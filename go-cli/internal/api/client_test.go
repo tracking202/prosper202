@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -241,8 +242,8 @@ func TestError400ParsesMessage(t *testing.T) {
 		t.Fatal("expected error for 400 response")
 	}
 
-	apiErr, ok := err.(*APIError)
-	if !ok {
+	var apiErr *APIError
+	if ok := errors.As(err, &apiErr); !ok {
 		t.Fatalf("error type = %T, want *APIError", err)
 	}
 	if apiErr.Status != 400 {
@@ -272,8 +273,8 @@ func TestError422ParsesFieldErrors(t *testing.T) {
 		t.Fatal("expected error for 422 response")
 	}
 
-	apiErr, ok := err.(*APIError)
-	if !ok {
+	var apiErr *APIError
+	if ok := errors.As(err, &apiErr); !ok {
 		t.Fatalf("error type = %T, want *APIError", err)
 	}
 	if apiErr.Status != 422 {
@@ -306,8 +307,8 @@ func TestError500ReturnsGenericError(t *testing.T) {
 		t.Fatal("expected error for 500 response")
 	}
 
-	apiErr, ok := err.(*APIError)
-	if !ok {
+	var apiErr *APIError
+	if ok := errors.As(err, &apiErr); !ok {
 		t.Fatalf("error type = %T, want *APIError", err)
 	}
 	if apiErr.Status != 500 {
@@ -332,8 +333,8 @@ func TestError500WithJSONBody(t *testing.T) {
 		t.Fatal("expected error for 500 response")
 	}
 
-	apiErr, ok := err.(*APIError)
-	if !ok {
+	var apiErr *APIError
+	if ok := errors.As(err, &apiErr); !ok {
 		t.Fatalf("error type = %T, want *APIError", err)
 	}
 	if apiErr.Message != "Database connection lost" {

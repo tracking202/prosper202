@@ -7,6 +7,7 @@ namespace Api\V3\Controllers;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
+use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
 
 class UsersController
@@ -127,7 +128,13 @@ class UsersController
             throw $e;
         }
 
-        return $this->get($newId);
+        // Committed: both the user row and its preferences row exist. Only
+        // the read-back remains, and its failure is not a failed create.
+        try {
+            return $this->get($newId);
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException('user', $e);
+        }
     }
 
     public function update(int $id, array $payload): array
@@ -172,6 +179,22 @@ class UsersController
         $stmt->close();
 
         return $this->get($id);
+    }
+
+    /**
+     * Read-only preview of delete() for `?dry_run=1`.
+     */
+    public function deletePreview(int $id): array
+    {
+        $existing = $this->get($id);
+        return ['data' => [
+            'dry_run' => true,
+            'action' => 'delete',
+            'resource' => 'users',
+            'mode' => 'soft',
+            'record' => $existing['data'],
+            'cascade' => [],
+        ]];
     }
 
     public function delete(int $id): void
@@ -225,7 +248,11 @@ class UsersController
 
     public function listApiKeys(int $userId): array
     {
-        $stmt = $this->prepare('SELECT user_id, api_key, created_at FROM 202_api_keys WHERE user_id = ?');
+        $hasScopeColumn = \Api\V3\Auth::apiKeyScopeColumnExists($this->db);
+        $columns = $hasScopeColumn
+            ? 'user_id, api_key, scope, created_at'
+            : 'user_id, api_key, created_at';
+        $stmt = $this->prepare("SELECT $columns FROM 202_api_keys WHERE user_id = ?");
         $this->bind($stmt, 'i', $userId);
         $this->execute($stmt, 'Query failed');
         $result = $stmt->get_result();
@@ -235,25 +262,130 @@ class UsersController
             if (isset($row['api_key']) && strlen($row['api_key']) > 8) {
                 $row['api_key'] = substr($row['api_key'], 0, 8) . str_repeat('*', 24);
             }
+            // Normalize scope for display: rows without one are full-access.
+            $row['scope'] = implode(',', \Api\V3\Auth::parseScopes((string)($row['scope'] ?? '')));
             $rows[] = $row;
         }
         $stmt->close();
         return ['data' => $rows];
     }
 
-    public function createApiKey(int $userId): array
+    public function createApiKey(int $userId, array $payload = [], ?\Api\V3\Auth $auth = null): array
     {
+        $scopeTokens = $this->normalizeRequestedScope($payload['scope'] ?? null);
+
+        foreach ($scopeTokens ?? [] as $token) {
+            if (!\Api\V3\Auth::isValidScopeToken($token)) {
+                throw new ValidationException('Invalid scope', [
+                    'scope' => sprintf(
+                        "Unknown scope token '%s'. Valid: *, read, write, stage, or <area>:read / <area>:write / <area>:stage with area one of: %s",
+                        $token,
+                        implode(', ', \Api\V3\Auth::KNOWN_SCOPE_AREAS)
+                    ),
+                ]);
+            }
+        }
+
+        // A key can never mint broader access than it holds itself. A scoped
+        // key must say what scope the new key gets — defaulting to full
+        // access would be a silent escalation.
+        if ($auth !== null && !$auth->hasFullScope()) {
+            if ($scopeTokens === null) {
+                throw new ValidationException('Invalid scope', [
+                    'scope' => 'Your key is scoped (' . implode(',', $auth->scopes())
+                        . '), so the new key needs an explicit scope no broader than that.',
+                ]);
+            }
+            foreach ($scopeTokens as $token) {
+                if (!$auth->coversScopeToken($token)) {
+                    throw new \Api\V3\AuthException(
+                        sprintf(
+                            "Cannot create a key with scope '%s': your key only has %s.",
+                            $token,
+                            implode(',', $auth->scopes())
+                        ),
+                        403
+                    );
+                }
+            }
+        }
+
+        $hasScopeColumn = \Api\V3\Auth::apiKeyScopeColumnExists($this->db);
+        if ($scopeTokens !== null && !$hasScopeColumn) {
+            throw new ConflictException(
+                'This install predates API key scopes (no scope column on 202_api_keys). '
+                . 'Run the upgrade at /202-config/upgrade.php, or create the key without a scope.'
+            );
+        }
+
         $key = bin2hex(random_bytes(32));
         $now = time();
+        $storedScope = $scopeTokens === null ? null : implode(',', $scopeTokens);
 
-        $stmt = $this->prepare('INSERT INTO 202_api_keys (user_id, api_key, created_at) VALUES (?, ?, ?)');
-        $this->bind($stmt, 'isi', $userId, $key, $now);
+        if ($hasScopeColumn) {
+            $stmt = $this->prepare('INSERT INTO 202_api_keys (user_id, api_key, scope, created_at) VALUES (?, ?, ?, ?)');
+            $this->bind($stmt, 'issi', $userId, $key, $storedScope, $now);
+        } else {
+            $stmt = $this->prepare('INSERT INTO 202_api_keys (user_id, api_key, created_at) VALUES (?, ?, ?)');
+            $this->bind($stmt, 'isi', $userId, $key, $now);
+        }
 
         $this->execute($stmt, 'Failed to create API key');
         $stmt->close();
 
         // Return the full key only on creation — it cannot be retrieved later.
-        return ['data' => ['user_id' => $userId, 'api_key' => $key, 'created_at' => $now]];
+        return ['data' => [
+            'user_id' => $userId,
+            'api_key' => $key,
+            'scope' => $storedScope ?? '*',
+            'created_at' => $now,
+        ]];
+    }
+
+    /**
+     * Normalize the requested scope into lower-cased unique tokens, or null
+     * when no scope was requested (a full-access key, the pre-scope default).
+     * Malformed input is an explicit error, never silently discarded.
+     *
+     * @return string[]|null
+     */
+    private function normalizeRequestedScope(mixed $raw): ?array
+    {
+        if ($raw === null) {
+            return null;
+        }
+        if (is_string($raw)) {
+            $raw = explode(',', $raw);
+        }
+        if (!is_array($raw)) {
+            throw new ValidationException('Invalid scope', [
+                'scope' => 'Must be a comma-separated string or an array of scope tokens.',
+            ]);
+        }
+        $tokens = [];
+        foreach ($raw as $token) {
+            if (!is_string($token)) {
+                throw new ValidationException('Invalid scope', [
+                    'scope' => 'Scope tokens must be strings.',
+                ]);
+            }
+            $value = strtolower(trim($token));
+            if ($value !== '') {
+                $tokens[] = $value;
+            }
+        }
+        $tokens = array_values(array_unique($tokens));
+        if ($tokens === []) {
+            // An explicitly supplied but empty scope is malformed input, not
+            // a request for full access: silently minting a `*` key here
+            // would hand out more privilege than the caller asked for.
+            throw new ValidationException('Invalid scope', [
+                'scope' => 'Scope was supplied but contained no tokens. Pass at least one token '
+                    . '(for example `read`, `read,stage`, or `campaigns:write`), or omit scope '
+                    . 'entirely for a full-access key.',
+            ]);
+        }
+        return $tokens;
     }
 
     public function deleteApiKey(int $userId, string $apiKey): void
@@ -262,6 +394,65 @@ class UsersController
         $this->bind($stmt, 'is', $userId, $apiKey);
         $this->execute($stmt, 'Failed to delete API key');
         $stmt->close();
+    }
+
+    /**
+     * Read-only preview of deleteApiKey() for `?dry_run=1`. The key in the
+     * preview is masked like listApiKeys() — the full value never leaves
+     * creation.
+     */
+    public function deleteApiKeyPreview(int $userId, string $apiKey): array
+    {
+        $stmt = $this->prepare('SELECT user_id, api_key, created_at FROM 202_api_keys WHERE user_id = ? AND api_key = ? LIMIT 1');
+        $this->bind($stmt, 'is', $userId, $apiKey);
+        $this->execute($stmt, 'Query failed');
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if (!$row) {
+            throw new NotFoundException('API key not found for user');
+        }
+        if (isset($row['api_key']) && strlen($row['api_key']) > 8) {
+            $row['api_key'] = substr($row['api_key'], 0, 8) . str_repeat('*', 24);
+        }
+
+        return ['data' => [
+            'dry_run' => true,
+            'action' => 'delete',
+            'resource' => 'api-keys',
+            'mode' => 'hard',
+            'record' => $row,
+            'cascade' => [],
+        ]];
+    }
+
+    /**
+     * Read-only preview of removeRole() for `?dry_run=1`.
+     */
+    public function removeRolePreview(int $userId, int $roleId): array
+    {
+        $stmt = $this->prepare(
+            'SELECT ur.user_id, ur.role_id, r.role_name FROM 202_user_role ur '
+            . 'INNER JOIN 202_roles r ON ur.role_id = r.role_id '
+            . 'WHERE ur.user_id = ? AND ur.role_id = ? LIMIT 1'
+        );
+        $this->bind($stmt, 'ii', $userId, $roleId);
+        $this->execute($stmt, 'Query failed');
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if (!$row) {
+            throw new NotFoundException('Role assignment not found for user');
+        }
+
+        return ['data' => [
+            'dry_run' => true,
+            'action' => 'delete',
+            'resource' => 'user-roles',
+            'mode' => 'hard',
+            'record' => $row,
+            'cascade' => [],
+        ]];
     }
 
     // --- Preferences ---

@@ -5,16 +5,55 @@ declare(strict_types=1);
 namespace Api\V3\Support;
 
 use Api\V3\Exception\DatabaseException;
+use Api\V3\Exception\ConflictException;
 
 class ServerStateStore
 {
     private const int DEFAULT_RETENTION = 5000;
 
+    /**
+     * How long a recorded Idempotency-Key stays replayable, and how many may
+     * share one shard. Retries happen within seconds or minutes, so a day is
+     * generous; the age bound is what keeps a busy caller's shard small,
+     * with the count a backstop for a caller that outruns it. Past either
+     * bound a key is forgotten and its retry executes again — which is why
+     * neither bound is tight.
+     */
+    private const int IDEMPOTENCY_RETENTION_SECONDS = 86400;
+    private const int IDEMPOTENCY_RETENTION = 500;
+
+    /**
+     * Staged-change statuses that are finished, and so safe to prune once a
+     * user's ledger passes the retention cap. `staged` is awaiting a
+     * decision; `applying` is mid-dispatch, and dropping one loses the
+     * record its own handler is about to write its outcome into. Only
+     * terminal states are prunable.
+     */
+    private const array PRUNABLE_CHANGE_STATUSES = ['applied', 'discarded', 'apply_interrupted'];
+
+    /**
+     * How many proposals one user may have awaiting a decision. Pruning only
+     * reclaims resolved and expired records, so without a bound on the live
+     * queue a propose-only key can grow its ledger for a whole TTL — and
+     * every later stage and list reads and rewrites that file. An approval
+     * queue this deep is unusable by a human anyway; the cap turns a latency
+     * and disk problem into an explicit refusal naming what to do.
+     * P202_STAGED_CHANGE_MAX_PENDING raises it for larger staged imports.
+     */
+    private const int DEFAULT_MAX_PENDING_CHANGES = 1000;
+
     private readonly string $baseDir;
 
-    public function __construct(?string $baseDir = null)
+    /**
+     * @param ?string $instanceIdentity Overrides the ambient $dbname/$dbhost
+     *        globals used to scope the default directory. Pass it from any
+     *        context that loads configuration inside a function rather than
+     *        at file scope — otherwise the globals are unset and this process
+     *        silently reads and writes a different store than the web tier.
+     */
+    public function __construct(?string $baseDir = null, ?string $instanceIdentity = null)
     {
-        $this->baseDir = rtrim($baseDir ?? $this->resolveDefaultBaseDir(), '/');
+        $this->baseDir = rtrim($baseDir ?? $this->resolveDefaultBaseDir($instanceIdentity), '/');
         $this->ensureDir($this->baseDir);
         $this->ensureDir($this->dir('idempotency'));
         $this->ensureDir($this->dir('changes'));
@@ -44,32 +83,263 @@ class ServerStateStore
         return sha1($json);
     }
 
-    public function getIdempotent(string $scope, string $key): ?array
+    /**
+     * Where a caller's Idempotency-Key records live. The scope is the caller
+     * and nothing else: a key identifies one request, so reusing it for a
+     * different endpoint is the same caller error as reusing it with a
+     * changed body, and folding the operation into the scope would file the
+     * second request separately and let it execute. What the request *was*
+     * belongs in the fingerprint, which is compared rather than looked up.
+     */
+    public static function idempotencyScopeForUser(int $userId): string
     {
-        $data = $this->readJsonFile($this->idempotencyPath($scope), ['items' => []]);
-        $items = $data['items'] ?? [];
-        if (!isset($items[$key]['response']) || !is_array($items[$key]['response'])) {
-            return null;
-        }
-        return $items[$key]['response'];
+        return 'idempotency:user:' . $userId;
     }
 
-    public function putIdempotent(string $scope, string $key, array $response): void
+    /**
+     * Identify a request for the mismatch check: the operation it targets
+     * plus the body it carries. Both matter — the same body sent to two
+     * endpoints is two different operations.
+     *
+     * @param array<string, mixed> $payload
+     */
+    public static function idempotencyFingerprint(string $operation, array $payload): string
     {
-        $path = $this->idempotencyPath($scope);
-        $this->mutateJsonFile($path, ['items' => []], static function (array $data) use ($key, $response): array {
+        return self::canonicalHash(['operation' => $operation, 'payload' => $payload]);
+    }
+
+    /**
+     * How long a reserveIdempotent() claim blocks a concurrent request with
+     * the same key. Past this a claim is assumed dead (the request that took
+     * it crashed) and may be re-taken, so a failed create cannot wedge a key.
+     */
+    public const IDEMPOTENCY_CLAIM_TTL_SECONDS = 300;
+
+    /**
+     * Read what a request carrying this Idempotency-Key should replay.
+     *
+     * $fingerprint identifies the request body. A key already recorded
+     * against a different body is a caller error rather than a new
+     * operation, and is reported as 'mismatch' so the caller can refuse it:
+     * the alternative — folding the body hash into $scope — sends the second
+     * request to a different file, where it looks like a fresh key and
+     * executes, producing exactly the duplicate the key was sent to prevent.
+     * An empty $fingerprint disables the check for callers that have no body
+     * to hash.
+     *
+     * @return array{state: 'miss'|'replay'|'mismatch', response: ?array}
+     */
+    public function lookupIdempotent(string $scope, string $key, string $fingerprint = ''): array
+    {
+        $data = $this->readJsonFile($this->idempotencyPath($scope, $key), ['items' => []]);
+        $items = $data['items'] ?? [];
+        $item = is_array($items) ? ($items[$key] ?? null) : null;
+        if (!is_array($item)) {
+            return ['state' => 'miss', 'response' => null];
+        }
+
+        if ($fingerprint !== '') {
+            $stored = (string)($item['fingerprint'] ?? '');
+            if ($stored !== '' && !hash_equals($stored, $fingerprint)) {
+                return ['state' => 'mismatch', 'response' => null];
+            }
+        }
+
+        if (!isset($item['response']) || !is_array($item['response'])) {
+            return ['state' => 'miss', 'response' => null];
+        }
+        return ['state' => 'replay', 'response' => $item['response']];
+    }
+
+    /**
+     * Atomically decide what a request carrying this Idempotency-Key should
+     * do. lookupIdempotent()/putIdempotent() are separately locked, so a
+     * check followed by the write left a window in which two concurrent retries
+     * both missed the record and both executed — which is precisely the case
+     * idempotency exists to prevent, since automatic retries usually race a
+     * still-running request rather than following it.
+     *
+     * $fingerprint identifies the request body. A key reused with a different
+     * body is a caller error, not a new operation: the scope used to include
+     * the payload hash, which made the same key with a changed field land in
+     * a different file and create a second record — the exact duplicate the
+     * key was sent to prevent.
+     *
+     * @return array{state: 'replay'|'in_flight'|'indeterminate'|'mismatch'|'claimed', response: ?array}
+     */
+    public function reserveIdempotent(string $scope, string $key, string $fingerprint = ''): array
+    {
+        $result = ['state' => 'claimed', 'response' => null];
+        $this->mutateJsonFile(
+            $this->idempotencyPath($scope, $key),
+            ['items' => []],
+            static function (array $data) use ($key, $fingerprint, &$result): array {
+                $item = $data['items'][$key] ?? null;
+
+                // Checked before every other outcome: a body mismatch makes
+                // replaying, waiting, or claiming all wrong answers.
+                if (is_array($item) && $fingerprint !== '') {
+                    $stored = (string)($item['fingerprint'] ?? '');
+                    if ($stored !== '' && !hash_equals($stored, $fingerprint)) {
+                        $result = ['state' => 'mismatch', 'response' => null];
+                        return $data;
+                    }
+                }
+
+                if (is_array($item) && isset($item['response']) && is_array($item['response'])) {
+                    $result = ['state' => 'replay', 'response' => $item['response']];
+                    return $data;
+                }
+                // Marked by a caller that knows its write landed but could
+                // not record the response: unknown from the first retry
+                // rather than after the claim ages out.
+                if (is_array($item) && ($item['indeterminate'] ?? false) === true) {
+                    $result = ['state' => 'indeterminate', 'response' => null];
+                    return $data;
+                }
+                $claimedAt = (int)($item['claimed_at'] ?? 0);
+                if (is_array($item) && $claimedAt > 0) {
+                    if (time() - $claimedAt <= self::IDEMPOTENCY_CLAIM_TTL_SECONDS) {
+                        // Another request holds this key and has not finished.
+                        $result = ['state' => 'in_flight', 'response' => null];
+                        return $data;
+                    }
+                    // The claim outlived its holder without recording a
+                    // response. A caller whose operation merely *failed*
+                    // releases the claim (see releaseIdempotent), so getting
+                    // here means the process died outright — possibly after
+                    // its write committed. Re-executing would duplicate the
+                    // record this key exists to prevent, so the claim is kept
+                    // and the state reported as unknown rather than reused.
+                    $result = ['state' => 'indeterminate', 'response' => null];
+                    return $data;
+                }
+                // Free: take it.
+                $data['items'][$key] = [
+                    'stored_at' => time(),
+                    'claimed_at' => time(),
+                    'fingerprint' => $fingerprint,
+                ];
+                $data['items'] = self::pruneIdempotencyItems($data['items'], $key);
+                return $data;
+            }
+        );
+        return $result;
+    }
+
+    /**
+     * Drop a claim taken by reserveIdempotent() whose operation failed, so
+     * the caller can retry instead of being told a request is in flight
+     * until the claim expires.
+     */
+    public function releaseIdempotent(string $scope, string $key): void
+    {
+        $this->mutateJsonFile(
+            $this->idempotencyPath($scope, $key),
+            ['items' => []],
+            static function (array $data) use ($key): array {
+                $item = $data['items'][$key] ?? null;
+                if (is_array($item) && !isset($item['response'])) {
+                    unset($data['items'][$key]);
+                }
+                return $data;
+            }
+        );
+    }
+
+    /**
+     * Record that this key's operation wrote to the database but never
+     * produced a response to replay. Without it the claim looks merely
+     * in-flight until it ages out, and a retry in that window is told to
+     * wait for a request that is already gone.
+     */
+    public function markIdempotentIndeterminate(string $scope, string $key): void
+    {
+        $this->mutateJsonFile(
+            $this->idempotencyPath($scope, $key),
+            ['items' => []],
+            static function (array $data) use ($key): array {
+                $item = $data['items'][$key] ?? null;
+                if (is_array($item) && !isset($item['response'])) {
+                    $item['indeterminate'] = true;
+                    $data['items'][$key] = $item;
+                }
+                return $data;
+            }
+        );
+    }
+
+    /**
+     * @param string $fingerprint Body hash to record when no claim already
+     *        carries one — required by callers that write without going
+     *        through reserveIdempotent(), or a later retry with a changed
+     *        body cannot be told apart from a replay.
+     */
+    public function putIdempotent(string $scope, string $key, array $response, string $fingerprint = ''): void
+    {
+        $path = $this->idempotencyPath($scope, $key);
+        $this->mutateJsonFile($path, ['items' => []], static function (array $data) use ($key, $response, $fingerprint): array {
+            // Prefer the fingerprint the claim recorded: without it a replay
+            // could no longer tell that a later retry changed the body.
+            $existing = $data['items'][$key] ?? null;
+            $stored = is_array($existing) ? (string)($existing['fingerprint'] ?? '') : '';
             $data['items'][$key] = [
                 'stored_at' => time(),
+                'fingerprint' => $stored !== '' ? $stored : $fingerprint,
                 'response' => $response,
             ];
 
-            if (count($data['items']) > self::DEFAULT_RETENTION) {
-                uasort($data['items'], static fn(array $a, array $b): int => ($a['stored_at'] ?? 0) <=> ($b['stored_at'] ?? 0));
-                $data['items'] = array_slice($data['items'], -self::DEFAULT_RETENTION, null, true);
-            }
+            $data['items'] = self::pruneIdempotencyItems($data['items'], $key);
 
             return $data;
         });
+    }
+
+    /**
+     * Drop expired and surplus records from one shard. $keepKey is the record
+     * the caller just wrote: it is never dropped, so a prune can't discard
+     * the claim or response the current request depends on.
+     *
+     * @param mixed $items
+     * @return array<string, mixed>
+     */
+    private static function pruneIdempotencyItems(mixed $items, string $keepKey): array
+    {
+        if (!is_array($items)) {
+            return [];
+        }
+
+        $cutoff = time() - self::IDEMPOTENCY_RETENTION_SECONDS;
+        foreach ($items as $itemKey => $item) {
+            // Cast before comparing: PHP turns an all-digit array key into an
+            // int, so an Idempotency-Key of "12345" arrives here as 12345 and
+            // a strict comparison against the string would never match.
+            if ((string)$itemKey === $keepKey) {
+                continue;
+            }
+            // A record with no readable timestamp is from a shape this
+            // version does not write; treat it as expired rather than
+            // keeping it forever.
+            $storedAt = is_array($item) ? (int)($item['stored_at'] ?? 0) : 0;
+            if ($storedAt <= $cutoff) {
+                unset($items[$itemKey]);
+            }
+        }
+
+        if (count($items) > self::IDEMPOTENCY_RETENTION) {
+            $keep = $items[$keepKey] ?? null;
+            uasort($items, static function (mixed $a, mixed $b): int {
+                $left = is_array($a) ? (int)($a['stored_at'] ?? 0) : 0;
+                $right = is_array($b) ? (int)($b['stored_at'] ?? 0) : 0;
+                return $left <=> $right;
+            });
+            $items = array_slice($items, -self::IDEMPOTENCY_RETENTION, null, true);
+            if ($keep !== null && !isset($items[$keepKey])) {
+                $items[$keepKey] = $keep;
+            }
+        }
+
+        return $items;
     }
 
     public function recordChange(string $entity, string $operation, array $record, int $actorUserId): void
@@ -231,6 +501,187 @@ class ServerStateStore
                 'offset' => $offset,
             ],
         ];
+    }
+
+    // ─── Staged writes ───────────────────────────────────────────────
+    // A staged write is a recorded operator-surface mutation awaiting
+    // approval: the model (or any caller) proposes, a person applies. One
+    // file per staging user; resolved entries stay as the audit trail and
+    // are pruned oldest-first past the retention cap.
+
+    /**
+     * The live-queue cap. Read here rather than baked in so a deployment
+     * doing large staged imports can raise it without a code change.
+     */
+    public static function maxPendingChanges(): int
+    {
+        $raw = getenv('P202_STAGED_CHANGE_MAX_PENDING');
+        if (is_string($raw) && trim($raw) !== '') {
+            $parsed = (int)$raw;
+            if ($parsed >= 1) {
+                return $parsed;
+            }
+            error_log(sprintf(
+                'p202: ignoring P202_STAGED_CHANGE_MAX_PENDING=%s — expected a whole number >= 1; using %d.',
+                $raw,
+                self::DEFAULT_MAX_PENDING_CHANGES
+            ));
+        }
+        return self::DEFAULT_MAX_PENDING_CHANGES;
+    }
+
+    public function stageWriteChange(int $userId, array $change): void
+    {
+        $changeId = (string)($change['change_id'] ?? '');
+        if ($changeId === '') {
+            throw new DatabaseException('Staged change missing change_id');
+        }
+        $maxPending = self::maxPendingChanges();
+        $this->mutateJsonFile($this->stagedChangesPath($userId), ['items' => []], static function (array $state) use ($changeId, $change, $maxPending): array {
+            // Counted under the same lock as the write, so concurrent stages
+            // cannot both slip past the cap.
+            $pending = 0;
+            $cutoff = time();
+            // Guarded like listChanges() and listJobEvents(): readJsonFile()
+            // only promises the top level is an array, so a truncated or
+            // hand-edited state file with `"items": null` would TypeError
+            // inside the lock and 500 every stage with no clue why.
+            $items = is_array($state['items'] ?? null) ? $state['items'] : [];
+            $state['items'] = $items;
+            foreach ($items as $item) {
+                if (($item['status'] ?? '') === 'staged'
+                    && $cutoff <= (int)($item['expires_at_epoch'] ?? 0)) {
+                    $pending++;
+                }
+            }
+            if ($pending >= $maxPending) {
+                throw new ConflictException(sprintf(
+                    'You already have %d staged changes awaiting a decision, which is the limit. Apply or '
+                    . 'discard some (GET /staged-changes?status=staged) before staging more, or raise '
+                    . 'P202_STAGED_CHANGE_MAX_PENDING.',
+                    $pending
+                ));
+            }
+
+            $state['items'][$changeId] = $change;
+
+            $now = time();
+            $resolved = [];
+            foreach ($state['items'] as $id => $item) {
+                if (!is_array($item)) {
+                    continue;
+                }
+                $status = (string)($item['status'] ?? '');
+                // Expired proposals keep the status `staged` but can never be
+                // applied, so counting only terminal records would let them
+                // accumulate without bound -- every later stage and list would
+                // read and rewrite an ever-larger file, which a propose-only
+                // key could drive on purpose.
+                $expired = $status === 'staged'
+                    && $now > (int)($item['expires_at_epoch'] ?? 0);
+                if ($expired || in_array($status, self::PRUNABLE_CHANGE_STATUSES, true)) {
+                    $resolved[$id] = (int)($item['created_at_epoch'] ?? 0);
+                }
+            }
+            if (count($resolved) > self::DEFAULT_RETENTION) {
+                asort($resolved);
+                $drop = count($resolved) - self::DEFAULT_RETENTION;
+                foreach (array_slice(array_keys($resolved), 0, $drop) as $dropId) {
+                    unset($state['items'][$dropId]);
+                }
+            }
+
+            return $state;
+        });
+    }
+
+    public function getStagedChangeForUser(int $userId, string $changeId): ?array
+    {
+        $state = $this->readJsonFile($this->stagedChangesPath($userId), ['items' => []]);
+        $item = $state['items'][$changeId] ?? null;
+        return is_array($item) ? $item : null;
+    }
+
+    /**
+     * Locate a staged change regardless of which user staged it (admin
+     * access). Scans the per-user files; fine at this store's scale.
+     */
+    public function findStagedChange(string $changeId): ?array
+    {
+        foreach ($this->listStagedChangeFiles() as $path) {
+            $state = $this->readJsonFile($path, ['items' => []]);
+            $item = $state['items'][$changeId] ?? null;
+            if (is_array($item)) {
+                return $item;
+            }
+        }
+        return null;
+    }
+
+    /** @return array<int, array<string, mixed>> newest first */
+    public function listStagedChangesForUser(int $userId): array
+    {
+        $state = $this->readJsonFile($this->stagedChangesPath($userId), ['items' => []]);
+        $items = array_values(array_filter($state['items'] ?? [], 'is_array'));
+        usort($items, static fn(array $a, array $b): int => ((int)($b['created_at_epoch'] ?? 0)) <=> ((int)($a['created_at_epoch'] ?? 0)));
+        return $items;
+    }
+
+    /** @return array<int, array<string, mixed>> newest first, across all users */
+    public function listStagedChangesAllUsers(): array
+    {
+        $items = [];
+        foreach ($this->listStagedChangeFiles() as $path) {
+            $state = $this->readJsonFile($path, ['items' => []]);
+            foreach ($state['items'] ?? [] as $item) {
+                if (is_array($item)) {
+                    $items[] = $item;
+                }
+            }
+        }
+        usort($items, static fn(array $a, array $b): int => ((int)($b['created_at_epoch'] ?? 0)) <=> ((int)($a['created_at_epoch'] ?? 0)));
+        return $items;
+    }
+
+    /**
+     * Atomically transform one staged change under the file lock. The
+     * mutator receives the current record and returns the updated one, or
+     * null to reject the transition (e.g. a status precondition failed).
+     * Returns the updated record, or null when the change is missing or the
+     * mutator rejected — the caller decides which error that is.
+     */
+    public function updateStagedChange(int $userId, string $changeId, callable $mutator): ?array
+    {
+        $result = null;
+        $this->mutateJsonFile($this->stagedChangesPath($userId), ['items' => []], static function (array $state) use ($changeId, $mutator, &$result): array {
+            $item = $state['items'][$changeId] ?? null;
+            if (!is_array($item)) {
+                return $state;
+            }
+            $updated = $mutator($item);
+            if (is_array($updated)) {
+                $state['items'][$changeId] = $updated;
+                $result = $updated;
+            }
+            return $state;
+        });
+        return $result;
+    }
+
+    /** @return string[] */
+    private function listStagedChangeFiles(): array
+    {
+        $dir = $this->dir('staged_changes');
+        if (!is_dir($dir)) {
+            return [];
+        }
+        $files = glob($dir . '/user-*.json');
+        return $files === false ? [] : $files;
+    }
+
+    private function stagedChangesPath(int $userId): string
+    {
+        return $this->dir('staged_changes') . '/user-' . $userId . '.json';
     }
 
     public function appendAudit(array $record): void
@@ -556,19 +1007,93 @@ class ServerStateStore
         ];
     }
 
-    private function resolveDefaultBaseDir(): string
+    private function resolveDefaultBaseDir(?string $instanceIdentity = null): string
     {
         $env = getenv('P202_SERVER_STATE_DIR');
         if (is_string($env) && trim($env) !== '') {
             return trim($env);
         }
 
-        return rtrim((string)sys_get_temp_dir(), '/') . '/p202-api-v3-state';
+        // The temp dir is machine-wide, so the default is scoped by instance
+        // identity (DB host + name): without this, two instances served on
+        // one host would share idempotency replays, staged changes, sync
+        // jobs, and rate-limit buckets across databases. Deployments that
+        // want a specific location (e.g. a persistent volume) set
+        // P202_SERVER_STATE_DIR explicitly, which wins above.
+        $legacy = rtrim((string)sys_get_temp_dir(), '/') . '/p202-api-v3-state';
+
+        $identity = $instanceIdentity !== null ? trim($instanceIdentity) : null;
+        if ($identity === null || $identity === '') {
+            // Falling back to the globals keeps the six existing call sites
+            // working, but nothing enforces that they loaded configuration at
+            // file scope. A caller that did not gets the unscoped path and
+            // then reads and writes a completely different staged-change,
+            // idempotency and rate-limit store than the web tier — with no
+            // error at all. Say so once per process rather than diverging in
+            // silence (error pattern #3).
+            global $dbname, $dbhost;
+            if (!is_string($dbname) || trim($dbname) === '') {
+                static $warned = false;
+                if (!$warned) {
+                    $warned = true;
+                    error_log(
+                        'p202: no database identity in scope when resolving the v3 API state directory; '
+                        . 'using the unscoped path ' . $legacy . '. A process that reaches this reads '
+                        . 'different state than the web tier — load 202-config.php at file scope, or pass '
+                        . 'the identity to ServerStateStore, or set P202_SERVER_STATE_DIR.'
+                    );
+                }
+                return $legacy;
+            }
+            $identity = (is_string($dbhost) ? $dbhost : '') . '|' . $dbname;
+        }
+        $scoped = $legacy . '-' . substr(sha1($identity), 0, 12);
+
+        // One-time adoption of the pre-scoping directory so in-flight sync
+        // jobs and staged changes survive the upgrade. On a host that really
+        // does run several instances, the first one upgraded adopts the
+        // shared history — no worse than the sharing that preceded it.
+        if (!is_dir($scoped) && is_dir($legacy)) {
+            // A failed adoption must not silently strand the old directory's
+            // staged changes, sync jobs, and idempotency records: keep using
+            // the legacy path so in-flight work stays reachable, and say so.
+            if (!@rename($legacy, $scoped)) {
+                // The likeliest reason a rename fails here is that another
+                // worker racing the same first-request-after-upgrade already
+                // performed it, which is a win, not an error: returning
+                // $legacy would have this worker recreate the old directory
+                // and write state that no later request reads. Re-check the
+                // destination before falling back; clearstatcache keeps the
+                // answer from being served out of anything cached earlier in
+                // the request.
+                clearstatcache(true, $scoped);
+                if (is_dir($scoped)) {
+                    return $scoped;
+                }
+                error_log(sprintf(
+                    'p202: could not adopt legacy API state dir %s into %s (%s); continuing to use the legacy path. '
+                    . 'Set P202_SERVER_STATE_DIR to choose a location explicitly.',
+                    $legacy,
+                    $scoped,
+                    (error_get_last()['message'] ?? 'unknown error')
+                ));
+                return $legacy;
+            }
+        }
+        return $scoped;
     }
 
-    private function idempotencyPath(string $scope): string
+    /**
+     * Records are sharded by the Idempotency-Key, not by the request body:
+     * a scope now covers a whole caller+operation, and without a shard every
+     * keyed create for that caller would read and rewrite one growing file
+     * under a lock. The shard depends on the key alone, so the same key
+     * always resolves to the same file whatever the body — which is what
+     * makes a changed body detectable instead of invisible.
+     */
+    private function idempotencyPath(string $scope, string $key): string
     {
-        return $this->dir('idempotency') . '/' . sha1($scope) . '.json';
+        return $this->dir('idempotency') . '/' . sha1($scope) . '-' . substr(sha1($key), 0, 2) . '.json';
     }
 
     private function changesPath(string $entity): string

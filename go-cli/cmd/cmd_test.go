@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -3486,6 +3487,9 @@ func TestUserAPIKeyRotateDeletesOldKeyByDefault(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == "GET" && r.URL.Path == "/api/v3/users/7/api-keys":
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":[{"user_id":7,"api_key":"old-key-************************","scope":"*","created_at":1700000000}]}`))
 		case r.Method == "POST" && r.URL.Path == "/api/v3/users/7/api-keys":
 			createPath = r.URL.Path
 			w.WriteHeader(200)
@@ -3526,6 +3530,9 @@ func TestUserAPIKeyRotateKeepOldSkipsDelete(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == "GET" && r.URL.Path == "/api/v3/users/7/api-keys":
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":[{"user_id":7,"api_key":"old-key-************************","scope":"*","created_at":1700000000}]}`))
 		case r.Method == "POST" && r.URL.Path == "/api/v3/users/7/api-keys":
 			w.WriteHeader(200)
 			w.Write([]byte(`{"data":{"api_key":"new-key-abcdef1234"}}`))
@@ -3557,6 +3564,9 @@ func TestUserAPIKeyRotateKeepOldSkipsDelete(t *testing.T) {
 func TestUserAPIKeyRotateUpdateConfig(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == "GET" && r.URL.Path == "/api/v3/users/7/api-keys":
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":[{"user_id":7,"api_key":"old-key-************************","scope":"*","created_at":1700000000}]}`))
 		case r.Method == "POST" && r.URL.Path == "/api/v3/users/7/api-keys":
 			w.WriteHeader(200)
 			w.Write([]byte(`{"data":{"api_key":"new-key-abcdef1234"}}`))
@@ -4478,8 +4488,8 @@ func TestBulkDeletePartialFailureExitCode(t *testing.T) {
 		t.Fatal("expected error for partial failure")
 	}
 
-	cliErr, ok := err.(*CLIError)
-	if !ok {
+	var cliErr *CLIError
+	if ok := errors.As(err, &cliErr); !ok {
 		t.Fatalf("error type = %T, want *CLIError", err)
 	}
 	if cliErr.ExitCode != ExitPartialFailure {
@@ -4652,8 +4662,8 @@ func TestRotatorDeleteBulkPartialFailure(t *testing.T) {
 		t.Fatal("expected error for partial failure")
 	}
 
-	cliErr, ok := err.(*CLIError)
-	if !ok {
+	var cliErr *CLIError
+	if ok := errors.As(err, &cliErr); !ok {
 		t.Fatalf("error type = %T, want *CLIError", err)
 	}
 	if cliErr.ExitCode != ExitPartialFailure {

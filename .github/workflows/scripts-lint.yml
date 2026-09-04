@@ -1,0 +1,55 @@
+name: Scripts and Workflows
+
+# The repo drives real work from shell (the installer, the eval fixture
+# seeder, release packaging) and from workflow YAML, and neither was checked
+# by anything. Both linters found real defects on their first run: a case
+# pattern that could never match, and `${{ runner.temp }}` read from a
+# job-level env block where the runner context does not exist, which silently
+# expanded to an empty string.
+
+on:
+  push:
+    paths:
+      - '**.sh'
+      - '.github/workflows/**'
+  pull_request:
+    paths:
+      - '**.sh'
+      - '.github/workflows/**'
+
+jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # install.sh carries 22 pre-existing warnings and is excluded until they
+      # are worked through; every other script is held at warning level. Drop
+      # the exclusion, don't widen it.
+      - name: Run ShellCheck
+        run: |
+          set -o pipefail
+          mapfile -t scripts < <(
+            find . -path ./vendor -prune -o -path ./node_modules -prune -o \
+                 -name '*.sh' -print | grep -v '^\./install\.sh$' | sort
+          )
+          if [ "${#scripts[@]}" -eq 0 ]; then
+            echo "no shell scripts found" >&2
+            exit 1
+          fi
+          printf 'checking %d script(s)\n' "${#scripts[@]}"
+          shellcheck --severity=warning --format=gcc "${scripts[@]}"
+
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Checks workflow syntax, action versions, context availability, and
+      # runs shellcheck over every `run:` block.
+      - name: Run actionlint
+        uses: raven-actions/actionlint@v2
+        with:
+          fail-on-error: true

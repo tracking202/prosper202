@@ -91,7 +91,12 @@ class ClicksController
 
         $rows = [];
         while ($row = $result->fetch_assoc()) {
-            $rows[] = $row;
+            // Resolved names derive from the visitor (user agent, IP): strip
+            // control/bidi characters and cap length before serving them.
+            $rows[] = \Api\V3\Support\ResponseSanitizer::cleanRowFields(
+                $row,
+                ['country_name', 'platform_name', 'browser_name']
+            );
         }
         $stmt->close();
 
@@ -136,6 +141,13 @@ class ClicksController
         if (!$row) {
             throw new NotFoundException('Click not found');
         }
+
+        // Resolved names derive from the visitor (user agent, IP): strip
+        // control/bidi characters and cap length before serving them.
+        $row = \Api\V3\Support\ResponseSanitizer::cleanRowFields(
+            $row,
+            ['country_name', 'region_name', 'city_name', 'isp_name', 'platform_name', 'browser_name']
+        );
 
         return ['data' => $row];
     }

@@ -1,0 +1,62 @@
+{
+  "cases": [
+    {
+      "id": "idem-001-a-retried-create-does-not-duplicate",
+      "priority": "critical",
+      "state": "seeded fixture; the agent is told the first attempt may already have landed",
+      "setup": [
+        "p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL IDEM RETRY\") | .aff_campaign_id' | xargs -r -I{} p202 campaign delete {} --force"
+      ],
+      "ask": "create a campaign named EVAL IDEM RETRY with payout 3.50 and url https://example.com/idem-retry. My connection dropped on an earlier attempt so this may be a retry — make sure it cannot end up created twice.",
+      "expected": {
+        "runs_one_of": [
+          "--idempotency-key"
+        ],
+        "checks": [
+          {
+            "run": "p202 campaign list --all --json | jq '[.data[] | select(.aff_campaign_name==\"EVAL IDEM RETRY\")] | length'",
+            "includes": [
+              "1"
+            ]
+          }
+        ],
+        "rubric": "PASS if the agent passed --idempotency-key on the create and exactly one campaign exists. FAIL if it created the campaign without a key, or if two rows exist."
+      },
+      "cleanup": [
+        "p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL IDEM RETRY\") | .aff_campaign_id' | xargs -r -I{} p202 campaign delete {} --force"
+      ],
+      "notes": "The retry-safe path is opt-in: without --idempotency-key a repeated create silently duplicates. An agent that is told a request may be a retry has to reach for the key."
+    },
+    {
+      "id": "idem-002-a-key-is-not-reused-for-a-different-create",
+      "priority": "high",
+      "state": "seeded fixture; the agent creates two different campaigns in one turn",
+      "setup": [
+        "p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL IDEM ALPHA\" or .aff_campaign_name==\"EVAL IDEM BETA\") | .aff_campaign_id' | xargs -r -I{} p202 campaign delete {} --force"
+      ],
+      "ask": "create two campaigns for me, both retry-safe: EVAL IDEM ALPHA with payout 1.25 at https://example.com/idem-alpha, and EVAL IDEM BETA with payout 2.75 at https://example.com/idem-beta",
+      "expected": {
+        "checks": [
+          {
+            "run": "p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL IDEM ALPHA\" or .aff_campaign_name==\"EVAL IDEM BETA\") | \"\\(.aff_campaign_name)|\\(.aff_campaign_payout)\"'",
+            "includes": [
+              "EVAL IDEM ALPHA|1.25",
+              "EVAL IDEM BETA|2.75"
+            ]
+          },
+          {
+            "run": "p202 campaign list --all --json | jq '[.data[] | select(.aff_campaign_name==\"EVAL IDEM ALPHA\" or .aff_campaign_name==\"EVAL IDEM BETA\")] | length'",
+            "includes": [
+              "2"
+            ]
+          }
+        ],
+        "rubric": "PASS if both campaigns exist with their own values. FAIL if the agent sent one idempotency key for both creates and stopped at the 422, leaving BETA uncreated, or if it dropped the key entirely after the refusal instead of minting a second one."
+      },
+      "cleanup": [
+        "p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL IDEM ALPHA\" or .aff_campaign_name==\"EVAL IDEM BETA\") | .aff_campaign_id' | xargs -r -I{} p202 campaign delete {} --force"
+      ],
+      "notes": "A key identifies one operation. Reusing it for a different body is a 422, so an agent that mints one key per turn rather than one per create gets stuck on the second one — the error names the remedy (send a new key), and the agent has to follow it."
+    }
+  ]
+}

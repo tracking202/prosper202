@@ -95,7 +95,8 @@ var rotatorCreateCmd = &cobra.Command{
 				body[f] = v
 			}
 		}
-		data, err := c.Post("rotators", body)
+		idemKey, _ := cmd.Flags().GetString("idempotency-key")
+		data, err := c.PostIdempotent("rotators", body, idemKey)
 		if err != nil {
 			return err
 		}
@@ -146,6 +147,7 @@ var rotatorDeleteCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		idsFlag, _ := cmd.Flags().GetString("ids")
 		if strings.TrimSpace(idsFlag) != "" {
 			idList, parseErr := parseIDList(idsFlag)
@@ -154,6 +156,13 @@ var rotatorDeleteCmd = &cobra.Command{
 			}
 			if len(idList) == 0 {
 				return validationError("--ids requires at least one ID").WithHint("Comma-separate internal ids, e.g. --ids 12,13,14 (find them with the matching `... list`).")
+			}
+
+			if dryRun {
+				return renderDeletePreviews(c, "rotators", idList)
+			}
+			if api.StagedMode() {
+				return stageDeletes(c, "rotators", idList)
 			}
 
 			force, _ := cmd.Flags().GetBool("force")
@@ -177,6 +186,13 @@ var rotatorDeleteCmd = &cobra.Command{
 				return partialFailureError("failed to delete %d rotators", failed)
 			}
 			return nil
+		}
+
+		if dryRun {
+			return renderDeletePreviews(c, "rotators", []string{args[0]})
+		}
+		if api.StagedMode() {
+			return stageDeletes(c, "rotators", []string{args[0]})
 		}
 
 		force, _ := cmd.Flags().GetBool("force")
@@ -236,7 +252,8 @@ var rotatorRuleCreateCmd = &cobra.Command{
 			// Sugar: a single-campaign redirect at full weight.
 			body["redirects"] = []map[string]string{{"redirect_campaign": camp, "weight": "100", "name": "to campaign " + camp}}
 		}
-		data, err := c.Post("rotators/"+args[0]+"/rules", body)
+		idemKey, _ := cmd.Flags().GetString("idempotency-key")
+		data, err := c.PostIdempotent("rotators/"+args[0]+"/rules", body, idemKey)
 		if err != nil {
 			return err
 		}
@@ -260,6 +277,7 @@ var rotatorRuleDeleteCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		idsFlag, _ := cmd.Flags().GetString("ids")
 		if strings.TrimSpace(idsFlag) != "" {
 			idList, parseErr := parseIDList(idsFlag)
@@ -270,6 +288,12 @@ var rotatorRuleDeleteCmd = &cobra.Command{
 				return validationError("--ids requires at least one rule ID").WithHint("Comma-separate rule ids, e.g. --ids 3,4 (find them with `p202 rotator rules <rotator_id>`).")
 			}
 			rotatorID := args[0]
+			if dryRun {
+				return renderDeletePreviews(c, "rotators/"+rotatorID+"/rules", idList)
+			}
+			if api.StagedMode() {
+				return stageDeletes(c, "rotators/"+rotatorID+"/rules", idList)
+			}
 			force, _ := cmd.Flags().GetBool("force")
 			if !force {
 				fmt.Printf("Delete %d rules from rotator %s? [y/N] ", len(idList), rotatorID)
@@ -297,6 +321,13 @@ var rotatorRuleDeleteCmd = &cobra.Command{
 				return partialFailureError("failed to delete %d rules", failed)
 			}
 			return nil
+		}
+
+		if dryRun {
+			return renderDeletePreviews(c, "rotators/"+args[0]+"/rules", []string{args[1]})
+		}
+		if api.StagedMode() {
+			return stageDeletes(c, "rotators/"+args[0]+"/rules", []string{args[1]})
 		}
 
 		force, _ := cmd.Flags().GetBool("force")
@@ -383,6 +414,8 @@ func init() {
 	rotatorListCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 	rotatorListCmd.Flags().Bool("all", false, "Fetch all rows across pages")
 
+	registerIdempotencyKeyFlag(rotatorCreateCmd)
+	registerIdempotencyKeyFlag(rotatorRuleCreateCmd)
 	rotatorCreateCmd.Flags().String("name", "", "Rotator name (required)")
 	rotatorCreateCmd.Flags().String("default_url", "", "Default redirect URL")
 	rotatorCreateCmd.Flags().String("default_campaign", "", "Default campaign ID")
@@ -393,8 +426,7 @@ func init() {
 	rotatorUpdateCmd.Flags().String("default_campaign", "", "Default campaign ID")
 	rotatorUpdateCmd.Flags().String("default_lp", "", "Default landing page ID")
 
-	rotatorDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
-	rotatorDeleteCmd.Flags().String("ids", "", "Comma-separated rotator IDs to delete in bulk")
+	registerDeleteFlags(rotatorDeleteCmd, "rotator")
 
 	rotatorRuleCreateCmd.Flags().String("rule_name", "", "Rule name (required)")
 	rotatorRuleCreateCmd.Flags().String("splittest", "", "Enable split test (0|1)")
@@ -403,8 +435,7 @@ func init() {
 	rotatorRuleCreateCmd.Flags().String("country", "", "Sugar: ISO country code (e.g. US) -> a country `is` criterion; avoids hand-writing --criteria_json")
 	rotatorRuleCreateCmd.Flags().String("redirect-campaign", "", "Sugar: redirect to this campaign id at full weight; avoids hand-writing --redirects_json")
 
-	rotatorRuleDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
-	rotatorRuleDeleteCmd.Flags().String("ids", "", "Comma-separated rule IDs to delete in bulk")
+	registerDeleteFlags(rotatorRuleDeleteCmd, "rule")
 
 	rotatorRuleUpdateCmd.Flags().String("rule_id", "", "Rule ID (alternative to the second positional arg)")
 	rotatorRuleUpdateCmd.Flags().String("rule_name", "", "Rule name")

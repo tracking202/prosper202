@@ -290,41 +290,47 @@ final class SyncFeaturesTest extends TestCase
         }
     }
 
-    public function testCreateJobIdempotencyKeyIsRequestHashScoped(): void
+    public function testCreateJobRefusesAKeyReusedForADifferentRequest(): void
     {
+        // The scope used to carry the request hash, so the same key with a
+        // different entity, endpoint or option set addressed a different
+        // record, looked unused, and queued a second job — the duplicate the
+        // key was sent to prevent.
         $db = $this->createMysqliMock();
         $store = new ServerStateStore($this->tmpDir);
         $engine = new FakeSyncEngine($store);
         $controller = new SyncController($db, 42, $store, $engine);
 
+        $campaigns = [
+            'source' => ['name' => 'prod', 'url' => 'https://prod.example.com', 'api_key' => 'prod-key'],
+            'target' => ['name' => 'stage', 'url' => 'https://stage.example.com', 'api_key' => 'stage-key'],
+            'entity' => 'campaigns',
+        ];
+        $landingPages = ['entity' => 'landing-pages'] + $campaigns;
+
         RequestContext::setHeaders(['Idempotency-Key' => 'sync-job-key-1']);
         try {
-            $first = $controller->createJob([
-                'source' => ['name' => 'prod', 'url' => 'https://prod.example.com', 'api_key' => 'prod-key'],
-                'target' => ['name' => 'stage', 'url' => 'https://stage.example.com', 'api_key' => 'stage-key'],
-                'entity' => 'campaigns',
-            ]);
+            $first = $controller->createJob($campaigns);
+            $second = $controller->createJob($campaigns);
 
-            $second = $controller->createJob([
-                'source' => ['name' => 'prod', 'url' => 'https://prod.example.com', 'api_key' => 'prod-key'],
-                'target' => ['name' => 'stage', 'url' => 'https://stage.example.com', 'api_key' => 'stage-key'],
-                'entity' => 'campaigns',
-            ]);
+            $this->assertSame($first['data']['job_id'], $second['data']['job_id']);
+            $this->assertTrue((bool)$second['idempotent_replay']);
 
-            $third = $controller->createJob([
-                'source' => ['name' => 'prod', 'url' => 'https://prod.example.com', 'api_key' => 'prod-key'],
-                'target' => ['name' => 'stage', 'url' => 'https://stage.example.com', 'api_key' => 'stage-key'],
-                'entity' => 'landing-pages',
-            ]);
+            try {
+                $controller->createJob($landingPages);
+                $this->fail('expected a reused key with a different request to be refused');
+            } catch (ValidationException $e) {
+                $this->assertArrayHasKey('idempotency_key', $e->getFieldErrors());
+            }
+
+            // A fresh key queues the different job.
+            RequestContext::setHeaders(['Idempotency-Key' => 'sync-job-key-2']);
+            $third = $controller->createJob($landingPages);
+            $this->assertNotSame($first['data']['job_id'], $third['data']['job_id']);
+            $this->assertArrayNotHasKey('idempotent_replay', $third);
         } finally {
             RequestContext::reset();
         }
-
-        $this->assertSame($first['data']['job_id'], $second['data']['job_id']);
-        $this->assertTrue((bool)$second['idempotent_replay']);
-
-        $this->assertNotSame($first['data']['job_id'], $third['data']['job_id']);
-        $this->assertArrayNotHasKey('idempotent_replay', $third);
     }
 
     public function testCreateJobRespectsPerPairQueueLimit(): void

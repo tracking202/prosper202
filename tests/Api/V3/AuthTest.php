@@ -343,4 +343,221 @@ final class AuthTest extends TestCase
         $this->expectExceptionCode(403);
         $auth->requireScope('sync:write');
     }
+
+    private function authWithScope(string $scope, string $role = 'user'): Auth
+    {
+        $db = $this->createMysqliMock([
+            "SHOW COLUMNS FROM 202_api_keys LIKE 'scope'" => ['Field' => 'scope'],
+            '202_api_keys' => ['user_id' => 5, 'scope' => $scope],
+            '202_user_role' => [['role_name' => $role]],
+        ]);
+
+        return Auth::fromRequest(['Authorization' => 'Bearer key'], $db);
+    }
+
+    public function testGlobalReadScopeSatisfiesAreaReadsButNoWrites(): void
+    {
+        $auth = $this->authWithScope('read');
+        $this->assertTrue($auth->hasScope('reports:read'));
+        $this->assertTrue($auth->hasScope('campaigns:read'));
+        $this->assertTrue($auth->hasScope('ltv:read'));
+        $this->assertFalse($auth->hasScope('campaigns:write'));
+        $this->assertFalse($auth->hasScope('sync:write'));
+    }
+
+    public function testGlobalWriteScopeImpliesRead(): void
+    {
+        $auth = $this->authWithScope('write');
+        $this->assertTrue($auth->hasScope('campaigns:write'));
+        $this->assertTrue($auth->hasScope('campaigns:read'));
+        $this->assertTrue($auth->hasScope('reports:read'));
+    }
+
+    public function testAreaWriteImpliesAreaReadOnly(): void
+    {
+        $auth = $this->authWithScope('ltv:write');
+        $this->assertTrue($auth->hasScope('ltv:write'));
+        $this->assertTrue($auth->hasScope('ltv:read'));
+        $this->assertFalse($auth->hasScope('sync:read'));
+        $this->assertFalse($auth->hasScope('reports:read'));
+    }
+
+    public function testScopedKeyAttenuatesAdmin(): void
+    {
+        $auth = $this->authWithScope('reports:read', 'Admin');
+        $this->assertTrue($auth->isAdmin());
+        $this->assertTrue($auth->hasScope('reports:read'));
+        $this->assertFalse($auth->hasScope('campaigns:write'));
+
+        $this->expectException(AuthException::class);
+        $this->expectExceptionCode(403);
+        $auth->requireScope('campaigns:write');
+    }
+
+    public function testUnscopedKeyKeepsFullAccess(): void
+    {
+        // No scope column at all (pre-1.9.75 schema): the key parses to `*`.
+        $db = $this->createMysqliMock([
+            '202_api_keys' => ['user_id' => 5],
+            '202_user_role' => [['role_name' => 'user']],
+        ]);
+        $auth = Auth::fromRequest(['Authorization' => 'Bearer key'], $db);
+        $this->assertTrue($auth->hasFullScope());
+        $this->assertTrue($auth->hasScope('campaigns:write'));
+        $this->assertTrue($auth->hasScope('sync:write'));
+    }
+
+    public function testRequireScopeErrorNamesTheRequiredScope(): void
+    {
+        $auth = $this->authWithScope('read');
+        $this->expectException(AuthException::class);
+        $this->expectExceptionMessageMatches("/requires 'campaigns:write'/");
+        $auth->requireScope('campaigns:write');
+    }
+
+    public function testSuperUserRoleCountsAsAdmin(): void
+    {
+        // The installer grants role 1, "Super user" — the install owner must
+        // pass the v3 admin gates.
+        $db = $this->createMysqliMock([
+            '202_api_keys' => ['user_id' => 1],
+            '202_user_role' => [['role_name' => 'Super user']],
+        ]);
+        $auth = Auth::fromRequest(['Authorization' => 'Bearer key'], $db);
+        $this->assertTrue($auth->isAdmin());
+    }
+
+    public function testIsValidScopeTokenGrammar(): void
+    {
+        $this->assertTrue(Auth::isValidScopeToken('*'));
+        $this->assertTrue(Auth::isValidScopeToken('read'));
+        $this->assertTrue(Auth::isValidScopeToken('write'));
+        $this->assertTrue(Auth::isValidScopeToken('reports:read'));
+        $this->assertTrue(Auth::isValidScopeToken('forecast-events:write'));
+        $this->assertTrue(Auth::isValidScopeToken(' LTV:READ '));
+
+        $this->assertFalse(Auth::isValidScopeToken(''));
+        $this->assertFalse(Auth::isValidScopeToken('reports'));
+        $this->assertFalse(Auth::isValidScopeToken('reports:delete'));
+        $this->assertFalse(Auth::isValidScopeToken('bogus:read'));
+        $this->assertFalse(Auth::isValidScopeToken('a:b:c'));
+    }
+
+    public function testStageScopeIsProposeOnly(): void
+    {
+        // The propose-only agent shape: read everything, stage writes,
+        // perform none.
+        $auth = $this->authWithScope('read,stage');
+        $this->assertTrue($auth->hasScope('campaigns:stage'));
+        $this->assertTrue($auth->hasScope('users:stage'));
+        $this->assertTrue($auth->hasScope('campaigns:read'));
+        $this->assertFalse($auth->hasScope('campaigns:write'));
+        $this->assertFalse($auth->hasScope('staged-changes:write'));
+
+        // stage alone grants neither reads nor writes.
+        $stageOnly = $this->authWithScope('stage');
+        $this->assertTrue($stageOnly->hasScope('campaigns:stage'));
+        $this->assertFalse($stageOnly->hasScope('campaigns:read'));
+        $this->assertFalse($stageOnly->hasScope('campaigns:write'));
+    }
+
+    public function testWriteScopeImpliesStage(): void
+    {
+        $this->assertTrue($this->authWithScope('write')->hasScope('campaigns:stage'));
+        $this->assertTrue($this->authWithScope('campaigns:write')->hasScope('campaigns:stage'));
+        $this->assertFalse($this->authWithScope('campaigns:write')->hasScope('rotators:stage'));
+    }
+
+    public function testStageScopeTokensAreValid(): void
+    {
+        $this->assertTrue(Auth::isValidScopeToken('stage'));
+        $this->assertTrue(Auth::isValidScopeToken('reports:stage'));
+        $this->assertTrue(Auth::isValidScopeToken('staged-changes:read'));
+        $this->assertFalse(Auth::isValidScopeToken('stage:read'));
+    }
+
+    public function testScopeAreaForPathMapsRouteFamilies(): void
+    {
+        $this->assertSame('campaigns', Auth::scopeAreaForPath('/campaigns/42'));
+        $this->assertSame('sync', Auth::scopeAreaForPath('/changes/campaigns'));
+        $this->assertSame('sync', Auth::scopeAreaForPath('/audit/sync-jobs'));
+        $this->assertSame('staged-changes', Auth::scopeAreaForPath('/staged-changes/chg_ab/apply'));
+        $this->assertNull(Auth::scopeAreaForPath('/capabilities'));
+        $this->assertNull(Auth::scopeAreaForPath('/system/health'));
+        $this->assertSame('system', Auth::scopeAreaForPath('/system/version'));
+        $this->assertNull(Auth::scopeAreaForPath('/'));
+    }
+
+    public function testCoversScopeTokenNeverEscalates(): void
+    {
+        $readOnly = $this->authWithScope('read');
+        $this->assertTrue($readOnly->coversScopeToken('read'));
+        $this->assertTrue($readOnly->coversScopeToken('reports:read'));
+        $this->assertFalse($readOnly->coversScopeToken('write'));
+        $this->assertFalse($readOnly->coversScopeToken('reports:write'));
+        $this->assertFalse($readOnly->coversScopeToken('*'));
+
+        $writeKey = $this->authWithScope('write');
+        $this->assertTrue($writeKey->coversScopeToken('read'));
+        $this->assertTrue($writeKey->coversScopeToken('write'));
+        $this->assertTrue($writeKey->coversScopeToken('campaigns:write'));
+        $this->assertFalse($writeKey->coversScopeToken('*'));
+    }
+
+    /**
+     * The fail-open direction. An empty scope column means "this key predates
+     * scopes" and is full access by design; a column that holds something
+     * unreadable does not, and must never be read as no attenuation at all.
+     */
+    public function testAnUnreadableScopeColumnGrantsNothingRatherThanEverything(): void
+    {
+        foreach (['[]', '["reports:read"', '[null]', '[""]'] as $raw) {
+            $scopes = Auth::parseScopes($raw);
+            $this->assertSame([Auth::MALFORMED_SCOPE], $scopes, "raw: $raw");
+            $this->assertNotContains('*', $scopes, "raw: $raw");
+        }
+    }
+
+    /**
+     * The probe answers one question — is the column there — and every
+     * failure used to answer it "no", which fromRequest() reads as an
+     * install predating scopes and parseScopes('') turns into full access.
+     * A transient database error must refuse, not promote.
+     */
+    public function testAFailedScopeColumnProbeRefusesRatherThanGrantingFullAccess(): void
+    {
+        $db = new class extends \mysqli {
+            public function __construct()
+            {
+            }
+
+            public function prepare(string $query): \mysqli_stmt|false
+            {
+                if (str_contains($query, 'SHOW COLUMNS')) {
+                    return false; // the transient failure
+                }
+                throw new \RuntimeException('must not reach the key lookup: ' . $query);
+            }
+        };
+
+        $this->expectException(AuthException::class);
+        Auth::apiKeyScopeColumnExists($db);
+    }
+
+    public function testAnEmptyScopeColumnIsStillFullAccess(): void
+    {
+        // Legacy keys, and installs whose 202_api_keys has no scope column.
+        $this->assertSame(['*'], Auth::parseScopes(''));
+        $this->assertSame(['*'], Auth::parseScopes('   '));
+    }
+
+    public function testAMalformedScopeSatisfiesNoRoute(): void
+    {
+        // Goes through the real fromRequest() path with a corrupt column.
+        $auth = $this->authWithScope('["reports:read"');
+        foreach (['campaigns:read', 'campaigns:write', 'campaigns:stage', 'reports:read'] as $needed) {
+            $this->assertFalse($auth->hasScope($needed), $needed);
+        }
+        $this->assertFalse($auth->hasFullScope());
+    }
 }

@@ -55,9 +55,19 @@ p202 config show
 | `p202 dashboard` | Overview of clicks, conversions, revenue, cost, profit, ROI |
 | `p202 analytics` | Grouped performance analytics shorthand |
 | `p202 user list` | List users |
+| `p202 change list` | Review staged writes awaiting approval |
+| `p202 eval run` | Run behavioral evals against an agent driving this instance |
 | `p202 system health` | Health check |
 
-All entities support standard CRUD operations (`list`, `get`, `create`, `update`, `delete`) where applicable.
+All entities support standard CRUD operations (`list`, `get`, `create`, `update`, `delete`) where applicable. Five behaviors apply across the board on servers that advertise them in `/capabilities`:
+
+- every `create` takes `--idempotency-key <key>` — a retry with the same key and payload replays the recorded response instead of creating a duplicate (`features.create_idempotency`);
+- every `delete` (including `--ids` bulk and `rotator rule-delete` / `user role remove` / `user apikey delete`) takes `--dry-run` — a read-only preview of the record and cascade counts the delete would remove (`features.delete_dry_run`);
+- `p202 user apikey create|rotate` refuse an *explicitly empty* `--scope` (`--scope "$SCOPE"` with the variable unset): omitting the flag means full access by design, but a blank value is malformed input and must not silently mint a full-access credential;
+- the global `--staged` flag turns any write into a recorded proposal with a server-issued change id instead of executing it; `p202 change list|show|apply|discard` reviews and resolves the queue, with the write re-validated at apply time (`features.staged_writes`);
+- `user apikey create` takes `--scope` to mint least-privilege keys (`*`, `read`, `write`, `stage`, or `<area>:read`/`<area>:write`/`<area>:stage` tokens — `read,stage` is the propose-only agent shape), and `user apikey rotate` carries the old key's scope onto the replacement (`features.api_key_scopes`).
+
+For teams shipping an AI agent on top of the CLI, `p202 eval run` executes behavioral snapshot evals: it hands each case's ask to a pluggable agent command, captures every `p202` invocation the agent makes via a PATH shim, re-reads instance state, and grades expectations (commands run, state unchanged/changed, reply contents, optional judged rubric). Cases follow the shape in `.claude/skills/p202-agent-evals/SKILL.md`; a starter suite ships in `tests/fixtures/agent-eval/cases/`. Exit code 0 when clean, 5 (`partial_failure`) when cases fail — results stay on stdout.
 
 ## Multi-Profile Management
 
@@ -247,10 +257,39 @@ is ignored; the hint carries the next action. Hints come from three sources,
 in order of precedence: a hint attached by the command itself (for example,
 which flag to change when the requested metric is missing, or the dependency
 order to sync first when a foreign key cannot be resolved); a generic hint
-for the failure class (401/403 key check, 404 use `list` for ids, 409 update
-instead of create, 429 back off, 5xx retry then `p202 system health`,
-network check the URL and `p202 config test`); and for any remaining
-validation error, a pointer to `<command> --help`.
+for the failure class (401/403 key check — or, when the 403 names a required
+scope, minting a key with `--scope`; 404 use `list` for ids; 429 back off;
+5xx retry then `p202 system health`; network check the URL and `p202 config
+test`); and for any remaining validation error, a pointer to `<command>
+--help`.
+
+`--staged` holds across the nested runners too: the interactive shell resets
+the whole flag tree between commands, so it saves and restores the session's
+staged mode (otherwise `p202 shell --staged` would execute the writes it
+promised to propose), and `p202 exec` passes the flag to each profile's child
+process, which inherits nothing from its parent.
+
+`p202 sync` and `p202 re-sync` refuse `--staged` outright: a sync resolves
+each entity's foreign keys from ids the preceding creates returned, and a
+staged create returns a proposal rather than a record, so the run would count
+proposals as synced and then fail to resolve their dependents. Use `--dry-run`
+to see what a sync would change, or stage individual writes.
+
+Commands that create something and then use it — `tracker create-with-url`,
+`import` — recognise the staged-change envelope a write returns under
+`--staged` and stop there rather than running their follow-up step against a
+record that is still a proposal: `create-with-url` reports the change id and
+where to get the URL after `p202 change apply`, and `import` counts the
+records as `staged` with their `change_ids`, never as `imported`.
+
+A 409 is resolved by cause rather than by status alone, because its causes
+need opposite responses: a still-running idempotent retry says to wait and
+resend the same command; a spent `Idempotency-Key` (its request died without
+recording a response) says to check whether the record exists and use a new
+key only if it does not; an `apply_interrupted` staged change says to check
+whether the write landed and stage it again if not; a staged change in the
+wrong state points at `p202 change show`; and only an actual duplicate gets
+"update it instead of creating".
 
 ### Exit Codes
 

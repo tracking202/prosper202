@@ -6,6 +6,7 @@ namespace Api\V3\Controllers;
 
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
+use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
 
 class RotatorsController
@@ -112,7 +113,12 @@ class RotatorsController
         $id = $stmt->insert_id;
         $stmt->close();
 
-        return $this->get($id);
+        // The rotator row exists; only the read-back can still fail.
+        try {
+            return $this->get($id);
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException('rotator', $e);
+        }
     }
 
     public function update(int $id, array $payload): array
@@ -146,6 +152,34 @@ class RotatorsController
         $stmt->close();
 
         return $this->get($id);
+    }
+
+    /**
+     * Read-only preview of delete() for `?dry_run=1`: the rotator plus the
+     * counts of the rule/criteria/redirect rows the cascade would remove.
+     */
+    public function deletePreview(int $id): array
+    {
+        $rotator = $this->get($id)['data'];
+        $criteriaCount = 0;
+        $redirectCount = 0;
+        foreach ($rotator['rules'] as $rule) {
+            $criteriaCount += count($rule['criteria']);
+            $redirectCount += count($rule['redirects']);
+        }
+
+        return ['data' => [
+            'dry_run' => true,
+            'action' => 'delete',
+            'resource' => 'rotators',
+            'mode' => 'hard',
+            'record' => $rotator,
+            'cascade' => [
+                ['resource' => 'rotator-rules', 'count' => count($rotator['rules'])],
+                ['resource' => 'rotator-rule-criteria', 'count' => $criteriaCount],
+                ['resource' => 'rotator-rule-redirects', 'count' => $redirectCount],
+            ],
+        ]];
     }
 
     public function delete(int $id): void
@@ -239,7 +273,12 @@ class RotatorsController
             throw $e;
         }
 
-        return $this->get($rotatorId);
+        // Committed: the rule and its redirects exist.
+        try {
+            return $this->get($rotatorId);
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException('rotator rule', $e);
+        }
     }
 
     public function updateRule(int $rotatorId, int $ruleId, array $payload): array
@@ -367,9 +406,54 @@ class RotatorsController
         return $this->get($rotatorId);
     }
 
+    /**
+     * Read-only preview of deleteRule() for `?dry_run=1`: the rule plus the
+     * criteria/redirect rows its deletion would cascade to.
+     */
+    public function deleteRulePreview(int $rotatorId, int $ruleId): array
+    {
+        $rotator = $this->get($rotatorId)['data'];
+        $target = null;
+        foreach ($rotator['rules'] as $rule) {
+            if ((int)$rule['id'] === $ruleId) {
+                $target = $rule;
+                break;
+            }
+        }
+        if ($target === null) {
+            throw new NotFoundException('Rule not found for rotator');
+        }
+
+        return ['data' => [
+            'dry_run' => true,
+            'action' => 'delete',
+            'resource' => 'rotator-rules',
+            'mode' => 'hard',
+            'record' => $target,
+            'cascade' => [
+                ['resource' => 'rotator-rule-criteria', 'count' => count($target['criteria'])],
+                ['resource' => 'rotator-rule-redirects', 'count' => count($target['redirects'])],
+            ],
+        ]];
+    }
+
     public function deleteRule(int $rotatorId, int $ruleId): void
     {
         $this->get($rotatorId);
+
+        // Verify the rule belongs to this rotator before touching its child
+        // rows: the criteria/redirects deletes below key on rule_id alone, so
+        // without this check a foreign rule_id would have its children
+        // removed even though the final rule delete (scoped to rotator_id)
+        // would no-op. Same ownership check updateRule() already performs.
+        $stmt = $this->prepare('SELECT id FROM 202_rotator_rules WHERE id = ? AND rotator_id = ? LIMIT 1');
+        $this->bind($stmt, 'ii', $ruleId, $rotatorId);
+        $this->execute($stmt, 'Rule lookup failed');
+        $rule = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if (!$rule) {
+            throw new NotFoundException('Rule not found for rotator');
+        }
 
         $this->db->begin_transaction();
         try {

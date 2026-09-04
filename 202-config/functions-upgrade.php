@@ -3298,7 +3298,16 @@ class UPGRADE
             $result = _upgrade_query($sql);
             if (!($result && mysqli_num_rows($result) > 0)) {
                 $sql = "ALTER TABLE `202_api_keys` ADD COLUMN `scope` text DEFAULT NULL AFTER `api_key`";
-                $result = _upgrade_query($sql);
+                // The version advances below whatever this returns, so a
+                // failure here leaves the install at 1.9.60 without the
+                // column. The 1.9.75 step repairs that; say so here rather
+                // than failing in silence (error pattern #1).
+                if (_upgrade_query($sql) === false) {
+                    error_log(
+                        'Prosper202 upgrade: could not add 202_api_keys.scope during the 1.9.60 step; '
+                        . 'the 1.9.75 step will retry it.'
+                    );
+                }
             }
 
             // Composite indexes for AUTH::is_rate_limited()'s per-login throttle
@@ -3883,10 +3892,42 @@ class UPGRADE
             }
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.74', '>')) {
+        if ($prosper202_version == '1.9.74') {
 
-            $prosper202_version = '1.9.74';
+            // API key scopes (agent least-privilege): the v3 API enforces
+            // read/write scopes per route family and key creation accepts a
+            // scope. Fresh installs get the column from UserTables::apiKeys(),
+            // and the 1.9.60 step adds it for older ones — so this looks
+            // redundant, and a review flagged it as a no-op.
+            //
+            // It is not. The 1.9.60 step now logs a failed ALTER but still
+            // advances the version regardless of it, so an install whose
+            // ALTER failed (permissions, lock timeout, disk) sits at 1.9.60+
+            // with no scope column. This guarded repeat is the only thing
+            // that repairs that install, and the v3 API's whole scope
+            // enforcement depends on the column existing. Keep it until
+            // 1.9.60 gates its own version bump.
+            $check = _upgrade_query("SHOW COLUMNS FROM `202_api_keys` LIKE 'scope'");
+            $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
+            $scope_ok = $exists || _upgrade_query(
+                "ALTER TABLE `202_api_keys` ADD COLUMN `scope` text DEFAULT NULL AFTER `api_key`"
+            ) !== false;
+
+            if ($scope_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.75'") !== false) {
+                    $prosper202_version = '1.9.75';
+                } else {
+                    error_log('Prosper202 upgrade: added 202_api_keys scope column but failed to persist version 1.9.75; leaving version at 1.9.74 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: failed to add 202_api_keys scope column; leaving version at 1.9.74 so the next run retries.');
+            }
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if (version_compare((string) $prosper202_version, '1.9.75', '>')) {
+
+            $prosper202_version = '1.9.75';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }

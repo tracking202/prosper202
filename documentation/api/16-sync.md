@@ -39,7 +39,11 @@ All sync endpoints require admin role and the appropriate sync scope (`sync:read
 
 ## Create Sync Job
 
-Pass an `Idempotency-Key` header to prevent duplicate job creation on retries.
+Pass an `Idempotency-Key` header to prevent duplicate job creation on
+retries. The key covers the whole request: retry it with the same source,
+target, entity and options and the recorded response replays
+(`idempotent_replay: true`). Reusing the key for a different sync is refused
+with `422` rather than queueing a second job — mint a new key instead.
 
 ```bash
 curl -X POST https://your-domain.com/api/v3/sync/jobs \
