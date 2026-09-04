@@ -41,13 +41,17 @@ parameters:
     ignoreErrors:
         # Three files declare a global `class INDEXES` with incompatible
         # signatures (202-config/class-indexes.php, functions-tracking202.php,
-        # connect2.php), and two declare `class DataEngine`. Each execution
-        # path loads exactly one, and every call site matches the copy its own
-        # path loads — but PHPStan cannot know which, so it picks one and
-        # reports every call against the others as an arity error. The
-        # duplicates themselves are caught by DuplicateGlobalClassTest, which
-        # is where that hazard belongs.
-        - identifier: arguments.count
+        # connect2.php). Each execution path loads exactly one and every call
+        # site matches the copy its own path loads, but PHPStan cannot know
+        # which — and which copy it picks varies by environment: locally it
+        # resolves the static copy and reports arity errors, on CI it resolves
+        # the instance-method copy and reports "static call to instance
+        # method". Every call-site check against this class is therefore
+        # unreliable, so ignore it by name rather than disabling whole
+        # identifiers that catch real problems elsewhere. The duplicate
+        # declarations themselves are tracked by DuplicateGlobalClassTest,
+        # which is where that hazard belongs.
+        - '#\bINDEXES::#'
         - identifier: class.notFound
         - identifier: class.noParent
         - identifier: method.notFound

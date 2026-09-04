@@ -61,8 +61,10 @@ jobs:
 
       # Configured in go-cli/.golangci.yml to report dropped errors
       # (CLAUDE.md #1 in its Go form) rather than style preferences.
+      # golangci-lint-action v6 cannot install golangci-lint v2 — it rejects
+      # the version string outright. v7 is the first release that can.
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
           version: v2.5.0
           working-directory: go-cli
