@@ -10,6 +10,7 @@ use Api\V3\Controllers\StagedChangesController;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\ServerStateStore;
 use Tests\TestCase;
 
@@ -456,6 +457,51 @@ final class StagedChangesControllerTest extends TestCase
         $m = new \ReflectionMethod(StagedChangesController::class, 'secretKeysIn');
         $m->setAccessible(true);
         return $m->invoke(null, $payload);
+    }
+
+    /**
+     * A handler that throws *after* its write commits must not put the
+     * proposal back on the queue: applying it again would perform the write
+     * a second time. The handler says which case it is by the exception type.
+     */
+    public function testAnApplyThatFailedAfterItsWriteLandedIsNotRestaged(): void
+    {
+        $auth = $this->authFor(5);
+        $id = $this->controller($auth)->stage('POST', '/campaigns', ['a' => 1], null)['data']['change_id'];
+
+        try {
+            $this->controller($auth)->apply($id, function (): void {
+                throw new WriteCommittedException('campaign', new \RuntimeException('read-back failed'));
+            });
+            $this->fail('the WriteCommittedException must propagate');
+        } catch (WriteCommittedException) {
+            // expected
+        }
+
+        $stored = $this->store->getStagedChangeForUser(5, $id);
+        $this->assertSame(StagedChangesController::STATUS_APPLY_INTERRUPTED, $stored['status']);
+        $this->assertNotEmpty($stored['interrupted_at']);
+    }
+
+    public function testAnApplyThatFailedBeforeAnyWriteIsStillRestaged(): void
+    {
+        // The ordinary failure: nothing was written, so the proposal is still
+        // applicable and must come back with the error recorded.
+        $auth = $this->authFor(5);
+        $id = $this->controller($auth)->stage('POST', '/campaigns', ['a' => 1], null)['data']['change_id'];
+
+        try {
+            $this->controller($auth)->apply($id, function (): void {
+                throw new ValidationException('aff_campaign_name is required');
+            });
+            $this->fail('the ValidationException must propagate');
+        } catch (ValidationException) {
+            // expected
+        }
+
+        $stored = $this->store->getStagedChangeForUser(5, $id);
+        $this->assertSame(StagedChangesController::STATUS_STAGED, $stored['status']);
+        $this->assertStringContainsString('aff_campaign_name', $stored['last_error']);
     }
 
     public function testAFreshApplyingClaimIsStillProtected(): void

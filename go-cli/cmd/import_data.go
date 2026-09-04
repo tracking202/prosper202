@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"p202/internal/api"
+	"p202/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -51,8 +52,10 @@ var dataImportCmd = &cobra.Command{
 		}
 
 		imported := 0
+		staged := 0
 		failed := 0
 		errorsOut := make([]string, 0)
+		changeIDs := make([]string, 0)
 
 		for i, rec := range records {
 			body := stripImmutableFields(entity, rec)
@@ -61,13 +64,22 @@ var dataImportCmd = &cobra.Command{
 				continue
 			}
 
-			if _, err := c.Post(endpoint, body); err != nil {
+			created, err := c.Post(endpoint, body)
+			if err != nil {
 				failed++
 				msg := fmt.Sprintf("record %d: %v", i+1, err)
 				errorsOut = append(errorsOut, msg)
 				if !skipErrors {
 					return fmt.Errorf("import failed (%s)", msg)
 				}
+				continue
+			}
+			// Under --staged the server records a proposal instead of the
+			// row. Counting those as imported would report records that do
+			// not exist yet and that nobody has approved.
+			if changeID, isStaged := stagedChangeID(created); isStaged {
+				staged++
+				changeIDs = append(changeIDs, changeID)
 				continue
 			}
 			imported++
@@ -79,6 +91,14 @@ var dataImportCmd = &cobra.Command{
 			"imported": imported,
 			"failed":   failed,
 			"dry_run":  dryRun,
+		}
+		if staged > 0 {
+			out["staged"] = staged
+			out["change_ids"] = changeIDs
+			output.Success(
+				"Staged %d of %d records for approval; none exist yet. Review with `p202 change list` "+
+					"and apply each with `p202 change apply <change_id>`.",
+				staged, len(records))
 		}
 		if len(errorsOut) > 0 {
 			out["errors"] = errorsOut

@@ -9,6 +9,7 @@ use Api\V3\AuthException;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\ServerStateStore;
 
 /**
@@ -277,7 +278,23 @@ final class StagedChangesController
                 $storedPayload,
                 $ownerId
             );
+        } catch (WriteCommittedException $e) {
+            // The handler's write landed and a later step failed. Returning
+            // the change to `staged` would invite an apply that performs the
+            // write a second time, so it is closed the same way an
+            // interrupted apply is: terminal, and honest that the outcome
+            // needs checking.
+            $this->store->updateStagedChange($ownerId, $changeId, function (array $current) use ($e): array {
+                $current['status'] = self::STATUS_APPLY_INTERRUPTED;
+                $current['interrupted_at'] = gmdate('c');
+                $current['last_error'] = $e->getMessage();
+                return $current;
+            });
+            throw $e;
         } catch (\Throwable $e) {
+            // Nothing was written, so the proposal is still applicable: put
+            // it back with the error recorded so it can be corrected or
+            // discarded.
             $this->store->updateStagedChange($ownerId, $changeId, function (array $current) use ($e): array {
                 $current['status'] = self::STATUS_STAGED;
                 $current['last_error'] = $e->getMessage();

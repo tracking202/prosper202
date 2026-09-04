@@ -375,6 +375,23 @@ func parseDataArray(data []byte) ([]map[string]interface{}, error) {
 	return items, nil
 }
 
+// stagedChangeID reports the server-issued change id when data is the 202
+// staged-change envelope a write returns under --staged, rather than the
+// created record. Compound commands (create something, then use it) must stop
+// there: nothing exists yet, so the follow-up step would operate on a record
+// that is still a proposal.
+func stagedChangeID(data []byte) (string, bool) {
+	obj, err := parseDataObject(data)
+	if err != nil {
+		return "", false
+	}
+	id, _ := obj["change_id"].(string)
+	if !strings.HasPrefix(id, "chg_") {
+		return "", false
+	}
+	return id, true
+}
+
 func extractIntField(obj map[string]interface{}, keys ...string) (int, bool) {
 	for _, key := range keys {
 		val, exists := obj[key]
@@ -1043,13 +1060,25 @@ func init() {
 				if err != nil {
 					return err
 				}
+				if changeID, staged := stagedChangeID(createdData); staged {
+					// The tracker is a proposal, so it has no tracking URL
+					// yet. Report the change instead of failing on a
+					// tracker_id that was never going to be there.
+					render(createdData)
+					output.Success(
+						"Staged the tracker create as %s. Apply it with `p202 change apply %s`, "+
+							"then `p202 tracker get-url <id>` for the tracking URL.",
+						changeID, changeID)
+					return nil
+				}
 				createdObj, err := parseDataObject(createdData)
 				if err != nil {
 					return fmt.Errorf("failed to parse tracker create response: %w", err)
 				}
 				trackerID, ok := extractIntField(createdObj, "tracker_id", "id")
 				if !ok {
-					return fmt.Errorf("tracker create response did not include tracker_id")
+					return validationError("tracker create response did not include tracker_id").
+						WithHint("Run `p202 tracker create` and `p202 tracker get-url <id>` separately to see which step fails.")
 				}
 
 				urlData, err := c.Get(fmt.Sprintf("trackers/%d/url", trackerID), nil)

@@ -7,6 +7,7 @@ namespace Api\V3\Controllers;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
+use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
 
 class UsersController
@@ -127,7 +128,13 @@ class UsersController
             throw $e;
         }
 
-        return $this->get($newId);
+        // Committed: both the user row and its preferences row exist. Only
+        // the read-back remains, and its failure is not a failed create.
+        try {
+            return $this->get($newId);
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException('user', $e);
+        }
     }
 
     public function update(int $id, array $payload): array

@@ -92,6 +92,13 @@ class ServerStateStore
                     $result = ['state' => 'replay', 'response' => $item['response']];
                     return $data;
                 }
+                // Marked by a caller that knows its write landed but could
+                // not record the response: unknown from the first retry
+                // rather than after the claim ages out.
+                if (is_array($item) && ($item['indeterminate'] ?? false) === true) {
+                    $result = ['state' => 'indeterminate', 'response' => null];
+                    return $data;
+                }
                 $claimedAt = (int)($item['claimed_at'] ?? 0);
                 if (is_array($item) && $claimedAt > 0) {
                     if (time() - $claimedAt <= self::IDEMPOTENCY_CLAIM_TTL_SECONDS) {
@@ -131,6 +138,28 @@ class ServerStateStore
                 $item = $data['items'][$key] ?? null;
                 if (is_array($item) && !isset($item['response'])) {
                     unset($data['items'][$key]);
+                }
+                return $data;
+            }
+        );
+    }
+
+    /**
+     * Record that this key's operation wrote to the database but never
+     * produced a response to replay. Without it the claim looks merely
+     * in-flight until it ages out, and a retry in that window is told to
+     * wait for a request that is already gone.
+     */
+    public function markIdempotentIndeterminate(string $scope, string $key): void
+    {
+        $this->mutateJsonFile(
+            $this->idempotencyPath($scope),
+            ['items' => []],
+            static function (array $data) use ($key): array {
+                $item = $data['items'][$key] ?? null;
+                if (is_array($item) && !isset($item['response'])) {
+                    $item['indeterminate'] = true;
+                    $data['items'][$key] = $item;
                 }
                 return $data;
             }
@@ -331,9 +360,18 @@ class ServerStateStore
         $this->mutateJsonFile($this->stagedChangesPath($userId), ['items' => []], static function (array $state) use ($changeId, $change): array {
             $state['items'][$changeId] = $change;
 
+            $now = time();
             $resolved = [];
             foreach ($state['items'] as $id => $item) {
-                if (in_array((string)($item['status'] ?? ''), self::PRUNABLE_CHANGE_STATUSES, true)) {
+                $status = (string)($item['status'] ?? '');
+                // Expired proposals keep the status `staged` but can never be
+                // applied, so counting only terminal records would let them
+                // accumulate without bound -- every later stage and list would
+                // read and rewrite an ever-larger file, which a propose-only
+                // key could drive on purpose.
+                $expired = $status === 'staged'
+                    && $now > (int)($item['expires_at_epoch'] ?? 0);
+                if ($expired || in_array($status, self::PRUNABLE_CHANGE_STATUSES, true)) {
                     $resolved[$id] = (int)($item['created_at_epoch'] ?? 0);
                 }
             }

@@ -6,6 +6,7 @@ namespace Api\V3\Controllers;
 
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
+use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
 
 class AttributionController
@@ -95,7 +96,11 @@ class AttributionController
         $id = $stmt->insert_id;
         $stmt->close();
 
-        return $this->getModel($id);
+        try {
+            return $this->getModel($id);
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException('attribution model', $e);
+        }
     }
 
     public function updateModel(int $id, array $payload): array
@@ -314,11 +319,16 @@ class AttributionController
         $exportId = $stmt->insert_id;
         $stmt->close();
 
-        $stmt = $this->prepare('SELECT export_id, user_id, model_id, scope_type, scope_id, start_hour, end_hour, requested_format, status, queued_at, created_at, updated_at, webhook_url FROM 202_attribution_exports WHERE export_id = ?');
-        $this->bind($stmt, 'i', $exportId);
-        $this->execute($stmt, 'Query failed');
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
+        // The export is queued from here; only reading it back can fail.
+        try {
+            $stmt = $this->prepare('SELECT export_id, user_id, model_id, scope_type, scope_id, start_hour, end_hour, requested_format, status, queued_at, created_at, updated_at, webhook_url FROM 202_attribution_exports WHERE export_id = ?');
+            $this->bind($stmt, 'i', $exportId);
+            $this->execute($stmt, 'Query failed');
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException('attribution export', $e);
+        }
 
         return ['data' => $row];
     }

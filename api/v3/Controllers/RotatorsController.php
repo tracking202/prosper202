@@ -6,6 +6,7 @@ namespace Api\V3\Controllers;
 
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
+use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
 
 class RotatorsController
@@ -112,7 +113,12 @@ class RotatorsController
         $id = $stmt->insert_id;
         $stmt->close();
 
-        return $this->get($id);
+        // The rotator row exists; only the read-back can still fail.
+        try {
+            return $this->get($id);
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException('rotator', $e);
+        }
     }
 
     public function update(int $id, array $payload): array
@@ -267,7 +273,12 @@ class RotatorsController
             throw $e;
         }
 
-        return $this->get($rotatorId);
+        // Committed: the rule and its redirects exist.
+        try {
+            return $this->get($rotatorId);
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException('rotator rule', $e);
+        }
     }
 
     public function updateRule(int $rotatorId, int $ruleId, array $payload): array

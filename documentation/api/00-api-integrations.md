@@ -147,9 +147,12 @@ The contract, in the terms of Anthropic's commerce-agents reference:
   `stage` scope grants without any write access — so an agent key can be
   physically incapable of the write it proposes.
 - **One apply.** The staged→applied transition is atomic; a concurrent
-  second apply gets `409`. A failed apply returns the change to `staged`
-  with `last_error` recorded, so it can be corrected or discarded. An apply
-  whose process dies mid-dispatch is a third case: the claim is taken before
+  second apply gets `409`. An apply that fails *before* its write returns the
+  change to `staged` with `last_error` recorded, so it can be corrected or
+  discarded; one that fails *after* its write landed does not, because
+  applying it again would perform the write twice — it is closed as
+  `apply_interrupted` like the case below. An apply whose process dies
+  mid-dispatch is the third case: the claim is taken before
   the write and resolved after it, so the record cannot say whether the
   write landed. After 15 minutes such a change is closed as
   `apply_interrupted` — never re-dispatched (that could duplicate a create
@@ -170,7 +173,9 @@ The contract, in the terms of Anthropic's commerce-agents reference:
 - **Expiry.** Changes expire (24h by default;
   `P202_STAGED_CHANGE_TTL_SECONDS` overrides) so a stale proposal cannot
   fire against a world that moved on. Applied and discarded changes remain
-  listed as the audit trail, actor-stamped.
+  listed as the audit trail, actor-stamped, and are pruned oldest-first past
+  a per-user cap — as are expired proposals, which are equally unusable and
+  would otherwise grow the ledger without bound.
 - **Fail-closed.** `staged=1` on a write outside the allowlist is a `422`,
   never a silent immediate write; `staged` and `dry_run` together are a
   `422`.

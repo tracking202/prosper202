@@ -101,6 +101,50 @@ final class StagedChangeRetentionTest extends TestCase
         );
     }
 
+    public function testExpiredProposalsArePrunedSoTheLedgerCannotGrowWithoutBound(): void
+    {
+        // An expired proposal keeps the status `staged` but can never be
+        // applied. Counting only terminal records would let a propose-only
+        // key grow this file forever, and every later stage and list has to
+        // read and rewrite it.
+        $expired = 'chg_' . str_repeat('d', 24);
+        $this->seedOverCap([$expired => [
+            'change_id' => $expired,
+            'status' => 'staged',
+            'method' => 'POST',
+            'path' => '/campaigns',
+            'payload' => [],
+            'created_at_epoch' => 1, // oldest, so it prunes first
+            'created_by' => 5,
+            'expires_at_epoch' => time() - 60,
+        ]]);
+
+        $this->store->stageWriteChange(5, $this->change('chg_' . str_repeat('e', 24), 'staged', time()));
+
+        $this->assertNull($this->store->getStagedChangeForUser(5, $expired));
+    }
+
+    public function testLiveProposalsAreNeverPruned(): void
+    {
+        // The other direction: a proposal still awaiting a decision must
+        // survive the cap, however full the ledger is.
+        $live = 'chg_' . str_repeat('f', 24);
+        $this->seedOverCap([$live => [
+            'change_id' => $live,
+            'status' => 'staged',
+            'method' => 'POST',
+            'path' => '/campaigns',
+            'payload' => [],
+            'created_at_epoch' => 1,
+            'created_by' => 5,
+            'expires_at_epoch' => time() + 86400,
+        ]]);
+
+        $this->store->stageWriteChange(5, $this->change('chg_' . str_repeat('0', 23) . '1', 'staged', time()));
+
+        $this->assertNotNull($this->store->getStagedChangeForUser(5, $live));
+    }
+
     public function testResolvedChangesAreStillPruned(): void
     {
         // The cap must still do its job: the oldest terminal records go.

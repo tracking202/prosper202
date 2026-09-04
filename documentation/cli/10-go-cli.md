@@ -262,6 +262,13 @@ scope, minting a key with `--scope`; 404 use `list` for ids; 429 back off;
 test`); and for any remaining validation error, a pointer to `<command>
 --help`.
 
+Commands that create something and then use it — `tracker create-with-url`,
+`import` — recognise the staged-change envelope a write returns under
+`--staged` and stop there rather than running their follow-up step against a
+record that is still a proposal: `create-with-url` reports the change id and
+where to get the URL after `p202 change apply`, and `import` counts the
+records as `staged` with their `change_ids`, never as `imported`.
+
 A 409 is resolved by cause rather than by status alone, because its causes
 need opposite responses: a still-running idempotent retry says to wait and
 resend the same command; a spent `Idempotency-Key` (its request died without

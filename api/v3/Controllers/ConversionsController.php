@@ -6,6 +6,7 @@ namespace Api\V3\Controllers;
 
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
+use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
 
 class ConversionsController
@@ -170,7 +171,14 @@ class ConversionsController
             throw new DatabaseException('Failed to create conversion: ' . $e->getMessage(), $e);
         }
 
-        return $this->get($convId);
+        // The repository's transaction has committed, so the conversion
+        // exists. Reading it back is the only step left, and its failure must
+        // not read as a failed create.
+        try {
+            return $this->get($convId);
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException('conversion', $e);
+        }
     }
 
     /**

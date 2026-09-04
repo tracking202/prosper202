@@ -8,6 +8,7 @@ use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\ServerStateStore;
 
 /**
@@ -428,9 +429,16 @@ abstract class Controller
         $insertId = $stmt->insert_id;
         $stmt->close();
 
-        $this->afterCreate($insertId, $clean);
-        $created = $this->get($insertId);
-        $this->recordChange('create', (array)$created['data']);
+        // The row exists from here on. A failure past this point is not a
+        // failed create, and must not be reported as one: the caller would
+        // retry and make a second row. See WriteCommittedException.
+        try {
+            $this->afterCreate($insertId, $clean);
+            $created = $this->get($insertId);
+            $this->recordChange('create', (array)$created['data']);
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException($this->changeEntityName() ?? 'record', $e);
+        }
 
         return $created;
     }
@@ -494,8 +502,14 @@ abstract class Controller
         $this->execute($stmt, 'Update failed');
         $stmt->close();
 
-        $updated = $this->get($id);
-        $this->recordChange('update', (array)$updated['data']);
+        // As in create(): the write has landed, so a later failure must not
+        // read as "the update did not happen".
+        try {
+            $updated = $this->get($id);
+            $this->recordChange('update', (array)$updated['data']);
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException($this->changeEntityName() ?? 'record', $e);
+        }
         return $updated;
     }
 
@@ -535,7 +549,11 @@ abstract class Controller
         $this->execute($stmt, 'Delete failed');
         $stmt->close();
 
-        $this->recordChange('delete', (array)$existing['data']);
+        try {
+            $this->recordChange('delete', (array)$existing['data']);
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException($this->changeEntityName() ?? 'record', $e);
+        }
     }
 
     /**

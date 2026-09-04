@@ -118,6 +118,29 @@ final class IdempotencyReservationTest extends TestCase
         $this->assertSame('indeterminate', $this->store->reserveIdempotent('scope', 'key-1')['state']);
     }
 
+    public function testAKeyMarkedIndeterminateIsUnknownFromTheNextRetry(): void
+    {
+        // A handler whose write landed but whose response never got recorded
+        // marks the key itself. Without that the claim just looks in-flight
+        // until it ages out, and a retry in that window is told to wait for a
+        // request that is already gone.
+        $this->store->reserveIdempotent('scope', 'key-1');
+        $this->store->markIdempotentIndeterminate('scope', 'key-1');
+
+        $this->assertSame('indeterminate', $this->store->reserveIdempotent('scope', 'key-1')['state']);
+    }
+
+    public function testMarkingIndeterminateNeverDiscardsARecordedResponse(): void
+    {
+        $this->store->reserveIdempotent('scope', 'key-1');
+        $this->store->putIdempotent('scope', 'key-1', ['data' => ['id' => 7]]);
+        $this->store->markIdempotentIndeterminate('scope', 'key-1');
+
+        $replay = $this->store->reserveIdempotent('scope', 'key-1');
+        $this->assertSame('replay', $replay['state']);
+        $this->assertSame(['data' => ['id' => 7]], $replay['response']);
+    }
+
     public function testAnIndeterminateKeyStaysIndeterminate(): void
     {
         $this->store->reserveIdempotent('scope', 'key-1');

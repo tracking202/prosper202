@@ -17,6 +17,7 @@ use Api\V3\RequestContext;
 use Api\V3\Router;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\ServerStateStore;
 
 // ─── Security headers ────────────────────────────────────────────────
@@ -221,9 +222,17 @@ try {
             }
             try {
                 $response = $op();
+            } catch (WriteCommittedException $e) {
+                // The row exists; only the steps after it failed. Releasing
+                // the claim would invite a retry that creates a second row,
+                // so the key is marked spent — from the very next retry, not
+                // once the claim ages out.
+                $stateStore->markIdempotentIndeterminate($scope, $key);
+                throw $e;
             } catch (\Throwable $e) {
-                // Release the claim so the caller can correct and retry
-                // rather than being told a request is in flight.
+                // Nothing was written, so free the key: the caller can
+                // correct and retry rather than being told a request is in
+                // flight.
                 $stateStore->releaseIdempotent($scope, $key);
                 throw $e;
             }
@@ -791,6 +800,9 @@ try {
     Bootstrap::errorResponse($e->getMessage(), 422, $e->getFieldErrors() ? ['field_errors' => $e->getFieldErrors()] : []);
 } catch (ConflictException $e) {
     Bootstrap::errorResponse($e->getMessage(), 409, $e->getDetails() ? ['details' => $e->getDetails()] : []);
+} catch (WriteCommittedException $e) {
+    error_log('p202: ' . $e->getMessage() . ' cause: ' . ($e->getPrevious()?->getMessage() ?? 'unknown'));
+    Bootstrap::errorResponse($e->getMessage(), $e->getHttpStatus());
 } catch (HttpException $e) {
     $code = $e->getHttpStatus();
     $message = $code >= 500 ? 'Internal server error' : $e->getMessage();
