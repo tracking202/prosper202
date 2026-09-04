@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	osexec "os/exec"
@@ -190,7 +191,8 @@ func defaultExecProfileRunner(call execCall) execResult {
 
 	result.ExitCode = 1
 	result.Err = err
-	if exitErr, ok := err.(*osexec.ExitError); ok {
+	var exitErr *osexec.ExitError
+	if errors.As(err, &exitErr) {
 		result.ExitCode = exitErr.ExitCode()
 	}
 	return result

@@ -62,13 +62,13 @@ jobs:
           --health-timeout=5s
           --health-retries=10
 
-    env:
-      # Keep the instance's server-side state (idempotency, staged changes)
-      # inside the job workspace.
-      P202_SERVER_STATE_DIR: ${{ runner.temp }}/p202-state
-
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+
+      # The `runner` context is not available in a job-level env block (it
+      # expands to empty there), so publish the path from a step instead.
+      - name: Set the server-state directory
+        run: echo "P202_SERVER_STATE_DIR=${{ runner.temp }}/p202-state" >> "$GITHUB_ENV"
 
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
@@ -112,7 +112,7 @@ jobs:
 
       - name: Wait for MySQL
         run: |
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if mysqladmin ping -h 127.0.0.1 -P 3306 -uroot -proot --silent; then
               echo "MySQL is up"; exit 0
             fi

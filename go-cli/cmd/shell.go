@@ -186,7 +186,7 @@ func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 					fmt.Fprintf(os.Stderr, "Error [%s]: %v\n", cmdStr, builtinErr)
 				}
 				if stopOnError {
-					return fmt.Errorf("stopped on error: %v", builtinErr)
+					return fmt.Errorf("stopped on error: %w", builtinErr)
 				}
 			}
 			if exit {
@@ -208,7 +208,7 @@ func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 				fmt.Fprintf(os.Stderr, "Error [%s]: %v\n", cmdStr, err)
 			}
 			if stopOnError {
-				return fmt.Errorf("stopped on error: %v", err)
+				return fmt.Errorf("stopped on error: %w", err)
 			}
 			continue
 		}

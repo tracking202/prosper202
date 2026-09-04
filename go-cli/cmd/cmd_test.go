@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -4487,8 +4488,8 @@ func TestBulkDeletePartialFailureExitCode(t *testing.T) {
 		t.Fatal("expected error for partial failure")
 	}
 
-	cliErr, ok := err.(*CLIError)
-	if !ok {
+	var cliErr *CLIError
+	if ok := errors.As(err, &cliErr); !ok {
 		t.Fatalf("error type = %T, want *CLIError", err)
 	}
 	if cliErr.ExitCode != ExitPartialFailure {
@@ -4661,8 +4662,8 @@ func TestRotatorDeleteBulkPartialFailure(t *testing.T) {
 		t.Fatal("expected error for partial failure")
 	}
 
-	cliErr, ok := err.(*CLIError)
-	if !ok {
+	var cliErr *CLIError
+	if ok := errors.As(err, &cliErr); !ok {
 		t.Fatalf("error type = %T, want *CLIError", err)
 	}
 	if cliErr.ExitCode != ExitPartialFailure {

@@ -39,6 +39,15 @@ parameters:
     # installed — a missing dev dependency would otherwise bury the custom
     # rule findings this job exists to surface.
     ignoreErrors:
+        # Three files declare a global `class INDEXES` with incompatible
+        # signatures (202-config/class-indexes.php, functions-tracking202.php,
+        # connect2.php), and two declare `class DataEngine`. Each execution
+        # path loads exactly one, and every call site matches the copy its own
+        # path loads — but PHPStan cannot know which, so it picks one and
+        # reports every call against the others as an arity error. The
+        # duplicates themselves are caught by DuplicateGlobalClassTest, which
+        # is where that hazard belongs.
+        - identifier: arguments.count
         - identifier: class.notFound
         - identifier: class.noParent
         - identifier: method.notFound
@@ -54,5 +63,7 @@ rules:
     - Prosper202\PHPStan\Rules\ForbidSilentJsonDecodeRule
     # CLAUDE.md #5 — inconsistent security patterns across similar operations.
     - Prosper202\PHPStan\Rules\ForbidDirectPasswordHashRule
+    # CLAUDE.md #7 — bind_param type string mismatches.
+    - Prosper202\PHPStan\Rules\BindParamArityRule
     # CLAUDE.md #8 — assumed closure, reference, and capture semantics.
     - Prosper202\PHPStan\Rules\ForbidArrowFnByRefCaptureRule

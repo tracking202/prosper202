@@ -673,19 +673,23 @@ func firstFlag(cmd *cobra.Command, names ...string) string {
 func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOptions) (bool, error) {
 	orchestrator, err := api.NewFromProfile(fromProfile)
 	if err != nil {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 	if !orchestrator.SupportsCapability("sync_features", "async_jobs") {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 
 	sourceConn, err := loadProfileConnection(fromProfile)
 	if err != nil {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 	targetConn, err := loadProfileConnection(toProfile)
 	if err != nil {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 
 	payload := map[string]interface{}{
@@ -704,7 +708,8 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 	}
 	resp, err := orchestrator.Post(endpoint, payload)
 	if err != nil {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 
 	obj, parseErr := parseDataObject(resp)
@@ -724,7 +729,8 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 				status := strings.ToLower(strings.TrimSpace(scalarString(jobObj["status"])))
 				if status == "succeeded" || status == "failed" || status == "partial" || status == "cancelled" {
 					render(jobResp)
-					return true, nil
+
+					return true, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 				}
 				time.Sleep(250 * time.Millisecond)
 			}
@@ -732,25 +738,30 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 	}
 
 	render(resp)
-	return true, nil
+
+	return true, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 }
 
 func tryServerSyncRead(path, fromProfile, toProfile string) (bool, error) {
 	orchestrator, err := api.NewFromProfile(fromProfile)
 	if err != nil {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 	if !orchestrator.SupportsCapability("sync_features", "async_jobs") {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 
 	sourceConn, err := loadProfileConnection(fromProfile)
 	if err != nil {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 	targetConn, err := loadProfileConnection(toProfile)
 	if err != nil {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 
 	params := map[string]string{
@@ -761,10 +772,12 @@ func tryServerSyncRead(path, fromProfile, toProfile string) (bool, error) {
 	}
 	resp, err := orchestrator.Get(path, params)
 	if err != nil {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 	render(resp)
-	return true, nil
+
+	return true, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 }
 
 func init() {

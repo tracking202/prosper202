@@ -12,7 +12,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
@@ -123,12 +123,14 @@ jobs:
             fi
           fi
 
-          echo "install_state=${install_state}" >> "$GITHUB_OUTPUT"
-          echo "diagnose_state=${diagnose_state}" >> "$GITHUB_OUTPUT"
-          echo "mkdir_state=${mkdir_state}" >> "$GITHUB_OUTPUT"
-          echo "phpunit_state=${phpunit_state}" >> "$GITHUB_OUTPUT"
-          echo "overall=${overall}" >> "$GITHUB_OUTPUT"
-          echo "final_status=${final_status}" >> "$GITHUB_OUTPUT"
+          {
+            echo "install_state=${install_state}"
+            echo "diagnose_state=${diagnose_state}"
+            echo "mkdir_state=${mkdir_state}"
+            echo "phpunit_state=${phpunit_state}"
+            echo "overall=${overall}"
+            echo "final_status=${final_status}"
+          } >> "$GITHUB_OUTPUT"
 
           status_label() {
             case "$1" in

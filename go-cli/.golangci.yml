@@ -13,6 +13,17 @@ linters:
     - ineffassign
     - staticcheck
     - unused
+    # The CLI's error contract (CLAUDE.md, go-cli section) says exit codes and
+    # hints are resolved with errors.As through the wrap chain, so a %v where
+    # a %w belongs silently turns a 401 into a generic exit 1. errorlint is
+    # that rule, mechanized.
+    - errorlint
+    # An unclosed response body leaks a connection per call — the kind of
+    # thing that only shows up under load.
+    - bodyclose
+    # Returning nil after checking err != nil: the error is swallowed and the
+    # caller proceeds on bad data.
+    - nilerr
 
   settings:
     errcheck:

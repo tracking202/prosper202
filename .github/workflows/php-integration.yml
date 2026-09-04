@@ -27,7 +27,7 @@ jobs:
           --health-retries=10
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
@@ -61,7 +61,7 @@ jobs:
 
       - name: Wait for MySQL
         run: |
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if mysqladmin ping -h 127.0.0.1 -P 3306 -uroot -proot --silent; then
               echo "MySQL is up"; exit 0
             fi

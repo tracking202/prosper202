@@ -228,7 +228,7 @@ func (r *Runner) judge(c Case, reply string, commands []string, env []string) (s
 	}
 	out, stderr, err := r.shell(r.JudgeCmd, env, string(input))
 	if err != nil {
-		return "", fmt.Errorf("%v: %s", err, firstLine(stderr))
+		return "", fmt.Errorf("%w: %s", err, firstLine(stderr))
 	}
 	verdict := strings.TrimSpace(out)
 	if verdict == "" {
