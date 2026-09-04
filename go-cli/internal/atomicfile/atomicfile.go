@@ -56,5 +56,15 @@ func Write(path string, data []byte, perm os.FileMode) error {
 		_ = os.Remove(tmpName)
 		return fmt.Errorf("renaming %s to %s: %w", tmpName, path, err)
 	}
+
+	// Flushing the file's contents is not enough: the rename itself is a
+	// directory-entry change, and on ext4/XFS that entry can be absent after a
+	// crash even though tmp.Sync() returned. Without this the documented
+	// all-or-nothing guarantee silently does not hold — `config set-key` could
+	// report success and still leave the old key, and a lost sync-manifest
+	// rename makes the next incremental sync re-create every already-synced
+	// record. Best-effort: Windows cannot open a directory for sync, so a
+	// failure here is not fatal to a write that has already landed.
+	syncDir(dir)
 	return nil
 }

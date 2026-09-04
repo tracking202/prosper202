@@ -231,3 +231,43 @@ func TestSaveTightensPermissionsOnPreexistingFile(t *testing.T) {
 		t.Fatalf("config mode = %04o, want 0600", mode)
 	}
 }
+
+// A V1 config whose active_profile names something other than "default" must
+// migrate the credential into THAT profile. Creating "default" while leaving
+// ActiveProfile pointing at the missing name orphaned the credential: every
+// command failed with `profile "prod" not found`, including config set-key and
+// set-url, so the CLI could not repair its own config. The sibling branch of
+// normalize() already handled this; this branch did not.
+func TestV1MigrationHonoursANonDefaultActiveProfile(t *testing.T) {
+	home := t.TempDir()
+	setTestHome(t, home)
+	writeRawConfig(t, home, `{"url":"https://prod.example.com","api_key":"prod-key-12345678","active_profile":"prod"}`)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.ActiveProfile != "prod" {
+		t.Fatalf("ActiveProfile = %q, want prod", cfg.ActiveProfile)
+	}
+	if _, ok := cfg.Profiles["prod"]; !ok {
+		t.Fatalf("credential was migrated into %v, not into the active profile", cfg.ProfileNames())
+	}
+
+	// The whole point: every resolution path must work, or the config is
+	// unusable and unrepairable from the CLI.
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	p, name, err := cfg.resolveProfile("")
+	if err != nil {
+		t.Fatalf("resolveProfile: %v", err)
+	}
+	if name != "prod" || p.APIKey != "prod-key-12345678" {
+		t.Fatalf("resolved %q with key %q", name, p.APIKey)
+	}
+	if _, _, err := cfg.EnsureProfile(""); err != nil {
+		t.Fatalf("EnsureProfile (the path config set-key uses): %v", err)
+	}
+}

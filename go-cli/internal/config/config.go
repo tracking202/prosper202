@@ -295,16 +295,24 @@ func (c *Config) normalize() {
 		if c.URL == "" && c.APIKey == "" && len(c.Defaults) == 0 {
 			return
 		}
+		// Migrate into the profile active_profile actually names. Hardcoding
+		// "default" here while leaving ActiveProfile pointing elsewhere orphaned
+		// the credential: every command then failed with `profile "prod" not
+		// found` — including `config set-key`/`set-url`, which resolve through
+		// EnsureProfile, so the CLI could not repair its own config. The sibling
+		// branch below already creates the profile ActiveProfile names.
+		target := strings.TrimSpace(c.ActiveProfile)
+		if target == "" {
+			target = defaultProfileName
+		}
 		c.Profiles = map[string]*Profile{
-			defaultProfileName: {
+			target: {
 				URL:      c.URL,
 				APIKey:   c.APIKey,
 				Defaults: cloneDefaults(c.Defaults),
 			},
 		}
-		if strings.TrimSpace(c.ActiveProfile) == "" {
-			c.ActiveProfile = defaultProfileName
-		}
+		c.ActiveProfile = target
 		c.clearLegacy()
 		return
 	}
