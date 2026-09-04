@@ -331,17 +331,19 @@ func handleBuiltin(line string, state *shell.State, currentProfile string) (bool
 			if cmdStr == "" {
 				return true, "", false, fmt.Errorf("syntax error: assignment to $%s requires a command", varName)
 			}
-			output, err := executeShellCommand(cmdStr)
+			output, err := executeShellCommandWith(cmdStr, true)
 			if err != nil {
 				printOutput(output) // partial output produced before the error
 				return true, "", false, err
 			}
 			value, ok := normalizeValue(output)
 			if !ok {
-				// Void operations (delete, revoke) report success on stderr and
-				// write nothing to stdout. Silently leaving $name unset would let
-				// the user believe the result was captured.
-				return true, "", false, fmt.Errorf("command produced no output; $%s was not set", varName)
+				// Captured as JSON above, so empty stdout is unambiguous here: a
+				// void operation (delete, revoke) that reports success on stderr
+				// and has no result to store. An empty result SET is {"data":[]}
+				// and lands in state.Set below. Silently leaving $name unset
+				// would let the user believe the result was captured.
+				return true, "", false, fmt.Errorf("command produced no output to capture; $%s was not set", varName)
 			}
 			state.Set(varName, value)
 			printOutput(output)
@@ -436,6 +438,21 @@ func currentProfileName() string {
 // produced before the failure is returned alongside the error; the caller
 // decides how to surface it (printing it here would corrupt JSONL output).
 func executeShellCommand(line string) ([]byte, error) {
+	return executeShellCommandWith(line, false)
+}
+
+// executeShellCommandWith runs a shell line, optionally forcing JSON output.
+//
+// forceJSON exists for `$name = <command>`. In the session's default table
+// mode a list with zero rows writes NOTHING to stdout — renderTable sends
+// "No results." to stderr — so an empty capture is indistinguishable from a
+// void operation that has no result at all. Forcing JSON removes the
+// ambiguity at the source rather than making the assignment guess: an empty
+// result set becomes {"data":[]} and is stored, while a genuine void
+// operation still writes nothing and is reported. Variables hold JSON
+// anyway ($name pretty-prints the stored value), so this is also the format
+// the capture is for.
+func executeShellCommandWith(line string, forceJSON bool) ([]byte, error) {
 	tokens, err := shell.TokenizeLine(line)
 	if err != nil {
 		return nil, fmt.Errorf("parse error: %w", err)
@@ -462,10 +479,15 @@ func executeShellCommand(line string) ([]byte, error) {
 	// it would only propose. PersistentPreRunE reads this variable on every
 	// Execute(), so it has to be restored like the others.
 	savedStaged := stagedWrites
+	// The command path the top-level error envelope and its hint name.
+	// PersistentPreRunE re-stamps this for every inner command, so without
+	// restoring it a failing `p202 shell` reports the LAST command the batch
+	// ran and points an agent at that command's --help instead of its own.
+	savedCommandPath := activeCommandPath
 	sessionOverride := configpkg.GetActiveOverride()
 
 	resetAllFlags(rootCmd)
-	jsonOutput = savedJSON
+	jsonOutput = savedJSON || forceJSON
 	csvOutput = savedCSV
 	profileName = savedProfile
 	groupName = savedGroup
@@ -485,6 +507,7 @@ func executeShellCommand(line string) ([]byte, error) {
 	})
 
 	// Restore session-level state the command's own flags may have modified.
+	activeCommandPath = savedCommandPath
 	jsonOutput = savedJSON
 	csvOutput = savedCSV
 	profileName = savedProfile

@@ -213,7 +213,7 @@ var rotatorRuleDeleteCmd = &cobra.Command{
 			noun:        "rule",
 			plural:      "rules",
 			context:     " from rotator " + rotatorID,
-			idsHintText: "Comma-separate rule ids, e.g. --ids 3,4 (find them with `p202 rotator rules <rotator_id>`).",
+			idsHintText: "Comma-separate rule ids, e.g. --ids 3,4 (find them with `p202 rotator get <rotator_id>`).",
 		})
 	},
 }

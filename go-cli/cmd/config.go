@@ -153,7 +153,7 @@ var configTestCmd = &cobra.Command{
 		}
 		data, err := c.Get("system/health", nil)
 		if err != nil {
-			return withHint(fmt.Errorf("connection failed: %w", err), "Check `p202 config get` (URL and key), that the instance is reachable, and that the key is valid in the Prosper202 UI under API keys.")
+			return withHint(fmt.Errorf("connection failed: %w", err), "Check `p202 config show` (URL and key), that the instance is reachable, and that the key is valid in the Prosper202 UI under API keys.")
 		}
 		if !jsonOutput {
 			fmt.Println("Connection successful!")

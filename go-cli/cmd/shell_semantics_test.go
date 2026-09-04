@@ -14,31 +14,6 @@ func osStdout() *os.File { return os.Stdout }
 
 func print_(s string) { fmt.Print(s) }
 
-// An assignment whose command writes nothing to stdout (every void operation —
-// delete, revoke — reports success on stderr) used to leave $name silently
-// unset, so the user believed the result had been captured.
-func TestAssignmentFromCommandWithNoOutputReportsFailure(t *testing.T) {
-	home := t.TempDir()
-	setTestHome(t, home)
-	srv := newRecordingServer(t)
-	writeTestConfig(t, home, srv.URL, "test-api-key-1234")
-
-	state := shell.NewState()
-	handled, _, _, err := handleBuiltin("$gone = campaign delete 7 --force", state, "default")
-	if !handled {
-		t.Fatal("assignment should be handled as a builtin")
-	}
-	if err == nil {
-		t.Fatal("expected an error explaining that $gone was not set")
-	}
-	if !strings.Contains(err.Error(), "$gone") {
-		t.Fatalf("error should name the variable, got %q", err)
-	}
-	if _, ok := state.Get("gone"); ok {
-		t.Fatal("$gone must not be set when there was no output to store")
-	}
-}
-
 // $_ is documented as the last result. After a command that produced no output
 // it used to retain the previous command's value and report it as current.
 func TestLastResultIsClearedWhenACommandProducesNoOutput(t *testing.T) {

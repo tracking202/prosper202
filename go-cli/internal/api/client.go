@@ -147,7 +147,7 @@ func HintFor(err error) string {
 		case apiErr.Status == 403 && strings.Contains(strings.ToLower(apiErr.Message), "scope"):
 			return "This key's scope does not cover the operation. Use a key with the needed scope, or mint one: `p202 user apikey create <user_id> --scope write` (scopes: *, read, write, <area>:read, <area>:write)."
 		case apiErr.Status == 401 || apiErr.Status == 403:
-			return "Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong."
+			return "Verify your API key: run `p202 config show`, then `p202 config set-key <key>` if it's wrong."
 		case apiErr.Status == 404:
 			return "Not found. Run the matching `... list` to find valid ids (ids are internal — not the public ones in tracking links; some commands accept --public)."
 		// A 409 has several unrelated causes -- a still-running idempotent
@@ -182,7 +182,7 @@ func HintFor(err error) string {
 	if errors.As(err, &reqErr) {
 		switch reqErr.Kind {
 		case "network":
-			return "Check the server URL (`p202 config get`) and that the instance is reachable; run `p202 config test` to verify the connection."
+			return "Check the server URL (`p202 config show`) and that the instance is reachable; run `p202 config test` to verify the connection."
 		case "validation":
 			return "The request could not be built from the given values; check them and retry."
 		}

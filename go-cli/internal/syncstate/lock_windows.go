@@ -17,7 +17,7 @@ func acquireLockFile(path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	var overlapped windows.Overlapped
+	overlapped := lockRegion()
 	err = windows.LockFileEx(
 		windows.Handle(file.Fd()),
 		windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY,
@@ -39,7 +39,25 @@ func acquireLockFile(path string) (*os.File, error) {
 // releaseLockFile drops the lock. The file itself is left in place on purpose —
 // see the AcquireLock doc comment.
 func releaseLockFile(file *os.File) {
-	var overlapped windows.Overlapped
+	overlapped := lockRegion()
 	_ = windows.UnlockFileEx(windows.Handle(file.Fd()), 0, 1, 0, &overlapped)
 	_ = file.Close()
+}
+
+// lockRegion is the byte range LockFileEx locks: one byte at a very high
+// offset, past any content the file will ever hold.
+//
+// It deliberately does NOT cover byte 0. Windows byte-range locks are
+// mandatory, not advisory, so locking the start of the file made the
+// "pid=... time=..." line unreadable to a contending process: readLockHolder's
+// os.ReadFile failed with ERROR_LOCK_VIOLATION and the contention message fell
+// back to the generic form, never naming the holder — while the unix test
+// asserts it does. Locking past the data keeps the diagnostic readable and the
+// mutual exclusion identical, since every participant locks the same range.
+// Locking a range beyond end-of-file is legal on Windows.
+func lockRegion() windows.Overlapped {
+	return windows.Overlapped{
+		Offset:     0,
+		OffsetHigh: 0x8000_0000,
+	}
 }

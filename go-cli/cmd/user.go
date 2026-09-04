@@ -195,11 +195,11 @@ var userRoleAssignCmd = &cobra.Command{
 		}
 		roleIDStr := roleIDFrom(cmd, args)
 		if roleIDStr == "" {
-			return validationError("role id is required (pass it as the second argument or via --role_id)").WithHint("`p202 user roles` lists role ids.")
+			return validationError("role id is required (pass it as the second argument or via --role_id)").WithHint("`p202 user role list` lists role ids.")
 		}
 		roleID, err := strconv.Atoi(roleIDStr)
 		if err != nil {
-			return validationError("role_id must be an integer: %s", roleIDStr).WithHint("`p202 user roles` lists role ids.")
+			return validationError("role_id must be an integer: %s", roleIDStr).WithHint("`p202 user role list` lists role ids.")
 		}
 		data, err := c.Post("users/"+args[0]+"/roles", map[string]interface{}{
 			"role_id": roleID,
@@ -223,7 +223,7 @@ var userRoleRemoveCmd = &cobra.Command{
 		}
 		roleID := roleIDFrom(cmd, args)
 		if roleID == "" {
-			return validationError("role id is required (pass it as the second argument or via --role_id)").WithHint("`p202 user roles` lists role ids.")
+			return validationError("role id is required (pass it as the second argument or via --role_id)").WithHint("`p202 user role list` lists role ids.")
 		}
 		if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
 			return renderDeletePreviews(c, "users/"+args[0]+"/roles", []string{roleID})
