@@ -93,7 +93,8 @@ var rotatorCreateCmd = &cobra.Command{
 				body[f] = v
 			}
 		}
-		data, err := c.Post("rotators", body)
+		idemKey, _ := cmd.Flags().GetString("idempotency-key")
+		data, err := c.PostIdempotent("rotators", body, idemKey)
 		if err != nil {
 			return err
 		}
@@ -135,7 +136,7 @@ var rotatorDeleteCmd = &cobra.Command{
 	Args:  deleteArgsValidator,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runBulkOrSingleDelete(cmd, args, deleteSpec{
-			urlFor:      func(id string) string { return "rotators/" + id },
+			endpoint:    "rotators",
 			noun:        "rotator",
 			plural:      "rotators",
 			cascadeOne:  " and all its rules",
@@ -188,7 +189,8 @@ var rotatorRuleCreateCmd = &cobra.Command{
 			// Sugar: a single-campaign redirect at full weight.
 			body["redirects"] = []map[string]string{{"redirect_campaign": camp, "weight": "100", "name": "to campaign " + camp}}
 		}
-		data, err := c.Post("rotators/"+args[0]+"/rules", body)
+		idemKey, _ := cmd.Flags().GetString("idempotency-key")
+		data, err := c.PostIdempotent("rotators/"+args[0]+"/rules", body, idemKey)
 		if err != nil {
 			return err
 		}
@@ -207,7 +209,7 @@ var rotatorRuleDeleteCmd = &cobra.Command{
 			return err
 		}
 		return runBulkOrSingleDelete(cmd, args[1:], deleteSpec{
-			urlFor:      func(id string) string { return "rotators/" + rotatorID + "/rules/" + id },
+			endpoint:    "rotators/" + rotatorID + "/rules",
 			noun:        "rule",
 			plural:      "rules",
 			context:     " from rotator " + rotatorID,
@@ -282,6 +284,8 @@ func init() {
 	rotatorListCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 	rotatorListCmd.Flags().Bool("all", false, "Fetch all rows across pages")
 
+	registerIdempotencyKeyFlag(rotatorCreateCmd)
+	registerIdempotencyKeyFlag(rotatorRuleCreateCmd)
 	rotatorCreateCmd.Flags().String("name", "", "Rotator name (required)")
 	rotatorCreateCmd.Flags().String("default_url", "", "Default redirect URL")
 	rotatorCreateCmd.Flags().String("default_campaign", "", "Default campaign ID")
@@ -292,8 +296,7 @@ func init() {
 	rotatorUpdateCmd.Flags().String("default_campaign", "", "Default campaign ID")
 	rotatorUpdateCmd.Flags().String("default_lp", "", "Default landing page ID")
 
-	rotatorDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
-	rotatorDeleteCmd.Flags().String("ids", "", "Comma-separated rotator IDs to delete in bulk")
+	registerDeleteFlags(rotatorDeleteCmd, "rotator")
 
 	rotatorRuleCreateCmd.Flags().String("rule_name", "", "Rule name (required)")
 	rotatorRuleCreateCmd.Flags().String("splittest", "", "Enable split test (0|1)")
@@ -302,8 +305,7 @@ func init() {
 	rotatorRuleCreateCmd.Flags().String("country", "", "Sugar: ISO country code (e.g. US) -> a country `is` criterion; avoids hand-writing --criteria_json")
 	rotatorRuleCreateCmd.Flags().String("redirect-campaign", "", "Sugar: redirect to this campaign id at full weight; avoids hand-writing --redirects_json")
 
-	rotatorRuleDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
-	rotatorRuleDeleteCmd.Flags().String("ids", "", "Comma-separated rule IDs to delete in bulk")
+	registerDeleteFlags(rotatorRuleDeleteCmd, "rule")
 
 	rotatorRuleUpdateCmd.Flags().String("rule_id", "", "Rule ID (alternative to the second positional arg)")
 	rotatorRuleUpdateCmd.Flags().String("rule_name", "", "Rule name")

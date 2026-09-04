@@ -50,6 +50,11 @@ curl -X POST https://your-domain.com/api/v3/campaigns \
 
 `POST /campaigns/bulk-upsert` accepts an array of campaign objects. Requires an `Idempotency-Key` header.
 
+The key identifies one batch. Retrying it with the same rows replays the
+recorded response instead of re-applying them; reusing a key for anything
+else — different rows, or a different endpoint — is refused with `422`, so
+mint a new key for a new batch.
+
 Rows without an `aff_campaign_id` (or `id`) are created and must include all
 required fields. Rows with an existing ID are updated and may send only the
 fields being changed.

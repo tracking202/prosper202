@@ -288,10 +288,17 @@ function authorize_attribution_request(array $params, string $permission): array
         ];
     }
 
-    // Join 202_users so a soft-deleted user's key stops authenticating (as
-    // api/v3/Auth.php does) — deleting a user must revoke access everywhere.
+    // Two constraints, both required:
+    //  - k.* rather than a named column list, so this keeps working on a schema
+    //    where `scope` has not been added yet; naming it would fail the prepare
+    //    and 500 every request. It must stay a wildcard over the key table
+    //    because the caller reads $row['scope'] to enforce attenuation, and a
+    //    narrower select would make that read absent -> unscoped -> full access.
+    //  - the 202_users join, so a soft-deleted user's key stops authenticating
+    //    (as api/v3/Auth.php does): deleting a user must revoke access
+    //    everywhere, not just in v3.
     $stmt = $connection->prepare(
-        'SELECT k.user_id FROM 202_api_keys k
+        'SELECT k.* FROM 202_api_keys k
          INNER JOIN 202_users u ON u.user_id = k.user_id
          WHERE k.api_key = ? AND u.user_deleted = 0 LIMIT 1'
     );
@@ -328,6 +335,21 @@ function authorize_attribution_request(array $params, string $permission): array
             'payload' => [
                 'error' => true,
                 'message' => 'Invalid API key.',
+            ],
+        ];
+    }
+
+    // A v3-scoped key is an attenuated credential. This legacy surface
+    // predates scoping and cannot enforce it, so refuse the key outright
+    // rather than granting more than its scope allows — the same refusal
+    // api/v1/functions.php and api/v2/functions.php apply.
+    $keyScope = strtolower(trim((string) ($row['scope'] ?? '')));
+    if ($keyScope !== '' && $keyScope !== '*') {
+        return [
+            'status' => 403,
+            'payload' => [
+                'error' => true,
+                'message' => 'This API key is scoped and only valid for the v3 API.',
             ],
         ];
     }

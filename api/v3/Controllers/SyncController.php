@@ -60,11 +60,26 @@ class SyncController
             'options' => $options,
             'idempotency_key' => $idempotencyKey,
         ];
-        $requestHash = ServerStateStore::canonicalHash($jobPayload);
-        $idempotencyScope = 'sync-job:' . sha1(strtolower((string)$source['url']) . '|' . strtolower((string)$target['url']) . '|' . $entity) . ':request:' . $requestHash;
+        // The request hash is a fingerprint recorded beside the response,
+        // not part of the scope. Scoping by the request meant a key reused
+        // with a different source, target, entity or option set addressed a
+        // different record, found nothing, and queued a second job — the
+        // duplicate the key was sent to prevent. Scope is the caller alone,
+        // so any reuse of the key is seen and a changed request is refused.
+        $requestHash = ServerStateStore::idempotencyFingerprint('sync-job', $jobPayload);
+        $idempotencyScope = ServerStateStore::idempotencyScopeForUser($this->userId);
         if ($idempotencyKey !== '') {
-            $cached = $this->store->getIdempotent($idempotencyScope, $idempotencyKey);
-            if (is_array($cached)) {
+            $lookup = $this->store->lookupIdempotent($idempotencyScope, $idempotencyKey, $requestHash);
+            if ($lookup['state'] === 'mismatch') {
+                throw new ValidationException(
+                    'This Idempotency-Key was already used for a different request. Resend the original '
+                    . 'sync request to replay its recorded response, or send a new Idempotency-Key to '
+                    . 'queue a different job.',
+                    ['idempotency_key' => 'Already used for a different request']
+                );
+            }
+            if ($lookup['state'] === 'replay' && is_array($lookup['response'])) {
+                $cached = $lookup['response'];
                 $cached['idempotent_replay'] = true;
                 return ['_status' => 202] + $cached;
             }
@@ -84,7 +99,7 @@ class SyncController
 
         $response = ['data' => $this->sanitizeJobForResponse($job)];
         if ($idempotencyKey !== '') {
-            $this->store->putIdempotent($idempotencyScope, $idempotencyKey, $response);
+            $this->store->putIdempotent($idempotencyScope, $idempotencyKey, $response, $requestHash);
         }
         return ['_status' => 202] + $response;
     }

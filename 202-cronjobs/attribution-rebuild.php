@@ -69,30 +69,63 @@ $database = DB::getInstance();
 $connection = $database?->getConnection();
 if ($connection instanceof mysqli) {
     $checkStmt = $connection->prepare('SELECT 1 FROM 202_cronjobs WHERE cronjob_type = ? AND cronjob_time = ? LIMIT 1');
-    if ($checkStmt) {
-        $checkStmt->bind_param('si', $cronType, $cronBucket);
-        $checkStmt->execute();
-        $checkStmt->store_result();
-        if ($checkStmt->num_rows > 0) {
-            fwrite(STDOUT, "Attribution cron already processed this window; skipping.\n");
-            $checkStmt->close();
-            exit(0);
-        }
+    if (!$checkStmt) {
+        // Skipping the check silently would rebuild a window that may already
+        // have been done — the same outcome the execute() guard below exists
+        // to prevent, so it fails the same way.
+        fwrite(STDERR, 'Failed to prepare the attribution cron marker check: ' . $connection->error . "\n");
+        exit(1);
+    }
+    $checkStmt->bind_param('si', $cronType, $cronBucket);
+    // Unchecked, a failed execute leaves num_rows at 0, which reads as
+    // "this window has not been processed" — so the job would rebuild
+    // attribution for a window it had already done.
+    if (!$checkStmt->execute()) {
+        $error = $checkStmt->error;
         $checkStmt->close();
+        fwrite(STDERR, 'Failed to check the attribution cron marker: ' . $error . "\n");
+        exit(1);
+    }
+    // store_result() has the same failure mode as execute(): a false
+    // return leaves num_rows at 0, which reads as "not yet processed".
+    if (!$checkStmt->store_result()) {
+        $error = $checkStmt->error;
+        $checkStmt->close();
+        fwrite(STDERR, 'Failed to buffer the attribution cron marker check: ' . $error . "\n");
+        exit(1);
+    }
+    if ($checkStmt->num_rows > 0) {
+        fwrite(STDOUT, "Attribution cron already processed this window; skipping.\n");
+        $checkStmt->close();
+        exit(0);
+    }
+    $checkStmt->close();
 
-        $insertStmt = $connection->prepare('INSERT INTO 202_cronjobs SET cronjob_type = ?, cronjob_time = ?');
-        if ($insertStmt) {
-            $insertStmt->bind_param('si', $cronType, $cronBucket);
-            $insertStmt->execute();
-            $insertStmt->close();
-        }
+    $insertStmt = $connection->prepare('INSERT INTO 202_cronjobs SET cronjob_type = ?, cronjob_time = ?');
+    if (!$insertStmt) {
+        // Without the marker the next run reprocesses this window.
+        fwrite(STDERR, 'Failed to prepare the attribution cron marker insert: ' . $connection->error . "\n");
+        exit(1);
+    }
+    $insertStmt->bind_param('si', $cronType, $cronBucket);
+    // Without the marker the next run reprocesses this same window.
+    if (!$insertStmt->execute()) {
+        $error = $insertStmt->error;
+        $insertStmt->close();
+        fwrite(STDERR, 'Failed to record the attribution cron marker: ' . $error . "\n");
+        exit(1);
+    }
+    $insertStmt->close();
 
-        $cleanupStmt = $connection->prepare('DELETE FROM 202_cronjobs WHERE cronjob_type = ? AND cronjob_time < ?');
-        if ($cleanupStmt) {
-            $cleanupStmt->bind_param('si', $cronType, $cronBucket);
-            $cleanupStmt->execute();
-            $cleanupStmt->close();
+    $cleanupStmt = $connection->prepare('DELETE FROM 202_cronjobs WHERE cronjob_type = ? AND cronjob_time < ?');
+    if ($cleanupStmt) {
+        $cleanupStmt->bind_param('si', $cronType, $cronBucket);
+        // Pruning old markers is housekeeping: a failure leaves stale
+        // rows but does not affect this run, so warn and carry on.
+        if (!$cleanupStmt->execute()) {
+            fwrite(STDERR, 'Warning: could not prune old attribution cron markers: ' . $cleanupStmt->error . "\n");
         }
+        $cleanupStmt->close();
     }
 }
 

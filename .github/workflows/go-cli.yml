@@ -1,0 +1,71 @@
+name: Go CLI
+
+# The p202 CLI had no test or lint job: `go test` and `go vet` only ever ran
+# on a developer's machine, and golangci-lint not at all. This runs them on
+# every change to go-cli/.
+
+on:
+  push:
+    paths:
+      - 'go-cli/**'
+      - '.github/workflows/go-cli.yml'
+  pull_request:
+    paths:
+      - 'go-cli/**'
+      - '.github/workflows/go-cli.yml'
+
+jobs:
+  test:
+    name: Vet and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go-cli
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'   # matches go-cli/go.mod
+          cache-dependency-path: go-cli/go.sum
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt would reformat these files:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      # Runs everything, forecast acceptance suites included (~40s of the
+      # total). They have a -short guard for local iteration; CI does not use
+      # it, so nothing here is skipped.
+      - name: go test
+        run: go test ./... -count=1
+
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: go-cli/go.sum
+
+      # Configured in go-cli/.golangci.yml to report dropped errors
+      # (CLAUDE.md #1 in its Go form) rather than style preferences.
+      # golangci-lint-action v6 cannot install golangci-lint v2 — it rejects
+      # the version string outright. v7 is the first release that can.
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.5.0
+          working-directory: go-cli

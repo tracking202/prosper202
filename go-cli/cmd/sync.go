@@ -11,6 +11,7 @@ import (
 
 	"p202/internal/api"
 	"p202/internal/metrics"
+	"p202/internal/output"
 	syncdata "p202/internal/sync"
 	"p202/internal/syncstate"
 
@@ -220,6 +221,19 @@ var reSyncCmd = &cobra.Command{
 }
 
 func executeSync(entityArg, fromProfile, toProfile string, opts syncOptions) error {
+	// A sync resolves each entity's foreign keys from ids the preceding
+	// creates returned. A staged create returns a proposal, not a record, so
+	// those ids do not exist yet: the run would count proposals as synced,
+	// then fail to resolve the dependents, leaving a half-usable proposal
+	// queue and a sync history that never happened. The server-side path
+	// refuses `staged=1` on sync/jobs already, but that rejection is
+	// swallowed by the probe-and-fall-back below, so refuse here where it is
+	// still one clear answer.
+	if api.StagedMode() {
+		return validationError("sync cannot be staged").
+			WithHint("Sync needs the ids that staged creates do not have yet. Drop --staged; use `--dry-run` to see what a sync would change, or stage individual writes instead.")
+	}
+
 	done := metrics.Timer("sync", entityArg)
 	if handled, err := tryServerSideSync(entityArg, fromProfile, toProfile, opts); err != nil {
 		done(false, err.Error())
@@ -685,19 +699,23 @@ func firstFlag(cmd *cobra.Command, names ...string) string {
 func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOptions) (bool, error) {
 	orchestrator, err := api.NewFromProfile(fromProfile)
 	if err != nil {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 	if !orchestrator.SupportsCapability("sync_features", "async_jobs") {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 
 	sourceConn, err := loadProfileConnection(fromProfile)
 	if err != nil {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 	targetConn, err := loadProfileConnection(toProfile)
 	if err != nil {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 
 	payload := map[string]interface{}{
@@ -716,10 +734,16 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 	}
 	resp, err := orchestrator.Post(endpoint, payload)
 	if err != nil {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 
 	obj, parseErr := parseDataObject(resp)
+	// A failed status poll is not a failed sync: the job already exists on the
+	// server, so returning anything that makes the caller fall back would run
+	// the whole sync a second time. But it must not vanish either — the
+	// rendered response is then the job-creation reply, not its outcome.
+	var pollErr error
 	if parseErr == nil {
 		jobID := scalarString(obj["job_id"])
 		if jobID != "" {
@@ -727,42 +751,58 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 				_, _ = orchestrator.Post("sync/worker/run", map[string]interface{}{"limit": 10})
 				jobResp, getErr := orchestrator.Get("sync/jobs/"+jobID, nil)
 				if getErr != nil {
+					pollErr = getErr
 					break
 				}
 				jobObj, objErr := parseDataObject(jobResp)
 				if objErr != nil {
+					pollErr = objErr
 					break
 				}
 				status := strings.ToLower(strings.TrimSpace(scalarString(jobObj["status"])))
 				if status == "succeeded" || status == "failed" || status == "partial" || status == "cancelled" {
 					render(jobResp)
-					return true, nil
+
+					return true, nil // server-side sync ran; the caller must not fall back
 				}
 				time.Sleep(250 * time.Millisecond)
 			}
 		}
 	}
 
+	if pollErr != nil {
+		output.Success(
+			"Warning: the sync job was created but its status could not be read (%v). "+
+				"The output below is the job as queued, not its result — check `p202 sync status`.",
+			pollErr)
+	}
 	render(resp)
-	return true, nil
+
+	// nilerr is right that an error was seen and nil is returned; that is
+	// deliberate here and the warning above says so.
+	return true, nil //nolint:nilerr // the job exists server-side; falling back would run the sync twice
 }
 
 func tryServerSyncRead(path, fromProfile, toProfile string) (bool, error) {
 	orchestrator, err := api.NewFromProfile(fromProfile)
 	if err != nil {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 	if !orchestrator.SupportsCapability("sync_features", "async_jobs") {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 
 	sourceConn, err := loadProfileConnection(fromProfile)
 	if err != nil {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 	targetConn, err := loadProfileConnection(toProfile)
 	if err != nil {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 
 	// scalarString instead of type assertions: loadProfileConnection builds
@@ -776,10 +816,12 @@ func tryServerSyncRead(path, fromProfile, toProfile string) (bool, error) {
 	}
 	resp, err := orchestrator.Get(path, params)
 	if err != nil {
-		return false, nil
+
+		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 	render(resp)
-	return true, nil
+
+	return true, nil // server-side sync ran; the caller must not fall back
 }
 
 func init() {

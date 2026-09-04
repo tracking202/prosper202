@@ -178,3 +178,48 @@ func TestArgCountErrorNamesCommandInEnvelope(t *testing.T) {
 		t.Errorf("exit_code = %v, want %d", env["exit_code"], ExitValidation)
 	}
 }
+
+// A 409 is three unrelated situations. An agent reading "update it instead of
+// creating" after an interrupted apply would do the wrong thing, so each shape
+// must resolve to its own next step.
+func TestConflictHintsAreSpecificPerCause(t *testing.T) {
+	cases := []struct {
+		name    string
+		message string
+		want    string
+	}{
+		{
+			name:    "in flight idempotency retry",
+			message: "A request with this Idempotency-Key is still in flight; retry once it completes to receive the recorded response.",
+			want:    "Wait, then retry the same command",
+		},
+		{
+			name:    "spent idempotency key",
+			message: "A previous request with this Idempotency-Key did not finish, so whether it created the record is unknown and this key can be neither replayed nor reused.",
+			want:    "retry with a new --idempotency-key",
+		},
+		{
+			name:    "interrupted apply",
+			message: "Change chg_0123456789abcdef01234567 was claimed for apply by a process that never finished, so whether the write landed is unknown - it is now recorded as apply_interrupted.",
+			want:    "stage it again if it did not",
+		},
+		{
+			name:    "staged change in the wrong state",
+			message: "Change chg_0123456789abcdef01234567 is applied, not staged - nothing to apply.",
+			want:    "p202 change show",
+		},
+		{
+			name:    "an actual duplicate still gets the create/update hint",
+			message: "A campaign with that name already exists",
+			want:    "update` it instead of creating",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := hintFor(&api.APIError{Status: 409, Message: tc.message})
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("hintFor(409 %q)\n  got:  %q\n  want substring: %q", tc.name, got, tc.want)
+			}
+		})
+	}
+}

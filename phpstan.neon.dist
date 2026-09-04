@@ -1,0 +1,73 @@
+# Committed PHPStan configuration.
+#
+# `phpstan.neon` stays gitignored for local overrides; this .dist file is what
+# CI runs, so the repo's custom rules actually execute. PHPStan prefers
+# phpstan.neon when present and falls back to this.
+#
+# customRulesetUsed disables PHPStan's built-in rule set on purpose. This job
+# exists to enforce the "Error patterns to avoid" list in CLAUDE.md across a
+# large legacy codebase, not to hold that codebase to a type-coverage level.
+# Every rule below maps to a numbered pattern and has cost someone a real bug.
+includes:
+    - phpstan-baseline.neon
+
+parameters:
+    level: 0
+    customRulesetUsed: true
+    phpVersion: 80300
+    bootstrapFiles:
+        - phpstan-legacy-stubs.php
+    paths:
+        - api
+        - 202-config
+        - 202-account
+        - 202-cronjobs
+        - cli
+        - tracking202
+    excludePaths:
+        analyseAndScan:
+            - vendor (?)
+            - node_modules (?)
+
+    # Inline @phpstan-ignore comments predate this config and reference rules
+    # it does not register; an unmatched one is not a failure here.
+    reportUnmatchedIgnoredErrors: false
+
+    # Symbol resolution is not what this job checks. Large parts of the legacy
+    # codebase are procedural includes with no autoloadable symbols, and the
+    # analysis must not depend on which optional packages happen to be
+    # installed — a missing dev dependency would otherwise bury the custom
+    # rule findings this job exists to surface.
+    ignoreErrors:
+        # Three files declare a global `class INDEXES` with incompatible
+        # signatures (202-config/class-indexes.php, functions-tracking202.php,
+        # connect2.php). Each execution path loads exactly one and every call
+        # site matches the copy its own path loads, but PHPStan cannot know
+        # which — and which copy it picks varies by environment: locally it
+        # resolves the static copy and reports arity errors, on CI it resolves
+        # the instance-method copy and reports "static call to instance
+        # method". Every call-site check against this class is therefore
+        # unreliable, so ignore it by name rather than disabling whole
+        # identifiers that catch real problems elsewhere. The duplicate
+        # declarations themselves are tracked by DuplicateGlobalClassTest,
+        # which is where that hazard belongs.
+        - '#\bINDEXES::#'
+        - identifier: class.notFound
+        - identifier: class.noParent
+        - identifier: method.notFound
+        - identifier: staticMethod.notFound
+        - identifier: function.notFound
+        - identifier: includeOnce.fileNotFound
+        - identifier: include.fileNotFound
+
+rules:
+    # CLAUDE.md #1 — unchecked return values after fallible calls.
+    - Prosper202\PHPStan\Rules\ForbidDirectMysqliStmtCallRule
+    # CLAUDE.md #4 — silent data loss on malformed input.
+    - Prosper202\PHPStan\Rules\ForbidSilentJsonDecodeRule
+    # CLAUDE.md #5 — inconsistent security patterns across similar operations.
+    - Prosper202\PHPStan\Rules\ForbidDirectPasswordHashRule
+    # CLAUDE.md #7 — bind_param type string mismatches.
+    - Prosper202\PHPStan\Rules\BindParamArityRule
+    # CLAUDE.md #8 — assumed closure, reference, and capture semantics.
+    - Prosper202\PHPStan\Rules\ForbidArrowFnByRefCaptureRule

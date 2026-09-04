@@ -186,7 +186,7 @@ func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 					fmt.Fprintf(os.Stderr, "Error [%s]: %v\n", cmdStr, builtinErr)
 				}
 				if stopOnError {
-					return fmt.Errorf("stopped on error: %v", builtinErr)
+					return fmt.Errorf("stopped on error: %w", builtinErr)
 				}
 			}
 			if exit {
@@ -208,7 +208,7 @@ func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 				fmt.Fprintf(os.Stderr, "Error [%s]: %v\n", cmdStr, err)
 			}
 			if stopOnError {
-				return fmt.Errorf("stopped on error: %v", err)
+				return fmt.Errorf("stopped on error: %w", err)
 			}
 			continue
 		}
@@ -457,6 +457,11 @@ func executeShellCommand(line string) ([]byte, error) {
 	savedCSV := csvOutput
 	savedProfile := profileName
 	savedGroup := groupName
+	// --staged is a safety promise, not a display preference: losing it in
+	// the reset would make `p202 shell --staged` execute the writes it said
+	// it would only propose. PersistentPreRunE reads this variable on every
+	// Execute(), so it has to be restored like the others.
+	savedStaged := stagedWrites
 	sessionOverride := configpkg.GetActiveOverride()
 
 	resetAllFlags(rootCmd)
@@ -464,6 +469,7 @@ func executeShellCommand(line string) ([]byte, error) {
 	csvOutput = savedCSV
 	profileName = savedProfile
 	groupName = savedGroup
+	stagedWrites = savedStaged
 	// PersistentPreRunE sets the active override from the --profile flag,
 	// which would clobber "use <profile>". Route the session's profile
 	// through the flag variable so the executed command actually uses it.
@@ -483,6 +489,8 @@ func executeShellCommand(line string) ([]byte, error) {
 	csvOutput = savedCSV
 	profileName = savedProfile
 	groupName = savedGroup
+	stagedWrites = savedStaged
+	api.SetStagedMode(savedStaged)
 	configpkg.SetActiveOverride(sessionOverride)
 
 	if cmdErr != nil {

@@ -18,6 +18,25 @@ import (
 
 const maxResponseSize = 10 << 20 // 10 MB
 
+// stagedMode, when set (the root --staged flag), stamps staged=1 onto every
+// mutating request so the server records the write as a proposal (a staged
+// change with a server-issued id) instead of executing it. The
+// /staged-changes endpoints themselves are exempt — applying or discarding a
+// proposal must never itself be staged. Servers advertise support via
+// features.staged_writes; on writes that cannot be staged the server fails
+// closed with a 422 rather than executing.
+var stagedMode = false
+
+// SetStagedMode turns proposal mode on or off for every subsequent request.
+func SetStagedMode(on bool) {
+	stagedMode = on
+}
+
+// StagedMode reports whether proposal mode is on.
+func StagedMode() bool {
+	return stagedMode
+}
+
 type Client struct {
 	rootURL string
 	apiKey  string
@@ -125,12 +144,29 @@ func HintFor(err error) string {
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
 		switch {
+		case apiErr.Status == 403 && strings.Contains(strings.ToLower(apiErr.Message), "scope"):
+			return "This key's scope does not cover the operation. Use a key with the needed scope, or mint one: `p202 user apikey create <user_id> --scope write` (scopes: *, read, write, <area>:read, <area>:write)."
 		case apiErr.Status == 401 || apiErr.Status == 403:
 			return "Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong."
 		case apiErr.Status == 404:
 			return "Not found. Run the matching `... list` to find valid ids (ids are internal — not the public ones in tracking links; some commands accept --public)."
+		// A 409 has several unrelated causes -- a still-running idempotent
+		// retry, a spent Idempotency-Key, an interrupted apply, a staged
+		// change in the wrong state, an actual duplicate -- and "update it
+		// instead of creating" is wrong advice for all but the last. Match
+		// the specific causes first; the duplicate stays the fallback.
+		case apiErr.Status == 409 && strings.Contains(strings.ToLower(apiErr.Message), "still in flight"):
+			return "The first request carrying this Idempotency-Key is still running. Wait, then retry the same command to receive its recorded response."
+		case apiErr.Status == 409 && strings.Contains(strings.ToLower(apiErr.Message), "idempotency-key"):
+			return "That Idempotency-Key is spent and its outcome is unknown. Run the matching `... list` to see whether the record exists, then retry with a new --idempotency-key only if it does not."
+		case apiErr.Status == 409 && strings.Contains(apiErr.Message, "apply_interrupted"):
+			return "The write may or may not have landed. Run the matching `... list` to check, then stage it again if it did not; this change id can no longer be applied or discarded."
+		case apiErr.Status == 409 && strings.Contains(apiErr.Message, "chg_"):
+			return "Only a staged change can be applied or discarded. Run `p202 change show <change_id>` for its current status."
 		case apiErr.Status == 409:
 			return "A matching record already exists. Run the matching `... list` to find it, then `... update` it instead of creating."
+		case (apiErr.Status == 400 || apiErr.Status == 422) && strings.Contains(strings.ToLower(apiErr.Message), "staged is not supported"):
+			return "This endpoint cannot be staged; drop --staged to run the command directly (capabilities lists features.staged_writes)."
 		case apiErr.Status == 422 && len(apiErr.FieldErrors) > 0:
 			return "Fix the field(s) listed above and retry."
 		case apiErr.Status == 400 || apiErr.Status == 422:
@@ -362,6 +398,19 @@ func (c *Client) Post(path string, body interface{}) ([]byte, error) {
 	return c.do("POST", path, nil, body)
 }
 
+// PostIdempotent sends a create with an Idempotency-Key header. Retrying the
+// same key and payload replays the recorded response (idempotent_replay: true
+// in the body) instead of creating a duplicate. Requires a server whose
+// capabilities report features.create_idempotency; older servers ignore the
+// header and create normally.
+func (c *Client) PostIdempotent(path string, body interface{}, idempotencyKey string) ([]byte, error) {
+	key := strings.TrimSpace(idempotencyKey)
+	if key == "" {
+		return c.Post(path, body)
+	}
+	return c.doWithHeaders("POST", path, nil, body, map[string]string{"Idempotency-Key": key})
+}
+
 func (c *Client) Put(path string, body interface{}) ([]byte, error) {
 	return c.do("PUT", path, nil, body)
 }
@@ -371,11 +420,79 @@ func (c *Client) Delete(path string) error {
 	return err
 }
 
+// DeleteReturning is Delete keeping the response body — used when the
+// response carries content, e.g. the 202 staged-change envelope under
+// --staged.
+func (c *Client) DeleteReturning(path string) ([]byte, error) {
+	return c.do("DELETE", path, nil, nil)
+}
+
+// DeletePreview asks the server what a delete would remove without removing
+// it (DELETE with dry_run=1) and returns the preview body. A server that
+// supports previews fails closed per endpoint: paths without preview support
+// reject rather than deleting. A server too old to know the parameter at all
+// would ignore it and perform the delete, so support is confirmed first.
+func (c *Client) DeletePreview(path string) ([]byte, error) {
+	if err := c.requireFeature("delete_dry_run", "--dry-run",
+		"Upgrade the server to 1.9.75 or later, or omit --dry-run and confirm the delete deliberately."); err != nil {
+		return nil, err
+	}
+	return c.do("DELETE", path, map[string]string{"dry_run": "1"}, nil)
+}
+
+// requireFeature refuses to send a request whose safety depends on server
+// support that is not advertised. These parameters are query parameters: a
+// server that predates the feature ignores the unknown parameter and performs
+// the real write, turning a preview or a proposal into an executed delete.
+// Refusing to send is the only fail-closed option available to the client.
+func (c *Client) requireFeature(flag, flagName, remedy string) error {
+	if c.SupportsCapability("features", flag) {
+		return nil
+	}
+	if err := c.CapabilitiesError(); err != nil {
+		return &RequestError{
+			Kind: "network",
+			Op:   "verify_" + flag + "_support",
+			Err: fmt.Errorf("could not confirm the server supports %s (%w); refusing to send it, "+
+				"because a server without support would perform the write instead", flagName, err),
+		}
+	}
+	return &APIError{
+		Status:   422,
+		Category: "validation",
+		Message: fmt.Sprintf("this server does not support %s (capabilities.features.%s is not set); "+
+			"refusing to send it, because a server without support would perform the write instead",
+			flagName, flag),
+		FieldErrors: map[string]string{flag: remedy},
+	}
+}
+
 func (c *Client) do(method, path string, params map[string]string, body interface{}) ([]byte, error) {
+	return c.doWithHeaders(method, path, params, body, nil)
+}
+
+func (c *Client) doWithHeaders(method, path string, params map[string]string, body interface{}, headers map[string]string) ([]byte, error) {
 	// Read once under the lock: version negotiation can rewrite baseURL from
 	// another goroutine, and the URL and the version header below must agree.
 	baseURL := c.currentBaseURL()
 	u := baseURL + "/" + strings.TrimLeft(path, "/")
+
+	if stagedMode &&
+		(method == "POST" || method == "PUT" || method == "PATCH" || method == "DELETE") &&
+		!strings.HasPrefix(strings.TrimLeft(path, "/"), "staged-changes") &&
+		params["dry_run"] == "" {
+		// A dry-run preview is a read; staging it would be rejected by the
+		// server's mutual-exclusion check, so an explicit --dry-run wins
+		// over the global --staged mode.
+		if err := c.requireFeature("staged_writes", "--staged",
+			"Upgrade the server to 1.9.75 or later, or drop --staged to perform the write directly."); err != nil {
+			return nil, err
+		}
+		if params == nil {
+			params = map[string]string{}
+		}
+		params["staged"] = "1"
+	}
 
 	if len(params) > 0 {
 		v := url.Values{}
@@ -405,6 +522,9 @@ func (c *Client) do(method, path string, params map[string]string, body interfac
 	req.Header.Set("User-Agent", "p202-cli/2.0 (Go)")
 	if idx := strings.LastIndex(baseURL, "/api/v"); idx != -1 {
 		req.Header.Set("X-P202-API-Version", baseURL[idx+5:])
+	}
+	for name, value := range headers {
+		req.Header.Set(name, value)
 	}
 
 	resp, err := c.http.Do(req)

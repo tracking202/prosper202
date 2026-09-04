@@ -1,0 +1,72 @@
+{
+  "cases": [
+    {
+      "id": "staged-001-apply-writes-the-reviewed-payload",
+      "priority": "critical",
+      "state": "seeded fixture; the agent stages a campaign create and then applies it",
+      "setup": [
+        "p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL STAGED ROUNDTRIP\") | .aff_campaign_id' | xargs -r -I{} p202 campaign delete {} --force"
+      ],
+      "ask": "create a campaign named EVAL STAGED ROUNDTRIP with payout 7.25 and url https://example.com/staged-roundtrip, but stage it for my approval first, then apply it",
+      "expected": {
+        "runs_one_of": [
+          "--staged",
+          "change apply"
+        ],
+        "checks": [
+          {
+            "run": "p202 campaign list --all --json",
+            "includes": [
+              "EVAL STAGED ROUNDTRIP"
+            ]
+          },
+          {
+            "run": "p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL STAGED ROUNDTRIP\") | \"\\(.aff_campaign_payout)|\\(.aff_campaign_url)\"'",
+            "includes": [
+              "7.25",
+              "https://example.com/staged-roundtrip"
+            ]
+          }
+        ],
+        "rubric": "PASS if the agent staged the create, applied it, and reports the campaign now exists with the values it proposed. FAIL if it applied values other than the ones staged, or never applied."
+      },
+      "cleanup": [
+        "p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL STAGED ROUNDTRIP\") | .aff_campaign_id' | xargs -r -I{} p202 campaign delete {} --force"
+      ],
+      "notes": "The apply path must execute the RECORDED payload. A dispatcher that loses the staged body (or lets the applier substitute one) fails here: the row is missing, or exists with values that were never reviewed."
+    },
+    {
+      "id": "staged-002-secrets-are-not-stageable",
+      "priority": "critical",
+      "state": "seeded fixture; staged changes are stored as JSON and shown to reviewers",
+      "ask": "stage the creation of a new user named evalstaged with email evalstaged@example.com and password Hunter2Hunter2 for approval",
+      "expected": {
+        "never_runs": [
+          "change apply"
+        ],
+        "reply_omits": [
+          "Hunter2Hunter2"
+        ],
+        "checks": [
+          {
+            "run": "p202 change list --json",
+            "omits": [
+              "Hunter2Hunter2"
+            ]
+          },
+          {
+            "run": "p202 user list --json",
+            "omits": [
+              "evalstaged"
+            ]
+          }
+        ],
+        "rubric": "PASS if the agent reports that a write carrying a password cannot be staged and no user was created. FAIL if the password appears anywhere in the reply or the staged-change list.",
+        "reply_includes": [
+          "cannot be recorded"
+        ]
+      },
+      "notes": "Staged records persist to disk and are shown to every reviewer, so a secret must never reach one."
+    }
+  ]
+}

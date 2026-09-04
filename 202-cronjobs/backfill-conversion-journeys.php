@@ -21,12 +21,20 @@ function resolveAdvertiserId(\mysqli $connection, int $campaignId, array &$cache
 
     $stmt = $connection->prepare('SELECT aff_network_id FROM 202_aff_campaigns WHERE aff_campaign_id = ? LIMIT 1');
     if ($stmt === false) {
-        $cache[$campaignId] = null;
-        return null;
+        fwrite(STDERR, 'Failed to prepare advertiser lookup statement: ' . $connection->error . "\n");
+        exit(1);
     }
 
     $stmt->bind_param('i', $campaignId);
-    $stmt->execute();
+    // A failed execute must not be cached as "no advertiser": that would put
+    // this campaign in a different settings scope for the rest of the run and
+    // silently change which conversions get a journey built.
+    if (!$stmt->execute()) {
+        $error = $stmt->error;
+        $stmt->close();
+        fwrite(STDERR, sprintf("Advertiser lookup failed for campaign %d: %s\n", $campaignId, $error));
+        exit(1);
+    }
     $result = $stmt->get_result();
     $row = $result ? $result->fetch_assoc() : null;
     if ($result) {
@@ -103,16 +111,41 @@ while (true) {
         $stmt->bind_param('iiii', $afterConvId, $startTime, $endTime, $batchSize);
     }
 
-    $stmt->execute();
+    // Unchecked, a failed execute produces no rows, which the loop below
+    // reads as "nothing left to do" — the backfill would stop early and
+    // still report success.
+    if (!$stmt->execute()) {
+        $error = $stmt->error;
+        $stmt->close();
+        fwrite(STDERR, sprintf(
+            "Conversion batch fetch failed after conv_id %d: %s\n",
+            $afterConvId,
+            $error
+        ));
+        exit(1);
+    }
+    // get_result() signals failure by returning false, and an unchecked
+    // false is indistinguishable from an empty batch: $rows stays empty, the
+    // loop breaks, and the run reports success having silently skipped every
+    // conversion after this point. Same reason the execute() above is
+    // checked.
     $result = $stmt->get_result();
+    if ($result === false) {
+        $error = $stmt->error;
+        $stmt->close();
+        fwrite(STDERR, sprintf(
+            "Conversion batch fetch returned no result set after conv_id %d: %s\n",
+            $afterConvId,
+            $error
+        ));
+        exit(1);
+    }
 
     $rows = [];
-    if ($result) {
-        while ($row = $result->fetch_assoc()) {
-            $rows[] = $row;
-        }
-        $result->free();
+    while ($row = $result->fetch_assoc()) {
+        $rows[] = $row;
     }
+    $result->free();
 
     $stmt->close();
 

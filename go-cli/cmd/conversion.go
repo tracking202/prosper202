@@ -116,7 +116,8 @@ var conversionCreateCmd = &cobra.Command{
 		if v, _ := cmd.Flags().GetString("transaction_id"); v != "" {
 			body["transaction_id"] = v
 		}
-		data, err := c.Post("conversions", body)
+		idemKey, _ := cmd.Flags().GetString("idempotency-key")
+		data, err := c.PostIdempotent("conversions", body, idemKey)
 		if err != nil {
 			return err
 		}
@@ -131,9 +132,9 @@ var conversionDeleteCmd = &cobra.Command{
 	Args:  deleteArgsValidator,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runBulkOrSingleDelete(cmd, args, deleteSpec{
-			urlFor: func(id string) string { return "conversions/" + id },
-			noun:   "conversion",
-			plural: "conversions",
+			endpoint: "conversions",
+			noun:     "conversion",
+			plural:   "conversions",
 		})
 	},
 }
@@ -153,9 +154,9 @@ func init() {
 	conversionCreateCmd.Flags().String("payout", "", "Payout amount")
 	conversionCreateCmd.Flags().String("conversion_payout", "", "Legacy alias for --payout")
 	conversionCreateCmd.Flags().String("transaction_id", "", "Transaction ID for deduplication")
+	registerIdempotencyKeyFlag(conversionCreateCmd)
 
-	conversionDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
-	conversionDeleteCmd.Flags().String("ids", "", "Comma-separated conversion IDs to delete in bulk")
+	registerDeleteFlags(conversionDeleteCmd, "conversion")
 
 	conversionCmd.AddCommand(conversionListCmd, conversionGetCmd, conversionCreateCmd, conversionDeleteCmd)
 	rootCmd.AddCommand(conversionCmd)

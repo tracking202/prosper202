@@ -17,6 +17,14 @@ function getStats($db, $variables): mixed {
 
 	if($key_result->num_rows > 0) {
 
+		// A v3-scoped key is an attenuated credential. This legacy API
+		// predates scoping and cannot enforce it, so refuse the key
+		// outright rather than granting more than its scope allows.
+		$legacy_key_scope = strtolower(trim((string) ($key_row['scope'] ?? '')));
+		if ($legacy_key_scope !== '' && $legacy_key_scope !== '*') {
+			return ['msg' => 'This API key is scoped and only valid for the v3 API', 'error' => true, 'status' => 403];
+		}
+
 		$mysql['user_id'] = $db->real_escape_string($key_row['user_id']);
 		$user_sql = "SELECT 	`user_timezone`
 					FROM   	`202_users`

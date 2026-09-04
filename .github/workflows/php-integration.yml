@@ -27,7 +27,7 @@ jobs:
           --health-retries=10
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
@@ -61,7 +61,7 @@ jobs:
 
       - name: Wait for MySQL
         run: |
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if mysqladmin ping -h 127.0.0.1 -P 3306 -uroot -proot --silent; then
               echo "MySQL is up"; exit 0
             fi
@@ -84,4 +84,12 @@ jobs:
           vendor/bin/phpunit --configuration phpunit.ci.xml \
             --group integration \
             tests/Conversion/ConversionIdempotencyIntegrationTest.php \
+            --verbose --no-coverage
+          # Checks the SQL the v3 API ships against the schema it ships, by
+          # preparing every statically-known statement on a real server. It
+          # needs its own database because it installs a fresh schema.
+          mysql -h 127.0.0.1 -uroot -proot -e 'DROP DATABASE IF EXISTS p202_sqlcheck; CREATE DATABASE p202_sqlcheck;'
+          P202_TEST_DB_NAME=p202_sqlcheck vendor/bin/phpunit --configuration phpunit.ci.xml \
+            --group integration \
+            tests/Schema/StaticSqlSchemaTest.php \
             --verbose --no-coverage

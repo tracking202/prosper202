@@ -24,6 +24,7 @@ var rawHeaders bool
 var fieldsFlag string
 var profileName string
 var groupName string
+var stagedWrites bool
 
 var rootCmd = &cobra.Command{
 	Use:   "p202",
@@ -35,6 +36,7 @@ var rootCmd = &cobra.Command{
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		activeCommandPath = cmd.CommandPath()
 		configpkg.SetActiveOverride(profileName)
+		api.SetStagedMode(stagedWrites)
 		if jsonOutput && csvOutput {
 			return validationError("--json and --csv cannot be used together").WithHint("Pick one output mode.")
 		}
@@ -107,7 +109,8 @@ func printError(w io.Writer, err error) {
 		enc := json.NewEncoder(&buf)
 		enc.SetEscapeHTML(false)
 		if mErr := enc.Encode(errorEnvelope(err)); mErr == nil {
-			w.Write(buf.Bytes())
+			// Nothing to report a failed write to: this IS the error path.
+			_, _ = w.Write(buf.Bytes())
 			return
 		}
 	}
@@ -144,6 +147,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&fieldsFlag, "fields", "", "Comma-separated columns to show, in order")
 	rootCmd.PersistentFlags().StringVar(&profileName, "profile", "", "Use a named configuration profile")
 	rootCmd.PersistentFlags().StringVar(&groupName, "group", "", "Use a tag group of profiles for multi-profile commands")
+	rootCmd.PersistentFlags().BoolVar(&stagedWrites, "staged", false, "Stage writes for approval instead of executing them (server records a change id; see `p202 change`)")
 }
 
 // resetAllFlags restores every flag in the command tree to its default value

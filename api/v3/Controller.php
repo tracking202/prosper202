@@ -8,6 +8,7 @@ use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\StatementHelpers;
 
@@ -440,9 +441,16 @@ abstract class Controller
         $insertId = $stmt->insert_id;
         $stmt->close();
 
-        $this->afterCreate($insertId, $clean);
-        $created = $this->get($insertId);
-        $this->recordChange('create', (array)$created['data']);
+        // The row exists from here on. A failure past this point is not a
+        // failed create, and must not be reported as one: the caller would
+        // retry and make a second row. See WriteCommittedException.
+        try {
+            $this->afterCreate($insertId, $clean);
+            $created = $this->get($insertId);
+            $this->recordChange('create', (array)$created['data']);
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException($this->changeEntityName() ?? 'record', $e);
+        }
 
         return $created;
     }
@@ -506,8 +514,14 @@ abstract class Controller
         $this->execute($stmt, 'Update failed');
         $stmt->close();
 
-        $updated = $this->get($id);
-        $this->recordChange('update', (array)$updated['data']);
+        // As in create(): the write has landed, so a later failure must not
+        // read as "the update did not happen".
+        try {
+            $updated = $this->get($id);
+            $this->recordChange('update', (array)$updated['data']);
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException($this->changeEntityName() ?? 'record', $e);
+        }
         return $updated;
     }
 
@@ -547,7 +561,29 @@ abstract class Controller
         $this->execute($stmt, 'Delete failed');
         $stmt->close();
 
-        $this->recordChange('delete', (array)$existing['data']);
+        try {
+            $this->recordChange('delete', (array)$existing['data']);
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException($this->changeEntityName() ?? 'record', $e);
+        }
+    }
+
+    /**
+     * Read-only preview of delete(): the record that would be removed,
+     * without removing it. Backs `?dry_run=1` on DELETE routes. Controllers
+     * whose deletes cascade override this to report the cascade too.
+     */
+    public function deletePreview(int|string $id): array
+    {
+        $existing = $this->get($id);
+        return ['data' => [
+            'dry_run' => true,
+            'action' => 'delete',
+            'resource' => $this->changeEntityName() ?? $this->tableName(),
+            'mode' => $this->deletedColumn() !== null ? 'soft' : 'hard',
+            'record' => $existing['data'],
+            'cascade' => [],
+        ]];
     }
 
     public function bulkUpsert(array $payload): array
@@ -566,10 +602,24 @@ abstract class Controller
             throw new ValidationException('rows exceeds max size', ['rows' => "Maximum {$maxRows} rows per request"]);
         }
 
-        $requestHash = ServerStateStore::canonicalHash(['rows' => $rows]);
-        $scope = 'bulk-upsert:' . $this->tableName() . ':user:' . $this->userId . ':request:' . $requestHash;
-        $existing = $this->stateStore()->getIdempotent($scope, $idempotencyKey);
-        if (is_array($existing)) {
+        // The target table and the rows are a fingerprint recorded beside
+        // the response, not part of the scope: with them in the scope a key
+        // reused for a changed batch (or a different table) reads a
+        // different file, finds nothing, and re-applies the whole batch —
+        // the duplicate the key was sent to prevent.
+        $requestHash = ServerStateStore::idempotencyFingerprint('bulk-upsert:' . $this->tableName(), ['rows' => $rows]);
+        $scope = ServerStateStore::idempotencyScopeForUser($this->userId);
+        $lookup = $this->stateStore()->lookupIdempotent($scope, $idempotencyKey, $requestHash);
+        if ($lookup['state'] === 'mismatch') {
+            throw new ValidationException(
+                'This Idempotency-Key was already used for a different request. Resend the original '
+                . 'rows to this same endpoint to replay the recorded response, or send a new '
+                . 'Idempotency-Key for a different batch.',
+                ['idempotency_key' => 'Already used for a different request']
+            );
+        }
+        if ($lookup['state'] === 'replay' && is_array($lookup['response'])) {
+            $existing = $lookup['response'];
             $existing['idempotent_replay'] = true;
             return $existing;
         }
@@ -647,7 +697,7 @@ abstract class Controller
         $this->stateStore()->incrementMetric('bulk_upsert_updated', (int)$summary['updated']);
         $this->stateStore()->incrementMetric('bulk_upsert_skipped', (int)$summary['skipped']);
         $this->stateStore()->incrementMetric('bulk_upsert_errors', (int)$summary['error']);
-        $this->stateStore()->putIdempotent($scope, $idempotencyKey, $response);
+        $this->stateStore()->putIdempotent($scope, $idempotencyKey, $response, $requestHash);
 
         return $response;
     }

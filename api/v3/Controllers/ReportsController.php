@@ -29,6 +29,14 @@ class ReportsController
         'text_ad'      => ['table' => '202_text_ads',            'id' => 'text_ad_id',       'name' => 'text_ad_name',       'de_id' => 'text_ad_id'],
     ];
 
+    /**
+     * Breakdown dimensions whose `name` values are visitor-authored or
+     * visitor-derived (keywords from tracking-link parameters, geo/ISP names
+     * from the visitor's IP, browser/platform/device names from the user
+     * agent). These are sanitized on the way out — see ResponseSanitizer.
+     */
+    private const array VISITOR_AUTHORED_BREAKDOWNS = ['keyword', 'city', 'region', 'isp', 'browser', 'platform', 'device'];
+
     private const array ALLOWED_SORTS = ['total_clicks', 'total_leads', 'total_income', 'total_cost', 'total_net', 'roi', 'epc', 'conv_rate'];
     private const array DAYPART_ALLOWED_SORTS = [
         'hour_of_day',
@@ -177,8 +185,12 @@ class ReportsController
         $this->execute($stmt, 'Breakdown query failed');
         $result = $stmt->get_result();
 
+        $sanitizeNames = in_array($breakdownType, self::VISITOR_AUTHORED_BREAKDOWNS, true);
         $rows = [];
         while ($row = $result->fetch_assoc()) {
+            if ($sanitizeNames) {
+                $row = \Api\V3\Support\ResponseSanitizer::cleanRowFields($row, ['name']);
+            }
             $rows[] = $row;
         }
         $stmt->close();

@@ -40,6 +40,36 @@ class CapabilitiesController
                     'force_update' => true,
                     'server_fk_remap' => true,
                 ],
+                'features' => [
+                    // Scoped API keys: creation accepts a scope; every route
+                    // enforces <area>:read/<area>:write (see Auth::hasScope).
+                    'api_key_scopes' => $this->apiKeyScopesEnabled(),
+                    // Idempotency-Key honored on single POST creates across
+                    // the operator surface (CRUD entities, conversions,
+                    // rotators + rules, attribution models + exports, users).
+                    // LTV write endpoints keep their own upsert/dedup
+                    // semantics; API-key creation is excluded (secret
+                    // responses are never stored for replay).
+                    'create_idempotency' => true,
+                    // ?dry_run=1 on DELETE previews the delete (record +
+                    // cascade counts) without performing it, across the
+                    // operator surface: CRUD entities, conversions, rotators
+                    // + rules, attribution models, users, API keys, roles.
+                    // Unsupported endpoints reject rather than fall through.
+                    'delete_dry_run' => true,
+                    // Visitor-authored strings (keyword/city/region/ISP/
+                    // browser/platform/device names) are stripped of
+                    // control and bidirectional characters and length-capped
+                    // at serialization (ResponseSanitizer).
+                    'response_sanitization' => true,
+                    // ?staged=1 on an operator-surface write records it as a
+                    // proposal with a server-issued change id instead of
+                    // executing; /staged-changes lists, applies, and
+                    // discards. Applying re-runs the write in full against
+                    // current state and the applier's credentials. The
+                    // `stage` scope action mints propose-only keys.
+                    'staged_writes' => true,
+                ],
                 'limits' => [
                     'max_bulk_rows' => $this->maxBulkRows(),
                     'max_job_concurrency' => 5,
@@ -58,6 +88,16 @@ class CapabilitiesController
                 ],
             ],
         ];
+    }
+
+    /**
+     * Scope enforcement always runs; what "enabled" means for clients is
+     * whether scoped keys can actually be minted, which needs the scope
+     * column on 202_api_keys (fresh installs have it; 1.9.75 backfills).
+     */
+    private function apiKeyScopesEnabled(): bool
+    {
+        return \Api\V3\Auth::apiKeyScopeColumnExists($this->db);
     }
 
     private function entitySupport(): array

@@ -7,6 +7,7 @@ namespace Api\V3\Controllers;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
+use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\StatementHelpers;
 
@@ -150,7 +151,11 @@ class AttributionController
         $id = $stmt->insert_id;
         $stmt->close();
 
-        return $this->getModel($id);
+        try {
+            return $this->getModel($id);
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException('attribution model', $e);
+        }
     }
 
     public function updateModel(int $id, array $payload): array
@@ -210,6 +215,58 @@ class AttributionController
         $stmt->close();
 
         return $this->getModel($id);
+    }
+
+    /**
+     * Read-only preview of deleteModel() for `?dry_run=1`: the model plus
+     * the counts of the snapshot/touchpoint/export rows the cascade removes.
+     */
+    public function deleteModelPreview(int $id): array
+    {
+        $model = $this->getModel($id)['data'];
+
+        $snapshots = $this->countRows(
+            'SELECT COUNT(*) AS c FROM 202_attribution_snapshots WHERE model_id = ? AND user_id = ?',
+            'ii',
+            $id,
+            $this->userId
+        );
+        $touchpoints = $this->countRows(
+            'SELECT COUNT(*) AS c FROM 202_attribution_touchpoints WHERE snapshot_id IN '
+            . '(SELECT snapshot_id FROM 202_attribution_snapshots WHERE model_id = ? AND user_id = ?)',
+            'ii',
+            $id,
+            $this->userId
+        );
+        $exports = $this->countRows(
+            'SELECT COUNT(*) AS c FROM 202_attribution_exports WHERE model_id = ? AND user_id = ?',
+            'ii',
+            $id,
+            $this->userId
+        );
+
+        return ['data' => [
+            'dry_run' => true,
+            'action' => 'delete',
+            'resource' => 'attribution-models',
+            'mode' => 'hard',
+            'record' => $model,
+            'cascade' => [
+                ['resource' => 'attribution-snapshots', 'count' => $snapshots],
+                ['resource' => 'attribution-touchpoints', 'count' => $touchpoints],
+                ['resource' => 'attribution-exports', 'count' => $exports],
+            ],
+        ]];
+    }
+
+    private function countRows(string $sql, string $types, mixed ...$binds): int
+    {
+        $stmt = $this->prepare($sql);
+        $this->bind($stmt, $types, ...$binds);
+        $this->execute($stmt, 'Count query failed');
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        return (int)($row['c'] ?? 0);
     }
 
     public function deleteModel(int $id): void
@@ -329,11 +386,16 @@ class AttributionController
         $exportId = $stmt->insert_id;
         $stmt->close();
 
-        $stmt = $this->prepare('SELECT export_id, user_id, model_id, scope_type, scope_id, start_hour, end_hour, requested_format, status, queued_at, created_at, updated_at, webhook_url FROM 202_attribution_exports WHERE export_id = ?');
-        $this->bind($stmt, 'i', $exportId);
-        $this->execute($stmt, 'Query failed');
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
+        // The export is queued from here; only reading it back can fail.
+        try {
+            $stmt = $this->prepare('SELECT export_id, user_id, model_id, scope_type, scope_id, start_hour, end_hour, requested_format, status, queued_at, created_at, updated_at, webhook_url FROM 202_attribution_exports WHERE export_id = ?');
+            $this->bind($stmt, 'i', $exportId);
+            $this->execute($stmt, 'Query failed');
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException('attribution export', $e);
+        }
 
         return ['data' => $row];
     }
