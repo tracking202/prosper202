@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 
+	"p202/internal/api"
+
 	"github.com/spf13/cobra"
 )
 
@@ -160,19 +162,28 @@ var execCmd = &cobra.Command{
 	},
 }
 
+// execChildArgs builds the argv for one profile's child process. Split out
+// so the flags that must survive the process boundary are testable: a child
+// inherits none of the parent's, and --staged silently not crossing would
+// turn a proposal into a performed write.
+func execChildArgs(call execCall) []string {
+	args := []string{"--profile", call.Profile}
+	if call.ForceJSON {
+		args = append(args, "--json")
+	}
+	if api.StagedMode() {
+		args = append(args, "--staged")
+	}
+	return append(args, call.SubArgs...)
+}
+
 func defaultExecProfileRunner(call execCall) execResult {
 	executable, err := os.Executable()
 	if err != nil {
 		return execResult{Profile: call.Profile, ExitCode: 1, Err: err}
 	}
 
-	args := []string{"--profile", call.Profile}
-	if call.ForceJSON {
-		args = append(args, "--json")
-	}
-	args = append(args, call.SubArgs...)
-
-	command := osexec.Command(executable, args...)
+	command := osexec.Command(executable, execChildArgs(call)...)
 	// Capture stdout and stderr into distinct buffers so per-profile JSON on
 	// stdout parses cleanly and stderr (warnings, hints) is reported separately
 	// instead of being mixed in by CombinedOutput().

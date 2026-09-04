@@ -106,3 +106,94 @@ func TestSyncStillRunsWhenStagedModeIsOff(t *testing.T) {
 		t.Fatalf("ordinary sync was refused as staged: %v", err)
 	}
 }
+
+// --staged is a safety promise. The shell resets the whole flag tree between
+// commands, so without an explicit save/restore the session's --staged is
+// gone by the time PersistentPreRunE runs and the write executes for real.
+func TestShellPreservesStagedModeAcrossCommands(t *testing.T) {
+	savedStaged := stagedWrites
+	defer func() {
+		stagedWrites = savedStaged
+		api.SetStagedMode(false)
+	}()
+
+	stagedWrites = true
+	api.SetStagedMode(true)
+
+	// Any command will do; what matters is the flag state afterwards.
+	_, _ = executeShellCommand("config get")
+
+	if !stagedWrites {
+		t.Error("stagedWrites was cleared by the shell's flag reset")
+	}
+	if !api.StagedMode() {
+		t.Error("api staged mode was cleared by the shell's flag reset")
+	}
+}
+
+func TestShellDoesNotInventStagedModeWhenTheSessionIsWithoutIt(t *testing.T) {
+	savedStaged := stagedWrites
+	defer func() {
+		stagedWrites = savedStaged
+		api.SetStagedMode(false)
+	}()
+
+	stagedWrites = false
+	api.SetStagedMode(false)
+
+	_, _ = executeShellCommand("config get")
+
+	if stagedWrites || api.StagedMode() {
+		t.Error("the shell turned staged mode on for a session that did not ask for it")
+	}
+}
+
+// exec runs each profile in a child process, which inherits no flags.
+func TestExecForwardsStagedModeToChildren(t *testing.T) {
+	defer api.SetStagedMode(false)
+
+	api.SetStagedMode(true)
+	args := execChildArgs(execCall{Profile: "prod", ForceJSON: true, SubArgs: []string{"campaign", "delete", "42"}})
+	if !containsArg(args, "--staged") {
+		t.Errorf("child args %v do not carry --staged", args)
+	}
+
+	api.SetStagedMode(false)
+	args = execChildArgs(execCall{Profile: "prod", ForceJSON: true, SubArgs: []string{"campaign", "list"}})
+	if containsArg(args, "--staged") {
+		t.Errorf("child args %v carry --staged when the parent had none", args)
+	}
+}
+
+func containsArg(args []string, want string) bool {
+	for _, a := range args {
+		if a == want {
+			return true
+		}
+	}
+	return false
+}
+
+// An explicitly empty --scope is malformed input, not "no scope". Dropping it
+// makes the server default to full access, so the CLI must refuse first.
+func TestEmptyScopeIsRefusedRatherThanMintingFullAccess(t *testing.T) {
+	for _, sub := range []string{"create", "rotate"} {
+		t.Run(sub, func(t *testing.T) {
+			var err error
+			if sub == "create" {
+				_, _, err = executeCommand("user", "apikey", "create", "1", "--scope", "")
+			} else {
+				_, _, err = executeCommand("user", "apikey", "rotate", "1", "0123456789abcdef", "--scope", "")
+			}
+			if err == nil {
+				t.Fatalf("apikey %s --scope \"\" must be refused", sub)
+			}
+			if !strings.Contains(err.Error(), "empty value") {
+				t.Errorf("message = %q, want it to name the empty --scope", err.Error())
+			}
+			if code := exitCodeForError(err); code != 1 {
+				t.Errorf("exit code = %d, want 1 (validation)", code)
+			}
+		})
+	}
+}

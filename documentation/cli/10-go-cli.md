@@ -63,6 +63,7 @@ All entities support standard CRUD operations (`list`, `get`, `create`, `update`
 
 - every `create` takes `--idempotency-key <key>` — a retry with the same key and payload replays the recorded response instead of creating a duplicate (`features.create_idempotency`);
 - every `delete` (including `--ids` bulk and `rotator rule-delete` / `user role remove` / `user apikey delete`) takes `--dry-run` — a read-only preview of the record and cascade counts the delete would remove (`features.delete_dry_run`);
+- `p202 user apikey create|rotate` refuse an *explicitly empty* `--scope` (`--scope "$SCOPE"` with the variable unset): omitting the flag means full access by design, but a blank value is malformed input and must not silently mint a full-access credential;
 - the global `--staged` flag turns any write into a recorded proposal with a server-issued change id instead of executing it; `p202 change list|show|apply|discard` reviews and resolves the queue, with the write re-validated at apply time (`features.staged_writes`);
 - `user apikey create` takes `--scope` to mint least-privilege keys (`*`, `read`, `write`, `stage`, or `<area>:read`/`<area>:write`/`<area>:stage` tokens — `read,stage` is the propose-only agent shape), and `user apikey rotate` carries the old key's scope onto the replacement (`features.api_key_scopes`).
 
@@ -261,6 +262,12 @@ scope, minting a key with `--scope`; 404 use `list` for ids; 429 back off;
 5xx retry then `p202 system health`; network check the URL and `p202 config
 test`); and for any remaining validation error, a pointer to `<command>
 --help`.
+
+`--staged` holds across the nested runners too: the interactive shell resets
+the whole flag tree between commands, so it saves and restores the session's
+staged mode (otherwise `p202 shell --staged` would execute the writes it
+promised to propose), and `p202 exec` passes the flag to each profile's child
+process, which inherits nothing from its parent.
 
 `p202 sync` and `p202 re-sync` refuse `--staged` outright: a sync resolves
 each entity's foreign keys from ids the preceding creates returned, and a

@@ -293,8 +293,21 @@ var userAPIKeyCreateCmd = &cobra.Command{
 			return err
 		}
 		var body interface{}
-		if scope, _ := cmd.Flags().GetString("scope"); strings.TrimSpace(scope) != "" {
-			body = map[string]string{"scope": strings.TrimSpace(scope)}
+		scope, _ := cmd.Flags().GetString("scope")
+		scope = strings.TrimSpace(scope)
+		// Omitting --scope means full access, by design. Passing it *empty*
+		// does not: that is a caller whose intended scope came out blank
+		// (`--scope "$SCOPE"` with SCOPE unset), and silently minting a
+		// full-access credential is the worst possible reading of it. The
+		// server rejects an explicitly empty scope too; this refuses before
+		// a key is created at all.
+		if cmd.Flags().Changed("scope") && scope == "" {
+			return validationError("--scope was given an empty value").
+				WithHint("Name the scope (`read`, `write`, or `<area>:read`/`<area>:write`, comma-separated), " +
+					"or omit --scope entirely to mint a full-access key on purpose.")
+		}
+		if scope != "" {
+			body = map[string]string{"scope": scope}
 		}
 		data, err := c.Post("users/"+args[0]+"/api-keys", body)
 		if err != nil {
@@ -361,6 +374,12 @@ var userAPIKeyRotateCmd = &cobra.Command{
 		// fails the rotation rather than silently minting a full-access key.
 		scope, _ := cmd.Flags().GetString("scope")
 		scope = strings.TrimSpace(scope)
+		// Same rule as create: an explicitly empty --scope is malformed
+		// input, not "carry the old scope".
+		if cmd.Flags().Changed("scope") && scope == "" {
+			return validationError("--scope was given an empty value").
+				WithHint("Name the new key's scope, or omit --scope to carry the old key's scope forward.")
+		}
 		if scope == "" {
 			if len(oldAPIKey) < 8 {
 				// Too short to match a masked prefix, so the old scope
