@@ -233,11 +233,37 @@ Check here before burning time on tooling failures.
   dropped errors rather than style. Run `golangci-lint run ./...` from
   `go-cli/` before pushing.
 
-## Verification hygiene
+## Verify your assumptions
 
-Most of the wrong conclusions in this repo have come not from bad code but
-from checks that did not check what they appeared to. Every one of these was
-caught only because the *result* was surprising enough to chase.
+**Before stating something as fact, know how you know it.** Nearly every wrong
+conclusion recorded here came from an assumption that was never checked — not
+from bad code. The failure mode is always the same: something is *inferred*
+(from reading code, from a green local run, from a plausible-looking output)
+and then *reported* as though it were established.
+
+Three habits, in order of how often they would have helped:
+
+- **Execute the mechanism, do not reason about it.** Reading a signature, a
+  config, or a comment yields an argument; running it yields a fact. Both are
+  useful, but only the second settles anything. A ten-line `php -r` or a
+  throwaway probe takes a minute. Real examples that a minute would have
+  caught: assuming one `bind()` signature existed when the codebase had two
+  shapes across eleven definitions; asserting in a comment that `is_dir()`
+  caches a negative stat, which it does not; and error pattern #8 above, the
+  arrow-function capture bug that started this list.
+- **Never report what you have not checked.** "Tests pass" means the suite you
+  ran, in the environment you ran it in. It is not a claim about CI, and
+  saying so after pushing without looking is how a red build gets announced as
+  green. State the scope: which suites, which environment, what could not run.
+- **A surprising result is a signal to investigate, not to conclude.** When
+  output disagrees with expectation, the first hypothesis should be that the
+  *check* is wrong, not the code. Eight concurrent workers producing three
+  distinct lines was interleaved stdout, not split brain; a probe that changed
+  nothing had been aimed at the wrong directory; a test that passed against a
+  "reverted" fix had a revert that silently did not apply.
+
+The rest of this section is the same principle applied to checks — the places
+where a check quietly fails to check what it appears to.
 
 - **Assert that a planted defect actually landed.** The standard way to prove a
   test is not vacuous is to revert the fix and watch it fail. A `str.replace`
@@ -266,6 +292,12 @@ caught only because the *result* was surprising enough to chase.
   namespaced, static global. The first "it works" run exercised one of them.
   Derive shapes from the callee's own signature rather than a hardcoded class
   list — the codebase had eleven `bind()` methods in two shapes.
+- **A claim about the tree is not a claim about CI until CI says so.** After
+  pushing, read the run: a workflow that is still `in_progress` has not passed.
+  Where a difference between environments is plausible (this sandbox runs on a
+  partial `vendor/`), measure the exposure rather than waiting to find out —
+  e.g. instrument a new rule to report every site it *declines* to analyse; if
+  that count is zero, fuller symbol resolution cannot surface new findings.
 - **Local green is not CI green when the environment carries ambient state.**
   A `--scope` check placed after `api.NewFromConfig()` passed here only
   because this sandbox has a URL configured; CI has none, so the config error
