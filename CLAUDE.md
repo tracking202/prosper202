@@ -8,6 +8,16 @@ Prosper202 — PHP 8.3 affiliate tracking platform with REST API v3 (mysqli, PSR
 ### 1. Unchecked return values after fallible calls
 `$stmt->execute()` can return false without throwing. Every execute() must be checked: `if (!$stmt->execute()) { $stmt->close(); throw ...; }`. Same applies to `$db->query()`, `json_encode()`, and any call that signals failure via return value rather than exception. This is especially critical inside transactions — an unchecked failure means partial operations get committed.
 
+The list is not just `execute()`, and writing this rule down did not stop the
+same shape shipping three more times. The ones that actually bit:
+`$stmt->get_result()` (false reads as an **empty result set**, so a batch loop
+exits and the job reports success), `$stmt->store_result()` (false leaves
+`num_rows` at 0, which reads as "not found"), `$conn->prepare()` (false skips
+whatever the statement guarded, in silence), and Go's `json.Marshal` assigned
+to `_` (renders nothing, exits 0). When a false return is
+*indistinguishable from a legitimate empty answer*, the failure is silent by
+construction — that is the tell, not the function name.
+
 ### 2. Dead code referencing nonexistent schema
 Never reference DB columns, tables, or config keys without verifying they exist in the actual schema. Code that calls `prepare()` with nonexistent columns fails silently or crashes depending on the error handling path. When adding features that touch the DB, confirm the schema first.
 
@@ -63,6 +73,47 @@ excuse to skip this), and add a case under
 `tests/fixtures/agent-eval/cases/` when the capability is agent-facing.
 When reporting status, say which paths were actually exercised rather than
 citing suite totals.
+
+### 11. Fail-open defaults on a security value
+`if ($scopes === []) { $scopes[] = '*'; }` — one fallback served two cases: a
+key with *no* scope (legitimately full access) and a key whose scope column
+was **unreadable** (`[]`, `[null]`, JSON truncated by a partial write). The
+second silently removed the key's attenuation entirely. A value that cannot
+be parsed must never resolve to the most-permissive interpretation; resolve
+it to something that satisfies nothing, and name it in the error so the
+corrupt row is findable. Whenever a default stands in for a missing value,
+ask separately what happens to a *malformed* one.
+
+### 12. A guard is only as good as the layer that delivers the input
+The server rejected an explicitly empty API-key scope. It never fired, because
+the CLI dropped the field before building the request, so the server saw
+"omitted" and applied its documented default of full access. Validation added
+at one layer is dead code if the layer above discards or rewrites the input.
+When adding a check, trace an actual bad value from the outermost entry point
+and confirm it *reaches* the check — this is #5 across layers rather than
+across sibling call sites.
+
+### 13. Retry seams must know whether the write landed
+An exception says nothing about whether the database changed. `Controller::create()`
+inserts, then runs `afterCreate()`, `get()` and `recordChange()` with the row
+already committed, so a throw from any of those looked identical to a
+validation failure — and both retry seams (idempotency reservations, staged
+apply) offered a retry that duplicated the record. Wrapping creates in a
+transaction was *not* the fix: `bulkUpsert()` already wraps `create()` in one
+and mysqli's `begin_transaction()` inside an active transaction implicitly
+commits the outer. The code that knows says so instead: handlers wrap their
+post-write steps and rethrow `WriteCommittedException`, and the seams refuse
+the retry. Any code that decides "safe to run this again" needs a fact, not an
+inference from an exception type.
+
+### 14. Safety flags must survive process and reset boundaries
+`--staged` promises a write becomes a proposal. The interactive shell resets
+the whole flag tree between commands and re-applied only the flags someone
+remembered to list, and `p202 exec` runs each profile in a child process that
+inherits nothing — so `p202 shell --staged -c 'campaign delete 42 --force'`
+performed the delete. A flag whose whole purpose is to withhold an action must
+be re-checked at every boundary that rebuilds state; grep for the reset and
+the subprocess spawn, not just the flag definition.
 
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
@@ -181,6 +232,47 @@ Check here before burning time on tooling failures.
   `.github/workflows/go-cli.yml`; `go-cli/.golangci.yml` scopes the linters to
   dropped errors rather than style. Run `golangci-lint run ./...` from
   `go-cli/` before pushing.
+
+## Verification hygiene
+
+Most of the wrong conclusions in this repo have come not from bad code but
+from checks that did not check what they appeared to. Every one of these was
+caught only because the *result* was surprising enough to chase.
+
+- **Assert that a planted defect actually landed.** The standard way to prove a
+  test is not vacuous is to revert the fix and watch it fail. A `str.replace`
+  that silently matched nothing made a good test look worthless — the revert
+  never happened and the test passed against the code it was supposed to
+  fail. Print a marker (`assert old in s`, then re-grep the file) before
+  believing the run.
+- **Assert that a probe perturbed the target.** To force a post-commit failure
+  I created a directory where a state file goes — in the wrong one of three
+  `/tmp/p202-api-v3-state-*` directories, picked with `head -1`. The request
+  succeeded and it read as "not reproducible". Confirm the thing you broke is
+  the thing under test (check mtime, or that the process reads that path).
+- **Concurrent processes must not share a stdout you intend to count.** Eight
+  parallel workers printing one line each produced concatenated and blank
+  lines, which read as three distinct values and "split brain". Redirect each
+  to its own file before counting; interleaving is not data.
+- **A narrow race needs its window widened, not more attempts.** Launching
+  more workers never hit the adoption-rename race. Inserting a deliberate
+  sleep between the guard and the rename reproduced it on the first try, and
+  demonstrated the fix. Scratch-only: never commit the sleep.
+- **A new lint rule is not done when it fires on the bug you wrote it for.**
+  Run it against the whole clean tree first (a rule with false positives is
+  worse than no rule — one draft produced 194), then plant a defect in *every*
+  shape and call form it claims to cover. Extending BindParamArityRule to the
+  `bind()` wrapper needed four: variadic instance, array-taking, static
+  namespaced, static global. The first "it works" run exercised one of them.
+  Derive shapes from the callee's own signature rather than a hardcoded class
+  list — the codebase had eleven `bind()` methods in two shapes.
+- **Local green is not CI green when the environment carries ambient state.**
+  A `--scope` check placed after `api.NewFromConfig()` passed here only
+  because this sandbox has a URL configured; CI has none, so the config error
+  won and the flag was never examined. Run CLI tests with an empty `HOME`
+  (`HOME=$(mktemp -d) go test ./cmd/...`) before pushing anything that touches
+  a command which builds a client. Flag validation belongs *before* the
+  client is built anyway.
 
 ## Review discipline
 - Review every file individually. Batch scanning causes context overload and misses real bugs.
