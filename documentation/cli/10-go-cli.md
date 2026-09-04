@@ -262,6 +262,12 @@ scope, minting a key with `--scope`; 404 use `list` for ids; 429 back off;
 test`); and for any remaining validation error, a pointer to `<command>
 --help`.
 
+`p202 sync` and `p202 re-sync` refuse `--staged` outright: a sync resolves
+each entity's foreign keys from ids the preceding creates returned, and a
+staged create returns a proposal rather than a record, so the run would count
+proposals as synced and then fail to resolve their dependents. Use `--dry-run`
+to see what a sync would change, or stage individual writes.
+
 Commands that create something and then use it — `tracker create-with-url`,
 `import` — recognise the staged-change envelope a write returns under
 `--staged` and stop there rather than running their follow-up step against a

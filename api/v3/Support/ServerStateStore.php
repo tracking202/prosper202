@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Api\V3\Support;
 
 use Api\V3\Exception\DatabaseException;
+use Api\V3\Exception\ConflictException;
 
 class ServerStateStore
 {
@@ -18,6 +19,17 @@ class ServerStateStore
      * terminal states are prunable.
      */
     private const array PRUNABLE_CHANGE_STATUSES = ['applied', 'discarded', 'apply_interrupted'];
+
+    /**
+     * How many proposals one user may have awaiting a decision. Pruning only
+     * reclaims resolved and expired records, so without a bound on the live
+     * queue a propose-only key can grow its ledger for a whole TTL — and
+     * every later stage and list reads and rewrites that file. An approval
+     * queue this deep is unusable by a human anyway; the cap turns a latency
+     * and disk problem into an explicit refusal naming what to do.
+     * P202_STAGED_CHANGE_MAX_PENDING raises it for larger staged imports.
+     */
+    private const int DEFAULT_MAX_PENDING_CHANGES = 1000;
 
     private readonly string $baseDir;
 
@@ -351,13 +363,49 @@ class ServerStateStore
     // file per staging user; resolved entries stay as the audit trail and
     // are pruned oldest-first past the retention cap.
 
+    /**
+     * The live-queue cap. Read here rather than baked in so a deployment
+     * doing large staged imports can raise it without a code change.
+     */
+    public static function maxPendingChanges(): int
+    {
+        $raw = getenv('P202_STAGED_CHANGE_MAX_PENDING');
+        if (is_string($raw) && trim($raw) !== '') {
+            $parsed = (int)$raw;
+            if ($parsed >= 1) {
+                return $parsed;
+            }
+        }
+        return self::DEFAULT_MAX_PENDING_CHANGES;
+    }
+
     public function stageWriteChange(int $userId, array $change): void
     {
         $changeId = (string)($change['change_id'] ?? '');
         if ($changeId === '') {
             throw new DatabaseException('Staged change missing change_id');
         }
-        $this->mutateJsonFile($this->stagedChangesPath($userId), ['items' => []], static function (array $state) use ($changeId, $change): array {
+        $maxPending = self::maxPendingChanges();
+        $this->mutateJsonFile($this->stagedChangesPath($userId), ['items' => []], static function (array $state) use ($changeId, $change, $maxPending): array {
+            // Counted under the same lock as the write, so concurrent stages
+            // cannot both slip past the cap.
+            $pending = 0;
+            $cutoff = time();
+            foreach ($state['items'] as $item) {
+                if (($item['status'] ?? '') === 'staged'
+                    && $cutoff <= (int)($item['expires_at_epoch'] ?? 0)) {
+                    $pending++;
+                }
+            }
+            if ($pending >= $maxPending) {
+                throw new ConflictException(sprintf(
+                    'You already have %d staged changes awaiting a decision, which is the limit. Apply or '
+                    . 'discard some (GET /staged-changes?status=staged) before staging more, or raise '
+                    . 'P202_STAGED_CHANGE_MAX_PENDING.',
+                    $pending
+                ));
+            }
+
             $state['items'][$changeId] = $change;
 
             $now = time();

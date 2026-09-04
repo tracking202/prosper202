@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Api\V3;
 
+use Api\V3\Exception\ConflictException;
 use Api\V3\Support\ServerStateStore;
 use Tests\TestCase;
 
@@ -143,6 +144,46 @@ final class StagedChangeRetentionTest extends TestCase
         $this->store->stageWriteChange(5, $this->change('chg_' . str_repeat('0', 23) . '1', 'staged', time()));
 
         $this->assertNotNull($this->store->getStagedChangeForUser(5, $live));
+    }
+
+    public function testThePendingQueueIsCappedSoAProposeOnlyKeyCannotGrowItForever(): void
+    {
+        // Pruning only reclaims resolved and expired records, so without a
+        // bound on the live queue a stage-scoped key can grow this file for a
+        // whole TTL -- and every later stage and list reads and rewrites it.
+        putenv('P202_STAGED_CHANGE_MAX_PENDING=5');
+        try {
+            for ($i = 0; $i < 5; $i++) {
+                $this->store->stageWriteChange(5, $this->change(sprintf('chg_%024x', $i + 1), 'staged', time()));
+            }
+
+            $this->expectException(ConflictException::class);
+            $this->expectExceptionMessageMatches('/awaiting a decision/');
+            $this->store->stageWriteChange(5, $this->change('chg_' . str_repeat('9', 24), 'staged', time()));
+        } finally {
+            putenv('P202_STAGED_CHANGE_MAX_PENDING');
+        }
+    }
+
+    public function testResolvingAProposalFreesQueueSpace(): void
+    {
+        // The cap counts live proposals only: applying or discarding one must
+        // let the next through, and so must letting one expire.
+        putenv('P202_STAGED_CHANGE_MAX_PENDING=3');
+        try {
+            for ($i = 0; $i < 3; $i++) {
+                $this->store->stageWriteChange(5, $this->change(sprintf('chg_%024x', $i + 1), 'staged', time()));
+            }
+            $this->store->updateStagedChange(5, sprintf('chg_%024x', 1), function (array $c): array {
+                $c['status'] = 'applied';
+                return $c;
+            });
+
+            $this->store->stageWriteChange(5, $this->change('chg_' . str_repeat('8', 24), 'staged', time()));
+            $this->assertNotNull($this->store->getStagedChangeForUser(5, 'chg_' . str_repeat('8', 24)));
+        } finally {
+            putenv('P202_STAGED_CHANGE_MAX_PENDING');
+        }
     }
 
     public function testResolvedChangesAreStillPruned(): void

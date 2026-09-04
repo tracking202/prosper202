@@ -3,6 +3,8 @@ package cmd
 import (
 	"strings"
 	"testing"
+
+	"p202/internal/api"
 )
 
 // Compound commands (create something, then use it) get a staged-change
@@ -67,5 +69,40 @@ func TestMalformedTrackerCreateIsACategorizedError(t *testing.T) {
 	}
 	if hint := hintFor(err); !strings.Contains(hint, "separately") {
 		t.Errorf("hint = %q, want the split-the-steps guidance", hint)
+	}
+}
+
+// A sync resolves foreign keys from ids the preceding creates returned, which
+// staged creates do not have. The server refuses staged=1 on sync/jobs, but
+// that rejection is swallowed by the probe-and-fall-back, so the CLI has to
+// refuse before it starts -- otherwise the client-side path runs with staging
+// on and counts proposals as synced.
+func TestSyncRefusesStagedModeBeforeDoingAnything(t *testing.T) {
+	api.SetStagedMode(true)
+	defer api.SetStagedMode(false)
+
+	err := executeSync("all", "from", "to", syncOptions{})
+	if err == nil {
+		t.Fatal("executeSync under --staged must refuse")
+	}
+	if code := exitCodeForError(err); code != 1 {
+		t.Errorf("exit code = %d, want 1 (validation)", code)
+	}
+	if hint := hintFor(err); !strings.Contains(hint, "Drop --staged") {
+		t.Errorf("hint = %q, want it to name dropping --staged", hint)
+	}
+	if !strings.Contains(err.Error(), "cannot be staged") {
+		t.Errorf("message = %q, want it to say sync cannot be staged", err.Error())
+	}
+}
+
+func TestSyncStillRunsWhenStagedModeIsOff(t *testing.T) {
+	// The guard must not block an ordinary sync: without staged mode this
+	// gets past the check and fails later, on configuration, not on staging.
+	api.SetStagedMode(false)
+
+	err := executeSync("all", "from", "to", syncOptions{})
+	if err != nil && strings.Contains(err.Error(), "cannot be staged") {
+		t.Fatalf("ordinary sync was refused as staged: %v", err)
 	}
 }

@@ -220,6 +220,19 @@ var reSyncCmd = &cobra.Command{
 }
 
 func executeSync(entityArg, fromProfile, toProfile string, opts syncOptions) error {
+	// A sync resolves each entity's foreign keys from ids the preceding
+	// creates returned. A staged create returns a proposal, not a record, so
+	// those ids do not exist yet: the run would count proposals as synced,
+	// then fail to resolve the dependents, leaving a half-usable proposal
+	// queue and a sync history that never happened. The server-side path
+	// refuses `staged=1` on sync/jobs already, but that rejection is
+	// swallowed by the probe-and-fall-back below, so refuse here where it is
+	// still one clear answer.
+	if api.StagedMode() {
+		return validationError("sync cannot be staged").
+			WithHint("Sync needs the ids that staged creates do not have yet. Drop --staged; use `--dry-run` to see what a sync would change, or stage individual writes instead.")
+	}
+
 	done := metrics.Timer("sync", entityArg)
 	if handled, err := tryServerSideSync(entityArg, fromProfile, toProfile, opts); err != nil {
 		done(false, err.Error())

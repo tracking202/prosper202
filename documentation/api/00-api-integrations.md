@@ -176,6 +176,12 @@ The contract, in the terms of Anthropic's commerce-agents reference:
   listed as the audit trail, actor-stamped, and are pruned oldest-first past
   a per-user cap — as are expired proposals, which are equally unusable and
   would otherwise grow the ledger without bound.
+- **A bounded queue.** Pruning only reclaims records that are finished or
+  expired, so the *live* queue is capped separately: past 1000 proposals
+  awaiting a decision (`P202_STAGED_CHANGE_MAX_PENDING` overrides), staging
+  returns `409` naming what to resolve first. Without it a propose-only key
+  could grow one user's ledger for a whole TTL, and every later stage and
+  list has to read and rewrite that file.
 - **Fail-closed.** `staged=1` on a write outside the allowlist is a `422`,
   never a silent immediate write; `staged` and `dry_run` together are a
   `422`.
