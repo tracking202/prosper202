@@ -288,11 +288,10 @@ var userAPIKeyCreateCmd = &cobra.Command{
 		"access (`*`). A scoped key cannot mint a key broader than itself.",
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
-		var body interface{}
+		// Flag validation runs before the client is built: it needs no
+		// configuration, and ordering it after would answer `--scope ""` on
+		// an unconfigured CLI with "no URL configured" instead of naming the
+		// real mistake.
 		scope, _ := cmd.Flags().GetString("scope")
 		scope = strings.TrimSpace(scope)
 		// Omitting --scope means full access, by design. Passing it *empty*
@@ -306,6 +305,12 @@ var userAPIKeyCreateCmd = &cobra.Command{
 				WithHint("Name the scope (`read`, `write`, or `<area>:read`/`<area>:write`, comma-separated), " +
 					"or omit --scope entirely to mint a full-access key on purpose.")
 		}
+
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		var body interface{}
 		if scope != "" {
 			body = map[string]string{"scope": scope}
 		}
@@ -356,6 +361,13 @@ var userAPIKeyRotateCmd = &cobra.Command{
 	Short: "Rotate an API key by creating a new one and optionally deleting the old one",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// As in create: the flag is checked before the client, so the error
+		// names the bad flag rather than an unrelated missing configuration.
+		if scopeFlag, _ := cmd.Flags().GetString("scope"); cmd.Flags().Changed("scope") && strings.TrimSpace(scopeFlag) == "" {
+			return validationError("--scope was given an empty value").
+				WithHint("Name the new key's scope, or omit --scope to carry the old key's scope forward.")
+		}
+
 		c, err := api.NewFromConfig()
 		if err != nil {
 			return err
@@ -374,12 +386,6 @@ var userAPIKeyRotateCmd = &cobra.Command{
 		// fails the rotation rather than silently minting a full-access key.
 		scope, _ := cmd.Flags().GetString("scope")
 		scope = strings.TrimSpace(scope)
-		// Same rule as create: an explicitly empty --scope is malformed
-		// input, not "carry the old scope".
-		if cmd.Flags().Changed("scope") && scope == "" {
-			return validationError("--scope was given an empty value").
-				WithHint("Name the new key's scope, or omit --scope to carry the old key's scope forward.")
-		}
 		if scope == "" {
 			if len(oldAPIKey) < 8 {
 				// Too short to match a masked prefix, so the old scope
