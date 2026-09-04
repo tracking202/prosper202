@@ -85,3 +85,11 @@ jobs:
             --group integration \
             tests/Conversion/ConversionIdempotencyIntegrationTest.php \
             --verbose --no-coverage
+          # Checks the SQL the v3 API ships against the schema it ships, by
+          # preparing every statically-known statement on a real server. It
+          # needs its own database because it installs a fresh schema.
+          mysql -h 127.0.0.1 -uroot -proot -e 'DROP DATABASE IF EXISTS p202_sqlcheck; CREATE DATABASE p202_sqlcheck;'
+          P202_TEST_DB_NAME=p202_sqlcheck vendor/bin/phpunit --configuration phpunit.ci.xml \
+            --group integration \
+            tests/Schema/StaticSqlSchemaTest.php \
+            --verbose --no-coverage

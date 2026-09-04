@@ -168,6 +168,15 @@ Check here before burning time on tooling failures.
   into `vendor/` by hand is invisible to it even after patching the
   autoloader. Add `scanDirectories: [vendor/<pkg>]` in a scratch config that
   `includes:` the dist file to confirm a clean run; do not commit that.
+- **`tests/Schema/StaticSqlSchemaTest.php` checks SQL against the schema** by
+  preparing every statically-known v3 statement on a real server — MySQL is
+  the only thing that knows whether a column exists, so no SQL parser is
+  involved. It is `@group integration`, so it is excluded from a default
+  `phpunit` run; invoke it with `--group integration` and a database it may
+  install a fresh schema into (it drops and recreates tables), e.g.
+  `P202_TEST_DB_HOST=127.0.0.1 P202_TEST_DB_NAME=p202_sqlcheck ... --group
+  integration tests/Schema/`. Point it at a scratch database, never the one
+  a live instance is using.
 - **`go test`, `go vet` and golangci-lint run in CI** via
   `.github/workflows/go-cli.yml`; `go-cli/.golangci.yml` scopes the linters to
   dropped errors rather than style. Run `golangci-lint run ./...` from
