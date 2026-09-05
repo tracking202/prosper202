@@ -340,9 +340,11 @@ class AUTH
 
         if ($keyIsValid) {
         //update the api key
+            global $db;
+            $escaped_api_key = $db->real_escape_string((string) $user_api_key);
             $user_sql = "	UPDATE 	202_users
-							SET		p202_customer_api_key='" . $user_api_key . "'
-							WHERE 	user_id='" . $_SESSION['user_id'] . "'";
+							SET		p202_customer_api_key='" . $escaped_api_key . "'
+							WHERE 	user_id='" . (int) $_SESSION['user_id'] . "'";
             _mysqli_query($user_sql);
             self::writeSessionValue('valid_key', true);
             // Warm the CLI shell license cache so p202 shell works without its own round-trip.

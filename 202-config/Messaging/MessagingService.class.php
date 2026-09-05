@@ -168,7 +168,15 @@ class MessagingService
             return;
         }
 
-        $this->db->begin_transaction();
+        // An unchecked begin_transaction() is the worst false return to ignore
+        // here: the loop below would run in autocommit, half a pull would land
+        // permanently, and the rollback in the catch would have nothing to undo
+        // -- while recordSyncSuccess() still advanced the cursor past it.
+        if (!$this->db->begin_transaction()) {
+            error_log('MessagingService: applyPull could not start a transaction');
+            $this->recordSyncError('could not start transaction');
+            return;
+        }
         try {
             foreach ($conversations as $conversation) {
                 if (!is_array($conversation) || empty($conversation['external_id'])) {
@@ -183,11 +191,14 @@ class MessagingService
                 $newestBody = '';
                 $messages   = $conversation['messages'] ?? [];
                 if (is_array($messages)) {
-                    foreach ($messages as $message) {
+                    // Pass the position within the conversation: it is stable
+                    // across polls and is the only discriminator available to
+                    // the synthetic-id fallback in upsertMessage().
+                    foreach (array_values($messages) as $position => $message) {
                         if (!is_array($message)) {
                             continue;
                         }
-                        $this->upsertMessage($conversationId, $message);
+                        $this->upsertMessage($conversationId, $message, $position);
                         $ts = $this->normalizeDate($message['created_at'] ?? null);
                         if ($ts !== null && ($newestTs === null || $ts > $newestTs)) {
                             $newestTs   = $ts;
@@ -206,7 +217,9 @@ class MessagingService
                 $this->deleteConversations($response['deleted_conversation_ids']);
             }
 
-            $this->db->commit();
+            if (!$this->db->commit()) {
+                throw new RuntimeException('commit pull failed');
+            }
         } catch (Throwable $e) {
             $this->db->rollback();
             error_log('MessagingService: applyPull failed: ' . $e->getMessage());
@@ -354,14 +367,17 @@ class MessagingService
      *
      * @param array<string,mixed> $m
      */
-    private function upsertMessage(int $conversationId, array $m): void
+    private function upsertMessage(int $conversationId, array $m, int $position = 0): void
     {
         $externalId  = isset($m['external_id']) ? (string) $m['external_id'] : null;
         $clientToken = isset($m['client_token']) ? (string) $m['client_token'] : null;
         $direction   = ($m['direction'] ?? '') === 'outbound' ? 'outbound' : 'inbound';
         $author      = in_array($m['author'] ?? '', ['team', 'system', 'user'], true) ? $m['author'] : 'team';
         $body        = isset($m['body']) ? (string) $m['body'] : '';
-        $createdAt   = $this->normalizeDate($m['created_at'] ?? null) ?? date('Y-m-d H:i:s');
+        // Keep the provided value separate from the substituted "now": the
+        // synthetic id below must not hash a timestamp that changes every poll.
+        $providedCreatedAt = $this->normalizeDate($m['created_at'] ?? null);
+        $createdAt   = $providedCreatedAt ?? date('Y-m-d H:i:s');
 
         // Reconcile a locally-queued outbound message by its client token.
         if ($clientToken !== null) {
@@ -388,7 +404,19 @@ class MessagingService
         // derive a stable synthetic id from its content so repeated pulls dedupe via
         // messageExists() below instead of inserting a fresh copy every sync.
         if ($externalId === null) {
-            $externalId = 'syn_' . md5($direction . '|' . $author . '|' . $createdAt . '|' . $body);
+            // Hash only fields that are stable across polls. Using the local
+            // $createdAt here meant a message with no created_at got a fresh id
+            // every sync, so messageExists() never matched and the poll inserted
+            // a duplicate row each time (~180/hour with a tab open) — the
+            // UNIQUE (conversation_id, external_id) key could not help.
+            //
+            // $position is required, not decorative: without it, a message
+            // lacking created_at hashed to direction|author||body alone, so two
+            // genuinely distinct messages with the same author and text (a
+            // repeated "ok") collided and the second was silently dropped as
+            // already-seen. Position is stable across polls and distinguishes
+            // them.
+            $externalId = 'syn_' . md5($direction . '|' . $author . '|' . ($providedCreatedAt ?? '') . '|' . $position . '|' . $body);
         }
 
         // Skip if we already have this message.
@@ -567,7 +595,14 @@ class MessagingService
             return false;
         }
 
-        $this->db->begin_transaction();
+        // See applyPull(): an ignored false here silently downgrades the
+        // reconcile to autocommit, so a later failure leaves the message half
+        // reconciled with no rollback to undo it.
+        if (!$this->db->begin_transaction()) {
+            error_log('MessagingService: pushMessage could not start a transaction');
+            $this->incrementPushAttempts($messageId);
+            return false;
+        }
         try {
             // Adopt the server's canonical conversation identifiers.
             if (isset($response['conversation']) && is_array($response['conversation'])
@@ -597,7 +632,9 @@ class MessagingService
             }
             $stmt->close();
 
-            $this->db->commit();
+            if (!$this->db->commit()) {
+                throw new RuntimeException('commit push reconcile failed');
+            }
         } catch (Throwable $e) {
             $this->db->rollback();
             error_log('MessagingService: pushMessage reconcile failed: ' . $e->getMessage());

@@ -25,12 +25,77 @@ class MessagingClient
     public function __construct()
     {
         // MESSAGING_API_URL is defined in 202-config/connect.php.
-        $this->baseUrl    = defined('MESSAGING_API_URL') ? MESSAGING_API_URL : 'https://my.tracking202.com/api/v3/messaging';
+        // Every request body below carries the install's customer API key and the
+        // user's email, so refuse to speak cleartext even if MESSAGING_API_URL is
+        // misconfigured (mirrors Lpo\PairingClient's guard).
+        $configuredUrl = defined('MESSAGING_API_URL') ? MESSAGING_API_URL : 'https://my.tracking202.com/api/v3/messaging';
+        if (!self::isSafeTransport((string) $configuredUrl)) {
+            throw new \RuntimeException('MESSAGING_API_URL must be an https:// URL (http:// is allowed only for loopback); refusing to send credentials in cleartext.');
+        }
+        $this->baseUrl    = $configuredUrl;
         $this->timeout    = 10;
         // Kept low so the synchronous widget-poll path stays responsive when the
         // central server is slow/unreachable; a healthy server answers on the first
         // try. The cron path tolerates the occasional miss and catches up next run.
         $this->maxRetries = 2;
+    }
+
+    /**
+     * Credentials must not cross a network in cleartext, so https is required —
+     * except against loopback, which never leaves the host. The carve-out exists
+     * because 202-config/Messaging/mock-server.php and the comment at
+     * connect.php:86 both document MESSAGING_API_URL=http://127.0.0.1:8787/messaging
+     * for local development; rejecting it made the repo's own documented setup
+     * throw out of the constructor, which the messaging AJAX endpoints surface as
+     * a bare 500 instead of degrading gracefully.
+     */
+    private static function isSafeTransport(string $url): bool
+    {
+        $url = strtolower(trim($url));
+        if (str_starts_with($url, 'https://')) {
+            return true;
+        }
+        if (!str_starts_with($url, 'http://')) {
+            return false;
+        }
+
+        $host = (string) parse_url($url, PHP_URL_HOST);
+        if ($host === '') {
+            return false;
+        }
+        if ($host === 'localhost' || $host === '::1' || $host === '[::1]') {
+            return true;
+        }
+
+        // 127.0.0.0/8 only — not every RFC1918 address, which does traverse a network.
+        return (bool) filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)
+            && str_starts_with($host, '127.');
+    }
+
+    /**
+     * The curl protocol allowlist, derived from the same predicate the
+     * constructor enforces: HTTPS always, plus HTTP only for a URL
+     * isSafeTransport() would accept as cleartext — i.e. loopback.
+     *
+     * The two must agree in both directions. Narrower than the transport rule
+     * makes the loopback carve-out dead code: the constructor accepts the
+     * documented mock-server URL and then every request fails with
+     * CURLE_UNSUPPORTED_PROTOCOL. Wider lets a misconfigured MESSAGING_API_URL
+     * carry the install's customer API key over cleartext.
+     *
+     * isSafeTransport() is re-run here rather than assumed. Keying only on the
+     * http:// prefix would be correct today purely because the constructor
+     * throws first — a fail-open that any future caller reaching this method by
+     * another path (or any relaxation of that constructor check) inherits
+     * silently, which is exactly how the mismatch above got in.
+     */
+    private static function allowedCurlProtocols(string $url): int
+    {
+        if (str_starts_with(strtolower(trim($url)), 'http://') && self::isSafeTransport($url)) {
+            return CURLPROTO_HTTPS | CURLPROTO_HTTP;
+        }
+
+        return CURLPROTO_HTTPS;
     }
 
     /**
@@ -151,6 +216,10 @@ class MessagingClient
             CURLOPT_CONNECTTIMEOUT => 5,
             CURLOPT_USERAGENT      => 'Prosper202-Messaging/1.0',
             CURLOPT_FOLLOWLOCATION => false,
+            // Not a bare CURLPROTO_HTTPS: that disagreed with isSafeTransport()
+            // and broke the documented loopback mock-server setup. See
+            // allowedCurlProtocols().
+            CURLOPT_PROTOCOLS      => self::allowedCurlProtocols($this->baseUrl),
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_HTTPHEADER     => [

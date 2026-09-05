@@ -16,10 +16,10 @@ $mysql['user_id'] = $db->real_escape_string($aff_campaign_row['user_id']);
 
 
 //see if it has the cookie, do whatever we can to grab to grab SOMETHING to tie this lead to
-if ($_COOKIE['tracking202subid']) {  
+if (isset($_COOKIE['tracking202subid']) && $_COOKIE['tracking202subid']) {
 
 	$mysql['click_id'] = $db->real_escape_string($_COOKIE['tracking202subid']);
-	
+
 } else  {
 
 	//ok grab the last click from this ip_id
@@ -35,8 +35,10 @@ if ($_COOKIE['tracking202subid']) {
 					ORDER BY 	202_clicks.click_id DESC 
 					LIMIT 		1";
 	$click_result1 = $db->query($click_sql1) or record_mysql_error($click_sql1);
-	$click_row1 = $click_result1->fetch_assoc();
-	$mysql['click_id'] = $db->real_escape_string($click_row1['click_id']);
+	$click_row1 = $click_result1 ? $click_result1->fetch_assoc() : null;
+	// No prior click for this IP inside the window — leave click_id empty so the
+	// guard below skips recording, instead of dereferencing a null row.
+	$mysql['click_id'] = $click_row1 ? $db->real_escape_string((string)$click_row1['click_id']) : '';
 
 }
 

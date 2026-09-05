@@ -25,8 +25,21 @@ try {
 
             $mysql['click_time_from'] = $db->real_escape_string((string)$row['time_from']);
             $mysql['click_time_to'] = $db->real_escape_string((string)$row['time_to']);
-            $sql = "UPDATE 202_dataengine_job SET processing = '1' WHERE time_from ='" . $mysql['click_time_from'] . "' AND time_to = '" . $mysql['click_time_to'] . "'";
+            // Atomic compare-and-swap claim: the SELECT above is not a lock, so
+            // two overlapping cron runs can both read processing=0 for the same
+            // window. Only the run whose UPDATE actually flips processing 0->1
+            // (affected_rows === 1) may aggregate the hour; the loser bails out
+            // instead of double-processing the window into the DataEngine.
+            $sql = "UPDATE 202_dataengine_job SET processing = '1' WHERE time_from ='" . $mysql['click_time_from'] . "' AND time_to = '" . $mysql['click_time_to'] . "' AND processing = '0'";
             $db->query($sql);
+            // 202_dataengine_job has no PRIMARY/UNIQUE key, so a duplicated
+            // window legitimately flips more than one row. Require >= 1 (we
+            // won the claim) rather than exactly 1 — bailing out after having
+            // already set processing='1' would strand the window forever,
+            // because the release UPDATEs live below this point.
+            if ($db->affected_rows < 1) {
+                return;
+            }
 
             $urls = [];
             for ($i = $mysql['click_time_from']; $i < $mysql['click_time_to']; $i += 3599) {

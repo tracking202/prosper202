@@ -97,9 +97,13 @@ class RemoteApiClient
             }
 
             $pagination = $resp['pagination'] ?? [];
-            $total = (int)($pagination['total'] ?? count($rows));
+            $total = isset($pagination['total']) ? (int)$pagination['total'] : null;
             $offset += $limit;
-            if ($offset >= $total || count($page) === 0) {
+            if (count($page) < $limit) {
+                // Short page — no more rows regardless of what total claims.
+                break;
+            }
+            if ($total !== null && $offset >= $total) {
                 break;
             }
         }
@@ -165,13 +169,26 @@ class RemoteApiClient
         curl_close($ch);
 
         $decoded = json_decode($responseBody, true);
-        if (!is_array($decoded)) {
-            $decoded = [];
-        }
 
         if ($status >= 400) {
-            $message = (string)($decoded['message'] ?? ('Remote API error ' . $status));
+            $message = is_array($decoded)
+                ? (string)($decoded['message'] ?? ('Remote API error ' . $status))
+                : 'Remote API error ' . $status;
             throw new DatabaseException($message);
+        }
+
+        // Redirects are not followed, and a proxy/maintenance page served with
+        // a 2xx status must not masquerade as an empty dataset — callers diff
+        // and prune against these results, so silence here means data loss.
+        if ($status >= 300) {
+            throw new DatabaseException('Remote API returned unexpected status ' . $status);
+        }
+
+        if (trim($responseBody) === '') {
+            return []; // 204-style empty success body
+        }
+        if (!is_array($decoded)) {
+            throw new DatabaseException('Remote API returned invalid JSON (status ' . $status . ')');
         }
 
         return $decoded;

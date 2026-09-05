@@ -22,7 +22,7 @@ class CampaignsController extends Controller
             'aff_campaign_url_4'           => ['type' => 's', 'max_length' => 2048],
             'aff_campaign_url_5'           => ['type' => 's', 'max_length' => 2048],
             'aff_campaign_payout'          => ['type' => 'd', 'required' => true],
-            'aff_campaign_currency'        => ['type' => 's', 'max_length' => 5],
+            'aff_campaign_currency'        => ['type' => 's', 'max_length' => 3],
             'aff_campaign_foreign_payout'  => ['type' => 'd', 'default' => 0],
             'aff_network_id'               => ['type' => 'i', 'required' => true],
             'aff_campaign_cloaking'        => ['type' => 'i'],

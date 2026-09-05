@@ -3072,7 +3072,14 @@ class UPGRADE
             $connection = $database->getConnection();
 
             if ($connection instanceof \mysqli) {
-                $connection->begin_transaction();
+                // Checked: on a false return the ALTERs and the seed UPDATE below
+                // run in autocommit, so the rollback in the catch does nothing and
+                // a failed upgrade leaves 202_attribution_settings half-migrated
+                // while the version row is never advanced -- the next run then
+                // re-applies the same steps against the partially changed schema.
+                if (!$connection->begin_transaction()) {
+                    throw new \RuntimeException('Failed to start the 1.9.57 upgrade transaction: ' . $connection->error);
+                }
 
                 try {
                     $columnChecks = [
@@ -3133,7 +3140,9 @@ class UPGRADE
                         throw new \RuntimeException('Failed to seed attribution setting toggles: ' . $connection->error);
                     }
 
-                    $connection->commit();
+                    if (!$connection->commit()) {
+                        throw new \RuntimeException('Failed to commit the 1.9.57 upgrade: ' . $connection->error);
+                    }
                 } catch (\Throwable $upgradeException) {
                     $connection->rollback();
                     throw $upgradeException;
@@ -3175,6 +3184,36 @@ class UPGRADE
               KEY `model_status` (`model_id`,`status`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
             $result = _upgrade_query($sql);
+
+            // The 1.9.56 block above already created 202_attribution_exports with
+            // a DIFFERENT column set, so the CREATE ... IF NOT EXISTS just above
+            // is a no-op on every install and the columns MysqlExportRepository
+            // selects never existed (ExportFormat::from('') -> uncaught
+            // ValueError, surfacing as a 500 on 202-account/attribution-export.php).
+            // Add the missing columns explicitly.
+            $exportColumnsToAdd = [
+                'format' => "ALTER TABLE `202_attribution_exports` ADD COLUMN `format` varchar(10) NOT NULL DEFAULT 'csv'",
+                'download_token' => "ALTER TABLE `202_attribution_exports` ADD COLUMN `download_token` varchar(64) DEFAULT NULL",
+                'webhook_method' => "ALTER TABLE `202_attribution_exports` ADD COLUMN `webhook_method` varchar(10) DEFAULT NULL",
+                'last_attempted_at' => "ALTER TABLE `202_attribution_exports` ADD COLUMN `last_attempted_at` int(10) unsigned DEFAULT NULL",
+                'error_message' => "ALTER TABLE `202_attribution_exports` ADD COLUMN `error_message` text DEFAULT NULL",
+            ];
+            foreach ($exportColumnsToAdd as $exportColumn => $exportAlterSql) {
+                $sql = "SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.COLUMNS
+                        WHERE TABLE_SCHEMA = DATABASE()
+                        AND TABLE_NAME = '202_attribution_exports'
+                        AND COLUMN_NAME = '" . $exportColumn . "'";
+                $result = _upgrade_query($sql);
+                $row = mysqli_fetch_assoc($result);
+                if ($row['count'] == 0) {
+                    $result = _upgrade_query($exportAlterSql);
+                }
+            }
+
+            // Backfill the renamed columns so pre-existing rows are readable.
+            $result = _upgrade_query("UPDATE `202_attribution_exports` SET `format` = `requested_format` WHERE `format` = 'csv' AND `requested_format` IS NOT NULL AND `requested_format` != ''");
+            $result = _upgrade_query("UPDATE `202_attribution_exports` SET `last_attempted_at` = `webhook_attempted_at` WHERE `last_attempted_at` IS NULL AND `webhook_attempted_at` IS NOT NULL");
+            $result = _upgrade_query("UPDATE `202_attribution_exports` SET `error_message` = `last_error` WHERE `error_message` IS NULL AND `last_error` IS NOT NULL");
 
             $sql = "UPDATE 202_version SET version='1.9.59'";
             $result = _upgrade_query($sql);

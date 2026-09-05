@@ -2569,21 +2569,32 @@ func TestTrackerCreateWithURL(t *testing.T) {
 }
 
 func TestTrackerBulkURLs(t *testing.T) {
+	// bulk-urls fans the per-tracker fetches over a worker pool, so this
+	// handler runs on several goroutines at once and its bookkeeping needs a
+	// lock. Without it `go test -race` fails here by scheduling luck rather
+	// than by anything the CLI did.
+	var mu sync.Mutex
 	var listQuery url.Values
 	urlCalls := 0
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "GET" && r.URL.Path == "/api/v3/trackers":
+			mu.Lock()
 			listQuery = r.URL.Query()
+			mu.Unlock()
 			w.WriteHeader(200)
 			w.Write([]byte(`{"data":[{"tracker_id":1,"aff_campaign_id":10},{"tracker_id":2,"aff_campaign_id":10}]}`))
 		case r.Method == "GET" && r.URL.Path == "/api/v3/trackers/1/url":
+			mu.Lock()
 			urlCalls++
+			mu.Unlock()
 			w.WriteHeader(200)
 			w.Write([]byte(`{"data":{"tracker_id":1,"direct_url":"https://trk.example/1"}}`))
 		case r.Method == "GET" && r.URL.Path == "/api/v3/trackers/2/url":
+			mu.Lock()
 			urlCalls++
+			mu.Unlock()
 			w.WriteHeader(200)
 			w.Write([]byte(`{"data":{"tracker_id":2,"direct_url":"https://trk.example/2"}}`))
 		default:
@@ -2602,11 +2613,15 @@ func TestTrackerBulkURLs(t *testing.T) {
 		t.Fatalf("tracker bulk-urls error: %v", err)
 	}
 
-	if got := listQuery.Get("filter[aff_campaign_id]"); got != "10" {
-		t.Errorf("filter[aff_campaign_id] = %q, want %q", got, "10")
+	mu.Lock()
+	gotFilter := listQuery.Get("filter[aff_campaign_id]")
+	gotCalls := urlCalls
+	mu.Unlock()
+	if gotFilter != "10" {
+		t.Errorf("filter[aff_campaign_id] = %q, want %q", gotFilter, "10")
 	}
-	if urlCalls != 2 {
-		t.Errorf("urlCalls = %d, want 2", urlCalls)
+	if gotCalls != 2 {
+		t.Errorf("urlCalls = %d, want 2", gotCalls)
 	}
 	if !strings.Contains(stdout, "https://trk.example/1") || !strings.Contains(stdout, "https://trk.example/2") {
 		t.Errorf("output should contain both tracker URLs, got:\n%s", stdout)

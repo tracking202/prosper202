@@ -263,6 +263,25 @@ final class MysqlCustomerCrmRepository
                 $this->conn->executeUpdate($stmt);
             }
 
+            // 202_offer_recommendations also carries customer_id but cannot use
+            // the plain repoint above: it has UNIQUE (user_id, customer_id,
+            // campaign_id, surface), so source and target can both hold a row
+            // for the same campaign+surface. Move what fits, then drop the
+            // leftovers — without this the source's rows were orphaned beyond
+            // the reach of stampRecommendationConversions() and the target's
+            // fatigue budget silently reset.
+            $stmt = $this->conn->prepareWrite(
+                'UPDATE IGNORE 202_offer_recommendations SET customer_id = ? WHERE customer_id = ? AND user_id = ?'
+            );
+            $this->conn->bind($stmt, 'iii', [$terminalTarget, $sourceId, $userId]);
+            $this->conn->executeUpdate($stmt);
+
+            $stmt = $this->conn->prepareWrite(
+                'DELETE FROM 202_offer_recommendations WHERE customer_id = ? AND user_id = ?'
+            );
+            $this->conn->bind($stmt, 'ii', [$sourceId, $userId]);
+            $this->conn->executeUpdate($stmt);
+
             // The target absorbs the source's acquisition and recency BEFORE
             // the source is zeroed: the merged revenue must attribute to the
             // EARLIEST acquisition click/time (breakdowns and cohorts key on

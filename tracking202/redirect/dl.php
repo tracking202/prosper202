@@ -301,51 +301,51 @@ switch ($tracker_row['user_keyword_searched_or_bidded']) {
 	case "bidded":
 		#try to get the bidded keyword first
 		if (isset($_GET['OVKEY'])) { //if this is a Y! keyword
-			$keyword = $db->real_escape_string((string)$_GET['OVKEY']);
+			$keyword = (string)$_GET['OVKEY'];
 		} elseif (isset($_GET['t202kw'])) {
-			$keyword = $db->real_escape_string((string)$_GET['t202kw']);
+			$keyword = (string)$_GET['t202kw'];
 		} elseif (isset($_GET['target_passthrough'])) { //if this is a mediatraffic! keyword
-			$keyword = $db->real_escape_string((string)$_GET['target_passthrough']);
+			$keyword = (string)$_GET['target_passthrough'];
 		} else { //if this is a zango, or more keyword
-			$keyword = $db->real_escape_string((string)($_GET['keyword'] ?? ''));
+			$keyword = (string)($_GET['keyword'] ?? '');
 		}
 		break;
 	case "searched":
 		#try to get the searched keyword
 		if (isset($referer_query['q'])) {
-			$keyword = $db->real_escape_string($referer_query['q']);
+			$keyword = $referer_query['q'];
 		} elseif (isset($_GET['OVRAW'])) { //if this is a Y! keyword
-			$keyword = $db->real_escape_string((string)$_GET['OVRAW']);
+			$keyword = (string)$_GET['OVRAW'];
 		} elseif (isset($_GET['target_passthrough'])) { //if this is a mediatraffic! keyword
-			$keyword = $db->real_escape_string((string)$_GET['target_passthrough']);
+			$keyword = (string)$_GET['target_passthrough'];
 		} elseif (isset($_GET['keyword'])) { //if this is a zango, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['keyword']);
+			$keyword = (string)$_GET['keyword'];
 		} elseif (isset($_GET['search_word'])) { //if this is a eniro, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['search_word']);
+			$keyword = (string)$_GET['search_word'];
 		} elseif (isset($_GET['query'])) { //if this is a naver, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['query']);
+			$keyword = (string)$_GET['query'];
 		} elseif (isset($_GET['encquery'])) { //if this is a aol, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['encquery']);
+			$keyword = (string)$_GET['encquery'];
 		} elseif (isset($_GET['terms'])) { //if this is a about.com, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['terms']);
+			$keyword = (string)$_GET['terms'];
 		} elseif (isset($_GET['rdata'])) { //if this is a viola, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['rdata']);
+			$keyword = (string)$_GET['rdata'];
 		} elseif (isset($_GET['qs'])) { //if this is a virgilio, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['qs']);
+			$keyword = (string)$_GET['qs'];
 		} elseif (isset($_GET['wd'])) { //if this is a baidu, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['wd']);
+			$keyword = (string)$_GET['wd'];
 		} elseif (isset($_GET['text'])) { //if this is a yandex, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['text']);
+			$keyword = (string)$_GET['text'];
 		} elseif (isset($_GET['szukaj'])) { //if this is a wp.pl, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['szukaj']);
+			$keyword = (string)$_GET['szukaj'];
 		} elseif (isset($_GET['qt'])) { //if this is a O*net, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['qt']);
+			$keyword = (string)$_GET['qt'];
 		} elseif (isset($_GET['k'])) { //if this is a yam, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['k']);
+			$keyword = (string)$_GET['k'];
 		} elseif (isset($_GET['words'])) { //if this is a Rambler, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['words']);
+			$keyword = (string)$_GET['words'];
 		} else {
-			$keyword = $db->real_escape_string((string)($_GET['t202kw'] ?? ''));
+			$keyword = (string)($_GET['t202kw'] ?? '');
 		}
 		break;
 }
@@ -366,8 +366,9 @@ $_lGET = array_change_key_case($_GET, CASE_LOWER); //make lowercase copy of get
 //Get C1-C4 IDs
 for ($i = 1; $i <= 4; $i++) {
 	$custom = "c" . $i; //create dynamic variable
-	$custom_val = $_lGET[$custom] ?? '';
-	$custom_val = $db->real_escape_string($custom_val); // get the value
+	// Raw value: findOrCreateCustomVar() binds it as a parameter, so escaping
+	// here would store literal backslashes.
+	$custom_val = (string) ($_lGET[$custom] ?? '');
 	$custom_val = str_replace('%20', ' ', $custom_val);
 	$custom_id = $trackingRepo->findOrCreateCustomVar($custom, $custom_val); //get the id
 	$mysql[$custom . '_id'] = $db->real_escape_string((string)$custom_id); //save it
@@ -381,7 +382,7 @@ $ppc_variable_ids = !empty($tracker_row['ppc_variable_ids']) ? explode(',', (str
 $parameters = !empty($tracker_row['parameters']) ? explode(',', (string) $tracker_row['parameters']) : [];
 
 foreach ($parameters as $key => $value) {
-	$variable = $db->real_escape_string((string)($_GET[$value] ?? ''));
+	$variable = (string)($_GET[$value] ?? '');
 
 	if (isset($variable) && $variable != '') {
 		$variable = str_replace('%20', ' ', $variable);
@@ -391,7 +392,7 @@ foreach ($parameters as $key => $value) {
 }
 
 //utm_source
-$utm_source = $db->real_escape_string((string)($_GET['utm_source'] ?? ''));
+$utm_source = (string)($_GET['utm_source'] ?? '');
 if (isset($utm_source) && $utm_source != '') {
 	$utm_source = str_replace('%20', ' ', $utm_source);
 	$utm_source_id = $trackingRepo->findOrCreateUtm($utm_source, 'utm_source');
@@ -401,7 +402,7 @@ if (isset($utm_source) && $utm_source != '') {
 $mysql['utm_source_id'] = $db->real_escape_string((string)$utm_source_id);
 
 //utm_medium
-$utm_medium = $db->real_escape_string((string)($_GET['utm_medium'] ?? ''));
+$utm_medium = (string)($_GET['utm_medium'] ?? '');
 if (isset($utm_medium) && $utm_medium != '') {
 	$utm_medium = str_replace('%20', ' ', $utm_medium);
 	$utm_medium_id = $trackingRepo->findOrCreateUtm($utm_medium, 'utm_medium');
@@ -411,7 +412,7 @@ if (isset($utm_medium) && $utm_medium != '') {
 $mysql['utm_medium_id'] = $db->real_escape_string((string)$utm_medium_id);
 
 //utm_campaign
-$utm_campaign = $db->real_escape_string((string)($_GET['utm_campaign'] ?? ''));
+$utm_campaign = (string)($_GET['utm_campaign'] ?? '');
 if (isset($utm_campaign) && $utm_campaign != '') {
 	$utm_campaign = str_replace('%20', ' ', $utm_campaign);
 	$utm_campaign_id = $trackingRepo->findOrCreateUtm($utm_campaign, 'utm_campaign');
@@ -421,7 +422,7 @@ if (isset($utm_campaign) && $utm_campaign != '') {
 $mysql['utm_campaign_id'] = $db->real_escape_string((string)$utm_campaign_id);
 
 //utm_term
-$utm_term = $db->real_escape_string((string)($_GET['utm_term'] ?? ''));
+$utm_term = (string)($_GET['utm_term'] ?? '');
 if (isset($utm_term) && $utm_term != '') {
 	$utm_term = str_replace('%20', ' ', $utm_term);
 	$utm_term_id = $trackingRepo->findOrCreateUtm($utm_term, 'utm_term');
@@ -431,7 +432,7 @@ if (isset($utm_term) && $utm_term != '') {
 $mysql['utm_term_id'] = $db->real_escape_string((string)$utm_term_id);
 
 //utm_content
-$utm_content = $db->real_escape_string((string)($_GET['utm_content'] ?? ''));
+$utm_content = (string)($_GET['utm_content'] ?? '');
 if (isset($utm_content) && $utm_content != '') {
 	$utm_content = str_replace('%20', ' ', $utm_content);
 	$utm_content_id = $trackingRepo->findOrCreateUtm($utm_content, 'utm_content');

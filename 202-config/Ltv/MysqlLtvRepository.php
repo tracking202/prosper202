@@ -363,6 +363,22 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
         $rows = [];
         foreach ($this->breakdown($query, $breakdownType, 100, 0) as $row) {
             $customers = (int) ($row['customers'] ?? 0);
+            // Defensive net: every breakdown now supplies aov/repeat_rate/mrr
+            // (product included), but a future breakdown that doesn't must fall
+            // back to the account projection rather than project a bogus 0.0.
+            $hasProjectionInputs = array_key_exists('aov', $row) && array_key_exists('repeat_rate', $row);
+            if (!$hasProjectionInputs) {
+                $prediction = $account;
+                $prediction['basis'] = 'account_fallback';
+                $prediction['fallback_reason'] = "'{$breakdownType}' breakdown does not supply per-cohort aov/repeat_rate";
+                $rows[] = [
+                    'id' => $row['id'] ?? null,
+                    'name' => $row['name'] ?? null,
+                    'customers' => $customers,
+                    'prediction' => $prediction,
+                ];
+                continue;
+            }
             if ($customers >= self::MIN_COHORT_SIZE) {
                 // Cohort projection: the COHORT's own MRR (a campaign with no
                 // subscribers must not display the account-wide subscriber
@@ -463,44 +479,91 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
             ? "\n            INNER JOIN 202_customers c ON c.customer_id = re.customer_id AND c.user_id = li.user_id AND c.merged_into_customer_id IS NULL" . $cfJoins
             : '';
 
-        $where = ['li.user_id = ?'];
-        $types = $cfTypes . 'i';
-        $binds = array_merge($cfBinds, [$query->userId]);
+        $pcWhere = ['li.user_id = ?', 'li.product_id IS NOT NULL'];
+        $pcTypes = $cfTypes . 'i';
+        $pcBinds = array_merge($cfBinds, [$query->userId]);
         if ($query->timeFrom !== null) {
-            $where[] = 're.occurred_at >= ?';
-            $types .= 'i';
-            $binds[] = $query->timeFrom;
+            $pcWhere[] = 're.occurred_at >= ?';
+            $pcTypes .= 'i';
+            $pcBinds[] = $query->timeFrom;
         }
         if ($query->timeTo !== null) {
-            $where[] = 're.occurred_at <= ?';
-            $types .= 'i';
-            $binds[] = $query->timeTo;
+            $pcWhere[] = 're.occurred_at <= ?';
+            $pcTypes .= 'i';
+            $pcBinds[] = $query->timeTo;
         }
-        $whereClause = 'WHERE ' . implode(' AND ', $where);
+        $pcWhereClause = 'WHERE ' . implode(' AND ', $pcWhere);
 
+        // Per-product subscriber MRR. Subscriptions carry no product_id, so a
+        // subscription's MRR is attributed to the product(s) it bills for (the
+        // products on its events' line items), split EVENLY across the distinct
+        // products of a multi-product (bundle) subscription. This is additive —
+        // summing product mrr over all products reconciles to total active MRR
+        // for subscriptions that have at least one product line item (a
+        // subscription with no product line items cannot be attributed and is
+        // omitted). Active subscriptions only, current-state (no report-window
+        // filter), matching mrr() and the acquisition breakdown's SUM(c.mrr).
+        // One placeholder: user_id.
+        $mrrSubquery = "LEFT JOIN (
+                    WITH sub_prod AS (
+                        SELECT DISTINCT s.subscription_id, s.mrr, li_s.product_id
+                        FROM 202_subscriptions s
+                        INNER JOIN 202_revenue_events re_s
+                            ON re_s.subscription_id = s.subscription_id AND re_s.user_id = s.user_id
+                        INNER JOIN 202_revenue_line_items li_s
+                            ON li_s.event_id = re_s.event_id AND li_s.product_id IS NOT NULL
+                        WHERE s.user_id = ? AND s.status = 'active'
+                    )
+                    SELECT sp.product_id, SUM(sp.mrr / cnt.n) AS mrr
+                    FROM sub_prod sp
+                    INNER JOIN (
+                        SELECT subscription_id, COUNT(*) AS n FROM sub_prod GROUP BY subscription_id
+                    ) cnt ON cnt.subscription_id = sp.subscription_id
+                    GROUP BY sp.product_id
+                ) pm ON pm.product_id = pc.product_id";
+
+        // pc is one row per (product, customer): grouping the events by
+        // re.customer_id yields the per-customer distinct-order count that
+        // repeat_rate needs. A merged customer's events were repointed to the
+        // survivor at merge time, so the stored customer_id is already correct.
         $sql = "SELECT
-                p.product_id AS id,
+                pc.product_id AS id,
                 COALESCE(p.name, p.sku, p.external_product_id) AS name,
                 p.sku,
-                COUNT(DISTINCT re.customer_id) AS customers,
-                COUNT(DISTINCT CASE WHEN re.event_type IN ('purchase','renewal','one_time')
-                                    THEN re.event_id END) AS orders,
-                COALESCE(SUM(li.quantity), 0) AS units,
-                COALESCE(SUM(li.amount), 0) AS total_revenue,
-                CASE WHEN COUNT(DISTINCT re.customer_id) > 0
-                     THEN SUM(li.amount) / COUNT(DISTINCT re.customer_id)
-                     ELSE 0 END AS avg_revenue_per_customer
-            FROM 202_revenue_line_items li
-            INNER JOIN 202_revenue_events re ON re.event_id = li.event_id
-            INNER JOIN 202_products p ON p.product_id = li.product_id{$customerJoin}
-            {$whereClause}
-            GROUP BY p.product_id, name, p.sku
+                COUNT(*) AS customers,
+                COALESCE(SUM(pc.cust_orders), 0) AS orders,
+                COALESCE(SUM(pc.cust_units), 0) AS units,
+                COALESCE(SUM(pc.cust_revenue), 0) AS total_revenue,
+                CASE WHEN COUNT(*) > 0 THEN SUM(pc.cust_revenue) / COUNT(*) ELSE 0 END AS avg_revenue_per_customer,
+                CASE WHEN SUM(pc.cust_orders) > 0 THEN SUM(pc.cust_revenue) / SUM(pc.cust_orders) ELSE 0 END AS aov,
+                CASE WHEN SUM(CASE WHEN pc.cust_orders >= 1 THEN 1 ELSE 0 END) > 0
+                     THEN SUM(CASE WHEN pc.cust_orders >= 2 THEN 1 ELSE 0 END)
+                          / SUM(CASE WHEN pc.cust_orders >= 1 THEN 1 ELSE 0 END)
+                     ELSE 0 END AS repeat_rate,
+                COALESCE(MAX(pm.mrr), 0) AS mrr
+            FROM (
+                SELECT
+                    li.product_id,
+                    re.customer_id,
+                    COUNT(DISTINCT CASE WHEN re.event_type IN ('purchase','renewal','one_time')
+                                        THEN re.event_id END) AS cust_orders,
+                    SUM(li.quantity) AS cust_units,
+                    SUM(li.amount) AS cust_revenue
+                FROM 202_revenue_line_items li
+                INNER JOIN 202_revenue_events re ON re.event_id = li.event_id{$customerJoin}
+                {$pcWhereClause}
+                GROUP BY li.product_id, re.customer_id
+            ) pc
+            INNER JOIN 202_products p ON p.product_id = pc.product_id
+            {$mrrSubquery}
+            GROUP BY pc.product_id, name, p.sku
             ORDER BY total_revenue DESC
             LIMIT ? OFFSET ?";
 
-        $binds[] = $limit;
-        $binds[] = $offset;
-        $types .= 'ii';
+        // Bind order follows SQL text: pc's cf-join + WHERE binds, then the MRR
+        // subquery's user_id, then LIMIT/OFFSET.
+        $binds = array_merge($pcBinds, [$query->userId, $limit, $offset]);
+        $types = $pcTypes . 'iii';
 
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $binds);

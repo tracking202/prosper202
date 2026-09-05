@@ -53,7 +53,11 @@ final class AttributionServiceExportTest extends TestCase
             'end_hour' => $now,
             'format' => ExportFormat::CSV->value,
             'webhook' => [
-                'url' => 'https://example.com/hook',
+                // An IP literal, not a hostname: scheduleSnapshotExport() now
+                // runs the SSRF guard, and a hostname would make this test
+                // depend on live DNS. 203.0.113.0/24 is TEST-NET-3 -- routable
+                // as far as the guard is concerned, and never contacted here.
+                'url' => 'https://203.0.113.10/hook',
                 'headers' => ['X-Test' => '  value '],
             ],
         ]);
@@ -68,11 +72,42 @@ final class AttributionServiceExportTest extends TestCase
         $job = $jobs[0];
         $this->assertSame(ExportStatus::PENDING, $job->status);
         $this->assertNotNull($job->webhook);
-        $this->assertSame('https://example.com/hook', $job->webhook->url);
+        $this->assertSame('https://203.0.113.10/hook', $job->webhook->url);
         // ExportWebhook stores header values verbatim (no trimming).
         $this->assertSame(['X-Test' => '  value '], $job->webhook->headers);
         $this->assertSame($now - 7200, $job->startHour);
         $this->assertSame($now, $job->endHour);
+    }
+
+    /**
+     * @dataProvider blockedWebhookUrls
+     */
+    public function testScheduleSnapshotExportRejectsAnUnsafeWebhookUrl(string $url): void
+    {
+        // The guard used to live in ExportWebhook's constructor, which is also
+        // the row-hydration path -- so it was moved here, to the write boundary.
+        // It has to still fire, or the move traded one bug for a worse one.
+        $now = (int) floor(time() / 3600) * 3600;
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->service->scheduleSnapshotExport(1, 1, [
+            'scope' => ScopeType::GLOBAL->value,
+            'start_hour' => $now - 7200,
+            'end_hour' => $now,
+            'format' => ExportFormat::CSV->value,
+            'webhook' => ['url' => $url],
+        ]);
+    }
+
+    /** @return array<string, array{0: string}> */
+    public static function blockedWebhookUrls(): array
+    {
+        return [
+            'cleartext'     => ['http://203.0.113.10/hook'],
+            'loopback'      => ['https://127.0.0.1/hook'],
+            'link local'    => ['https://169.254.169.254/hook'],
+            'private range' => ['https://10.0.0.5/hook'],
+        ];
     }
 
     public function testScheduleSnapshotExportRejectsInvalidWindow(): void

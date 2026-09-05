@@ -94,7 +94,22 @@ final class MysqlRotatorRepository implements RotatorRepositoryInterface
 
     public function create(int $userId, array $data): int
     {
-        $publicId = (int) ($data['public_id'] ?? random_int(100_000, 9_999_999));
+        // public_id is resolved by the unauthenticated redirect with no user
+        // scoping and has no UNIQUE key, so an ALREADY-TAKEN caller value would
+        // resolve to another user's rotator. The hazard is collision, not caller
+        // choice: honour a supplied public_id when it is free, generate one
+        // otherwise. Refusing it outright broke cross-install `p202 sync`, which
+        // matches rotators between installs by public_id.
+        $publicId = 0;
+        if (isset($data['public_id']) && $data['public_id'] !== '') {
+            $requested = (int) $data['public_id'];
+            if ($requested > 0 && $this->publicIdIsFree($requested)) {
+                $publicId = $requested;
+            }
+        }
+        if ($publicId === 0) {
+            $publicId = $this->generatePublicId();
+        }
 
         $stmt = $this->conn->prepareWrite(
             'INSERT INTO 202_rotators (public_id, user_id, name, default_url, default_campaign, default_lp) VALUES (?, ?, ?, ?, ?, ?)'
@@ -233,6 +248,13 @@ final class MysqlRotatorRepository implements RotatorRepositoryInterface
     public function updateRule(int $ruleId, int $rotatorId, array $data): void
     {
         $this->conn->transaction(function () use ($ruleId, $rotatorId, $data): void {
+            // Ownership pre-check: rule ids are globally unique and the child
+            // criteria/redirect replacements below match on rule_id alone, so
+            // without this a caller could wipe another rotator's targeting and
+            // re-stamp the rows with their own rotator_id. Matches the guard in
+            // InMemoryRotatorRepository and RotatorsController::deleteRule.
+            $this->assertRuleBelongsToRotator($ruleId, $rotatorId);
+
             // Update rule fields
             $sets = [];
             $values = [];
@@ -324,9 +346,65 @@ final class MysqlRotatorRepository implements RotatorRepositoryInterface
         });
     }
 
+    /**
+     * Pick an unused public_id. Best-effort in the absence of a UNIQUE key:
+     * removes deliberate collisions, makes random ones vanishingly unlikely.
+     */
+    private function publicIdIsFree(int $candidate): bool
+    {
+        // prepareWrite, not prepareRead: this decides whether an id is free, and
+        // a replica lagging behind the primary can still show a public_id that
+        // has just been taken, handing out a duplicate.
+        // No $stmt->close() here -- Connection::fetchOne() already closes it, and
+        // a second close throws "mysqli_stmt object is already closed" on PHP 8.
+        $stmt = $this->conn->prepareWrite('SELECT id FROM 202_rotators WHERE public_id = ? LIMIT 1');
+        $this->conn->bind($stmt, 'i', [$candidate]);
+        $row = $this->conn->fetchOne($stmt);
+
+        return $row === null;
+    }
+
+    private function generatePublicId(): int
+    {
+        for ($attempt = 0; $attempt < 10; $attempt++) {
+            $candidate = random_int(100_000, 9_999_999);
+            if ($this->publicIdIsFree($candidate)) {
+                return $candidate;
+            }
+        }
+
+        throw new RuntimeException('Unable to allocate a unique rotator public id');
+    }
+
+    /**
+     * Verify a rule belongs to the given rotator before touching its children,
+     * which are keyed on the globally-unique rule_id alone.
+     */
+    private function assertRuleBelongsToRotator(int $ruleId, int $rotatorId): void
+    {
+        // prepareWrite, not prepareRead: both callers run this inside the write
+        // transaction that is about to delete or update the rule's children, so
+        // reading it from a replica can authorise the write against stale,
+        // pre-transaction state. delete() in this class uses the write
+        // connection with FOR UPDATE for the same reason.
+        // No $stmt->close() here -- Connection::fetchOne() already closes it, and
+        // a second close throws "mysqli_stmt object is already closed" on PHP 8.
+        $stmt = $this->conn->prepareWrite(
+            'SELECT rotator_id FROM 202_rotator_rules WHERE id = ? FOR UPDATE'
+        );
+        $this->conn->bind($stmt, 'i', [$ruleId]);
+        $row = $this->conn->fetchOne($stmt);
+
+        if ($row === null || (int) $row['rotator_id'] !== $rotatorId) {
+            throw new RuntimeException("Rule $ruleId not found");
+        }
+    }
+
     public function deleteRule(int $ruleId, int $rotatorId): void
     {
         $this->conn->transaction(function () use ($ruleId, $rotatorId): void {
+            $this->assertRuleBelongsToRotator($ruleId, $rotatorId);
+
             $stmt = $this->conn->prepareWrite(
                 'DELETE FROM 202_rotator_rules_criteria WHERE rule_id = ?'
             );

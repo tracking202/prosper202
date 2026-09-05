@@ -26,7 +26,7 @@ class LtvPredictCommand extends BaseCommand
 
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
-        $result = $this->client()->get('ltv/predict', LtvSummaryCommand::collectLtvParams($input));
+        $result = $this->client()->get('ltv/predict', $this->collectOptions($input, LtvSummaryCommand::LTV_PARAMS));
         $this->render($output, $result, $input);
         return Command::SUCCESS;
     }

@@ -8,7 +8,6 @@ use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Console\Question\Question;
 
 class UserCreateCommand extends BaseCommand
 {
@@ -48,12 +47,8 @@ class UserCreateCommand extends BaseCommand
         // Secure password input: if not provided via --user_pass, prompt interactively.
         // This avoids leaking the password into shell history and ps output.
         if (empty($body['user_pass'])) {
-            $helper = $this->getHelper('question');
-            $question = new Question('Password (hidden): ');
-            $question->setHidden(true);
-            $question->setHiddenFallback(false);
-            $password = $helper->ask($input, $output, $question);
-            if (!$password) {
+            $password = $this->promptHiddenSecret($input, $output, 'Password (hidden): ');
+            if ($password === null) {
                 $output->writeln('<error>Password is required</error>');
                 return Command::FAILURE;
             }

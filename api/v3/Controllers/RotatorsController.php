@@ -8,9 +8,12 @@ use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\StatementHelpers;
 
 class RotatorsController
 {
+    use StatementHelpers;
+
     public function __construct(private readonly \mysqli $db, private readonly int $userId)
     {
     }
@@ -93,6 +96,34 @@ class RotatorsController
         return ['data' => $row];
     }
 
+    /**
+     * Pick an unused public_id. 202_rotators has no UNIQUE key on the column,
+     * so this is best-effort: it removes deliberate collisions and makes random
+     * ones vanishingly unlikely.
+     */
+    private function publicIdIsFree(int $candidate): bool
+    {
+        $stmt = $this->prepare('SELECT id FROM 202_rotators WHERE public_id = ? LIMIT 1');
+        $this->bind($stmt, 'i', $candidate);
+        $this->execute($stmt, 'Public id lookup failed');
+        $taken = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return $taken === null || $taken === false;
+    }
+
+    private function generatePublicId(): int
+    {
+        for ($attempt = 0; $attempt < 10; $attempt++) {
+            $candidate = random_int(100_000, 9_999_999);
+            if ($this->publicIdIsFree($candidate)) {
+                return $candidate;
+            }
+        }
+
+        throw new DatabaseException('Unable to allocate a unique rotator public id');
+    }
+
     public function create(array $payload): array
     {
         $name = trim((string)($payload['name'] ?? ''));
@@ -103,9 +134,29 @@ class RotatorsController
         $defaultUrl = (string)($payload['default_url'] ?? '');
         $defaultCampaign = (int)($payload['default_campaign'] ?? 0);
         $defaultLp = (int)($payload['default_lp'] ?? 0);
-        $publicId = isset($payload['public_id']) && (int)$payload['public_id'] > 0
-            ? (int)$payload['public_id']
-            : random_int(100_000, 9_999_999);
+        // public_id is the handle offrtr.php/rtr.php resolve for ANY visitor with
+        // no user scoping, and 202_rotators has no unique key on it — so a
+        // caller-chosen value that is ALREADY TAKEN would route another user's
+        // clicks to this rotator (the lookup is then memcached). An integrity
+        // bug within the install, not cross-install.
+        //
+        // The danger is collision, not caller choice, so honour a supplied
+        // public_id when it is free and fall back to a generated one otherwise.
+        // Rejecting it outright broke `p202 sync`: rotators are matched between
+        // installs by public_id, so a server-assigned value meant the target
+        // never matched the source — every run re-created every rotator, and
+        // remapping trackers' rotator_id failed outright with "unresolvable
+        // target foreign key".
+        $publicId = 0;
+        if (isset($payload['public_id']) && $payload['public_id'] !== '') {
+            $requested = (int)$payload['public_id'];
+            if ($requested > 0 && $this->publicIdIsFree($requested)) {
+                $publicId = $requested;
+            }
+        }
+        if ($publicId === 0) {
+            $publicId = $this->generatePublicId();
+        }
 
         $stmt = $this->prepare('INSERT INTO 202_rotators (public_id, user_id, name, default_url, default_campaign, default_lp) VALUES (?, ?, ?, ?, ?, ?)');
         $this->bind($stmt, 'iissii', $publicId, $this->userId, $name, $defaultUrl, $defaultCampaign, $defaultLp);
@@ -124,6 +175,11 @@ class RotatorsController
     public function update(int $id, array $payload): array
     {
         $this->get($id);
+
+        // create() rejects empty names; update must too.
+        if (array_key_exists('name', $payload) && trim((string)$payload['name']) === '') {
+            throw new ValidationException('name cannot be empty', ['name' => 'Cannot be empty']);
+        }
 
         $sets = [];
         $binds = [];
@@ -186,7 +242,7 @@ class RotatorsController
     {
         $this->get($id);
 
-        $this->db->begin_transaction();
+        $this->beginTransaction();
         try {
             $stmt = $this->prepare('DELETE FROM 202_rotator_rules_criteria WHERE rotator_id = ?');
             $this->bind($stmt, 'i', $id);
@@ -208,7 +264,9 @@ class RotatorsController
             $this->execute($stmt, 'Delete rotator failed');
             $stmt->close();
 
-            $this->db->commit();
+            if (!$this->db->commit()) {
+                throw new DatabaseException('Transaction commit failed');
+            }
         } catch (\Throwable $e) {
             $this->db->rollback();
             throw $e;
@@ -233,7 +291,7 @@ class RotatorsController
         $splittest = (int)($payload['splittest'] ?? 0);
         $status = (int)($payload['status'] ?? 1);
 
-        $this->db->begin_transaction();
+        $this->beginTransaction();
         try {
             $stmt = $this->prepare('INSERT INTO 202_rotator_rules (rotator_id, rule_name, splittest, status) VALUES (?, ?, ?, ?)');
             $this->bind($stmt, 'isii', $rotatorId, $ruleName, $splittest, $status);
@@ -244,6 +302,9 @@ class RotatorsController
             if (!empty($payload['criteria']) && is_array($payload['criteria'])) {
                 $insertCriteria = $this->prepare('INSERT INTO 202_rotator_rules_criteria (rotator_id, rule_id, type, statement, value) VALUES (?, ?, ?, ?, ?)');
                 foreach ($payload['criteria'] as $c) {
+                    if (!is_array($c)) {
+                        throw new ValidationException('Each criterion must be an object', ['criteria' => 'Scalar entries are not valid criteria']);
+                    }
                     $cType = (string)($c['type'] ?? '');
                     $cStatement = (string)($c['statement'] ?? '');
                     $cValue = (string)($c['value'] ?? '');
@@ -256,6 +317,9 @@ class RotatorsController
             if (!empty($payload['redirects']) && is_array($payload['redirects'])) {
                 $insertRedirect = $this->prepare('INSERT INTO 202_rotator_rules_redirects (rule_id, redirect_url, redirect_campaign, redirect_lp, weight, name) VALUES (?, ?, ?, ?, ?, ?)');
                 foreach ($payload['redirects'] as $r) {
+                    if (!is_array($r)) {
+                        throw new ValidationException('Each redirect must be an object', ['redirects' => 'Scalar entries are not valid redirects']);
+                    }
                     $rUrl = (string)($r['redirect_url'] ?? '');
                     $rCampaign = (int)($r['redirect_campaign'] ?? 0);
                     $rLp = (int)($r['redirect_lp'] ?? 0);
@@ -267,7 +331,9 @@ class RotatorsController
                 $insertRedirect->close();
             }
 
-            $this->db->commit();
+            if (!$this->db->commit()) {
+                throw new DatabaseException('Transaction commit failed');
+            }
         } catch (\Throwable $e) {
             $this->db->rollback();
             throw $e;
@@ -338,7 +404,7 @@ class RotatorsController
             throw new ValidationException('No fields to update');
         }
 
-        $this->db->begin_transaction();
+        $this->beginTransaction();
         try {
             if (!empty($setParts)) {
                 $binds[] = $ruleId;
@@ -397,7 +463,9 @@ class RotatorsController
                 }
             }
 
-            $this->db->commit();
+            if (!$this->db->commit()) {
+                throw new DatabaseException('Transaction commit failed');
+            }
         } catch (\Throwable $e) {
             $this->db->rollback();
             throw $e;
@@ -455,7 +523,7 @@ class RotatorsController
             throw new NotFoundException('Rule not found for rotator');
         }
 
-        $this->db->begin_transaction();
+        $this->beginTransaction();
         try {
             $stmt = $this->prepare('DELETE FROM 202_rotator_rules_criteria WHERE rule_id = ?');
             $this->bind($stmt, 'i', $ruleId);
@@ -472,37 +540,12 @@ class RotatorsController
             $this->execute($stmt, 'Delete rule failed');
             $stmt->close();
 
-            $this->db->commit();
+            if (!$this->db->commit()) {
+                throw new DatabaseException('Transaction commit failed');
+            }
         } catch (\Throwable $e) {
             $this->db->rollback();
             throw $e;
-        }
-    }
-
-    private function prepare(string $sql): \mysqli_stmt
-    {
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            throw new DatabaseException('Prepare failed');
-        }
-        return $stmt;
-    }
-
-    private function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
-    {
-        // @phpstan-ignore-next-line -- this IS the ref-safe wrapper; no Connection in scope
-        if (!$stmt->bind_param($types, ...$values)) {
-            $stmt->close();
-            throw new DatabaseException('Bind failed');
-        }
-    }
-
-    private function execute(\mysqli_stmt $stmt, string $message): void
-    {
-        // @phpstan-ignore-next-line -- this IS the checked-execution wrapper; no Connection in scope
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException($message);
         }
     }
 }

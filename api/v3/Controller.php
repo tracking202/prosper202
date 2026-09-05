@@ -10,6 +10,7 @@ use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\ServerStateStore;
+use Api\V3\Support\StatementHelpers;
 
 /**
  * Base CRUD controller with lifecycle hooks, input validation, and DI.
@@ -20,6 +21,8 @@ use Api\V3\Support\ServerStateStore;
  */
 abstract class Controller
 {
+    use StatementHelpers;
+
     abstract protected function tableName(): string;
     abstract protected function primaryKey(): string;
     abstract protected function fields(): array;
@@ -64,7 +67,11 @@ abstract class Controller
         return $this->primaryKey() . ' DESC';
     }
 
-    protected function maxBulkRows(): int
+    /**
+     * Single source of truth for the bulk-upsert row cap; /capabilities
+     * advertises this value and must never drift from what is enforced.
+     */
+    public static function configuredMaxBulkRows(): int
     {
         $raw = getenv('P202_MAX_BULK_ROWS');
         if (is_string($raw) && trim($raw) !== '') {
@@ -74,6 +81,11 @@ abstract class Controller
             }
         }
         return 500;
+    }
+
+    protected function maxBulkRows(): int
+    {
+        return self::configuredMaxBulkRows();
     }
 
     protected function selectColumns(): array
@@ -633,15 +645,30 @@ abstract class Controller
                         $primaryKey = $this->primaryKey();
                         $id = $row[$primaryKey] ?? $row['id'] ?? null;
                         if ($id !== null && $id !== '') {
+                            // Strictly validate the ID instead of passing it through
+                            // as a string: binding "12abc" as 's' against an integer
+                            // PK would let MySQL coerce it to 12 and silently
+                            // overwrite the wrong row.
+                            if (is_int($id)) {
+                                // Already an integer.
+                            } elseif (is_string($id) && ctype_digit(trim($id))) {
+                                $id = (int)trim($id);
+                            } elseif (is_float($id) && $id === (float)(int)$id) {
+                                $id = (int)$id;
+                            } else {
+                                $summary['error']++;
+                                $results[] = ['index' => $index, 'status' => 'error', 'message' => 'Invalid primary key value'];
+                                continue;
+                            }
                             try {
-                                $this->get((string)$id);
+                                $this->get($id);
                                 $clean = $this->validatePayload($row);
                                 if ($clean === []) {
                                     $summary['skipped']++;
                                     $results[] = ['index' => $index, 'status' => 'skipped', 'message' => 'No mutable fields provided'];
                                     continue;
                                 }
-                                $updated = $this->update((string)$id, $row);
+                                $updated = $this->update($id, $row);
                                 $summary['updated']++;
                                 $results[] = ['index' => $index, 'status' => 'updated', 'data' => $updated['data']];
                                 continue;
@@ -831,43 +858,4 @@ abstract class Controller
         return $map[$this->tableName()] ?? null;
     }
 
-    protected function transaction(callable $fn): mixed
-    {
-        $this->db->begin_transaction();
-        try {
-            $result = $fn();
-            $this->db->commit();
-            return $result;
-        } catch (\Throwable $e) {
-            $this->db->rollback();
-            throw $e;
-        }
-    }
-
-    protected function prepare(string $sql): \mysqli_stmt
-    {
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            throw new DatabaseException("Prepare failed");
-        }
-        return $stmt;
-    }
-
-    protected function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
-    {
-        // @phpstan-ignore-next-line this IS the ref-safe bind wrapper (analog of Connection::bind); no $this->conn exists, cannot self-route
-        if (!$stmt->bind_param($types, ...$values)) {
-            $stmt->close();
-            throw new DatabaseException('Bind failed');
-        }
-    }
-
-    protected function execute(\mysqli_stmt $stmt, string $message): void
-    {
-        // @phpstan-ignore-next-line this IS the checked-execute wrapper (analog of Connection::execute); no $this->conn exists, cannot self-route
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException($message);
-        }
-    }
 }

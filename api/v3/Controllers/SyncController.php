@@ -14,7 +14,7 @@ class SyncController
 {
     private readonly SyncEngine $engine;
 
-    public function __construct(\mysqli $db, private readonly int $userId, private readonly ?ServerStateStore $store = new ServerStateStore(), ?SyncEngine $engine = null)
+    public function __construct(\mysqli $db, private readonly int $userId, private readonly ServerStateStore $store = new ServerStateStore(), ?SyncEngine $engine = null)
     {
         if ($db->connect_errno !== 0) {
             throw new DatabaseException('Database connection unavailable for sync controller');
@@ -324,7 +324,7 @@ class SyncController
             $entity = trim((string)($request['entity'] ?? 'all'));
             $options = is_array($request['options'] ?? null) ? $request['options'] : [];
 
-            $pairKey = sha1(strtolower((string)($source['url'] ?? '')) . '|' . strtolower((string)($target['url'] ?? '')));
+            $pairKey = SyncEngine::pairKeyFor($source, $target);
             $manifest = $this->store->loadSyncManifest($pairKey);
             if (!empty($options['incremental']) && empty($options['updated_since']) && !empty($manifest['last_sync_epoch'])) {
                 $options['updated_since'] = (string)((int)$manifest['last_sync_epoch']);
@@ -352,6 +352,12 @@ class SyncController
                 $job['results'] = $results;
                 $job['error'] = null;
                 $job['next_run_at'] = null;
+                // Re-read the persisted flag: a cancel may have landed while
+                // execute() was running and our in-memory copy is stale.
+                $fresh = $this->store->getJob($jobId);
+                if (is_array($fresh) && !empty($fresh['cancel_requested'])) {
+                    $job['cancel_requested'] = true;
+                }
                 if ((bool)($job['cancel_requested'] ?? false)) {
                     $job['status'] = 'cancelled';
                     $this->store->incrementMetric('jobs_cancelled', 1);
@@ -472,7 +478,7 @@ class SyncController
             throw new ValidationException('Prune confirmation token required', ['confirmation_token' => 'Required when prune=true']);
         }
 
-        $pairKey = sha1(strtolower((string)$source['url']) . '|' . strtolower((string)$target['url']));
+        $pairKey = SyncEngine::pairKeyFor($source, $target);
         if (!$this->store->validatePruneToken($token, $pairKey)) {
             throw new ValidationException('Invalid prune confirmation token', ['confirmation_token' => 'Token is invalid or expired']);
         }

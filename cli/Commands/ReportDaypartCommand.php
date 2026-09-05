@@ -33,7 +33,7 @@ class ReportDaypartCommand extends BaseCommand
 
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
-        $params = ReportSummaryCommand::collectParams($input);
+        $params = $this->collectOptions($input, ReportSummaryCommand::FILTER_PARAMS);
         $params['sort'] = (string)$input->getOption('sort');
         $params['sort_dir'] = (string)$input->getOption('sort_dir');
 

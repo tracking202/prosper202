@@ -43,7 +43,8 @@ $rotator_sql = "SELECT
 					   ac.aff_campaign_url_5,
 					   ac.aff_campaign_payout,
 					   ac.aff_campaign_cloaking,
-					   lp.landing_page_url 	
+					   up.maxmind_isp,
+					   lp.landing_page_url
 				FROM 202_rotators AS rt
 				LEFT JOIN 202_aff_campaigns AS ac ON ac.aff_campaign_id = rt.default_campaign
 				LEFT JOIN 202_landing_pages AS lp ON lp.landing_page_id = rt.default_lp
@@ -330,6 +331,9 @@ if ($default == false) {
 				";
 				$click_result = $db->query($update_sql) or record_mysql_error($db);
 
+				// Initialize before the branch so the non-cloaked path doesn't read an
+				// undefined variable at the $cloaking_on checks further down (matches off.php/rtr.php).
+				$cloaking_on = false;
 				if (($rule_redirect_row['click_cloaking'] == 1) or // if tracker has overrided cloaking on
 				(($rule_redirect_row['click_cloaking'] == - 1) and ($rule_redirect_row['aff_campaign_cloaking'] == 1)) or ((! isset($rule_redirect_row['click_cloaking'])) and ($rule_redirect_row['aff_campaign_cloaking'] == 1))) // if no tracker but but by default campaign has cloaking on
 				{
@@ -382,24 +386,24 @@ if ($default == false) {
 				if ($cloaking_on == true) { ?>
 				<html>
 				<head>
-				<title><?php echo $rule_redirect_row['aff_campaign_name']; ?></title>
+				<title><?php echo htmlspecialchars((string) $rule_redirect_row['aff_campaign_name'], ENT_QUOTES, 'UTF-8'); ?></title>
 				<meta name="robots" content="noindex">
 				<meta http-equiv="refresh"
-					content="1; url=<?php echo $redirect_site_url; ?>">
+					content="1; url=<?php echo htmlspecialchars((string) $redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>">
 				</head>
 				<body>
 					<form name="form1" id="form1" method="get"
 						action="/tracking202/redirect/cl2.php">
 						<input type="hidden" name="q"
-							value="<?php echo $redirect_site_url; ?>" />
+							value="<?php echo htmlspecialchars((string) $redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>" />
 					</form>
 					<script type="text/javascript">
 							document.form1.submit();
 						</script>
 
 					<div style="padding: 30px; text-align: center;">
-							You are being automatically redirected to <?php echo $rule_redirect_row['aff_campaign_name']; ?>.<br />
-						<br /> Page Stuck? <a href="<?php echo $redirect_site_url; ?>">Click
+							You are being automatically redirected to <?php echo htmlspecialchars((string) $rule_redirect_row['aff_campaign_name'], ENT_QUOTES, 'UTF-8'); ?>.<br />
+						<br /> Page Stuck? <a href="<?php echo htmlspecialchars((string) $redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>">Click
 							Here</a>.
 					</div>
 				</body>
@@ -455,6 +459,9 @@ if ($default == false) {
 				";
 				$click_result = $db->query($update_sql) or record_mysql_error($db);
 
+				// Initialize before the branch so the non-cloaked path doesn't read an
+				// undefined variable at the $cloaking_on checks further down (matches off.php/rtr.php).
+				$cloaking_on = false;
 				if (($click_row['click_cloaking'] == 1) or // if tracker has overrided cloaking on
 				(($click_row['click_cloaking'] == - 1) and ($rotator_row['aff_campaign_cloaking'] == 1)) or ((! isset($click_row['click_cloaking'])) and ($rotator_row['aff_campaign_cloaking'] == 1))) // if no tracker but but by default campaign has cloaking on
 				{
@@ -507,24 +514,24 @@ if ($default == false) {
 				if ($cloaking_on == true) { ?>
 				<html>
 				<head>
-				<title><?php echo $rotator_row['aff_campaign_name']; ?></title>
+				<title><?php echo htmlspecialchars((string) $rotator_row['aff_campaign_name'], ENT_QUOTES, 'UTF-8'); ?></title>
 				<meta name="robots" content="noindex">
 				<meta http-equiv="refresh"
-					content="1; url=<?php echo $redirect_site_url; ?>">
+					content="1; url=<?php echo htmlspecialchars((string) $redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>">
 				</head>
 				<body>
 					<form name="form1" id="form1" method="get"
 						action="/tracking202/redirect/cl2.php">
 						<input type="hidden" name="q"
-							value="<?php echo $redirect_site_url; ?>" />
+							value="<?php echo htmlspecialchars((string) $redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>" />
 					</form>
 					<script type="text/javascript">
 							document.form1.submit();
 						</script>
 
 					<div style="padding: 30px; text-align: center;">
-							You are being automatically redirected to <?php echo $rotator_row['aff_campaign_name']; ?>.<br />
-						<br /> Page Stuck? <a href="<?php echo $redirect_site_url; ?>">Click
+							You are being automatically redirected to <?php echo htmlspecialchars((string) $rotator_row['aff_campaign_name'], ENT_QUOTES, 'UTF-8'); ?>.<br />
+						<br /> Page Stuck? <a href="<?php echo htmlspecialchars((string) $redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>">Click
 							Here</a>.
 					</div>
 				</body>

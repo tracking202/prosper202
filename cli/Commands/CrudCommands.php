@@ -13,7 +13,6 @@ use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Console\Question\ConfirmationQuestion;
 
 /**
  * Factory for generating standard CRUD commands (list, get, create, update, delete)
@@ -203,16 +202,8 @@ class CrudCommands
             {
                 $id = $input->getArgument('id');
 
-                if (!$input->getOption('force')) {
-                    $helper = $this->getHelper('question');
-                    $question = new ConfirmationQuestion(
-                        "Are you sure you want to delete {$this->entity} #{$id}? [y/N] ",
-                        false
-                    );
-                    if (!$helper->ask($input, $output, $question)) {
-                        $output->writeln('<comment>Cancelled.</comment>');
-                        return Command::SUCCESS;
-                    }
+                if (!$this->confirmDestructive($input, $output, "delete {$this->entity} #{$id}")) {
+                    return Command::SUCCESS;
                 }
 
                 $this->client()->delete($this->endpoint . '/' . $id);

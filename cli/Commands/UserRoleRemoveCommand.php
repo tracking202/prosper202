@@ -9,7 +9,6 @@ use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Console\Question\ConfirmationQuestion;
 
 class UserRoleRemoveCommand extends BaseCommand
 {
@@ -30,16 +29,8 @@ class UserRoleRemoveCommand extends BaseCommand
         $userId = $input->getArgument('user_id');
         $roleId = $input->getArgument('role_id');
 
-        if (!$input->getOption('force')) {
-            $helper = $this->getHelper('question');
-            $question = new ConfirmationQuestion(
-                sprintf('Are you sure you want to remove role %s from user %s? [y/N] ', $roleId, $userId),
-                false
-            );
-            if (!$helper->ask($input, $output, $question)) {
-                $output->writeln('Cancelled.');
-                return Command::SUCCESS;
-            }
+        if (!$this->confirmDestructive($input, $output, sprintf('remove role %s from user %s', $roleId, $userId))) {
+            return Command::SUCCESS;
         }
 
         $this->client()->delete('users/' . $userId . '/roles/' . $roleId);

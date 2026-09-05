@@ -29,23 +29,10 @@ class AttributionModelUpdateCommand extends BaseCommand
 
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
-        $body = [];
-        foreach (['model_name', 'model_type', 'is_active', 'is_default'] as $f) {
-            $val = $input->getOption($f);
-            if ($val !== null) {
-                $body[$f] = $val;
-            }
-        }
-        $weightingConfig = $input->getOption('weighting_config');
+        $body = $this->collectOptions($input, ['model_name', 'model_type', 'is_active', 'is_default']);
+        $weightingConfig = $this->decodeJsonOption($input, 'weighting_config');
         if ($weightingConfig !== null) {
-            $decodedConfig = json_decode((string)$weightingConfig, true);
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                $output->writeln(
-                    sprintf('<error>Invalid --weighting_config JSON: %s</error>', json_last_error_msg())
-                );
-                return Command::FAILURE;
-            }
-            $body['weighting_config'] = $decodedConfig;
+            $body['weighting_config'] = $weightingConfig;
         }
 
         if (empty($body)) {

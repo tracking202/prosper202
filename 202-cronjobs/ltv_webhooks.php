@@ -29,6 +29,7 @@ include_once(str_repeat("../", 1) . '202-config/connect.php');
 
 use Prosper202\Database\Connection;
 use Prosper202\Ltv\MysqlWebhookRepository;
+use Prosper202\Validation\OutboundUrlGuard;
 
 set_time_limit(0);
 
@@ -75,19 +76,10 @@ try {
 
         // Pin the connection to an address the guard just validated —
         // otherwise curl re-resolves and a DNS-rebinding host could hand it
-        // a private IP the check never saw. Prefer IPv4; TLS host
-        // verification still runs against the hostname's certificate.
-        $pinnedIp = null;
-        foreach ($validatedIps as $candidateIp) {
-            if (filter_var($candidateIp, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false) {
-                $pinnedIp = $candidateIp;
-                break;
-            }
-        }
-        $pinnedIp = $pinnedIp ?? $validatedIps[0];
-        $urlParts = parse_url($url);
-        $pinHost = (string) ($urlParts['host'] ?? '');
-        $pinPort = (int) ($urlParts['port'] ?? 443);
+        // a private IP the check never saw. TLS host verification still runs
+        // against the hostname's certificate. Shared with the attribution
+        // export cron so the two pins cannot drift apart.
+        $resolveEntry = OutboundUrlGuard::curlResolveEntry($url, $validatedIps);
 
         $signature = MysqlWebhookRepository::signature($body, (string) $delivery['webhook_secret']);
 
@@ -115,8 +107,10 @@ try {
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
-            CURLOPT_RESOLVE => [$pinHost . ':' . $pinPort . ':' . $pinnedIp],
         ]);
+        if ($resolveEntry !== null) {
+            curl_setopt($ch, CURLOPT_RESOLVE, [$resolveEntry]);
+        }
 
         $responseBody = curl_exec($ch);
         $statusCode = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);

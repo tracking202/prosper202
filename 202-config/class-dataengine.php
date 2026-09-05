@@ -1231,6 +1231,62 @@ class DisplayData
     private const UNPAGINATED = ['breakdown', 'hourly', 'weekly'];
 
     /**
+     * The metric columns a user without access_to_campaign_data must not see.
+     *
+     * Every report screen makes this same decision, and each one used to
+     * restate the list inline. They drifted: displayPerPPCReport()'s totals row
+     * masked 'net' (a key that row never prints) while leaving 'total_net'
+     * showing, and maskVariableData() masked only the per-row keys, so the
+     * "Totals for report" line of the variable report -- and its excel download
+     * -- printed the install's real click, lead, income, cost and net figures
+     * to a user explicitly denied campaign data.
+     *
+     * Named once here so a new report cannot pick up a stale copy.
+     */
+    private const MASKED_METRICS = ['clicks', 'click_out', 'leads', 'income', 'cost', 'net'];
+
+    /** Prefix the totals row uses for the same metrics. */
+    private const TOTALS_PREFIX = 'total_';
+
+    /**
+     * True when campaign figures must be hidden from the current viewer.
+     *
+     * Publishers are exempt: their session is already scoped to their own data
+     * by the query layer, and $_SESSION['publisher'] is what marks it.
+     */
+    private static function campaignDataHidden(): bool
+    {
+        global $userObj;
+
+        return $userObj
+            && !$userObj->hasPermission("access_to_campaign_data")
+            && empty($_SESSION['publisher']);
+    }
+
+    /**
+     * Replace the sensitive metrics in one report row with '?'.
+     *
+     * Only keys already present are touched, so this never invents a column a
+     * template does not expect. The parenthesised "*_wrapper" display keys are
+     * NOT handled here because their name differs per template; each caller
+     * sets its own, which is also where the unmasked branch builds it.
+     *
+     * @param array<string,mixed> $row
+     * @return array<string,mixed>
+     */
+    private static function maskMetrics(array $row, string $prefix = ''): array
+    {
+        foreach (self::MASKED_METRICS as $metric) {
+            $key = $prefix . $metric;
+            if (array_key_exists($key, $row)) {
+                $row[$key] = '?';
+            }
+        }
+
+        return $row;
+    }
+
+    /**
      * Bootstrap label style (primary/important/default) for a net or ROI value.
      */
     private static function labelStyle($value): string
@@ -1297,8 +1353,6 @@ class DisplayData
 
     public function displayReport($reportType, $theData, $foundRows = '')
     {
-        global $userObj;
-
         $paginateReport = !in_array($reportType, self::UNPAGINATED, true);
         $downloadUrl = self::DOWNLOAD_URLS[$reportType] ?? '';
         $featureLabel = self::FEATURE_LABELS[$reportType] ?? 'Item';
@@ -1360,16 +1414,12 @@ class DisplayData
             $totalNetStyle = self::labelStyle($html['total_net'] ?? 0);
             $totalRoiStyle = self::labelStyle($html['total_roi'] ?? 0);
 
-            $masked = $userObj && !$userObj->hasPermission("access_to_campaign_data") && empty($_SESSION['publisher']);
+            $masked = self::campaignDataHidden();
 
             if ($i != $rowCount - 1) {
                 if ($masked) {
-                    $html['clicks'] = '?';
-                    $html['click_out'] = '?';
-                    $html['leads'] = '?';
-                    $html['income'] = '?';
+                    $html = self::maskMetrics($html);
                     $html['cost_wrapper'] = '?';
-                    $html['net'] = '?';
                 } else {
                     $html['cost_wrapper'] = '(' . $html['cost'] . ')';
                 }
@@ -1393,12 +1443,8 @@ class DisplayData
             		</tr> ';
             } else {
                 if ($masked) {
-                    $html['total_clicks'] = '?';
-                    $html['total_click_out'] = '?';
-                    $html['total_leads'] = '?';
-                    $html['total_income'] = '?';
+                    $html = self::maskMetrics($html, self::TOTALS_PREFIX);
                     $html['total_cost_wrapper'] = '?';
-                    $html['total_net'] = '?';
                 } else {
                     $html['total_cost_wrapper'] = '(' . $html['total_cost'] . ')';
                 }
@@ -1430,8 +1476,6 @@ class DisplayData
 
     public function displayPerPPCReport($type, $theData)
     {
-        global $userObj;
-
         $featureLabel = match ($type) {
             'slp_direct_link' => '[direct link & simple lp]',
             'alp' => '[adv lp]',
@@ -1478,13 +1522,9 @@ class DisplayData
                 $netStyle = self::labelStyle($ppc_account['net']);
                 $roiStyle = self::labelStyle($ppc_account['roi']);
 
-                if ($userObj && !$userObj->hasPermission("access_to_campaign_data") && empty($_SESSION['publisher'])) {
-                    $ppc_account['clicks'] = '?';
-                    $ppc_account['click_out'] = '?';
-                    $ppc_account['leads'] = '?';
-                    $ppc_account['income'] = '?';
+                if (self::campaignDataHidden()) {
+                    $ppc_account = self::maskMetrics($ppc_account);
                     $ppc_account['cost_wrapper'] = '?';
-                    $ppc_account['net'] = '?';
                 } else {
                     $ppc_account['cost_wrapper'] = '(' . $ppc_account['cost'] . ')';
                 }
@@ -1514,13 +1554,12 @@ class DisplayData
                 </tr> ';
             }
 
-            if ($userObj && !$userObj->hasPermission("access_to_campaign_data") && empty($_SESSION['publisher'])) {
-                $campaign['total_clicks'] = '?';
-                $campaign['total_click_out'] = '?';
-                $campaign['total_leads'] = '?';
-                $campaign['total_income'] = '?';
+            // This row prints total_* keys but its cost cell reads the
+            // unprefixed cost_wrapper, so the prefix applies to the metrics and
+            // not to the wrapper.
+            if (self::campaignDataHidden()) {
+                $campaign = self::maskMetrics($campaign, self::TOTALS_PREFIX);
                 $campaign['cost_wrapper'] = '?';
-                $campaign['net'] = '?';
             } else {
                 $campaign['cost_wrapper'] = '(' . $campaign['total_cost'] . ')';
             }
@@ -1545,8 +1584,53 @@ class DisplayData
         }
     }
 
+    /**
+     * Mask click/revenue figures for users without access_to_campaign_data,
+     * matching displayReport()/downloadReport(). The variable reports nest
+     * their rows (network -> variable -> value), so walk the structure and
+     * mask wherever those keys appear.
+     *
+     * Both the per-row keys and their total_* counterparts are masked. Masking
+     * only the per-row keys left the "Totals for report" line -- rendered by
+     * displayVariableReport() and written by downloadVariables() -- showing the
+     * real figures, which is the whole number the permission exists to withhold
+     * and the easiest one to read off the screen.
+     */
+    private function maskVariableData($theData)
+    {
+        if (!self::campaignDataHidden()) {
+            return $theData;
+        }
+
+        $sensitive = array_merge(
+            self::MASKED_METRICS,
+            array_map(
+                static fn(string $metric): string => self::TOTALS_PREFIX . $metric,
+                self::MASKED_METRICS
+            )
+        );
+
+        $mask = function ($value) use (&$mask, $sensitive) {
+            if (!is_array($value)) {
+                return $value;
+            }
+            foreach ($value as $key => $item) {
+                if (is_array($item)) {
+                    $value[$key] = $mask($item);
+                } elseif (in_array($key, $sensitive, true)) {
+                    $value[$key] = '?';
+                }
+            }
+            return $value;
+        };
+
+        return $mask((array) $theData);
+    }
+
     public function displayVariableReport($theData)
     {
+        $theData = $this->maskVariableData($theData);
+
         echo '<div class="row">
                     <div class="col-xs-12 text-right" style="padding-bottom: 10px;">
                         <img style="margin-bottom:2px;" src="' . get_absolute_url() . '202-img/icons/16x16/page_white_excel.png"/>
@@ -1651,8 +1735,6 @@ class DisplayData
 
     public function downloadReport($reportType, $theData, $foundRows = '')
     {
-        global $userObj;
-
         $featureLabel = self::FEATURE_LABELS[$reportType] ?? 'Item';
 
         echo $featureLabel . "\t" . "Clicks" . "\t" . "Click Throughs" . "\t" . "LP CTR" . "\t" . "Leads" . "\t" . "S/U" . "\t" . "Payout" . "\t" . "EPC" . "\t" . "Avg CPC" . "\t" . "Income" . "\t" . "Cost" . "\t" . "Net" . "\t" . "ROI" . "\n";
@@ -1691,13 +1773,8 @@ class DisplayData
                 continue;
             }
 
-            if ($userObj && !$userObj->hasPermission("access_to_campaign_data") && empty($_SESSION['publisher'])) {
-                $html['clicks'] = '?';
-                $html['click_out'] = '?';
-                $html['leads'] = '?';
-                $html['income'] = '?';
-                $html['cost'] = '?';
-                $html['net'] = '?';
+            if (self::campaignDataHidden()) {
+                $html = self::maskMetrics($html);
             }
 
             echo $featureKey . "\t" . $html['clicks'] . "\t" . $html['click_out'] . "\t" . $html['ctr'] . "\t" . $html['leads'] . "\t" . $html['su_ratio'] . "\t" . $html['payout'] . "\t" . $html['epc'] . "\t" . $html['cpc'] . "\t" . $html['income'] . "\t" . $html['cost'] . "\t" . $html['net'] . "\t" . $html['roi'] . "\n";
@@ -1706,6 +1783,8 @@ class DisplayData
 
     public function downloadVariables($theData)
     {
+        $theData = $this->maskVariableData($theData);
+
         echo "Custom Variables" . "\t" . "Clicks" . "\t" . "Click Throughs" . "\t" . "LP CTR" . "\t" . "Leads" . "\t" . "S/U" . "\t" . "Payout" . "\t" . "EPC" . "\t" . "Avg CPC" . "\t" . "Income" . "\t" . "Cost" . "\t" . "Net" . "\t" . "ROI" . "\n";
 
         $rows = array_values((array) $theData);
