@@ -3,11 +3,11 @@
     {
       "id": "skan-001-registering-the-app-claims-its-postbacks",
       "priority": "high",
-      "state": "two SKAN 4.0 postbacks for App Store id 990001112 seeded through the public receiver with per-run unique transaction ids, so every run seeds two FRESH unclaimed rows; the app is not registered",
+      "state": "two SKAN 4.0 postbacks for App Store id 990001112 seeded through the public receiver with per-run unique transaction ids (each id is also written to a marker file so the checks can address exactly this run's rows); the app is not registered",
       "setup": [
         "p202 skan app list --json | jq -r '.data[] | select(.app_id==990001112) | .skan_app_id' | xargs -r -I{} p202 skan app delete {} --force",
-        "curl -sS -o /dev/null -X POST -H 'Content-Type: application/json' -d '{\"version\":\"4.0\",\"ad-network-id\":\"eval.skadnetwork\",\"source-identifier\":\"11\",\"app-id\":990001112,\"transaction-id\":\"eval-skan-a-'$(date +%s%N)'\",\"redownload\":false,\"fidelity-type\":1,\"did-win\":true,\"conversion-value\":5,\"postback-sequence-index\":0,\"attribution-signature\":\"AA==\"}' \"$(p202 config show --json | jq -r .url)/.well-known/skadnetwork/report-attribution/\"",
-        "curl -sS -o /dev/null -X POST -H 'Content-Type: application/json' -d '{\"version\":\"4.0\",\"ad-network-id\":\"eval.skadnetwork\",\"source-identifier\":\"11\",\"app-id\":990001112,\"transaction-id\":\"eval-skan-b-'$(date +%s%N)'\",\"redownload\":false,\"fidelity-type\":1,\"did-win\":true,\"conversion-value\":9,\"postback-sequence-index\":0,\"attribution-signature\":\"AA==\"}' \"$(p202 config show --json | jq -r .url)/.well-known/skadnetwork/report-attribution/\""
+        "id=\"eval-skan-a-$(date +%s%N)\"; printf '%s' \"$id\" > /tmp/p202-eval-skan-001.a; curl -sS -o /dev/null -X POST -H 'Content-Type: application/json' -d '{\"version\":\"4.0\",\"ad-network-id\":\"eval.skadnetwork\",\"source-identifier\":\"11\",\"app-id\":990001112,\"transaction-id\":\"'\"$id\"'\",\"redownload\":false,\"fidelity-type\":1,\"did-win\":true,\"conversion-value\":5,\"postback-sequence-index\":0,\"attribution-signature\":\"AA==\"}' \"$(p202 config show --json | jq -r .url)/.well-known/skadnetwork/report-attribution/\"",
+        "id=\"eval-skan-b-$(date +%s%N)\"; printf '%s' \"$id\" > /tmp/p202-eval-skan-001.b; curl -sS -o /dev/null -X POST -H 'Content-Type: application/json' -d '{\"version\":\"4.0\",\"ad-network-id\":\"eval.skadnetwork\",\"source-identifier\":\"11\",\"app-id\":990001112,\"transaction-id\":\"'\"$id\"'\",\"redownload\":false,\"fidelity-type\":1,\"did-win\":true,\"conversion-value\":9,\"postback-sequence-index\":0,\"attribution-signature\":\"AA==\"}' \"$(p202 config show --json | jq -r .url)/.well-known/skadnetwork/report-attribution/\""
       ],
       "ask": "Register our iOS app — App Store id 990001112, call it Eval SKAN App — for SKAN reporting, and tell me how many new SKAN postbacks arrived for it in the last few minutes.",
       "expected": {
@@ -22,7 +22,13 @@
             ]
           },
           {
-            "run": "p202 skan postbacks list --app-id 990001112 --time-from $(($(date +%s)-240)) --json | jq '.pagination.total == 2'",
+            "run": "p202 skan postbacks list --app-id 990001112 --transaction-id \"$(cat /tmp/p202-eval-skan-001.a)\" --json | jq '.pagination.total == 1'",
+            "includes": [
+              "true"
+            ]
+          },
+          {
+            "run": "p202 skan postbacks list --app-id 990001112 --transaction-id \"$(cat /tmp/p202-eval-skan-001.b)\" --json | jq '.pagination.total == 1'",
             "includes": [
               "true"
             ]
@@ -34,9 +40,10 @@
         ]
       },
       "cleanup": [
-        "p202 skan app list --json | jq -r '.data[] | select(.app_id==990001112) | .skan_app_id' | xargs -r -I{} p202 skan app delete {} --force"
+        "p202 skan app list --json | jq -r '.data[] | select(.app_id==990001112) | .skan_app_id' | xargs -r -I{} p202 skan app delete {} --force",
+        "rm -f /tmp/p202-eval-skan-001.a /tmp/p202-eval-skan-001.b"
       ],
-      "notes": "Registration is the claim mechanism, and this run's rows genuinely exercise it: the unique transaction ids mean the two seeds arrive unowned EVERY run (a fixed id would dedupe against rows claimed in an earlier run, leaving the claim untested after the first). The checks compare exact jq booleans, and the postback count is windowed to this run's seeds so leftovers from earlier runs cannot satisfy it."
+      "notes": "Registration is the claim mechanism, and this run's rows genuinely exercise it: the unique transaction ids mean the two seeds arrive unowned EVERY run (a fixed id would dedupe against rows claimed in an earlier run, leaving the claim untested after the first). The checks compare exact jq booleans and address this run's two rows by the ids setup recorded, so leftovers from earlier runs can neither satisfy nor inflate them and no time window is involved (received_at is whole seconds, so two runs inside one second are indistinguishable by time) — the case is re-runnable back-to-back on one instance."
     },
     {
       "id": "skan-002-unverified-postbacks-are-not-reported-as-verified",
