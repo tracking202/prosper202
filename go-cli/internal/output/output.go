@@ -173,21 +173,24 @@ func rowsOf(data []byte) []map[string]interface{} {
 
 // idOf returns the best identifier field for a row (id, or a known primary key).
 func idOf(obj map[string]interface{}) string {
-	// Entity primary keys first; user_id stays last because it is a foreign
-	// key on almost every row — matching it early prints the OWNER's id as
-	// though it were the row's, which scripts then feed to get/delete.
-	// Ordering within the list follows the same rule for entity-to-entity
-	// foreign keys, matching the API's row shapes: snapshot/export rows
-	// carry model_id, subscription rows carry customer_id, webhook-delivery
-	// rows carry webhook_id — the row's OWN key must be listed before any
-	// key that appears on it as a reference.
-	for _, k := range []string{"id", "aff_campaign_id", "tracker_id", "ppc_account_id",
-		"aff_network_id", "ppc_network_id", "landing_page_id", "text_ad_id", "conv_id",
-		"rotator_id", "rule_id", "event_id", "skan_app_id", "postback_id",
-		"snapshot_id", "export_id", "model_id", "delivery_id", "webhook_id",
-		"integration_id", "field_id", "alias_id", "subscription_id",
-		"company_id", "customer_id", "product_id",
-		"user_id", "click_id"} {
+	// The row's OWN key must come before any key that appears on it as a
+	// reference, or quiet mode prints a foreign key and scripts feed the
+	// wrong entity's id to get/delete. The order is a topological sort of the
+	// API's row shapes (docs/openapi.yaml): conversions carry click_id;
+	// clicks carry campaign, account, landing-page, rotator and rule ids;
+	// trackers carry campaign, account, text-ad, landing-page and rotator
+	// ids; text ads and landing pages carry aff_campaign_id; campaigns carry
+	// aff_network_id; accounts carry ppc_network_id; snapshots and exports
+	// carry model_id; subscriptions carry customer_id; webhook deliveries
+	// carry webhook_id. user_id is last because it is a foreign key on almost
+	// every row. TestRenderQuietPrefersTheRowsOwnPrimaryKeyOverUserId pins
+	// one row per shape.
+	for _, k := range []string{"id", "conv_id", "click_id", "tracker_id", "text_ad_id",
+		"landing_page_id", "aff_campaign_id", "ppc_account_id", "aff_network_id",
+		"ppc_network_id", "rule_id", "rotator_id", "event_id", "skan_app_id",
+		"postback_id", "snapshot_id", "export_id", "model_id", "delivery_id",
+		"webhook_id", "integration_id", "field_id", "alias_id", "subscription_id",
+		"company_id", "customer_id", "product_id", "user_id"} {
 		if v, ok := obj[k]; ok {
 			return formatValue(v)
 		}

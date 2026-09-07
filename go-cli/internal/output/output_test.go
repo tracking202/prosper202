@@ -463,8 +463,9 @@ func TestRenderQuietPrefersTheRowsOwnPrimaryKeyOverUserId(t *testing.T) {
 	// hands scripts the OWNER's id to feed into get/delete. Each row here
 	// carries its entity's primary key plus user_id, and the primary key
 	// must win.
-	// Row shapes mirror the API's actual SELECT columns for each list
-	// endpoint, including the foreign keys that ride along.
+	// Row shapes mirror the API's actual response schemas (docs/openapi.yaml)
+	// for each list endpoint, including the foreign keys that ride along; the
+	// ids are chosen so a wrong pick is visible.
 	cases := map[string]string{
 		`{"data":[{"skan_app_id":2,"app_id":525463029,"user_id":1}]}`:        "2",
 		`{"data":[{"rule_id":7,"app_id":525463029,"user_id":1}]}`:            "7",
@@ -482,6 +483,15 @@ func TestRenderQuietPrefersTheRowsOwnPrimaryKeyOverUserId(t *testing.T) {
 		`{"data":[{"delivery_id":15,"webhook_id":4,"user_id":1}]}`:           "15",
 		`{"data":[{"integration_id":3,"provider":"stripe","user_id":1}]}`:    "3",
 		`{"data":[{"alias_id":11,"alias_type":"email"}]}`:                    "11",
+		// Core entities, whose rows carry other entities' keys as references.
+		`{"data":[{"click_id":6,"aff_campaign_id":2,"ppc_account_id":1,"landing_page_id":4,"rotator_id":null,"rule_id":null,"user_id":1}]}`: "6",
+		`{"data":[{"conv_id":3,"click_id":6,"campaign_id":2,"user_id":1}]}`:                                                                 "3",
+		`{"data":[{"tracker_id":7,"aff_campaign_id":2,"ppc_account_id":1,"text_ad_id":5,"landing_page_id":4,"rotator_id":0,"user_id":1}]}`:  "7",
+		`{"data":[{"text_ad_id":5,"aff_campaign_id":2,"landing_page_id":4,"user_id":1}]}`:                                                   "5",
+		`{"data":[{"landing_page_id":4,"aff_campaign_id":2,"user_id":1}]}`:                                                                  "4",
+		`{"data":[{"aff_campaign_id":2,"aff_network_id":1,"user_id":1}]}`:                                                                   "2",
+		`{"data":[{"ppc_account_id":3,"ppc_network_id":1,"user_id":1}]}`:                                                                    "3",
+		`{"data":[{"rule_id":9,"rotator_id":1,"weight":50}]}`:                                                                               "9",
 	}
 	for input, want := range cases {
 		out := captureStdout(t, func() {
