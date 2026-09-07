@@ -1287,13 +1287,10 @@ class ReportSummaryForm extends ReportBasicForm
 	#[\Override]
     function getRowHtml($row, $tr_class = "")
 	{
-		global $userObj;
-
-		$hideDate = false;
-
-		if ($userObj && !$userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
-			$hideDate = true;
-		}
+		// Same decision as every other report surface (and empty() rather than
+		// a bare !$_SESSION['publisher'], which raised an undefined-index notice
+		// on every non-publisher render).
+		$hideDate = \Prosper202\Report\CampaignDataMask::hidden();
 
 		$html_val = "";
 		if ($this->getRollupSubTables() && ($row->getDetailId() > 1)) {
@@ -1483,13 +1480,10 @@ class ReportSummaryForm extends ReportBasicForm
 	function getExportRowHtml($row)
 	{
 
-		global $userObj;
-
-		$hideDate = false;
-
-		if ($userObj && !$userObj->hasPermission("access_to_campaign_data") && !$_SESSION['publisher']) {
-			$hideDate = true;
-		}
+		// Same decision as every other report surface (and empty() rather than
+		// a bare !$_SESSION['publisher'], which raised an undefined-index notice
+		// on every non-publisher render).
+		$hideDate = \Prosper202\Report\CampaignDataMask::hidden();
 
 		$current_detail = $this->getCurrentDetailByKey($row->getDetailId());
 

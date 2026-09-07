@@ -3,7 +3,15 @@
 declare(strict_types=1);
 include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
 
+use Prosper202\Report\CampaignDataMask;
+
 AUTH::require_user();
+
+// Decided once for the whole screen. This is the same predicate every other
+// report surface uses -- including the publisher exemption, which this file
+// used to skip, and the null-$userObj guard -- and the same metric list
+// (click_out was missing here).
+$campaignDataHidden = CampaignDataMask::hidden();
 
 
 //set the timezone for the user, for entering their dates.
@@ -161,12 +169,8 @@ $info_result = $db->query($info_sql) or record_mysql_error($info_sql);
 					$html['rotator_roi'] = htmlentities($roi . '%', ENT_QUOTES, 'UTF-8');
 					$html['rotator_cost_wrapper'] = '(' . $html['rotator_cost'] . ')';
 
-					if (!$userObj->hasPermission("access_to_campaign_data")) {
-						$html['rotator_clicks'] = '?';
-						$html['rotator_leads'] = '?';
-						$html['rotator_income'] = '?';
-						$html['rotator_cost_wrapper'] = '?';
-						$html['rotator_net'] = '?';
+					if ($campaignDataHidden) {
+						$html = CampaignDataMask::apply($html, 'rotator_');
 					}
 
 				?>
@@ -245,12 +249,8 @@ $info_result = $db->query($info_sql) or record_mysql_error($info_sql);
 							$html['rule_roi'] = htmlentities($rule_roi . '%', ENT_QUOTES, 'UTF-8');
 							$html['rule_cost_wrapper'] = '(' . $html['rule_cost'] . ')';
 
-							if (!$userObj->hasPermission("access_to_campaign_data")) {
-								$html['rule_clicks'] = '?';
-								$html['rule_leads'] = '?';
-								$html['rule_income'] = '?';
-								$html['rule_cost_wrapper'] = '?';
-								$html['rule_net'] = '?';
+							if ($campaignDataHidden) {
+								$html = CampaignDataMask::apply($html, 'rule_');
 							}
 
 						?>
@@ -324,12 +324,8 @@ $info_result = $db->query($info_sql) or record_mysql_error($info_sql);
 
 						$html['default_cost_wrapper'] = '(' . $html['default_cost'] . ')';
 
-						if (!$userObj->hasPermission("access_to_campaign_data")) {
-							$html['default_clicks'] = '?';
-							$html['default_leads'] = '?';
-							$html['default_income'] = '?';
-							$html['default_cost_wrapper'] = '?';
-							$html['default_net'] = '?';
+						if ($campaignDataHidden) {
+							$html = CampaignDataMask::apply($html, 'default_');
 						}
 
 				?>
@@ -378,12 +374,8 @@ $info_result = $db->query($info_sql) or record_mysql_error($info_sql);
 
 			$html['total_cost_wrapper'] = '(' . $html['total_cost'] . ')';
 
-			if (!$userObj->hasPermission("access_to_campaign_data")) {
-				$html['total_clicks'] = '?';
-				$html['total_leads'] = '?';
-				$html['total_income'] = '?';
-				$html['total_cost_wrapper'] = '?';
-				$html['total_net'] = '?';
+			if ($campaignDataHidden) {
+				$html = CampaignDataMask::apply($html, 'total_');
 			}
 
 			?>

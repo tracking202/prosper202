@@ -1231,67 +1231,16 @@ class DisplayData
     private const UNPAGINATED = ['breakdown', 'hourly', 'weekly'];
 
     /**
-     * The metric columns a user without access_to_campaign_data must not see.
-     *
-     * Every report screen makes this same decision, and each one used to
-     * restate the list inline. They drifted: displayPerPPCReport()'s totals row
-     * masked 'net' (a key that row never prints) while leaving 'total_net'
-     * showing, and maskVariableData() masked only the per-row keys, so the
-     * "Totals for report" line of the variable report -- and its excel download
-     * -- printed the install's real click, lead, income, cost and net figures
-     * to a user explicitly denied campaign data.
-     *
-     * Named once here so a new report cannot pick up a stale copy.
-     */
-    private const MASKED_METRICS = ['clicks', 'click_out', 'leads', 'income', 'cost', 'net'];
-
-    /** Prefix the totals row uses for the same metrics. */
-    private const TOTALS_PREFIX = 'total_';
-
-    /**
-     * True when campaign figures must be hidden from the current viewer.
-     *
-     * Publishers are exempt: their session is already scoped to their own data
-     * by the query layer, and $_SESSION['publisher'] is what marks it.
-     */
-    private static function campaignDataHidden(): bool
-    {
-        global $userObj;
-
-        return $userObj
-            && !$userObj->hasPermission("access_to_campaign_data")
-            && empty($_SESSION['publisher']);
-    }
-
-    /**
-     * Replace the sensitive metrics in one report row with '?'.
-     *
-     * Only keys already present are touched, so this never invents a column a
-     * template does not expect. The parenthesised "*_wrapper" display keys are
-     * NOT handled here because their name differs per template; each caller
-     * sets its own, which is also where the unmasked branch builds it.
-     *
-     * @param array<string,mixed> $row
-     * @return array<string,mixed>
-     */
-    private static function maskMetrics(array $row, string $prefix = ''): array
-    {
-        foreach (self::MASKED_METRICS as $metric) {
-            $key = $prefix . $metric;
-            if (array_key_exists($key, $row)) {
-                $row[$key] = '?';
-            }
-        }
-
-        return $row;
-    }
-
-    /**
      * Bootstrap label style (primary/important/default) for a net or ROI value.
      */
     private static function labelStyle($value): string
     {
         $number = self::convertToNumber($value);
+        if (!is_numeric($number)) {
+            // A masked '?' reaches here. PHP 8 compares '?' > 0 as true, which
+            // styled every masked total as a positive figure.
+            return 'default';
+        }
         if ($number > 0) {
             return 'primary';
         }
@@ -1405,6 +1354,10 @@ class DisplayData
             return;
         }
 
+        // Decided once per report, not once per row: the viewer cannot change
+        // mid-render.
+        $masked = \Prosper202\Report\CampaignDataMask::hidden();
+
         for ($i = 0; $i < $rowCount; $i++) {
             $html = $rows[$i];
             $featureKey = self::featureKey((string) $reportType, $html);
@@ -1414,14 +1367,10 @@ class DisplayData
             $totalNetStyle = self::labelStyle($html['total_net'] ?? 0);
             $totalRoiStyle = self::labelStyle($html['total_roi'] ?? 0);
 
-            $masked = self::campaignDataHidden();
-
             if ($i != $rowCount - 1) {
+                $html['cost_wrapper'] = '(' . $html['cost'] . ')';
                 if ($masked) {
-                    $html = self::maskMetrics($html);
-                    $html['cost_wrapper'] = '?';
-                } else {
-                    $html['cost_wrapper'] = '(' . $html['cost'] . ')';
+                    $html = \Prosper202\Report\CampaignDataMask::apply($html);
                 }
 
                 echo ' <tr>
@@ -1442,11 +1391,9 @@ class DisplayData
 
             		</tr> ';
             } else {
+                $html['total_cost_wrapper'] = '(' . $html['total_cost'] . ')';
                 if ($masked) {
-                    $html = self::maskMetrics($html, self::TOTALS_PREFIX);
-                    $html['total_cost_wrapper'] = '?';
-                } else {
-                    $html['total_cost_wrapper'] = '(' . $html['total_cost'] . ')';
+                    $html = \Prosper202\Report\CampaignDataMask::apply($html, 'total_');
                 }
 
                 echo '<tr style="background-color: #F8F8F8;" id="totals" class="no-sort">
@@ -1486,6 +1433,8 @@ class DisplayData
             return;
         }
 
+        $masked = \Prosper202\Report\CampaignDataMask::hidden();
+
         foreach ($theData as $campaign) {
             $name = match ($type) {
                 'slp_direct_link' => $campaign['total_aff_network_name'] . ' - ' . $campaign['total_aff_campaign_name'],
@@ -1522,11 +1471,9 @@ class DisplayData
                 $netStyle = self::labelStyle($ppc_account['net']);
                 $roiStyle = self::labelStyle($ppc_account['roi']);
 
-                if (self::campaignDataHidden()) {
-                    $ppc_account = self::maskMetrics($ppc_account);
-                    $ppc_account['cost_wrapper'] = '?';
-                } else {
-                    $ppc_account['cost_wrapper'] = '(' . $ppc_account['cost'] . ')';
+                $ppc_account['cost_wrapper'] = '(' . $ppc_account['cost'] . ')';
+                if ($masked) {
+                    $ppc_account = \Prosper202\Report\CampaignDataMask::apply($ppc_account);
                 }
 
                 if (($ppc_account['ppc_network_name'] != '') && ($ppc_account['ppc_account_name'] != '')) {
@@ -1554,14 +1501,12 @@ class DisplayData
                 </tr> ';
             }
 
-            // This row prints total_* keys but its cost cell reads the
-            // unprefixed cost_wrapper, so the prefix applies to the metrics and
-            // not to the wrapper.
-            if (self::campaignDataHidden()) {
-                $campaign = self::maskMetrics($campaign, self::TOTALS_PREFIX);
-                $campaign['cost_wrapper'] = '?';
-            } else {
-                $campaign['cost_wrapper'] = '(' . $campaign['total_cost'] . ')';
+            // total_cost_wrapper, not cost_wrapper: this row is all total_* keys
+            // and the mask is applied with that prefix. The odd-one-out key it
+            // used to have is where 'net' got masked while 'total_net' printed.
+            $campaign['total_cost_wrapper'] = '(' . $campaign['total_cost'] . ')';
+            if ($masked) {
+                $campaign = \Prosper202\Report\CampaignDataMask::apply($campaign, 'total_');
             }
 
             echo '<tr style="background-color: #F8F8F8;" id="totals" class="no-sort">
@@ -1575,7 +1520,7 @@ class DisplayData
                     <td><strong>' . $campaign['total_epc'] . '</strong></td>
                     <td><strong>' . $campaign['total_cpc'] . '</strong></td>
                     <td><strong>' . $campaign['total_income'] . '</strong></td>
-                    <td><strong>' . $campaign['cost_wrapper'] . '</strong></td>
+                    <td><strong>' . $campaign['total_cost_wrapper'] . '</strong></td>
                     <td><strong><span class="label label-' . $totalNetStyle . '">' . $campaign['total_net'] . '</span></strong></td>
                     <td><strong><span class="label label-' . $totalRoiStyle . '">' . $campaign['total_roi'] . '</span></strong></td>
                 </tr>
@@ -1585,46 +1530,20 @@ class DisplayData
     }
 
     /**
-     * Mask click/revenue figures for users without access_to_campaign_data,
-     * matching displayReport()/downloadReport(). The variable reports nest
-     * their rows (network -> variable -> value), so walk the structure and
-     * mask wherever those keys appear.
-     *
-     * Both the per-row keys and their total_* counterparts are masked. Masking
-     * only the per-row keys left the "Totals for report" line -- rendered by
-     * displayVariableReport() and written by downloadVariables() -- showing the
-     * real figures, which is the whole number the permission exists to withhold
-     * and the easiest one to read off the screen.
+     * The variable reports nest their rows (network -> variable -> value) and
+     * carry the report totals on the last node, so the mask walks the whole
+     * structure for both the per-row and the total_* keys. Masking only the
+     * per-row keys here left the "Totals for report" line -- rendered by
+     * displayVariableReport() and written by downloadVariables() -- showing
+     * the real figures.
      */
     private function maskVariableData($theData)
     {
-        if (!self::campaignDataHidden()) {
+        if (!\Prosper202\Report\CampaignDataMask::hidden()) {
             return $theData;
         }
 
-        $sensitive = array_merge(
-            self::MASKED_METRICS,
-            array_map(
-                static fn(string $metric): string => self::TOTALS_PREFIX . $metric,
-                self::MASKED_METRICS
-            )
-        );
-
-        $mask = function ($value) use (&$mask, $sensitive) {
-            if (!is_array($value)) {
-                return $value;
-            }
-            foreach ($value as $key => $item) {
-                if (is_array($item)) {
-                    $value[$key] = $mask($item);
-                } elseif (in_array($key, $sensitive, true)) {
-                    $value[$key] = '?';
-                }
-            }
-            return $value;
-        };
-
-        return $mask((array) $theData);
+        return \Prosper202\Report\CampaignDataMask::applyDeep((array) $theData);
     }
 
     public function displayVariableReport($theData)
@@ -1739,6 +1658,8 @@ class DisplayData
 
         echo $featureLabel . "\t" . "Clicks" . "\t" . "Click Throughs" . "\t" . "LP CTR" . "\t" . "Leads" . "\t" . "S/U" . "\t" . "Payout" . "\t" . "EPC" . "\t" . "Avg CPC" . "\t" . "Income" . "\t" . "Cost" . "\t" . "Net" . "\t" . "ROI" . "\n";
 
+        $masked = \Prosper202\Report\CampaignDataMask::hidden();
+
         foreach (array_values((array) $theData) as $html) {
             // The trailing totals row carries only total_* keys; letting it
             // fall through printed an "Unknown" row of empty cells (plus
@@ -1773,8 +1694,8 @@ class DisplayData
                 continue;
             }
 
-            if (self::campaignDataHidden()) {
-                $html = self::maskMetrics($html);
+            if ($masked) {
+                $html = \Prosper202\Report\CampaignDataMask::apply($html);
             }
 
             echo $featureKey . "\t" . $html['clicks'] . "\t" . $html['click_out'] . "\t" . $html['ctr'] . "\t" . $html['leads'] . "\t" . $html['su_ratio'] . "\t" . $html['payout'] . "\t" . $html['epc'] . "\t" . $html['cpc'] . "\t" . $html['income'] . "\t" . $html['cost'] . "\t" . $html['net'] . "\t" . $html['roi'] . "\n";
