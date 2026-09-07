@@ -6,7 +6,9 @@ info:
     REST API for the Prosper202 affiliate tracking platform.
 
     ## Authentication
-    All endpoints except `GET /system/health` require a Bearer token:
+    All endpoints require a Bearer token except `GET /system/health`, the
+    token-gated public `GET /skan/schema`, and the SKAdNetwork postback
+    receiver (see the SKAN tag):
     ```
     Authorization: Bearer <api_key>
     ```
@@ -57,6 +59,17 @@ info:
     mints propose-only keys. Fail-closed on unsupported endpoints;
     `staged` and `dry_run` are mutually exclusive. Advertised via
     `features.staged_writes`.
+
+    ## SKAdNetwork (SKAN)
+    The server is the developer-side SKAdNetwork endpoint: devices POST
+    signed install-validation postbacks to
+    `/.well-known/skadnetwork/report-attribution/` (site root, outside this
+    base path), and `/skan/*` serves the stored postbacks, an aggregate
+    report with conversion-value decoding, the advertised-app registry, and
+    the decoding rules. `GET /skan/schema` is public and gated by an app's
+    schema token instead of an API key, so an iOS build can fetch its
+    conversion-value mapping at runtime. Advertised via `features.skan`;
+    all `/skan` routes live in the `skan` scope area.
 
     ## Errors
     Error responses use a consistent format:
@@ -109,6 +122,8 @@ tags:
     description: Attribution models, snapshots, and exports
   - name: Users
     description: User, role, API key, and preference management
+  - name: SKAN
+    description: Apple SKAdNetwork install attribution — postback receiver, app registry, conversion-value rules, report, and the runtime schema
 
 paths:
   # ─── System ──────────────────────────────────────────────────────────
@@ -2153,6 +2168,531 @@ paths:
         "409":
           description: Not in the staged state
 
+  # ─── SKAN (SKAdNetwork) ──────────────────────────────────────────────
+
+  /skan/apps:
+    get:
+      tags: [SKAN]
+      summary: List registered advertised apps
+      description: |
+        The App Store apps whose SKAdNetwork postbacks belong to the caller.
+        Each row carries the app's `schema_token` — the bearer capability an
+        iOS build presents to `GET /skan/schema`. It is served only to the
+        owner; staged-change previews and apply results redact it.
+      operationId: listSkanApps
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Paginated app registrations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkanAppListResponse"
+    post:
+      tags: [SKAN]
+      summary: Register an advertised app
+      description: |
+        Registering claims the app's postbacks: rows that arrived before
+        registration (stored unclaimed) are adopted, and the receiver stamps
+        future ones with the caller's user id. An App Store id can be
+        registered by exactly one user across the install; a second
+        registration is `409`. The response mints and returns the app's
+        `schema_token`.
+
+        `Idempotency-Key` is deliberately not honored on this create — the
+        token must never persist as a replayable record. Retries are safe
+        anyway: the unique `app_id` answers `409`.
+      operationId: createSkanApp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SkanAppCreate"
+      responses:
+        "201":
+          description: App registered; the response carries its schema token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkanAppResponse"
+        "409":
+          description: This App Store id is already registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /skan/apps/{id}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [SKAN]
+      summary: Get an app registration
+      description: Addressed by the internal `skan_app_id`, not the App Store id.
+      operationId: getSkanApp
+      responses:
+        "200":
+          description: The registration, including its schema token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkanAppResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [SKAN]
+      summary: Update an app registration
+      description: Re-runs the postback claim, so any unclaimed history for the app is adopted on update.
+      operationId: updateSkanApp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SkanAppUpdate"
+      responses:
+        "200":
+          description: Registration updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkanAppResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The new App Store id is already registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
+      tags: [SKAN]
+      summary: Delete an app registration
+      description: |
+        Hard delete of the registration only: postbacks already claimed keep
+        their owner (history is never reassigned). The dry-run preview omits
+        the schema token.
+      operationId: deleteSkanApp
+      responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
+        "204":
+          description: Registration deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /skan/apps/{id}/schema-token/rotate:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    post:
+      tags: [SKAN]
+      summary: Rotate the app's schema token
+      description: |
+        Mints a replacement token and invalidates the old one immediately —
+        the remedy for a token leaked out of a shipped binary. Builds
+        configured with the old token can no longer fetch the schema until
+        updated. Stageable; an applied rotation's result is served with the
+        token redacted (the owner reads it via `GET /skan/apps/{id}`).
+      operationId: rotateSkanSchemaToken
+      responses:
+        "200":
+          description: The registration with its new schema token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkanAppResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /skan/conversion-values:
+    get:
+      tags: [SKAN]
+      summary: List conversion-value decoding rules
+      operationId: listSkanConversionValues
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Paginated rules
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkanConversionValueListResponse"
+    post:
+      tags: [SKAN]
+      summary: Create a decoding rule
+      description: |
+        A rule maps exactly one fine value (0–63) **or** one coarse value
+        (`low`/`medium`/`high`) to an event name and revenue; `app_id = 0`
+        rules are the account-wide defaults that app-specific rules
+        override. The same rows drive the report's decode and the schema
+        served to devices. Honors `Idempotency-Key`.
+      operationId: createSkanConversionValue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SkanConversionValueCreate"
+      responses:
+        "201":
+          description: Rule created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkanConversionValueResponse"
+        "409":
+          description: A rule for this conversion value already exists for this app
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /skan/conversion-values/{id}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [SKAN]
+      summary: Get a decoding rule
+      operationId: getSkanConversionValue
+      responses:
+        "200":
+          description: The rule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkanConversionValueResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [SKAN]
+      summary: Update a decoding rule
+      description: |
+        The row is validated as it will exist after the update. To switch a
+        rule between kinds, send the clear and the replacement together — an
+        explicit `null` empties the old kind while the new value arrives
+        (`{"fine_value": null, "coarse_value": "high"}`). An absent field
+        means keep; clearing without a replacement is `422`.
+      operationId: updateSkanConversionValue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SkanConversionValueUpdate"
+      responses:
+        "200":
+          description: Rule updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkanConversionValueResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: A rule for this conversion value already exists for this app
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
+      tags: [SKAN]
+      summary: Delete a decoding rule
+      operationId: deleteSkanConversionValue
+      responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
+        "204":
+          description: Rule deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /skan/postbacks:
+    get:
+      tags: [SKAN]
+      summary: List received postbacks
+      description: |
+        Postbacks stored by the public receiver and claimed by the caller's
+        app registrations, newest first. Every string column is authored by
+        whoever POSTed to the open receiver, so values are sanitized at
+        serialization. Rows never carry the attribution signature (see
+        `GET /skan/postbacks/{id}`) or the raw body. Malformed filter values
+        are rejected with `422` rather than ignored.
+      operationId: listSkanPostbacks
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/timeFrom"
+        - $ref: "#/components/parameters/timeTo"
+        - $ref: "#/components/parameters/skanAppId"
+        - $ref: "#/components/parameters/skanAdNetworkId"
+        - $ref: "#/components/parameters/skanVersion"
+        - $ref: "#/components/parameters/skanTransactionId"
+        - $ref: "#/components/parameters/skanCountryCode"
+        - $ref: "#/components/parameters/skanSourceIdentifier"
+        - $ref: "#/components/parameters/skanCampaignId"
+        - $ref: "#/components/parameters/skanFidelityType"
+        - $ref: "#/components/parameters/skanPostbackSequenceIndex"
+        - $ref: "#/components/parameters/skanDidWin"
+        - $ref: "#/components/parameters/skanRedownload"
+        - $ref: "#/components/parameters/skanCoarseConversionValue"
+        - $ref: "#/components/parameters/skanSignature"
+      responses:
+        "200":
+          description: Paginated postbacks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkanPostbackListResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /skan/postbacks/{id}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [SKAN]
+      summary: Get one postback, including its attribution signature
+      description: |
+        The signature is served for forensics — copy it into
+        `POST /skan/verify` or diff it against another implementation. The
+        raw request body is retained server-side but never served.
+      operationId: getSkanPostback
+      responses:
+        "200":
+          description: The postback with its attribution signature
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkanPostbackResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /skan/report:
+    get:
+      tags: [SKAN]
+      summary: Aggregate SKAN report with conversion-value decoding
+      description: |
+        Groups postbacks by `group_by` and decodes winning postbacks'
+        conversion values through the caller's rules (app-specific over
+        `app_id = 0` defaults; a fine value with no rule stays undecoded and
+        never falls back to a coarse rule). Days are UTC, oldest first.
+
+        **Trust default:** the receiver is public, so without an explicit
+        `signature` filter every headline metric — installs, losses,
+        redownloads, the whole decode — counts only signature-verified
+        postbacks (`meta.trusted: verified-only`). Forged and unverifiable
+        rows stay visible through the `signature_*_count` columns, which
+        always count all rows in the group. Passing `signature=` recomputes
+        the metrics over exactly that class (`meta.trusted: as-filtered`).
+        `meta.groups_truncated` is true when more groups matched than
+        `limit` allowed. Accepts the same filters as the postback list.
+      operationId: getSkanReport
+      parameters:
+        - name: group_by
+          in: query
+          schema:
+            type: string
+            enum: [day, app, ad-network, source, country, version]
+            default: day
+        - name: limit
+          in: query
+          description: Maximum groups to return (default 100, max 500). Day mode keeps the newest days; other modes keep the busiest groups.
+          schema:
+            type: integer
+            default: 100
+            maximum: 500
+        - $ref: "#/components/parameters/timeFrom"
+        - $ref: "#/components/parameters/timeTo"
+        - $ref: "#/components/parameters/skanAppId"
+        - $ref: "#/components/parameters/skanAdNetworkId"
+        - $ref: "#/components/parameters/skanVersion"
+        - $ref: "#/components/parameters/skanTransactionId"
+        - $ref: "#/components/parameters/skanCountryCode"
+        - $ref: "#/components/parameters/skanSourceIdentifier"
+        - $ref: "#/components/parameters/skanCampaignId"
+        - $ref: "#/components/parameters/skanFidelityType"
+        - $ref: "#/components/parameters/skanPostbackSequenceIndex"
+        - $ref: "#/components/parameters/skanDidWin"
+        - $ref: "#/components/parameters/skanRedownload"
+        - $ref: "#/components/parameters/skanCoarseConversionValue"
+        - $ref: "#/components/parameters/skanSignature"
+      responses:
+        "200":
+          description: Report groups
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkanReportResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /skan/verify:
+    post:
+      tags: [SKAN]
+      summary: Verify a postback payload's Apple signature
+      description: |
+        Verifies the `attribution-signature` of the submitted postback JSON
+        against Apple's published P-256 key using the exact per-version
+        signed-message composition, and returns the byte string that was
+        (or should have been) signed for diffing. Nothing is stored. A read
+        that arrives as POST only because the postback is its input: it
+        requires `skan:read`, and `staged=1` is rejected.
+      operationId: verifySkanPostback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SkadnetworkPostback"
+      responses:
+        "200":
+          description: Verification verdict and the reconstructed signed message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkanVerifyResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /skan/schema:
+    get:
+      tags: [SKAN]
+      summary: Conversion-value schema for an iOS build (public, token-gated)
+      description: |
+        The ENCODE view of the app's decoding rules, fetched by the shipped
+        app at runtime so a mapping change needs no App Store resubmission.
+        No API key: access is gated by the app's `schema_token`, sent only
+        in the `X-P202-Schema-Token` header (never a query string, which
+        access logs would capture). Serves event names and values only —
+        never revenue. `ETag` equals `schema_version` and changes exactly
+        when encoding behaviour changes; `If-None-Match` answers `304`.
+        Rate-limited per source IP. The `events` value is always a JSON
+        object, even when empty.
+      operationId: getSkanSchema
+      security: []
+      parameters:
+        - name: X-P202-Schema-Token
+          in: header
+          required: true
+          description: The app's schema token, minted at registration (`POST /skan/apps`) and rotatable
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+        - name: If-None-Match
+          in: header
+          required: false
+          description: The `ETag` of a previously fetched document; an unchanged schema answers `304`
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The schema document
+          headers:
+            ETag:
+              description: Quoted `schema_version`; send back as `If-None-Match`
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkanSchemaResponse"
+        "304":
+          description: Not modified — the cached document is current
+        "400":
+          description: Missing schema token header
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Unknown schema token (never minted, or rotated away)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/SkanRateLimited"
+
+  /.well-known/skadnetwork/report-attribution/:
+    servers:
+      - url: /
+        description: Site root — Apple devices POST here directly; this path is outside the /api/v3 base
+    get:
+      tags: [SKAN]
+      summary: Receiver readiness probe
+      description: Lets an operator confirm the endpoint is reachable at the exact URL Apple will use, before pointing an app at it.
+      operationId: probeSkadnetworkReceiver
+      security: []
+      responses:
+        "200":
+          description: The receiver is ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkanReceiverProbeResponse"
+    post:
+      tags: [SKAN]
+      summary: Receive a SKAdNetwork install-validation postback
+      description: |
+        The developer-side `NSAdvertisingAttributionReportEndpoint`. Devices
+        POST signed postbacks here; the server verifies Apple's signature
+        (2.1, 2.2, 3.0, 4.0 — retired 1.0/2.0 and unknown versions store as
+        `unverifiable`), stores the row flagged with its signature state,
+        and answers `200` including for a byte-identical retry
+        (`duplicate: true`). Structurally broken bodies (which no genuine
+        device sends) are `400` with per-field errors; any non-`200`
+        makes the device retry later, so a storage outage loses nothing.
+        Bodies over 32 KB are rejected. Rate-limited per source IP.
+      operationId: receiveSkadnetworkPostback
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SkadnetworkPostback"
+      responses:
+        "200":
+          description: Stored (or recognized as a retry of a stored postback)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkanPostbackReceiptResponse"
+        "400":
+          description: Structurally invalid postback (Apple's hyphenated field names in `field_errors`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationError"
+        "405":
+          description: Only GET (probe) and POST are served
+        "429":
+          $ref: "#/components/responses/SkanRateLimited"
+        "503":
+          description: Database unavailable — the device retries later
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+
 components:
   securitySchemes:
     BearerAuth:
@@ -2256,6 +2796,88 @@ components:
       schema:
         type: integer
 
+    # SKAN postback filters (list + report)
+    skanAppId:
+      name: app_id
+      in: query
+      description: Advertised App Store id
+      schema:
+        type: integer
+    skanAdNetworkId:
+      name: ad_network_id
+      in: query
+      schema:
+        type: string
+    skanVersion:
+      name: version
+      in: query
+      description: SKAN postback version (e.g. `4.0`)
+      schema:
+        type: string
+    skanTransactionId:
+      name: transaction_id
+      in: query
+      schema:
+        type: string
+    skanCountryCode:
+      name: country_code
+      in: query
+      schema:
+        type: string
+    skanSourceIdentifier:
+      name: source_identifier
+      in: query
+      description: SKAN 4 source identifier (1–4 digits)
+      schema:
+        type: string
+    skanCampaignId:
+      name: campaign_id
+      in: query
+      description: SKAN 2/3 campaign id
+      schema:
+        type: integer
+    skanFidelityType:
+      name: fidelity_type
+      in: query
+      description: 1 = StoreKit-rendered or web ad, 0 = view-through
+      schema:
+        type: integer
+        enum: [0, 1]
+    skanPostbackSequenceIndex:
+      name: postback_sequence_index
+      in: query
+      description: SKAN 4 conversion window (0, 1, or 2)
+      schema:
+        type: integer
+        enum: [0, 1, 2]
+    skanDidWin:
+      name: did_win
+      in: query
+      description: Winning (1/true) or losing (0/false) postbacks; anything else is a 422
+      schema:
+        type: string
+        enum: ["1", "0", "true", "false"]
+    skanRedownload:
+      name: redownload
+      in: query
+      description: Redownloads (1/true) or first installs (0/false)
+      schema:
+        type: string
+        enum: ["1", "0", "true", "false"]
+    skanCoarseConversionValue:
+      name: coarse_conversion_value
+      in: query
+      schema:
+        type: string
+        enum: [low, medium, high]
+    skanSignature:
+      name: signature
+      in: query
+      description: Signature verification state. On the report, an explicit value switches `meta.trusted` to `as-filtered`.
+      schema:
+        type: string
+        enum: [valid, invalid, unverifiable]
+
   # ─── Shared responses ───────────────────────────────────────────────
 
   responses:
@@ -2283,6 +2905,23 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ValidationError"
+
+    SkanRateLimited:
+      description: Per-source rate limit exceeded; retry after the indicated seconds
+      headers:
+        Retry-After:
+          description: Seconds until the window resets
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Error"
+              - type: object
+                properties:
+                  retry_after_seconds:
+                    type: integer
 
   # ─── Schemas ─────────────────────────────────────────────────────────
 
@@ -3596,3 +4235,499 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/User"
+
+    # ── SKAN (SKAdNetwork) ─────────────────────────────────────────────
+
+    SkanApp:
+      type: object
+      properties:
+        skan_app_id:
+          type: integer
+          description: Internal registration id — the `{id}` in `/skan/apps/{id}`
+        app_id:
+          type: integer
+          description: Numeric App Store id of the advertised app (unique across the install)
+        app_name:
+          type: string
+        notes:
+          type: string
+          nullable: true
+        schema_token:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: Bearer capability the iOS build sends as `X-P202-Schema-Token`; owner-only, redacted from staged previews and apply results
+        user_id:
+          type: integer
+        version:
+          type: string
+          description: Content hash of the record; also its ETag
+        etag:
+          type: string
+
+    SkanAppCreate:
+      type: object
+      required: [app_id, app_name]
+      properties:
+        app_id:
+          type: integer
+          description: Numeric App Store id (the number in the app's App Store URL)
+        app_name:
+          type: string
+          maxLength: 255
+        notes:
+          type: string
+          maxLength: 500
+
+    SkanAppUpdate:
+      type: object
+      properties:
+        app_id:
+          type: integer
+        app_name:
+          type: string
+          maxLength: 255
+        notes:
+          type: string
+          maxLength: 500
+
+    SkanAppResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/SkanApp"
+
+    SkanAppListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkanApp"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    SkanConversionValue:
+      type: object
+      description: Exactly one of `fine_value` / `coarse_value` is non-null.
+      properties:
+        rule_id:
+          type: integer
+        app_id:
+          type: integer
+          description: App Store id this rule applies to; `0` = account-wide default
+        fine_value:
+          type: integer
+          nullable: true
+          minimum: 0
+          maximum: 63
+        coarse_value:
+          type: string
+          nullable: true
+          enum: [low, medium, high, null]
+        event_name:
+          type: string
+        revenue:
+          type: string
+          description: Decimal string (5 places), e.g. `"49.99000"`
+        user_id:
+          type: integer
+        version:
+          type: string
+        etag:
+          type: string
+
+    SkanConversionValueCreate:
+      type: object
+      required: [event_name]
+      description: Set `fine_value` (0–63) or `coarse_value` — one of them, not both and not neither (`422` otherwise).
+      properties:
+        app_id:
+          type: integer
+          default: 0
+          description: App Store id, or `0` for the account-wide default rules
+        fine_value:
+          type: integer
+          minimum: 0
+          maximum: 63
+        coarse_value:
+          type: string
+          enum: [low, medium, high]
+        event_name:
+          type: string
+          maxLength: 255
+        revenue:
+          type: number
+          default: 0
+          description: Revenue attributed per decoded postback
+
+    SkanConversionValueUpdate:
+      type: object
+      description: |
+        An absent field is kept. An explicit `null` on `fine_value` or
+        `coarse_value` clears it, and must arrive together with the
+        replacement value of the other kind so the rule still maps exactly
+        one value.
+      properties:
+        app_id:
+          type: integer
+        fine_value:
+          type: integer
+          nullable: true
+          minimum: 0
+          maximum: 63
+        coarse_value:
+          type: string
+          nullable: true
+          enum: [low, medium, high, null]
+        event_name:
+          type: string
+          maxLength: 255
+        revenue:
+          type: number
+
+    SkanConversionValueResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/SkanConversionValue"
+
+    SkanConversionValueListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkanConversionValue"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    SkanPostback:
+      type: object
+      description: |
+        One stored postback; columns mirror Apple's parameters with hyphens
+        as underscores. Fields Apple withheld for privacy are `null`.
+      properties:
+        postback_id:
+          type: integer
+        user_id:
+          type: integer
+          description: Owning user (`0` rows are unclaimed and not visible through the API)
+        received_at:
+          type: integer
+          description: Unix timestamp the receiver stored it
+        version:
+          type: string
+          description: SKAN postback version, e.g. `4.0`
+        ad_network_id:
+          type: string
+        transaction_id:
+          type: string
+        app_id:
+          type: integer
+        source_identifier:
+          type: string
+          nullable: true
+          description: SKAN 4 hierarchical source identifier (1–4 digits)
+        campaign_id:
+          type: integer
+          nullable: true
+          description: SKAN ≤ 3 campaign id
+        conversion_value:
+          type: integer
+          nullable: true
+          minimum: 0
+          maximum: 63
+        coarse_conversion_value:
+          type: string
+          nullable: true
+          enum: [low, medium, high, null]
+        postback_sequence_index:
+          type: integer
+          nullable: true
+          description: SKAN 4 conversion window, 0–2
+        redownload:
+          type: integer
+          nullable: true
+          description: 1 = redownload, 0 = first install
+        did_win:
+          type: integer
+          nullable: true
+          description: 1 = winning postback, 0 = losing; `null` for SKAN ≤ 2.2 (counted as wins)
+        source_app_id:
+          type: integer
+          nullable: true
+        source_domain:
+          type: string
+          nullable: true
+          description: SKAN 4 web-ad source domain
+        fidelity_type:
+          type: integer
+          nullable: true
+          description: 1 = StoreKit-rendered or web ad, 0 = view-through
+        country_code:
+          type: string
+          nullable: true
+        signature_valid:
+          type: integer
+          nullable: true
+          description: 1 = verified against Apple's key, 0 = wrong or forged, `null` = unverifiable version
+        remote_ip:
+          type: string
+          description: Display value (proxy-header aware); not the rate-limit identity
+
+    SkanPostbackDetail:
+      allOf:
+        - $ref: "#/components/schemas/SkanPostback"
+        - type: object
+          properties:
+            attribution_signature:
+              type: string
+              description: Apple's base64 ECDSA signature as received (sanitized; up to 4096 chars), for forensics
+
+    SkanPostbackResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/SkanPostbackDetail"
+
+    SkanPostbackListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkanPostback"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    SkanReportGroup:
+      type: object
+      description: |
+        One report group. Which dimension fields are present depends on
+        `group_by`: `date` (day), `app_id` + `app_name` (app),
+        `ad_network_id` (ad-network), `source_identifier` + `campaign_id`
+        (source), `country_code` (country), `version` (version).
+      properties:
+        date:
+          type: string
+          format: date
+          description: UTC day (day mode)
+        app_id:
+          type: integer
+        app_name:
+          type: string
+          nullable: true
+          description: From the app registry (app mode); `null` when unregistered
+        ad_network_id:
+          type: string
+        source_identifier:
+          type: string
+          nullable: true
+        campaign_id:
+          type: integer
+          nullable: true
+        country_code:
+          type: string
+          nullable: true
+        version:
+          type: string
+        postbacks:
+          type: integer
+          description: All rows in the group, regardless of signature state
+        losses:
+          type: integer
+          description: "`did_win = 0` (trusted rows only)"
+        installs:
+          type: integer
+          description: Winning first-window postbacks excluding redownloads (trusted rows only)
+        redownloads:
+          type: integer
+        signature_valid_count:
+          type: integer
+        signature_invalid_count:
+          type: integer
+        signature_unverified_count:
+          type: integer
+        measurable:
+          type: integer
+          description: Winning postbacks carrying a conversion value
+        decoded:
+          type: integer
+        undecoded:
+          type: integer
+          description: Value present but no matching rule
+        null_conversion_values:
+          type: integer
+          description: Value withheld by Apple's privacy tier
+        decoded_revenue:
+          type: number
+        events:
+          type: object
+          description: Per-event counts and revenue, keyed by event name (always an object, `{}` when empty)
+          additionalProperties:
+            type: object
+            properties:
+              count:
+                type: integer
+              revenue:
+                type: number
+
+    SkanReportResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            group_by:
+              type: string
+              enum: [day, app, ad-network, source, country, version]
+            groups:
+              type: array
+              items:
+                $ref: "#/components/schemas/SkanReportGroup"
+        meta:
+          type: object
+          properties:
+            timezone:
+              type: string
+              example: UTC
+            trusted:
+              type: string
+              enum: [verified-only, as-filtered]
+              description: Which rows the headline metrics counted
+            groups_truncated:
+              type: boolean
+              description: More groups matched than `limit` allowed
+            notes:
+              type: string
+
+    SkadnetworkPostback:
+      type: object
+      description: |
+        A SKAdNetwork postback as Apple's devices send it (hyphenated
+        keys). Versions 2.1–4.0 verify; which fields are present depends on
+        the version and Apple's privacy tier. The conversion values are not
+        covered by Apple's signature in any version.
+      required: [version, ad-network-id, transaction-id, app-id, attribution-signature]
+      properties:
+        version:
+          type: string
+          example: "4.0"
+        ad-network-id:
+          type: string
+          maxLength: 100
+        transaction-id:
+          type: string
+          maxLength: 64
+        app-id:
+          type: integer
+        source-identifier:
+          type: string
+          description: SKAN 4; 1–4 digits
+        campaign-id:
+          type: integer
+          description: SKAN ≤ 3
+        conversion-value:
+          type: integer
+          minimum: 0
+          maximum: 63
+        coarse-conversion-value:
+          type: string
+          enum: [low, medium, high]
+        postback-sequence-index:
+          type: integer
+          enum: [0, 1, 2]
+        redownload:
+          type: boolean
+        did-win:
+          type: boolean
+        source-app-id:
+          type: integer
+        source-domain:
+          type: string
+        fidelity-type:
+          type: integer
+          enum: [0, 1]
+        country-code:
+          type: string
+        attribution-signature:
+          type: string
+          description: Base64 ECDSA (P-256/SHA-256) signature over the version-specific field composition
+
+    SkanVerifyResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            signature:
+              type: string
+              enum: [valid, invalid, unverifiable]
+            signed_message_base64:
+              type: string
+              nullable: true
+              description: Base64 of the exact byte string Apple signs for this version (fields joined with U+2063); `null` when the version is unverifiable
+            verifiable_versions:
+              type: array
+              items:
+                type: string
+              example: ["2.1", "2.2", "3.0", "4.0"]
+
+    SkanSchemaResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            app_id:
+              type: integer
+            schema_version:
+              type: string
+              description: Content hash of the mapping; also the ETag (unquoted)
+            events:
+              type: object
+              description: Event name → values to set when the app reports that event; always an object
+              additionalProperties:
+                type: object
+                properties:
+                  fine_value:
+                    type: integer
+                    nullable: true
+                    minimum: 0
+                    maximum: 63
+                  coarse_value:
+                    type: string
+                    nullable: true
+                    enum: [low, medium, high, null]
+            generated_at:
+              type: integer
+
+    SkanPostbackReceiptResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            accepted:
+              type: boolean
+            duplicate:
+              type: boolean
+              description: A byte-identical retry of a postback already stored; nothing new was written
+            signature:
+              type: string
+              enum: [valid, invalid, unverifiable]
+
+    SkanReceiverProbeResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            endpoint:
+              type: string
+              example: skadnetwork-report-attribution
+            status:
+              type: string
+              example: ready
+            accepts:
+              type: string

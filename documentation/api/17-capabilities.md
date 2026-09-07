@@ -79,13 +79,14 @@ API version and feature detection.
 | Field | Type | Description |
 | ----- | ---- | ----------- |
 | `api_version` | string | API version this server implements. |
-| `entity_support` | object | Map of entity → object of supported operations. Each value is an object of booleans keyed by `list`, `get`, `create`, `update`, `delete`, and `bulk_upsert`. Entity keys are hyphenated: `aff-networks`, `ppc-networks`, `ppc-accounts`, `campaigns`, `landing-pages`, `text-ads`, `trackers`. |
+| `entity_support` | object | Map of entity → object of supported operations. Each value is an object of booleans keyed by `list`, `get`, `create`, `update`, `delete`, and `bulk_upsert`. Entity keys are hyphenated: `aff-networks`, `ppc-networks`, `ppc-accounts`, `campaigns`, `landing-pages`, `text-ads`, `forecast-events`, `trackers`, `skan-apps`, `skan-conversion-values` (no `bulk_upsert`), and `skan-postbacks` (read-only: `list` and `get`). |
 | `sync_features` | object | Booleans for supported sync capabilities: `diff`, `sync_plan`, `async_jobs`, `incremental`, `prune`, `force_update`, `server_fk_remap`. |
 | `features.api_key_scopes` | boolean | Scoped API keys can be minted (the `scope` column exists — fresh installs and 1.9.75+). Scope *enforcement* always runs; unscoped keys are full-access. See [API Key Scopes](00-api-integrations.md#api-key-scopes). |
 | `features.create_idempotency` | boolean | `Idempotency-Key` honored on single POST creates across the operator surface (retries replay instead of duplicating). |
 | `features.delete_dry_run` | boolean | `?dry_run=1` on DELETE previews the delete without performing it; unsupported endpoints reject rather than fall through. See [Delete Dry-Run](00-api-integrations.md#delete-dry-run). |
 | `features.response_sanitization` | boolean | Visitor-authored strings (keyword/city/region/ISP/browser/platform/device names) are stripped of control and bidirectional characters and length-capped at serialization. |
 | `features.staged_writes` | boolean | `?staged=1` on an operator-surface write records it as a proposal with a server-issued change id; `/staged-changes` lists, applies, and discards, with validation re-run at apply time. See [Staged Writes](00-api-integrations.md#staged-writes). |
+| `features.skan` | boolean | Apple SKAdNetwork measurement: the public postback receiver at `/.well-known/skadnetwork/report-attribution/`, the `/skan` routes (postbacks, report, app registry, conversion-value rules, verify) under the `skan` scope area, and the token-gated public `GET /skan/schema` that iOS builds fetch at runtime. `p202 skan` commands require it. See [SKAdNetwork](19-skan.md). |
 | `limits.max_bulk_rows` | integer | Maximum rows per bulk-upsert request. |
 | `limits.max_job_concurrency` | integer | Maximum concurrent async jobs. |
 | `limits.max_job_events_page` | integer | Maximum job events returned per page. |
