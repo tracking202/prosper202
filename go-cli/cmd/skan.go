@@ -29,52 +29,102 @@ var skanCmd = &cobra.Command{
 		"decoded report. Requires a server advertising features.skan in /capabilities.",
 }
 
-// skanFilterFlags maps postback list/report flag names (kebab-case; the
-// normalizer also accepts snake_case) to the API's query parameter names.
-var skanFilterFlags = map[string]string{
-	"time-from":               "time_from",
-	"time-to":                 "time_to",
-	"app-id":                  "app_id",
-	"ad-network-id":           "ad_network_id",
-	"version":                 "version",
-	"transaction-id":          "transaction_id",
-	"country-code":            "country_code",
-	"source-identifier":       "source_identifier",
-	"campaign-id":             "campaign_id",
-	"fidelity-type":           "fidelity_type",
-	"postback-sequence-index": "postback_sequence_index",
-	"did-win":                 "did_win",
-	"redownload":              "redownload",
-	"coarse-conversion-value": "coarse_conversion_value",
-	"signature":               "signature",
+// skanFilterFlagDefs is the single source for the postback list/report
+// filter flags: flag name (kebab-case; the normalizer also accepts
+// snake_case), the API query parameter it feeds, and its help text. One
+// table, so a flag cannot be registered without being collected or
+// collected without being registered.
+var skanFilterFlagDefs = []struct {
+	flag  string
+	param string
+	help  string
+}{
+	{"time-from", "time_from", "Received-at range start (unix timestamp)"},
+	{"time-to", "time_to", "Received-at range end (unix timestamp)"},
+	{"app-id", "app_id", "Filter by advertised App Store id"},
+	{"ad-network-id", "ad_network_id", "Filter by ad network id"},
+	{"version", "version", "Filter by SKAN postback version (e.g. 4.0)"},
+	{"transaction-id", "transaction_id", "Filter by Apple transaction id"},
+	{"country-code", "country_code", "Filter by install country code"},
+	{"source-identifier", "source_identifier", "Filter by SKAN 4 source identifier"},
+	{"campaign-id", "campaign_id", "Filter by SKAN 2/3 campaign id"},
+	{"fidelity-type", "fidelity_type", "Filter: 1=StoreKit-rendered/web ad, 0=view-through"},
+	{"postback-sequence-index", "postback_sequence_index", "Filter by conversion window (0, 1, or 2)"},
+	{"did-win", "did_win", "Filter: 1=winning postbacks, 0=losing"},
+	{"redownload", "redownload", "Filter: 1=redownloads only, 0=first installs"},
+	{"coarse-conversion-value", "coarse_conversion_value", "Filter by coarse value (low, medium, high)"},
+	{"signature", "signature", "Filter by verification state: valid, invalid, unverifiable"},
 }
 
 func registerSkanFilterFlags(cmd *cobra.Command) {
-	cmd.Flags().String("time-from", "", "Received-at range start (unix timestamp)")
-	cmd.Flags().String("time-to", "", "Received-at range end (unix timestamp)")
-	cmd.Flags().String("app-id", "", "Filter by advertised App Store id")
-	cmd.Flags().String("ad-network-id", "", "Filter by ad network id")
-	cmd.Flags().String("version", "", "Filter by SKAN postback version (e.g. 4.0)")
-	cmd.Flags().String("transaction-id", "", "Filter by Apple transaction id")
-	cmd.Flags().String("country-code", "", "Filter by install country code")
-	cmd.Flags().String("source-identifier", "", "Filter by SKAN 4 source identifier")
-	cmd.Flags().String("campaign-id", "", "Filter by SKAN 2/3 campaign id")
-	cmd.Flags().String("fidelity-type", "", "Filter: 1=StoreKit-rendered/web ad, 0=view-through")
-	cmd.Flags().String("postback-sequence-index", "", "Filter by conversion window (0, 1, or 2)")
-	cmd.Flags().String("did-win", "", "Filter: 1=winning postbacks, 0=losing")
-	cmd.Flags().String("redownload", "", "Filter: 1=redownloads only, 0=first installs")
-	cmd.Flags().String("coarse-conversion-value", "", "Filter by coarse value (low, medium, high)")
-	cmd.Flags().String("signature", "", "Filter by verification state: valid, invalid, unverifiable")
+	for _, def := range skanFilterFlagDefs {
+		cmd.Flags().String(def.flag, "", def.help)
+	}
 }
 
 func collectSkanFilters(cmd *cobra.Command) map[string]string {
 	params := map[string]string{}
-	for flag, param := range skanFilterFlags {
-		if v, _ := cmd.Flags().GetString(flag); v != "" {
-			params[param] = v
+	for _, def := range skanFilterFlagDefs {
+		if v, _ := cmd.Flags().GetString(def.flag); v != "" {
+			params[def.param] = v
 		}
 	}
 	return params
+}
+
+// skanAppBodyFields / skanCvBodyFields map each create/update flag to its
+// API body field — the one place the flag↔field correspondence lives.
+var skanAppBodyFields = map[string]string{
+	"app-id":   "app_id",
+	"app-name": "app_name",
+	"notes":    "notes",
+}
+
+var skanCvBodyFields = map[string]string{
+	"app-id":       "app_id",
+	"fine-value":   "fine_value",
+	"coarse-value": "coarse_value",
+	"event-name":   "event_name",
+	"revenue":      "revenue",
+}
+
+// collectSkanBody gathers flag values into an API body. changedOnly sends
+// exactly the flags the caller set (updates: an explicitly empty value is a
+// deliberate write); otherwise only non-empty values are sent (creates).
+func collectSkanBody(cmd *cobra.Command, fields map[string]string, changedOnly bool) map[string]string {
+	body := map[string]string{}
+	for flag, field := range fields {
+		if changedOnly {
+			if cmd.Flags().Changed(flag) {
+				v, _ := cmd.Flags().GetString(flag)
+				body[field] = v
+			}
+		} else if v, _ := cmd.Flags().GetString(flag); v != "" {
+			body[field] = v
+		}
+	}
+	return body
+}
+
+// listAllSkanRows fetches every page of a skan list endpoint and renders
+// the rows in the list envelope shape, so --all output is structurally
+// identical to a paged list.
+func listAllSkanRows(c *api.Client, endpoint string, params map[string]string) error {
+	rows, err := fetchAllRowsWithParams(c, endpoint, params)
+	if err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(map[string]interface{}{
+		"data": rows,
+		"pagination": map[string]interface{}{
+			"total": len(rows), "limit": len(rows), "offset": 0,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("encoding rows: %w", err)
+	}
+	render(encoded)
+	return nil
 }
 
 // ── Postbacks (read-only) ───────────────────────────────────────────
@@ -95,21 +145,7 @@ var skanPostbacksListCmd = &cobra.Command{
 		}
 		params := collectSkanFilters(cmd)
 		if allRows, _ := cmd.Flags().GetBool("all"); allRows {
-			rows, err := fetchAllRowsWithParams(c, "skan/postbacks", params)
-			if err != nil {
-				return err
-			}
-			encoded, err := json.Marshal(map[string]interface{}{
-				"data": rows,
-				"pagination": map[string]interface{}{
-					"total": len(rows), "limit": len(rows), "offset": 0,
-				},
-			})
-			if err != nil {
-				return fmt.Errorf("encoding rows: %w", err)
-			}
-			render(encoded)
-			return nil
+			return listAllSkanRows(c, "skan/postbacks", params)
 		}
 		for _, f := range []string{"limit", "offset"} {
 			if v, _ := cmd.Flags().GetString(f); v != "" {
@@ -273,6 +309,9 @@ var skanAppListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if allRows, _ := cmd.Flags().GetBool("all"); allRows {
+			return listAllSkanRows(c, "skan/apps", map[string]string{})
+		}
 		params := map[string]string{}
 		for _, f := range []string{"limit", "offset"} {
 			if v, _ := cmd.Flags().GetString(f); v != "" {
@@ -310,12 +349,7 @@ var skanAppCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Register an advertised app (claims its stored postbacks)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		body := map[string]string{}
-		for _, f := range []string{"app-id", "app-name", "notes"} {
-			if v, _ := cmd.Flags().GetString(f); v != "" {
-				body[skanBodyField(f)] = v
-			}
-		}
+		body := collectSkanBody(cmd, skanAppBodyFields, false)
 		if body["app_id"] == "" {
 			return validationError("required flag --app-id is missing").
 				WithHint("Pass the numeric App Store id of the advertised app (the number in its App Store URL).")
@@ -327,8 +361,13 @@ var skanAppCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		idemKey, _ := cmd.Flags().GetString("idempotency-key")
-		data, err := c.PostIdempotent("skan/apps", body, idemKey)
+		// Deliberately no --idempotency-key: the server does not record a
+		// replayable response for app creates (the response carries the
+		// schema token, which must never persist in the server-state
+		// store). Retries are safe anyway — the App Store id is globally
+		// unique, so a duplicate create answers 409 naming the
+		// registration.
+		data, err := c.Post("skan/apps", body)
 		if err != nil {
 			return err
 		}
@@ -342,13 +381,7 @@ var skanAppUpdateCmd = &cobra.Command{
 	Short: "Update a registered app (re-runs the postback claim)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		body := map[string]string{}
-		for _, f := range []string{"app-id", "app-name", "notes"} {
-			if cmd.Flags().Changed(f) {
-				v, _ := cmd.Flags().GetString(f)
-				body[skanBodyField(f)] = v
-			}
-		}
+		body := collectSkanBody(cmd, skanAppBodyFields, true)
 		if len(body) == 0 {
 			return validationError("nothing to update").
 				WithHint("Pass at least one of --app-id, --app-name, --notes.")
@@ -421,7 +454,11 @@ var skanSchemaCmd = &cobra.Command{
 			return validationError("this app registration has no schema token").
 				WithHint("The server must advertise features.skan in /capabilities; `p202 skan app get " + args[0] + "` shows the registration.")
 		}
-		data, err := c.Get("skan/schema", map[string]string{"token": envelope.Data.SchemaToken})
+		// The token travels as a header, exactly as the P202SKAN helper
+		// sends it — never as a query parameter, which request logging
+		// would capture.
+		data, err := c.GetWithHeaders("skan/schema", nil,
+			map[string]string{"X-P202-Schema-Token": envelope.Data.SchemaToken})
 		if err != nil {
 			return err
 		}
@@ -445,6 +482,9 @@ var skanCvListCmd = &cobra.Command{
 		c, err := api.NewFromConfig()
 		if err != nil {
 			return err
+		}
+		if allRows, _ := cmd.Flags().GetBool("all"); allRows {
+			return listAllSkanRows(c, "skan/conversion-values", map[string]string{})
 		}
 		params := map[string]string{}
 		for _, f := range []string{"limit", "offset"} {
@@ -483,13 +523,7 @@ var skanCvCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a decoding rule (one fine value 0-63 OR one coarse value)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		body := map[string]string{}
-		for _, f := range []string{"app-id", "fine-value", "coarse-value", "event-name", "revenue"} {
-			if cmd.Flags().Changed(f) {
-				v, _ := cmd.Flags().GetString(f)
-				body[skanBodyField(f)] = v
-			}
-		}
+		body := collectSkanBody(cmd, skanCvBodyFields, true)
 		if body["event_name"] == "" {
 			return validationError("required flag --event-name is missing")
 		}
@@ -515,19 +549,38 @@ var skanCvCreateCmd = &cobra.Command{
 
 var skanCvUpdateCmd = &cobra.Command{
 	Use:   "update <id>",
-	Short: "Update a decoding rule",
-	Args:  cobra.ExactArgs(1),
+	Short: "Update a decoding rule (switch kinds with --clear-fine-value/--clear-coarse-value)",
+	Long: "Updates fields of a decoding rule. A rule always maps exactly ONE conversion\n" +
+		"value, so switching a rule between kinds takes the clear and the replacement in\n" +
+		"one command: `update 5 --clear-fine-value --coarse-value high` turns a fine rule\n" +
+		"into a coarse one. The clear flags send an explicit JSON null.",
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		body := map[string]string{}
-		for _, f := range []string{"app-id", "fine-value", "coarse-value", "event-name", "revenue"} {
-			if cmd.Flags().Changed(f) {
-				v, _ := cmd.Flags().GetString(f)
-				body[skanBodyField(f)] = v
-			}
+		clearFine, _ := cmd.Flags().GetBool("clear-fine-value")
+		clearCoarse, _ := cmd.Flags().GetBool("clear-coarse-value")
+		if clearFine && cmd.Flags().Changed("fine-value") {
+			return validationError("--clear-fine-value and --fine-value are mutually exclusive")
+		}
+		if clearCoarse && cmd.Flags().Changed("coarse-value") {
+			return validationError("--clear-coarse-value and --coarse-value are mutually exclusive")
+		}
+
+		// interface{} values so the clear flags can send true JSON nulls —
+		// the server distinguishes "field: null" (clear it) from an absent
+		// field (keep it).
+		body := map[string]interface{}{}
+		for field, v := range collectSkanBody(cmd, skanCvBodyFields, true) {
+			body[field] = v
+		}
+		if clearFine {
+			body["fine_value"] = nil
+		}
+		if clearCoarse {
+			body["coarse_value"] = nil
 		}
 		if len(body) == 0 {
 			return validationError("nothing to update").
-				WithHint("Pass at least one of --app-id, --fine-value, --coarse-value, --event-name, --revenue.")
+				WithHint("Pass at least one of --app-id, --fine-value, --coarse-value, --event-name, --revenue, or a --clear-* flag with its replacement value.")
 		}
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -551,24 +604,6 @@ var skanCvDeleteCmd = &cobra.Command{
 	},
 }
 
-// skanBodyField converts a kebab-case flag name to its API field name.
-func skanBodyField(flag string) string {
-	switch flag {
-	case "app-id":
-		return "app_id"
-	case "app-name":
-		return "app_name"
-	case "fine-value":
-		return "fine_value"
-	case "coarse-value":
-		return "coarse_value"
-	case "event-name":
-		return "event_name"
-	default:
-		return flag
-	}
-}
-
 func init() {
 	skanPostbacksListCmd.Flags().StringP("limit", "l", "", "Max results")
 	skanPostbacksListCmd.Flags().StringP("offset", "o", "", "Pagination offset")
@@ -584,19 +619,18 @@ func init() {
 
 	skanAppListCmd.Flags().StringP("limit", "l", "", "Max results")
 	skanAppListCmd.Flags().StringP("offset", "o", "", "Pagination offset")
+	skanAppListCmd.Flags().Bool("all", false, "Fetch all rows across pages")
 	for _, cmd := range []*cobra.Command{skanAppCreateCmd, skanAppUpdateCmd} {
 		cmd.Flags().String("app-id", "", "Numeric App Store id of the advertised app")
 		cmd.Flags().String("app-name", "", "Display name for reports")
 		cmd.Flags().String("notes", "", "Free-form notes")
 	}
-	registerIdempotencyKeyFlag(skanAppCreateCmd)
-	skanAppDeleteCmd.Flags().Bool("force", false, "Skip the confirmation prompt")
-	skanAppDeleteCmd.Flags().Bool("dry-run", false, "Preview what would be deleted without deleting")
-	skanAppDeleteCmd.Flags().String("ids", "", "Comma-separated ids for bulk delete")
+	registerDeleteFlags(skanAppDeleteCmd, "SKAN app")
 	skanAppCmd.AddCommand(skanAppListCmd, skanAppGetCmd, skanAppCreateCmd, skanAppUpdateCmd, skanAppDeleteCmd, skanAppRotateTokenCmd)
 
 	skanCvListCmd.Flags().StringP("limit", "l", "", "Max results")
 	skanCvListCmd.Flags().StringP("offset", "o", "", "Pagination offset")
+	skanCvListCmd.Flags().Bool("all", false, "Fetch all rows across pages")
 	for _, cmd := range []*cobra.Command{skanCvCreateCmd, skanCvUpdateCmd} {
 		cmd.Flags().String("app-id", "", "App Store id this rule applies to (0 = account-wide default)")
 		cmd.Flags().String("fine-value", "", "Fine conversion value 0-63")
@@ -604,10 +638,10 @@ func init() {
 		cmd.Flags().String("event-name", "", "Event the value decodes to")
 		cmd.Flags().String("revenue", "", "Revenue attributed per decoded postback")
 	}
+	skanCvUpdateCmd.Flags().Bool("clear-fine-value", false, "Set fine_value to null (pair with --coarse-value to switch kinds)")
+	skanCvUpdateCmd.Flags().Bool("clear-coarse-value", false, "Set coarse_value to null (pair with --fine-value to switch kinds)")
 	registerIdempotencyKeyFlag(skanCvCreateCmd)
-	skanCvDeleteCmd.Flags().Bool("force", false, "Skip the confirmation prompt")
-	skanCvDeleteCmd.Flags().Bool("dry-run", false, "Preview what would be deleted without deleting")
-	skanCvDeleteCmd.Flags().String("ids", "", "Comma-separated ids for bulk delete")
+	registerDeleteFlags(skanCvDeleteCmd, "conversion-value rule")
 	skanCvCmd.AddCommand(skanCvListCmd, skanCvGetCmd, skanCvCreateCmd, skanCvUpdateCmd, skanCvDeleteCmd)
 
 	skanCmd.AddCommand(skanPostbacksCmd, skanReportCmd, skanVerifyCmd, skanAppCmd, skanCvCmd, skanSchemaCmd)

@@ -70,6 +70,9 @@ final class SkanSchemaTest extends TestCase
 
         $data = $result['body']['data'];
         $this->assertSame(525463029, $data['app_id']);
+        // Always an object (see testEmptyRuleSetServesAnEmptyEventsObject);
+        // the resolution result is asserted over its array form.
+        $this->assertInstanceOf(\stdClass::class, $data['events']);
         $this->assertSame(
             [
                 'purchase' => ['fine_value' => 63, 'coarse_value' => 'high'],
@@ -77,7 +80,10 @@ final class SkanSchemaTest extends TestCase
                 'trial'    => ['fine_value' => null, 'coarse_value' => 'medium'],
                 'tutorial' => ['fine_value' => 9, 'coarse_value' => null],
             ],
-            $data['events']
+            array_map(
+                static fn($mapping) => (array)$mapping,
+                (array)$data['events']
+            )
         );
         $this->assertSame('"' . $data['schema_version'] . '"', $result['etag']);
     }

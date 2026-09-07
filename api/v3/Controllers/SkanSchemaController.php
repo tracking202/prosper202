@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Api\V3\Exception\DatabaseException;
+use Api\V3\Support\MysqliStatements;
 
 /**
  * Serves the SKAN conversion-value schema to the advertised app at runtime.
@@ -25,6 +26,8 @@ use Api\V3\Exception\DatabaseException;
  */
 final class SkanSchemaController
 {
+    use MysqliStatements;
+
     /** Order for picking one coarse value when several map to one event. */
     private const COARSE_RANK = ['low' => 1, 'medium' => 2, 'high' => 3];
 
@@ -45,7 +48,7 @@ final class SkanSchemaController
                 'status' => 400,
                 'body' => [
                     'error' => true,
-                    'message' => 'Provide the app\'s schema token (X-P202-Schema-Token header or ?token=)',
+                    'message' => 'Provide the app\'s schema token in the X-P202-Schema-Token header',
                     'status' => 400,
                 ],
                 'etag' => null,
@@ -88,7 +91,12 @@ final class SkanSchemaController
                 'data' => [
                     'app_id' => (int)$app['app_id'],
                     'schema_version' => trim($etag, '"'),
-                    'events' => $events === [] ? new \stdClass() : $events,
+                    // Always an object: event names can be numeric strings,
+                    // and a PHP array of 0-based numeric keys would
+                    // JSON-encode as a LIST, dropping the names — the iOS
+                    // helper's [String: EventMapping] decoder then rejects
+                    // the whole document on every installed device.
+                    'events' => (object)$events,
                     'generated_at' => time(),
                 ],
             ],
@@ -153,44 +161,4 @@ final class SkanSchemaController
         return $events;
     }
 
-    private function prepare(string $sql): \mysqli_stmt
-    {
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            throw new DatabaseException('Prepare failed');
-        }
-        return $stmt;
-    }
-
-    private function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
-    {
-        // @phpstan-ignore-next-line prosper202.directStmtCall — this IS the centralized ref-safe bind wrapper (no Connection instance in scope; routing through $this->conn would self-recurse)
-        if (!$stmt->bind_param($types, ...$values)) {
-            $stmt->close();
-            throw new DatabaseException('Bind failed');
-        }
-    }
-
-    private function execute(\mysqli_stmt $stmt, string $message): void
-    {
-        // @phpstan-ignore-next-line prosper202.directStmtCall — this IS the centralized checked-execute wrapper (no Connection instance; routing through $this->conn would self-recurse)
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException($message);
-        }
-    }
-
-    /**
-     * get_result() returning false reads as an empty result set at the call
-     * site (error pattern #1's get_result variant), so it is checked here.
-     */
-    private function result(\mysqli_stmt $stmt): \mysqli_result
-    {
-        $result = $stmt->get_result();
-        if ($result === false) {
-            $stmt->close();
-            throw new DatabaseException('Result retrieval failed');
-        }
-        return $result;
-    }
 }

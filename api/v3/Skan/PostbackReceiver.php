@@ -32,12 +32,25 @@ namespace Api\V3\Skan;
  */
 final class PostbackReceiver
 {
+    use \Api\V3\Support\MysqliStatements;
+
     /**
      * Largest body accepted; real postbacks are under 2 KB. Kept well below
      * the raw_payload column's TEXT capacity (65535 bytes) so an accepted
      * body can never fail the INSERT on size and turn into a retry loop.
      */
     public const MAX_BODY_BYTES = 32768;
+
+    /**
+     * Retention defaults (days) for rows the endpoint's openness makes
+     * unbounded: postbacks nobody has claimed (no app registration) and
+     * postbacks whose signature verified as forged. Verified, claimed rows
+     * are operator data and are never pruned. Overridable via
+     * P202_SKAN_RETENTION_DAYS_UNCLAIMED / P202_SKAN_RETENTION_DAYS_INVALID;
+     * 0 disables that class of pruning.
+     */
+    public const DEFAULT_RETENTION_DAYS_UNCLAIMED = 30;
+    public const DEFAULT_RETENTION_DAYS_INVALID = 90;
 
     private const COARSE_VALUES = ['low', 'medium', 'high'];
 
@@ -100,7 +113,8 @@ final class PostbackReceiver
             (string)$postback['ad-network-id'],
             (string)$postback['transaction-id'],
             $sequenceIndex,
-            $didWin
+            $didWin,
+            $rawBody
         );
 
         // Aligned (type, value) pairs so the bind string cannot drift from
@@ -136,6 +150,17 @@ final class PostbackReceiver
             return $this->error(500, 'Failed to store postback');
         }
 
+        if ($insert === 'stored' && mt_rand(1, 100) === 1) {
+            // Opportunistic retention: the endpoint is open, so aged
+            // unclaimed/forged rows must not accumulate forever. Never
+            // fatal — the accepted postback outcome stands regardless.
+            try {
+                $this->prunePostbacks($receivedAt);
+            } catch (\Throwable $e) {
+                error_log('p202 skan: postback retention pruning failed: ' . $e->getMessage());
+            }
+        }
+
         return [
             'status' => 200,
             'body' => [
@@ -149,27 +174,60 @@ final class PostbackReceiver
     }
 
     /**
-     * The identity of a postback for retry deduplication: Apple documents
-     * transaction-id as the dedupe value; ad-network-id namespaces it, and
-     * the sequence index / did-win legs of one transaction are distinct
-     * postbacks. Kept out of the storage scope of anything else — this hash
-     * exists only to make device retries idempotent.
+     * The identity of a postback for retry deduplication. Apple documents
+     * transaction-id as the dedupe value and device retries are
+     * byte-identical, so the raw body is part of the identity: without it,
+     * a forged postback carrying a real (ad-network-id, transaction-id,
+     * window) tuple with different content would occupy the slot first and
+     * the later genuine signed postback would be dropped as its
+     * "duplicate". With the body folded in, only true retries collide;
+     * mutated forgeries store as their own rows, and reporting separates
+     * them by signature state.
      */
-    public static function dedupeHash(string $adNetworkId, string $transactionId, ?int $sequenceIndex, ?bool $didWin): string
+    public static function dedupeHash(string $adNetworkId, string $transactionId, ?int $sequenceIndex, ?bool $didWin, string $rawBody): string
     {
         // Length-prefixed serialization: with a plain joining character, an
         // ad-network-id containing that character could collide with a
         // different (network, transaction) pair. The prefixes pin the field
         // boundaries whatever the strings contain.
         return sha1(sprintf(
-            '%d:%s|%d:%s|%s|%s',
+            '%d:%s|%d:%s|%s|%s|%s',
             strlen($adNetworkId),
             $adNetworkId,
             strlen($transactionId),
             $transactionId,
             $sequenceIndex === null ? '-' : (string)$sequenceIndex,
-            $didWin === null ? '-' : ($didWin ? 'w' : 'l')
+            $didWin === null ? '-' : ($didWin ? 'w' : 'l'),
+            sha1($rawBody)
         ));
+    }
+
+    /**
+     * Bounded retention pass: delete aged rows nobody will ever act on —
+     * unclaimed postbacks (no app registration adopted them) and rows whose
+     * signature verified as forged. Verified rows belonging to a user are
+     * never touched. LIMITed so a pass stays cheap on the request path.
+     */
+    public function prunePostbacks(int $now): void
+    {
+        $classes = [
+            ['P202_SKAN_RETENTION_DAYS_UNCLAIMED', self::DEFAULT_RETENTION_DAYS_UNCLAIMED,
+                'DELETE FROM 202_skan_postbacks WHERE user_id = 0 AND received_at < ? LIMIT 500'],
+            ['P202_SKAN_RETENTION_DAYS_INVALID', self::DEFAULT_RETENTION_DAYS_INVALID,
+                'DELETE FROM 202_skan_postbacks WHERE signature_valid = 0 AND received_at < ? LIMIT 500'],
+        ];
+        foreach ($classes as [$envName, $defaultDays, $sql]) {
+            $raw = getenv($envName);
+            $days = (is_string($raw) && trim($raw) !== '' && is_numeric($raw)) ? (int)$raw : $defaultDays;
+            if ($days <= 0) {
+                continue; // explicitly disabled
+            }
+            $cutoff = $now - ($days * 86400);
+            $stmt = $this->prepare($sql);
+            $this->bind($stmt, 'i', $cutoff);
+            $this->execute($stmt, 'Retention delete failed');
+            $stmt->close();
+        }
     }
 
     /**
@@ -275,13 +333,8 @@ final class PostbackReceiver
     {
         $stmt = $this->prepare('SELECT user_id FROM 202_skan_apps WHERE app_id = ? LIMIT 1');
         $this->bind($stmt, 'i', $appId);
-        $this->execute($stmt);
-        $result = $stmt->get_result();
-        if ($result === false) {
-            $stmt->close();
-            throw new \RuntimeException('SKAN app lookup returned no result set');
-        }
-        $row = $result->fetch_assoc();
+        $this->execute($stmt, 'SKAN app lookup failed');
+        $row = $this->result($stmt)->fetch_assoc();
         $stmt->close();
         return is_array($row) ? (int)$row['user_id'] : 0;
     }
@@ -357,30 +410,4 @@ final class PostbackReceiver
         return ['status' => $status, 'body' => $body];
     }
 
-    private function prepare(string $sql): \mysqli_stmt
-    {
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            throw new \RuntimeException('SKAN statement prepare failed');
-        }
-        return $stmt;
-    }
-
-    private function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
-    {
-        // @phpstan-ignore-next-line the receiver is its own checked bind wrapper; no Connection in scope
-        if (!$stmt->bind_param($types, ...$values)) {
-            $stmt->close();
-            throw new \RuntimeException('SKAN statement bind failed');
-        }
-    }
-
-    private function execute(\mysqli_stmt $stmt): void
-    {
-        // @phpstan-ignore-next-line the receiver is its own checked execute wrapper; no Connection in scope
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new \RuntimeException('SKAN statement execute failed');
-        }
-    }
 }

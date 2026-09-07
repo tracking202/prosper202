@@ -463,11 +463,25 @@ func TestRenderQuietPrefersTheRowsOwnPrimaryKeyOverUserId(t *testing.T) {
 	// hands scripts the OWNER's id to feed into get/delete. Each row here
 	// carries its entity's primary key plus user_id, and the primary key
 	// must win.
+	// Row shapes mirror the API's actual SELECT columns for each list
+	// endpoint, including the foreign keys that ride along.
 	cases := map[string]string{
 		`{"data":[{"skan_app_id":2,"app_id":525463029,"user_id":1}]}`:        "2",
 		`{"data":[{"rule_id":7,"app_id":525463029,"user_id":1}]}`:            "7",
 		`{"data":[{"postback_id":31,"user_id":1,"campaign_id":9}]}`:          "31",
 		`{"data":[{"event_id":12,"user_id":1,"event_name":"Black Friday"}]}`: "12",
+		`{"data":[{"model_id":3,"user_id":1,"model_name":"U-shaped"}]}`:      "3",
+		`{"data":[{"snapshot_id":44,"model_id":3,"user_id":1}]}`:             "44",
+		`{"data":[{"export_id":5,"user_id":1,"model_id":3}]}`:                "5",
+		`{"data":[{"subscription_id":8,"customer_id":21,"user_id":1}]}`:      "8",
+		`{"data":[{"customer_id":21,"user_id":1,"company":"Acme"}]}`:         "21",
+		`{"data":[{"company_id":6,"name":"Acme","domain":"acme.io"}]}`:       "6",
+		`{"data":[{"product_id":9,"sku":"pro-annual"}]}`:                     "9",
+		`{"data":[{"field_id":2,"field_key":"plan","user_id":1}]}`:           "2",
+		`{"data":[{"webhook_id":4,"webhook_url":"https://x","user_id":1}]}`:  "4",
+		`{"data":[{"delivery_id":15,"webhook_id":4,"user_id":1}]}`:           "15",
+		`{"data":[{"integration_id":3,"provider":"stripe","user_id":1}]}`:    "3",
+		`{"data":[{"alias_id":11,"alias_type":"email"}]}`:                    "11",
 	}
 	for input, want := range cases {
 		out := captureStdout(t, func() {

@@ -975,6 +975,72 @@ class ServerStateStore
         return $this->sanitizeSensitive($payload);
     }
 
+    /**
+     * Soft per-source rate limit for unauthenticated endpoints.
+     *
+     * The bucket is keyed on the validated TCP peer address (REMOTE_ADDR),
+     * never on client-supplied headers: X-Forwarded-For is attacker-chosen
+     * on an open endpoint, so keying on it lets a flooder mint a fresh
+     * bucket per request — the limit never fires AND every spoofed value
+     * becomes a state file (the p13n endpoints' "never raw spoofable
+     * headers" rule). Behind a TLS-terminating proxy the peer is the proxy,
+     * so callers size $maxPerWindow as an aggregate ceiling, not a
+     * per-device one.
+     *
+     * Soft means the limiter's own failure never blocks the request:
+     * returns the retry-after seconds when the limit is exceeded, and null
+     * when the request may proceed — including when the limiter itself
+     * errored (logged). Also opportunistically garbage-collects stale
+     * bucket files so the directory stays bounded by recent distinct peers.
+     */
+    public function softIpRateLimit(string $prefix, int $maxPerWindow, int $windowSeconds, ?string $peerIp = null): ?int
+    {
+        try {
+            $ip = $peerIp ?? (string)($_SERVER['REMOTE_ADDR'] ?? '');
+            if (filter_var($ip, FILTER_VALIDATE_IP) === false) {
+                // No validated peer (CLI, misconfigured SAPI): one shared
+                // bucket rather than an attacker-nameable one.
+                $ip = 'unknown';
+            }
+            if (mt_rand(1, 100) === 1) {
+                $this->pruneStaleRateLimits(max(3600, $windowSeconds * 10));
+            }
+            $rate = $this->consumeRateLimit($prefix . ':' . substr($ip, 0, 64), $maxPerWindow, $windowSeconds);
+            if (!$rate['allowed']) {
+                return max(1, (int)$rate['reset_at'] - time());
+            }
+            return null;
+        } catch (\Throwable $e) {
+            error_log('p202: rate limiter unavailable, serving request: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Delete rate-limit bucket files whose window is long over. Buckets are
+     * one small JSON file per distinct source; without collection the
+     * directory grows with every source ever seen.
+     */
+    public function pruneStaleRateLimits(int $maxAgeSeconds): void
+    {
+        $dir = $this->dir('rate_limits');
+        $entries = @scandir($dir);
+        if ($entries === false) {
+            return;
+        }
+        $cutoff = time() - $maxAgeSeconds;
+        foreach ($entries as $entry) {
+            if ($entry === '.' || $entry === '..' || !str_ends_with($entry, '.json')) {
+                continue;
+            }
+            $path = $dir . '/' . $entry;
+            $mtime = @filemtime($path);
+            if ($mtime !== false && $mtime < $cutoff) {
+                @unlink($path);
+            }
+        }
+    }
+
     /** @return array{allowed: bool, remaining: int, reset_at: int} */
     public function consumeRateLimit(string $bucket, int $maxPerWindow, int $windowSeconds): array
     {

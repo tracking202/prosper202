@@ -39,7 +39,7 @@ $allowedOrigin = defined('API_CORS_ORIGIN') ? API_CORS_ORIGIN : '';
 if ($allowedOrigin !== '') {
     header('Access-Control-Allow-Origin: ' . $allowedOrigin);
     header('Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    header('Access-Control-Allow-Headers: Authorization, Content-Type, X-P202-API-Version, Idempotency-Key, If-Match');
+    header('Access-Control-Allow-Headers: Authorization, Content-Type, X-P202-API-Version, Idempotency-Key, If-Match, If-None-Match, X-P202-Schema-Token');
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -129,29 +129,28 @@ try {
     // resubmission. An app binary cannot hold an API key; access is gated
     // by the app's rotatable schema token instead (SkanSchemaController).
     if ($path === '/skan/schema' && $method === 'GET') {
-        // Soft per-source limit, mirroring the postback receiver: devices
-        // fetch rarely, and the limiter's own failure must never block them.
+        // Soft per-source limit, mirroring the postback receiver: keyed on
+        // the validated TCP peer, never client headers (an attacker-chosen
+        // X-Forwarded-For would defeat the limit AND mint unbounded bucket
+        // files), fail-open so the limiter's own failure never blocks
+        // devices.
         try {
-            $limiter = new ServerStateStore();
-            $forwarded = trim(explode(',', (string)RequestContext::header('x-forwarded-for', ''))[0]);
-            $clientIp = $forwarded !== '' ? $forwarded : (string)($_SERVER['REMOTE_ADDR'] ?? '');
-            $rate = $limiter->consumeRateLimit('skan-schema:ip:' . $clientIp, 120, 60);
-            if (!$rate['allowed']) {
-                $retryAfter = max(1, (int)$rate['reset_at'] - time());
-                header('Retry-After: ' . $retryAfter);
-                Bootstrap::errorResponse('Rate limit exceeded', 429, ['retry_after_seconds' => $retryAfter]);
-                exit;
-            }
+            $retryAfter = (new ServerStateStore())->softIpRateLimit('skan-schema', 300, 60);
         } catch (\Throwable $e) {
             error_log('p202 skan: schema rate limiter unavailable, serving request: ' . $e->getMessage());
+            $retryAfter = null;
+        }
+        if ($retryAfter !== null) {
+            header('Retry-After: ' . $retryAfter);
+            Bootstrap::errorResponse('Rate limit exceeded', 429, ['retry_after_seconds' => $retryAfter]);
+            exit;
         }
 
-        $schemaToken = RequestContext::header('x-p202-schema-token');
-        if ($schemaToken === null && isset($queryParams['token'])) {
-            $schemaToken = (string)$queryParams['token'];
-        }
+        // Header-only token transport: a token in a GET query string would
+        // be captured by ordinary request logging (the p13n endpoints'
+        // rule), and the iOS helper and CLI both send the header.
         $schemaResult = (new \Api\V3\Controllers\SkanSchemaController($db))
-            ->publicSchema($schemaToken, RequestContext::header('if-none-match'));
+            ->publicSchema(RequestContext::header('x-p202-schema-token'), RequestContext::header('if-none-match'));
         if ($schemaResult['etag'] !== null) {
             header('ETag: ' . $schemaResult['etag']);
             header('Cache-Control: private, max-age=300');
@@ -502,7 +501,13 @@ try {
 
             $r->get('/apps',            fn() => $crud($apps)->list($queryParams));
             $r->get('/apps/{id}',       fn($ctx) => $crud($apps)->get((int)$ctx['id']));
-            $r->post('/apps',           fn() => ['_status' => 201] + $idempotent('skan/apps', $payload, fn() => $crud($apps)->create($payload)));
+            // Deliberately NOT wrapped in $idempotent, for the same reason
+            // API-key creation is not: the response carries the app's schema
+            // token, which must never persist in the server-state store as a
+            // replayable record. Retry safety comes from the global UNIQUE
+            // app_id instead — a duplicate create answers 409 naming the
+            // registration.
+            $r->post('/apps',           fn() => ['_status' => 201] + $crud($apps)->create($payload));
             $r->put('/apps/{id}',       fn($ctx) => $crud($apps)->update((int)$ctx['id'], $payload));
             $r->delete('/apps/{id}',    fn($ctx) => tap($crud($apps), fn($c) => $c->delete((int)$ctx['id'])));
             $r->post('/apps/{id}/schema-token/rotate', fn($ctx) => $crud($apps)->rotateSchemaToken((int)$ctx['id']));
@@ -801,17 +806,20 @@ try {
             // could always call it through the group middleware.
             $scopeAction = 'read';
         }
-        if ($method === 'POST' && $path === '/skan/verify') {
-            // Signature verification computes over the submitted payload and
-            // stores nothing — a read that arrives as POST only because the
-            // postback JSON is its input.
-            $scopeAction = 'read';
-        }
         if ($stagedWrite) {
             // Staging proposes rather than performs, so a propose-only
             // (`stage`) key suffices; the write scope is required of the
             // applier instead.
             $scopeAction = 'stage';
+        }
+        if ($method === 'POST' && $path === '/skan/verify') {
+            // Signature verification computes over the submitted payload and
+            // stores nothing — a read that arrives as POST only because the
+            // postback JSON is its input. Deliberately AFTER the staged
+            // override: verify?staged=1 stays a read, so a read-scoped key
+            // reaches the staging branch's "staged is not supported here"
+            // 422 instead of a baffling 403 about stage scope.
+            $scopeAction = 'read';
         }
         if ($method === 'POST' && preg_match('#^/staged-changes/[^/]+/discard$#', $path) === 1) {
             // Gated on the change's own area, like apply below. Demanding

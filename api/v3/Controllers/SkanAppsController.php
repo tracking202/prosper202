@@ -43,19 +43,14 @@ class SkanAppsController extends Controller
     }
 
     #[\Override]
-    public function create(array $payload): array
+    protected function duplicateKeyConflictMessage(): ?string
     {
-        try {
-            return parent::create($payload);
-        } catch (\mysqli_sql_exception $e) {
-            // Two concurrent registrations can both pass the beforeCreate
-            // pre-check; the UNIQUE key decides, and the loser deserves the
-            // same readable answer as the pre-checked case.
-            if ((int)$e->getCode() === 1062) {
-                throw new ConflictException('This App Store id is already registered.');
-            }
-            throw $e;
-        }
+        // Two concurrent registrations can both pass the beforeCreate
+        // pre-check; the UNIQUE key decides, and the loser deserves the same
+        // readable answer as the pre-checked case. (schema_token is UNIQUE
+        // too, but 32 random bytes cannot realistically collide — app_id is
+        // the only key a client can actually hit.)
+        return 'This App Store id is already registered.';
     }
 
     #[\Override]
@@ -134,14 +129,7 @@ class SkanAppsController extends Controller
     #[\Override]
     public function update(int|string $id, array $payload): array
     {
-        try {
-            $updated = parent::update($id, $payload);
-        } catch (\mysqli_sql_exception $e) {
-            if ((int)$e->getCode() === 1062) {
-                throw new ConflictException('This App Store id is already registered.');
-            }
-            throw $e;
-        }
+        $updated = parent::update($id, $payload);
         // Re-run the claim on every update so unclaimed history (or a claim
         // that failed at create time) can be picked up by touching the app.
         try {

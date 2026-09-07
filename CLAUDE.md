@@ -158,6 +158,22 @@ the lookup keys on (here the key itself, so the same key still lands in the
 same file) and bound what a shard retains, or the correctness fix ships a
 latency regression.
 
+### 16. On a public endpoint, identity is what the attacker cannot choose
+Every value a security decision keys on must be split into what the peer
+proved and what the request merely *claimed*. Two instances shipped in one
+feature: the receiver's rate limiter keyed buckets on `AUTH::client_ip()`,
+which honors `X-Forwarded-For` — one curl loop with random headers both
+dodges the limit and mints unbounded bucket files (key on `REMOTE_ADDR`;
+the XFF-aware value is for display); and the postback dedupe hash covered
+only fields an attacker can copy out of thin air (network, transaction,
+leg), so a forgery arriving first claimed the UNIQUE slot and the genuine
+signed postback was answered `duplicate: true` and dropped — the dedupe
+must cover the full body, so only a byte-identical retry collapses. The
+same review asks the report question: aggregates over rows anyone can
+insert must default to counting only rows that passed verification, with
+the unverified visible in separate columns — "stored and flagged" is not a
+trust decision, the read path makes one whether it means to or not.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure

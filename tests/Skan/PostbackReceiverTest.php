@@ -265,7 +265,7 @@ final class PostbackReceiverTest extends TestCase
         $this->assertSame($rawBody, $row['raw_payload']);
         $this->assertSame('203.0.113.9', $row['remote_ip']);
         $this->assertSame(
-            PostbackReceiver::dedupeHash('example123.skadnetwork', '6aafb7a5-0170-41b5-bbe4-fe71dedf1e28', 0, true),
+            PostbackReceiver::dedupeHash('example123.skadnetwork', '6aafb7a5-0170-41b5-bbe4-fe71dedf1e28', 0, true, $rawBody),
             $row['dedupe_hash']
         );
     }
@@ -366,19 +366,34 @@ final class PostbackReceiverTest extends TestCase
         // The three conversion windows and the win/loss legs of one
         // transaction are distinct postbacks; only a true retry (same leg)
         // may collide.
+        $body = '{"transaction-id":"tx"}';
         $hashes = [
-            PostbackReceiver::dedupeHash('n', 'tx', 0, true),
-            PostbackReceiver::dedupeHash('n', 'tx', 1, true),
-            PostbackReceiver::dedupeHash('n', 'tx', 2, true),
-            PostbackReceiver::dedupeHash('n', 'tx', 0, false),
-            PostbackReceiver::dedupeHash('n', 'tx', null, null),
-            PostbackReceiver::dedupeHash('other', 'tx', 0, true),
+            PostbackReceiver::dedupeHash('n', 'tx', 0, true, $body),
+            PostbackReceiver::dedupeHash('n', 'tx', 1, true, $body),
+            PostbackReceiver::dedupeHash('n', 'tx', 2, true, $body),
+            PostbackReceiver::dedupeHash('n', 'tx', 0, false, $body),
+            PostbackReceiver::dedupeHash('n', 'tx', null, null, $body),
+            PostbackReceiver::dedupeHash('other', 'tx', 0, true, $body),
         ];
         $this->assertSame($hashes, array_values(array_unique($hashes)));
 
         $this->assertSame(
-            PostbackReceiver::dedupeHash('n', 'tx', 0, true),
-            PostbackReceiver::dedupeHash('n', 'tx', 0, true)
+            PostbackReceiver::dedupeHash('n', 'tx', 0, true, $body),
+            PostbackReceiver::dedupeHash('n', 'tx', 0, true, $body)
+        );
+    }
+
+    public function testDedupeHashCoversTheBodySoForgeriesCannotOccupyARealSlot(): void
+    {
+        // The identity tuple (network, transaction, index, win) is attacker
+        // choosable: anyone can POST well-formed junk naming a real
+        // transaction. If the dedupe hash covered only that tuple, a forgery
+        // arriving first would claim the UNIQUE slot and the genuine signed
+        // postback would be dropped as a "duplicate". Folding the body in
+        // means only a true retry (Apple resends the identical body) dedupes.
+        $this->assertNotSame(
+            PostbackReceiver::dedupeHash('n', 'tx', 0, true, '{"conversion-value":63}'),
+            PostbackReceiver::dedupeHash('n', 'tx', 0, true, '{"conversion-value":0}')
         );
     }
 
@@ -387,10 +402,10 @@ final class PostbackReceiverTest extends TestCase
         // With a plain joining character an ad-network-id of "a|b" and a
         // transaction of "c" would serialize identically to "a" + "b|c",
         // letting a crafted postback occupy another one's dedupe slot. The
-        // length prefixes pin the boundaries.
+        // length prefixes pin the boundaries even when the bodies match.
         $this->assertNotSame(
-            PostbackReceiver::dedupeHash('a|b', 'c', 0, true),
-            PostbackReceiver::dedupeHash('a', 'b|c', 0, true)
+            PostbackReceiver::dedupeHash('a|b', 'c', 0, true, '{}'),
+            PostbackReceiver::dedupeHash('a', 'b|c', 0, true, '{}')
         );
     }
 }

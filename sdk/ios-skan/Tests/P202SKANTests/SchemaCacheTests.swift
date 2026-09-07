@@ -32,11 +32,25 @@ final class SchemaCacheTests: XCTestCase {
         )
         cache.etag = "\"abc\""
         cache.fetchedAt = Date(timeIntervalSince1970: 1_725_690_000)
-        cache.lastFineValue = 63
         cache.save(to: store, schemaToken: "token-a")
 
         let loaded = SchemaCache.load(from: store, schemaToken: "token-a")
         XCTAssertEqual(loaded, cache)
+    }
+
+    func testLastFineValueLivesOutsideTheTokenKeyedCache() {
+        // It is device conversion state, not fetch state: rotating the
+        // schema token must NOT forget the last fine value, or the next
+        // coarse-only update would regress the postback to fine 0.
+        let store = InMemoryStore()
+        LastFineValueStore.save(41, to: store)
+
+        XCTAssertEqual(LastFineValueStore.load(from: store), 41)
+        XCTAssertFalse(store.keys.contains(SchemaCache.storageKey(schemaToken: "token-a")))
+        XCTAssertTrue(store.keys.contains(LastFineValueStore.key))
+
+        store.set(Data("junk".utf8), forKey: LastFineValueStore.key)
+        XCTAssertNil(LastFineValueStore.load(from: store), "corrupt data must load as nil, not crash")
     }
 
     func testDifferentTokensUseDifferentSlots() {

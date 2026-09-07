@@ -26,20 +26,14 @@ header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
 header('Cache-Control: no-store');
 
-$respond = static function (int $status, array $body): never {
-    http_response_code($status);
-    header('Content-Type: application/json; charset=utf-8');
-    $json = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-    if ($json === false) {
-        http_response_code(500);
-        $json = '{"error":true,"message":"Response encoding failed","status":500}';
-    }
-    echo $json;
-    exit;
-};
-
+// Pre-autoload responder: only the unconfigured-install case may answer
+// before the framework is loadable. Everything after the requires responds
+// through Bootstrap so the envelope shape has one owner.
 if (!file_exists($root . '/202-config.php') || !file_exists($root . '/vendor/autoload.php')) {
-    $respond(503, ['error' => true, 'message' => 'Service unavailable', 'status' => 503]);
+    http_response_code(503);
+    header('Content-Type: application/json; charset=utf-8');
+    echo '{"error":true,"message":"Service unavailable","status":503}';
+    exit;
 }
 
 require_once $root . '/vendor/autoload.php';
@@ -59,18 +53,20 @@ $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
 if ($method === 'GET' || $method === 'HEAD') {
     // Setup probe: lets an operator confirm the endpoint is reachable at the
     // exact URL Apple will use, before pointing an app at it.
-    $respond(200, [
+    Bootstrap::jsonResponse([
         'data' => [
             'endpoint' => 'skadnetwork-report-attribution',
             'status' => 'ready',
             'accepts' => 'POST application/json (SKAdNetwork install-validation postbacks)',
         ],
     ]);
+    exit;
 }
 
 if ($method !== 'POST') {
     header('Allow: GET, POST');
-    $respond(405, ['error' => true, 'message' => 'Method not allowed', 'status' => 405]);
+    Bootstrap::errorResponse('Method not allowed', 405);
+    exit;
 }
 
 try {
@@ -78,60 +74,42 @@ try {
     $db = Bootstrap::db();
 } catch (\Throwable) {
     // Non-200: the device retries later, so a DB outage loses nothing.
-    $respond(503, ['error' => true, 'message' => 'Service unavailable', 'status' => 503]);
+    Bootstrap::errorResponse('Service unavailable', 503);
+    exit;
 }
 
-$forwardedFor = trim((string)($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ''));
-$remoteIp = $forwardedFor !== ''
-    ? trim(explode(',', $forwardedFor)[0])
-    : (string)($_SERVER['REMOTE_ADDR'] ?? '');
-
-// Soft per-source rate limit. Postbacks come from individual devices, each
-// sending a handful over an install's lifetime, so a generous per-IP window
-// only throttles floods from a single source. Never let the limiter's own
-// failure block ingestion.
-$stateStore = null;
+// Soft rate limit keyed on the validated TCP peer (never client headers —
+// see ServerStateStore::softIpRateLimit). Behind a TLS-terminating proxy
+// the peer is the proxy, so the ceiling is an aggregate one; devices each
+// send a handful of postbacks over an install's lifetime.
 try {
-    $stateStore = new ServerStateStore();
-    $rate = $stateStore->consumeRateLimit('skan:ip:' . $remoteIp, 240, 60);
-    if (!$rate['allowed']) {
-        $retryAfter = max(1, (int)$rate['reset_at'] - time());
-        header('Retry-After: ' . $retryAfter);
-        $respond(429, [
-            'error' => true,
-            'message' => 'Rate limit exceeded',
-            'status' => 429,
-            'retry_after_seconds' => $retryAfter,
-        ]);
-    }
+    $retryAfter = (new ServerStateStore())->softIpRateLimit('skan', 600, 60);
 } catch (\Throwable $e) {
     error_log('p202 skan: rate limiter unavailable, accepting postback: ' . $e->getMessage());
+    $retryAfter = null;
+}
+if ($retryAfter !== null) {
+    header('Retry-After: ' . $retryAfter);
+    Bootstrap::errorResponse('Rate limit exceeded', 429, ['retry_after_seconds' => $retryAfter]);
+    exit;
 }
 
 $rawBody = file_get_contents('php://input', false, null, 0, PostbackReceiver::MAX_BODY_BYTES + 1);
 if ($rawBody === false) {
-    $respond(500, ['error' => true, 'message' => 'Failed to read request body', 'status' => 500]);
+    Bootstrap::errorResponse('Failed to read request body', 500);
+    exit;
 }
 
 try {
+    // The stored remote_ip is display/forensic data, so the validated
+    // XFF-aware helper is right for it; the rate-limit key above is not
+    // derived from it.
     $receiver = new PostbackReceiver($db, new PostbackVerifier());
-    $result = $receiver->receive($rawBody, $remoteIp);
+    $result = $receiver->receive($rawBody, \AUTH::client_ip());
 } catch (\Throwable $e) {
     error_log('p202 skan: postback processing failed: ' . $e->getMessage());
-    $respond(500, ['error' => true, 'message' => 'Internal server error', 'status' => 500]);
+    Bootstrap::errorResponse('Internal server error', 500);
+    exit;
 }
 
-if ($stateStore !== null) {
-    try {
-        if ($result['status'] === 200) {
-            $duplicate = (bool)(($result['body']['data']['duplicate'] ?? false));
-            $stateStore->incrementMetric($duplicate ? 'skan_postbacks_duplicate' : 'skan_postbacks_received', 1);
-        } else {
-            $stateStore->incrementMetric('skan_postbacks_rejected', 1);
-        }
-    } catch (\Throwable) {
-        // Metrics are best-effort; the postback outcome stands.
-    }
-}
-
-$respond($result['status'], $result['body']);
+Bootstrap::jsonResponse($result['body'], $result['status']);

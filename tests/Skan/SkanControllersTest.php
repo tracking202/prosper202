@@ -178,6 +178,10 @@ final class SkanControllersTest extends TestCase
         $result = (new SkanPostbacksController($db, 1))->report(['group_by' => 'day']);
         $this->assertSame('day', $result['data']['group_by']);
         $this->assertSame('UTC', $result['meta']['timezone']);
+        // No signature filter given → the report must default to counting
+        // verified rows only, and must say so.
+        $this->assertSame('verified-only', $result['meta']['trusted']);
+        $this->assertFalse($result['meta']['groups_truncated']);
         $this->assertCount(1, $result['data']['groups']);
 
         $group = $result['data']['groups'][0];
@@ -196,9 +200,13 @@ final class SkanControllersTest extends TestCase
 
         // 2 × 99.99 (app-specific beats default) + 1 × 49.99 + 1 × 10.00
         $this->assertSame(259.97, $group['decoded_revenue']);
-        $this->assertSame(['count' => 2, 'revenue' => 199.98], $group['events']['premium_purchase']);
-        $this->assertSame(['count' => 1, 'revenue' => 49.99], $group['events']['purchase']);
-        $this->assertSame(['count' => 1, 'revenue' => 10.0], $group['events']['high_value']);
+        // events must be an object so a group with no decoded events still
+        // JSON-encodes as {} rather than [] (consumers key by event name).
+        $this->assertInstanceOf(\stdClass::class, $group['events']);
+        $events = (array)$group['events'];
+        $this->assertSame(['count' => 2, 'revenue' => 199.98], $events['premium_purchase']);
+        $this->assertSame(['count' => 1, 'revenue' => 49.99], $events['purchase']);
+        $this->assertSame(['count' => 1, 'revenue' => 10.0], $events['high_value']);
     }
 
     // ─── Postbacks: verify ───────────────────────────────────────────

@@ -52,6 +52,14 @@ public final class P202SKAN {
         case notConfigured
         case unexpectedStatus(Int)
         case emptyResponse
+        /// The configuration changed (a different schema token) while this
+        /// fetch was in flight; its response was discarded rather than
+        /// written into the new configuration's cache.
+        case superseded
+        /// The P202SKAN instance was deallocated before the response
+        /// arrived. Unreachable through `shared`; possible for short-lived
+        /// injected instances.
+        case deallocated
     }
 
     public static let shared = P202SKAN()
@@ -61,6 +69,7 @@ public final class P202SKAN {
     private let session: URLSession
     private var configuration: Configuration?
     private var cache = SchemaCache()
+    private var lastFineValue: Int?
     private var refreshInFlight = false
 
     /// The store and session are injectable for tests; production uses
@@ -86,6 +95,9 @@ public final class P202SKAN {
         queue.sync {
             self.configuration = config
             self.cache = SchemaCache.load(from: store, schemaToken: schemaToken)
+            // Token-independent on purpose: the device's conversion windows
+            // keep running across a token rotation (see LastFineValueStore).
+            self.lastFineValue = LastFineValueStore.load(from: store)
         }
         refreshSchema()
     }
@@ -108,13 +120,15 @@ public final class P202SKAN {
             guard let update = ConversionUpdate.resolve(
                 event: name,
                 in: schema,
-                lastFineValue: cache.lastFineValue
+                lastFineValue: lastFineValue
             ) else {
                 return nil
             }
-            if !update.usedFineFallback {
-                cache.lastFineValue = update.fineValue
-                cache.save(to: store, schemaToken: config.schemaToken)
+            // Persist only on change: repeated events with the same fine
+            // value must not write the store on every call.
+            if !update.usedFineFallback && lastFineValue != update.fineValue {
+                lastFineValue = update.fineValue
+                LastFineValueStore.save(update.fineValue, to: store)
             }
             return (update, config.lockWindow)
         }
@@ -146,7 +160,11 @@ public final class P202SKAN {
     /// against an in-flight fetch — so a caller-provided completion is
     /// always invoked exactly once.
     public func refreshSchema(completion: ((Result<P202SKANSchema, Error>) -> Void)? = nil) {
-        let request: URLRequest? = queue.sync {
+        // The token is captured alongside the request: finishRefresh writes
+        // the response into the cache only while the SAME token is still
+        // configured. Without that check, reconfiguring mid-flight would let
+        // the OLD app's schema land in the NEW token's cache slot.
+        let prepared: (request: URLRequest, token: String)? = queue.sync {
             guard let config = configuration else {
                 return nil
             }
@@ -157,48 +175,72 @@ public final class P202SKAN {
             if let etag = cache.etag {
                 req.setValue(etag, forHTTPHeaderField: "If-None-Match")
             }
-            return req
+            return (req, config.schemaToken)
         }
-        guard let request else {
+        guard let prepared else {
             completion?(.failure(SDKError.notConfigured))
             return
         }
 
-        session.dataTask(with: request) { [weak self] data, response, error in
-            guard let self else { return }
-            let result: Result<P202SKANSchema, Error> = self.queue.sync {
-                self.refreshInFlight = false
-                guard let config = self.configuration else {
-                    return .failure(SDKError.notConfigured)
-                }
-                if let error {
-                    return .failure(error)
-                }
-                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                if status == 304, let cached = self.cache.schema {
-                    self.cache.fetchedAt = Date()
-                    self.cache.save(to: self.store, schemaToken: config.schemaToken)
-                    return .success(cached)
-                }
-                guard status == 200 else {
-                    return .failure(SDKError.unexpectedStatus(status))
-                }
-                guard let data, !data.isEmpty else {
-                    return .failure(SDKError.emptyResponse)
-                }
-                do {
-                    let schema = try P202SKANSchema.decode(responseBody: data)
-                    self.cache.schema = schema
-                    self.cache.etag = "\"\(schema.schemaVersion)\""
-                    self.cache.fetchedAt = Date()
-                    self.cache.save(to: self.store, schemaToken: config.schemaToken)
-                    return .success(schema)
-                } catch {
-                    return .failure(error)
-                }
+        session.dataTask(with: prepared.request) { [weak self] data, response, error in
+            // The completion contract is exactly-once even when the instance
+            // died while the request was out.
+            guard let self else {
+                completion?(.failure(SDKError.deallocated))
+                return
             }
-            completion?(result)
+            completion?(self.finishRefresh(
+                requestToken: prepared.token,
+                data: data,
+                response: response,
+                error: error
+            ))
         }.resume()
+    }
+
+    /// Apply one fetch's outcome to the cache. Internal (not private) so
+    /// tests can drive it with crafted responses — the stale-token guard is
+    /// exactly the kind of seam a unit test must exercise for real.
+    func finishRefresh(
+        requestToken: String,
+        data: Data?,
+        response: URLResponse?,
+        error: Error?
+    ) -> Result<P202SKANSchema, Error> {
+        return queue.sync {
+            guard let config = configuration, config.schemaToken == requestToken else {
+                // A different token is configured now (or none). This
+                // response belongs to the old configuration: drop it without
+                // touching the cache or the new fetch's in-flight marker.
+                return .failure(SDKError.superseded)
+            }
+            refreshInFlight = false
+            if let error {
+                return .failure(error)
+            }
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 304, let cached = cache.schema {
+                cache.fetchedAt = Date()
+                cache.save(to: store, schemaToken: config.schemaToken)
+                return .success(cached)
+            }
+            guard status == 200 else {
+                return .failure(SDKError.unexpectedStatus(status))
+            }
+            guard let data, !data.isEmpty else {
+                return .failure(SDKError.emptyResponse)
+            }
+            do {
+                let schema = try P202SKANSchema.decode(responseBody: data)
+                cache.schema = schema
+                cache.etag = "\"\(schema.schemaVersion)\""
+                cache.fetchedAt = Date()
+                cache.save(to: store, schemaToken: config.schemaToken)
+                return .success(schema)
+            } catch {
+                return .failure(error)
+            }
+        }
     }
 
     // MARK: - Internals

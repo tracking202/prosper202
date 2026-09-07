@@ -212,6 +212,34 @@ abstract class Controller
     {
     }
 
+    /**
+     * Message for a duplicate-key (MySQL 1062) failure on this controller's
+     * INSERT/UPDATE, or null (the default) to let the exception propagate.
+     *
+     * Returning a message turns the race loser's raw SQL error into the same
+     * 409 a beforeCreate uniqueness pre-check produces: two concurrent
+     * writes can both pass the pre-check, and only the UNIQUE key decides.
+     * The message should name the colliding thing the way the pre-check
+     * does, so the caller cannot tell which path rejected them.
+     */
+    protected function duplicateKeyConflictMessage(): ?string
+    {
+        return null;
+    }
+
+    /**
+     * @throws ConflictException when the failure is a duplicate key and the
+     *                           controller declares a conflict message
+     */
+    private function rethrowDuplicateKey(\mysqli_sql_exception $e): never
+    {
+        $message = $this->duplicateKeyConflictMessage();
+        if ($message !== null && (int)$e->getCode() === 1062) {
+            throw new ConflictException($message);
+        }
+        throw $e;
+    }
+
     // ─── CRUD Operations ─────────────────────────────────────────────
 
     public function list(array $params): array
@@ -424,7 +452,11 @@ abstract class Controller
         $stmt = $this->prepare($sql);
         $this->bind($stmt, $types, ...$binds);
 
-        $this->execute($stmt, 'Insert failed');
+        try {
+            $this->execute($stmt, 'Insert failed');
+        } catch (\mysqli_sql_exception $e) {
+            $this->rethrowDuplicateKey($e);
+        }
 
         $insertId = $stmt->insert_id;
         $stmt->close();
@@ -499,7 +531,11 @@ abstract class Controller
         $stmt = $this->prepare($sql);
         $this->bind($stmt, $types, ...$binds);
 
-        $this->execute($stmt, 'Update failed');
+        try {
+            $this->execute($stmt, 'Update failed');
+        } catch (\mysqli_sql_exception $e) {
+            $this->rethrowDuplicateKey($e);
+        }
         $stmt->close();
 
         // As in create(): the write has landed, so a later failure must not

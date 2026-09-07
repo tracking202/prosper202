@@ -46,17 +46,22 @@ class SkanConversionValuesController extends Controller
         ];
     }
 
+    /**
+     * Which of fine_value/coarse_value the in-flight update() explicitly set
+     * to null. validatePayload() drops nulls, so without this capture a
+     * kind-switch ({"fine_value": null, "coarse_value": "high"}) would
+     * validate a row state the UPDATE never writes.
+     *
+     * @var array<string, true>
+     */
+    private array $pendingClears = [];
+
     #[\Override]
-    public function create(array $payload): array
+    protected function duplicateKeyConflictMessage(): ?string
     {
-        try {
-            return parent::create($payload);
-        } catch (\mysqli_sql_exception $e) {
-            if ((int)$e->getCode() === 1062) {
-                throw new ConflictException('A rule for this conversion value already exists for this app.');
-            }
-            throw $e;
-        }
+        // Two concurrent writes can both pass the beforeCreate/beforeUpdate
+        // pre-check; the UNIQUE (user, app, value) keys decide.
+        return 'A rule for this conversion value already exists for this app.';
     }
 
     #[\Override]
@@ -71,35 +76,73 @@ class SkanConversionValuesController extends Controller
     }
 
     #[\Override]
+    public function update(int|string $id, array $payload): array
+    {
+        // A rule holds exactly one kind of value, so switching kinds needs
+        // the old kind cleared and the new one set in ONE request — an
+        // explicit null alongside the replacement value. Capture the nulls
+        // here (base validation drops them) and apply them via the
+        // beforeUpdate extras, which bind SQL NULL.
+        $this->pendingClears = [];
+        foreach (['fine_value', 'coarse_value'] as $col) {
+            if (array_key_exists($col, $payload) && $payload[$col] === null) {
+                $this->pendingClears[$col] = true;
+            }
+        }
+
+        if ($this->pendingClears !== []) {
+            $hasReplacement = false;
+            foreach ($this->resolveFields() as $col => $def) {
+                if (($def['readonly'] ?? false) === false && ($payload[$col] ?? null) !== null) {
+                    $hasReplacement = true;
+                    break;
+                }
+            }
+            if (!$hasReplacement) {
+                throw new ValidationException('A rule always maps exactly one conversion value', [
+                    'fine_value' => 'To switch kinds, send the explicit null and the replacement together, '
+                        . 'e.g. {"fine_value": null, "coarse_value": "high"}. To remove the rule, delete it.',
+                ]);
+            }
+        }
+
+        try {
+            return parent::update($id, $payload);
+        } finally {
+            $this->pendingClears = [];
+        }
+    }
+
+    #[\Override]
     protected function beforeUpdate(int|string $id, array $payload): array
     {
         // Validate the row as it will exist after the update, not just the
         // patch: adding coarse_value to a fine rule must fail even though
-        // neither field alone is invalid.
+        // neither field alone is invalid. $payload here is the cleaned
+        // payload (explicit nulls already dropped); pendingClears restores
+        // their meaning.
         $current = (array)$this->get($id)['data'];
-        $effective = [
-            'app_id' => array_key_exists('app_id', $payload) ? $payload['app_id'] : $current['app_id'],
-            'fine_value' => array_key_exists('fine_value', $payload) ? $payload['fine_value'] : $current['fine_value'],
-            'coarse_value' => array_key_exists('coarse_value', $payload) ? $payload['coarse_value'] : $current['coarse_value'],
-        ];
+        $effective = ['app_id' => $current['app_id'], 'fine_value' => $current['fine_value'], 'coarse_value' => $current['coarse_value']];
+        foreach ($effective as $col => $unused) {
+            if (isset($this->pendingClears[$col])) {
+                $effective[$col] = null;
+            } elseif (array_key_exists($col, $payload)) {
+                $effective[$col] = $payload[$col];
+            }
+        }
         $this->assertRuleShape($effective);
         $this->assertNoDuplicateRule($effective, excludeId: (int)$id);
-        return [
+
+        $extras = [
             'updated_at' => ['type' => 'i', 'value' => time()],
         ];
-    }
-
-    #[\Override]
-    public function update(int|string $id, array $payload): array
-    {
-        try {
-            return parent::update($id, $payload);
-        } catch (\mysqli_sql_exception $e) {
-            if ((int)$e->getCode() === 1062) {
-                throw new ConflictException('A rule for this conversion value already exists for this app.');
-            }
-            throw $e;
+        if (isset($this->pendingClears['fine_value'])) {
+            $extras['fine_value'] = ['type' => 'i', 'value' => null];
         }
+        if (isset($this->pendingClears['coarse_value'])) {
+            $extras['coarse_value'] = ['type' => 's', 'value' => null];
+        }
+        return $extras;
     }
 
     /**

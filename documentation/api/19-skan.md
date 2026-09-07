@@ -81,15 +81,22 @@ plausible postback silently:
 - Valid postbacks are stored and answered `200` — including replays (devices
   retry up to nine times over several days when they don't get a `200`;
   replays answer `{"duplicate": true}` and store nothing new). Deduplication
-  follows Apple's guidance: the `transaction-id`, namespaced by ad network,
-  with the postback-sequence-index and did-win legs kept distinct.
+  covers the `transaction-id` namespaced by ad network, the
+  postback-sequence-index and did-win legs, **and the exact request body**:
+  only a true retry (the device resending the identical postback) dedupes.
+  A crafted postback naming a real transaction with different contents
+  stores as its own (flagged) row instead of occupying the genuine
+  postback's slot.
 - Signature verification result is stored per row as `signature_valid`:
   `1` (verified against Apple's key), `0` (wrong or forged), `NULL`
   (unverifiable version). Tampered or unverifiable postbacks are stored *and
-  flagged* rather than dropped, so integration tests and forensics work —
-  filter them out of reports with `signature=valid` when you need certainty.
+  flagged* rather than dropped, so integration tests and forensics work.
+  The report already excludes them from headline metrics by default (see
+  Report below); the postback *list* shows every row, filterable with
+  `signature=valid|invalid|unverifiable`.
 - Database outages answer `503`/`500` so the device retries later; a
-  per-source rate limit (240/min per IP) answers `429`.
+  per-source rate limit (600/min per source IP, fail-open if the limiter
+  itself breaks) answers `429` with `Retry-After`.
 
 Because the endpoint is public and unauthenticated, Apple's attribution
 signature is the trust boundary. Two things follow. First, treat
@@ -114,6 +121,17 @@ web ad, 0 = view-through), `country_code`, plus `received_at`,
 as `NULL`. The raw request body is retained in the database for forensics
 but never served through the API.
 
+### Retention
+
+Because the endpoint is public, rows nobody will ever act on are pruned
+opportunistically (piggybacked on receiver traffic, in small batches):
+postbacks still **unclaimed** by any app registration after 30 days, and
+postbacks whose signature verified as **forged** (`signature_valid = 0`)
+after 90 days. Verified rows claimed by a user are never pruned. Override
+with the `P202_SKAN_RETENTION_DAYS_UNCLAIMED` and
+`P202_SKAN_RETENTION_DAYS_INVALID` environment variables (`0` disables that
+class's pruning entirely).
+
 ### List filters
 
 `GET /skan/postbacks` accepts `limit`, `offset`, `time_from`/`time_to`
@@ -133,9 +151,13 @@ but never served through the API.
 
 An App Store id can be registered by exactly one user across the install
 (second registration returns `409`) — the receiver resolves postback
-ownership by app id alone. Registering (or updating) an app claims any
-unclaimed postbacks for it; deleting a registration keeps already-claimed
-history with its user.
+ownership by app id alone, so two owners would make attribution ambiguous.
+On a multi-user install this is first-come-first-served: whoever registers
+the app owns its postbacks until they delete the registration, and there is
+no per-user view of another user's claim — coordinate app ownership
+between users the way campaigns are divided. Registering (or updating) an
+app claims any unclaimed postbacks for it; deleting a registration keeps
+already-claimed history with its user (history is never reassigned).
 
 ## Conversion values
 
@@ -153,6 +175,13 @@ app-specific fine rule → default (`app_id = 0`) fine rule; coarse values
 resolve the same way. A fine value with no rule stays *undecoded* — it never
 falls back to a coarse rule.
 
+To switch a rule between kinds, send the clear and the replacement in one
+`PUT`: an explicit `null` empties the old kind while the new value arrives
+(`{"fine_value": null, "coarse_value": "high"}` turns a fine rule into a
+coarse one). An absent field means "keep"; clearing without a replacement is
+rejected, since a rule must always map exactly one value. The CLI spells
+this `p202 skan cv update <id> --clear-fine-value --coarse-value high`.
+
 ## Remote-configured conversion values (no app resubmission)
 
 The app does not have to hardcode its conversion-value scheme. Registering
@@ -162,8 +191,12 @@ an app mints a **schema token** (returned by `POST /skan/apps`, shown by
 
 ```
 GET /api/v3/skan/schema
-X-P202-Schema-Token: <token>        (or ?token=<token>)
+X-P202-Schema-Token: <token>
 ```
+
+The token travels **only** as that header — a `?token=` query parameter is
+rejected-by-omission (the endpoint never reads it), because query strings
+land in access logs, proxies, and browser history.
 
 which serves the ENCODE view of the same rules the reports decode with:
 
@@ -178,8 +211,14 @@ Edit the rules and every installed build picks the change up on its next
 fetch — no App Store resubmission. The endpoint is unauthenticated by
 design (an app binary cannot hold an API key); the token gates it, grants
 read access to this document only, and the document deliberately excludes
-revenue amounts. It supports `If-None-Match` (304 until a rule changes,
-`ETag` = `schema_version`) and is rate-limited per source IP. Precedence
+revenue amounts. Because the token is a bearer capability, the server keeps
+it out of every side channel: `POST /skan/apps` does not record replayable
+idempotency responses (retries are already safe — a duplicate registration
+answers `409`), staged-change apply results and delete previews are served
+with the token redacted, and the owner reads it via their own scoped
+`GET /skan/apps/{id}`. The endpoint supports `If-None-Match` (304 until a
+rule changes, `ETag` = `schema_version`) and is rate-limited per source IP
+(300/min). Precedence
 mirrors decoding — app-specific rules beat `app_id = 0` defaults — and when
 several values decode to one event, the highest is served, so encode and
 decode stay two views of one rule set. `features.skan` in `/capabilities`
@@ -200,7 +239,7 @@ runtime.
 
 `GET /skan/report?group_by=day|app|ad-network|source|country|version` with
 the same filters as the postback list, plus `limit` (max groups, default
-100). Days are UTC. Each group reports:
+100). Days are UTC, listed oldest first. Each group reports:
 
 - `postbacks`, `losses` (`did-win: false`), `installs` (winning
   first-window postbacks excluding redownloads; postbacks without `did-win`
@@ -211,6 +250,19 @@ the same filters as the postback list, plus `limit` (max groups, default
   value), `decoded`, `undecoded` (value present, no matching rule),
   `null_conversion_values` (value withheld by Apple's privacy tier),
   `decoded_revenue`, and `events` (per-event counts and revenue)
+
+**Trust default:** the receiver is public, so unless you pass an explicit
+`signature` filter, every headline metric — installs, losses, redownloads,
+the whole conversion-value decode — counts **only signature-verified
+postbacks**; forged and unverifiable rows stay visible through the
+`signature_*_count` columns (which always count all rows in the group) but
+cannot move the numbers. `meta.trusted` says which regime produced the
+response: `verified-only` (the default) or `as-filtered` (you filtered by
+signature state yourself, e.g. `signature=invalid` to study forgeries).
+Malformed filter values are rejected with `422` rather than ignored, and
+`meta.groups_truncated: true` flags a report that hit the group `limit`
+with groups left over — raise `limit` or narrow the time range rather than
+treating the visible groups as the whole story.
 
 ## Verifying a postback by hand
 

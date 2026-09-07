@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
-use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Skan\PostbackVerifier;
+use Api\V3\Support\MysqliStatements;
 use Api\V3\Support\ResponseSanitizer;
 
 /**
@@ -27,6 +27,8 @@ use Api\V3\Support\ResponseSanitizer;
  */
 class SkanPostbacksController
 {
+    use MysqliStatements;
+
     /** String columns whose content arrives from the open receiver. */
     private const UNTRUSTED_FIELDS = [
         'version',
@@ -37,13 +39,22 @@ class SkanPostbacksController
         'source_domain',
         'country_code',
         'remote_ip',
-        'attribution_signature',
     ];
 
     private const SELECT_COLUMNS = 'postback_id, user_id, received_at, version, ad_network_id, '
         . 'transaction_id, app_id, source_identifier, campaign_id, conversion_value, '
         . 'coarse_conversion_value, postback_sequence_index, redownload, did_win, '
         . 'source_app_id, source_domain, fidelity_type, country_code, signature_valid, remote_ip';
+
+    /** Report grouping modes: output alias => SQL expression. */
+    private const GROUP_MODES = [
+        'day'        => ['grp_day' => 'FLOOR(received_at / 86400) * 86400'],
+        'app'        => ['grp_app_id' => 'app_id'],
+        'ad-network' => ['grp_ad_network_id' => 'ad_network_id'],
+        'source'     => ['grp_source_identifier' => 'source_identifier', 'grp_campaign_id' => 'campaign_id'],
+        'country'    => ['grp_country_code' => 'country_code'],
+        'version'    => ['grp_version' => 'version'],
+    ];
 
     public function __construct(private readonly \mysqli $db, private readonly int $userId)
     {
@@ -79,7 +90,10 @@ class SkanPostbacksController
 
         $rows = [];
         while ($row = $result->fetch_assoc()) {
-            unset($row['attribution_signature']);
+            // Defense in depth: list rows never carry the signature or the
+            // raw body (get() serves the signature for forensics), even if
+            // the select list changes later.
+            unset($row['attribution_signature'], $row['raw_payload']);
             $rows[] = ResponseSanitizer::cleanRowFields($row, self::UNTRUSTED_FIELDS);
         }
         $stmt->close();
@@ -104,96 +118,126 @@ class SkanPostbacksController
             throw new NotFoundException('Postback not found');
         }
 
-        return ['data' => ResponseSanitizer::cleanRowFields($row, self::UNTRUSTED_FIELDS)];
+        $row = ResponseSanitizer::cleanRowFields($row, self::UNTRUSTED_FIELDS);
+        // The signature is served for forensics (copy into /skan/verify, diff
+        // against another implementation), so the default 512-char cap would
+        // corrupt exactly the oversized forged values this path exists to
+        // inspect. Character hygiene still applies; the length cap matches
+        // what the receiver accepts.
+        $row['attribution_signature'] = ResponseSanitizer::cleanVisitorString(
+            (string)($row['attribution_signature'] ?? ''),
+            4096
+        );
+
+        return ['data' => $row];
     }
 
     /**
      * Aggregate SKAN report with conversion-value decoding.
      *
      * group_by: day (default, UTC), app, ad-network, source, country,
-     * version. Winning postbacks' conversion values are decoded through the
-     * user's 202_skan_conversion_values rules (app-specific rules first,
-     * then the app_id = 0 defaults) into named events and revenue.
+     * version. By default every trusted metric (installs, losses,
+     * redownloads, conversion-value decoding, revenue) counts ONLY
+     * signature-verified postbacks — the receiver stores forged and
+     * unverifiable rows flagged, and anyone can POST well-formed junk at the
+     * open endpoint, so unverified rows must not move headline numbers.
+     * They remain visible per group via the signature_*_count columns, and
+     * an explicit ?signature= filter recomputes the metrics over exactly
+     * that class (e.g. signature=invalid to inspect what forged rows claim,
+     * or during integration tests with self-signed fixtures).
      */
     public function report(array $params): array
     {
         $groupBy = (string)($params['group_by'] ?? 'day');
-        $groups = [
-            'day'        => ['expr' => 'FLOOR(received_at / 86400) * 86400', 'cols' => ['grp_day']],
-            'app'        => ['expr' => 'app_id', 'cols' => ['grp_app_id']],
-            'ad-network' => ['expr' => 'ad_network_id', 'cols' => ['grp_ad_network_id']],
-            'source'     => ['expr' => 'source_identifier, campaign_id', 'cols' => ['grp_source_identifier', 'grp_campaign_id']],
-            'country'    => ['expr' => 'country_code', 'cols' => ['grp_country_code']],
-            'version'    => ['expr' => 'version', 'cols' => ['grp_version']],
-        ];
-        if (!isset($groups[$groupBy])) {
+        if (!isset(self::GROUP_MODES[$groupBy])) {
             throw new ValidationException('Invalid group_by', [
-                'group_by' => 'Must be one of: ' . implode(', ', array_keys($groups)),
+                'group_by' => 'Must be one of: ' . implode(', ', array_keys(self::GROUP_MODES)),
             ]);
         }
+        $aliasMap = self::GROUP_MODES[$groupBy];
         $maxGroups = max(1, min(500, (int)($params['limit'] ?? 100)));
 
-        [$where, $binds, $types] = $this->buildFilters($params);
+        [$where, $binds, $types, $explicitSignature] = $this->buildFilters($params);
         $whereClause = 'WHERE ' . implode(' AND ', $where);
 
-        $groupExpr = $groups[$groupBy]['expr'];
-        $groupCols = $groups[$groupBy]['cols'];
+        // The trust gate for headline metrics. With an explicit signature
+        // filter the row set is already the class the caller asked about.
+        $trusted = $explicitSignature ? '1 = 1' : 'signature_valid = 1';
+
         $selectGroup = [];
-        $exprParts = explode(', ', $groupExpr);
-        foreach ($exprParts as $i => $expr) {
-            $selectGroup[] = "$expr AS {$groupCols[$i]}";
+        foreach ($aliasMap as $alias => $expr) {
+            $selectGroup[] = "$expr AS $alias";
         }
+        $groupByExpr = implode(', ', array_values($aliasMap));
+        $firstAlias = array_key_first($aliasMap);
 
         $winCondition = '(did_win IS NULL OR did_win = 1)';
         $firstWindow = 'COALESCE(postback_sequence_index, 0) = 0';
 
+        // Day groups keep the NEWEST window (DESC + limit, re-sorted
+        // ascending for output); other modes keep the busiest groups.
+        $orderBy = $groupBy === 'day' ? "$firstAlias DESC" : 'postbacks DESC';
+
         $sql = 'SELECT ' . implode(', ', $selectGroup) . ",
                 COUNT(*) AS postbacks,
-                SUM(CASE WHEN did_win = 0 THEN 1 ELSE 0 END) AS losses,
-                SUM(CASE WHEN $winCondition AND $firstWindow AND COALESCE(redownload, 0) = 0 THEN 1 ELSE 0 END) AS installs,
-                SUM(CASE WHEN $winCondition AND $firstWindow AND redownload = 1 THEN 1 ELSE 0 END) AS redownloads,
+                SUM(CASE WHEN $trusted AND did_win = 0 THEN 1 ELSE 0 END) AS losses,
+                SUM(CASE WHEN $trusted AND $winCondition AND $firstWindow AND COALESCE(redownload, 0) = 0 THEN 1 ELSE 0 END) AS installs,
+                SUM(CASE WHEN $trusted AND $winCondition AND $firstWindow AND redownload = 1 THEN 1 ELSE 0 END) AS redownloads,
                 SUM(CASE WHEN signature_valid = 1 THEN 1 ELSE 0 END) AS signature_valid_count,
                 SUM(CASE WHEN signature_valid = 0 THEN 1 ELSE 0 END) AS signature_invalid_count,
                 SUM(CASE WHEN signature_valid IS NULL THEN 1 ELSE 0 END) AS signature_unverified_count
             FROM 202_skan_postbacks
             $whereClause
-            GROUP BY $groupExpr
-            ORDER BY " . ($groupBy === 'day' ? 'grp_day ASC' : 'postbacks DESC') . '
-            LIMIT ?';
+            GROUP BY $groupByExpr
+            ORDER BY $orderBy
+            LIMIT ?";
 
         $stmt = $this->prepare($sql);
         $groupBinds = $binds;
         $groupTypes = $types . 'i';
-        $groupBinds[] = $maxGroups;
+        $groupBinds[] = $maxGroups + 1; // one extra row detects truncation
         $this->bind($stmt, $groupTypes, ...$groupBinds);
         $this->execute($stmt, 'Report query failed');
         $result = $this->result($stmt);
 
         $groupsOut = [];
         while ($row = $result->fetch_assoc()) {
-            $key = $this->groupKey($groupBy, $row);
+            $key = $this->groupKey($aliasMap, $row);
             $groupsOut[$key] = $this->initGroupRow($groupBy, $row);
         }
         $stmt->close();
 
+        $truncated = count($groupsOut) > $maxGroups;
+        if ($truncated) {
+            $groupsOut = array_slice($groupsOut, 0, $maxGroups, preserve_keys: true);
+        }
+
         // Conversion-value decode: distribution of values per group, folded
         // through the user's rules in PHP (rule resolution — app-specific
-        // over default — is not expressible as a sane single JOIN).
+        // over default — is not expressible as a sane single JOIN). The row
+        // set is bounded to the retained group window so the query never
+        // aggregates combinations the fold would discard.
+        $cvWhere = $where;
+        $cvBinds = $binds;
+        $cvTypes = $types;
+        $this->restrictToRetainedGroups($groupBy, $groupsOut, $cvWhere, $cvBinds, $cvTypes);
+        $cvWhereClause = 'WHERE ' . implode(' AND ', $cvWhere);
+
         $cvSql = 'SELECT ' . implode(', ', $selectGroup) . ",
                 app_id AS cv_app_id, conversion_value, coarse_conversion_value, COUNT(*) AS cnt
             FROM 202_skan_postbacks
-            $whereClause AND $winCondition
-            GROUP BY $groupExpr, app_id, conversion_value, coarse_conversion_value";
+            $cvWhereClause AND $trusted AND $winCondition
+            GROUP BY $groupByExpr, app_id, conversion_value, coarse_conversion_value";
         $stmt = $this->prepare($cvSql);
-        $this->bind($stmt, $types, ...$binds);
+        $this->bind($stmt, $cvTypes, ...$cvBinds);
         $this->execute($stmt, 'Report decode query failed');
         $result = $this->result($stmt);
 
         $rules = $this->conversionRules();
         while ($row = $result->fetch_assoc()) {
-            $key = $this->groupKey($groupBy, $row);
+            $key = $this->groupKey($aliasMap, $row);
             if (!isset($groupsOut[$key])) {
-                continue; // group beyond the LIMIT window
+                continue; // group beyond the retained window (source mode only)
             }
             $count = (int)$row['cnt'];
             $fine = $row['conversion_value'] === null ? null : (int)$row['conversion_value'];
@@ -224,15 +268,32 @@ class SkanPostbacksController
             $this->attachAppNames($groupsOut);
         }
 
+        $groups = array_values($groupsOut);
+        if ($groupBy === 'day') {
+            usort($groups, static fn(array $a, array $b): int => strcmp((string)$a['date'], (string)$b['date']));
+        }
+        foreach ($groups as &$group) {
+            // Event names can be numeric strings; as a PHP array they would
+            // JSON-encode as a list and drop the names, which the iOS
+            // helper's dictionary decoder rejects. An object survives.
+            $group['events'] = (object)$group['events'];
+        }
+        unset($group);
+
         return [
             'data' => [
                 'group_by' => $groupBy,
-                'groups' => array_values($groupsOut),
+                'groups' => $groups,
             ],
             'meta' => [
                 'timezone' => 'UTC',
-                'notes' => 'installs = winning first-window postbacks excluding redownloads; '
-                    . 'conversion values decode through /skan/conversion-values rules',
+                'trusted' => $explicitSignature ? 'as-filtered' : 'verified-only',
+                'groups_truncated' => $truncated,
+                'notes' => ($explicitSignature
+                    ? 'metrics computed over the signature class the filter selected'
+                    : 'installs/losses/decoding count signature-verified postbacks only; unverified rows appear in the signature_*_count columns')
+                    . '; installs = winning first-window postbacks excluding redownloads'
+                    . '; conversion values decode through /skan/conversion-values rules',
             ],
         ];
     }
@@ -269,9 +330,14 @@ class SkanPostbacksController
     // ─── Internals ───────────────────────────────────────────────────
 
     /**
-     * Shared filter builder for list() and report().
+     * Shared filter builder for list() and report(). Malformed values are
+     * rejected loudly (error pattern #4): a coerced did_win=true would
+     * silently filter for LOSING postbacks, and app_id=abc would silently
+     * become app 0 — both worse than a 422 naming the field.
      *
-     * @return array{0: string[], 1: mixed[], 2: string}
+     * @return array{0: string[], 1: mixed[], 2: string, 3: bool} where the
+     *         final element reports whether an explicit signature filter was
+     *         given (list() ignores it; report() keys its trust gate on it).
      */
     private function buildFilters(array $params): array
     {
@@ -279,38 +345,54 @@ class SkanPostbacksController
         $binds = [$this->userId];
         $types = 'i';
 
-        if (!empty($params['time_from'])) {
-            $where[] = 'received_at >= ?';
-            $binds[] = (int)$params['time_from'];
-            $types .= 'i';
-        }
-        if (!empty($params['time_to'])) {
-            $where[] = 'received_at <= ?';
-            $binds[] = (int)$params['time_to'];
-            $types .= 'i';
-        }
-        foreach (['app_id' => 'app_id', 'campaign_id' => 'campaign_id', 'fidelity_type' => 'fidelity_type', 'postback_sequence_index' => 'postback_sequence_index'] as $param => $column) {
+        foreach (['time_from' => 'received_at >= ?', 'time_to' => 'received_at <= ?'] as $param => $condition) {
             if (isset($params[$param]) && $params[$param] !== '') {
-                $where[] = "$column = ?";
+                if (!is_numeric($params[$param])) {
+                    throw new ValidationException('Invalid time filter', [
+                        $param => 'Must be a unix timestamp',
+                    ]);
+                }
+                $where[] = $condition;
                 $binds[] = (int)$params[$param];
                 $types .= 'i';
             }
         }
-        foreach (['ad_network_id' => 'ad_network_id', 'version' => 'version', 'transaction_id' => 'transaction_id', 'country_code' => 'country_code', 'source_identifier' => 'source_identifier', 'coarse_conversion_value' => 'coarse_conversion_value'] as $param => $column) {
+        foreach (['app_id', 'campaign_id', 'fidelity_type', 'postback_sequence_index'] as $param) {
             if (isset($params[$param]) && $params[$param] !== '') {
-                $where[] = "$column = ?";
+                if (!is_numeric($params[$param])) {
+                    throw new ValidationException('Invalid filter value', [
+                        $param => 'Must be an integer',
+                    ]);
+                }
+                $where[] = "$param = ?";
+                $binds[] = (int)$params[$param];
+                $types .= 'i';
+            }
+        }
+        foreach (['ad_network_id', 'version', 'transaction_id', 'country_code', 'source_identifier', 'coarse_conversion_value'] as $param) {
+            if (isset($params[$param]) && $params[$param] !== '') {
+                $where[] = "$param = ?";
                 $binds[] = (string)$params[$param];
                 $types .= 's';
             }
         }
         foreach (['did_win', 'redownload'] as $flag) {
             if (isset($params[$flag]) && $params[$flag] !== '') {
+                $bool = filter_var($params[$flag], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+                if ($bool === null) {
+                    throw new ValidationException('Invalid filter value', [
+                        $flag => 'Must be a boolean (1/0/true/false)',
+                    ]);
+                }
                 $where[] = "$flag = ?";
-                $binds[] = (int)(bool)(int)$params[$flag];
+                $binds[] = (int)$bool;
                 $types .= 'i';
             }
         }
+
+        $explicitSignature = false;
         if (isset($params['signature']) && $params['signature'] !== '') {
+            $explicitSignature = true;
             $signature = strtolower(trim((string)$params['signature']));
             if ($signature === PostbackVerifier::RESULT_VALID) {
                 $where[] = 'signature_valid = 1';
@@ -325,20 +407,91 @@ class SkanPostbacksController
             }
         }
 
-        return [$where, $binds, $types];
+        return [$where, $binds, $types, $explicitSignature];
     }
 
-    private function groupKey(string $groupBy, array $row): string
+    /**
+     * Bound the decode query to the groups the report retained, so it never
+     * aggregates and ships combinations the fold would discard. Day mode
+     * bounds by the retained time window; single-column modes bind an IN
+     * list of the retained keys. Source mode (two columns, both nullable)
+     * keeps the PHP-side discard — its cardinality is bounded by the ad
+     * networks' own 4-digit identifier space.
+     *
+     * @param array<string, array<string, mixed>> $groupsOut
+     * @param string[] $where
+     * @param mixed[] $binds
+     */
+    private function restrictToRetainedGroups(string $groupBy, array $groupsOut, array &$where, array &$binds, string &$types): void
     {
-        return match ($groupBy) {
-            'day' => (string)(int)$row['grp_day'],
-            'app' => (string)(int)$row['grp_app_id'],
-            'ad-network' => (string)($row['grp_ad_network_id'] ?? ''),
-            'source' => (string)($row['grp_source_identifier'] ?? '') . '|' . (string)($row['grp_campaign_id'] ?? ''),
-            'country' => (string)($row['grp_country_code'] ?? ''),
-            'version' => (string)($row['grp_version'] ?? ''),
-            default => '',
-        };
+        if ($groupsOut === []) {
+            // No groups retained: make the decode query return nothing
+            // rather than everything.
+            $where[] = '1 = 0';
+            return;
+        }
+
+        switch ($groupBy) {
+            case 'day':
+                $days = array_map(static fn(string $key): int => (int)$key, array_keys($groupsOut));
+                $where[] = 'received_at >= ?';
+                $binds[] = min($days);
+                $types .= 'i';
+                $where[] = 'received_at < ?';
+                $binds[] = max($days) + 86400;
+                $types .= 'i';
+                return;
+            case 'app':
+                $keys = array_map('intval', array_keys($groupsOut));
+                $where[] = 'app_id IN (' . implode(', ', array_fill(0, count($keys), '?')) . ')';
+                foreach ($keys as $key) {
+                    $binds[] = $key;
+                    $types .= 'i';
+                }
+                return;
+            case 'ad-network':
+            case 'country':
+            case 'version':
+                $column = ['ad-network' => 'ad_network_id', 'country' => 'country_code', 'version' => 'version'][$groupBy];
+                $values = [];
+                $hasNull = false;
+                foreach (array_keys($groupsOut) as $key) {
+                    if ($key === '') {
+                        $hasNull = true; // NULL group key (country only)
+                    } else {
+                        $values[] = (string)$key;
+                    }
+                }
+                $parts = [];
+                if ($values !== []) {
+                    $parts[] = "$column IN (" . implode(', ', array_fill(0, count($values), '?')) . ')';
+                    foreach ($values as $value) {
+                        $binds[] = $value;
+                        $types .= 's';
+                    }
+                }
+                if ($hasNull) {
+                    $parts[] = "$column IS NULL";
+                }
+                $where[] = '(' . implode(' OR ', $parts) . ')';
+                return;
+            case 'source':
+            default:
+                return;
+        }
+    }
+
+    /**
+     * @param array<string, string> $aliasMap
+     * @param array<string, mixed> $row
+     */
+    private function groupKey(array $aliasMap, array $row): string
+    {
+        $parts = [];
+        foreach (array_keys($aliasMap) as $alias) {
+            $parts[] = $row[$alias] === null ? '' : (string)$row[$alias];
+        }
+        return implode('|', $parts);
     }
 
     /** @return array<string, mixed> */
@@ -441,47 +594,5 @@ class SkanPostbacksController
             $group['app_name'] = $names[(int)($group['app_id'] ?? 0)] ?? null;
         }
         unset($group);
-    }
-
-    private function prepare(string $sql): \mysqli_stmt
-    {
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            throw new DatabaseException('Prepare failed');
-        }
-        return $stmt;
-    }
-
-    private function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
-    {
-        // @phpstan-ignore-next-line prosper202.directStmtCall — this IS the centralized ref-safe bind wrapper (no Connection instance in scope; routing through $this->conn would self-recurse)
-        if (!$stmt->bind_param($types, ...$values)) {
-            $stmt->close();
-            throw new DatabaseException('Bind failed');
-        }
-    }
-
-    private function execute(\mysqli_stmt $stmt, string $message): void
-    {
-        // @phpstan-ignore-next-line prosper202.directStmtCall — this IS the centralized checked-execute wrapper (no Connection instance; routing through $this->conn would self-recurse)
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException($message);
-        }
-    }
-
-    /**
-     * get_result() returning false is indistinguishable from an empty result
-     * set at the call site (error pattern #1's get_result variant), so it is
-     * checked centrally here.
-     */
-    private function result(\mysqli_stmt $stmt): \mysqli_result
-    {
-        $result = $stmt->get_result();
-        if ($result === false) {
-            $stmt->close();
-            throw new DatabaseException('Result retrieval failed');
-        }
-        return $result;
     }
 }

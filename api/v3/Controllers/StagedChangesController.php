@@ -347,6 +347,9 @@ final class StagedChangesController
         if (is_array($response)) {
             $result = $response['data'] ?? null;
         }
+        if (is_array($result)) {
+            $result = self::redactCapabilityValues($result);
+        }
 
         return [
             'data' => [
@@ -354,6 +357,30 @@ final class StagedChangesController
                 'result' => $result,
             ],
         ];
+    }
+
+    /**
+     * Strip capability values from an applied write's result before handing
+     * it to the applier. The write executes as the PROPOSER, but the apply
+     * response goes to a different principal — often an admin with no other
+     * read path to the proposer's resources — so a secret minted by the
+     * write (a SKAN schema token from an app create or rotation) must not
+     * ride along. The proposer retrieves it through their own scoped GET.
+     * Same policy as SkanAppsController::deletePreview, applied to the
+     * transient response instead of the stored record (which never held it).
+     *
+     * @param array<string, mixed> $data
+     * @return array<string, mixed>
+     */
+    private static function redactCapabilityValues(array $data): array
+    {
+        unset($data['schema_token']);
+        foreach ($data as $key => $value) {
+            if (is_array($value)) {
+                $data[$key] = self::redactCapabilityValues($value);
+            }
+        }
+        return $data;
     }
 
     public function discard(string $changeId): array

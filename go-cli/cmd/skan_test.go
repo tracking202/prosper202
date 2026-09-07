@@ -202,16 +202,17 @@ func TestSkanAppRotateTokenPostsToTheRotateRoute(t *testing.T) {
 	}
 }
 
-func TestSkanSchemaFetchesTheDeviceFacingDocumentByToken(t *testing.T) {
+func TestSkanSchemaFetchesTheDeviceFacingDocumentByHeaderToken(t *testing.T) {
 	token := strings.Repeat("cd", 32)
-	var schemaQueryToken string
+	var schemaHeaderToken, schemaRawQuery string
 	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/skan/apps/7"):
 			w.WriteHeader(200)
 			w.Write([]byte(`{"data":{"skan_app_id":7,"app_id":525463029,"schema_token":"` + token + `"}}`))
 		case strings.HasSuffix(r.URL.Path, "/skan/schema"):
-			schemaQueryToken = r.URL.Query().Get("token")
+			schemaHeaderToken = r.Header.Get("X-P202-Schema-Token")
+			schemaRawQuery = r.URL.RawQuery
 			w.WriteHeader(200)
 			w.Write([]byte(`{"data":{"app_id":525463029,"schema_version":"v1","events":{"purchase":{"fine_value":63,"coarse_value":"high"}}}}`))
 		default:
@@ -229,8 +230,13 @@ func TestSkanSchemaFetchesTheDeviceFacingDocumentByToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("skan schema error: %v", err)
 	}
-	if schemaQueryToken != token {
-		t.Errorf("schema fetched with token %q, want the app's %q", schemaQueryToken, token)
+	if schemaHeaderToken != token {
+		t.Errorf("schema fetched with X-P202-Schema-Token %q, want the app's %q", schemaHeaderToken, token)
+	}
+	// Header-only transport: a token in the query string would be captured
+	// by ordinary access logging, and the server rejects it there.
+	if strings.Contains(schemaRawQuery, "token") {
+		t.Errorf("the token must not appear in the query string, got %q", schemaRawQuery)
 	}
 	if !strings.Contains(stdout, `"schema_version"`) || !strings.Contains(stdout, "purchase") {
 		t.Errorf("stdout should render the device-facing document, got:\n%s", stdout)
@@ -285,5 +291,123 @@ func TestSkanAppDeleteDryRunPreviewsWithoutConfirmation(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "dry_run") {
 		t.Errorf("stdout should render the preview, got:\n%s", stdout)
+	}
+}
+
+func TestSkanVerifyUnderStagedModeStaysAnImmediateRead(t *testing.T) {
+	// verify computes and stores nothing; there is no proposal to record.
+	// Under global --staged (e.g. a staged shell profile) it must run
+	// directly rather than being stamped staged=1 and bounced by the
+	// server's "staged is not supported" rejection.
+	var gotParams url.Values
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		gotParams = r.URL.Query()
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":{"signature":"invalid","signed_message_base64":"eA=="}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	postback := `{"version":"4.0","ad-network-id":"n","app-id":1,"transaction-id":"tx","redownload":false,"attribution-signature":"AA=="}`
+	file := filepath.Join(tmp, "postback.json")
+	if err := os.WriteFile(file, []byte(postback), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, err := executeCommand("skan", "verify", "--file", file, "--staged", "--json")
+	if err != nil {
+		t.Fatalf("skan verify --staged error: %v", err)
+	}
+	if gotParams.Get("staged") != "" {
+		t.Errorf("verify must not be stamped staged=1, params: %v", gotParams)
+	}
+	if !strings.Contains(stdout, `"signature"`) {
+		t.Errorf("stdout should carry the verdict, got:\n%s", stdout)
+	}
+}
+
+func TestSkanCvUpdateClearFlagsSendExplicitNulls(t *testing.T) {
+	// Switching a rule between kinds takes the clear and the replacement in
+	// one request; the clear must arrive as a JSON null (an absent field
+	// means "keep"), so the body cannot be map[string]string.
+	var gotMethod string
+	var gotBody []byte
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":{"rule_id":5,"fine_value":null,"coarse_value":"high","event_name":"purchase"}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("skan", "cv", "update", "5", "--clear-fine-value", "--coarse-value", "high", "--json")
+	if err != nil {
+		t.Fatalf("skan cv update error: %v", err)
+	}
+	if gotMethod != "PUT" {
+		t.Errorf("method = %q, want PUT", gotMethod)
+	}
+	if !strings.Contains(string(gotBody), `"fine_value":null`) {
+		t.Errorf("body must carry an explicit null for fine_value, got: %s", gotBody)
+	}
+	if !strings.Contains(string(gotBody), `"coarse_value":"high"`) {
+		t.Errorf("body must carry the replacement coarse value, got: %s", gotBody)
+	}
+}
+
+func TestSkanCvUpdateClearAndSetOfTheSameKindConflict(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	// No server: the conflict is rejected before any request is built.
+	writeTestConfig(t, tmp, "http://127.0.0.1:0", "test-key")
+
+	_, _, err := executeCommand("skan", "cv", "update", "5", "--clear-fine-value", "--fine-value", "10")
+	if err == nil {
+		t.Fatal("expected a validation error")
+	}
+	if got := exitCodeForError(err); got != 1 {
+		t.Errorf("exit code = %d, want 1 (validation)", got)
+	}
+}
+
+func TestSkanAppListAllPaginatesThroughEveryPage(t *testing.T) {
+	// The server caps pages at 2 rows (pagination.limit=2), so all three
+	// rows take two requests — the traversal must follow the server's page
+	// size, not assume its own.
+	var offsets []string
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		offset := r.URL.Query().Get("offset")
+		offsets = append(offsets, offset)
+		w.WriteHeader(200)
+		if offset == "0" {
+			w.Write([]byte(`{"data":[{"skan_app_id":1,"app_id":100},{"skan_app_id":2,"app_id":200}],"pagination":{"total":3,"limit":2,"offset":0}}`))
+			return
+		}
+		w.Write([]byte(`{"data":[{"skan_app_id":3,"app_id":300}],"pagination":{"total":3,"limit":2,"offset":2}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("skan", "app", "list", "--all", "--json")
+	if err != nil {
+		t.Fatalf("skan app list --all error: %v", err)
+	}
+	if len(offsets) != 2 || offsets[0] != "0" || offsets[1] != "2" {
+		t.Errorf("expected two pages at offsets 0 and 2, got: %v", offsets)
+	}
+	for _, id := range []string{`"app_id": 100`, `"app_id": 200`, `"app_id": 300`} {
+		if !strings.Contains(stdout, id) && !strings.Contains(stdout, strings.ReplaceAll(id, ": ", ":")) {
+			t.Errorf("stdout should carry every row (%s missing), got:\n%s", id, stdout)
+		}
 	}
 }
