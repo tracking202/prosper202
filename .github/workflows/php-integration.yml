@@ -85,6 +85,13 @@ jobs:
             --group integration \
             tests/Conversion/ConversionIdempotencyIntegrationTest.php \
             --verbose --no-coverage
+          # The SKAN receiver's dedupe is a UNIQUE index over a hash of the
+          # whole body: only a real server shows it collapsing a byte-identical
+          # retry while a forgery and the genuine postback both land.
+          vendor/bin/phpunit --configuration phpunit.ci.xml \
+            --group integration \
+            tests/Skan/PostbackReceiverIntegrationTest.php \
+            --verbose --no-coverage
           # Checks the SQL the v3 API ships against the schema it ships, by
           # preparing every statically-known statement on a real server. It
           # needs its own database because it installs a fresh schema.
