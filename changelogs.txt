@@ -1,6 +1,6 @@
 Release notes
 
-Version 1.9.75
+Version 1.9.76
 -- New: SKAdNetwork (SKAN) measurement endpoint — point an iOS app's NSAdvertisingAttributionReportEndpoint at your Prosper202 domain and it receives Apple's install-validation postbacks at /.well-known/skadnetwork/report-attribution/ (a real directory, so the shipped Apache/nginx configs serve it with no rewrite rules), making Prosper202 the server side of a mobile measurement partner
 -- New: SKAN signature verification — every postback is checked against Apple's published P-256 key using the exact per-version signed-message composition for SKAN 2.1 through 4.0; forged or unverifiable postbacks are stored flagged (signature_valid) rather than dropped, and because the receiver is public the report counts only signature-verified postbacks in its headline metrics by default (meta.trusted says so; an explicit signature filter widens it, and per-group signature_valid/invalid/unverified counts always show what was excluded)
 -- New: SKAN app registry and conversion-value decoding — register advertised App Store apps (registering claims postbacks that arrived before it; an App Store id can only be registered once so ownership is never ambiguous), and mirror the in-app conversion-value schema as decoding rules (fine values 0-63 and coarse low/medium/high, per app with account-wide defaults) so reports translate values into named events and revenue
@@ -12,6 +12,8 @@ Version 1.9.75
 -- New: Schema token rotation — POST /skan/apps/{id}/schema-token/rotate (CLI: `p202 skan app rotate-token`) mints a replacement and invalidates the old token immediately, the remedy for a token leaked out of a shipped binary
 -- New: `p202 skan schema <id>` shows the conversion-value document exactly as devices fetch it, by performing the same header-tokenized request the iOS helper makes; `p202 skan cv update` grows --clear-fine-value/--clear-coarse-value so a rule can switch between fine and coarse in one command, and skan app/cv lists take --all
 -- Fixed: `--quiet` id output now prints the row's own primary key for SKAN apps, conversion-value rules, postbacks, and forecast events instead of falling back to the owning user_id
+
+Version 1.9.75
 -- New: Staged writes — run any operator-surface write with `--staged` (or `?staged=1`) to record it as an approval-pending proposal with a server-issued change id instead of executing it; `p202 change list/show/apply/discard` reviews and resolves the queue, and applying re-runs the write against current state under the applier's key
 -- New: API key scopes — mint least-privilege keys (read-only, write, per-area, or propose-only `stage`) via the v3 API or `p202 user apikey create --scope`; every v3 route enforces the scope, scoped keys bind admins too, and the legacy v1/v2 APIs refuse scoped keys rather than over-granting
 -- New: Idempotency-Key support on single-entity creates (campaigns, trackers, conversions, rotators and rules, attribution models and exports, users) — a retried create replays the recorded response instead of duplicating

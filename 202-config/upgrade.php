@@ -13,12 +13,6 @@ if (!isset($db) || !($db instanceof mysqli)) {
 	_die('Database connection unavailable.');
 }
 
-// Converge version-independent schema on every visit — including the
-// "Already Upgraded" bounce below. An install whose database already says
-// the current version never sees the upgrade button, so this is the only
-// path that creates tables shipped inside an already-consumed version
-// (e.g. the SKAN tables inside 1.9.75). Idempotent CREATE IF NOT EXISTS.
-UPGRADE::ensure_schema_current();
 $partition_support = 0;
 $partitionSql = "SELECT COUNT(*) as partition_support FROM INFORMATION_SCHEMA.PARTITIONS LIMIT 1";
 $partitionRow = memcache_mysql_fetch_assoc($partitionSql);

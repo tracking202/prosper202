@@ -163,34 +163,6 @@ class PROSPER202
 class UPGRADE
 {
 
-    /**
-     * Converge schema that ships inside an already-consumed version.
-     *
-     * The SKAN tables belong to version 1.9.75, but installs whose database
-     * already said 1.9.75 before deploying SKAN-era code (anything installed
-     * or upgraded from source while master carried that version) never
-     * re-enter the 1.9.74 upgrade block — version equality even hides the
-     * upgrade button. This runs unconditionally from every upgrade surface
-     * (the upgrade page on each visit, including the "Already Upgraded"
-     * bounce, and the top of upgrade_databases()), so visiting the upgrade
-     * page after deploying is always sufficient to converge. Every statement
-     * is CREATE TABLE IF NOT EXISTS from the same definitions the fresh
-     * installer uses, so it is idempotent and cannot drift from them.
-     *
-     * @return bool true when every statement succeeded
-     */
-    public static function ensure_schema_current()
-    {
-        $ensure_ok = true;
-        foreach (\Prosper202\Database\Tables\SkanTables::getDefinitions() as $skan_definition) {
-            if (_upgrade_query($skan_definition->createStatement) === false) {
-                $ensure_ok = false;
-                error_log('Prosper202 ensure_schema_current: failed to create ' . $skan_definition->tableName);
-            }
-        }
-        return $ensure_ok;
-    }
-
     public static function upgrade_databases($time_from)
     {
         global $dbname;
@@ -201,11 +173,6 @@ class UPGRADE
         //Try to disable mysql strict mode
         $sql = "SET session sql_mode= ''";
         $result = _upgrade_query($sql);
-
-        // Version-independent schema convergence (see ensure_schema_current):
-        // runs on every upgrade invocation so installs already at the current
-        // version still receive tables that ship inside it.
-        self::ensure_schema_current();
 
         $partition_start = time();
         $partition_end = strtotime('+3 years', $partition_start);
@@ -3946,28 +3913,54 @@ class UPGRADE
                 "ALTER TABLE `202_api_keys` ADD COLUMN `scope` text DEFAULT NULL AFTER `api_key`"
             ) !== false;
 
-            // SKAdNetwork (SKAN) attribution ships in the same version. The
-            // creates live in ensure_schema_current() (which already ran at
-            // the top of this method); re-checking here keeps the version
-            // gate honest — 1.9.75 is only persisted once the SKAN tables
-            // actually exist, so a partial failure retries on the next run.
-            $skan_ok = self::ensure_schema_current();
-
-            if ($scope_ok && $skan_ok) {
+            if ($scope_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.75'") !== false) {
                     $prosper202_version = '1.9.75';
                 } else {
-                    error_log('Prosper202 upgrade: 1.9.75 schema applied but failed to persist the version; leaving version at 1.9.74 so the next run retries.');
+                    error_log('Prosper202 upgrade: added 202_api_keys scope column but failed to persist version 1.9.75; leaving version at 1.9.74 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: 1.9.75 schema incomplete (api-key scope column or SKAN tables); leaving version at 1.9.74 so the next run retries.');
+                error_log('Prosper202 upgrade: failed to add 202_api_keys scope column; leaving version at 1.9.74 so the next run retries.');
+            }
+        }
+
+        if ($prosper202_version == '1.9.75') {
+
+            // SKAdNetwork (SKAN) attribution: the postback store, the
+            // advertised-app registry (its rotatable schema_token column and
+            // unique index are part of the definition), and the
+            // conversion-value decoding rules. The DDL comes from
+            // SkanTables::getDefinitions() — the same definitions the fresh
+            // installer uses — so this block cannot drift from it, and every
+            // CREATE is IF NOT EXISTS so a partial failure safely retries on
+            // the next run.
+            $skan_ok = true;
+
+            foreach (\Prosper202\Database\Tables\SkanTables::getDefinitions() as $skan_definition) {
+                if (_upgrade_query($skan_definition->createStatement) === false) {
+                    $skan_ok = false;
+                    error_log('Prosper202 upgrade: failed to create ' . $skan_definition->tableName);
+                }
+            }
+
+            if ($skan_ok) {
+                // Advance the version only once every DDL statement
+                // succeeded, so a partial failure re-enters this block on the
+                // next run.
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.76'") !== false) {
+                    $prosper202_version = '1.9.76';
+                } else {
+                    error_log('Prosper202 upgrade: created SKAN tables but failed to persist version 1.9.76; leaving version at 1.9.75 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: SKAN schema incomplete; leaving version at 1.9.75 so the next run retries.');
             }
         }
 
         //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.75', '>')) {
+        if (version_compare((string) $prosper202_version, '1.9.76', '>')) {
 
-            $prosper202_version = '1.9.75';
+            $prosper202_version = '1.9.76';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }
