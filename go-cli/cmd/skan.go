@@ -419,7 +419,7 @@ var skanSchemaCmd = &cobra.Command{
 		}
 		if err := json.Unmarshal(appData, &envelope); err != nil || envelope.Data.SchemaToken == "" {
 			return validationError("this app registration has no schema token").
-				WithHint("The server must advertise features.skan_remote_schema in /capabilities; `p202 skan app get " + args[0] + "` shows the registration.")
+				WithHint("The server must advertise features.skan in /capabilities; `p202 skan app get " + args[0] + "` shows the registration.")
 		}
 		data, err := c.Get("skan/schema", map[string]string{"token": envelope.Data.SchemaToken})
 		if err != nil {

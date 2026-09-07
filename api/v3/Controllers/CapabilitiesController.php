@@ -69,17 +69,16 @@ class CapabilitiesController
                     // current state and the applier's credentials. The
                     // `stage` scope action mints propose-only keys.
                     'staged_writes' => true,
-                    // SKAdNetwork MMP endpoint: the server accepts signed
+                    // SKAdNetwork MMP: the server accepts signed
                     // install-validation postbacks at
-                    // /.well-known/skadnetwork/report-attribution/ and serves
+                    // /.well-known/skadnetwork/report-attribution/, serves
                     // them (with signature state and conversion-value
-                    // decoding) under /skan.
+                    // decoding) under /skan, and serves each registered
+                    // app's conversion-value mapping to its iOS build at
+                    // runtime via GET /skan/schema (gated by the app's
+                    // rotatable schema token), so mapping changes need no
+                    // App Store resubmission.
                     'skan' => true,
-                    // GET /skan/schema serves each registered app's
-                    // conversion-value mapping to its iOS build at runtime
-                    // (gated by the app's rotatable schema token), so mapping
-                    // changes need no App Store resubmission.
-                    'skan_remote_schema' => true,
                 ],
                 'limits' => [
                     'max_bulk_rows' => $this->maxBulkRows(),

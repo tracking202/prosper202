@@ -182,8 +182,8 @@ revenue amounts. It supports `If-None-Match` (304 until a rule changes,
 `ETag` = `schema_version`) and is rate-limited per source IP. Precedence
 mirrors decoding — app-specific rules beat `app_id = 0` defaults — and when
 several values decode to one event, the highest is served, so encode and
-decode stay two views of one rule set. `features.skan_remote_schema` in
-`/capabilities` advertises support.
+decode stay two views of one rule set. `features.skan` in `/capabilities`
+advertises the whole SKAN surface, this endpoint included.
 
 The repository ships **P202SKAN** ([`sdk/ios-skan/`](../../sdk/ios-skan/)),
 a small dependency-free Swift helper that fetches and caches this document

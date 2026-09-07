@@ -252,7 +252,7 @@ func TestSkanSchemaWithoutATokenNamesTheServerRequirement(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a validation error when the registration has no token")
 	}
-	if hint := hintFor(err); !strings.Contains(hint, "skan_remote_schema") {
+	if hint := hintFor(err); !strings.Contains(hint, "features.skan") {
 		t.Errorf("hint should name the server requirement, got %q", hint)
 	}
 }

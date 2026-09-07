@@ -3913,14 +3913,29 @@ class UPGRADE
                 "ALTER TABLE `202_api_keys` ADD COLUMN `scope` text DEFAULT NULL AFTER `api_key`"
             ) !== false;
 
-            if ($scope_ok) {
+            // SKAdNetwork (SKAN) attribution ships in the same version:
+            // postback store, advertised-app registry (schema token column
+            // included), and conversion-value decoding rules. The DDL comes
+            // from SkanTables::getDefinitions() — the same definitions the
+            // fresh installer uses — so this cannot drift from it, and every
+            // CREATE is IF NOT EXISTS, so a partial failure safely retries
+            // on the next run.
+            $skan_ok = true;
+            foreach (\Prosper202\Database\Tables\SkanTables::getDefinitions() as $skan_definition) {
+                if (_upgrade_query($skan_definition->createStatement) === false) {
+                    $skan_ok = false;
+                    error_log('Prosper202 upgrade: failed to create ' . $skan_definition->tableName);
+                }
+            }
+
+            if ($scope_ok && $skan_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.75'") !== false) {
                     $prosper202_version = '1.9.75';
                 } else {
-                    error_log('Prosper202 upgrade: added 202_api_keys scope column but failed to persist version 1.9.75; leaving version at 1.9.74 so the next run retries.');
+                    error_log('Prosper202 upgrade: 1.9.75 schema applied but failed to persist the version; leaving version at 1.9.74 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: failed to add 202_api_keys scope column; leaving version at 1.9.74 so the next run retries.');
+                error_log('Prosper202 upgrade: 1.9.75 schema incomplete (api-key scope column or SKAN tables); leaving version at 1.9.74 so the next run retries.');
             }
         }
 
