@@ -26,7 +26,7 @@ var skanCmd = &cobra.Command{
 		"/.well-known/skadnetwork/report-attribution/, verifies Apple's signature, and\n" +
 		"stores them. Register advertised apps (skan app), mirror the in-app\n" +
 		"conversion-value schema as decoding rules (skan cv), then read postbacks and the\n" +
-		"decoded report. Requires a server with features.skan (1.9.76+).",
+		"decoded report. Requires a server advertising features.skan in /capabilities.",
 }
 
 // skanFilterFlags maps postback list/report flag names (kebab-case; the
@@ -419,7 +419,7 @@ var skanSchemaCmd = &cobra.Command{
 		}
 		if err := json.Unmarshal(appData, &envelope); err != nil || envelope.Data.SchemaToken == "" {
 			return validationError("this app registration has no schema token").
-				WithHint("The server needs features.skan_remote_schema (1.9.77+); `p202 skan app get " + args[0] + "` shows the registration.")
+				WithHint("The server must advertise features.skan_remote_schema in /capabilities; `p202 skan app get " + args[0] + "` shows the registration.")
 		}
 		data, err := c.Get("skan/schema", map[string]string{"token": envelope.Data.SchemaToken})
 		if err != nil {

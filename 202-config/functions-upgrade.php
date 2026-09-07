@@ -3924,105 +3924,10 @@ class UPGRADE
             }
         }
 
-        if ($prosper202_version == '1.9.75') {
-
-            // SKAdNetwork (SKAN) attribution: postback store, advertised-app
-            // registry, and conversion-value decoding rules. Table DDL comes
-            // from SkanTables::getDefinitions() — the same definitions the
-            // fresh installer uses — so this block cannot drift from it. Every
-            // CREATE is IF NOT EXISTS, so a partial failure safely retries on
-            // the next run.
-            $skan_ok = true;
-
-            foreach (\Prosper202\Database\Tables\SkanTables::getDefinitions() as $skan_definition) {
-                if (_upgrade_query($skan_definition->createStatement) === false) {
-                    $skan_ok = false;
-                    error_log('Prosper202 upgrade: failed to create ' . $skan_definition->tableName);
-                }
-            }
-
-            if ($skan_ok) {
-                // Only advance the version once every DDL statement succeeded,
-                // so a partial failure re-enters this block on the next run.
-                if (_upgrade_query("UPDATE 202_version SET version='1.9.76'") !== false) {
-                    $prosper202_version = '1.9.76';
-                } else {
-                    error_log('Prosper202 upgrade: SKAN schema created but failed to persist version 1.9.76; leaving version at 1.9.75 so the next run retries.');
-                }
-            } else {
-                error_log('Prosper202 upgrade: SKAN schema incomplete; leaving version at 1.9.75 so the next run retries.');
-            }
-        }
-
-        if ($prosper202_version == '1.9.76') {
-
-            // SKAN remote conversion-value schema: each registered app gets a
-            // schema token that lets its iOS build fetch the conversion-value
-            // mapping at runtime (GET /api/v3/skan/schema), so mapping changes
-            // do not need an App Store resubmission. Fresh installs get the
-            // column from SkanTables::skanApps(); this adds it to tables the
-            // 1.9.76 step already created. Order matters: backfill tokens
-            // BEFORE the unique index, or two pre-existing rows with the ''
-            // default would fail the index build. Every step is guarded and
-            // idempotent so a partial failure retries on the next run.
-            $token_ok = true;
-
-            $check = _upgrade_query("SHOW COLUMNS FROM `202_skan_apps` LIKE 'schema_token'");
-            $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
-            if (!$exists && _upgrade_query(
-                "ALTER TABLE `202_skan_apps` ADD COLUMN `schema_token` varchar(64) NOT NULL DEFAULT '' AFTER `notes`"
-            ) === false) {
-                $token_ok = false;
-                error_log('Prosper202 upgrade: failed to add 202_skan_apps.schema_token');
-            }
-
-            if ($token_ok) {
-                // Backfill in PHP so the tokens come from random_bytes(), not
-                // from SQL RAND()/UUID() — a schema token is a capability
-                // value, and a predictable one defeats its purpose.
-                $rows = _upgrade_query("SELECT skan_app_id FROM `202_skan_apps` WHERE schema_token = ''");
-                if ($rows instanceof mysqli_result) {
-                    while ($token_row = $rows->fetch_assoc()) {
-                        $new_token = bin2hex(random_bytes(32));
-                        if (_upgrade_query(
-                            "UPDATE `202_skan_apps` SET schema_token = '" . $new_token . "' WHERE skan_app_id = " . (int) $token_row['skan_app_id']
-                        ) === false) {
-                            $token_ok = false;
-                            error_log('Prosper202 upgrade: failed to backfill schema_token for skan_app_id ' . (int) $token_row['skan_app_id']);
-                        }
-                    }
-                } elseif ($rows === false) {
-                    $token_ok = false;
-                    error_log('Prosper202 upgrade: could not read 202_skan_apps rows for schema_token backfill');
-                }
-            }
-
-            if ($token_ok) {
-                $check = _upgrade_query("SHOW INDEX FROM `202_skan_apps` WHERE Key_name = 'schema_token'");
-                $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
-                if (!$exists && _upgrade_query(
-                    "ALTER TABLE `202_skan_apps` ADD UNIQUE KEY `schema_token` (`schema_token`)"
-                ) === false) {
-                    $token_ok = false;
-                    error_log('Prosper202 upgrade: failed to add 202_skan_apps.schema_token unique index');
-                }
-            }
-
-            if ($token_ok) {
-                if (_upgrade_query("UPDATE 202_version SET version='1.9.77'") !== false) {
-                    $prosper202_version = '1.9.77';
-                } else {
-                    error_log('Prosper202 upgrade: SKAN schema tokens added but failed to persist version 1.9.77; leaving version at 1.9.76 so the next run retries.');
-                }
-            } else {
-                error_log('Prosper202 upgrade: SKAN schema-token migration incomplete; leaving version at 1.9.76 so the next run retries.');
-            }
-        }
-
         //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.77', '>')) {
+        if (version_compare((string) $prosper202_version, '1.9.75', '>')) {
 
-            $prosper202_version = '1.9.77';
+            $prosper202_version = '1.9.75';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }
