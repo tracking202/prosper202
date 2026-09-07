@@ -281,6 +281,19 @@ Check here before burning time on tooling failures.
   (headless web installer; prints the REST API key) and seed with
   `tests/fixtures/agent-eval/seed.sh`. Reports stay empty until the
   dataengine cron runs — the seeder triggers `202-cronjobs/dej.php` itself.
+- **This sandbox's PHP is 8.4; CI runs 8.3, and `php -S` differs between
+  them.** Before 8.4 the built-in server treats any request path containing
+  a `.` as a static file and never resolves its directory index, so
+  `/.well-known/skadnetwork/report-attribution/` is a 404 (logged
+  `- Success`) on 8.3 and fine on 8.4. `install-instance.sh` therefore serves
+  through `tests/fixtures/agent-eval/ci/router.php` and probes the receiver
+  URL after installing. To run CI's PHP here without touching the system
+  `php`: `apt-get download php8.3-cli php8.3-common php8.3-mysql
+  php8.3-mbstring php8.3-curl php8.3-xml php8.3-gd php8.3-zip` into the
+  scratchpad, `dpkg -x` each, and run `usr/bin/php8.3 -n -d
+  extension_dir=usr/lib/php/20230831 -d extension=mysqlnd -d extension=mysqli
+  ...` (a shim named `php` on PATH makes `install-instance.sh` use it). The
+  static builds on dl.static-php.dev ship without mysqli.
 - **phpstan is now configured and runs in CI** (`phpstan.neon.dist` +
   `phpstan-baseline.neon`, job `phpstan` in `.github/workflows/php-lint.yml`).
   In a sandbox where `composer install` failed there is no `vendor/bin/`, but
@@ -417,6 +430,13 @@ where a check quietly fails to check what it appears to.
   partial `vendor/`), measure the exposure rather than waiting to find out —
   e.g. instrument a new rule to report every site it *declines* to analyse; if
   that count is zero, fuller symbol resolution cannot surface new findings.
+- **Local green is not CI green when the runtime version differs.** The
+  eval harness passed here three times on PHP 8.4 and failed in CI on 8.3,
+  because `php -S` changed its path rules between the two; an hour went to
+  the MySQL 8.0 service that the two setups also did not share. Before
+  suspecting the component that differs most visibly, diff the versions of
+  everything on the path (`php -v` against the workflow's `php-version`),
+  and read the server log the job uploads — the 404 was on its first page.
 - **Local green is not CI green when the environment carries ambient state.**
   A `--scope` check placed after `api.NewFromConfig()` passed here only
   because this sandbox has a URL configured; CI has none, so the config error
