@@ -285,14 +285,13 @@ function dispatchWebhook(ExportJob $job, array $fileInfo): array
         $headers[] = 'X-Prosper202-Signature: ' . $signature;
     }
 
-    // Re-validate at dispatch: DNS can change between scheduling and delivery.
-    // Keep the validated addresses -- curl must be pinned to one of them below,
-    // or it resolves the host a second time and a DNS-rebinding record can hand
-    // it an internal address the guard never saw. This is what the guard's
-    // return value is for; 202-cronjobs/ltv_webhooks.php pins the same way.
+    // Full check at dispatch: the write boundary only checked shape, and DNS
+    // can change between scheduling and delivery anyway. The validated
+    // addresses feed curlOptions(), which pins the connection to one of them so
+    // curl cannot be handed a rebound private address by its own lookup.
     try {
         $validatedIps = \Prosper202\Validation\OutboundUrlGuard::assertAllowed($webhook->url, 'webhook_url');
-    } catch (\RuntimeException $e) {
+    } catch (\Prosper202\Validation\OutboundUrlException $e) {
         error_log('attribution-export: refusing webhook delivery: ' . $e->getMessage());
         return [
             'success' => false,
@@ -303,21 +302,14 @@ function dispatchWebhook(ExportJob $job, array $fileInfo): array
         ];
     }
 
-    $resolveEntry = \Prosper202\Validation\OutboundUrlGuard::curlResolveEntry($webhook->url, $validatedIps);
-
     $ch = curl_init($webhook->url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $json);
     curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-    // Never follow a redirect into a private address, and never leave https.
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
-    curl_setopt($ch, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
-    // Send to the address the guard actually approved, not whatever DNS says now.
-    if ($resolveEntry !== null) {
-        curl_setopt($ch, CURLOPT_RESOLVE, [$resolveEntry]);
-    }
+    // Pinned to a validated address, no redirects, https only, TLS verified --
+    // the same option set ltv_webhooks.php uses, so neither can drop one.
+    curl_setopt_array($ch, \Prosper202\Validation\OutboundUrlGuard::curlOptions($webhook->url, $validatedIps));
 
     $response = curl_exec($ch);
     $statusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE) ?: null;

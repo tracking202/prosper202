@@ -173,31 +173,26 @@ final class AttributionRepositoryTest extends TestCase
 
     // --- Exports ---
 
-    public function testScheduleExportCreatesRecord(): void
+    public function testListExportsReturnsTheSeededRecord(): void
     {
         $repo = $this->makeRepo();
 
-        $id = $repo->scheduleExport(1, 1, [
-            'scope_type' => 'campaign',
-            'scope_id' => 5,
-            'format' => 'csv',
-        ]);
+        $id = $repo->seedExport(1, 1, ['scope_type' => 'campaign', 'scope_id' => 5]);
 
         $exports = $repo->listExports(1, 1);
         self::assertCount(1, $exports);
         self::assertSame($id, $exports[0]['export_id']);
-        self::assertSame('queued', $exports[0]['status']);
+        self::assertSame('pending', $exports[0]['status']);
         self::assertSame('campaign', $exports[0]['scope_type']);
     }
 
     public function testListExportsFiltersByModelAndUser(): void
     {
         $repo = $this->makeRepo();
-        $repo->scheduleExport(1, 1, []);
-        $repo->scheduleExport(2, 1, []);
+        $repo->seedExport(1, 1);
+        $repo->seedExport(2, 1);
+        $repo->seedExport(1, 2);
 
-        $exports = $repo->listExports(1, 1);
-
-        self::assertCount(1, $exports);
+        self::assertCount(1, $repo->listExports(1, 1));
     }
 }

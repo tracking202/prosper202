@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Ltv;
 
 use Prosper202\Database\Connection;
+use Prosper202\Validation\OutboundUrlGuard;
 use RuntimeException;
 
 /**
@@ -40,55 +41,17 @@ final class MysqlWebhookRepository
     }
 
     /**
-     * SSRF guard, applied at registration AND again at dispatch (DNS can
-     * change between the two): https only, resolvable host, and no
-     * private/loopback/link-local/reserved addresses.
+     * Dispatch-time SSRF guard: delegates to the one implementation in
+     * OutboundUrlGuard. Kept as a named entry point for the cron and the tests;
+     * the body it used to carry was a line-for-line copy that could (and did)
+     * drift from the attribution crons' checks.
      *
-     * Returns the VALIDATED addresses so the dispatcher can pin its
-     * connection to one of them (CURLOPT_RESOLVE) — without pinning, a
-     * DNS-rebinding host could answer the guard with a public IP and give
-     * curl's second lookup a private one.
-     *
-     * @return list<string> the validated IPs for the URL's host
-     * @throws RuntimeException with the reason when the URL is not allowed
+     * @return list<string> the validated IPs for the URL's host, for curlOptions()
+     * @throws \Prosper202\Validation\OutboundUrlException
      */
     public static function assertUrlAllowed(string $url): array
     {
-        $parts = parse_url($url);
-        if (!is_array($parts) || ($parts['scheme'] ?? '') !== 'https' || empty($parts['host'])) {
-            throw new RuntimeException('webhook_url must be a valid https:// URL');
-        }
-        if (isset($parts['port']) && !in_array((int) $parts['port'], [443, 8443], true)) {
-            throw new RuntimeException('webhook_url port must be 443 or 8443');
-        }
-
-        $host = (string) $parts['host'];
-        $ips = [];
-        if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
-            $ips = [$host];
-        } else {
-            $records = @dns_get_record($host, DNS_A + DNS_AAAA);
-            if (is_array($records)) {
-                foreach ($records as $record) {
-                    if (!empty($record['ip'])) {
-                        $ips[] = (string) $record['ip'];
-                    }
-                    if (!empty($record['ipv6'])) {
-                        $ips[] = (string) $record['ipv6'];
-                    }
-                }
-            }
-        }
-        if ($ips === []) {
-            throw new RuntimeException('webhook_url host does not resolve');
-        }
-        foreach ($ips as $ip) {
-            // Covers the PHP filter flags PLUS the ranges they miss
-            // (RFC 6598 CGNAT, 192.0.0.0/24, 198.18.0.0/15, multicast).
-            \Prosper202\Validation\OutboundUrlGuard::assertIpAllowed($ip, 'webhook_url');
-        }
-
-        return array_values($ips);
+        return OutboundUrlGuard::assertAllowed($url, 'webhook_url');
     }
 
     /**
@@ -140,7 +103,9 @@ final class MysqlWebhookRepository
      */
     public function create(int $userId, string $url, array $events): array
     {
-        self::assertUrlAllowed($url);
+        // Write boundary: syntactic check only, no DNS (see OutboundUrlGuard).
+        // The cron re-runs the full check and pins the connection at delivery.
+        OutboundUrlGuard::assertWellFormed($url, 'webhook_url');
 
         $events = array_values(array_unique(array_map(strval(...), $events)));
         if ($events === []) {

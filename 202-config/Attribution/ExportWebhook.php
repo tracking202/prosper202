@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Prosper202\Attribution;
 
 use InvalidArgumentException;
+use Prosper202\Validation\OutboundUrlException;
+use Prosper202\Validation\OutboundUrlGuard;
 
 /**
  * Describes a webhook callback that should be notified once an export completes.
@@ -26,16 +28,13 @@ final readonly class ExportWebhook
         // The SSRF guard deliberately does NOT run here. This constructor is
         // also the row-hydration path (ExportJob::fromDatabaseRow), and
         // findPending() array_maps every pending row through it: one stored
-        // http:// or non-resolving webhook_url would throw out of the cron's
-        // very first call and strand EVERY pending export, including jobs with
-        // no webhook at all, on every tick. listRecentForModel() would 500 the
-        // export listing for the same reason, and a transient DNS failure did
-        // both. The guard runs where it can fail one request instead of the
-        // batch -- at each write boundary:
-        //   - AttributionService::scheduleSnapshotExport() (api/v2)
-        //   - AttributionController::scheduleExport()      (api/v3)
-        // and again at delivery in 202-cronjobs/attribution-export.php, which
-        // has to re-check anyway because DNS can change in between.
+        // bad webhook_url would throw out of the cron's very first call and
+        // strand EVERY pending export, including jobs with no webhook at all,
+        // on every tick; listRecentForModel() would 500 the export listing for
+        // the same reason. The guard runs where it can fail one request instead
+        // of the batch: fromArray() below (the request-payload factory, api/v2)
+        // and AttributionController::scheduleExport() (api/v3), and in full
+        // again at delivery in 202-cronjobs/attribution-export.php.
 
         foreach ($this->headers as $key => $value) {
             if (!is_string($key) || $key === '' || !is_string($value)) {
@@ -52,6 +51,14 @@ final readonly class ExportWebhook
         $url = trim((string) ($data['url'] ?? ''));
         if ($url === '') {
             throw new InvalidArgumentException('Webhook URL is required when webhook settings are provided.');
+        }
+        // Write-boundary SSRF check: shape only, no DNS (see OutboundUrlGuard).
+        // This factory is reached only from a request payload, never from a
+        // stored row, so a rejection here fails exactly the request that sent it.
+        try {
+            OutboundUrlGuard::assertWellFormed($url, 'webhook.url');
+        } catch (OutboundUrlException $e) {
+            throw new InvalidArgumentException($e->getMessage(), 0, $e);
         }
 
         $secret = isset($data['secret']) && $data['secret'] !== '' ? (string) $data['secret'] : null;

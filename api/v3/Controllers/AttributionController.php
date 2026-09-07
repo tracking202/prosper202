@@ -365,14 +365,13 @@ class AttributionController
         $format = (string)($payload['format'] ?? 'csv');
         $webhookUrl = (string)($payload['webhook_url'] ?? '');
         // Validate here, at the entry point: this is the only place the caller
-        // can be told their URL is unusable. Storing it unchecked and relying on
-        // a guard further down means the rejection happens in a cron nobody is
-        // watching -- and it used to happen in the row hydration, taking the
-        // whole export queue down with it.
+        // can be told their URL is unusable. Shape only, no DNS -- a resolver
+        // stall must not block the request or turn into a 422 for a valid URL;
+        // the cron runs the full check and pins the connection at delivery.
         if ($webhookUrl !== '') {
             try {
-                \Prosper202\Validation\OutboundUrlGuard::assertAllowed($webhookUrl, 'webhook_url');
-            } catch (\RuntimeException $e) {
+                \Prosper202\Validation\OutboundUrlGuard::assertWellFormed($webhookUrl, 'webhook_url');
+            } catch (\Prosper202\Validation\OutboundUrlException $e) {
                 throw new ValidationException($e->getMessage(), ['webhook_url' => $e->getMessage()], $e);
             }
         }

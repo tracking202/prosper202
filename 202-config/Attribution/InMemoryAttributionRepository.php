@@ -152,26 +152,38 @@ final class InMemoryAttributionRepository implements AttributionRepositoryInterf
         return $filtered;
     }
 
-    public function scheduleExport(int $modelId, int $userId, array $data): int
+    /**
+     * Test fixture: put an export row in place for listExports() to find.
+     *
+     * This is NOT a scheduling API. The repository trio used to expose
+     * scheduleExport(), which nothing in production called -- both API
+     * controllers write exports themselves -- and whose MySQL version stored
+     * status 'queued' (not a valid ExportStatus; the export cron only claims
+     * 'pending') and the webhook_url unguarded. Dead code with two latent
+     * defects is not kept for a test's convenience; the test seeds directly.
+     *
+     * @param array<string, mixed> $row overrides for the seeded export
+     */
+    public function seedExport(int $modelId, int $userId, array $row = []): int
     {
         $id = $this->nextExportId++;
         $now = time();
 
-        $this->exports[$id] = [
+        $this->exports[$id] = $row + [
             'export_id' => $id,
             'user_id' => $userId,
             'model_id' => $modelId,
-            'scope_type' => (string) ($data['scope_type'] ?? 'global'),
-            'scope_id' => (int) ($data['scope_id'] ?? 0),
-            'start_hour' => (int) ($data['start_hour'] ?? 0),
-            'end_hour' => (int) ($data['end_hour'] ?? time()),
-            'requested_format' => (string) ($data['format'] ?? 'csv'),
-            'status' => 'queued',
+            'scope_type' => 'global',
+            'scope_id' => 0,
+            'start_hour' => 0,
+            'end_hour' => $now,
+            'requested_format' => 'csv',
+            'status' => 'pending',
             'queued_at' => $now,
             'started_at' => null,
             'completed_at' => null,
             'file_path' => null,
-            'webhook_url' => (string) ($data['webhook_url'] ?? ''),
+            'webhook_url' => '',
             'created_at' => $now,
             'updated_at' => $now,
         ];
