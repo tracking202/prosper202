@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Api\V3;
 
+use Tests\Support\SourceScan;
 use Tests\TestCase;
 
 /**
@@ -45,24 +46,10 @@ final class ApiKeyAuthPathScopeTest extends TestCase
      */
     private function authenticatingFiles(): array
     {
-        $root = dirname(__DIR__, 3);
         $found = [];
-
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveCallbackFilterIterator(
-                new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS),
-                static fn(\SplFileInfo $f): bool =>
-                    !in_array($f->getFilename(), ['vendor', 'node_modules', '.git', 'tests'], true)
-            )
-        );
-
-        foreach ($iterator as $file) {
-            if (!$file->isFile() || $file->getExtension() !== 'php') {
-                continue;
-            }
-            $source = (string)file_get_contents($file->getPathname());
+        foreach (SourceScan::phpFiles() as $path => $source) {
             if ($this->hasAuthenticatingSelect($source)) {
-                $found[str_replace($root . '/', '', $file->getPathname())] = $source;
+                $found[$path] = $source;
             }
         }
 
