@@ -6,86 +6,108 @@ namespace Tests\Messaging;
 
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
+use ReflectionProperty;
 
 /**
- * MessagingClient makes the same decision twice: isSafeTransport() decides
- * whether a configured MESSAGING_API_URL may be used at all, and
- * allowedCurlProtocols() decides which schemes curl will actually speak. Those
- * two answers must agree for every URL.
- *
- * They did not. isSafeTransport() admitted http:// for loopback so the repo's
- * own documented mock-server setup would work, while the curl allowlist was
- * pinned to CURLPROTO_HTTPS — so the constructor accepted the URL and then
- * every request died with CURLE_UNSUPPORTED_PROTOCOL. Drift in the other
- * direction is worse: an allowlist wider than the transport rule would carry
- * the install's customer API key over cleartext.
+ * MessagingClient makes one transport decision, transportProtocols(): whether
+ * a configured MESSAGING_API_URL is accepted at all and, if so, which curl
+ * protocols may carry requests to it. Those used to be two functions that had
+ * to agree and did not (the allowlist was pinned to HTTPS while acceptance
+ * admitted loopback http://, so the documented mock-server setup was accepted
+ * and then failed every request). With one function there is nothing to keep
+ * aligned -- this test pins the table itself, and that the constructor stores
+ * the URL trimmed, since the decision trims and a padded stored URL failed at
+ * curl anyway.
  */
 final class MessagingTransportAllowlistTest extends TestCase
 {
-    private ReflectionMethod $isSafeTransport;
-    private ReflectionMethod $allowedProtocols;
+    private ReflectionMethod $decide;
 
     protected function setUp(): void
     {
         require_once __DIR__ . '/../../202-config/Messaging/MessagingClient.class.php';
-
-        $this->isSafeTransport = new ReflectionMethod(\MessagingClient::class, 'isSafeTransport');
-        $this->isSafeTransport->setAccessible(true);
-        $this->allowedProtocols = new ReflectionMethod(\MessagingClient::class, 'allowedCurlProtocols');
-        $this->allowedProtocols->setAccessible(true);
+        $this->decide = new ReflectionMethod(\MessagingClient::class, 'transportProtocols');
+        $this->decide->setAccessible(true);
     }
 
     /**
-     * @dataProvider urls
+     * @dataProvider decisions
      */
-    public function testTheAllowlistAgreesWithTheTransportRule(string $url): void
+    public function testTheTransportDecision(string $url, ?int $expected): void
     {
-        $accepted = (bool) $this->isSafeTransport->invoke(null, $url);
-        $protocols = (int) $this->allowedProtocols->invoke(null, $url);
-        $allowsCleartext = ($protocols & CURLPROTO_HTTP) !== 0;
-
-        self::assertNotSame(
-            0,
-            $protocols & CURLPROTO_HTTPS,
-            'HTTPS must always be permitted'
-        );
-        self::assertSame(
-            0,
-            $protocols & ~(CURLPROTO_HTTPS | CURLPROTO_HTTP),
-            'The allowlist must never widen beyond http/https'
-        );
-
-        if (!$accepted) {
-            // A rejected URL never reaches curl, so the allowlist is moot; it
-            // must still not be the permissive variant, or a future refactor
-            // that relaxes the constructor silently inherits cleartext.
-            self::assertFalse($allowsCleartext, "Rejected URL must not enable cleartext: $url");
-            return;
-        }
-
-        $isCleartextUrl = str_starts_with(strtolower(trim($url)), 'http://');
-        self::assertSame(
-            $isCleartextUrl,
-            $allowsCleartext,
-            "curl's protocol allowlist disagrees with isSafeTransport() for: $url"
-        );
+        self::assertSame($expected, $this->decide->invoke(null, $url), $url);
     }
 
-    /** @return array<string, array{0: string}> */
-    public static function urls(): array
+    /** @return array<string, array{0: string, 1: ?int}> */
+    public static function decisions(): array
     {
+        $httpsOnly = CURLPROTO_HTTPS;
+        $loopback = CURLPROTO_HTTPS | CURLPROTO_HTTP;
+
         return [
-            'central https'      => ['https://my.tracking202.com/api/v3/messaging'],
-            'documented mock'    => ['http://127.0.0.1:8787/messaging'],
-            'loopback name'      => ['http://localhost:8787/messaging'],
-            'loopback v6'        => ['http://[::1]:8787/messaging'],
-            'loopback 127.x'     => ['http://127.5.5.5:8787/messaging'],
-            'uppercase scheme'   => ['HTTP://127.0.0.1:8787/messaging'],
-            'padded'            => ["  http://127.0.0.1:8787/messaging  "],
-            'private lan'        => ['http://10.0.0.9/messaging'],
-            'public cleartext'   => ['http://my.tracking202.com/api/v3/messaging'],
-            'no scheme'          => ['my.tracking202.com/api/v3/messaging'],
-            'empty'              => [''],
+            'central https'    => ['https://my.tracking202.com/api/v3/messaging', $httpsOnly],
+            'https any host'   => ['https://10.0.0.9/messaging', $httpsOnly],
+            'documented mock'  => ['http://127.0.0.1:8787/messaging', $loopback],
+            'loopback name'    => ['http://localhost:8787/messaging', $loopback],
+            'loopback v6'      => ['http://[::1]:8787/messaging', $loopback],
+            'loopback 127.x'   => ['http://127.5.5.5:8787/messaging', $loopback],
+            'uppercase scheme' => ['HTTP://127.0.0.1:8787/messaging', $loopback],
+            'padded'           => ["  http://127.0.0.1:8787/messaging  ", $loopback],
+            'private lan'      => ['http://10.0.0.9/messaging', null],
+            'public cleartext' => ['http://my.tracking202.com/api/v3/messaging', null],
+            'no scheme'        => ['my.tracking202.com/api/v3/messaging', null],
+            'empty'            => ['', null],
+            'http no host'     => ['http:///messaging', null],
         ];
+    }
+
+    public function testCleartextIsNeverGrantedToARefusedOrHttpsUrl(): void
+    {
+        // The security property, stated independently of the table above: HTTP
+        // appears in the mask only for an accepted loopback URL.
+        foreach (self::decisions() as $name => [$url, $expected]) {
+            $mask = $this->decide->invoke(null, $url);
+            if ($mask === null) {
+                continue;
+            }
+            self::assertNotSame(0, $mask & CURLPROTO_HTTPS, "$name: HTTPS must always be permitted");
+            $grantsHttp = ($mask & CURLPROTO_HTTP) !== 0;
+            $isLoopbackCleartext = str_starts_with(strtolower(trim($url)), 'http://');
+            self::assertSame($isLoopbackCleartext, $grantsHttp, "$name: cleartext must be granted exactly to accepted http:// (loopback) URLs");
+        }
+    }
+
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testTheConstructorStoresTheTrimmedUrlAndTheMatchingProtocols(): void
+    {
+        define('MESSAGING_API_URL', "  http://127.0.0.1:8787/messaging  ");
+        require_once __DIR__ . '/../../202-config/Messaging/MessagingClient.class.php';
+
+        $client = new \MessagingClient();
+
+        $baseUrl = new ReflectionProperty(\MessagingClient::class, 'baseUrl');
+        $baseUrl->setAccessible(true);
+        self::assertSame('http://127.0.0.1:8787/messaging', $baseUrl->getValue($client), 'a padded URL must not reach curl padded');
+
+        $protocols = new ReflectionProperty(\MessagingClient::class, 'curlProtocols');
+        $protocols->setAccessible(true);
+        self::assertSame(CURLPROTO_HTTPS | CURLPROTO_HTTP, $protocols->getValue($client));
+    }
+
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testTheConstructorRefusesACleartextUrlThatIsNotLoopback(): void
+    {
+        define('MESSAGING_API_URL', 'http://my.tracking202.com/api/v3/messaging');
+        require_once __DIR__ . '/../../202-config/Messaging/MessagingClient.class.php';
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('refusing to send credentials in cleartext');
+        new \MessagingClient();
     }
 }

@@ -16,8 +16,13 @@ use Throwable;
  *
  * Consolidates the prepare/bind/execute boilerplate that was duplicated
  * across every Attribution repository implementation.
+ *
+ * Not final: statementError()/statementErrno() are protected so a test can
+ * stand in for mysqli_stmt::$error/$errno, which throw on every
+ * constructor-skipping fake. Those two readers are the only sanctioned
+ * override point; everything else is an implementation detail.
  */
-final class Connection
+class Connection
 {
     private readonly mysqli $read;
 
@@ -125,16 +130,8 @@ final class Connection
     {
         // @phpstan-ignore-next-line -- this IS the centralized execute wrapper; self-routing would recurse
         if (!$stmt->execute()) {
-            try {
-                $error = $stmt->error;
-            } catch (\Error) {
-                $error = '(unknown)';
-            }
-            try {
-                $errno = (int) $stmt->errno;
-            } catch (\Error) {
-                $errno = 0;
-            }
+            $error = $this->statementError($stmt);
+            $errno = $this->statementErrno($stmt);
             unset($this->boundValues[spl_object_id($stmt)]);
             $stmt->close();
             // The errno tag makes error-class detection (deadlock, duplicate
@@ -145,6 +142,70 @@ final class Connection
             );
         }
         unset($this->boundValues[spl_object_id($stmt)]);
+    }
+
+    /**
+     * A false from get_result() after a successful execute() means one of two
+     * very different things: the statement produced no result set (an INSERT
+     * or UPDATE -- not an error), or the fetch failed (a lost connection, a
+     * server that went away mid-query). Reading them both as "no rows" is
+     * CLAUDE.md #1's silent-failure tell -- publicIdIsFree() would report a
+     * taken id as free, a batch loop would end early and report success. The
+     * statement's errno tells them apart.
+     *
+     * @param mysqli_stmt $stmt
+     * @throws QueryException when the fetch failed
+     */
+    private function assertResultRetrieved(object $stmt, mysqli_result|false $result): void
+    {
+        if ($result !== false) {
+            return;
+        }
+        $errno = $this->statementErrno($stmt);
+        if ($errno === 0) {
+            return; // no result set, and MySQL reports no error: a legitimate empty answer
+        }
+        $error = $this->statementError($stmt);
+        $stmt->close();
+        throw new QueryException('MySQL get_result failed: ' . $error . ' [errno ' . $errno . ']');
+    }
+
+    /**
+     * mysqli_stmt::$error, or '(unknown)' where the property cannot be read.
+     * Native mysqli_stmt properties throw on a statement whose constructor was
+     * skipped (test fakes) and on a closed one; the guard keeps the diagnostic
+     * from replacing the failure it was meant to describe. Protected so a test
+     * can stand in for the value a fake physically cannot carry.
+     *
+     * @param mysqli_stmt $stmt
+     */
+    protected function statementError(object $stmt): string
+    {
+        try {
+            // `??` rather than a bare read: a plain-object test fake without the
+            // property must not raise "Undefined property" (a warning PHPUnit
+            // promotes to a failure), and on a constructor-skipping native fake
+            // isset() answers false instead of throwing.
+            return (string) ($stmt->error ?? '(unknown)');
+        } catch (\Error) {
+            return '(unknown)';
+        }
+    }
+
+    /**
+     * mysqli_stmt::$errno, or 0 where the property cannot be read (see
+     * statementError()). 0 is deliberately "no error": a fake that cannot
+     * report an errno must not make every fetch look failed.
+     *
+     * @param mysqli_stmt $stmt
+     */
+    protected function statementErrno(object $stmt): int
+    {
+        try {
+            return (int) ($stmt->errno ?? 0); // see statementError() on `??`
+        } catch (\Error) {
+            return 0;
+        }
     }
 
     /**
@@ -196,6 +257,7 @@ final class Connection
     {
         $this->execute($stmt);
         $result = $stmt->get_result();
+        $this->assertResultRetrieved($stmt, $result);
         $row = ($result instanceof mysqli_result) ? $result->fetch_assoc() : null;
         if ($result instanceof mysqli_result) {
             $result->free();
@@ -215,6 +277,7 @@ final class Connection
     {
         $this->execute($stmt);
         $result = $stmt->get_result();
+        $this->assertResultRetrieved($stmt, $result);
         $rows = [];
         if ($result instanceof mysqli_result) {
             while ($row = $result->fetch_assoc()) {

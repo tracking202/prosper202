@@ -347,14 +347,26 @@ final class MysqlRotatorRepository implements RotatorRepositoryInterface
     }
 
     /**
-     * Pick an unused public_id. Best-effort in the absence of a UNIQUE key:
-     * removes deliberate collisions, makes random ones vanishingly unlikely.
+     * Is this public_id currently unused? A check-then-insert, with the limits
+     * that implies -- stated plainly because the comment here used to claim
+     * more than the code delivers:
+     *
+     *  - Reading from the primary (prepareWrite) removes one duplicate source:
+     *    a replica lagging behind an id that was just taken.
+     *  - It does NOT remove the race. create() calls this outside any
+     *    transaction and 202_rotators has no UNIQUE key on public_id, so two
+     *    concurrent creates (two `p202 sync` runs, two API calls) can both see
+     *    an id as free and both insert it. The unauthenticated redirect then
+     *    resolves that public_id to whichever row it finds first. Closing that
+     *    needs a UNIQUE index added by a schema upgrade, with existing
+     *    duplicates resolved first; until then this check makes deliberate
+     *    collisions fail and random ones vanishingly unlikely, nothing more.
+     *
+     * Connection::fetchOne() throws if the SELECT's result cannot be retrieved,
+     * so a failed read cannot be mistaken for "free".
      */
     private function publicIdIsFree(int $candidate): bool
     {
-        // prepareWrite, not prepareRead: this decides whether an id is free, and
-        // a replica lagging behind the primary can still show a public_id that
-        // has just been taken, handing out a duplicate.
         // No $stmt->close() here -- Connection::fetchOne() already closes it, and
         // a second close throws "mysqli_stmt object is already closed" on PHP 8.
         $stmt = $this->conn->prepareWrite('SELECT id FROM 202_rotators WHERE public_id = ? LIMIT 1');
