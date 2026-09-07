@@ -75,6 +75,11 @@ class CapabilitiesController
                     // them (with signature state and conversion-value
                     // decoding) under /skan.
                     'skan' => true,
+                    // GET /skan/schema serves each registered app's
+                    // conversion-value mapping to its iOS build at runtime
+                    // (gated by the app's rotatable schema token), so mapping
+                    // changes need no App Store resubmission.
+                    'skan_remote_schema' => true,
                 ],
                 'limits' => [
                     'max_bulk_rows' => $this->maxBulkRows(),

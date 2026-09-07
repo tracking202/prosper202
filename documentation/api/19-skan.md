@@ -59,7 +59,9 @@ than 4.0 are stored but flagged `unverifiable`.
 | `GET` | `/skan/report` | Aggregate report with conversion-value decoding |
 | `POST` | `/skan/verify` | Verify a postback payload's signature without storing it |
 | `GET/POST` | `/skan/apps`, `/skan/apps/{id}` | App registry (CRUD; `PUT`/`DELETE` on `/{id}`) |
+| `POST` | `/skan/apps/{id}/schema-token/rotate` | Mint a new schema token; the old one stops working |
 | `GET/POST` | `/skan/conversion-values`, `/skan/conversion-values/{id}` | Decoding rules (CRUD; `PUT`/`DELETE` on `/{id}`) |
+| `GET` | `/skan/schema` | Public (schema-token gated): the conversion-value mapping an iOS build fetches at runtime |
 
 All `/skan` API routes require the `skan` scope area (`skan:read` for reads,
 `skan:write` for writes; `POST /skan/verify` counts as a read — it computes
@@ -151,6 +153,49 @@ app-specific fine rule → default (`app_id = 0`) fine rule; coarse values
 resolve the same way. A fine value with no rule stays *undecoded* — it never
 falls back to a coarse rule.
 
+## Remote-configured conversion values (no app resubmission)
+
+The app does not have to hardcode its conversion-value scheme. Registering
+an app mints a **schema token** (returned by `POST /skan/apps`, shown by
+`GET /skan/apps/{id}`, rotatable via `POST
+/skan/apps/{id}/schema-token/rotate`). A build carrying that token fetches
+
+```
+GET /api/v3/skan/schema
+X-P202-Schema-Token: <token>        (or ?token=<token>)
+```
+
+which serves the ENCODE view of the same rules the reports decode with:
+
+```json
+{"data": {"app_id": 525463029, "schema_version": "d6eefc…",
+  "events": {"purchase": {"fine_value": 63, "coarse_value": "high"},
+             "signup":   {"fine_value": 5,  "coarse_value": null}},
+  "generated_at": 1725690000}}
+```
+
+Edit the rules and every installed build picks the change up on its next
+fetch — no App Store resubmission. The endpoint is unauthenticated by
+design (an app binary cannot hold an API key); the token gates it, grants
+read access to this document only, and the document deliberately excludes
+revenue amounts. It supports `If-None-Match` (304 until a rule changes,
+`ETag` = `schema_version`) and is rate-limited per source IP. Precedence
+mirrors decoding — app-specific rules beat `app_id = 0` defaults — and when
+several values decode to one event, the highest is served, so encode and
+decode stay two views of one rule set. `features.skan_remote_schema` in
+`/capabilities` advertises support.
+
+The repository ships **P202SKAN** ([`sdk/ios-skan/`](../../sdk/ios-skan/)),
+a small dependency-free Swift helper that fetches and caches this document
+(offline-safe, ETag-aware, token-keyed cache) and maps
+`P202SKAN.shared.logEvent("purchase")` to the right
+`SKAdNetwork.updatePostbackConversionValue` call — unmapped events are
+deliberate no-ops. Verify what devices will receive with
+`p202 skan schema <app-registration-id>`, which performs the same request
+the helper makes. The `NSAdvertisingAttributionReportEndpoint` line in
+`Info.plist` still ships with the app — iOS does not allow setting it at
+runtime.
+
 ## Report
 
 `GET /skan/report?group_by=day|app|ad-network|source|country|version` with
@@ -224,8 +269,11 @@ SKAN is aggregate, delayed, and anonymous by design. Expect and plan for:
   source-identifier digits. `null_conversion_values` in the report makes
   that visible.
 - **The app controls the conversion value.** Prosper202 decodes; the app's
-  SKAdNetwork calls encode. Changing the in-app schema without updating
-  `/skan/conversion-values` (or vice versa) silently skews decoded revenue.
+  SKAdNetwork calls encode. With the P202SKAN helper (or your own fetch of
+  `/skan/schema`), both sides are driven by the same rules and cannot
+  drift. An app that hardcodes its own encoding instead must be kept in
+  sync with `/skan/conversion-values` by hand, or decoded revenue silently
+  skews.
 - **AdAttributionKit** (Apple's SKAN successor with JWS-signed postbacks
   and re-engagement support) uses a different postback format and is not
   yet supported; SKAN postbacks continue to flow from current iOS versions.

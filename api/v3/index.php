@@ -124,6 +124,46 @@ try {
         exit;
     }
 
+    // Unauthenticated SKAN conversion-value schema, fetched by the
+    // advertised iOS app at runtime so mapping changes need no App Store
+    // resubmission. An app binary cannot hold an API key; access is gated
+    // by the app's rotatable schema token instead (SkanSchemaController).
+    if ($path === '/skan/schema' && $method === 'GET') {
+        // Soft per-source limit, mirroring the postback receiver: devices
+        // fetch rarely, and the limiter's own failure must never block them.
+        try {
+            $limiter = new ServerStateStore();
+            $forwarded = trim(explode(',', (string)RequestContext::header('x-forwarded-for', ''))[0]);
+            $clientIp = $forwarded !== '' ? $forwarded : (string)($_SERVER['REMOTE_ADDR'] ?? '');
+            $rate = $limiter->consumeRateLimit('skan-schema:ip:' . $clientIp, 120, 60);
+            if (!$rate['allowed']) {
+                $retryAfter = max(1, (int)$rate['reset_at'] - time());
+                header('Retry-After: ' . $retryAfter);
+                Bootstrap::errorResponse('Rate limit exceeded', 429, ['retry_after_seconds' => $retryAfter]);
+                exit;
+            }
+        } catch (\Throwable $e) {
+            error_log('p202 skan: schema rate limiter unavailable, serving request: ' . $e->getMessage());
+        }
+
+        $schemaToken = RequestContext::header('x-p202-schema-token');
+        if ($schemaToken === null && isset($queryParams['token'])) {
+            $schemaToken = (string)$queryParams['token'];
+        }
+        $schemaResult = (new \Api\V3\Controllers\SkanSchemaController($db))
+            ->publicSchema($schemaToken, RequestContext::header('if-none-match'));
+        if ($schemaResult['etag'] !== null) {
+            header('ETag: ' . $schemaResult['etag']);
+            header('Cache-Control: private, max-age=300');
+        }
+        if ($schemaResult['status'] === 304) {
+            http_response_code(304);
+            exit;
+        }
+        Bootstrap::jsonResponse($schemaResult['body'] ?? [], $schemaResult['status']);
+        exit;
+    }
+
     // Authenticate
     $auth = Auth::fromRequest($headers, $db);
     $userId = $auth->userId();
@@ -465,6 +505,7 @@ try {
             $r->post('/apps',           fn() => ['_status' => 201] + $idempotent('skan/apps', $payload, fn() => $crud($apps)->create($payload)));
             $r->put('/apps/{id}',       fn($ctx) => $crud($apps)->update((int)$ctx['id'], $payload));
             $r->delete('/apps/{id}',    fn($ctx) => tap($crud($apps), fn($c) => $c->delete((int)$ctx['id'])));
+            $r->post('/apps/{id}/schema-token/rotate', fn($ctx) => $crud($apps)->rotateSchemaToken((int)$ctx['id']));
 
             $r->get('/conversion-values',         fn() => $crud($rules)->list($queryParams));
             $r->get('/conversion-values/{id}',    fn($ctx) => $crud($rules)->get((int)$ctx['id']));
@@ -666,6 +707,7 @@ try {
         $r->post('/apps', $stageable);
         $r->put('/apps/{id}', $stageable);
         $r->delete('/apps/{id}', $stageable);
+        $r->post('/apps/{id}/schema-token/rotate', $stageable);
         $r->post('/conversion-values', $stageable);
         $r->put('/conversion-values/{id}', $stageable);
         $r->delete('/conversion-values/{id}', $stageable);

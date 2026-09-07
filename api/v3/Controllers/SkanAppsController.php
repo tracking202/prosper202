@@ -32,9 +32,13 @@ class SkanAppsController extends Controller
     protected function fields(): array
     {
         return [
-            'app_id'   => ['type' => 'i', 'required' => true],
-            'app_name' => ['type' => 's', 'required' => true, 'max_length' => 255],
-            'notes'    => ['type' => 's', 'max_length' => 500],
+            'app_id'       => ['type' => 'i', 'required' => true],
+            'app_name'     => ['type' => 's', 'required' => true, 'max_length' => 255],
+            'notes'        => ['type' => 's', 'max_length' => 500],
+            // The capability value an iOS build presents to GET /skan/schema
+            // to fetch its conversion-value mapping at runtime. Served to the
+            // owner, never client-writable; rotate with rotateSchemaToken().
+            'schema_token' => ['type' => 's', 'readonly' => true],
         ];
     }
 
@@ -59,9 +63,48 @@ class SkanAppsController extends Controller
     {
         $this->assertAppIdUnregistered((int)($payload['app_id'] ?? 0));
         return [
+            'schema_token' => ['type' => 's', 'value' => self::newSchemaToken()],
             'created_at' => ['type' => 'i', 'value' => time()],
             'updated_at' => ['type' => 'i', 'value' => time()],
         ];
+    }
+
+    /**
+     * Replace the app's schema token. The old token stops working with this
+     * write — the remedy for a token leaked out of a shipped binary — and the
+     * response carries the replacement for the next build's configuration.
+     */
+    public function rotateSchemaToken(int $id): array
+    {
+        $this->get($id); // ownership + existence; throws NotFoundException otherwise
+
+        $token = self::newSchemaToken();
+        $sql = 'UPDATE 202_skan_apps SET schema_token = ?, updated_at = ? WHERE skan_app_id = ? AND user_id = ?';
+        $stmt = $this->prepare($sql);
+        $now = time();
+        $this->bind($stmt, 'siii', $token, $now, $id, $this->userId);
+        $this->execute($stmt, 'Token rotation failed');
+        $stmt->close();
+
+        return $this->get($id);
+    }
+
+    private static function newSchemaToken(): string
+    {
+        return bin2hex(random_bytes(32));
+    }
+
+    #[\Override]
+    public function deletePreview(int|string $id): array
+    {
+        // Previews are embedded in staged changes, which readers other than
+        // the owner can see; the schema token is a capability value and
+        // stays out of them. The owner reads it via GET /skan/apps/{id}.
+        $preview = parent::deletePreview($id);
+        if (isset($preview['data']['record']) && is_array($preview['data']['record'])) {
+            unset($preview['data']['record']['schema_token']);
+        }
+        return $preview;
     }
 
     #[\Override]

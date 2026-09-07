@@ -173,9 +173,13 @@ func rowsOf(data []byte) []map[string]interface{} {
 
 // idOf returns the best identifier field for a row (id, or a known primary key).
 func idOf(obj map[string]interface{}) string {
+	// Entity primary keys first; user_id stays last because it is a foreign
+	// key on almost every row — matching it early prints the OWNER's id as
+	// though it were the row's, which scripts then feed to get/delete.
 	for _, k := range []string{"id", "aff_campaign_id", "tracker_id", "ppc_account_id",
 		"aff_network_id", "ppc_network_id", "landing_page_id", "text_ad_id", "conv_id",
-		"rotator_id", "user_id", "click_id"} {
+		"rotator_id", "rule_id", "event_id", "skan_app_id", "postback_id",
+		"user_id", "click_id"} {
 		if v, ok := obj[k]; ok {
 			return formatValue(v)
 		}

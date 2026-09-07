@@ -54,7 +54,8 @@ p202 config show
 | `p202 skan postbacks list` | List received SKAdNetwork postbacks (`skan postbacks get <id>` for one) |
 | `p202 skan report` | Aggregate SKAN report with conversion-value decoding (`--group-by day\|app\|ad-network\|source\|country\|version`) |
 | `p202 skan app list` | Registered advertised apps (CRUD; registering claims the app's postbacks) |
-| `p202 skan cv list` | Conversion-value decoding rules (CRUD; mirror of the in-app SKAN schema) |
+| `p202 skan cv list` | Conversion-value decoding rules (CRUD; drives both reports and the runtime schema) |
+| `p202 skan schema <id>` | Show the conversion-value schema exactly as devices fetch it (`skan app rotate-token <id>` replaces a leaked token) |
 | `p202 skan verify` | Verify a postback's Apple signature from `--file`/stdin (stores nothing) |
 | `p202 forecast` | Forecast future metrics from historical data |
 | `p202 dashboard` | Overview of clicks, conversions, revenue, cost, profit, ROI |

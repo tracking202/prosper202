@@ -375,6 +375,61 @@ var skanAppDeleteCmd = &cobra.Command{
 	},
 }
 
+var skanAppRotateTokenCmd = &cobra.Command{
+	Use:   "rotate-token <id>",
+	Short: "Replace the app's schema token (the old token stops working immediately)",
+	Long: "Mints a new schema token for the registered app and invalidates the old one —\n" +
+		"the remedy when a token shipped in an app binary has leaked. Builds configured\n" +
+		"with the old token can no longer fetch the schema until updated.",
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		data, err := c.Post("skan/apps/"+args[0]+"/schema-token/rotate", nil)
+		if err != nil {
+			return err
+		}
+		render(data)
+		return nil
+	},
+}
+
+var skanSchemaCmd = &cobra.Command{
+	Use:   "schema <app-registration-id>",
+	Short: "Show the conversion-value schema exactly as devices fetch it",
+	Long: "Reads the app registration (for its schema token), then fetches the public\n" +
+		"GET /skan/schema endpoint with it — the same request the P202SKAN helper in the\n" +
+		"iOS app makes — so what you see is byte-for-byte what shipped builds decode.",
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		appData, err := c.Get("skan/apps/"+args[0], nil)
+		if err != nil {
+			return err
+		}
+		var envelope struct {
+			Data struct {
+				SchemaToken string `json:"schema_token"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(appData, &envelope); err != nil || envelope.Data.SchemaToken == "" {
+			return validationError("this app registration has no schema token").
+				WithHint("The server needs features.skan_remote_schema (1.9.77+); `p202 skan app get " + args[0] + "` shows the registration.")
+		}
+		data, err := c.Get("skan/schema", map[string]string{"token": envelope.Data.SchemaToken})
+		if err != nil {
+			return err
+		}
+		render(data)
+		return nil
+	},
+}
+
 // ── Conversion values ───────────────────────────────────────────────
 
 var skanCvCmd = &cobra.Command{
@@ -538,7 +593,7 @@ func init() {
 	skanAppDeleteCmd.Flags().Bool("force", false, "Skip the confirmation prompt")
 	skanAppDeleteCmd.Flags().Bool("dry-run", false, "Preview what would be deleted without deleting")
 	skanAppDeleteCmd.Flags().String("ids", "", "Comma-separated ids for bulk delete")
-	skanAppCmd.AddCommand(skanAppListCmd, skanAppGetCmd, skanAppCreateCmd, skanAppUpdateCmd, skanAppDeleteCmd)
+	skanAppCmd.AddCommand(skanAppListCmd, skanAppGetCmd, skanAppCreateCmd, skanAppUpdateCmd, skanAppDeleteCmd, skanAppRotateTokenCmd)
 
 	skanCvListCmd.Flags().StringP("limit", "l", "", "Max results")
 	skanCvListCmd.Flags().StringP("offset", "o", "", "Pagination offset")
@@ -555,6 +610,6 @@ func init() {
 	skanCvDeleteCmd.Flags().String("ids", "", "Comma-separated ids for bulk delete")
 	skanCvCmd.AddCommand(skanCvListCmd, skanCvGetCmd, skanCvCreateCmd, skanCvUpdateCmd, skanCvDeleteCmd)
 
-	skanCmd.AddCommand(skanPostbacksCmd, skanReportCmd, skanVerifyCmd, skanAppCmd, skanCvCmd)
+	skanCmd.AddCommand(skanPostbacksCmd, skanReportCmd, skanVerifyCmd, skanAppCmd, skanCvCmd, skanSchemaCmd)
 	rootCmd.AddCommand(skanCmd)
 }

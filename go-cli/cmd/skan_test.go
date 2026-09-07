@@ -176,6 +176,87 @@ func TestSkanAppCreateRequiresAppIdAndName(t *testing.T) {
 	}
 }
 
+func TestSkanAppRotateTokenPostsToTheRotateRoute(t *testing.T) {
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":{"skan_app_id":7,"app_id":525463029,"schema_token":"` + strings.Repeat("ab", 32) + `"}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("skan", "app", "rotate-token", "7", "--json")
+	if err != nil {
+		t.Fatalf("skan app rotate-token error: %v", err)
+	}
+	if gotMethod != "POST" || !strings.HasSuffix(gotPath, "/skan/apps/7/schema-token/rotate") {
+		t.Errorf("request = %s %s, want POST .../skan/apps/7/schema-token/rotate", gotMethod, gotPath)
+	}
+	if !strings.Contains(stdout, "schema_token") {
+		t.Errorf("stdout should carry the new token, got:\n%s", stdout)
+	}
+}
+
+func TestSkanSchemaFetchesTheDeviceFacingDocumentByToken(t *testing.T) {
+	token := strings.Repeat("cd", 32)
+	var schemaQueryToken string
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/skan/apps/7"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"skan_app_id":7,"app_id":525463029,"schema_token":"` + token + `"}}`))
+		case strings.HasSuffix(r.URL.Path, "/skan/schema"):
+			schemaQueryToken = r.URL.Query().Get("token")
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"app_id":525463029,"schema_version":"v1","events":{"purchase":{"fine_value":63,"coarse_value":"high"}}}}`))
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("skan", "schema", "7", "--json")
+	if err != nil {
+		t.Fatalf("skan schema error: %v", err)
+	}
+	if schemaQueryToken != token {
+		t.Errorf("schema fetched with token %q, want the app's %q", schemaQueryToken, token)
+	}
+	if !strings.Contains(stdout, `"schema_version"`) || !strings.Contains(stdout, "purchase") {
+		t.Errorf("stdout should render the device-facing document, got:\n%s", stdout)
+	}
+}
+
+func TestSkanSchemaWithoutATokenNamesTheServerRequirement(t *testing.T) {
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":{"skan_app_id":7,"app_id":525463029}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("skan", "schema", "7")
+	if err == nil {
+		t.Fatal("expected a validation error when the registration has no token")
+	}
+	if hint := hintFor(err); !strings.Contains(hint, "1.9.77") {
+		t.Errorf("hint should name the server requirement, got %q", hint)
+	}
+}
+
 func TestSkanAppDeleteDryRunPreviewsWithoutConfirmation(t *testing.T) {
 	var gotMethod, gotPath string
 	var gotParams url.Values

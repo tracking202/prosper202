@@ -458,6 +458,27 @@ func TestRenderQuietIdOnly(t *testing.T) {
 	}
 }
 
+func TestRenderQuietPrefersTheRowsOwnPrimaryKeyOverUserId(t *testing.T) {
+	// user_id is a foreign key on almost every row; printing it as the id
+	// hands scripts the OWNER's id to feed into get/delete. Each row here
+	// carries its entity's primary key plus user_id, and the primary key
+	// must win.
+	cases := map[string]string{
+		`{"data":[{"skan_app_id":2,"app_id":525463029,"user_id":1}]}`:        "2",
+		`{"data":[{"rule_id":7,"app_id":525463029,"user_id":1}]}`:            "7",
+		`{"data":[{"postback_id":31,"user_id":1,"campaign_id":9}]}`:          "31",
+		`{"data":[{"event_id":12,"user_id":1,"event_name":"Black Friday"}]}`: "12",
+	}
+	for input, want := range cases {
+		out := captureStdout(t, func() {
+			RenderWith([]byte(input), Opts{Quiet: true})
+		})
+		if strings.TrimSpace(out) != want {
+			t.Errorf("quiet output for %s = %q, want %q", input, out, want)
+		}
+	}
+}
+
 func TestRenderFieldsSelection(t *testing.T) {
 	input := `[{"id":1,"name":"A","total_net":5,"roi":10}]`
 	out := captureStdout(t, func() {

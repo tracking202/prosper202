@@ -83,10 +83,12 @@ final class SkanTables
                 `app_id` bigint(20) unsigned NOT NULL,
                 `app_name` varchar(255) NOT NULL,
                 `notes` varchar(500) DEFAULT NULL,
+                `schema_token` varchar(64) NOT NULL DEFAULT '',
                 `created_at` int(10) unsigned NOT NULL,
                 `updated_at` int(10) unsigned NOT NULL,
                 PRIMARY KEY (`skan_app_id`),
                 UNIQUE KEY `app_id` (`app_id`),
+                UNIQUE KEY `schema_token` (`schema_token`),
                 KEY `user_id` (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Advertised App Store apps whose SKAN postbacks belong to a user'"
         );

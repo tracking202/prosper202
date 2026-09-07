@@ -1,5 +1,12 @@
 Release notes
 
+Version 1.9.77
+-- New: Remote-configured SKAN conversion values — registering an app now mints a schema token, and GET /api/v3/skan/schema serves that app's conversion-value mapping to its iOS build at runtime (ETag/304 conditional fetches, per-IP rate limiting, event names and values only — never revenue), so changing what conversion values mean is a rule edit in Prosper202 instead of an App Store resubmission
+-- New: P202SKAN iOS helper (sdk/ios-skan) — a dependency-free Swift package that fetches and caches the schema (offline-safe, token-keyed cache) and maps logEvent("purchase") to the right SKAdNetwork.updatePostbackConversionValue call; unmapped events are deliberate no-ops, and coarse-only updates re-send the last fine value rather than downgrading it
+-- New: Schema token rotation — POST /skan/apps/{id}/schema-token/rotate (CLI: `p202 skan app rotate-token`) mints a replacement and invalidates the old token immediately, the remedy for a token leaked out of a shipped binary
+-- New: `p202 skan schema <id>` shows the conversion-value document exactly as devices fetch it, by performing the same tokenized request the iOS helper makes
+-- Fixed: `--quiet` id output now prints the row's own primary key for SKAN apps, conversion-value rules, postbacks, and forecast events instead of falling back to the owning user_id
+
 Version 1.9.76
 -- New: SKAdNetwork (SKAN) measurement endpoint — point an iOS app's NSAdvertisingAttributionReportEndpoint at your Prosper202 domain and it receives Apple's install-validation postbacks at /.well-known/skadnetwork/report-attribution/ (a real directory, so the shipped Apache/nginx configs serve it with no rewrite rules), making Prosper202 the server side of a mobile measurement partner
 -- New: SKAN signature verification — every postback is checked against Apple's published P-256 key using the exact per-version signed-message composition for SKAN 2.1 through 4.0; forged or unverifiable postbacks are stored flagged (signature_valid) rather than dropped, and reports count verified, invalid, and unverifiable separately
