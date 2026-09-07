@@ -45,35 +45,42 @@ trait StatementHelpers
     }
 
     /**
-     * Open a transaction, or throw.
+     * Run $fn inside a transaction: checked begin, checked commit, rollback on
+     * any throwable. This is the only transaction primitive in api/v3 -- the
+     * controllers hand their multi-statement bodies to it as closures rather
+     * than opening a transaction themselves, so there is no second place for a
+     * commit check or a rollback to be forgotten.
      *
-     * begin_transaction() is fallible like every other mysqli call, and a false
-     * return is the worst one to ignore: the body then runs in autocommit,
-     * every statement lands individually, and the rollback in the failure path
-     * has nothing to roll back. The caller is told the operation failed while
-     * half the work is permanently committed -- the exact partial-write hazard
-     * transactions are here to prevent.
+     * On the return-value checks: which mysqli failure mode applies depends on
+     * the entry point. api/v3/index.php never includes 202-config/connect.php,
+     * so this code runs under PHP's default mysqli_report(ERROR | STRICT) and a
+     * failed begin_transaction()/commit() throws mysqli_sql_exception before
+     * the `if` is reached. connect.php (the UI and cron paths) downgrades that
+     * to STRICT alone, where the same calls return false. The checks are kept
+     * so the helper is correct under both modes -- a trait cannot know which
+     * bootstrap loaded it -- and so the failure has the same DatabaseException
+     * shape as every other helper here.
      *
-     * Prefer transaction() where the work fits a closure; this exists for the
-     * call sites that need a bare try/catch around multi-statement bodies.
+     * @template T
+     * @param callable(): T $fn
+     * @return T
      */
-    protected function beginTransaction(): void
-    {
-        if (!$this->db->begin_transaction()) {
-            throw new DatabaseException('Could not start transaction');
-        }
-    }
-
     protected function transaction(callable $fn): mixed
     {
-        $this->beginTransaction();
+        // An ignored false here is the worst one: $fn() would run in
+        // autocommit, every statement would land individually, and the
+        // rollback below would have nothing to undo while the caller is told
+        // the operation failed.
+        if (!$this->db->begin_transaction()) {
+            throw new DatabaseException('Could not start transaction: ' . $this->db->error);
+        }
         try {
             $result = $fn();
             if (!$this->db->commit()) {
                 // Thrown, not returned: the catch below is what rolls back, so
                 // a failed commit leaves nothing half-applied on a connection
                 // that may be reused.
-                throw new DatabaseException('Transaction commit failed');
+                throw new DatabaseException('Transaction commit failed: ' . $this->db->error);
             }
             return $result;
         } catch (\Throwable $e) {

@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Api\V3\Exception\ConflictException;
-use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
@@ -273,8 +272,7 @@ class AttributionController
     {
         $this->getModel($id);
 
-        $this->beginTransaction();
-        try {
+        $this->transaction(function () use ($id): void {
             $stmt = $this->prepare('DELETE FROM 202_attribution_touchpoints WHERE snapshot_id IN (SELECT snapshot_id FROM 202_attribution_snapshots WHERE model_id = ? AND user_id = ?)');
             $this->bind($stmt, 'ii', $id, $this->userId);
             $this->execute($stmt, 'Delete touchpoints failed');
@@ -294,14 +292,7 @@ class AttributionController
             $this->bind($stmt, 'ii', $id, $this->userId);
             $this->execute($stmt, 'Delete model failed');
             $stmt->close();
-
-            if (!$this->db->commit()) {
-                throw new DatabaseException('Transaction commit failed');
-            }
-        } catch (\Throwable $e) {
-            $this->db->rollback();
-            throw $e;
-        }
+        });
     }
 
     // --- Snapshots ---

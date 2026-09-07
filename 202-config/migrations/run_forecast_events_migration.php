@@ -9,6 +9,8 @@ declare(strict_types=1);
 
 include_once dirname(__DIR__) . '/connect.php';
 
+use Prosper202\Database\Connection;
+
 if (!isset($db) || !($db instanceof mysqli)) {
     die("Error: Database connection not available\n");
 }
@@ -91,22 +93,14 @@ try {
         $dml = [];
     }
 
-    // Checked: an ignored false here runs the statements below in autocommit,
-    // so the rollback in the catch block silently does nothing and a migration
-    // that reports failure has still left the schema half-applied.
-    if (!$db->begin_transaction()) {
-        throw new Exception('Failed to start transaction: ' . $db->error);
-    }
-    $inTransaction = true;
-
-    foreach ($dml as $statement) {
-        $runStatement($statement);
-    }
-
-    if (!$db->commit()) {
-        throw new Exception('Failed to commit migration: ' . $db->error);
-    }
-    $inTransaction = false;
+    // Connection::transaction() does the checked begin, the checked commit and
+    // the rollback-on-throw; hand-rolling those here is how the unchecked
+    // begin_transaction() got in. run_ltv_backfill.php uses the same shape.
+    (new Connection($db))->transaction(static function () use ($dml, $runStatement): void {
+        foreach ($dml as $statement) {
+            $runStatement($statement);
+        }
+    });
 
     echo "\nMigration completed successfully!\n";
 
@@ -130,10 +124,8 @@ try {
         }
     }
 
-} catch (Exception $e) {
-    if (!empty($inTransaction)) {
-        $db->rollback();
-    }
+} catch (Throwable $e) {
+    // Connection::transaction() has already rolled back if the seed failed.
     echo "\nMigration failed: " . $e->getMessage() . "\n";
     exit(1);
 }

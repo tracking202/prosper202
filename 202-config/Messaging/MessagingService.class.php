@@ -168,16 +168,15 @@ class MessagingService
             return;
         }
 
-        // An unchecked begin_transaction() is the worst false return to ignore
-        // here: the loop below would run in autocommit, half a pull would land
-        // permanently, and the rollback in the catch would have nothing to undo
-        // -- while recordSyncSuccess() still advanced the cursor past it.
-        if (!$this->db->begin_transaction()) {
-            error_log('MessagingService: applyPull could not start a transaction');
-            $this->recordSyncError('could not start transaction');
-            return;
-        }
         try {
+            // Checked inside the try so the catch below is the one recovery path
+            // for every failure of this pull, including "could not even begin".
+            // An ignored false here would run the loop in autocommit, land half
+            // a pull permanently, and leave the rollback nothing to undo while
+            // recordSyncSuccess() advanced the cursor past it.
+            if (!$this->db->begin_transaction()) {
+                throw new RuntimeException('begin transaction failed');
+            }
             foreach ($conversations as $conversation) {
                 if (!is_array($conversation) || empty($conversation['external_id'])) {
                     continue;
@@ -595,15 +594,13 @@ class MessagingService
             return false;
         }
 
-        // See applyPull(): an ignored false here silently downgrades the
-        // reconcile to autocommit, so a later failure leaves the message half
-        // reconciled with no rollback to undo it.
-        if (!$this->db->begin_transaction()) {
-            error_log('MessagingService: pushMessage could not start a transaction');
-            $this->incrementPushAttempts($messageId);
-            return false;
-        }
         try {
+            // See applyPull(): checked inside the try so the catch is the single
+            // recovery path, and because an ignored false silently downgrades
+            // the reconcile to autocommit with no rollback to undo it.
+            if (!$this->db->begin_transaction()) {
+                throw new RuntimeException('begin transaction failed');
+            }
             // Adopt the server's canonical conversation identifiers.
             if (isset($response['conversation']) && is_array($response['conversation'])
                 && !empty($response['conversation']['external_id'])) {

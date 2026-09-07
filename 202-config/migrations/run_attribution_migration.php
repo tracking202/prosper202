@@ -42,12 +42,13 @@ try {
     echo "Found " . count($statements) . " SQL statements to execute...\n";
     
     // Execute each statement
-    // Checked: an ignored false here runs the statements below in autocommit,
-    // so the rollback in the catch block silently does nothing and a migration
-    // that reports failure has still left the schema half-applied.
-    if (!$db->begin_transaction()) {
-        throw new Exception('Failed to start transaction: ' . $db->error);
-    }
+    // No transaction here, on purpose. The statements in this file are CREATE
+    // TABLE / ALTER TABLE with one INSERT IGNORE between them, and MySQL commits
+    // implicitly before and after every DDL statement -- so a transaction
+    // around this loop can never roll anything back, and the rollback() that
+    // used to sit in the catch block only made a failed run look recoverable.
+    // The script is re-runnable instead: IF NOT EXISTS / INSERT IGNORE make a
+    // second pass after a failure a no-op for everything that already landed.
     
     foreach ($statements as $index => $statement) {
         echo "Executing statement " . ($index + 1) . "...\n";
@@ -62,10 +63,6 @@ try {
         if ($db->affected_rows > 0) {
             echo "  -> Affected {$db->affected_rows} rows\n";
         }
-    }
-    
-    if (!$db->commit()) {
-        throw new Exception('Failed to commit migration: ' . $db->error);
     }
     
     echo "\nMigration completed successfully!\n";
@@ -103,7 +100,6 @@ try {
     }
     
 } catch (Exception $e) {
-    $db->rollback();
     echo "\nMigration failed: " . $e->getMessage() . "\n";
     exit(1);
 }

@@ -109,8 +109,7 @@ class UsersController
             $installHash = (string) $hashRow['install_hash'];
         }
 
-        $this->beginTransaction();
-        try {
+        $newId = $this->transaction(function () use ($fname, $lname, $username, $hashedPass, $email, $tz, $now, $active, $installHash): int {
             $stmt = $this->prepare(
                 'INSERT INTO 202_users (user_fname, user_lname, user_name, user_pass, user_email, user_dash_email, user_timezone, user_time_register, user_active, install_hash, user_hash, user_deleted)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)'
@@ -125,13 +124,8 @@ class UsersController
             $this->execute($stmt, 'Failed to create user preferences');
             $stmt->close();
 
-            if (!$this->db->commit()) {
-                throw new DatabaseException('Transaction commit failed');
-            }
-        } catch (\Throwable $e) {
-            $this->db->rollback();
-            throw $e;
-        }
+            return $newId;
+        });
 
         // Committed: both the user row and its preferences row exist. Only
         // the read-back remains, and its failure is not a failed create.
@@ -205,8 +199,7 @@ class UsersController
     public function delete(int $id): void
     {
         $this->get($id);
-        $this->beginTransaction();
-        try {
+        $this->transaction(function () use ($id): void {
             $stmt = $this->prepare('UPDATE 202_users SET user_deleted = 1 WHERE user_id = ?');
             $this->bind($stmt, 'i', $id);
             $this->execute($stmt, 'Delete failed');
@@ -218,14 +211,7 @@ class UsersController
             $this->bind($stmt, 'i', $id);
             $this->execute($stmt, 'API key revocation failed');
             $stmt->close();
-
-            if (!$this->db->commit()) {
-                throw new DatabaseException('Delete commit failed');
-            }
-        } catch (\Throwable $e) {
-            $this->db->rollback();
-            throw $e;
-        }
+        });
     }
 
     // --- Roles ---

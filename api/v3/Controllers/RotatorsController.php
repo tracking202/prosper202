@@ -242,8 +242,7 @@ class RotatorsController
     {
         $this->get($id);
 
-        $this->beginTransaction();
-        try {
+        $this->transaction(function () use ($id): void {
             $stmt = $this->prepare('DELETE FROM 202_rotator_rules_criteria WHERE rotator_id = ?');
             $this->bind($stmt, 'i', $id);
             $this->execute($stmt, 'Delete criteria failed');
@@ -263,14 +262,7 @@ class RotatorsController
             $this->bind($stmt, 'ii', $id, $this->userId);
             $this->execute($stmt, 'Delete rotator failed');
             $stmt->close();
-
-            if (!$this->db->commit()) {
-                throw new DatabaseException('Transaction commit failed');
-            }
-        } catch (\Throwable $e) {
-            $this->db->rollback();
-            throw $e;
-        }
+        });
     }
 
     public function listRules(int $rotatorId): array
@@ -291,8 +283,7 @@ class RotatorsController
         $splittest = (int)($payload['splittest'] ?? 0);
         $status = (int)($payload['status'] ?? 1);
 
-        $this->beginTransaction();
-        try {
+        $this->transaction(function () use ($payload, $rotatorId, $ruleName, $splittest, $status): void {
             $stmt = $this->prepare('INSERT INTO 202_rotator_rules (rotator_id, rule_name, splittest, status) VALUES (?, ?, ?, ?)');
             $this->bind($stmt, 'isii', $rotatorId, $ruleName, $splittest, $status);
             $this->execute($stmt, 'Failed to create rule');
@@ -330,14 +321,7 @@ class RotatorsController
                 }
                 $insertRedirect->close();
             }
-
-            if (!$this->db->commit()) {
-                throw new DatabaseException('Transaction commit failed');
-            }
-        } catch (\Throwable $e) {
-            $this->db->rollback();
-            throw $e;
-        }
+        });
 
         // Committed: the rule and its redirects exist.
         try {
@@ -404,8 +388,7 @@ class RotatorsController
             throw new ValidationException('No fields to update');
         }
 
-        $this->beginTransaction();
-        try {
+        $this->transaction(function () use ($binds, $hasCriteria, $hasRedirects, $payload, $rotatorId, $ruleId, $setParts, $types): void {
             if (!empty($setParts)) {
                 $binds[] = $ruleId;
                 $types .= 'i';
@@ -462,14 +445,7 @@ class RotatorsController
                     $insertRedirect->close();
                 }
             }
-
-            if (!$this->db->commit()) {
-                throw new DatabaseException('Transaction commit failed');
-            }
-        } catch (\Throwable $e) {
-            $this->db->rollback();
-            throw $e;
-        }
+        });
 
         return $this->get($rotatorId);
     }
@@ -523,8 +499,7 @@ class RotatorsController
             throw new NotFoundException('Rule not found for rotator');
         }
 
-        $this->beginTransaction();
-        try {
+        $this->transaction(function () use ($rotatorId, $ruleId): void {
             $stmt = $this->prepare('DELETE FROM 202_rotator_rules_criteria WHERE rule_id = ?');
             $this->bind($stmt, 'i', $ruleId);
             $this->execute($stmt, 'Delete criteria failed');
@@ -539,13 +514,6 @@ class RotatorsController
             $this->bind($stmt, 'ii', $ruleId, $rotatorId);
             $this->execute($stmt, 'Delete rule failed');
             $stmt->close();
-
-            if (!$this->db->commit()) {
-                throw new DatabaseException('Transaction commit failed');
-            }
-        } catch (\Throwable $e) {
-            $this->db->rollback();
-            throw $e;
-        }
+        });
     }
 }
