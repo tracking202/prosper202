@@ -43,18 +43,21 @@ final class SkanSchemaController
     public function publicSchema(?string $token, ?string $ifNoneMatch): array
     {
         $token = trim((string)$token);
-        if ($token === '' || strlen($token) > 128) {
-            return [
-                'status' => 400,
-                'body' => [
-                    'error' => true,
-                    'message' => 'Provide the app\'s schema token in the X-P202-Schema-Token header',
-                    'status' => 400,
-                ],
-                'etag' => null,
-            ];
+        if ($token === '') {
+            return self::badRequest('Provide the app\'s schema token in the X-P202-Schema-Token header');
+        }
+        // Minted tokens are exactly bin2hex(random_bytes(32)); anything else
+        // is a paste of the wrong value (an API key, a truncated copy) and is
+        // told so instead of getting a misleading "unknown token" 404.
+        if (strlen($token) !== 64 || !ctype_xdigit($token)) {
+            return self::badRequest('Schema tokens are 64 hexadecimal characters; use the value from POST /skan/apps or GET /skan/apps/{id}');
         }
 
+        // Deliberately an indexed equality lookup rather than a constant-time
+        // compare: the token is 256 random bits, so guessing is infeasible
+        // regardless of timing, and the comparison happens inside the
+        // database's index walk, which exposes no per-byte timing to the
+        // client the way a naive string compare in PHP could.
         $stmt = $this->prepare('SELECT skan_app_id, user_id, app_id FROM 202_skan_apps WHERE schema_token = ? LIMIT 1');
         $this->bind($stmt, 's', $token);
         $this->execute($stmt, 'Schema lookup failed');
@@ -161,4 +164,13 @@ final class SkanSchemaController
         return $events;
     }
 
+    /** @return array{status: int, body: array<string, mixed>, etag: null} */
+    private static function badRequest(string $message): array
+    {
+        return [
+            'status' => 400,
+            'body' => ['error' => true, 'message' => $message, 'status' => 400],
+            'etag' => null,
+        ];
+    }
 }

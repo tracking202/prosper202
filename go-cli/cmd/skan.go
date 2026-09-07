@@ -90,7 +90,9 @@ var skanCvBodyFields = map[string]string{
 
 // collectSkanBody gathers flag values into an API body. changedOnly sends
 // exactly the flags the caller set (updates: an explicitly empty value is a
-// deliberate write); otherwise only non-empty values are sent (creates).
+// deliberate write); otherwise only non-empty values are sent (both
+// creates, so an empty --fine-value never counts as "set" for the
+// one-kind check).
 func collectSkanBody(cmd *cobra.Command, fields map[string]string, changedOnly bool) map[string]string {
 	body := map[string]string{}
 	for flag, field := range fields {
@@ -523,7 +525,7 @@ var skanCvCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a decoding rule (one fine value 0-63 OR one coarse value)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		body := collectSkanBody(cmd, skanCvBodyFields, true)
+		body := collectSkanBody(cmd, skanCvBodyFields, false)
 		if body["event_name"] == "" {
 			return validationError("required flag --event-name is missing")
 		}

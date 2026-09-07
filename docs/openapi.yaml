@@ -4357,6 +4357,7 @@ components:
           maxLength: 255
         revenue:
           type: number
+          minimum: 0
           default: 0
           description: Revenue attributed per decoded postback
 
@@ -4384,6 +4385,7 @@ components:
           maxLength: 255
         revenue:
           type: number
+          minimum: 0
 
     SkanConversionValueResponse:
       type: object
@@ -4550,7 +4552,7 @@ components:
           type: integer
         measurable:
           type: integer
-          description: Winning postbacks carrying a conversion value
+          description: Winning postbacks carrying a conversion value, across all three conversion windows (so it can exceed installs, which counts first-window postbacks only)
         decoded:
           type: integer
         undecoded:

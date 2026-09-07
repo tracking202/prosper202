@@ -81,28 +81,13 @@ class SkanConversionValuesController extends Controller
         // A rule holds exactly one kind of value, so switching kinds needs
         // the old kind cleared and the new one set in ONE request — an
         // explicit null alongside the replacement value. Capture the nulls
-        // here (base validation drops them) and apply them via the
-        // beforeUpdate extras, which bind SQL NULL.
+        // here (base validation drops them); beforeUpdate() validates the row
+        // as it will exist afterwards and applies them via the extras, which
+        // bind SQL NULL.
         $this->pendingClears = [];
         foreach (['fine_value', 'coarse_value'] as $col) {
             if (array_key_exists($col, $payload) && $payload[$col] === null) {
                 $this->pendingClears[$col] = true;
-            }
-        }
-
-        if ($this->pendingClears !== []) {
-            $hasReplacement = false;
-            foreach ($this->resolveFields() as $col => $def) {
-                if (($def['readonly'] ?? false) === false && ($payload[$col] ?? null) !== null) {
-                    $hasReplacement = true;
-                    break;
-                }
-            }
-            if (!$hasReplacement) {
-                throw new ValidationException('A rule always maps exactly one conversion value', [
-                    'fine_value' => 'To switch kinds, send the explicit null and the replacement together, '
-                        . 'e.g. {"fine_value": null, "coarse_value": "high"}. To remove the rule, delete it.',
-                ]);
             }
         }
 
@@ -122,13 +107,27 @@ class SkanConversionValuesController extends Controller
         // payload (explicit nulls already dropped); pendingClears restores
         // their meaning.
         $current = (array)$this->get($id)['data'];
-        $effective = ['app_id' => $current['app_id'], 'fine_value' => $current['fine_value'], 'coarse_value' => $current['coarse_value']];
+        $effective = [
+            'app_id' => $current['app_id'],
+            'fine_value' => $current['fine_value'],
+            'coarse_value' => $current['coarse_value'],
+            'revenue' => $current['revenue'],
+        ];
         foreach ($effective as $col => $unused) {
             if (isset($this->pendingClears[$col])) {
                 $effective[$col] = null;
             } elseif (array_key_exists($col, $payload)) {
                 $effective[$col] = $payload[$col];
             }
+        }
+        if ($this->pendingClears !== [] && $effective['fine_value'] === null && $effective['coarse_value'] === null) {
+            // The clear arrived without the replacement kind — whatever else
+            // the payload carried — so name the one-request switch syntax
+            // rather than the generic shape error.
+            throw new ValidationException('A rule always maps exactly one conversion value', [
+                'fine_value' => 'To switch kinds, send the explicit null and the replacement together, '
+                    . 'e.g. {"fine_value": null, "coarse_value": "high"}. To remove the rule, delete it.',
+            ]);
         }
         $this->assertRuleShape($effective);
         $this->assertNoDuplicateRule($effective, excludeId: (int)$id);
@@ -162,6 +161,11 @@ class SkanConversionValuesController extends Controller
         if ($fine !== null && ((int)$fine < 0 || (int)$fine > 63)) {
             throw new ValidationException('Invalid fine conversion value', [
                 'fine_value' => 'Must be an integer from 0 to 63 (SKAN fine values are 6 bits)',
+            ]);
+        }
+        if (array_key_exists('revenue', $rule) && $rule['revenue'] !== null && (float)$rule['revenue'] < 0) {
+            throw new ValidationException('Invalid revenue', [
+                'revenue' => 'Must be zero or a positive amount',
             ]);
         }
         if ((int)($rule['app_id'] ?? 0) < 0) {

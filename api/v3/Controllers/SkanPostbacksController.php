@@ -293,6 +293,7 @@ class SkanPostbacksController
                     ? 'metrics computed over the signature class the filter selected'
                     : 'installs/losses/decoding count signature-verified postbacks only; unverified rows appear in the signature_*_count columns')
                     . '; installs = winning first-window postbacks excluding redownloads'
+                    . '; conversion values decode across all three windows, so measurable/decoded can exceed installs'
                     . '; conversion values decode through /skan/conversion-values rules',
             ],
         ];

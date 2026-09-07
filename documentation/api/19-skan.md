@@ -167,7 +167,7 @@ already-claimed history with its user (history is never reassigned).
 | `fine_value` | integer | One of | Fine conversion value 0–63 |
 | `coarse_value` | string | One of | `low`, `medium`, or `high` |
 | `event_name` | string | Yes | Event the value decodes to (max 255) |
-| `revenue` | number | No | Revenue attributed per decoded postback (default 0) |
+| `revenue` | number | No | Revenue attributed per decoded postback (default 0; must not be negative) |
 
 Each rule maps exactly one fine **or** one coarse value (`422` otherwise;
 duplicate mappings return `409`). Resolution order at decode time:
@@ -247,7 +247,9 @@ the same filters as the postback list, plus `limit` (max groups, default
 - `signature_valid_count` / `signature_invalid_count` /
   `signature_unverified_count`
 - Conversion-value decoding: `measurable` (winning postbacks carrying a
-  value), `decoded`, `undecoded` (value present, no matching rule),
+  value, across all three conversion windows — so it can exceed `installs`,
+  which counts first-window postbacks only), `decoded`, `undecoded` (value
+  present, no matching rule),
   `null_conversion_values` (value withheld by Apple's privacy tier),
   `decoded_revenue`, and `events` (per-event counts and revenue)
 

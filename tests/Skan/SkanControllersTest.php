@@ -80,6 +80,57 @@ final class SkanControllersTest extends TestCase
         }
     }
 
+    public function testNegativeRevenueIsRejected(): void
+    {
+        $ctrl = new SkanConversionValuesController($this->createMysqliMock(), 1);
+        $this->expectException(ValidationException::class);
+        $ctrl->create(['fine_value' => 10, 'event_name' => 'purchase', 'revenue' => -1]);
+    }
+
+    public function testClearingAKindWithoutItsReplacementNamesTheSwitchSyntax(): void
+    {
+        // A fine rule; the payload clears fine_value and only adjusts revenue.
+        // No replacement kind is supplied, so the row would end up mapping
+        // nothing — the error must name the one-request switch, whatever
+        // else the payload carried.
+        $db = $this->createMysqliMock([
+            'FROM 202_skan_conversion_values WHERE rule_id = ?' => [[
+                'rule_id' => 5, 'app_id' => 0, 'fine_value' => 10, 'coarse_value' => null,
+                'event_name' => 'purchase', 'revenue' => '1.00000', 'user_id' => 1,
+            ]],
+        ]);
+        $ctrl = new SkanConversionValuesController($db, 1);
+        try {
+            $ctrl->update(5, ['fine_value' => null, 'revenue' => 5]);
+            $this->fail('Expected a ValidationException');
+        } catch (ValidationException $e) {
+            $this->assertStringContainsString('switch kinds', $e->getFieldErrors()['fine_value'] ?? '');
+        }
+    }
+
+    public function testClearingAnAlreadyNullKindIsNotRejected(): void
+    {
+        // A coarse rule: clearing fine_value is a no-op, and the rename must
+        // reach the UPDATE rather than being refused as a kind-switch.
+        $db = $this->createMysqliMock([
+            'FROM 202_skan_conversion_values WHERE rule_id = ?' => [[
+                'rule_id' => 5, 'app_id' => 0, 'fine_value' => null, 'coarse_value' => 'high',
+                'event_name' => 'purchase', 'revenue' => '1.00000', 'user_id' => 1,
+            ]],
+        ]);
+        $ctrl = new SkanConversionValuesController($db, 1);
+        try {
+            $ctrl->update(5, ['fine_value' => null, 'event_name' => 'renamed']);
+            $this->addToAssertionCount(1);
+        } catch (ValidationException $e) {
+            $this->fail('A no-op clear beside a rename must not be refused: ' . $e->getMessage());
+        } catch (\Throwable) {
+            // Reaching the UPDATE is the point; the mock cannot complete the
+            // round-trip, exactly as in the create tests.
+            $this->addToAssertionCount(1);
+        }
+    }
+
     // ─── App registry ────────────────────────────────────────────────
 
     public function testRegisteringAnAlreadyRegisteredAppIdConflicts(): void

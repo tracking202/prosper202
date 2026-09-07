@@ -361,6 +361,49 @@ final class PostbackReceiverTest extends TestCase
         $this->assertTrue($result['body']['error']);
     }
 
+    public function testRetentionPruningTargetsOnlyUnclaimedAndForgedRowsWithBoundedBatches(): void
+    {
+        $db = $this->capturingDb();
+        $now = 1_800_000_000;
+        $this->receiver($db)->prunePostbacks($now);
+
+        $deletes = array_values(array_filter(
+            $this->captured,
+            static fn(array $c): bool => str_starts_with(ltrim($c['sql']), 'DELETE')
+        ));
+        $this->assertCount(2, $deletes, 'one bounded delete per retention class');
+        $this->assertStringContainsString('WHERE user_id = 0 AND received_at < ?', $deletes[0]['sql']);
+        $this->assertSame([$now - PostbackReceiver::DEFAULT_RETENTION_DAYS_UNCLAIMED * 86400], $deletes[0]['values']);
+        $this->assertStringContainsString('WHERE signature_valid = 0 AND received_at < ?', $deletes[1]['sql']);
+        $this->assertSame([$now - PostbackReceiver::DEFAULT_RETENTION_DAYS_INVALID * 86400], $deletes[1]['values']);
+        foreach ($deletes as $delete) {
+            $this->assertStringContainsString('LIMIT 500', $delete['sql'], 'a pass must stay cheap on the request path');
+            $this->assertStringNotContainsString('signature_valid = 1', $delete['sql'], 'verified rows are never pruned');
+        }
+    }
+
+    public function testRetentionOverridesComeFromTheEnvironmentAndZeroDisablesAClass(): void
+    {
+        putenv('P202_SKAN_RETENTION_DAYS_UNCLAIMED=7');
+        putenv('P202_SKAN_RETENTION_DAYS_INVALID=0');
+        try {
+            $db = $this->capturingDb();
+            $now = 1_800_000_000;
+            $this->receiver($db)->prunePostbacks($now);
+
+            $deletes = array_values(array_filter(
+                $this->captured,
+                static fn(array $c): bool => str_starts_with(ltrim($c['sql']), 'DELETE')
+            ));
+            $this->assertCount(1, $deletes, 'a 0-day override disables that class entirely');
+            $this->assertStringContainsString('user_id = 0', $deletes[0]['sql']);
+            $this->assertSame([$now - 7 * 86400], $deletes[0]['values']);
+        } finally {
+            putenv('P202_SKAN_RETENTION_DAYS_UNCLAIMED');
+            putenv('P202_SKAN_RETENTION_DAYS_INVALID');
+        }
+    }
+
     public function testDedupeHashSeparatesTheLegsOfOneTransaction(): void
     {
         // The three conversion windows and the win/loss legs of one

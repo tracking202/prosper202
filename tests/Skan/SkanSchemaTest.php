@@ -39,6 +39,17 @@ final class SkanSchemaTest extends TestCase
         $this->assertSame(400, $this->controller([])->publicSchema('   ', null)['status']);
     }
 
+    public function testMalformedTokenIsA400NotAnUnknownTokenLookup(): void
+    {
+        // A pasted API key or a truncated copy is told what a token looks
+        // like instead of getting a 404 that reads as "your token was revoked".
+        foreach (['not-a-token', str_repeat('f', 63), str_repeat('g', 64)] as $bad) {
+            $result = $this->controller([])->publicSchema($bad, null);
+            $this->assertSame(400, $result['status'], "token $bad");
+            $this->assertStringContainsString('64 hexadecimal', (string)$result['body']['message']);
+        }
+    }
+
     public function testUnknownTokenIsA404(): void
     {
         $result = $this->controller([], tokenKnown: false)->publicSchema(self::TOKEN, null);
