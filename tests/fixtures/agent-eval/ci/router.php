@@ -36,6 +36,20 @@ if (
     $_SERVER['SCRIPT_NAME'] = $p202RouterScript;
     $_SERVER['PHP_SELF'] = $p202RouterScript;
     $_SERVER['SCRIPT_FILENAME'] = $p202RouterTarget . '/index.php';
+    // php -S logs nothing for a request its router handles, and the server
+    // log is what a red CI run is diagnosed from — so log this one in the
+    // server's own format once the script has finished and the status is
+    // known (error_log() reaches the same stderr under the cli-server SAPI).
+    register_shutdown_function(static function (): void {
+        error_log(sprintf(
+            '%s:%s [%d]: %s %s (router)',
+            (string) ($_SERVER['REMOTE_ADDR'] ?? '-'),
+            (string) ($_SERVER['REMOTE_PORT'] ?? '-'),
+            (int) (http_response_code() ?: 200),
+            (string) ($_SERVER['REQUEST_METHOD'] ?? '-'),
+            (string) ($_SERVER['REQUEST_URI'] ?? '-')
+        ));
+    });
     // The include runs at file (global) scope on purpose — 202-config.php's
     // database globals must land in the global scope — so drop the router's
     // own variables first; anything left here would leak into the script.
