@@ -159,7 +159,7 @@ if ($pci == '') {
     } else {
         
         // cloaking ON, so do a meta REFRESH
-        $html['aff_campaign_name'] = $aff_campaign_row['aff_campaign_name'];
+        $html['aff_campaign_name'] = htmlspecialchars((string) $aff_campaign_row['aff_campaign_name'], ENT_QUOTES, 'UTF-8');
         ?>
 
 <html>
@@ -394,10 +394,14 @@ $redirect_site_url = setPrePopVars($urlvars, $redirect_site_url, false);
 $de = new DataEngine();
 $data=($de->setDirtyHour($mysql['click_id']));
 
+// Assign before the output below: the earlier assignment lives in the other
+// branch, so this path was echoing an undefined key. Escaped like the URL.
+$html['aff_campaign_name'] = htmlspecialchars((string) ($info_row['aff_campaign_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+
 if ($cloaking_on == true) {
-    
+
     // if cloaking is turned on, meta refresh out
-    
+
     ?>
 <html>
 <head>

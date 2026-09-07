@@ -713,16 +713,29 @@ func ensembleWeights(eval *rollingEval, candidates []Method, include func(evalRo
 	if len(rmses) == 0 {
 		return nil
 	}
+	// Every comparison against NaN is false, so a non-finite RMSE would slip
+	// past both the `< best` and the `> dropFactor*best` guards below: it would
+	// neither set the baseline nor be pruned, and 1/(NaN+eps)^2 would then make
+	// that member's weight NaN and poison the whole mix. Skip such members
+	// explicitly — an unmeasurable error is not evidence of accuracy.
 	best := math.MaxFloat64
+	haveBest := false
 	for _, rmse := range rmses {
+		if !isFinite(rmse) {
+			continue
+		}
 		if rmse < best {
 			best = rmse
+			haveBest = true
 		}
+	}
+	if !haveBest {
+		return nil
 	}
 	weights := map[Method]float64{}
 	for _, m := range candidates {
 		rmse, ok := rmses[m]
-		if !ok || rmse > ensembleDropFactor*best {
+		if !ok || !isFinite(rmse) || rmse > ensembleDropFactor*best {
 			continue
 		}
 		// Inverse-MSE (Bates–Granger) weighting on the recency-discounted
@@ -762,13 +775,23 @@ func nestedEnsemblePredictor(e *rollingEval, candidates []Method) rowPredictor {
 	}
 }
 
+// isFinite reports whether f is a real number. Used at every point where a
+// value derived from a backtest feeds a comparison, because NaN compares false
+// against everything and therefore slips through range guards silently.
+func isFinite(f float64) bool {
+	return !math.IsNaN(f) && !math.IsInf(f, 0)
+}
+
 // normalizeWeights scales the members' weights to sum to 1.
 func normalizeWeights(weights map[Method]float64, members []Method) {
 	sum := 0.0
 	for _, m := range members {
 		sum += weights[m]
 	}
-	if sum <= 0 {
+	// Written as !(sum > 0) rather than sum <= 0 so a NaN sum takes the equal-
+	// weights fallback too: NaN <= 0 is false, so the old form let it through
+	// and NaN/NaN made every member's weight NaN.
+	if !(sum > 0) || math.IsInf(sum, 0) {
 		for _, m := range members {
 			weights[m] = 1 / float64(len(members))
 		}
@@ -1075,7 +1098,20 @@ func applyProfile(preds []Prediction, profile func(time.Time) float64, logScale 
 			continue
 		}
 		if v := math.Expm1(preds[i].Value); v > 0 {
-			preds[i].Value = math.Log1p(v * w)
+			// Scale on the reporting scale, then return to the model scale.
+			// log1p is only defined above -1, and a profile weight can
+			// legitimately be negative — BuildWeekdayWeights divides a
+			// possibly-negative day value by a positive mean — so v*w can leave
+			// the domain. Log1p returns NaN there, and a single NaN propagates
+			// through the bounds, the quantiles and (via the backtest RMSE) the
+			// ensemble weights, turning every prediction into NaN. Clamp into
+			// the representable range instead; NonNegative configs then clip it
+			// to zero at output anyway.
+			scaled := v * w
+			if scaled <= -1 {
+				scaled = math.Nextafter(-1, 0)
+			}
+			preds[i].Value = math.Log1p(scaled)
 		}
 	}
 }

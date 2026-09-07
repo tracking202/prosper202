@@ -7,6 +7,14 @@ include_once(str_repeat("../", 1) . '202-config/class-dataengine.php');
 
 AUTH::require_user();
 
+// Upgrading overwrites application files and runs DB migrations — the most
+// powerful operation in the account area. Gate it like the Settings page
+// instead of allowing any authenticated role to trigger it.
+if (!$userObj->hasPermission("access_to_settings")) {
+	header('location: ' . get_absolute_url() . '202-account/');
+	exit;
+}
+
 // On managed deployments (Coolify, or any Docker image built from git) the
 // 1-click upgrade would write into the ephemeral container filesystem and be
 // silently reverted on the next redeploy — refuse before touching anything.

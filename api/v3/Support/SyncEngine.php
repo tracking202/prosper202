@@ -211,6 +211,28 @@ class SyncEngine
             $prune = (bool)($options['prune'] ?? false);
             $prunePreview = (bool)($options['prune_preview'] ?? false);
 
+            // Prune decisions must be made against the FULL source key set.
+            // When updated_since filters the fetch above, every unchanged
+            // source record is absent from $sourceData, and diffing the target
+            // against that filtered set would classify the bulk of the target
+            // install as "only in target" and delete it.
+            $pruneSourceKeys = null;
+            if (($prune || $prunePreview) && $updatedSince !== '') {
+                $fullSourceData = $this->fetchPortableData($sourceClient);
+                $fullSourceLookups = $this->buildEntityLookups($fullSourceData);
+                $pruneSourceKeys = [];
+                foreach ($entities as $pruneEntity) {
+                    $pruneSourceKeys[$pruneEntity] = [];
+                    foreach ($fullSourceData[$pruneEntity] as $fullRow) {
+                        $fullKey = $this->naturalKeyForEntity($pruneEntity, $fullRow, $fullSourceLookups);
+                        if ($fullKey !== '') {
+                            $pruneSourceKeys[$pruneEntity][$fullKey] = true;
+                        }
+                    }
+                }
+                unset($fullSourceData, $fullSourceLookups);
+            }
+
             $results = [];
             $mappings = [];
             $sourceHashes = [];
@@ -220,6 +242,7 @@ class SyncEngine
                 $entitySpan = $this->startTraceSpan('sync.execute.entity', ['entity' => $entity]);
                 $remapSpan = $this->startTraceSpan('sync.execute.remap', ['entity' => $entity]);
                 $remapOps = 0;
+                try {
             $result = [
                 'synced' => 0,
                 'skipped' => 0,
@@ -397,6 +420,7 @@ class SyncEngine
             }
 
             $this->endTraceSpan($remapSpan, 'ok', ['operations' => $remapOps]);
+            $remapSpan = null;
             $writeSpan = $this->startTraceSpan('sync.execute.write', ['entity' => $entity]);
             $this->endTraceSpan($writeSpan, 'ok', [
                 'created' => (int)($result['created'] ?? 0),
@@ -408,10 +432,11 @@ class SyncEngine
                 $pruneSpan = $this->startTraceSpan('sync.execute.prune', ['entity' => $entity]);
                 $allow = $this->normalizeEntitySet($options['prune_allowlist'] ?? []);
                 $deny = $this->normalizeEntitySet($options['prune_denylist'] ?? []);
+                $knownSourceKeys = $pruneSourceKeys !== null ? ($pruneSourceKeys[$entity] ?? []) : $sourceKeys;
 
                 foreach ($targetData[$entity] as $targetRow) {
                     $targetKey = $this->naturalKeyForEntity($entity, $targetRow, $targetLookups);
-                    if ($targetKey === '' || isset($sourceKeys[$targetKey])) {
+                    if ($targetKey === '' || isset($knownSourceKeys[$targetKey])) {
                         continue;
                     }
 
@@ -462,6 +487,13 @@ class SyncEngine
                     'synced' => (int)($result['synced'] ?? 0),
                     'failed' => (int)($result['failed'] ?? 0),
                 ]);
+                $entitySpan = null;
+                } finally {
+                    // On the success path both are null; a thrown error must
+                    // not leave spans stuck in 'running' forever.
+                    $this->endTraceSpan($remapSpan, 'error');
+                    $this->endTraceSpan($entitySpan, 'error');
+                }
         }
 
             $traceMeta = ['entities' => count($entities)];
@@ -516,9 +548,26 @@ class SyncEngine
         array $sourceLookups,
         array $targetLookups
     ): void {
+        $rules = $this->fetchSourceRotatorRules($sourceClient, $sourceRotatorId);
+        $this->postRotatorRules($targetClient, $targetRotatorId, $rules, $sourceLookups, $targetLookups);
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    private function fetchSourceRotatorRules(RemoteApiClient $sourceClient, string $sourceRotatorId): array
+    {
         $sourceRotator = $sourceClient->get('rotators/' . $sourceRotatorId);
         $rules = $sourceRotator['data']['rules'] ?? [];
+        return is_array($rules) ? $rules : [];
+    }
 
+    /** @param array<int, array<string, mixed>> $rules */
+    private function postRotatorRules(
+        RemoteApiClient $targetClient,
+        string $targetRotatorId,
+        array $rules,
+        array $sourceLookups,
+        array $targetLookups
+    ): void {
         foreach ($rules as $rule) {
             $rulePayload = [
                 'rule_name' => $rule['rule_name'] ?? '',
@@ -586,8 +635,16 @@ class SyncEngine
         array $sourceLookups,
         array $targetLookups
     ): void {
+        // Fetch the source rules BEFORE deleting anything on the target: if the
+        // source fetch fails we abort with the target rotator's rules intact,
+        // instead of stripping them and having nothing to recreate.
+        $sourceRules = $this->fetchSourceRotatorRules($sourceClient, $sourceRotatorId);
+
         $targetRotator = $targetClient->get('rotators/' . $targetRotatorId);
         $targetRules = $targetRotator['data']['rules'] ?? [];
+        if (!is_array($targetRules)) {
+            $targetRules = [];
+        }
         foreach ($targetRules as $rule) {
             if (!is_array($rule)) {
                 continue;
@@ -599,14 +656,7 @@ class SyncEngine
             $targetClient->delete('rotators/' . $targetRotatorId . '/rules/' . $ruleId);
         }
 
-        $this->syncRotatorRules(
-            $sourceClient,
-            $targetClient,
-            $sourceRotatorId,
-            $targetRotatorId,
-            $sourceLookups,
-            $targetLookups
-        );
+        $this->postRotatorRules($targetClient, $targetRotatorId, $sourceRules, $sourceLookups, $targetLookups);
     }
 
     protected function buildClients(array $sourceProfile, array $targetProfile): array
@@ -651,8 +701,13 @@ class SyncEngine
                         $detailData = is_array($detail['data'] ?? null) ? $detail['data'] : [];
                         $rules = $detailData['rules'] ?? [];
                         $row['rules'] = is_array($rules) ? $rules : [];
-                    } catch (\Throwable) {
-                        $row['rules'] = [];
+                    } catch (\Throwable $e) {
+                        // Do not map a failed detail fetch to "no rules": the
+                        // diff would see a rule-less rotator and a force_update
+                        // run would delete every rule on the other side.
+                        throw new DatabaseException(
+                            'Failed to fetch rotator ' . $rotatorId . ' detail: ' . $e->getMessage()
+                        );
                     }
                     $enriched[] = $row;
                 }
@@ -1176,7 +1231,9 @@ class SyncEngine
         $this->sortRecursive($copy);
         $json = json_encode($copy, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         if ($json === false) {
-            return sha1((string)microtime(true));
+            // A random fallback would silently defeat incremental-sync
+            // hash matching (every run re-syncs every record, forever).
+            throw new DatabaseException('Failed to encode record for hashing: ' . json_last_error_msg());
         }
         return sha1($json);
     }
@@ -1286,9 +1343,20 @@ class SyncEngine
         return !in_array($value, ['0', 'false', 'no', 'off', 'disabled'], true);
     }
 
-    private function pairKey(array $sourceProfile, array $targetProfile): string
+    /**
+     * Single source of truth for the source/target pair key. Prune tokens,
+     * manifests, and audit records must all agree on this formula — an
+     * independent copy that drifts silently breaks token validation and
+     * incremental manifests.
+     */
+    public static function pairKeyFor(array $sourceProfile, array $targetProfile): string
     {
         return sha1(strtolower((string)($sourceProfile['url'] ?? '')) . '|' . strtolower((string)($targetProfile['url'] ?? '')));
+    }
+
+    private function pairKey(array $sourceProfile, array $targetProfile): string
+    {
+        return self::pairKeyFor($sourceProfile, $targetProfile);
     }
 
     private function profileLabel(array $profile): string

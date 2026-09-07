@@ -158,14 +158,8 @@ class CapabilitiesController
 
     private function maxBulkRows(): int
     {
-        $raw = getenv('P202_MAX_BULK_ROWS');
-        if (is_string($raw) && trim($raw) !== '') {
-            $parsed = (int)$raw;
-            if ($parsed > 0) {
-                return min(5000, $parsed);
-            }
-        }
-        return 500;
+        // Advertise exactly what the bulk endpoint enforces.
+        return \Api\V3\Controller::configuredMaxBulkRows();
     }
 
     /**

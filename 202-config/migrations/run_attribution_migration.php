@@ -42,7 +42,13 @@ try {
     echo "Found " . count($statements) . " SQL statements to execute...\n";
     
     // Execute each statement
-    $db->begin_transaction();
+    // No transaction here, on purpose. The statements in this file are CREATE
+    // TABLE / ALTER TABLE with one INSERT IGNORE between them, and MySQL commits
+    // implicitly before and after every DDL statement -- so a transaction
+    // around this loop can never roll anything back, and the rollback() that
+    // used to sit in the catch block only made a failed run look recoverable.
+    // The script is re-runnable instead: IF NOT EXISTS / INSERT IGNORE make a
+    // second pass after a failure a no-op for everything that already landed.
     
     foreach ($statements as $index => $statement) {
         echo "Executing statement " . ($index + 1) . "...\n";
@@ -58,8 +64,6 @@ try {
             echo "  -> Affected {$db->affected_rows} rows\n";
         }
     }
-    
-    $db->commit();
     
     echo "\nMigration completed successfully!\n";
     echo "Attribution models tables have been created.\n";
@@ -96,7 +100,6 @@ try {
     }
     
 } catch (Exception $e) {
-    $db->rollback();
     echo "\nMigration failed: " . $e->getMessage() . "\n";
     exit(1);
 }

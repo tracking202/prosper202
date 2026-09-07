@@ -95,12 +95,18 @@ func isNotFoundErr(err error) bool {
 	return false
 }
 
-// deleteArgsValidator allows zero positional args when --ids is set, else one.
-func deleteArgsValidator(cmd *cobra.Command, args []string) error {
-	if ids, _ := cmd.Flags().GetString("ids"); strings.TrimSpace(ids) != "" {
-		return cobra.MaximumNArgs(0)(cmd, args)
+// deleteArgsValidatorN returns a cobra Args validator for delete commands whose
+// deletable id is preceded by `base` fixed positional args (0 for flat
+// resources, 1 for nested ones like rotator rules): with --ids set the id list
+// replaces the positional id, so exactly `base` args are allowed; otherwise
+// base+1.
+func deleteArgsValidatorN(base int) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if ids, _ := cmd.Flags().GetString("ids"); strings.TrimSpace(ids) != "" {
+			return cobra.ExactArgs(base)(cmd, args)
+		}
+		return cobra.ExactArgs(base+1)(cmd, args)
 	}
-	return cobra.ExactArgs(1)(cmd, args)
 }
 
 // deleteDryRunFlagDesc is the shared help text for --dry-run on every delete
@@ -232,7 +238,50 @@ func withDryRunHint(err error) error {
 // bulkOrSingleDelete deletes one id (positional) or many (--ids), honoring
 // --force, against endpoint/<id>. Shared so every delete has the same bulk
 // semantics. noun is used in confirmation and summary messages.
+
+// deleteArgsValidator allows zero positional args when --ids is set, else one.
+var deleteArgsValidator = deleteArgsValidatorN(0)
+
+// deleteSpec describes what varies between the CLI's delete commands: the URL
+// for one id, and the wording. Everything else — id validation, the --ids bulk
+// path, confirmation, partial-failure accounting, which stream each message
+// goes to — is shared in runBulkOrSingleDelete. These used to be five
+// hand-rolled copies, and the copies are exactly where the mechanics drifted
+// (prompts on stdout, unvalidated ids); the wording is the only part that was
+// ever meant to differ.
+type deleteSpec struct {
+	endpoint    string // collection path; one record is endpoint + "/" + id
+	noun        string // singular, e.g. "rotator"
+	plural      string // bulk prompts and summaries, e.g. "rotators"
+	cascadeOne  string // single-confirm suffix, e.g. " and all its rules"
+	cascadeMany string // bulk-confirm suffix, e.g. " and all their rules"
+	context     string // parent-resource suffix, e.g. " from rotator 7"
+	// idsHintText overrides the --ids recovery hint for commands whose ids are
+	// not discoverable via a plain `<entity> list` (rotator rules, for example).
+	idsHintText string
+}
+
+// idsHint returns the recovery hint shown when --ids resolves to nothing.
+func (s deleteSpec) idsHint() string {
+	if s.idsHintText != "" {
+		return s.idsHintText
+	}
+	return "Comma-separate internal ids, e.g. --ids 12,13,14 (find them with the matching `... list`)."
+}
+
+// bulkOrSingleDelete is the flat-resource convenience wrapper around
+// runBulkOrSingleDelete for callers with no special wording.
 func bulkOrSingleDelete(cmd *cobra.Command, endpoint, noun string) error {
+	return runBulkOrSingleDelete(cmd, cmd.Flags().Args(), deleteSpec{
+		endpoint: endpoint,
+		noun:     noun,
+		plural:   noun + "s",
+	})
+}
+
+// runBulkOrSingleDelete deletes one id (from args) or many (--ids), honoring
+// --force. Prompts and cancellations go to stderr so piped stdout stays data.
+func runBulkOrSingleDelete(cmd *cobra.Command, args []string, spec deleteSpec) error {
 	c, err := api.NewFromConfig()
 	if err != nil {
 		return err
@@ -240,7 +289,6 @@ func bulkOrSingleDelete(cmd *cobra.Command, endpoint, noun string) error {
 	force, _ := cmd.Flags().GetBool("force")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	idsFlag, _ := cmd.Flags().GetString("ids")
-	args := cmd.Flags().Args()
 
 	if strings.TrimSpace(idsFlag) != "" {
 		ids, perr := parseIDList(idsFlag)
@@ -248,30 +296,30 @@ func bulkOrSingleDelete(cmd *cobra.Command, endpoint, noun string) error {
 			return perr
 		}
 		if len(ids) == 0 {
-			return validationError("--ids requires at least one ID").WithHint("Comma-separate internal ids, e.g. --ids 12,13,14 (find them with the matching `... list`).")
+			return validationError("--ids requires at least one ID").WithHint(spec.idsHint())
 		}
 		if dryRun {
-			return renderDeletePreviews(c, endpoint, ids)
+			return renderDeletePreviews(c, spec.endpoint, ids)
 		}
 		if api.StagedMode() {
-			return stageDeletes(c, endpoint, ids)
+			return stageDeletes(c, spec.endpoint, ids)
 		}
-		if !force && !confirmPrompt("Delete %d %ss?", len(ids), noun) {
+		if !force && !confirmPrompt("Delete %d %s%s%s?", len(ids), spec.plural, spec.cascadeMany, spec.context) {
 			fmt.Fprintln(os.Stderr, "Cancelled.")
 			return nil
 		}
 		deleted, failed := 0, 0
 		for _, id := range ids {
-			if err := c.Delete(endpoint + "/" + id); err != nil {
+			if err := c.Delete(spec.endpoint + "/" + id); err != nil {
 				failed++
-				fmt.Fprintf(os.Stderr, "Failed to delete %s %s: %v\n", noun, id, err)
+				fmt.Fprintf(os.Stderr, "Failed to delete %s %s%s: %v\n", spec.noun, id, spec.context, err)
 				continue
 			}
 			deleted++
 		}
-		output.Success("Deleted %d of %d %ss.", deleted, len(ids), noun)
+		output.Success("Deleted %d of %d %s%s.", deleted, len(ids), spec.plural, spec.context)
 		if failed > 0 {
-			return partialFailureError("failed to delete %d %ss", failed, noun)
+			return partialFailureError("failed to delete %d %s", failed, spec.plural)
 		}
 		return nil
 	}
@@ -279,20 +327,27 @@ func bulkOrSingleDelete(cmd *cobra.Command, endpoint, noun string) error {
 	if len(args) != 1 {
 		return validationError("provide a single id or use --ids").WithHint("Pass one id as the argument, or several with --ids 12,13,14.")
 	}
+	// Validate before previewing or staging: a preview is still a DELETE
+	// request, so a blank or non-numeric id must not reach the server on any
+	// of these paths.
+	id, err := validateID(args[0])
+	if err != nil {
+		return err
+	}
 	if dryRun {
-		return renderDeletePreviews(c, endpoint, []string{args[0]})
+		return renderDeletePreviews(c, spec.endpoint, []string{id})
 	}
 	if api.StagedMode() {
-		return stageDeletes(c, endpoint, []string{args[0]})
+		return stageDeletes(c, spec.endpoint, []string{id})
 	}
-	if !force && !confirmPrompt("Delete %s %s?", noun, args[0]) {
+	if !force && !confirmPrompt("Delete %s %s%s%s?", spec.noun, id, spec.cascadeOne, spec.context) {
 		fmt.Fprintln(os.Stderr, "Cancelled.")
 		return nil
 	}
-	if err := c.Delete(endpoint + "/" + args[0]); err != nil {
+	if err := c.Delete(spec.endpoint + "/" + id); err != nil {
 		return err
 	}
-	output.Success("%s %s deleted.", capitalize(noun), args[0])
+	output.Success("%s %s deleted%s.", capitalize(spec.noun), id, spec.context)
 	return nil
 }
 
@@ -444,6 +499,31 @@ func cloneMutableFields(source map[string]interface{}, fields []crudField) map[s
 		}
 	}
 	return out
+}
+
+// requireID rejects a blank positional id. Interpolating one produced a request
+// against the collection endpoint itself (DELETE users/) rather than against a
+// record — a very different operation from the one the user asked for.
+func requireID(raw string) (string, error) {
+	id := strings.TrimSpace(raw)
+	if id == "" {
+		return "", validationError("an ID is required")
+	}
+	return id, nil
+}
+
+// validateID additionally enforces, for a single positional id, the same numeric
+// rule parseIDList applies to every id in --ids. Used by the mutating commands;
+// `get` uses requireID instead because it also accepts public ids.
+func validateID(raw string) (string, error) {
+	id, err := requireID(raw)
+	if err != nil {
+		return "", err
+	}
+	if _, err := strconv.Atoi(id); err != nil {
+		return "", validationError("invalid ID %q: must be a numeric value", id)
+	}
+	return id, nil
 }
 
 func parseIDList(raw string) ([]string, error) {
@@ -656,8 +736,12 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			id, err := requireID(args[0])
+			if err != nil {
+				return err
+			}
 			forcePublic, _ := cmd.Flags().GetBool("public")
-			data, err := getWithPublicFallback(c, entity, args[0], forcePublic)
+			data, err := getWithPublicFallback(c, entity, id, forcePublic)
 			if err != nil {
 				return err
 			}
@@ -726,7 +810,11 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if len(body) == 0 {
 				return validationError("no fields specified; pass at least one flag to update")
 			}
-			data, err := c.Put(entity.Endpoint+"/"+args[0], body)
+			id, err := validateID(args[0])
+			if err != nil {
+				return err
+			}
+			data, err := c.Put(entity.Endpoint+"/"+id, body)
 			if err != nil {
 				return err
 			}
@@ -742,78 +830,15 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	deleteCmd := &cobra.Command{
 		Use:   "delete <id>",
 		Short: fmt.Sprintf("Delete a %s", entity.Name),
-		Args: func(cmd *cobra.Command, args []string) error {
-			idsFlag, _ := cmd.Flags().GetString("ids")
-			if strings.TrimSpace(idsFlag) != "" {
-				return cobra.MaximumNArgs(0)(cmd, args)
-			}
-			return cobra.ExactArgs(1)(cmd, args)
-		},
+		Args:  deleteArgsValidator,
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("delete", entity.Endpoint)
 			defer func() { done(retErr == nil, errString(retErr)) }()
-			c, err := api.NewFromConfig()
-			if err != nil {
-				return err
-			}
-			dryRun, _ := cmd.Flags().GetBool("dry-run")
-			idsFlag, _ := cmd.Flags().GetString("ids")
-			if strings.TrimSpace(idsFlag) != "" {
-				idList, parseErr := parseIDList(idsFlag)
-				if parseErr != nil {
-					return parseErr
-				}
-				if len(idList) == 0 {
-					return validationError("--ids requires at least one ID").WithHint("Comma-separate internal ids, e.g. --ids 12,13,14 (find them with the matching `... list`).")
-				}
-
-				if dryRun {
-					return renderDeletePreviews(c, entity.Endpoint, idList)
-				}
-				if api.StagedMode() {
-					return stageDeletes(c, entity.Endpoint, idList)
-				}
-
-				force, _ := cmd.Flags().GetBool("force")
-				if !force && !confirmPrompt("Delete %d %s?", len(idList), entity.Plural) {
-					fmt.Println("Cancelled.")
-					return nil
-				}
-
-				deleted := 0
-				failed := 0
-				for _, id := range idList {
-					if err := c.Delete(entity.Endpoint + "/" + id); err != nil {
-						failed++
-						fmt.Fprintf(os.Stderr, "Failed to delete %s %s: %v\n", entity.Name, id, err)
-						continue
-					}
-					deleted++
-				}
-				output.Success("Deleted %d of %d %s.", deleted, len(idList), entity.Plural)
-				if failed > 0 {
-					return partialFailureError("failed to delete %d %s", failed, entity.Plural)
-				}
-				return nil
-			}
-
-			if dryRun {
-				return renderDeletePreviews(c, entity.Endpoint, []string{args[0]})
-			}
-			if api.StagedMode() {
-				return stageDeletes(c, entity.Endpoint, []string{args[0]})
-			}
-
-			force, _ := cmd.Flags().GetBool("force")
-			if !force && !confirmPrompt("Delete %s %s?", entity.Name, args[0]) {
-				fmt.Println("Cancelled.")
-				return nil
-			}
-			if err := c.Delete(entity.Endpoint + "/" + args[0]); err != nil {
-				return err
-			}
-			output.Success("%s %s deleted.", capitalize(entity.Name), args[0])
-			return nil
+			return runBulkOrSingleDelete(cmd, args, deleteSpec{
+				endpoint: entity.Endpoint,
+				noun:     entity.Name,
+				plural:   entity.Plural,
+			})
 		},
 	}
 	registerDeleteFlags(deleteCmd, entity.Name)
@@ -1228,16 +1253,37 @@ func init() {
 					close(results)
 				}()
 
-				ordered := make([]map[string]interface{}, len(trackers))
+				// Report per-tracker failures and keep the rows that succeeded,
+				// matching how the bulk deletes account for partial failure.
+				// Returning on the first error discarded every row already
+				// fetched, so one transient 500 threw away the whole listing.
+				indexed := make([]map[string]interface{}, len(trackers))
+				failed := 0
 				for result := range results {
 					if result.err != nil {
-						return result.err
+						failed++
+						fmt.Fprintf(os.Stderr, "Failed to fetch URL for tracker at row %d: %v\n", result.index+1, result.err)
+						continue
 					}
-					ordered[result.index] = result.row
+					indexed[result.index] = result.row
 				}
 
-				encoded, _ := json.Marshal(map[string]interface{}{"data": ordered})
+				// Drop the gaps left by failed rows rather than emitting nulls.
+				ordered := make([]map[string]interface{}, 0, len(trackers)-failed)
+				for _, row := range indexed {
+					if row != nil {
+						ordered = append(ordered, row)
+					}
+				}
+
+				encoded, err := json.Marshal(map[string]interface{}{"data": ordered})
+				if err != nil {
+					return fmt.Errorf("encoding tracker URLs: %w", err)
+				}
 				render(encoded)
+				if failed > 0 {
+					return partialFailureError("failed to fetch %d of %d tracker URLs", failed, len(trackers))
+				}
 				return nil
 			},
 		}

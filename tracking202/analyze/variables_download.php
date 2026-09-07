@@ -13,13 +13,14 @@ include_once(substr(__DIR__, 0,-20) . '/202-config/class-dataengine.php');
 AUTH::require_user();
 
 $time = grab_timeframe();
-$mysql['to'] = $db->real_escape_string($time['to']);
-$mysql['from'] = $db->real_escape_string($time['from']);
+$mysql['to'] = $db->real_escape_string((string)$time['to']);
+$mysql['from'] = $db->real_escape_string((string)$time['from']);
 
 
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 $user_sql = "SELECT user_pref_breakdown, user_pref_show, user_cpc_or_cpv FROM 202_users_pref WHERE user_id=".$mysql['user_id'];
 $user_result = _mysqli_query($user_sql);
+if (!$user_result) { record_mysql_error($user_sql); }
 $user_row = $user_result->fetch_assoc();
 $breakdown = $user_row['user_pref_breakdown'];
 $cpv = ($user_row['user_cpc_or_cpv'] == 'cpv');

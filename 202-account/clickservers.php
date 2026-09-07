@@ -11,7 +11,7 @@ $user_sql = "	SELECT 	`clickserver_api_key`
 				 FROM   	`202_users` 
 				 WHERE  	`202_users`.`user_id`='".$mysql['user_id']."'";
 $user_result = $db->query($user_sql);
-$user_row = $user_result->fetch_assoc();
+$user_row = $user_result ? ($user_result->fetch_assoc() ?: []) : [];
 if ($user_row['clickserver_api_key']) {
 	$clickservers = clickserver_api_domain_list($user_row['clickserver_api_key']);
 }
@@ -126,7 +126,7 @@ $(document).ready(function() {
 	                	$(checkbox).bootstrapSwitch('toggleState');
 
 	                } else {
-	                    if("<?php echo $_SERVER['HTTP_HOST'];?>" == clid){
+	                    if(<?php echo json_encode((string) ($_SERVER['HTTP_HOST'] ?? ''), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?> == clid){
                             window.location.href = "../202-account/signout.php";
                         }
 

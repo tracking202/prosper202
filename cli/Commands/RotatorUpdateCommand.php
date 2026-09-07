@@ -28,13 +28,7 @@ class RotatorUpdateCommand extends BaseCommand
 
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
-        $body = [];
-        foreach (['name', 'default_url', 'default_campaign', 'default_lp'] as $f) {
-            $val = $input->getOption($f);
-            if ($val !== null) {
-                $body[$f] = $val;
-            }
-        }
+        $body = $this->collectOptions($input, ['name', 'default_url', 'default_campaign', 'default_lp']);
         if (empty($body)) {
             $output->writeln('<error>Provide at least one field to update</error>');
             return Command::FAILURE;

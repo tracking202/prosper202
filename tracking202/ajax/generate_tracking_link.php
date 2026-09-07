@@ -133,15 +133,34 @@ $html = [];
 							WHERE 202_trackers.tracker_id_public = '".$mysql['tracker_id_public']."' AND 202_trackers.user_id = '".$mysql['user_id']."'";
 		
 		$get_tracker_result = $db->query($get_tracker_sql);
-		$get_tracker_row = $get_tracker_result->fetch_assoc();		
-
-		if ($get_tracker_result->num_rows > 0) {
-			$drop_tracker = "DELETE FROM 202_trackers WHERE tracker_id = '".$get_tracker_row['tracker_id']."'";
-			$drop_tracker_result = $db->query($drop_tracker);
+		if (!$get_tracker_result) {
+			record_mysql_error($get_tracker_sql);
 		}
+		$get_tracker_row = $get_tracker_result->fetch_assoc();
 	}
 
-	$db->begin_transaction();
+	// The transaction opens BEFORE the edit path's DELETE. Editing a tracker is
+	// implemented as delete-then-recreate, and with the DELETE outside the
+	// transaction any failure of the INSERT/UPDATE below (or of begin itself)
+	// destroyed the user's tracker and never replaced it -- the rollback could
+	// not reach a row deleted in autocommit.
+	//
+	// begin_transaction() is checked because under this bootstrap's
+	// mysqli_report(MYSQLI_REPORT_STRICT) a failure returns false rather than
+	// throwing; ignoring it would run everything below in autocommit with the
+	// rollback() calls undoing nothing. record_mysql_error() is declared
+	// `never` -- it logs mysqli_error($db) and exits -- so nothing follows it.
+	if (!$db->begin_transaction()) {
+		record_mysql_error('begin_transaction() for tracker creation');
+	}
+
+	if (isset($get_tracker_result) && $get_tracker_result->num_rows > 0) {
+		$drop_tracker = "DELETE FROM 202_trackers WHERE tracker_id = '".$get_tracker_row['tracker_id']."'";
+		if (!$db->query($drop_tracker)) {
+			$db->rollback();
+			record_mysql_error($drop_tracker);
+		}
+	}
 
 	$tracker_sql = "INSERT INTO `202_trackers`
 					SET			`user_id`='".$mysql['user_id']."',
@@ -183,7 +202,16 @@ $html = [];
 		die('Error setting tracker ID');
 	}
 
-	$db->commit();
+	if (!$db->commit()) {
+		// Capture the cause before rollback() overwrites mysqli_error($db), and
+		// roll back BEFORE record_mysql_error(): that helper INSERTs into
+		// 202_mysql_errors on this same connection, and a still-open failed
+		// transaction would swallow that row along with everything else.
+		$commitError = $db->error;
+		$db->rollback();
+		error_log('generate_tracking_link: commit failed: ' . $commitError);
+		record_mysql_error('commit() for tracker creation: ' . $commitError);
+	}
 
 	$parsed_url = [];
 	if (!empty($landing_page_row['landing_page_url'])) {

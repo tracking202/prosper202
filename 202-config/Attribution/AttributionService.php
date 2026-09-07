@@ -153,6 +153,8 @@ final readonly class AttributionService
         if (isset($payload['webhook']) && is_array($payload['webhook'])) {
             $webhookPayload = array_filter($payload['webhook'], static fn ($value) => $value !== null && $value !== '');
             if (!empty($webhookPayload)) {
+                // fromArray() runs the write-boundary SSRF check and throws
+                // InvalidArgumentException like the other payload validation here.
                 $webhook = ExportWebhook::fromArray($webhookPayload);
             }
         }

@@ -9,7 +9,6 @@ use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Console\Question\ConfirmationQuestion;
 
 class AttributionModelDeleteCommand extends BaseCommand
 {
@@ -28,16 +27,8 @@ class AttributionModelDeleteCommand extends BaseCommand
     {
         $id = $input->getArgument('id');
 
-        if (!$input->getOption('force')) {
-            $helper = $this->getHelper('question');
-            $question = new ConfirmationQuestion(
-                sprintf('Are you sure you want to delete attribution model %s? [y/N] ', $id),
-                false
-            );
-            if (!$helper->ask($input, $output, $question)) {
-                $output->writeln('Cancelled.');
-                return Command::SUCCESS;
-            }
+        if (!$this->confirmDestructive($input, $output, sprintf('delete attribution model %s', $id))) {
+            return Command::SUCCESS;
         }
 
         $this->client()->delete('attribution/models/' . $id);

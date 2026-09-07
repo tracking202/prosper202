@@ -5,8 +5,12 @@ include_once(substr(__DIR__, 0, -22) . '/202-config/connect.php');
 //grab the users date range preferences
 $time = grab_timeframe();
 $click_filtered = '';
-$mysql['to'] = $db->real_escape_string($time['to']);
-$mysql['from'] = $db->real_escape_string($time['from']);
+// grab_timeframe() returns int timestamps (mktime/time), and this file declares
+// strict_types=1 — passing an int to real_escape_string(string) is a TypeError,
+// not a coercion, so the mobile mini-stats page fataled for every account whose
+// time preference resolves to a computed window (the default, 'today').
+$mysql['to'] = $db->real_escape_string((string)$time['to']);
+$mysql['from'] = $db->real_escape_string((string)$time['from']);
 
 
 //show real or filtered clicks

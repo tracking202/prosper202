@@ -158,6 +158,27 @@ the lookup keys on (here the key itself, so the same key still lands in the
 same file) and bound what a shard retains, or the correctness fix ships a
 latency regression.
 
+### 16. A validation in a hydration path fails the batch, not the record
+`ExportWebhook`'s constructor ran the SSRF guard. That constructor is also the
+row-hydration path: the export cron's `findPending()` maps every pending row
+through it, so one stored `http://` webhook — or one transient DNS failure —
+threw out of the first call and stranded *every* pending export on every tick,
+including jobs with no webhook at all. The guard was right; its placement
+converted a single bad record into a total outage of the queue. Rejecting bad
+input belongs at the write boundary, where a caller is present to be told, and
+again at the point of use, where it can fail one item. A constructor that
+doubles as `fromDatabaseRow()` is neither: it runs over data that is already
+stored, in a loop, with nobody to answer. Before adding a check, ask who is on
+the other end of the throw and how many unrelated records share the call.
+
+The same question applies to any guard whose failure mode is silence. The
+webhook crons pin curl to an address `OutboundUrlGuard` approved, but an
+unbracketed IPv6 literal makes the `CURLOPT_RESOLVE` entry unparseable; curl
+discards it, resolves the host itself, and the DNS-rebinding hole the pin
+exists to close is open again — with the pinning code still sitting there
+looking correct. A guard that can be dropped without an error needs a test that
+asserts the guard's *output*, not just that the call was made.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure

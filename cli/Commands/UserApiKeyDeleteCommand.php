@@ -9,7 +9,6 @@ use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Console\Question\ConfirmationQuestion;
 
 class UserApiKeyDeleteCommand extends BaseCommand
 {
@@ -30,16 +29,8 @@ class UserApiKeyDeleteCommand extends BaseCommand
         $userId = $input->getArgument('user_id');
         $apiKey = $input->getArgument('api_key');
 
-        if (!$input->getOption('force')) {
-            $helper = $this->getHelper('question');
-            $question = new ConfirmationQuestion(
-                sprintf('Are you sure you want to delete API key %s for user %s? [y/N] ', $apiKey, $userId),
-                false
-            );
-            if (!$helper->ask($input, $output, $question)) {
-                $output->writeln('Cancelled.');
-                return Command::SUCCESS;
-            }
+        if (!$this->confirmDestructive($input, $output, sprintf('delete API key %s for user %s', $apiKey, $userId))) {
+            return Command::SUCCESS;
         }
 
         $this->client()->delete('users/' . $userId . '/api-keys/' . $apiKey);

@@ -363,7 +363,10 @@ func runSyncProfiles(entities []string, fromProfile, toProfile string, opts sync
 
 			if opts.Incremental && manifest != nil && sourceID != "" {
 				if entry, exists := manifest.GetMapping(currentEntity, sourceID); exists {
-					if entry.SourceHash == sourceHash {
+					// "" means no fingerprint (see comparableHash); it must never
+					// satisfy the unchanged-skip, else unencodable rows are
+					// silently dropped from every incremental sync.
+					if entry.SourceHash != "" && entry.SourceHash == sourceHash {
 						result.Skipped++
 						idMap.Set(currentEntity, sourceID, entry.TargetID)
 						continue
@@ -646,8 +649,17 @@ func handleSyncRecordError(entity, key string, err error, skipErrors bool, resul
 	return skipErrors
 }
 
+// comparableHash fingerprints a record for incremental-sync change detection.
+// A row that cannot be encoded returns "" — never a real hash — because hashing
+// the nil bytes from a failed Marshal gave every unencodable row the SAME
+// digest, so a changed record could match its stored hash and be skipped as
+// unchanged. Callers must treat "" as "no fingerprint" (see the skip check in
+// runSyncProfiles), which errs toward re-syncing.
 func comparableHash(row map[string]interface{}) string {
-	data, _ := json.Marshal(row)
+	data, err := json.Marshal(row)
+	if err != nil {
+		return ""
+	}
 	sum := sha1.Sum(data)
 	return hex.EncodeToString(sum[:])
 }
@@ -793,11 +805,14 @@ func tryServerSyncRead(path, fromProfile, toProfile string) (bool, error) {
 		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
 
+	// scalarString instead of type assertions: loadProfileConnection builds
+	// string values today, but a bare .(string) here would panic at a distance
+	// if that map's shape ever changed in diff.go.
 	params := map[string]string{
-		"source[name]": sourceConn["name"].(string),
-		"source[url]":  sourceConn["url"].(string),
-		"target[name]": targetConn["name"].(string),
-		"target[url]":  targetConn["url"].(string),
+		"source[name]": scalarString(sourceConn["name"]),
+		"source[url]":  scalarString(sourceConn["url"]),
+		"target[name]": scalarString(targetConn["name"]),
+		"target[url]":  scalarString(targetConn["url"]),
 	}
 	resp, err := orchestrator.Get(path, params)
 	if err != nil {

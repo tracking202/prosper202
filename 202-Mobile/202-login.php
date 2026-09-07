@@ -78,7 +78,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$login_server_serialized,
 			$login_session_serialized
 		);
-		$log_stmt->execute();
+		if (!$log_stmt->execute()) {
+			prosper_log('login', 'Unable to write mobile login log row: ' . $log_stmt->error);
+		}
 		$log_stmt->close();
 	} elseif ($should_log_attempt) {
 		prosper_log('login', 'Unable to prepare mobile login log statement: ' . $db->error);

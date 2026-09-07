@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -561,9 +562,22 @@ func scalarString(v interface{}) string {
 	}
 }
 
+// comparableEqual reports whether two records are identical. Both operands are
+// marshalled and compared byte-wise, which is stable because encoding/json sorts
+// map keys.
+//
+// An encoding failure must report "not equal", never "equal". Both failures
+// yielded nil, and bytes.Equal(nil, nil) is true — so a record pair that could
+// not be encoded was declared unchanged, and sync would silently skip a real
+// difference. Erring toward "changed" makes the failure visible as a redundant
+// update instead of missing data.
 func comparableEqual(a, b map[string]interface{}) bool {
-	aBytes, _ := json.Marshal(a)
-	bBytes, _ := json.Marshal(b)
+	aBytes, aErr := json.Marshal(a)
+	bBytes, bErr := json.Marshal(b)
+	if aErr != nil || bErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not encode records for comparison (%v / %v); treating them as changed.\n", aErr, bErr)
+		return false
+	}
 	return bytes.Equal(aBytes, bBytes)
 }
 
@@ -590,9 +604,11 @@ func changedFields(a, b map[string]interface{}) []string {
 			out = append(out, key)
 			continue
 		}
-		aBytes, _ := json.Marshal(aRaw)
-		bBytes, _ := json.Marshal(bRaw)
-		if !bytes.Equal(aBytes, bBytes) {
+		aBytes, aErr := json.Marshal(aRaw)
+		bBytes, bErr := json.Marshal(bRaw)
+		// As in comparableEqual: an encoding failure must not be reported as an
+		// unchanged field, which would hide the difference from the sync.
+		if aErr != nil || bErr != nil || !bytes.Equal(aBytes, bBytes) {
 			out = append(out, key)
 		}
 	}

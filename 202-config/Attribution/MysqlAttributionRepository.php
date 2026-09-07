@@ -190,27 +190,4 @@ final class MysqlAttributionRepository implements AttributionRepositoryInterface
 
         return $this->conn->fetchAll($stmt);
     }
-
-    public function scheduleExport(int $modelId, int $userId, array $data): int
-    {
-        $now = time();
-
-        $stmt = $this->conn->prepareWrite(
-            'INSERT INTO 202_attribution_exports
-             (user_id, model_id, scope_type, scope_id, start_hour, end_hour, requested_format, status, queued_at, created_at, updated_at, webhook_url)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        );
-        $this->conn->bind($stmt, 'iisiiissiiis', [
-            $userId, $modelId,
-            (string) ($data['scope_type'] ?? 'global'),
-            (int) ($data['scope_id'] ?? 0),
-            (int) ($data['start_hour'] ?? 0),
-            (int) ($data['end_hour'] ?? time()),
-            (string) ($data['format'] ?? 'csv'),
-            'queued',
-            $now, $now, $now,
-            (string) ($data['webhook_url'] ?? ''),
-        ]);
-        return $this->conn->executeInsert($stmt);
-    }
 }

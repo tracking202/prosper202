@@ -116,7 +116,9 @@ class Application extends ConsoleApplication
                     'aff_campaign_cloaking' => 'Enable cloaking (0|1)',
                     'aff_campaign_rotate' => 'Enable URL rotation (0|1)',
                 ],
-                'required' => ['aff_campaign_name', 'aff_campaign_url'],
+                // Must match CampaignsController::fields() required flags, or
+                // client-side validation passes and the server 422s anyway.
+                'required' => ['aff_campaign_name', 'aff_campaign_url', 'aff_campaign_payout', 'aff_network_id'],
                 'listParams' => ['filter[aff_network_id]' => 'Filter by affiliate network'],
             ],
             [

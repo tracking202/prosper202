@@ -89,7 +89,10 @@ var reportCrosstabCmd = &cobra.Command{
 		if len(opts.Fields) == 0 {
 			opts.Fields = append([]string{rowDim}, cols...)
 		}
-		out, _ := json.Marshal(map[string]interface{}{"data": matrix})
+		out, err := json.Marshal(map[string]interface{}{"data": matrix})
+		if err != nil {
+			return fmt.Errorf("encoding crosstab matrix: %w", err)
+		}
 		output.RenderWith(out, opts)
 		return nil
 	},

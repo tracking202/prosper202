@@ -48,9 +48,4 @@ interface AttributionRepositoryInterface
      * @return list<array<string, mixed>>
      */
     public function listExports(int $modelId, int $userId): array;
-
-    /**
-     * @param array<string, mixed> $data scope_type, scope_id, start_hour, end_hour, format, webhook_url
-     */
-    public function scheduleExport(int $modelId, int $userId, array $data): int;
 }

@@ -83,6 +83,13 @@ final readonly class AttributionJobRunner
             $lastConversionId = $lastRecord?->conversionId;
         } while ($lastConversionId !== null);
 
+        // Break the by-reference binding from the batch loop above. While it is
+        // still bound, the by-value `$state = $modelsState[...]` in the finalise
+        // loop below writes into the LAST model's slot instead of reading its
+        // own — so with >= 2 models the final model finalises another model's
+        // state (wrong totals, and its snapshot rows re-pointed at that model).
+        unset($state);
+
         if (!$processed) {
             return;
         }

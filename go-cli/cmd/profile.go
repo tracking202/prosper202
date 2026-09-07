@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -87,7 +88,7 @@ var configRemoveProfileCmd = &cobra.Command{
 
 		force, _ := cmd.Flags().GetBool("force")
 		if !force && !confirmPrompt("Remove profile %s?", name) {
-			fmt.Println("Cancelled.")
+			fmt.Fprintln(os.Stderr, "Cancelled.")
 			return nil
 		}
 

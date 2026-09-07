@@ -15,12 +15,24 @@ if (!$userObj->hasPermission("access_to_update_section") || !$userObj->hasPermis
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
+	// CSRF check — this endpoint clears lead/filter flags (alters reported
+	// income); gate it on the session token like the setup/ mutations do.
+	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
+		header('location: ' . get_absolute_url() . 'tracking202/update/delete-subids.php');
+		die();
+	}
+
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 
 	$subids = $_POST['subids'] ?? '';
 	$subids = trim((string) $subids);
 	$subids = explode("\r", $subids);
 	$subids = str_replace("\n", '', $subids);
+
+	// Optimistic before the loop so a mid-loop failure can flip it false. The
+	// previous unconditional `$success = true;` AFTER the loop overwrote every
+	// failure, reporting success even when updates had failed.
+	$success = true;
 
 	foreach ($subids as $click_id) {
 		$mysql['click_id'] = $db->real_escape_string($click_id);
@@ -53,10 +65,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				click_id='" . $mysql['click_id'] . "'
 				AND user_id='" . $mysql['user_id'] . "'
 		";
-		try {
-			$update_result = $db->query($update_sql);
-		} catch (Exception $e) {
-			error_log("Database query failed: " . $e->getMessage());
+		// Return-value check, not try/catch: see the note on the spy update below.
+		if ($db->query($update_sql) === false) {
+			error_log("delete-subids clicks update failed: " . $db->error);
 			$success = false;
 			continue;
 		}
@@ -70,13 +81,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				click_id='" . $mysql['click_id'] . "'
 				AND user_id='" . $mysql['user_id'] . "'
 		";
-		$update_result = $db->query($update_sql) or die($db->error);
+		// connect.php sets mysqli_report(MYSQLI_REPORT_STRICT) WITHOUT
+		// MYSQLI_REPORT_ERROR, so a failed query() returns false rather than
+		// throwing — check the return value, a catch block would never run.
+		// (Replaces `or die($db->error)`, which leaked the raw MySQL error and
+		// left 202_clicks updated while 202_clicks_spy was not.)
+		if ($db->query($update_sql) === false) {
+			error_log("delete-subids spy update failed: " . $db->error);
+			$success = false;
+			continue;
+		}
 
 		$de = new DataEngine();
 		$de->setDirtyHour($mysql['click_id']);
 	}
-
-	$success = true;
 }
 
 //show the template
@@ -111,6 +129,7 @@ template_top('Delete Subids'); ?>
 <div class="row">
 	<div class="col-xs-12">
 		<form method="post" action="" class="form-horizontal" role="form">
+			<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES); ?>" />
 			<div class="form-group" style="margin:0px 0px 15px 0px;">
 				<label for="subids">Subids</label>
 				<textarea rows="5" name="subids" id="subids" placeholder="Add your subids..." class="form-control"><?php echo htmlspecialchars($_POST['subids'] ?? '', ENT_QUOTES); ?></textarea>

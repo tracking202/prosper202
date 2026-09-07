@@ -2,9 +2,13 @@
 declare(strict_types=1);
 function getStats($db, $variables): mixed {
 	$mysql['api_key'] = $db->real_escape_string($variables['apikey']);
-	$key_sql = "SELECT 	*
-				FROM   	`202_api_keys` 
-				WHERE  	`api_key`='".$mysql['api_key']."'";
+	// Join 202_users so a soft-deleted user's key stops authenticating, exactly
+	// as api/v3/Auth.php does. Deleting a user must revoke access on EVERY API
+	// version, not just the newest one.
+	$key_sql = "SELECT 	k.*
+				FROM   	`202_api_keys` k
+				INNER JOIN `202_users` u ON u.`user_id` = k.`user_id`
+				WHERE  	k.`api_key`='".$mysql['api_key']."' AND u.`user_deleted` = 0";
 	$key_result = _mysqli_query($db, $key_sql);
 	if ($key_result === false) {
 		return ['msg' => 'Database error', 'error' => true, 'status' => 500];

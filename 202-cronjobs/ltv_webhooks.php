@@ -29,6 +29,7 @@ include_once(str_repeat("../", 1) . '202-config/connect.php');
 
 use Prosper202\Database\Connection;
 use Prosper202\Ltv\MysqlWebhookRepository;
+use Prosper202\Validation\OutboundUrlGuard;
 
 set_time_limit(0);
 
@@ -73,22 +74,6 @@ try {
             continue;
         }
 
-        // Pin the connection to an address the guard just validated —
-        // otherwise curl re-resolves and a DNS-rebinding host could hand it
-        // a private IP the check never saw. Prefer IPv4; TLS host
-        // verification still runs against the hostname's certificate.
-        $pinnedIp = null;
-        foreach ($validatedIps as $candidateIp) {
-            if (filter_var($candidateIp, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false) {
-                $pinnedIp = $candidateIp;
-                break;
-            }
-        }
-        $pinnedIp = $pinnedIp ?? $validatedIps[0];
-        $urlParts = parse_url($url);
-        $pinHost = (string) ($urlParts['host'] ?? '');
-        $pinPort = (int) ($urlParts['port'] ?? 443);
-
         $signature = MysqlWebhookRepository::signature($body, (string) $delivery['webhook_secret']);
 
         $ch = curl_init($url);
@@ -108,15 +93,10 @@ try {
                 'User-Agent: Prosper202-LTV-Webhook/1.0',
             ],
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => false, // SSRF: never follow redirects
-            CURLOPT_MAXREDIRS => 0,
-            CURLOPT_CONNECTTIMEOUT => 5,
-            CURLOPT_TIMEOUT => 15,
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_SSL_VERIFYHOST => 2,
-            CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
-            CURLOPT_RESOLVE => [$pinHost . ':' . $pinPort . ':' . $pinnedIp],
         ]);
+        // Pin to an address the guard just validated, no redirects, https only,
+        // TLS verified -- one shared option set so no dispatcher can drop one.
+        curl_setopt_array($ch, OutboundUrlGuard::curlOptions($url, $validatedIps));
 
         $responseBody = curl_exec($ch);
         $statusCode = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);

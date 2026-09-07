@@ -165,7 +165,7 @@ $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url, 2u.install_hash, 2u.p202_customer_api_key FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = $db->query($user_sql);
-$user_row = $user_results->fetch_assoc();
+$user_row = $user_results ? ($user_results->fetch_assoc() ?: []) : [];
 $username = $user_row['username'];
 $editing_dni_network = false;
 $dniNetworks = getAllDniNetworks($user_row['install_hash']);
@@ -180,7 +180,7 @@ if (isset($_GET['cb_status']) && $_GET['cb_status'] == 1) {
              FROM 202_users_pref
              WHERE user_id='" . $mysql['user_id'] . "'";
 	$user_results = $db->query($user_sql);
-	$user_row = $user_results->fetch_assoc();
+	$user_row = $user_results ? ($user_results->fetch_assoc() ?: []) : [];
 	if ($user_row['cb_verified']) {
 		echo '<span class="label label-primary">Verified</span>';
 	} else {
@@ -196,7 +196,7 @@ $user_sql = "	SELECT 	*
 				 LEFT JOIN	`202_users_pref` USING (user_id)
 				 WHERE  	`202_users`.`user_id`='" . $mysql['user_id'] . "'";
 $user_result = $db->query($user_sql);
-$user_row = $user_result->fetch_assoc();
+$user_row = $user_result ? ($user_result->fetch_assoc() ?: []) : [];
 $html = array_map('htmlentities', $user_row);
 
 $cb_verified = $user_row['cb_verified'];
@@ -467,8 +467,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 }
 
 
-if (isset($_GET['delete_dni_network']) && !empty($_GET['delete_dni_network'])) {
-	$mysql['deleteDniNetworkId'] = $db->real_escape_string((string)$_GET['delete_dni_network']);
+// Deleting is a POST: a GET carrying the CSRF token put that token into browser
+// history, Referer headers and access logs, and it guards every POST mutation in
+// the session.
+if (isset($_POST['delete_dni_network']) && !empty($_POST['delete_dni_network'])) {
+	// CSRF check — this deletes a DNI network and marks the linked aff network
+	// deleted.
+	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
+		http_response_code(403);
+		die('Invalid token.');
+	}
+	$mysql['deleteDniNetworkId'] = $db->real_escape_string((string)$_POST['delete_dni_network']);
 	$db->query("DELETE FROM 202_dni_networks WHERE id = '" . $mysql['deleteDniNetworkId'] . "' AND user_id = '" . $mysql['user_id'] . "'");
 	$sql = "UPDATE 202_aff_networks SET aff_network_deleted = '1', aff_network_time = '" . time() . "' WHERE dni_network_id = '" . $mysql['deleteDniNetworkId'] . "'";
 	$db->query($sql);
@@ -599,7 +608,7 @@ template_top('API Integrations');
 							}
 						?>
 							<tr>
-								<td> <img src="<?php echo $dni_row['favIcon']; ?>" width=16>&nbsp;&nbsp;<?php echo $dni_row['name'] . " (" . $dni_row['type'] . ")"; ?><span class="fui-info-circle" style="font-size: 12px; margin: -25px 0px 0px 5px;" data-toggle="tooltip" title="" data-original-title="<?php echo $dni_row['shortDescription']; ?>"></span><br>
+								<td> <img src="<?php echo htmlspecialchars((string) ($dni_row['favIcon']), ENT_QUOTES, 'UTF-8'); ?>" width=16>&nbsp;&nbsp;<?php echo htmlspecialchars((string) ($dni_row['name']), ENT_QUOTES, 'UTF-8') . " (" . htmlspecialchars((string) ($dni_row['type']), ENT_QUOTES, 'UTF-8') . ")"; ?><span class="fui-info-circle" style="font-size: 12px; margin: -25px 0px 0px 5px;" data-toggle="tooltip" title="" data-original-title="<?php echo htmlspecialchars((string) ($dni_row['shortDescription']), ENT_QUOTES, 'UTF-8'); ?>"></span><br>
 									<?php if ($dni_row['processed'] == false) { ?>
 										<div id="network-<?php echo $dni_row['id']; ?>">
 											<span style='font-size:10px'>processing... <img src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif"></span>
@@ -611,9 +620,9 @@ template_top('API Integrations');
 											<div>
 											<?php } ?>
 								</td>
-								<td><?php echo substr((string) $dni_row['apiKey'], 0, 12) . "... "; ?><a href="#" class="link showFullDniApikey" data-long="<?php echo $dni_row['apiKey']; ?>" data-short="<?php echo substr((string) $dni_row['apiKey'], 0, 12); ?>">show</a></td>
+								<td><?php echo substr((string) $dni_row['apiKey'], 0, 12) . "... "; ?><a href="#" class="link showFullDniApikey" data-long="<?php echo htmlspecialchars((string) ($dni_row['apiKey']), ENT_QUOTES, 'UTF-8'); ?>" data-short="<?php echo substr((string) $dni_row['apiKey'], 0, 12); ?>">show</a></td>
 								<td><?php echo $dni_row['affiliateId']; ?></td>
-								<td><a href="<?php echo get_absolute_url(); ?>202-account/api-integrations.php?edit_dni_network=<?php echo $dni_row['id']; ?>" title="Edit"><i class="glyphicon glyphicon-pencil"></i></a> <a href="<?php echo get_absolute_url(); ?>202-account/api-integrations.php?delete_dni_network=<?php echo $dni_row['id']; ?>" onClick="return confirm('Delete This DNI Network?')" title="Delete"><i class="glyphicon glyphicon-trash"></i></a></td>
+								<td><a href="<?php echo get_absolute_url(); ?>202-account/api-integrations.php?edit_dni_network=<?php echo $dni_row['id']; ?>" title="Edit"><i class="glyphicon glyphicon-pencil"></i></a> <form method="post" style="display:inline" onsubmit="return confirm('Delete This DNI Network?');"><input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>"><input type="hidden" name="delete_dni_network" value="<?php echo htmlspecialchars((string) $dni_row['id'], ENT_QUOTES, 'UTF-8'); ?>"><button type="submit" title="Delete" class="btn btn-link" style="padding:0;border:0;vertical-align:baseline"><i class="glyphicon glyphicon-trash"></i></button></form></td>
 							</tr>
 						<?php } ?>
 					</tbody>
@@ -624,8 +633,8 @@ template_top('API Integrations');
 			<div class="apiint-dni-form">
 				<form class="form-horizontal" role="form" method="post" action="">
 					<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>">
-					<input type="hidden" name="dni_network_type" id="dni_network_type" value="<?php echo $edit_dni_row['type'] ?? ''; ?>">
-					<input type="hidden" name="dni_network_name" id="dni_network_name" value="<?php echo $edit_dni_row['name'] ?? ''; ?>">
+					<input type="hidden" name="dni_network_type" id="dni_network_type" value="<?php echo htmlspecialchars((string) ($edit_dni_row['type'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
+					<input type="hidden" name="dni_network_name" id="dni_network_name" value="<?php echo htmlspecialchars((string) ($edit_dni_row['name'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
 					<?php if (isset($editing_dni_network) && $editing_dni_network) { ?>
 						<input type="hidden" name="editing_dni_network" value="1">
 						<input type="hidden" name="editing_dni_network_id" value="<?php echo $edit_dni_row['id'] ?? ''; ?>">
@@ -646,7 +655,7 @@ template_top('API Integrations');
 									echo 'col-xs-7';
 								} ?>" id="dni_api_key_input_group" style="padding: 0px; padding-right: 5px;">
 						<label class="sr-only" for="dni_network_api_key">Add API key</label>
-						<input type="text" name="dni_network_api_key" class="form-control input-sm" placeholder="API Key" value="<?php echo $edit_dni_row['apiKey'] ?? ''; ?>">
+						<input type="text" name="dni_network_api_key" class="form-control input-sm" placeholder="API Key" value="<?php echo htmlspecialchars((string) ($edit_dni_row['apiKey'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
 						<div id="dniInfo"></div>
 					</div>
 					<div class="col-xs-2" id="dni_affiliate_id_input_group" style="<?php if (isset($editing_dni_network) && $editing_dni_network) {

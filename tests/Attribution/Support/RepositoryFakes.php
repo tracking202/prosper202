@@ -9,10 +9,6 @@ use Prosper202\Attribution\ModelType;
 use Prosper202\Attribution\Repository\ModelRepositoryInterface;
 use Prosper202\Attribution\Repository\SnapshotRepositoryInterface;
 use Prosper202\Attribution\Repository\TouchpointRepositoryInterface;
-use Prosper202\Attribution\Export\ExportFormat;
-use Prosper202\Attribution\Export\ExportJob;
-use Prosper202\Attribution\Export\ExportStatus;
-use Prosper202\Attribution\Repository\ExportRepositoryInterface;
 use Prosper202\Attribution\ScopeType;
 use Prosper202\Attribution\Snapshot;
 use Prosper202\Attribution\Touchpoint;
@@ -298,113 +294,5 @@ final class InMemoryTouchpointRepository implements TouchpointRepositoryInterfac
     public function deleteBySnapshot(int $snapshotId): void
     {
         unset($this->touchpoints[$snapshotId]);
-    }
-}
-
-/**
- * In-memory fake for {@see ExportRepositoryInterface}, backed by the mutable
- * Prosper202\Attribution\Export\ExportJob value object that ExportProcessor
- * operates on. Job objects are stored by reference so that in-place mutations
- * performed by the processor (markCompleted/markFailed) are reflected once the
- * processor calls update(), mirroring the behaviour of MysqlExportRepository.
- *
- * Used exclusively by ExportProcessorTest.
- */
-final class InMemoryExportRepository implements ExportRepositoryInterface
-{
-    /**
-     * @var array<int, ExportJob>
-     */
-    private array $jobs = [];
-
-    private int $nextId = 1;
-
-    /** @var callable():int|null */
-    private $clock;
-
-    /**
-     * @param callable():int|null $clock
-     */
-    public function __construct(?callable $clock = null)
-    {
-        $this->clock = $clock;
-    }
-
-    public function create(ExportJob $job): ExportJob
-    {
-        $job->exportId = $this->nextId++;
-        $this->jobs[$job->exportId] = $job;
-
-        return $job;
-    }
-
-    public function update(ExportJob $job): ExportJob
-    {
-        if ($job->exportId === null) {
-            return $job;
-        }
-
-        $this->jobs[$job->exportId] = $job;
-
-        return $job;
-    }
-
-    public function findById(int $exportId): ?ExportJob
-    {
-        return $this->jobs[$exportId] ?? null;
-    }
-
-    /**
-     * @return ExportJob[]
-     */
-    public function findForUser(int $userId, ?int $modelId = null, int $limit = 25): array
-    {
-        $limit = max(1, $limit);
-
-        $filtered = array_filter(
-            $this->jobs,
-            static function (ExportJob $job) use ($userId, $modelId): bool {
-                if ($job->userId !== $userId) {
-                    return false;
-                }
-
-                return $modelId === null || $job->modelId === $modelId;
-            }
-        );
-
-        usort($filtered, static fn (ExportJob $a, ExportJob $b): int => $b->createdAt <=> $a->createdAt);
-
-        return array_slice(array_values($filtered), 0, $limit);
-    }
-
-    /**
-     * Claims a batch of pending jobs and marks them as processing, returning the
-     * stored job instances so subsequent mutations and update() calls persist.
-     *
-     * @return ExportJob[]
-     */
-    public function claimPending(int $limit = 10): array
-    {
-        $limit = max(1, $limit);
-
-        $pending = array_filter(
-            $this->jobs,
-            static fn (ExportJob $job): bool => $job->status === ExportStatus::PENDING
-        );
-
-        usort($pending, static fn (ExportJob $a, ExportJob $b): int => $a->createdAt <=> $b->createdAt);
-        $batch = array_slice($pending, 0, $limit);
-
-        $now = $this->now();
-        foreach ($batch as $job) {
-            $job->markProcessing($now);
-        }
-
-        return $batch;
-    }
-
-    private function now(): int
-    {
-        return $this->clock !== null ? ($this->clock)() : time();
     }
 }

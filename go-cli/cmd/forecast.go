@@ -325,7 +325,7 @@ func runForecast(cmd *cobra.Command, args []string) error {
 
 	series := parsed[metric]
 	if len(series) == 0 {
-		available := parsedMetricNames(parsed)
+		available := responseMetricNames(data)
 		if len(available) == 0 {
 			return validationError("no valid data points found for metric %q", metric).
 				WithHint("No bucket in the response carried a numeric %q value. Check `p202 report timeseries --period %s` with the same filters to see which metrics the API returns for this window.", metric, history)
@@ -659,14 +659,40 @@ func parseTimeseriesMulti(data []byte, metrics []string) (map[string]forecast.Se
 	return out, rejected, nil
 }
 
-// parsedMetricNames lists the metrics a parsed response carried values for,
-// sorted, for error hints.
-func parsedMetricNames(parsed map[string]forecast.Series) []string {
-	names := make([]string, 0, len(parsed))
-	for m, s := range parsed {
-		if len(s) > 0 {
-			names = append(names, m)
+// responseMetricNames lists every forecastable metric the RAW response carried a
+// numeric value for, sorted.
+//
+// The recovery hint must not use parsedMetricNames: parseTimeseriesMulti only
+// populates the metrics it was asked for (the coherent inputs plus the requested
+// one), so naming those listed a subset of what would actually work and hid the
+// rest of the valid choices from anyone following the hint.
+func responseMetricNames(data []byte) []string {
+	var parsed map[string]interface{}
+	if json.Unmarshal(data, &parsed) != nil {
+		return nil
+	}
+	rawItems, ok := parsed["data"].([]interface{})
+	if !ok {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, raw := range rawItems {
+		obj, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
 		}
+		for m := range forecastAllowedMetrics {
+			if seen[m] {
+				continue
+			}
+			if _, ok := extractMetricValue(obj, m); ok {
+				seen[m] = true
+			}
+		}
+	}
+	names := make([]string, 0, len(seen))
+	for m := range seen {
+		names = append(names, m)
 	}
 	sort.Strings(names)
 	return names

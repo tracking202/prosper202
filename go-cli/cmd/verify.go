@@ -356,6 +356,7 @@ var rotatorCheckCmd = &cobra.Command{
 			return err
 		}
 		var datas []map[string]interface{}
+		var fetchFailures []map[string]interface{}
 		if len(args) == 1 {
 			raw, err := c.Get("rotators/"+args[0], nil)
 			if err != nil {
@@ -382,19 +383,35 @@ var rotatorCheckCmd = &cobra.Command{
 			for _, r := range resp.Data {
 				full, err := c.Get(fmt.Sprintf("rotators/%v", normalizeID(r["id"])), nil)
 				if err != nil {
+					// This command gates deploys, so a rotator whose detail
+					// fetch failed must count as a failure — silently skipping
+					// it let a broken rotator ride an exit code 0.
+					fetchFailures = append(fetchFailures, map[string]interface{}{
+						"id":     normalizeID(r["id"]),
+						"name":   r["name"],
+						"status": "ERROR",
+						"reason": fmt.Sprintf("could not fetch rotator: %v", err),
+					})
 					continue
 				}
 				var fr struct {
 					Data map[string]interface{} `json:"data"`
 				}
-				if json.Unmarshal(full, &fr) == nil {
-					datas = append(datas, fr.Data)
+				if err := json.Unmarshal(full, &fr); err != nil {
+					fetchFailures = append(fetchFailures, map[string]interface{}{
+						"id":     normalizeID(r["id"]),
+						"name":   r["name"],
+						"status": "ERROR",
+						"reason": fmt.Sprintf("could not parse rotator: %v", err),
+					})
+					continue
 				}
+				datas = append(datas, fr.Data)
 			}
 		}
 
-		rows := make([]map[string]interface{}, 0, len(datas))
-		failed := 0
+		rows := make([]map[string]interface{}, 0, len(datas)+len(fetchFailures))
+		failed := len(fetchFailures)
 		for _, d := range datas {
 			issues := rotatorIssues(d)
 			status := "OK"
@@ -409,6 +426,7 @@ var rotatorCheckCmd = &cobra.Command{
 				"reason": strings.Join(issues, "; "),
 			})
 		}
+		rows = append(rows, fetchFailures...)
 		render(rowsToJSON(rows))
 		if failed > 0 {
 			return partialFailureError("%d rotator(s) have configuration issues", failed)
@@ -443,7 +461,12 @@ var rotatorTraceCmd = &cobra.Command{
 		var tr struct {
 			Data []map[string]interface{} `json:"data"`
 		}
-		_ = json.Unmarshal(trk, &tr)
+		// Discarding this error made tr.Data nil, so a malformed response was
+		// reported as "fed by 0 tracker(s)" — a confident false claim from a
+		// command whose whole purpose is verification.
+		if err := json.Unmarshal(trk, &tr); err != nil {
+			return fmt.Errorf("parsing trackers for rotator %s: %w", args[0], err)
+		}
 
 		fmt.Fprintf(os.Stderr, "Rotator %s %q — default %s, %d rule(s), fed by %d tracker(s)\n",
 			args[0], fmt.Sprintf("%v", rot.Data["name"]), defaultDest(rot.Data),
@@ -534,7 +557,11 @@ var trackerCheckCmd = &cobra.Command{
 			var resp struct {
 				Data []map[string]interface{} `json:"data"`
 			}
-			_ = json.Unmarshal(list, &resp)
+			// Without this check a malformed list left resp.Data nil, so the
+			// command verified nothing at all and still reported success.
+			if err := json.Unmarshal(list, &resp); err != nil {
+				return fmt.Errorf("parsing tracker list: %w", err)
+			}
 			for _, t := range resp.Data {
 				ids = append(ids, fmt.Sprintf("%v", normalizeID(t["tracker_id"])))
 			}

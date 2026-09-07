@@ -202,8 +202,15 @@ switch ($case) {
 		
 	default:
 		
-		if ($_SERVER['REQUEST_METHOD'] == 'POST') { 
-			
+		if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+
+			// The form below already submits the session token; verify it here
+			// rather than rendering a token that is never checked.
+			if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
+				header('location: '.get_absolute_url().'tracking202/update/upload.php');
+				die();
+			}
+
 			// Initialize error variable
 			$error = false;
 			
@@ -276,7 +283,7 @@ switch ($case) {
 		<div class="row">
 			<div class="col-xs-12">
 				<form enctype="multipart/form-data" action="<?php echo get_absolute_url();?>tracking202/update/upload.php" method="post" class="form-horizontal" role="form">
-					<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" /> 
+					<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES); ?>" />
 					<div class="col-xs-3">
 						<label for="csv">Upload Commission Report:</label>
 					</div>

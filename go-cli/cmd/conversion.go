@@ -3,12 +3,9 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strconv"
-	"strings"
 
 	"p202/internal/api"
-	"p202/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -102,11 +99,11 @@ var conversionCreateCmd = &cobra.Command{
 			clickIDStr, _ = cmd.Flags().GetString("click_id_public")
 		}
 		if clickIDStr == "" {
-			return validationError("required flag --click_id (or --click_id_public) is missing")
+			return fmt.Errorf("required flag --click_id (or --click_id_public) is missing")
 		}
 		clickID, err := strconv.Atoi(clickIDStr)
 		if err != nil {
-			return validationError("--click_id must be an integer: %s", clickIDStr).WithHint("Use the internal click id from `p202 click list`, or pass the public id via --click_id_public.")
+			return fmt.Errorf("--click_id must be an integer: %s", clickIDStr)
 		}
 		body := map[string]interface{}{
 			"click_id": clickID,
@@ -132,76 +129,13 @@ var conversionCreateCmd = &cobra.Command{
 var conversionDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete a conversion",
-	Args: func(cmd *cobra.Command, args []string) error {
-		idsFlag, _ := cmd.Flags().GetString("ids")
-		if strings.TrimSpace(idsFlag) != "" {
-			return cobra.MaximumNArgs(0)(cmd, args)
-		}
-		return cobra.ExactArgs(1)(cmd, args)
-	},
+	Args:  deleteArgsValidator,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
-		dryRun, _ := cmd.Flags().GetBool("dry-run")
-		idsFlag, _ := cmd.Flags().GetString("ids")
-		if strings.TrimSpace(idsFlag) != "" {
-			idList, parseErr := parseIDList(idsFlag)
-			if parseErr != nil {
-				return parseErr
-			}
-			if len(idList) == 0 {
-				return validationError("--ids requires at least one ID").WithHint("Comma-separate internal ids, e.g. --ids 12,13,14 (find them with the matching `... list`).")
-			}
-
-			if dryRun {
-				return renderDeletePreviews(c, "conversions", idList)
-			}
-			if api.StagedMode() {
-				return stageDeletes(c, "conversions", idList)
-			}
-
-			force, _ := cmd.Flags().GetBool("force")
-			if !force && !confirmPrompt("Delete %d conversions?", len(idList)) {
-				fmt.Println("Cancelled.")
-				return nil
-			}
-
-			deleted := 0
-			failed := 0
-			for _, id := range idList {
-				if err := c.Delete("conversions/" + id); err != nil {
-					failed++
-					fmt.Fprintf(os.Stderr, "Failed to delete conversion %s: %v\n", id, err)
-					continue
-				}
-				deleted++
-			}
-			output.Success("Deleted %d of %d conversions.", deleted, len(idList))
-			if failed > 0 {
-				return partialFailureError("failed to delete %d conversions", failed)
-			}
-			return nil
-		}
-
-		if dryRun {
-			return renderDeletePreviews(c, "conversions", []string{args[0]})
-		}
-		if api.StagedMode() {
-			return stageDeletes(c, "conversions", []string{args[0]})
-		}
-
-		force, _ := cmd.Flags().GetBool("force")
-		if !force && !confirmPrompt("Delete conversion %s?", args[0]) {
-			fmt.Println("Cancelled.")
-			return nil
-		}
-		if err := c.Delete("conversions/" + args[0]); err != nil {
-			return err
-		}
-		output.Success("Conversion %s deleted.", args[0])
-		return nil
+		return runBulkOrSingleDelete(cmd, args, deleteSpec{
+			endpoint: "conversions",
+			noun:     "conversion",
+			plural:   "conversions",
+		})
 	},
 }
 

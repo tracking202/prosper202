@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Api\V3;
 
+use Tests\Support\SourceScan;
 use Tests\TestCase;
 
 /**
@@ -45,33 +46,19 @@ final class DuplicateGlobalClassTest extends TestCase
     /** @return array<string, string[]> global class name => files declaring it */
     private function globalClassDeclarations(): array
     {
-        $root = dirname(__DIR__, 3);
         $found = [];
-
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveCallbackFilterIterator(
-                new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS),
-                static function (\SplFileInfo $file): bool {
-                    $name = $file->getFilename();
-                    return !in_array($name, ['vendor', 'node_modules', '.git'], true);
-                }
-            )
-        );
-
-        foreach ($iterator as $file) {
-            if (!$file->isFile() || $file->getExtension() !== 'php') {
-                continue;
-            }
-            $source = (string)file_get_contents($file->getPathname());
+        // Tests are included: a test that declares a global stub class collides
+        // with the real one just as any other file would.
+        foreach (SourceScan::phpFiles(includeTests: true) as $path => $source) {
             // Namespaced classes cannot collide with global ones.
             if (preg_match('/^\s*namespace\s+[^;{\s]+/m', $source) === 1) {
                 continue;
             }
-            if (preg_match_all('/^\s*(?:final\s+|abstract\s+)?class\s+([A-Za-z_]\w*)/m', $source, $matches) < 1) {
+            if (SourceScan::countMatches('/^\s*(?:final\s+|abstract\s+)?class\s+([A-Za-z_]\w*)/m', $source, $path, $matches) < 1) {
                 continue;
             }
             foreach ($matches[1] as $class) {
-                $found[$class][] = str_replace($root . '/', '', $file->getPathname());
+                $found[$class][] = $path;
             }
         }
 

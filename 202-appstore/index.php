@@ -6,7 +6,7 @@ AUTH::require_user();
 
 template_top('Prosper202 ClickServer App Store');  
 
-	if ($_POST['update_clickserver_api_key'] == '1') {
+	if (isset($_POST['update_clickserver_api_key']) && $_POST['update_clickserver_api_key'] == '1') {
 
 		// validate token
 		if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) { $error['token'] = 'You must use our forms to submit data.';  }
@@ -43,6 +43,7 @@ template_top('Prosper202 ClickServer App Store');
 	
 	//make it hide most of the api keys
 	$hideChars = 22;
+	$hiddenPart = '';
 	for ($x = 0; $x < $hideChars; $x++) $hiddenPart .= '*';
 	if ($html['clickserver_api_key']) $html['clickserver_api_key'] = $hiddenPart . substr($html['clickserver_api_key'], $hideChars, 99);
 	

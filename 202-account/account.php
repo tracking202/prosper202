@@ -26,7 +26,7 @@ $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = $db->query($user_sql);
-$user_row = $user_results->fetch_assoc();
+$user_row = $user_results ? ($user_results->fetch_assoc() ?: []) : [];
 $username = $user_row['username'];
 
 if (!empty($user_row['url']))
@@ -89,16 +89,20 @@ if (isset($_POST['remove_rest_api_key'])) {
 	die();
 }
 
+// Inbound handoff from my.tracking202.com, which redirects here with the key
+// base64'd in the query string. A GET must NOT change state: the vendor cannot
+// carry our session token, so this used to be an unauthenticated-origin write —
+// any site could <img src="...account.php?customers_api_key=..."> and silently
+// rewrite the account's customer API key. Decode it, hold it, and let the user
+// confirm through the token-checked POST handler below (which performs the same
+// validation and write, so there is no second code path to keep in sync).
+$pendingCustomerApiKey = null;
 if (!empty($_GET['customers_api_key'])) {
-	$mysql['p202_customer_api_key'] = $db->real_escape_string(base64_decode((string) $_GET['customers_api_key']));
-	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-	$validate = validateCustomersApiKey($mysql['p202_customer_api_key']);
-	if ($validate['code'] != 200) {
-		$error['p202_customer_api_key_invalid'] = "API key is not valid. Check your key and try again!";
-	}
-	if (!$error) {
-		$db->query("UPDATE 202_users SET p202_customer_api_key = '" . $mysql['p202_customer_api_key'] . "' WHERE user_id = '" . $mysql['user_id'] . "'");
-		$change_p202_customer_api_key = true;
+	$decodedCustomerApiKey = base64_decode((string) $_GET['customers_api_key'], true);
+	if ($decodedCustomerApiKey === false || trim($decodedCustomerApiKey) === '') {
+		$error['p202_customer_api_key_invalid'] = 'That API key link was malformed. Copy your key from my.tracking202.com and paste it in the field below.';
+	} else {
+		$pendingCustomerApiKey = trim($decodedCustomerApiKey);
 	}
 }
 
@@ -148,7 +152,7 @@ if (!$userObj->hasPermission("access_to_personal_settings")) {
 }
 
 $user_result = $db->query($user_sql);
-$user_row = $user_result->fetch_assoc();
+$user_row = $user_result ? ($user_result->fetch_assoc() ?: []) : [];
 $currentUserEmail = isset($user_row['user_email']) ? (string)$user_row['user_email'] : '';
 $html = array_map('htmlentities', $user_row);
 
@@ -487,7 +491,12 @@ if (!empty($_POST['change_user_api_key']) && $_POST['change_user_api_key'] == '1
 }
 
 if (!empty($_POST['change_user_stats202_app_key']) && $_POST['change_user_stats202_app_key'] == '1') {
-	if (!preg_match('/\*/', (string) $_POST['user_stats202_app_key'])) {
+	// CSRF check — every other mutation block in this file validates the token;
+	// this one omitted it, letting a forged form overwrite the Stats202 app key.
+	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
+		$error['token'] = 'You must use our forms to submit data.';
+	}
+	if (!$error && !preg_match('/\*/', (string) $_POST['user_stats202_app_key'])) {
 		// Replace the undefined method with a more direct validation approach
 		$app_key = $_POST['user_stats202_app_key'];
 		$api_key = $_SESSION['user_api_key'];
@@ -515,12 +524,15 @@ if (!empty($_POST['change_user_stats202_app_key']) && $_POST['change_user_stats2
 }
 
 if (!empty($_POST['update_p202_customer_api_key']) && $_POST['update_p202_customer_api_key'] == '1') {
+	// Check the token BEFORE validateCustomersApiKey(): that makes a server-side
+	// call out to the vendor with the submitted value, so validating first let a
+	// forged request drive outbound traffic even though the write was blocked.
 	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
 		$error['token'] = 'You must use our forms to submit data.';
 	}
 	$mysql['p202_customer_api_key'] = $db->real_escape_string((string)$_POST['p202_customer_api_key']);
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-	$validate = validateCustomersApiKey($_POST['p202_customer_api_key']);
+	$validate = $error ? ['code' => 0] : validateCustomersApiKey($_POST['p202_customer_api_key']);
 	if ($validate['code'] != 200 && $mysql['p202_customer_api_key'] != '') {
 		$error['p202_customer_api_key_invalid'] = "API key is not valid. Check your key and try again!";
 	}
@@ -562,7 +574,7 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 			$verify_stmt->bind_param('i', $current_user_id);
 			$verify_stmt->execute();
 			$result = $verify_stmt->get_result();
-			$stored = $result ? $result->fetch_assoc() : null;
+			$stored = $result ? ($result->fetch_assoc() ?: []) : [];
 			$verify_stmt->close();
 			if (!$stored || !verify_user_pass((string) $_POST['user_pass'], (string) ($stored['user_pass'] ?? ''))['valid']) {
 				$error['user_pass'] .= 'Your old password was typed incorrectly.';
@@ -637,7 +649,7 @@ $user_sql = "	SELECT 	*
 				 LEFT JOIN	`202_users_pref` USING (user_id)
 				 WHERE  	`202_users`.`user_id`='" . $mysql['user_id'] . "'";
 $user_result = $db->query($user_sql);
-$user_row = $user_result->fetch_assoc();
+$user_row = $user_result ? ($user_result->fetch_assoc() ?: []) : [];
 $html = array_map('htmlentities', $user_row);
 ?>
 
@@ -676,6 +688,28 @@ $html = array_map('htmlentities', $user_row);
 				<?php } ?>
 				<?php if ($change_p202_customer_api_key) { ?>
 					<div class="success" style="text-align:right"><small><span class="fui-check-inverted"></span> Your submission was successful. Your Prosper202 customer API key have been saved.</small></div>
+				<?php } ?>
+
+				<?php if ($pendingCustomerApiKey !== null) {
+					// Confirmation step for the vendor handoff above. Submits through
+					// update_p202_customer_api_key, which checks the session token.
+					$pendingPreview = strlen($pendingCustomerApiKey) > 8
+						? substr($pendingCustomerApiKey, 0, 8) . str_repeat('*', 12)
+						: $pendingCustomerApiKey;
+				?>
+					<div class="alert" style="text-align:left; padding:10px; border:1px solid #e5e5e5; margin-bottom:10px;">
+						<form method="post" action="" class="form-inline" role="form">
+							<input type="hidden" name="update_p202_customer_api_key" value="1" />
+							<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>" />
+							<input type="hidden" name="p202_customer_api_key" value="<?php echo htmlspecialchars($pendingCustomerApiKey, ENT_QUOTES, 'UTF-8'); ?>" />
+							<small>
+								Connect the Prosper202 customer API key
+								<code><?php echo htmlspecialchars($pendingPreview, ENT_QUOTES, 'UTF-8'); ?></code>
+								to this account?
+							</small>
+							<button class="btn btn-sm btn-p202" type="submit" style="margin-left:8px;">Save API key</button>
+						</form>
+					</div>
 				<?php } ?>
 			</div>
 		</div>

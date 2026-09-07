@@ -19,6 +19,13 @@ $success = false;
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
+	// CSRF check — this endpoint alters reported income; every setup/ mutation
+	// gates its writes on the session token, and this one must too.
+	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
+		header('location: ' . get_absolute_url() . 'tracking202/update/subids.php');
+		die();
+	}
+
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$mysql['click_update_type'] = 'upload';
 	$mysql['click_update_time'] = time();
@@ -154,6 +161,7 @@ template_top('Update Subids'); ?>
 <div class="row">
 	<div class="col-xs-12">
 		<form method="post" action="" class="form-horizontal" role="form">
+			<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES); ?>" />
 			<div class="form-group" style="margin:0px 0px 15px 0px;">
 				<label for="subids">Subids</label>
 				<textarea rows="5" name="subids" id="subids" placeholder="Add your subids..." class="form-control"></textarea>

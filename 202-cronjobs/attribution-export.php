@@ -285,12 +285,31 @@ function dispatchWebhook(ExportJob $job, array $fileInfo): array
         $headers[] = 'X-Prosper202-Signature: ' . $signature;
     }
 
+    // Full check at dispatch: the write boundary only checked shape, and DNS
+    // can change between scheduling and delivery anyway. The validated
+    // addresses feed curlOptions(), which pins the connection to one of them so
+    // curl cannot be handed a rebound private address by its own lookup.
+    try {
+        $validatedIps = \Prosper202\Validation\OutboundUrlGuard::assertAllowed($webhook->url, 'webhook_url');
+    } catch (\Prosper202\Validation\OutboundUrlException $e) {
+        error_log('attribution-export: refusing webhook delivery: ' . $e->getMessage());
+        return [
+            'success' => false,
+            'attempted_at' => time(),
+            'status_code' => null,
+            'response_body' => null,
+            'error' => $e->getMessage(),
+        ];
+    }
+
     $ch = curl_init($webhook->url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $json);
     curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+    // Pinned to a validated address, no redirects, https only, TLS verified --
+    // the same option set ltv_webhooks.php uses, so neither can drop one.
+    curl_setopt_array($ch, \Prosper202\Validation\OutboundUrlGuard::curlOptions($webhook->url, $validatedIps));
 
     $response = curl_exec($ch);
     $statusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE) ?: null;

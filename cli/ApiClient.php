@@ -119,6 +119,12 @@ class ApiClient
             throw new ApiException($msg, $httpCode, $data);
         }
 
+        if ($response !== '' && !is_array($decoded)) {
+            // A scalar body on success must not silently render as an
+            // empty result — surface what the server actually sent.
+            throw new \RuntimeException('Unexpected non-object JSON response from server: ' . substr($response, 0, 200));
+        }
+
         return $data;
     }
 }

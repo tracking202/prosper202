@@ -38,7 +38,12 @@ var campaignOptimizeCmd = &cobra.Command{
 		var sum struct {
 			Data map[string]interface{} `json:"data"`
 		}
-		_ = json.Unmarshal(sumRaw, &sum)
+		// A discarded parse error left sum.Data nil, and every metric below
+		// coerced to 0 — the command then reported a campaign with real traffic
+		// as having no clicks, leads or revenue.
+		if err := json.Unmarshal(sumRaw, &sum); err != nil {
+			return fmt.Errorf("parsing summary report for campaign %s: %w", id, err)
+		}
 		s := sum.Data
 		clicks := toFloat(s["total_clicks"])
 		leads := toFloat(s["total_leads"])

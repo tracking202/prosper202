@@ -44,6 +44,27 @@ if ($userIds === []) {
 $cronBucket = (int) ($endTime - ($endTime % 3600));
 $cronType = 'attr';
 
+// The check-then-insert window guard below is not atomic and 202_cronjobs has
+// no unique key on (cronjob_type, cronjob_time), so two overlapping runs could
+// both pass the check and rebuild the same bucket. Take an exclusive
+// non-blocking file lock first; the loser exits instead of duplicating work.
+$attrLockPath = sys_get_temp_dir() . '/p202-attribution-rebuild.lock';
+$attrLockHandle = fopen($attrLockPath, 'c+');
+if ($attrLockHandle === false) {
+    fwrite(STDERR, "Unable to open attribution cron lock file.\n");
+    exit(1);
+}
+if (!flock($attrLockHandle, LOCK_EX | LOCK_NB)) {
+    fclose($attrLockHandle);
+    fwrite(STDOUT, "Attribution cron is already running; skipping.\n");
+    exit(0);
+}
+// Released implicitly when the process exits.
+register_shutdown_function(static function () use ($attrLockHandle): void {
+    flock($attrLockHandle, LOCK_UN);
+    fclose($attrLockHandle);
+});
+
 $database = DB::getInstance();
 $connection = $database?->getConnection();
 if ($connection instanceof mysqli) {

@@ -13,8 +13,8 @@ include_once(substr(__DIR__, 0,-20) . '/202-config/class-dataengine.php');
 AUTH::require_user();
 
 $time = grab_timeframe();
-$mysql['to'] = $db->real_escape_string($time['to']);
-$mysql['from'] = $db->real_escape_string($time['from']);
+$mysql['to'] = $db->real_escape_string((string)$time['to']);
+$mysql['from'] = $db->real_escape_string((string)$time['from']);
 
 
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);

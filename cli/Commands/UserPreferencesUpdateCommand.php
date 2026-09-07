@@ -29,13 +29,7 @@ class UserPreferencesUpdateCommand extends BaseCommand
 
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
-        $body = [];
-        foreach (['user_tracking_domain', 'user_account_currency', 'user_slack_incoming_webhook', 'user_daily_email', 'ipqs_api_key'] as $f) {
-            $val = $input->getOption($f);
-            if ($val !== null) {
-                $body[$f] = $val;
-            }
-        }
+        $body = $this->collectOptions($input, ['user_tracking_domain', 'user_account_currency', 'user_slack_incoming_webhook', 'user_daily_email', 'ipqs_api_key']);
         if (empty($body)) {
             $output->writeln('<error>Provide at least one preference to update</error>');
             return Command::FAILURE;

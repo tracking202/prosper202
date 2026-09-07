@@ -32,7 +32,7 @@ class ReportTimeseriesCommand extends BaseCommand
 
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
-        $params = ReportSummaryCommand::collectParams($input);
+        $params = $this->collectOptions($input, ReportSummaryCommand::FILTER_PARAMS);
         $params['interval'] = $input->getOption('interval');
 
         $result = $this->client()->get('reports/timeseries', $params);

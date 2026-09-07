@@ -166,12 +166,20 @@ func TestSaveThenLoadRoundTrip(t *testing.T) {
 	tmp := t.TempDir()
 	setTestHome(t, tmp)
 
-	original := &Config{
-		URL:    "https://tracker.example.com",
-		APIKey: "roundtrip-key-abcd1234",
-	}
+	const wantURL = "https://tracker.example.com"
+	const wantKey = "roundtrip-key-abcd1234"
+
+	original := &Config{URL: wantURL, APIKey: wantKey}
 	if err := original.Save(); err != nil {
 		t.Fatalf("Save() error: %v", err)
+	}
+
+	// Save() normalizes in place: the legacy fields are consumed into the
+	// profiles map and cleared, so a saved Config is left in canonical V2 form.
+	// That is what stops a later Save() from re-applying them over whatever the
+	// caller has since assigned to the profile.
+	if original.URL != "" || original.APIKey != "" {
+		t.Fatalf("legacy fields not consumed by Save(): url=%q api_key=%q", original.URL, original.APIKey)
 	}
 
 	loaded, err := Load()
@@ -182,11 +190,11 @@ func TestSaveThenLoadRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveProfile(default) error: %v", err)
 	}
-	if profile.URL != original.URL {
-		t.Fatalf("URL round-trip: got %q, want %q", profile.URL, original.URL)
+	if profile.URL != wantURL {
+		t.Fatalf("URL round-trip: got %q, want %q", profile.URL, wantURL)
 	}
-	if profile.APIKey != original.APIKey {
-		t.Fatalf("APIKey round-trip: got %q, want %q", profile.APIKey, original.APIKey)
+	if profile.APIKey != wantKey {
+		t.Fatalf("APIKey round-trip: got %q, want %q", profile.APIKey, wantKey)
 	}
 }
 
