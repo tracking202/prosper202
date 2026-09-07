@@ -1,0 +1,231 @@
+# SKAdNetwork (SKAN)
+
+Prosper202 can act as the measurement endpoint for Apple's SKAdNetwork — the
+privacy-preserving install attribution framework for iOS app campaigns. iOS
+devices send signed install-validation postbacks directly to a URL the
+advertised app (or an ad network) designates. Point that URL at your
+Prosper202 install and it will receive the postbacks, verify Apple's ECDSA
+signature on each one, store them, decode conversion values into named events
+and revenue, and report on the results — the server side of what a mobile
+measurement partner (MMP) does.
+
+Supported postback versions: 2.1, 2.2, 3.0, and 4.0 are verified against
+Apple's published P-256 key. Retired versions (1.0, 2.0) and versions newer
+than 4.0 are stored but flagged `unverifiable`.
+
+## Setup
+
+1. **Confirm the endpoint is reachable.** Postbacks arrive at
+   `https://your-domain.com/.well-known/skadnetwork/report-attribution/`
+   (shipped as a real directory — no rewrite rules needed, and the bundled
+   Apache/nginx configs already keep `/.well-known/` servable). A GET to that
+   URL returns `{"data":{"status":"ready",...}}`. The URL must be served over
+   HTTPS on port 443 for devices to deliver to it.
+
+2. **Point the app at it.** The app developer adds one key to the app's
+   `Info.plist`:
+
+   ```xml
+   <key>NSAdvertisingAttributionReportEndpoint</key>
+   <string>https://your-domain.com</string>
+   ```
+
+   Devices append `/.well-known/skadnetwork/report-attribution/` themselves.
+   With this in place the developer receives a copy of every *winning*
+   postback for the app. (Registered ad networks can likewise use the same
+   URL as their postback endpoint and will also receive non-winning
+   postbacks.)
+
+3. **Register the app** so its postbacks belong to your reporting
+   (`POST /skan/apps` with the numeric App Store id). Postbacks that arrive
+   before registration are stored unclaimed and are claimed retroactively
+   when the app is registered.
+
+4. **Mirror the app's conversion-value schema** as decoding rules
+   (`POST /skan/conversion-values`). The app itself chooses what the 6-bit
+   fine value (0–63) and the coarse value (`low`/`medium`/`high`) mean when
+   it calls SKAdNetwork's `updatePostbackConversionValue(_:coarseValue:lockWindow:)`
+   — Prosper202 cannot set conversion values for the app, it decodes what
+   the app encoded. Keep the two sides in sync or reports will decode to the
+   wrong events.
+
+## Endpoints
+
+| Method | Path | Description |
+| ------ | ---- | ----------- |
+| `POST` | `/.well-known/skadnetwork/report-attribution/` | Public postback receiver (no auth — devices POST here) |
+| `GET` | `/skan/postbacks` | List received postbacks (filters below, paginated) |
+| `GET` | `/skan/postbacks/{id}` | One postback, including its attribution signature |
+| `GET` | `/skan/report` | Aggregate report with conversion-value decoding |
+| `POST` | `/skan/verify` | Verify a postback payload's signature without storing it |
+| `GET/POST` | `/skan/apps`, `/skan/apps/{id}` | App registry (CRUD; `PUT`/`DELETE` on `/{id}`) |
+| `GET/POST` | `/skan/conversion-values`, `/skan/conversion-values/{id}` | Decoding rules (CRUD; `PUT`/`DELETE` on `/{id}`) |
+
+All `/skan` API routes require the `skan` scope area (`skan:read` for reads,
+`skan:write` for writes; `POST /skan/verify` counts as a read — it computes
+over the submitted payload without storing anything). App and
+conversion-value writes support `?staged=1` proposals and `?dry_run=1`
+delete previews like the rest of the operator surface. `GET /capabilities`
+reports `features.skan: true` once the server has this feature.
+
+## The receiver
+
+The receiver validates strictly, verifies, and stores — it never drops a
+plausible postback silently:
+
+- Structurally broken bodies (bad JSON, missing or mis-typed fields,
+  out-of-range values) are rejected with `400` and per-field errors. Genuine
+  devices never send these.
+- Valid postbacks are stored and answered `200` — including replays (devices
+  retry up to nine times over several days when they don't get a `200`;
+  replays answer `{"duplicate": true}` and store nothing new). Deduplication
+  follows Apple's guidance: the `transaction-id`, namespaced by ad network,
+  with the postback-sequence-index and did-win legs kept distinct.
+- Signature verification result is stored per row as `signature_valid`:
+  `1` (verified against Apple's key), `0` (wrong or forged), `NULL`
+  (unverifiable version). Tampered or unverifiable postbacks are stored *and
+  flagged* rather than dropped, so integration tests and forensics work —
+  filter them out of reports with `signature=valid` when you need certainty.
+- Database outages answer `503`/`500` so the device retries later; a
+  per-source rate limit (240/min per IP) answers `429`.
+
+Because the endpoint is public and unauthenticated, Apple's attribution
+signature is the trust boundary. Two things follow. First, treat
+`signature_valid = 1` as the ground truth for spend decisions — anyone can
+POST a well-formed but unsigned postback. Second, Apple does **not** sign
+the conversion values (fine or coarse) in any SKAN version, so even a
+signature-valid postback's conversion value is not cryptographically bound —
+this is a property of SKAdNetwork itself, worth knowing when you weigh the
+numbers.
+
+## Postback fields
+
+Stored columns mirror Apple's postback parameters (hyphens become
+underscores): `version`, `ad_network_id`, `transaction_id`, `app_id`,
+`source_identifier` (SKAN 4; 1–4 digits, hierarchical), `campaign_id`
+(SKAN ≤ 3), `conversion_value` (0–63), `coarse_conversion_value`
+(`low`/`medium`/`high`), `postback_sequence_index` (0–2, SKAN 4's three
+conversion windows), `redownload`, `did_win`, `source_app_id`,
+`source_domain` (SKAN 4 web ads), `fidelity_type` (1 = StoreKit-rendered or
+web ad, 0 = view-through), `country_code`, plus `received_at`,
+`signature_valid`, and `remote_ip`. Fields Apple withheld for privacy store
+as `NULL`. The raw request body is retained in the database for forensics
+but never served through the API.
+
+### List filters
+
+`GET /skan/postbacks` accepts `limit`, `offset`, `time_from`/`time_to`
+(unix, on `received_at`), and equality filters: `app_id`, `ad_network_id`,
+`version`, `transaction_id`, `country_code`, `source_identifier`,
+`campaign_id`, `fidelity_type`, `postback_sequence_index`, `did_win`,
+`redownload`, `coarse_conversion_value`, and
+`signature` (`valid` / `invalid` / `unverifiable`).
+
+## Apps
+
+| Field | Type | Required | Description |
+| ----- | ---- | -------- | ----------- |
+| `app_id` | integer | Yes | Numeric App Store id of the advertised app |
+| `app_name` | string | Yes | Display name for reports (max 255) |
+| `notes` | string | No | Free-form notes (max 500) |
+
+An App Store id can be registered by exactly one user across the install
+(second registration returns `409`) — the receiver resolves postback
+ownership by app id alone. Registering (or updating) an app claims any
+unclaimed postbacks for it; deleting a registration keeps already-claimed
+history with its user.
+
+## Conversion values
+
+| Field | Type | Required | Description |
+| ----- | ---- | -------- | ----------- |
+| `app_id` | integer | No | App this rule applies to; `0` (default) = account-wide fallback |
+| `fine_value` | integer | One of | Fine conversion value 0–63 |
+| `coarse_value` | string | One of | `low`, `medium`, or `high` |
+| `event_name` | string | Yes | Event the value decodes to (max 255) |
+| `revenue` | number | No | Revenue attributed per decoded postback (default 0) |
+
+Each rule maps exactly one fine **or** one coarse value (`422` otherwise;
+duplicate mappings return `409`). Resolution order at decode time:
+app-specific fine rule → default (`app_id = 0`) fine rule; coarse values
+resolve the same way. A fine value with no rule stays *undecoded* — it never
+falls back to a coarse rule.
+
+## Report
+
+`GET /skan/report?group_by=day|app|ad-network|source|country|version` with
+the same filters as the postback list, plus `limit` (max groups, default
+100). Days are UTC. Each group reports:
+
+- `postbacks`, `losses` (`did-win: false`), `installs` (winning
+  first-window postbacks excluding redownloads; postbacks without `did-win`
+  — SKAN ≤ 2.2 winners — count as wins), `redownloads`
+- `signature_valid_count` / `signature_invalid_count` /
+  `signature_unverified_count`
+- Conversion-value decoding: `measurable` (winning postbacks carrying a
+  value), `decoded`, `undecoded` (value present, no matching rule),
+  `null_conversion_values` (value withheld by Apple's privacy tier),
+  `decoded_revenue`, and `events` (per-event counts and revenue)
+
+## Verifying a postback by hand
+
+`POST /skan/verify` with a postback JSON object as the body returns the
+signature verdict (`valid` / `invalid` / `unverifiable`) and
+`signed_message_base64` — the exact byte string Apple signed (parameters
+joined with U+2063), for diffing against another implementation. Nothing is
+stored; the production Apple key is always used.
+
+## Example
+
+```bash
+# What a device delivers (SKAN 4.0 winning postback):
+curl -X POST https://your-domain.com/.well-known/skadnetwork/report-attribution/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "version": "4.0",
+    "ad-network-id": "example123.skadnetwork",
+    "source-identifier": "5239",
+    "app-id": 525463029,
+    "transaction-id": "6aafb7a5-0170-41b5-bbe4-fe71dedf1e28",
+    "redownload": false,
+    "source-app-id": 1234567891,
+    "fidelity-type": 1,
+    "did-win": true,
+    "conversion-value": 63,
+    "postback-sequence-index": 0,
+    "attribution-signature": "MEUCIQ..."
+  }'
+
+# Register the app and a conversion-value schema, then report:
+curl -X POST https://your-domain.com/api/v3/skan/apps \
+  -H "Authorization: Bearer YOUR_API_KEY" -H "Content-Type: application/json" \
+  -d '{"app_id": 525463029, "app_name": "My iOS App"}'
+
+curl -X POST https://your-domain.com/api/v3/skan/conversion-values \
+  -H "Authorization: Bearer YOUR_API_KEY" -H "Content-Type: application/json" \
+  -d '{"app_id": 525463029, "fine_value": 63, "event_name": "purchase", "revenue": 49.99}'
+
+curl "https://your-domain.com/api/v3/skan/report?group_by=day" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+## What SKAN can and cannot tell you
+
+SKAN is aggregate, delayed, and anonymous by design. Expect and plan for:
+
+- **No click-level join.** Postbacks carry no device id, click id, or
+  Prosper202 subid — SKAN installs cannot be matched to individual clicks
+  or conversions elsewhere in Prosper202. Campaign-level comparison happens
+  through the ad network's `source-identifier` (or `campaign-id`).
+- **Delays are intentional.** The first postback arrives 24–48+ hours after
+  install; SKAN 4's second and third windows arrive days to weeks later.
+- **Privacy tiers null things out.** Low-volume campaigns receive postbacks
+  with the conversion value, source app, and country withheld, and fewer
+  source-identifier digits. `null_conversion_values` in the report makes
+  that visible.
+- **The app controls the conversion value.** Prosper202 decodes; the app's
+  SKAdNetwork calls encode. Changing the in-app schema without updating
+  `/skan/conversion-values` (or vice versa) silently skews decoded revenue.
+- **AdAttributionKit** (Apple's SKAN successor with JWS-signed postbacks
+  and re-engagement support) uses a different postback format and is not
+  yet supported; SKAN postbacks continue to flow from current iOS versions.

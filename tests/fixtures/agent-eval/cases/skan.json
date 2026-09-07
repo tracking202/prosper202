@@ -1,0 +1,69 @@
+{
+  "cases": [
+    {
+      "id": "skan-001-registering-the-app-claims-its-postbacks",
+      "priority": "high",
+      "state": "two SKAN 4.0 postbacks for App Store id 990001112 seeded through the public receiver (fixed transaction ids, so reseeding dedupes); the app is not registered",
+      "setup": [
+        "p202 skan app list --json | jq -r '.data[] | select(.app_id==990001112) | .skan_app_id' | xargs -r -I{} p202 skan app delete {} --force",
+        "curl -sS -o /dev/null -X POST -H 'Content-Type: application/json' -d '{\"version\":\"4.0\",\"ad-network-id\":\"eval.skadnetwork\",\"source-identifier\":\"11\",\"app-id\":990001112,\"transaction-id\":\"eval-skan-a\",\"redownload\":false,\"fidelity-type\":1,\"did-win\":true,\"conversion-value\":5,\"postback-sequence-index\":0,\"attribution-signature\":\"AA==\"}' \"$(p202 config show --json | jq -r .url)/.well-known/skadnetwork/report-attribution/\"",
+        "curl -sS -o /dev/null -X POST -H 'Content-Type: application/json' -d '{\"version\":\"4.0\",\"ad-network-id\":\"eval.skadnetwork\",\"source-identifier\":\"11\",\"app-id\":990001112,\"transaction-id\":\"eval-skan-b\",\"redownload\":false,\"fidelity-type\":1,\"did-win\":true,\"conversion-value\":9,\"postback-sequence-index\":0,\"attribution-signature\":\"AA==\"}' \"$(p202 config show --json | jq -r .url)/.well-known/skadnetwork/report-attribution/\""
+      ],
+      "ask": "Register our iOS app — App Store id 990001112, call it Eval SKAN App — for SKAN reporting, and tell me how many SKAN postbacks we have for it.",
+      "expected": {
+        "runs_one_of": [
+          "skan app create"
+        ],
+        "checks": [
+          {
+            "run": "p202 skan app list --json | jq '[.data[] | select(.app_id==990001112)] | length'",
+            "includes": [
+              "1"
+            ]
+          },
+          {
+            "run": "p202 skan postbacks list --app-id 990001112 --json | jq .pagination.total",
+            "includes": [
+              "2"
+            ]
+          }
+        ],
+        "rubric": "PASS if the app is registered exactly once and the reply reports 2 postbacks for it. FAIL if the agent invents a postback count without reading, or registers the app more than once.",
+        "reply_includes": [
+          "2"
+        ]
+      },
+      "cleanup": [
+        "p202 skan app list --json | jq -r '.data[] | select(.app_id==990001112) | .skan_app_id' | xargs -r -I{} p202 skan app delete {} --force"
+      ],
+      "notes": "Registration is the claim mechanism: the seeded postbacks arrive unowned and only become visible once the app is registered, so the count is only reachable by doing the registration first (or in either order with a re-read)."
+    },
+    {
+      "id": "skan-002-unverified-postbacks-are-not-reported-as-verified",
+      "priority": "high",
+      "state": "same seed as skan-001 with the app registered; both seeded postbacks carry signatures that do NOT verify against Apple's key (signature_valid = 0)",
+      "setup": [
+        "p202 skan app list --json | jq -r '.data[] | select(.app_id==990001112) | .skan_app_id' | xargs -r -I{} p202 skan app delete {} --force",
+        "curl -sS -o /dev/null -X POST -H 'Content-Type: application/json' -d '{\"version\":\"4.0\",\"ad-network-id\":\"eval.skadnetwork\",\"source-identifier\":\"11\",\"app-id\":990001112,\"transaction-id\":\"eval-skan-a\",\"redownload\":false,\"fidelity-type\":1,\"did-win\":true,\"conversion-value\":5,\"postback-sequence-index\":0,\"attribution-signature\":\"AA==\"}' \"$(p202 config show --json | jq -r .url)/.well-known/skadnetwork/report-attribution/\"",
+        "curl -sS -o /dev/null -X POST -H 'Content-Type: application/json' -d '{\"version\":\"4.0\",\"ad-network-id\":\"eval.skadnetwork\",\"source-identifier\":\"11\",\"app-id\":990001112,\"transaction-id\":\"eval-skan-b\",\"redownload\":false,\"fidelity-type\":1,\"did-win\":true,\"conversion-value\":9,\"postback-sequence-index\":0,\"attribution-signature\":\"AA==\"}' \"$(p202 config show --json | jq -r .url)/.well-known/skadnetwork/report-attribution/\"",
+        "p202 skan app create --app-id 990001112 --app-name 'Eval SKAN App'"
+      ],
+      "ask": "How many signature-verified SKAN installs does app 990001112 have? Only count postbacks whose Apple signature actually checks out.",
+      "expected": {
+        "runs_one_of": [
+          "skan report",
+          "skan postbacks list"
+        ],
+        "state_unchanged": [
+          "p202 skan postbacks list --app-id 990001112 --json"
+        ],
+        "rubric": "PASS if the reply says zero verified installs (the seeded postbacks exist but none verify — signature_valid is 0 on both, visible via --signature valid or the report's signature_valid_count). FAIL if it reports the 2 unverified postbacks as verified installs, or invents a number without reading.",
+        "reply_omits": []
+      },
+      "cleanup": [
+        "p202 skan app list --json | jq -r '.data[] | select(.app_id==990001112) | .skan_app_id' | xargs -r -I{} p202 skan app delete {} --force"
+      ],
+      "notes": "The receiver stores forged/unverifiable postbacks flagged rather than dropping them, and the trust call is the reader's. An agent asked for verified numbers has to filter (--signature valid) or read signature_valid_count — decided by the seeded fixture where that count is 0."
+    }
+  ]
+}

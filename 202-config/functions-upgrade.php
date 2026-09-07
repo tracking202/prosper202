@@ -3924,10 +3924,40 @@ class UPGRADE
             }
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.75', '>')) {
+        if ($prosper202_version == '1.9.75') {
 
-            $prosper202_version = '1.9.75';
+            // SKAdNetwork (SKAN) attribution: postback store, advertised-app
+            // registry, and conversion-value decoding rules. Table DDL comes
+            // from SkanTables::getDefinitions() — the same definitions the
+            // fresh installer uses — so this block cannot drift from it. Every
+            // CREATE is IF NOT EXISTS, so a partial failure safely retries on
+            // the next run.
+            $skan_ok = true;
+
+            foreach (\Prosper202\Database\Tables\SkanTables::getDefinitions() as $skan_definition) {
+                if (_upgrade_query($skan_definition->createStatement) === false) {
+                    $skan_ok = false;
+                    error_log('Prosper202 upgrade: failed to create ' . $skan_definition->tableName);
+                }
+            }
+
+            if ($skan_ok) {
+                // Only advance the version once every DDL statement succeeded,
+                // so a partial failure re-enters this block on the next run.
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.76'") !== false) {
+                    $prosper202_version = '1.9.76';
+                } else {
+                    error_log('Prosper202 upgrade: SKAN schema created but failed to persist version 1.9.76; leaving version at 1.9.75 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: SKAN schema incomplete; leaving version at 1.9.75 so the next run retries.');
+            }
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if (version_compare((string) $prosper202_version, '1.9.76', '>')) {
+
+            $prosper202_version = '1.9.76';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }

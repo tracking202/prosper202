@@ -44,7 +44,7 @@ and stage writes, but a person's key performs them.
 
 Areas: `campaigns`, `aff-networks`, `ppc-networks`, `ppc-accounts`,
 `trackers`, `landing-pages`, `text-ads`, `forecast-events`, `clicks`,
-`conversions`, `reports`, `ltv`, `rotators`, `attribution`, `users`,
+`conversions`, `reports`, `ltv`, `rotators`, `attribution`, `skan`, `users`,
 `system`, `sync` (the `changes` and `audit` routes fall under `sync`),
 `staged-changes`.
 
@@ -284,6 +284,7 @@ Empty response body.
 | Reports | Summary, breakdown, timeseries, daypart, weekpart | [Reports](11-reports.md) |
 | Rotators | CRUD + nested rules, criteria, redirects | [Rotators](12-rotators.md) |
 | Attribution | Models, snapshots, exports | [Attribution](13-attribution.md) |
+| SKAN | Apple SKAdNetwork postbacks, apps, conversion values, report | [SKAdNetwork](19-skan.md) |
 | Forecast Events | CRUD + bulk-upsert | [Forecast Events](18-forecast-events.md) |
 | Users | CRUD + roles, API keys, preferences | [Users](14-users.md) |
 | System | Health, version, cron, errors, metrics, db-stats | [System](15-system.md) |

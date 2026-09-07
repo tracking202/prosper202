@@ -69,6 +69,12 @@ class CapabilitiesController
                     // current state and the applier's credentials. The
                     // `stage` scope action mints propose-only keys.
                     'staged_writes' => true,
+                    // SKAdNetwork MMP endpoint: the server accepts signed
+                    // install-validation postbacks at
+                    // /.well-known/skadnetwork/report-attribution/ and serves
+                    // them (with signature state and conversion-value
+                    // decoding) under /skan.
+                    'skan' => true,
                 ],
                 'limits' => [
                     'max_bulk_rows' => $this->maxBulkRows(),
@@ -120,6 +126,9 @@ class CapabilitiesController
             'text-ads' => $base,
             'forecast-events' => $base,
             'trackers' => $base,
+            'skan-apps' => ['bulk_upsert' => false] + $base,
+            'skan-conversion-values' => ['bulk_upsert' => false] + $base,
+            'skan-postbacks' => ['list' => true, 'get' => true, 'create' => false, 'update' => false, 'delete' => false, 'bulk_upsert' => false],
         ];
     }
 

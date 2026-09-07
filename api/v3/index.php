@@ -450,6 +450,34 @@ try {
             $r->post('/{id}/exports',  fn($ctx) => ['_status' => 201] + $idempotent('attribution/models/' . (int)$ctx['id'] . '/exports', $payload, fn() => $crud($cls)->scheduleExport((int)$ctx['id'], $payload)));
         });
 
+        // ── SKAdNetwork (SKAN) ───────────────────────────────────────────
+        // Postbacks arrive through the public receiver
+        // (/.well-known/skadnetwork/report-attribution/), never through this
+        // API — here they are read-only. Apps and conversion-value rules are
+        // per-user CRUD.
+        $router->group('/skan', function (Router $r) use ($crud, $idempotent, $queryParams, $payload) {
+            $apps = \Api\V3\Controllers\SkanAppsController::class;
+            $rules = \Api\V3\Controllers\SkanConversionValuesController::class;
+            $postbacks = \Api\V3\Controllers\SkanPostbacksController::class;
+
+            $r->get('/apps',            fn() => $crud($apps)->list($queryParams));
+            $r->get('/apps/{id}',       fn($ctx) => $crud($apps)->get((int)$ctx['id']));
+            $r->post('/apps',           fn() => ['_status' => 201] + $idempotent('skan/apps', $payload, fn() => $crud($apps)->create($payload)));
+            $r->put('/apps/{id}',       fn($ctx) => $crud($apps)->update((int)$ctx['id'], $payload));
+            $r->delete('/apps/{id}',    fn($ctx) => tap($crud($apps), fn($c) => $c->delete((int)$ctx['id'])));
+
+            $r->get('/conversion-values',         fn() => $crud($rules)->list($queryParams));
+            $r->get('/conversion-values/{id}',    fn($ctx) => $crud($rules)->get((int)$ctx['id']));
+            $r->post('/conversion-values',        fn() => ['_status' => 201] + $idempotent('skan/conversion-values', $payload, fn() => $crud($rules)->create($payload)));
+            $r->put('/conversion-values/{id}',    fn($ctx) => $crud($rules)->update((int)$ctx['id'], $payload));
+            $r->delete('/conversion-values/{id}', fn($ctx) => tap($crud($rules), fn($c) => $c->delete((int)$ctx['id'])));
+
+            $r->get('/postbacks',      fn() => $crud($postbacks)->list($queryParams));
+            $r->get('/postbacks/{id}', fn($ctx) => $crud($postbacks)->get((int)$ctx['id']));
+            $r->get('/report',         fn() => $crud($postbacks)->report($queryParams));
+            $r->post('/verify',        fn() => $crud($postbacks)->verify($payload));
+        });
+
         // ── Users (admin-gated writes, self-or-admin for reads) ──────────
         $router->group('/users', function (Router $r) use ($db, $auth, $idempotent, $payload) {
             $make = fn() => new \Api\V3\Controllers\UsersController($db);
@@ -547,6 +575,7 @@ try {
                 'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}',
                 'rotators'      => '/rotators',
                 'attribution'   => '/attribution/models',
+                'skan'          => '/skan/{apps|conversion-values|postbacks|report|verify}',
                 'users'         => '/users',
                 'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics}',
                 'sync'          => '/sync/{plan|jobs|status|history|re-sync}',
@@ -573,6 +602,8 @@ try {
         $previewRouter->delete('/rotators/{id}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->delete('/rotators/{id}/rules/{ruleId}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deleteRulePreview((int)$ctx['id'], (int)$ctx['ruleId']));
         $previewRouter->delete('/attribution/models/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionController::class)->deleteModelPreview((int)$ctx['id']));
+        $previewRouter->delete('/skan/apps/{id}', fn($ctx) => $crud(\Api\V3\Controllers\SkanAppsController::class)->deletePreview((int)$ctx['id']));
+        $previewRouter->delete('/skan/conversion-values/{id}', fn($ctx) => $crud(\Api\V3\Controllers\SkanConversionValuesController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->group('/users', function (Router $r) use ($db, $auth) {
             $make = fn() => new \Api\V3\Controllers\UsersController($db);
             $r->delete('/{id}', function ($ctx) use ($auth, $make) {
@@ -630,6 +661,14 @@ try {
         $r->put('/{id}', $stageable);
         $r->delete('/{id}', $stageable);
         $r->post('/{id}/exports', $stageable);
+    });
+    $stageableRouter->group('/skan', function (Router $r) use ($stageable) {
+        $r->post('/apps', $stageable);
+        $r->put('/apps/{id}', $stageable);
+        $r->delete('/apps/{id}', $stageable);
+        $r->post('/conversion-values', $stageable);
+        $r->put('/conversion-values/{id}', $stageable);
+        $r->delete('/conversion-values/{id}', $stageable);
     });
     $stageableRouter->group('/users', function (Router $r) use ($stageable) {
         $r->post('', $stageable);
@@ -718,6 +757,12 @@ try {
         if ($method === 'POST' && $path === '/sync/plan') {
             // Planning computes a diff without applying it; sync:read keys
             // could always call it through the group middleware.
+            $scopeAction = 'read';
+        }
+        if ($method === 'POST' && $path === '/skan/verify') {
+            // Signature verification computes over the submitted payload and
+            // stores nothing — a read that arrives as POST only because the
+            // postback JSON is its input.
             $scopeAction = 'read';
         }
         if ($stagedWrite) {
