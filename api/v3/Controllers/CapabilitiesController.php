@@ -69,16 +69,17 @@ class CapabilitiesController
                     // current state and the applier's credentials. The
                     // `stage` scope action mints propose-only keys.
                     'staged_writes' => true,
-                    // SKAdNetwork MMP: the server accepts signed
-                    // install-validation postbacks at
-                    // /.well-known/skadnetwork/report-attribution/, serves
-                    // them (with signature state and conversion-value
-                    // decoding) under /skan, and serves each registered
-                    // app's conversion-value mapping to its iOS build at
-                    // runtime via GET /skan/schema (gated by the app's
-                    // rotatable schema token), so mapping changes need no
-                    // App Store resubmission.
-                    'skan' => true,
+                    // Platform-signed attribution postbacks, one entry per
+                    // protocol the receiver verifies and stores. Apple's
+                    // SKAdNetwork arrives at
+                    // /.well-known/skadnetwork/report-attribution/; every
+                    // protocol is served (with signature state and
+                    // conversion-value decoding) under /attribution, and each
+                    // registered app's conversion-value mapping is served to
+                    // its build at runtime via GET /attribution/schema (gated
+                    // by the app's rotatable schema token), so mapping changes
+                    // need no App Store resubmission.
+                    'attribution_postbacks' => ['skadnetwork'],
                 ],
                 'limits' => [
                     'max_bulk_rows' => $this->maxBulkRows(),
@@ -130,9 +131,9 @@ class CapabilitiesController
             'text-ads' => $base,
             'forecast-events' => $base,
             'trackers' => $base,
-            'skan-apps' => ['bulk_upsert' => false] + $base,
-            'skan-conversion-values' => ['bulk_upsert' => false] + $base,
-            'skan-postbacks' => ['list' => true, 'get' => true, 'create' => false, 'update' => false, 'delete' => false, 'bulk_upsert' => false],
+            'attribution-apps' => ['bulk_upsert' => false] + $base,
+            'attribution-conversion-values' => ['bulk_upsert' => false] + $base,
+            'attribution-postbacks' => ['list' => true, 'get' => true, 'create' => false, 'update' => false, 'delete' => false, 'bulk_upsert' => false],
         ];
     }
 

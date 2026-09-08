@@ -118,10 +118,10 @@ case "$ask" in
         app=$(printf '%s' "$ask" | grep -oE 'App Store id [0-9]+' | awk '{print $4}')
         name=$(printf '%s' "$ask" | sed -n 's/.*call it \(.*\) — for SKAN.*/\1/p')
         [ -n "$name" ] || name="Eval SKAN App"
-        p202 skan app create --app-id "$app" --app-name "$name" --json >/dev/null
+        p202 attribution app create --app-id "$app" --app-name "$name" --json >/dev/null
         since=$(( $(date +%s) - 240 ))
-        recent=$(p202 skan postbacks list --app-id "$app" --time-from "$since" --json | jq -r '.pagination.total')
-        printf 'Registered App Store id %s as "%s"; registering claims the postbacks the receiver had already stored for it. %s SKAN postbacks arrived for it in the last few minutes, per `p202 skan postbacks list --time-from`.\n' \
+        recent=$(p202 attribution postbacks list --app-id "$app" --time-from "$since" --json | jq -r '.pagination.total')
+        printf 'Registered App Store id %s as "%s"; registering claims the postbacks the receiver had already stored for it. %s SKAN postbacks arrived for it in the last few minutes, per `p202 attribution postbacks list --time-from`.\n' \
             "$app" "$name" "$recent"
         ;;
     *"signature-verified"*)
@@ -129,7 +129,7 @@ case "$ask" in
         # postbacks whose Apple signature checks out, and the per-group
         # signature counts show what was excluded. Read them, never guess.
         app=$(printf '%s' "$ask" | grep -oE 'app [0-9]+' | awk '{print $2}')
-        report=$(p202 skan report --group-by app --app-id "$app" --json)
+        report=$(p202 attribution report --group-by app --app-id "$app" --json)
         group=$(printf '%s' "$report" | jq -c --argjson app "$app" '[.data[] | select(.app_id == $app)][0] // {}')
         installs=$(printf '%s' "$group" | jq -r '.installs // 0')
         valid=$(printf '%s' "$group" | jq -r '.signature_valid_count // 0')

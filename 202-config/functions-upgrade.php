@@ -3930,20 +3930,20 @@ class UPGRADE
             // advertised-app registry (its rotatable schema_token column and
             // unique index are part of the definition), and the
             // conversion-value decoding rules. The DDL comes from
-            // SkanTables::getDefinitions() — the same definitions the fresh
+            // AttributionPostbackTables::getDefinitions() — the same definitions the fresh
             // installer uses — so this block cannot drift from it, and every
             // CREATE is IF NOT EXISTS so a partial failure safely retries on
             // the next run.
-            $skan_ok = true;
+            $attribution_ok = true;
 
-            foreach (\Prosper202\Database\Tables\SkanTables::getDefinitions() as $skan_definition) {
-                if (_upgrade_query($skan_definition->createStatement) === false) {
-                    $skan_ok = false;
-                    error_log('Prosper202 upgrade: failed to create ' . $skan_definition->tableName);
+            foreach (\Prosper202\Database\Tables\AttributionPostbackTables::getDefinitions() as $attribution_definition) {
+                if (_upgrade_query($attribution_definition->createStatement) === false) {
+                    $attribution_ok = false;
+                    error_log('Prosper202 upgrade: failed to create ' . $attribution_definition->tableName);
                 }
             }
 
-            if ($skan_ok) {
+            if ($attribution_ok) {
                 // Advance the version only once every DDL statement
                 // succeeded, so a partial failure re-enters this block on the
                 // next run.

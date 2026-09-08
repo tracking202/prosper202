@@ -60,9 +60,9 @@ go-cli/prosper202-cli
 go-cli/*.exe
 go-cli/p202
 
-# Swift package build artifacts (P202SKAN)
-sdk/ios-skan/.build/
-sdk/ios-skan/Package.resolved
+# Swift package build artifacts (P202Attribution)
+sdk/ios-attribution/.build/
+sdk/ios-attribution/Package.resolved
 rector.php
 RECTOR_FINDINGS.md
 rector_report.txt

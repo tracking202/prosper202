@@ -127,17 +127,17 @@ try {
     // Unauthenticated SKAN conversion-value schema, fetched by the
     // advertised iOS app at runtime so mapping changes need no App Store
     // resubmission. An app binary cannot hold an API key; access is gated
-    // by the app's rotatable schema token instead (SkanSchemaController).
-    if ($path === '/skan/schema' && $method === 'GET') {
+    // by the app's rotatable schema token instead (AttributionSchemaController).
+    if ($path === '/attribution/schema' && $method === 'GET') {
         // Soft per-source limit, mirroring the postback receiver: keyed on
         // the validated TCP peer, never client headers (an attacker-chosen
         // X-Forwarded-For would defeat the limit AND mint unbounded bucket
         // files), fail-open so the limiter's own failure never blocks
         // devices.
         try {
-            $retryAfter = (new ServerStateStore())->softIpRateLimit('skan-schema', 300, 60);
+            $retryAfter = (new ServerStateStore())->softIpRateLimit('attribution-schema', 300, 60);
         } catch (\Throwable $e) {
-            error_log('p202 skan: schema rate limiter unavailable, serving request: ' . $e->getMessage());
+            error_log('p202 attribution: schema rate limiter unavailable, serving request: ' . $e->getMessage());
             $retryAfter = null;
         }
         if ($retryAfter !== null) {
@@ -149,7 +149,7 @@ try {
         // Header-only token transport: a token in a GET query string would
         // be captured by ordinary request logging (the p13n endpoints'
         // rule), and the iOS helper and CLI both send the header.
-        $schemaResult = (new \Api\V3\Controllers\SkanSchemaController($db))
+        $schemaResult = (new \Api\V3\Controllers\AttributionSchemaController($db))
             ->publicSchema(RequestContext::header('x-p202-schema-token'), RequestContext::header('if-none-match'));
         // The document is selected by the token header, not by the URL, so
         // every cache between here and the device must key on it too —
@@ -505,10 +505,10 @@ try {
         // (/.well-known/skadnetwork/report-attribution/), never through this
         // API — here they are read-only. Apps and conversion-value rules are
         // per-user CRUD.
-        $router->group('/skan', function (Router $r) use ($crud, $idempotent, $queryParams, $payload) {
-            $apps = \Api\V3\Controllers\SkanAppsController::class;
-            $rules = \Api\V3\Controllers\SkanConversionValuesController::class;
-            $postbacks = \Api\V3\Controllers\SkanPostbacksController::class;
+        $router->group('/attribution', function (Router $r) use ($crud, $idempotent, $queryParams, $payload) {
+            $apps = \Api\V3\Controllers\AttributionAppsController::class;
+            $rules = \Api\V3\Controllers\AttributionConversionValuesController::class;
+            $postbacks = \Api\V3\Controllers\AttributionPostbacksController::class;
 
             $r->get('/apps',            fn() => $crud($apps)->list($queryParams));
             $r->get('/apps/{id}',       fn($ctx) => $crud($apps)->get((int)$ctx['id']));
@@ -525,7 +525,7 @@ try {
 
             $r->get('/conversion-values',         fn() => $crud($rules)->list($queryParams));
             $r->get('/conversion-values/{id}',    fn($ctx) => $crud($rules)->get((int)$ctx['id']));
-            $r->post('/conversion-values',        fn() => ['_status' => 201] + $idempotent('skan/conversion-values', $payload, fn() => $crud($rules)->create($payload)));
+            $r->post('/conversion-values',        fn() => ['_status' => 201] + $idempotent('attribution/conversion-values', $payload, fn() => $crud($rules)->create($payload)));
             $r->put('/conversion-values/{id}',    fn($ctx) => $crud($rules)->update((int)$ctx['id'], $payload));
             $r->delete('/conversion-values/{id}', fn($ctx) => tap($crud($rules), fn($c) => $c->delete((int)$ctx['id'])));
 
@@ -631,8 +631,7 @@ try {
                 'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart}',
                 'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}',
                 'rotators'      => '/rotators',
-                'attribution'   => '/attribution/models',
-                'skan'          => '/skan/{apps|conversion-values|postbacks|report|verify}',
+                'attribution'   => '/attribution/{models|apps|conversion-values|postbacks|report|verify}',
                 'users'         => '/users',
                 'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics}',
                 'sync'          => '/sync/{plan|jobs|status|history|re-sync}',
@@ -659,8 +658,8 @@ try {
         $previewRouter->delete('/rotators/{id}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->delete('/rotators/{id}/rules/{ruleId}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deleteRulePreview((int)$ctx['id'], (int)$ctx['ruleId']));
         $previewRouter->delete('/attribution/models/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionController::class)->deleteModelPreview((int)$ctx['id']));
-        $previewRouter->delete('/skan/apps/{id}', fn($ctx) => $crud(\Api\V3\Controllers\SkanAppsController::class)->deletePreview((int)$ctx['id']));
-        $previewRouter->delete('/skan/conversion-values/{id}', fn($ctx) => $crud(\Api\V3\Controllers\SkanConversionValuesController::class)->deletePreview((int)$ctx['id']));
+        $previewRouter->delete('/attribution/apps/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionAppsController::class)->deletePreview((int)$ctx['id']));
+        $previewRouter->delete('/attribution/conversion-values/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionConversionValuesController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->group('/users', function (Router $r) use ($db, $auth) {
             $make = fn() => new \Api\V3\Controllers\UsersController($db);
             $r->delete('/{id}', function ($ctx) use ($auth, $make) {
@@ -719,7 +718,7 @@ try {
         $r->delete('/{id}', $stageable);
         $r->post('/{id}/exports', $stageable);
     });
-    $stageableRouter->group('/skan', function (Router $r) use ($stageable) {
+    $stageableRouter->group('/attribution', function (Router $r) use ($stageable) {
         $r->post('/apps', $stageable);
         $r->put('/apps/{id}', $stageable);
         $r->delete('/apps/{id}', $stageable);
@@ -823,7 +822,7 @@ try {
             // applier instead.
             $scopeAction = 'stage';
         }
-        if ($method === 'POST' && $path === '/skan/verify') {
+        if ($method === 'POST' && $path === '/attribution/verify') {
             // Signature verification computes over the submitted payload and
             // stores nothing — a read that arrives as POST only because the
             // postback JSON is its input. Deliberately AFTER the staged

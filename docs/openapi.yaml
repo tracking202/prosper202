@@ -7,7 +7,7 @@ info:
 
     ## Authentication
     All endpoints require a Bearer token except `GET /system/health`, the
-    token-gated public `GET /skan/schema`, and the SKAdNetwork postback
+    token-gated public `GET /attribution/schema`, and the SKAdNetwork postback
     receiver (see the SKAN tag):
     ```
     Authorization: Bearer <api_key>
@@ -64,12 +64,12 @@ info:
     The server is the developer-side SKAdNetwork endpoint: devices POST
     signed install-validation postbacks to
     `/.well-known/skadnetwork/report-attribution/` (site root, outside this
-    base path), and `/skan/*` serves the stored postbacks, an aggregate
+    base path), and `/attribution/*` serves the stored postbacks, an aggregate
     report with conversion-value decoding, the advertised-app registry, and
-    the decoding rules. `GET /skan/schema` is public and gated by an app's
+    the decoding rules. `GET /attribution/schema` is public and gated by an app's
     schema token instead of an API key, so an iOS build can fetch its
-    conversion-value mapping at runtime. Advertised via `features.skan`;
-    all `/skan` routes live in the `skan` scope area.
+    conversion-value mapping at runtime. Advertised via `features.attribution_postbacks`;
+    all `/attribution` routes live in the `attribution` scope area.
 
     ## Errors
     Error responses use a consistent format:
@@ -122,7 +122,7 @@ tags:
     description: Attribution models, snapshots, and exports
   - name: Users
     description: User, role, API key, and preference management
-  - name: SKAN
+  - name: Attribution postbacks
     description: Apple SKAdNetwork install attribution — postback receiver, app registry, conversion-value rules, report, and the runtime schema
 
 paths:
@@ -2170,16 +2170,16 @@ paths:
 
   # ─── SKAN (SKAdNetwork) ──────────────────────────────────────────────
 
-  /skan/apps:
+  /attribution/apps:
     get:
-      tags: [SKAN]
+      tags: [Attribution postbacks]
       summary: List registered advertised apps
       description: |
         The App Store apps whose SKAdNetwork postbacks belong to the caller.
         Each row carries the app's `schema_token` — the bearer capability an
-        iOS build presents to `GET /skan/schema`. It is served only to the
+        iOS build presents to `GET /attribution/schema`. It is served only to the
         owner; staged-change previews and apply results redact it.
-      operationId: listSkanApps
+      operationId: listAttributionApps
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
@@ -2189,9 +2189,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SkanAppListResponse"
+                $ref: "#/components/schemas/AttributionAppListResponse"
     post:
-      tags: [SKAN]
+      tags: [Attribution postbacks]
       summary: Register an advertised app
       description: |
         Registering claims the app's postbacks: rows that arrived before
@@ -2204,20 +2204,20 @@ paths:
         `Idempotency-Key` is deliberately not honored on this create — the
         token must never persist as a replayable record. Retries are safe
         anyway: the unique `app_id` answers `409`.
-      operationId: createSkanApp
+      operationId: createAttributionApp
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SkanAppCreate"
+              $ref: "#/components/schemas/AttributionAppCreate"
       responses:
         "201":
           description: App registered; the response carries its schema token
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SkanAppResponse"
+                $ref: "#/components/schemas/AttributionAppResponse"
         "409":
           description: This App Store id is already registered
           content:
@@ -2227,41 +2227,41 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
-  /skan/apps/{id}:
+  /attribution/apps/{id}:
     parameters:
       - $ref: "#/components/parameters/resourceId"
     get:
-      tags: [SKAN]
+      tags: [Attribution postbacks]
       summary: Get an app registration
-      description: Addressed by the internal `skan_app_id`, not the App Store id.
-      operationId: getSkanApp
+      description: Addressed by the internal `attribution_app_id`, not the App Store id.
+      operationId: getAttributionApp
       responses:
         "200":
           description: The registration, including its schema token
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SkanAppResponse"
+                $ref: "#/components/schemas/AttributionAppResponse"
         "404":
           $ref: "#/components/responses/NotFound"
     put:
-      tags: [SKAN]
+      tags: [Attribution postbacks]
       summary: Update an app registration
       description: Re-runs the postback claim, so any unclaimed history for the app is adopted on update.
-      operationId: updateSkanApp
+      operationId: updateAttributionApp
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SkanAppUpdate"
+              $ref: "#/components/schemas/AttributionAppUpdate"
       responses:
         "200":
           description: Registration updated
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SkanAppResponse"
+                $ref: "#/components/schemas/AttributionAppResponse"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -2275,13 +2275,13 @@ paths:
     delete:
       parameters:
         - $ref: "#/components/parameters/dryRun"
-      tags: [SKAN]
+      tags: [Attribution postbacks]
       summary: Delete an app registration
       description: |
         Hard delete of the registration only: postbacks already claimed keep
         their owner (history is never reassigned). The dry-run preview omits
         the schema token.
-      operationId: deleteSkanApp
+      operationId: deleteAttributionApp
       responses:
         "200":
           description: Dry-run preview (`dry_run=1`) — the delete was not performed.
@@ -2290,34 +2290,34 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /skan/apps/{id}/schema-token/rotate:
+  /attribution/apps/{id}/schema-token/rotate:
     parameters:
       - $ref: "#/components/parameters/resourceId"
     post:
-      tags: [SKAN]
+      tags: [Attribution postbacks]
       summary: Rotate the app's schema token
       description: |
         Mints a replacement token and invalidates the old one immediately —
         the remedy for a token leaked out of a shipped binary. Builds
         configured with the old token can no longer fetch the schema until
         updated. Stageable; an applied rotation's result is served with the
-        token redacted (the owner reads it via `GET /skan/apps/{id}`).
-      operationId: rotateSkanSchemaToken
+        token redacted (the owner reads it via `GET /attribution/apps/{id}`).
+      operationId: rotateAttributionSchemaToken
       responses:
         "200":
           description: The registration with its new schema token
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SkanAppResponse"
+                $ref: "#/components/schemas/AttributionAppResponse"
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /skan/conversion-values:
+  /attribution/conversion-values:
     get:
-      tags: [SKAN]
+      tags: [Attribution postbacks]
       summary: List conversion-value decoding rules
-      operationId: listSkanConversionValues
+      operationId: listAttributionConversionValues
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
@@ -2327,9 +2327,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SkanConversionValueListResponse"
+                $ref: "#/components/schemas/AttributionConversionValueListResponse"
     post:
-      tags: [SKAN]
+      tags: [Attribution postbacks]
       summary: Create a decoding rule
       description: |
         A rule maps exactly one fine value (0–63) **or** one coarse value
@@ -2337,20 +2337,20 @@ paths:
         rules are the account-wide defaults that app-specific rules
         override. The same rows drive the report's decode and the schema
         served to devices. Honors `Idempotency-Key`.
-      operationId: createSkanConversionValue
+      operationId: createAttributionConversionValue
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SkanConversionValueCreate"
+              $ref: "#/components/schemas/AttributionConversionValueCreate"
       responses:
         "201":
           description: Rule created
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SkanConversionValueResponse"
+                $ref: "#/components/schemas/AttributionConversionValueResponse"
         "409":
           description: A rule for this conversion value already exists for this app
           content:
@@ -2360,24 +2360,24 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
-  /skan/conversion-values/{id}:
+  /attribution/conversion-values/{id}:
     parameters:
       - $ref: "#/components/parameters/resourceId"
     get:
-      tags: [SKAN]
+      tags: [Attribution postbacks]
       summary: Get a decoding rule
-      operationId: getSkanConversionValue
+      operationId: getAttributionConversionValue
       responses:
         "200":
           description: The rule
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SkanConversionValueResponse"
+                $ref: "#/components/schemas/AttributionConversionValueResponse"
         "404":
           $ref: "#/components/responses/NotFound"
     put:
-      tags: [SKAN]
+      tags: [Attribution postbacks]
       summary: Update a decoding rule
       description: |
         The row is validated as it will exist after the update. To switch a
@@ -2385,20 +2385,20 @@ paths:
         explicit `null` empties the old kind while the new value arrives
         (`{"fine_value": null, "coarse_value": "high"}`). An absent field
         means keep; clearing without a replacement is `422`.
-      operationId: updateSkanConversionValue
+      operationId: updateAttributionConversionValue
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SkanConversionValueUpdate"
+              $ref: "#/components/schemas/AttributionConversionValueUpdate"
       responses:
         "200":
           description: Rule updated
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SkanConversionValueResponse"
+                $ref: "#/components/schemas/AttributionConversionValueResponse"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -2412,9 +2412,9 @@ paths:
     delete:
       parameters:
         - $ref: "#/components/parameters/dryRun"
-      tags: [SKAN]
+      tags: [Attribution postbacks]
       summary: Delete a decoding rule
-      operationId: deleteSkanConversionValue
+      operationId: deleteAttributionConversionValue
       responses:
         "200":
           description: Dry-run preview (`dry_run=1`) — the delete was not performed.
@@ -2423,70 +2423,70 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /skan/postbacks:
+  /attribution/postbacks:
     get:
-      tags: [SKAN]
+      tags: [Attribution postbacks]
       summary: List received postbacks
       description: |
         Postbacks stored by the public receiver and claimed by the caller's
         app registrations, newest first. Every string column is authored by
         whoever POSTed to the open receiver, so values are sanitized at
         serialization. Rows never carry the attribution signature (see
-        `GET /skan/postbacks/{id}`) or the raw body. Malformed filter values
+        `GET /attribution/postbacks/{id}`) or the raw body. Malformed filter values
         are rejected with `422` rather than ignored.
-      operationId: listSkanPostbacks
+      operationId: listAttributionPostbacks
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
         - $ref: "#/components/parameters/timeFrom"
         - $ref: "#/components/parameters/timeTo"
-        - $ref: "#/components/parameters/skanAppId"
-        - $ref: "#/components/parameters/skanAdNetworkId"
-        - $ref: "#/components/parameters/skanVersion"
-        - $ref: "#/components/parameters/skanTransactionId"
-        - $ref: "#/components/parameters/skanCountryCode"
-        - $ref: "#/components/parameters/skanSourceIdentifier"
-        - $ref: "#/components/parameters/skanCampaignId"
-        - $ref: "#/components/parameters/skanFidelityType"
-        - $ref: "#/components/parameters/skanPostbackSequenceIndex"
-        - $ref: "#/components/parameters/skanDidWin"
-        - $ref: "#/components/parameters/skanRedownload"
-        - $ref: "#/components/parameters/skanCoarseConversionValue"
-        - $ref: "#/components/parameters/skanSignature"
+        - $ref: "#/components/parameters/attributionAppId"
+        - $ref: "#/components/parameters/attributionAdNetworkId"
+        - $ref: "#/components/parameters/attributionVersion"
+        - $ref: "#/components/parameters/attributionTransactionId"
+        - $ref: "#/components/parameters/attributionCountryCode"
+        - $ref: "#/components/parameters/attributionSourceIdentifier"
+        - $ref: "#/components/parameters/attributionCampaignId"
+        - $ref: "#/components/parameters/attributionFidelityType"
+        - $ref: "#/components/parameters/attributionPostbackSequenceIndex"
+        - $ref: "#/components/parameters/attributionDidWin"
+        - $ref: "#/components/parameters/attributionRedownload"
+        - $ref: "#/components/parameters/attributionCoarseConversionValue"
+        - $ref: "#/components/parameters/attributionSignature"
       responses:
         "200":
           description: Paginated postbacks
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SkanPostbackListResponse"
+                $ref: "#/components/schemas/AttributionPostbackListResponse"
         "422":
           $ref: "#/components/responses/ValidationError"
 
-  /skan/postbacks/{id}:
+  /attribution/postbacks/{id}:
     parameters:
       - $ref: "#/components/parameters/resourceId"
     get:
-      tags: [SKAN]
+      tags: [Attribution postbacks]
       summary: Get one postback, including its attribution signature
       description: |
         The signature is served for forensics — copy it into
-        `POST /skan/verify` or diff it against another implementation. The
+        `POST /attribution/verify` or diff it against another implementation. The
         raw request body is retained server-side but never served.
-      operationId: getSkanPostback
+      operationId: getAttributionPostback
       responses:
         "200":
           description: The postback with its attribution signature
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SkanPostbackResponse"
+                $ref: "#/components/schemas/AttributionPostbackResponse"
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /skan/report:
+  /attribution/report:
     get:
-      tags: [SKAN]
+      tags: [Attribution postbacks]
       summary: Aggregate SKAN report with conversion-value decoding
       description: |
         Groups postbacks by `group_by` and decodes winning postbacks'
@@ -2503,7 +2503,7 @@ paths:
         the metrics over exactly that class (`meta.trusted: as-filtered`).
         `meta.groups_truncated` is true when more groups matched than
         `limit` allowed. Accepts the same filters as the postback list.
-      operationId: getSkanReport
+      operationId: getAttributionReport
       parameters:
         - name: group_by
           in: query
@@ -2520,32 +2520,32 @@ paths:
             maximum: 500
         - $ref: "#/components/parameters/timeFrom"
         - $ref: "#/components/parameters/timeTo"
-        - $ref: "#/components/parameters/skanAppId"
-        - $ref: "#/components/parameters/skanAdNetworkId"
-        - $ref: "#/components/parameters/skanVersion"
-        - $ref: "#/components/parameters/skanTransactionId"
-        - $ref: "#/components/parameters/skanCountryCode"
-        - $ref: "#/components/parameters/skanSourceIdentifier"
-        - $ref: "#/components/parameters/skanCampaignId"
-        - $ref: "#/components/parameters/skanFidelityType"
-        - $ref: "#/components/parameters/skanPostbackSequenceIndex"
-        - $ref: "#/components/parameters/skanDidWin"
-        - $ref: "#/components/parameters/skanRedownload"
-        - $ref: "#/components/parameters/skanCoarseConversionValue"
-        - $ref: "#/components/parameters/skanSignature"
+        - $ref: "#/components/parameters/attributionAppId"
+        - $ref: "#/components/parameters/attributionAdNetworkId"
+        - $ref: "#/components/parameters/attributionVersion"
+        - $ref: "#/components/parameters/attributionTransactionId"
+        - $ref: "#/components/parameters/attributionCountryCode"
+        - $ref: "#/components/parameters/attributionSourceIdentifier"
+        - $ref: "#/components/parameters/attributionCampaignId"
+        - $ref: "#/components/parameters/attributionFidelityType"
+        - $ref: "#/components/parameters/attributionPostbackSequenceIndex"
+        - $ref: "#/components/parameters/attributionDidWin"
+        - $ref: "#/components/parameters/attributionRedownload"
+        - $ref: "#/components/parameters/attributionCoarseConversionValue"
+        - $ref: "#/components/parameters/attributionSignature"
       responses:
         "200":
           description: Report groups
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SkanReportResponse"
+                $ref: "#/components/schemas/AttributionReportResponse"
         "422":
           $ref: "#/components/responses/ValidationError"
 
-  /skan/verify:
+  /attribution/verify:
     post:
-      tags: [SKAN]
+      tags: [Attribution postbacks]
       summary: Verify a postback payload's Apple signature
       description: |
         Verifies the `attribution-signature` of the submitted postback JSON
@@ -2553,8 +2553,8 @@ paths:
         signed-message composition, and returns the byte string that was
         (or should have been) signed for diffing. Nothing is stored. A read
         that arrives as POST only because the postback is its input: it
-        requires `skan:read`, and `staged=1` is rejected.
-      operationId: verifySkanPostback
+        requires `attribution:read`, and `staged=1` is rejected.
+      operationId: verifyAttributionPostback
       requestBody:
         required: true
         content:
@@ -2567,13 +2567,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SkanVerifyResponse"
+                $ref: "#/components/schemas/AttributionVerifyResponse"
         "422":
           $ref: "#/components/responses/ValidationError"
 
-  /skan/schema:
+  /attribution/schema:
     get:
-      tags: [SKAN]
+      tags: [Attribution postbacks]
       summary: Conversion-value schema for an iOS build (public, token-gated)
       description: |
         The ENCODE view of the app's decoding rules, fetched by the shipped
@@ -2585,13 +2585,13 @@ paths:
         when encoding behaviour changes; `If-None-Match` answers `304`.
         Rate-limited per source IP. The `events` value is always a JSON
         object, even when empty.
-      operationId: getSkanSchema
+      operationId: getAttributionSchema
       security: []
       parameters:
         - name: X-P202-Schema-Token
           in: header
           required: true
-          description: The app's schema token, minted at registration (`POST /skan/apps`) and rotatable
+          description: The app's schema token, minted at registration (`POST /attribution/apps`) and rotatable
           schema:
             type: string
             pattern: "^[0-9a-f]{64}$"
@@ -2612,7 +2612,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SkanSchemaResponse"
+                $ref: "#/components/schemas/AttributionSchemaResponse"
         "304":
           description: Not modified — the cached document is current
         "400":
@@ -2628,14 +2628,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "429":
-          $ref: "#/components/responses/SkanRateLimited"
+          $ref: "#/components/responses/AttributionRateLimited"
 
   /.well-known/skadnetwork/report-attribution/:
     servers:
       - url: /
         description: Site root — Apple devices POST here directly; this path is outside the /api/v3 base
     get:
-      tags: [SKAN]
+      tags: [Attribution postbacks]
       summary: Receiver readiness probe
       description: Lets an operator confirm the endpoint is reachable at the exact URL Apple will use, before pointing an app at it.
       operationId: probeSkadnetworkReceiver
@@ -2646,9 +2646,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SkanReceiverProbeResponse"
+                $ref: "#/components/schemas/SkadnetworkReceiverProbeResponse"
     post:
-      tags: [SKAN]
+      tags: [Attribution postbacks]
       summary: Receive a SKAdNetwork install-validation postback
       description: |
         The developer-side `NSAdvertisingAttributionReportEndpoint`. Devices
@@ -2674,7 +2674,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SkanPostbackReceiptResponse"
+                $ref: "#/components/schemas/AttributionPostbackReceiptResponse"
         "400":
           description: Structurally invalid postback (Apple's hyphenated field names in `field_errors`)
           content:
@@ -2692,7 +2692,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "429":
-          $ref: "#/components/responses/SkanRateLimited"
+          $ref: "#/components/responses/AttributionRateLimited"
         "503":
           description: Database unavailable — the device retries later
           content:
@@ -2805,80 +2805,80 @@ components:
         type: integer
 
     # SKAN postback filters (list + report)
-    skanAppId:
+    attributionAppId:
       name: app_id
       in: query
       description: Advertised App Store id
       schema:
         type: integer
-    skanAdNetworkId:
+    attributionAdNetworkId:
       name: ad_network_id
       in: query
       schema:
         type: string
-    skanVersion:
+    attributionVersion:
       name: version
       in: query
       description: SKAN postback version (e.g. `4.0`)
       schema:
         type: string
-    skanTransactionId:
+    attributionTransactionId:
       name: transaction_id
       in: query
       schema:
         type: string
-    skanCountryCode:
+    attributionCountryCode:
       name: country_code
       in: query
       schema:
         type: string
-    skanSourceIdentifier:
+    attributionSourceIdentifier:
       name: source_identifier
       in: query
       description: SKAN 4 source identifier (1–4 digits)
       schema:
         type: string
-    skanCampaignId:
+    attributionCampaignId:
       name: campaign_id
       in: query
       description: SKAN 2/3 campaign id
       schema:
         type: integer
-    skanFidelityType:
+    attributionFidelityType:
       name: fidelity_type
       in: query
       description: 1 = StoreKit-rendered or web ad, 0 = view-through
       schema:
         type: integer
         enum: [0, 1]
-    skanPostbackSequenceIndex:
+    attributionPostbackSequenceIndex:
       name: postback_sequence_index
       in: query
       description: SKAN 4 conversion window (0, 1, or 2)
       schema:
         type: integer
         enum: [0, 1, 2]
-    skanDidWin:
+    attributionDidWin:
       name: did_win
       in: query
       description: Winning (1/true) or losing (0/false) postbacks; anything else is a 422
       schema:
         type: string
         enum: ["1", "0", "true", "false"]
-    skanRedownload:
+    attributionRedownload:
       name: redownload
       in: query
       description: Redownloads (1/true) or first installs (0/false)
       schema:
         type: string
         enum: ["1", "0", "true", "false"]
-    skanCoarseConversionValue:
+    attributionCoarseConversionValue:
       name: coarse_conversion_value
       in: query
       schema:
         type: string
         enum: [low, medium, high]
-    skanSignature:
+    attributionSignature:
       name: signature
       in: query
       description: Signature verification state. On the report, an explicit value switches `meta.trusted` to `as-filtered`.
@@ -2914,7 +2914,7 @@ components:
           schema:
             $ref: "#/components/schemas/ValidationError"
 
-    SkanRateLimited:
+    AttributionRateLimited:
       description: Per-source rate limit exceeded; retry after the indicated seconds
       headers:
         Retry-After:
@@ -4246,12 +4246,12 @@ components:
 
     # ── SKAN (SKAdNetwork) ─────────────────────────────────────────────
 
-    SkanApp:
+    AttributionApp:
       type: object
       properties:
-        skan_app_id:
+        attribution_app_id:
           type: integer
-          description: Internal registration id — the `{id}` in `/skan/apps/{id}`
+          description: Internal registration id — the `{id}` in `/attribution/apps/{id}`
         app_id:
           type: integer
           description: Numeric App Store id of the advertised app (unique across the install)
@@ -4272,7 +4272,7 @@ components:
         etag:
           type: string
 
-    SkanAppCreate:
+    AttributionAppCreate:
       type: object
       required: [app_id, app_name]
       properties:
@@ -4286,7 +4286,7 @@ components:
           type: string
           maxLength: 500
 
-    SkanAppUpdate:
+    AttributionAppUpdate:
       type: object
       properties:
         app_id:
@@ -4298,23 +4298,23 @@ components:
           type: string
           maxLength: 500
 
-    SkanAppResponse:
+    AttributionAppResponse:
       type: object
       properties:
         data:
-          $ref: "#/components/schemas/SkanApp"
+          $ref: "#/components/schemas/AttributionApp"
 
-    SkanAppListResponse:
+    AttributionAppListResponse:
       type: object
       properties:
         data:
           type: array
           items:
-            $ref: "#/components/schemas/SkanApp"
+            $ref: "#/components/schemas/AttributionApp"
         pagination:
           $ref: "#/components/schemas/Pagination"
 
-    SkanConversionValue:
+    AttributionConversionValue:
       type: object
       description: Exactly one of `fine_value` / `coarse_value` is non-null.
       properties:
@@ -4344,7 +4344,7 @@ components:
         etag:
           type: string
 
-    SkanConversionValueCreate:
+    AttributionConversionValueCreate:
       type: object
       required: [event_name]
       description: Set `fine_value` (0–63) or `coarse_value` — one of them, not both and not neither (`422` otherwise).
@@ -4369,7 +4369,7 @@ components:
           default: 0
           description: Revenue attributed per decoded postback
 
-    SkanConversionValueUpdate:
+    AttributionConversionValueUpdate:
       type: object
       description: |
         An absent field is kept. An explicit `null` on `fine_value` or
@@ -4395,23 +4395,23 @@ components:
           type: number
           minimum: 0
 
-    SkanConversionValueResponse:
+    AttributionConversionValueResponse:
       type: object
       properties:
         data:
-          $ref: "#/components/schemas/SkanConversionValue"
+          $ref: "#/components/schemas/AttributionConversionValue"
 
-    SkanConversionValueListResponse:
+    AttributionConversionValueListResponse:
       type: object
       properties:
         data:
           type: array
           items:
-            $ref: "#/components/schemas/SkanConversionValue"
+            $ref: "#/components/schemas/AttributionConversionValue"
         pagination:
           $ref: "#/components/schemas/Pagination"
 
-    SkanPostback:
+    AttributionPostback:
       type: object
       description: |
         One stored postback; columns mirror Apple's parameters with hyphens
@@ -4485,32 +4485,32 @@ components:
           type: string
           description: Display value (proxy-header aware); not the rate-limit identity
 
-    SkanPostbackDetail:
+    AttributionPostbackDetail:
       allOf:
-        - $ref: "#/components/schemas/SkanPostback"
+        - $ref: "#/components/schemas/AttributionPostback"
         - type: object
           properties:
             attribution_signature:
               type: string
               description: Apple's base64 ECDSA signature as received (sanitized; up to 4096 chars), for forensics
 
-    SkanPostbackResponse:
+    AttributionPostbackResponse:
       type: object
       properties:
         data:
-          $ref: "#/components/schemas/SkanPostbackDetail"
+          $ref: "#/components/schemas/AttributionPostbackDetail"
 
-    SkanPostbackListResponse:
+    AttributionPostbackListResponse:
       type: object
       properties:
         data:
           type: array
           items:
-            $ref: "#/components/schemas/SkanPostback"
+            $ref: "#/components/schemas/AttributionPostback"
         pagination:
           $ref: "#/components/schemas/Pagination"
 
-    SkanReportGroup:
+    AttributionReportGroup:
       type: object
       description: |
         One report group. Which dimension fields are present depends on
@@ -4582,7 +4582,7 @@ components:
               revenue:
                 type: number
 
-    SkanReportResponse:
+    AttributionReportResponse:
       type: object
       properties:
         data:
@@ -4594,7 +4594,7 @@ components:
             groups:
               type: array
               items:
-                $ref: "#/components/schemas/SkanReportGroup"
+                $ref: "#/components/schemas/AttributionReportGroup"
         meta:
           type: object
           properties:
@@ -4664,7 +4664,7 @@ components:
           type: string
           description: Base64 ECDSA (P-256/SHA-256) signature over the version-specific field composition
 
-    SkanVerifyResponse:
+    AttributionVerifyResponse:
       type: object
       properties:
         data:
@@ -4683,7 +4683,7 @@ components:
                 type: string
               example: ["2.1", "2.2", "3.0", "4.0"]
 
-    SkanSchemaResponse:
+    AttributionSchemaResponse:
       type: object
       properties:
         data:
@@ -4712,7 +4712,7 @@ components:
             generated_at:
               type: integer
 
-    SkanPostbackReceiptResponse:
+    AttributionPostbackReceiptResponse:
       type: object
       properties:
         data:
@@ -4727,7 +4727,7 @@ components:
               type: string
               enum: [valid, invalid, unverifiable]
 
-    SkanReceiverProbeResponse:
+    SkadnetworkReceiverProbeResponse:
       type: object
       properties:
         data:

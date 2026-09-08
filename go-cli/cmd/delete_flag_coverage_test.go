@@ -35,7 +35,7 @@ func TestEveryDeleteCommandHasTheSafetyFlags(t *testing.T) {
 			}
 		}
 		// The shared registrars give --force the -f shorthand; a
-		// hand-rolled set loses it silently (skan's did), and scripts
+		// hand-rolled set loses it silently (the attribution postbacks set did), and scripts
 		// written against `-f` then hit "unknown shorthand flag".
 		if f := c.Flags().Lookup("force"); f != nil && f.Shorthand != "f" {
 			t.Errorf("%s --force has shorthand %q, want \"f\" (use registerDeleteFlags/registerSingleDeleteFlags)", c.CommandPath(), f.Shorthand)

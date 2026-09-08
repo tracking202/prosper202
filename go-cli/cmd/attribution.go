@@ -11,7 +11,7 @@ import (
 
 var attributionCmd = &cobra.Command{
 	Use:   "attribution",
-	Short: "Manage attribution models, snapshots, and exports",
+	Short: "Attribution: models, snapshots and exports over your own clicks, plus platform-signed postbacks (SKAdNetwork)",
 }
 
 // --- Model subcommands ---

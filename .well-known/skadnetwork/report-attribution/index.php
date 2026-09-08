@@ -17,7 +17,7 @@ declare(strict_types=1);
  * denying other dotfiles.
  *
  * All parsing, validation, signature verification, and storage live in
- * Api\V3\Skan\PostbackReceiver; this file is only HTTP plumbing.
+ * Api\V3\Attribution\PostbackReceiver; this file is only HTTP plumbing.
  */
 
 $root = dirname(__DIR__, 3);
@@ -44,8 +44,8 @@ require_once $root . '/vendor/autoload.php';
 require_once $root . '/202-config.php';
 
 use Api\V3\Bootstrap;
-use Api\V3\Skan\PostbackReceiver;
-use Api\V3\Skan\PostbackVerifier;
+use Api\V3\Attribution\PostbackReceiver;
+use Api\V3\Attribution\PostbackVerifier;
 use Api\V3\Support\ServerStateStore;
 
 $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
@@ -83,9 +83,9 @@ try {
 // the peer is the proxy, so the ceiling is an aggregate one; devices each
 // send a handful of postbacks over an install's lifetime.
 try {
-    $retryAfter = (new ServerStateStore())->softIpRateLimit('skan', 600, 60);
+    $retryAfter = (new ServerStateStore())->softIpRateLimit('attribution', 600, 60);
 } catch (\Throwable $e) {
-    error_log('p202 skan: rate limiter unavailable, accepting postback: ' . $e->getMessage());
+    error_log('p202 attribution: rate limiter unavailable, accepting postback: ' . $e->getMessage());
     $retryAfter = null;
 }
 if ($retryAfter !== null) {
@@ -107,7 +107,7 @@ try {
     $receiver = new PostbackReceiver($db, new PostbackVerifier());
     $result = $receiver->receive($rawBody, \AUTH::client_ip());
 } catch (\Throwable $e) {
-    error_log('p202 skan: postback processing failed: ' . $e->getMessage());
+    error_log('p202 attribution: postback processing failed: ' . $e->getMessage());
     Bootstrap::errorResponse('Internal server error', 500);
     exit;
 }

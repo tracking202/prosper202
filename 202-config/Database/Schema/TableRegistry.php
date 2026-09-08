@@ -164,9 +164,9 @@ final class TableRegistry
     public const string FORECAST_EVENTS = '202_forecast_events';
 
     // SKAdNetwork (SKAN) attribution tables
-    public const string SKAN_POSTBACKS = '202_skan_postbacks';
-    public const string SKAN_APPS = '202_skan_apps';
-    public const string SKAN_CONVERSION_VALUES = '202_skan_conversion_values';
+    public const string ATTRIBUTION_POSTBACKS = '202_attribution_postbacks';
+    public const string ATTRIBUTION_APPS = '202_attribution_apps';
+    public const string ATTRIBUTION_CONVERSION_VALUES = '202_attribution_conversion_values';
 
     // Data engine tables
     public const string DATAENGINE = '202_dataengine';

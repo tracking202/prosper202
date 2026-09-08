@@ -449,11 +449,11 @@ func (c *Client) doWithHeaders(method, path string, params map[string]string, bo
 	if stagedMode &&
 		(method == "POST" || method == "PUT" || method == "PATCH" || method == "DELETE") &&
 		!strings.HasPrefix(strings.TrimLeft(path, "/"), "staged-changes") &&
-		// skan/verify computes over the submitted payload and stores
+		// attribution/verify computes over the submitted payload and stores
 		// nothing — a read that arrives as POST because the postback JSON
 		// is its input. There is no proposal to record; stamping staged=1
 		// would only earn the server's "staged is not supported" rejection.
-		strings.TrimLeft(path, "/") != "skan/verify" &&
+		strings.TrimLeft(path, "/") != "attribution/verify" &&
 		params["dry_run"] == "" {
 		// A dry-run preview is a read; staging it would be rejected by the
 		// server's mutual-exclusion check, so an explicit --dry-run wins

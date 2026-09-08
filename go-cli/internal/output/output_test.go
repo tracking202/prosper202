@@ -467,7 +467,7 @@ func TestRenderQuietPrefersTheRowsOwnPrimaryKeyOverUserId(t *testing.T) {
 	// for each list endpoint, including the foreign keys that ride along; the
 	// ids are chosen so a wrong pick is visible.
 	cases := map[string]string{
-		`{"data":[{"skan_app_id":2,"app_id":525463029,"user_id":1}]}`:        "2",
+		`{"data":[{"attribution_app_id":2,"app_id":525463029,"user_id":1}]}`: "2",
 		`{"data":[{"rule_id":7,"app_id":525463029,"user_id":1}]}`:            "7",
 		`{"data":[{"postback_id":31,"user_id":1,"campaign_id":9}]}`:          "31",
 		`{"data":[{"event_id":12,"user_id":1,"event_name":"Black Friday"}]}`: "12",

@@ -1,6 +1,6 @@
 name: Swift SDK
 
-# The P202SKAN package's comments lean on "this repository's CI" running its
+# The P202Attribution package's comments lean on "this repository's CI" running its
 # tests on Linux (where StoreKit does not exist and the SKAdNetwork call
 # compiles to a no-op). This job is that CI: build + unit tests on every
 # change to the package. The env-gated live-server integration tests skip
@@ -9,11 +9,11 @@ name: Swift SDK
 on:
   push:
     paths:
-      - 'sdk/ios-skan/**'
+      - 'sdk/ios-attribution/**'
       - '.github/workflows/swift-sdk.yml'
   pull_request:
     paths:
-      - 'sdk/ios-skan/**'
+      - 'sdk/ios-attribution/**'
       - '.github/workflows/swift-sdk.yml'
 
 jobs:
@@ -23,7 +23,7 @@ jobs:
     container: swift:6.0.3   # matches the toolchain the package is developed against
     defaults:
       run:
-        working-directory: sdk/ios-skan
+        working-directory: sdk/ios-attribution
     steps:
       - uses: actions/checkout@v4
 

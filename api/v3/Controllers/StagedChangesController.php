@@ -366,7 +366,7 @@ final class StagedChangesController
      * read path to the proposer's resources — so a secret minted by the
      * write (a SKAN schema token from an app create or rotation) must not
      * ride along. The proposer retrieves it through their own scoped GET.
-     * Same policy as SkanAppsController::deletePreview, applied to the
+     * Same policy as AttributionAppsController::deletePreview, applied to the
      * transient response instead of the stored record (which never held it).
      *
      * @param array<string, mixed> $data
