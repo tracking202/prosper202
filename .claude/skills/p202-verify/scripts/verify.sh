@@ -89,6 +89,32 @@ elif [ -f phpstan.phar ] && have php; then
     PHPSTAN_CMD="php phpstan.phar"
 fi
 
+# A `go` on PATH is not necessarily a `go` that answers. Wrappers (ax, and
+# some version-manager shims) exit 0 while emitting nothing, and golangci-lint
+# reads GOROOT and GOCACHE out of `go env`, so it dies on "unexpected end of
+# JSON input" before it lints a line. Walk the candidates and take the first
+# that actually replies; the tiers then use that binary and put its directory
+# first on PATH so the tools they shell out to resolve the same one.
+GO_BIN=""
+find_working_go() {
+    local dir candidate search
+    search="$PATH:/opt/homebrew/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin"
+    local IFS=:
+    for dir in $search; do
+        [ -n "$dir" ] || continue
+        candidate="$dir/go"
+        [ -x "$candidate" ] || continue
+        if [ -n "$("$candidate" env GOROOT 2>/dev/null)" ]; then
+            GO_BIN="$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+if [ -d go-cli ]; then
+    find_working_go || true
+fi
+
 SCHEMA_DB_READY=no
 if [ -n "${P202_TEST_DB_HOST:-}" ] && [ -n "${P202_TEST_DB_NAME:-}" ]; then
     SCHEMA_DB_READY=yes
@@ -109,15 +135,12 @@ reason_for() {
             ;;
         go|golangci)
             [ -d go-cli ] || { echo "go-cli/ missing"; return; }
-            have go || { echo "go not on PATH"; return; }
-            # `go` being on PATH is not the same as `go` answering. A wrapper
-            # that intercepts the toolchain (ax, asdf shims, a corporate
-            # proxy) can exit 0 while emitting nothing, and golangci-lint
-            # then dies on `go env -json` with "unexpected end of JSON input".
-            # Catch that here so it reports SKIP rather than a FAIL that reads
-            # as a code regression.
-            if [ -z "$(go env -json GOROOT 2>/dev/null)" ]; then
-                echo "\`go env -json\` returned nothing; the go on PATH ($(command -v go)) is a wrapper that swallows output"
+            if [ -z "$GO_BIN" ]; then
+                if have go; then
+                    echo "no working go found; the one on PATH ($(command -v go)) answers \`go env\` with nothing, and no fallback replied either"
+                else
+                    echo "go not on PATH"
+                fi
                 return
             fi
             if [ "$1" = golangci ]; then
@@ -180,8 +203,10 @@ go_env_broken() {
 }
 
 run_go() {
-    local out rc
-    out=$( cd go-cli && go vet ./... 2>&1 && go test ./... 2>&1 )
+    local out rc godir
+    godir=$(dirname "$GO_BIN")
+    out=$( cd go-cli && PATH="$godir:$PATH" "$GO_BIN" vet ./... 2>&1 \
+           && PATH="$godir:$PATH" "$GO_BIN" test ./... 2>&1 )
     rc=$?
     printf '%s\n' "$out"
     if [ $rc -ne 0 ] && go_env_broken "$out"; then
@@ -192,7 +217,7 @@ run_go() {
 
     # An empty HOME catches flag checks that only pass because this machine
     # has a CLI config. CI has none.
-    out=$( cd go-cli && HOME=$(mktemp -d) go test ./cmd/... 2>&1 )
+    out=$( cd go-cli && HOME=$(mktemp -d) PATH="$godir:$PATH" "$GO_BIN" test ./cmd/... 2>&1 )
     rc=$?
     printf '%s\n' "$out"
     if [ $rc -ne 0 ] && go_env_broken "$out"; then
@@ -203,8 +228,11 @@ run_go() {
 }
 
 run_golangci() {
-    local out rc
-    out=$( cd go-cli && golangci-lint run ./... 2>&1 )
+    local out rc godir
+    # golangci-lint shells out to `go env`, so the PATH it inherits decides
+    # whether it can start at all.
+    godir=$(dirname "$GO_BIN")
+    out=$( cd go-cli && PATH="$godir:$PATH" golangci-lint run ./... 2>&1 )
     rc=$?
     printf '%s\n' "$out"
     if [ $rc -ne 0 ] && printf '%s' "$out" | grep -qE 'Running error:|context loading failed|could not load export data'; then
