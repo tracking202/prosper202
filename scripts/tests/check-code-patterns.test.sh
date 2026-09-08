@@ -301,6 +301,37 @@ XML
         printf '  skip  unit tier cases: no vendor/bin/phpunit at %s\n' "$REAL_VENDOR"
     fi
 
+    # ── schema tier, behaviourally: a skip next to a failure is FAIL ──
+    #
+    # The detector fires on "Skipped: N". The first version consulted it
+    # before the exit status, so a run in which one test skipped (no DB) and
+    # another failed reported SKIP and hid the failure.
+    if [ -x "$REAL_VENDOR/bin/phpunit" ]; then
+        ln -s "$(cd "$REAL_VENDOR" && pwd)" vendor
+        cat > phpunit.ci.xml <<'XML'
+<?xml version="1.0"?>
+<phpunit bootstrap="vendor/autoload.php" colors="false" convertDeprecationsToExceptions="false">
+  <testsuites><testsuite name="default"><directory>tests</directory></testsuite></testsuites>
+</phpunit>
+XML
+        mkdir -p tests/Schema
+        expect_schema() { # name want_verdict
+            local got
+            got=$(P202_TEST_DB_HOST=127.0.0.1 P202_TEST_DB_NAME=zz_scratch ./verify.sh --tier schema 2>/dev/null | awk '/^  schema / {print $2}')
+            if [ "$got" = "$2" ]; then printf '  ok    %-46s schema=%s\n' "$1" "$got"; pass=$((pass + 1)); else printf '  FAIL  %-46s schema=%s (wanted %s)\n' "$1" "$got" "$2"; fail=$((fail + 1)); fi
+        }
+        printf '<?php\n/** @group integration */\nfinal class ZzSkipTest extends \\PHPUnit\\Framework\\TestCase { public function testDb(): void { $this->markTestSkipped("no db"); } }\n' > tests/Schema/ZzSkipTest.php
+        expect_schema "schema: only skips (no db) is SKIP, not PASS" SKIP
+        printf '<?php\n/** @group integration */\nfinal class ZzScanTest extends \\PHPUnit\\Framework\\TestCase { public function testScan(): void { $this->fail("scanner regression"); } }\n' > tests/Schema/ZzScanTest.php
+        expect_schema "schema: a failure next to a skip is FAIL, not SKIP" FAIL
+        rm -f tests/Schema/ZzScanTest.php tests/Schema/ZzSkipTest.php
+        printf '<?php\n/** @group integration */\nfinal class ZzOkTest extends \\PHPUnit\\Framework\\TestCase { public function testOk(): void { $this->assertTrue(true); } }\n' > tests/Schema/ZzOkTest.php
+        expect_schema "schema: a green run PASSES" PASS
+        rm -rf tests/Schema phpunit.ci.xml vendor
+    else
+        printf '  skip  schema tier cases: no vendor/bin/phpunit at %s\n' "$REAL_VENDOR"
+    fi
+
     # ── go tier: a change that breaks the build is FAIL; only a host that
     #    cannot build cgo at all is SKIP. The output cannot tell the two
     #    apart, so the tier compiles a known-good cgo program to find out. ──
@@ -327,6 +358,41 @@ XML
             printf '  ok    %-46s\n' "go: probe tells a healthy host from a broken one"; pass=$((pass + 1))
         else
             printf '  FAIL  %-46s\n' "go: probe tells a healthy host from a broken one"; fail=$((fail + 1))
+        fi
+        # ── golangci tier: same shape. A change that cannot load is FAIL; only a
+        #    host where the linter cannot lint a trivial module is SKIP. ──
+        if command -v golangci-lint >/dev/null 2>&1; then
+            printf 'package main\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
+            expect_golangci() { # name want_verdict [env...]
+                local name="$1" want="$2"; shift 2
+                local got
+                got=$(env "$@" ./verify.sh --tier golangci 2>/dev/null | awk '/^  golangci / {print $2}')
+                if [ "$got" = "$want" ]; then printf '  ok    %-46s golangci=%s\n' "$name" "$got"; pass=$((pass + 1)); else printf '  FAIL  %-46s golangci=%s (wanted %s)\n' "$name" "$got" "$want"; fail=$((fail + 1)); fi
+            }
+            expect_golangci "golangci: healthy module PASSES" PASS
+            printf 'package main\n\nimport _ "example.com/does/not/exist_zz"\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
+            expect_golangci "golangci: a change importing a missing package is FAIL" FAIL
+            # A build cache that cannot be created breaks package loading for
+            # every module while leaving `go env` answering, which is the
+            # shape of a host problem the resolver does not catch up front.
+            expect_golangci "golangci: the same failure on a broken host is SKIP" SKIP GOCACHE=/nonexistent/p202/cache
+            # A change-side fault whose output DOES match the trigger on this
+            # version ("Running error", "context loading failed"): a
+            # malformed go.mod. Only the probe can tell it from a broken host.
+            printf 'package main\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
+            cp go-cli/go.mod "$REPO/go.mod.keep"
+            printf 'module p202harness\n\ngo 1.22\n\nthis is not valid\n' > go-cli/go.mod
+            expect_golangci "golangci: a change-side load error that matches the trigger is FAIL" FAIL
+            mv "$REPO/go.mod.keep" go-cli/go.mod
+            eval "$(sed -n '/^host_golangci_broken() {/,/^}/p' ./verify.sh)"
+            if ! host_golangci_broken && GOCACHE=/nonexistent/p202/cache host_golangci_broken; then
+                printf '  ok    %-46s\n' "golangci: probe tells a healthy host from a broken one"; pass=$((pass + 1))
+            else
+                printf '  FAIL  %-46s\n' "golangci: probe tells a healthy host from a broken one"; fail=$((fail + 1))
+            fi
+            printf 'package main\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
+        else
+            printf '  skip  golangci tier cases: golangci-lint not installed\n'
         fi
         rm -rf go-cli
     else

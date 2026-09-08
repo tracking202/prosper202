@@ -410,6 +410,31 @@ run_go() {
     return $rc
 }
 
+# Output that MIGHT mean golangci-lint cannot run on this host. As with the
+# Go tier, the text is ambiguous: a golangci-lint built against a different
+# Go fails to load every package, and so does a change that imports a
+# package that does not exist. Which strings appear even varies by
+# golangci-lint version (2.1.6 prints "could not load export data" for a bad
+# import; 2.13 prints "typecheck" and "no required module"). So this is the
+# trigger only; the probe decides.
+golangci_env_broken() {
+    printf '%s' "$1" | grep -qE 'Running error:|context loading failed|could not load export data|Failed to discover go env'
+}
+
+# Lint a known-good module with the same golangci-lint and the same go. If
+# that fails, the host cannot run the linter at all; if it succeeds, whatever
+# failed in go-cli is the change.
+host_golangci_broken() {
+    local dir rc
+    dir=$(mktemp -d) || return 0
+    printf 'module p202probe\n\ngo 1.22\n' > "$dir/go.mod"
+    printf 'package main\n\nfunc main() {}\n' > "$dir/main.go"
+    ( cd "$dir" && PATH="$(dirname "$GO_BIN"):$PATH" golangci-lint run ./... >/dev/null 2>&1 )
+    rc=$?
+    rm -rf "$dir"
+    [ $rc -ne 0 ]
+}
+
 run_golangci() {
     local out rc godir
     # golangci-lint shells out to `go env`, so the PATH it inherits decides
@@ -418,9 +443,12 @@ run_golangci() {
     out=$( cd go-cli && PATH="$godir:$PATH" golangci-lint run ./... 2>&1 )
     rc=$?
     printf '%s\n' "$out"
-    if [ $rc -ne 0 ] && printf '%s' "$out" | grep -qE 'Running error:|context loading failed|could not load export data'; then
-        COULD_NOT_RUN_REASON="golangci-lint could not load packages (toolchain mismatch or go wrapper); not a lint finding"
+    if [ $rc -ne 0 ] && golangci_env_broken "$out" && host_golangci_broken; then
+        COULD_NOT_RUN_REASON="golangci-lint cannot lint a trivial module on this host (probe failed): toolchain mismatch or go wrapper; not a finding about this code"
         return $TIER_COULD_NOT_RUN
+    fi
+    if [ $rc -ne 0 ] && golangci_env_broken "$out"; then
+        FAIL_NOTE="output mentions package loading, but golangci-lint lints a trivial module on this host, so the failure is in the change"
     fi
     return $rc
 }
@@ -432,9 +460,17 @@ run_schema() {
     out=$( $PHPUNIT_CMD --configuration phpunit.ci.xml --group integration --no-coverage tests/Schema/ 2>&1 )
     rc=$?
     printf '%s\n' "$out"
-    if phpunit_ran_nothing "$out"; then
+    # Only a run PHPUnit itself called successful can be "ran nothing". A
+    # non-zero exit means at least one test failed, and a failure next to a
+    # skip is still a failure: the first version checked the summary before
+    # the exit status and would have reported SKIP for a run in which the
+    # scanner test failed while the database test skipped.
+    if [ $rc -eq 0 ] && phpunit_ran_nothing "$out"; then
         COULD_NOT_RUN_REASON="the schema tests skipped themselves ($(printf '%s' "$out" | grep -oE 'Tests: [0-9]+.*|No tests executed' | tail -1)); is P202_TEST_DB_HOST reachable?"
         return $TIER_COULD_NOT_RUN
+    fi
+    if [ $rc -ne 0 ] && phpunit_ran_nothing "$out"; then
+        FAIL_NOTE="some schema tests also skipped themselves (is P202_TEST_DB_HOST reachable?), but at least one failed and that is the verdict"
     fi
     return $rc
 }
