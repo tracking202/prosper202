@@ -41,6 +41,18 @@ jobs:
           printf 'checking %d script(s)\n' "${#scripts[@]}"
           shellcheck --severity=warning --format=gcc "${scripts[@]}"
 
+  hook-tests:
+    name: check-code-patterns regression tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The hook selects the files it inspects. When that selection was wrong
+      # it examined nothing and still reported clean, so the selection itself
+      # needs a test. Runs the real script against a throwaway repository.
+      - name: Run check-code-patterns tests
+        run: ./scripts/tests/check-code-patterns.test.sh
+
   actionlint:
     name: actionlint
     runs-on: ubuntu-latest
