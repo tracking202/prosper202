@@ -5,17 +5,21 @@ declare(strict_types=1);
 namespace Api\V3\Attribution;
 
 /**
- * Accepts SKAdNetwork install-validation postbacks.
+ * Accepts platform-signed attribution postbacks — SKAdNetwork today,
+ * AdAttributionKit beside it — and stores one row per postback in
+ * 202_attribution_postbacks.
  *
- * Devices POST these directly (not Apple's servers) to
- * /.well-known/skadnetwork/report-attribution/ when the advertised app names
- * this Prosper202 install as its NSAdvertisingAttributionReportEndpoint, or
- * when this install is registered as an ad network's postback endpoint. The
- * receiver validates the payload strictly, verifies Apple's signature,
- * resolves the owning user through the 202_attribution_apps registry, and stores one
- * row per postback in 202_attribution_postbacks.
+ * Devices POST these directly (not Apple's servers) to the protocol's
+ * well-known URL when the advertised app names this Prosper202 install as
+ * its attribution endpoint, or when this install is registered as an ad
+ * network's postback endpoint. The protocol (PostbackProtocol) validates
+ * the body strictly, verifies the platform's signature and normalizes the
+ * fields; the receiver does everything the protocols share: it resolves the
+ * owning user through the 202_attribution_apps registry, decides what the
+ * signature verdict is worth (SignatureState::trustBit), dedupes retries,
+ * stores the row, and prunes what the open endpoint lets strangers mint.
  *
- * Response contract (what the HTTP entry point sends):
+ * Response contract (what PostbackEndpoint sends):
  *  - 200 once the postback is stored — including replays of one already
  *    stored (the device retries up to nine times when it does not get a 200,
  *    so a duplicate must not look like a failure) and postbacks whose
@@ -29,9 +33,10 @@ namespace Api\V3\Attribution;
  *  - 429/500 for rate limiting and storage failures — non-200, so the device
  *    retries later.
  *
- * No authentication: devices cannot present credentials. The attribution
- * signature is the trust boundary, which is why signature_valid is stored on
- * every row and surfaced through the reporting API.
+ * No authentication: devices cannot present credentials. The platform's
+ * signature is the trust boundary, which is why signature_state and the
+ * signature_valid trust bit are stored on every row and surfaced through
+ * the reporting API.
  */
 final class PostbackReceiver
 {
@@ -46,19 +51,23 @@ final class PostbackReceiver
 
     /**
      * Retention defaults (days) for rows the endpoint's openness makes
-     * unbounded. Only a row that VERIFIED against Apple's key and belongs to
-     * a registered app is operator data kept forever; every other class is
-     * something an unauthenticated poster can mint, so each has a window:
+     * unbounded. Only a row that VERIFIED against the platform's production
+     * key and belongs to a registered app is operator data kept forever;
+     * every other class is something an unauthenticated poster can mint, so
+     * each has a window:
      *
      *  - unclaimed    no app registration adopted it (user_id = 0)
      *  - invalid      the signature was checked and is forged
-     *  - unverifiable the signature could not be checked at all
+     *  - unverifiable the signature could not be checked at all, or was
+     *                 made with a development key the app did not opt into
      *
      * The third class is not a formality: naming a version outside
      * PostbackVerifier::VERIFIABLE_VERSIONS stores signature_valid = NULL,
      * and if the body names a registered App Store id (a public number) the
      * row is claimed too — so without this class it matched neither of the
-     * others and lived forever, unauthenticated and free to repeat.
+     * others and lived forever, unauthenticated and free to repeat. A
+     * development-signed AdAttributionKit postback is the same shape: any
+     * developer with a phone in Developer Mode can mint one naming any app.
      *
      * Overridable per class via P202_ATTRIBUTION_RETENTION_DAYS_UNCLAIMED /
      * _INVALID / _UNVERIFIABLE; 0 disables that class of pruning.
@@ -67,11 +76,22 @@ final class PostbackReceiver
     public const DEFAULT_RETENTION_DAYS_INVALID = 90;
     public const DEFAULT_RETENTION_DAYS_UNVERIFIABLE = 90;
 
-    private const COARSE_VALUES = ['low', 'medium', 'high'];
+    /**
+     * The columns the receiver writes for every protocol. A protocol's
+     * ParsedPostback::$columns may not name any of these: the identity,
+     * ownership and trust columns have one author so that no protocol can
+     * (deliberately or by a typo) overwrite the trust bit or the owner.
+     */
+    public const GENERIC_COLUMNS = [
+        'user_id', 'received_at', 'protocol', 'ad_network_id', 'transaction_id',
+        'app_id', 'postback_sequence_index', 'did_win', 'signature_state',
+        'signature_valid', 'key_id', 'dedupe_hash', 'raw_payload', 'remote_ip',
+        'created_at',
+    ];
 
     public function __construct(
         private readonly \mysqli $db,
-        private readonly PostbackVerifier $verifier,
+        private readonly PostbackProtocol $protocol,
     ) {
     }
 
@@ -97,21 +117,24 @@ final class PostbackReceiver
             return $this->error(400, 'Body is not a JSON object');
         }
 
-        $fieldErrors = $this->validate($postback);
-        if ($fieldErrors !== []) {
-            return $this->error(400, 'Invalid postback', $fieldErrors);
+        $parsed = $this->protocol->parse($postback);
+        if (is_array($parsed)) {
+            return $this->error(400, 'Invalid postback', $parsed);
+        }
+        if (!in_array($parsed->signatureState, SignatureState::ALL, true)) {
+            // A verdict the policy below cannot interpret is a defect in the
+            // protocol, not in the postback; a 500 (the endpoint's catch)
+            // makes the device retry after the fix instead of storing a row
+            // whose trust bit was decided by a fall-through.
+            throw new \LogicException(sprintf(
+                'Protocol %s produced unknown signature state "%s"',
+                $this->protocol->name(),
+                $parsed->signatureState
+            ));
         }
 
-        $signatureState = $this->verifier->verify($postback);
-        $signatureValid = match ($signatureState) {
-            PostbackVerifier::RESULT_VALID => 1,
-            PostbackVerifier::RESULT_INVALID => 0,
-            default => null,
-        };
-
-        $appId = (int)$postback['app-id'];
         try {
-            $userId = $this->resolveUserId($appId);
+            [$userId, $acceptDevelopment] = $this->resolveOwner($parsed->appId);
         } catch (\Throwable $e) {
             // A non-200 makes the device retry later, when the database may
             // be back — the postback is not lost.
@@ -119,46 +142,44 @@ final class PostbackReceiver
             return $this->error(500, 'Failed to store postback');
         }
 
-        $sequenceIndex = array_key_exists('postback-sequence-index', $postback)
-            ? (int)$postback['postback-sequence-index'] : null;
-        $didWin = array_key_exists('did-win', $postback)
-            ? (bool)$postback['did-win'] : null;
-
         $dedupeHash = self::dedupeHash(
-            (string)$postback['ad-network-id'],
-            (string)$postback['transaction-id'],
-            $sequenceIndex,
-            $didWin,
+            $this->protocol->name(),
+            $parsed->adNetworkId,
+            $parsed->postbackId,
+            $parsed->sequenceIndex,
+            $parsed->didWin,
             $rawBody
         );
 
         // Aligned (type, value) pairs so the bind string cannot drift from
-        // the value list (error pattern #7).
+        // the value list (error pattern #7). Keys follow GENERIC_COLUMNS.
         $columns = [
             'user_id'                 => ['i', $userId],
             'received_at'             => ['i', $receivedAt],
-            'version'                 => ['s', (string)$postback['version']],
-            'ad_network_id'           => ['s', (string)$postback['ad-network-id']],
-            'transaction_id'          => ['s', (string)$postback['transaction-id']],
-            'app_id'                  => ['i', $appId],
-            'source_identifier'       => ['s', self::optString($postback, 'source-identifier')],
-            'campaign_id'             => ['i', self::optInt($postback, 'campaign-id')],
-            'conversion_value'        => ['i', self::optInt($postback, 'conversion-value')],
-            'coarse_conversion_value' => ['s', self::optString($postback, 'coarse-conversion-value')],
-            'postback_sequence_index' => ['i', $sequenceIndex],
-            'redownload'              => ['i', array_key_exists('redownload', $postback) ? (int)(bool)$postback['redownload'] : null],
-            'did_win'                 => ['i', $didWin === null ? null : (int)$didWin],
-            'source_app_id'           => ['i', self::optInt($postback, 'source-app-id')],
-            'source_domain'           => ['s', self::optString($postback, 'source-domain')],
-            'fidelity_type'           => ['i', self::optInt($postback, 'fidelity-type')],
-            'country_code'            => ['s', self::optString($postback, 'country-code')],
-            'attribution_signature'   => ['s', (string)$postback['attribution-signature']],
-            'signature_valid'         => ['i', $signatureValid],
+            'protocol'                => ['s', $this->protocol->name()],
+            'ad_network_id'           => ['s', $parsed->adNetworkId],
+            'transaction_id'          => ['s', $parsed->postbackId],
+            'app_id'                  => ['i', $parsed->appId],
+            'postback_sequence_index' => ['i', $parsed->sequenceIndex],
+            'did_win'                 => ['i', $parsed->didWin === null ? null : (int)$parsed->didWin],
+            'signature_state'         => ['s', $parsed->signatureState],
+            'signature_valid'         => ['i', SignatureState::trustBit($parsed->signatureState, $acceptDevelopment)],
+            'key_id'                  => ['s', $parsed->keyId],
             'dedupe_hash'             => ['s', $dedupeHash],
             'raw_payload'             => ['s', $rawBody],
             'remote_ip'               => ['s', substr($remoteIp, 0, 45)],
             'created_at'              => ['i', $receivedAt],
         ];
+
+        $reserved = array_intersect_key($parsed->columns, $columns);
+        if ($reserved !== []) {
+            throw new \LogicException(sprintf(
+                'Protocol %s tried to write receiver-owned column(s): %s',
+                $this->protocol->name(),
+                implode(', ', array_keys($reserved))
+            ));
+        }
+        $columns += $parsed->columns;
 
         $insert = $this->insertPostback($columns);
         if ($insert === 'error') {
@@ -182,7 +203,7 @@ final class PostbackReceiver
                 'data' => [
                     'accepted' => true,
                     'duplicate' => $insert === 'duplicate',
-                    'signature' => $signatureState,
+                    'signature' => $parsed->signatureState,
                 ],
             ],
         ];
@@ -190,27 +211,37 @@ final class PostbackReceiver
 
     /**
      * The identity of a postback for retry deduplication. Apple documents
-     * transaction-id as the dedupe value and device retries are
+     * the postback id (SKAdNetwork transaction-id, AdAttributionKit
+     * postback-identifier) as the dedupe value and device retries are
      * byte-identical, so the raw body is part of the identity: without it,
-     * a forged postback carrying a real (ad-network-id, transaction-id,
-     * window) tuple with different content would occupy the slot first and
-     * the later genuine signed postback would be dropped as its
-     * "duplicate". With the body folded in, only true retries collide;
-     * mutated forgeries store as their own rows, and reporting separates
-     * them by signature state.
+     * a forged postback carrying a real (network, id, window) tuple with
+     * different content would occupy the slot first and the later genuine
+     * signed postback would be dropped as its "duplicate". With the body
+     * folded in, only true retries collide; mutated forgeries store as
+     * their own rows, and reporting separates them by signature state.
+     * The protocol is part of the identity too: one table holds every
+     * protocol's rows, and each protocol's id space is its own.
      */
-    public static function dedupeHash(string $adNetworkId, string $transactionId, ?int $sequenceIndex, ?bool $didWin, string $rawBody): string
-    {
+    public static function dedupeHash(
+        string $protocol,
+        string $adNetworkId,
+        string $postbackId,
+        ?int $sequenceIndex,
+        ?bool $didWin,
+        string $rawBody
+    ): string {
         // Length-prefixed serialization: with a plain joining character, an
         // ad-network-id containing that character could collide with a
-        // different (network, transaction) pair. The prefixes pin the field
+        // different (network, id) pair. The prefixes pin the field
         // boundaries whatever the strings contain.
         return sha1(sprintf(
-            '%d:%s|%d:%s|%s|%s|%s',
+            '%d:%s|%d:%s|%d:%s|%s|%s|%s',
+            strlen($protocol),
+            $protocol,
             strlen($adNetworkId),
             $adNetworkId,
-            strlen($transactionId),
-            $transactionId,
+            strlen($postbackId),
+            $postbackId,
             $sequenceIndex === null ? '-' : (string)$sequenceIndex,
             $didWin === null ? '-' : ($didWin ? 'w' : 'l'),
             sha1($rawBody)
@@ -219,9 +250,10 @@ final class PostbackReceiver
 
     /**
      * Bounded retention pass: delete aged rows nobody will ever act on —
-     * unclaimed postbacks (no app registration adopted them) and rows whose
-     * signature verified as forged. Verified rows belonging to a user are
-     * never touched. LIMITed so a pass stays cheap on the request path.
+     * unclaimed postbacks (no app registration adopted them), rows whose
+     * signature verified as forged, and rows nobody vouched for. Verified
+     * rows belonging to a user are never touched. LIMITed so a pass stays
+     * cheap on the request path.
      */
     public function prunePostbacks(int $now): void
     {
@@ -275,112 +307,29 @@ final class PostbackReceiver
     }
 
     /**
-     * Strict structural validation. Anything a genuine device would never
-     * send is named here and rejected with a 400 — not stored half-parsed.
-     *
-     * @param array<string, mixed> $postback
-     * @return array<string, string> field => problem (empty when valid)
-     */
-    private function validate(array $postback): array
-    {
-        $errors = [];
-
-        $version = $postback['version'] ?? null;
-        if (!is_string($version) || preg_match('/^\d{1,2}\.\d{1,2}$/D', $version) !== 1) {
-            $errors['version'] = 'Required: a version string such as "4.0"';
-        }
-
-        $adNetworkId = $postback['ad-network-id'] ?? null;
-        if (!is_string($adNetworkId) || trim($adNetworkId) === '' || strlen($adNetworkId) > 100) {
-            $errors['ad-network-id'] = 'Required: a non-empty string of at most 100 characters';
-        }
-
-        $transactionId = $postback['transaction-id'] ?? null;
-        if (!is_string($transactionId) || trim($transactionId) === '' || strlen($transactionId) > 64) {
-            $errors['transaction-id'] = 'Required: a non-empty string of at most 64 characters';
-        }
-
-        if (!is_int($postback['app-id'] ?? null) || $postback['app-id'] < 0) {
-            $errors['app-id'] = 'Required: a non-negative integer App Store id';
-        }
-
-        $signature = $postback['attribution-signature'] ?? null;
-        if (!is_string($signature) || trim($signature) === '' || strlen($signature) > 4096) {
-            $errors['attribution-signature'] = 'Required: a non-empty base64 string';
-        }
-
-        if (array_key_exists('source-identifier', $postback)) {
-            $sourceIdentifier = $postback['source-identifier'];
-            if (!is_string($sourceIdentifier) || preg_match('/^\d{1,4}$/D', $sourceIdentifier) !== 1) {
-                $errors['source-identifier'] = 'Must be a string of 1-4 digits';
-            }
-        }
-        if (array_key_exists('campaign-id', $postback) && (!is_int($postback['campaign-id']) || $postback['campaign-id'] < 0)) {
-            $errors['campaign-id'] = 'Must be a non-negative integer';
-        }
-        if (array_key_exists('conversion-value', $postback)) {
-            $conversionValue = $postback['conversion-value'];
-            if (!is_int($conversionValue) || $conversionValue < 0 || $conversionValue > 63) {
-                $errors['conversion-value'] = 'Must be an integer from 0 to 63';
-            }
-        }
-        if (
-            array_key_exists('coarse-conversion-value', $postback)
-            && !in_array($postback['coarse-conversion-value'], self::COARSE_VALUES, true)
-        ) {
-            $errors['coarse-conversion-value'] = 'Must be one of: low, medium, high';
-        }
-        if (array_key_exists('postback-sequence-index', $postback)) {
-            $sequenceIndex = $postback['postback-sequence-index'];
-            if (!is_int($sequenceIndex) || $sequenceIndex < 0 || $sequenceIndex > 2) {
-                $errors['postback-sequence-index'] = 'Must be an integer from 0 to 2';
-            }
-        }
-        if (array_key_exists('redownload', $postback) && !is_bool($postback['redownload'])) {
-            $errors['redownload'] = 'Must be a boolean';
-        }
-        if (array_key_exists('did-win', $postback) && !is_bool($postback['did-win'])) {
-            $errors['did-win'] = 'Must be a boolean';
-        }
-        if (array_key_exists('source-app-id', $postback) && (!is_int($postback['source-app-id']) || $postback['source-app-id'] < 0)) {
-            $errors['source-app-id'] = 'Must be a non-negative integer App Store id';
-        }
-        if (array_key_exists('source-domain', $postback)) {
-            $sourceDomain = $postback['source-domain'];
-            if (!is_string($sourceDomain) || trim($sourceDomain) === '' || strlen($sourceDomain) > 255) {
-                $errors['source-domain'] = 'Must be a non-empty string of at most 255 characters';
-            }
-        }
-        if (array_key_exists('fidelity-type', $postback)) {
-            $fidelityType = $postback['fidelity-type'];
-            if (!is_int($fidelityType) || $fidelityType < 0 || $fidelityType > 1) {
-                $errors['fidelity-type'] = 'Must be 0 (view-through) or 1 (StoreKit-rendered or web ad)';
-            }
-        }
-        if (array_key_exists('country-code', $postback)) {
-            $countryCode = $postback['country-code'];
-            if (!is_string($countryCode) || strlen($countryCode) > 8 || trim($countryCode) === '') {
-                $errors['country-code'] = 'Must be a short country identifier string';
-            }
-        }
-
-        return $errors;
-    }
-
-    /**
-     * Which user's reporting this postback belongs to: the owner of the
+     * Which user's reporting this postback belongs to — the owner of the
      * advertised app's registration, or 0 (unclaimed) when the app is not
-     * registered. Registering the app later claims unclaimed history — see
-     * AttributionAppsController::afterCreate().
+     * registered — and whether that registration accepts development-signed
+     * postbacks as trusted. Registering the app later claims unclaimed
+     * history — see AttributionAppsController::afterCreate().
+     *
+     * @return array{0: int, 1: bool} [user_id, accept_development_postbacks]
      */
-    private function resolveUserId(int $appId): int
+    private function resolveOwner(int $appId): array
     {
-        $stmt = $this->prepare('SELECT user_id FROM 202_attribution_apps WHERE app_id = ? LIMIT 1');
+        $stmt = $this->prepare('SELECT user_id, accept_development_postbacks FROM 202_attribution_apps WHERE app_id = ? LIMIT 1');
         $this->bind($stmt, 'i', $appId);
-        $this->execute($stmt, 'SKAN app lookup failed');
+        $this->execute($stmt, 'Attribution app lookup failed');
         $row = $this->result($stmt)->fetch_assoc();
         $stmt->close();
-        return is_array($row) ? (int)$row['user_id'] : 0;
+        if (!is_array($row)) {
+            return [0, false];
+        }
+        // The opt-in is read strictly: only a stored 1 turns development
+        // signatures into trusted rows. Anything else — 0, NULL, a value
+        // that failed to read — is the untrusting default (error pattern
+        // #11: a malformed security value never resolves permissively).
+        return [(int)$row['user_id'], (int)$row['accept_development_postbacks'] === 1];
     }
 
     /**
@@ -429,18 +378,6 @@ final class PostbackReceiver
         }
     }
 
-    /** @param array<string, mixed> $postback */
-    private static function optString(array $postback, string $key): ?string
-    {
-        return array_key_exists($key, $postback) ? (string)$postback[$key] : null;
-    }
-
-    /** @param array<string, mixed> $postback */
-    private static function optInt(array $postback, string $key): ?int
-    {
-        return array_key_exists($key, $postback) ? (int)$postback[$key] : null;
-    }
-
     /**
      * @param array<string, string> $fieldErrors
      * @return array{status: int, body: array<string, mixed>}
@@ -453,5 +390,4 @@ final class PostbackReceiver
         }
         return ['status' => $status, 'body' => $body];
     }
-
 }

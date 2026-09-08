@@ -4260,6 +4260,15 @@ components:
         notes:
           type: string
           nullable: true
+        accept_development_postbacks:
+          type: integer
+          enum: [0, 1]
+          description: >-
+            1 = postbacks signed with Apple's development keys (AdAttributionKit)
+            store as trusted (`signature_valid = 1`) for this app and count in the
+            report — for integration-testing your own build; 0 (default) = they
+            store flagged `development` and count nowhere. SKAdNetwork has no
+            development key, so this never affects SKAdNetwork rows.
         schema_token:
           type: string
           pattern: "^[0-9a-f]{64}$"
@@ -4285,6 +4294,11 @@ components:
         notes:
           type: string
           maxLength: 500
+        accept_development_postbacks:
+          type: integer
+          enum: [0, 1]
+          default: 0
+          description: Trust development-signed postbacks for this app (see `AttributionApp`)
 
     AttributionAppUpdate:
       type: object
@@ -4297,6 +4311,10 @@ components:
         notes:
           type: string
           maxLength: 500
+        accept_development_postbacks:
+          type: integer
+          enum: [0, 1]
+          description: Trust development-signed postbacks for this app (see `AttributionApp`)
 
     AttributionAppResponse:
       type: object
@@ -4414,8 +4432,12 @@ components:
     AttributionPostback:
       type: object
       description: |
-        One stored postback; columns mirror Apple's parameters with hyphens
-        as underscores. Fields Apple withheld for privacy are `null`.
+        One stored postback. Every protocol's rows share this shape: the
+        generic columns (`protocol`, identity, window, `did_win`,
+        `conversion_type`, `ad_interaction_type`, signature verdict) are
+        filled for all of them; the protocol-specific columns mirror that
+        protocol's parameters with hyphens as underscores and are `null`
+        for the others. Fields Apple withheld for privacy are `null`.
       properties:
         postback_id:
           type: integer
@@ -4425,9 +4447,14 @@ components:
         received_at:
           type: integer
           description: Unix timestamp the receiver stored it
+        protocol:
+          type: string
+          enum: [skadnetwork, adattributionkit]
+          description: Which framework signed and delivered the postback
         version:
           type: string
-          description: SKAN postback version, e.g. `4.0`
+          nullable: true
+          description: SKAdNetwork postback version, e.g. `4.0`; `null` for AdAttributionKit (unversioned)
         ad_network_id:
           type: string
         transaction_id:
@@ -4454,33 +4481,70 @@ components:
         postback_sequence_index:
           type: integer
           nullable: true
-          description: SKAN 4 conversion window, 0–2
+          description: Conversion window, 0–2 (SKAdNetwork 4 and AdAttributionKit)
+        conversion_type:
+          type: string
+          nullable: true
+          enum: [download, redownload, re-engagement, null]
+          description: >-
+            Protocol-neutral conversion kind: SKAdNetwork's `redownload` flag
+            read as `download`/`redownload`; AdAttributionKit's `conversion-type`
+            as sent (`re-engagement` exists only there)
         redownload:
           type: integer
           nullable: true
-          description: 1 = redownload, 0 = first install
+          description: SKAdNetwork's raw flag — 1 = redownload, 0 = first install; `null` for AdAttributionKit
         did_win:
           type: integer
           nullable: true
           description: 1 = winning postback, 0 = losing; `null` for SKAN ≤ 2.2 (counted as wins)
+        ad_interaction_type:
+          type: string
+          nullable: true
+          enum: [view, click, null]
+          description: >-
+            Protocol-neutral interaction kind: SKAdNetwork's `fidelity-type`
+            (1 = click, 0 = view); AdAttributionKit's `ad-interaction-type` as
+            sent. `null` when the postback carried neither (SKAdNetwork 2.1)
         source_app_id:
           type: integer
           nullable: true
+          description: Publisher app (SKAdNetwork `source-app-id`, AdAttributionKit `publisher-item-identifier`)
         source_domain:
           type: string
           nullable: true
           description: SKAN 4 web-ad source domain
+        marketplace_id:
+          type: string
+          nullable: true
+          description: AdAttributionKit `marketplace-identifier` (e.g. `com.apple.AppStore`); `null` for SKAdNetwork
         fidelity_type:
           type: integer
           nullable: true
-          description: 1 = StoreKit-rendered or web ad, 0 = view-through
+          description: SKAdNetwork's raw value — 1 = StoreKit-rendered or web ad, 0 = view-through
         country_code:
           type: string
           nullable: true
+        signature_state:
+          type: string
+          enum: [valid, invalid, unverifiable, development]
+          description: >-
+            What the verifier established: `valid` against Apple's production key,
+            `invalid` (wrong or forged), `unverifiable` (unknown version or key,
+            or no OpenSSL), `development` (verified against one of Apple's
+            AdAttributionKit development keys)
         signature_valid:
           type: integer
           nullable: true
-          description: 1 = verified against Apple's key, 0 = wrong or forged, `null` = unverifiable version
+          description: >-
+            The trust bit reports key on: 1 = verified against Apple's production
+            key (or development-signed for an app that opted in), 0 = wrong or
+            forged, `null` = nobody vouched for it (unverifiable, or development-
+            signed without the opt-in)
+        key_id:
+          type: string
+          nullable: true
+          description: The signing key the postback named (AdAttributionKit JWS `kid`); `null` for SKAdNetwork
         remote_ip:
           type: string
           description: Display value (proxy-header aware); not the rate-limit identity
@@ -4725,7 +4789,7 @@ components:
               description: A byte-identical retry of a postback already stored; nothing new was written
             signature:
               type: string
-              enum: [valid, invalid, unverifiable]
+              enum: [valid, invalid, unverifiable, development]
 
     SkadnetworkReceiverProbeResponse:
       type: object
@@ -4733,11 +4797,14 @@ components:
         data:
           type: object
           properties:
-            endpoint:
-              type: string
-              example: skadnetwork-report-attribution
             status:
               type: string
               example: ready
+            protocol:
+              type: string
+              example: skadnetwork
+            endpoint:
+              type: string
+              example: skadnetwork-report-attribution
             accepts:
               type: string

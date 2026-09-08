@@ -5,8 +5,8 @@ declare(strict_types=1);
 /**
  * SKAdNetwork install-validation postback endpoint.
  *
- * Devices POST signed SKAN postbacks here when an advertised iOS app names
- * this Prosper202 install in its Info.plist:
+ * Devices POST signed SKAdNetwork postbacks here when an advertised iOS app
+ * names this Prosper202 install in its Info.plist:
  *
  *   NSAdvertisingAttributionReportEndpoint = https://your-domain.com
  *
@@ -16,8 +16,11 @@ declare(strict_types=1);
  * shipped Apache/nginx configs already keep /.well-known/ servable while
  * denying other dotfiles.
  *
- * All parsing, validation, signature verification, and storage live in
- * Api\V3\Attribution\PostbackReceiver; this file is only HTTP plumbing.
+ * The HTTP plumbing shared by every postback endpoint (probe, method check,
+ * rate limit, body limit, error envelopes) lives in
+ * Api\V3\Attribution\PostbackEndpoint; parsing, validation and signature
+ * verification in Api\V3\Attribution\SkadnetworkProtocol; storage in
+ * Api\V3\Attribution\PostbackReceiver. This file only picks the protocol.
  */
 
 $root = dirname(__DIR__, 3);
@@ -43,73 +46,6 @@ require_once $root . '/vendor/autoload.php';
 // api/v3/index.php loads it here rather than inside Bootstrap::init().
 require_once $root . '/202-config.php';
 
-use Api\V3\Bootstrap;
-use Api\V3\Attribution\PostbackReceiver;
-use Api\V3\Attribution\PostbackVerifier;
-use Api\V3\Support\ServerStateStore;
-
-$method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
-
-if ($method === 'GET' || $method === 'HEAD') {
-    // Setup probe: lets an operator confirm the endpoint is reachable at the
-    // exact URL Apple will use, before pointing an app at it.
-    Bootstrap::jsonResponse([
-        'data' => [
-            'endpoint' => 'skadnetwork-report-attribution',
-            'status' => 'ready',
-            'accepts' => 'POST application/json (SKAdNetwork install-validation postbacks)',
-        ],
-    ]);
-    exit;
-}
-
-if ($method !== 'POST') {
-    header('Allow: GET, POST');
-    Bootstrap::errorResponse('Method not allowed', 405);
-    exit;
-}
-
-try {
-    Bootstrap::init();
-    $db = Bootstrap::db();
-} catch (\Throwable) {
-    // Non-200: the device retries later, so a DB outage loses nothing.
-    Bootstrap::errorResponse('Service unavailable', 503);
-    exit;
-}
-
-// Soft rate limit keyed on the validated TCP peer (never client headers —
-// see ServerStateStore::softIpRateLimit). Behind a TLS-terminating proxy
-// the peer is the proxy, so the ceiling is an aggregate one; devices each
-// send a handful of postbacks over an install's lifetime.
-try {
-    $retryAfter = (new ServerStateStore())->softIpRateLimit('attribution', 600, 60);
-} catch (\Throwable $e) {
-    error_log('p202 attribution: rate limiter unavailable, accepting postback: ' . $e->getMessage());
-    $retryAfter = null;
-}
-if ($retryAfter !== null) {
-    header('Retry-After: ' . $retryAfter);
-    Bootstrap::errorResponse('Rate limit exceeded', 429, ['retry_after_seconds' => $retryAfter]);
-    exit;
-}
-
-$rawBody = file_get_contents('php://input', false, null, 0, PostbackReceiver::MAX_BODY_BYTES + 1);
-if ($rawBody === false) {
-    Bootstrap::errorResponse('Failed to read request body', 500);
-    exit;
-}
-
-try {
-    // The stored remote_ip is display/forensic data, so the validated
-    // XFF-aware helper is right for it; the rate-limit key above is not
-    // derived from it.
-    $receiver = new PostbackReceiver($db, new PostbackVerifier());
-    $result = $receiver->receive($rawBody, \AUTH::client_ip());
-} catch (\Throwable $e) {
-    error_log('p202 attribution: postback processing failed: ' . $e->getMessage());
-    Bootstrap::errorResponse('Internal server error', 500);
-    exit;
-}
-
-Bootstrap::jsonResponse($result['body'], $result['status']);
+\Api\V3\Attribution\PostbackEndpoint::serve(
+    new \Api\V3\Attribution\SkadnetworkProtocol(new \Api\V3\Attribution\PostbackVerifier())
+);

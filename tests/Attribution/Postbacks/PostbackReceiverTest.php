@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Attribution\Postbacks;
 
+use Api\V3\Attribution\ParsedPostback;
+use Api\V3\Attribution\PostbackProtocol;
 use Api\V3\Attribution\PostbackReceiver;
-use Api\V3\Attribution\PostbackVerifier;
+use Api\V3\Attribution\SignatureState;
+use Api\V3\Attribution\SkadnetworkProtocol;
 use Tests\TestCase;
 
 /**
@@ -14,34 +17,23 @@ use Tests\TestCase;
  * asserted against the exact INSERT the receiver builds — the (type, value)
  * pairing is what error pattern #7 is about, so the test reads the captured
  * binds rather than trusting the array's shape.
+ *
+ * The receiver is exercised through the real SKAdNetwork protocol for the
+ * SKAdNetwork cases, and through a stub protocol for the policy only the
+ * receiver owns (what a signature verdict is worth once the app's opt-in is
+ * known; which columns a protocol may not touch) — SKAdNetwork has no
+ * development key, so its protocol cannot produce those inputs.
  */
 final class PostbackReceiverTest extends TestCase
 {
-    private static ?\OpenSSLAsymmetricKey $key = null;
-    private static string $publicKeyB64 = '';
+    use SigningKeyFixture;
 
     /** @var array<int, array{sql: string, types: string, values: mixed[]}> */
     private array $captured = [];
 
     public static function setUpBeforeClass(): void
     {
-        $key = openssl_pkey_new([
-            'curve_name' => 'prime256v1',
-            'private_key_type' => OPENSSL_KEYTYPE_EC,
-        ]);
-        if ($key === false) {
-            self::fail('Could not generate a P-256 key');
-        }
-        self::$key = $key;
-        $details = openssl_pkey_get_details($key);
-        if ($details === false) {
-            self::fail('Could not read generated key details');
-        }
-        self::$publicKeyB64 = str_replace(
-            ['-----BEGIN PUBLIC KEY-----', '-----END PUBLIC KEY-----', "\n"],
-            '',
-            $details['key']
-        );
+        self::generateSigningKey();
     }
 
     protected function setUp(): void
@@ -113,13 +105,53 @@ final class PostbackReceiverTest extends TestCase
 
     private function receiver(\mysqli $db): PostbackReceiver
     {
-        return new PostbackReceiver($db, new PostbackVerifier(self::$publicKeyB64));
+        return new PostbackReceiver($db, new SkadnetworkProtocol(self::fixtureVerifier()));
+    }
+
+    /**
+     * A protocol double that hands the receiver a fixed verdict and a fixed
+     * set of protocol-owned columns.
+     *
+     * @param array<string, array{0: string, 1: mixed}> $columns
+     */
+    private function stubProtocol(string $signatureState, array $columns = []): PostbackProtocol
+    {
+        return new class ($signatureState, $columns) implements PostbackProtocol {
+            /** @param array<string, array{0: string, 1: mixed}> $columns */
+            public function __construct(private readonly string $state, private readonly array $columns)
+            {
+            }
+
+            public function name(): string
+            {
+                return 'stub';
+            }
+
+            public function describe(): array
+            {
+                return ['endpoint' => 'stub', 'accepts' => 'anything'];
+            }
+
+            public function parse(array $body): ParsedPostback|array
+            {
+                return new ParsedPostback(
+                    adNetworkId: 'stub.network',
+                    postbackId: 'stub-postback-1',
+                    appId: 42,
+                    sequenceIndex: 0,
+                    didWin: true,
+                    signatureState: $this->state,
+                    keyId: 'stub-key/1',
+                    columns: $this->columns,
+                );
+            }
+        };
     }
 
     /** @return array<string, mixed> */
     private function signedV4Postback(): array
     {
-        $postback = [
+        return $this->signPostback([
             'version' => '4.0',
             'ad-network-id' => 'example123.skadnetwork',
             'source-identifier' => '5239',
@@ -132,14 +164,7 @@ final class PostbackReceiverTest extends TestCase
             'conversion-value' => 63,
             'country-code' => 'US',
             'postback-sequence-index' => 0,
-        ];
-        $message = (new PostbackVerifier(self::$publicKeyB64))->buildSignedMessage($postback);
-        $this->assertNotNull($message);
-        $signature = '';
-        $this->assertNotNull(self::$key);
-        $this->assertTrue(openssl_sign($message, $signature, self::$key, OPENSSL_ALGO_SHA256));
-        $postback['attribution-signature'] = base64_encode($signature);
-        return $postback;
+        ]);
     }
 
     /** @return array{sql: string, types: string, values: mixed[]}|null */
@@ -151,6 +176,25 @@ final class PostbackReceiverTest extends TestCase
             }
         }
         return null;
+    }
+
+    /**
+     * The captured INSERT as column => bound value, after checking that the
+     * column list, the bind string and the value list line up 1:1.
+     *
+     * @return array<string, mixed>
+     */
+    private function insertedRow(): array
+    {
+        $insert = $this->capturedInsert();
+        $this->assertNotNull($insert, 'an INSERT must have been prepared');
+        $this->assertSame(1, preg_match('/\(([^)]+)\) VALUES/', $insert['sql'], $m));
+        $columns = array_map('trim', explode(',', $m[1]));
+        $this->assertCount(count($columns), $insert['values']);
+        $this->assertSame(strlen($insert['types']), count($insert['values']));
+        $row = array_combine($columns, $insert['values']);
+        $this->assertNotFalse($row);
+        return $row;
     }
 
     // ─── Rejections (never touch the database) ───────────────────────
@@ -225,7 +269,7 @@ final class PostbackReceiverTest extends TestCase
         $this->assertNotFalse($rawBody);
 
         // The advertised app is registered to user 7.
-        $db = $this->capturingDb(['FROM 202_attribution_apps' => [['user_id' => 7]]]);
+        $db = $this->capturingDb(['FROM 202_attribution_apps' => [['user_id' => 7, 'accept_development_postbacks' => 0]]]);
         $result = $this->receiver($db)->receive($rawBody, '203.0.113.9', receivedAt: 1_700_000_000);
 
         $this->assertSame(200, $result['status']);
@@ -234,18 +278,10 @@ final class PostbackReceiverTest extends TestCase
             $result['body']['data']
         );
 
-        $insert = $this->capturedInsert();
-        $this->assertNotNull($insert, 'an INSERT must have been prepared');
-
-        // Columns in the SQL and the bound values must line up 1:1.
-        $this->assertSame(1, preg_match('/\(([^)]+)\) VALUES/', $insert['sql'], $m));
-        $columns = array_map('trim', explode(',', $m[1]));
-        $this->assertCount(count($columns), $insert['values']);
-        $this->assertSame(strlen($insert['types']), count($insert['values']));
-
-        $row = array_combine($columns, $insert['values']);
+        $row = $this->insertedRow();
         $this->assertSame(7, $row['user_id']);
         $this->assertSame(1_700_000_000, $row['received_at']);
+        $this->assertSame('skadnetwork', $row['protocol']);
         $this->assertSame('4.0', $row['version']);
         $this->assertSame('example123.skadnetwork', $row['ad_network_id']);
         $this->assertSame('6aafb7a5-0170-41b5-bbe4-fe71dedf1e28', $row['transaction_id']);
@@ -261,12 +297,22 @@ final class PostbackReceiverTest extends TestCase
         $this->assertNull($row['source_domain']);
         $this->assertSame(1, $row['fidelity_type']);
         $this->assertSame('US', $row['country_code']);
+        // The protocol-neutral reading of the SKAdNetwork flags.
+        $this->assertSame('download', $row['conversion_type']);
+        $this->assertSame('click', $row['ad_interaction_type']);
+        $this->assertArrayNotHasKey('marketplace_id', $row, 'SKAdNetwork has no marketplace; the protocol leaves the column alone');
+        $this->assertSame('valid', $row['signature_state']);
         $this->assertSame(1, $row['signature_valid']);
+        $this->assertNull($row['key_id'], 'SKAdNetwork does not name its key');
         $this->assertSame($rawBody, $row['raw_payload']);
         $this->assertSame('203.0.113.9', $row['remote_ip']);
         $this->assertSame(
-            PostbackReceiver::dedupeHash('example123.skadnetwork', '6aafb7a5-0170-41b5-bbe4-fe71dedf1e28', 0, true, $rawBody),
+            PostbackReceiver::dedupeHash('skadnetwork', 'example123.skadnetwork', '6aafb7a5-0170-41b5-bbe4-fe71dedf1e28', 0, true, $rawBody),
             $row['dedupe_hash']
+        );
+        $this->assertEmpty(
+            array_diff(PostbackReceiver::GENERIC_COLUMNS, array_keys($row)),
+            'every receiver-owned column is written for every protocol'
         );
     }
 
@@ -295,12 +341,8 @@ final class PostbackReceiverTest extends TestCase
 
         $this->assertSame(200, $result['status']);
         $this->assertSame('invalid', $result['body']['data']['signature']);
-        $insert = $this->capturedInsert();
-        $this->assertNotNull($insert);
-        $row = array_combine(
-            array_map('trim', explode(',', preg_replace('/^.*\(([^)]+)\) VALUES.*$/s', '$1', $insert['sql']) ?? '')),
-            $insert['values']
-        );
+        $row = $this->insertedRow();
+        $this->assertSame('invalid', $row['signature_state']);
         $this->assertSame(0, $row['signature_valid']);
     }
 
@@ -322,15 +364,103 @@ final class PostbackReceiverTest extends TestCase
 
         $this->assertSame(200, $result['status']);
         $this->assertSame('unverifiable', $result['body']['data']['signature']);
-        $insert = $this->capturedInsert();
-        $this->assertNotNull($insert);
-        $row = array_combine(
-            array_map('trim', explode(',', preg_replace('/^.*\(([^)]+)\) VALUES.*$/s', '$1', $insert['sql']) ?? '')),
-            $insert['values']
-        );
+        $row = $this->insertedRow();
+        $this->assertSame('unverifiable', $row['signature_state']);
         $this->assertNull($row['signature_valid']);
         $this->assertNull($row['did_win'], '2.0 has no did-win; absence must store as NULL, not false');
         $this->assertNull($row['postback_sequence_index']);
+        $this->assertNull($row['ad_interaction_type'], 'no fidelity-type means no interaction type, not a guess');
+        $this->assertSame('download', $row['conversion_type']);
+    }
+
+    // ─── Trust policy (receiver-owned, protocol-independent) ─────────
+
+    /**
+     * @dataProvider developmentTrustCases
+     * @param array<int, array<string, mixed>> $appRows
+     */
+    public function testADevelopmentSignatureIsTrustedOnlyWhenTheRegisteredAppOptedIn(array $appRows, int $expectedUserId, ?int $expectedTrustBit): void
+    {
+        // "Verified against Apple's DEVELOPMENT key" is a true statement that
+        // must not count as verified: any phone in Developer Mode can mint
+        // one naming any App Store id. The state is stored as the verifier
+        // found it; the trust bit is the registration's decision.
+        $db = $this->capturingDb(['FROM 202_attribution_apps' => $appRows]);
+        $result = (new PostbackReceiver($db, $this->stubProtocol(SignatureState::DEVELOPMENT)))
+            ->receive('{"any":"body"}', '1.2.3.4');
+
+        $this->assertSame(200, $result['status']);
+        $this->assertSame('development', $result['body']['data']['signature']);
+        $row = $this->insertedRow();
+        // The stub contributes no columns, so the INSERT is exactly the
+        // receiver's own set — GENERIC_COLUMNS must list every one of them
+        // and nothing else, or the collision guard has a blind spot.
+        $this->assertEqualsCanonicalizing(PostbackReceiver::GENERIC_COLUMNS, array_keys($row));
+        $this->assertSame('stub', $row['protocol']);
+        $this->assertSame($expectedUserId, $row['user_id']);
+        $this->assertSame('development', $row['signature_state']);
+        $this->assertSame($expectedTrustBit, $row['signature_valid']);
+        $this->assertSame('stub-key/1', $row['key_id']);
+    }
+
+    /** @return array<string, array{0: array<int, array<string, mixed>>, 1: int, 2: ?int}> */
+    public static function developmentTrustCases(): array
+    {
+        return [
+            'unregistered app' => [[], 0, null],
+            'registered, opt-in off' => [[['user_id' => 7, 'accept_development_postbacks' => 0]], 7, null],
+            'registered, opt-in on' => [[['user_id' => 7, 'accept_development_postbacks' => 1]], 7, 1],
+            // A value that is not exactly 1 is the untrusting reading
+            // (error pattern #11): the column cannot be read as "on" by
+            // accident, and a corrupt row must not widen trust.
+            'registered, opt-in unreadable' => [[['user_id' => 7, 'accept_development_postbacks' => null]], 7, null],
+        ];
+    }
+
+    public function testTheOptInNeverPromotesAForgedOrUnverifiableSignature(): void
+    {
+        // The opt-in is about development keys only. A forgery stays 0 and
+        // an unverifiable row stays NULL whatever the registration says.
+        $appRows = [['user_id' => 7, 'accept_development_postbacks' => 1]];
+        foreach ([SignatureState::INVALID => 0, SignatureState::UNVERIFIABLE => null] as $state => $expected) {
+            $this->captured = [];
+            $db = $this->capturingDb(['FROM 202_attribution_apps' => $appRows]);
+            (new PostbackReceiver($db, $this->stubProtocol($state)))->receive('{}', '1.2.3.4');
+            $row = $this->insertedRow();
+            $this->assertSame($state, $row['signature_state']);
+            $this->assertSame($expected, $row['signature_valid'], $state);
+        }
+    }
+
+    public function testAProtocolCannotWriteAReceiverOwnedColumn(): void
+    {
+        // The trust bit, the owner and the identity columns have one author.
+        // A protocol naming one of them — by design or by a typo in its
+        // column map — is a defect that must not reach the table.
+        $db = $this->capturingDb(['FROM 202_attribution_apps' => []]);
+        $receiver = new PostbackReceiver($db, $this->stubProtocol(SignatureState::INVALID, [
+            'signature_valid' => ['i', 1],
+        ]));
+        try {
+            $receiver->receive('{}', '1.2.3.4');
+            $this->fail('expected a LogicException');
+        } catch (\LogicException $e) {
+            $this->assertStringContainsString('signature_valid', $e->getMessage());
+        }
+        $this->assertNull($this->capturedInsert(), 'nothing may be written');
+    }
+
+    public function testAnUnknownSignatureStateIsADefectNotARow(): void
+    {
+        $db = $this->capturingDb(['FROM 202_attribution_apps' => []]);
+        $receiver = new PostbackReceiver($db, $this->stubProtocol('probably-fine'));
+        try {
+            $receiver->receive('{}', '1.2.3.4');
+            $this->fail('expected a LogicException');
+        } catch (\LogicException $e) {
+            $this->assertStringContainsString('probably-fine', $e->getMessage());
+        }
+        $this->assertNull($this->capturedInsert(), 'nothing may be written');
     }
 
     public function testDuplicateKeyOnInsertReportsDuplicateWith200(): void
@@ -477,18 +607,22 @@ final class PostbackReceiverTest extends TestCase
         // may collide.
         $body = '{"transaction-id":"tx"}';
         $hashes = [
-            PostbackReceiver::dedupeHash('n', 'tx', 0, true, $body),
-            PostbackReceiver::dedupeHash('n', 'tx', 1, true, $body),
-            PostbackReceiver::dedupeHash('n', 'tx', 2, true, $body),
-            PostbackReceiver::dedupeHash('n', 'tx', 0, false, $body),
-            PostbackReceiver::dedupeHash('n', 'tx', null, null, $body),
-            PostbackReceiver::dedupeHash('other', 'tx', 0, true, $body),
+            PostbackReceiver::dedupeHash('skadnetwork', 'n', 'tx', 0, true, $body),
+            PostbackReceiver::dedupeHash('skadnetwork', 'n', 'tx', 1, true, $body),
+            PostbackReceiver::dedupeHash('skadnetwork', 'n', 'tx', 2, true, $body),
+            PostbackReceiver::dedupeHash('skadnetwork', 'n', 'tx', 0, false, $body),
+            PostbackReceiver::dedupeHash('skadnetwork', 'n', 'tx', null, null, $body),
+            PostbackReceiver::dedupeHash('skadnetwork', 'other', 'tx', 0, true, $body),
+            // One table holds every protocol; each protocol's id space is
+            // its own, so the same tuple under another protocol is another
+            // postback.
+            PostbackReceiver::dedupeHash('adattributionkit', 'n', 'tx', 0, true, $body),
         ];
         $this->assertSame($hashes, array_values(array_unique($hashes)));
 
         $this->assertSame(
-            PostbackReceiver::dedupeHash('n', 'tx', 0, true, $body),
-            PostbackReceiver::dedupeHash('n', 'tx', 0, true, $body)
+            PostbackReceiver::dedupeHash('skadnetwork', 'n', 'tx', 0, true, $body),
+            PostbackReceiver::dedupeHash('skadnetwork', 'n', 'tx', 0, true, $body)
         );
     }
 
@@ -501,8 +635,8 @@ final class PostbackReceiverTest extends TestCase
         // postback would be dropped as a "duplicate". Folding the body in
         // means only a true retry (Apple resends the identical body) dedupes.
         $this->assertNotSame(
-            PostbackReceiver::dedupeHash('n', 'tx', 0, true, '{"conversion-value":63}'),
-            PostbackReceiver::dedupeHash('n', 'tx', 0, true, '{"conversion-value":0}')
+            PostbackReceiver::dedupeHash('skadnetwork', 'n', 'tx', 0, true, '{"conversion-value":63}'),
+            PostbackReceiver::dedupeHash('skadnetwork', 'n', 'tx', 0, true, '{"conversion-value":0}')
         );
     }
 
@@ -513,8 +647,12 @@ final class PostbackReceiverTest extends TestCase
         // letting a crafted postback occupy another one's dedupe slot. The
         // length prefixes pin the boundaries even when the bodies match.
         $this->assertNotSame(
-            PostbackReceiver::dedupeHash('a|b', 'c', 0, true, '{}'),
-            PostbackReceiver::dedupeHash('a', 'b|c', 0, true, '{}')
+            PostbackReceiver::dedupeHash('p', 'a|b', 'c', 0, true, '{}'),
+            PostbackReceiver::dedupeHash('p', 'a', 'b|c', 0, true, '{}')
+        );
+        $this->assertNotSame(
+            PostbackReceiver::dedupeHash('p|a', 'b', 'c', 0, true, '{}'),
+            PostbackReceiver::dedupeHash('p', 'a|b', 'c', 0, true, '{}')
         );
     }
 }

@@ -6,6 +6,7 @@ namespace Tests\Attribution\Postbacks;
 
 use Api\V3\Attribution\PostbackReceiver;
 use Api\V3\Attribution\PostbackVerifier;
+use Api\V3\Attribution\SkadnetworkProtocol;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\Tables\AttributionPostbackTables;
 
@@ -139,15 +140,33 @@ final class PostbackReceiverIntegrationTest extends TestCase
             1_800_000_000
         );
 
-        $result = self::$db->query('SELECT app_id, user_id FROM 202_attribution_postbacks ORDER BY postback_id');
+        $result = self::$db->query(
+            'SELECT app_id, user_id, protocol, signature_state, signature_valid, conversion_type, ad_interaction_type
+             FROM 202_attribution_postbacks ORDER BY postback_id'
+        );
         $rows = array_map(
-            static fn(array $row): array => ['app_id' => (int) $row['app_id'], 'user_id' => (int) $row['user_id']],
+            static fn(array $row): array => [
+                'app_id' => (int) $row['app_id'],
+                'user_id' => (int) $row['user_id'],
+                'protocol' => $row['protocol'],
+                'signature_state' => $row['signature_state'],
+                'signature_valid' => $row['signature_valid'] === null ? null : (int) $row['signature_valid'],
+                'conversion_type' => $row['conversion_type'],
+                'ad_interaction_type' => $row['ad_interaction_type'],
+            ],
             $result->fetch_all(MYSQLI_ASSOC)
         );
+        $expected = [
+            'protocol' => 'skadnetwork',
+            'signature_state' => 'invalid',
+            'signature_valid' => 0,
+            'conversion_type' => 'download',
+            'ad_interaction_type' => 'click',
+        ];
         $this->assertSame(
             [
-                ['app_id' => 525463029, 'user_id' => 7],
-                ['app_id' => 999000111, 'user_id' => 0],
+                ['app_id' => 525463029, 'user_id' => 7] + $expected,
+                ['app_id' => 999000111, 'user_id' => 0] + $expected,
             ],
             $rows
         );
@@ -155,7 +174,7 @@ final class PostbackReceiverIntegrationTest extends TestCase
 
     private function receiver(): PostbackReceiver
     {
-        return new PostbackReceiver(self::$db, new PostbackVerifier());
+        return new PostbackReceiver(self::$db, new SkadnetworkProtocol(new PostbackVerifier()));
     }
 
     /** @param array<string, mixed> $overrides */

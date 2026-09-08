@@ -87,12 +87,18 @@ plausible postback silently:
   A crafted postback naming a real transaction with different contents
   stores as its own (flagged) row instead of occupying the genuine
   postback's slot.
-- Signature verification result is stored per row as `signature_valid`:
-  `1` (verified against Apple's key), `0` (wrong or forged), `NULL`
-  (unverifiable version). Tampered or unverifiable postbacks are stored *and
-  flagged* rather than dropped, so integration tests and forensics work.
-  The report already excludes them from headline metrics by default (see
-  Report below); the postback *list* shows every row, filterable with
+- The signature verdict is stored per row twice, on purpose.
+  `signature_state` is what the verifier established: `valid` (Apple's
+  production key), `invalid` (wrong or forged), `unverifiable` (a version or
+  key this server cannot check, or no OpenSSL), or `development` (one of
+  Apple's AdAttributionKit development keys — see the app registry's
+  `accept_development_postbacks`). `signature_valid` is the **trust bit**
+  the report keys on: `1` (verified against the production key, or
+  development-signed for an app that opted in), `0` (forged), `NULL`
+  (nobody vouched for it). Tampered or unverifiable postbacks are stored
+  *and flagged* rather than dropped, so integration tests and forensics
+  work. The report already excludes them from headline metrics by default
+  (see Report below); the postback *list* shows every row, filterable with
   `signature=valid|invalid|unverifiable`.
 - Database outages answer `503`/`500` so the device retries later; a
   per-source rate limit (600/min per source IP, fail-open if the limiter
@@ -109,17 +115,25 @@ numbers.
 
 ## Postback fields
 
-Stored columns mirror Apple's postback parameters (hyphens become
-underscores): `version`, `ad_network_id`, `transaction_id`, `app_id`,
-`source_identifier` (SKAN 4; 1–4 digits, hierarchical), `campaign_id`
-(SKAN ≤ 3), `conversion_value` (0–63), `coarse_conversion_value`
-(`low`/`medium`/`high`), `postback_sequence_index` (0–2, SKAN 4's three
-conversion windows), `redownload`, `did_win`, `source_app_id`,
-`source_domain` (SKAN 4 web ads), `fidelity_type` (1 = StoreKit-rendered or
-web ad, 0 = view-through), `country_code`, plus `received_at`,
-`signature_valid`, and `remote_ip`. Fields Apple withheld for privacy store
-as `NULL`. The raw request body is retained in the database for forensics
-but never served through the API.
+Every protocol's postbacks share one table and one row shape, told apart
+by `protocol` (`skadnetwork`, `adattributionkit`). The generic columns are
+filled for all of them: `ad_network_id`, `transaction_id` (the framework's
+unique postback id), `app_id` (the advertised app), `postback_sequence_index`
+(0–2, the three conversion windows), `did_win`, `conversion_type`
+(`download`, `redownload`, or AdAttributionKit's `re-engagement`),
+`ad_interaction_type` (`view` or `click`), `conversion_value` (0–63),
+`coarse_conversion_value` (`low`/`medium`/`high`), `source_app_id` (the
+publisher app), `country_code`, `signature_state`, `signature_valid`,
+`key_id` (the signing key the postback named, AdAttributionKit only), plus
+`received_at` and `remote_ip`. The SKAdNetwork-specific columns mirror
+Apple's parameters (hyphens become underscores) and are `NULL` on other
+protocols' rows: `version`, `source_identifier` (SKAN 4; 1–4 digits,
+hierarchical), `campaign_id` (SKAN ≤ 3), `redownload` and `fidelity_type`
+(the raw flags behind `conversion_type` and `ad_interaction_type`; 1 =
+StoreKit-rendered or web ad, 0 = view-through), and `source_domain` (SKAN 4
+web ads); `marketplace_id` is AdAttributionKit's. Fields Apple withheld for
+privacy store as `NULL`. The raw request body is retained in the database
+for forensics but never served through the API.
 
 ### Retention
 
@@ -127,10 +141,11 @@ Because the endpoint is public, rows nobody will ever act on are pruned
 opportunistically (piggybacked on receiver traffic, in small batches):
 postbacks still **unclaimed** by any app registration after 30 days,
 postbacks whose signature verified as **forged** (`signature_valid = 0`)
-after 90 days, and postbacks whose signature could not be checked at all
-(**unverifiable**, `signature_valid IS NULL`) after 90 days. Only a row that
-verified against Apple's key *and* belongs to a registered app is kept
-forever.
+after 90 days, and postbacks nobody vouched for (`signature_valid IS NULL`:
+**unverifiable**, or **development**-signed for an app that did not opt in)
+after 90 days. Only a row that verified against Apple's production key
+(or is development-signed for an app that opted in) *and* belongs to a
+registered app is kept forever.
 
 That third class matters because it is the cheapest row for a stranger to
 create: naming a SKAN version this server cannot verify stores
@@ -167,6 +182,7 @@ allowed range still clamps (`limit` to 1–500).
 | `app_id` | integer | Yes | Numeric App Store id of the advertised app |
 | `app_name` | string | Yes | Display name for reports (max 255) |
 | `notes` | string | No | Free-form notes (max 500) |
+| `accept_development_postbacks` | `0`/`1` | No | `1` = postbacks signed with Apple's AdAttributionKit **development** keys store as trusted for this app and count in the report; default `0` stores them flagged `development` and counts them nowhere. Turn it on while integration-testing your own build, and off again before trusting the numbers: any phone in Developer Mode can mint a development-signed postback naming any App Store id. SKAdNetwork has no development key, so this never affects SKAdNetwork rows. |
 
 An App Store id can be registered by exactly one user across the install
 (second registration returns `409`) — the receiver resolves postback

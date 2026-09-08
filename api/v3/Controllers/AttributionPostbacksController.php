@@ -11,12 +11,12 @@ use Api\V3\Support\MysqliStatements;
 use Api\V3\Support\ResponseSanitizer;
 
 /**
- * Read-only access to received SKAdNetwork postbacks, plus the aggregate
- * SKAN report and an ad-hoc signature verification utility.
+ * Read-only access to received attribution postbacks (SKAdNetwork and
+ * AdAttributionKit share one table, told apart by `protocol`), plus the
+ * aggregate report and an ad-hoc signature verification utility.
  *
- * Postbacks are written only by the public receiver
- * (/.well-known/skadnetwork/report-attribution/); the API never mutates
- * them. Rows belong to the user whose 202_attribution_apps registration matches the
+ * Postbacks are written only by the public receivers under /.well-known/;
+ * the API never mutates them. Rows belong to the user whose 202_attribution_apps registration matches the
  * advertised app (user_id = 0 rows are unclaimed and become visible once the
  * app is registered — AttributionAppsController claims them).
  *
@@ -37,14 +37,17 @@ class AttributionPostbacksController
         'source_identifier',
         'coarse_conversion_value',
         'source_domain',
+        'marketplace_id',
         'country_code',
+        'key_id',
         'remote_ip',
     ];
 
-    private const SELECT_COLUMNS = 'postback_id, user_id, received_at, version, ad_network_id, '
+    private const SELECT_COLUMNS = 'postback_id, user_id, received_at, protocol, version, ad_network_id, '
         . 'transaction_id, app_id, source_identifier, campaign_id, conversion_value, '
-        . 'coarse_conversion_value, postback_sequence_index, redownload, did_win, '
-        . 'source_app_id, source_domain, fidelity_type, country_code, signature_valid, remote_ip';
+        . 'coarse_conversion_value, postback_sequence_index, conversion_type, redownload, did_win, '
+        . 'ad_interaction_type, source_app_id, source_domain, marketplace_id, fidelity_type, country_code, '
+        . 'signature_state, signature_valid, key_id, remote_ip';
 
     /** Report grouping modes: output alias => SQL expression. */
     private const GROUP_MODES = [
@@ -133,7 +136,7 @@ class AttributionPostbacksController
     }
 
     /**
-     * Aggregate SKAN report with conversion-value decoding.
+     * Aggregate attribution report with conversion-value decoding.
      *
      * group_by: day (default, UTC), app, ad-network, source, country,
      * version. By default every trusted metric (installs, losses,
@@ -173,6 +176,9 @@ class AttributionPostbacksController
 
         $winCondition = '(did_win IS NULL OR did_win = 1)';
         $firstWindow = 'COALESCE(postback_sequence_index, 0) = 0';
+        // conversion_type is the protocol-neutral reading of SKAdNetwork's
+        // redownload flag and AdAttributionKit's conversion-type: a
+        // re-engagement is neither an install nor a redownload.
 
         // Day groups keep the NEWEST window (DESC + limit, re-sorted
         // ascending for output); other modes keep the busiest groups.
@@ -181,8 +187,8 @@ class AttributionPostbacksController
         $sql = 'SELECT ' . implode(', ', $selectGroup) . ",
                 COUNT(*) AS postbacks,
                 SUM(CASE WHEN $trusted AND did_win = 0 THEN 1 ELSE 0 END) AS losses,
-                SUM(CASE WHEN $trusted AND $winCondition AND $firstWindow AND COALESCE(redownload, 0) = 0 THEN 1 ELSE 0 END) AS installs,
-                SUM(CASE WHEN $trusted AND $winCondition AND $firstWindow AND redownload = 1 THEN 1 ELSE 0 END) AS redownloads,
+                SUM(CASE WHEN $trusted AND $winCondition AND $firstWindow AND conversion_type = 'download' THEN 1 ELSE 0 END) AS installs,
+                SUM(CASE WHEN $trusted AND $winCondition AND $firstWindow AND conversion_type = 'redownload' THEN 1 ELSE 0 END) AS redownloads,
                 SUM(CASE WHEN signature_valid = 1 THEN 1 ELSE 0 END) AS signature_valid_count,
                 SUM(CASE WHEN signature_valid = 0 THEN 1 ELSE 0 END) AS signature_invalid_count,
                 SUM(CASE WHEN signature_valid IS NULL THEN 1 ELSE 0 END) AS signature_unverified_count

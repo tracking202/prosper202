@@ -205,6 +205,43 @@ final class AttributionControllersTest extends TestCase
         }
     }
 
+    /** @dataProvider rejectedDevelopmentOptIns */
+    public function testTheDevelopmentOptInAcceptsOnlyZeroOrOne(mixed $value): void
+    {
+        // The opt-in widens what the report trusts, so it is a strict flag:
+        // "yes", 2 and true are refused rather than coerced to on.
+        $ctrl = new AttributionAppsController($this->createMysqliMock(), 1);
+        try {
+            $ctrl->create(['app_id' => 525463029, 'app_name' => 'My App', 'accept_development_postbacks' => $value]);
+            $this->fail('Expected a ValidationException');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('accept_development_postbacks', $e->getFieldErrors());
+        }
+    }
+
+    /** @return array<string, array{0: mixed}> */
+    public static function rejectedDevelopmentOptIns(): array
+    {
+        return ['two' => [2], 'negative' => [-1], 'word' => ['yes'], 'bool' => [true]];
+    }
+
+    public function testTheDevelopmentOptInClearsValidationAsZeroOrOne(): void
+    {
+        foreach ([0, 1, '1'] as $value) {
+            $ctrl = new AttributionAppsController($this->createMysqliMock(), 1);
+            try {
+                $ctrl->create(['app_id' => 525463029, 'app_name' => 'My App', 'accept_development_postbacks' => $value]);
+                $this->addToAssertionCount(1);
+            } catch (ValidationException $e) {
+                $this->fail('accept_development_postbacks=' . var_export($value, true) . ' must be accepted: ' . $e->getMessage());
+            } catch (\Throwable) {
+                // Reaching the INSERT is the point; the mock cannot complete
+                // it (insert_id is C-backed), as in the other create tests.
+                $this->addToAssertionCount(1);
+            }
+        }
+    }
+
     // ─── Postbacks: list ─────────────────────────────────────────────
 
     public function testListSanitizesReceiverAuthoredStringsAndOmitsTheSignature(): void
@@ -214,13 +251,17 @@ final class AttributionControllersTest extends TestCase
             'COUNT(*) as total' => [['total' => 1]],
             'ORDER BY postback_id DESC' => [[
                 'postback_id' => 5, 'user_id' => 1, 'received_at' => 1700000000,
+                'protocol' => 'skadnetwork',
                 'version' => '4.0', 'ad_network_id' => $hostile,
                 'transaction_id' => 'tx', 'app_id' => 42, 'source_identifier' => '12',
                 'campaign_id' => null, 'conversion_value' => 9,
                 'coarse_conversion_value' => null, 'postback_sequence_index' => 0,
-                'redownload' => 0, 'did_win' => 1, 'source_app_id' => null,
-                'source_domain' => null, 'fidelity_type' => 1, 'country_code' => 'US',
-                'signature_valid' => 1, 'remote_ip' => '1.2.3.4',
+                'conversion_type' => 'download', 'redownload' => 0, 'did_win' => 1,
+                'ad_interaction_type' => 'click', 'source_app_id' => null,
+                'source_domain' => null, 'marketplace_id' => "com.apple\x07.AppStore",
+                'fidelity_type' => 1, 'country_code' => 'US',
+                'signature_state' => 'valid', 'signature_valid' => 1,
+                'key_id' => "apple-cas-identifier/0\u{202E}", 'remote_ip' => '1.2.3.4',
                 'attribution_signature' => 'should-not-be-served-in-lists',
             ]],
         ]);
@@ -231,6 +272,11 @@ final class AttributionControllersTest extends TestCase
         $this->assertArrayNotHasKey('attribution_signature', $row);
         $this->assertStringNotContainsString("\x07", $row['ad_network_id']);
         $this->assertStringNotContainsString("\u{202E}", $row['ad_network_id']);
+        // The AdAttributionKit-authored strings are receiver input too: the
+        // marketplace id and the signing key id come out of the JWS the
+        // poster wrote.
+        $this->assertStringNotContainsString("\x07", $row['marketplace_id']);
+        $this->assertStringNotContainsString("\u{202E}", $row['key_id']);
     }
 
     public function testListRejectsAnUnknownSignatureFilter(): void

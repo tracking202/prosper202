@@ -9,14 +9,21 @@ use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\ValidationException;
 
 /**
- * Registry of advertised App Store apps for SKAN reporting.
+ * Registry of advertised App Store apps for attribution reporting.
  *
- * Registering an app claims its postbacks: the public receiver stamps each
+ * Registering an app claims its postbacks: the public receivers stamp each
  * incoming postback with the registering user's id, and creation (or a later
  * update) retroactively claims any postbacks that arrived before the app was
  * registered (rows with user_id = 0). An App Store id can be registered by
  * exactly one user — a global UNIQUE constraint, checked here for a readable
  * error — so postback ownership is never ambiguous.
+ *
+ * The registration also carries the app's trust policy for development-
+ * signed postbacks (AdAttributionKit's development keys, which any phone in
+ * Developer Mode can sign with, naming any App Store id). Off by default:
+ * such rows store flagged `development` and count nowhere; an owner turns
+ * accept_development_postbacks on for an app while integration-testing
+ * their own build, and off again before trusting the numbers.
  */
 class AttributionAppsController extends Controller
 {
@@ -36,6 +43,10 @@ class AttributionAppsController extends Controller
             'app_id'       => ['type' => 'i', 'required' => true],
             'app_name'     => ['type' => 's', 'required' => true, 'max_length' => 255],
             'notes'        => ['type' => 's', 'max_length' => 500],
+            // 1 = development-signed postbacks for this app store as trusted
+            // (signature_valid = 1) and count in the report; 0 = they store
+            // flagged and are pruned like any other unverified row.
+            'accept_development_postbacks' => ['type' => 'i', 'allowed' => [0, 1]],
             // The capability value an iOS build presents to GET /attribution/schema
             // to fetch its conversion-value mapping at runtime. Served to the
             // owner, never client-writable; rotate with rotateSchemaToken().
