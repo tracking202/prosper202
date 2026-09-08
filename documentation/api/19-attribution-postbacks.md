@@ -1,4 +1,4 @@
-# SKAdNetwork (SKAN)
+# Attribution postbacks (SKAdNetwork)
 
 Prosper202 can act as the measurement endpoint for Apple's SKAdNetwork — the
 privacy-preserving install attribution framework for iOS app campaigns. iOS
