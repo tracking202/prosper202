@@ -80,6 +80,56 @@ final class SkanControllersTest extends TestCase
         }
     }
 
+    public function testRevenueAboveWhatTheColumnHoldsIsRejectedAsInputNotAs500(): void
+    {
+        // revenue is decimal(11,5); without an upper bound the value reached
+        // the INSERT and came back as a 500 under strict mode (or was
+        // silently clamped, and then decoded as revenue in the report).
+        $ctrl = new SkanConversionValuesController($this->createMysqliMock(), 1);
+        $this->expectException(ValidationException::class);
+        $ctrl->create(['fine_value' => 10, 'event_name' => 'purchase', 'revenue' => 1000000]);
+    }
+
+    /** @dataProvider unusableAppIds */
+    public function testAnAppIdTheColumnCannotHoldIsRejected(mixed $appId): void
+    {
+        // app_id is bigint UNSIGNED, so a negative value is strict-mode
+        // error 1264 and surfaces as a 500 for plainly bad input; 0 is the
+        // reserved account-wide-default scope for conversion values.
+        $ctrl = new SkanAppsController($this->createMysqliMock(), 1);
+        $this->expectException(ValidationException::class);
+        $ctrl->create(['app_id' => $appId, 'app_name' => 'Test']);
+    }
+
+    /** @return array<string, array{0: mixed}> */
+    public static function unusableAppIds(): array
+    {
+        return ['negative' => [-5], 'reserved zero' => [0]];
+    }
+
+    public function testAMistypedPagingValueIsA422NotOneSilentlyClampedRow(): void
+    {
+        // ?limit=abc used to cast to 0 and clamp to 1, so a caller who
+        // mistyped a limit got one row back and read it as "this account has
+        // one postback" — the silent coercion every other filter rejects.
+        $ctrl = new SkanPostbacksController($this->createMysqliMock(), 1);
+        try {
+            $ctrl->list(['limit' => 'abc']);
+            $this->fail('Expected a ValidationException');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('limit', $e->getFieldErrors());
+        }
+    }
+
+    public function testAnOutOfRangePagingNumberStillClamps(): void
+    {
+        // A range is a documented ceiling, not a typo: 9999 clamps to 500
+        // rather than erroring, which is what every paging client expects.
+        $ctrl = new SkanPostbacksController($this->createMysqliMock(), 1);
+        $result = $ctrl->list(['limit' => '9999']);
+        $this->assertSame(500, $result['pagination']['limit']);
+    }
+
     public function testNegativeRevenueIsRejected(): void
     {
         $ctrl = new SkanConversionValuesController($this->createMysqliMock(), 1);

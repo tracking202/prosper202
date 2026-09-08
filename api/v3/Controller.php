@@ -231,8 +231,14 @@ abstract class Controller
      * @throws ConflictException when the failure is a duplicate key and the
      *                           controller declares a conflict message
      */
-    private function rethrowDuplicateKey(\mysqli_sql_exception $e): never
+    private function rethrowDuplicateKey(\mysqli_sql_exception $e, \mysqli_stmt $stmt): never
     {
+        // Under mysqli's ERROR|STRICT reporting the throw comes from inside
+        // $stmt->execute(), so execute()'s own close() never ran: this is
+        // the only place that can release the statement before the
+        // exception leaves the request. Without it every 409 from a racing
+        // create leaks a prepared statement against max_prepared_stmt_count.
+        $stmt->close();
         $message = $this->duplicateKeyConflictMessage();
         if ($message !== null && (int)$e->getCode() === 1062) {
             throw new ConflictException($message);
@@ -455,7 +461,7 @@ abstract class Controller
         try {
             $this->execute($stmt, 'Insert failed');
         } catch (\mysqli_sql_exception $e) {
-            $this->rethrowDuplicateKey($e);
+            $this->rethrowDuplicateKey($e, $stmt);
         }
 
         $insertId = $stmt->insert_id;
@@ -534,7 +540,7 @@ abstract class Controller
         try {
             $this->execute($stmt, 'Update failed');
         } catch (\mysqli_sql_exception $e) {
-            $this->rethrowDuplicateKey($e);
+            $this->rethrowDuplicateKey($e, $stmt);
         }
         $stmt->close();
 

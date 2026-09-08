@@ -347,6 +347,12 @@ func TestExcerpt(t *testing.T) {
 			t.Errorf("excerpt(%q) = %q, want %q", in, got, want)
 		}
 	}
+	if got := excerpt(`{"data":{"app_id":1,"schema_token":"deadbeef","notes":"keep"}}`); strings.Contains(got, "deadbeef") {
+		t.Errorf("excerpt leaked a schema token into a failure line: %s", got)
+	} else if !strings.Contains(got, `"notes":"keep"`) {
+		t.Errorf("excerpt masked more than the credential: %s", got)
+	}
+
 	got := excerpt(strings.Repeat("x", excerptMax+50))
 	if got != strings.Repeat("x", excerptMax)+"…" {
 		t.Errorf("long output not cut at %d with a marker: got %d bytes", excerptMax, len(got))

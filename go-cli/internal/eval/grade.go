@@ -2,6 +2,7 @@ package eval
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -92,15 +93,28 @@ func anyCommandContainsAny(commands []string, patterns []string) bool {
 // excerptMax bounds how much of a check's output a failure line quotes.
 const excerptMax = 200
 
+// secretFields are JSON keys whose value is a credential rather than data.
+// A failure line is written to CI logs, which are readable for the life of
+// the run and cannot be rotated, so these are masked before quoting even
+// though today's cases pipe their output through jq. The hazard is the next
+// case that dumps a raw envelope, and it must not depend on remembering
+// this file.
+var secretFields = []string{"schema_token", "api_key", "token", "secret", "password", "authorization"}
+
+var secretValuePattern = regexp.MustCompile(
+	`(?i)"(` + strings.Join(secretFields, "|") + `)"\s*:\s*"[^"]*"`)
+
 // excerpt renders captured output for a failure line: the reader of a red
 // CI run sees what the check actually returned (a `false`, an error
 // envelope, nothing at all) instead of only what it was expected to contain.
-// Whitespace collapses to single spaces and long output is cut with a marker.
+// Whitespace collapses to single spaces, credential values are masked, and
+// long output is cut with a marker.
 func excerpt(out string) string {
 	s := strings.Join(strings.Fields(out), " ")
 	if s == "" {
 		return "<empty>"
 	}
+	s = secretValuePattern.ReplaceAllString(s, `"$1":"[redacted]"`)
 	if r := []rune(s); len(r) > excerptMax {
 		return string(r[:excerptMax]) + "…"
 	}

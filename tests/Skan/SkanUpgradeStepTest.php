@@ -41,7 +41,16 @@ final class SkanUpgradeStepTest extends TestCase
         // The block's DDL must come from the installer definitions (never a
         // hand-copied CREATE that can drift), and it must persist the bumped
         // version so a 1.9.75 install converges to 1.9.76.
-        $block = substr($source, $gate, 1600);
+        // Bounded by the NEXT version gate rather than a byte count: a
+        // fixed window silently slides off the end as the block grows (a
+        // false failure) or, once a 1.9.76 block is appended, spills into
+        // it and matches ITS version UPDATE — passing while this block no
+        // longer persists a version at all, the exact defect this test
+        // exists to catch.
+        $nextGate = strpos($source, "if (\$prosper202_version == '", $gate + 1);
+        $block = $nextGate === false
+            ? substr($source, $gate)
+            : substr($source, $gate, $nextGate - $gate);
         $this->assertStringContainsString('SkanTables::getDefinitions()', $block);
         $this->assertStringContainsString("version='" . self::CURRENT_VERSION . "'", $block);
     }

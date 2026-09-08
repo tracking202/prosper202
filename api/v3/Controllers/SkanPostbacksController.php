@@ -62,8 +62,8 @@ class SkanPostbacksController
 
     public function list(array $params): array
     {
-        $limit = max(1, min(500, (int)($params['limit'] ?? 50)));
-        $offset = max(0, (int)($params['offset'] ?? 0));
+        $limit = self::boundedInt($params, 'limit', 50, 1, 500);
+        $offset = self::boundedInt($params, 'offset', 0, 0, PHP_INT_MAX);
 
         [$where, $binds, $types] = $this->buildFilters($params);
         $whereClause = 'WHERE ' . implode(' AND ', $where);
@@ -155,7 +155,7 @@ class SkanPostbacksController
             ]);
         }
         $aliasMap = self::GROUP_MODES[$groupBy];
-        $maxGroups = max(1, min(500, (int)($params['limit'] ?? 100)));
+        $maxGroups = self::boundedInt($params, 'limit', 100, 1, 500);
 
         [$where, $binds, $types, $explicitSignature] = $this->buildFilters($params);
         $whereClause = 'WHERE ' . implode(' AND ', $where);
@@ -329,6 +329,32 @@ class SkanPostbacksController
     }
 
     // ─── Internals ───────────────────────────────────────────────────
+
+    /**
+     * A paging bound, or a 422 naming the parameter.
+     *
+     * Deliberately not `max(1, min(500, (int)$v))`: casting silently turned
+     * ?limit=abc into 1 and ?offset=-5 into 0, so a caller who mistyped a
+     * limit got one row back and read it as "the account has one postback".
+     * That is the same silent coercion buildFilters below rejects for every
+     * other parameter (error patterns #4 and #5). An out-of-range NUMBER
+     * still clamps — a range is a documented ceiling, not a typo.
+     *
+     * @param array<string, mixed> $params
+     */
+    private static function boundedInt(array $params, string $key, int $default, int $min, int $max): int
+    {
+        if (!isset($params[$key]) || $params[$key] === '') {
+            return $default;
+        }
+        $raw = $params[$key];
+        if (!is_int($raw) && !(is_string($raw) && preg_match('/^-?\d+$/D', $raw) === 1)) {
+            throw new ValidationException('Invalid paging value', [
+                $key => 'Must be an integer',
+            ]);
+        }
+        return max($min, min($max, (int)$raw));
+    }
 
     /**
      * Shared filter builder for list() and report(). Malformed values are

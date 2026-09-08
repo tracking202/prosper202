@@ -71,6 +71,10 @@ public final class P202SKAN {
     private var cache = SchemaCache()
     private var lastFineValue: Int?
     private var refreshInFlight = false
+    /// When the last refresh ATTEMPT resolved, successfully or not. Distinct
+    /// from `cache.fetchedAt`, which records only successes — see
+    /// refreshIfStale() for why a failure has to be remembered too.
+    private var lastAttemptAt: Date?
 
     /// The store and session are injectable for tests; production uses
     /// UserDefaults and the shared URLSession.
@@ -145,11 +149,25 @@ public final class P202SKAN {
     /// Signal install attribution before any conversion event has happened
     /// (the modern replacement for registerAppForAdNetworkAttribution): sets
     /// conversion value 0 on iOS 15.4+, where the API exists.
-    public func registerAttribution() {
-        Self.submitToSKAdNetwork(
-            ConversionUpdate(fineValue: 0, coarseValue: nil, usedFineFallback: false),
-            lockWindow: false
+    ///
+    /// Safe to call at any point in the app's life, including from
+    /// `applicationDidBecomeActive`, which is where developers habitually
+    /// put it: it re-asserts the value already reported rather than
+    /// resetting to 0. Hardcoding 0 would have reported 0 to Apple after a
+    /// `logEvent` had reported 40 AND left `lastFineValue` at 40, so the
+    /// SDK's own state disagreed with what Apple held — and the next
+    /// coarse-only event would have re-reported 40 out of nowhere.
+    /// Returns the update handed to SKAdNetwork, like `logEvent`, so the
+    /// app can log what was reported.
+    @discardableResult
+    public func registerAttribution() -> ConversionUpdate {
+        let update = ConversionUpdate(
+            fineValue: queue.sync { lastFineValue ?? 0 },
+            coarseValue: nil,
+            usedFineFallback: false
         )
+        Self.submitToSKAdNetwork(update, lockWindow: false)
+        return update
     }
 
     /// Fetch the schema now. Uses If-None-Match, so an unchanged schema
@@ -215,6 +233,7 @@ public final class P202SKAN {
                 return .failure(SDKError.superseded)
             }
             refreshInFlight = false
+            lastAttemptAt = Date()
             if let error {
                 return .failure(error)
             }
@@ -258,10 +277,16 @@ public final class P202SKAN {
             guard let config = configuration, !refreshInFlight else {
                 return false
             }
-            guard let fetchedAt = cache.fetchedAt else {
+            // A FAILED fetch throttles too. cache.fetchedAt is written only
+            // on success, so a device that is offline, holds a rotated
+            // token (404), or has just been told 429 would otherwise be
+            // stale forever and start a fresh GET on every single
+            // logEvent — hammering the very limiter that produced the 429,
+            // with no error the app can see.
+            guard let last = [cache.fetchedAt, lastAttemptAt].compactMap({ $0 }).max() else {
                 return true
             }
-            return Date().timeIntervalSince(fetchedAt) > config.refreshInterval
+            return Date().timeIntervalSince(last) > config.refreshInterval
         }
         if stale {
             refreshSchema()

@@ -182,17 +182,25 @@ func idOf(obj map[string]interface{}) string {
 	// ids; text ads and landing pages carry aff_campaign_id; campaigns carry
 	// aff_network_id; accounts carry ppc_network_id; snapshots and exports
 	// carry model_id; subscriptions carry customer_id; webhook deliveries
-	// carry webhook_id. user_id is last because it is a foreign key on almost
-	// every row. TestRenderQuietPrefersTheRowsOwnPrimaryKeyOverUserId pins
-	// one row per shape.
+	// carry webhook_id, and customer_id precedes company_id because an LTV
+	// customer row carries the company it belongs to. user_id is last
+	// because it is a foreign key on almost every row.
+	// TestRenderQuietPrefersTheRowsOwnPrimaryKeyOverUserId pins one row per
+	// shape, including the nullable-foreign-key case.
 	for _, k := range []string{"id", "conv_id", "click_id", "tracker_id", "text_ad_id",
 		"landing_page_id", "aff_campaign_id", "ppc_account_id", "aff_network_id",
 		"ppc_network_id", "rule_id", "rotator_id", "event_id", "skan_app_id",
 		"postback_id", "snapshot_id", "export_id", "model_id", "delivery_id",
 		"webhook_id", "integration_id", "field_id", "alias_id", "subscription_id",
-		"company_id", "customer_id", "product_id", "user_id"} {
+		"customer_id", "company_id", "product_id", "user_id"} {
+		// Presence is not enough: a nullable foreign key (a customer with no
+		// company) is present with a nil value, and returning its empty
+		// string here both shadows the row's real key and makes renderQuiet
+		// drop the row entirely.
 		if v, ok := obj[k]; ok {
-			return formatValue(v)
+			if id := formatValue(v); id != "" {
+				return id
+			}
 		}
 	}
 	return ""

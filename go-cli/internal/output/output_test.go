@@ -624,3 +624,19 @@ func TestTableRenderingSanitizesCellsButJSONStaysRaw(t *testing.T) {
 		t.Errorf("JSON output must keep the raw value for machine consumers:\n%q", raw)
 	}
 }
+
+func TestQuietIdSkipsANullForeignKeyRatherThanDroppingTheRow(t *testing.T) {
+	// An LTV customer row selects customer_id AND company_id, and company_id
+	// is NULL for a customer attached to no company. Returning on key
+	// presence printed the company's id when set and nothing at all when
+	// null, so `p202 ltv customers <id> -q` silently produced no output for
+	// the ordinary case.
+	for name, row := range map[string]map[string]interface{}{
+		"no company":   {"customer_id": 8821, "company_id": nil, "user_id": 1},
+		"with company": {"customer_id": 8821, "company_id": 44, "user_id": 1},
+	} {
+		if got := idOf(row); got != "8821" {
+			t.Errorf("%s: idOf = %q, want \"8821\"", name, got)
+		}
+	}
+}

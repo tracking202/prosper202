@@ -2683,6 +2683,14 @@ paths:
                 $ref: "#/components/schemas/ValidationError"
         "405":
           description: Only GET (probe) and POST are served
+        "413":
+          description: >-
+            Body over 32 KB. Terminal: no genuine Apple postback approaches
+            this size, and the same body would fail every retry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "429":
           $ref: "#/components/responses/SkanRateLimited"
         "503":

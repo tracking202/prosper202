@@ -72,6 +72,30 @@ final class FacadeTests: XCTestCase {
         XCTAssertFalse(store.keys.contains(SchemaCache.storageKey(schemaToken: "token-b")))
     }
 
+    func testRegisterAttributionDoesNotResetAValueAlreadyReported() throws {
+        // Developers habitually call registerAttribution() from
+        // applicationDidBecomeActive. Reporting a hardcoded 0 there would
+        // both downgrade what Apple holds and leave the SDK's own
+        // lastFineValue untouched, so the two disagreed from then on.
+        let store = InMemoryStore()
+        let sdk = P202SKAN(store: store, session: .shared)
+        sdk.configure(endpoint: Self.deadEndpoint, schemaToken: "token-a")
+        _ = try sdk.finishRefresh(
+            requestToken: "token-a",
+            data: Self.schemaBody,
+            response: httpResponse(status: 200),
+            error: nil
+        ).get()
+
+        XCTAssertEqual(sdk.registerAttribution().fineValue, 0, "a fresh install reports 0")
+        XCTAssertEqual(sdk.logEvent("purchase")?.fineValue, 63)
+        XCTAssertEqual(
+            sdk.registerAttribution().fineValue,
+            63,
+            "re-asserts the reported value instead of resetting it"
+        )
+    }
+
     func testLastFineValueSurvivesATokenRotation() throws {
         let store = InMemoryStore()
         let sdk = P202SKAN(store: store, session: .shared)

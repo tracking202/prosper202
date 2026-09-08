@@ -452,7 +452,17 @@ var skanSchemaCmd = &cobra.Command{
 				SchemaToken string `json:"schema_token"`
 			} `json:"data"`
 		}
-		if err := json.Unmarshal(appData, &envelope); err != nil || envelope.Data.SchemaToken == "" {
+		// An unreadable response and a registration without a token are
+		// different failures with different remedies; folding them together
+		// told the caller "no schema token" when a proxy had returned an
+		// error page, and pointed them at the wrong fix.
+		if err := json.Unmarshal(appData, &envelope); err != nil {
+			return withHint(
+				fmt.Errorf("reading app %s: could not decode the server's response: %w", args[0], err),
+				"The server returned something that is not the expected JSON envelope; check the configured URL with `p202 config show` and that it reaches the API and not a proxy error page.",
+			)
+		}
+		if envelope.Data.SchemaToken == "" {
 			return validationError("this app registration has no schema token").
 				WithHint("The server must advertise features.skan in /capabilities; `p202 skan app get " + args[0] + "` shows the registration.")
 		}

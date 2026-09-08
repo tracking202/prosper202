@@ -6,6 +6,7 @@ namespace Api\V3\Controllers;
 
 use Api\V3\Controller;
 use Api\V3\Exception\ConflictException;
+use Api\V3\Exception\ValidationException;
 
 /**
  * Registry of advertised App Store apps for SKAN reporting.
@@ -56,7 +57,8 @@ class SkanAppsController extends Controller
     #[\Override]
     protected function beforeCreate(array $payload): array
     {
-        $this->assertAppIdUnregistered((int)($payload['app_id'] ?? 0));
+        self::assertUsableAppId($payload['app_id'] ?? null);
+        $this->assertAppIdUnregistered((int)$payload['app_id']);
         return [
             'schema_token' => ['type' => 's', 'value' => self::newSchemaToken()],
             'created_at' => ['type' => 'i', 'value' => time()],
@@ -82,6 +84,26 @@ class SkanAppsController extends Controller
         $stmt->close();
 
         return $this->get($id);
+    }
+
+    /**
+     * An App Store id the rest of the feature can actually use.
+     *
+     * The column is bigint UNSIGNED, so a negative value reaches strict-mode
+     * MySQL as error 1264 and surfaces as a 500 for what is plainly bad
+     * input. 0 is refused separately: it is the reserved "account-wide
+     * default" scope in 202_skan_conversion_values, so an app registered as
+     * 0 would share one scope with the defaults and the schema endpoint
+     * could not tell an app rule from a fallback.
+     */
+    private static function assertUsableAppId(mixed $appId): void
+    {
+        $value = is_numeric($appId) ? (int)$appId : -1;
+        if ($value < 1) {
+            throw new ValidationException('Invalid app_id', [
+                'app_id' => 'Must be a positive App Store id (the number in the app\'s App Store URL)',
+            ]);
+        }
     }
 
     private static function newSchemaToken(): string
@@ -119,6 +141,7 @@ class SkanAppsController extends Controller
     protected function beforeUpdate(int|string $id, array $payload): array
     {
         if (array_key_exists('app_id', $payload)) {
+            self::assertUsableAppId($payload['app_id']);
             $this->assertAppIdUnregistered((int)$payload['app_id'], excludeId: (int)$id);
         }
         return [

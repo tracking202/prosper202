@@ -26,6 +26,7 @@ use Prosper202\Database\Tables\SkanTables;
 final class PostbackReceiverIntegrationTest extends TestCase
 {
     private static ?\mysqli $db = null;
+    private static bool $reportModeChanged = false;
 
     public static function setUpBeforeClass(): void
     {
@@ -36,8 +37,14 @@ final class PostbackReceiverIntegrationTest extends TestCase
 
         // Production report mode (PHP's default since 8.1, and what the
         // receiver documents): failures throw, so the exception branch of
-        // insertPostback() is the one exercised here.
+        // insertPostback() is the one exercised here. mysqli_report() is
+        // process-global and returns bool, not the mode it replaced — PHP
+        // exposes no getter — so tearDownAfterClass restores the documented
+        // 8.1+ default rather than a captured value. Leaving it set would
+        // decide, by class order, whether a later suite's mysqli throws or
+        // returns false.
         mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+        self::$reportModeChanged = true;
 
         try {
             $db = @mysqli_connect(
@@ -66,6 +73,10 @@ final class PostbackReceiverIntegrationTest extends TestCase
         if (self::$db) {
             self::$db->close();
             self::$db = null;
+        }
+        if (self::$reportModeChanged) {
+            mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+            self::$reportModeChanged = false;
         }
     }
 

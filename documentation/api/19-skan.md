@@ -125,14 +125,33 @@ but never served through the API.
 
 Because the endpoint is public, rows nobody will ever act on are pruned
 opportunistically (piggybacked on receiver traffic, in small batches):
-postbacks still **unclaimed** by any app registration after 30 days, and
+postbacks still **unclaimed** by any app registration after 30 days,
 postbacks whose signature verified as **forged** (`signature_valid = 0`)
-after 90 days. Verified rows claimed by a user are never pruned. Override
-with the `P202_SKAN_RETENTION_DAYS_UNCLAIMED` and
-`P202_SKAN_RETENTION_DAYS_INVALID` environment variables (`0` disables that
-class's pruning entirely).
+after 90 days, and postbacks whose signature could not be checked at all
+(**unverifiable**, `signature_valid IS NULL`) after 90 days. Only a row that
+verified against Apple's key *and* belongs to a registered app is kept
+forever.
+
+That third class matters because it is the cheapest row for a stranger to
+create: naming a SKAN version this server cannot verify stores
+`signature_valid = NULL`, and a body naming a registered App Store id (a
+public number) is claimed at the same time — so it belonged to neither of
+the other classes and would have lived forever.
+
+Override with the `P202_SKAN_RETENTION_DAYS_UNCLAIMED`,
+`P202_SKAN_RETENTION_DAYS_INVALID` and
+`P202_SKAN_RETENTION_DAYS_UNVERIFIABLE` environment variables (`0` disables
+that class's pruning entirely). A value that is not a whole number of days
+is **rejected**, not rounded or defaulted: the class prunes nothing and the
+variable is named in the error log, so writing `never` keeps rows rather
+than quietly deleting them on the 30-day default.
 
 ### List filters
+
+`limit` and `offset` must be integers — a non-numeric value is a 422 naming
+the parameter rather than a silent fall back to the default, so a mistyped
+limit cannot read as "this account has one postback". A number outside the
+allowed range still clamps (`limit` to 1–500).
 
 `GET /skan/postbacks` accepts `limit`, `offset`, `time_from`/`time_to`
 (unix, on `received_at`), and equality filters: `app_id`, `ad_network_id`,

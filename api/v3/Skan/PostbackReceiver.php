@@ -23,6 +23,9 @@ namespace Api\V3\Skan;
  *    signature, and reports separate verified from unverified).
  *  - 400 when the body is not a postback at all (bad JSON, missing or
  *    mis-typed fields). Genuine devices never send these.
+ *  - 413 when the body exceeds MAX_BODY_BYTES. Also terminal: no genuine
+ *    postback is anywhere near that size, and the same body would fail
+ *    every retry, so there is nothing for the device to come back for.
  *  - 429/500 for rate limiting and storage failures — non-200, so the device
  *    retries later.
  *
@@ -43,14 +46,26 @@ final class PostbackReceiver
 
     /**
      * Retention defaults (days) for rows the endpoint's openness makes
-     * unbounded: postbacks nobody has claimed (no app registration) and
-     * postbacks whose signature verified as forged. Verified, claimed rows
-     * are operator data and are never pruned. Overridable via
-     * P202_SKAN_RETENTION_DAYS_UNCLAIMED / P202_SKAN_RETENTION_DAYS_INVALID;
-     * 0 disables that class of pruning.
+     * unbounded. Only a row that VERIFIED against Apple's key and belongs to
+     * a registered app is operator data kept forever; every other class is
+     * something an unauthenticated poster can mint, so each has a window:
+     *
+     *  - unclaimed    no app registration adopted it (user_id = 0)
+     *  - invalid      the signature was checked and is forged
+     *  - unverifiable the signature could not be checked at all
+     *
+     * The third class is not a formality: naming a version outside
+     * PostbackVerifier::VERIFIABLE_VERSIONS stores signature_valid = NULL,
+     * and if the body names a registered App Store id (a public number) the
+     * row is claimed too — so without this class it matched neither of the
+     * others and lived forever, unauthenticated and free to repeat.
+     *
+     * Overridable per class via P202_SKAN_RETENTION_DAYS_UNCLAIMED /
+     * _INVALID / _UNVERIFIABLE; 0 disables that class of pruning.
      */
     public const DEFAULT_RETENTION_DAYS_UNCLAIMED = 30;
     public const DEFAULT_RETENTION_DAYS_INVALID = 90;
+    public const DEFAULT_RETENTION_DAYS_UNVERIFIABLE = 90;
 
     private const COARSE_VALUES = ['low', 'medium', 'high'];
 
@@ -215,12 +230,13 @@ final class PostbackReceiver
                 'DELETE FROM 202_skan_postbacks WHERE user_id = 0 AND received_at < ? LIMIT 500'],
             ['P202_SKAN_RETENTION_DAYS_INVALID', self::DEFAULT_RETENTION_DAYS_INVALID,
                 'DELETE FROM 202_skan_postbacks WHERE signature_valid = 0 AND received_at < ? LIMIT 500'],
+            ['P202_SKAN_RETENTION_DAYS_UNVERIFIABLE', self::DEFAULT_RETENTION_DAYS_UNVERIFIABLE,
+                'DELETE FROM 202_skan_postbacks WHERE signature_valid IS NULL AND received_at < ? LIMIT 500'],
         ];
         foreach ($classes as [$envName, $defaultDays, $sql]) {
-            $raw = getenv($envName);
-            $days = (is_string($raw) && trim($raw) !== '' && is_numeric($raw)) ? (int)$raw : $defaultDays;
+            $days = self::retentionDays($envName, $defaultDays);
             if ($days <= 0) {
-                continue; // explicitly disabled
+                continue; // disabled, or a value we refused to guess at
             }
             $cutoff = $now - ($days * 86400);
             $stmt = $this->prepare($sql);
@@ -228,6 +244,34 @@ final class PostbackReceiver
             $this->execute($stmt, 'Retention delete failed');
             $stmt->close();
         }
+    }
+
+    /**
+     * Days to retain one prune class, or 0 to prune nothing.
+     *
+     * An unset variable means "use the default"; a value we cannot parse
+     * does NOT. Falling back to the default here would delete rows on a
+     * window the operator never chose — an operator who wrote "never"
+     * meant keep (error patterns #4 and #11: a malformed value must not
+     * resolve to the destructive reading). Skip the class instead, and
+     * name the variable so the misconfiguration is findable.
+     */
+    private static function retentionDays(string $envName, int $defaultDays): int
+    {
+        $raw = getenv($envName);
+        if ($raw === false || trim($raw) === '') {
+            return $defaultDays;
+        }
+        $raw = trim($raw);
+        if (preg_match('/^\d+$/D', $raw) !== 1) {
+            error_log(sprintf(
+                'p202 skan: ignoring malformed %s (%s); expected a whole number of days, 0 to disable. Nothing pruned for this class.',
+                $envName,
+                $raw
+            ));
+            return 0;
+        }
+        return (int)$raw;
     }
 
     /**
@@ -242,7 +286,7 @@ final class PostbackReceiver
         $errors = [];
 
         $version = $postback['version'] ?? null;
-        if (!is_string($version) || preg_match('/^\d{1,2}\.\d{1,2}$/', $version) !== 1) {
+        if (!is_string($version) || preg_match('/^\d{1,2}\.\d{1,2}$/D', $version) !== 1) {
             $errors['version'] = 'Required: a version string such as "4.0"';
         }
 
@@ -267,7 +311,7 @@ final class PostbackReceiver
 
         if (array_key_exists('source-identifier', $postback)) {
             $sourceIdentifier = $postback['source-identifier'];
-            if (!is_string($sourceIdentifier) || preg_match('/^\d{1,4}$/', $sourceIdentifier) !== 1) {
+            if (!is_string($sourceIdentifier) || preg_match('/^\d{1,4}$/D', $sourceIdentifier) !== 1) {
                 $errors['source-identifier'] = 'Must be a string of 1-4 digits';
             }
         }

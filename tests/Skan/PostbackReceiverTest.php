@@ -361,6 +361,65 @@ final class PostbackReceiverTest extends TestCase
         $this->assertTrue($result['body']['error']);
     }
 
+    public function testAMalformedRetentionOverrideSkipsThatClassInsteadOfPruningOnTheDefault(): void
+    {
+        // "never" is what an operator writes meaning KEEP. Falling back to
+        // the 30-day default would delete on a window they never chose, so
+        // a value we cannot parse prunes nothing for that class.
+        putenv('P202_SKAN_RETENTION_DAYS_UNCLAIMED=never');
+        try {
+            $db = $this->capturingDb();
+            $this->receiver($db)->prunePostbacks(1_800_000_000);
+
+            $deletes = array_values(array_filter(
+                $this->captured,
+                static fn(array $c): bool => str_starts_with(ltrim($c['sql']), 'DELETE')
+            ));
+            foreach ($deletes as $delete) {
+                $this->assertStringNotContainsString(
+                    'user_id = 0',
+                    $delete['sql'],
+                    'an unparseable retention value must not fall back to the destructive default'
+                );
+            }
+            $this->assertCount(2, $deletes, 'the other classes still prune');
+        } finally {
+            putenv('P202_SKAN_RETENTION_DAYS_UNCLAIMED');
+        }
+    }
+
+    /**
+     * @dataProvider trailingNewlineFields
+     */
+    public function testATrailingNewlineDoesNotSlipPastALengthCheckedField(string $field, mixed $value): void
+    {
+        // PCRE's $ matches before a final newline without the D modifier, so
+        // "1234\n" passed a /^\d{1,4}$/ meant to bound a varchar(4): the row
+        // then failed the INSERT and answered 500, which a device retries
+        // forever, instead of the 400 the validator exists to produce.
+        $body = json_encode(array_merge([
+            'version' => '4.0',
+            'ad-network-id' => 'eval.skadnetwork',
+            'transaction-id' => 'tx-newline',
+            'app-id' => 42,
+            'attribution-signature' => 'AA==',
+        ], [$field => $value]));
+        $this->assertNotFalse($body);
+
+        $result = $this->receiver($this->capturingDb())->receive($body, '127.0.0.1');
+        $this->assertSame(400, $result['status'], "$field must be rejected");
+        $this->assertArrayHasKey($field, $result['body']['field_errors']);
+    }
+
+    /** @return array<string, array{0: string, 1: mixed}> */
+    public static function trailingNewlineFields(): array
+    {
+        return [
+            'source-identifier' => ['source-identifier', "1234\n"],
+            'version' => ['version', "4.0\n"],
+        ];
+    }
+
     public function testRetentionPruningTargetsOnlyUnclaimedAndForgedRowsWithBoundedBatches(): void
     {
         $db = $this->capturingDb();
@@ -371,11 +430,18 @@ final class PostbackReceiverTest extends TestCase
             $this->captured,
             static fn(array $c): bool => str_starts_with(ltrim($c['sql']), 'DELETE')
         ));
-        $this->assertCount(2, $deletes, 'one bounded delete per retention class');
+        $this->assertCount(3, $deletes, 'one bounded delete per retention class');
         $this->assertStringContainsString('WHERE user_id = 0 AND received_at < ?', $deletes[0]['sql']);
         $this->assertSame([$now - PostbackReceiver::DEFAULT_RETENTION_DAYS_UNCLAIMED * 86400], $deletes[0]['values']);
         $this->assertStringContainsString('WHERE signature_valid = 0 AND received_at < ?', $deletes[1]['sql']);
         $this->assertSame([$now - PostbackReceiver::DEFAULT_RETENTION_DAYS_INVALID * 86400], $deletes[1]['values']);
+        // The class an unauthenticated poster can mint for free: naming a
+        // version the verifier does not know stores signature_valid = NULL,
+        // and a body naming a registered app is claimed too — so without
+        // this delete the row matched neither of the others and lived
+        // forever.
+        $this->assertStringContainsString('WHERE signature_valid IS NULL AND received_at < ?', $deletes[2]['sql']);
+        $this->assertSame([$now - PostbackReceiver::DEFAULT_RETENTION_DAYS_UNVERIFIABLE * 86400], $deletes[2]['values']);
         foreach ($deletes as $delete) {
             $this->assertStringContainsString('LIMIT 500', $delete['sql'], 'a pass must stay cheap on the request path');
             $this->assertStringNotContainsString('signature_valid = 1', $delete['sql'], 'verified rows are never pruned');
@@ -395,7 +461,7 @@ final class PostbackReceiverTest extends TestCase
                 $this->captured,
                 static fn(array $c): bool => str_starts_with(ltrim($c['sql']), 'DELETE')
             ));
-            $this->assertCount(1, $deletes, 'a 0-day override disables that class entirely');
+            $this->assertCount(2, $deletes, 'a 0-day override disables that class entirely');
             $this->assertStringContainsString('user_id = 0', $deletes[0]['sql']);
             $this->assertSame([$now - 7 * 86400], $deletes[0]['values']);
         } finally {

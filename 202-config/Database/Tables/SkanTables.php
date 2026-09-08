@@ -68,7 +68,8 @@ final class SkanTables
                 KEY `user_received` (`user_id`,`received_at`),
                 KEY `user_app` (`user_id`,`app_id`),
                 KEY `user_ad_network` (`user_id`,`ad_network_id`),
-                KEY `transaction` (`transaction_id`)
+                KEY `transaction` (`transaction_id`),
+                KEY `signature_received` (`signature_valid`,`received_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='SKAdNetwork install-validation postbacks received from Apple devices'"
         );
     }

@@ -151,15 +151,26 @@ try {
         // rule), and the iOS helper and CLI both send the header.
         $schemaResult = (new \Api\V3\Controllers\SkanSchemaController($db))
             ->publicSchema(RequestContext::header('x-p202-schema-token'), RequestContext::header('if-none-match'));
+        // The document is selected by the token header, not by the URL, so
+        // every cache between here and the device must key on it too —
+        // without Vary a shared cache can serve one app's schema to another
+        // app's token, and a rotated token would keep working from cache.
+        header('Vary: X-P202-Schema-Token');
+        $schemaCacheControl = 'no-store';
         if ($schemaResult['etag'] !== null) {
             header('ETag: ' . $schemaResult['etag']);
-            header('Cache-Control: private, max-age=300');
+            $schemaCacheControl = 'private, max-age=300';
+            header('Cache-Control: ' . $schemaCacheControl);
         }
         if ($schemaResult['status'] === 304) {
             http_response_code(304);
             exit;
         }
-        Bootstrap::jsonResponse($schemaResult['body'] ?? [], $schemaResult['status']);
+        // Passed in, not left to the header() above: jsonResponse sets
+        // Cache-Control itself and would otherwise replace it with
+        // no-store, leaving the 200 uncacheable while the 304 above
+        // advertised five minutes.
+        Bootstrap::jsonResponse($schemaResult['body'] ?? [], $schemaResult['status'], $schemaCacheControl);
         exit;
     }
 

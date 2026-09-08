@@ -35,6 +35,9 @@ class SkanConversionValuesController extends Controller
         return 'rule_id';
     }
 
+    /** Largest value the revenue decimal(11,5) column can hold. */
+    private const MAX_REVENUE = 999999.99999;
+
     protected function fields(): array
     {
         return [
@@ -163,10 +166,17 @@ class SkanConversionValuesController extends Controller
                 'fine_value' => 'Must be an integer from 0 to 63 (SKAN fine values are 6 bits)',
             ]);
         }
-        if (array_key_exists('revenue', $rule) && $rule['revenue'] !== null && (float)$rule['revenue'] < 0) {
-            throw new ValidationException('Invalid revenue', [
-                'revenue' => 'Must be zero or a positive amount',
-            ]);
+        if (array_key_exists('revenue', $rule) && $rule['revenue'] !== null) {
+            // Bounded on both sides against the decimal(11,5) column: an
+            // out-of-range value would otherwise reach the INSERT and come
+            // back as a 500 (strict mode) or be silently clamped to a
+            // number the report then decodes as revenue (non-strict).
+            $revenue = (float)$rule['revenue'];
+            if ($revenue < 0 || $revenue > self::MAX_REVENUE) {
+                throw new ValidationException('Invalid revenue', [
+                    'revenue' => 'Must be between 0 and ' . self::MAX_REVENUE,
+                ]);
+            }
         }
         if ((int)($rule['app_id'] ?? 0) < 0) {
             throw new ValidationException('Invalid app_id', [
