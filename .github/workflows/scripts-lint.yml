@@ -47,6 +47,53 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The harness drives the real verify.sh tiers through the repository's
+      # own vendor/bin/phpunit, vendor/bin/phpcs and golangci-lint. On a bare
+      # runner those cases skip with a note, and the first version of this
+      # job ran 29 of 47 cases while the PR described the harness as wired
+      # into CI. The setup below mirrors php-unit.yml and go-cli.yml so every
+      # case runs here.
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mysqli, pdo, pdo_mysql, memcached, :memcache, mbstring, curl, zip, dom, xml, gd, zlib
+
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.composer/cache
+            ~/.cache/composer
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: Configure Composer authentication
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if [ -n "${GITHUB_TOKEN}" ]; then
+            composer config -g github-oauth.github.com "${GITHUB_TOKEN}"
+          fi
+
+      - name: Install PHP dependencies
+        env:
+          COMPOSER_ALLOW_SUPERUSER: 1
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: go-cli/go.sum
+
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.5.0
+          install-only: true
+
       # The hook selects the files it inspects. When that selection was wrong
       # it examined nothing and still reported clean, so the selection itself
       # needs a test. Runs the real script against a throwaway repository.
