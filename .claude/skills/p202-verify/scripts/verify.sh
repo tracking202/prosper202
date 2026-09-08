@@ -296,35 +296,47 @@ phpunit_ran_nothing() {
 # touch of a legacy file and be switched off within the week. This one fails
 # only when a change makes a file worse than it was at HEAD; a brand-new file
 # has no HEAD and must be clean.
-phpcs_summary_errors() {
-    local n
-    n=$(grep -oE 'A TOTAL OF [0-9]+ ERROR' | grep -oE '[0-9]+')
-    echo "${n:-0}"
+# Turns one phpcs run into "ERRORS WARNINGS", or "?" when phpcs did not
+# actually analyse the file. The exit code cannot be trusted for that: the
+# documented bitmask (1 errors, 2 warnings, 3 both) does not match what
+# PHP_CodeSniffer 3.13 does (2 for errors, 1 for warnings only, 3 for a
+# missing file or unknown standard, 2 for out-of-memory). The first version
+# read exit 3 as a tool failure and would have skipped the ratchet for a
+# file with both errors and warnings. The stable signal is the report: a
+# successful analysis either prints "A TOTAL OF N ERRORS AND M WARNINGS" or
+# prints nothing at all with exit 0 (clean). Anything else is "?", which
+# must never be read as 0 (CLAUDE.md error pattern #11).
+phpcs_counts_from_run() { # $1 = exit code, $2 = output
+    local e w
+    e=$(printf '%s' "$2" | grep -oE 'A TOTAL OF [0-9]+ ERROR' | grep -oE '[0-9]+' | head -1)
+    w=$(printf '%s' "$2" | grep -oE '[0-9]+ WARNING' | grep -oE '[0-9]+' | head -1)
+    if [ -n "$e" ] && [ -n "$w" ]; then
+        echo "$e $w"
+    elif [ "$1" -eq 0 ] && [ -z "$(printf '%s' "$2" | tr -d '[:space:]')" ]; then
+        echo "0 0"
+    else
+        echo "?"
+    fi
 }
 
-# Prints an error count, or "?" when phpcs itself could not analyse the file
-# (exit 3+, typically out of memory). "?" must never be read as 0: an
-# unreadable answer resolving to "clean" is CLAUDE.md error pattern #11.
-phpcs_error_count_file() {
+phpcs_counts_file() {
     local out rc
     # shellcheck disable=SC2086
     out=$( $PHPCS_CMD -d memory_limit=512M --standard=PSR12 --report=summary "$1" 2>&1 )
     rc=$?
-    if [ $rc -ge 3 ]; then echo "?"; return; fi
-    printf '%s' "$out" | phpcs_summary_errors
+    phpcs_counts_from_run "$rc" "$out"
 }
 
-phpcs_error_count_at_head() {
+phpcs_counts_at_head() {
     local out rc
     # shellcheck disable=SC2086
     out=$( git show "HEAD:$1" 2>/dev/null | $PHPCS_CMD -d memory_limit=512M --standard=PSR12 --report=summary --stdin-path="$1" - 2>&1 )
     rc=$?
-    if [ $rc -ge 3 ]; then echo "?"; return; fi
-    printf '%s' "$out" | phpcs_summary_errors
+    phpcs_counts_from_run "$rc" "$out"
 }
 
 run_phpcs() {
-    local files f head_count wt_count worse=0 examined=0
+    local files f head wt he hw we ww worse=0 examined=0
     files=$(changed_php_files)
     if [ -z "$files" ]; then
         COULD_NOT_RUN_REASON="no new or modified .php files, so nothing was examined"
@@ -333,21 +345,25 @@ run_phpcs() {
     while IFS= read -r f; do
         [ -f "$f" ] || continue
         examined=$((examined + 1))
-        wt_count=$(phpcs_error_count_file "$f")
+        wt=$(phpcs_counts_file "$f")
         if git cat-file -e "HEAD:$f" 2>/dev/null; then
-            head_count=$(phpcs_error_count_at_head "$f")
+            head=$(phpcs_counts_at_head "$f")
         else
-            head_count=0
+            head="0 0"
         fi
-        if [ "$wt_count" = "?" ] || [ "$head_count" = "?" ]; then
-            COULD_NOT_RUN_REASON="phpcs could not analyse $f (exit 3 or higher; out of memory?)"
+        if [ "$wt" = "?" ] || [ "$head" = "?" ]; then
+            COULD_NOT_RUN_REASON="phpcs did not analyse $f (no report; unknown standard, missing file or out of memory?)"
             return $TIER_COULD_NOT_RUN
         fi
-        if [ "$wt_count" -gt "$head_count" ]; then
-            printf 'phpcs: %s: %s PSR12 errors, was %s at HEAD (+%s)\n' "$f" "$wt_count" "$head_count" $((wt_count - head_count))
+        we=${wt%% *}; ww=${wt##* }; he=${head%% *}; hw=${head##* }
+        # Errors and warnings ratchet independently: AGENTS.md's
+        # `phpcs --standard=PSR12 .` fails on either, so a new file may not
+        # introduce warnings any more than errors.
+        if [ "$we" -gt "$he" ] || [ "$ww" -gt "$hw" ]; then
+            printf 'phpcs: %s: %s errors / %s warnings, was %s / %s at HEAD\n' "$f" "$we" "$ww" "$he" "$hw"
             worse=$((worse + 1))
-        elif [ "$wt_count" -gt 0 ]; then
-            printf 'phpcs: %s: %s pre-existing PSR12 errors, none added\n' "$f" "$wt_count"
+        elif [ "$we" -gt 0 ] || [ "$ww" -gt 0 ]; then
+            printf 'phpcs: %s: %s pre-existing errors / %s warnings, none added\n' "$f" "$we" "$ww"
         fi
     done <<< "$files"
     printf 'phpcs: %s file(s) examined, %s made worse\n' "$examined" "$worse"
@@ -382,9 +398,39 @@ host_go_toolchain_broken() {
     [ $rc -ne 0 ]
 }
 
+# The committed module graph must load before anything is attributed to the
+# change. On a fresh or network-restricted checkout with an empty module
+# cache, `go vet` fails while downloading the existing dependencies, having
+# compiled nothing of this repository; that is the environment, not the code.
+# Only a fetch that the environment prevented counts. A go.mod the change
+# broke also fails `go list -m all`, and the first version of this check
+# reported that as SKIP: the harness case for a malformed go.mod caught it
+# within the hour. So the verdict needs a network or proxy signature in the
+# output, not just a non-zero exit; anything else is left for vet to fail on.
+go_modules_unavailable() {
+    local out
+    out=$( cd go-cli && PATH="$(dirname "$GO_BIN"):$PATH" "$GO_BIN" list -m all 2>&1 >/dev/null ) && return 1
+    printf '%s' "$out" | grep -qE 'proxy\.golang\.org|GOPROXY|module lookup disabled|dial tcp|no such host|connection refused|i/o timeout|TLS handshake|Forbidden|Service Unavailable'
+}
+
 run_go() {
-    local out rc godir
+    local out rc godir gofmt_bin unformatted
     godir=$(dirname "$GO_BIN")
+    if go_modules_unavailable; then
+        COULD_NOT_RUN_REASON="the committed Go module graph could not be loaded (empty module cache with no network or proxy?); nothing of this repository was compiled"
+        return $TIER_COULD_NOT_RUN
+    fi
+    # CI's first gate (.github/workflows/go-cli.yml): any file gofmt would
+    # reformat fails the job before vet or test run.
+    gofmt_bin="$("$GO_BIN" env GOROOT 2>/dev/null)/bin/gofmt"
+    if [ -x "$gofmt_bin" ]; then
+        unformatted=$( cd go-cli && "$gofmt_bin" -l . 2>/dev/null )
+        if [ -n "$unformatted" ]; then
+            printf 'gofmt would reformat:\n%s\n' "$unformatted"
+            FAIL_NOTE="gofmt -l lists $(printf '%s\n' "$unformatted" | grep -c .) file(s); CI's Go workflow fails on this before vet or test"
+            return 1
+        fi
+    fi
     out=$( cd go-cli && PATH="$godir:$PATH" "$GO_BIN" vet ./... 2>&1 \
            && PATH="$godir:$PATH" "$GO_BIN" test ./... 2>&1 )
     rc=$?
@@ -437,6 +483,10 @@ host_golangci_broken() {
 
 run_golangci() {
     local out rc godir
+    if go_modules_unavailable; then
+        COULD_NOT_RUN_REASON="the committed Go module graph could not be loaded (empty module cache with no network or proxy?); golangci-lint cannot type-check without it"
+        return $TIER_COULD_NOT_RUN
+    fi
     # golangci-lint shells out to `go env`, so the PATH it inherits decides
     # whether it can start at all.
     godir=$(dirname "$GO_BIN")

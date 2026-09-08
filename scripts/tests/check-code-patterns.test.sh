@@ -224,13 +224,19 @@ Tests: 2, Assertions: 1, Skipped: 1." yes
 Tests: 2, Assertions: 40, Failures: 1." no
 
     # ── phpcs ratchet, behaviourally, using the repo's own vendor/ ──
-    eval "$(sed -n '/^phpcs_summary_errors() {/,/^}/p' ./verify.sh)"
-    if [ "$(printf 'A TOTAL OF 23 ERRORS AND 12 WARNINGS' | phpcs_summary_errors)" = 23 ] \
-       && [ "$(printf '' | phpcs_summary_errors)" = 0 ] \
-       && [ "$(printf 'A TOTAL OF 1 ERROR AND 0 WARNINGS' | phpcs_summary_errors)" = 1 ]; then
-        printf '  ok    %-46s\n' "phpcs: summary parsing"; pass=$((pass + 1))
+    # The report line is the only version-stable signal of a completed
+    # analysis; exit codes disagree between the documented bitmask and what
+    # phpcs 3.13 actually returns, in both directions.
+    eval "$(sed -n '/^phpcs_counts_from_run() {/,/^}/p' ./verify.sh)"
+    if [ "$(phpcs_counts_from_run 2 'A TOTAL OF 23 ERRORS AND 12 WARNINGS WERE FOUND IN 1 FILE')" = "23 12" ] \
+       && [ "$(phpcs_counts_from_run 1 'A TOTAL OF 0 ERRORS AND 1 WARNING WERE FOUND IN 1 FILE')" = "0 1" ] \
+       && [ "$(phpcs_counts_from_run 0 '')" = "0 0" ] \
+       && [ "$(phpcs_counts_from_run 3 'ERROR: the "X" coding standard is not installed')" = "?" ] \
+       && [ "$(phpcs_counts_from_run 2 'PHP Warning:  Failed to set memory limit')" = "?" ] \
+       && [ "$(phpcs_counts_from_run 0 'something unexpected with exit 0')" = "?" ]; then
+        printf '  ok    %-46s\n' "phpcs: report parsing, tool failures never read as 0"; pass=$((pass + 1))
     else
-        printf '  FAIL  %-46s\n' "phpcs: summary parsing"; fail=$((fail + 1))
+        printf '  FAIL  %-46s\n' "phpcs: report parsing, tool failures never read as 0"; fail=$((fail + 1))
     fi
     REAL_VENDOR="$HERE/../../vendor"
     if [ -x "$REAL_VENDOR/bin/phpcs" ]; then
@@ -254,7 +260,26 @@ Tests: 2, Assertions: 40, Failures: 1." no
         rm -f src/new_clean.php
         printf '<?php\nfunction bad() { return 1; }\n' > src/new_bad.php
         expect_phpcs "ratchet: a new file with any violation FAILS" FAIL
-        rm -f src/new_bad.php vendor
+        rm -f src/new_bad.php
+        # Warnings ratchet too: `phpcs --standard=PSR12 .` fails on either.
+        printf '<?php\n\nfunction longline(): string\n{\n    return "%s";\n}\n' "$(printf 'x%.0s' $(seq 1 130))" > src/new_warn.php
+        expect_phpcs "ratchet: a new file with only a warning FAILS" FAIL
+        rm -f src/new_warn.php
+        # Both errors and warnings in one file is a normal findings result on
+        # every phpcs version, whatever exit code it chooses; it must ratchet,
+        # not be mistaken for a tool failure.
+        printf '<?php\nfunction bad() { return "%s"; }\n' "$(printf 'x%.0s' $(seq 1 130))" > src/new_both.php
+        expect_phpcs "ratchet: errors and warnings together still FAILS" FAIL
+        rm -f src/new_both.php vendor
+        # A phpcs that produces no report is a tool failure and must be SKIP,
+        # never read as zero findings.
+        mkdir -p vendor/bin
+        printf '<?php\n' > vendor/autoload.php
+        printf '#!/bin/sh\necho "ERROR: the PSR12 coding standard is not installed" >&2\nexit 3\n' > vendor/bin/phpcs
+        chmod +x vendor/bin/phpcs
+        printf '<?php\nfunction bad() { return 1; }\n' > src/new_bad.php
+        expect_phpcs "ratchet: a phpcs that cannot analyse is SKIP, not PASS" SKIP
+        rm -rf src/new_bad.php vendor
     else
         printf '  skip  phpcs ratchet cases: no vendor/bin/phpcs at %s\n' "$REAL_VENDOR"
     fi
@@ -350,6 +375,20 @@ XML
         printf 'package main\n\n// #cgo LDFLAGS: -lp202_no_such_lib_zz\nimport "C"\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
         expect_go "go: a change with bad cgo is FAIL on a healthy host" FAIL
         expect_go "go: the same failure on a host that cannot build cgo is SKIP" SKIP CC=false
+        # gofmt is CI's first Go gate; the tier must mirror it.
+        printf 'package main\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
+        printf 'package main\n\nfunc   ugly( ) {\n}\n' > go-cli/cmd/x/ugly.go
+        expect_go "go: an unformatted file is FAIL, as in CI" FAIL
+        rm -f go-cli/cmd/x/ugly.go
+        # An empty module cache with no network fails while downloading the
+        # committed dependencies, before any repository code is compiled.
+        cp go-cli/go.mod "$REPO/go.mod.keep"
+        printf 'module p202harness\n\ngo 1.22\n\nrequire example.com/not/in/cache_zz v1.0.0\n' > go-cli/go.mod
+        expect_go "go: dependencies that cannot be fetched are SKIP" SKIP GOPROXY=off GOFLAGS=-mod=mod
+        # A go.mod the change broke is not "dependencies unavailable".
+        printf 'module p202harness\n\ngo 1.22\n\nthis is not valid\n' > go-cli/go.mod
+        expect_go "go: a malformed go.mod is FAIL, not an environment SKIP" FAIL
+        mv "$REPO/go.mod.keep" go-cli/go.mod
         eval "$(sed -n '/^host_go_toolchain_broken() {/,/^}/p' ./verify.sh)"
         # Read by the sourced host_go_toolchain_broken, which shellcheck cannot see.
         # shellcheck disable=SC2034
@@ -375,7 +414,15 @@ XML
             # A build cache that cannot be created breaks package loading for
             # every module while leaving `go env` answering, which is the
             # shape of a host problem the resolver does not catch up front.
-            expect_golangci "golangci: the same failure on a broken host is SKIP" SKIP GOCACHE=/nonexistent/p202/cache
+            # A path under a regular file cannot be created by anyone, root
+            # included; /nonexistent/... was writable as root and the case
+            # silently inverted in a container.
+            printf 'x' > "$REPO/notadir"
+            expect_golangci "golangci: the same failure on a broken host is SKIP" SKIP GOCACHE="$REPO/notadir/cache"
+            cp go-cli/go.mod "$REPO/go.mod.keep"
+            printf 'module p202harness\n\ngo 1.22\n\nrequire example.com/not/in/cache_zz v1.0.0\n' > go-cli/go.mod
+            expect_golangci "golangci: dependencies that cannot be fetched are SKIP" SKIP GOPROXY=off GOFLAGS=-mod=mod
+            mv "$REPO/go.mod.keep" go-cli/go.mod
             # A change-side fault whose output DOES match the trigger on this
             # version ("Running error", "context loading failed"): a
             # malformed go.mod. Only the probe can tell it from a broken host.
@@ -385,7 +432,7 @@ XML
             expect_golangci "golangci: a change-side load error that matches the trigger is FAIL" FAIL
             mv "$REPO/go.mod.keep" go-cli/go.mod
             eval "$(sed -n '/^host_golangci_broken() {/,/^}/p' ./verify.sh)"
-            if ! host_golangci_broken && GOCACHE=/nonexistent/p202/cache host_golangci_broken; then
+            if ! host_golangci_broken && GOCACHE="$REPO/notadir/cache" host_golangci_broken; then
                 printf '  ok    %-46s\n' "golangci: probe tells a healthy host from a broken one"; pass=$((pass + 1))
             else
                 printf '  FAIL  %-46s\n' "golangci: probe tells a healthy host from a broken one"; fail=$((fail + 1))

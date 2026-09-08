@@ -27,6 +27,11 @@ on:
       - '202-lost-pass.php'
       - '202-pass-reset.php'
       - 'api-key-required.php'
+      # API-key lifecycle: the appstore page writes clickserver_api_key behind
+      # a CSRF check, and 202-js/account.php (loaded by template.php) generates
+      # and removes REST API keys.
+      - '202-appstore/**'
+      - '202-js/account.php'
       - 'cli/**'
       - 'go-cli/**'
       - '202-config/**'
