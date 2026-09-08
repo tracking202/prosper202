@@ -99,6 +99,14 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           "$(go env GOPATH)/bin/golangci-lint" --version
 
+      # For the ladder's actionlint tier and its harness cases. Pinned to
+      # the version the actionlint job above resolves at the time of writing.
+      - name: Install actionlint
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.12 "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/actionlint" -version
+
       # The hook selects the files it inspects. When that selection was wrong
       # it examined nothing and still reported clean, so the selection itself
       # needs a test. Runs the real script against a throwaway repository.

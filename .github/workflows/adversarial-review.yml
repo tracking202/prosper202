@@ -32,6 +32,9 @@ on:
       # and removes REST API keys.
       - '202-appstore/**'
       - '202-js/account.php'
+      # Validates an install_hash and hands the matching database API key to
+      # an external service.
+      - '202-cronjobs/dni.php'
       - 'cli/**'
       - 'go-cli/**'
       - '202-config/**'

@@ -165,6 +165,30 @@ if [ -f "$VERIFY" ]; then
     printf '<?php\nfunction ok() {\n    return 1;\n}\n' > src/brand_new_ok.php
     expect_tier "ladder: untracked clean file must PASS, not SKIP" PASS
     rm -f src/brand_new_ok.php
+    # A deletion-only change lists a path that is gone; the hook skips it and
+    # exits 0, which the first guard read as PASS.
+    git rm -q src/clean.php
+    expect_tier "ladder: a deletion-only change is SKIP, not PASS" SKIP
+    git reset -q --hard HEAD >/dev/null
+
+    # ── actionlint tier: CI's workflow gate ──
+    if command -v actionlint >/dev/null 2>&1; then
+        expect_actionlint() { # name want_verdict
+            local got
+            got=$(./verify.sh --tier actionlint 2>/dev/null | awk '/^  actionlint / {print $2}')
+            if [ "$got" = "$2" ]; then printf '  ok    %-46s actionlint=%s\n' "$1" "$got"; pass=$((pass + 1)); else printf '  FAIL  %-46s actionlint=%s (wanted %s)\n' "$1" "$got" "$2"; fail=$((fail + 1)); fi
+        }
+        mkdir -p .github/workflows
+        printf 'on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n' > .github/workflows/ok.yml
+        expect_actionlint "actionlint: a valid workflow PASSES" PASS
+        # An input the action does not define: the exact mistake CI rejected
+        # on this branch.
+        printf 'on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          no-such-input: yes\n' > .github/workflows/bad.yml
+        expect_actionlint "actionlint: an undefined action input FAILS" FAIL
+        rm -rf .github
+    else
+        printf '  skip  actionlint tier cases: actionlint not installed\n'
+    fi
 
     # ── --plan: which tiers a change selects, without running any ──
     expect_plan() { # name want_tier present(yes|no)
@@ -187,6 +211,15 @@ if [ -f "$VERIFY" ]; then
     printf '<?php\n// unrelated\n' > src/other.php
     expect_plan "plan: ordinary php does not select schema" schema no
     rm -f src/other.php
+    # StaticSqlSchemaTest scans api/v3 for SQL literals, so a query change
+    # there is a schema change.
+    mkdir -p api/v3 && printf '<?php\n$sql = "SELECT 1";\n' > api/v3/Q.php
+    expect_plan "plan: an api/v3 change selects schema" schema yes
+    rm -rf api
+    mkdir -p .github/workflows && printf 'on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n' > .github/workflows/x.yml
+    expect_plan "plan: a workflow change selects actionlint" actionlint yes
+    expect_plan "plan: a workflow change does not select phpstan" phpstan no
+    rm -rf .github
     rm -rf 202-config
 
     # ── unit-tier interpreter classifier, against a workflow file we write ──

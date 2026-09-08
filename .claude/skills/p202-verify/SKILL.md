@@ -53,7 +53,8 @@ subset, because the tier that matters is the one that touches your path.
 | `go-cli/**` | + `go vet`, `go test`, `golangci-lint`, and the empty-`HOME` run |
 | `tracking202/redirect/**` | + a real click through a seeded instance, not a unit test |
 | `202-config/PHPStan/Rules/**` | + rule registered in `phpstan.neon.dist`, + clean against the whole tree, + a planted defect in every call shape it claims to cover |
-| `202-config/Database/**`, `202-config/migrations/**`, `tests/Schema/**`, any `*.sql` | + `--group integration tests/Schema/` against a scratch database. The table definitions live in `202-config/Database/Tables/*.php` and have no "schema" in their path; the first version of the selector missed them. |
+| `202-config/Database/**`, `202-config/migrations/**`, `tests/Schema/**`, `api/v3/**`, any `*.sql` | + `--group integration tests/Schema/` against a scratch database. The table definitions live in `202-config/Database/Tables/*.php` and have no "schema" in their path; the first version of the selector missed them. |
+| `.github/workflows/**` | actionlint, which is CI's workflow gate; a workflow-only change previously selected nothing that could see an invalid action input |
 | anything auth, scope, idempotency, or staged-write shaped | all of the above, plus a live end-to-end pass |
 
 An unregistered PHPStan rule never runs. A rule that fires on correct code
@@ -98,6 +99,7 @@ Tiers, in order, with the command each wraps:
 6. `golangci` — `cd go-cli && golangci-lint run ./...`
 7. `schema` — `phpunit --configuration phpunit.ci.xml --group integration tests/Schema/` against a scratch database. PHPUnit 9 exits 0 when the tests skip themselves, which the schema test does when it cannot reach the database; a run that reports `Skipped: N` or `No tests executed` is SKIP, never PASS.
 8. `patterns` — `scripts/check-code-patterns.sh`, the existing Stop hook
+9. `actionlint` — `actionlint` over `.github/workflows/`, selected when a workflow changes
 
 The `--memory-limit` on tier 2 is not decoration. CI installs PHP through
 `setup-php`, which leaves `memory_limit` uncapped; a stock local `php.ini`
@@ -105,16 +107,16 @@ caps it at 128M and PHPStan dies parsing the intl stubs, reporting FAIL for a
 reason that has nothing to do with the change. `scripts/check-code-patterns.sh`
 passes the same 512M for the same reason.
 
-Tiers 9 and 10 are not scripted because they need a live instance and a
+Tiers 10 and 11 are not scripted because they need a live instance and a
 decision about what to exercise. Do them by hand:
 
-9. **Live end-to-end.** Stand up an instance with
+10. **Live end-to-end.** Stand up an instance with
    `tests/fixtures/agent-eval/ci/install-instance.sh`, seed it with
    `tests/fixtures/agent-eval/seed.sh`, then drive the actual path a user
    would take. Reports stay empty until the dataengine cron runs; the seeder
    triggers `202-cronjobs/dej.php` itself. If an instance is already up in
    this session, there is no excuse to skip this.
-10. **Agent eval.** If the change is agent-facing, add a case under
+11. **Agent eval.** If the change is agent-facing, add a case under
    `tests/fixtures/agent-eval/cases/` and run it. Grading is on final state,
    not on transcript wording.
 

@@ -15,7 +15,7 @@
 
 set -uo pipefail
 
-ALL_TIERS="syntax phpstan phpcs unit go golangci schema patterns"
+ALL_TIERS="syntax phpstan phpcs unit go golangci schema patterns actionlint"
 
 usage() {
     cat <<'EOF'
@@ -29,7 +29,7 @@ Usage: verify.sh [options]
   --list           list tier names
   -h, --help       this message
 
-Tiers: syntax phpstan phpcs unit go golangci schema patterns
+Tiers: syntax phpstan phpcs unit go golangci schema patterns actionlint
 
 Tiers 8 (live end-to-end) and 9 (agent eval) are deliberately not scripted.
 They need a running instance and a decision about what to exercise. See
@@ -137,6 +137,16 @@ changed_php_files() {
     } | awk 'NF' | sort -u
 }
 
+# The subset that still exists. A deletion-only change lists paths that are
+# gone; a tier that "examines" those examines nothing, and two tiers were
+# caught reporting PASS for exactly that.
+existing_changed_php_files() {
+    local f
+    changed_php_files | while IFS= read -r f; do
+        [ -f "$f" ] && printf '%s\n' "$f"
+    done
+}
+
 SCHEMA_DB_READY=no
 if [ -n "${P202_TEST_DB_HOST:-}" ] && [ -n "${P202_TEST_DB_NAME:-}" ]; then
     SCHEMA_DB_READY=yes
@@ -182,6 +192,10 @@ reason_for() {
         patterns)
             [ -x scripts/check-code-patterns.sh ] || { echo "scripts/check-code-patterns.sh not executable"; return; }
             git rev-parse --git-dir >/dev/null 2>&1 || { echo "not a git working tree"; return; }
+            ;;
+        actionlint)
+            have actionlint || { echo "actionlint not installed (brew install actionlint, or the download script CI uses)"; return; }
+            [ -d .github/workflows ] || { echo ".github/workflows/ missing"; return; }
             ;;
     esac
     echo ""
@@ -554,8 +568,8 @@ run_patterns() {
     # plus untracked files, or this guard skips a tier the hook would have
     # run: the first version of this guard did exactly that, and a reviewer
     # caught it two commits after the same bug was fixed in the hook.
-    if [ -z "$(changed_php_files)" ]; then
-        COULD_NOT_RUN_REASON="no new or modified .php files, so no lines were examined"
+    if [ -z "$(existing_changed_php_files)" ]; then
+        COULD_NOT_RUN_REASON="no new or modified .php files still exist, so no lines were examined"
         return $TIER_COULD_NOT_RUN
     fi
     scripts/check-code-patterns.sh
@@ -563,6 +577,15 @@ run_patterns() {
     # The Stop hook uses exit 2 for "violations found".
     [ $rc -eq 0 ] && return 0
     return 1
+}
+
+# CI's workflow gate (.github/workflows/scripts-lint.yml, actionlint job):
+# invalid action inputs, unknown contexts, workflow syntax. A workflow-only
+# change previously selected nothing that could see any of that, and one
+# such change on this branch was rejected by CI for an input that did not
+# exist in the action version named.
+run_actionlint() {
+    actionlint
 }
 
 # ------------------------------------------------- tiers from the diff
@@ -588,7 +611,10 @@ tiers_from_diff() {
     # installer runs, and 202-config/migrations/ the ALTERs; neither has
     # "schema" in its path, which is how the first version of this line
     # missed the repository's primary schema-edit path.
-    echo "$files" | grep -qE '^(202-config/(Database|migrations)/|tests/Schema/)' && tiers="$tiers schema"
+    # api/v3 is where StaticSqlSchemaTest scans for SQL literals to prepare
+    # against the schema, so a query change there is a schema change.
+    echo "$files" | grep -qE '^(202-config/(Database|migrations)/|tests/Schema/|api/v3/)' && tiers="$tiers schema"
+    echo "$files" | grep -qE '^\.github/workflows/.*\.ya?ml$' && tiers="$tiers actionlint"
     echo "$files" | grep -q '\.sql$'                    && tiers="$tiers schema"
     echo "$tiers" | tr ' ' '\n' | awk 'NF' | sort -u | tr '\n' ' '
 }
