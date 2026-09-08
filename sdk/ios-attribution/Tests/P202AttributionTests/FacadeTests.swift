@@ -96,6 +96,73 @@ final class FacadeTests: XCTestCase {
         )
     }
 
+    func testAReengagementScopedUpdateNeverTouchesTheInstallPostbacksValue() throws {
+        // AdAttributionKit keeps a separate conversion value for its
+        // re-engagement postback (iOS 18+). An update scoped to it must
+        // neither be sent to SKAdNetwork (whose only postback is the install
+        // one) nor fall back to, or overwrite, the install postback's fine
+        // value — each postback has its own history.
+        let store = InMemoryStore()
+        let sdk = P202Attribution(store: store, session: .shared)
+        sdk.configure(endpoint: Self.deadEndpoint, schemaToken: "token-a")
+        _ = try sdk.finishRefresh(
+            requestToken: "token-a",
+            data: Self.schemaBody,
+            response: httpResponse(status: 200),
+            error: nil
+        ).get()
+
+        XCTAssertEqual(sdk.logEvent("purchase")?.fineValue, 63, "install postback: fine 63")
+
+        let coarseOnly = try XCTUnwrap(sdk.logEvent("engaged", conversionTypes: [.reengagement]))
+        XCTAssertEqual(coarseOnly.conversionTypes, [.reengagement])
+        XCTAssertFalse(coarseOnly.includesInstall)
+        XCTAssertTrue(coarseOnly.includesReengagement)
+        XCTAssertEqual(coarseOnly.coarseValue, .medium)
+        XCTAssertTrue(coarseOnly.usedFineFallback)
+        XCTAssertEqual(
+            coarseOnly.fineValue,
+            0,
+            "no re-engagement fine value has been reported yet; the install postback's 63 must not leak in"
+        )
+
+        let fine = try XCTUnwrap(sdk.logEvent("purchase", conversionTypes: [.reengagement]))
+        XCTAssertEqual(fine.fineValue, 63)
+        XCTAssertEqual(LastFineValueStore.load(from: store, for: .reengagement), 63)
+        XCTAssertEqual(
+            sdk.logEvent("engaged", conversionTypes: [.reengagement])?.fineValue,
+            63,
+            "a coarse-only re-engagement update keeps the re-engagement postback's own last fine value"
+        )
+
+        XCTAssertEqual(sdk.registerAttribution().fineValue, 63)
+        XCTAssertEqual(LastFineValueStore.load(from: store, for: .install), 63)
+    }
+
+    func testAnUpdateScopedToBothPostbacksRecordsBothHistories() throws {
+        let store = InMemoryStore()
+        let sdk = P202Attribution(store: store, session: .shared)
+        sdk.configure(endpoint: Self.deadEndpoint, schemaToken: "token-a")
+        _ = try sdk.finishRefresh(
+            requestToken: "token-a",
+            data: Self.schemaBody,
+            response: httpResponse(status: 200),
+            error: nil
+        ).get()
+
+        let update = try XCTUnwrap(sdk.logEvent("purchase", conversionTypes: [.install, .reengagement]))
+        XCTAssertTrue(update.includesInstall)
+        XCTAssertTrue(update.includesReengagement)
+        XCTAssertEqual(LastFineValueStore.load(from: store, for: .install), 63)
+        XCTAssertEqual(LastFineValueStore.load(from: store, for: .reengagement), 63)
+
+        // An unscoped update is the frameworks' default: the install postback.
+        let unscoped = try XCTUnwrap(sdk.logEvent("purchase"))
+        XCTAssertNil(unscoped.conversionTypes)
+        XCTAssertTrue(unscoped.includesInstall)
+        XCTAssertFalse(unscoped.includesReengagement)
+    }
+
     func testLastFineValueSurvivesATokenRotation() throws {
         let store = InMemoryStore()
         let sdk = P202Attribution(store: store, session: .shared)

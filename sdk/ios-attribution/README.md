@@ -1,10 +1,10 @@
-# P202Attribution — remote-configured SKAdNetwork conversion values
+# P202Attribution — remote-configured conversion values for SKAdNetwork and AdAttributionKit
 
 A small, dependency-free Swift helper that lets an iOS app take its
-SKAdNetwork conversion-value mapping from your Prosper202 server at runtime.
-Change what the values mean in Prosper202 (`p202 attribution cv …` or
-`/attribution/conversion-values`) and shipped builds pick it up — **no App Store
-resubmission**.
+conversion-value mapping from your Prosper202 server at runtime and report
+it to both of Apple's attribution frameworks. Change what the values mean
+in Prosper202 (`p202 attribution cv …` or `/attribution/conversion-values`)
+and shipped builds pick it up — **no App Store resubmission**.
 
 The server builds the document this helper fetches (`GET /api/v3/attribution/schema`)
 and the decode step in `/attribution/report` from the same rules, so what the app
@@ -14,12 +14,22 @@ encodes and what your reports decode can never drift.
 
 Two things cannot be remote-configured, by iOS design:
 
-1. The postback endpoint in `Info.plist`:
+1. The postback endpoints in `Info.plist` — SKAdNetwork's, and
+   AdAttributionKit's (iOS 17.4+; add the Boolean key too if you want copies
+   of re-engagement postbacks, iOS 18+):
 
    ```xml
    <key>NSAdvertisingAttributionReportEndpoint</key>
    <string>https://your-domain.com</string>
+   <key>AttributionCopyEndpoint</key>
+   <string>https://your-domain.com</string>
+   <key>EligibleForAdAttributionKitReengagementPostbackCopies</key>
+   <true/>
    ```
+
+   Apple appends the well-known paths itself
+   (`/.well-known/skadnetwork/report-attribution/` and
+   `/.well-known/appattribution/report-attribution/`); Prosper202 serves both.
 
 2. This helper plus the app's **schema token** — minted when you register
    the app (`p202 attribution app create …`; shown by `p202 attribution app get <id>`).
@@ -51,16 +61,31 @@ P202Attribution.shared.configure(
 P202Attribution.shared.logEvent("purchase")
 P202Attribution.shared.logEvent("signup")
 
+// A conversion that belongs to a re-engagement (AdAttributionKit, iOS 18+)
+// rather than the install:
+P202Attribution.shared.logEvent("purchase", conversionTypes: [.reengagement])
+
 // Optionally, before any event has fired (modern equivalent of
 // registerAppForAdNetworkAttribution; iOS 15.4+):
 P202Attribution.shared.registerAttribution()
 ```
 
-`logEvent` resolves the name through the fetched schema and calls
-`SKAdNetwork.updatePostbackConversionValue` with the mapped fine value
-(0–63) and, on iOS 16.1+, the coarse value. Verify what devices will
-receive with `p202 attribution schema <app-registration-id>` — it performs the
-same request this helper makes.
+`logEvent` resolves the name through the fetched schema and hands the
+mapped fine value (0–63) and coarse value to both frameworks:
+`SKAdNetwork.updatePostbackConversionValue` (iOS 15.4+; coarse values on
+16.1+) and AdAttributionKit's `Postback.updateConversionValue` (iOS 17.4+).
+Apple's guidance for an app that cannot know which framework its ad
+networks integrate is to call both; the system ignores whichever has no
+pending postback. Verify what devices will receive with
+`p202 attribution schema <app-registration-id>` — it performs the same
+request this helper makes.
+
+`conversionTypes` scopes an update to AdAttributionKit's install and/or
+re-engagement postback (iOS 18+; earlier systems apply the unscoped
+update). An update that leaves out `.install` is not sent to SKAdNetwork at
+all — its only postback is the install one — and each postback keeps its
+own last fine value for coarse-only mappings, so a re-engagement update
+never falls back to, or overwrites, the install postback's value.
 
 ## Behaviour you should know about
 
@@ -79,7 +104,14 @@ same request this helper makes.
   the SKAdNetwork API shape, not a helper limitation.
 - **iOS 14.0–15.3** offers only deprecated SKAN calls; the helper is silent
   there rather than shipping deprecated API usage. iOS 15.4+ is fully
-  supported; 16.1+ adds coarse values and window locking.
+  supported; 16.1+ adds coarse values and window locking; 17.4+ adds the
+  AdAttributionKit call; 18+ adds re-engagement scoping.
+- **Development-signed AdAttributionKit postbacks** (the ones a phone in
+  Developer Mode generates) are stored by Prosper202 flagged `development`
+  and count nowhere until you turn on `accept_development_postbacks` for
+  the app registration (`p202 attribution app update <id>
+  --accept-development-postbacks 1`) — do that while integration-testing,
+  and turn it off again before trusting the numbers.
 
 ## Testing
 

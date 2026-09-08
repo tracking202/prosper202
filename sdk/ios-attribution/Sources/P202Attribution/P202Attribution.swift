@@ -5,8 +5,12 @@ import FoundationNetworking
 #if os(iOS) && canImport(StoreKit)
 import StoreKit
 #endif
+#if os(iOS) && canImport(AdAttributionKit)
+import AdAttributionKit
+#endif
 
-/// Remote-configured SKAdNetwork conversion values for a Prosper202 server.
+/// Remote-configured conversion values for a Prosper202 server, reported
+/// to both of Apple's attribution frameworks.
 ///
 /// The app ships once with the server URL and its app's schema token; from
 /// then on, what each event encodes to is edited in Prosper202
@@ -19,15 +23,23 @@ import StoreKit
 ///     )
 ///     ...
 ///     P202Attribution.shared.logEvent("purchase")
+///     P202Attribution.shared.logEvent("purchase", conversionTypes: [.reengagement])
 ///
-/// `logEvent` resolves the event through the fetched schema and calls
-/// `SKAdNetwork.updatePostbackConversionValue`. Unmapped events are no-ops
-/// by design. The schema is cached (with its ETag) across launches, so the
-/// device encodes correctly offline and refreshes cheaply — the server
-/// answers 304 until a rule actually changes.
+/// `logEvent` resolves the event through the fetched schema and hands the
+/// values to `SKAdNetwork.updatePostbackConversionValue` and, on iOS 17.4+,
+/// to AdAttributionKit's `Postback.updateConversionValue` — Apple's guidance
+/// for an app whose ad networks may use either framework is to call both,
+/// and the system ignores whichever has no pending postback. An update
+/// scoped with `conversionTypes` (iOS 18+) reaches only those
+/// AdAttributionKit postbacks; one that leaves out `.install` is never sent
+/// to SKAdNetwork, whose only postback is the install one. Unmapped events
+/// are no-ops by design. The schema is cached (with its ETag) across
+/// launches, so the device encodes correctly offline and refreshes cheaply
+/// — the server answers 304 until a rule actually changes.
 ///
-/// Note: `NSAdvertisingAttributionReportEndpoint` in Info.plist cannot be
-/// set at runtime; that one line still ships with the app.
+/// Note: `NSAdvertisingAttributionReportEndpoint` (SKAdNetwork) and
+/// `AttributionCopyEndpoint` (AdAttributionKit) in Info.plist cannot be set
+/// at runtime; those lines still ship with the app.
 public final class P202Attribution {
     public struct Configuration {
         public let endpoint: URL
@@ -69,7 +81,10 @@ public final class P202Attribution {
     private let session: URLSession
     private var configuration: Configuration?
     private var cache = SchemaCache()
+    /// The last fine value reported for the install postback and, separately,
+    /// for AdAttributionKit's re-engagement postback (see LastFineValueStore).
     private var lastFineValue: Int?
+    private var lastReengagementFineValue: Int?
     private var refreshInFlight = false
     /// When the last refresh ATTEMPT resolved, successfully or not. Distinct
     /// from `cache.fetchedAt`, which records only successes — see
@@ -101,7 +116,8 @@ public final class P202Attribution {
             self.cache = SchemaCache.load(from: store, schemaToken: schemaToken)
             // Token-independent on purpose: the device's conversion windows
             // keep running across a token rotation (see LastFineValueStore).
-            self.lastFineValue = LastFineValueStore.load(from: store)
+            self.lastFineValue = LastFineValueStore.load(from: store, for: .install)
+            self.lastReengagementFineValue = LastFineValueStore.load(from: store, for: .reengagement)
         }
         refreshSchema()
     }
@@ -112,27 +128,48 @@ public final class P202Attribution {
     }
 
     /// Report an event by the name it carries in `/attribution/conversion-values`.
-    /// Returns the update that was handed to SKAdNetwork, or nil when the
+    /// Returns the update that was handed to the frameworks, or nil when the
     /// schema does not map the event (a deliberate no-op) or no schema is
     /// available yet. The return value exists for the app's own logging.
+    ///
+    /// `conversionTypes` scopes the update to AdAttributionKit's install
+    /// and/or re-engagement postback (iOS 18+; earlier systems apply the
+    /// unscoped update). Leave it nil for the frameworks' default. An update
+    /// that leaves out `.install` is not sent to SKAdNetwork at all: its
+    /// only postback is the install one, and a re-engagement conversion
+    /// must not overwrite the install postback's value.
     @discardableResult
-    public func logEvent(_ name: String) -> ConversionUpdate? {
+    public func logEvent(
+        _ name: String,
+        conversionTypes: [ConversionUpdate.ConversionType]? = nil
+    ) -> ConversionUpdate? {
         let resolved: (update: ConversionUpdate, lockWindow: Bool)? = queue.sync {
             guard let config = configuration, let schema = cache.schema else {
                 return nil
             }
-            guard let update = ConversionUpdate.resolve(
+            // A coarse-only mapping falls back to the last fine value of the
+            // postback being updated — never the other postback's.
+            let updatesInstall = conversionTypes?.contains(.install) ?? true
+            let history = updatesInstall ? lastFineValue : lastReengagementFineValue
+            guard let decision = ConversionUpdate.resolve(
                 event: name,
                 in: schema,
-                lastFineValue: lastFineValue
+                lastFineValue: history
             ) else {
                 return nil
             }
+            let update = decision.scoped(to: conversionTypes)
             // Persist only on change: repeated events with the same fine
             // value must not write the store on every call.
-            if !update.usedFineFallback && lastFineValue != update.fineValue {
-                lastFineValue = update.fineValue
-                LastFineValueStore.save(update.fineValue, to: store)
+            if !update.usedFineFallback {
+                if update.includesInstall && lastFineValue != update.fineValue {
+                    lastFineValue = update.fineValue
+                    LastFineValueStore.save(update.fineValue, to: store, for: .install)
+                }
+                if update.includesReengagement && lastReengagementFineValue != update.fineValue {
+                    lastReengagementFineValue = update.fineValue
+                    LastFineValueStore.save(update.fineValue, to: store, for: .reengagement)
+                }
             }
             return (update, config.lockWindow)
         }
@@ -142,7 +179,7 @@ public final class P202Attribution {
         guard let (update, lockWindow) = resolved else {
             return nil
         }
-        Self.submitToSKAdNetwork(update, lockWindow: lockWindow)
+        Self.submit(update, lockWindow: lockWindow)
         return update
     }
 
@@ -157,7 +194,7 @@ public final class P202Attribution {
     /// `logEvent` had reported 40 AND left `lastFineValue` at 40, so the
     /// SDK's own state disagreed with what Apple held — and the next
     /// coarse-only event would have re-reported 40 out of nowhere.
-    /// Returns the update handed to SKAdNetwork, like `logEvent`, so the
+    /// Returns the update handed to the frameworks, like `logEvent`, so the
     /// app can log what was reported.
     @discardableResult
     public func registerAttribution() -> ConversionUpdate {
@@ -166,7 +203,7 @@ public final class P202Attribution {
             coarseValue: nil,
             usedFineFallback: false
         )
-        Self.submitToSKAdNetwork(update, lockWindow: false)
+        Self.submit(update, lockWindow: false)
         return update
     }
 
@@ -293,6 +330,55 @@ public final class P202Attribution {
         }
     }
 
+    /// Hand one update to both frameworks. Apple's guidance for an app that
+    /// cannot know which framework its ad networks integrate is to call
+    /// both; the system ignores the one with no pending postback. (Calling
+    /// SKAdNetwork alone is bridged into AdAttributionKit by the system, but
+    /// only AdAttributionKit's own API can scope an update to a
+    /// re-engagement postback.)
+    private static func submit(_ update: ConversionUpdate, lockWindow: Bool) {
+        if update.includesInstall {
+            submitToSKAdNetwork(update, lockWindow: lockWindow)
+        }
+        submitToAdAttributionKit(update, lockWindow: lockWindow)
+    }
+
+    /// The one place AdAttributionKit is touched. On non-iOS platforms
+    /// (tests, this repository's CI) it compiles to a no-op. Errors are
+    /// swallowed on purpose: the framework throws when the app has no
+    /// pending postback to update (no ad was seen), which is the same
+    /// silent outcome SKAdNetwork's completion handler reports.
+    private static func submitToAdAttributionKit(_ update: ConversionUpdate, lockWindow: Bool) {
+        #if os(iOS) && canImport(AdAttributionKit)
+        guard #available(iOS 17.4, *), Postback.isSupported else {
+            return
+        }
+        Task {
+            do {
+                if #available(iOS 18.0, *), let types = update.conversionTypes {
+                    try await Postback.updateConversionValue(PostbackUpdate(
+                        fineConversionValue: update.fineValue,
+                        lockPostback: lockWindow,
+                        coarseConversionValue: update.coarseValue?.aakValue,
+                        conversionTypes: types.map { $0.aakValue }
+                    ))
+                } else if let coarse = update.coarseValue {
+                    try await Postback.updateConversionValue(
+                        update.fineValue,
+                        coarseConversionValue: coarse.aakValue,
+                        lockPostback: lockWindow
+                    )
+                } else {
+                    try await Postback.updateConversionValue(update.fineValue, lockPostback: lockWindow)
+                }
+            } catch {
+                // No pending postback (or a framework refusal): nothing to
+                // report, exactly as with SKAdNetwork.
+            }
+        }
+        #endif
+    }
+
     /// The one place StoreKit is touched. On non-iOS platforms (tests, this
     /// repository's CI) it compiles to a no-op.
     private static func submitToSKAdNetwork(_ update: ConversionUpdate, lockWindow: Bool) {
@@ -327,6 +413,29 @@ private extension P202AttributionSchema.CoarseValue {
         case .low: return .low
         case .medium: return .medium
         case .high: return .high
+        }
+    }
+}
+#endif
+
+#if os(iOS) && canImport(AdAttributionKit)
+@available(iOS 17.4, *)
+private extension P202AttributionSchema.CoarseValue {
+    var aakValue: CoarseConversionValue {
+        switch self {
+        case .low: return .low
+        case .medium: return .medium
+        case .high: return .high
+        }
+    }
+}
+
+@available(iOS 18.0, *)
+private extension ConversionUpdate.ConversionType {
+    var aakValue: PostbackUpdate.ConversionType {
+        switch self {
+        case .install: return .install
+        case .reengagement: return .reengagement
         }
     }
 }

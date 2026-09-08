@@ -1,23 +1,65 @@
 import Foundation
 
-/// The pure decision of what to hand SKAdNetwork for one reported event —
-/// separated from the StoreKit call so it is testable everywhere (including
-/// this repository's Linux CI, where StoreKit does not exist).
-public struct ConversionUpdate: Equatable {
+/// The pure decision of what to hand the attribution frameworks for one
+/// reported event — separated from the StoreKit and AdAttributionKit calls
+/// so it is testable everywhere (including this repository's Linux CI,
+/// where neither framework exists).
+public struct ConversionUpdate: Equatable, Sendable {
+    /// Which of AdAttributionKit's postbacks an update is for. SKAdNetwork
+    /// keeps only the install postback; AdAttributionKit on iOS 18+ also
+    /// keeps a re-engagement postback with its own conversion value.
+    public enum ConversionType: String, Codable, Equatable, CaseIterable, Sendable {
+        case install
+        case reengagement
+    }
+
     /// The fine conversion value to set (0-63).
     public let fineValue: Int
     /// The coarse value to set alongside it, when the schema defines one.
     public let coarseValue: P202AttributionSchema.CoarseValue?
     /// True when the schema had no fine value for this event and the update
     /// carries the last fine value sent instead (or 0 when none was) —
-    /// SKAdNetwork's coarse-bearing API always takes a fine value, and
-    /// sending an arbitrary one would silently downgrade the fine signal.
+    /// the coarse-bearing APIs always take a fine value, and sending an
+    /// arbitrary one would silently downgrade the fine signal.
     public let usedFineFallback: Bool
+    /// The postbacks the caller scoped the update to; nil is the frameworks'
+    /// default (the install postback — SKAdNetwork's only one — and
+    /// whatever AdAttributionKit applies an unscoped update to).
+    public let conversionTypes: [ConversionType]?
 
-    public init(fineValue: Int, coarseValue: P202AttributionSchema.CoarseValue?, usedFineFallback: Bool) {
+    public init(
+        fineValue: Int,
+        coarseValue: P202AttributionSchema.CoarseValue?,
+        usedFineFallback: Bool,
+        conversionTypes: [ConversionType]? = nil
+    ) {
         self.fineValue = fineValue
         self.coarseValue = coarseValue
         self.usedFineFallback = usedFineFallback
+        self.conversionTypes = conversionTypes
+    }
+
+    /// Whether the update reaches the install postback — the only one
+    /// SKAdNetwork has, so this decides whether SKAdNetwork is called at
+    /// all: a re-engagement-only update must not overwrite the install
+    /// postback's value.
+    public var includesInstall: Bool {
+        return conversionTypes?.contains(.install) ?? true
+    }
+
+    /// Whether the update reaches AdAttributionKit's re-engagement postback.
+    public var includesReengagement: Bool {
+        return conversionTypes?.contains(.reengagement) ?? false
+    }
+
+    /// The same decision, scoped to the given postbacks.
+    public func scoped(to conversionTypes: [ConversionType]?) -> ConversionUpdate {
+        return ConversionUpdate(
+            fineValue: fineValue,
+            coarseValue: coarseValue,
+            usedFineFallback: usedFineFallback,
+            conversionTypes: conversionTypes
+        )
     }
 
     /// Resolve an event name against the schema. Returns nil for an event
@@ -48,8 +90,9 @@ public struct ConversionUpdate: Equatable {
         )
     }
 
-    /// SKAN fine values are 6 bits; the server validates its side, and the
-    /// device clamps defensively rather than crashing on a bad document.
+    /// Fine values are 6 bits in both frameworks; the server validates its
+    /// side, and the device clamps defensively rather than crashing on a
+    /// bad document.
     private static func clamp(_ value: Int) -> Int {
         return min(63, max(0, value))
     }

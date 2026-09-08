@@ -5,8 +5,9 @@ import Foundation
 /// `/attribution/conversion-values`. The server builds this document and the
 /// decode reports from the same rows, so the two directions cannot drift.
 public struct P202AttributionSchema: Codable, Equatable {
-    /// SKAN's coarse conversion values, as the server serves them.
-    public enum CoarseValue: String, Codable, Equatable {
+    /// The coarse conversion values (the same three in SKAdNetwork and
+    /// AdAttributionKit), as the server serves them.
+    public enum CoarseValue: String, Codable, Equatable, Sendable {
         case low
         case medium
         case high

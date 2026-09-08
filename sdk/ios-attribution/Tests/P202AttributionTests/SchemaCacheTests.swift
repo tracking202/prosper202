@@ -53,6 +53,20 @@ final class SchemaCacheTests: XCTestCase {
         XCTAssertNil(LastFineValueStore.load(from: store), "corrupt data must load as nil, not crash")
     }
 
+    func testTheReengagementFineValueHasItsOwnSlot() {
+        // Two postbacks, two conversion values: the slots must not alias,
+        // and the install slot keeps its pre-re-engagement key so devices
+        // upgrading the helper keep the value they already reported.
+        let store = InMemoryStore()
+        LastFineValueStore.save(40, to: store, for: .install)
+        LastFineValueStore.save(7, to: store, for: .reengagement)
+        XCTAssertEqual(LastFineValueStore.load(from: store, for: .install), 40)
+        XCTAssertEqual(LastFineValueStore.load(from: store, for: .reengagement), 7)
+        XCTAssertEqual(LastFineValueStore.load(from: store), 40, "the default is the install postback")
+        XCTAssertEqual(LastFineValueStore.key(for: .install), "p202attribution.lastFineValue")
+        XCTAssertNotEqual(LastFineValueStore.key(for: .install), LastFineValueStore.key(for: .reengagement))
+    }
+
     func testDifferentTokensUseDifferentSlots() {
         // Rotating the token in a new build must never serve the old
         // token's cached schema.

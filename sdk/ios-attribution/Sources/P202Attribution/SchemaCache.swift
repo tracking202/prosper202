@@ -51,28 +51,50 @@ struct SchemaCache: Codable, Equatable {
     }
 }
 
-/// The last fine conversion value handed to SKAdNetwork — the fallback that
-/// keeps a coarse-only update from regressing the fine signal.
+/// The last fine conversion value handed to the frameworks, per postback —
+/// the fallback that keeps a coarse-only update from regressing the fine
+/// signal. The install postback (SKAdNetwork's only one, and
+/// AdAttributionKit's default) and AdAttributionKit's re-engagement
+/// postback each carry their own conversion value, so each has its own
+/// slot: a re-engagement update must never fall back to the install
+/// postback's value, or vice versa.
 ///
 /// Deliberately NOT part of SchemaCache: it is device conversion state, not
-/// fetch state. SKAdNetwork's conversion windows keep running across a
-/// schema-token rotation (a new build with a new token), so forgetting the
-/// value with the old token's cache would make the next coarse-only update
-/// report fine value 0 and silently downgrade the postback.
+/// fetch state. The conversion windows keep running across a schema-token
+/// rotation (a new build with a new token), so forgetting the value with
+/// the old token's cache would make the next coarse-only update report
+/// fine value 0 and silently downgrade the postback.
 enum LastFineValueStore {
+    /// The install postback's slot — the key predates re-engagement support,
+    /// so devices upgrading the helper keep their value.
     static let key = "p202attribution.lastFineValue"
+    static let reengagementKey = "p202attribution.lastFineValue.reengagement"
 
-    static func load(from store: P202KeyValueStore) -> Int? {
-        guard let data = store.data(forKey: key) else {
+    static func key(for conversionType: ConversionUpdate.ConversionType) -> String {
+        switch conversionType {
+        case .install: return key
+        case .reengagement: return reengagementKey
+        }
+    }
+
+    static func load(
+        from store: P202KeyValueStore,
+        for conversionType: ConversionUpdate.ConversionType = .install
+    ) -> Int? {
+        guard let data = store.data(forKey: key(for: conversionType)) else {
             return nil
         }
         return try? JSONDecoder().decode(Int.self, from: data)
     }
 
-    static func save(_ value: Int, to store: P202KeyValueStore) {
+    static func save(
+        _ value: Int,
+        to store: P202KeyValueStore,
+        for conversionType: ConversionUpdate.ConversionType = .install
+    ) {
         guard let data = try? JSONEncoder().encode(value) else {
             return
         }
-        store.set(data, forKey: key)
+        store.set(data, forKey: key(for: conversionType))
     }
 }
