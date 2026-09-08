@@ -195,6 +195,9 @@ reason_for() {
 # environment gap and not a finding about this code.
 readonly TIER_COULD_NOT_RUN=77
 COULD_NOT_RUN_REASON=""
+# A tier that fails may attach context for the reader. It is context only:
+# a FAIL with a note is still a FAIL and still sets the exit code.
+FAIL_NOTE=""
 
 run_syntax() {
     local status=0
@@ -226,17 +229,34 @@ local_php_version() {
     php -r 'echo PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION;' 2>/dev/null
 }
 
-# Non-empty when the local interpreter is not the one CI tests on. A newer
-# PHP turns deprecations into failures the suite never sees on CI (16 of
-# them on 8.5 against a project targeting 8.3), and the ladder promised that
-# environmental inability reports SKIP rather than FAIL.
+# Non-empty when the local interpreter is not the one CI tests on. Attached
+# to a FAIL as a note so the reader can judge whether the failures are the
+# interpreter (a newer PHP promotes deprecations) or the change. It never
+# downgrades the verdict: the first version turned every non-zero exit on a
+# non-CI PHP into SKIP, which would have hidden a real \$this->fail() behind
+# "environmental". A reviewer caught that before it shipped.
 interpreter_mismatch_reason() {
     local ci local_v
     ci=$(ci_php_version)
     local_v=$(local_php_version)
     [ -n "$ci" ] && [ -n "$local_v" ] || return 0
     [ "$ci" != "$local_v" ] || return 0
-    echo "PHPUnit failed on PHP $local_v but CI pins $ci (.github/workflows/php-unit.yml); a newer interpreter turns deprecations into failures, see references/sandbox-recovery.md"
+    echo "local PHP is $local_v, CI pins $ci (.github/workflows/php-unit.yml); if every failure above is a deprecation notice that is the interpreter, not the change, see references/sandbox-recovery.md"
+}
+
+# CI's false-green guard (.github/workflows/php-unit.yml): a collection-time
+# die()/exit(0) aborts PHPUnit before any test runs, yet can exit 0. PHPUnit
+# prints two summary forms, "OK (N tests, M assertions)" for a clean run and
+# "Tests: N, Assertions: M, ..." otherwise; parse both. CI requires 600.
+MIN_UNIT_TESTS="${P202_MIN_UNIT_TESTS:-600}"
+
+phpunit_test_count() {
+    local n
+    n=$(printf '%s' "$1" | grep -oE 'OK \([0-9]+ test' | tail -1 | grep -oE '[0-9]+')
+    if [ -z "$n" ]; then
+        n=$(printf '%s' "$1" | grep -oE 'Tests: [0-9]+' | tail -1 | grep -oE '[0-9]+')
+    fi
+    echo "${n:-0}"
 }
 
 run_unit() {
@@ -250,14 +270,16 @@ run_unit() {
     rc=$?
     printf '%s\n' "$out"
     if [ $rc -ne 0 ]; then
-        local why
-        why=$(interpreter_mismatch_reason)
-        if [ -n "$why" ]; then
-            COULD_NOT_RUN_REASON="$why"
-            return $TIER_COULD_NOT_RUN
-        fi
+        FAIL_NOTE=$(interpreter_mismatch_reason)
+        return 1
     fi
-    return $rc
+    local count
+    count=$(phpunit_test_count "$out")
+    if [ "$count" -lt "$MIN_UNIT_TESTS" ]; then
+        FAIL_NOTE="PHPUnit exited 0 but ran only $count tests (expected >= $MIN_UNIT_TESTS); the suite probably aborted during collection (a load-time die()/exit), which CI also treats as a failure"
+        return 1
+    fi
+    return 0
 }
 
 # PHPUnit 9 exits 0 when every test it selected skipped itself, and the
@@ -488,6 +510,7 @@ for t in $TIERS; do
 
     echo "--- $t: running"
     COULD_NOT_RUN_REASON=""
+    FAIL_NOTE=""
     "run_$t"
     rc=$?
     if [ $rc -eq 0 ]; then
@@ -498,9 +521,9 @@ for t in $TIERS; do
         RESULTS="${RESULTS}${t}|SKIP|${COULD_NOT_RUN_REASON:-could not run}"$'\n'
         echo "--- $t: SKIP (${COULD_NOT_RUN_REASON:-could not run})"
     else
-        RESULTS="${RESULTS}${t}|FAIL|"$'\n'
+        RESULTS="${RESULTS}${t}|FAIL|${FAIL_NOTE}"$'\n'
         FAILED=1
-        echo "--- $t: FAIL"
+        echo "--- $t: FAIL${FAIL_NOTE:+ ($FAIL_NOTE)}"
     fi
     echo
 done

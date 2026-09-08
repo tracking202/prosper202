@@ -18,6 +18,14 @@ on:
     types: [opened, synchronize, ready_for_review, reopened]
     paths:
       - 'api/**'
+      # The primary login and account surfaces: throttling, session setup,
+      # password verification and change. Left out of the first version,
+      # which advertised an auth review and silently skipped the login page.
+      - '202-account/**'
+      - '202-login.php'
+      - '202-lost-pass.php'
+      - '202-pass-reset.php'
+      - 'api-key-required.php'
       - 'cli/**'
       - 'go-cli/**'
       - '202-config/**'

@@ -259,6 +259,48 @@ Tests: 2, Assertions: 40, Failures: 1." no
         printf '  skip  phpcs ratchet cases: no vendor/bin/phpcs at %s\n' "$REAL_VENDOR"
     fi
 
+    # ── unit tier, behaviourally: a real failure on a non-CI PHP is still FAIL ──
+    #
+    # The first backstop turned every non-zero PHPUnit exit on a non-CI PHP
+    # into SKIP, so a deliberate $this->fail() reported as environmental with
+    # exit 0. A reviewer caught it. These cases pin the fail-closed shape and
+    # CI's false-green guard (an exit-0 run that executed no tests).
+    if [ -x "$REAL_VENDOR/bin/phpunit" ]; then
+        ln -s "$(cd "$REAL_VENDOR" && pwd)" vendor
+        cat > phpunit.ci.xml <<'XML'
+<?xml version="1.0"?>
+<phpunit bootstrap="vendor/autoload.php" colors="false" convertDeprecationsToExceptions="false">
+  <testsuites><testsuite name="default"><directory>tests</directory></testsuite></testsuites>
+</phpunit>
+XML
+        mkdir -p .github/workflows tests
+        printf "      php-version: '7.4'\n" > .github/workflows/php-unit.yml
+        printf '<?php\nfinal class ZzPassTest extends \\PHPUnit\\Framework\\TestCase { public function testOk(): void { $this->assertTrue(true); } }\n' > tests/ZzPassTest.php
+        expect_unit() { # name want_verdict
+            local got
+            got=$(P202_MIN_UNIT_TESTS="${3:-1}" ./verify.sh --tier unit 2>/dev/null | awk '/^  unit / {print $2}')
+            if [ "$got" = "$2" ]; then printf '  ok    %-46s unit=%s\n' "$1" "$got"; pass=$((pass + 1)); else printf '  FAIL  %-46s unit=%s (wanted %s)\n' "$1" "$got" "$2"; fail=$((fail + 1)); fi
+        }
+        expect_unit "unit: green suite on a non-CI PHP PASSES" PASS
+        printf '<?php\nfinal class ZzFailTest extends \\PHPUnit\\Framework\\TestCase { public function testNo(): void { $this->fail("deliberate"); } }\n' > tests/ZzFailTest.php
+        expect_unit "unit: a real failure on a non-CI PHP is FAIL, not SKIP" FAIL
+        note_out=$(P202_MIN_UNIT_TESTS=1 ./verify.sh --tier unit 2>&1)
+        if printf '%s' "$note_out" | grep -q "CI pins 7.4"; then
+            printf '  ok    %-46s\n' "unit: the FAIL carries the interpreter note"; pass=$((pass + 1))
+        else
+            printf '  FAIL  %-46s\n' "unit: the FAIL carries the interpreter note"; fail=$((fail + 1))
+            printf '%s\n' "$note_out" | grep -E "^--- unit|^  unit|php-version|PHP" | sed 's/^/        | /'
+        fi
+        rm -f tests/ZzFailTest.php
+        printf '<?php\nexit(0);\n' > tests/ZzAbortTest.php
+        expect_unit "unit: collection abort with exit 0 is FAIL (false green)" FAIL
+        rm -f tests/ZzAbortTest.php
+        expect_unit "unit: too few tests for CI's threshold is FAIL" FAIL 600
+        rm -rf tests/ZzPassTest.php phpunit.ci.xml .github vendor
+    else
+        printf '  skip  unit tier cases: no vendor/bin/phpunit at %s\n' "$REAL_VENDOR"
+    fi
+
     rm -rf scripts ./verify.sh
 else
     printf '  skip  verify.sh not found at %s\n' "$VERIFY"
