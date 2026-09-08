@@ -88,11 +88,16 @@ jobs:
           go-version: '1.22'
           cache-dependency-path: go-cli/go.sum
 
+      # The binary only. golangci-lint-action@v7 always runs the linter and
+      # has no install-only input (v6 did; I wrote it from memory and
+      # actionlint caught it), so use golangci's own install script, which
+      # fetches a prebuilt binary and has no Go-version constraint.
       - name: Install golangci-lint
-        uses: golangci/golangci-lint-action@v7
-        with:
-          version: v2.5.0
-          install-only: true
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
+            | sh -s -- -b "$(go env GOPATH)/bin" v2.5.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          "$(go env GOPATH)/bin/golangci-lint" --version
 
       # The hook selects the files it inspects. When that selection was wrong
       # it examined nothing and still reported clean, so the selection itself
