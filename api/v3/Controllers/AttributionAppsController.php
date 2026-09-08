@@ -143,6 +143,7 @@ class AttributionAppsController extends Controller
         // logged failure here is recoverable without support surgery.
         try {
             $this->claimUnassignedPostbacks((int)$payload['app_id']);
+            $this->syncDevelopmentTrust((int)$payload['app_id'], (int)($payload['accept_development_postbacks'] ?? 0) === 1);
         } catch (\Throwable $e) {
             error_log('p202 attribution: claiming postbacks for app ' . (int)$payload['app_id'] . ' failed: ' . $e->getMessage());
         }
@@ -165,9 +166,17 @@ class AttributionAppsController extends Controller
     {
         $updated = parent::update($id, $payload);
         // Re-run the claim on every update so unclaimed history (or a claim
-        // that failed at create time) can be picked up by touching the app.
+        // that failed at create time) can be picked up by touching the app,
+        // and re-apply the development trust policy so toggling the opt-in
+        // changes what the report counts from now on AND for the rows
+        // already stored — the flag is a live policy, not a receipt-time
+        // snapshot.
         try {
             $this->claimUnassignedPostbacks((int)$updated['data']['app_id']);
+            $this->syncDevelopmentTrust(
+                (int)$updated['data']['app_id'],
+                (int)($updated['data']['accept_development_postbacks'] ?? 0) === 1
+            );
         } catch (\Throwable $e) {
             error_log('p202 attribution: claiming postbacks for app ' . (int)$updated['data']['app_id'] . ' failed: ' . $e->getMessage());
         }
@@ -205,6 +214,25 @@ class AttributionAppsController extends Controller
         $stmt = $this->prepare($sql);
         $this->bind($stmt, 'ii', $this->userId, $appId);
         $this->execute($stmt, 'Postback claim failed');
+        $stmt->close();
+    }
+
+    /**
+     * Apply the app's accept_development_postbacks policy to the stored
+     * rows: development-signed rows of this app become trusted
+     * (signature_valid = 1) when the opt-in is on and untrusted (NULL,
+     * the "nobody vouched for it" class) when it is off. Only the owner's
+     * rows: history a previous owner claimed keeps that owner's decision.
+     * Rows in any other signature state are never touched — the opt-in is
+     * about development keys only.
+     */
+    private function syncDevelopmentTrust(int $appId, bool $accept): void
+    {
+        $stmt = $accept
+            ? $this->prepare("UPDATE 202_attribution_postbacks SET signature_valid = 1 WHERE app_id = ? AND user_id = ? AND signature_state = 'development'")
+            : $this->prepare("UPDATE 202_attribution_postbacks SET signature_valid = NULL WHERE app_id = ? AND user_id = ? AND signature_state = 'development'");
+        $this->bind($stmt, 'ii', $appId, $this->userId);
+        $this->execute($stmt, 'Development trust sync failed');
         $stmt->close();
     }
 }

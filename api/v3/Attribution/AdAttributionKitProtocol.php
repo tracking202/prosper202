@@ -40,7 +40,7 @@ final class AdAttributionKitProtocol implements PostbackProtocol
     private const COARSE_VALUES = ['low', 'medium', 'high'];
 
     /** Room for any genuine JWS (about 600 bytes) with a wide margin; the column is TEXT. */
-    private const MAX_JWS_LENGTH = 8192;
+    public const MAX_JWS_LENGTH = 8192;
 
     public function __construct(private readonly JwsVerifier $verifier = new JwsVerifier())
     {

@@ -2453,6 +2453,9 @@ paths:
         - $ref: "#/components/parameters/attributionRedownload"
         - $ref: "#/components/parameters/attributionCoarseConversionValue"
         - $ref: "#/components/parameters/attributionSignature"
+        - $ref: "#/components/parameters/attributionProtocol"
+        - $ref: "#/components/parameters/attributionConversionType"
+        - $ref: "#/components/parameters/attributionAdInteractionType"
       responses:
         "200":
           description: Paginated postbacks
@@ -2487,7 +2490,7 @@ paths:
   /attribution/report:
     get:
       tags: [Attribution postbacks]
-      summary: Aggregate SKAN report with conversion-value decoding
+      summary: Aggregate attribution report with conversion-value decoding
       description: |
         Groups postbacks by `group_by` and decodes winning postbacks'
         conversion values through the caller's rules (app-specific over
@@ -2503,13 +2506,20 @@ paths:
         the metrics over exactly that class (`meta.trusted: as-filtered`).
         `meta.groups_truncated` is true when more groups matched than
         `limit` allowed. Accepts the same filters as the postback list.
+
+        Every metric counts **unique postbacks** (protocol, ad network,
+        postback id, conversion window): the receiver stores a replay of a
+        signed postback whose unsigned fields differ as its own row, and the
+        report is where it collapses to one. `installs` are winning
+        first-window `download`s; `redownloads` and AdAttributionKit
+        `reengagements` are reported beside them.
       operationId: getAttributionReport
       parameters:
         - name: group_by
           in: query
           schema:
             type: string
-            enum: [day, app, ad-network, source, country, version]
+            enum: [day, app, ad-network, source, country, version, protocol, conversion-type]
             default: day
         - name: limit
           in: query
@@ -2533,6 +2543,9 @@ paths:
         - $ref: "#/components/parameters/attributionRedownload"
         - $ref: "#/components/parameters/attributionCoarseConversionValue"
         - $ref: "#/components/parameters/attributionSignature"
+        - $ref: "#/components/parameters/attributionProtocol"
+        - $ref: "#/components/parameters/attributionConversionType"
+        - $ref: "#/components/parameters/attributionAdInteractionType"
       responses:
         "200":
           description: Report groups
@@ -2881,10 +2894,36 @@ components:
     attributionSignature:
       name: signature
       in: query
-      description: Signature verification state. On the report, an explicit value switches `meta.trusted` to `as-filtered`.
+      description: >-
+        Signature class. `valid`, `invalid` and `unverifiable` select on the
+        trust bit the report keys on (`signature_valid` 1 / 0 / null);
+        `development` selects rows verified against one of Apple's
+        AdAttributionKit development keys whatever their trust bit. On the
+        report, an explicit value switches `meta.trusted` to `as-filtered`.
       schema:
         type: string
-        enum: [valid, invalid, unverifiable]
+        enum: [valid, invalid, unverifiable, development]
+    attributionProtocol:
+      name: protocol
+      in: query
+      description: Which framework delivered the postback; the shorthands `skan` and `aak` are accepted
+      schema:
+        type: string
+        enum: [skadnetwork, adattributionkit, skan, aak]
+    attributionConversionType:
+      name: conversion_type
+      in: query
+      description: Protocol-neutral conversion kind (`re-engagement` exists only in AdAttributionKit)
+      schema:
+        type: string
+        enum: [download, redownload, re-engagement]
+    attributionAdInteractionType:
+      name: ad_interaction_type
+      in: query
+      description: View-through or click-through
+      schema:
+        type: string
+        enum: [view, click]
 
   # ─── Shared responses ───────────────────────────────────────────────
 
@@ -4580,7 +4619,8 @@ components:
         One report group. Which dimension fields are present depends on
         `group_by`: `date` (day), `app_id` + `app_name` (app),
         `ad_network_id` (ad-network), `source_identifier` + `campaign_id`
-        (source), `country_code` (country), `version` (version).
+        (source), `country_code` (country), `version` (version),
+        `protocol` (protocol), `conversion_type` (conversion-type).
       properties:
         date:
           type: string
@@ -4605,26 +4645,42 @@ components:
           nullable: true
         version:
           type: string
+          nullable: true
+        protocol:
+          type: string
+          enum: [skadnetwork, adattributionkit]
+        conversion_type:
+          type: string
+          nullable: true
+          enum: [download, redownload, re-engagement, null]
         postbacks:
           type: integer
           description: All rows in the group, regardless of signature state
         losses:
           type: integer
-          description: "`did_win = 0` (trusted rows only)"
+          description: Unique losing postbacks (`did_win = 0`, trusted rows only)
         installs:
           type: integer
-          description: Winning first-window postbacks excluding redownloads (trusted rows only)
+          description: Unique winning first-window `download` postbacks (trusted rows only)
         redownloads:
           type: integer
+          description: Unique winning first-window `redownload` postbacks (trusted rows only)
+        reengagements:
+          type: integer
+          description: Unique winning first-window `re-engagement` postbacks — AdAttributionKit only (trusted rows only)
         signature_valid_count:
           type: integer
         signature_invalid_count:
           type: integer
         signature_unverified_count:
           type: integer
+          description: Rows with `signature_valid = null`, including development-signed rows of apps that did not opt in
+        signature_development_count:
+          type: integer
+          description: Rows verified against an AdAttributionKit development key, whatever their trust bit
         measurable:
           type: integer
-          description: Winning postbacks carrying a conversion value, across all three conversion windows (so it can exceed installs, which counts first-window postbacks only)
+          description: Unique winning postbacks carrying a conversion value, across all three conversion windows (so it can exceed installs, which counts first-window postbacks only); a replayed postback decodes once, through its first-received copy
         decoded:
           type: integer
         undecoded:
@@ -4730,22 +4786,53 @@ components:
 
     AttributionVerifyResponse:
       type: object
+      description: |
+        The protocol is detected from the body: a `jws-string` key means
+        AdAttributionKit (the JWS alone is enough), anything else is
+        verified as SKAdNetwork. The SKAdNetwork fields
+        (`signed_message_base64`, `verifiable_versions`) and the
+        AdAttributionKit fields (`key_id`, `header`, `payload`,
+        `known_key_ids`, `development_key_ids`) are present for their own
+        protocol only.
       properties:
         data:
           type: object
           properties:
+            protocol:
+              type: string
+              enum: [skadnetwork, adattributionkit]
             signature:
               type: string
-              enum: [valid, invalid, unverifiable]
+              enum: [valid, invalid, unverifiable, development]
             signed_message_base64:
               type: string
               nullable: true
-              description: Base64 of the exact byte string Apple signs for this version (fields joined with U+2063); `null` when the version is unverifiable
+              description: SKAdNetwork — base64 of the exact byte string Apple signs for this version (fields joined with U+2063); `null` when the version is unverifiable
             verifiable_versions:
               type: array
               items:
                 type: string
               example: ["2.1", "2.2", "3.0", "4.0"]
+            key_id:
+              type: string
+              description: AdAttributionKit — the JWS header's `kid`
+              example: apple-development-identifier/1
+            header:
+              type: object
+              description: AdAttributionKit — the decoded JWS header
+            payload:
+              type: object
+              description: AdAttributionKit — the decoded JWS payload (the signed attribution fields)
+            known_key_ids:
+              type: array
+              items:
+                type: string
+              example: ["apple-cas-identifier/0", "apple-development-identifier/0", "apple-development-identifier/1"]
+            development_key_ids:
+              type: array
+              items:
+                type: string
+              example: ["apple-development-identifier/0", "apple-development-identifier/1"]
 
     AttributionSchemaResponse:
       type: object

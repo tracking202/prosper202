@@ -11,7 +11,7 @@ import (
 
 var attributionCmd = &cobra.Command{
 	Use:   "attribution",
-	Short: "Attribution: models, snapshots and exports over your own clicks, plus platform-signed postbacks (SKAdNetwork)",
+	Short: "Attribution: models, snapshots and exports over your own clicks, plus platform-signed postbacks (SKAdNetwork, AdAttributionKit)",
 }
 
 // --- Model subcommands ---

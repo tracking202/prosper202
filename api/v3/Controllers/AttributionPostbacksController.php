@@ -6,7 +6,12 @@ namespace Api\V3\Controllers;
 
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Attribution\AdAttributionKitProtocol;
+use Api\V3\Attribution\JwsVerifier;
 use Api\V3\Attribution\PostbackVerifier;
+use Api\V3\Attribution\Protocols;
+use Api\V3\Attribution\SignatureState;
+use Api\V3\Attribution\SkadnetworkProtocol;
 use Api\V3\Support\MysqliStatements;
 use Api\V3\Support\ResponseSanitizer;
 
@@ -51,13 +56,38 @@ class AttributionPostbacksController
 
     /** Report grouping modes: output alias => SQL expression. */
     private const GROUP_MODES = [
-        'day'        => ['grp_day' => 'FLOOR(received_at / 86400) * 86400'],
-        'app'        => ['grp_app_id' => 'app_id'],
-        'ad-network' => ['grp_ad_network_id' => 'ad_network_id'],
-        'source'     => ['grp_source_identifier' => 'source_identifier', 'grp_campaign_id' => 'campaign_id'],
-        'country'    => ['grp_country_code' => 'country_code'],
-        'version'    => ['grp_version' => 'version'],
+        'day'             => ['grp_day' => 'FLOOR(received_at / 86400) * 86400'],
+        'app'             => ['grp_app_id' => 'app_id'],
+        'ad-network'      => ['grp_ad_network_id' => 'ad_network_id'],
+        'source'          => ['grp_source_identifier' => 'source_identifier', 'grp_campaign_id' => 'campaign_id'],
+        'country'         => ['grp_country_code' => 'country_code'],
+        'version'         => ['grp_version' => 'version'],
+        'protocol'        => ['grp_protocol' => 'protocol'],
+        'conversion-type' => ['grp_conversion_type' => 'conversion_type'],
     ];
+
+    /**
+     * Single-column string grouping modes: mode => column, for bounding the
+     * decode query to the retained groups.
+     */
+    private const STRING_GROUP_COLUMNS = [
+        'ad-network'      => 'ad_network_id',
+        'country'         => 'country_code',
+        'version'         => 'version',
+        'protocol'        => 'protocol',
+        'conversion-type' => 'conversion_type',
+    ];
+
+    /**
+     * What makes two rows the same postback: the framework's postback id,
+     * namespaced by protocol and ad network, per conversion window. Apple
+     * says to count unique postback ids, and the receiver deliberately
+     * stores a replay whose UNSIGNED fields differ (a different
+     * conversion value on the same signed postback) as its own row rather
+     * than letting either copy block the other — so the report, not the
+     * store, is where a replayed postback collapses to one.
+     */
+    private const IDENTITY = "CONCAT_WS('|', protocol, ad_network_id, transaction_id, COALESCE(postback_sequence_index, -1))";
 
     public function __construct(private readonly \mysqli $db, private readonly int $userId)
     {
@@ -139,8 +169,11 @@ class AttributionPostbacksController
      * Aggregate attribution report with conversion-value decoding.
      *
      * group_by: day (default, UTC), app, ad-network, source, country,
-     * version. By default every trusted metric (installs, losses,
-     * redownloads, conversion-value decoding, revenue) counts ONLY
+     * version, protocol, conversion-type. Every metric counts unique
+     * postbacks (IDENTITY), so a replay of one signed postback with a
+     * different unsigned field counts once. By default every trusted
+     * metric (installs, losses, redownloads, re-engagements,
+     * conversion-value decoding, revenue) counts ONLY
      * signature-verified postbacks — the receiver stores forged and
      * unverifiable rows flagged, and anyone can POST well-formed junk at the
      * open endpoint, so unverified rows must not move headline numbers.
@@ -176,6 +209,7 @@ class AttributionPostbacksController
 
         $winCondition = '(did_win IS NULL OR did_win = 1)';
         $firstWindow = 'COALESCE(postback_sequence_index, 0) = 0';
+        $identity = self::IDENTITY;
         // conversion_type is the protocol-neutral reading of SKAdNetwork's
         // redownload flag and AdAttributionKit's conversion-type: a
         // re-engagement is neither an install nor a redownload.
@@ -186,12 +220,14 @@ class AttributionPostbacksController
 
         $sql = 'SELECT ' . implode(', ', $selectGroup) . ",
                 COUNT(*) AS postbacks,
-                SUM(CASE WHEN $trusted AND did_win = 0 THEN 1 ELSE 0 END) AS losses,
-                SUM(CASE WHEN $trusted AND $winCondition AND $firstWindow AND conversion_type = 'download' THEN 1 ELSE 0 END) AS installs,
-                SUM(CASE WHEN $trusted AND $winCondition AND $firstWindow AND conversion_type = 'redownload' THEN 1 ELSE 0 END) AS redownloads,
+                COUNT(DISTINCT CASE WHEN $trusted AND did_win = 0 THEN $identity END) AS losses,
+                COUNT(DISTINCT CASE WHEN $trusted AND $winCondition AND $firstWindow AND conversion_type = 'download' THEN $identity END) AS installs,
+                COUNT(DISTINCT CASE WHEN $trusted AND $winCondition AND $firstWindow AND conversion_type = 'redownload' THEN $identity END) AS redownloads,
+                COUNT(DISTINCT CASE WHEN $trusted AND $winCondition AND $firstWindow AND conversion_type = 're-engagement' THEN $identity END) AS reengagements,
                 SUM(CASE WHEN signature_valid = 1 THEN 1 ELSE 0 END) AS signature_valid_count,
                 SUM(CASE WHEN signature_valid = 0 THEN 1 ELSE 0 END) AS signature_invalid_count,
-                SUM(CASE WHEN signature_valid IS NULL THEN 1 ELSE 0 END) AS signature_unverified_count
+                SUM(CASE WHEN signature_valid IS NULL THEN 1 ELSE 0 END) AS signature_unverified_count,
+                SUM(CASE WHEN signature_state = 'development' THEN 1 ELSE 0 END) AS signature_development_count
             FROM 202_attribution_postbacks
             $whereClause
             GROUP BY $groupByExpr
@@ -223,6 +259,14 @@ class AttributionPostbacksController
         // over default — is not expressible as a sane single JOIN). The row
         // set is bounded to the retained group window so the query never
         // aggregates combinations the fold would discard.
+        //
+        // Each unique postback decodes ONCE, through its first-received
+        // copy: a replay of a signed postback carrying a different (unsigned)
+        // conversion value is its own row in the store, and counting it in
+        // a second value bucket would let whoever holds a genuine postback
+        // mint revenue by resending it with new values. Apple's rule is to
+        // discard the later duplicates, which MIN(postback_id) per identity
+        // is (postback_id is receipt order).
         $cvWhere = $where;
         $cvBinds = $binds;
         $cvTypes = $types;
@@ -233,9 +277,16 @@ class AttributionPostbacksController
                 app_id AS cv_app_id, conversion_value, coarse_conversion_value, COUNT(*) AS cnt
             FROM 202_attribution_postbacks
             $cvWhereClause AND $trusted AND $winCondition
+            AND postback_id IN (
+                SELECT MIN(postback_id) FROM 202_attribution_postbacks
+                $cvWhereClause AND $trusted AND $winCondition
+                GROUP BY $identity
+            )
             GROUP BY $groupByExpr, app_id, conversion_value, coarse_conversion_value";
         $stmt = $this->prepare($cvSql);
-        $this->bind($stmt, $cvTypes, ...$cvBinds);
+        // The where clause appears twice (outer query and the first-copy
+        // subquery), so its binds do too.
+        $this->bind($stmt, $cvTypes . $cvTypes, ...$cvBinds, ...$cvBinds);
         $this->execute($stmt, 'Report decode query failed');
         $result = $this->result($stmt);
 
@@ -298,7 +349,8 @@ class AttributionPostbacksController
                 'notes' => ($explicitSignature
                     ? 'metrics computed over the signature class the filter selected'
                     : 'installs/losses/decoding count signature-verified postbacks only; unverified rows appear in the signature_*_count columns')
-                    . '; installs = winning first-window postbacks excluding redownloads'
+                    . '; every metric counts unique postbacks (protocol, ad network, postback id, window), so a replayed postback counts once and decodes through its first-received copy'
+                    . '; installs = winning first-window downloads; redownloads and re-engagements (AdAttributionKit) are reported separately'
                     . '; conversion values decode across all three windows, so measurable/decoded can exceed installs'
                     . '; conversion values decode through /attribution/conversion-values rules',
             ],
@@ -311,6 +363,11 @@ class AttributionPostbacksController
      * test fixture) verifies before trusting the pipeline. Nothing is
      * stored.
      *
+     * The protocol is detected from the body: a `jws-string` key means an
+     * AdAttributionKit postback (the JWS alone is enough — the unsigned
+     * envelope fields are not needed to judge the signature); anything
+     * else is verified as a SKAdNetwork postback.
+     *
      * @param array<string, mixed> $payload The postback JSON, as received.
      */
     public function verify(array $payload): array
@@ -318,12 +375,40 @@ class AttributionPostbacksController
         if ($payload === []) {
             throw new ValidationException('Provide the postback JSON object as the request body');
         }
+
+        if (array_key_exists('jws-string', $payload)) {
+            $jws = $payload['jws-string'];
+            if (!is_string($jws) || trim($jws) === '' || strlen($jws) > AdAttributionKitProtocol::MAX_JWS_LENGTH) {
+                throw new ValidationException('Invalid postback', [
+                    'jws-string' => 'Must be the compact JWS string, at most ' . AdAttributionKitProtocol::MAX_JWS_LENGTH . ' characters',
+                ]);
+            }
+            $decoded = JwsVerifier::decode($jws);
+            if (is_string($decoded)) {
+                throw new ValidationException('Invalid postback', ['jws-string' => $decoded]);
+            }
+            return [
+                'data' => [
+                    'protocol' => AdAttributionKitProtocol::NAME,
+                    'signature' => (new JwsVerifier())->verify($decoded),
+                    'key_id' => $decoded['header']['kid'],
+                    // The decoded parts, so a caller can read what the
+                    // postback claims without a JWS tool of their own.
+                    'header' => $decoded['header'],
+                    'payload' => $decoded['payload'],
+                    'known_key_ids' => array_keys(JwsVerifier::APPLE_KEYS),
+                    'development_key_ids' => JwsVerifier::DEVELOPMENT_KEY_IDS,
+                ],
+            ];
+        }
+
         $verifier = new PostbackVerifier();
         $state = $verifier->verify($payload);
         $message = $verifier->buildSignedMessage($payload);
 
         return [
             'data' => [
+                'protocol' => SkadnetworkProtocol::NAME,
                 'signature' => $state,
                 // Base64 of the exact byte string Apple signed (fields joined
                 // with U+2063) — for diffing against another implementation
@@ -423,19 +508,48 @@ class AttributionPostbacksController
             }
         }
 
+        foreach ([
+            'protocol' => Protocols::NAMES,
+            'conversion_type' => AdAttributionKitProtocol::CONVERSION_TYPES,
+            'ad_interaction_type' => AdAttributionKitProtocol::INTERACTION_TYPES,
+        ] as $param => $allowed) {
+            if (isset($params[$param]) && $params[$param] !== '') {
+                $value = strtolower(trim((string)$params[$param]));
+                if ($param === 'protocol') {
+                    $value = Protocols::normalize($value) ?? $value;
+                }
+                if (!in_array($value, $allowed, true)) {
+                    throw new ValidationException('Invalid filter value', [
+                        $param => 'Must be one of: ' . implode(', ', $allowed)
+                            . ($param === 'protocol' ? ' (or ' . implode(', ', array_keys(Protocols::ALIASES)) . ')' : ''),
+                    ]);
+                }
+                $where[] = "$param = ?";
+                $binds[] = $value;
+                $types .= 's';
+            }
+        }
+
+        // valid/invalid/unverifiable select on the trust bit — the value the
+        // report keys on, so "valid" is exactly what the default report
+        // counts (including development rows the app opted in to);
+        // "development" selects on the verifier's verdict regardless of
+        // trust, for an integration tester looking for their own postbacks.
         $explicitSignature = false;
         if (isset($params['signature']) && $params['signature'] !== '') {
             $explicitSignature = true;
             $signature = strtolower(trim((string)$params['signature']));
-            if ($signature === PostbackVerifier::RESULT_VALID) {
+            if ($signature === SignatureState::VALID) {
                 $where[] = 'signature_valid = 1';
-            } elseif ($signature === PostbackVerifier::RESULT_INVALID) {
+            } elseif ($signature === SignatureState::INVALID) {
                 $where[] = 'signature_valid = 0';
-            } elseif ($signature === PostbackVerifier::RESULT_UNVERIFIABLE) {
+            } elseif ($signature === SignatureState::UNVERIFIABLE) {
                 $where[] = 'signature_valid IS NULL';
+            } elseif ($signature === SignatureState::DEVELOPMENT) {
+                $where[] = "signature_state = 'development'";
             } else {
                 throw new ValidationException('Invalid signature filter', [
-                    'signature' => 'Must be one of: valid, invalid, unverifiable',
+                    'signature' => 'Must be one of: valid, invalid, unverifiable, development',
                 ]);
             }
         }
@@ -447,9 +561,11 @@ class AttributionPostbacksController
      * Bound the decode query to the groups the report retained, so it never
      * aggregates and ships combinations the fold would discard. Day mode
      * bounds by the retained time window; single-column modes bind an IN
-     * list of the retained keys. Source mode (two columns, both nullable)
-     * keeps the PHP-side discard — its cardinality is bounded by the ad
-     * networks' own 4-digit identifier space.
+     * list of the retained keys (a NULL key — country, version and
+     * conversion_type are nullable — becomes an IS NULL branch). Source
+     * mode (two columns, both nullable) keeps the PHP-side discard — its
+     * cardinality is bounded by the ad networks' own 4-digit identifier
+     * space.
      *
      * @param array<string, array<string, mixed>> $groupsOut
      * @param string[] $where
@@ -485,12 +601,14 @@ class AttributionPostbacksController
             case 'ad-network':
             case 'country':
             case 'version':
-                $column = ['ad-network' => 'ad_network_id', 'country' => 'country_code', 'version' => 'version'][$groupBy];
+            case 'protocol':
+            case 'conversion-type':
+                $column = self::STRING_GROUP_COLUMNS[$groupBy];
                 $values = [];
                 $hasNull = false;
                 foreach (array_keys($groupsOut) as $key) {
                     if ($key === '') {
-                        $hasNull = true; // NULL group key (country only)
+                        $hasNull = true; // NULL group key
                     } else {
                         $values[] = (string)$key;
                     }
@@ -539,7 +657,9 @@ class AttributionPostbacksController
                 'campaign_id' => $row['grp_campaign_id'] === null ? null : (int)$row['grp_campaign_id'],
             ],
             'country' => ['country_code' => $row['grp_country_code'] === null ? null : ResponseSanitizer::cleanVisitorString((string)$row['grp_country_code'])],
-            'version' => ['version' => ResponseSanitizer::cleanVisitorString((string)($row['grp_version'] ?? ''))],
+            'version' => ['version' => $row['grp_version'] === null ? null : ResponseSanitizer::cleanVisitorString((string)$row['grp_version'])],
+            'protocol' => ['protocol' => ResponseSanitizer::cleanVisitorString((string)($row['grp_protocol'] ?? ''))],
+            'conversion-type' => ['conversion_type' => $row['grp_conversion_type'] === null ? null : ResponseSanitizer::cleanVisitorString((string)$row['grp_conversion_type'])],
             default => [],
         };
 
@@ -548,9 +668,11 @@ class AttributionPostbacksController
             'losses' => (int)$row['losses'],
             'installs' => (int)$row['installs'],
             'redownloads' => (int)$row['redownloads'],
+            'reengagements' => (int)$row['reengagements'],
             'signature_valid_count' => (int)$row['signature_valid_count'],
             'signature_invalid_count' => (int)$row['signature_invalid_count'],
             'signature_unverified_count' => (int)$row['signature_unverified_count'],
+            'signature_development_count' => (int)$row['signature_development_count'],
             'measurable' => 0,
             'decoded' => 0,
             'undecoded' => 0,

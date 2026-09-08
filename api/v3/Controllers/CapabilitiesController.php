@@ -72,14 +72,16 @@ class CapabilitiesController
                     // Platform-signed attribution postbacks, one entry per
                     // protocol the receiver verifies and stores. Apple's
                     // SKAdNetwork arrives at
-                    // /.well-known/skadnetwork/report-attribution/; every
+                    // /.well-known/skadnetwork/report-attribution/ and
+                    // AdAttributionKit at
+                    // /.well-known/appattribution/report-attribution/; every
                     // protocol is served (with signature state and
                     // conversion-value decoding) under /attribution, and each
                     // registered app's conversion-value mapping is served to
                     // its build at runtime via GET /attribution/schema (gated
                     // by the app's rotatable schema token), so mapping changes
                     // need no App Store resubmission.
-                    'attribution_postbacks' => ['skadnetwork'],
+                    'attribution_postbacks' => \Api\V3\Attribution\Protocols::NAMES,
                 ],
                 'limits' => [
                     'max_bulk_rows' => $this->maxBulkRows(),

@@ -29,7 +29,8 @@ func TestAttributionPostbacksListMapsFlagsToApiParams(t *testing.T) {
 
 	_, _, err := executeCommand("attribution", "postbacks", "list",
 		"--app-id", "525463029", "--signature", "valid",
-		"--ad-network-id", "example123.skadnetwork", "--did-win", "1")
+		"--ad-network-id", "example123.skadnetwork", "--did-win", "1",
+		"--protocol", "aak", "--conversion-type", "re-engagement", "--ad-interaction-type", "view")
 	if err != nil {
 		t.Fatalf("attribution postbacks list error: %v", err)
 	}
@@ -41,6 +42,10 @@ func TestAttributionPostbacksListMapsFlagsToApiParams(t *testing.T) {
 		"signature":     "valid",
 		"ad_network_id": "example123.skadnetwork",
 		"did_win":       "1",
+		// The server resolves the shorthand; the CLI passes it through.
+		"protocol":            "aak",
+		"conversion_type":     "re-engagement",
+		"ad_interaction_type": "view",
 	} {
 		if got := gotParams.Get(param); got != want {
 			t.Errorf("param %s = %q, want %q", param, got, want)
@@ -173,6 +178,47 @@ func TestAttributionAppCreateRequiresAppIdAndName(t *testing.T) {
 	_, _, err = executeCommand("attribution", "app", "create", "--app-id", "42")
 	if err == nil || !strings.Contains(err.Error(), "--app-name") {
 		t.Fatalf("expected the missing --app-name to be named, got %v", err)
+	}
+}
+
+func TestAttributionAppCreateSendsTheDevelopmentOptIn(t *testing.T) {
+	var gotBody map[string]interface{}
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/attribution/apps") {
+			_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		}
+		w.WriteHeader(201)
+		w.Write([]byte(`{"data":{"attribution_app_id":7,"app_id":42,"app_name":"My App","accept_development_postbacks":1}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("attribution", "app", "create", "--app-id", "42", "--app-name", "My App", "--accept-development-postbacks", "1")
+	if err != nil {
+		t.Fatalf("attribution app create error: %v", err)
+	}
+	if got := gotBody["accept_development_postbacks"]; got != "1" {
+		t.Errorf("accept_development_postbacks = %v, want \"1\"", got)
+	}
+}
+
+func TestAttributionAppCreateRejectsANonBooleanOptIn(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, "http://127.0.0.1:0", "test-key")
+
+	_, _, err := executeCommand("attribution", "app", "create", "--app-id", "42", "--app-name", "My App", "--accept-development-postbacks", "yes")
+	if err == nil || !strings.Contains(err.Error(), "--accept-development-postbacks") {
+		t.Fatalf("expected the flag to be named, got %v", err)
+	}
+	if got := exitCodeForError(err); got != 1 {
+		t.Errorf("exit code = %d, want 1 (validation)", got)
+	}
+	if hint := hintFor(err); !strings.Contains(hint, "development") {
+		t.Errorf("hint = %q, want it to explain the flag", hint)
 	}
 }
 

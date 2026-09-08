@@ -286,6 +286,72 @@ final class AttributionControllersTest extends TestCase
         $ctrl->list(['signature' => 'probably-fine']);
     }
 
+    public function testTheProtocolFilterAcceptsShorthandsAndNamesTheChoicesOtherwise(): void
+    {
+        $ctrl = new AttributionPostbacksController($this->createMysqliMock(['COUNT(*) as total' => [['total' => 0]]]), 1);
+        foreach (['skan', 'SKAN', 'aak', 'skadnetwork', 'adattributionkit'] as $value) {
+            $this->assertSame(0, $ctrl->list(['protocol' => $value])['pagination']['total'], $value);
+        }
+        try {
+            $ctrl->list(['protocol' => 'skadnetworks']);
+            $this->fail('Expected a ValidationException');
+        } catch (ValidationException $e) {
+            $message = $e->getFieldErrors()['protocol'] ?? '';
+            $this->assertStringContainsString('skadnetwork, adattributionkit', $message);
+            $this->assertStringContainsString('skan, aak', $message);
+        }
+    }
+
+    /** @dataProvider rejectedEnumFilters */
+    public function testEnumFiltersRejectValuesOutsideTheirSets(string $param, string $value): void
+    {
+        $ctrl = new AttributionPostbacksController($this->createMysqliMock(), 1);
+        try {
+            $ctrl->list([$param => $value]);
+            $this->fail('Expected a ValidationException');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey($param, $e->getFieldErrors());
+        }
+    }
+
+    /** @return array<string, array{0: string, 1: string}> */
+    public static function rejectedEnumFilters(): array
+    {
+        return [
+            'conversion_type' => ['conversion_type', 'install'],
+            'ad_interaction_type' => ['ad_interaction_type', 'tap'],
+        ];
+    }
+
+    public function testTheSignatureFilterAcceptsDevelopment(): void
+    {
+        $ctrl = new AttributionPostbacksController($this->createMysqliMock(['COUNT(*) as total' => [['total' => 0]]]), 1);
+        $this->assertSame(0, $ctrl->list(['signature' => 'development'])['pagination']['total']);
+    }
+
+    public function testTheReportAcceptsTheProtocolAndConversionTypeModes(): void
+    {
+        $metrics = [
+            'postbacks' => 1, 'losses' => 0, 'installs' => 0, 'redownloads' => 0, 'reengagements' => 1,
+            'signature_valid_count' => 1, 'signature_invalid_count' => 0,
+            'signature_unverified_count' => 0, 'signature_development_count' => 1,
+        ];
+        $db = $this->createMysqliMock([
+            'AS postbacks' => [
+                ['grp_protocol' => 'adattributionkit', 'grp_conversion_type' => 're-engagement'] + $metrics,
+            ],
+        ]);
+        $ctrl = new AttributionPostbacksController($db, 1);
+
+        $group = $ctrl->report(['group_by' => 'protocol'])['data']['groups'][0];
+        $this->assertSame('adattributionkit', $group['protocol']);
+        $this->assertSame(1, $group['reengagements']);
+        $this->assertSame(1, $group['signature_development_count']);
+
+        $group = $ctrl->report(['group_by' => 'conversion-type'])['data']['groups'][0];
+        $this->assertSame('re-engagement', $group['conversion_type']);
+    }
+
     // ─── Postbacks: report ───────────────────────────────────────────
 
     public function testReportRejectsAnUnknownGroupBy(): void
@@ -302,8 +368,9 @@ final class AttributionControllersTest extends TestCase
             // Per-group aggregates.
             'AS postbacks' => [[
                 'grp_day' => $day, 'postbacks' => 6, 'losses' => 1, 'installs' => 4,
-                'redownloads' => 1, 'signature_valid_count' => 5,
+                'redownloads' => 1, 'reengagements' => 0, 'signature_valid_count' => 5,
                 'signature_invalid_count' => 0, 'signature_unverified_count' => 1,
+                'signature_development_count' => 0,
             ]],
             // Conversion-value distribution for the same group.
             'cv_app_id' => [
@@ -384,6 +451,7 @@ final class AttributionControllersTest extends TestCase
             'postback-sequence-index' => 0,
             'attribution-signature' => base64_encode('nonsense'),
         ]);
+        $this->assertSame('skadnetwork', $result['data']['protocol']);
         $this->assertSame('invalid', $result['data']['signature']);
         $this->assertNotNull($result['data']['signed_message_base64']);
         $decoded = base64_decode((string)$result['data']['signed_message_base64'], true);
@@ -392,5 +460,28 @@ final class AttributionControllersTest extends TestCase
 
         $legacy = $ctrl->verify(['version' => '1.0', 'attribution-signature' => 'AA==']);
         $this->assertSame('unverifiable', $legacy['data']['signature']);
+    }
+
+    public function testVerifyDetectsAnAdAttributionKitBodyByItsJws(): void
+    {
+        $ctrl = new AttributionPostbacksController($this->createMysqliMock(), 1);
+
+        // The JWS alone is enough: the unsigned envelope fields play no part
+        // in the verdict, so an operator can paste just the jws-string.
+        $result = $ctrl->verify(['jws-string' => AdAttributionKitFixtures::EXAMPLE_JWS]);
+        $this->assertSame('adattributionkit', $result['data']['protocol']);
+        $this->assertSame('development', $result['data']['signature']);
+        $this->assertSame(AdAttributionKitFixtures::EXAMPLE_KEY_ID, $result['data']['key_id']);
+        $this->assertSame('ES256', $result['data']['header']['alg']);
+        $this->assertSame(AdAttributionKitFixtures::EXAMPLE_POSTBACK_ID, $result['data']['payload']['postback-identifier']);
+        $this->assertContains(AdAttributionKitFixtures::EXAMPLE_KEY_ID, $result['data']['development_key_ids']);
+        $this->assertContains('apple-cas-identifier/0', $result['data']['known_key_ids']);
+
+        try {
+            $ctrl->verify(['jws-string' => 'not.a']);
+            $this->fail('Expected a ValidationException');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('jws-string', $e->getFieldErrors());
+        }
     }
 }

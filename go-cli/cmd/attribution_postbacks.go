@@ -13,10 +13,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Apple SKAdNetwork: postbacks received by the server's public endpoint
-// (/.well-known/skadnetwork/report-attribution/), the advertised-app
+// Apple SKAdNetwork and AdAttributionKit: postbacks received by the server's
+// public endpoints (/.well-known/skadnetwork/report-attribution/ and
+// /.well-known/appattribution/report-attribution/), the advertised-app
 // registry, conversion-value decoding rules, the aggregate report, and
-// ad-hoc signature verification. Servers advertise support via
+// ad-hoc signature verification. Servers list the protocols they receive in
 // features.attribution_postbacks in /capabilities.
 
 // attributionFilterFlagDefs is the single source for the postback list/report
@@ -31,6 +32,9 @@ var attributionFilterFlagDefs = []struct {
 }{
 	{"time-from", "time_from", "Received-at range start (unix timestamp)"},
 	{"time-to", "time_to", "Received-at range end (unix timestamp)"},
+	{"protocol", "protocol", "Filter by protocol: skadnetwork (skan) or adattributionkit (aak)"},
+	{"conversion-type", "conversion_type", "Filter: download, redownload, re-engagement"},
+	{"ad-interaction-type", "ad_interaction_type", "Filter: view (view-through) or click"},
 	{"app-id", "app_id", "Filter by advertised App Store id"},
 	{"ad-network-id", "ad_network_id", "Filter by ad network id"},
 	{"version", "version", "Filter by SKAN postback version (e.g. 4.0)"},
@@ -43,7 +47,7 @@ var attributionFilterFlagDefs = []struct {
 	{"did-win", "did_win", "Filter: 1=winning postbacks, 0=losing"},
 	{"redownload", "redownload", "Filter: 1=redownloads only, 0=first installs"},
 	{"coarse-conversion-value", "coarse_conversion_value", "Filter by coarse value (low, medium, high)"},
-	{"signature", "signature", "Filter by verification state: valid, invalid, unverifiable"},
+	{"signature", "signature", "Filter by verification state: valid, invalid, unverifiable, development"},
 }
 
 func registerAttributionFilterFlags(cmd *cobra.Command) {
@@ -65,9 +69,20 @@ func collectAttributionFilters(cmd *cobra.Command) map[string]string {
 // attributionAppBodyFields / attributionCvBodyFields map each create/update flag to its
 // API body field — the one place the flag↔field correspondence lives.
 var attributionAppBodyFields = map[string]string{
-	"app-id":   "app_id",
-	"app-name": "app_name",
-	"notes":    "notes",
+	"app-id":                       "app_id",
+	"app-name":                     "app_name",
+	"notes":                        "notes",
+	"accept-development-postbacks": "accept_development_postbacks",
+}
+
+// validateAttributionAppBody refuses the flag values the server would reject,
+// so the error names the flag rather than a JSON field.
+func validateAttributionAppBody(body map[string]string) error {
+	if v, ok := body["accept_development_postbacks"]; ok && v != "0" && v != "1" {
+		return validationError("--accept-development-postbacks must be 0 or 1, got %q", v).
+			WithHint("1 trusts postbacks signed with Apple's AdAttributionKit development keys for this app (integration testing only); 0 stores them flagged and uncounted.")
+	}
+	return nil
 }
 
 var attributionCvBodyFields = map[string]string{
@@ -124,12 +139,12 @@ func listAllAttributionRows(c *api.Client, endpoint string, params map[string]st
 var attributionPostbacksCmd = &cobra.Command{
 	Use:     "postbacks",
 	Aliases: []string{"postback", "pb"},
-	Short:   "Received SKAdNetwork postbacks (read-only)",
+	Short:   "Received SKAdNetwork and AdAttributionKit postbacks (read-only)",
 }
 
 var attributionPostbacksListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List received postbacks with filters (signature state, app, network, window)",
+	Short: "List received postbacks with filters (protocol, signature state, app, network, window)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -175,10 +190,12 @@ var attributionPostbacksGetCmd = &cobra.Command{
 
 var attributionReportCmd = &cobra.Command{
 	Use:   "report",
-	Short: "Aggregate SKAN report with conversion-value decoding",
-	Long: "Groups postbacks by day (UTC), app, ad-network, source, country, or version and\n" +
-		"decodes winning postbacks' conversion values through the rules in `p202 attribution cv`.\n" +
-		"installs = winning first-window postbacks excluding redownloads.",
+	Short: "Aggregate attribution report with conversion-value decoding",
+	Long: "Groups postbacks by day (UTC), app, ad-network, source, country, version, protocol,\n" +
+		"or conversion-type and decodes winning postbacks' conversion values through the rules\n" +
+		"in `p202 attribution cv`. Every metric counts unique postbacks, so a replay counts once.\n" +
+		"installs = winning first-window downloads; redownloads and re-engagements\n" +
+		"(AdAttributionKit) are reported beside them.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		params := collectAttributionFilters(cmd)
 		groupBy, _ := cmd.Flags().GetString("group-by")
@@ -239,10 +256,12 @@ func reshapeAttributionReport(data []byte) []byte {
 var attributionVerifyCmd = &cobra.Command{
 	Use:   "verify",
 	Short: "Verify a postback payload's Apple signature (nothing is stored)",
-	Long: "Reads a SKAdNetwork postback JSON object from --file (or stdin) and asks the\n" +
-		"server to verify its attribution-signature against Apple's key. The response\n" +
-		"carries the verdict (valid / invalid / unverifiable) and the exact signed\n" +
-		"message (base64) for diffing against another implementation.",
+	Long: "Reads a postback JSON object from --file (or stdin) and asks the server to verify\n" +
+		"Apple's signature. A body with a jws-string is verified as AdAttributionKit (the\n" +
+		"response decodes the JWS header and payload and names the signing key); anything\n" +
+		"else as SKAdNetwork (the response carries the exact signed message, base64, for\n" +
+		"diffing against another implementation). The verdict is valid / invalid /\n" +
+		"unverifiable / development.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		file, _ := cmd.Flags().GetString("file")
 		var raw []byte
@@ -349,6 +368,9 @@ var attributionAppCreateCmd = &cobra.Command{
 		if body["app_name"] == "" {
 			return validationError("required flag --app-name is missing")
 		}
+		if err := validateAttributionAppBody(body); err != nil {
+			return err
+		}
 		c, err := api.NewFromConfig()
 		if err != nil {
 			return err
@@ -376,7 +398,10 @@ var attributionAppUpdateCmd = &cobra.Command{
 		body := collectAttributionBody(cmd, attributionAppBodyFields, true)
 		if len(body) == 0 {
 			return validationError("nothing to update").
-				WithHint("Pass at least one of --app-id, --app-name, --notes.")
+				WithHint("Pass at least one of --app-id, --app-name, --notes, --accept-development-postbacks.")
+		}
+		if err := validateAttributionAppBody(body); err != nil {
+			return err
 		}
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -396,7 +421,7 @@ var attributionAppDeleteCmd = &cobra.Command{
 	Short: "Delete an app registration (already-claimed postbacks keep their owner)",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return bulkOrSingleDelete(cmd, "attribution/apps", "SKAN app")
+		return bulkOrSingleDelete(cmd, "attribution/apps", "attribution app")
 	},
 }
 
@@ -474,7 +499,7 @@ var attributionSchemaCmd = &cobra.Command{
 var attributionCvCmd = &cobra.Command{
 	Use:     "cv",
 	Aliases: []string{"conversion-values", "conversion-value"},
-	Short:   "Conversion-value decoding rules (mirror of the in-app SKAN schema)",
+	Short:   "Conversion-value decoding rules (mirror of the in-app conversion-value schema)",
 }
 
 var attributionCvListCmd = &cobra.Command{
@@ -613,7 +638,7 @@ func init() {
 	registerAttributionFilterFlags(attributionPostbacksListCmd)
 	attributionPostbacksCmd.AddCommand(attributionPostbacksListCmd, attributionPostbacksGetCmd)
 
-	attributionReportCmd.Flags().String("group-by", "day", "Group results by: day, app, ad-network, source, country, version")
+	attributionReportCmd.Flags().String("group-by", "day", "Group results by: day, app, ad-network, source, country, version, protocol, conversion-type")
 	attributionReportCmd.Flags().StringP("limit", "l", "", "Max groups to return (default 100)")
 	registerAttributionFilterFlags(attributionReportCmd)
 
@@ -626,8 +651,9 @@ func init() {
 		cmd.Flags().String("app-id", "", "Numeric App Store id of the advertised app")
 		cmd.Flags().String("app-name", "", "Display name for reports")
 		cmd.Flags().String("notes", "", "Free-form notes")
+		cmd.Flags().String("accept-development-postbacks", "", "1 = trust AdAttributionKit development-signed postbacks for this app (integration testing), 0 = store them flagged (default)")
 	}
-	registerDeleteFlags(attributionAppDeleteCmd, "SKAN app")
+	registerDeleteFlags(attributionAppDeleteCmd, "attribution app")
 	attributionAppCmd.AddCommand(attributionAppListCmd, attributionAppGetCmd, attributionAppCreateCmd, attributionAppUpdateCmd, attributionAppDeleteCmd, attributionAppRotateTokenCmd)
 
 	attributionCvListCmd.Flags().StringP("limit", "l", "", "Max results")

@@ -10,7 +10,6 @@ use Api\V3\Attribution\PostbackReceiver;
 use Api\V3\Attribution\PostbackVerifier;
 use Api\V3\Attribution\SkadnetworkProtocol;
 use PHPUnit\Framework\TestCase;
-use Prosper202\Database\Tables\AttributionPostbackTables;
 
 /**
  * The receiver guarantees only a real server can demonstrate: the dedupe
@@ -28,68 +27,21 @@ use Prosper202\Database\Tables\AttributionPostbackTables;
  */
 final class PostbackReceiverIntegrationTest extends TestCase
 {
-    private static ?\mysqli $db = null;
-    private static bool $reportModeChanged = false;
+    use ConnectsToTestDatabase;
 
     public static function setUpBeforeClass(): void
     {
-        $host = getenv('P202_TEST_DB_HOST');
-        if ($host === false || $host === '') {
-            return; // no DB configured; individual tests will skip
-        }
-
-        // Production report mode (PHP's default since 8.1, and what the
-        // receiver documents): failures throw, so the exception branch of
-        // insertPostback() is the one exercised here. mysqli_report() is
-        // process-global and returns bool, not the mode it replaced — PHP
-        // exposes no getter — so tearDownAfterClass restores the documented
-        // 8.1+ default rather than a captured value. Leaving it set would
-        // decide, by class order, whether a later suite's mysqli throws or
-        // returns false.
-        mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
-        self::$reportModeChanged = true;
-
-        try {
-            $db = @mysqli_connect(
-                $host,
-                (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
-                (string) (getenv('P202_TEST_DB_PASS') ?: ''),
-                (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
-                (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
-            );
-        } catch (\Throwable) {
-            return; // connection failed; tests will skip
-        }
-        if (!$db) {
-            return;
-        }
-
-        // The same DDL the installer and the 1.9.76 upgrade step run.
-        foreach (AttributionPostbackTables::getDefinitions() as $definition) {
-            $db->query($definition->createStatement);
-        }
-        self::$db = $db;
+        self::connectTestDatabase();
     }
 
     public static function tearDownAfterClass(): void
     {
-        if (self::$db) {
-            self::$db->close();
-            self::$db = null;
-        }
-        if (self::$reportModeChanged) {
-            mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
-            self::$reportModeChanged = false;
-        }
+        self::disconnectTestDatabase();
     }
 
     protected function setUp(): void
     {
-        if (!self::$db) {
-            self::markTestSkipped('No test database configured (set P202_TEST_DB_HOST).');
-        }
-        self::$db->query('TRUNCATE TABLE 202_attribution_postbacks');
-        self::$db->query('TRUNCATE TABLE 202_attribution_apps');
+        $this->requireEmptyAttributionTables();
     }
 
     public function testAByteIdenticalRetryIsStoredOnceAndAnsweredDuplicate(): void
