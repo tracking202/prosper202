@@ -4,7 +4,7 @@
 # 202-config.php, serve the repo with PHP's built-in server (through
 # router.php, so the dotted SKAN receiver URL resolves on PHP < 8.4), drive
 # the real web installer headlessly (cookie + CSRF token + form POST), and
-# probe the SKAN receiver URL. Prints exactly one line to stdout on success:
+# probe the postback receiver URLs. Prints exactly one line to stdout on success:
 # the REST API key of the account it created. Everything else goes to stderr.
 #
 # Requirements: a reachable MySQL, PHP with the app's extensions, curl, and
@@ -120,16 +120,18 @@ if [ -z "$REST_KEY" ]; then
     exit 1
 fi
 
-# The SKAN receiver lives at a dotted directory URL; prove the server resolves
-# it (see router.php) here, where the cause is named, rather than letting an
-# eval case fail later with a row count that does not add up.
-RECEIVER_URL="$BASE_URL/.well-known/skadnetwork/report-attribution/"
-RECEIVER_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' "$RECEIVER_URL" || true)
-if [ "$RECEIVER_STATUS" != "200" ]; then
-    log "SKAN receiver probe GET $RECEIVER_URL returned HTTP ${RECEIVER_STATUS:-000} (expected 200); last server log lines:"
-    tail -5 "$RUNTIME_DIR/php-server.log" >&2
-    exit 1
-fi
+# The postback receivers live at dotted directory URLs; prove the server
+# resolves each (see router.php) here, where the cause is named, rather than
+# letting an eval case fail later with a row count that does not add up.
+for RECEIVER_PATH in /.well-known/skadnetwork/report-attribution/ /.well-known/appattribution/report-attribution/; do
+    RECEIVER_URL="$BASE_URL$RECEIVER_PATH"
+    RECEIVER_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' "$RECEIVER_URL" || true)
+    if [ "$RECEIVER_STATUS" != "200" ]; then
+        log "Receiver probe GET $RECEIVER_URL returned HTTP ${RECEIVER_STATUS:-000} (expected 200); last server log lines:"
+        tail -5 "$RUNTIME_DIR/php-server.log" >&2
+        exit 1
+    fi
+done
 
 log "Install complete; instance at $BASE_URL"
 printf '%s\n' "$REST_KEY"

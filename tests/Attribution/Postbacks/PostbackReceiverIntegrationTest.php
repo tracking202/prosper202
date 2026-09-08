@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Attribution\Postbacks;
 
+use Api\V3\Attribution\AdAttributionKitProtocol;
+use Api\V3\Attribution\JwsVerifier;
 use Api\V3\Attribution\PostbackReceiver;
 use Api\V3\Attribution\PostbackVerifier;
 use Api\V3\Attribution\SkadnetworkProtocol;
@@ -169,6 +171,64 @@ final class PostbackReceiverIntegrationTest extends TestCase
                 ['app_id' => 999000111, 'user_id' => 0] + $expected,
             ],
             $rows
+        );
+    }
+
+    public function testAnAdAttributionKitDevelopmentPostbackIsTrustedOnlyOnceItsAppOptsIn(): void
+    {
+        // Apple's documented example carries a genuine development-key
+        // signature (apple-development-identifier/1), so this is the real
+        // verifier, the real DDL and the real opt-in column end to end.
+        $receiver = new PostbackReceiver(self::$db, new AdAttributionKitProtocol(new JwsVerifier()));
+
+        $unclaimed = $receiver->receive((string) json_encode(AdAttributionKitFixtures::exampleBody()), '203.0.113.9', 1_800_000_000);
+        $this->assertSame(200, $unclaimed['status']);
+        $this->assertSame('development', $unclaimed['body']['data']['signature']);
+
+        self::$db->query(
+            "INSERT INTO 202_attribution_apps (user_id, app_id, app_name, accept_development_postbacks, schema_token, created_at, updated_at)
+             VALUES (7, " . AdAttributionKitFixtures::EXAMPLE_APP_ID . ", 'Opted-in app', 1, 'integration-token-aak', 1, 1)"
+        );
+        // A different unsigned field makes a different body, so this is a
+        // second postback rather than a deduped retry of the first.
+        $optedIn = $receiver->receive(
+            (string) json_encode(AdAttributionKitFixtures::exampleBody(['country-code' => 'CA'])),
+            '203.0.113.9',
+            1_800_000_001
+        );
+        $this->assertSame(200, $optedIn['status']);
+        $this->assertFalse($optedIn['body']['data']['duplicate']);
+
+        $result = self::$db->query(
+            'SELECT user_id, protocol, version, transaction_id, app_id, signature_state, signature_valid, key_id,
+                    conversion_type, ad_interaction_type, conversion_value, source_app_id, marketplace_id, country_code
+             FROM 202_attribution_postbacks ORDER BY postback_id'
+        );
+        $rows = $result->fetch_all(MYSQLI_ASSOC);
+        $this->assertCount(2, $rows);
+
+        $shared = [
+            'protocol' => 'adattributionkit',
+            'version' => null,
+            'transaction_id' => AdAttributionKitFixtures::EXAMPLE_POSTBACK_ID,
+            'app_id' => (string) AdAttributionKitFixtures::EXAMPLE_APP_ID,
+            'signature_state' => 'development',
+            'key_id' => AdAttributionKitFixtures::EXAMPLE_KEY_ID,
+            'conversion_type' => 're-engagement',
+            'ad_interaction_type' => 'click',
+            'conversion_value' => '24',
+            'source_app_id' => '0',
+            'marketplace_id' => 'com.apple.AppStore',
+        ];
+        $this->assertSame(
+            ['user_id' => '0', 'signature_valid' => null, 'country_code' => 'US'] + $shared,
+            ['user_id' => $rows[0]['user_id'], 'signature_valid' => $rows[0]['signature_valid'], 'country_code' => $rows[0]['country_code']] + array_intersect_key($rows[0], $shared),
+            'before the registration: unclaimed, and nobody vouches for a development signature'
+        );
+        $this->assertSame(
+            ['user_id' => '7', 'signature_valid' => '1', 'country_code' => 'CA'] + $shared,
+            ['user_id' => $rows[1]['user_id'], 'signature_valid' => $rows[1]['signature_valid'], 'country_code' => $rows[1]['country_code']] + array_intersect_key($rows[1], $shared),
+            'after the opt-in: owned and trusted'
         );
     }
 
