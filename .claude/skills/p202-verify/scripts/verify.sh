@@ -354,13 +354,32 @@ run_phpcs() {
     [ "$worse" -eq 0 ]
 }
 
-# Toolchain breakage, not a finding about this code. These markers are
-# deliberately narrow: a genuine Go compile error names a repo file and line
-# (./cmd/foo.go:12:3), which must still count as FAIL. A cgo or linker failure
-# names the C toolchain, and on a machine whose Xcode tools do not match the
-# installed Go it fails identically for every package.
+# Output that MIGHT mean the host toolchain is broken. A genuine Go compile
+# error names a repo file and line (./cmd/foo.go:12:3) and never matches. A
+# cgo or linker failure matches, but that output is ambiguous: a host whose
+# Xcode tools do not match the installed Go produces it for every package,
+# and so does a change that adds bad C or links a library that is not there.
+# The text cannot tell those apart, so this is only the trigger for the
+# probe below; the verdict comes from the probe. The first version treated a
+# match as proof and would have reported a change that broke the build as
+# SKIP with exit 0.
 go_env_broken() {
-    printf '%s' "$1" | grep -qE 'missing LC_UUID|__cgo_|clang: error|^ld: |cannot find -l|no export data'
+    printf '%s' "$1" | grep -qE 'missing LC_UUID|__cgo_|clang: error|(^|[[:space:]])ld: |cannot find -l|no export data|running cc failed|(^|[[:space:]])cgo: |runtime/cgo: '
+}
+
+# Settles the ambiguity by execution: build a known-good cgo program with the
+# same toolchain, in a temp module that shares nothing with the change. If
+# that fails, the host cannot build cgo at all and the tier could not run. If
+# it succeeds, whatever failed in go-cli is the change, and a FAIL.
+host_go_toolchain_broken() {
+    local dir rc
+    dir=$(mktemp -d) || return 0
+    printf 'module p202probe\n\ngo 1.22\n' > "$dir/go.mod"
+    printf 'package main\n\nimport "C"\n\nfunc main() {}\n' > "$dir/main.go"
+    ( cd "$dir" && PATH="$(dirname "$GO_BIN"):$PATH" "$GO_BIN" build -o /dev/null . >/dev/null 2>&1 )
+    rc=$?
+    rm -rf "$dir"
+    [ $rc -ne 0 ]
 }
 
 run_go() {
@@ -370,9 +389,12 @@ run_go() {
            && PATH="$godir:$PATH" "$GO_BIN" test ./... 2>&1 )
     rc=$?
     printf '%s\n' "$out"
-    if [ $rc -ne 0 ] && go_env_broken "$out"; then
-        COULD_NOT_RUN_REASON="Go toolchain cannot build (cgo/linker); \`go test\` never ran this code"
+    if [ $rc -ne 0 ] && go_env_broken "$out" && host_go_toolchain_broken; then
+        COULD_NOT_RUN_REASON="the host Go toolchain cannot build a trivial cgo program (probe failed); \`go test\` never ran this code"
         return $TIER_COULD_NOT_RUN
+    fi
+    if [ $rc -ne 0 ] && go_env_broken "$out"; then
+        FAIL_NOTE="output mentions the C toolchain, but a trivial cgo program builds on this host, so the failure is in the change"
     fi
     [ $rc -eq 0 ] || return 1
 
@@ -381,8 +403,8 @@ run_go() {
     out=$( cd go-cli && HOME=$(mktemp -d) PATH="$godir:$PATH" "$GO_BIN" test ./cmd/... 2>&1 )
     rc=$?
     printf '%s\n' "$out"
-    if [ $rc -ne 0 ] && go_env_broken "$out"; then
-        COULD_NOT_RUN_REASON="Go toolchain cannot build the empty-HOME run (cgo/linker)"
+    if [ $rc -ne 0 ] && go_env_broken "$out" && host_go_toolchain_broken; then
+        COULD_NOT_RUN_REASON="the host Go toolchain cannot build a trivial cgo program (probe failed) during the empty-HOME run"
         return $TIER_COULD_NOT_RUN
     fi
     return $rc

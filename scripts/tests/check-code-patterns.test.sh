@@ -301,6 +301,38 @@ XML
         printf '  skip  unit tier cases: no vendor/bin/phpunit at %s\n' "$REAL_VENDOR"
     fi
 
+    # ── go tier: a change that breaks the build is FAIL; only a host that
+    #    cannot build cgo at all is SKIP. The output cannot tell the two
+    #    apart, so the tier compiles a known-good cgo program to find out. ──
+    if command -v go >/dev/null 2>&1 && [ -n "$(go env GOROOT 2>/dev/null)" ]; then
+        mkdir -p go-cli/cmd/x
+        printf 'module p202harness\n\ngo 1.22\n' > go-cli/go.mod
+        printf 'package main\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
+        printf 'package main\n\nimport "testing"\n\nfunc TestOk(t *testing.T) {}\n' > go-cli/cmd/x/main_test.go
+        expect_go() { # name want_verdict [env...]
+            local name="$1" want="$2"; shift 2
+            local got
+            got=$(env "$@" ./verify.sh --tier go 2>/dev/null | awk '/^  go / {print $2}')
+            if [ "$got" = "$want" ]; then printf '  ok    %-46s go=%s\n' "$name" "$got"; pass=$((pass + 1)); else printf '  FAIL  %-46s go=%s (wanted %s)\n' "$name" "$got" "$want"; fail=$((fail + 1)); fi
+        }
+        expect_go "go: healthy module PASSES" PASS
+        printf 'package main\n\n// #cgo LDFLAGS: -lp202_no_such_lib_zz\nimport "C"\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
+        expect_go "go: a change with bad cgo is FAIL on a healthy host" FAIL
+        expect_go "go: the same failure on a host that cannot build cgo is SKIP" SKIP CC=false
+        eval "$(sed -n '/^host_go_toolchain_broken() {/,/^}/p' ./verify.sh)"
+        # Read by the sourced host_go_toolchain_broken, which shellcheck cannot see.
+        # shellcheck disable=SC2034
+        GO_BIN=$(command -v go)
+        if ! host_go_toolchain_broken && CC=false host_go_toolchain_broken; then
+            printf '  ok    %-46s\n' "go: probe tells a healthy host from a broken one"; pass=$((pass + 1))
+        else
+            printf '  FAIL  %-46s\n' "go: probe tells a healthy host from a broken one"; fail=$((fail + 1))
+        fi
+        rm -rf go-cli
+    else
+        printf '  skip  go tier cases: no working go on PATH\n'
+    fi
+
     rm -rf scripts ./verify.sh
 else
     printf '  skip  verify.sh not found at %s\n' "$VERIFY"
