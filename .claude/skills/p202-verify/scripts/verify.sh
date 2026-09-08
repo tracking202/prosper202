@@ -15,7 +15,7 @@
 
 set -uo pipefail
 
-ALL_TIERS="syntax phpstan unit go golangci schema patterns"
+ALL_TIERS="syntax phpstan phpcs unit go golangci schema patterns"
 
 usage() {
     cat <<'EOF'
@@ -24,11 +24,12 @@ Usage: verify.sh [options]
   (no options)     run every tier the environment supports
   --probe          detect the environment and report tier availability only
   --changed        run only the tiers implied by the working-tree diff
+  --plan           print the tiers --changed would run, without running them
   --tier NAME      run one tier (repeatable)
   --list           list tier names
   -h, --help       this message
 
-Tiers: syntax phpstan unit go golangci schema patterns
+Tiers: syntax phpstan phpcs unit go golangci schema patterns
 
 Tiers 8 (live end-to-end) and 9 (agent eval) are deliberately not scripted.
 They need a running instance and a decision about what to exercise. See
@@ -53,6 +54,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --probe)   MODE=probe ;;
         --changed) MODE=changed ;;
+        --plan)    MODE=plan ;;
         --list)    echo "$ALL_TIERS" | tr ' ' '\n'; exit 0 ;;
         --tier)
             shift
@@ -115,6 +117,26 @@ if [ -d go-cli ]; then
     find_working_go || true
 fi
 
+PHPCS_CMD=""
+if [ -x vendor/bin/phpcs ]; then
+    PHPCS_CMD="vendor/bin/phpcs"
+elif have phpcs; then
+    PHPCS_CMD="phpcs"
+fi
+
+# The PHP files a change touches: tracked modifications plus untracked new
+# files. Every consumer of "which PHP changed" goes through here, because the
+# first version of this script kept two copies of that selection and one of
+# them forgot untracked files, which a reviewer caught after the same bug had
+# been fixed in scripts/check-code-patterns.sh.
+changed_php_files() {
+    {
+        git diff --name-only HEAD -- '*.php' 2>/dev/null
+        git diff --name-only --cached -- '*.php' 2>/dev/null
+        git ls-files --others --exclude-standard -- '*.php' 2>/dev/null
+    } | awk 'NF' | sort -u
+}
+
 SCHEMA_DB_READY=no
 if [ -n "${P202_TEST_DB_HOST:-}" ] && [ -n "${P202_TEST_DB_NAME:-}" ]; then
     SCHEMA_DB_READY=yes
@@ -129,8 +151,12 @@ reason_for() {
             [ -n "$PHPSTAN_CMD" ] || { echo "no vendor/bin/phpstan and no phpstan.phar (see references/sandbox-recovery.md)"; return; }
             [ -f phpstan.neon.dist ] || { echo "phpstan.neon.dist missing"; return; }
             ;;
+        phpcs)
+            [ -n "$PHPCS_CMD" ] || { echo "no vendor/bin/phpcs and no phpcs on PATH"; return; }
+            ;;
         unit)
             [ -n "$PHPUNIT_CMD" ] || { echo "no vendor/bin/phpunit and no phpunit-9.phar (see references/sandbox-recovery.md)"; return; }
+            [ -f phpunit.ci.xml ] || { echo "phpunit.ci.xml missing; this tier mirrors CI's invocation"; return; }
             [ -f vendor/autoload.php ] || { echo "vendor/autoload.php missing; run composer dump-autoload --dev"; return; }
             ;;
         go|golangci)
@@ -149,6 +175,7 @@ reason_for() {
             ;;
         schema)
             [ -n "$PHPUNIT_CMD" ] || { echo "phpunit unavailable"; return; }
+            [ -f phpunit.ci.xml ] || { echo "phpunit.ci.xml missing; this tier mirrors CI's invocation"; return; }
             [ "$SCHEMA_DB_READY" = yes ] || { echo "set P202_TEST_DB_HOST and P202_TEST_DB_NAME to a SCRATCH database (this tier drops and recreates tables)"; return; }
             ;;
         patterns)
@@ -188,9 +215,120 @@ run_phpstan() {
     $PHPSTAN_CMD analyse -c phpstan.neon.dist --no-progress --memory-limit=512M
 }
 
+# The PHP minor version CI pins for the unit job, read from the workflow so
+# it cannot drift from what CI actually runs.
+ci_php_version() {
+    sed -nE "s/^[[:space:]]*php-version:[[:space:]]*['\"]?([0-9]+\.[0-9]+).*/\1/p" \
+        "$ROOT/.github/workflows/php-unit.yml" 2>/dev/null | head -1
+}
+
+local_php_version() {
+    php -r 'echo PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION;' 2>/dev/null
+}
+
+# Non-empty when the local interpreter is not the one CI tests on. A newer
+# PHP turns deprecations into failures the suite never sees on CI (16 of
+# them on 8.5 against a project targeting 8.3), and the ladder promised that
+# environmental inability reports SKIP rather than FAIL.
+interpreter_mismatch_reason() {
+    local ci local_v
+    ci=$(ci_php_version)
+    local_v=$(local_php_version)
+    [ -n "$ci" ] && [ -n "$local_v" ] || return 0
+    [ "$ci" != "$local_v" ] || return 0
+    echo "PHPUnit failed on PHP $local_v but CI pins $ci (.github/workflows/php-unit.yml); a newer interpreter turns deprecations into failures, see references/sandbox-recovery.md"
+}
+
 run_unit() {
+    local out rc
+    # Exactly CI's invocation (.github/workflows/php-unit.yml). The strict
+    # phpunit.xml is for local development and promotes deprecations to
+    # errors; running it here reported 16 failures on PHP 8.5 that CI, on
+    # 8.3 with phpunit.ci.xml, never sees.
     # shellcheck disable=SC2086
-    $PHPUNIT_CMD
+    out=$( $PHPUNIT_CMD --configuration phpunit.ci.xml --exclude-group integration --no-coverage 2>&1 )
+    rc=$?
+    printf '%s\n' "$out"
+    if [ $rc -ne 0 ]; then
+        local why
+        why=$(interpreter_mismatch_reason)
+        if [ -n "$why" ]; then
+            COULD_NOT_RUN_REASON="$why"
+            return $TIER_COULD_NOT_RUN
+        fi
+    fi
+    return $rc
+}
+
+# PHPUnit 9 exits 0 when every test it selected skipped itself, and the
+# schema test skips when it cannot reach the database. "OK, but incomplete,
+# skipped, or risky tests!" is not a pass of anything.
+phpunit_ran_nothing() {
+    printf '%s' "$1" | grep -qE 'No tests executed|Tests: 0,|Skipped: [1-9]'
+}
+
+# PSR12 as a ratchet. AGENTS.md asks for `phpcs --standard=PSR12 .`, CI does
+# not run it, and the tree is nowhere near clean (api/v3 alone carries a few
+# hundred findings), so a tier that fails on any finding would fail on every
+# touch of a legacy file and be switched off within the week. This one fails
+# only when a change makes a file worse than it was at HEAD; a brand-new file
+# has no HEAD and must be clean.
+phpcs_summary_errors() {
+    local n
+    n=$(grep -oE 'A TOTAL OF [0-9]+ ERROR' | grep -oE '[0-9]+')
+    echo "${n:-0}"
+}
+
+# Prints an error count, or "?" when phpcs itself could not analyse the file
+# (exit 3+, typically out of memory). "?" must never be read as 0: an
+# unreadable answer resolving to "clean" is CLAUDE.md error pattern #11.
+phpcs_error_count_file() {
+    local out rc
+    # shellcheck disable=SC2086
+    out=$( $PHPCS_CMD -d memory_limit=512M --standard=PSR12 --report=summary "$1" 2>&1 )
+    rc=$?
+    if [ $rc -ge 3 ]; then echo "?"; return; fi
+    printf '%s' "$out" | phpcs_summary_errors
+}
+
+phpcs_error_count_at_head() {
+    local out rc
+    # shellcheck disable=SC2086
+    out=$( git show "HEAD:$1" 2>/dev/null | $PHPCS_CMD -d memory_limit=512M --standard=PSR12 --report=summary --stdin-path="$1" - 2>&1 )
+    rc=$?
+    if [ $rc -ge 3 ]; then echo "?"; return; fi
+    printf '%s' "$out" | phpcs_summary_errors
+}
+
+run_phpcs() {
+    local files f head_count wt_count worse=0 examined=0
+    files=$(changed_php_files)
+    if [ -z "$files" ]; then
+        COULD_NOT_RUN_REASON="no new or modified .php files, so nothing was examined"
+        return $TIER_COULD_NOT_RUN
+    fi
+    while IFS= read -r f; do
+        [ -f "$f" ] || continue
+        examined=$((examined + 1))
+        wt_count=$(phpcs_error_count_file "$f")
+        if git cat-file -e "HEAD:$f" 2>/dev/null; then
+            head_count=$(phpcs_error_count_at_head "$f")
+        else
+            head_count=0
+        fi
+        if [ "$wt_count" = "?" ] || [ "$head_count" = "?" ]; then
+            COULD_NOT_RUN_REASON="phpcs could not analyse $f (exit 3 or higher; out of memory?)"
+            return $TIER_COULD_NOT_RUN
+        fi
+        if [ "$wt_count" -gt "$head_count" ]; then
+            printf 'phpcs: %s: %s PSR12 errors, was %s at HEAD (+%s)\n' "$f" "$wt_count" "$head_count" $((wt_count - head_count))
+            worse=$((worse + 1))
+        elif [ "$wt_count" -gt 0 ]; then
+            printf 'phpcs: %s: %s pre-existing PSR12 errors, none added\n' "$f" "$wt_count"
+        fi
+    done <<< "$files"
+    printf 'phpcs: %s file(s) examined, %s made worse\n' "$examined" "$worse"
+    [ "$worse" -eq 0 ]
 }
 
 # Toolchain breakage, not a finding about this code. These markers are
@@ -243,8 +381,17 @@ run_golangci() {
 }
 
 run_schema() {
+    local out rc
+    # CI's invocation (.github/workflows/php-integration.yml).
     # shellcheck disable=SC2086
-    $PHPUNIT_CMD --group integration tests/Schema/
+    out=$( $PHPUNIT_CMD --configuration phpunit.ci.xml --group integration --no-coverage tests/Schema/ 2>&1 )
+    rc=$?
+    printf '%s\n' "$out"
+    if phpunit_ran_nothing "$out"; then
+        COULD_NOT_RUN_REASON="the schema tests skipped themselves ($(printf '%s' "$out" | grep -oE 'Tests: [0-9]+.*|No tests executed' | tail -1)); is P202_TEST_DB_HOST reachable?"
+        return $TIER_COULD_NOT_RUN
+    fi
+    return $rc
 }
 
 run_patterns() {
@@ -255,12 +402,7 @@ run_patterns() {
     # plus untracked files, or this guard skips a tier the hook would have
     # run: the first version of this guard did exactly that, and a reviewer
     # caught it two commits after the same bug was fixed in the hook.
-    local php_changes
-    php_changes=$(
-        git diff --name-only HEAD -- '*.php' 2>/dev/null
-        git ls-files --others --exclude-standard -- '*.php' 2>/dev/null
-    )
-    if [ -z "$php_changes" ]; then
+    if [ -z "$(changed_php_files)" ]; then
         COULD_NOT_RUN_REASON="no new or modified .php files, so no lines were examined"
         return $TIER_COULD_NOT_RUN
     fi
@@ -288,9 +430,13 @@ tiers_from_diff() {
         echo "$tiers"
         return
     fi
-    echo "$files" | grep -q '\.php$'                    && tiers="$tiers phpstan unit"
+    echo "$files" | grep -q '\.php$'                    && tiers="$tiers phpstan phpcs unit"
     echo "$files" | grep -q '^go-cli/'                  && tiers="$tiers go golangci"
-    echo "$files" | grep -qE '^(202-config/.*[Ss]chema|tests/Schema/)' && tiers="$tiers schema"
+    # 202-config/Database/Tables/*.php hold the CREATE TABLE definitions the
+    # installer runs, and 202-config/migrations/ the ALTERs; neither has
+    # "schema" in its path, which is how the first version of this line
+    # missed the repository's primary schema-edit path.
+    echo "$files" | grep -qE '^(202-config/(Database|migrations)/|tests/Schema/)' && tiers="$tiers schema"
     echo "$files" | grep -q '\.sql$'                    && tiers="$tiers schema"
     echo "$tiers" | tr ' ' '\n' | awk 'NF' | sort -u | tr '\n' ' '
 }
@@ -298,6 +444,7 @@ tiers_from_diff() {
 # ------------------------------------------------------------- dispatch
 
 case "$MODE" in
+    plan)    tiers_from_diff | tr ' ' '\n' | awk 'NF'; exit 0 ;;
     changed) TIERS=$(tiers_from_diff) ;;
     *)       TIERS="${SELECTED:-$ALL_TIERS}" ;;
 esac

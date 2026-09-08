@@ -47,13 +47,13 @@ subset, because the tier that matters is the one that touches your path.
 
 | Changed path | Tiers that must run |
 |---|---|
-| any `*.php` | syntax, phpstan, unit |
+| any `*.php` | syntax, phpstan, phpcs, unit |
 | `api/**` | + integration against a live instance, + agent eval if the surface is agent-facing |
 | `cli/Commands/**` | + `bin/p202` exercised end to end against a live instance |
 | `go-cli/**` | + `go vet`, `go test`, `golangci-lint`, and the empty-`HOME` run |
 | `tracking202/redirect/**` | + a real click through a seeded instance, not a unit test |
 | `202-config/PHPStan/Rules/**` | + rule registered in `phpstan.neon.dist`, + clean against the whole tree, + a planted defect in every call shape it claims to cover |
-| schema or SQL | + `--group integration tests/Schema/` against a scratch database |
+| `202-config/Database/**`, `202-config/migrations/**`, `tests/Schema/**`, any `*.sql` | + `--group integration tests/Schema/` against a scratch database. The table definitions live in `202-config/Database/Tables/*.php` and have no "schema" in their path; the first version of the selector missed them. |
 | anything auth, scope, idempotency, or staged-write shaped | all of the above, plus a live end-to-end pass |
 
 An unregistered PHPStan rule never runs. A rule that fires on correct code
@@ -69,6 +69,9 @@ suggestion.
 
 # only the tiers implied by your working-tree diff
 .claude/skills/p202-verify/scripts/verify.sh --changed
+
+# see which tiers --changed would pick, without running any
+.claude/skills/p202-verify/scripts/verify.sh --plan
 
 # one tier
 .claude/skills/p202-verify/scripts/verify.sh --tier phpstan
@@ -89,11 +92,12 @@ Tiers, in order, with the command each wraps:
 
 1. `syntax` — `php -l` over the tree, `bash -n` over `*.sh`
 2. `phpstan` — `vendor/bin/phpstan analyse -c phpstan.neon.dist --no-progress --memory-limit=512M`
-3. `unit` — `vendor/bin/phpunit` (the `integration` group is excluded by `phpunit.xml`)
-4. `go` — `cd go-cli && go vet ./... && go test ./...`, then `HOME=$(mktemp -d) go test ./cmd/...`
-5. `golangci` — `cd go-cli && golangci-lint run ./...`
-6. `schema` — `phpunit --group integration tests/Schema/` against a scratch database
-7. `patterns` — `scripts/check-code-patterns.sh`, the existing Stop hook
+3. `phpcs` — PSR12 over the PHP files the change touches, as a **ratchet**: a file may not have more PSR12 errors than it had at `HEAD`, and a new file must have none. `AGENTS.md` asks for `phpcs --standard=PSR12 .`; CI does not run it and the tree is far from clean (`api/v3` alone carries a few hundred findings), so a tier that failed on any finding would fail on every touch of a legacy file and be switched off. Pre-existing findings are printed, not counted.
+4. `unit` — `vendor/bin/phpunit --configuration phpunit.ci.xml --exclude-group integration --no-coverage`, which is exactly CI's invocation. Not the strict `phpunit.xml`: that one promotes deprecations to errors, and on a newer local PHP than CI's it reported 16 failures CI never sees. If the suite still fails and the local PHP minor version differs from the one `php-unit.yml` pins, the tier reports SKIP naming both versions rather than FAIL.
+5. `go` — `cd go-cli && go vet ./... && go test ./...`, then `HOME=$(mktemp -d) go test ./cmd/...`
+6. `golangci` — `cd go-cli && golangci-lint run ./...`
+7. `schema` — `phpunit --configuration phpunit.ci.xml --group integration tests/Schema/` against a scratch database. PHPUnit 9 exits 0 when the tests skip themselves, which the schema test does when it cannot reach the database; a run that reports `Skipped: N` or `No tests executed` is SKIP, never PASS.
+8. `patterns` — `scripts/check-code-patterns.sh`, the existing Stop hook
 
 The `--memory-limit` on tier 2 is not decoration. CI installs PHP through
 `setup-php`, which leaves `memory_limit` uncapped; a stock local `php.ini`
@@ -101,20 +105,20 @@ caps it at 128M and PHPStan dies parsing the intl stubs, reporting FAIL for a
 reason that has nothing to do with the change. `scripts/check-code-patterns.sh`
 passes the same 512M for the same reason.
 
-Tiers 8 and 9 are not scripted because they need a live instance and a
+Tiers 9 and 10 are not scripted because they need a live instance and a
 decision about what to exercise. Do them by hand:
 
-8. **Live end-to-end.** Stand up an instance with
+9. **Live end-to-end.** Stand up an instance with
    `tests/fixtures/agent-eval/ci/install-instance.sh`, seed it with
    `tests/fixtures/agent-eval/seed.sh`, then drive the actual path a user
    would take. Reports stay empty until the dataengine cron runs; the seeder
    triggers `202-cronjobs/dej.php` itself. If an instance is already up in
    this session, there is no excuse to skip this.
-9. **Agent eval.** If the change is agent-facing, add a case under
+10. **Agent eval.** If the change is agent-facing, add a case under
    `tests/fixtures/agent-eval/cases/` and run it. Grading is on final state,
    not on transcript wording.
 
-The empty-`HOME` Go run in tier 4 is not redundant. A `--scope` check once
+The empty-`HOME` Go run in tier 5 is not redundant. A `--scope` check once
 passed locally only because the sandbox had a URL configured while CI had
 none, so the config error won and the flag was never examined.
 

@@ -166,6 +166,99 @@ if [ -f "$VERIFY" ]; then
     expect_tier "ladder: untracked clean file must PASS, not SKIP" PASS
     rm -f src/brand_new_ok.php
 
+    # ── --plan: which tiers a change selects, without running any ──
+    expect_plan() { # name want_tier present(yes|no)
+        local name="$1" tier="$2" want="$3" got=no
+        if ./verify.sh --plan 2>/dev/null | grep -qx "$tier"; then got=yes; fi
+        if [ "$got" = "$want" ]; then
+            printf '  ok    %-46s %s=%s\n' "$name" "$tier" "$got"; pass=$((pass + 1))
+        else
+            printf '  FAIL  %-46s %s=%s (wanted %s)\n' "$name" "$tier" "$got" "$want"; fail=$((fail + 1))
+        fi
+    }
+    mkdir -p 202-config/Database/Tables 202-config/migrations
+    printf '<?php\n$sql = "CREATE TABLE x (id INT)";\n' > 202-config/Database/Tables/XTables.php
+    expect_plan "plan: table definitions select schema" schema yes
+    expect_plan "plan: a php change selects phpcs" phpcs yes
+    rm -f 202-config/Database/Tables/XTables.php
+    printf 'ALTER TABLE x ADD y INT;\n' > 202-config/migrations/0001.sql
+    expect_plan "plan: a .sql file selects schema" schema yes
+    rm -f 202-config/migrations/0001.sql
+    printf '<?php\n// unrelated\n' > src/other.php
+    expect_plan "plan: ordinary php does not select schema" schema no
+    rm -f src/other.php
+    rm -rf 202-config
+
+    # ── unit-tier interpreter classifier, against a workflow file we write ──
+    eval "$(sed -n '/^ci_php_version() {/,/^}/p; /^local_php_version() {/,/^}/p; /^interpreter_mismatch_reason() {/,/^}/p' ./verify.sh)"
+    # Read by the sourced ci_php_version, which shellcheck cannot see.
+    # shellcheck disable=SC2034
+    ROOT="$REPO"
+    mkdir -p .github/workflows
+    local_v=$(local_php_version)
+    printf "      php-version: '%s'\n" "$local_v" > .github/workflows/php-unit.yml
+    if [ -z "$(interpreter_mismatch_reason)" ]; then
+        printf '  ok    %-46s\n' "unit: CI on the same PHP gives no mismatch"; pass=$((pass + 1))
+    else
+        printf '  FAIL  %-46s\n' "unit: CI on the same PHP gives no mismatch"; fail=$((fail + 1))
+    fi
+    printf "      php-version: '7.4'\n" > .github/workflows/php-unit.yml
+    if interpreter_mismatch_reason | grep -q "CI pins 7.4"; then
+        printf '  ok    %-46s\n' "unit: CI on another PHP names both versions"; pass=$((pass + 1))
+    else
+        printf '  FAIL  %-46s\n' "unit: CI on another PHP names both versions"; fail=$((fail + 1))
+    fi
+    rm -rf .github
+
+    # ── schema-tier vacuous-pass detector, against real PHPUnit 9 output shapes ──
+    eval "$(sed -n '/^phpunit_ran_nothing() {/,/^}/p' ./verify.sh)"
+    check_nothing() { # name text want(yes|no)
+        local got=no; if phpunit_ran_nothing "$2"; then got=yes; fi
+        if [ "$got" = "$3" ]; then printf '  ok    %-46s\n' "$1"; pass=$((pass + 1)); else printf '  FAIL  %-46s (got %s)\n' "$1" "$got"; fail=$((fail + 1)); fi
+    }
+    check_nothing "schema: skipped-self counts as ran nothing" "OK, but incomplete, skipped, or risky tests!
+Tests: 2, Assertions: 1, Skipped: 1." yes
+    check_nothing "schema: no tests executed counts" "No tests executed!" yes
+    check_nothing "schema: a real green run does not" "OK (2 tests, 40 assertions)" no
+    check_nothing "schema: a real red run does not" "FAILURES!
+Tests: 2, Assertions: 40, Failures: 1." no
+
+    # ── phpcs ratchet, behaviourally, using the repo's own vendor/ ──
+    eval "$(sed -n '/^phpcs_summary_errors() {/,/^}/p' ./verify.sh)"
+    if [ "$(printf 'A TOTAL OF 23 ERRORS AND 12 WARNINGS' | phpcs_summary_errors)" = 23 ] \
+       && [ "$(printf '' | phpcs_summary_errors)" = 0 ] \
+       && [ "$(printf 'A TOTAL OF 1 ERROR AND 0 WARNINGS' | phpcs_summary_errors)" = 1 ]; then
+        printf '  ok    %-46s\n' "phpcs: summary parsing"; pass=$((pass + 1))
+    else
+        printf '  FAIL  %-46s\n' "phpcs: summary parsing"; fail=$((fail + 1))
+    fi
+    REAL_VENDOR="$HERE/../../vendor"
+    if [ -x "$REAL_VENDOR/bin/phpcs" ]; then
+        ln -s "$(cd "$REAL_VENDOR" && pwd)" vendor
+        expect_phpcs() { # name want_verdict
+            local got
+            got=$(./verify.sh --tier phpcs 2>/dev/null | awk '/^  phpcs / {print $2}')
+            if [ "$got" = "$2" ]; then printf '  ok    %-46s phpcs=%s\n' "$1" "$got"; pass=$((pass + 1)); else printf '  FAIL  %-46s phpcs=%s (wanted %s)\n' "$1" "$got" "$2"; fail=$((fail + 1)); fi
+        }
+        # A committed legacy file that already violates PSR12 (brace placement).
+        printf '<?php\nclass Legacy {\n    public function a() { return 1; }\n}\n' > src/legacy_style.php
+        git add src/legacy_style.php && git commit -qm "legacy style"
+        expect_phpcs "ratchet: nothing changed skips" SKIP
+        printf '\n// a comment does not add a violation\n' >> src/legacy_style.php
+        expect_phpcs "ratchet: touching a legacy file without worsening it PASSES" PASS
+        printf 'function worse() { return 2; }\n' >> src/legacy_style.php
+        expect_phpcs "ratchet: adding a violation to a legacy file FAILS" FAIL
+        git checkout -q -- src/legacy_style.php
+        printf '<?php\n\nfunction fine(): int\n{\n    return 1;\n}\n' > src/new_clean.php
+        expect_phpcs "ratchet: a clean new file PASSES" PASS
+        rm -f src/new_clean.php
+        printf '<?php\nfunction bad() { return 1; }\n' > src/new_bad.php
+        expect_phpcs "ratchet: a new file with any violation FAILS" FAIL
+        rm -f src/new_bad.php vendor
+    else
+        printf '  skip  phpcs ratchet cases: no vendor/bin/phpcs at %s\n' "$REAL_VENDOR"
+    fi
+
     rm -rf scripts ./verify.sh
 else
     printf '  skip  verify.sh not found at %s\n' "$VERIFY"
