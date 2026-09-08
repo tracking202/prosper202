@@ -455,7 +455,19 @@ run_go() {
     # it is able to see.
     gofmt_bin="$("$GO_BIN" env GOROOT 2>/dev/null)/bin/gofmt"
     if [ -x "$gofmt_bin" ]; then
-        unformatted=$( cd go-cli && "$gofmt_bin" -l . 2>/dev/null )
+        local gofmt_rc
+        # stderr kept and exit status checked: a file gofmt cannot parse
+        # produces a diagnostic on stderr, nothing on stdout, and exit 2. The
+        # first version discarded both and walked on to the module check,
+        # which on a machine that cannot fetch reported the whole tier SKIP
+        # for a syntax error. CI rejects that file at the same step.
+        unformatted=$( cd go-cli && "$gofmt_bin" -l . 2>&1 )
+        gofmt_rc=$?
+        if [ $gofmt_rc -ne 0 ]; then
+            printf 'gofmt failed:\n%s\n' "$unformatted"
+            FAIL_NOTE="gofmt exited $gofmt_rc, which means a file it could not parse; CI's Go workflow fails on this before vet or test"
+            return 1
+        fi
         if [ -n "$unformatted" ]; then
             printf 'gofmt would reformat:\n%s\n' "$unformatted"
             FAIL_NOTE="gofmt -l lists $(printf '%s\n' "$unformatted" | grep -c .) file(s); CI's Go workflow fails on this before vet or test"

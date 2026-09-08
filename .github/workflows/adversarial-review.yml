@@ -32,9 +32,13 @@ on:
       # and removes REST API keys.
       - '202-appstore/**'
       - '202-js/account.php'
-      # Validates an install_hash and hands the matching database API key to
-      # an external service.
-      - '202-cronjobs/dni.php'
+      # The cron endpoints authenticate requests against a user's
+      # install_hash and release keys or data to external services (dni.php
+      # returns the database API key, daily-email.php sends the user's email
+      # and metrics). Three rounds of review each found one more of these,
+      # so the whole directory is in rather than a list that will be short
+      # again next month.
+      - '202-cronjobs/**'
       - 'cli/**'
       - 'go-cli/**'
       - '202-config/**'

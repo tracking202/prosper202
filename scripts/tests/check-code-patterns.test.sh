@@ -441,6 +441,11 @@ XML
         printf 'package main\n\nfunc   ugly( ) {\n}\n' > go-cli/cmd/x/ugly.go
         expect_go "go: an unformatted file is FAIL even when dependencies are unavailable" FAIL GOPROXY=off
         rm -f go-cli/cmd/x/ugly.go
+        # A file gofmt cannot parse prints nothing on stdout and exits 2; the
+        # first gate read only stdout and walked on to the module check.
+        printf 'package main\n\nfunc main( {\n' > go-cli/cmd/x/broken.go
+        expect_go "go: a syntax error is FAIL even when dependencies are unavailable" FAIL GOPROXY=off
+        rm -f go-cli/cmd/x/broken.go
         git reset -q --hard HEAD~1 >/dev/null
         printf 'package main\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
         # A go.mod the change broke is not "dependencies unavailable".
