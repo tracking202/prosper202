@@ -175,6 +175,7 @@ reason_for() {
             ;;
         schema)
             [ -n "$PHPUNIT_CMD" ] || { echo "phpunit unavailable"; return; }
+            [ -f vendor/autoload.php ] || { echo "vendor/autoload.php missing; run composer dump-autoload --dev"; return; }
             [ -f phpunit.ci.xml ] || { echo "phpunit.ci.xml missing; this tier mirrors CI's invocation"; return; }
             [ "$SCHEMA_DB_READY" = yes ] || { echo "set P202_TEST_DB_HOST and P202_TEST_DB_NAME to a SCRATCH database (this tier drops and recreates tables)"; return; }
             ;;

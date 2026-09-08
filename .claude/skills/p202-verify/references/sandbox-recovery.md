@@ -110,26 +110,33 @@ entry for the uppercase path; that would hide the real finding on Linux.
 ## Local PHP is newer than the project target
 
 `composer.json` requires `php >=8.3` and every CI job pins `php-version: 8.3`.
-A newer local PHP still runs the suite, but PHPUnit 9 converts deprecation
-notices into test errors, so the run goes red for reasons CI will never see.
+A newer local PHP promotes deprecation notices, and under the strict
+`phpunit.xml` those become test errors CI never sees (16 of them on 8.5).
 
-On PHP 8.5 the suite reports 16 errors with none of them a regression:
+The `unit` tier does not run that file. It runs CI's exact invocation,
+`phpunit.ci.xml` with `--exclude-group integration`, which passes on PHP 8.5
+here: 1194 tests, 8 skipped, 0 failures. So a newer interpreter is not, by
+itself, a reason for the tier to fail.
 
-| Cause | Count |
-|---|---|
-| `ReflectionMethod::setAccessible()` deprecated since 8.5 | 10 |
-| Slim implicit-nullable and `offsetExists` return-type notices | 6 |
+If the tier does fail on a PHP that differs from CI's, the `FAIL` line carries
+a note naming both versions. That note is context, not a verdict. Read each
+failure:
 
-Check the interpreter before believing the result:
+- a deprecation notice (`... is deprecated since 8.5`, an implicit-nullable
+  warning from a vendor package) is the interpreter, not the change;
+- an assertion failure or an exception from application code is the change,
+  whatever PHP it ran on, and must be treated as one.
+
+Never write the whole tier off as environmental because the interpreter
+differs. The first version of the tier did exactly that in code, and turned a
+deliberate `$this->fail()` into a SKIP with exit 0. Do not recreate that at
+the reporting layer. Check the interpreter so you know which failures to
+suspect, then report the tier as `FAIL` with what you found:
 
 ```bash
 php -v | head -1
 grep php-version .github/workflows/php-unit.yml
 ```
-
-If the major/minor differ from CI, report the tier as environmental and name
-the interpreter. Do not baseline these, do not edit the tests, and do not
-report them as failures of the change under review.
 
 The separate errors reading "requires DB singleton which is not available in
 tests" and the `memcache` cache-key notices are the documented no-database
