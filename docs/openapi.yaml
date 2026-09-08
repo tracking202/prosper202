@@ -2713,6 +2713,82 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /.well-known/appattribution/report-attribution/:
+    servers:
+      - url: /
+        description: Site root — Apple devices POST here directly; this path is outside the /api/v3 base
+    get:
+      tags: [Attribution postbacks]
+      summary: AdAttributionKit receiver readiness probe
+      description: Lets an operator confirm the endpoint is reachable at the exact URL Apple will use, before pointing an app at it.
+      operationId: probeAdAttributionKitReceiver
+      security: []
+      responses:
+        "200":
+          description: The receiver is ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdAttributionKitReceiverProbeResponse"
+    post:
+      tags: [Attribution postbacks]
+      summary: Receive an AdAttributionKit postback copy
+      description: |
+        The developer-side `AttributionCopyEndpoint` (iOS 17.4+). Devices
+        POST copies of winning AdAttributionKit postbacks here: a JSON
+        envelope whose `jws-string` is a compact JWS (ES256) carrying the
+        signed attribution fields, beside four unsigned fields. The server
+        decodes the JWS, verifies its signature against the key its `kid`
+        names — Apple's production key (`valid`), one of Apple's development
+        keys (`development`; trusted only for an app registration that opted
+        in), an unknown key (`unverifiable`) — validates the payload under
+        Apple's field names, stores the row flagged with its signature state,
+        and answers `200` including for a byte-identical retry
+        (`duplicate: true`). Structurally broken bodies — a `jws-string`
+        that is not a JWS, a payload missing required fields — are `400`
+        with per-field errors; any non-`200` makes the device retry later.
+        Bodies over 32 KB are rejected. Rate-limited per source IP, in one
+        bucket with the SKAdNetwork receiver.
+      operationId: receiveAdAttributionKitPostback
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdAttributionKitPostback"
+      responses:
+        "200":
+          description: Stored (or recognized as a retry of a stored postback)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionPostbackReceiptResponse"
+        "400":
+          description: Structurally invalid postback (Apple's hyphenated field names in `field_errors`; JWS payload fields under their own names)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationError"
+        "405":
+          description: Only GET (probe) and POST are served
+        "413":
+          description: >-
+            Body over 32 KB. Terminal: no genuine Apple postback approaches
+            this size, and the same body would fail every retry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/AttributionRateLimited"
+        "503":
+          description: Database unavailable — the device retries later
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 
 components:
   securitySchemes:
@@ -4878,6 +4954,42 @@ components:
               type: string
               enum: [valid, invalid, unverifiable, development]
 
+    AdAttributionKitPostback:
+      type: object
+      description: |
+        The JSON envelope an Apple device POSTs to the `AttributionCopyEndpoint`
+        (Apple's "Identifying the parameters in a postback", AdAttributionKit).
+        `jws-string` is signed by Apple; the other four fields are not, exactly
+        as SKAdNetwork never signed conversion values. The JWS payload carries
+        `postback-identifier`, `ad-network-identifier`, `advertised-item-identifier`,
+        `impression-type`, `did-win`, `postback-sequence-index`, `conversion-type`
+        (`download`, `redownload`, `re-engagement`) and `source-identifier`, plus
+        the optional `publisher-item-identifier` and `marketplace-identifier`;
+        its header carries `alg` (`ES256`) and `kid`.
+      required: [jws-string, ad-interaction-type]
+      properties:
+        jws-string:
+          type: string
+          description: Compact JWS — header, payload and signature as unpadded base64url segments
+          example: eyJraWQiOiJhcHBsZS1kZXZlbG9wbWVudC1pZGVudGlmaWVyXC8xIiwiYWxnIjoiRVMyNTYifQ.eyJwb3N0YmFjay1pZGVudGlmaWVyIjoiODU1NDZFQjctRkQzOS00NEJDLTg5OTAtQzk4QTRBQzM2QTQ5IiwicHVibGlzaGVyLWl0ZW0taWRlbnRpZmllciI6MCwibWFya2V0cGxhY2UtaWRlbnRpZmllciI6ImNvbS5hcHBsZS5BcHBTdG9yZSIsImltcHJlc3Npb24tdHlwZSI6ImFwcC1pbXByZXNzaW9uIiwiYWQtbmV0d29yay1pZGVudGlmaWVyIjoiZGV2ZWxvcG1lbnQuYWRhdHRyaWJ1dGlvbmtpdCIsImRpZC13aW4iOnRydWUsInBvc3RiYWNrLXNlcXVlbmNlLWluZGV4IjowLCJjb252ZXJzaW9uLXR5cGUiOiJyZS1lbmdhZ2VtZW50Iiwic291cmNlLWlkZW50aWZpZXIiOiIxMjM0IiwiYWR2ZXJ0aXNlZC1pdGVtLWlkZW50aWZpZXIiOjEwNzM4MDI3NzU2fQ.bAdNwKd6OfHK9tofvjjua4X_JPcFTxXPQSspD9gZkinw97pY7R1aI-LSjl-oxZZF3_K2H5JK5TSEBee4_1U4oQ
+        conversion-value:
+          type: integer
+          minimum: 0
+          maximum: 63
+          description: Unsigned; withheld by Apple's postback data tier when absent
+        coarse-conversion-value:
+          type: string
+          enum: [low, medium, high]
+          description: Unsigned; withheld by the data tier when absent
+        ad-interaction-type:
+          type: string
+          enum: [view, click]
+          description: Unsigned
+        country-code:
+          type: string
+          description: Unsigned ISO 3166 identifier; withheld by the data tier when absent
+          example: US
+
     SkadnetworkReceiverProbeResponse:
       type: object
       properties:
@@ -4895,3 +5007,21 @@ components:
               example: skadnetwork-report-attribution
             accepts:
               type: string
+    AdAttributionKitReceiverProbeResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            status:
+              type: string
+              example: ready
+            protocol:
+              type: string
+              example: adattributionkit
+            endpoint:
+              type: string
+              example: appattribution-report-attribution
+            accepts:
+              type: string
+
