@@ -339,7 +339,7 @@ cd go-cli && make build
 ```bash
 ./p202 campaign list --json                 # any entity: list / get / create / update / delete
 ./p202 report summary --period last7
-./p202 attribution report --group-by ad-network    # iOS SKAdNetwork installs with decoded revenue
+./p202 attribution report --group-by ad-network    # iOS SKAdNetwork / AdAttributionKit installs with decoded revenue
 ./p202 forecast --metric revenue --horizon 7
 ./p202 sync all --from prod --to staging    # replicate between instances
 ```

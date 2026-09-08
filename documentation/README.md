@@ -41,7 +41,7 @@
 - [Reports](api/11-reports.md)
 - [Rotators](api/12-rotators.md)
 - [Attribution](api/13-attribution.md)
-- [SKAdNetwork (SKAN)](api/19-attribution-postbacks.md)
+- [Attribution postbacks (SKAdNetwork, AdAttributionKit)](api/19-attribution-postbacks.md)
 - [Forecast Events](api/18-forecast-events.md)
 - [Users](api/14-users.md)
 - [System](api/15-system.md)

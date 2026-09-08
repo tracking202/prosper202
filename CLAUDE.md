@@ -305,6 +305,12 @@ Check here before burning time on tooling failures.
   into `vendor/` by hand is invisible to it even after patching the
   autoloader. Add `scanDirectories: [vendor/<pkg>]` in a scratch config that
   `includes:` the dist file to confirm a clean run; do not commit that.
+- **The PHPUnit 9 phar takes ONE path argument; extra paths are silently
+  ignored.** `php phpunit-9.phar ... tests/A/FooTest.php tests/Schema/` ran
+  only `FooTest` and reported OK, and the schema suite it appeared to include
+  never executed — noticed only because 4 tests ran where 9 were expected.
+  Run one path per invocation, and compare the test count against what the
+  paths should contain before believing an OK line.
 - **`tests/Schema/StaticSqlSchemaTest.php` checks SQL against the schema** by
   preparing every statically-known v3 statement on a real server — MySQL is
   the only thing that knows whether a column exists, so no SQL parser is

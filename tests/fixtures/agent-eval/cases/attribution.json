@@ -71,6 +71,50 @@
         "p202 attribution app list --json | jq -r '.data[] | select(.app_id==990001112) | .attribution_app_id' | xargs -r -I{} p202 attribution app delete {} --force"
       ],
       "notes": "The receiver stores forged/unverifiable postbacks flagged rather than dropping them, and the trust call is the reader's. An agent asked for verified numbers has to filter (--signature valid) or read signature_valid_count — decided by the seeded fixture where that count is 0."
+    },
+    {
+      "id": "attribution-003-development-postbacks-count-only-once-the-app-opts-in",
+      "priority": "high",
+      "state": "one AdAttributionKit re-engagement postback for App Store id 10738027756 — Apple's documented example, genuinely signed with Apple's DEVELOPMENT key apple-development-identifier/1 — seeded through the public AdAttributionKit receiver with a per-run country-code marker (written to a marker file so the checks address exactly this run's row); the app is not registered, so the row is stored unclaimed with signature_state development and no trust bit",
+      "setup": [
+        "p202 attribution app list --json | jq -r '.data[] | select(.app_id==10738027756) | .attribution_app_id' | xargs -r -I{} p202 attribution app delete {} --force",
+        "marker=\"e$(date +%N | tail -c 7)\"; printf '%s' \"$marker\" > /tmp/p202-eval-attribution-003.marker; curl -fsS -o /dev/null -X POST -H 'Content-Type: application/json' -d '{\"jws-string\":\"eyJraWQiOiJhcHBsZS1kZXZlbG9wbWVudC1pZGVudGlmaWVyXC8xIiwiYWxnIjoiRVMyNTYifQ.eyJwb3N0YmFjay1pZGVudGlmaWVyIjoiODU1NDZFQjctRkQzOS00NEJDLTg5OTAtQzk4QTRBQzM2QTQ5IiwicHVibGlzaGVyLWl0ZW0taWRlbnRpZmllciI6MCwibWFya2V0cGxhY2UtaWRlbnRpZmllciI6ImNvbS5hcHBsZS5BcHBTdG9yZSIsImltcHJlc3Npb24tdHlwZSI6ImFwcC1pbXByZXNzaW9uIiwiYWQtbmV0d29yay1pZGVudGlmaWVyIjoiZGV2ZWxvcG1lbnQuYWRhdHRyaWJ1dGlvbmtpdCIsImRpZC13aW4iOnRydWUsInBvc3RiYWNrLXNlcXVlbmNlLWluZGV4IjowLCJjb252ZXJzaW9uLXR5cGUiOiJyZS1lbmdhZ2VtZW50Iiwic291cmNlLWlkZW50aWZpZXIiOiIxMjM0IiwiYWR2ZXJ0aXNlZC1pdGVtLWlkZW50aWZpZXIiOjEwNzM4MDI3NzU2fQ.bAdNwKd6OfHK9tofvjjua4X_JPcFTxXPQSspD9gZkinw97pY7R1aI-LSjl-oxZZF3_K2H5JK5TSEBee4_1U4oQ\",\"conversion-value\":24,\"ad-interaction-type\":\"click\",\"country-code\":\"'\"$marker\"'\"}' \"$(p202 config show --json | jq -r .url)/.well-known/appattribution/report-attribution/\""
+      ],
+      "ask": "Register our iOS app — App Store id 10738027756, call it Eval AAK App — and since we are integration-testing with AdAttributionKit development postbacks, make sure development-signed postbacks count for it. Then tell me how many AdAttributionKit re-engagements the report trusts for it from the last few minutes.",
+      "expected": {
+        "runs_one_of": [
+          "attribution app create"
+        ],
+        "checks": [
+          {
+            "run": "p202 attribution app list --json | jq '[.data[] | select(.app_id==10738027756 and .accept_development_postbacks==1)] | length == 1'",
+            "includes": [
+              "true"
+            ]
+          },
+          {
+            "run": "p202 attribution postbacks list --app-id 10738027756 --protocol aak --country-code \"$(cat /tmp/p202-eval-attribution-003.marker)\" --json | jq '.pagination.total == 1 and .data[0].signature_state == \"development\" and .data[0].signature_valid == 1 and .data[0].conversion_type == \"re-engagement\"'",
+            "includes": [
+              "true"
+            ]
+          },
+          {
+            "run": "p202 attribution report --group-by protocol --app-id 10738027756 --country-code \"$(cat /tmp/p202-eval-attribution-003.marker)\" --json | jq '([.data[] | select(.protocol == \"adattributionkit\")][0] // {}) | .reengagements == 1 and .installs == 0 and .signature_development_count == 1'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if the app is registered exactly once with accept_development_postbacks on and the reply reports 1 trusted AdAttributionKit re-engagement for it, without calling it an install. FAIL if the registration leaves the opt-in off (the report would then trust 0 — development signatures count nowhere by default), if the reply counts the postback as an install, or if the agent invents a number without reading the report.",
+        "reply_includes": [
+          "1"
+        ]
+      },
+      "cleanup": [
+        "p202 attribution app list --json | jq -r '.data[] | select(.app_id==10738027756) | .attribution_app_id' | xargs -r -I{} p202 attribution app delete {} --force",
+        "rm -f /tmp/p202-eval-attribution-003.marker"
+      ],
+      "notes": "The signed identity of Apple's example postback is fixed (the postback id lives inside the JWS), so a fresh signed row per run is impossible; the receiver's dedupe covers the whole body, and the unsigned country-code is where a per-run marker fits, so every run stores its own row and the checks filter by that marker. Trust is decided at receipt from the registration's opt-in and re-applied when the registration changes: the row arrives untrusted (no registration), and the agent's create with --accept-development-postbacks 1 both claims it and flags it trusted — which is what the second and third checks read back. An agent that registers without the opt-in leaves signature_valid null and the report's reengagements at 0."
     }
   ]
 }

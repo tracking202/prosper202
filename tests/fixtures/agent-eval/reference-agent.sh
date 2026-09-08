@@ -111,6 +111,21 @@ case "$ask" in
             printf 'I could not find a campaign matching that name in `p202 campaign list`, so I have nothing to delete. Nothing was changed.\n'
         fi
         ;;
+    *[Rr]egister*"App Store id"*AdAttributionKit*)
+        # Integration testing with AdAttributionKit: development-signed
+        # postbacks count nowhere until the registration opts in, so the
+        # create carries the opt-in, and the answer is read back from the
+        # report the case checks — the trusted re-engagements for the app.
+        app=$(printf '%s' "$ask" | grep -oE 'App Store id [0-9]+' | awk '{print $4}')
+        name=$(printf '%s' "$ask" | sed -n 's/.*call it \(.*\) — and since.*/\1/p')
+        [ -n "$name" ] || name="Eval AAK App"
+        p202 attribution app create --app-id "$app" --app-name "$name" --accept-development-postbacks 1 --json >/dev/null
+        since=$(( $(date +%s) - 240 ))
+        report=$(p202 attribution report --group-by protocol --app-id "$app" --time-from "$since" --json)
+        reengagements=$(printf '%s' "$report" | jq -r '([.data[] | select(.protocol == "adattributionkit")][0] // {}) | .reengagements // 0')
+        printf 'Registered App Store id %s as "%s" with accept_development_postbacks on, so postbacks signed with Apple'"'"'s AdAttributionKit development keys are trusted for this app while you integration-test (turn it off again before trusting production numbers). The report trusts %s AdAttributionKit re-engagement(s) for it from the last few minutes, per `p202 attribution report --group-by protocol --time-from`; re-engagements are counted separately from installs.\n' \
+            "$app" "$name" "$reengagements"
+        ;;
     *[Rr]egister*"App Store id"*)
         # Registering the advertised app is what claims its stored postbacks,
         # so the count is only knowable after the create, from a real

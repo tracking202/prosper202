@@ -1,39 +1,57 @@
-# Attribution postbacks (SKAdNetwork)
+# Attribution postbacks (SKAdNetwork and AdAttributionKit)
 
-Prosper202 can act as the measurement endpoint for Apple's SKAdNetwork — the
-privacy-preserving install attribution framework for iOS app campaigns. iOS
-devices send signed install-validation postbacks directly to a URL the
-advertised app (or an ad network) designates. Point that URL at your
-Prosper202 install and it will receive the postbacks, verify Apple's ECDSA
-signature on each one, store them, decode conversion values into named events
-and revenue, and report on the results — the server side of what a mobile
-measurement partner (MMP) does.
+Prosper202 can act as the measurement endpoint for Apple's two
+privacy-preserving attribution frameworks for iOS app campaigns:
+**SKAdNetwork** (install attribution for App Store campaigns) and
+**AdAttributionKit** (its successor, iOS 17.4+, which also covers alternative
+app marketplaces and re-engagement). iOS devices send signed postbacks
+directly to URLs the advertised app (or an ad network) designates. Point
+them at your Prosper202 install and it will receive the postbacks, verify
+Apple's signature on each one — ECDSA over SKAdNetwork's per-version field
+composition; an ES256 JWS for AdAttributionKit — store them in one table
+with a `protocol` column, decode conversion values into named events and
+revenue through one set of rules, and report on the results across both
+frameworks — the server side of what a mobile measurement partner (MMP)
+does.
 
-Supported postback versions: 2.1, 2.2, 3.0, and 4.0 are verified against
-Apple's published P-256 key. Retired versions (1.0, 2.0) and versions newer
-than 4.0 are stored but flagged `unverifiable`.
+Supported SKAdNetwork postback versions: 2.1, 2.2, 3.0, and 4.0 are verified
+against Apple's published P-256 key. Retired versions (1.0, 2.0) and
+versions newer than 4.0 are stored but flagged `unverifiable`.
+AdAttributionKit postbacks are unversioned; their JWS is verified against
+the key its `kid` names — Apple's production key (the same key SKAdNetwork
+uses) or one of Apple's two development keys, which store as `development`
+(see [AdAttributionKit](#adattributionkit) below).
 
 ## Setup
 
-1. **Confirm the endpoint is reachable.** Postbacks arrive at
+1. **Confirm the endpoints are reachable.** Postbacks arrive at
    `https://your-domain.com/.well-known/skadnetwork/report-attribution/`
-   (shipped as a real directory — no rewrite rules needed, and the bundled
-   Apache/nginx configs already keep `/.well-known/` servable). A GET to that
-   URL returns `{"data":{"status":"ready",...}}`. The URL must be served over
-   HTTPS on port 443 for devices to deliver to it.
+   (SKAdNetwork) and
+   `https://your-domain.com/.well-known/appattribution/report-attribution/`
+   (AdAttributionKit) — shipped as real directories, so no rewrite rules are
+   needed and the bundled Apache/nginx configs already keep `/.well-known/`
+   servable. A GET to either URL returns
+   `{"data":{"status":"ready","protocol":...}}`. The URLs must be served
+   over HTTPS on port 443 for devices to deliver to them.
 
-2. **Point the app at it.** The app developer adds one key to the app's
-   `Info.plist`:
+2. **Point the app at them.** The app developer adds the endpoint keys to
+   the app's `Info.plist` — the SKAdNetwork one, the AdAttributionKit one
+   (iOS 17.4+), and, to receive copies of AdAttributionKit re-engagement
+   postbacks (iOS 18+), the Boolean opt-in:
 
    ```xml
    <key>NSAdvertisingAttributionReportEndpoint</key>
    <string>https://your-domain.com</string>
+   <key>AttributionCopyEndpoint</key>
+   <string>https://your-domain.com</string>
+   <key>EligibleForAdAttributionKitReengagementPostbackCopies</key>
+   <true/>
    ```
 
-   Devices append `/.well-known/skadnetwork/report-attribution/` themselves.
-   With this in place the developer receives a copy of every *winning*
-   postback for the app. (Registered ad networks can likewise use the same
-   URL as their postback endpoint and will also receive non-winning
+   Devices append the well-known paths themselves. With this in place the
+   developer receives a copy of every *winning* postback for the app from
+   both frameworks. (Registered ad networks can likewise use the same URLs
+   as their postback endpoints and will also receive non-winning
    postbacks.)
 
 3. **Register the app** so its postbacks belong to your reporting
@@ -45,15 +63,17 @@ than 4.0 are stored but flagged `unverifiable`.
    (`POST /attribution/conversion-values`). The app itself chooses what the 6-bit
    fine value (0–63) and the coarse value (`low`/`medium`/`high`) mean when
    it calls SKAdNetwork's `updatePostbackConversionValue(_:coarseValue:lockWindow:)`
-   — Prosper202 cannot set conversion values for the app, it decodes what
-   the app encoded. Keep the two sides in sync or reports will decode to the
-   wrong events.
+   or AdAttributionKit's `Postback.updateConversionValue` (the same value
+   space in both) — Prosper202 cannot set conversion values for the app, it
+   decodes what the app encoded. Keep the two sides in sync or reports will
+   decode to the wrong events.
 
 ## Endpoints
 
 | Method | Path | Description |
 | ------ | ---- | ----------- |
-| `POST` | `/.well-known/skadnetwork/report-attribution/` | Public postback receiver (no auth — devices POST here) |
+| `POST` | `/.well-known/skadnetwork/report-attribution/` | Public SKAdNetwork postback receiver (no auth — devices POST here) |
+| `POST` | `/.well-known/appattribution/report-attribution/` | Public AdAttributionKit postback-copy receiver (no auth — devices POST here) |
 | `GET` | `/attribution/postbacks` | List received postbacks (filters below, paginated) |
 | `GET` | `/attribution/postbacks/{id}` | One postback, including its attribution signature |
 | `GET` | `/attribution/report` | Aggregate report with conversion-value decoding |
@@ -68,7 +88,8 @@ All `/attribution` API routes require the `attribution` scope area (`attribution
 over the submitted payload without storing anything). App and
 conversion-value writes support `?staged=1` proposals and `?dry_run=1`
 delete previews like the rest of the operator surface. `GET /capabilities`
-reports `features.attribution_postbacks: true` once the server has this feature.
+lists the protocols the server receives in `features.attribution_postbacks`
+(`["skadnetwork", "adattributionkit"]`).
 
 ## The receiver
 
@@ -81,7 +102,8 @@ plausible postback silently:
 - Valid postbacks are stored and answered `200` — including replays (devices
   retry up to nine times over several days when they don't get a `200`;
   replays answer `{"duplicate": true}` and store nothing new). Deduplication
-  covers the `transaction-id` namespaced by ad network, the
+  covers the postback id (SKAdNetwork `transaction-id`, AdAttributionKit
+  `postback-identifier`) namespaced by protocol and ad network, the
   postback-sequence-index and did-win legs, **and the exact request body**:
   only a true retry (the device resending the identical postback) dedupes.
   A crafted postback naming a real transaction with different contents
@@ -112,6 +134,77 @@ the conversion values (fine or coarse) in any SKAN version, so even a
 signature-valid postback's conversion value is not cryptographically bound —
 this is a property of SKAdNetwork itself, worth knowing when you weigh the
 numbers.
+
+## AdAttributionKit
+
+An AdAttributionKit postback copy is a JSON envelope:
+
+```json
+{
+  "jws-string": "<header>.<payload>.<signature>",
+  "conversion-value": 24,
+  "coarse-conversion-value": "high",
+  "ad-interaction-type": "click",
+  "country-code": "US"
+}
+```
+
+Only the `jws-string` is signed. Its payload carries the attribution:
+`postback-identifier`, `ad-network-identifier`, `advertised-item-identifier`
+(the App Store id), `impression-type`, `did-win`, `postback-sequence-index`
+(0–2), `conversion-type` (`download`, `redownload`, or `re-engagement`),
+`source-identifier`, and the optional `publisher-item-identifier` and
+`marketplace-identifier`. The four fields beside it — the conversion values,
+the interaction type and the country — are unsigned, exactly as SKAdNetwork
+never signed conversion values either.
+
+The receiver decodes the JWS (three unpadded base64url segments; the header
+must name `alg` and `kid`), validates the payload under Apple's field names
+(the tier-withheld fields are optional, everything else required), and
+verifies the signature over the received segments with the key `kid` names.
+`ES256` is required whatever the header claims — the header never chooses
+the algorithm — and the key is chosen by `kid` alone:
+
+| `kid` | Key | Stored `signature_state` |
+| ----- | --- | ------------------------ |
+| `apple-cas-identifier/0` | Apple's production key (the SKAdNetwork key) | `valid` |
+| `apple-development-identifier/0`, `apple-development-identifier/1` | Apple's development keys (end-to-end test flows; postbacks generated from Developer settings) | `development` |
+| anything else | unknown | `unverifiable` |
+
+A signature that does not check out, or a header naming another algorithm,
+stores `invalid`. Malformed JWS strings and payloads that are not postbacks
+are `400`s with the offending field named.
+
+**Development signatures are untrusted by default.** "Verified against
+Apple's development key" is a true statement that must not count as
+verified: any phone in Developer Mode can mint a development-signed
+postback naming any App Store id. Such rows store with `signature_state =
+development` and no trust bit (`signature_valid` null — the same class as
+unverifiable rows, pruned after 90 days), so they count nowhere. Turn on
+`accept_development_postbacks` on the app registration while
+integration-testing your own build, and the app's development rows —
+those already stored and those still to arrive — become trusted
+(`signature_valid = 1`); turn it off again and they stop being trusted.
+The flag is a live policy, not a receipt-time snapshot. `signature=development`
+lists such rows whatever their trust bit, and the report's
+`signature_development_count` counts them per group.
+
+Normalization onto the shared row: `postback-identifier` → `transaction_id`,
+`advertised-item-identifier` → `app_id`, `publisher-item-identifier` →
+`source_app_id`, `marketplace-identifier` → `marketplace_id`, `conversion-type`
+→ `conversion_type` and `ad-interaction-type` → `ad_interaction_type`
+verbatim, the JWS header's `kid` → `key_id`, and the whole `jws-string` →
+`attribution_signature`. SKAdNetwork rows carry the same generic dimensions
+derived from their own flags (`redownload` → `conversion_type`,
+`fidelity-type` → `ad_interaction_type`), so one report reads both.
+
+**Re-engagement** is the one signal SKAdNetwork never had: an
+AdAttributionKit postback with `conversion-type: re-engagement` reports a
+conversion by someone who already had the app. It is neither an install nor
+a redownload — the report counts it as `reengagements` — and it carries its
+own conversion value, which the app sets through
+`Postback.updateConversionValue` with `conversionTypes: [.reengagement]`
+(iOS 18+; the P202Attribution helper's `logEvent(_:conversionTypes:)`).
 
 ## Postback fields
 
@@ -169,11 +262,18 @@ limit cannot read as "this account has one postback". A number outside the
 allowed range still clamps (`limit` to 1–500).
 
 `GET /attribution/postbacks` accepts `limit`, `offset`, `time_from`/`time_to`
-(unix, on `received_at`), and equality filters: `app_id`, `ad_network_id`,
+(unix, on `received_at`), and equality filters: `protocol` (`skadnetwork` /
+`adattributionkit`; the shorthands `skan` / `aak` are accepted),
+`conversion_type` (`download` / `redownload` / `re-engagement`),
+`ad_interaction_type` (`view` / `click`), `app_id`, `ad_network_id`,
 `version`, `transaction_id`, `country_code`, `source_identifier`,
 `campaign_id`, `fidelity_type`, `postback_sequence_index`, `did_win`,
-`redownload`, `coarse_conversion_value`, and
-`signature` (`valid` / `invalid` / `unverifiable`).
+`redownload`, `coarse_conversion_value`, and `signature`. The `signature`
+values `valid` / `invalid` / `unverifiable` select on the **trust bit** the
+report keys on (`signature_valid` 1 / 0 / null — so `valid` is exactly
+what the default report counts, opted-in development rows included);
+`development` selects rows verified against a development key whatever
+their trust bit. Unknown values are `422`s naming the choices.
 
 ## Apps
 
@@ -257,36 +357,52 @@ rule changes, `ETag` = `schema_version`) and is rate-limited per source IP
 mirrors decoding — app-specific rules beat `app_id = 0` defaults — and when
 several values decode to one event, the highest is served, so encode and
 decode stay two views of one rule set. `features.attribution_postbacks` in `/capabilities`
-advertises the whole SKAN surface, this endpoint included.
+advertises the whole postback surface, this endpoint included.
 
 The repository ships **P202Attribution** ([`sdk/ios-attribution/`](../../sdk/ios-attribution/)),
 a small dependency-free Swift helper that fetches and caches this document
 (offline-safe, ETag-aware, token-keyed cache) and maps
 `P202Attribution.shared.logEvent("purchase")` to the right
-`SKAdNetwork.updatePostbackConversionValue` call — unmapped events are
-deliberate no-ops. Verify what devices will receive with
-`p202 attribution schema <app-registration-id>`, which performs the same request
-the helper makes. The `NSAdvertisingAttributionReportEndpoint` line in
-`Info.plist` still ships with the app — iOS does not allow setting it at
-runtime.
+`SKAdNetwork.updatePostbackConversionValue` and AdAttributionKit
+`Postback.updateConversionValue` calls — unmapped events are deliberate
+no-ops, and `logEvent(_:conversionTypes:)` scopes an update to
+AdAttributionKit's re-engagement postback. Verify what devices will receive
+with `p202 attribution schema <app-registration-id>`, which performs the
+same request the helper makes. The `NSAdvertisingAttributionReportEndpoint`
+and `AttributionCopyEndpoint` lines in `Info.plist` still ship with the app
+— iOS does not allow setting them at runtime.
 
 ## Report
 
-`GET /attribution/report?group_by=day|app|ad-network|source|country|version` with
-the same filters as the postback list, plus `limit` (max groups, default
-100). Days are UTC, listed oldest first. Each group reports:
+`GET /attribution/report?group_by=day|app|ad-network|source|country|version|protocol|conversion-type`
+with the same filters as the postback list, plus `limit` (max groups,
+default 100). Days are UTC, listed oldest first. Each group reports:
 
-- `postbacks`, `losses` (`did-win: false`), `installs` (winning
-  first-window postbacks excluding redownloads; postbacks without `did-win`
-  — SKAN ≤ 2.2 winners — count as wins), `redownloads`
+- `postbacks` (all rows), `losses` (`did-win: false`), `installs` (winning
+  first-window `download` postbacks; postbacks without `did-win` — SKAN ≤
+  2.2 winners — count as wins), `redownloads`, and `reengagements`
+  (AdAttributionKit only)
 - `signature_valid_count` / `signature_invalid_count` /
-  `signature_unverified_count`
-- Conversion-value decoding: `measurable` (winning postbacks carrying a
-  value, across all three conversion windows — so it can exceed `installs`,
-  which counts first-window postbacks only), `decoded`, `undecoded` (value
-  present, no matching rule),
+  `signature_unverified_count` (rows with no trust bit, development rows
+  without the opt-in included) / `signature_development_count` (rows
+  verified against a development key, whatever their trust bit)
+- Conversion-value decoding: `measurable` (unique winning postbacks
+  carrying a value, across all three conversion windows — so it can exceed
+  `installs`, which counts first-window postbacks only), `decoded`,
+  `undecoded` (value present, no matching rule),
   `null_conversion_values` (value withheld by Apple's privacy tier),
   `decoded_revenue`, and `events` (per-event counts and revenue)
+
+**Every metric counts unique postbacks** — protocol, ad network, postback
+id and conversion window — and the decode reads each unique postback's
+first-received copy. The receiver deliberately stores a replay of a signed
+postback whose *unsigned* fields differ (a different conversion value on
+the same signed postback) as its own row, so that a forgery can never block
+the genuine copy; the report is where such a replay collapses to one.
+Without that, whoever holds one genuine postback could resend it with new
+conversion values and mint installs and revenue. `postbacks` alone counts
+rows, so a group whose `postbacks` exceeds its unique postbacks is showing
+you replays.
 
 **Trust default:** the receiver is public, so unless you pass an explicit
 `signature` filter, every headline metric — installs, losses, redownloads,
@@ -304,10 +420,14 @@ treating the visible groups as the whole story.
 ## Verifying a postback by hand
 
 `POST /attribution/verify` with a postback JSON object as the body returns the
-signature verdict (`valid` / `invalid` / `unverifiable`) and
-`signed_message_base64` — the exact byte string Apple signed (parameters
-joined with U+2063), for diffing against another implementation. Nothing is
-stored; the production Apple key is always used.
+signature verdict. The protocol is detected from the body: a `jws-string`
+key is verified as AdAttributionKit — the JWS alone is enough — and the
+response carries `protocol`, the verdict (`valid` / `invalid` /
+`unverifiable` / `development`), the `key_id`, the decoded `header` and
+`payload`, and the key ids the server knows; anything else is verified as
+SKAdNetwork, returning `signed_message_base64` — the exact byte string Apple
+signed (parameters joined with U+2063), for diffing against another
+implementation. Nothing is stored; Apple's published keys are always used.
 
 ## Example
 
@@ -330,6 +450,17 @@ curl -X POST https://your-domain.com/.well-known/skadnetwork/report-attribution/
     "attribution-signature": "MEUCIQ..."
   }'
 
+# What a device delivers for AdAttributionKit (a postback copy; the signed
+# attribution is inside the JWS, the four other fields are unsigned):
+curl -X POST https://your-domain.com/.well-known/appattribution/report-attribution/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jws-string": "eyJraWQiOiJhcHBsZS1jYXMtaWRlbnRpZmllclwvMCIsImFsZyI6IkVTMjU2In0.eyJwb3N0YmFjay1pZGVudGlmaWVyIjoi...",
+    "conversion-value": 24,
+    "ad-interaction-type": "click",
+    "country-code": "US"
+  }'
+
 # Register the app and a conversion-value schema, then report:
 curl -X POST https://your-domain.com/api/v3/attribution/apps \
   -H "Authorization: Bearer YOUR_API_KEY" -H "Content-Type: application/json" \
@@ -343,13 +474,14 @@ curl "https://your-domain.com/api/v3/attribution/report?group_by=day" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
-## What SKAN can and cannot tell you
+## What these postbacks can and cannot tell you
 
-SKAN is aggregate, delayed, and anonymous by design. Expect and plan for:
+Both frameworks are aggregate, delayed, and anonymous by design. Expect and
+plan for:
 
 - **No click-level join.** Postbacks carry no device id, click id, or
-  Prosper202 subid — SKAN installs cannot be matched to individual clicks
-  or conversions elsewhere in Prosper202. Campaign-level comparison happens
+  Prosper202 subid — installs cannot be matched to individual clicks or
+  conversions elsewhere in Prosper202. Campaign-level comparison happens
   through the ad network's `source-identifier` (or `campaign-id`).
 - **Delays are intentional.** The first postback arrives 24–48+ hours after
   install; SKAN 4's second and third windows arrive days to weeks later.
@@ -363,6 +495,9 @@ SKAN is aggregate, delayed, and anonymous by design. Expect and plan for:
   drift. An app that hardcodes its own encoding instead must be kept in
   sync with `/attribution/conversion-values` by hand, or decoded revenue silently
   skews.
-- **AdAttributionKit** (Apple's SKAN successor with JWS-signed postbacks
-  and re-engagement support) uses a different postback format and is not
-  yet supported; SKAN postbacks continue to flow from current iOS versions.
+- **Both frameworks flow side by side** on current iOS versions, and the
+  system picks one winner per conversion across them — so a device reports
+  a given install through SKAdNetwork *or* AdAttributionKit, never both.
+  The report tells them apart by `protocol`; only AdAttributionKit rows can
+  carry `conversion_type: re-engagement`, and only for apps that ship the
+  re-engagement `Info.plist` key.
