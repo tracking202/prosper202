@@ -248,12 +248,20 @@ run_schema() {
 }
 
 run_patterns() {
-    # check-code-patterns.sh inspects only ADDED/MODIFIED lines and exits 0
-    # immediately when no tracked .php file has changed. Reporting that as
-    # PASS would claim a verification that never looked at anything, which is
-    # the conflation this whole script exists to prevent.
-    if [ -z "$(git diff --name-only HEAD -- '*.php' 2>/dev/null)" ]; then
-        COULD_NOT_RUN_REASON="no modified tracked .php files, so no lines were examined"
+    # check-code-patterns.sh exits 0 immediately when it has no PHP to look
+    # at. Reporting that as PASS would claim a verification that never looked
+    # at anything, which is the conflation this whole script exists to
+    # prevent. The selection here must match the hook's own, tracked changes
+    # plus untracked files, or this guard skips a tier the hook would have
+    # run: the first version of this guard did exactly that, and a reviewer
+    # caught it two commits after the same bug was fixed in the hook.
+    local php_changes
+    php_changes=$(
+        git diff --name-only HEAD -- '*.php' 2>/dev/null
+        git ls-files --others --exclude-standard -- '*.php' 2>/dev/null
+    )
+    if [ -z "$php_changes" ]; then
+        COULD_NOT_RUN_REASON="no new or modified .php files, so no lines were examined"
         return $TIER_COULD_NOT_RUN
     fi
     scripts/check-code-patterns.sh

@@ -129,5 +129,47 @@ assert_script "uses PHPStan exit status" 'phpstan_status' yes
 assert_script "pins the committed config (baseline)" '\-c phpstan\.neon\.dist' yes
 assert_script "selects untracked files too" 'ls-files --others --exclude-standard' yes
 
+# ── The hook driven through verify.sh's patterns tier ──
+#
+# verify.sh guards the tier with its own file selection so that "nothing to
+# examine" reports SKIP rather than a vacuous PASS. That selection has to
+# match the hook's, or the ladder skips a tier the hook would have run. It
+# did, once: the guard listed tracked changes only, two commits after the
+# hook was taught to see untracked files.
+VERIFY="$HERE/../../.claude/skills/p202-verify/scripts/verify.sh"
+if [ -f "$VERIFY" ]; then
+    mkdir -p scripts
+    cp "$SCRIPT" scripts/check-code-patterns.sh
+    chmod +x scripts/check-code-patterns.sh
+    cp "$VERIFY" ./verify.sh
+    chmod +x ./verify.sh
+
+    expect_tier() { # name want_verdict
+        local name="$1" want="$2" got
+        got=$(./verify.sh --tier patterns 2>/dev/null | awk '/^  patterns / {print $2}')
+        if [ "$got" = "$want" ]; then
+            printf '  ok    %-46s patterns=%s\n' "$name" "$got"
+            pass=$((pass + 1))
+        else
+            printf '  FAIL  %-46s patterns=%s (wanted %s)\n' "$name" "$got" "$want"
+            fail=$((fail + 1))
+        fi
+    }
+
+    expect_tier "ladder: clean tree skips with a reason" SKIP
+
+    printf '<?php\nfunction fresh($stmt) {\n    $stmt->execute();\n}\n' > src/brand_new.php
+    expect_tier "ladder: untracked violation must FAIL, not SKIP" FAIL
+    rm -f src/brand_new.php
+
+    printf '<?php\nfunction ok() {\n    return 1;\n}\n' > src/brand_new_ok.php
+    expect_tier "ladder: untracked clean file must PASS, not SKIP" PASS
+    rm -f src/brand_new_ok.php
+
+    rm -rf scripts ./verify.sh
+else
+    printf '  skip  verify.sh not found at %s\n' "$VERIFY"
+fi
+
 echo "  ---- $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
