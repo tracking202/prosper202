@@ -323,7 +323,10 @@ Two obligations that are easy to skip:
 - **A regression test is not a substitute for either.** It proves this bug is
   gone; it does nothing for the next instance of the same shape elsewhere.
   Grep for every analogous site (error pattern #5) and decide whether a check
-  can cover them all.
+  can cover them all. The `p202-sweep` skill in `.claude/skills/p202-sweep/`
+  is that sweep as a procedure: state the invariant as a predicate over one
+  site, fan it across the tree, settle the uncertain cases by executing rather
+  than reading, and land the result as a rule or structural test.
 - **Meet the bar for a new check before adding it** — clean against the whole
   tree first, then exercised against every shape and call form it claims to
   cover. A rule that fires on correct code gets disabled, and then the pattern
@@ -420,6 +423,11 @@ where a check quietly fails to check what it appears to.
 - Never report work as complete or merge-ready on the strength of tests that don't exercise the new path. State what was actually run and what could not be.
 
 ## Before committing
+- Run the verification ladder and report its scope report verbatim:
+  `.claude/skills/p202-verify/scripts/verify.sh --changed`. The skill at
+  `.claude/skills/p202-verify/` explains which tiers your change needs and how
+  to recover a tier on a partial `vendor/`. A tier it reports as `SKIP` did not
+  run; never fold a skip into a claim that tests pass.
 - Always perform a full deploy-quality code review of the staged changes before committing. Treat every commit as if it ships to production.
 - Walk each changed file individually (per the Review discipline above), tracing error paths and the failure modes in the "Error patterns to avoid" list.
 - Confirm the code lints/compiles and that any relevant tests pass. If tests or static analysis can't be run in the environment, say so explicitly rather than implying they passed.
