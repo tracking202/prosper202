@@ -280,6 +280,13 @@ Tests: 2, Assertions: 40, Failures: 1." no
         printf '<?php\nfunction bad() { return 1; }\n' > src/new_bad.php
         expect_phpcs "ratchet: a phpcs that cannot analyse is SKIP, not PASS" SKIP
         rm -rf src/new_bad.php vendor
+        ln -s "$(cd "$REAL_VENDOR" && pwd)" vendor
+        # A change that only deletes PHP lists files that no longer exist;
+        # examining none of them is not a pass.
+        git rm -q src/legacy_style.php
+        expect_phpcs "ratchet: a deletion-only change is SKIP, not PASS" SKIP
+        git reset -q --hard HEAD >/dev/null
+        rm -f vendor
     else
         printf '  skip  phpcs ratchet cases: no vendor/bin/phpcs at %s\n' "$REAL_VENDOR"
     fi
@@ -365,6 +372,9 @@ XML
         printf 'module p202harness\n\ngo 1.22\n' > go-cli/go.mod
         printf 'package main\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
         printf 'package main\n\nimport "testing"\n\nfunc TestOk(t *testing.T) {}\n' > go-cli/cmd/x/main_test.go
+        # Commit the module so the tiers have a committed baseline to judge
+        # the environment on, as the real go-cli does.
+        git add go-cli/go.mod && git commit -qm "go baseline"
         expect_go() { # name want_verdict [env...]
             local name="$1" want="$2"; shift 2
             local got
@@ -380,15 +390,30 @@ XML
         printf 'package main\n\nfunc   ugly( ) {\n}\n' > go-cli/cmd/x/ugly.go
         expect_go "go: an unformatted file is FAIL, as in CI" FAIL
         rm -f go-cli/cmd/x/ugly.go
-        # An empty module cache with no network fails while downloading the
-        # committed dependencies, before any repository code is compiled.
-        cp go-cli/go.mod "$REPO/go.mod.keep"
+        # The environment is judged on the COMMITTED module graph. A
+        # requirement the change adds also makes go try the proxy, and an
+        # earlier version of the precheck read that as "no network".
+        # The change adds a requirement AND imports it, so vet must resolve it
+        # (an unused requirement is never resolved under lazy loading and
+        # fails nothing, on CI either). The committed baseline loads fine, so
+        # this is the change's failure, not the environment's.
         printf 'module p202harness\n\ngo 1.22\n\nrequire example.com/not/in/cache_zz v1.0.0\n' > go-cli/go.mod
-        expect_go "go: dependencies that cannot be fetched are SKIP" SKIP GOPROXY=off GOFLAGS=-mod=mod
+        printf 'package main\n\nimport _ "example.com/not/in/cache_zz"\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
+        expect_go "go: a requirement the change adds and imports, unfetchable, is FAIL" FAIL GOPROXY=off
+        # Now commit that state so it IS the baseline: an empty cache with no
+        # network fails before any repository code is compiled.
+        git add go-cli/go.mod && git commit -qm "baseline requires an unfetchable module"
+        expect_go "go: committed dependencies that cannot be fetched are SKIP" SKIP GOPROXY=off
+        # gofmt needs neither cache nor network, so it still reports.
+        printf 'package main\n\nfunc   ugly( ) {\n}\n' > go-cli/cmd/x/ugly.go
+        expect_go "go: an unformatted file is FAIL even when dependencies are unavailable" FAIL GOPROXY=off
+        rm -f go-cli/cmd/x/ugly.go
+        git reset -q --hard HEAD~1 >/dev/null
+        printf 'package main\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
         # A go.mod the change broke is not "dependencies unavailable".
         printf 'module p202harness\n\ngo 1.22\n\nthis is not valid\n' > go-cli/go.mod
         expect_go "go: a malformed go.mod is FAIL, not an environment SKIP" FAIL
-        mv "$REPO/go.mod.keep" go-cli/go.mod
+        git checkout -q -- go-cli/go.mod
         eval "$(sed -n '/^host_go_toolchain_broken() {/,/^}/p' ./verify.sh)"
         # Read by the sourced host_go_toolchain_broken, which shellcheck cannot see.
         # shellcheck disable=SC2034
@@ -419,10 +444,11 @@ XML
             # silently inverted in a container.
             printf 'x' > "$REPO/notadir"
             expect_golangci "golangci: the same failure on a broken host is SKIP" SKIP GOCACHE="$REPO/notadir/cache"
-            cp go-cli/go.mod "$REPO/go.mod.keep"
             printf 'module p202harness\n\ngo 1.22\n\nrequire example.com/not/in/cache_zz v1.0.0\n' > go-cli/go.mod
-            expect_golangci "golangci: dependencies that cannot be fetched are SKIP" SKIP GOPROXY=off GOFLAGS=-mod=mod
-            mv "$REPO/go.mod.keep" go-cli/go.mod
+            expect_golangci "golangci: a requirement the change adds and cannot fetch is FAIL" FAIL GOPROXY=off
+            git add go-cli/go.mod && git commit -qm "baseline requires an unfetchable module"
+            expect_golangci "golangci: committed dependencies that cannot be fetched are SKIP" SKIP GOPROXY=off
+            git reset -q --hard HEAD~1 >/dev/null
             # A change-side fault whose output DOES match the trigger on this
             # version ("Running error", "context loading failed"): a
             # malformed go.mod. Only the probe can tell it from a broken host.

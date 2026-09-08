@@ -366,6 +366,13 @@ run_phpcs() {
             printf 'phpcs: %s: %s pre-existing errors / %s warnings, none added\n' "$f" "$we" "$ww"
         fi
     done <<< "$files"
+    # A change consisting only of deletions lists files that no longer
+    # exist; the loop above skips them and examines nothing. That is not a
+    # pass of anything.
+    if [ "$examined" -eq 0 ]; then
+        COULD_NOT_RUN_REASON="every changed .php file has been deleted, so nothing was examined"
+        return $TIER_COULD_NOT_RUN
+    fi
     printf 'phpcs: %s file(s) examined, %s made worse\n' "$examined" "$worse"
     [ "$worse" -eq 0 ]
 }
@@ -402,26 +409,36 @@ host_go_toolchain_broken() {
 # change. On a fresh or network-restricted checkout with an empty module
 # cache, `go vet` fails while downloading the existing dependencies, having
 # compiled nothing of this repository; that is the environment, not the code.
-# Only a fetch that the environment prevented counts. A go.mod the change
-# broke also fails `go list -m all`, and the first version of this check
-# reported that as SKIP: the harness case for a malformed go.mod caught it
-# within the hour. So the verdict needs a network or proxy signature in the
-# output, not just a non-zero exit; anything else is left for vet to fail on.
+# Only a fetch that the environment prevented counts, and the environment
+# is judged on the committed module graph, not the working tree's. Two
+# earlier versions got this wrong in the same direction: the first reported
+# any `go list -m all` failure as SKIP (a malformed go.mod is the change's
+# fault); the second required a network signature, which a requirement the
+# change itself added also produces, since go tries to fetch it. So the
+# probe loads HEAD's go.mod and go.sum in a temp dir. If the baseline graph
+# loads, the environment can fetch and whatever failed is the change; if the
+# baseline fails with a network signature, nothing of this repository could
+# have been compiled here.
 go_modules_unavailable() {
-    local out
-    out=$( cd go-cli && PATH="$(dirname "$GO_BIN"):$PATH" "$GO_BIN" list -m all 2>&1 >/dev/null ) && return 1
-    printf '%s' "$out" | grep -qE 'proxy\.golang\.org|GOPROXY|module lookup disabled|dial tcp|no such host|connection refused|i/o timeout|TLS handshake|Forbidden|Service Unavailable'
+    local dir out rc
+    ( cd go-cli && PATH="$(dirname "$GO_BIN"):$PATH" "$GO_BIN" list -m all >/dev/null 2>&1 ) && return 1
+    dir=$(mktemp -d) || return 1
+    git show HEAD:go-cli/go.mod > "$dir/go.mod" 2>/dev/null || { rm -rf "$dir"; return 1; }
+    git show HEAD:go-cli/go.sum > "$dir/go.sum" 2>/dev/null || true
+    out=$( cd "$dir" && PATH="$(dirname "$GO_BIN"):$PATH" "$GO_BIN" list -m all 2>&1 >/dev/null )
+    rc=$?
+    rm -rf "$dir"
+    [ $rc -ne 0 ] && printf '%s' "$out" | grep -qE 'proxy\.golang\.org|GOPROXY|module lookup disabled|dial tcp|no such host|connection refused|i/o timeout|TLS handshake|Forbidden|Service Unavailable'
 }
 
 run_go() {
     local out rc godir gofmt_bin unformatted
     godir=$(dirname "$GO_BIN")
-    if go_modules_unavailable; then
-        COULD_NOT_RUN_REASON="the committed Go module graph could not be loaded (empty module cache with no network or proxy?); nothing of this repository was compiled"
-        return $TIER_COULD_NOT_RUN
-    fi
     # CI's first gate (.github/workflows/go-cli.yml): any file gofmt would
-    # reformat fails the job before vet or test run.
+    # reformat fails the job before vet or test run. It needs no module
+    # cache and no network, so it runs before the availability check: a
+    # tier that cannot fetch dependencies can still report a code failure
+    # it is able to see.
     gofmt_bin="$("$GO_BIN" env GOROOT 2>/dev/null)/bin/gofmt"
     if [ -x "$gofmt_bin" ]; then
         unformatted=$( cd go-cli && "$gofmt_bin" -l . 2>/dev/null )
@@ -430,6 +447,10 @@ run_go() {
             FAIL_NOTE="gofmt -l lists $(printf '%s\n' "$unformatted" | grep -c .) file(s); CI's Go workflow fails on this before vet or test"
             return 1
         fi
+    fi
+    if go_modules_unavailable; then
+        COULD_NOT_RUN_REASON="the committed Go module graph could not be loaded (empty module cache with no network or proxy?); nothing of this repository was compiled"
+        return $TIER_COULD_NOT_RUN
     fi
     out=$( cd go-cli && PATH="$godir:$PATH" "$GO_BIN" vet ./... 2>&1 \
            && PATH="$godir:$PATH" "$GO_BIN" test ./... 2>&1 )
