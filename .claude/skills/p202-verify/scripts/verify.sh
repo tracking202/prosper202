@@ -652,15 +652,26 @@ run_go() {
     # see. The previous commit put the switch first and moved this gate
     # back behind a fetch-dependent SKIP, which a reviewer caught.
     gofmt_bin="$("$GO_BIN" env GOROOT 2>/dev/null)/bin/gofmt"
-    local gofmt_rc deferred_parse=""
+    local gofmt_rc gofmt_err errf deferred_parse=""
     if [ -x "$gofmt_bin" ]; then
-        # stderr kept and exit status checked: a file gofmt cannot parse
-        # produces a diagnostic on stderr, nothing on stdout, and exit 2. The
-        # first version discarded both and walked on to the module check,
-        # which on a machine that cannot fetch reported the whole tier SKIP
-        # for a syntax error. CI rejects that file at the same step.
-        unformatted=$( cd go-cli && "$gofmt_bin" -l . 2>&1 )
+        # stdout and stderr kept apart, exit status checked. gofmt -l lists
+        # files it would reformat on stdout (a definite, version-independent
+        # failure) and prints parse diagnostics on stderr with exit 2 (which
+        # may be ambiguous, see below). The first version discarded both and
+        # walked on; the second merged them, so an unformatted file next to
+        # an unparsable one was deferred with it and could end as SKIP.
+        if ! errf=$(mktemp); then
+            COULD_NOT_RUN_REASON="mktemp failed; gofmt's diagnostics could not be captured"
+            return $TIER_COULD_NOT_RUN
+        fi
+        unformatted=$( cd go-cli && "$gofmt_bin" -l . 2>"$errf" )
         gofmt_rc=$?
+        gofmt_err=$(cat "$errf"); rm -f "$errf"
+        if [ -n "$unformatted" ]; then
+            printf 'gofmt would reformat:\n%s\n' "$unformatted"
+            FAIL_NOTE="gofmt -l lists $(printf '%s\n' "$unformatted" | grep -c .) file(s); CI's Go workflow fails on this before vet or test"
+            return 1
+        fi
         if [ $gofmt_rc -ne 0 ]; then
             # A parse failure is only a verdict when the local parser accepts
             # at least what CI's does, which is the case when the local Go is
@@ -670,15 +681,11 @@ run_go() {
             # gofmt asked. A reviewer found this after the previous round
             # had, correctly, moved the gate ahead of the toolchain switch.
             if go_local_is_at_least_ci; then
-                printf 'gofmt failed:\n%s\n' "$unformatted"
+                printf 'gofmt failed:\n%s\n' "$gofmt_err"
                 FAIL_NOTE="gofmt exited $gofmt_rc, which means a file it could not parse; CI's Go workflow fails on this before vet or test"
                 return 1
             fi
-            deferred_parse="$unformatted"
-        elif [ -n "$unformatted" ]; then
-            printf 'gofmt would reformat:\n%s\n' "$unformatted"
-            FAIL_NOTE="gofmt -l lists $(printf '%s\n' "$unformatted" | grep -c .) file(s); CI's Go workflow fails on this before vet or test"
-            return 1
+            deferred_parse="$gofmt_err"
         fi
     fi
     if ! use_ci_go_toolchain; then
@@ -693,6 +700,7 @@ run_go() {
         unformatted=$( cd go-cli && "$gofmt_bin" -l . 2>&1 )
         gofmt_rc=$?
         if [ $gofmt_rc -ne 0 ] || [ -n "$unformatted" ]; then
+            # Merged is fine here: any output from CI's own gofmt is a verdict.
             printf 'gofmt (CI toolchain %s):\n%s\n' "${GOTOOLCHAIN:-}" "$unformatted"
             FAIL_NOTE="gofmt under CI's ${GOTOOLCHAIN:-toolchain} rejects a file the local gofmt also rejected; CI's Go workflow fails on this before vet or test"
             unset GOTOOLCHAIN

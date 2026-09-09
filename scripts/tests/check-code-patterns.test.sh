@@ -566,6 +566,11 @@ XML
         # indistinguishable: SKIP, not FAIL, and not PASS.
         printf "          go-version: '1.99'\n" > .github/workflows/go-cli.yml
         expect_go "go: a syntax error with CI on a newer, unfetchable Go is SKIP" SKIP
+        # ...but an unformatted file next to it is a definite,
+        # version-independent failure and must not be deferred with it.
+        printf 'package main\n\nfunc   ugly( ) {\n}\n' > go-cli/cmd/x/ugly.go
+        expect_go "go: an unformatted file beside a deferred parse error is still FAIL" FAIL
+        rm -f go-cli/cmd/x/ugly.go
         rm -f go-cli/cmd/x/broken.go
         printf "          go-version: '1.1'\n" > .github/workflows/go-cli.yml
         # A real other minor: CI's toolchain is fetched and the tier runs
