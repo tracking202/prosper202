@@ -398,6 +398,67 @@ final class AttributionReportIntegrationTest extends TestCase
         );
     }
 
+    /**
+     * The sparse tenant is the case the window optimisation got wrong: with
+     * fewer populated days than the page holds, every day outside the bound
+     * was dropped and the report simply returned less. Six populated days
+     * spread over 700 is the shape that reproduced it (it returned two).
+     */
+    public function testASparseTenantStillGetsEveryPopulatedDay(): void
+    {
+        // Registers the app whose id these postbacks name, so the receiver
+        // claims them to the owner the report reads for. Its own rows all
+        // land on the current day, which is the first offset below.
+        $this->seed();
+
+        $skan = new PostbackReceiver(self::$db, new SkadnetworkProtocol(new PostbackVerifier()));
+        $offsets = [0, 100, 250, 400, 550, 699];
+        $expected = [];
+        foreach ($offsets as $i => $daysAgo) {
+            $at = self::receivedAt(0) - $daysAgo * 86400;
+            $this->assertSame(
+                200,
+                $skan->receive($this->skanPostback('tx-sparse-' . $i, 5), '203.0.113.11', $at)['status']
+            );
+            $expected[] = gmdate('Y-m-d', $at);
+        }
+        sort($expected);
+
+        $controller = $this->controller();
+        $report = $controller->report([]);
+        $dates = array_column($report['data']['groups'], 'date');
+        sort($dates);
+
+        $this->assertSame($expected, $dates, 'every populated day is a group, however far back it is');
+        $this->assertEquals(
+            $controller->report(['time_from' => 0])['data']['groups'],
+            $report['data']['groups'],
+            'the bounded attempt may only stand when it is provably the whole answer'
+        );
+    }
+
+    /**
+     * The window is subtracted from the caller's own time_to. An anchor near
+     * the bottom of the integer range put the result below PHP_INT_MIN, where
+     * it stopped being an integer and the filter rejected it — a 422 naming
+     * time_from, which the caller never sent, and only in day mode, which
+     * disclosed the window's existence and size.
+     */
+    public function testAnExtremeTimeToDoesNotRejectAFilterTheCallerNeverSent(): void
+    {
+        $this->seed();
+        $controller = $this->controller();
+
+        foreach (['day', 'protocol'] as $groupBy) {
+            $report = $controller->report(['group_by' => $groupBy, 'time_to' => (string)PHP_INT_MIN]);
+            $this->assertSame(
+                [],
+                $report['data']['groups'],
+                "$groupBy answers an empty window rather than rejecting it"
+            );
+        }
+    }
+
     public function testPostbacksThatDifferOnlyInWhereASeparatorFallsCountSeparately(): void
     {
         // Neither protocol restricts the characters in an ad-network-id or

@@ -155,6 +155,10 @@ final class AttributionUpgradeStepTest extends TestCase
         $this->assertStringContainsString('_die(', $branch);
     }
 
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
     public function testEveryColumnAddedNotNullWithoutADefaultIsBackfilled(): void
     {
         // A column added NOT NULL with no DEFAULT gets the server's implicit
@@ -209,6 +213,10 @@ final class AttributionUpgradeStepTest extends TestCase
         }
     }
 
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
     public function testTheBackfilledSignatureStateIsTheOneTheReceiverWouldHaveStored(): void
     {
         // The trust bit already on the row is what the state produced:
@@ -234,6 +242,10 @@ final class AttributionUpgradeStepTest extends TestCase
         $this->assertStringNotContainsString(SignatureState::DEVELOPMENT->value, $statements);
     }
 
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
     public function testTheProtocolBackfillNamesTheProtocolThatPredatesTheColumn(): void
     {
         // AdAttributionKit support arrived WITH the protocol column, so a row
@@ -254,6 +266,13 @@ final class AttributionUpgradeStepTest extends TestCase
      */
     private function backfillStatements(): array
     {
+        // Loading the upgrade file pulls in 202-config/class-dataengine.php
+        // (functions-upgrade.php:7), and DataEngine's constructor resolves a
+        // real connection. Once that class is in the process, any later suite
+        // that builds a DataEngine gets the real one instead of the stub it
+        // expects, and fails with "mysqli object is not fully initialized" —
+        // tests/StaticEndpoint runs after tests/Attribution, so it was the
+        // one that broke. The callers therefore run in their own process.
         require_once dirname(__DIR__, 3) . '/202-config/functions-upgrade.php';
 
         $this->assertTrue(

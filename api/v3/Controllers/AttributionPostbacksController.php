@@ -266,7 +266,13 @@ class AttributionPostbacksController
             $anchor = isset($params['time_to']) && $params['time_to'] !== ''
                 ? self::strictInt($params['time_to'], 'time_to', 'Invalid time filter', 'Must be a unix timestamp')
                 : time();
-            $boundedTimeFrom = $anchor - ($maxGroups + 1) * 86400;
+            // Floored at the epoch. Subtracting the window from an anchor
+            // near PHP_INT_MIN lands below it, and buildFilters then rejects
+            // the value as a bad time_from — a 422 naming a parameter the
+            // caller never sent, which also discloses the window size. A
+            // bound of 0 excludes nothing, and the fallback below still
+            // decides whether the bounded answer may stand.
+            $boundedTimeFrom = max(0, $anchor - ($maxGroups + 1) * 86400);
         }
 
         $firstParams = $params;
