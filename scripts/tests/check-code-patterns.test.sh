@@ -314,6 +314,16 @@ Tests: 2, Assertions: 40, Failures: 1." no
         expect_phpcs "ratchet: a phpcs that cannot analyse is SKIP, not PASS" SKIP
         rm -rf src/new_bad.php vendor
         ln -s "$(cd "$REAL_VENDOR" && pwd)" vendor
+        # Renames. A legacy file that moves keeps its findings; the ratchet
+        # must compare against the original blob, not a clean baseline.
+        git mv src/legacy_style.php src/moved_style.php
+        expect_phpcs "ratchet: a staged rename of a legacy file PASSES" PASS
+        printf 'function worse() { return 2; }\n' >> src/moved_style.php
+        expect_phpcs "ratchet: a staged rename that also adds a violation FAILS" FAIL
+        git reset -q --hard HEAD >/dev/null
+        mv src/legacy_style.php src/moved_style.php
+        expect_phpcs "ratchet: an unstaged plain move of a legacy file PASSES" PASS
+        git reset -q --hard HEAD >/dev/null; rm -f src/moved_style.php
         # A change that only deletes PHP lists files that no longer exist;
         # examining none of them is not a pass.
         git rm -q src/legacy_style.php
@@ -452,6 +462,17 @@ XML
         printf 'module p202harness\n\ngo 1.22\n\nthis is not valid\n' > go-cli/go.mod
         expect_go "go: a malformed go.mod is FAIL, not an environment SKIP" FAIL
         git checkout -q -- go-cli/go.mod
+        # A PASS on a newer Go than CI's must say so.
+        eval "$(sed -n '/^ci_go_version() {/,/^}/p; /^local_go_version() {/,/^}/p; /^go_version_mismatch_note() {/,/^}/p' ./verify.sh)"
+        # shellcheck disable=SC2034
+        GO_BIN=$(command -v go)
+        mkdir -p .github/workflows
+        printf "          go-version: '%s'\n" "$(local_go_version)" > .github/workflows/go-cli.yml
+        if [ -z "$(go_version_mismatch_note)" ]; then printf '  ok    %-46s\n' "go: CI on the same Go gives no caveat"; pass=$((pass + 1)); else printf '  FAIL  %-46s\n' "go: CI on the same Go gives no caveat"; fail=$((fail + 1)); fi
+        printf "          go-version: '1.1'\n" > .github/workflows/go-cli.yml
+        if go_version_mismatch_note | grep -q "CI pins 1.1"; then printf '  ok    %-46s\n' "go: CI on another Go names both versions"; pass=$((pass + 1)); else printf '  FAIL  %-46s\n' "go: CI on another Go names both versions"; fail=$((fail + 1)); fi
+        if ./verify.sh --tier go 2>/dev/null | grep -E '^  go +PASS' | grep -q "CI pins 1.1"; then printf '  ok    %-46s\n' "go: the PASS line carries the caveat"; pass=$((pass + 1)); else printf '  FAIL  %-46s\n' "go: the PASS line carries the caveat"; fail=$((fail + 1)); fi
+        rm -rf .github
         eval "$(sed -n '/^host_go_toolchain_broken() {/,/^}/p' ./verify.sh)"
         # Read by the sourced host_go_toolchain_broken, which shellcheck cannot see.
         # shellcheck disable=SC2034

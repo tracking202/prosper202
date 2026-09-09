@@ -213,6 +213,10 @@ COULD_NOT_RUN_REASON=""
 # A tier that fails may attach context for the reader. It is context only:
 # a FAIL with a note is still a FAIL and still sets the exit code.
 FAIL_NOTE=""
+# A tier that passes may attach a caveat the same way: a PASS with a note is
+# still a PASS, but the reader is told what this environment could not
+# have seen. Used when the local toolchain is newer than CI's.
+PASS_NOTE=""
 
 run_syntax() {
     local status=0
@@ -341,6 +345,33 @@ phpcs_counts_file() {
     phpcs_counts_from_run "$rc" "$out"
 }
 
+# The HEAD path to ratchet $1 against. A path that exists at HEAD is its
+# own baseline. A path that does not may still be a rename: git's rename
+# detection covers a staged move (with or without edits), and an exact
+# content match against a deleted path covers an unstaged plain move. With
+# neither, the file is new and must be clean. The first version treated
+# every path absent from HEAD as new, so moving a legacy file failed the
+# ratchet on every finding it already had.
+phpcs_baseline_path() {
+    local f="$1" old blob d
+    if git cat-file -e "HEAD:$f" 2>/dev/null; then
+        echo "$f"
+        return
+    fi
+    old=$(git diff -M50 --name-status HEAD 2>/dev/null | awk -F'\t' -v f="$f" '$1 ~ /^R/ && $3 == f { print $2; exit }')
+    if [ -n "$old" ]; then
+        echo "$old"
+        return
+    fi
+    blob=$(git hash-object "$f" 2>/dev/null) || return 0
+    git diff --name-only --diff-filter=D HEAD 2>/dev/null | while IFS= read -r d; do
+        if [ "$(git rev-parse "HEAD:$d" 2>/dev/null)" = "$blob" ]; then
+            echo "$d"
+            break
+        fi
+    done
+}
+
 phpcs_counts_at_head() {
     local out rc
     # shellcheck disable=SC2086
@@ -350,7 +381,7 @@ phpcs_counts_at_head() {
 }
 
 run_phpcs() {
-    local files f head wt he hw we ww worse=0 examined=0
+    local files f base head wt he hw we ww worse=0 examined=0
     files=$(changed_php_files)
     if [ -z "$files" ]; then
         COULD_NOT_RUN_REASON="no new or modified .php files, so nothing was examined"
@@ -360,8 +391,9 @@ run_phpcs() {
         [ -f "$f" ] || continue
         examined=$((examined + 1))
         wt=$(phpcs_counts_file "$f")
-        if git cat-file -e "HEAD:$f" 2>/dev/null; then
-            head=$(phpcs_counts_at_head "$f")
+        base=$(phpcs_baseline_path "$f")
+        if [ -n "$base" ]; then
+            head=$(phpcs_counts_at_head "$base")
         else
             head="0 0"
         fi
@@ -374,7 +406,10 @@ run_phpcs() {
         # `phpcs --standard=PSR12 .` fails on either, so a new file may not
         # introduce warnings any more than errors.
         if [ "$we" -gt "$he" ] || [ "$ww" -gt "$hw" ]; then
-            printf 'phpcs: %s: %s errors / %s warnings, was %s / %s at HEAD\n' "$f" "$we" "$ww" "$he" "$hw"
+            printf 'phpcs: %s: %s errors / %s warnings, was %s / %s at HEAD%s\n' "$f" "$we" "$ww" "$he" "$hw" "${base:+ ($base)}"
+            if [ -z "$base" ]; then
+                printf 'phpcs: %s has no baseline at HEAD; if it is a renamed legacy file with edits, stage the rename (git add -A) so it can be matched\n' "$f"
+            fi
             worse=$((worse + 1))
         elif [ "$we" -gt 0 ] || [ "$ww" -gt 0 ]; then
             printf 'phpcs: %s: %s pre-existing errors / %s warnings, none added\n' "$f" "$we" "$ww"
@@ -417,6 +452,30 @@ host_go_toolchain_broken() {
     rc=$?
     rm -rf "$dir"
     [ $rc -ne 0 ]
+}
+
+# The Go minor version CI pins for go-cli, read from the workflow.
+ci_go_version() {
+    sed -nE "s/^[[:space:]]*go-version:[[:space:]]*['\"]?([0-9]+\.[0-9]+).*/\1/p" \
+        "$ROOT/.github/workflows/go-cli.yml" 2>/dev/null | head -1
+}
+
+local_go_version() {
+    "$GO_BIN" env GOVERSION 2>/dev/null | sed -nE 's/^go([0-9]+\.[0-9]+).*/\1/p'
+}
+
+# The `go 1.22` directive gates language features, not the standard library:
+# a module that imports a package added in a later release builds on a newer
+# local Go and fails on CI's. Pinning CI's toolchain here is not an option on
+# every machine (Go 1.22 could not link on the macOS this was written on), so
+# a PASS from a newer Go carries the caveat rather than pretending to be CI.
+go_version_mismatch_note() {
+    local ci local_v
+    ci=$(ci_go_version)
+    local_v=$(local_go_version)
+    [ -n "$ci" ] && [ -n "$local_v" ] || return 0
+    [ "$ci" != "$local_v" ] || return 0
+    echo "local Go is $local_v, CI pins $ci (.github/workflows/go-cli.yml); standard-library APIs newer than $ci would pass here and fail CI"
 }
 
 # The committed module graph must load before anything is attributed to the
@@ -500,6 +559,7 @@ run_go() {
         COULD_NOT_RUN_REASON="the host Go toolchain cannot build a trivial cgo program (probe failed) during the empty-HOME run"
         return $TIER_COULD_NOT_RUN
     fi
+    [ $rc -eq 0 ] && PASS_NOTE=$(go_version_mismatch_note)
     return $rc
 }
 
@@ -547,6 +607,7 @@ run_golangci() {
     if [ $rc -ne 0 ] && golangci_env_broken "$out"; then
         FAIL_NOTE="output mentions package loading, but golangci-lint lints a trivial module on this host, so the failure is in the change"
     fi
+    [ $rc -eq 0 ] && PASS_NOTE=$(go_version_mismatch_note)
     return $rc
 }
 
@@ -679,11 +740,12 @@ for t in $TIERS; do
     echo "--- $t: running"
     COULD_NOT_RUN_REASON=""
     FAIL_NOTE=""
+    PASS_NOTE=""
     "run_$t"
     rc=$?
     if [ $rc -eq 0 ]; then
-        RESULTS="${RESULTS}${t}|PASS|"$'\n'
-        echo "--- $t: PASS"
+        RESULTS="${RESULTS}${t}|PASS|${PASS_NOTE}"$'\n'
+        echo "--- $t: PASS${PASS_NOTE:+ ($PASS_NOTE)}"
     elif [ $rc -eq $TIER_COULD_NOT_RUN ]; then
         # Never counted as a pass and never counted as a failure.
         RESULTS="${RESULTS}${t}|SKIP|${COULD_NOT_RUN_REASON:-could not run}"$'\n'
