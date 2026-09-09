@@ -2604,7 +2604,7 @@ paths:
           application/json:
             schema:
               anyOf:
-                - $ref: "#/components/schemas/SkadnetworkPostback"
+                - $ref: "#/components/schemas/SkadnetworkVerifyRequest"
                 - $ref: "#/components/schemas/AdAttributionKitVerifyRequest"
       responses:
         "200":
@@ -5036,6 +5036,28 @@ components:
           description: Unsigned ISO 3166 identifier; withheld by the data tier when absent
           example: US
 
+    SkadnetworkVerifyRequest:
+      type: object
+      minProperties: 1
+      additionalProperties: true
+      description: |
+        A SKAdNetwork postback submitted to `POST /attribution/verify`. The
+        fields and their meanings are `SkadnetworkPostback`'s; what differs
+        is that none of them is required here, so this schema deliberately
+        does not repeat the list (repeating it is how the two drift apart).
+
+        Verification reports what the body supports rather than refusing to
+        look at it, so a partial or mistyped postback gets a verdict, not a
+        validation error. Executed against the endpoint:
+        `{"version": "4.0", "attribution-signature": "AA=="}` answers
+        `invalid`, `{"attribution-signature": "AA=="}` answers
+        `unverifiable`, and a full 4.0 body answers `invalid` — all 200.
+        Only an empty object is a 422, which is what `minProperties` says.
+
+        `SkadnetworkPostback` keeps its five required fields because the
+        RECEIVER really does require them. Pointing this request body at
+        that schema made the spec reject bodies the endpoint answers, and
+        contradict this operation's own description.
     AdAttributionKitVerifyRequest:
       type: object
       description: |

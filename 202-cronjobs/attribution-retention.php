@@ -82,22 +82,39 @@ $warn = static function (string $message): void {
     error_log('attribution-retention: ' . $message);
 };
 
+// Hold the whole report until the run has finished, so the status code is
+// still settable when it ends in a failure. Do not rely on the ambient
+// output_buffering: it is 0 in PHP's compiled default, under `php -S`, and
+// in the official php-fpm images — the containerised deploy this job is
+// scheduled from — and with no buffer the first report line sends the
+// headers, after which http_response_code() cannot change anything and a
+// mid-run database failure answers 200 with a partial report that a URL
+// fetcher reads as a successful prune. An earlier version of this comment
+// asserted a 4KB buffer as a property of the server; it is a setting, and
+// this is the version that does not depend on it.
+$buffering = PHP_SAPI !== 'cli' && ob_start();
+
 /**
  * Warn, then abort the run. A URL fetcher never sees the exit status —
  * measured: exit(1) alone answers HTTP 200, which a scheduler reads as a
  * successful prune — so a non-CLI failure is also given a 500.
- *
- * That only works while the response headers are unsent: measured under the
- * built-in server, the status is still settable after 1KB of output but not
- * after 4KB (the output buffer flushes in between). This report is a fixed
- * handful of short lines — one per retention class, twice, plus a summary,
- * ~400 bytes in full — so it cannot grow into that limit no matter how many
- * rows are pruned.
  */
-$fail = static function (string $message) use ($warn): never {
+$fail = static function (string $message) use ($warn, &$buffering): never {
     $warn($message);
     if (PHP_SAPI !== 'cli') {
-        http_response_code(500);
+        if (!headers_sent()) {
+            http_response_code(500);
+        } else {
+            // The buffer could not be started, or something flushed it. The
+            // status is lost, so put the failure where the fetcher will still
+            // see it: in the body, on its own line, in the report it is
+            // already reading.
+            echo "attribution-retention: FAILED\n";
+        }
+        if ($buffering) {
+            ob_end_flush();
+            $buffering = false;
+        }
     }
     exit(1);
 };
@@ -126,6 +143,18 @@ for ($i = 1; $i < count($argv); $i++) {
     $name = explode('=', $arg, 2)[0];
     if ($i >= $restIndex || !in_array($name, $known, true)) {
         $fail('unrecognised argument "' . $arg . '"; this job takes --dry-run and --max-passes=N');
+    }
+    if ($name === '--dry-run' && str_contains($arg, '=')) {
+        // Recognising the NAME is not the same as getopt() having produced
+        // the flag. --dry-run takes no value, so getopt() ignores
+        // "--dry-run=" entirely: the name passed the check above, the option
+        // stayed unset, and the job pruned for real while the operator
+        // believed they had asked for a preview — the exact outcome this
+        // guard exists to prevent, reached through the guard itself.
+        // ("--dry-run=0" is the same shape in the safe direction: getopt()
+        // does set the flag, so it previews, which reads as the opposite of
+        // what was typed. Both are refused rather than guessed at.)
+        $fail('--dry-run takes no value; pass it on its own to preview without deleting');
     }
     if ($name === '--max-passes') {
         if (!isset($options['max-passes'])) {

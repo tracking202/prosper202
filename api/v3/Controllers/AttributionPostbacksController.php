@@ -255,6 +255,13 @@ class AttributionPostbacksController
         // the answer is identical either way, nothing about the window is
         // disclosed to the caller.
         //
+        // What a sparse tenant pays for that correctness, measured rather
+        // than assumed: 24k rows over 90 populated days spanning 800 days
+        // ran 401 ms through the discarded attempt plus the re-run, against
+        // 367 ms unbounded — about 9%. The cost falls on tenants one empty
+        // day short of a full page, and it buys the case above, where the
+        // bound alone answered 2 groups instead of 6.
+        //
         // Only day mode: the other modes rank by count, not by time, so a
         // window would change which groups they return and no cheap test
         // could tell that it had.
