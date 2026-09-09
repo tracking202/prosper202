@@ -544,6 +544,11 @@ XML
         if [ -z "$(ci_go_toolchain)" ]; then printf '  ok    %-46s\n' "go: CI on the same Go needs no toolchain switch"; pass=$((pass + 1)); else printf '  FAIL  %-46s\n' "go: CI on the same Go needs no toolchain switch"; fail=$((fail + 1)); fi
         printf "          go-version: '1.1'\n" > .github/workflows/go-cli.yml
         expect_go "go: CI on a Go that cannot be fetched is SKIP, not PASS" SKIP
+        # gofmt needs no toolchain switch, so it must still report before
+        # the fetch-dependent SKIP.
+        printf 'package main\n\nfunc   ugly( ) {\n}\n' > go-cli/cmd/x/ugly.go
+        expect_go "go: an unformatted file is FAIL even when CI's Go cannot be fetched" FAIL
+        rm -f go-cli/cmd/x/ugly.go
         # A real other minor: CI's toolchain is fetched and the tier runs
         # under it. Needs the toolchain module to be reachable; skip the
         # case, visibly, when it is not.
@@ -558,6 +563,16 @@ XML
             else
                 printf '  FAIL  %-46s\n' "go: a different CI minor runs under CI's toolchain"; fail=$((fail + 1))
                 printf '%s\n' "$go_out" | grep -E "^--- go|^  go " | sed 's/^/        | /'
+            fi
+            # The empty-HOME step must reuse the caches, not fetch the
+            # toolchain a second time into a temp tree.
+            # Count only after the marker: a first-ever fetch in the switch
+            # step is legitimate, a fetch inside the empty-HOME step is not.
+            dl=$(printf '%s\n' "$go_out" | sed -n '/^empty-HOME run:/,$p' | grep -c "downloading go1\.")
+            if [ "$dl" -eq 0 ]; then
+                printf '  ok    %-46s downloads=%s\n' "go: the empty-HOME run keeps the toolchain cache" "$dl"; pass=$((pass + 1))
+            else
+                printf '  FAIL  %-46s downloads=%s (wanted 0)\n' "go: the empty-HOME run keeps the toolchain cache" "$dl"; fail=$((fail + 1))
             fi
         fi
         rm -rf .github

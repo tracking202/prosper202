@@ -633,12 +633,13 @@ go_modules_unavailable() {
 run_go() {
     local out rc godir gofmt_bin unformatted
     godir=$(dirname "$GO_BIN")
-    use_ci_go_toolchain || return $TIER_COULD_NOT_RUN
     # CI's first gate (.github/workflows/go-cli.yml): any file gofmt would
     # reformat fails the job before vet or test run. It needs no module
-    # cache and no network, so it runs before the availability check: a
-    # tier that cannot fetch dependencies can still report a code failure
-    # it is able to see.
+    # cache, no network and no particular toolchain, so it runs before both
+    # the toolchain switch and the availability check: a tier that will
+    # SKIP for either reason can still report a code failure it is able to
+    # see. The previous commit put the switch first and moved this gate
+    # back behind a fetch-dependent SKIP, which a reviewer caught.
     gofmt_bin="$("$GO_BIN" env GOROOT 2>/dev/null)/bin/gofmt"
     if [ -x "$gofmt_bin" ]; then
         local gofmt_rc
@@ -660,6 +661,7 @@ run_go() {
             return 1
         fi
     fi
+    use_ci_go_toolchain || return $TIER_COULD_NOT_RUN
     if go_modules_unavailable; then
         COULD_NOT_RUN_REASON="the committed Go module graph could not be loaded (empty module cache with no network or proxy?); nothing of this repository was compiled"
         return $TIER_COULD_NOT_RUN
@@ -695,9 +697,20 @@ run_go() {
     fi
 
     # An empty HOME catches flag checks that only pass because this machine
-    # has a CLI config. CI has none.
-    out=$( cd go-cli && HOME=$(mktemp -d) PATH="$godir:$PATH" "$GO_BIN" test ./cmd/... 2>&1 )
+    # has a CLI config. CI has none. Only the CLI's config home is isolated:
+    # Go's GOPATH, module cache and build cache default to $HOME/go and
+    # $HOME/.cache, so a bare HOME swap made this step refetch the toolchain
+    # into a temp tree it never removed, and let a proxy failure here read
+    # as a code FAIL. The caches are resolved first and passed through.
+    local tmp_home gopath gomodcache gocache
+    gopath=$("$GO_BIN" env GOPATH 2>/dev/null)
+    gomodcache=$("$GO_BIN" env GOMODCACHE 2>/dev/null)
+    gocache=$("$GO_BIN" env GOCACHE 2>/dev/null)
+    tmp_home=$(mktemp -d)
+    printf 'empty-HOME run:\n'
+    out=$( cd go-cli && HOME="$tmp_home" GOPATH="$gopath" GOMODCACHE="$gomodcache" GOCACHE="$gocache" PATH="$godir:$PATH" "$GO_BIN" test ./cmd/... 2>&1 )
     rc=$?
+    rm -rf "$tmp_home"
     printf '%s\n' "$out"
     if [ $rc -ne 0 ] && go_env_broken "$out" && host_go_toolchain_broken; then
         COULD_NOT_RUN_REASON="the host Go toolchain cannot build a trivial cgo program (probe failed) during the empty-HOME run"
