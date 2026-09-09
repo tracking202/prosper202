@@ -1,0 +1,628 @@
+#!/usr/bin/env bash
+#
+# Regression tests for scripts/check-code-patterns.sh.
+#
+# The hook selected its work with `git diff --name-only HEAD`, which lists
+# tracked modifications only. A brand-new .php file was therefore invisible:
+# the hook exited 0 having examined nothing and reported clean. That is a
+# check that appeared to run and did not (CLAUDE.md error pattern #10), so it
+# gets a test rather than only a fix.
+#
+# Runs the real script against a throwaway git repository. Part 2 (PHPStan)
+# self-skips there because ./vendor/bin/phpstan is absent, so the behavioural
+# cases below cover file selection and the diff-versus-whole-file decision.
+# The PHPStan invocation is covered by static assertions at the end.
+#
+# Usage: scripts/tests/check-code-patterns.test.sh
+# Exits 0 when every case passes, 1 otherwise.
+
+set -uo pipefail
+
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+SCRIPT="$HERE/../check-code-patterns.sh"
+
+if [ ! -f "$SCRIPT" ]; then
+    echo "cannot find check-code-patterns.sh at $SCRIPT" >&2
+    exit 1
+fi
+
+REPO=$(mktemp -d)
+trap 'rm -rf "$REPO"' EXIT
+
+pass=0
+fail=0
+
+cd "$REPO" || exit 1
+git init -q .
+git config user.email test@example.com
+git config user.name test
+
+# A committed file whose legacy body already violates pattern 1. Nothing may
+# report it unless a *changed* line reintroduces the pattern.
+mkdir -p src tests
+printf '<?php\nfunction legacy($stmt) {\n    $stmt->execute();\n}\n' > src/legacy.php
+printf '<?php\n// placeholder\n' > src/clean.php
+git add -A
+git commit -qm "initial"
+
+cp "$SCRIPT" ./check.sh
+chmod +x ./check.sh
+
+# Runs the hook and reports both its exit status and whether it named the
+# pattern. Checking only the exit status would pass on an unrelated violation.
+expect() {
+    local name="$1" want_exit="$2" want_caught="$3"
+    local got_exit got_caught
+
+    ./check.sh >/dev/null 2>"$REPO/stderr.txt"
+    got_exit=$?
+
+    if grep -qF 'Direct $stmt->execute()' "$REPO/stderr.txt"; then
+        got_caught=yes
+    else
+        got_caught=no
+    fi
+
+    if [ "$got_exit" = "$want_exit" ] && [ "$got_caught" = "$want_caught" ]; then
+        printf '  ok    %-46s exit=%s caught=%s\n' "$name" "$got_exit" "$got_caught"
+        pass=$((pass + 1))
+    else
+        printf '  FAIL  %-46s exit=%s caught=%s (wanted exit=%s caught=%s)\n' \
+            "$name" "$got_exit" "$got_caught" "$want_exit" "$want_caught"
+        fail=$((fail + 1))
+    fi
+}
+
+echo "check-code-patterns.sh"
+
+expect "clean tree" 0 no
+
+# The regression. Before the fix this returned exit 0 with nothing caught.
+printf '<?php\nfunction fresh($stmt) {\n    $stmt->execute();\n}\n' > src/brand_new.php
+expect "untracked new file WITH violation" 2 yes
+rm -f src/brand_new.php
+
+printf '<?php\nfunction ok() {\n    return 1;\n}\n' > src/brand_new_ok.php
+expect "untracked new file, clean" 0 no
+rm -f src/brand_new_ok.php
+
+# tests/ is exempt from this pattern; whole-file treatment must not bypass that.
+printf '<?php\nfunction t($stmt) {\n    $stmt->execute();\n}\n' > tests/NewTest.php
+expect "untracked new file under tests/ (exempt)" 0 no
+rm -f tests/NewTest.php
+
+printf '<?php\nfunction c($stmt) {\n    $stmt->execute();\n}\n' > src/clean.php
+expect "tracked file, violation in ADDED line" 2 yes
+git checkout -q -- src/clean.php
+
+# The reason the diff scoping exists: legacy lines must stay invisible.
+printf '\n// harmless trailing comment\n' >> src/legacy.php
+expect "tracked file, violation only in LEGACY lines" 0 no
+git checkout -q -- src/legacy.php
+
+printf '<?php\nfunction s($stmt) {\n    $stmt->execute();\n}\n' > src/staged.php
+git add src/staged.php
+expect "staged-but-uncommitted new file" 2 yes
+git reset -q
+rm -f src/staged.php
+
+# ── Static assertions on the PHPStan invocation ──
+#
+# PHPStan under --error-format=raw prints bare "path:line:message" lines and
+# never the "[ERROR]" marker the default table renderer uses. The hook used to
+# grep for that literal, so the whole PHPStan gate passed regardless of what
+# was found. Guard both halves of that fix.
+assert_script() {
+    local name="$1" pattern="$2" want="$3" got=no
+    if grep -qE -- "$pattern" "$SCRIPT"; then got=yes; fi
+    if [ "$got" = "$want" ]; then
+        printf '  ok    %-46s\n' "$name"
+        pass=$((pass + 1))
+    else
+        printf '  FAIL  %-46s (found=%s wanted=%s)\n' "$name" "$got" "$want"
+        fail=$((fail + 1))
+    fi
+}
+
+assert_script "does not grep for the [ERROR] marker" 'grep -qF .\[ERROR\]' no
+assert_script "uses PHPStan exit status" 'phpstan_status' yes
+assert_script "pins the committed config (baseline)" '\-c phpstan\.neon\.dist' yes
+assert_script "selects untracked files too" 'ls-files --others --exclude-standard' yes
+
+# ── The hook's PHPStan half on a partial vendor ──
+#
+# A field report from a sandbox with no vendor/bin/ found the hook skipping
+# PHPStan in silence, and analysing tests/ files the config never covers.
+mkdir -p vendor api tests
+printf '<?php\n' > vendor/autoload.php
+printf 'parameters:\n    paths:\n        - api\n        - src\n' > phpstan.neon.dist
+printf '<?php\nfunction fresh() { return 1; }\n' > api/New.php
+./check.sh >/dev/null 2>"$REPO/stderr.txt"; rc=$?
+if [ "$rc" -eq 0 ] && grep -q "PHPStan NOT run" "$REPO/stderr.txt"; then
+    printf '  ok    %-46s\n' "hook: no phpstan anywhere says so loudly"; pass=$((pass + 1))
+else
+    printf '  FAIL  %-46s exit=%s stderr=%s\n' "hook: no phpstan anywhere says so loudly" "$rc" "$(head -c 80 "$REPO/stderr.txt")"; fail=$((fail + 1))
+fi
+# A fake phar that records what it was asked to analyse and reports clean.
+printf '<?php\nfile_put_contents(__DIR__ . "/phpstan-args.log", implode("\\n", array_slice($argv, 1)) . "\\n", FILE_APPEND);\necho "[OK] No errors\\n";\n' > phpstan.phar
+printf '<?php\nfinal class ZzT extends \\PHPUnit\\Framework\\TestCase {}\n' > tests/ZzT.php
+./check.sh >/dev/null 2>"$REPO/stderr.txt"; rc=$?
+if [ "$rc" -eq 0 ] && [ -f phpstan-args.log ] && grep -q "api/New.php" phpstan-args.log && ! grep -q "tests/ZzT.php" phpstan-args.log && ! grep -q "PHPStan NOT run" "$REPO/stderr.txt"; then
+    printf '  ok    %-46s\n' "hook: phar fallback used, tests/ kept out of PHPStan"; pass=$((pass + 1))
+else
+    printf '  FAIL  %-46s exit=%s log=%s\n' "hook: phar fallback used, tests/ kept out of PHPStan" "$rc" "$(tr '\n' ' ' < phpstan-args.log 2>/dev/null)"; fail=$((fail + 1))
+fi
+rm -rf vendor api tests/ZzT.php phpstan.neon.dist phpstan.phar phpstan-args.log
+
+# ── The hook driven through verify.sh's patterns tier ──
+#
+# verify.sh guards the tier with its own file selection so that "nothing to
+# examine" reports SKIP rather than a vacuous PASS. That selection has to
+# match the hook's, or the ladder skips a tier the hook would have run. It
+# did, once: the guard listed tracked changes only, two commits after the
+# hook was taught to see untracked files.
+VERIFY="$HERE/../../.claude/skills/p202-verify/scripts/verify.sh"
+if [ -f "$VERIFY" ]; then
+    mkdir -p scripts
+    cp "$SCRIPT" scripts/check-code-patterns.sh
+    chmod +x scripts/check-code-patterns.sh
+    cp "$VERIFY" ./verify.sh
+    chmod +x ./verify.sh
+
+    expect_tier() { # name want_verdict
+        local name="$1" want="$2" got
+        got=$(./verify.sh --tier patterns 2>/dev/null | awk '/^  patterns / {print $2}')
+        if [ "$got" = "$want" ]; then
+            printf '  ok    %-46s patterns=%s\n' "$name" "$got"
+            pass=$((pass + 1))
+        else
+            printf '  FAIL  %-46s patterns=%s (wanted %s)\n' "$name" "$got" "$want"
+            fail=$((fail + 1))
+        fi
+    }
+
+    expect_tier "ladder: clean tree skips with a reason" SKIP
+
+    printf '<?php\nfunction fresh($stmt) {\n    $stmt->execute();\n}\n' > src/brand_new.php
+    expect_tier "ladder: untracked violation must FAIL, not SKIP" FAIL
+    rm -f src/brand_new.php
+
+    printf '<?php\nfunction ok() {\n    return 1;\n}\n' > src/brand_new_ok.php
+    expect_tier "ladder: untracked clean file must PASS, not SKIP" PASS
+    rm -f src/brand_new_ok.php
+    # A deletion-only change lists a path that is gone; the hook skips it and
+    # exits 0, which the first guard read as PASS.
+    git rm -q src/clean.php
+    expect_tier "ladder: a deletion-only change is SKIP, not PASS" SKIP
+    git reset -q --hard HEAD >/dev/null
+
+    # ── actionlint tier: CI's workflow gate ──
+    if command -v actionlint >/dev/null 2>&1; then
+        expect_actionlint() { # name want_verdict
+            local got
+            got=$(./verify.sh --tier actionlint 2>/dev/null | awk '/^  actionlint / {print $2}')
+            if [ "$got" = "$2" ]; then printf '  ok    %-46s actionlint=%s\n' "$1" "$got"; pass=$((pass + 1)); else printf '  FAIL  %-46s actionlint=%s (wanted %s)\n' "$1" "$got" "$2"; fail=$((fail + 1)); fi
+        }
+        mkdir -p .github/workflows
+        printf 'on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n' > .github/workflows/ok.yml
+        expect_actionlint "actionlint: a valid workflow PASSES" PASS
+        # An input the action does not define: the exact mistake CI rejected
+        # on this branch.
+        printf 'on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          no-such-input: yes\n' > .github/workflows/bad.yml
+        expect_actionlint "actionlint: an undefined action input FAILS" FAIL
+        rm -rf .github
+    else
+        printf '  skip  actionlint tier cases: actionlint not installed\n'
+    fi
+
+    # ── --plan: which tiers a change selects, without running any ──
+    expect_plan() { # name want_tier present(yes|no)
+        local name="$1" tier="$2" want="$3" got=no
+        if ./verify.sh --plan 2>/dev/null | grep -qx "$tier"; then got=yes; fi
+        if [ "$got" = "$want" ]; then
+            printf '  ok    %-46s %s=%s\n' "$name" "$tier" "$got"; pass=$((pass + 1))
+        else
+            printf '  FAIL  %-46s %s=%s (wanted %s)\n' "$name" "$tier" "$got" "$want"; fail=$((fail + 1))
+        fi
+    }
+    mkdir -p 202-config/Database/Tables 202-config/migrations
+    printf '<?php\n$sql = "CREATE TABLE x (id INT)";\n' > 202-config/Database/Tables/XTables.php
+    expect_plan "plan: table definitions select schema" schema yes
+    expect_plan "plan: a php change selects phpcs" phpcs yes
+    rm -f 202-config/Database/Tables/XTables.php
+    printf 'ALTER TABLE x ADD y INT;\n' > 202-config/migrations/0001.sql
+    expect_plan "plan: a .sql file selects schema" schema yes
+    rm -f 202-config/migrations/0001.sql
+    printf '<?php\n// unrelated\n' > src/other.php
+    expect_plan "plan: ordinary php does not select schema" schema no
+    rm -f src/other.php
+    # StaticSqlSchemaTest scans api/v3 for SQL literals, so a query change
+    # there is a schema change.
+    mkdir -p api/v3 && printf '<?php\n$sql = "SELECT 1";\n' > api/v3/Q.php
+    expect_plan "plan: an api/v3 change selects schema" schema yes
+    rm -rf api
+    mkdir -p .github/workflows && printf 'on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n' > .github/workflows/x.yml
+    expect_plan "plan: a workflow change selects actionlint" actionlint yes
+    expect_plan "plan: a workflow change does not select phpstan" phpstan no
+    rm -rf .github
+    rm -rf 202-config
+    mkdir -p sdk/ios-attribution && printf '// swift\n' > sdk/ios-attribution/P.swift
+    expect_plan "plan: an sdk/ios-attribution change selects swift" swift yes
+    rm -rf sdk
+
+    # ── phpstan tier on a partial vendor: the documented Symfony errors are
+    #    the environment; anything else is still a finding. ──
+    mkdir -p vendor cli
+    printf '<?php\n' > vendor/autoload.php            # partial: autoload but no vendor/bin
+    printf 'parameters:\n    paths:\n        - cli\n' > phpstan.neon.dist
+    # cli/A.php is committed and untouched by the change: an error there
+    # cannot be the change's doing.
+    printf '<?php\n' > cli/A.php
+    git add cli/A.php && git commit -qm "cli baseline"
+    expect_phpstan() { # name want_verdict
+        local got
+        got=$(./verify.sh --tier phpstan 2>/dev/null | awk '/^  phpstan / {print $2}')
+        if [ "$got" = "$2" ]; then printf '  ok    %-46s phpstan=%s\n' "$1" "$got"; pass=$((pass + 1)); else printf '  FAIL  %-46s phpstan=%s (wanted %s)\n' "$1" "$got" "$2"; fail=$((fail + 1)); fi
+    }
+    fake_phpstan() { # $1 = json body for --error-format=json; always exits 1 with an [ERROR] line otherwise
+        # The JSON goes through a file, not a PHP string literal: single
+        # quotes collapse the backslashes JSON needs and the tier then
+        # decodes nothing, which is exactly what happened the first time.
+        printf '%s' "$1" > phpstan-fake.json
+        printf '<?php\nif (in_array("--error-format=json", $argv, true)) { readfile(__DIR__ . "/phpstan-fake.json"); exit(1); }\necho " [ERROR] Found errors\\n"; exit(1);\n' > phpstan.phar
+    }
+    fake_phpstan '{"totals":{"errors":0,"file_errors":2},"files":{"/r/cli/A.php":{"errors":2,"messages":[{"message":"Class Foo extends unknown class Symfony\\Component\\Console\\Command\\Command.","line":3},{"message":"Class Bar extends unknown class Symfony\\Component\\Console\\Application.","line":9}]}},"errors":[]}'
+    expect_phpstan "phpstan: only the documented Symfony errors on a partial vendor is SKIP" SKIP
+    fake_phpstan '{"totals":{"errors":0,"file_errors":2},"files":{"/r/cli/A.php":{"errors":2,"messages":[{"message":"Class Foo extends unknown class Symfony\\Component\\Console\\Command\\Command.","line":3},{"message":"Direct $stmt->bind_param() bypasses Connection::bind() ref safety.","line":9}]}},"errors":[]}'
+    expect_phpstan "phpstan: a real finding beside the Symfony errors is FAIL" FAIL
+    # The same text in a file the change touched is the change's to answer
+    # for: a misspelled Symfony superclass prints exactly this.
+    printf '<?php\n// touched\n' >> cli/A.php
+    fake_phpstan '{"totals":{"errors":0,"file_errors":1},"files":{"/r/cli/A.php":{"errors":1,"messages":[{"message":"Class Foo extends unknown class Symfony\\Component\\Console\\Comand\\Command.","line":3}]}},"errors":[]}'
+    expect_phpstan "phpstan: the Symfony shape in a file the change touched is FAIL" FAIL
+    git checkout -q -- cli/A.php
+    fake_phpstan '{"totals":{"errors":0,"file_errors":2},"files":{"/r/cli/A.php":{"errors":2,"messages":[{"message":"Class Foo extends unknown class Symfony\\Component\\Console\\Command\\Command.","line":3},{"message":"Direct $stmt->bind_param() bypasses Connection::bind() ref safety.","line":9}]}},"errors":[]}'
+    split_out=$(./verify.sh --tier phpstan 2>&1)
+    if printf '%s' "$split_out" | grep -E '^  phpstan +FAIL' | grep -q "1 environmental.*1 other"; then
+        printf '  ok    %-46s\n' "phpstan: the FAIL line carries the split"; pass=$((pass + 1))
+    else
+        printf '  FAIL  %-46s\n' "phpstan: the FAIL line carries the split"; fail=$((fail + 1))
+        printf '%s\n' "$split_out" | grep -E "^--- phpstan|^  phpstan|environmental" | sed 's/^/        | /'
+    fi
+    git rm -q -r cli >/dev/null 2>&1; git commit -qm "drop cli baseline" >/dev/null 2>&1
+    rm -rf vendor cli phpstan.neon.dist phpstan.phar phpstan-fake.json
+
+    # ── unit-tier interpreter classifier, against a workflow file we write ──
+    eval "$(sed -n '/^ci_php_version() {/,/^}/p; /^local_php_version() {/,/^}/p; /^interpreter_mismatch_reason() {/,/^}/p' ./verify.sh)"
+    # Read by the sourced ci_php_version, which shellcheck cannot see.
+    # shellcheck disable=SC2034
+    ROOT="$REPO"
+    mkdir -p .github/workflows
+    local_v=$(local_php_version)
+    printf "      php-version: '%s'\n" "$local_v" > .github/workflows/php-unit.yml
+    if [ -z "$(interpreter_mismatch_reason)" ]; then
+        printf '  ok    %-46s\n' "unit: CI on the same PHP gives no mismatch"; pass=$((pass + 1))
+    else
+        printf '  FAIL  %-46s\n' "unit: CI on the same PHP gives no mismatch"; fail=$((fail + 1))
+    fi
+    printf "      php-version: '7.4'\n" > .github/workflows/php-unit.yml
+    if interpreter_mismatch_reason | grep -q "CI pins 7.4"; then
+        printf '  ok    %-46s\n' "unit: CI on another PHP names both versions"; pass=$((pass + 1))
+    else
+        printf '  FAIL  %-46s\n' "unit: CI on another PHP names both versions"; fail=$((fail + 1))
+    fi
+    rm -rf .github
+
+    # ── schema-tier vacuous-pass detector, against real PHPUnit 9 output shapes ──
+    eval "$(sed -n '/^phpunit_ran_nothing() {/,/^}/p' ./verify.sh)"
+    check_nothing() { # name text want(yes|no)
+        local got=no; if phpunit_ran_nothing "$2"; then got=yes; fi
+        if [ "$got" = "$3" ]; then printf '  ok    %-46s\n' "$1"; pass=$((pass + 1)); else printf '  FAIL  %-46s (got %s)\n' "$1" "$got"; fail=$((fail + 1)); fi
+    }
+    check_nothing "schema: skipped-self counts as ran nothing" "OK, but incomplete, skipped, or risky tests!
+Tests: 2, Assertions: 1, Skipped: 1." yes
+    check_nothing "schema: no tests executed counts" "No tests executed!" yes
+    check_nothing "schema: a real green run does not" "OK (2 tests, 40 assertions)" no
+    check_nothing "schema: a real red run does not" "FAILURES!
+Tests: 2, Assertions: 40, Failures: 1." no
+
+    # ── phpcs ratchet, behaviourally, using the repo's own vendor/ ──
+    # The report line is the only version-stable signal of a completed
+    # analysis; exit codes disagree between the documented bitmask and what
+    # phpcs 3.13 actually returns, in both directions.
+    eval "$(sed -n '/^phpcs_counts_from_run() {/,/^}/p' ./verify.sh)"
+    if [ "$(phpcs_counts_from_run 2 'A TOTAL OF 23 ERRORS AND 12 WARNINGS WERE FOUND IN 1 FILE')" = "23 12" ] \
+       && [ "$(phpcs_counts_from_run 1 'A TOTAL OF 0 ERRORS AND 1 WARNING WERE FOUND IN 1 FILE')" = "0 1" ] \
+       && [ "$(phpcs_counts_from_run 0 '')" = "0 0" ] \
+       && [ "$(phpcs_counts_from_run 3 'ERROR: the "X" coding standard is not installed')" = "?" ] \
+       && [ "$(phpcs_counts_from_run 2 'PHP Warning:  Failed to set memory limit')" = "?" ] \
+       && [ "$(phpcs_counts_from_run 0 'something unexpected with exit 0')" = "?" ]; then
+        printf '  ok    %-46s\n' "phpcs: report parsing, tool failures never read as 0"; pass=$((pass + 1))
+    else
+        printf '  FAIL  %-46s\n' "phpcs: report parsing, tool failures never read as 0"; fail=$((fail + 1))
+    fi
+    REAL_VENDOR="$HERE/../../vendor"
+    if [ -x "$REAL_VENDOR/bin/phpcs" ]; then
+        ln -s "$(cd "$REAL_VENDOR" && pwd)" vendor
+        expect_phpcs() { # name want_verdict
+            local got
+            got=$(./verify.sh --tier phpcs 2>/dev/null | awk '/^  phpcs / {print $2}')
+            if [ "$got" = "$2" ]; then printf '  ok    %-46s phpcs=%s\n' "$1" "$got"; pass=$((pass + 1)); else printf '  FAIL  %-46s phpcs=%s (wanted %s)\n' "$1" "$got" "$2"; fail=$((fail + 1)); fi
+        }
+        # A committed legacy file that already violates PSR12 (brace placement).
+        printf '<?php\nclass Legacy {\n    public function a() { return 1; }\n}\n' > src/legacy_style.php
+        git add src/legacy_style.php && git commit -qm "legacy style"
+        expect_phpcs "ratchet: nothing changed skips" SKIP
+        printf '\n// a comment does not add a violation\n' >> src/legacy_style.php
+        expect_phpcs "ratchet: touching a legacy file without worsening it PASSES" PASS
+        printf 'function worse() { return 2; }\n' >> src/legacy_style.php
+        expect_phpcs "ratchet: adding a violation to a legacy file FAILS" FAIL
+        git checkout -q -- src/legacy_style.php
+        printf '<?php\n\nfunction fine(): int\n{\n    return 1;\n}\n' > src/new_clean.php
+        expect_phpcs "ratchet: a clean new file PASSES" PASS
+        rm -f src/new_clean.php
+        printf '<?php\nfunction bad() { return 1; }\n' > src/new_bad.php
+        expect_phpcs "ratchet: a new file with any violation FAILS" FAIL
+        rm -f src/new_bad.php
+        # Warnings ratchet too: `phpcs --standard=PSR12 .` fails on either.
+        printf '<?php\n\nfunction longline(): string\n{\n    return "%s";\n}\n' "$(printf 'x%.0s' $(seq 1 130))" > src/new_warn.php
+        expect_phpcs "ratchet: a new file with only a warning FAILS" FAIL
+        rm -f src/new_warn.php
+        # Both errors and warnings in one file is a normal findings result on
+        # every phpcs version, whatever exit code it chooses; it must ratchet,
+        # not be mistaken for a tool failure.
+        printf '<?php\nfunction bad() { return "%s"; }\n' "$(printf 'x%.0s' $(seq 1 130))" > src/new_both.php
+        expect_phpcs "ratchet: errors and warnings together still FAILS" FAIL
+        rm -f src/new_both.php vendor
+        # A phpcs that produces no report is a tool failure and must be SKIP,
+        # never read as zero findings.
+        mkdir -p vendor/bin
+        printf '<?php\n' > vendor/autoload.php
+        printf '#!/bin/sh\necho "ERROR: the PSR12 coding standard is not installed" >&2\nexit 3\n' > vendor/bin/phpcs
+        chmod +x vendor/bin/phpcs
+        printf '<?php\nfunction bad() { return 1; }\n' > src/new_bad.php
+        expect_phpcs "ratchet: a phpcs that cannot analyse is SKIP, not PASS" SKIP
+        rm -rf src/new_bad.php vendor
+        ln -s "$(cd "$REAL_VENDOR" && pwd)" vendor
+        # Renames. A legacy file that moves keeps its findings; the ratchet
+        # must compare against the original blob, not a clean baseline.
+        git mv src/legacy_style.php src/moved_style.php
+        expect_phpcs "ratchet: a staged rename of a legacy file PASSES" PASS
+        printf 'function worse() { return 2; }\n' >> src/moved_style.php
+        expect_phpcs "ratchet: a staged rename that also adds a violation FAILS" FAIL
+        git reset -q --hard HEAD >/dev/null
+        mv src/legacy_style.php src/moved_style.php
+        expect_phpcs "ratchet: an unstaged plain move of a legacy file PASSES" PASS
+        git reset -q --hard HEAD >/dev/null; rm -f src/moved_style.php
+        # A change that only deletes PHP lists files that no longer exist;
+        # examining none of them is not a pass.
+        git rm -q src/legacy_style.php
+        expect_phpcs "ratchet: a deletion-only change is SKIP, not PASS" SKIP
+        git reset -q --hard HEAD >/dev/null
+        rm -f vendor
+    else
+        printf '  skip  phpcs ratchet cases: no vendor/bin/phpcs at %s\n' "$REAL_VENDOR"
+    fi
+
+    # ── unit tier, behaviourally: a real failure on a non-CI PHP is still FAIL ──
+    #
+    # The first backstop turned every non-zero PHPUnit exit on a non-CI PHP
+    # into SKIP, so a deliberate $this->fail() reported as environmental with
+    # exit 0. A reviewer caught it. These cases pin the fail-closed shape and
+    # CI's false-green guard (an exit-0 run that executed no tests).
+    if [ -x "$REAL_VENDOR/bin/phpunit" ]; then
+        ln -s "$(cd "$REAL_VENDOR" && pwd)" vendor
+        cat > phpunit.ci.xml <<'XML'
+<?xml version="1.0"?>
+<phpunit bootstrap="vendor/autoload.php" colors="false" convertDeprecationsToExceptions="false">
+  <testsuites><testsuite name="default"><directory>tests</directory></testsuite></testsuites>
+</phpunit>
+XML
+        mkdir -p .github/workflows tests
+        printf "      php-version: '7.4'\n" > .github/workflows/php-unit.yml
+        printf '<?php\nfinal class ZzPassTest extends \\PHPUnit\\Framework\\TestCase { public function testOk(): void { $this->assertTrue(true); } }\n' > tests/ZzPassTest.php
+        expect_unit() { # name want_verdict
+            local got
+            got=$(P202_MIN_UNIT_TESTS="${3:-1}" ./verify.sh --tier unit 2>/dev/null | awk '/^  unit / {print $2}')
+            if [ "$got" = "$2" ]; then printf '  ok    %-46s unit=%s\n' "$1" "$got"; pass=$((pass + 1)); else printf '  FAIL  %-46s unit=%s (wanted %s)\n' "$1" "$got" "$2"; fail=$((fail + 1)); fi
+        }
+        expect_unit "unit: green suite on a non-CI PHP PASSES" PASS
+        printf '<?php\nfinal class ZzFailTest extends \\PHPUnit\\Framework\\TestCase { public function testNo(): void { $this->fail("deliberate"); } }\n' > tests/ZzFailTest.php
+        expect_unit "unit: a real failure on a non-CI PHP is FAIL, not SKIP" FAIL
+        note_out=$(P202_MIN_UNIT_TESTS=1 ./verify.sh --tier unit 2>&1)
+        if printf '%s' "$note_out" | grep -q "CI pins 7.4"; then
+            printf '  ok    %-46s\n' "unit: the FAIL carries the interpreter note"; pass=$((pass + 1))
+        else
+            printf '  FAIL  %-46s\n' "unit: the FAIL carries the interpreter note"; fail=$((fail + 1))
+            printf '%s\n' "$note_out" | grep -E "^--- unit|^  unit|php-version|PHP" | sed 's/^/        | /'
+        fi
+        rm -f tests/ZzFailTest.php
+        printf '<?php\nexit(0);\n' > tests/ZzAbortTest.php
+        expect_unit "unit: collection abort with exit 0 is FAIL (false green)" FAIL
+        rm -f tests/ZzAbortTest.php
+        expect_unit "unit: too few tests for CI's threshold is FAIL" FAIL 600
+        rm -rf tests/ZzPassTest.php phpunit.ci.xml .github vendor
+    else
+        printf '  skip  unit tier cases: no vendor/bin/phpunit at %s\n' "$REAL_VENDOR"
+    fi
+
+    # ── schema tier, behaviourally: a skip next to a failure is FAIL ──
+    #
+    # The detector fires on "Skipped: N". The first version consulted it
+    # before the exit status, so a run in which one test skipped (no DB) and
+    # another failed reported SKIP and hid the failure.
+    if [ -x "$REAL_VENDOR/bin/phpunit" ]; then
+        ln -s "$(cd "$REAL_VENDOR" && pwd)" vendor
+        cat > phpunit.ci.xml <<'XML'
+<?xml version="1.0"?>
+<phpunit bootstrap="vendor/autoload.php" colors="false" convertDeprecationsToExceptions="false">
+  <testsuites><testsuite name="default"><directory>tests</directory></testsuite></testsuites>
+</phpunit>
+XML
+        mkdir -p tests/Schema
+        expect_schema() { # name want_verdict
+            local got
+            got=$(P202_TEST_DB_HOST=127.0.0.1 P202_TEST_DB_NAME=zz_scratch ./verify.sh --tier schema 2>/dev/null | awk '/^  schema / {print $2}')
+            if [ "$got" = "$2" ]; then printf '  ok    %-46s schema=%s\n' "$1" "$got"; pass=$((pass + 1)); else printf '  FAIL  %-46s schema=%s (wanted %s)\n' "$1" "$got" "$2"; fail=$((fail + 1)); fi
+        }
+        printf '<?php\n/** @group integration */\nfinal class ZzSkipTest extends \\PHPUnit\\Framework\\TestCase { public function testDb(): void { $this->markTestSkipped("no db"); } }\n' > tests/Schema/ZzSkipTest.php
+        expect_schema "schema: only skips (no db) is SKIP, not PASS" SKIP
+        printf '<?php\n/** @group integration */\nfinal class ZzScanTest extends \\PHPUnit\\Framework\\TestCase { public function testScan(): void { $this->fail("scanner regression"); } }\n' > tests/Schema/ZzScanTest.php
+        expect_schema "schema: a failure next to a skip is FAIL, not SKIP" FAIL
+        rm -f tests/Schema/ZzScanTest.php tests/Schema/ZzSkipTest.php
+        printf '<?php\n/** @group integration */\nfinal class ZzOkTest extends \\PHPUnit\\Framework\\TestCase { public function testOk(): void { $this->assertTrue(true); } }\n' > tests/Schema/ZzOkTest.php
+        expect_schema "schema: a green run PASSES" PASS
+        rm -rf tests/Schema phpunit.ci.xml vendor
+    else
+        printf '  skip  schema tier cases: no vendor/bin/phpunit at %s\n' "$REAL_VENDOR"
+    fi
+
+    # ── go tier: a change that breaks the build is FAIL; only a host that
+    #    cannot build cgo at all is SKIP. The output cannot tell the two
+    #    apart, so the tier compiles a known-good cgo program to find out. ──
+    if command -v go >/dev/null 2>&1 && [ -n "$(go env GOROOT 2>/dev/null)" ]; then
+        mkdir -p go-cli/cmd/x
+        printf 'module p202harness\n\ngo 1.22\n' > go-cli/go.mod
+        printf 'package main\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
+        printf 'package main\n\nimport "testing"\n\nfunc TestOk(t *testing.T) {}\n' > go-cli/cmd/x/main_test.go
+        # Commit the module so the tiers have a committed baseline to judge
+        # the environment on, as the real go-cli does.
+        git add go-cli/go.mod && git commit -qm "go baseline"
+        expect_go() { # name want_verdict [env...]
+            local name="$1" want="$2"; shift 2
+            local got
+            got=$(env "$@" ./verify.sh --tier go 2>/dev/null | awk '/^  go / {print $2}')
+            if [ "$got" = "$want" ]; then printf '  ok    %-46s go=%s\n' "$name" "$got"; pass=$((pass + 1)); else printf '  FAIL  %-46s go=%s (wanted %s)\n' "$name" "$got" "$want"; fail=$((fail + 1)); fi
+        }
+        expect_go "go: healthy module PASSES" PASS
+        printf 'package main\n\n// #cgo LDFLAGS: -lp202_no_such_lib_zz\nimport "C"\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
+        expect_go "go: a change with bad cgo is FAIL on a healthy host" FAIL
+        expect_go "go: the same failure on a host that cannot build cgo is SKIP" SKIP CC=false
+        # gofmt is CI's first Go gate; the tier must mirror it.
+        printf 'package main\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
+        printf 'package main\n\nfunc   ugly( ) {\n}\n' > go-cli/cmd/x/ugly.go
+        expect_go "go: an unformatted file is FAIL, as in CI" FAIL
+        rm -f go-cli/cmd/x/ugly.go
+        # The environment is judged on the COMMITTED module graph. A
+        # requirement the change adds also makes go try the proxy, and an
+        # earlier version of the precheck read that as "no network".
+        # The change adds a requirement AND imports it, so vet must resolve it
+        # (an unused requirement is never resolved under lazy loading and
+        # fails nothing, on CI either). The committed baseline loads fine, so
+        # this is the change's failure, not the environment's.
+        printf 'module p202harness\n\ngo 1.22\n\nrequire example.com/not/in/cache_zz v1.0.0\n' > go-cli/go.mod
+        printf 'package main\n\nimport _ "example.com/not/in/cache_zz"\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
+        expect_go "go: a requirement the change adds and imports, unfetchable, is FAIL" FAIL GOPROXY=off
+        # Now commit that state so it IS the baseline: an empty cache with no
+        # network fails before any repository code is compiled.
+        git add go-cli/go.mod && git commit -qm "baseline requires an unfetchable module"
+        expect_go "go: committed dependencies that cannot be fetched are SKIP" SKIP GOPROXY=off
+        # gofmt needs neither cache nor network, so it still reports.
+        printf 'package main\n\nfunc   ugly( ) {\n}\n' > go-cli/cmd/x/ugly.go
+        expect_go "go: an unformatted file is FAIL even when dependencies are unavailable" FAIL GOPROXY=off
+        rm -f go-cli/cmd/x/ugly.go
+        # A file gofmt cannot parse prints nothing on stdout and exits 2; the
+        # first gate read only stdout and walked on to the module check.
+        printf 'package main\n\nfunc main( {\n' > go-cli/cmd/x/broken.go
+        expect_go "go: a syntax error is FAIL even when dependencies are unavailable" FAIL GOPROXY=off
+        rm -f go-cli/cmd/x/broken.go
+        git reset -q --hard HEAD~1 >/dev/null
+        printf 'package main\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
+        # A go.mod the change broke is not "dependencies unavailable".
+        printf 'module p202harness\n\ngo 1.22\n\nthis is not valid\n' > go-cli/go.mod
+        expect_go "go: a malformed go.mod is FAIL, not an environment SKIP" FAIL
+        git checkout -q -- go-cli/go.mod
+        # A Go tier on a machine whose go differs from CI's must run CI's
+        # toolchain (via GOTOOLCHAIN) or SKIP; a PASS on a different Go is a
+        # false green with a footnote, which is what the first version did.
+        eval "$(sed -n '/^ci_go_version() {/,/^}/p; /^local_go_version() {/,/^}/p; /^go_version_mismatch_note() {/,/^}/p; /^ci_go_toolchain() {/,/^}/p' ./verify.sh)"
+        # shellcheck disable=SC2034
+        GO_BIN=$(command -v go)
+        mkdir -p .github/workflows
+        local_go=$(local_go_version)
+        printf "          go-version: '%s'\n" "$local_go" > .github/workflows/go-cli.yml
+        if [ -z "$(ci_go_toolchain)" ]; then printf '  ok    %-46s\n' "go: CI on the same Go needs no toolchain switch"; pass=$((pass + 1)); else printf '  FAIL  %-46s\n' "go: CI on the same Go needs no toolchain switch"; fail=$((fail + 1)); fi
+        printf "          go-version: '1.1'\n" > .github/workflows/go-cli.yml
+        expect_go "go: CI on a Go that cannot be fetched is SKIP, not PASS" SKIP
+        # A real other minor: CI's toolchain is fetched and the tier runs
+        # under it. Needs the toolchain module to be reachable; skip the
+        # case, visibly, when it is not.
+        other_minor="1.22"; [ "$local_go" = "1.22" ] && other_minor="1.23"
+        printf "          go-version: '%s'\n" "$other_minor" > .github/workflows/go-cli.yml
+        if [ "$(ci_go_toolchain)" = "?" ]; then
+            printf '  skip  go: toolchain module unreachable; cannot exercise the GOTOOLCHAIN switch\n'
+        else
+            go_out=$(./verify.sh --tier go 2>&1)
+            if printf '%s' "$go_out" | grep -E '^  go +PASS' | grep -q "ran under CI's go$other_minor"; then
+                printf '  ok    %-46s\n' "go: a different CI minor runs under CI's toolchain"; pass=$((pass + 1))
+            else
+                printf '  FAIL  %-46s\n' "go: a different CI minor runs under CI's toolchain"; fail=$((fail + 1))
+                printf '%s\n' "$go_out" | grep -E "^--- go|^  go " | sed 's/^/        | /'
+            fi
+        fi
+        rm -rf .github
+        eval "$(sed -n '/^host_go_toolchain_broken() {/,/^}/p' ./verify.sh)"
+        # Read by the sourced host_go_toolchain_broken, which shellcheck cannot see.
+        # shellcheck disable=SC2034
+        GO_BIN=$(command -v go)
+        if ! host_go_toolchain_broken && CC=false host_go_toolchain_broken; then
+            printf '  ok    %-46s\n' "go: probe tells a healthy host from a broken one"; pass=$((pass + 1))
+        else
+            printf '  FAIL  %-46s\n' "go: probe tells a healthy host from a broken one"; fail=$((fail + 1))
+        fi
+        # ── golangci tier: same shape. A change that cannot load is FAIL; only a
+        #    host where the linter cannot lint a trivial module is SKIP. ──
+        if command -v golangci-lint >/dev/null 2>&1; then
+            printf 'package main\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
+            expect_golangci() { # name want_verdict [env...]
+                local name="$1" want="$2"; shift 2
+                local got
+                got=$(env "$@" ./verify.sh --tier golangci 2>/dev/null | awk '/^  golangci / {print $2}')
+                if [ "$got" = "$want" ]; then printf '  ok    %-46s golangci=%s\n' "$name" "$got"; pass=$((pass + 1)); else printf '  FAIL  %-46s golangci=%s (wanted %s)\n' "$name" "$got" "$want"; fail=$((fail + 1)); fi
+            }
+            expect_golangci "golangci: healthy module PASSES" PASS
+            printf 'package main\n\nimport _ "example.com/does/not/exist_zz"\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
+            expect_golangci "golangci: a change importing a missing package is FAIL" FAIL
+            # A build cache that cannot be created breaks package loading for
+            # every module while leaving `go env` answering, which is the
+            # shape of a host problem the resolver does not catch up front.
+            # A path under a regular file cannot be created by anyone, root
+            # included; /nonexistent/... was writable as root and the case
+            # silently inverted in a container.
+            printf 'x' > "$REPO/notadir"
+            expect_golangci "golangci: the same failure on a broken host is SKIP" SKIP GOCACHE="$REPO/notadir/cache"
+            printf 'module p202harness\n\ngo 1.22\n\nrequire example.com/not/in/cache_zz v1.0.0\n' > go-cli/go.mod
+            expect_golangci "golangci: a requirement the change adds and cannot fetch is FAIL" FAIL GOPROXY=off
+            git add go-cli/go.mod && git commit -qm "baseline requires an unfetchable module"
+            expect_golangci "golangci: committed dependencies that cannot be fetched are SKIP" SKIP GOPROXY=off
+            git reset -q --hard HEAD~1 >/dev/null
+            # A change-side fault whose output DOES match the trigger on this
+            # version ("Running error", "context loading failed"): a
+            # malformed go.mod. Only the probe can tell it from a broken host.
+            printf 'package main\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
+            cp go-cli/go.mod "$REPO/go.mod.keep"
+            printf 'module p202harness\n\ngo 1.22\n\nthis is not valid\n' > go-cli/go.mod
+            expect_golangci "golangci: a change-side load error that matches the trigger is FAIL" FAIL
+            mv "$REPO/go.mod.keep" go-cli/go.mod
+            eval "$(sed -n '/^host_golangci_broken() {/,/^}/p' ./verify.sh)"
+            if ! host_golangci_broken && GOCACHE="$REPO/notadir/cache" host_golangci_broken; then
+                printf '  ok    %-46s\n' "golangci: probe tells a healthy host from a broken one"; pass=$((pass + 1))
+            else
+                printf '  FAIL  %-46s\n' "golangci: probe tells a healthy host from a broken one"; fail=$((fail + 1))
+            fi
+            printf 'package main\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
+        else
+            printf '  skip  golangci tier cases: golangci-lint not installed\n'
+        fi
+        rm -rf go-cli
+    else
+        printf '  skip  go tier cases: no working go on PATH\n'
+    fi
+
+    rm -rf scripts ./verify.sh
+else
+    printf '  skip  verify.sh not found at %s\n' "$VERIFY"
+fi
+
+echo "  ---- $pass passed, $fail failed"
+[ "$fail" -eq 0 ]
