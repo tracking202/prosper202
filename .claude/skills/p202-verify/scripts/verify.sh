@@ -573,6 +573,17 @@ go_version_mismatch_note() {
     echo "local Go is $local_v, CI pins $ci (.github/workflows/go-cli.yml)"
 }
 
+# True when the local Go minor is at least CI's (or either is unknown, in
+# which case the local parser is the only one there is).
+go_local_is_at_least_ci() {
+    local ci local_v
+    ci=$(ci_go_version)
+    local_v=$(local_go_version)
+    [ -n "$ci" ] && [ -n "$local_v" ] || return 0
+    [ "${local_v%%.*}" -gt "${ci%%.*}" ] && return 0
+    [ "${local_v%%.*}" -eq "${ci%%.*}" ] && [ "${local_v#*.}" -ge "${ci#*.}" ]
+}
+
 # The GOTOOLCHAIN value that makes the local go run CI's minor, or nothing
 # when the local go already is CI's. Prints "?" when the minors differ but
 # no toolchain for CI's minor can be resolved.
@@ -641,8 +652,8 @@ run_go() {
     # see. The previous commit put the switch first and moved this gate
     # back behind a fetch-dependent SKIP, which a reviewer caught.
     gofmt_bin="$("$GO_BIN" env GOROOT 2>/dev/null)/bin/gofmt"
+    local gofmt_rc deferred_parse=""
     if [ -x "$gofmt_bin" ]; then
-        local gofmt_rc
         # stderr kept and exit status checked: a file gofmt cannot parse
         # produces a diagnostic on stderr, nothing on stdout, and exit 2. The
         # first version discarded both and walked on to the module check,
@@ -651,17 +662,43 @@ run_go() {
         unformatted=$( cd go-cli && "$gofmt_bin" -l . 2>&1 )
         gofmt_rc=$?
         if [ $gofmt_rc -ne 0 ]; then
-            printf 'gofmt failed:\n%s\n' "$unformatted"
-            FAIL_NOTE="gofmt exited $gofmt_rc, which means a file it could not parse; CI's Go workflow fails on this before vet or test"
-            return 1
-        fi
-        if [ -n "$unformatted" ]; then
+            # A parse failure is only a verdict when the local parser accepts
+            # at least what CI's does, which is the case when the local Go is
+            # CI's minor or newer (Go never removes syntax). An older local
+            # Go can reject syntax CI's version introduced, so the decision
+            # is deferred until CI's toolchain has been selected and its own
+            # gofmt asked. A reviewer found this after the previous round
+            # had, correctly, moved the gate ahead of the toolchain switch.
+            if go_local_is_at_least_ci; then
+                printf 'gofmt failed:\n%s\n' "$unformatted"
+                FAIL_NOTE="gofmt exited $gofmt_rc, which means a file it could not parse; CI's Go workflow fails on this before vet or test"
+                return 1
+            fi
+            deferred_parse="$unformatted"
+        elif [ -n "$unformatted" ]; then
             printf 'gofmt would reformat:\n%s\n' "$unformatted"
             FAIL_NOTE="gofmt -l lists $(printf '%s\n' "$unformatted" | grep -c .) file(s); CI's Go workflow fails on this before vet or test"
             return 1
         fi
     fi
-    use_ci_go_toolchain || return $TIER_COULD_NOT_RUN
+    if ! use_ci_go_toolchain; then
+        if [ -n "$deferred_parse" ]; then
+            COULD_NOT_RUN_REASON="the local gofmt (older than CI's Go) could not parse a file, and CI's toolchain could not be fetched to ask its gofmt; a syntax error and a version gap look the same from here"
+        fi
+        return $TIER_COULD_NOT_RUN
+    fi
+    if [ -n "$deferred_parse" ]; then
+        # CI's gofmt gets the final word on the file the local one rejected.
+        gofmt_bin="$("$GO_BIN" env GOROOT 2>/dev/null)/bin/gofmt"
+        unformatted=$( cd go-cli && "$gofmt_bin" -l . 2>&1 )
+        gofmt_rc=$?
+        if [ $gofmt_rc -ne 0 ] || [ -n "$unformatted" ]; then
+            printf 'gofmt (CI toolchain %s):\n%s\n' "${GOTOOLCHAIN:-}" "$unformatted"
+            FAIL_NOTE="gofmt under CI's ${GOTOOLCHAIN:-toolchain} rejects a file the local gofmt also rejected; CI's Go workflow fails on this before vet or test"
+            unset GOTOOLCHAIN
+            return 1
+        fi
+    fi
     if go_modules_unavailable; then
         COULD_NOT_RUN_REASON="the committed Go module graph could not be loaded (empty module cache with no network or proxy?); nothing of this repository was compiled"
         return $TIER_COULD_NOT_RUN

@@ -556,6 +556,18 @@ XML
         printf 'package main\n\nfunc   ugly( ) {\n}\n' > go-cli/cmd/x/ugly.go
         expect_go "go: an unformatted file is FAIL even when CI's Go cannot be fetched" FAIL
         rm -f go-cli/cmd/x/ugly.go
+        # A parse failure is a verdict only when the local parser accepts
+        # at least what CI's does. CI on 1.1 is older than any local Go, so
+        # a syntax error is FAIL outright...
+        printf 'package main\n\nfunc main( {\n' > go-cli/cmd/x/broken.go
+        expect_go "go: a syntax error with CI on an older Go is FAIL" FAIL
+        # ...while CI on a Go newer than local (1.99 exists nowhere, so it
+        # cannot be fetched) leaves a syntax error and a version gap
+        # indistinguishable: SKIP, not FAIL, and not PASS.
+        printf "          go-version: '1.99'\n" > .github/workflows/go-cli.yml
+        expect_go "go: a syntax error with CI on a newer, unfetchable Go is SKIP" SKIP
+        rm -f go-cli/cmd/x/broken.go
+        printf "          go-version: '1.1'\n" > .github/workflows/go-cli.yml
         # A real other minor: CI's toolchain is fetched and the tier runs
         # under it. Needs the toolchain module to be reachable; skip the
         # case, visibly, when it is not.
