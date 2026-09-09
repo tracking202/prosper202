@@ -54,6 +54,7 @@ subset, because the tier that matters is the one that touches your path.
 | `tracking202/redirect/**` | + a real click through a seeded instance, not a unit test |
 | `202-config/PHPStan/Rules/**` | + rule registered in `phpstan.neon.dist`, + clean against the whole tree, + a planted defect in every call shape it claims to cover |
 | `202-config/Database/**`, `202-config/migrations/**`, `tests/Schema/**`, `api/v3/**`, any `*.sql` | + `--group integration tests/Schema/` against a scratch database. The table definitions live in `202-config/Database/Tables/*.php` and have no "schema" in their path; the first version of the selector missed them. |
+| `sdk/ios-attribution/**` | swift (`swift build && swift test`, mirroring the Swift SDK job); SKIP with the toolchain hint when `swift` is absent |
 | `.github/workflows/**` | actionlint, which is CI's workflow gate; a workflow-only change previously selected nothing that could see an invalid action input |
 | anything auth, scope, idempotency, or staged-write shaped | all of the above, plus a live end-to-end pass |
 
@@ -92,7 +93,7 @@ as `PASS`.
 Tiers, in order, with the command each wraps:
 
 1. `syntax` — `php -l` over the tree, `bash -n` over `*.sh`
-2. `phpstan` — `vendor/bin/phpstan analyse -c phpstan.neon.dist --no-progress --memory-limit=512M`
+2. `phpstan` — `vendor/bin/phpstan analyse -c phpstan.neon.dist --no-progress --memory-limit=512M`. On a partial `vendor/` the documented errors (`cli/` classes extending Symfony classes composer never delivered) are separated from everything else: if they are the only errors the tier is SKIP naming the count, otherwise FAIL as `(N environmental, M other)`, so a tier that would be FAIL on every run in that environment still says what is worth reading.
 3. `phpcs` — PSR12 over the PHP files the change touches, as a **ratchet**: a file may not have more PSR12 errors, nor more warnings, than it had at `HEAD`, and a new file must have none of either. `AGENTS.md` asks for `phpcs --standard=PSR12 .`; CI does not run it and the tree is far from clean (`api/v3` alone carries a few hundred findings), so a tier that failed on any finding would fail on every touch of a legacy file and be switched off. Pre-existing findings are printed, not counted. A renamed file is ratcheted against its original blob (git's rename detection for a staged move, an exact content match for an unstaged plain move); an unstaged move with edits has no findable baseline, so stage it first. Whether phpcs actually analysed a file is read from its report line, not its exit code: the documented exit bitmask does not match what phpcs 3.13 returns, in both directions, and a run with no report is SKIP, never zero findings.
 4. `unit` — `vendor/bin/phpunit --configuration phpunit.ci.xml --exclude-group integration --no-coverage`, which is exactly CI's invocation. Not the strict `phpunit.xml`: that one promotes deprecations to errors, and on a newer local PHP than CI's it reported 16 failures CI never sees. A failure is a failure: if the local PHP minor version differs from the one `php-unit.yml` pins, the FAIL carries a note naming both so the reader can judge whether the failures are deprecation notices from the interpreter, but the verdict is never downgraded to SKIP (the first version did that, and would have hidden a real `$this->fail()` behind "environmental"). CI's false-green guard is mirrored too: an exit-0 run that executed fewer than 600 tests is FAIL, because a collection-time `die()`/`exit(0)` aborts PHPUnit before any test runs and can still exit 0.
 5. `go` — first `go list -m all`, so an empty module cache with no network is SKIP rather than a FAIL blamed on code that never compiled; then `gofmt -l .`, which is CI's first Go gate and fails the tier on any file it would reformat; then `cd go-cli && go vet ./... && go test ./...`, then `HOME=$(mktemp -d) go test ./cmd/...`. A PASS from a Go newer than the one `go-cli.yml` pins carries a note saying so: the `go 1.22` directive gates language features, not the standard library, so an import of a package added in a later release builds here and fails CI. Pinning CI's toolchain locally is not always possible (Go 1.22 could not link on the macOS this was written on), so the caveat is the honest form. When the output mentions the C toolchain, the tier compiles a known-good cgo program with the same `go` to decide whether the host is broken (SKIP) or the change is (FAIL); the text alone cannot tell a machine whose Xcode tools mismatch its Go from a change that links a library that is not there.
@@ -100,6 +101,7 @@ Tiers, in order, with the command each wraps:
 7. `schema` — `phpunit --configuration phpunit.ci.xml --group integration tests/Schema/` against a scratch database. PHPUnit 9 exits 0 when the tests skip themselves, which the schema test does when it cannot reach the database; a run that reports `Skipped: N` or `No tests executed` is SKIP, never PASS.
 8. `patterns` — `scripts/check-code-patterns.sh`, the existing Stop hook
 9. `actionlint` — `actionlint` over `.github/workflows/`, selected when a workflow changes
+10. `swift` — `cd sdk/ios-attribution && swift build && swift test`, selected when that directory changes
 
 The `--memory-limit` on tier 2 is not decoration. CI installs PHP through
 `setup-php`, which leaves `memory_limit` uncapped; a stock local `php.ini`
@@ -107,16 +109,16 @@ caps it at 128M and PHPStan dies parsing the intl stubs, reporting FAIL for a
 reason that has nothing to do with the change. `scripts/check-code-patterns.sh`
 passes the same 512M for the same reason.
 
-Tiers 10 and 11 are not scripted because they need a live instance and a
+Tiers 11 and 12 are not scripted because they need a live instance and a
 decision about what to exercise. Do them by hand:
 
-10. **Live end-to-end.** Stand up an instance with
+11. **Live end-to-end.** Stand up an instance with
    `tests/fixtures/agent-eval/ci/install-instance.sh`, seed it with
    `tests/fixtures/agent-eval/seed.sh`, then drive the actual path a user
    would take. Reports stay empty until the dataengine cron runs; the seeder
    triggers `202-cronjobs/dej.php` itself. If an instance is already up in
    this session, there is no excuse to skip this.
-11. **Agent eval.** If the change is agent-facing, add a case under
+12. **Agent eval.** If the change is agent-facing, add a case under
    `tests/fixtures/agent-eval/cases/` and run it. Grading is on final state,
    not on transcript wording.
 

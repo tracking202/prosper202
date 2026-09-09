@@ -162,12 +162,47 @@ done <<< "$files"
 # Part 2: PHPStan on modified files
 # ═══════════════════════════════════════════════════════
 
-phpstan_bin="./vendor/bin/phpstan"
-if [ -x "$phpstan_bin" ] || [ -f "$phpstan_bin" ]; then
-    # Build list of files that exist and are under analysed paths
+# The same fallback the verification ladder uses: a sandbox where composer
+# could not authenticate has no vendor/bin/, and the official phar at the
+# repo root is the documented recovery. The hook used to look at
+# vendor/bin/phpstan only and, finding nothing, skip this half in silence,
+# so a partial vendor read as "PHPStan passed" (error pattern #10 rebuilt
+# inside the guard). Both are PHP entry points, so `php <bin>` works for
+# either; a shell wrapper at vendor/bin/phpstan would not.
+phpstan_bin=""
+if [ -f ./vendor/bin/phpstan ]; then
+    phpstan_bin="./vendor/bin/phpstan"
+elif [ -f ./phpstan.phar ]; then
+    phpstan_bin="./phpstan.phar"
+fi
+
+if [ -z "$phpstan_bin" ]; then
+    echo "check-code-patterns: PHPStan NOT run: no vendor/bin/phpstan and no phpstan.phar (see .claude/skills/p202-verify/references/sandbox-recovery.md); the pattern checks above still ran" >&2
+else
+    # Only files under the config's own `paths:`. PHPStan is handed the
+    # changed files explicitly, which is how a touched test under tests/
+    # was analysed although phpstan.neon.dist never covers tests/. On a
+    # partial vendor PHPUnit\Framework\TestCase is unresolvable and every
+    # such test failed the hook; CI, with a full vendor, never saw it.
+    config_paths=$(awk '
+        /^[[:space:]]*paths:[[:space:]]*$/ { inpaths = 1; next }
+        inpaths && /^[[:space:]]*-[[:space:]]*/ { sub(/^[[:space:]]*-[[:space:]]*/, ""); print; next }
+        inpaths { inpaths = 0 }
+    ' phpstan.neon.dist 2>/dev/null)
+    if [ -z "$config_paths" ]; then
+        config_paths=$'api\n202-config\n202-account\n202-cronjobs\ncli\ntracking202'
+    fi
+    in_config_paths() {
+        local p
+        while IFS= read -r p; do
+            [ -n "$p" ] || continue
+            case "$1" in "$p"/*|"$p") return 0 ;; esac
+        done <<< "$config_paths"
+        return 1
+    }
     analyse_files=()
     while IFS= read -r file; do
-        if [ -f "$file" ]; then
+        if [ -f "$file" ] && in_config_paths "$file"; then
             analyse_files+=("$file")
         fi
     done <<< "$files"

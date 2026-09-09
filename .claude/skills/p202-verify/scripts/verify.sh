@@ -15,7 +15,7 @@
 
 set -uo pipefail
 
-ALL_TIERS="syntax phpstan phpcs unit go golangci schema patterns actionlint"
+ALL_TIERS="syntax phpstan phpcs unit go golangci schema patterns actionlint swift"
 
 usage() {
     cat <<'EOF'
@@ -29,7 +29,7 @@ Usage: verify.sh [options]
   --list           list tier names
   -h, --help       this message
 
-Tiers: syntax phpstan phpcs unit go golangci schema patterns actionlint
+Tiers: syntax phpstan phpcs unit go golangci schema patterns actionlint swift
 
 Tiers 8 (live end-to-end) and 9 (agent eval) are deliberately not scripted.
 They need a running instance and a decision about what to exercise. See
@@ -39,10 +39,10 @@ EOF
 
 # ---------------------------------------------------------------- setup
 
+SELF=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 if ROOT=$(git rev-parse --show-toplevel 2>/dev/null); then
     :
 else
-    SELF=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
     ROOT=$(cd "$SELF/../../../.." && pwd)
 fi
 cd "$ROOT" || { echo "cannot cd to repo root" >&2; exit 2; }
@@ -197,6 +197,10 @@ reason_for() {
             have actionlint || { echo "actionlint not installed (brew install actionlint, or the download script CI uses)"; return; }
             [ -d .github/workflows ] || { echo ".github/workflows/ missing"; return; }
             ;;
+        swift)
+            [ -d sdk/ios-attribution ] || { echo "sdk/ios-attribution/ not in this tree"; return; }
+            have swift || { echo "swift not installed (on Linux the swift.org toolchain tarball for your distro runs with no extra packages; see references/sandbox-recovery.md)"; return; }
+            ;;
     esac
     echo ""
 }
@@ -227,14 +231,55 @@ run_syntax() {
     return $status
 }
 
+# On a partial vendor PHPStan reports a known set of errors that are the
+# environment, not the code: `cli/` classes that extend Symfony Console
+# classes composer never delivered ("extends unknown class Symfony\\..."),
+# six of them at the time of writing. A tier that is FAIL on every run in
+# that environment carries no information, so those are separated out. The
+# shape is specific (identifier class.notFound, path under cli/, Symfony in
+# the message), and anything else stays a FAIL with the counts on the line.
+phpstan_partial_vendor_split() { # $1 = json output; prints "ENV OTHER"
+    php -r '
+        $j = json_decode(stream_get_contents(STDIN), true);
+        $env = 0; $other = 0;
+        foreach (($j["files"] ?? []) as $path => $f) {
+            foreach (($f["messages"] ?? []) as $m) {
+                $isEnv = preg_match("#(^|/)cli/#", (string) $path)
+                    && preg_match("/unknown class Symfony\\\\|Symfony\\\\[A-Za-z\\\\]+ not found/", (string) ($m["message"] ?? ""));
+                if ($isEnv) { $env++; } else { $other++; }
+            }
+        }
+        $other += count($j["errors"] ?? []);
+        echo $env, " ", $other;
+    ' <<< "$1" 2>/dev/null || echo "? ?"
+}
+
 run_phpstan() {
     # --memory-limit is not optional locally. CI installs PHP through
     # setup-php, which leaves memory_limit uncapped; a stock local php.ini
     # caps it at 128M and PHPStan dies parsing the intl stubs. Without the
     # flag this tier reports FAIL for an environment reason and sends the
     # reader hunting a regression that is not there.
+    local out rc
     # shellcheck disable=SC2086
-    $PHPSTAN_CMD analyse -c phpstan.neon.dist --no-progress --memory-limit=512M
+    out=$( $PHPSTAN_CMD analyse -c phpstan.neon.dist --no-progress --memory-limit=512M 2>&1 )
+    rc=$?
+    printf '%s\n' "$out"
+    if [ $rc -ne 0 ] && [ "$VENDOR_STATE" = partial ]; then
+        local json split env other
+        # shellcheck disable=SC2086
+        json=$( $PHPSTAN_CMD analyse -c phpstan.neon.dist --no-progress --memory-limit=512M --error-format=json 2>/dev/null )
+        split=$(phpstan_partial_vendor_split "$json")
+        env=${split%% *}; other=${split##* }
+        if [ "$env" != "?" ] && [ "$other" -eq 0 ] && [ "$env" -gt 0 ]; then
+            COULD_NOT_RUN_REASON="$env class.notFound errors, all Symfony classes under cli/ that this partial vendor never delivered, and no other findings; see references/sandbox-recovery.md"
+            return $TIER_COULD_NOT_RUN
+        fi
+        if [ "$env" != "?" ] && [ "$env" -gt 0 ]; then
+            FAIL_NOTE="$env environmental (Symfony under cli/ on a partial vendor), $other other; the $other are the findings to read"
+        fi
+    fi
+    return $rc
 }
 
 # The PHP minor version CI pins for the unit job, read from the workflow so
@@ -290,6 +335,15 @@ run_unit() {
     printf '%s\n' "$out"
     if [ $rc -ne 0 ]; then
         FAIL_NOTE=$(interpreter_mismatch_reason)
+        if [ "$VENDOR_STATE" = partial ]; then
+            # The suites that error on a partial vendor are documented in
+            # references/sandbox-recovery.md; print what erred here grouped
+            # by suite so the two lists can be compared, instead of a bare
+            # FAIL that says the same thing on every run.
+            local suites
+            suites=$(printf '%s\n' "$out" | grep -oE '^[0-9]+\) Tests\\[A-Za-z]+' | sed -E 's/^[0-9]+\) Tests\\//' | sort | uniq -c | sort -rn | awk '{printf "%s(%s) ", $2, $1}')
+            [ -n "$suites" ] && FAIL_NOTE="${FAIL_NOTE:+$FAIL_NOTE; }partial vendor; erroring suites: $suites(compare with references/sandbox-recovery.md)"
+        fi
         return 1
     fi
     local count
@@ -645,7 +699,15 @@ run_patterns() {
         COULD_NOT_RUN_REASON="no new or modified .php files still exist, so no lines were examined"
         return $TIER_COULD_NOT_RUN
     fi
-    scripts/check-code-patterns.sh
+    # The hook that ships next to this script, when that differs from the
+    # tree's copy. Run from a worktree of another branch, the tree's copy is
+    # whatever that branch has, which a field report found to be the old
+    # one; the ladder and its hook are versioned together.
+    local hook="scripts/check-code-patterns.sh"
+    if [ -n "${SELF:-}" ] && [ -x "$SELF/../../../../scripts/check-code-patterns.sh" ]; then
+        hook="$SELF/../../../../scripts/check-code-patterns.sh"
+    fi
+    "$hook"
     local rc=$?
     # The Stop hook uses exit 2 for "violations found".
     [ $rc -eq 0 ] && return 0
@@ -659,6 +721,12 @@ run_patterns() {
 # exist in the action version named.
 run_actionlint() {
     actionlint
+}
+
+# Mirrors the Swift SDK job. Selected only for changes under
+# sdk/ios-attribution/; SKIP with the toolchain hint when swift is absent.
+run_swift() {
+    ( cd sdk/ios-attribution && swift build && swift test )
 }
 
 # ------------------------------------------------- tiers from the diff
@@ -688,6 +756,7 @@ tiers_from_diff() {
     # against the schema, so a query change there is a schema change.
     echo "$files" | grep -qE '^(202-config/(Database|migrations)/|tests/Schema/|api/v3/)' && tiers="$tiers schema"
     echo "$files" | grep -qE '^\.github/workflows/.*\.ya?ml$' && tiers="$tiers actionlint"
+    echo "$files" | grep -q '^sdk/ios-attribution/'         && tiers="$tiers swift"
     echo "$files" | grep -q '\.sql$'                    && tiers="$tiers schema"
     echo "$tiers" | tr ' ' '\n' | awk 'NF' | sort -u | tr '\n' ' '
 }

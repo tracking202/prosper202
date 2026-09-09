@@ -129,6 +129,31 @@ assert_script "uses PHPStan exit status" 'phpstan_status' yes
 assert_script "pins the committed config (baseline)" '\-c phpstan\.neon\.dist' yes
 assert_script "selects untracked files too" 'ls-files --others --exclude-standard' yes
 
+# ── The hook's PHPStan half on a partial vendor ──
+#
+# A field report from a sandbox with no vendor/bin/ found the hook skipping
+# PHPStan in silence, and analysing tests/ files the config never covers.
+mkdir -p vendor api tests
+printf '<?php\n' > vendor/autoload.php
+printf 'parameters:\n    paths:\n        - api\n        - src\n' > phpstan.neon.dist
+printf '<?php\nfunction fresh() { return 1; }\n' > api/New.php
+./check.sh >/dev/null 2>"$REPO/stderr.txt"; rc=$?
+if [ "$rc" -eq 0 ] && grep -q "PHPStan NOT run" "$REPO/stderr.txt"; then
+    printf '  ok    %-46s\n' "hook: no phpstan anywhere says so loudly"; pass=$((pass + 1))
+else
+    printf '  FAIL  %-46s exit=%s stderr=%s\n' "hook: no phpstan anywhere says so loudly" "$rc" "$(head -c 80 "$REPO/stderr.txt")"; fail=$((fail + 1))
+fi
+# A fake phar that records what it was asked to analyse and reports clean.
+printf '<?php\nfile_put_contents(__DIR__ . "/phpstan-args.log", implode("\\n", array_slice($argv, 1)) . "\\n", FILE_APPEND);\necho "[OK] No errors\\n";\n' > phpstan.phar
+printf '<?php\nfinal class ZzT extends \\PHPUnit\\Framework\\TestCase {}\n' > tests/ZzT.php
+./check.sh >/dev/null 2>"$REPO/stderr.txt"; rc=$?
+if [ "$rc" -eq 0 ] && [ -f phpstan-args.log ] && grep -q "api/New.php" phpstan-args.log && ! grep -q "tests/ZzT.php" phpstan-args.log && ! grep -q "PHPStan NOT run" "$REPO/stderr.txt"; then
+    printf '  ok    %-46s\n' "hook: phar fallback used, tests/ kept out of PHPStan"; pass=$((pass + 1))
+else
+    printf '  FAIL  %-46s exit=%s log=%s\n' "hook: phar fallback used, tests/ kept out of PHPStan" "$rc" "$(tr '\n' ' ' < phpstan-args.log 2>/dev/null)"; fail=$((fail + 1))
+fi
+rm -rf vendor api tests/ZzT.php phpstan.neon.dist phpstan.phar phpstan-args.log
+
 # ── The hook driven through verify.sh's patterns tier ──
 #
 # verify.sh guards the tier with its own file selection so that "nothing to
@@ -221,6 +246,40 @@ if [ -f "$VERIFY" ]; then
     expect_plan "plan: a workflow change does not select phpstan" phpstan no
     rm -rf .github
     rm -rf 202-config
+    mkdir -p sdk/ios-attribution && printf '// swift\n' > sdk/ios-attribution/P.swift
+    expect_plan "plan: an sdk/ios-attribution change selects swift" swift yes
+    rm -rf sdk
+
+    # ── phpstan tier on a partial vendor: the documented Symfony errors are
+    #    the environment; anything else is still a finding. ──
+    mkdir -p vendor cli
+    printf '<?php\n' > vendor/autoload.php            # partial: autoload but no vendor/bin
+    printf 'parameters:\n    paths:\n        - cli\n' > phpstan.neon.dist
+    printf '<?php\n' > cli/A.php
+    expect_phpstan() { # name want_verdict
+        local got
+        got=$(./verify.sh --tier phpstan 2>/dev/null | awk '/^  phpstan / {print $2}')
+        if [ "$got" = "$2" ]; then printf '  ok    %-46s phpstan=%s\n' "$1" "$got"; pass=$((pass + 1)); else printf '  FAIL  %-46s phpstan=%s (wanted %s)\n' "$1" "$got" "$2"; fail=$((fail + 1)); fi
+    }
+    fake_phpstan() { # $1 = json body for --error-format=json; always exits 1 with an [ERROR] line otherwise
+        # The JSON goes through a file, not a PHP string literal: single
+        # quotes collapse the backslashes JSON needs and the tier then
+        # decodes nothing, which is exactly what happened the first time.
+        printf '%s' "$1" > phpstan-fake.json
+        printf '<?php\nif (in_array("--error-format=json", $argv, true)) { readfile(__DIR__ . "/phpstan-fake.json"); exit(1); }\necho " [ERROR] Found errors\\n"; exit(1);\n' > phpstan.phar
+    }
+    fake_phpstan '{"totals":{"errors":0,"file_errors":2},"files":{"/r/cli/A.php":{"errors":2,"messages":[{"message":"Class Foo extends unknown class Symfony\\Component\\Console\\Command\\Command.","line":3},{"message":"Class Bar extends unknown class Symfony\\Component\\Console\\Application.","line":9}]}},"errors":[]}'
+    expect_phpstan "phpstan: only the documented Symfony errors on a partial vendor is SKIP" SKIP
+    fake_phpstan '{"totals":{"errors":0,"file_errors":2},"files":{"/r/cli/A.php":{"errors":2,"messages":[{"message":"Class Foo extends unknown class Symfony\\Component\\Console\\Command\\Command.","line":3},{"message":"Direct $stmt->bind_param() bypasses Connection::bind() ref safety.","line":9}]}},"errors":[]}'
+    expect_phpstan "phpstan: a real finding beside the Symfony errors is FAIL" FAIL
+    split_out=$(./verify.sh --tier phpstan 2>&1)
+    if printf '%s' "$split_out" | grep -E '^  phpstan +FAIL' | grep -q "1 environmental.*1 other"; then
+        printf '  ok    %-46s\n' "phpstan: the FAIL line carries the split"; pass=$((pass + 1))
+    else
+        printf '  FAIL  %-46s\n' "phpstan: the FAIL line carries the split"; fail=$((fail + 1))
+        printf '%s\n' "$split_out" | grep -E "^--- phpstan|^  phpstan|environmental" | sed 's/^/        | /'
+    fi
+    rm -rf vendor cli phpstan.neon.dist phpstan.phar phpstan-fake.json
 
     # ── unit-tier interpreter classifier, against a workflow file we write ──
     eval "$(sed -n '/^ci_php_version() {/,/^}/p; /^local_php_version() {/,/^}/p; /^interpreter_mismatch_reason() {/,/^}/p' ./verify.sh)"

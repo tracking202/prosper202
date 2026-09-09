@@ -48,22 +48,35 @@ dependencies usually did land.
 ```bash
 composer dump-autoload --dev
 curl -fsSLO https://phar.phpunit.de/phpunit-9.phar
-php phpunit-9.phar --bootstrap vendor/autoload.php tests/Api tests/User tests/Crud
+php phpunit-9.phar --bootstrap vendor/autoload.php tests/Api
+php phpunit-9.phar --bootstrap vendor/autoload.php tests/User
 ```
+
+One path per invocation. PHPUnit 9 takes a single path argument and silently
+ignores the rest, so `phpunit tests/Api tests/User` runs `tests/Api` alone
+and reports OK. A field report from a sandbox caught this when a two-path
+run executed 4 tests where 9 were expected. Use `--testsuite` for several
+directories at once.
 
 `phar.phpunit.de` is reachable in sandboxes where codeload is not. The phar
 supplies PHPUnit's own classes; the project autoloader supplies the rest.
 
 ## PHPStan
 
-The official phar works with the committed config:
+The official phar works with the committed config, and both the ladder's
+`phpstan` tier and `scripts/check-code-patterns.sh` find it at the repo root
+when `vendor/bin/phpstan` is absent:
 
 ```bash
 curl -fsSLO https://github.com/phpstan/phpstan/releases/download/<version>/phpstan.phar
 php phpstan.phar analyse -c phpstan.neon.dist --no-progress
 ```
 
-Expect about six `class.notFound` errors for `cli/` on a partial vendor.
+Expect about six `class.notFound` errors for `cli/` on a partial vendor, all
+of the shape `extends unknown class Symfony\...`. The `phpstan` tier
+recognises that shape when `vendor:` is partial: if those are the only
+errors it reports SKIP naming the count, and if there are others it reports
+FAIL as `(N environmental, M other)` so the real findings are not buried.
 PHPStan discovers symbols through Composer package metadata, so a package
 cloned into `vendor/` by hand stays invisible to it even after the autoloader
 is patched. To confirm a clean run, write a scratch config that `includes:`
