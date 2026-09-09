@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Check modified PHP files for anti-patterns defined in CLAUDE.md.
+# Check new and modified PHP files for anti-patterns defined in CLAUDE.md.
 # Used as a Claude Code Stop hook — exit 2 blocks Claude from finishing
 # until violations are fixed.
 #
-# Only checks ADDED/MODIFIED lines (git diff), not entire files,
-# to avoid false positives on legacy code.
+# For a file that git already tracks, only ADDED/MODIFIED lines are checked,
+# so legacy code below the change does not produce false positives.
 #
-# Also runs PHPStan on modified files to catch type errors.
+# For a file git has never seen, the whole file is checked. `git diff` emits
+# nothing for an untracked path, so selecting work from the diff alone let a
+# brand-new .php file through every check while the hook still reported clean
+# — a check that appeared to run and did not (CLAUDE.md error pattern #10).
+# There is no legacy code in a new file, so whole-file treatment cannot
+# reintroduce the false positives the diff scoping exists to avoid.
+#
+# Also runs PHPStan on those files to catch type errors.
 
 violations=""
 violation_count=0
@@ -21,11 +28,24 @@ add_violation() {
     violation_count=$((violation_count + 1))
 }
 
-# Check if there are modified PHP files
-files=$(git diff --name-only HEAD -- '*.php' 2>/dev/null || true)
+# Collect the PHP files this run is responsible for. `git diff --name-only
+# HEAD` covers tracked files whether the change is staged or not, and it
+# already reports a newly `git add`ed file. It cannot report a file that was
+# never added, hence the second listing. --exclude-standard keeps .gitignore
+# in force, so vendor/ and friends stay out.
+tracked_php=$(git diff --name-only HEAD -- '*.php' 2>/dev/null || true)
+untracked_php=$(git ls-files --others --exclude-standard -- '*.php' 2>/dev/null || true)
+
+files=$(printf '%s\n%s\n' "$tracked_php" "$untracked_php" | awk 'NF' | sort -u)
 if [ -z "$files" ]; then
     exit 0
 fi
+
+# A path git has never seen. Exact whole-line match so that `foo.php` is not
+# mistaken for `src/foo.php`.
+is_untracked() {
+    printf '%s\n' "$untracked_php" | grep -qxF -- "$1"
+}
 
 # ═══════════════════════════════════════════════════════
 # Part 1: Pattern checks on diff output
@@ -34,8 +54,13 @@ fi
 while IFS= read -r file; do
     [ -f "$file" ] || continue
 
-    # Only check new/modified lines in the diff
-    added=$(git diff HEAD -- "$file" | grep '^+' | grep -v '^+++' || true)
+    # Tracked: only the new/modified lines. Untracked: every line is new, and
+    # `git diff` would return nothing at all for this path.
+    if is_untracked "$file"; then
+        added=$(cat "$file")
+    else
+        added=$(git diff HEAD -- "$file" | grep '^+' | grep -v '^+++' || true)
+    fi
     [ -z "$added" ] && continue
 
     # Write to temp file so grep reads from file, not stdin (avoids option parsing issues)
@@ -137,28 +162,90 @@ done <<< "$files"
 # Part 2: PHPStan on modified files
 # ═══════════════════════════════════════════════════════
 
-phpstan_bin="./vendor/bin/phpstan"
-if [ -x "$phpstan_bin" ] || [ -f "$phpstan_bin" ]; then
-    # Build list of files that exist and are under analysed paths
+# The same fallback the verification ladder uses: a sandbox where composer
+# could not authenticate has no vendor/bin/, and the official phar at the
+# repo root is the documented recovery. The hook used to look at
+# vendor/bin/phpstan only and, finding nothing, skip this half in silence,
+# so a partial vendor read as "PHPStan passed" (error pattern #10 rebuilt
+# inside the guard). Both are PHP entry points, so `php <bin>` works for
+# either; a shell wrapper at vendor/bin/phpstan would not.
+phpstan_bin=""
+if [ -f ./vendor/bin/phpstan ]; then
+    phpstan_bin="./vendor/bin/phpstan"
+elif [ -f ./phpstan.phar ]; then
+    phpstan_bin="./phpstan.phar"
+fi
+
+if [ -z "$phpstan_bin" ]; then
+    echo "check-code-patterns: PHPStan NOT run: no vendor/bin/phpstan and no phpstan.phar (see .claude/skills/p202-verify/references/sandbox-recovery.md); the pattern checks above still ran" >&2
+else
+    # Only files under the config's own `paths:`. PHPStan is handed the
+    # changed files explicitly, which is how a touched test under tests/
+    # was analysed although phpstan.neon.dist never covers tests/. On a
+    # partial vendor PHPUnit\Framework\TestCase is unresolvable and every
+    # such test failed the hook; CI, with a full vendor, never saw it.
+    config_paths=$(awk '
+        /^[[:space:]]*paths:[[:space:]]*$/ { inpaths = 1; next }
+        inpaths && /^[[:space:]]*-[[:space:]]*/ { sub(/^[[:space:]]*-[[:space:]]*/, ""); print; next }
+        inpaths { inpaths = 0 }
+    ' phpstan.neon.dist 2>/dev/null)
+    if [ -z "$config_paths" ]; then
+        config_paths=$'api\n202-config\n202-account\n202-cronjobs\ncli\ntracking202'
+    fi
+    in_config_paths() {
+        local p
+        while IFS= read -r p; do
+            [ -n "$p" ] || continue
+            case "$1" in "$p"/*|"$p") return 0 ;; esac
+        done <<< "$config_paths"
+        return 1
+    }
     analyse_files=()
     while IFS= read -r file; do
-        if [ -f "$file" ]; then
+        if [ -f "$file" ] && in_config_paths "$file"; then
             analyse_files+=("$file")
         fi
     done <<< "$files"
 
     if [ "${#analyse_files[@]}" -gt 0 ]; then
+        # PHPStan reports findings through its exit status: 1 when it has
+        # something to say, 0 when clean. Ask it that question directly.
+        #
+        # This used to grep the output for the literal "[ERROR]". That marker
+        # belongs to the default table renderer and is never emitted under
+        # --error-format=raw, which prints bare "path:line:message" lines, so
+        # the grep never matched and this entire PHPStan gate passed no matter
+        # what was found. `|| true` on the assignment hid the exit status that
+        # would have given the game away.
+        #
+        # -c is not optional. Without it PHPStan picks up phpstan.neon, which
+        # is gitignored, machine-local, and does not include
+        # phpstan-baseline.neon -- so every pre-existing error in a legacy file
+        # would block the hook the moment anyone touched that file, and the
+        # hook would be switched off within a day. The dist config carries the
+        # baseline and is what CI runs, so only genuinely new findings fire.
+        set +e
         phpstan_output=$(php -d memory_limit=512M "$phpstan_bin" analyse \
+            -c phpstan.neon.dist \
             --no-progress --error-format=raw --memory-limit=512M \
-            "${analyse_files[@]}" 2>&1 || true)
+            "${analyse_files[@]}" 2>&1)
+        phpstan_status=$?
+        set -e
 
-        if echo "$phpstan_output" | grep -qF '[ERROR]'; then
+        if [ "$phpstan_status" -ne 0 ]; then
             error_lines=$(echo "$phpstan_output" | grep -v '^\s*$' | grep -v '^\s*Note:' | grep -v '^\s*\[OK\]' || true)
             if [ -n "$error_lines" ]; then
                 violations+="  PHPStan errors:"$'\n'
                 while IFS= read -r line; do
                     [ -n "$line" ] && violations+="    $line"$'\n'
                 done <<< "$error_lines"
+                violation_count=$((violation_count + 1))
+            else
+                # PHPStan said something is wrong and the filters left nothing
+                # to show: a crash, a bad config, an out-of-memory kill. Report
+                # the status rather than falling through to a pass, because an
+                # unreadable answer is not a clean one (CLAUDE.md #11).
+                violations+="  PHPStan exited $phpstan_status with no parseable output; run it directly to see why."$'\n'
                 violation_count=$((violation_count + 1))
             fi
         fi
@@ -171,7 +258,7 @@ fi
 
 if [ "$violation_count" -gt 0 ]; then
     {
-        echo "Found $violation_count code pattern violation(s) in modified PHP files:"
+        echo "Found $violation_count code pattern violation(s) in new and modified PHP files:"
         echo ""
         echo "$violations"
         echo "Ref: CLAUDE.md 'Error patterns to avoid'"

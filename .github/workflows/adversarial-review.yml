@@ -1,0 +1,135 @@
+name: Adversarial Review
+
+# A second reviewer on the diffs that have historically shipped defects.
+#
+# claude-code-review.yml already runs one general review on every PR. This one
+# is narrower and deliberately different: a different model, an adversarial
+# prompt scoped to the failure shapes recorded in CLAUDE.md, and only on paths
+# that touch auth, scopes, idempotency, staged writes, the click path, or the
+# static-analysis rules themselves.
+#
+# The point is disagreement. Two models running the same prompt is redundancy;
+# two models running different prompts is coverage. Agreement between them on
+# a finding is high signal. Set REVIEW_MODEL below to a model other than the
+# one claude-code-review.yml uses, or the second run adds little.
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+    paths:
+      - 'api/**'
+      # The primary login and account surfaces: throttling, session setup,
+      # password verification and change. Left out of the first version,
+      # which advertised an auth review and silently skipped the login page.
+      - '202-account/**'
+      - '202-Mobile/**'
+      - '202-login.php'
+      - '202-lost-pass.php'
+      - '202-pass-reset.php'
+      - 'api-key-required.php'
+      # API-key lifecycle: the appstore page writes clickserver_api_key behind
+      # a CSRF check, and 202-js/account.php (loaded by template.php) generates
+      # and removes REST API keys.
+      - '202-appstore/**'
+      - '202-js/account.php'
+      # The cron endpoints authenticate requests against a user's
+      # install_hash and release keys or data to external services (dni.php
+      # returns the database API key, daily-email.php sends the user's email
+      # and metrics). Three rounds of review each found one more of these,
+      # so the whole directory is in rather than a list that will be short
+      # again next month.
+      - '202-cronjobs/**'
+      - 'cli/**'
+      - 'go-cli/**'
+      - '202-config/**'
+      - 'tracking202/**'
+      - 'tests/fixtures/agent-eval/**'
+      - 'phpstan.neon.dist'
+
+concurrency:
+  group: adversarial-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  adversarial-review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Adversarial review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          allowed_bots: 'claude'
+          # Pin this to a different model from the one the general review runs,
+          # otherwise the second opinion is the same opinion. The flag is
+          # omitted entirely when the variable is unset: `--model` with an
+          # empty value is a hard CLI error ("option '--model <model>'
+          # argument missing"), not a fallback to the default.
+          claude_args: "${{ vars.ADVERSARIAL_REVIEW_MODEL && format('--model {0}', vars.ADVERSARIAL_REVIEW_MODEL) || '' }}"
+          prompt: |
+            You are the second reviewer on ${{ github.repository }} PR
+            ${{ github.event.pull_request.number }}. A general review already
+            ran. Do not repeat it. Your job is to try to break this diff.
+
+            Read CLAUDE.md first, in full. Its "Error patterns to avoid"
+            section is a list of defects that actually shipped in this
+            repository. Treat it as the rubric.
+
+            Review every changed file individually. Batch scanning misses real
+            bugs. For each file, trace the error paths, not the happy path.
+
+            Ask these questions of the diff, and answer each one with a file
+            and line or with "not applicable to this diff":
+
+            1. Is there a fallible call whose return value is unchecked?
+               Not just execute(). get_result(), store_result(), prepare(),
+               and json.Marshal all signal failure with a value that is
+               indistinguishable from a legitimate empty answer. That
+               indistinguishability is the tell.
+            2. Does any default, fallback, or predicate resolve an unknown or
+               malformed value to the most permissive interpretation? A
+               predicate that answers a question must not answer it when it
+               does not know. false is an answer, not an error.
+            3. Is a guard added at one layer while a layer above it can
+               discard, omit, or rewrite the input before it arrives?
+            4. Is a security or validation pattern applied here that has
+               analogous call sites elsewhere which this diff does not touch?
+               Name them.
+            5. Does any flag whose purpose is to withhold an action survive
+               every boundary that rebuilds state? Check subprocess spawns and
+               flag-tree resets, not just the flag definition.
+            6. Does any retry, idempotency, or dedup mechanism fold the thing
+               it is meant to compare into the key it looks up by? If X is
+               part of the lookup path, no lookup can tell you X changed.
+            7. Does a new or changed cache multiply the blast radius of a
+               wrong value? Ask what the cached value costs if it is wrong,
+               not what it saves when right.
+            8. Do the tests exercise the real seam, or do they inject a fake
+               for the thing under test? If the new code IS the wiring, a
+               stubbed dispatcher proves only the bookkeeping.
+            9. Does the PR description claim a capability is complete without
+               naming an end-to-end run that exercised it? Aggregate green
+               suites are not coverage of the path this diff wrote.
+            10. If this diff adds a PHPStan rule: is it registered in
+                phpstan.neon.dist, and is there evidence it was run against
+                the whole clean tree and against a planted defect in every
+                call shape it claims to cover?
+
+            Report only findings you can point at with a file and line. For
+            each one give the failure mode, not a style note. If you cannot
+            find anything under a heading, say so rather than padding.
+
+            End with a short verdict: BLOCKING, NON-BLOCKING, or CLEAN, and one
+            sentence saying which of the ten questions you could not evaluate
+            from the diff alone.
