@@ -706,7 +706,13 @@ run_go() {
     gopath=$("$GO_BIN" env GOPATH 2>/dev/null)
     gomodcache=$("$GO_BIN" env GOMODCACHE 2>/dev/null)
     gocache=$("$GO_BIN" env GOCACHE 2>/dev/null)
-    tmp_home=$(mktemp -d)
+    # Checked: if mktemp fails, HOME would be empty and the run would fall
+    # back to whatever go resolves, which is no longer an isolation probe.
+    if ! tmp_home=$(mktemp -d); then
+        COULD_NOT_RUN_REASON="mktemp -d failed, so HOME could not be isolated for the empty-HOME run; vet and test passed under ${GOTOOLCHAIN:-the local go}"
+        unset GOTOOLCHAIN
+        return $TIER_COULD_NOT_RUN
+    fi
     printf 'empty-HOME run:\n'
     out=$( cd go-cli && HOME="$tmp_home" GOPATH="$gopath" GOMODCACHE="$gomodcache" GOCACHE="$gocache" PATH="$godir:$PATH" "$GO_BIN" test ./cmd/... 2>&1 )
     rc=$?
