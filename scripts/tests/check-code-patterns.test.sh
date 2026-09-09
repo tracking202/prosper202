@@ -499,8 +499,14 @@ XML
         # empty-HOME step is an isolation probe and an unisolated run is not
         # a pass. A PATH shim fails mktemp without touching TMPDIR, which go
         # test itself needs.
-        mkdir -p "$REPO/shim" && printf '#!/bin/sh\nexit 1\n' > "$REPO/shim/mktemp" && chmod +x "$REPO/shim/mktemp"
-        expect_go "go: a failing mktemp is SKIP, not an unisolated PASS" SKIP PATH="$REPO/shim:$PATH"
+        # The shim fails only `mktemp -d`, which is the empty-HOME
+        # allocation; the plain `mktemp` the gofmt gate uses earlier in the
+        # same tier passes through to the real binary. A shim that failed
+        # every call tripped at the gofmt gate instead, and this case kept
+        # passing after the empty-HOME check it exists for was removed.
+        real_mktemp=$(command -v mktemp)
+        mkdir -p "$REPO/shim" && printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = "-d" ] && exit 1; done\nexec %s "$@"\n' "$real_mktemp" > "$REPO/shim/mktemp" && chmod +x "$REPO/shim/mktemp"
+        expect_go "go: a failing mktemp -d is SKIP, not an unisolated PASS" SKIP PATH="$REPO/shim:$PATH"
         rm -rf "$REPO/shim"
         printf 'package main\n\n// #cgo LDFLAGS: -lp202_no_such_lib_zz\nimport "C"\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
         expect_go "go: a change with bad cgo is FAIL on a healthy host" FAIL

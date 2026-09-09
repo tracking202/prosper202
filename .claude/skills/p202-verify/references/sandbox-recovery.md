@@ -225,11 +225,15 @@ cd go-cli
 go vet ./...
 go test ./...              # forecast acceptance suites take ~40s; -short skips them
 golangci-lint run ./...    # .golangci.yml scopes linters to dropped errors, not style
-HOME=$(mktemp -d) go test ./cmd/...
+tmp=$(mktemp -d) && HOME="$tmp" GOPATH="$(go env GOPATH)" GOMODCACHE="$(go env GOMODCACHE)" GOCACHE="$(go env GOCACHE)" go test ./cmd/...; rm -rf "$tmp"
 ```
 
 The empty-`HOME` run matters for anything touching a command that builds a
-client. A flag check placed after `api.NewFromConfig()` passes locally only
+client. Swap only `HOME`: Go's `GOPATH`, module cache and build cache default
+to `$HOME/go` and `$HOME/.cache`, so a bare `HOME=$(mktemp -d)` moves them too,
+refetches any toolchain selected through `GOTOOLCHAIN` into the temp tree, and
+turns a proxy hiccup there into a failure. The command above passes the three
+through and removes the temp home afterwards, as the `go` tier does. A flag check placed after `api.NewFromConfig()` passes locally only
 because the sandbox has a URL configured. CI has none, the config error wins,
 and the flag is never examined. Flag validation belongs before the client is
 built.
