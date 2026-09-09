@@ -42,10 +42,10 @@ var attributionFilterFlagDefs = []struct {
 	{"country-code", "country_code", "Filter by install country code"},
 	{"source-identifier", "source_identifier", "Filter by SKAN 4 source identifier"},
 	{"campaign-id", "campaign_id", "Filter by SKAN 2/3 campaign id"},
-	{"fidelity-type", "fidelity_type", "Filter: 1=StoreKit-rendered/web ad, 0=view-through"},
+	{"fidelity-type", "fidelity_type", "Filter: 1=click-through, 0=view-through (both protocols; prefer --ad-interaction-type)"},
 	{"postback-sequence-index", "postback_sequence_index", "Filter by conversion window (0, 1, or 2)"},
 	{"did-win", "did_win", "Filter: 1=winning postbacks, 0=losing"},
-	{"redownload", "redownload", "Filter: 1=redownloads only, 0=first installs"},
+	{"redownload", "redownload", "Filter: 1=redownloads, 0=first installs (both protocols; prefer --conversion-type)"},
 	{"coarse-conversion-value", "coarse_conversion_value", "Filter by coarse value (low, medium, high)"},
 	{"signature", "signature", "Filter by verification state: valid, invalid, unverifiable, development"},
 }
@@ -113,6 +113,111 @@ func collectAttributionBody(cmd *cobra.Command, fields map[string]string, change
 	return body
 }
 
+// ── Shared list plumbing ────────────────────────────────────────────
+//
+// The three list commands and the report used to carry hand-copied RunE
+// bodies, and the copies had drifted: only the report checked that --limit
+// was a number, so the same typo was a CLI validation error (exit 1) on one
+// command and a server 422 on the next. One registrar, one paging validator
+// and one runner keep them answering the same way.
+
+// registerAttributionListFlags registers the paging trio every attribution
+// list command carries. Deliberately no --page (which the generated CRUD
+// list commands offer): neither the postbacks controller nor the generic
+// list reads a page parameter, so the flag would promise paging the server
+// ignores.
+func registerAttributionListFlags(cmd *cobra.Command) {
+	cmd.Flags().StringP("limit", "l", "", "Max results")
+	cmd.Flags().StringP("offset", "o", "", "Pagination offset")
+	cmd.Flags().Bool("all", false, "Fetch all rows across pages")
+}
+
+// attributionPagingValue returns a validated paging flag's value, or "" when
+// the flag was not given. The server rejects a non-numeric value too, but
+// only after a round trip and with a different category; a mistyped flag is
+// the caller's mistake on every command that accepts it.
+func attributionPagingValue(cmd *cobra.Command, flag string) (string, error) {
+	v, _ := cmd.Flags().GetString(flag)
+	if v == "" {
+		return "", nil
+	}
+	smallest, requirement := 1, "a positive integer"
+	hint := "Pass a whole number, e.g. `--limit 50`; the server caps it at 500."
+	if flag == "offset" {
+		smallest, requirement = 0, "a non-negative integer"
+		hint = "Pass a whole number of rows to skip, e.g. `--offset 50`, or `--all` to fetch every page."
+	}
+	if n, err := strconv.Atoi(v); err != nil || n < smallest {
+		return "", validationError("--%s must be %s", flag, requirement).WithHint("%s", hint)
+	}
+	return v, nil
+}
+
+// collectAttributionPaging validates --limit/--offset and adds the ones that
+// were given to params.
+func collectAttributionPaging(cmd *cobra.Command, params map[string]string) error {
+	for _, flag := range []string{"limit", "offset"} {
+		v, err := attributionPagingValue(cmd, flag)
+		if err != nil {
+			return err
+		}
+		if v != "" {
+			params[flag] = v
+		}
+	}
+	return nil
+}
+
+// runAttributionList is the body every attribution list command shares.
+// Paging is validated before the client is built, so a bad --limit is a
+// validation error even where no server URL is configured. params carries
+// the command's own filters (the two registries have none).
+func runAttributionList(cmd *cobra.Command, endpoint string, params map[string]string) error {
+	if err := collectAttributionPaging(cmd, params); err != nil {
+		return err
+	}
+	c, err := api.NewFromConfig()
+	if err != nil {
+		return err
+	}
+	if allRows, _ := cmd.Flags().GetBool("all"); allRows {
+		// --all drives its own paging; sending the caller's limit/offset
+		// too would fight the traversal, so they are dropped (they are
+		// still validated above — a typo is a typo either way).
+		delete(params, "limit")
+		delete(params, "offset")
+		return listAllAttributionRows(c, endpoint, params)
+	}
+	data, err := c.Get(endpoint, params)
+	if err != nil {
+		return err
+	}
+	render(data)
+	return nil
+}
+
+// newAttributionGetCmd builds the `get <id>` command for one attribution
+// endpoint: the three read a row the same way and differ only in the path.
+func newAttributionGetCmd(endpoint, short string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "get <id>",
+		Short: short,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := api.NewFromConfig()
+			if err != nil {
+				return err
+			}
+			data, err := c.Get(endpoint+"/"+args[0], nil)
+			if err != nil {
+				return err
+			}
+			render(data)
+			return nil
+		},
+	}
+}
+
 // listAllAttributionRows fetches every page of an attribution list endpoint and renders
 // the rows in the list envelope shape, so --all output is structurally
 // identical to a paged list.
@@ -146,45 +251,12 @@ var attributionPostbacksListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List received postbacks with filters (protocol, signature state, app, network, window)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
-		params := collectAttributionFilters(cmd)
-		if allRows, _ := cmd.Flags().GetBool("all"); allRows {
-			return listAllAttributionRows(c, "attribution/postbacks", params)
-		}
-		for _, f := range []string{"limit", "offset"} {
-			if v, _ := cmd.Flags().GetString(f); v != "" {
-				params[f] = v
-			}
-		}
-		data, err := c.Get("attribution/postbacks", params)
-		if err != nil {
-			return err
-		}
-		render(data)
-		return nil
+		return runAttributionList(cmd, "attribution/postbacks", collectAttributionFilters(cmd))
 	},
 }
 
-var attributionPostbacksGetCmd = &cobra.Command{
-	Use:   "get <id>",
-	Short: "Get one postback, including its attribution signature",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
-		data, err := c.Get("attribution/postbacks/"+args[0], nil)
-		if err != nil {
-			return err
-		}
-		render(data)
-		return nil
-	},
-}
+var attributionPostbacksGetCmd = newAttributionGetCmd("attribution/postbacks",
+	"Get one postback, including its attribution signature")
 
 // ── Report ──────────────────────────────────────────────────────────
 
@@ -202,11 +274,12 @@ var attributionReportCmd = &cobra.Command{
 		if groupBy != "" {
 			params["group_by"] = groupBy
 		}
-		if v, _ := cmd.Flags().GetString("limit"); v != "" {
-			if n, err := strconv.Atoi(v); err != nil || n <= 0 {
-				return validationError("--limit must be a positive integer")
-			}
-			params["limit"] = v
+		limit, err := attributionPagingValue(cmd, "limit")
+		if err != nil {
+			return err
+		}
+		if limit != "" {
+			params["limit"] = limit
 		}
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -256,9 +329,9 @@ func reshapeAttributionReport(data []byte) []byte {
 var attributionVerifyCmd = &cobra.Command{
 	Use:   "verify",
 	Short: "Verify a postback payload's Apple signature (nothing is stored)",
-	Long: "Reads a postback JSON object from --file (or stdin) and asks the server to verify\n" +
-		"Apple's signature. A body with a jws-string is verified as AdAttributionKit (the\n" +
-		"response decodes the JWS header and payload and names the signing key); anything\n" +
+	Long: "Reads a postback JSON object from --file (or piped stdin) and asks the server to\n" +
+		"verify Apple's signature. A body with a jws-string is verified as AdAttributionKit\n" +
+		"(the response decodes the JWS header and payload and names the signing key); anything\n" +
 		"else as SKAdNetwork (the response carries the exact signed message, base64, for\n" +
 		"diffing against another implementation). The verdict is valid / invalid /\n" +
 		"unverifiable / development.",
@@ -267,6 +340,15 @@ var attributionVerifyCmd = &cobra.Command{
 		var raw []byte
 		var err error
 		if file == "" || file == "-" {
+			// io.ReadAll on a terminal blocks forever with no output and
+			// no error envelope, so `p202 attribution verify --json` run
+			// without piping anything hung instead of telling the caller
+			// what to pass. isTerminal (shell.go) is the character-device
+			// test, which also covers stdin redirected from /dev/null.
+			if isTerminal(os.Stdin) {
+				return validationError("no postback JSON to read: stdin is not a pipe or a file").
+					WithHint("Pass --file <postback.json>, or pipe the postback in: `cat postback.json | p202 attribution verify`.")
+			}
 			raw, err = io.ReadAll(os.Stdin)
 			if err != nil {
 				return validationError("reading postback JSON from stdin: %v", err).
@@ -316,45 +398,12 @@ var attributionAppListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List registered apps",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
-		if allRows, _ := cmd.Flags().GetBool("all"); allRows {
-			return listAllAttributionRows(c, "attribution/apps", map[string]string{})
-		}
-		params := map[string]string{}
-		for _, f := range []string{"limit", "offset"} {
-			if v, _ := cmd.Flags().GetString(f); v != "" {
-				params[f] = v
-			}
-		}
-		data, err := c.Get("attribution/apps", params)
-		if err != nil {
-			return err
-		}
-		render(data)
-		return nil
+		return runAttributionList(cmd, "attribution/apps", map[string]string{})
 	},
 }
 
-var attributionAppGetCmd = &cobra.Command{
-	Use:   "get <id>",
-	Short: "Get a registered app by its internal id (from `attribution app list`)",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
-		data, err := c.Get("attribution/apps/"+args[0], nil)
-		if err != nil {
-			return err
-		}
-		render(data)
-		return nil
-	},
-}
+var attributionAppGetCmd = newAttributionGetCmd("attribution/apps",
+	"Get a registered app by its internal id (from `attribution app list`)")
 
 var attributionAppCreateCmd = &cobra.Command{
 	Use:   "create",
@@ -397,7 +446,9 @@ var attributionAppUpdateCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		body := collectAttributionBody(cmd, attributionAppBodyFields, true)
 		if len(body) == 0 {
-			return validationError("nothing to update").
+			// Same sentence the generated CRUD update commands use, so an
+			// agent scripting against one wording works on both surfaces.
+			return validationError("no fields specified; pass at least one flag to update").
 				WithHint("Pass at least one of --app-id, --app-name, --notes, --accept-development-postbacks.")
 		}
 		if err := validateAttributionAppBody(body); err != nil {
@@ -506,45 +557,12 @@ var attributionCvListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List conversion-value rules",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
-		if allRows, _ := cmd.Flags().GetBool("all"); allRows {
-			return listAllAttributionRows(c, "attribution/conversion-values", map[string]string{})
-		}
-		params := map[string]string{}
-		for _, f := range []string{"limit", "offset"} {
-			if v, _ := cmd.Flags().GetString(f); v != "" {
-				params[f] = v
-			}
-		}
-		data, err := c.Get("attribution/conversion-values", params)
-		if err != nil {
-			return err
-		}
-		render(data)
-		return nil
+		return runAttributionList(cmd, "attribution/conversion-values", map[string]string{})
 	},
 }
 
-var attributionCvGetCmd = &cobra.Command{
-	Use:   "get <id>",
-	Short: "Get a conversion-value rule",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
-		data, err := c.Get("attribution/conversion-values/"+args[0], nil)
-		if err != nil {
-			return err
-		}
-		render(data)
-		return nil
-	},
-}
+var attributionCvGetCmd = newAttributionGetCmd("attribution/conversion-values",
+	"Get a conversion-value rule")
 
 var attributionCvCreateCmd = &cobra.Command{
 	Use:   "create",
@@ -606,7 +624,7 @@ var attributionCvUpdateCmd = &cobra.Command{
 			body["coarse_value"] = nil
 		}
 		if len(body) == 0 {
-			return validationError("nothing to update").
+			return validationError("no fields specified; pass at least one flag to update").
 				WithHint("Pass at least one of --app-id, --fine-value, --coarse-value, --event-name, --revenue, or a --clear-* flag with its replacement value.")
 		}
 		c, err := api.NewFromConfig()
@@ -632,9 +650,7 @@ var attributionCvDeleteCmd = &cobra.Command{
 }
 
 func init() {
-	attributionPostbacksListCmd.Flags().StringP("limit", "l", "", "Max results")
-	attributionPostbacksListCmd.Flags().StringP("offset", "o", "", "Pagination offset")
-	attributionPostbacksListCmd.Flags().Bool("all", false, "Fetch all rows across pages")
+	registerAttributionListFlags(attributionPostbacksListCmd)
 	registerAttributionFilterFlags(attributionPostbacksListCmd)
 	attributionPostbacksCmd.AddCommand(attributionPostbacksListCmd, attributionPostbacksGetCmd)
 
@@ -642,11 +658,9 @@ func init() {
 	attributionReportCmd.Flags().StringP("limit", "l", "", "Max groups to return (default 100)")
 	registerAttributionFilterFlags(attributionReportCmd)
 
-	attributionVerifyCmd.Flags().StringP("file", "f", "", "Path to the postback JSON (default: read stdin)")
+	attributionVerifyCmd.Flags().StringP("file", "f", "", "Path to the postback JSON (default: read piped stdin)")
 
-	attributionAppListCmd.Flags().StringP("limit", "l", "", "Max results")
-	attributionAppListCmd.Flags().StringP("offset", "o", "", "Pagination offset")
-	attributionAppListCmd.Flags().Bool("all", false, "Fetch all rows across pages")
+	registerAttributionListFlags(attributionAppListCmd)
 	for _, cmd := range []*cobra.Command{attributionAppCreateCmd, attributionAppUpdateCmd} {
 		cmd.Flags().String("app-id", "", "Numeric App Store id of the advertised app")
 		cmd.Flags().String("app-name", "", "Display name for reports")
@@ -656,9 +670,7 @@ func init() {
 	registerDeleteFlags(attributionAppDeleteCmd, "attribution app")
 	attributionAppCmd.AddCommand(attributionAppListCmd, attributionAppGetCmd, attributionAppCreateCmd, attributionAppUpdateCmd, attributionAppDeleteCmd, attributionAppRotateTokenCmd)
 
-	attributionCvListCmd.Flags().StringP("limit", "l", "", "Max results")
-	attributionCvListCmd.Flags().StringP("offset", "o", "", "Pagination offset")
-	attributionCvListCmd.Flags().Bool("all", false, "Fetch all rows across pages")
+	registerAttributionListFlags(attributionCvListCmd)
 	for _, cmd := range []*cobra.Command{attributionCvCreateCmd, attributionCvUpdateCmd} {
 		cmd.Flags().String("app-id", "", "App Store id this rule applies to (0 = account-wide default)")
 		cmd.Flags().String("fine-value", "", "Fine conversion value 0-63")

@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
+use Api\V3\Attribution\SignatureState;
 use Api\V3\Controller;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Exception\WriteCommittedException;
 
 /**
  * Registry of advertised App Store apps for attribution reporting.
@@ -23,7 +25,9 @@ use Api\V3\Exception\ValidationException;
  * Developer Mode can sign with, naming any App Store id). Off by default:
  * such rows store flagged `development` and count nowhere; an owner turns
  * accept_development_postbacks on for an app while integration-testing
- * their own build, and off again before trusting the numbers.
+ * their own build, and off again before trusting the numbers. Deleting the
+ * registration reverts it too — with nothing left to vouch for those rows,
+ * they go back to untrusted rather than staying counted forever.
  */
 class AttributionAppsController extends Controller
 {
@@ -66,6 +70,22 @@ class AttributionAppsController extends Controller
     }
 
     #[\Override]
+    public function create(array $payload): array
+    {
+        // The RAW value, before Controller::create() hands the payload to
+        // validatePayload() and the 'i' field definition casts it: by the
+        // time beforeCreate() runs, 1.5 is 1, '525463029.9' is 525463029 and
+        // a 20-digit string is PHP_INT_MAX. A guard placed there registers a
+        // different app from the one the caller named and answers 201 (error
+        // patterns #4 and #12). Absent app_id is left to validatePayload's
+        // required check so the caller still gets every missing field at once.
+        if (array_key_exists('app_id', $payload)) {
+            self::assertUsableAppId($payload['app_id']);
+        }
+        return parent::create($payload);
+    }
+
+    #[\Override]
     protected function beforeCreate(array $payload): array
     {
         self::assertUsableAppId($payload['app_id'] ?? null);
@@ -94,7 +114,17 @@ class AttributionAppsController extends Controller
         $this->execute($stmt, 'Token rotation failed');
         $stmt->close();
 
-        return $this->get($id);
+        // The old token is dead from here: only reading the new one back can
+        // still fail, and this route is stageable. Reported as a plain
+        // failure, StagedChangesController::apply() would return the change
+        // to `staged` on the premise that nothing was written, and the
+        // re-apply would mint a THIRD token — leaving the approver holding
+        // one that was never in effect (error pattern #13).
+        try {
+            return $this->get($id);
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException('attribution app schema token', $e);
+        }
     }
 
     /**
@@ -106,15 +136,40 @@ class AttributionAppsController extends Controller
      * default" scope in 202_attribution_conversion_values, so an app registered as
      * 0 would share one scope with the defaults and the schema endpoint
      * could not tell an app rule from a fallback.
+     *
+     * Called on the RAW payload value by create()/update() — see the note
+     * there — and again on the cast one from the beforeCreate/beforeUpdate
+     * hooks, which is where the 0-and-negative check still earns its keep.
      */
     private static function assertUsableAppId(mixed $appId): void
     {
-        $value = is_numeric($appId) ? (int)$appId : -1;
-        if ($value < 1) {
+        if (!self::isUsableAppId($appId)) {
             throw new ValidationException('Invalid app_id', [
                 'app_id' => 'Must be a positive App Store id (the number in the app\'s App Store URL)',
             ]);
         }
+    }
+
+    /**
+     * An App Store id is a whole number, so only two spellings are accepted:
+     * a PHP int (a JSON body's number) and a string of digits (the Go CLI
+     * sends it that way, as does a form-encoded body). Everything else —
+     * 1.5, '1e2', '525463029.9', ' 1', true, an array — is a value the int
+     * cast would silently rewrite into some *other* app's id, which then
+     * takes the global UNIQUE slot. A digit string PHP cannot represent
+     * saturates to PHP_INT_MAX under the same cast, so the round-trip below
+     * refuses it too rather than registering app 9223372036854775807.
+     */
+    private static function isUsableAppId(mixed $appId): bool
+    {
+        if (is_int($appId)) {
+            return $appId >= 1;
+        }
+        if (!is_string($appId) || preg_match('/^\d+$/D', $appId) !== 1) {
+            return false;
+        }
+        $digits = ltrim($appId, '0');
+        return $digits !== '' && $digits === (string)(int)$digits;
     }
 
     private static function newSchemaToken(): string
@@ -142,8 +197,11 @@ class AttributionAppsController extends Controller
         // row exists either way). Updating the app re-runs the claim, so a
         // logged failure here is recoverable without support surgery.
         try {
-            $this->claimUnassignedPostbacks((int)$payload['app_id']);
-            $this->syncDevelopmentTrust((int)$payload['app_id'], (int)($payload['accept_development_postbacks'] ?? 0) === 1);
+            $this->applyRegistrationPolicy(
+                (int)$payload['app_id'],
+                accept: (int)($payload['accept_development_postbacks'] ?? 0) === 1,
+                claimHistory: true
+            );
         } catch (\Throwable $e) {
             error_log('p202 attribution: claiming postbacks for app ' . (int)$payload['app_id'] . ' failed: ' . $e->getMessage());
         }
@@ -164,6 +222,11 @@ class AttributionAppsController extends Controller
     #[\Override]
     public function update(int|string $id, array $payload): array
     {
+        // Raw, for the same reason create() checks it raw: beforeUpdate()
+        // only ever sees the already-cast int.
+        if (array_key_exists('app_id', $payload)) {
+            self::assertUsableAppId($payload['app_id']);
+        }
         $updated = parent::update($id, $payload);
         // Re-run the claim on every update so unclaimed history (or a claim
         // that failed at create time) can be picked up by touching the app,
@@ -172,15 +235,50 @@ class AttributionAppsController extends Controller
         // already stored — the flag is a live policy, not a receipt-time
         // snapshot.
         try {
-            $this->claimUnassignedPostbacks((int)$updated['data']['app_id']);
-            $this->syncDevelopmentTrust(
+            $this->applyRegistrationPolicy(
                 (int)$updated['data']['app_id'],
-                (int)($updated['data']['accept_development_postbacks'] ?? 0) === 1
+                accept: (int)($updated['data']['accept_development_postbacks'] ?? 0) === 1,
+                claimHistory: true
             );
         } catch (\Throwable $e) {
             error_log('p202 attribution: claiming postbacks for app ' . (int)$updated['data']['app_id'] . ' failed: ' . $e->getMessage());
         }
         return $updated;
+    }
+
+    #[\Override]
+    protected function beforeDelete(int|string $id): void
+    {
+        // Deleting the registration is the third way the development-trust
+        // opt-in is toggled, and the only one that leaves nothing behind to
+        // toggle it back: without this the rows the opt-in marked trusted
+        // keep signature_valid = 1 forever and the default verified-only
+        // report goes on counting them. Runs BEFORE the row goes away, so a
+        // failure aborts the delete rather than stranding trusted rows with
+        // no registration — the fail-closed direction for a trust value.
+        $row = $this->get($id); // ownership + existence; throws NotFoundException otherwise
+        $appId = (int)($row['data']['app_id'] ?? 0);
+        if ($appId > 0) {
+            $this->applyRegistrationPolicy($appId, accept: false, claimHistory: false);
+        }
+    }
+
+    /**
+     * The one place the registration's policy is applied to postbacks
+     * already stored. create(), update() and delete() all pass through here:
+     * the claim-then-sync pair was duplicated between afterCreate() and
+     * update(), and the delete path was written without either.
+     *
+     * $claimHistory is false for delete — a registration going away must not
+     * hand the departing owner rows nobody had claimed — but the trust sync
+     * runs on every path, which is the point.
+     */
+    private function applyRegistrationPolicy(int $appId, bool $accept, bool $claimHistory): void
+    {
+        if ($claimHistory) {
+            $this->claimUnassignedPostbacks($appId);
+        }
+        $this->syncDevelopmentTrust($appId, $accept);
     }
 
     /**
@@ -228,9 +326,10 @@ class AttributionAppsController extends Controller
      */
     private function syncDevelopmentTrust(int $appId, bool $accept): void
     {
+        $development = SignatureState::DEVELOPMENT->value;
         $stmt = $accept
-            ? $this->prepare("UPDATE 202_attribution_postbacks SET signature_valid = 1 WHERE app_id = ? AND user_id = ? AND signature_state = 'development'")
-            : $this->prepare("UPDATE 202_attribution_postbacks SET signature_valid = NULL WHERE app_id = ? AND user_id = ? AND signature_state = 'development'");
+            ? $this->prepare("UPDATE 202_attribution_postbacks SET signature_valid = 1 WHERE app_id = ? AND user_id = ? AND signature_state = '$development'")
+            : $this->prepare("UPDATE 202_attribution_postbacks SET signature_valid = NULL WHERE app_id = ? AND user_id = ? AND signature_state = '$development'");
         $this->bind($stmt, 'ii', $appId, $this->userId);
         $this->execute($stmt, 'Development trust sync failed');
         $stmt->close();

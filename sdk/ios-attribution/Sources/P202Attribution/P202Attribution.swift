@@ -32,10 +32,12 @@ import AdAttributionKit
 /// and the system ignores whichever has no pending postback. An update
 /// scoped with `conversionTypes` (iOS 18+) reaches only those
 /// AdAttributionKit postbacks; one that leaves out `.install` is never sent
-/// to SKAdNetwork, whose only postback is the install one. Unmapped events
-/// are no-ops by design. The schema is cached (with its ETag) across
-/// launches, so the device encodes correctly offline and refreshes cheaply
-/// — the server answers 304 until a rule actually changes.
+/// to SKAdNetwork, whose only postback is the install one, and is dropped
+/// entirely on iOS 17.4-17.x, which has no re-engagement postback and no
+/// way to scope an update to one. Unmapped events are no-ops by design.
+/// The schema is cached (with its ETag) across launches, so the device
+/// encodes correctly offline and refreshes cheaply — the server answers 304
+/// until a rule actually changes.
 ///
 /// Note: `NSAdvertisingAttributionReportEndpoint` (SKAdNetwork) and
 /// `AttributionCopyEndpoint` (AdAttributionKit) in Info.plist cannot be set
@@ -133,11 +135,13 @@ public final class P202Attribution {
     /// available yet. The return value exists for the app's own logging.
     ///
     /// `conversionTypes` scopes the update to AdAttributionKit's install
-    /// and/or re-engagement postback (iOS 18+; earlier systems apply the
-    /// unscoped update). Leave it nil for the frameworks' default. An update
-    /// that leaves out `.install` is not sent to SKAdNetwork at all: its
-    /// only postback is the install one, and a re-engagement conversion
-    /// must not overwrite the install postback's value.
+    /// and/or re-engagement postback (iOS 18+). Leave it nil for the install
+    /// postback, which is the only one every supported system has. An update
+    /// that leaves out `.install` is not sent to SKAdNetwork at all — its
+    /// only postback is the install one — and is dropped on iOS 17.4-17.x
+    /// too, where AdAttributionKit cannot scope an update and would apply it
+    /// to that same install postback: a re-engagement conversion must not
+    /// overwrite the install postback's value.
     @discardableResult
     public func logEvent(
         _ name: String,
@@ -344,7 +348,11 @@ public final class P202Attribution {
     }
 
     /// The one place AdAttributionKit is touched. On non-iOS platforms
-    /// (tests, this repository's CI) it compiles to a no-op. Errors are
+    /// (tests, this repository's CI) it compiles to a no-op. Which of the
+    /// framework's two call shapes to use — and whether to call it at all —
+    /// is decided by `ConversionUpdate.adAttributionKitDelivery(scopedAPIAvailable:)`,
+    /// which is pure so that decision is covered off-iOS; the only thing
+    /// left here is answering the availability question. Errors are
     /// swallowed on purpose: the framework throws when the app has no
     /// pending postback to update (no ad was seen), which is the same
     /// silent outcome SKAdNetwork's completion handler reports.
@@ -353,16 +361,40 @@ public final class P202Attribution {
         guard #available(iOS 17.4, *), Postback.isSupported else {
             return
         }
-        Task {
-            do {
-                if #available(iOS 18.0, *), let types = update.conversionTypes {
+        if #available(iOS 18.0, *) {
+            // Always the scoped API here, even for an unscoped update: the
+            // overloads below carry no conversion types, and the system then
+            // updates every postback type — including the re-engagement one,
+            // whose value this SDK tracks separately.
+            guard case .scoped(let types) = update.adAttributionKitDelivery(scopedAPIAvailable: true) else {
+                return
+            }
+            Task {
+                do {
                     try await Postback.updateConversionValue(PostbackUpdate(
                         fineConversionValue: update.fineValue,
                         lockPostback: lockWindow,
                         coarseConversionValue: update.coarseValue?.aakValue,
                         conversionTypes: types.map { $0.aakValue }
                     ))
-                } else if let coarse = update.coarseValue {
+                } catch {
+                    // No pending postback (or a framework refusal): nothing
+                    // to report, exactly as with SKAdNetwork.
+                }
+            }
+            return
+        }
+        // iOS 17.4-17.x: only the unscoped overloads exist, and the only
+        // postback they can reach is the install one. A re-engagement-scoped
+        // update is therefore dropped rather than applied to the install
+        // postback — the value submit() just declined to touch by skipping
+        // SKAdNetwork.
+        guard case .unscoped = update.adAttributionKitDelivery(scopedAPIAvailable: false) else {
+            return
+        }
+        Task {
+            do {
+                if let coarse = update.coarseValue {
                     try await Postback.updateConversionValue(
                         update.fineValue,
                         coarseConversionValue: coarse.aakValue,
@@ -372,8 +404,8 @@ public final class P202Attribution {
                     try await Postback.updateConversionValue(update.fineValue, lockPostback: lockWindow)
                 }
             } catch {
-                // No pending postback (or a framework refusal): nothing to
-                // report, exactly as with SKAdNetwork.
+                // As above: no pending postback is not an error the app can
+                // act on.
             }
         }
         #endif

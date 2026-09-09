@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Attribution\Postbacks;
 
 use Api\V3\Attribution\PostbackVerifier;
+use Api\V3\Attribution\SignatureState;
 use Tests\TestCase;
 
 /**
@@ -105,7 +106,7 @@ final class PostbackVerifierTest extends TestCase
     {
         $postback = $this->v4WinningPostback();
         $postback['attribution-signature'] = $this->sign($this->v4WinningMessage());
-        $this->assertSame(PostbackVerifier::RESULT_VALID, $this->verifier()->verify($postback));
+        $this->assertSame(SignatureState::VALID, $this->verifier()->verify($postback));
     }
 
     public function testV4WebAdUsesSourceDomainInTheMessage(): void
@@ -121,7 +122,7 @@ final class PostbackVerifierTest extends TestCase
         $this->assertSame($message, $this->verifier()->buildSignedMessage($postback));
 
         $postback['attribution-signature'] = $this->sign($message);
-        $this->assertSame(PostbackVerifier::RESULT_VALID, $this->verifier()->verify($postback));
+        $this->assertSame(SignatureState::VALID, $this->verifier()->verify($postback));
     }
 
     public function testV4LosingPostbackWithoutSourceVerifies(): void
@@ -145,7 +146,7 @@ final class PostbackVerifierTest extends TestCase
         $this->assertSame($message, $this->verifier()->buildSignedMessage($postback));
 
         $postback['attribution-signature'] = $this->sign($message);
-        $this->assertSame(PostbackVerifier::RESULT_VALID, $this->verifier()->verify($postback));
+        $this->assertSame(SignatureState::VALID, $this->verifier()->verify($postback));
     }
 
     public function testTamperingWithASignedFieldInvalidatesThePostback(): void
@@ -164,7 +165,7 @@ final class PostbackVerifierTest extends TestCase
             $tampered = $postback;
             $tampered[$field] = $value;
             $this->assertSame(
-                PostbackVerifier::RESULT_INVALID,
+                SignatureState::INVALID,
                 $this->verifier()->verify($tampered),
                 "tampered $field must not verify"
             );
@@ -180,11 +181,11 @@ final class PostbackVerifierTest extends TestCase
         $postback['attribution-signature'] = $this->sign($this->v4WinningMessage());
 
         $postback['conversion-value'] = 1;
-        $this->assertSame(PostbackVerifier::RESULT_VALID, $this->verifier()->verify($postback));
+        $this->assertSame(SignatureState::VALID, $this->verifier()->verify($postback));
 
         unset($postback['conversion-value']);
         $postback['coarse-conversion-value'] = 'high';
-        $this->assertSame(PostbackVerifier::RESULT_VALID, $this->verifier()->verify($postback));
+        $this->assertSame(SignatureState::VALID, $this->verifier()->verify($postback));
     }
 
     public function testV3CompositionWithAndWithoutSourceAppId(): void
@@ -205,7 +206,7 @@ final class PostbackVerifierTest extends TestCase
         ]);
         $this->assertSame($message, $this->verifier()->buildSignedMessage($withSource));
         $withSource['attribution-signature'] = $this->sign($message);
-        $this->assertSame(PostbackVerifier::RESULT_VALID, $this->verifier()->verify($withSource));
+        $this->assertSame(SignatureState::VALID, $this->verifier()->verify($withSource));
 
         $withoutSource = $withSource;
         unset($withoutSource['source-app-id'], $withoutSource['attribution-signature']);
@@ -215,7 +216,7 @@ final class PostbackVerifierTest extends TestCase
         ]);
         $this->assertSame($message, $this->verifier()->buildSignedMessage($withoutSource));
         $withoutSource['attribution-signature'] = $this->sign($message);
-        $this->assertSame(PostbackVerifier::RESULT_VALID, $this->verifier()->verify($withoutSource));
+        $this->assertSame(SignatureState::VALID, $this->verifier()->verify($withoutSource));
     }
 
     public function testV21AndV22Composition(): void
@@ -231,7 +232,7 @@ final class PostbackVerifierTest extends TestCase
         $message21 = implode(self::SEP, ['2.1', 'n.skadnetwork', '7', '1', 't21', 'false']);
         $this->assertSame($message21, $this->verifier()->buildSignedMessage($v21));
         $v21['attribution-signature'] = $this->sign($message21);
-        $this->assertSame(PostbackVerifier::RESULT_VALID, $this->verifier()->verify($v21));
+        $this->assertSame(SignatureState::VALID, $this->verifier()->verify($v21));
 
         // 2.2 appends fidelity-type to the 2.1 composition.
         $v22 = $v21;
@@ -241,7 +242,7 @@ final class PostbackVerifierTest extends TestCase
         $message22 = implode(self::SEP, ['2.2', 'n.skadnetwork', '7', '1', 't21', 'false', '0']);
         $this->assertSame($message22, $this->verifier()->buildSignedMessage($v22));
         $v22['attribution-signature'] = $this->sign($message22);
-        $this->assertSame(PostbackVerifier::RESULT_VALID, $this->verifier()->verify($v22));
+        $this->assertSame(SignatureState::VALID, $this->verifier()->verify($v22));
     }
 
     public function testUnknownAndRetiredVersionsAreUnverifiableNotInvalid(): void
@@ -254,7 +255,7 @@ final class PostbackVerifierTest extends TestCase
             $postback['version'] = $version;
             $postback['attribution-signature'] = 'AA==';
             $this->assertSame(
-                PostbackVerifier::RESULT_UNVERIFIABLE,
+                SignatureState::UNVERIFIABLE,
                 $this->verifier()->verify($postback),
                 "version $version"
             );
@@ -263,7 +264,7 @@ final class PostbackVerifierTest extends TestCase
         $noVersion = $this->v4WinningPostback();
         unset($noVersion['version']);
         $noVersion['attribution-signature'] = 'AA==';
-        $this->assertSame(PostbackVerifier::RESULT_UNVERIFIABLE, $this->verifier()->verify($noVersion));
+        $this->assertSame(SignatureState::UNVERIFIABLE, $this->verifier()->verify($noVersion));
     }
 
     public function testClaimedVersionMissingItsSignedFieldsIsInvalid(): void
@@ -275,7 +276,7 @@ final class PostbackVerifierTest extends TestCase
             $postback['attribution-signature'] = $this->sign($this->v4WinningMessage());
             unset($postback[$field]);
             $this->assertSame(
-                PostbackVerifier::RESULT_INVALID,
+                SignatureState::INVALID,
                 $this->verifier()->verify($postback),
                 "missing $field"
             );
@@ -301,13 +302,41 @@ final class PostbackVerifierTest extends TestCase
         $postback = $this->v4WinningPostback();
 
         $postback['attribution-signature'] = '!!!not-base64!!!';
-        $this->assertSame(PostbackVerifier::RESULT_INVALID, $this->verifier()->verify($postback));
+        $this->assertSame(SignatureState::INVALID, $this->verifier()->verify($postback));
 
         $postback['attribution-signature'] = '';
-        $this->assertSame(PostbackVerifier::RESULT_INVALID, $this->verifier()->verify($postback));
+        $this->assertSame(SignatureState::INVALID, $this->verifier()->verify($postback));
 
         unset($postback['attribution-signature']);
-        $this->assertSame(PostbackVerifier::RESULT_INVALID, $this->verifier()->verify($postback));
+        $this->assertSame(SignatureState::INVALID, $this->verifier()->verify($postback));
+    }
+
+    public function testAVerificationKeyThatWillNotLoadIsUnverifiableNotInvalid(): void
+    {
+        // A key this installation cannot read says nothing about the
+        // postback: it may not be called forged, and least of all genuine.
+        // The AdAttributionKit side asserts the same thing through the
+        // shared EcdsaP256 helper; SKAdNetwork asserts it directly so the
+        // guard cannot vanish here the day the two stop sharing a helper.
+        $postback = $this->v4WinningPostback();
+        $postback['attribution-signature'] = $this->sign($this->v4WinningMessage());
+
+        foreach (['not-a-key', '', 'AAAA'] as $brokenKey) {
+            $this->assertSame(
+                SignatureState::UNVERIFIABLE,
+                (new PostbackVerifier($brokenKey))->verify($postback),
+                'configured key ' . var_export($brokenKey, true)
+            );
+        }
+
+        // Nor does the signature being obvious rubbish change the answer:
+        // the environment problem is settled before the signature is
+        // consulted, so this is still "cannot judge", not "rejected".
+        $postback['attribution-signature'] = base64_encode('not a signature at all');
+        $this->assertSame(
+            SignatureState::UNVERIFIABLE,
+            (new PostbackVerifier('not-a-key'))->verify($postback)
+        );
     }
 
     public function testTheDefaultVerifierUsesApplesKeyNotOurs(): void
@@ -316,7 +345,7 @@ final class PostbackVerifierTest extends TestCase
         // (Apple-key) verifier — proof the configured key participates.
         $postback = $this->v4WinningPostback();
         $postback['attribution-signature'] = $this->sign($this->v4WinningMessage());
-        $this->assertSame(PostbackVerifier::RESULT_INVALID, (new PostbackVerifier())->verify($postback));
+        $this->assertSame(SignatureState::INVALID, (new PostbackVerifier())->verify($postback));
     }
 
     public function testApplesPublishedKeyParsesAsP256(): void

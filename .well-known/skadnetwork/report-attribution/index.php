@@ -16,35 +16,17 @@ declare(strict_types=1);
  * shipped Apache/nginx configs already keep /.well-known/ servable while
  * denying other dotfiles.
  *
- * The HTTP plumbing shared by every postback endpoint (probe, method check,
- * rate limit, body limit, error envelopes) lives in
+ * The HTTP plumbing shared by every postback endpoint is written once, not
+ * per endpoint: the headers, the unconfigured-install 503, the autoloader
+ * and the database-free request-shape checks in ../../postback-prelude.php;
+ * the probe, rate limit, body read and error envelopes in
  * Api\V3\Attribution\PostbackEndpoint; parsing, validation and signature
  * verification in Api\V3\Attribution\SkadnetworkProtocol; storage in
  * Api\V3\Attribution\PostbackReceiver. This file only picks the protocol.
  */
 
-$root = dirname(__DIR__, 3);
-
-header('X-Content-Type-Options: nosniff');
-header('X-Frame-Options: DENY');
-header('Cache-Control: no-store');
-
-// Pre-autoload responder: only the unconfigured-install case may answer
-// before the framework is loadable. Everything after the requires responds
-// through Bootstrap so the envelope shape has one owner.
-if (!file_exists($root . '/202-config.php') || !file_exists($root . '/vendor/autoload.php')) {
-    http_response_code(503);
-    header('Content-Type: application/json; charset=utf-8');
-    echo '{"error":true,"message":"Service unavailable","status":503}';
-    exit;
-}
-
-require_once $root . '/vendor/autoload.php';
-
-// Load config at file scope so the DB globals ($dbhost, $dbuser, ...) are
-// visible to the DB class constructor via `global` — the same reason
-// api/v3/index.php loads it here rather than inside Bootstrap::init().
-require_once $root . '/202-config.php';
+define('P202_POSTBACK_ENTRY', __FILE__);
+require dirname(__DIR__, 2) . '/postback-prelude.php';
 
 \Api\V3\Attribution\PostbackEndpoint::serve(
     new \Api\V3\Attribution\SkadnetworkProtocol(new \Api\V3\Attribution\PostbackVerifier())

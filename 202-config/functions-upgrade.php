@@ -117,6 +117,280 @@ if (!function_exists('_upgrade_query')) {
     }
 }
 
+if (!function_exists('_upgrade_attribution_legacy_skan_state')) {
+    /**
+     * Is this install carrying the pre-release `202_skan_*` attribution
+     * tables, with postbacks in them that the current `202_attribution_*`
+     * tables do not have?
+     *
+     * The SKAdNetwork tables were named `202_skan_postbacks` / `202_skan_apps`
+     * / `202_skan_conversion_values` before release and renamed afterwards.
+     * That is a different set of table NAMES, not a different shape, so a
+     * `CREATE TABLE IF NOT EXISTS` for the new names succeeds beside the old
+     * ones and produces empty tables: every postback already received
+     * disappears from the API and the reports while the upgrade reports
+     * success. Copying the rows across is a manual step (the row shapes
+     * differ), so the upgrade has to stop and say so rather than silently
+     * produce that state — error pattern #4.
+     *
+     * @return string 'none' when there is nothing to rescue (no legacy
+     *         tables, or only empty ones); 'legacy-data' when legacy rows
+     *         exist and the current tables are empty; 'legacy-and-current-data'
+     *         when both hold rows — which is NOT the same as "someone copied
+     *         them across", because postbacks received fresh under the new
+     *         names produce exactly the same counts, and row counts cannot
+     *         tell the two apart; 'unknown' when a probe failed and the
+     *         question was not answered — which must never be read as 'none'
+     *         (error pattern #11).
+     */
+    function _upgrade_attribution_legacy_skan_state(\Prosper202\Database\SchemaReconciler $reconciler): string
+    {
+        $legacy_tables = ['202_skan_postbacks', '202_skan_apps', '202_skan_conversion_values'];
+        $current_tables = [
+            \Prosper202\Database\Schema\TableRegistry::ATTRIBUTION_POSTBACKS,
+            \Prosper202\Database\Schema\TableRegistry::ATTRIBUTION_APPS,
+            \Prosper202\Database\Schema\TableRegistry::ATTRIBUTION_CONVERSION_VALUES,
+        ];
+
+        $count_rows = static function (array $tables) use ($reconciler): ?int {
+            $total = 0;
+            foreach ($tables as $table) {
+                $exists = $reconciler->tableExists($table);
+                if ($exists === null) {
+                    return null;
+                }
+                if ($exists === false) {
+                    continue;
+                }
+                $rows = $reconciler->tableRowCount($table);
+                if ($rows === null) {
+                    return null;
+                }
+                $total += $rows;
+            }
+
+            return $total;
+        };
+
+        $legacy_rows = $count_rows($legacy_tables);
+        if ($legacy_rows === null) {
+            return 'unknown';
+        }
+        if ($legacy_rows === 0) {
+            // No legacy tables, or leftover empty ones. Nothing is at risk.
+            return 'none';
+        }
+
+        $current_rows = $count_rows($current_tables);
+        if ($current_rows === null) {
+            return 'unknown';
+        }
+
+        return $current_rows === 0 ? 'legacy-data' : 'legacy-and-current-data';
+    }
+}
+
+if (!function_exists('_upgrade_attribution_backfill_statements')) {
+    /**
+     * The UPDATEs that _upgrade_attribution_backfill_added_columns() runs.
+     *
+     * Pure — it touches no database — so the mapping below can be tested
+     * against SignatureState directly instead of only through a live upgrade.
+     *
+     * @return array<int, string>
+     */
+    function _upgrade_attribution_backfill_statements(): array
+    {
+        $table = \Prosper202\Database\Schema\TableRegistry::ATTRIBUTION_POSTBACKS;
+
+        $statements = [
+            'UPDATE `' . $table . "` SET `protocol` = '"
+                . \Api\V3\Attribution\SkadnetworkProtocol::NAME . "' WHERE `protocol` = ''",
+        ];
+
+        // Spellings come from the enum the receiver writes, never from memory,
+        // and each predicate is the trust bit that state produces.
+        $states = [
+            \Api\V3\Attribution\SignatureState::VALID->value        => '`signature_valid` = 1',
+            \Api\V3\Attribution\SignatureState::INVALID->value      => '`signature_valid` = 0',
+            \Api\V3\Attribution\SignatureState::UNVERIFIABLE->value => '`signature_valid` IS NULL',
+        ];
+        foreach ($states as $state => $predicate) {
+            $statements[] = 'UPDATE `' . $table . "` SET `signature_state` = '" . $state
+                . "' WHERE `signature_state` = '' AND " . $predicate;
+        }
+
+        return $statements;
+    }
+}
+
+if (!function_exists('_upgrade_attribution_backfill_added_columns')) {
+    /**
+     * Give the rows that predate `protocol` and `signature_state` a real
+     * value in each.
+     *
+     * Both columns are NOT NULL with no DEFAULT, so every row already in the
+     * table when they were added got the server's implicit default: the empty
+     * string. That is not a value any reader accepts — AttributionPostbacksController's
+     * protocol filter matches none of those rows and every GROUP BY protocol
+     * buckets them under ''. The postbacks are still stored, and silently
+     * invisible: the same loss the pre-release 202_skan_* halt above exists to
+     * prevent, arriving through the column that was supposed to fix the shape
+     * (error pattern #4).
+     *
+     * Neither value is a guess:
+     *  - protocol: a row that predates the column can only be SKAdNetwork.
+     *    AdAttributionKit support arrived WITH `protocol`, so the
+     *    AdAttributionKit endpoint never wrote a row without one.
+     *  - signature_state: the row already carries the trust bit that state
+     *    produced. PostbackReceiver stores signature_valid =
+     *    SignatureState::trustBit(), and AttributionPostbacksController's
+     *    `signature` filter reads the pair back the same way — 1 is valid,
+     *    0 is invalid, NULL is unverifiable. SignatureState::DEVELOPMENT is
+     *    deliberately absent from the map: it shares its trust bits with the
+     *    other two (1 when the app opted in, NULL when it did not) and the
+     *    opt-in column arrived together with signature_state, so no
+     *    pre-existing row can be one and nothing here may pretend to know.
+     *
+     * Only rows still holding the implicit default are touched, which is what
+     * keeps the step idempotent: a real value is never overwritten and a
+     * second run changes nothing.
+     *
+     * @return bool False when a statement failed, so the caller leaves the
+     *         version where it is and the next run retries (error pattern #1).
+     */
+    function _upgrade_attribution_backfill_added_columns(): bool
+    {
+        global $db;
+
+        $statements = _upgrade_attribution_backfill_statements();
+
+        $conn = ($db instanceof \mysqli) ? $db : $db->getConnection();
+
+        $ok = true;
+        foreach ($statements as $statement) {
+            if (_upgrade_query($statement) === false) {
+                error_log('Prosper202 upgrade: attribution backfill failed: ' . $statement);
+                $ok = false;
+                continue;
+            }
+            $changed = (int) $conn->affected_rows;
+            if ($changed > 0) {
+                error_log('Prosper202 upgrade: attribution backfill updated ' . $changed
+                    . ' row(s): ' . $statement);
+            }
+        }
+
+        return $ok;
+    }
+}
+
+if (!function_exists('_upgrade_attribution_tables')) {
+    /**
+     * Create the attribution-postback tables and converge the ones that
+     * already exist to the definitions.
+     *
+     * `CREATE TABLE IF NOT EXISTS` alone is not enough here. The 1.9.76
+     * attribution tables were reshaped in place while 1.9.76 was unreleased,
+     * so an install can hold a table that exists, is named correctly, and is
+     * still missing columns the current code selects — and the CREATE is a
+     * no-op against it. SchemaReconciler reads the live table and adds what
+     * the definition requires; see 202-config/Database/SchemaReconciler.php
+     * for what it will and will not change.
+     *
+     * @param  array<int, \Prosper202\Database\Schema\SchemaDefinition> $definitions
+     * @return bool True when every table exists, matches its definition, and
+     *         the backfill for the columns added NOT NULL with no default
+     *         succeeded. False leaves the version where it is, so the next
+     *         run retries the whole step.
+     */
+    function _upgrade_attribution_tables(array $definitions): bool
+    {
+        $reconciler = new \Prosper202\Database\SchemaReconciler(
+            static function (string $sql) {
+                return _upgrade_query($sql);
+            }
+        );
+
+        $state = _upgrade_attribution_legacy_skan_state($reconciler);
+
+        if ($state === 'unknown') {
+            // The probe failed, so whether creating the new tables would
+            // strand existing postbacks is unknown. Do nothing and retry.
+            error_log('Prosper202 upgrade: could not check for the pre-release 202_skan_* attribution tables; '
+                . 'the attribution schema was left untouched so the next run retries.');
+            return false;
+        }
+
+        if ($state === 'legacy-data') {
+            $halt = 'Prosper202 upgrade halted: this install still holds postbacks in the pre-release '
+                . '202_skan_postbacks / 202_skan_apps / 202_skan_conversion_values tables, which this release '
+                . 'replaced with 202_attribution_postbacks / 202_attribution_apps / '
+                . '202_attribution_conversion_values. Continuing would create those tables empty and every '
+                . 'postback already received would vanish from the API and the reports. Copy the rows into the '
+                . '202_attribution_* tables by hand (the columns differ, so no automatic migration is offered), '
+                . 'or drop the 202_skan_* tables if that data is not wanted, then re-run the upgrade.';
+            error_log($halt);
+            _die("<h6>Upgrade paused</h6>
+                    <small>This install still holds attribution postbacks in the pre-release <code>202_skan_*</code> tables, which this release renamed to <code>202_attribution_*</code>. Upgrading now would leave those postbacks unreadable, so the upgrade stopped instead. Copy the rows into the <code>202_attribution_*</code> tables by hand, or drop the <code>202_skan_*</code> tables if you do not want that data, then re-run this upgrade. <a href='" . get_absolute_url() . "202-login.php'>Back to login</a></small>");
+        }
+
+        if ($state === 'legacy-and-current-data') {
+            // Both sets of tables hold rows. This branch used to read that as
+            // "the data has been copied across" and continue; it cannot know
+            // that. Postbacks received fresh under the new names — with no
+            // copy ever performed — produce identical counts, and then
+            // continuing strands every legacy row behind nothing but a log
+            // line. A count cannot answer the question, so it is put to the
+            // operator, who can, and the upgrade fails closed like the
+            // branch above rather than guessing the permissive answer
+            // (error patterns #4 and #11).
+            $halt = 'Prosper202 upgrade halted: this install holds postbacks in BOTH the pre-release '
+                . '202_skan_postbacks / 202_skan_apps / 202_skan_conversion_values tables and the '
+                . '202_attribution_postbacks / 202_attribution_apps / 202_attribution_conversion_values '
+                . 'tables that replaced them. Row counts cannot tell whether the 202_skan_* rows were '
+                . 'copied across or whether the 202_attribution_* rows are simply postbacks received '
+                . 'since the rename, so the upgrade stopped instead of assuming the first. Check the '
+                . '202_skan_* rows: copy any that are missing into the 202_attribution_* tables by hand '
+                . '(the columns differ, so no automatic migration is offered), then drop the 202_skan_* '
+                . 'tables and re-run the upgrade.';
+            error_log($halt);
+            _die("<h6>Upgrade paused</h6>
+                    <small>This install holds attribution postbacks in both the pre-release <code>202_skan_*</code> tables and the <code>202_attribution_*</code> tables that replaced them. The upgrade cannot tell whether the old rows were already copied across or whether the new rows simply arrived since the rename, so it stopped rather than assume. Copy any missing rows into the <code>202_attribution_*</code> tables by hand, drop the <code>202_skan_*</code> tables, then re-run this upgrade. <a href='" . get_absolute_url() . "202-login.php'>Back to login</a></small>");
+        }
+
+        $ok = true;
+        foreach ($definitions as $definition) {
+            if (_upgrade_query($definition->createStatement) === false) {
+                $ok = false;
+                error_log('Prosper202 upgrade: failed to create ' . $definition->tableName);
+                continue;
+            }
+            if (!$reconciler->reconcile($definition)) {
+                $ok = false;
+            }
+        }
+
+        foreach ($reconciler->getApplied() as $statement) {
+            error_log('Prosper202 upgrade: reconciled attribution schema: ' . $statement);
+        }
+        foreach ($reconciler->getUnreconciled() as $note) {
+            error_log('Prosper202 upgrade: attribution schema difference left in place: ' . $note);
+        }
+        foreach ($reconciler->getErrors() as $error) {
+            error_log('Prosper202 upgrade: attribution schema reconciliation failed: ' . $error);
+        }
+
+        // Adding the columns is only half the step: the rows that predate them
+        // hold the server's implicit default until this runs.
+        if ($ok && !_upgrade_attribution_backfill_added_columns()) {
+            $ok = false;
+        }
+
+        return $ok;
+    }
+}
+
 class PROSPER202
 {
 
@@ -3926,22 +4200,24 @@ class UPGRADE
 
         if ($prosper202_version == '1.9.75') {
 
-            // SKAdNetwork (SKAN) attribution: the postback store, the
-            // advertised-app registry (its rotatable schema_token column and
-            // unique index are part of the definition), and the
-            // conversion-value decoding rules. The DDL comes from
+            // Platform-signed attribution postbacks (SKAdNetwork and
+            // AdAttributionKit): the postback store, the advertised-app
+            // registry (its rotatable schema_token column and unique index
+            // are part of the definition), and the conversion-value decoding
+            // rules. The DDL comes from
             // AttributionPostbackTables::getDefinitions() — the same definitions the fresh
             // installer uses — so this block cannot drift from it, and every
             // CREATE is IF NOT EXISTS so a partial failure safely retries on
             // the next run.
-            $attribution_ok = true;
-
-            foreach (\Prosper202\Database\Tables\AttributionPostbackTables::getDefinitions() as $attribution_definition) {
-                if (_upgrade_query($attribution_definition->createStatement) === false) {
-                    $attribution_ok = false;
-                    error_log('Prosper202 upgrade: failed to create ' . $attribution_definition->tableName);
-                }
-            }
+            //
+            // _upgrade_attribution_tables() does not only create: it also
+            // reconciles a table that already exists with its definition,
+            // because an install can arrive here holding an older shape of
+            // these tables (see the 1.9.76 block below), and against an
+            // existing table a CREATE IF NOT EXISTS changes nothing at all.
+            $attribution_ok = _upgrade_attribution_tables(
+                \Prosper202\Database\Tables\AttributionPostbackTables::getDefinitions()
+            );
 
             if ($attribution_ok) {
                 // Advance the version only once every DDL statement
@@ -3954,6 +4230,55 @@ class UPGRADE
                 }
             } else {
                 error_log('Prosper202 upgrade: SKAN schema incomplete; leaving version at 1.9.75 so the next run retries.');
+            }
+        }
+
+        if ($prosper202_version == '1.9.76') {
+
+            // Converge an install that is ALREADY at 1.9.76 but whose
+            // attribution tables are an older shape of 1.9.76.
+            //
+            // This exists because the 1.9.76 attribution tables were reshaped
+            // in place after version.php already said 1.9.76 and before the
+            // release: 202_attribution_postbacks gained protocol,
+            // conversion_type, ad_interaction_type, marketplace_id,
+            // signature_state and key_id (and version became nullable), and
+            // 202_attribution_apps gained accept_development_postbacks. One
+            // version number therefore covers more than one table shape, and
+            // an install that took an earlier one reads 1.9.76, never enters
+            // the 1.9.75 block, and would keep answering device postbacks
+            // with "Unknown column 'protocol'" — a 500 the device retries
+            // nine times and then drops the only copy Apple sends.
+            //
+            // How this block is reached, because one of the two ways in is
+            // NOT the obvious one: 202-config/upgrade.php can never enter it.
+            // upgrade_needed() compares the stored version with the code's and
+            // returns false when they match, and upgrade.php then redirects
+            // and _die()s "Already Upgraded" before any step runs. The two
+            // live entries are:
+            //   1. the 1-click upgrade pages, 202-account/auto-upgrade.php and
+            //      auto-upgrade-premium.php, which call
+            //      UPGRADE::upgrade_databases() after unpacking a download
+            //      with no upgrade_needed() gate in front of it (and with this
+            //      release's class still in memory, since the include_once of
+            //      an already-loaded file is a no-op);
+            //   2. the documented repair for a branch deployment: set
+            //      202_version back to 1.9.75 and re-run the upgrade page,
+            //      which enters the 1.9.75 block above and falls into this one
+            //      with $prosper202_version already advanced.
+            // Both were executed against a scratch database before this
+            // comment was written; neither is inferred from reading.
+            //
+            // Scope, deliberately narrow: only the three attribution tables,
+            // additive, and idempotent — an install whose tables already match
+            // runs no statements at all. It persists no version because
+            // 1.9.76 is the current one; when 1.9.77 arrives this block should
+            // move into that step's gate and stop running unconditionally.
+            if (!_upgrade_attribution_tables(
+                \Prosper202\Database\Tables\AttributionPostbackTables::getDefinitions()
+            )) {
+                error_log('Prosper202 upgrade: could not converge the 1.9.76 attribution tables; '
+                    . 'the attribution API and the postback receiver may still fail on this install.');
             }
         }
 

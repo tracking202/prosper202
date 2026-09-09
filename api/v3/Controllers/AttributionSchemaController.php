@@ -84,7 +84,7 @@ final class AttributionSchemaController
         }
         $etag = '"' . sha1($canonical) . '"';
 
-        if ($ifNoneMatch !== null && trim($ifNoneMatch) === $etag) {
+        if ($ifNoneMatch !== null && self::ifNoneMatchSatisfied($ifNoneMatch, $etag)) {
             return ['status' => 304, 'body' => null, 'etag' => $etag];
         }
 
@@ -105,6 +105,48 @@ final class AttributionSchemaController
             ],
             'etag' => $etag,
         ];
+    }
+
+    /**
+     * Whether an If-None-Match header matches the document's ETag, using the
+     * WEAK comparison function RFC 7232 §3.2 requires for this header.
+     *
+     * Exact equality against the strong tag was wrong in three ways at once:
+     * the header may carry a comma-separated list, the value `*`, and weak
+     * validators (`W/"..."`). The nginx gzip filter rewrites a strong ETag to
+     * its `W/` form, so every device behind a compressing proxy failed the
+     * comparison and re-downloaded the whole schema on every poll — the
+     * opposite of what this endpoint's ETag and max-age advertise. Only a
+     * client echoing the exact quoted string ever got a 304.
+     *
+     * Normalisation matches Controller::assertIfMatchSatisfied(): strip a
+     * leading `W/`, then the surrounding quotes and spaces. `*` matches
+     * because the caller only reaches here with a resolved app row. A tag a
+     * proxy has *rewritten* rather than weakened (mod_deflate's
+     * `-gzip` suffix) is a different opaque tag and correctly does not match.
+     *
+     * Splitting on commas is safe for this endpoint: the tags it mints are
+     * sha1 hex, so no comma can appear inside one.
+     */
+    private static function ifNoneMatchSatisfied(string $header, string $etag): bool
+    {
+        $expected = trim($etag, '" ');
+        foreach (explode(',', $header) as $candidate) {
+            $candidate = trim($candidate);
+            if ($candidate === '') {
+                continue;
+            }
+            if ($candidate === '*') {
+                return true;
+            }
+            if (str_starts_with($candidate, 'W/')) {
+                $candidate = substr($candidate, 2);
+            }
+            if (trim($candidate, '" ') === $expected) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

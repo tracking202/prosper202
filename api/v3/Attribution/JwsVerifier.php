@@ -133,14 +133,14 @@ final class JwsVerifier
     }
 
     /**
-     * Judge a decoded JWS (from decode()). Returns a SignatureState value:
-     * VALID or DEVELOPMENT when the signature checks out against the named
-     * key, INVALID when it does not (or the header asks for anything but
-     * ES256), UNVERIFIABLE when the key is unknown or OpenSSL is missing.
+     * Judge a decoded JWS (from decode()): VALID or DEVELOPMENT when the
+     * signature checks out against the named key, INVALID when it does not
+     * (or the header asks for anything but ES256), UNVERIFIABLE when the
+     * key is unknown or OpenSSL is missing.
      *
      * @param array{header: array<string, mixed>, payload: array<string, mixed>, signature: string, signing_input: string} $decoded
      */
-    public function verify(array $decoded): string
+    public function verify(array $decoded): SignatureState
     {
         $header = $decoded['header'];
         $kid = $header['kid'] ?? null;
@@ -157,28 +157,18 @@ final class JwsVerifier
         if (!isset($this->keys[$kid])) {
             return SignatureState::UNVERIFIABLE;
         }
-        if (!function_exists('openssl_verify') || !function_exists('openssl_pkey_get_public')) {
-            return SignatureState::UNVERIFIABLE;
-        }
 
-        $publicKey = openssl_pkey_get_public(self::publicKeyPem($this->keys[$kid]));
-        if ($publicKey === false) {
-            // A bad key is an installation problem, not evidence about the
-            // postback; never let it read as "invalid signature".
-            return SignatureState::UNVERIFIABLE;
-        }
-
+        // Null when the segment is not 64 bytes: whatever it is, it is not an
+        // ES256 signature. EcdsaP256 still runs its environment checks first,
+        // so a host with no OpenSSL (or a key that will not load) reports that
+        // it cannot judge rather than calling the signature forged.
         $der = self::rawSignatureToDer($decoded['signature']);
-        if ($der === null) {
-            // Not 64 bytes: whatever it is, it is not an ES256 signature.
-            return SignatureState::INVALID;
-        }
 
-        // openssl_verify: 1 = valid, 0 = mismatch, -1/false = OpenSSL error.
-        // With a loaded key and a well-formed DER blob the error case means
-        // a corrupt signature, so anything but 1 is INVALID.
-        $result = openssl_verify($decoded['signing_input'], $der, $publicKey, OPENSSL_ALGO_SHA256);
-        if ($result !== 1) {
+        $verified = EcdsaP256::verify($decoded['signing_input'], $der, $this->keys[$kid]);
+        if ($verified === null) {
+            return SignatureState::UNVERIFIABLE;
+        }
+        if ($verified === false) {
             return SignatureState::INVALID;
         }
         return in_array($kid, $this->developmentKeyIds, true)
@@ -257,12 +247,5 @@ final class JwsVerifier
         }
         $decoded = base64_decode($base64, true);
         return $decoded === false ? null : $decoded;
-    }
-
-    private static function publicKeyPem(string $publicKeyB64): string
-    {
-        return "-----BEGIN PUBLIC KEY-----\n"
-            . chunk_split($publicKeyB64, 64, "\n")
-            . "-----END PUBLIC KEY-----\n";
     }
 }

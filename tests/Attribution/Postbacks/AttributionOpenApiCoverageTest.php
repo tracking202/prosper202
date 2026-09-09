@@ -69,11 +69,11 @@ final class AttributionOpenApiCoverageTest extends TestCase
         $this->assertEqualsCanonicalizing(Protocols::NAMES, array_map('trim', explode(',', $m[1])));
 
         $this->assertSame(1, preg_match('/        signature_state:\n(?:.*\n){1,3}?\s+enum: \[([^\]]+)\]/', $block, $m), 'AttributionPostback.signature_state has no enum');
-        $this->assertEqualsCanonicalizing(SignatureState::ALL, array_map('trim', explode(',', $m[1])));
+        $this->assertEqualsCanonicalizing(SignatureState::values(), array_map('trim', explode(',', $m[1])));
 
         $spec = $this->spec();
         $this->assertSame(1, preg_match('/    attributionSignature:\n(?:.*\n){1,12}?\s+enum: \[([^\]]+)\]/', $spec, $m), 'the signature filter parameter has no enum');
-        $this->assertEqualsCanonicalizing(SignatureState::ALL, array_map('trim', explode(',', $m[1])));
+        $this->assertEqualsCanonicalizing(SignatureState::values(), array_map('trim', explode(',', $m[1])));
 
         $this->assertSame(1, preg_match('/    attributionProtocol:\n(?:.*\n){1,8}?\s+enum: \[([^\]]+)\]/', $spec, $m), 'the protocol filter parameter has no enum');
         $this->assertEqualsCanonicalizing(

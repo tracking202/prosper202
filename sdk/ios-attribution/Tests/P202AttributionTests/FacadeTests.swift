@@ -163,6 +163,41 @@ final class FacadeTests: XCTestCase {
         XCTAssertFalse(unscoped.includesReengagement)
     }
 
+    func testTheUpdatesTheFacadeProducesReachAdAttributionKitCorrectly() throws {
+        // The two device scenarios that corrupt conversion values if the
+        // dispatch is wrong, checked on the updates the facade actually
+        // builds rather than on hand-made ones.
+        let store = InMemoryStore()
+        let sdk = P202Attribution(store: store, session: .shared)
+        sdk.configure(endpoint: Self.deadEndpoint, schemaToken: "token-a")
+        _ = try sdk.finishRefresh(
+            requestToken: "token-a",
+            data: Self.schemaBody,
+            response: httpResponse(status: 200),
+            error: nil
+        ).get()
+
+        // iOS 17.4-17.x: a re-engagement event is skipped for SKAdNetwork so
+        // the install postback keeps its value — and must be skipped for
+        // AdAttributionKit too, whose only postback there is that same
+        // install one.
+        let reengagement = try XCTUnwrap(sdk.logEvent("purchase", conversionTypes: [.reengagement]))
+        XCTAssertFalse(reengagement.includesInstall)
+        XCTAssertEqual(reengagement.adAttributionKitDelivery(scopedAPIAvailable: false), .skip)
+        XCTAssertEqual(reengagement.adAttributionKitDelivery(scopedAPIAvailable: true), .scoped([.reengagement]))
+
+        // iOS 18: registerAttribution() re-asserts the INSTALL postback's
+        // value from applicationDidBecomeActive. Sent unscoped it would write
+        // that value (0 here) onto the re-engagement postback as well, wiping
+        // the 63 the SDK still tracks — and re-sends — for that postback.
+        let reasserted = sdk.registerAttribution()
+        XCTAssertNil(reasserted.conversionTypes)
+        XCTAssertEqual(reasserted.fineValue, 0, "no install event has been reported")
+        XCTAssertEqual(LastFineValueStore.load(from: store, for: .reengagement), 63)
+        XCTAssertEqual(reasserted.adAttributionKitDelivery(scopedAPIAvailable: true), .scoped([.install]))
+        XCTAssertEqual(reasserted.adAttributionKitDelivery(scopedAPIAvailable: false), .unscoped)
+    }
+
     func testLastFineValueSurvivesATokenRotation() throws {
         let store = InMemoryStore()
         let sdk = P202Attribution(store: store, session: .shared)

@@ -230,8 +230,7 @@ for forensics but never served through the API.
 
 ### Retention
 
-Because the endpoint is public, rows nobody will ever act on are pruned
-opportunistically (piggybacked on receiver traffic, in small batches):
+Because the endpoint is public, rows nobody will ever act on have windows:
 postbacks still **unclaimed** by any app registration after 30 days,
 postbacks whose signature verified as **forged** (`signature_valid = 0`)
 after 90 days, and postbacks nobody vouched for (`signature_valid IS NULL`:
@@ -239,6 +238,14 @@ after 90 days, and postbacks nobody vouched for (`signature_valid IS NULL`:
 after 90 days. Only a row that verified against Apple's production key
 (or is development-signed for an app that opted in) *and* belongs to a
 registered app is kept forever.
+
+`202-cronjobs/attribution-retention.php` is the pruner to schedule (hourly
+or daily): it runs whether or not postbacks are arriving, drains the backlog
+rather than nibbling at it, and reports what it removed (`--dry-run` reports
+the windows and the backlog without deleting). The receiver also prunes
+opportunistically, piggybacked on its own traffic in small batches, but that
+is a safety net rather than the policy — it only fires while new postbacks
+are still arriving.
 
 That third class matters because it is the cheapest row for a stranger to
 create: naming a SKAN version this server cannot verify stores
@@ -252,7 +259,10 @@ Override with the `P202_ATTRIBUTION_RETENTION_DAYS_UNCLAIMED`,
 that class's pruning entirely). A value that is not a whole number of days
 is **rejected**, not rounded or defaulted: the class prunes nothing and the
 variable is named in the error log, so writing `never` keeps rows rather
-than quietly deleting them on the 30-day default.
+than quietly deleting them on the 30-day default. They are read by whichever
+process prunes, so put them in the crontab line (or the cron user's
+environment) — php-fpm's environment only configures the receiver's
+opportunistic pass.
 
 ### List filters
 
@@ -274,6 +284,19 @@ report keys on (`signature_valid` 1 / 0 / null — so `valid` is exactly
 what the default report counts, opted-in development rows included);
 `development` selects rows verified against a development key whatever
 their trust bit. Unknown values are `422`s naming the choices.
+
+`redownload` and `fidelity_type` are SKAdNetwork's spellings of
+`conversion_type` and `ad_interaction_type`, and are matched on those
+protocol-neutral columns: `redownload=1` selects `conversion_type =
+redownload` and `redownload=0` selects `download`; `fidelity_type=1` selects
+`ad_interaction_type = click` and `fidelity_type=0` selects `view`. Only
+SKAdNetwork rows carry the raw `redownload` and `fidelity_type` columns —
+AdAttributionKit leaves both `NULL` — so matching them literally answered
+the same question two different ways depending on which spelling you used.
+Prefer `conversion_type` / `ad_interaction_type`: they mean the same thing
+across both protocols, and `conversion_type` can also name `re-engagement`,
+which `redownload` has no way to express (and which `redownload=0`
+therefore excludes).
 
 ## Apps
 
@@ -378,14 +401,17 @@ and `AttributionCopyEndpoint` lines in `Info.plist` still ship with the app
 with the same filters as the postback list, plus `limit` (max groups,
 default 100). Days are UTC, listed oldest first. Each group reports:
 
-- `postbacks` (all rows), `losses` (`did-win: false`), `installs` (winning
+- `postbacks` (unique postbacks, whatever their signature state), `losses`
+  (`did-win: false`), `installs` (winning
   first-window `download` postbacks; postbacks without `did-win` — SKAN ≤
   2.2 winners — count as wins), `redownloads`, and `reengagements`
   (AdAttributionKit only)
 - `signature_valid_count` / `signature_invalid_count` /
-  `signature_unverified_count` (rows with no trust bit, development rows
-  without the opt-in included) / `signature_development_count` (rows
-  verified against a development key, whatever their trust bit)
+  `signature_unverified_count` (no trust bit, development postbacks
+  without the opt-in included) / `signature_development_count` (verified
+  against a development key, whatever their trust bit) — each counts
+  unique postbacks, and a postback belonging to two classes (an opted-in
+  development-signed one is both `valid` and `development`) counts in each
 - Conversion-value decoding: `measurable` (unique winning postbacks
   carrying a value, across all three conversion windows — so it can exceed
   `installs`, which counts first-window postbacks only), `decoded`,
@@ -400,22 +426,33 @@ postback whose *unsigned* fields differ (a different conversion value on
 the same signed postback) as its own row, so that a forgery can never block
 the genuine copy; the report is where such a replay collapses to one.
 Without that, whoever holds one genuine postback could resend it with new
-conversion values and mint installs and revenue. `postbacks` alone counts
-rows, so a group whose `postbacks` exceeds its unique postbacks is showing
-you replays.
+conversion values and mint installs and revenue. `postbacks` and the four
+`signature_*_count` columns count unique postbacks too, so no column of the
+report exposes the stored row count — it answers "how many postbacks",
+never "how many rows".
 
 **Trust default:** the receiver is public, so unless you pass an explicit
 `signature` filter, every headline metric — installs, losses, redownloads,
 the whole conversion-value decode — counts **only signature-verified
 postbacks**; forged and unverifiable rows stay visible through the
-`signature_*_count` columns (which always count all rows in the group) but
-cannot move the numbers. `meta.trusted` says which regime produced the
-response: `verified-only` (the default) or `as-filtered` (you filtered by
-signature state yourself, e.g. `signature=invalid` to study forgeries).
+`signature_*_count` columns (which count every unique postback in the
+group, whatever its signature state) but cannot move the numbers.
+`meta.trusted` says which regime produced the response: `verified-only`
+(the default) or `as-filtered` (you filtered by signature state yourself,
+e.g. `signature=invalid` to study forgeries).
 Malformed filter values are rejected with `422` rather than ignored, and
 `meta.groups_truncated: true` flags a report that hit the group `limit`
 with groups left over — raise `limit` or narrow the time range rather than
 treating the visible groups as the whole story.
+
+**Which groups come back:** `group_by=day` returns the newest `limit`
+populated days — a day no matching postback landed on is not a group at all,
+so an account that received postbacks on six days spread over two years gets
+six groups, not two years of zeroes. Every other mode returns the `limit`
+busiest groups. Neither `time_from` nor `time_to` has a default, so an
+unfiltered day report picks its days out of the account's whole retained
+history; to reach days older than the newest `limit`, raise `limit` or move
+the window with `time_to`.
 
 ## Verifying a postback by hand
 
@@ -427,7 +464,16 @@ response carries `protocol`, the verdict (`valid` / `invalid` /
 `payload`, and the key ids the server knows; anything else is verified as
 SKAdNetwork, returning `signed_message_base64` — the exact byte string Apple
 signed (parameters joined with U+2063), for diffing against another
-implementation. Nothing is stored; Apple's published keys are always used.
+implementation. The `jws-string` decides on its own, so a body carrying the
+SKAdNetwork fields *and* a `jws-string` — a postback copied from one
+receiver into the other's envelope — is verified as AdAttributionKit.
+Nothing is stored; Apple's published keys are always used.
+
+A `422` means an empty body, or a `jws-string` that is not a decodable
+compact JWS. A body without a `jws-string` is never a validation error: it
+is verified as SKAdNetwork and comes back `unverifiable` when its `version`
+is not one this server can check, `invalid` when it claims a version whose
+signed fields it does not carry.
 
 ## Example
 

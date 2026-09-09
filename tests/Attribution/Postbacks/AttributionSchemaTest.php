@@ -136,6 +136,54 @@ final class AttributionSchemaTest extends TestCase
         $this->assertNotSame($first['etag'], $this->controller($changed)->publicSchema(self::TOKEN, null)['etag']);
     }
 
+    /**
+     * RFC 7232 requires the WEAK comparison function for If-None-Match, and
+     * lets the header carry a comma-separated list or `*`. Exact string
+     * equality against the strong ETag matched none of those, so every
+     * client behind a proxy that weakens ETags (the nginx gzip filter
+     * rewrites `"x"` to `W/"x"`) re-downloaded the whole document on every
+     * poll while the endpoint advertised max-age caching.
+     *
+     * @dataProvider ifNoneMatchCases
+     */
+    public function testIfNoneMatchIsComparedWeakly(string $headerFormat, int $expectedStatus): void
+    {
+        $rules = [
+            ['app_id' => 0, 'fine_value' => 63, 'coarse_value' => null, 'event_name' => 'purchase'],
+        ];
+        $fresh = $this->controller($rules)->publicSchema(self::TOKEN, null);
+        $bare = trim((string)$fresh['etag'], '"');
+
+        $result = $this->controller($rules)->publicSchema(self::TOKEN, sprintf($headerFormat, $bare));
+
+        $this->assertSame($expectedStatus, $result['status']);
+        // The 304 shape is part of the contract: no body, ETag echoed.
+        if ($expectedStatus === 304) {
+            $this->assertNull($result['body']);
+            $this->assertSame($fresh['etag'], $result['etag']);
+        } else {
+            $this->assertIsArray($result['body']);
+        }
+    }
+
+    /** @return array<string, array{string, int}> */
+    public function ifNoneMatchCases(): array
+    {
+        $other = str_repeat('0', 40);
+        return [
+            'strong exact match'            => ['"%s"', 304],
+            'weak validator'                => ['W/"%s"', 304],
+            'list whose second entry hits'  => ['W/"' . $other . '", "%s"', 304],
+            'star matches an existing resource' => ['*', 304],
+            'genuine non-match still serves the document' => ['"' . $other . '"', 200],
+            // Apache mod_deflate with `DeflateAlterETag AddSuffix` rewrites the tag
+            // itself rather than weakening it, so `"x-gzip"` is a different
+            // opaque tag and 200 is the RFC-correct answer; recorded here so
+            // the boundary is deliberate rather than accidental.
+            'gzip-suffixed tag is a different entity' => ['"%s-gzip"', 200],
+        ];
+    }
+
     public function testEmptyRuleSetServesAnEmptyEventsObject(): void
     {
         $result = $this->controller([])->publicSchema(self::TOKEN, null);

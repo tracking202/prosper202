@@ -37,8 +37,6 @@ final class AdAttributionKitProtocol implements PostbackProtocol
     public const CONVERSION_TYPES = ['download', 'redownload', 're-engagement'];
     public const INTERACTION_TYPES = ['view', 'click'];
 
-    private const COARSE_VALUES = ['low', 'medium', 'high'];
-
     /** Room for any genuine JWS (about 600 bytes) with a wide margin; the column is TEXT. */
     public const MAX_JWS_LENGTH = 8192;
 
@@ -95,14 +93,14 @@ final class AdAttributionKitProtocol implements PostbackProtocol
             signatureState: $this->verifier->verify($decoded),
             keyId: (string)$decoded['header']['kid'],
             columns: [
-                'conversion_value'        => ['i', self::optInt($body, 'conversion-value')],
-                'coarse_conversion_value' => ['s', self::optString($body, 'coarse-conversion-value')],
+                'conversion_value'        => ['i', PostbackFields::optInt($body, 'conversion-value')],
+                'coarse_conversion_value' => ['s', PostbackFields::optString($body, 'coarse-conversion-value')],
                 'conversion_type'         => ['s', (string)$payload['conversion-type']],
                 'ad_interaction_type'     => ['s', (string)$body['ad-interaction-type']],
-                'source_identifier'       => ['s', self::optString($payload, 'source-identifier')],
-                'source_app_id'           => ['i', self::optInt($payload, 'publisher-item-identifier')],
-                'marketplace_id'          => ['s', self::optString($payload, 'marketplace-identifier')],
-                'country_code'            => ['s', self::optString($body, 'country-code')],
+                'source_identifier'       => ['s', PostbackFields::optString($payload, 'source-identifier')],
+                'source_app_id'           => ['i', PostbackFields::optInt($payload, 'publisher-item-identifier')],
+                'marketplace_id'          => ['s', PostbackFields::optString($payload, 'marketplace-identifier')],
+                'country_code'            => ['s', PostbackFields::optString($body, 'country-code')],
                 'attribution_signature'   => ['s', (string)$jws],
             ],
         );
@@ -131,24 +129,9 @@ final class AdAttributionKitProtocol implements PostbackProtocol
         ) {
             $errors['ad-interaction-type'] = 'Required: one of: view, click';
         }
-        if (array_key_exists('conversion-value', $body)) {
-            $conversionValue = $body['conversion-value'];
-            if (!is_int($conversionValue) || $conversionValue < 0 || $conversionValue > 63) {
-                $errors['conversion-value'] = 'Must be an integer from 0 to 63';
-            }
-        }
-        if (
-            array_key_exists('coarse-conversion-value', $body)
-            && !in_array($body['coarse-conversion-value'], self::COARSE_VALUES, true)
-        ) {
-            $errors['coarse-conversion-value'] = 'Must be one of: low, medium, high';
-        }
-        if (array_key_exists('country-code', $body)) {
-            $countryCode = $body['country-code'];
-            if (!is_string($countryCode) || trim($countryCode) === '' || strlen($countryCode) > 8) {
-                $errors['country-code'] = 'Must be a short country identifier string';
-            }
-        }
+        $errors += PostbackFields::errorsFor($body, 'conversion-value');
+        $errors += PostbackFields::errorsFor($body, 'coarse-conversion-value');
+        $errors += PostbackFields::errorsFor($body, 'country-code');
 
         return $errors;
     }
@@ -198,12 +181,7 @@ final class AdAttributionKitProtocol implements PostbackProtocol
         }
 
         // Withheld by the postback data tier: optional, strict when present.
-        if (array_key_exists('source-identifier', $payload)) {
-            $sourceIdentifier = $payload['source-identifier'];
-            if (!is_string($sourceIdentifier) || preg_match('/^\d{1,4}$/D', $sourceIdentifier) !== 1) {
-                $errors['source-identifier'] = 'Must be a string of 1-4 digits';
-            }
-        }
+        $errors += PostbackFields::errorsFor($payload, 'source-identifier');
         if (
             array_key_exists('publisher-item-identifier', $payload)
             && (!is_int($payload['publisher-item-identifier']) || $payload['publisher-item-identifier'] < 0)
@@ -218,17 +196,5 @@ final class AdAttributionKitProtocol implements PostbackProtocol
         }
 
         return $errors;
-    }
-
-    /** @param array<string, mixed> $fields */
-    private static function optString(array $fields, string $key): ?string
-    {
-        return array_key_exists($key, $fields) ? (string)$fields[$key] : null;
-    }
-
-    /** @param array<string, mixed> $fields */
-    private static function optInt(array $fields, string $key): ?int
-    {
-        return array_key_exists($key, $fields) ? (int)$fields[$key] : null;
     }
 }

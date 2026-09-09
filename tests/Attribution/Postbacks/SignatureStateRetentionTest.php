@@ -55,20 +55,20 @@ final class SignatureStateRetentionTest extends TestCase
         $this->assertContains(0, $prunedTrustValues, 'forged rows must have a retention class');
         $this->assertContains(null, $prunedTrustValues, 'rows nobody vouched for must have a retention class');
 
-        $this->assertNotEmpty(SignatureState::ALL);
-        foreach (SignatureState::ALL as $state) {
+        $this->assertNotEmpty(SignatureState::cases());
+        foreach (SignatureState::cases() as $state) {
             foreach ([false, true] as $acceptDevelopment) {
-                $bit = SignatureState::trustBit($state, $acceptDevelopment);
+                $bit = $state->trustBit($acceptDevelopment);
                 if ($bit === 1) {
                     continue; // trusted: kept forever once claimed, by design
                 }
                 $this->assertContains(
                     $bit,
                     [0, null],
-                    "state '$state' (opt-in " . var_export($acceptDevelopment, true) . ") yields trust bit "
+                    "state '{$state->value}' (opt-in " . var_export($acceptDevelopment, true) . ") yields trust bit "
                     . var_export($bit, true) . ', which no retention class prunes'
                 );
-                $this->assertContains($bit, $prunedTrustValues, "state '$state' maps to a trust value without a DELETE");
+                $this->assertContains($bit, $prunedTrustValues, "state '{$state->value}' maps to a trust value without a DELETE");
             }
         }
     }
@@ -76,10 +76,10 @@ final class SignatureStateRetentionTest extends TestCase
     public function testOnlyTheProductionKeyOrAnOptedInDevelopmentKeyIsTrusted(): void
     {
         $trusted = [];
-        foreach (SignatureState::ALL as $state) {
+        foreach (SignatureState::cases() as $state) {
             foreach ([false, true] as $acceptDevelopment) {
-                if (SignatureState::trustBit($state, $acceptDevelopment) === 1) {
-                    $trusted[] = $state . ($acceptDevelopment ? '+opt-in' : '');
+                if ($state->trustBit($acceptDevelopment) === 1) {
+                    $trusted[] = $state->value . ($acceptDevelopment ? '+opt-in' : '');
                 }
             }
         }
@@ -90,10 +90,16 @@ final class SignatureStateRetentionTest extends TestCase
         );
     }
 
-    public function testAnUnknownStateNeverReadsAsTrusted(): void
+    public function testAStateOutsideTheEnumCannotBeConstructed(): void
     {
-        foreach ([false, true] as $acceptDevelopment) {
-            $this->assertNull(SignatureState::trustBit('probably-fine', $acceptDevelopment));
+        // The states are a closed set: a verdict no trust policy knows how
+        // to price is unrepresentable rather than mapped to a fall-through.
+        // tryFrom is the only door in from a string (the stored column, the
+        // API filter) and it refuses anything else.
+        $this->assertNull(SignatureState::tryFrom('probably-fine'));
+        $this->assertNull(SignatureState::tryFrom('Valid'), 'the backing values are exact, not case-insensitive');
+        foreach (SignatureState::values() as $value) {
+            $this->assertInstanceOf(SignatureState::class, SignatureState::tryFrom($value));
         }
     }
 }

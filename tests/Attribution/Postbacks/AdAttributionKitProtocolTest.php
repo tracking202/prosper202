@@ -8,6 +8,7 @@ use Api\V3\Attribution\AdAttributionKitProtocol;
 use Api\V3\Attribution\JwsVerifier;
 use Api\V3\Attribution\ParsedPostback;
 use Api\V3\Attribution\PostbackReceiver;
+use Api\V3\Attribution\SignatureState;
 use Tests\TestCase;
 
 /**
@@ -65,7 +66,7 @@ final class AdAttributionKitProtocolTest extends TestCase
         $this->assertSame(AdAttributionKitFixtures::EXAMPLE_APP_ID, $parsed->appId);
         $this->assertSame(0, $parsed->sequenceIndex);
         $this->assertTrue($parsed->didWin);
-        $this->assertSame('development', $parsed->signatureState);
+        $this->assertSame(SignatureState::DEVELOPMENT, $parsed->signatureState);
         $this->assertSame(AdAttributionKitFixtures::EXAMPLE_KEY_ID, $parsed->keyId);
 
         $columns = $parsed->columns;
@@ -109,7 +110,7 @@ final class AdAttributionKitProtocolTest extends TestCase
         $this->assertSame(['i', 24], $parsed->columns['conversion_value']);
         $this->assertSame(['s', 'US'], $parsed->columns['country_code']);
         $this->assertSame(['s', 'click'], $parsed->columns['ad_interaction_type']);
-        $this->assertSame('invalid', $parsed->signatureState, 'a re-encoded payload no longer carries Apple\'s signature');
+        $this->assertSame(SignatureState::INVALID, $parsed->signatureState, 'a re-encoded payload no longer carries Apple\'s signature');
     }
 
     public function testTierWithheldFieldsStoreAsNull(): void
@@ -134,7 +135,7 @@ final class AdAttributionKitProtocolTest extends TestCase
         $parsed = $this->parsed(AdAttributionKitFixtures::exampleBody([
             'jws-string' => AdAttributionKitFixtures::jws(self::header(['kid' => 'apple-cas-identifier/7']), AdAttributionKitFixtures::examplePayload()),
         ]));
-        $this->assertSame('unverifiable', $parsed->signatureState);
+        $this->assertSame(SignatureState::UNVERIFIABLE, $parsed->signatureState);
         $this->assertSame('apple-cas-identifier/7', $parsed->keyId);
     }
 

@@ -51,11 +51,11 @@ final class PostbackReceiverTest extends TestCase
      *
      * @param array<string, array{0: string, 1: mixed}> $columns
      */
-    private function stubProtocol(string $signatureState, array $columns = []): PostbackProtocol
+    private function stubProtocol(SignatureState $signatureState, array $columns = []): PostbackProtocol
     {
         return new class ($signatureState, $columns) implements PostbackProtocol {
             /** @param array<string, array{0: string, 1: mixed}> $columns */
-            public function __construct(private readonly string $state, private readonly array $columns)
+            public function __construct(private readonly SignatureState $state, private readonly array $columns)
             {
             }
 
@@ -359,13 +359,13 @@ final class PostbackReceiverTest extends TestCase
         // The opt-in is about development keys only. A forgery stays 0 and
         // an unverifiable row stays NULL whatever the registration says.
         $appRows = [['user_id' => 7, 'accept_development_postbacks' => 1]];
-        foreach ([SignatureState::INVALID => 0, SignatureState::UNVERIFIABLE => null] as $state => $expected) {
+        foreach ([[SignatureState::INVALID, 0], [SignatureState::UNVERIFIABLE, null]] as [$state, $expected]) {
             $this->captured = [];
             $db = $this->capturingDb(['FROM 202_attribution_apps' => $appRows]);
             (new PostbackReceiver($db, $this->stubProtocol($state)))->receive('{}', '1.2.3.4');
             $row = $this->insertedRow();
-            $this->assertSame($state, $row['signature_state']);
-            $this->assertSame($expected, $row['signature_valid'], $state);
+            $this->assertSame($state->value, $row['signature_state']);
+            $this->assertSame($expected, $row['signature_valid'], $state->value);
         }
     }
 
@@ -383,19 +383,6 @@ final class PostbackReceiverTest extends TestCase
             $this->fail('expected a LogicException');
         } catch (\LogicException $e) {
             $this->assertStringContainsString('signature_valid', $e->getMessage());
-        }
-        $this->assertNull($this->capturedInsert(), 'nothing may be written');
-    }
-
-    public function testAnUnknownSignatureStateIsADefectNotARow(): void
-    {
-        $db = $this->capturingDb(['FROM 202_attribution_apps' => []]);
-        $receiver = new PostbackReceiver($db, $this->stubProtocol('probably-fine'));
-        try {
-            $receiver->receive('{}', '1.2.3.4');
-            $this->fail('expected a LogicException');
-        } catch (\LogicException $e) {
-            $this->assertStringContainsString('probably-fine', $e->getMessage());
         }
         $this->assertNull($this->capturedInsert(), 'nothing may be written');
     }
@@ -533,6 +520,86 @@ final class PostbackReceiverTest extends TestCase
             $this->assertSame([$now - 7 * 86400], $deletes[0]['values']);
         } finally {
             putenv('P202_ATTRIBUTION_RETENTION_DAYS_UNCLAIMED');
+            putenv('P202_ATTRIBUTION_RETENTION_DAYS_INVALID');
+        }
+    }
+
+    public function testRetentionPolicyReportsTheWindowsThisProcessResolved(): void
+    {
+        // What 202-cronjobs/attribution-retention.php prints. The overrides
+        // are read from the environment of whichever process prunes, so an
+        // operator's only way to see that their crontab value took is the
+        // cron reporting the window it resolved.
+        putenv('P202_ATTRIBUTION_RETENTION_DAYS_UNCLAIMED=7');
+        putenv('P202_ATTRIBUTION_RETENTION_DAYS_INVALID=0');
+        putenv('P202_ATTRIBUTION_RETENTION_DAYS_UNVERIFIABLE=90 days');
+        try {
+            $now = 1_800_000_000;
+            $policy = PostbackReceiver::retentionPolicy($now);
+
+            $this->assertSame(['days' => 7, 'cutoff' => $now - 7 * 86400], $policy['unclaimed']);
+            $this->assertSame(['days' => 0, 'cutoff' => null], $policy['invalid'], 'an explicit 0 disables the class');
+            // A value we cannot parse prunes nothing rather than falling back
+            // to the destructive default, and the report says so — an
+            // operator who sees "disabled" for a class they set knows the
+            // value was refused.
+            $this->assertSame(['days' => 0, 'cutoff' => null], $policy['unverifiable']);
+        } finally {
+            putenv('P202_ATTRIBUTION_RETENTION_DAYS_UNCLAIMED');
+            putenv('P202_ATTRIBUTION_RETENTION_DAYS_INVALID');
+            putenv('P202_ATTRIBUTION_RETENTION_DAYS_UNVERIFIABLE');
+        }
+    }
+
+    public function testRetentionBacklogCountsEachClassAgainstItsOwnWindow(): void
+    {
+        $now = 1_800_000_000;
+        $db = $this->capturingDb([
+            'WHERE user_id = 0 AND' => [['aged' => 7]],
+            'WHERE signature_valid = 0 AND' => [['aged' => 0]],
+            'WHERE signature_valid IS NULL AND' => [['aged' => 1200]],
+        ]);
+
+        $backlog = $this->receiver($db)->retentionBacklog($now);
+        $this->assertSame(['unclaimed' => 7, 'invalid' => 0, 'unverifiable' => 1200], $backlog);
+
+        // The count has to ask exactly what the delete asks, or the cron
+        // reports a backlog it is not pruning: same predicates, same cutoffs,
+        // and unbounded (the LIMIT belongs to a pass, not to the backlog).
+        $counts = $this->capturedStatements('SELECT');
+        $this->assertCount(3, $counts, 'one count per pruning class');
+        $this->assertSame([$now - PostbackReceiver::DEFAULT_RETENTION_DAYS_UNCLAIMED * 86400], $counts[0]['values']);
+        $this->assertSame([$now - PostbackReceiver::DEFAULT_RETENTION_DAYS_INVALID * 86400], $counts[1]['values']);
+        $this->assertSame([$now - PostbackReceiver::DEFAULT_RETENTION_DAYS_UNVERIFIABLE * 86400], $counts[2]['values']);
+        foreach ($counts as $count) {
+            $this->assertStringContainsString('received_at < ?', $count['sql']);
+            $this->assertStringNotContainsString('LIMIT', $count['sql']);
+        }
+    }
+
+    public function testRetentionBacklogRefusesToReadAMissingCountAsZero(): void
+    {
+        // COUNT(*) always answers with exactly one row, so no row is a
+        // transport failure. Reported as 0 it would tell the cron there is
+        // nothing to prune — the silent-empty-answer shape of error pattern
+        // #1, on the number an operator uses to decide whether retention is
+        // working.
+        $db = $this->capturingDb();
+
+        $this->expectException(\Api\V3\Exception\DatabaseException::class);
+        $this->receiver($db)->retentionBacklog(1_800_000_000);
+    }
+
+    public function testADisabledClassCountsAsZeroWithoutAskingTheDatabase(): void
+    {
+        putenv('P202_ATTRIBUTION_RETENTION_DAYS_INVALID=0');
+        try {
+            $db = $this->capturingDb(['received_at < ?' => [['aged' => 3]]]);
+            $backlog = $this->receiver($db)->retentionBacklog(1_800_000_000);
+
+            $this->assertSame(0, $backlog['invalid'], 'a class that prunes nothing has no backlog');
+            $this->assertCount(2, $this->capturedStatements('SELECT'), 'and is not counted for');
+        } finally {
             putenv('P202_ATTRIBUTION_RETENTION_DAYS_INVALID');
         }
     }

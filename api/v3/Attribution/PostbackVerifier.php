@@ -46,19 +46,6 @@ final class PostbackVerifier
         'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEWdp8GPcGqmhgzEFj9Z2nSpQVddayaPe4'
         . 'FMzqM9wib1+aHaaIzoHoLN9zW4K8y4SPykE3YVK3sVqW6Af0lfx3gg==';
 
-    /** The signature checks out against the verification key. */
-    public const RESULT_VALID = 'valid';
-
-    /** The signature is wrong, or the payload lacks the signed fields it claims. */
-    public const RESULT_INVALID = 'invalid';
-
-    /**
-     * This verifier cannot judge the postback: the version's signing scheme
-     * is unknown here (1.0/2.0's retired P-192 key, or a version newer than
-     * 4.0), or OpenSSL support is missing.
-     */
-    public const RESULT_UNVERIFIABLE = 'unverifiable';
-
     /** Versions whose signature composition and key this verifier knows. */
     public const VERIFIABLE_VERSIONS = ['2.1', '2.2', '3.0', '4.0'];
 
@@ -78,15 +65,22 @@ final class PostbackVerifier
     }
 
     /**
-     * Verify a decoded postback. Returns one of the RESULT_* constants.
+     * Verify a decoded postback.
+     *
+     * VALID when the signature checks out against the verification key,
+     * INVALID when it does not (or the payload lacks the fields the version
+     * it claims signs over), and UNVERIFIABLE when this verifier cannot
+     * judge the postback at all: the version's signing scheme is unknown
+     * here (1.0/2.0's retired P-192 key, or a version newer than 4.0), or
+     * OpenSSL support is missing.
      *
      * @param array<string, mixed> $postback Decoded postback JSON.
      */
-    public function verify(array $postback): string
+    public function verify(array $postback): SignatureState
     {
         $version = $postback['version'] ?? null;
         if (!is_string($version) || !in_array($version, self::VERIFIABLE_VERSIONS, true)) {
-            return self::RESULT_UNVERIFIABLE;
+            return SignatureState::UNVERIFIABLE;
         }
 
         $message = $this->buildSignedMessage($postback);
@@ -94,38 +88,27 @@ final class PostbackVerifier
             // The payload claims a version whose signed fields it does not
             // carry (or carries with the wrong types). Apple never emits
             // that, so it cannot be genuine.
-            return self::RESULT_INVALID;
+            return SignatureState::INVALID;
         }
 
         $signatureB64 = $postback['attribution-signature'] ?? null;
         if (!is_string($signatureB64) || trim($signatureB64) === '') {
-            return self::RESULT_INVALID;
+            return SignatureState::INVALID;
         }
         $signature = base64_decode($signatureB64, true);
         if ($signature === false || $signature === '') {
-            return self::RESULT_INVALID;
+            return SignatureState::INVALID;
         }
 
-        if (!function_exists('openssl_verify') || !function_exists('openssl_pkey_get_public')) {
-            return self::RESULT_UNVERIFIABLE;
+        // EcdsaP256 answers null for the environment problems — no OpenSSL,
+        // or a verification key that will not load — which are not evidence
+        // about the postback and must never read as "invalid signature". A
+        // signature that merely fails to check out is answered false.
+        $verified = EcdsaP256::verify($message, $signature, $this->publicKeyB64);
+        if ($verified === null) {
+            return SignatureState::UNVERIFIABLE;
         }
-
-        $publicKey = openssl_pkey_get_public($this->publicKeyPem());
-        if ($publicKey === false) {
-            // A bad key is an installation problem, not evidence about the
-            // postback; never let it read as "invalid signature".
-            return self::RESULT_UNVERIFIABLE;
-        }
-
-        // openssl_verify: 1 = valid, 0 = signature does not match, -1/false =
-        // OpenSSL error. With a loaded key and a built-in algorithm, the
-        // error case means the signature blob itself is not parseable ECDSA
-        // DER — an artifact of a forged or corrupted postback, so it is
-        // INVALID, not "cannot judge". (Environment problems — missing
-        // extension, unparseable key — were returned as UNVERIFIABLE above,
-        // before the signature was consulted.)
-        $result = openssl_verify($message, $signature, $publicKey, OPENSSL_ALGO_SHA256);
-        return $result === 1 ? self::RESULT_VALID : self::RESULT_INVALID;
+        return $verified ? SignatureState::VALID : SignatureState::INVALID;
     }
 
     /**
@@ -258,13 +241,6 @@ final class PostbackVerifier
         }
 
         return $parts;
-    }
-
-    private function publicKeyPem(): string
-    {
-        return "-----BEGIN PUBLIC KEY-----\n"
-            . chunk_split($this->publicKeyB64, 64, "\n")
-            . "-----END PUBLIC KEY-----\n";
     }
 
     private static function asString(mixed $value): ?string

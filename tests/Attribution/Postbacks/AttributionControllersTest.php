@@ -8,7 +8,9 @@ use Api\V3\Controllers\AttributionAppsController;
 use Api\V3\Controllers\AttributionConversionValuesController;
 use Api\V3\Controllers\AttributionPostbacksController;
 use Api\V3\Exception\ConflictException;
+use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Exception\WriteCommittedException;
 use Tests\TestCase;
 
 /**
@@ -16,10 +18,14 @@ use Tests\TestCase;
  * shared mysqli mock. Anything that requires a real INSERT round-trip
  * (insert_id is a C-backed property mocks cannot expose) is exercised by the
  * live-instance flow instead; these tests pin the paths that must reject
- * before any write happens, and the report's conversion-value decode fold.
+ * before any write happens, the report's conversion-value decode fold, and —
+ * over the capturing double — the statements the app-registry write paths
+ * actually send, and how they report a failure that lands after the write.
  */
 final class AttributionControllersTest extends TestCase
 {
+    use CapturingMysqli;
+
     // ─── Conversion-value rules ──────────────────────────────────────
 
     public function testRuleWithBothFineAndCoarseIsRejected(): void
@@ -242,6 +248,142 @@ final class AttributionControllersTest extends TestCase
         }
     }
 
+    /** @dataProvider appIdsTheIntCastWouldRewrite */
+    public function testAnAppIdTheIntCastWouldRewriteIsRejected(mixed $appId): void
+    {
+        // Controller::create() casts app_id to int in validatePayload()
+        // before any beforeCreate() guard can look at it, so 1.5 registered
+        // app 1, '525463029.9' registered 525463029 and a 20-digit string
+        // registered PHP_INT_MAX: a 201 naming an app the caller never sent,
+        // holding the global UNIQUE slot. The check has to see the raw value.
+        $ctrl = new AttributionAppsController($this->createMysqliMock(), 1);
+        try {
+            $ctrl->create(['app_id' => $appId, 'app_name' => 'Test']);
+            $this->fail('Expected a ValidationException');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('app_id', $e->getFieldErrors());
+        }
+    }
+
+    /** @return array<string, array{0: mixed}> */
+    public static function appIdsTheIntCastWouldRewrite(): array
+    {
+        return [
+            'fraction' => [1.5],
+            'exponent string' => ['1e2'],
+            'wider than int64' => ['99999999999999999999'],
+            'leading space' => [' 1'],
+            'float past int64' => [1e20],
+            'decimal string' => ['525463029.9'],
+        ];
+    }
+
+    public function testUpdatingToAnAppIdTheIntCastWouldRewriteIsRejected(): void
+    {
+        // Same cast, same silent rewrite, on the update path.
+        $ctrl = new AttributionAppsController($this->createMysqliMock(), 1);
+        try {
+            $ctrl->update(7, ['app_id' => '1e2']);
+            $this->fail('Expected a ValidationException');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('app_id', $e->getFieldErrors());
+        }
+    }
+
+    public function testAnAppIdAsAnIntegerOrADigitStringIsStillAccepted(): void
+    {
+        // JSON bodies send app_id as a number, the Go CLI sends it as a
+        // digit string; the raw check must not refuse either.
+        foreach ([525463029, '525463029'] as $value) {
+            $ctrl = new AttributionAppsController($this->createMysqliMock(), 1);
+            try {
+                $ctrl->create(['app_id' => $value, 'app_name' => 'My App']);
+                $this->addToAssertionCount(1);
+            } catch (ValidationException $e) {
+                $this->fail('app_id=' . var_export($value, true) . ' must be accepted: ' . $e->getMessage());
+            } catch (\Throwable) {
+                // Reaching the INSERT is the point; the mock cannot complete
+                // it (insert_id is C-backed), as in the other create tests.
+                $this->addToAssertionCount(1);
+            }
+        }
+    }
+
+    public function testDeletingAnOptedInAppStopsTrustingItsDevelopmentPostbacks(): void
+    {
+        // The opt-in is a live policy, and deleting the registration is the
+        // third way it is toggled. Without a beforeDelete() counterpart the
+        // rows it marked trusted stay signature_valid = 1 forever, counted
+        // by the default verified-only report, with no registration left to
+        // turn them off.
+        $db = $this->capturingDb([
+            'FROM 202_attribution_apps' => [[
+                'attribution_app_id' => 7, 'app_id' => 525463029, 'app_name' => 'My App',
+                'notes' => null, 'accept_development_postbacks' => 1,
+                'schema_token' => str_repeat('a', 64), 'user_id' => 1,
+            ]],
+        ]);
+        (new AttributionAppsController($db, 1))->delete(7);
+
+        $untrust = array_values(array_filter(
+            $this->capturedStatements('UPDATE'),
+            static fn(array $s): bool => str_contains($s['sql'], '202_attribution_postbacks')
+        ));
+        $this->assertCount(1, $untrust, 'the delete must revert the development-trust opt-in exactly once');
+        $this->assertStringContainsString('signature_valid = NULL', $untrust[0]['sql']);
+        $this->assertStringContainsString("signature_state = 'development'", $untrust[0]['sql']);
+        // Scoped to this app and this owner: history a previous owner
+        // claimed keeps that owner's decision.
+        $this->assertSame('ii', $untrust[0]['types']);
+        $this->assertSame([525463029, 1], $untrust[0]['values']);
+        // ...and the registration itself is still removed.
+        $this->assertNotEmpty($this->capturedStatements('DELETE'));
+    }
+
+    public function testARotationWhoseReadBackFailsReportsTheWriteAsCommitted(): void
+    {
+        // POST /attribution/apps/{id}/schema-token/rotate is stageable, and
+        // the UPDATE has already killed the old token by the time the row is
+        // read back. Reported as a plain failure the staged-apply seam
+        // returns the change to `staged` ("nothing was written") and a
+        // re-apply mints a THIRD token, so the token the approver finally
+        // reads is not the one in effect (CLAUDE.md #13).
+        $db = $this->capturingDb([
+            'FROM 202_attribution_apps' => [[
+                'attribution_app_id' => 7, 'app_id' => 525463029, 'app_name' => 'My App',
+                'notes' => null, 'accept_development_postbacks' => 0,
+                'schema_token' => str_repeat('a', 64), 'user_id' => 1,
+            ]],
+        ]);
+        // Only the post-write read-back is forced to fail; every other step
+        // of rotateSchemaToken() runs its real code against the double.
+        $ctrl = new class ($db, 1) extends AttributionAppsController {
+            public int $reads = 0;
+
+            #[\Override]
+            public function get(int|string $id): array
+            {
+                if (++$this->reads > 1) {
+                    throw new DatabaseException('Query failed');
+                }
+                return parent::get($id);
+            }
+        };
+
+        try {
+            $ctrl->rotateSchemaToken(7);
+            $this->fail('Expected a WriteCommittedException');
+        } catch (WriteCommittedException $e) {
+            $this->assertInstanceOf(DatabaseException::class, $e->getPrevious());
+            $this->assertSame(2, $ctrl->reads, 'the forced failure must be the read-back, not the ownership check');
+        }
+        // The rotation itself did go out; that is why a retry is refused.
+        $this->assertNotEmpty(array_values(array_filter(
+            $this->capturedStatements('UPDATE'),
+            static fn(array $s): bool => str_contains($s['sql'], 'schema_token = ?')
+        )));
+    }
+
     // ─── Postbacks: list ─────────────────────────────────────────────
 
     public function testListSanitizesReceiverAuthoredStringsAndOmitsTheSignature(): void
@@ -249,7 +391,7 @@ final class AttributionControllersTest extends TestCase
         $hostile = "evil\x07net\u{202E}.skadnetwork";
         $db = $this->createMysqliMock([
             'COUNT(*) as total' => [['total' => 1]],
-            'ORDER BY postback_id DESC' => [[
+            'ORDER BY received_at DESC, postback_id DESC' => [[
                 'postback_id' => 5, 'user_id' => 1, 'received_at' => 1700000000,
                 'protocol' => 'skadnetwork',
                 'version' => '4.0', 'ad_network_id' => $hostile,
@@ -323,6 +465,62 @@ final class AttributionControllersTest extends TestCase
         ];
     }
 
+    /** @dataProvider integerFiltersTheCastWouldRewrite */
+    public function testAnIntegerFilterTheCastWouldRewriteIsRejectedBeforeAnyQuery(string $param, string $value): void
+    {
+        // The only regression test for the strict integer filters lived in
+        // the @group integration suite, so a skipped database job left them
+        // with no cover at all. Validation throws before a statement is
+        // prepared, so the capturing double proves both halves here: the
+        // 422 naming the field, and that nothing reached the server.
+        //
+        // A digit-only shape is not enough on its own: '9223372036854775808'
+        // passed it and the (int) cast then bound 9223372036854775807, so
+        // the caller was told "no postbacks for 9223372036854775808" about
+        // a number they never sent — the silent rewrite the strict test was
+        // added to remove. AttributionAppsController refuses the same class
+        // for app_id (CLAUDE.md #5).
+        $db = $this->capturingDb();
+        try {
+            (new AttributionPostbacksController($db, 1))->list([$param => $value]);
+            $this->fail("$param=" . var_export($value, true) . ' must be rejected, not rewritten');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey($param, $e->getFieldErrors());
+        }
+        $this->assertSame([], $this->captured, 'the filter must be refused before any statement is prepared');
+    }
+
+    /** @return array<string, array{0: string, 1: string}> */
+    public static function integerFiltersTheCastWouldRewrite(): array
+    {
+        $cases = [];
+        foreach (['app_id', 'campaign_id', 'postback_sequence_index', 'fidelity_type', 'time_from', 'time_to', 'limit', 'offset'] as $param) {
+            foreach ([
+                'fraction' => '1.9',
+                'exponent' => '1e0',
+                'leading space' => ' 1',
+                'trailing space' => '1 ',
+                'wider than int64' => '9223372036854775808',
+                'far wider than int64' => '99999999999999999999',
+                'negative wider than int64' => '-99999999999999999999',
+            ] as $label => $value) {
+                $cases["$param $label"] = [$param, $value];
+            }
+        }
+        return $cases;
+    }
+
+    public function testAnIntegerFilterStillAcceptsWhatTheCastReproducesExactly(): void
+    {
+        // Leading zeros are not a rewrite ('007' is 7) and the int64
+        // endpoints round-trip, so the round-trip check must not refuse
+        // them — a guard that also rejects valid input gets removed.
+        $ctrl = new AttributionPostbacksController($this->createMysqliMock(['COUNT(*) as total' => [['total' => 0]]]), 1);
+        foreach (['525463029', '007', '0', '-0', '-1', (string)PHP_INT_MAX, (string)PHP_INT_MIN] as $value) {
+            $this->assertSame(0, $ctrl->list(['app_id' => $value])['pagination']['total'], $value);
+        }
+    }
+
     public function testTheSignatureFilterAcceptsDevelopment(): void
     {
         $ctrl = new AttributionPostbacksController($this->createMysqliMock(['COUNT(*) as total' => [['total' => 0]]]), 1);
@@ -359,6 +557,97 @@ final class AttributionControllersTest extends TestCase
         $ctrl = new AttributionPostbacksController($this->createMysqliMock(), 1);
         $this->expectException(ValidationException::class);
         $ctrl->report(['group_by' => 'zodiac-sign']);
+    }
+
+    public function testTheReportIdentityPinsItsFieldBoundaries(): void
+    {
+        // The identity joined protocol, ad_network_id, transaction_id and
+        // the window with a plain '|', and neither protocol restricts the
+        // characters in the two attacker-authored ones: ('acme|A9F3',
+        // 'B7C2') and ('acme', 'A9F3|B7C2') are two different postbacks,
+        // stored as two rows, that produced one identity string and counted
+        // once. The behaviour is proved against a real server in
+        // AttributionReportIntegrationTest; this pins the SQL shape so the
+        // guard survives a skipped database job.
+        $db = $this->capturingDb();
+        (new AttributionPostbacksController($db, 1))->report(['group_by' => 'day', 'time_from' => 0]);
+
+        $usingIdentity = array_values(array_filter(
+            $this->capturedStatements('SELECT'),
+            static fn(array $s): bool => str_contains($s['sql'], 'COUNT(DISTINCT') || str_contains($s['sql'], 'MIN(postback_id)')
+        ));
+        $this->assertCount(2, $usingIdentity, 'the aggregate and the first-copy decode subquery both key on the identity');
+        foreach ($usingIdentity as $statement) {
+            foreach (['protocol', 'ad_network_id', 'transaction_id'] as $field) {
+                $this->assertStringContainsString(
+                    "CONCAT(LENGTH($field), ':', $field)",
+                    $statement['sql'],
+                    "$field must be length-prefixed so a separator inside it cannot shift a field boundary"
+                );
+            }
+            // ...and compared as bytes: the columns collate
+            // utf8mb4_general_ci, which folds 'ACME.skadnetwork' into
+            // 'acme.skadnetwork' — the same two-rows-counted-as-one by a
+            // different route.
+            $this->assertStringContainsString('AS BINARY)', $statement['sql']);
+        }
+    }
+
+    public function testADayReportShortOfAFullPageIsRecomputedWithoutTheInternalWindow(): void
+    {
+        // A day report with no time_from tries a window bounded to the
+        // newest limit + 1 days first, because aggregating a tenant's whole
+        // retained history to throw all but a page away got slower every
+        // month. A SHORT page proves nothing about older days — a tenant
+        // with 6 populated days spread over 700 came back with 2 — so the
+        // bounded attempt is thrown away and the query re-run unbounded.
+        $db = $this->capturingDb();
+        $report = (new AttributionPostbacksController($db, 1))->report([]);
+
+        $aggregates = array_values(array_filter(
+            $this->capturedStatements('SELECT'),
+            static fn(array $s): bool => str_contains($s['sql'], 'AS postbacks')
+        ));
+        $this->assertCount(2, $aggregates, 'a short page cannot stand as the answer');
+        // user_id, the bounded time_from, the LIMIT.
+        $this->assertStringContainsString('received_at >= ?', $aggregates[0]['sql']);
+        $this->assertSame('iii', $aggregates[0]['types']);
+        // The re-run carries the caller's own filters only: user_id, LIMIT.
+        $this->assertStringNotContainsString('received_at >= ?', $aggregates[1]['sql']);
+        $this->assertSame('ii', $aggregates[1]['types']);
+        // The result is identical to the unbounded query either way, so
+        // there is no window to disclose to the caller.
+        $this->assertArrayNotHasKey('time_from_defaulted', $report['meta']);
+        $this->assertStringNotContainsString('time_from defaulted', $report['meta']['notes']);
+    }
+
+    public function testADayReportThatFillsThePageIsNotRecomputed(): void
+    {
+        // The other half: limit + 1 groups came back from inside the window,
+        // the query orders by day DESC, and every day the bound excluded is
+        // older than every day it kept — so those ARE the newest limit + 1
+        // groups overall and the second query would be wasted work. This is
+        // the case the bound was measured on.
+        $metrics = [
+            'postbacks' => 1, 'losses' => 0, 'installs' => 1, 'redownloads' => 0, 'reengagements' => 0,
+            'signature_valid_count' => 1, 'signature_invalid_count' => 0,
+            'signature_unverified_count' => 0, 'signature_development_count' => 0,
+        ];
+        $day = intdiv(time(), 86400) * 86400;
+        $db = $this->capturingDb(['AS postbacks' => [
+            ['grp_day' => $day] + $metrics,
+            ['grp_day' => $day - 86400] + $metrics,
+            ['grp_day' => $day - 2 * 86400] + $metrics,
+        ]]);
+        $report = (new AttributionPostbacksController($db, 1))->report(['limit' => 2]);
+
+        $aggregates = array_values(array_filter(
+            $this->capturedStatements('SELECT'),
+            static fn(array $s): bool => str_contains($s['sql'], 'AS postbacks')
+        ));
+        $this->assertCount(1, $aggregates, 'a full page is provably the whole answer; the second query is skipped');
+        $this->assertTrue($report['meta']['groups_truncated']);
+        $this->assertCount(2, $report['data']['groups']);
     }
 
     public function testReportDecodesConversionValuesThroughTheRules(): void

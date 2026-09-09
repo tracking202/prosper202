@@ -20,7 +20,7 @@ final class ParsedPostback
      *                                    the value a registration claims on
      * @param int|null    $sequenceIndex  conversion window 0-2, if carried
      * @param bool|null   $didWin         whether the network won attribution
-     * @param string      $signatureState one of SignatureState::ALL
+     * @param SignatureState $signatureState the verifier's verdict
      * @param string|null $keyId          which key verified it, when the
      *                                    protocol names keys
      * @param array<string, array{0: string, 1: mixed}> $columns
@@ -33,7 +33,7 @@ final class ParsedPostback
         public readonly int $appId,
         public readonly ?int $sequenceIndex,
         public readonly ?bool $didWin,
-        public readonly string $signatureState,
+        public readonly SignatureState $signatureState,
         public readonly ?string $keyId,
         public readonly array $columns,
     ) {

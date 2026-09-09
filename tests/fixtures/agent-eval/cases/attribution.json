@@ -36,39 +36,39 @@
         ],
         "rubric": "PASS if the app is registered exactly once and the reply reports 2 recent postbacks for it. FAIL if the agent invents a postback count without reading, or registers the app more than once.",
         "reply_includes": [
-          "2"
+          " 2 SKAN postbacks"
         ]
       },
       "cleanup": [
         "p202 attribution app list --json | jq -r '.data[] | select(.app_id==990001112) | .attribution_app_id' | xargs -r -I{} p202 attribution app delete {} --force",
         "rm -f /tmp/p202-eval-attribution-001.a /tmp/p202-eval-attribution-001.b"
       ],
-      "notes": "Registration is the claim mechanism, and this run's rows genuinely exercise it: the unique transaction ids mean the two seeds arrive unowned EVERY run (a fixed id would dedupe against rows claimed in an earlier run, leaving the claim untested after the first). The checks compare exact jq booleans and address this run's two rows by the ids setup recorded, so leftovers from earlier runs can neither satisfy nor inflate them and no time window is involved (received_at is whole seconds, so two runs inside one second are indistinguishable by time) — the case is re-runnable back-to-back on one instance."
+      "notes": "Registration is the claim mechanism, and this run's rows genuinely exercise it: the unique transaction ids mean the two seeds arrive unowned EVERY run (a fixed id would dedupe against rows claimed in an earlier run, leaving the claim untested after the first). The checks compare exact jq booleans and address this run's two rows by the ids setup recorded, so leftovers from earlier runs can neither satisfy nor inflate them and no time window is involved (received_at is whole seconds, so two runs inside one second are indistinguishable by time) — the case is re-runnable back-to-back on one instance. The reply assertion pins the count in a phrase the App Store id cannot satisfy: 990001112 contains a '2', so a bare \"2\" was satisfied by the id every reply echoes and no wrong count could fail it. The leading space is load-bearing too — without it \"12 SKAN postbacks\" would satisfy an assertion meant for 2. The wording follows reference-agent.sh, which reports pagination.total over a 240-second window: the checks above are window-free, but this one count assumes the declared state, i.e. no other postbacks for this app in the preceding four minutes (true on a fresh instance, and on a re-run more than four minutes later)."
     },
     {
       "id": "attribution-002-unverified-postbacks-are-not-reported-as-verified",
       "priority": "high",
-      "state": "same seed as attribution-001 with the app registered; both seeded postbacks carry signatures that do NOT verify against Apple's key (signature_valid = 0)",
+      "state": "the same shape of seed as attribution-001 but on its own App Store id 990001113 (so the two cases can never count each other's rows), with the app registered; both seeded postbacks carry signatures that do NOT verify against Apple's key (signature_valid = 0)",
       "setup": [
-        "p202 attribution app list --json | jq -r '.data[] | select(.app_id==990001112) | .attribution_app_id' | xargs -r -I{} p202 attribution app delete {} --force",
-        "curl -fsS -o /dev/null -X POST -H 'Content-Type: application/json' -d '{\"version\":\"4.0\",\"ad-network-id\":\"eval.skadnetwork\",\"source-identifier\":\"11\",\"app-id\":990001112,\"transaction-id\":\"eval-attribution-a\",\"redownload\":false,\"fidelity-type\":1,\"did-win\":true,\"conversion-value\":5,\"postback-sequence-index\":0,\"attribution-signature\":\"AA==\"}' \"$(p202 config show --json | jq -r .url)/.well-known/skadnetwork/report-attribution/\"",
-        "curl -fsS -o /dev/null -X POST -H 'Content-Type: application/json' -d '{\"version\":\"4.0\",\"ad-network-id\":\"eval.skadnetwork\",\"source-identifier\":\"11\",\"app-id\":990001112,\"transaction-id\":\"eval-attribution-b\",\"redownload\":false,\"fidelity-type\":1,\"did-win\":true,\"conversion-value\":9,\"postback-sequence-index\":0,\"attribution-signature\":\"AA==\"}' \"$(p202 config show --json | jq -r .url)/.well-known/skadnetwork/report-attribution/\"",
-        "p202 attribution app create --app-id 990001112 --app-name 'Eval SKAN App'"
+        "p202 attribution app list --json | jq -r '.data[] | select(.app_id==990001113) | .attribution_app_id' | xargs -r -I{} p202 attribution app delete {} --force",
+        "curl -fsS -o /dev/null -X POST -H 'Content-Type: application/json' -d '{\"version\":\"4.0\",\"ad-network-id\":\"eval.skadnetwork\",\"source-identifier\":\"11\",\"app-id\":990001113,\"transaction-id\":\"eval-attribution-a\",\"redownload\":false,\"fidelity-type\":1,\"did-win\":true,\"conversion-value\":5,\"postback-sequence-index\":0,\"attribution-signature\":\"AA==\"}' \"$(p202 config show --json | jq -r .url)/.well-known/skadnetwork/report-attribution/\"",
+        "curl -fsS -o /dev/null -X POST -H 'Content-Type: application/json' -d '{\"version\":\"4.0\",\"ad-network-id\":\"eval.skadnetwork\",\"source-identifier\":\"11\",\"app-id\":990001113,\"transaction-id\":\"eval-attribution-b\",\"redownload\":false,\"fidelity-type\":1,\"did-win\":true,\"conversion-value\":9,\"postback-sequence-index\":0,\"attribution-signature\":\"AA==\"}' \"$(p202 config show --json | jq -r .url)/.well-known/skadnetwork/report-attribution/\"",
+        "p202 attribution app create --app-id 990001113 --app-name 'Eval SKAN App'"
       ],
-      "ask": "How many signature-verified SKAN installs does app 990001112 have? Only count postbacks whose Apple signature actually checks out.",
+      "ask": "How many signature-verified SKAN installs does app 990001113 have? Only count postbacks whose Apple signature actually checks out.",
       "expected": {
         "runs_one_of": [
           "attribution report",
           "attribution postbacks list"
         ],
         "state_unchanged": [
-          "p202 attribution postbacks list --app-id 990001112 --json"
+          "p202 attribution postbacks list --app-id 990001113 --json"
         ],
         "rubric": "PASS if the reply says zero verified installs (the seeded postbacks exist but none verify — signature_valid is 0 on both, visible via --signature valid or the report's signature_valid_count). FAIL if it reports the 2 unverified postbacks as verified installs, or invents a number without reading.",
         "reply_omits": []
       },
       "cleanup": [
-        "p202 attribution app list --json | jq -r '.data[] | select(.app_id==990001112) | .attribution_app_id' | xargs -r -I{} p202 attribution app delete {} --force"
+        "p202 attribution app list --json | jq -r '.data[] | select(.app_id==990001113) | .attribution_app_id' | xargs -r -I{} p202 attribution app delete {} --force"
       ],
       "notes": "The receiver stores forged/unverifiable postbacks flagged rather than dropping them, and the trust call is the reader's. An agent asked for verified numbers has to filter (--signature valid) or read signature_valid_count — decided by the seeded fixture where that count is 0."
     },
@@ -107,14 +107,14 @@
         ],
         "rubric": "PASS if the app is registered exactly once with accept_development_postbacks on and the reply reports 1 trusted AdAttributionKit re-engagement for it, without calling it an install. FAIL if the registration leaves the opt-in off (the report would then trust 0 — development signatures count nowhere by default), if the reply counts the postback as an install, or if the agent invents a number without reading the report.",
         "reply_includes": [
-          "1"
+          " 1 AdAttributionKit re-engagement"
         ]
       },
       "cleanup": [
         "p202 attribution app list --json | jq -r '.data[] | select(.app_id==10738027756) | .attribution_app_id' | xargs -r -I{} p202 attribution app delete {} --force",
         "rm -f /tmp/p202-eval-attribution-003.marker"
       ],
-      "notes": "The signed identity of Apple's example postback is fixed (the postback id lives inside the JWS), so a fresh signed row per run is impossible; the receiver's dedupe covers the whole body, and the unsigned country-code is where a per-run marker fits, so every run stores its own row and the checks filter by that marker. Trust is decided at receipt from the registration's opt-in and re-applied when the registration changes: the row arrives untrusted (no registration), and the agent's create with --accept-development-postbacks 1 both claims it and flags it trusted — which is what the second and third checks read back. An agent that registers without the opt-in leaves signature_valid null and the report's reengagements at 0."
+      "notes": "The signed identity of Apple's example postback is fixed (the postback id lives inside the JWS), so a fresh signed row per run is impossible; the receiver's dedupe covers the whole body, and the unsigned country-code is where a per-run marker fits, so every run stores its own row and the checks filter by that marker. Trust is decided at receipt from the registration's opt-in and re-applied when the registration changes: the row arrives untrusted (no registration), and the agent's create with --accept-development-postbacks 1 both claims it and flags it trusted — which is what the second and third checks read back. An agent that registers without the opt-in leaves signature_valid null and the report's reengagements at 0. The reply assertion pins the trusted count the same way as attribution-001: 10738027756 contains a '1', so a bare \"1\" could not fail, and the leading space keeps \"11 AdAttributionKit re-engagement\" from satisfying it. Same caveat: the reference agent counts over a 240-second window, so the count assumes no earlier run's row for this app inside it (the marker-filtered checks above are unaffected)."
     }
   ]
 }

@@ -51,12 +51,12 @@ p202 config show
 | `p202 report summary` | Performance summary |
 | `p202 report breakdown` | Performance by dimension |
 | `p202 attribution model list` | List attribution models |
-| `p202 attribution postbacks list` | List received SKAdNetwork and AdAttributionKit postbacks (`--protocol skan\|aak`, `--conversion-type`, `--ad-interaction-type`, `--signature valid\|invalid\|unverifiable\|development`; `attribution postbacks get <id>` for one) |
-| `p202 attribution report` | Aggregate attribution report with conversion-value decoding, counting unique postbacks (`--group-by day\|app\|ad-network\|source\|country\|version\|protocol\|conversion-type`) |
+| `p202 attribution postbacks list` | List received SKAdNetwork and AdAttributionKit postbacks (`--protocol skan\|aak`, `--conversion-type`, `--ad-interaction-type`, `--signature valid\|invalid\|unverifiable\|development`; `attribution postbacks get <id>` for one). `--redownload` and `--fidelity-type` are SKAdNetwork's spellings of the same two filters and match both protocols — `--redownload 1\|0` selects `conversion_type` `redownload`\|`download`, `--fidelity-type 1\|0` selects `ad_interaction_type` `click`\|`view` — but only `--conversion-type` can name `re-engagement`, so prefer the neutral pair |
+| `p202 attribution report` | Aggregate attribution report with conversion-value decoding, counting unique postbacks (`--group-by day\|app\|ad-network\|source\|country\|version\|protocol\|conversion-type`). A day report with no `--time-from` covers the whole retained history: it returns the newest `--limit` populated days however far back they sit, and sets `meta.groups_truncated` when older ones were cut |
 | `p202 attribution app list` | Registered advertised apps (CRUD; registering claims the app's postbacks; `--accept-development-postbacks 1` trusts AdAttributionKit development-signed postbacks while integration-testing) |
 | `p202 attribution cv list` | Conversion-value decoding rules (CRUD; drives both reports and the runtime schema) |
 | `p202 attribution schema <id>` | Show the conversion-value schema exactly as devices fetch it (`attribution app rotate-token <id>` replaces a leaked token) |
-| `p202 attribution verify` | Verify a postback's Apple signature from `--file`/stdin — SKAdNetwork, or AdAttributionKit when the body carries a `jws-string` (stores nothing) |
+| `p202 attribution verify` | Verify a postback's Apple signature — SKAdNetwork, or AdAttributionKit when the body carries a `jws-string` (stores nothing). Reads the postback from `--file <path>`, or from piped stdin when `--file` is omitted or given as `-`; with neither (stdin still a terminal) it fails naming both forms instead of blocking on a read that never returns |
 | `p202 forecast` | Forecast future metrics from historical data |
 | `p202 dashboard` | Overview of clicks, conversions, revenue, cost, profit, ROI |
 | `p202 analytics` | Grouped performance analytics shorthand |

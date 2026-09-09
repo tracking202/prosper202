@@ -174,6 +174,55 @@ insert must default to counting only rows that passed verification, with
 the unverified visible in separate columns — "stored and flagged" is not a
 trust decision, the read path makes one whether it means to or not.
 
+### 17. A key derived from an identity must be injective
+When a value exists to tell two things apart, every transform between the
+thing and the comparison has to preserve the distinction. Two instances
+shipped in one feature, both found only by reading:
+`ServerStateStore::slug()` turns a rate-limit bucket into a filename with
+`preg_replace('/[^a-z0-9._-]+/', '-', ...)`, which collapses every run of
+`:` — so `2001:db8::1` and `2001:db8:1::`, both canonical addresses that
+`REMOTE_ADDR` really produces, shared one bucket and one ceiling, and a
+flood from one peer answered 429 to the other; and the report's identity
+was `CONCAT_WS('|', protocol, ad_network_id, transaction_id, ...)` over
+fields no validator constrains the characters of, so a postback naming
+`acme.skadnetwork|A9F3` / `B7C2` and one naming `acme.skadnetwork` /
+`A9F3|B7C2` counted as one.
+
+The second is the sharper lesson, because the codebase already had the
+answer: `PostbackReceiver::dedupeHash()` length-prefixes every field and
+its comment says why — "with a plain joining character, an ad-network-id
+containing that character could collide with a different (network, id)
+pair". The guard existed, one file away, and the sibling was written with
+a bare delimiter anyway. Ask of any composite key, bucket name, cache key
+or `CONCAT_WS`: can two different inputs produce this same string? If a
+sanitizer, a truncation, a case fold or a delimiter sits between the value
+and the comparison, the answer is usually yes.
+
+This differs from #15: there the discriminator was *inside* the lookup
+path, so no lookup could see it change. Here the mapping itself is
+many-to-one, so two things that should differ never get the chance to.
+
+### 18. A guard that runs after the framework already normalized its input
+`assertUsableAppId()` rejected anything that was not a positive App Store
+id, and it never once saw a bad value. It ran from `beforeCreate()`, and
+`Controller::create()` calls `validatePayload()` — which casts every `'i'`
+field — *before* it calls the hook. So `1e20` was stored as
+7766279631452241920, `'99999999999999999999'` as `PHP_INT_MAX`, `1.5` as
+1, each answered 201 with an id the caller never sent, and the global
+UNIQUE key taken by a garbage number. The same shape sat two files away in
+the conversion-values controller, where the mis-scoped rule is then served
+to a device in another app's runtime schema.
+
+This is #12 seen from the inside: the layer that discarded the input was
+not a different service or a CLI, it was the base class on the same
+request path, three stack frames up, doing something entirely reasonable.
+A validation hook cannot see the raw request unless it is given it. When
+you add a check, find where the value it inspects came from — if a
+framework hook hands it to you, assume it has already been normalized, and
+prove otherwise by feeding a malformed value in at the outermost entry
+point (the decoded request body, not the hook's argument) and watching
+where it lands.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure
@@ -399,6 +448,18 @@ Three habits, in order of how often they would have helped:
   distinct lines was interleaved stdout, not split brain; a probe that changed
   nothing had been aimed at the wrong directory; a test that passed against a
   "reverted" fix had a revert that silently did not apply.
+
+- **A performance fix must be shown to return the same answer, not just to run
+  faster.** A day-grouped report was made to scan only the newest `limit + 1`
+  days, justified in a code comment, the OpenAPI spec and the guide with three
+  phrasings of "the days it cuts are days the LIMIT would have thrown away".
+  Executed, a tenant with six populated days spread over seven hundred returned
+  six groups before and two after — and low-volume accounts are exactly the ones
+  that hit it. The optimization was defensible; asserting its safety in three
+  places without running the sparse case was not, and prose that denies a
+  behaviour change reads as verified fact to the next reviewer. Before claiming
+  an optimization is invisible, construct the input where the shortcut and the
+  full computation could disagree and run both.
 
 The rest of this section is the same principle applied to checks — the places
 where a check quietly fails to check what it appears to.

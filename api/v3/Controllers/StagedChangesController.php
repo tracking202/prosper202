@@ -73,10 +73,34 @@ final class StagedChangesController
      * names the v3 write surface accepts were checked against this list when
      * it was written and the only matches were genuine credentials;
      * StagedChangesControllerTest guards that direction as fields are added.
+     *
+     * The needles are chosen against the real column sets in
+     * `202-config/Database/Tables/`, not by shape alone, because the write
+     * result of `PUT /users/{id}/preferences` is a whole `SELECT *` row and
+     * a needle that matches an ordinary column makes the applied write
+     * unreadable. Across all 605 columns defined there:
+     *   'cb_key'        -> cb_key (the ClickBank secret key) only
+     *   'site_key'      -> lpo_site_key only
+     *   'api_signature' -> zaxaa_api_signature only
+     *   'bridge_config' -> lpo_bridge_config only
+     * The broader forms were measured and rejected: '_key' also matches
+     * export_keyword*, user_pref_keyword and user_keyword_searched_or_bidded;
+     * 'signature' also matches attribution_signature, signature_state and
+     * signature_valid; 'config' also matches config and weighting_config.
+     *
+     * `bridge_config` is the odd one out and is here on different grounds:
+     * the *name* is not a credential, but the value is a JSON document whose
+     * `ctx_key` member is the derived t202ctx signing key (see
+     * `Prosper202\Lpo\CtxToken`). This matcher reads key names, so it can
+     * only ever redact that column whole — parsing someone else's JSON to
+     * redact a member is not something this class should be doing.
+     * PreferenceSecretCoverageTest fails when a new `202_users_pref` column
+     * is neither classified as non-secret nor matched here.
      */
     private const SECRET_KEY_SUBSTRINGS = [
         'api_key', 'apikey', 'password', 'passwd', 'secret',
         'token', 'private_key', 'webhook', 'credential',
+        'cb_key', 'site_key', 'api_signature', 'bridge_config',
     ];
 
     /**
@@ -348,7 +372,37 @@ final class StagedChangesController
             $result = $response['data'] ?? null;
         }
         if (is_array($result)) {
-            $result = self::redactCapabilityValues($result);
+            // The write executes as the PROPOSER, but this response goes to a
+            // different principal — often an admin with no other read path to
+            // the proposer's resources — so a credential the handler returns
+            // should not ride along. The proposer retrieves it through their
+            // own scoped GET.
+            //
+            // What this actually guarantees, and no more: every value whose
+            // *key name* isSecretKeyName() recognises, at any depth of an
+            // array-shaped result, is replaced. A credential carried under a
+            // name no needle matches, or embedded inside a string value
+            // (JSON, a URL, a connection string) under an innocuous name, is
+            // returned verbatim — key-name matching cannot see either.
+            // PreferenceSecretCoverageTest holds the needle list level with
+            // the one `SELECT *` read shape on the stageable surface
+            // (`PUT /users/{id}/preferences` -> `202_users_pref`); a handler
+            // that starts returning a credential under a new name is on the
+            // person adding it.
+            //
+            // This is the same redactor present() uses on the stored payload,
+            // deliberately: a private one-key copy that only knew
+            // `schema_token` left every other credential the write surface
+            // can return exposed.
+            $result = self::redactSecrets($result);
+        } elseif ($result !== null) {
+            // Fail closed on a shape this redactor cannot inspect: it judges
+            // by key name and a scalar has no key, so nothing here can tell a
+            // campaign name from a freshly minted token. No stageable handler
+            // returns a scalar `data` today, which is exactly why the branch
+            // is written before one does — a probe returning a raw token got
+            // it back verbatim.
+            $result = '[redacted: non-array result]';
         }
 
         return [
@@ -357,30 +411,6 @@ final class StagedChangesController
                 'result' => $result,
             ],
         ];
-    }
-
-    /**
-     * Strip capability values from an applied write's result before handing
-     * it to the applier. The write executes as the PROPOSER, but the apply
-     * response goes to a different principal — often an admin with no other
-     * read path to the proposer's resources — so a secret minted by the
-     * write (a SKAN schema token from an app create or rotation) must not
-     * ride along. The proposer retrieves it through their own scoped GET.
-     * Same policy as AttributionAppsController::deletePreview, applied to the
-     * transient response instead of the stored record (which never held it).
-     *
-     * @param array<string, mixed> $data
-     * @return array<string, mixed>
-     */
-    private static function redactCapabilityValues(array $data): array
-    {
-        unset($data['schema_token']);
-        foreach ($data as $key => $value) {
-            if (is_array($value)) {
-                $data[$key] = self::redactCapabilityValues($value);
-            }
-        }
-        return $data;
     }
 
     public function discard(string $changeId): array
@@ -554,7 +584,14 @@ final class StagedChangesController
 
     /**
      * A copy with every credential-bearing value replaced, at any depth.
-     * Defense in depth for records written before the guard was recursive.
+     *
+     * Two callers, for two reasons: present() uses it as defense in depth on
+     * a stored record written before the stage-time guard was recursive, and
+     * apply() uses it on the write's result, where it is the only guard —
+     * that response is minted by the handler and never passed through
+     * stage(). It replaces rather than removes so the shape the CLI renders
+     * survives: an absent key reads as "no such value", a placeholder as
+     * "withheld".
      */
     private static function redactSecrets(array $payload): array
     {
@@ -592,6 +629,17 @@ final class StagedChangesController
             && time() > (int)($change['expires_at_epoch'] ?? 0);
         if (is_array($change['payload'] ?? null)) {
             $change['payload'] = self::redactSecrets($change['payload']);
+        }
+        // The preview is a handler-built dry-run of the record the write
+        // would touch, so nothing in stage() ever inspected it; it is shown
+        // to every reviewer alongside the payload and gets the same
+        // treatment. Today's previews are already credential-free at the
+        // source (AttributionAppsController::deletePreview drops the schema
+        // token, UsersController::get() never selects user_pass), which is
+        // exactly the kind of per-site care that stops holding as previews
+        // are added.
+        if (is_array($change['preview'] ?? null)) {
+            $change['preview'] = self::redactSecrets($change['preview']);
         }
         // Records staged before the path check existed can still hold a live
         // credential in their path. apply() reads the stored record, not this

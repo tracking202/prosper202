@@ -81,11 +81,16 @@ pending postback. Verify what devices will receive with
 request this helper makes.
 
 `conversionTypes` scopes an update to AdAttributionKit's install and/or
-re-engagement postback (iOS 18+; earlier systems apply the unscoped
-update). An update that leaves out `.install` is not sent to SKAdNetwork at
-all — its only postback is the install one — and each postback keeps its
-own last fine value for coarse-only mappings, so a re-engagement update
-never falls back to, or overwrites, the install postback's value.
+re-engagement postback (iOS 18+). Leaving it nil means the install
+postback, and on iOS 18+ the helper says so explicitly instead of using
+AdAttributionKit's unscoped call, which Apple documents as updating *every*
+postback type. An update that leaves out `.install` is not sent to
+SKAdNetwork at all — its only postback is the install one — and on iOS
+17.4–17.x, which has no re-engagement postback and no way to scope an
+update, it is dropped rather than applied to the install postback. Each
+postback keeps its own last fine value for coarse-only mappings, so a
+re-engagement update never falls back to, or overwrites, the install
+postback's value.
 
 ## Behaviour you should know about
 
@@ -105,7 +110,9 @@ never falls back to, or overwrites, the install postback's value.
 - **iOS 14.0–15.3** offers only deprecated SKAN calls; the helper is silent
   there rather than shipping deprecated API usage. iOS 15.4+ is fully
   supported; 16.1+ adds coarse values and window locking; 17.4+ adds the
-  AdAttributionKit call; 18+ adds re-engagement scoping.
+  AdAttributionKit call; 18+ adds re-engagement scoping — below 18 a
+  `.reengagement`-scoped event reports nothing at all, because the postback
+  it names does not exist there.
 - **Development-signed AdAttributionKit postbacks** (the ones a phone in
   Developer Mode generates) are stored by Prosper202 flagged `development`
   and count nowhere until you turn on `accept_development_postbacks` for

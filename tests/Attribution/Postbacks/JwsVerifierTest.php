@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Attribution\Postbacks;
 
 use Api\V3\Attribution\JwsVerifier;
+use Api\V3\Attribution\SignatureState;
 use Api\V3\Attribution\PostbackVerifier;
 use Tests\TestCase;
 
@@ -48,7 +49,7 @@ final class JwsVerifierTest extends TestCase
         $this->assertSame(AdAttributionKitFixtures::examplePayload(), $decoded['payload']);
         $this->assertSame(64, strlen($decoded['signature']), 'ES256 signatures are raw R||S');
 
-        $this->assertSame('development', (new JwsVerifier())->verify($decoded));
+        $this->assertSame(SignatureState::DEVELOPMENT, (new JwsVerifier())->verify($decoded));
     }
 
     public function testATamperedPayloadIsInvalid(): void
@@ -60,7 +61,7 @@ final class JwsVerifierTest extends TestCase
 
         $decoded = JwsVerifier::decode($tampered);
         $this->assertIsArray($decoded);
-        $this->assertSame('invalid', (new JwsVerifier())->verify($decoded));
+        $this->assertSame(SignatureState::INVALID, (new JwsVerifier())->verify($decoded));
     }
 
     public function testADevelopmentSignatureCannotBeRelabelledAsProduction(): void
@@ -76,7 +77,7 @@ final class JwsVerifierTest extends TestCase
 
         $decoded = JwsVerifier::decode($relabelled);
         $this->assertIsArray($decoded);
-        $this->assertSame('invalid', (new JwsVerifier())->verify($decoded));
+        $this->assertSame(SignatureState::INVALID, (new JwsVerifier())->verify($decoded));
     }
 
     public function testAnUnknownKeyIdIsUnverifiableNotInvalid(): void
@@ -89,7 +90,7 @@ final class JwsVerifierTest extends TestCase
 
         $decoded = JwsVerifier::decode($unknown);
         $this->assertIsArray($decoded);
-        $this->assertSame('unverifiable', (new JwsVerifier())->verify($decoded));
+        $this->assertSame(SignatureState::UNVERIFIABLE, (new JwsVerifier())->verify($decoded));
     }
 
     /**
@@ -106,7 +107,7 @@ final class JwsVerifierTest extends TestCase
         $jws = AdAttributionKitFixtures::base64Url((string)json_encode($header)) . '.' . $payload . '.AA';
         $decoded = JwsVerifier::decode($jws);
         $this->assertIsArray($decoded);
-        $this->assertSame('invalid', (new JwsVerifier())->verify($decoded));
+        $this->assertSame(SignatureState::INVALID, (new JwsVerifier())->verify($decoded));
     }
 
     /** @return array<string, array{0: array<string, mixed>}> */
@@ -125,7 +126,23 @@ final class JwsVerifierTest extends TestCase
         [$header, $payload] = self::exampleSegments();
         $decoded = JwsVerifier::decode($header . '.' . $payload . '.' . AdAttributionKitFixtures::base64Url('short'));
         $this->assertIsArray($decoded);
-        $this->assertSame('invalid', (new JwsVerifier())->verify($decoded));
+        $this->assertSame(SignatureState::INVALID, (new JwsVerifier())->verify($decoded));
+    }
+
+    public function testAKeyThatWillNotLoadOutranksASignatureOfTheWrongLength(): void
+    {
+        // Two facts hold at once here: the verification key is broken and
+        // the signature segment is not 64 bytes. An installation that
+        // cannot load its own key is in no position to call anything
+        // forged, so the environment problem has to win — EcdsaP256 runs
+        // its checks before it looks at the signature, and the not-64-bytes
+        // rejection must stay behind them.
+        [$header, $payload] = self::exampleSegments();
+        $decoded = JwsVerifier::decode($header . '.' . $payload . '.' . AdAttributionKitFixtures::base64Url('short'));
+        $this->assertIsArray($decoded);
+
+        $brokenKey = new JwsVerifier([AdAttributionKitFixtures::EXAMPLE_KEY_ID => 'not-a-key'], []);
+        $this->assertSame(SignatureState::UNVERIFIABLE, $brokenKey->verify($decoded));
     }
 
     /**
@@ -185,9 +202,9 @@ final class JwsVerifierTest extends TestCase
 
             $decoded = JwsVerifier::decode($jws);
             $this->assertIsArray($decoded);
-            $this->assertSame('valid', $asProduction->verify($decoded), "iteration $i");
-            $this->assertSame('development', $asDevelopment->verify($decoded), "iteration $i");
-            $this->assertSame('invalid', $wrongKey->verify($decoded), "iteration $i");
+            $this->assertSame(SignatureState::VALID, $asProduction->verify($decoded), "iteration $i");
+            $this->assertSame(SignatureState::DEVELOPMENT, $asDevelopment->verify($decoded), "iteration $i");
+            $this->assertSame(SignatureState::INVALID, $wrongKey->verify($decoded), "iteration $i");
         }
     }
 

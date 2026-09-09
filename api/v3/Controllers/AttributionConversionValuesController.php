@@ -68,6 +68,23 @@ class AttributionConversionValuesController extends Controller
     }
 
     #[\Override]
+    public function create(array $payload): array
+    {
+        // The RAW value, before Controller::create() hands the payload to
+        // validatePayload() and the 'i' field definition casts it: by the time
+        // beforeCreate() runs, 1.5 is 1, '1e2' is 100, ' 1' is 1 and a 20-digit
+        // string is PHP_INT_MAX. A guard placed there scopes the rule to a
+        // DIFFERENT app and still answers 201 — and GET /attribution/schema
+        // then serves that rule to that app's builds (error patterns #4 and
+        // #12). An absent app_id is left to the field's declared default,
+        // which is the account-wide scope.
+        if (array_key_exists('app_id', $payload)) {
+            self::assertAppScope($payload['app_id']);
+        }
+        return parent::create($payload);
+    }
+
+    #[\Override]
     protected function beforeCreate(array $payload): array
     {
         $this->assertRuleShape($payload);
@@ -81,6 +98,15 @@ class AttributionConversionValuesController extends Controller
     #[\Override]
     public function update(int|string $id, array $payload): array
     {
+        // Raw, for the same reason create() checks it raw: everything past
+        // parent::update() — beforeUpdate() included — only ever sees the cast
+        // int. app_id is NOT NULL with a declared default, so unlike the two
+        // value columns below it has no "clear" spelling: an explicit null is
+        // bad input here, not a sentinel.
+        if (array_key_exists('app_id', $payload)) {
+            self::assertAppScope($payload['app_id']);
+        }
+
         // A rule holds exactly one kind of value, so switching kinds needs
         // the old kind cleared and the new one set in ONE request — an
         // explicit null alongside the replacement value. Capture the nulls
@@ -178,11 +204,55 @@ class AttributionConversionValuesController extends Controller
                 ]);
             }
         }
-        if ((int)($rule['app_id'] ?? 0) < 0) {
+        self::assertAppScope($rule['app_id'] ?? 0);
+    }
+
+    private static function assertAppScope(mixed $appId): void
+    {
+        if (!self::isAppScope($appId)) {
             throw new ValidationException('Invalid app_id', [
                 'app_id' => 'Must be an App Store id, or 0 for the account-wide default rules',
             ]);
         }
+    }
+
+    /**
+     * An app scope this table can be keyed on: an App Store id, or 0 — the
+     * reserved account-wide-default scope.
+     *
+     * Deliberately the same spellings AttributionAppsController::isUsableAppId()
+     * accepts — a PHP int (a JSON body's number) and a string of digits the int
+     * cast leaves unchanged (the Go CLI and form-encoded bodies send it that
+     * way) — with one difference: 0 and '0' are valid here and refused there,
+     * because the registry reserves 0 for exactly this scope.
+     *
+     * 1.5, '1e2', '525463029.9', ' 1' and a 20-digit string are the ones the
+     * 'i' cast silently rewrote into some OTHER app's scope, which
+     * GET /attribution/schema then served to that app. null is refused for a
+     * different reason: validatePayload() drops it, so it resolved to the
+     * field's default — 0, the widest scope there is. true and an array the
+     * base validation would refuse anyway; refusing them here just makes the
+     * answer one message instead of two.
+     *
+     * Called on the RAW payload value by create()/update(), and again from
+     * assertRuleShape() on the cast payload / the row merged with the DB.
+     */
+    private static function isAppScope(mixed $appId): bool
+    {
+        if (is_int($appId)) {
+            return $appId >= 0;
+        }
+        if (!is_string($appId) || preg_match('/^\d+$/D', $appId) !== 1) {
+            return false;
+        }
+        $digits = ltrim($appId, '0');
+        if ($digits === '') {
+            return true; // '0', '00' — the account-wide default scope
+        }
+        // A digit string PHP cannot represent saturates to PHP_INT_MAX under
+        // the cast, so the round-trip refuses it rather than scoping the rule
+        // to app 9223372036854775807.
+        return $digits === (string)(int)$digits;
     }
 
     /** @param array<string, mixed> $rule */

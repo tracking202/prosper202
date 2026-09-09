@@ -6,6 +6,7 @@ namespace Tests\Attribution\Postbacks;
 
 use Api\V3\Attribution\ParsedPostback;
 use Api\V3\Attribution\PostbackReceiver;
+use Api\V3\Attribution\SignatureState;
 use Api\V3\Attribution\SkadnetworkProtocol;
 use Tests\TestCase;
 
@@ -76,7 +77,7 @@ final class SkadnetworkProtocolTest extends TestCase
         $this->assertSame(525463029, $parsed->appId);
         $this->assertSame(0, $parsed->sequenceIndex);
         $this->assertTrue($parsed->didWin);
-        $this->assertSame('valid', $parsed->signatureState);
+        $this->assertSame(SignatureState::VALID, $parsed->signatureState);
         $this->assertNull($parsed->keyId, 'SKAdNetwork postbacks do not name a key');
 
         $columns = $parsed->columns;
@@ -122,7 +123,7 @@ final class SkadnetworkProtocolTest extends TestCase
         // them by signature state, not by shape).
         $body['attribution-signature'] = 'AA==';
         $parsed = $this->parsed($body);
-        $this->assertSame('invalid', $parsed->signatureState);
+        $this->assertSame(SignatureState::INVALID, $parsed->signatureState);
         $this->assertSame(['s', $expectedType], $parsed->columns['conversion_type']);
         $this->assertSame(['i', $expectedFlag], $parsed->columns['redownload']);
     }
@@ -172,7 +173,7 @@ final class SkadnetworkProtocolTest extends TestCase
     {
         $tampered = $this->signPostback($this->unsignedV4());
         $tampered['source-identifier'] = '1111';
-        $this->assertSame('invalid', $this->parsed($tampered)->signatureState);
+        $this->assertSame(SignatureState::INVALID, $this->parsed($tampered)->signatureState);
 
         $legacy = $this->parsed([
             'version' => '2.0',
@@ -183,7 +184,7 @@ final class SkadnetworkProtocolTest extends TestCase
             'redownload' => false,
             'attribution-signature' => 'AA==',
         ]);
-        $this->assertSame('unverifiable', $legacy->signatureState);
+        $this->assertSame(SignatureState::UNVERIFIABLE, $legacy->signatureState);
         $this->assertNull($legacy->sequenceIndex);
         $this->assertNull($legacy->didWin);
         $this->assertSame(['i', 9], $legacy->columns['campaign_id']);

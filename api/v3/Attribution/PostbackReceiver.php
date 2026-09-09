@@ -16,7 +16,7 @@ namespace Api\V3\Attribution;
  * the body strictly, verifies the platform's signature and normalizes the
  * fields; the receiver does everything the protocols share: it resolves the
  * owning user through the 202_attribution_apps registry, decides what the
- * signature verdict is worth (SignatureState::trustBit), dedupes retries,
+ * signature verdict is worth (SignatureState::trustBit()), dedupes retries,
  * stores the row, and prunes what the open endpoint lets strangers mint.
  *
  * Response contract (what PostbackEndpoint sends):
@@ -70,11 +70,47 @@ final class PostbackReceiver
      * developer with a phone in Developer Mode can mint one naming any app.
      *
      * Overridable per class via P202_ATTRIBUTION_RETENTION_DAYS_UNCLAIMED /
-     * _INVALID / _UNVERIFIABLE; 0 disables that class of pruning.
+     * _INVALID / _UNVERIFIABLE; 0 disables that class of pruning. The
+     * overrides are read from the environment of whichever process prunes,
+     * so an operator setting them for the cron
+     * (202-cronjobs/attribution-retention.php) and an operator setting them
+     * for php-fpm are configuring two different pruners — the cron prints
+     * the windows it resolved for exactly that reason.
      */
     public const DEFAULT_RETENTION_DAYS_UNCLAIMED = 30;
     public const DEFAULT_RETENTION_DAYS_INVALID = 90;
     public const DEFAULT_RETENTION_DAYS_UNVERIFIABLE = 90;
+
+    /**
+     * Rows one pass deletes per class. Bounded so a pass stays cheap on the
+     * request path; the cron loops passes until the backlog drains.
+     */
+    public const PRUNE_BATCH_LIMIT = 500;
+
+    /**
+     * The prune classes in one place: label => [environment override,
+     * default window in days, the predicate that selects the class]. The
+     * pruner, the resolved-policy report and the backlog count all read
+     * this — a second copy of "which rows are prunable" is how a retention
+     * policy and the numbers an operator is shown drift apart.
+     */
+    private const PRUNE_CLASSES = [
+        'unclaimed' => [
+            'P202_ATTRIBUTION_RETENTION_DAYS_UNCLAIMED',
+            self::DEFAULT_RETENTION_DAYS_UNCLAIMED,
+            'user_id = 0',
+        ],
+        'invalid' => [
+            'P202_ATTRIBUTION_RETENTION_DAYS_INVALID',
+            self::DEFAULT_RETENTION_DAYS_INVALID,
+            'signature_valid = 0',
+        ],
+        'unverifiable' => [
+            'P202_ATTRIBUTION_RETENTION_DAYS_UNVERIFIABLE',
+            self::DEFAULT_RETENTION_DAYS_UNVERIFIABLE,
+            'signature_valid IS NULL',
+        ],
+    ];
 
     /**
      * The columns the receiver writes for every protocol. A protocol's
@@ -93,6 +129,19 @@ final class PostbackReceiver
         private readonly \mysqli $db,
         private readonly PostbackProtocol $protocol,
     ) {
+    }
+
+    /**
+     * A receiver for maintenance work only — the retention cron, which
+     * prunes without receiving anything. Pruning is protocol-blind: every
+     * protocol's rows live in one table and the retention classes are about
+     * ownership and trust, not about which platform sent the row. The
+     * protocol here is therefore arbitrary and unused; do not call
+     * receive() on a receiver built this way.
+     */
+    public static function forMaintenance(\mysqli $db): self
+    {
+        return new self($db, new SkadnetworkProtocol());
     }
 
     /**
@@ -120,17 +169,6 @@ final class PostbackReceiver
         $parsed = $this->protocol->parse($postback);
         if (is_array($parsed)) {
             return $this->error(400, 'Invalid postback', $parsed);
-        }
-        if (!in_array($parsed->signatureState, SignatureState::ALL, true)) {
-            // A verdict the policy below cannot interpret is a defect in the
-            // protocol, not in the postback; a 500 (the endpoint's catch)
-            // makes the device retry after the fix instead of storing a row
-            // whose trust bit was decided by a fall-through.
-            throw new \LogicException(sprintf(
-                'Protocol %s produced unknown signature state "%s"',
-                $this->protocol->name(),
-                $parsed->signatureState
-            ));
         }
 
         try {
@@ -162,8 +200,8 @@ final class PostbackReceiver
             'app_id'                  => ['i', $parsed->appId],
             'postback_sequence_index' => ['i', $parsed->sequenceIndex],
             'did_win'                 => ['i', $parsed->didWin === null ? null : (int)$parsed->didWin],
-            'signature_state'         => ['s', $parsed->signatureState],
-            'signature_valid'         => ['i', SignatureState::trustBit($parsed->signatureState, $acceptDevelopment)],
+            'signature_state'         => ['s', $parsed->signatureState->value],
+            'signature_valid'         => ['i', $parsed->signatureState->trustBit($acceptDevelopment)],
             'key_id'                  => ['s', $parsed->keyId],
             'dedupe_hash'             => ['s', $dedupeHash],
             'raw_payload'             => ['s', $rawBody],
@@ -187,9 +225,13 @@ final class PostbackReceiver
         }
 
         if ($insert === 'stored' && mt_rand(1, 100) === 1) {
-            // Opportunistic retention: the endpoint is open, so aged
-            // unclaimed/forged rows must not accumulate forever. Never
-            // fatal — the accepted postback outcome stands regardless.
+            // Opportunistic retention, a safety net rather than the policy:
+            // it only ever runs while postbacks are still arriving, in the
+            // web SAPI's environment, and one bounded pass at a time.
+            // 202-cronjobs/attribution-retention.php is the documented
+            // pruner — deterministic, logged, and drained to completion.
+            // Never fatal here: the accepted postback outcome stands
+            // regardless.
             try {
                 $this->prunePostbacks($receivedAt);
             } catch (\Throwable $e) {
@@ -203,7 +245,7 @@ final class PostbackReceiver
                 'data' => [
                     'accepted' => true,
                     'duplicate' => $insert === 'duplicate',
-                    'signature' => $parsed->signatureState,
+                    'signature' => $parsed->signatureState->value,
                 ],
             ],
         ];
@@ -253,29 +295,90 @@ final class PostbackReceiver
      * unclaimed postbacks (no app registration adopted them), rows whose
      * signature verified as forged, and rows nobody vouched for. Verified
      * rows belonging to a user are never touched. LIMITed so a pass stays
-     * cheap on the request path.
+     * cheap on the request path; 202-cronjobs/attribution-retention.php is
+     * the documented pruner and loops passes until the backlog drains.
      */
     public function prunePostbacks(int $now): void
     {
-        $classes = [
-            ['P202_ATTRIBUTION_RETENTION_DAYS_UNCLAIMED', self::DEFAULT_RETENTION_DAYS_UNCLAIMED,
-                'DELETE FROM 202_attribution_postbacks WHERE user_id = 0 AND received_at < ? LIMIT 500'],
-            ['P202_ATTRIBUTION_RETENTION_DAYS_INVALID', self::DEFAULT_RETENTION_DAYS_INVALID,
-                'DELETE FROM 202_attribution_postbacks WHERE signature_valid = 0 AND received_at < ? LIMIT 500'],
-            ['P202_ATTRIBUTION_RETENTION_DAYS_UNVERIFIABLE', self::DEFAULT_RETENTION_DAYS_UNVERIFIABLE,
-                'DELETE FROM 202_attribution_postbacks WHERE signature_valid IS NULL AND received_at < ? LIMIT 500'],
-        ];
-        foreach ($classes as [$envName, $defaultDays, $sql]) {
-            $days = self::retentionDays($envName, $defaultDays);
-            if ($days <= 0) {
+        foreach (self::retentionPolicy($now) as $label => $window) {
+            if ($window['cutoff'] === null) {
                 continue; // disabled, or a value we refused to guess at
             }
-            $cutoff = $now - ($days * 86400);
-            $stmt = $this->prepare($sql);
-            $this->bind($stmt, 'i', $cutoff);
+            $stmt = $this->prepare(
+                'DELETE FROM 202_attribution_postbacks WHERE ' . self::PRUNE_CLASSES[$label][2]
+                . ' AND received_at < ? LIMIT ' . self::PRUNE_BATCH_LIMIT
+            );
+            $this->bind($stmt, 'i', $window['cutoff']);
             $this->execute($stmt, 'Retention delete failed');
             $stmt->close();
         }
+    }
+
+    /**
+     * The retention windows in force for THIS process: label =>
+     * {days, cutoff}. A class that prunes nothing — 0 days, or an override
+     * this process refused to guess at — reports 0 days and a null cutoff.
+     *
+     * Public because the windows come from the environment, which differs
+     * between the web SAPI that runs the opportunistic pruner and the
+     * crontab that runs the retention cron: the cron prints what it
+     * resolved so an operator can see whether their override reached the
+     * process that actually prunes.
+     *
+     * @return array<string, array{days: int, cutoff: int|null}>
+     */
+    public static function retentionPolicy(int $now): array
+    {
+        $policy = [];
+        foreach (self::PRUNE_CLASSES as $label => [$envName, $defaultDays]) {
+            $days = self::retentionDays($envName, $defaultDays);
+            $policy[$label] = [
+                'days' => $days,
+                'cutoff' => $days > 0 ? $now - ($days * 86400) : null,
+            ];
+        }
+        return $policy;
+    }
+
+    /**
+     * How many rows each class would delete if it ran until it drained:
+     * label => rows already past that class's window. A class that prunes
+     * nothing reports 0.
+     *
+     * This is what the cron reports, before and after its passes. It counts
+     * rather than reading affected_rows so the number is the operator's
+     * question ("how much aged data is still here") rather than the
+     * pruner's ("how much did this batch remove").
+     *
+     * @return array<string, int>
+     */
+    public function retentionBacklog(int $now): array
+    {
+        $backlog = [];
+        foreach (self::retentionPolicy($now) as $label => $window) {
+            if ($window['cutoff'] === null) {
+                $backlog[$label] = 0;
+                continue;
+            }
+            $stmt = $this->prepare(
+                'SELECT COUNT(*) AS aged FROM 202_attribution_postbacks WHERE '
+                . self::PRUNE_CLASSES[$label][2] . ' AND received_at < ?'
+            );
+            $this->bind($stmt, 'i', $window['cutoff']);
+            $this->execute($stmt, 'Retention backlog count failed');
+            $row = $this->result($stmt)->fetch_assoc();
+            $stmt->close();
+            if (!is_array($row) || !isset($row['aged'])) {
+                // COUNT(*) always answers with exactly one row, so no row is
+                // a transport failure — never "nothing to prune", which is
+                // what a 0 here would tell the operator (error pattern #1).
+                throw new \Api\V3\Exception\DatabaseException(
+                    'Retention backlog count for class ' . $label . ' returned no row'
+                );
+            }
+            $backlog[$label] = (int)$row['aged'];
+        }
+        return $backlog;
     }
 
     /**
@@ -296,11 +399,22 @@ final class PostbackReceiver
         }
         $raw = trim($raw);
         if (preg_match('/^\d+$/D', $raw) !== 1) {
-            error_log(sprintf(
-                'p202 attribution: ignoring malformed %s (%s); expected a whole number of days, 0 to disable. Nothing pruned for this class.',
-                $envName,
-                $raw
-            ));
+            // Once per process per (variable, value): the policy is resolved
+            // again on every pruning pass and by every reporter, and the cron
+            // makes hundreds of passes — the same misconfiguration repeated
+            // that many times in a log is noise, not information. Only the
+            // warning is suppressed; the value is re-parsed and re-refused
+            // every time.
+            static $warned = [];
+            $key = $envName . '=' . $raw;
+            if (!isset($warned[$key])) {
+                $warned[$key] = true;
+                error_log(sprintf(
+                    'p202 attribution: ignoring malformed %s (%s); expected a whole number of days, 0 to disable. Nothing pruned for this class.',
+                    $envName,
+                    $raw
+                ));
+            }
             return 0;
         }
         return (int)$raw;

@@ -51,6 +51,64 @@ final class ConversionUpdateTests: XCTestCase {
         XCTAssertNotEqual(scoped, decision, "the scope is part of what was reported")
     }
 
+    func testAReengagementScopedUpdateIsDroppedWithoutTheScopedAPI() {
+        // iOS 17.4-17.x: no re-engagement postback exists and no unscoped
+        // overload can be scoped, so the update would land on the install
+        // postback — the value the caller just declined to touch by skipping
+        // SKAdNetwork. Nothing can be delivered, so nothing is.
+        let update = ConversionUpdate(
+            fineValue: 3,
+            coarseValue: nil,
+            usedFineFallback: false,
+            conversionTypes: [.reengagement]
+        )
+        XCTAssertEqual(update.adAttributionKitDelivery(scopedAPIAvailable: false), .skip)
+        XCTAssertEqual(update.adAttributionKitDelivery(scopedAPIAvailable: true), .scoped([.reengagement]))
+    }
+
+    func testAnUnscopedUpdateNamesTheInstallPostbackWhereItCan() {
+        // nil means the install postback everywhere else in this type, but
+        // AdAttributionKit's unscoped overloads carry no conversion types and
+        // the system then updates EVERY postback type. Where the scoped API
+        // exists the install scope is therefore stated outright.
+        let update = ConversionUpdate(fineValue: 0, coarseValue: nil, usedFineFallback: false)
+        XCTAssertNil(update.conversionTypes)
+        XCTAssertEqual(update.adAttributionKitDelivery(scopedAPIAvailable: true), .scoped([.install]))
+        // Below iOS 18 the unscoped overload is right: install is the only
+        // postback it can reach.
+        XCTAssertEqual(update.adAttributionKitDelivery(scopedAPIAvailable: false), .unscoped)
+    }
+
+    func testInstallBearingScopesAreDeliveredOnBothSystems() {
+        for types in [[ConversionUpdate.ConversionType.install], [.install, .reengagement]] {
+            let update = ConversionUpdate(
+                fineValue: 63,
+                coarseValue: .high,
+                usedFineFallback: false,
+                conversionTypes: types
+            )
+            XCTAssertEqual(update.adAttributionKitDelivery(scopedAPIAvailable: true), .scoped(types))
+            XCTAssertEqual(
+                update.adAttributionKitDelivery(scopedAPIAvailable: false),
+                .unscoped,
+                "the install postback is reachable on iOS 17.4 too"
+            )
+        }
+    }
+
+    func testAnEmptyScopeNamesNoPostbackRatherThanEveryPostback() {
+        // [] is not nil: it selects nothing. It must not reach the scoped
+        // API, whose nil conversionTypes means every postback type.
+        let update = ConversionUpdate(
+            fineValue: 12,
+            coarseValue: nil,
+            usedFineFallback: false,
+            conversionTypes: []
+        )
+        XCTAssertEqual(update.adAttributionKitDelivery(scopedAPIAvailable: true), .skip)
+        XCTAssertEqual(update.adAttributionKitDelivery(scopedAPIAvailable: false), .skip)
+    }
+
     func testOutOfRangeFineValuesAreClampedNotCrashed() {
         let update = ConversionUpdate.resolve(event: "broken", in: schema, lastFineValue: nil)
         XCTAssertEqual(update?.fineValue, 63)

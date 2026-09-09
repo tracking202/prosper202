@@ -2502,17 +2502,29 @@ paths:
         redownloads, the whole decode — counts only signature-verified
         postbacks (`meta.trusted: verified-only`). Forged and unverifiable
         rows stay visible through the `signature_*_count` columns, which
-        always count all rows in the group. Passing `signature=` recomputes
-        the metrics over exactly that class (`meta.trusted: as-filtered`).
-        `meta.groups_truncated` is true when more groups matched than
-        `limit` allowed. Accepts the same filters as the postback list.
+        count every unique postback in the group whatever its signature
+        state (a postback that belongs to two classes — an opted-in
+        development-signed one is both `valid` and `development` — counts in
+        each). Passing `signature=` recomputes the metrics over exactly that
+        class (`meta.trusted: as-filtered`). `meta.groups_truncated` is true
+        when more groups matched than `limit` allowed. Accepts the same
+        filters as the postback list.
 
         Every metric counts **unique postbacks** (protocol, ad network,
-        postback id, conversion window): the receiver stores a replay of a
-        signed postback whose unsigned fields differ as its own row, and the
-        report is where it collapses to one. `installs` are winning
+        postback id, conversion window) — `postbacks` and the four
+        `signature_*_count` columns included: the receiver stores a replay of
+        a signed postback whose unsigned fields differ as its own row, and
+        the report is where it collapses to one. `installs` are winning
         first-window `download`s; `redownloads` and AdAttributionKit
         `reengagements` are reported beside them.
+
+        **Which groups come back:** `group_by=day` returns the newest
+        `limit` populated days — a day no matching postback landed on is not
+        a group at all — and every other mode returns the `limit` busiest
+        groups. Neither `time_from` nor `time_to` has a default, so an
+        unfiltered day report picks those days out of the account's whole
+        retained history; to reach days older than the newest `limit`, raise
+        `limit` or move the window with `time_to`.
       operationId: getAttributionReport
       parameters:
         - name: group_by
@@ -2561,19 +2573,39 @@ paths:
       tags: [Attribution postbacks]
       summary: Verify a postback payload's Apple signature
       description: |
-        Verifies the `attribution-signature` of the submitted postback JSON
+        The protocol is detected from the body, exactly as the receivers do
+        it: a `jws-string` key is verified as AdAttributionKit — the compact
+        JWS alone is enough, so the unsigned envelope fields may be sent
+        with a copied postback but are not read — and the response carries
+        the decoded header and payload beside the verdict. Anything else is
+        verified as SKAdNetwork: the `attribution-signature` is checked
         against Apple's published P-256 key using the exact per-version
-        signed-message composition, and returns the byte string that was
-        (or should have been) signed for diffing. Nothing is stored. A read
+        signed-message composition, and the byte string that was (or should
+        have been) signed is returned for diffing. Nothing is stored. A read
         that arrives as POST only because the postback is its input: it
         requires `attribution:read`, and `staged=1` is rejected.
+
+        `422` covers an empty body and a `jws-string` that cannot be decoded.
+        A body with no `jws-string` always gets a SKAdNetwork verdict rather
+        than a validation error — `unverifiable` when its `version` is not
+        one this server can check (see `verifiable_versions`), `invalid` when
+        it claims a version whose signed fields it does not carry.
       operationId: verifyAttributionPostback
       requestBody:
         required: true
+        description: >-
+          A SKAdNetwork postback, or an AdAttributionKit one — told apart by
+          the presence of `jws-string`. The two shapes overlap rather than
+          exclude each other: `jws-string` decides on its own, so a body that
+          also carries the SKAdNetwork fields (a postback copied from one
+          receiver into the other's envelope) is still verified as
+          AdAttributionKit.
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SkadnetworkPostback"
+              anyOf:
+                - $ref: "#/components/schemas/SkadnetworkPostback"
+                - $ref: "#/components/schemas/AdAttributionKitVerifyRequest"
       responses:
         "200":
           description: Verification verdict and the reconstructed signed message
@@ -2936,7 +2968,12 @@ components:
     attributionFidelityType:
       name: fidelity_type
       in: query
-      description: 1 = StoreKit-rendered or web ad, 0 = view-through
+      description: >-
+        SKAdNetwork's spelling of `ad_interaction_type`: 1 = StoreKit-rendered
+        or web ad (click), 0 = view-through. Matched on the protocol-neutral
+        `ad_interaction_type` column, so it selects AdAttributionKit rows too
+        (they leave the raw `fidelity_type` column `NULL`); prefer
+        `ad_interaction_type=click|view`, which says the same thing.
       schema:
         type: integer
         enum: [0, 1]
@@ -2957,7 +2994,14 @@ components:
     attributionRedownload:
       name: redownload
       in: query
-      description: Redownloads (1/true) or first installs (0/false)
+      description: >-
+        SKAdNetwork's spelling of `conversion_type`: redownloads (1/true) or
+        first installs (0/false). Matched on the protocol-neutral
+        `conversion_type` column (`redownload` / `download`), so it selects
+        AdAttributionKit rows too (they leave the raw `redownload` column
+        `NULL`); prefer `conversion_type=redownload|download`, which says the
+        same thing and can also select `re-engagement` — a kind this flag
+        cannot name, and which `redownload=0` therefore excludes.
       schema:
         type: string
         enum: ["1", "0", "true", "false"]
@@ -4731,7 +4775,7 @@ components:
           enum: [download, redownload, re-engagement, null]
         postbacks:
           type: integer
-          description: All rows in the group, regardless of signature state
+          description: Unique postbacks in the group, regardless of signature state
         losses:
           type: integer
           description: Unique losing postbacks (`did_win = 0`, trusted rows only)
@@ -4746,14 +4790,16 @@ components:
           description: Unique winning first-window `re-engagement` postbacks — AdAttributionKit only (trusted rows only)
         signature_valid_count:
           type: integer
+          description: Unique postbacks with `signature_valid = 1`
         signature_invalid_count:
           type: integer
+          description: Unique postbacks with `signature_valid = 0`
         signature_unverified_count:
           type: integer
-          description: Rows with `signature_valid = null`, including development-signed rows of apps that did not opt in
+          description: Unique postbacks with `signature_valid = null`, including development-signed ones of apps that did not opt in
         signature_development_count:
           type: integer
-          description: Rows verified against an AdAttributionKit development key, whatever their trust bit
+          description: Unique postbacks verified against an AdAttributionKit development key, whatever their trust bit — they also count in the valid or unverified column
         measurable:
           type: integer
           description: Unique winning postbacks carrying a conversion value, across all three conversion windows (so it can exceed installs, which counts first-window postbacks only); a replayed postback decodes once, through its first-received copy
@@ -4786,7 +4832,7 @@ components:
           properties:
             group_by:
               type: string
-              enum: [day, app, ad-network, source, country, version]
+              enum: [day, app, ad-network, source, country, version, protocol, conversion-type]
             groups:
               type: array
               items:
@@ -4989,6 +5035,22 @@ components:
           type: string
           description: Unsigned ISO 3166 identifier; withheld by the data tier when absent
           example: US
+
+    AdAttributionKitVerifyRequest:
+      type: object
+      description: |
+        An AdAttributionKit postback submitted to `POST /attribution/verify`.
+        Only `jws-string` is required here: the signature covers the JWS and
+        nothing else, so the unsigned envelope fields of
+        `AdAttributionKitPostback` (`conversion-value`,
+        `coarse-conversion-value`, `ad-interaction-type`, `country-code`) may
+        be left on a copied receiver body but do not affect the verdict. The
+        receiver itself requires `ad-interaction-type`; this endpoint does not.
+      required: [jws-string]
+      properties:
+        jws-string:
+          type: string
+          description: Compact JWS — header, payload and signature as unpadded base64url segments (see `AdAttributionKitPostback` for an example)
 
     SkadnetworkReceiverProbeResponse:
       type: object

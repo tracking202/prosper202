@@ -4,7 +4,9 @@ name: Swift SDK
 # tests on Linux (where StoreKit does not exist and the SKAdNetwork call
 # compiles to a no-op). This job is that CI: build + unit tests on every
 # change to the package. The env-gated live-server integration tests skip
-# themselves here, exactly as they do on a dev machine without P202_TEST_URL.
+# themselves here, exactly as they do on a dev machine that sets neither
+# P202ATTRIBUTION_LIVE_ENDPOINT nor P202ATTRIBUTION_LIVE_TOKEN (the two
+# variables LiveServerIntegrationTests reads; see the package README).
 
 on:
   push:

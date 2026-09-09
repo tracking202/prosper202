@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"encoding/json"
-	"fmt"
 
 	"p202/internal/api"
 
@@ -83,7 +82,12 @@ var attrModelCreateCmd = &cobra.Command{
 		if v, _ := cmd.Flags().GetString("weighting_config"); v != "" {
 			var parsed interface{}
 			if err := json.Unmarshal([]byte(v), &parsed); err != nil {
-				return withHint(fmt.Errorf("invalid --weighting_config JSON: %w", err), "Pass a JSON object, e.g. --weighting_config '{\"first\":0.4,\"last\":0.6}'; quote it so the shell keeps it intact.")
+				// A bad flag value is a validation error, not a bare
+				// fmt.Errorf: the latter reports no category at all, so
+				// the --json envelope's "validation" would come from the
+				// default rather than from the code that knows.
+				return validationError("invalid --weighting_config JSON: %v", err).
+					WithHint("Pass a JSON object, e.g. --weighting_config '{\"first\":0.4,\"last\":0.6}'; quote it so the shell keeps it intact.")
 			}
 			body["weighting_config"] = parsed
 		}
@@ -121,7 +125,12 @@ var attrModelUpdateCmd = &cobra.Command{
 		if v, _ := cmd.Flags().GetString("weighting_config"); v != "" {
 			var parsed interface{}
 			if err := json.Unmarshal([]byte(v), &parsed); err != nil {
-				return withHint(fmt.Errorf("invalid --weighting_config JSON: %w", err), "Pass a JSON object, e.g. --weighting_config '{\"first\":0.4,\"last\":0.6}'; quote it so the shell keeps it intact.")
+				// A bad flag value is a validation error, not a bare
+				// fmt.Errorf: the latter reports no category at all, so
+				// the --json envelope's "validation" would come from the
+				// default rather than from the code that knows.
+				return validationError("invalid --weighting_config JSON: %v", err).
+					WithHint("Pass a JSON object, e.g. --weighting_config '{\"first\":0.4,\"last\":0.6}'; quote it so the shell keeps it intact.")
 			}
 			body["weighting_config"] = parsed
 		}
@@ -158,22 +167,17 @@ var attrSnapshotListCmd = &cobra.Command{
 	Short: "List snapshots for a model",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
+		// Shares runAttributionList with the postbacks/apps/conversion-values
+		// lists so --limit/--offset are validated the same way (and before the
+		// client is built) and --all traverses pages the same way. Hand-rolling
+		// the body here is how this command drifted: it used to pass --limit
+		// through to the server unchecked, which answered 422 where its three
+		// siblings answered a validation error, and it had no --all at all.
 		params := map[string]string{}
-		for _, f := range []string{"scope_type", "limit", "offset"} {
-			if v, _ := cmd.Flags().GetString(f); v != "" {
-				params[f] = v
-			}
+		if v, _ := cmd.Flags().GetString("scope_type"); v != "" {
+			params["scope_type"] = v
 		}
-		data, err := c.Get("attribution/models/"+args[0]+"/snapshots", params)
-		if err != nil {
-			return err
-		}
-		render(data)
-		return nil
+		return runAttributionList(cmd, "attribution/models/"+args[0]+"/snapshots", params)
 	},
 }
 
@@ -251,8 +255,7 @@ func init() {
 
 	// Snapshot flags
 	attrSnapshotListCmd.Flags().String("scope_type", "", "Filter: global, campaign, landing_page")
-	attrSnapshotListCmd.Flags().StringP("limit", "l", "", "Max results")
-	attrSnapshotListCmd.Flags().StringP("offset", "o", "", "Pagination offset")
+	registerAttributionListFlags(attrSnapshotListCmd)
 
 	attrSnapshotCmd.AddCommand(attrSnapshotListCmd)
 

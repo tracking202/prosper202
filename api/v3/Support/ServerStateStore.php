@@ -1044,25 +1044,55 @@ class ServerStateStore
                 continue;
             }
             $path = $dir . '/' . $entry;
-            // A lock file is only removable once its bucket is gone. Its
-            // mtime is its CREATION time — taking the lock does not touch it
-            // — so an age test alone would delete the lock of a busy bucket,
-            // and two processes holding LOCK_EX on different inodes is the
-            // lost update the lock was added to prevent.
-            if ($isLock && is_file(substr($path, 0, -strlen('.lock')))) {
+            $mtime = @filemtime($path);
+            if ($mtime === false || $mtime >= $cutoff) {
                 continue;
             }
-            $mtime = @filemtime($path);
-            if ($mtime !== false && $mtime < $cutoff) {
-                @unlink($path);
+            if ($isLock) {
+                // Neither of the cheap tests can decide a lock is free. Its
+                // mtime is its CREATION time — taking the lock does not
+                // touch it — and a missing bucket file is also the state of
+                // the request that revives an idle peer, possibly one this
+                // very pass emptied moments earlier. Deleting a held lock
+                // leaves two processes holding LOCK_EX on different inodes,
+                // which is the lost update the lock exists to prevent, so
+                // what protects it is taking it.
+                if (is_file(substr($path, 0, -strlen('.lock')))) {
+                    continue;
+                }
+                $this->unlinkUnheldLock($path);
+                continue;
             }
+            @unlink($path);
         }
+    }
+
+    /**
+     * Remove a stale lock file only when no one is inside its critical
+     * section: the unlink runs while this pass itself holds LOCK_EX, so a
+     * mutateJsonFile() that already has the lock keeps its file. The
+     * remaining window is the instant between fopen() and flock() there — a
+     * caller that opened this inode microseconds ago still ends up alone on
+     * it — versus the whole critical section before. 'r+' rather than 'c+':
+     * a collection pass must never create the file it came to delete.
+     */
+    private function unlinkUnheldLock(string $path): void
+    {
+        $fh = @fopen($path, 'r+');
+        if ($fh === false) {
+            return;
+        }
+        if (flock($fh, LOCK_EX | LOCK_NB)) {
+            @unlink($path);
+            flock($fh, LOCK_UN);
+        }
+        fclose($fh);
     }
 
     /** @return array{allowed: bool, remaining: int, reset_at: int} */
     public function consumeRateLimit(string $bucket, int $maxPerWindow, int $windowSeconds): array
     {
-        $path = $this->dir('rate_limits') . '/' . $this->slug($bucket) . '.json';
+        $path = $this->rateLimitPath($bucket);
         $now = time();
 
         // The increment runs under mutateJsonFile's exclusive lock, not as a
@@ -1211,6 +1241,26 @@ class ServerStateStore
     private function manifestPath(string $pairKey): string
     {
         return $this->dir('manifests') . '/' . $this->slug($pairKey) . '.json';
+    }
+
+    /**
+     * Bucket file for one rate-limit key. slug() is not injective — it
+     * collapses every run of characters outside [a-z0-9._-] to a single '-'
+     * — so `<prefix>:2001:db8::1` and `<prefix>:2001:db8:1::`, both forms
+     * REMOTE_ADDR really produces, named the same file and shared one
+     * ceiling: a flooder's 429 was answered to an unrelated peer. The
+     * readable slug stays for whoever reads the directory; a short digest of
+     * the RAW key is what makes the name unique.
+     */
+    private function rateLimitPath(string $bucket): string
+    {
+        $slug = $this->slug($bucket);
+        if ($slug === '') {
+            // A key with no slug-safe characters at all would otherwise
+            // produce a filename starting with '-'.
+            $slug = 'bucket';
+        }
+        return $this->dir('rate_limits') . '/' . $slug . '-' . substr(hash('sha256', $bucket), 0, 12) . '.json';
     }
 
     private function dir(string $name): string
