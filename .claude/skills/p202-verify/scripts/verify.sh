@@ -238,13 +238,28 @@ run_syntax() {
 # that environment carries no information, so those are separated out. The
 # shape is specific (identifier class.notFound, path under cli/, Symfony in
 # the message), and anything else stays a FAIL with the counts on the line.
-phpstan_partial_vendor_split() { # $1 = json output; prints "ENV OTHER"
-    php -r '
+#
+# One more condition, added after a reviewer pointed out that a change which
+# misspells a Symfony superclass prints the same text: an error counts as
+# environmental only when its file is one the change did not touch. Symfony
+# classes come from vendor, so nothing in an unchanged file can have been
+# broken by the change; the same text in a changed or new file is the
+# change's to answer for.
+phpstan_partial_vendor_split() { # $1 = json output; $2 = changed php files, newline separated; prints "ENV OTHER"
+    CHANGED="$2" php -r '
         $j = json_decode(stream_get_contents(STDIN), true);
+        $changed = array_filter(array_map("trim", explode("\n", (string) getenv("CHANGED"))));
+        $isChanged = function (string $path) use ($changed): bool {
+            foreach ($changed as $c) {
+                if ($path === $c || str_ends_with($path, "/" . $c)) { return true; }
+            }
+            return false;
+        };
         $env = 0; $other = 0;
         foreach (($j["files"] ?? []) as $path => $f) {
             foreach (($f["messages"] ?? []) as $m) {
-                $isEnv = preg_match("#(^|/)cli/#", (string) $path)
+                $isEnv = !$isChanged((string) $path)
+                    && preg_match("#(^|/)cli/#", (string) $path)
                     && preg_match("/unknown class Symfony\\\\|Symfony\\\\[A-Za-z\\\\]+ not found/", (string) ($m["message"] ?? ""));
                 if ($isEnv) { $env++; } else { $other++; }
             }
@@ -269,7 +284,7 @@ run_phpstan() {
         local json split env other
         # shellcheck disable=SC2086
         json=$( $PHPSTAN_CMD analyse -c phpstan.neon.dist --no-progress --memory-limit=512M --error-format=json 2>/dev/null )
-        split=$(phpstan_partial_vendor_split "$json")
+        split=$(phpstan_partial_vendor_split "$json" "$(changed_php_files)")
         env=${split%% *}; other=${split##* }
         if [ "$env" != "?" ] && [ "$other" -eq 0 ] && [ "$env" -gt 0 ]; then
             COULD_NOT_RUN_REASON="$env class.notFound errors, all Symfony classes under cli/ that this partial vendor never delivered, and no other findings; see references/sandbox-recovery.md"
@@ -493,17 +508,39 @@ go_env_broken() {
     printf '%s' "$1" | grep -qE 'missing LC_UUID|__cgo_|clang: error|(^|[[:space:]])ld: |cannot find -l|no export data|running cc failed|(^|[[:space:]])cgo: |runtime/cgo: '
 }
 
-# Settles the ambiguity by execution: build a known-good cgo program with the
-# same toolchain, in a temp module that shares nothing with the change. If
-# that fails, the host cannot build cgo at all and the tier could not run. If
-# it succeeds, whatever failed in go-cli is the change, and a FAIL.
+# Settles the ambiguity by execution: build AND RUN a known-good test binary
+# that imports net, with the same toolchain (GOTOOLCHAIN included), in a temp
+# module that shares nothing with the change. That is the shape the real
+# suite has: net pulls in cgo on darwin, and the failure this branch started
+# from was a dyld abort ("missing LC_UUID") when the test binary *ran*, not
+# when it built. The first probe only built a trivial cgo program, which
+# links fine under a toolchain whose test binaries cannot run, and so blamed
+# the change for a host problem. If this probe fails, the host cannot run
+# test binaries under this toolchain and the tier could not run; if it
+# succeeds, whatever failed in go-cli is the change.
 host_go_toolchain_broken() {
     local dir rc
     dir=$(mktemp -d) || return 0
-    printf 'module p202probe\n\ngo 1.22\n' > "$dir/go.mod"
+    # Two shapes, because each misses what the other catches. A trivial
+    # `import "C"` program exercises the C compiler, which a change adding
+    # real C needs; but it forces external linking, whose output carries the
+    # load command dyld wants, so it runs even on a host where the internally
+    # linked test binaries of the real suite abort. A net-importing test with
+    # no explicit cgo reproduces that second shape exactly, and never invokes
+    # the C compiler because the runtime's cgo support ships precompiled.
+    # The host is broken if either fails.
+    printf 'module p202cgo\n\ngo 1.22\n' > "$dir/go.mod"
     printf 'package main\n\nimport "C"\n\nfunc main() {}\n' > "$dir/main.go"
     ( cd "$dir" && PATH="$(dirname "$GO_BIN"):$PATH" "$GO_BIN" build -o /dev/null . >/dev/null 2>&1 )
     rc=$?
+    if [ $rc -eq 0 ]; then
+        rm -f "$dir/main.go"
+        printf 'module p202probe\n\ngo 1.22\n' > "$dir/go.mod"
+        printf 'package p202probe\n' > "$dir/probe.go"
+        printf 'package p202probe\n\nimport (\n\t"net"\n\t"testing"\n)\n\nfunc TestProbe(t *testing.T) { _ = net.IPv4len }\n' > "$dir/probe_test.go"
+        ( cd "$dir" && PATH="$(dirname "$GO_BIN"):$PATH" "$GO_BIN" test . >/dev/null 2>&1 )
+        rc=$?
+    fi
     rm -rf "$dir"
     [ $rc -ne 0 ]
 }
@@ -520,16 +557,51 @@ local_go_version() {
 
 # The `go 1.22` directive gates language features, not the standard library:
 # a module that imports a package added in a later release builds on a newer
-# local Go and fails on CI's. Pinning CI's toolchain here is not an option on
-# every machine (Go 1.22 could not link on the macOS this was written on), so
-# a PASS from a newer Go carries the caveat rather than pretending to be CI.
+# local Go and fails on CI's. So when the local minor differs from the one
+# go-cli.yml pins, the Go tiers run CI's toolchain instead, fetched through
+# GOTOOLCHAIN (the latest patch of CI's minor, resolved from the toolchain
+# module). A PASS then means what CI's PASS means. If that toolchain cannot
+# be resolved or fetched, the tier is SKIP: the first version attached a
+# caveat to a PASS, and a reviewer pointed out that a PASS with a caveat
+# still exits 0, which is the false green with a footnote.
 go_version_mismatch_note() {
     local ci local_v
     ci=$(ci_go_version)
     local_v=$(local_go_version)
     [ -n "$ci" ] && [ -n "$local_v" ] || return 0
     [ "$ci" != "$local_v" ] || return 0
-    echo "local Go is $local_v, CI pins $ci (.github/workflows/go-cli.yml); standard-library APIs newer than $ci would pass here and fail CI"
+    echo "local Go is $local_v, CI pins $ci (.github/workflows/go-cli.yml)"
+}
+
+# The GOTOOLCHAIN value that makes the local go run CI's minor, or nothing
+# when the local go already is CI's. Prints "?" when the minors differ but
+# no toolchain for CI's minor can be resolved.
+ci_go_toolchain() {
+    local ci local_v latest
+    ci=$(ci_go_version)
+    local_v=$(local_go_version)
+    [ -n "$ci" ] && [ -n "$local_v" ] || return 0
+    [ "$ci" != "$local_v" ] || return 0
+    latest=$( "$GO_BIN" list -m -versions golang.org/toolchain 2>/dev/null | tr ' ' '\n' | grep -oE "go${ci//./\\.}\.[0-9]+" | sort -t. -k3,3n | tail -1 )
+    echo "${latest:-?}"
+}
+
+# Exports GOTOOLCHAIN for the calling tier when CI's toolchain is needed
+# and available. Returns 1, with COULD_NOT_RUN_REASON set, when it is
+# needed and not available. Sets PASS_NOTE so a PASS says which go ran.
+use_ci_go_toolchain() {
+    local tc
+    tc=$(ci_go_toolchain)
+    [ -n "$tc" ] || return 0
+    if [ "$tc" = "?" ] || ! GOTOOLCHAIN="$tc" "$GO_BIN" version >/dev/null 2>&1; then
+        COULD_NOT_RUN_REASON="$(go_version_mismatch_note); CI's toolchain could not be resolved or fetched (no network or proxy?), and a PASS on a different Go would not mean CI passes"
+        return 1
+    fi
+    local local_v
+    local_v=$(local_go_version)
+    export GOTOOLCHAIN="$tc"
+    PASS_NOTE="ran under CI's $tc via GOTOOLCHAIN (local go is $local_v)"
+    return 0
 }
 
 # The committed module graph must load before anything is attributed to the
@@ -561,6 +633,7 @@ go_modules_unavailable() {
 run_go() {
     local out rc godir gofmt_bin unformatted
     godir=$(dirname "$GO_BIN")
+    use_ci_go_toolchain || return $TIER_COULD_NOT_RUN
     # CI's first gate (.github/workflows/go-cli.yml): any file gofmt would
     # reformat fails the job before vet or test run. It needs no module
     # cache and no network, so it runs before the availability check: a
@@ -591,18 +664,35 @@ run_go() {
         COULD_NOT_RUN_REASON="the committed Go module graph could not be loaded (empty module cache with no network or proxy?); nothing of this repository was compiled"
         return $TIER_COULD_NOT_RUN
     fi
-    out=$( cd go-cli && PATH="$godir:$PATH" "$GO_BIN" vet ./... 2>&1 \
-           && PATH="$godir:$PATH" "$GO_BIN" test ./... 2>&1 )
+    out=$( cd go-cli && PATH="$godir:$PATH" "$GO_BIN" vet ./... 2>&1 )
     rc=$?
     printf '%s\n' "$out"
     if [ $rc -ne 0 ] && go_env_broken "$out" && host_go_toolchain_broken; then
-        COULD_NOT_RUN_REASON="the host Go toolchain cannot build a trivial cgo program (probe failed); \`go test\` never ran this code"
+        COULD_NOT_RUN_REASON="the host cannot build or run a trivial net-importing test under ${GOTOOLCHAIN:-the local go} (probe failed); nothing of this repository was vetted"
+        unset GOTOOLCHAIN
+        return $TIER_COULD_NOT_RUN
+    fi
+    if [ $rc -ne 0 ]; then
+        go_env_broken "$out" && FAIL_NOTE="output mentions the C toolchain, but a net-importing test builds and runs on this host, so the failure is in the change"
+        unset GOTOOLCHAIN
+        return 1
+    fi
+    out=$( cd go-cli && PATH="$godir:$PATH" "$GO_BIN" test ./... 2>&1 )
+    rc=$?
+    printf '%s\n' "$out"
+    if [ $rc -ne 0 ] && go_env_broken "$out" && host_go_toolchain_broken; then
+        # vet passed, so say so: the reader learns what did run here.
+        COULD_NOT_RUN_REASON="go vet passed under ${GOTOOLCHAIN:-the local go}, but this host cannot run test binaries under it (probe failed the same way); \`go test\` did not run this code"
+        unset GOTOOLCHAIN
         return $TIER_COULD_NOT_RUN
     fi
     if [ $rc -ne 0 ] && go_env_broken "$out"; then
-        FAIL_NOTE="output mentions the C toolchain, but a trivial cgo program builds on this host, so the failure is in the change"
+        FAIL_NOTE="output mentions the C toolchain, but a net-importing test builds and runs on this host, so the failure is in the change"
     fi
-    [ $rc -eq 0 ] || return 1
+    if [ $rc -ne 0 ]; then
+        unset GOTOOLCHAIN
+        return 1
+    fi
 
     # An empty HOME catches flag checks that only pass because this machine
     # has a CLI config. CI has none.
@@ -613,7 +703,7 @@ run_go() {
         COULD_NOT_RUN_REASON="the host Go toolchain cannot build a trivial cgo program (probe failed) during the empty-HOME run"
         return $TIER_COULD_NOT_RUN
     fi
-    [ $rc -eq 0 ] && PASS_NOTE=$(go_version_mismatch_note)
+    unset GOTOOLCHAIN
     return $rc
 }
 
@@ -644,6 +734,7 @@ host_golangci_broken() {
 
 run_golangci() {
     local out rc godir
+    use_ci_go_toolchain || return $TIER_COULD_NOT_RUN
     if go_modules_unavailable; then
         COULD_NOT_RUN_REASON="the committed Go module graph could not be loaded (empty module cache with no network or proxy?); golangci-lint cannot type-check without it"
         return $TIER_COULD_NOT_RUN
@@ -661,7 +752,7 @@ run_golangci() {
     if [ $rc -ne 0 ] && golangci_env_broken "$out"; then
         FAIL_NOTE="output mentions package loading, but golangci-lint lints a trivial module on this host, so the failure is in the change"
     fi
-    [ $rc -eq 0 ] && PASS_NOTE=$(go_version_mismatch_note)
+    unset GOTOOLCHAIN
     return $rc
 }
 

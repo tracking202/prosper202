@@ -255,7 +255,10 @@ if [ -f "$VERIFY" ]; then
     mkdir -p vendor cli
     printf '<?php\n' > vendor/autoload.php            # partial: autoload but no vendor/bin
     printf 'parameters:\n    paths:\n        - cli\n' > phpstan.neon.dist
+    # cli/A.php is committed and untouched by the change: an error there
+    # cannot be the change's doing.
     printf '<?php\n' > cli/A.php
+    git add cli/A.php && git commit -qm "cli baseline"
     expect_phpstan() { # name want_verdict
         local got
         got=$(./verify.sh --tier phpstan 2>/dev/null | awk '/^  phpstan / {print $2}')
@@ -272,6 +275,13 @@ if [ -f "$VERIFY" ]; then
     expect_phpstan "phpstan: only the documented Symfony errors on a partial vendor is SKIP" SKIP
     fake_phpstan '{"totals":{"errors":0,"file_errors":2},"files":{"/r/cli/A.php":{"errors":2,"messages":[{"message":"Class Foo extends unknown class Symfony\\Component\\Console\\Command\\Command.","line":3},{"message":"Direct $stmt->bind_param() bypasses Connection::bind() ref safety.","line":9}]}},"errors":[]}'
     expect_phpstan "phpstan: a real finding beside the Symfony errors is FAIL" FAIL
+    # The same text in a file the change touched is the change's to answer
+    # for: a misspelled Symfony superclass prints exactly this.
+    printf '<?php\n// touched\n' >> cli/A.php
+    fake_phpstan '{"totals":{"errors":0,"file_errors":1},"files":{"/r/cli/A.php":{"errors":1,"messages":[{"message":"Class Foo extends unknown class Symfony\\Component\\Console\\Comand\\Command.","line":3}]}},"errors":[]}'
+    expect_phpstan "phpstan: the Symfony shape in a file the change touched is FAIL" FAIL
+    git checkout -q -- cli/A.php
+    fake_phpstan '{"totals":{"errors":0,"file_errors":2},"files":{"/r/cli/A.php":{"errors":2,"messages":[{"message":"Class Foo extends unknown class Symfony\\Component\\Console\\Command\\Command.","line":3},{"message":"Direct $stmt->bind_param() bypasses Connection::bind() ref safety.","line":9}]}},"errors":[]}'
     split_out=$(./verify.sh --tier phpstan 2>&1)
     if printf '%s' "$split_out" | grep -E '^  phpstan +FAIL' | grep -q "1 environmental.*1 other"; then
         printf '  ok    %-46s\n' "phpstan: the FAIL line carries the split"; pass=$((pass + 1))
@@ -279,6 +289,7 @@ if [ -f "$VERIFY" ]; then
         printf '  FAIL  %-46s\n' "phpstan: the FAIL line carries the split"; fail=$((fail + 1))
         printf '%s\n' "$split_out" | grep -E "^--- phpstan|^  phpstan|environmental" | sed 's/^/        | /'
     fi
+    git rm -q -r cli >/dev/null 2>&1; git commit -qm "drop cli baseline" >/dev/null 2>&1
     rm -rf vendor cli phpstan.neon.dist phpstan.phar phpstan-fake.json
 
     # ── unit-tier interpreter classifier, against a workflow file we write ──
@@ -521,16 +532,34 @@ XML
         printf 'module p202harness\n\ngo 1.22\n\nthis is not valid\n' > go-cli/go.mod
         expect_go "go: a malformed go.mod is FAIL, not an environment SKIP" FAIL
         git checkout -q -- go-cli/go.mod
-        # A PASS on a newer Go than CI's must say so.
-        eval "$(sed -n '/^ci_go_version() {/,/^}/p; /^local_go_version() {/,/^}/p; /^go_version_mismatch_note() {/,/^}/p' ./verify.sh)"
+        # A Go tier on a machine whose go differs from CI's must run CI's
+        # toolchain (via GOTOOLCHAIN) or SKIP; a PASS on a different Go is a
+        # false green with a footnote, which is what the first version did.
+        eval "$(sed -n '/^ci_go_version() {/,/^}/p; /^local_go_version() {/,/^}/p; /^go_version_mismatch_note() {/,/^}/p; /^ci_go_toolchain() {/,/^}/p' ./verify.sh)"
         # shellcheck disable=SC2034
         GO_BIN=$(command -v go)
         mkdir -p .github/workflows
-        printf "          go-version: '%s'\n" "$(local_go_version)" > .github/workflows/go-cli.yml
-        if [ -z "$(go_version_mismatch_note)" ]; then printf '  ok    %-46s\n' "go: CI on the same Go gives no caveat"; pass=$((pass + 1)); else printf '  FAIL  %-46s\n' "go: CI on the same Go gives no caveat"; fail=$((fail + 1)); fi
+        local_go=$(local_go_version)
+        printf "          go-version: '%s'\n" "$local_go" > .github/workflows/go-cli.yml
+        if [ -z "$(ci_go_toolchain)" ]; then printf '  ok    %-46s\n' "go: CI on the same Go needs no toolchain switch"; pass=$((pass + 1)); else printf '  FAIL  %-46s\n' "go: CI on the same Go needs no toolchain switch"; fail=$((fail + 1)); fi
         printf "          go-version: '1.1'\n" > .github/workflows/go-cli.yml
-        if go_version_mismatch_note | grep -q "CI pins 1.1"; then printf '  ok    %-46s\n' "go: CI on another Go names both versions"; pass=$((pass + 1)); else printf '  FAIL  %-46s\n' "go: CI on another Go names both versions"; fail=$((fail + 1)); fi
-        if ./verify.sh --tier go 2>/dev/null | grep -E '^  go +PASS' | grep -q "CI pins 1.1"; then printf '  ok    %-46s\n' "go: the PASS line carries the caveat"; pass=$((pass + 1)); else printf '  FAIL  %-46s\n' "go: the PASS line carries the caveat"; fail=$((fail + 1)); fi
+        expect_go "go: CI on a Go that cannot be fetched is SKIP, not PASS" SKIP
+        # A real other minor: CI's toolchain is fetched and the tier runs
+        # under it. Needs the toolchain module to be reachable; skip the
+        # case, visibly, when it is not.
+        other_minor="1.22"; [ "$local_go" = "1.22" ] && other_minor="1.23"
+        printf "          go-version: '%s'\n" "$other_minor" > .github/workflows/go-cli.yml
+        if [ "$(ci_go_toolchain)" = "?" ]; then
+            printf '  skip  go: toolchain module unreachable; cannot exercise the GOTOOLCHAIN switch\n'
+        else
+            go_out=$(./verify.sh --tier go 2>&1)
+            if printf '%s' "$go_out" | grep -E '^  go +PASS' | grep -q "ran under CI's go$other_minor"; then
+                printf '  ok    %-46s\n' "go: a different CI minor runs under CI's toolchain"; pass=$((pass + 1))
+            else
+                printf '  FAIL  %-46s\n' "go: a different CI minor runs under CI's toolchain"; fail=$((fail + 1))
+                printf '%s\n' "$go_out" | grep -E "^--- go|^  go " | sed 's/^/        | /'
+            fi
+        fi
         rm -rf .github
         eval "$(sed -n '/^host_go_toolchain_broken() {/,/^}/p' ./verify.sh)"
         # Read by the sourced host_go_toolchain_broken, which shellcheck cannot see.
