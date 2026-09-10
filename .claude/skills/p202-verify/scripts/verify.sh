@@ -24,6 +24,8 @@ Usage: verify.sh [options]
   (no options)     run every tier the environment supports
   --probe          detect the environment and report tier availability only
   --changed        run only the tiers implied by the working-tree diff
+  --since REF      compare against REF instead of the working tree, so a
+                   change that is already committed still selects tiers
   --plan           print the tiers --changed would run, without running them
   --tier NAME      run one tier (repeatable)
   --list           list tier names
@@ -48,12 +50,21 @@ fi
 cd "$ROOT" || { echo "cannot cd to repo root" >&2; exit 2; }
 
 MODE=run
+# Empty means "compare against the working tree"; --since sets a ref.
+DIFF_BASE=""
 SELECTED=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --probe)   MODE=probe ;;
         --changed) MODE=changed ;;
+        --since)
+            shift
+            [ $# -gt 0 ] || { echo "--since needs a ref" >&2; exit 2; }
+            DIFF_BASE=$1
+            git rev-parse --verify --quiet "$DIFF_BASE^{commit}" >/dev/null \
+                || { echo "--since: no such commit: $DIFF_BASE" >&2; exit 2; }
+            ;;
         --plan)    MODE=plan ;;
         --list)    echo "$ALL_TIERS" | tr ' ' '\n'; exit 0 ;;
         --tier)
@@ -75,8 +86,28 @@ PHPUNIT_CMD=""
 PHPSTAN_CMD=""
 VENDOR_STATE="absent"
 
+# What makes a vendor/ "full" is that composer finished, not that a directory
+# exists. `[ -d vendor/bin ]` was the first test here, and one hand-written
+# file satisfies it: an agent working around the partial vendor had put a
+# phpstan shim in vendor/bin, which flipped this to "full" and so switched OFF
+# both partial-vendor branches below — the unit tier then blamed 76
+# missing-class errors on the interpreter version, and the phpstan tier
+# stopped separating the Symfony class.notFound errors from real findings.
+# Neither report was true, and both looked like ordinary output.
+#
+# Composer's own manifest is the authority, and a manifest can still describe
+# packages whose directories never landed (the sandbox this was found in had
+# no installed.json at all, and empty vendor/phpunit/phpunit and
+# vendor/symfony/console), so check both. Deciding on a directory anyone may
+# write into is what made the first version wrong.
 if [ -f vendor/autoload.php ]; then
-    if [ -d vendor/bin ]; then VENDOR_STATE="full"; else VENDOR_STATE="partial"; fi
+    if [ ! -f vendor/composer/installed.json ]; then
+        VENDOR_STATE="partial"
+    elif find vendor -mindepth 2 -maxdepth 2 -type d -empty -print -quit 2>/dev/null | grep -q .; then
+        VENDOR_STATE="partial"
+    else
+        VENDOR_STATE="full"
+    fi
 fi
 
 if [ -x vendor/bin/phpunit ]; then
@@ -131,8 +162,14 @@ fi
 # been fixed in scripts/check-code-patterns.sh.
 changed_php_files() {
     {
-        git diff --name-only HEAD -- '*.php' 2>/dev/null
-        git diff --name-only --cached -- '*.php' 2>/dev/null
+        if [ -n "$DIFF_BASE" ]; then
+            # REF against the working tree, so committed and uncommitted
+            # changes are both selected.
+            git diff --name-only "$DIFF_BASE" -- '*.php' 2>/dev/null
+        else
+            git diff --name-only HEAD -- '*.php' 2>/dev/null
+            git diff --name-only --cached -- '*.php' 2>/dev/null
+        fi
         git ls-files --others --exclude-standard -- '*.php' 2>/dev/null
     } | awk 'NF' | sort -u
 }
@@ -788,6 +825,14 @@ run_patterns() {
     # caught it two commits after the same bug was fixed in the hook.
     if [ -z "$(existing_changed_php_files)" ]; then
         COULD_NOT_RUN_REASON="no new or modified .php files still exist, so no lines were examined"
+        if [ -n "$DIFF_BASE" ]; then
+            COULD_NOT_RUN_REASON="$COULD_NOT_RUN_REASON (compared against $DIFF_BASE)"
+        else
+            # Said explicitly because this skip is what a clean tree looks
+            # like, and a scope report full of skips reads like a verification
+            # to anyone who does not know the selection was empty.
+            COULD_NOT_RUN_REASON="$COULD_NOT_RUN_REASON; nothing is uncommitted, so pass --since <ref> to select on a change that is already committed"
+        fi
         return $TIER_COULD_NOT_RUN
     fi
     # The hook that ships next to this script, when that differs from the
@@ -829,8 +874,12 @@ tiers_from_diff() {
     # dropped and the scope report still reads clean -- error pattern #10
     # rebuilt inside the tool that exists to prevent it.
     files=$(
-        git diff --name-only HEAD 2>/dev/null
-        git diff --name-only --cached 2>/dev/null
+        if [ -n "$DIFF_BASE" ]; then
+            git diff --name-only "$DIFF_BASE" 2>/dev/null
+        else
+            git diff --name-only HEAD 2>/dev/null
+            git diff --name-only --cached 2>/dev/null
+        fi
         git ls-files --others --exclude-standard 2>/dev/null
     )
     if [ -z "$files" ]; then
