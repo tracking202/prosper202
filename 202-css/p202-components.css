@@ -16,6 +16,8 @@
  *   .p202-strip         stacked status rows (pill, label, value)
  *   .p202-flash         an alert with an icon
  *   .p202-skeleton      a loading placeholder
+ *   .p202-disclosure    the "Advanced" part of a form, closed by default
+ *   .p202-decided       a note where the app decided something, with a change link
  *
  * 202-account/ui-kit.php renders every one of them in every state; look there
  * before inventing a class, and add the new state there when you add one.
@@ -641,6 +643,90 @@
     font-weight: 700;
 }
 
+/* ---------- Disclosure ("Advanced") and decided notes ---------- */
+
+.p202-disclosure {
+    border: 1px solid var(--bs-border-color);
+    border-radius: 8px;
+    background: var(--bs-secondary-bg);
+}
+
+.p202-disclosure > summary {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 0.85rem;
+    border-radius: 8px;
+    color: var(--bs-secondary-color);
+    font-size: 0.875rem;
+    font-weight: 700;
+    list-style: none;
+    cursor: pointer;
+}
+
+.p202-disclosure > summary::-webkit-details-marker {
+    display: none;
+}
+
+.p202-disclosure > summary::before {
+    content: "";
+    width: 0.45rem;
+    height: 0.45rem;
+    margin: 0 0.2rem 0.15rem 0.15rem;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform 0.15s ease;
+}
+
+.p202-disclosure[open] > summary::before {
+    transform: rotate(45deg);
+    margin-bottom: 0.3rem;
+}
+
+.p202-disclosure > summary:hover,
+.p202-disclosure[open] > summary {
+    color: var(--bs-body-color);
+}
+
+.p202-disclosure[open] > summary {
+    border-bottom: 1px solid var(--bs-border-color);
+    border-radius: 8px 8px 0 0;
+}
+
+.p202-disclosure > summary:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 0.25rem var(--bs-focus-ring-color);
+}
+
+.p202-disclosure__hint {
+    margin-left: auto;
+    color: var(--bs-tertiary-color);
+    font-size: 0.75rem;
+    font-weight: 400;
+}
+
+.p202-disclosure__body {
+    padding: 0.85rem;
+}
+
+.p202-decided {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    color: var(--bs-secondary-color);
+    font-size: 0.78125rem;
+}
+
+.p202-decided .bi {
+    color: var(--bs-success-text-emphasis);
+}
+
+.p202-decided a {
+    font-weight: 700;
+}
+
 /* ---------- Loading ---------- */
 
 .p202-skeleton {
@@ -662,7 +748,8 @@
         animation: none;
     }
 
-    .p202-list__item {
+    .p202-list__item,
+    .p202-disclosure > summary::before {
         transition: none;
     }
 }

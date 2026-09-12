@@ -38,18 +38,47 @@ pieces Bootstrap does not have. Each is a thin class on Bootstrap primitives:
 | `.p202-strip` | Stacked status rows: pill, label, value, aside. |
 | `.p202-flash` | An alert with an icon. |
 | `.p202-skeleton` | A loading placeholder. |
+| `.p202-disclosure` | The "Advanced" section of a form: a `<details>` closed by default; `data-p202-remember="<key>"` keeps the open state per browser. |
+| `.p202-decided` | A one-line note where the app made a decision, with a `change` link. |
 
 `202-account/ui-kit.php` (admin only) renders every component in every state.
 Check it before inventing a class, and add the new state there when you add one.
 
-**UX rules.** Every page opens with a page header and a one-line purpose. Forms
-put labels above controls, hints below, and errors under the hint in the API's
-own sentence (`.is-invalid` + `.invalid-feedback`). One primary button per form.
-Destructive actions confirm in a modal that says what is kept. Empty states name
-the next action. Tables right-align numbers and carry a totals row where one
-exists. Loading states are skeletons in place. Focus is visible on everything,
-contrast holds in both themes, and dropdowns, tabs and modals work from the
-keyboard. Copy is written from the user's side: "Register app", then
+**The principle: the app decides what it can, and says so.** A page should
+need as little thought as possible from the person using it, while an advanced
+user can still reach every setting. Concretely:
+
+1. **The common case is the whole form.** A form shows only the fields the
+   common case needs. Everything else sits under one `.p202-disclosure`
+   labelled "Advanced", closed by default, which remembers whether the user
+   opened it (`data-p202-remember`).
+2. **Every default is pre-selected and explained in one line.** Fifty rows,
+   the last seven days, verified only, grouped by day, newest first. A default
+   never reads as an empty field the user must fill.
+3. **Never ask what can be answered.** The platform comes from the store link,
+   the app name from the store, HTTPS from the install URL, the tracking domain
+   from the settings already made. A value the app can find, it finds.
+4. **A decision the app makes is shown where its result appears**, with a
+   one-click way to change it: `.p202-decided` ("Treated as an App Store id ·
+   change"). Nothing is silently assumed.
+5. **One primary action per page.** Destructive and rare actions sit away from
+   it and confirm in a modal that says what is kept.
+6. **Empty states do the first step**, or offer it as one click. Never a
+   paragraph of instructions where a button would do.
+7. **Nudges over settings.** When the data shows a situation with a clear next
+   step (development postbacks arriving for an app that rejects them, an
+   unregistered app id in a report, a receiver that stopped answering), the
+   page offers the action in place.
+8. **Remember choices.** Filters, date presets and open disclosures persist
+   per user, as the report preferences already do.
+
+And the mechanics that keep pages consistent: every page opens with a page
+header and a one-line purpose. Forms put labels above controls, hints below,
+and errors under the hint in the API's own sentence (`.is-invalid` +
+`.invalid-feedback`). Tables right-align numbers and carry a totals row where
+one exists. Loading states are skeletons in place. Focus is visible on
+everything, contrast holds in both themes, and dropdowns, tabs and modals work
+from the keyboard. Copy is written from the user's side: "Register app", then
 "Registered".
 
 ## The two shells

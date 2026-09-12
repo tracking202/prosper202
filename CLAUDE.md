@@ -300,7 +300,11 @@ Check here before burning time on tooling failures.
   SHA-384; nothing loads from a CDN except Highcharts at a pinned version.
   Three structural tests guard this (`AssetManifestTest`, `ShellIsolationTest`,
   `NoLegacyBootstrapClassesTest` under `tests/Api/V3/`), and
-  `202-account/ui-kit.php` shows every component. See
+  `202-account/ui-kit.php` shows every component. The standard's first rule
+  is that the app decides what it can and says so: a form shows the common
+  case, everything else sits under a closed `.p202-disclosure` labelled
+  Advanced, and a value the app can find (platform from a store link, the
+  name from the store, HTTPS from the install URL) is never asked for. See
   `documentation/features/ui-standard.md`.
 - **`pgrep -f` / `pkill -f` with a pattern that also appears in your own
   command line matches your own shell and kills it (exit 144).** This happened

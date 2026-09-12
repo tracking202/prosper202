@@ -10,6 +10,7 @@
  *   form[data-p202-confirm="…"]   asks before submitting
  *   [data-bs-toggle="tooltip"]    Bootstrap tooltips and popovers, initialised
  *   [data-bs-toggle="popover"]    here so pages never have to
+ *   details[data-p202-remember]   keeps a disclosure's open state per browser
  */
 (function () {
     'use strict';
@@ -102,6 +103,28 @@
         }
     });
 
+    /* Disclosures that opt in with data-p202-remember keep their open state
+       per browser, so an advanced user who opened "Advanced" once finds it open
+       next time and everyone else never sees it. */
+    function initDisclosures() {
+        Array.prototype.forEach.call(document.querySelectorAll('details[data-p202-remember]'), function (element) {
+            var key = 'p202-disclosure:' + element.getAttribute('data-p202-remember');
+            try {
+                var saved = localStorage.getItem(key);
+                if (saved === 'open') {
+                    element.open = true;
+                } else if (saved === 'closed') {
+                    element.open = false;
+                }
+            } catch (error) {}
+            element.addEventListener('toggle', function () {
+                try {
+                    localStorage.setItem(key, element.open ? 'open' : 'closed');
+                } catch (error) {}
+            });
+        });
+    }
+
     function initBootstrapHints() {
         if (!window.bootstrap) {
             return;
@@ -114,10 +137,15 @@
         });
     }
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initBootstrapHints);
-    } else {
+    function init() {
+        initDisclosures();
         initBootstrapHints();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
     }
 
     window.p202ui = { initHints: initBootstrapHints, copyText: copyText };

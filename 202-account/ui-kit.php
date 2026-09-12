@@ -131,24 +131,49 @@ $sections = [
 
 <section class="p202-section" id="forms">
 	<h2 class="p202-section__title">Forms</h2>
-	<p class="text-secondary">Labels above controls, the hint below, the error under the hint in the API's own words.</p>
+	<p class="text-secondary">The common case is the whole form; everything else waits under Advanced. A value the app can find is never asked for, and a decision it makes is shown with a way to change it.</p>
 	<div class="row g-4">
 		<div class="col-md-6">
 			<form class="p202-panel" action="#forms" method="get" onsubmit="return false;">
-				<div class="p202-panel__head"><h3 class="p202-panel__title">Register an app</h3></div>
+				<div class="p202-panel__head"><h3 class="p202-panel__title">Register an app</h3><span class="p202-panel__sub">one field for the common case</span></div>
 				<div class="p202-panel__body">
 					<div class="mb-3">
-						<label class="form-label" for="kit-platform">Platform</label>
-						<div class="d-flex gap-3" id="kit-platform">
-							<div class="form-check"><input class="form-check-input" type="radio" name="kit_platform" id="kit-platform-ios" checked><label class="form-check-label" for="kit-platform-ios">iOS</label></div>
-							<div class="form-check"><input class="form-check-input" type="radio" name="kit_platform" id="kit-platform-android" disabled><label class="form-check-label" for="kit-platform-android">Android · not supported yet</label></div>
+						<label class="form-label" for="kit-app-url">App Store link or ID <span class="text-danger">*</span></label>
+						<input type="text" class="form-control" id="kit-app-url" value="https://apps.apple.com/us/app/summit-run/id990077001">
+						<div class="form-text">Paste the App Store link. The name and platform are picked up for you.</div>
+						<div class="p202-decided mt-2"><i class="bi bi-check2-circle"></i> Summit Run · iOS · App Store ID 990077001 <a href="#forms">change</a></div>
+					</div>
+					<details class="p202-disclosure mb-3" data-p202-remember="ui-kit-register-advanced">
+						<summary>Advanced <span class="p202-disclosure__hint">notes, development postbacks, platform</span></summary>
+						<div class="p202-disclosure__body">
+							<div class="mb-3">
+								<label class="form-label" for="kit-notes">Notes</label>
+								<textarea class="form-control" id="kit-notes" rows="2" placeholder="Optional, up to 500 characters"></textarea>
+							</div>
+							<div class="form-check mb-3">
+								<input class="form-check-input" type="checkbox" id="kit-dev">
+								<label class="form-check-label" for="kit-dev">Accept development postbacks</label>
+								<div class="form-text">Off until you are testing with Xcode or TestFlight builds. Applies to postbacks already stored, and is withdrawn when you turn it off.</div>
+							</div>
+							<div class="mb-1">
+								<span class="form-label d-block" id="kit-platform-label">Platform</span>
+								<div class="d-flex gap-3" role="group" aria-labelledby="kit-platform-label">
+									<div class="form-check"><input class="form-check-input" type="radio" name="kit_platform" id="kit-platform-ios" checked><label class="form-check-label" for="kit-platform-ios">iOS</label></div>
+									<div class="form-check"><input class="form-check-input" type="radio" name="kit_platform" id="kit-platform-android" disabled><label class="form-check-label" for="kit-platform-android">Android · not supported yet</label></div>
+								</div>
+								<div class="form-text">Set from the link you pasted; change it only if the link was wrong.</div>
+							</div>
 						</div>
+					</details>
+					<div class="p202-form-actions">
+						<button type="button" class="btn btn-secondary">Cancel</button>
+						<button type="submit" class="btn btn-primary">Register app</button>
 					</div>
-					<div class="mb-3">
-						<label class="form-label" for="kit-app-id">App Store ID <span class="text-danger">*</span></label>
-						<input type="text" class="form-control" id="kit-app-id" value="1234567890">
-						<div class="form-text">The number in the app's App Store URL.</div>
-					</div>
+				</div>
+			</form>
+			<div class="p202-panel mt-4">
+				<div class="p202-panel__head"><h3 class="p202-panel__title">Field states</h3><span class="p202-panel__sub">every control the standard uses</span></div>
+				<div class="p202-panel__body">
 					<div class="mb-3">
 						<label class="form-label" for="kit-app-name">App name <span class="text-danger">*</span></label>
 						<input type="text" class="form-control is-invalid" id="kit-app-name" value="">
@@ -156,36 +181,24 @@ $sections = [
 						<div class="invalid-feedback">App name is required.</div>
 					</div>
 					<div class="mb-3">
-						<label class="form-label" for="kit-notes">Notes</label>
-						<textarea class="form-control" id="kit-notes" rows="2" placeholder="Optional, up to 500 characters"></textarea>
-					</div>
-					<div class="mb-3">
 						<label class="form-label" for="kit-kind">Kind</label>
 						<select class="form-select" id="kit-kind">
 							<option>Fine value (0–63)</option>
 							<option>Coarse value</option>
 						</select>
-					</div>
-					<div class="form-check mb-2">
-						<input class="form-check-input" type="checkbox" id="kit-dev" checked>
-						<label class="form-check-label" for="kit-dev">Accept development postbacks</label>
-						<div class="form-text">Applies to postbacks already stored, and is withdrawn when you turn it off.</div>
+						<div class="form-text">Fine is the default; most schemas use it.</div>
 					</div>
 					<div class="form-check form-switch mb-3">
 						<input class="form-check-input" type="checkbox" role="switch" id="kit-switch" checked>
 						<label class="form-check-label" for="kit-switch">Active</label>
 					</div>
-					<div class="input-group mb-3">
+					<div class="input-group">
 						<span class="input-group-text">Days</span>
 						<input type="number" class="form-control" id="kit-days" value="30" min="0" max="3650">
 						<button class="btn btn-secondary" type="button">Preview pruning</button>
 					</div>
-					<div class="p202-form-actions">
-						<button type="button" class="btn btn-secondary">Cancel</button>
-						<button type="submit" class="btn btn-primary">Register app</button>
-					</div>
 				</div>
-			</form>
+			</div>
 		</div>
 		<div class="col-md-6">
 			<div class="p202-panel">
