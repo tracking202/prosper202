@@ -4,64 +4,16 @@ include_once(str_repeat("../", 1).'202-config/connect.php');
 
 AUTH::require_user();
 
-// Simple markdown to HTML converter
-function markdownToHtml(string $markdown): string {
-    // Convert headers
-    $html = preg_replace('/^### (.+)$/m', '<h3>$1</h3>', $markdown);
-    $html = preg_replace('/^## (.+)$/m', '<h2>$1</h2>', $html);
-    $html = preg_replace('/^# (.+)$/m', '<h1>$1</h1>', $html);
-    
-    // Convert code blocks
-    $html = preg_replace('/```(\w+)?\n(.*?)```/s', '<pre><code class="language-$1">$2</code></pre>', $html);
-    $html = preg_replace('/`([^`]+)`/', '<code>$1</code>', $html);
-    
-    // Convert links
-    $html = preg_replace('/\[([^\]]+)\]\(([^)]+)\)/', '<a href="$2">$1</a>', $html);
-    
-    // Convert bold and italic
-    $html = preg_replace('/\*\*([^*]+)\*\*/', '<strong>$1</strong>', $html);
-    $html = preg_replace('/\*([^*]+)\*/', '<em>$1</em>', $html);
-    
-    // Convert lists
-    $html = preg_replace('/^\- (.+)$/m', '<li>$1</li>', $html);
-    $html = preg_replace('/(<li>.*<\/li>)/s', '<ul>$1</ul>', $html);
-    
-    // Convert line breaks to paragraphs
-    $lines = explode("\n", $html);
-    $paragraphs = [];
-    $current_paragraph = '';
-    
-    foreach ($lines as $line) {
-        $line = trim($line);
-        if (empty($line)) {
-            if (!empty($current_paragraph)) {
-                $paragraphs[] = $current_paragraph;
-                $current_paragraph = '';
-            }
-        } elseif (preg_match('/^<(h[1-6]|pre|ul|li)/', $line)) {
-            if (!empty($current_paragraph)) {
-                $paragraphs[] = '<p>' . $current_paragraph . '</p>';
-                $current_paragraph = '';
-            }
-            $paragraphs[] = $line;
-        } else {
-            $current_paragraph .= ($current_paragraph ? ' ' : '') . $line;
-        }
-    }
-    
-    if (!empty($current_paragraph)) {
-        $paragraphs[] = '<p>' . $current_paragraph . '</p>';
-    }
-    
-    return implode("\n", $paragraphs);
-}
+// The Markdown renderer lives in 202-config/markdown.php so it can be tested.
+require_once __DIR__ . '/../202-config/markdown.php';
 
 // Get the document to display
 $doc = $_GET['doc'] ?? '';
 $allowed_docs = [
     'attribution-engine' => 'documentation/tutorials-and-guides/14-advanced-attribution-engine.md',
     'attribution-troubleshooting' => 'documentation/tutorials-and-guides/15-advanced-attribution-troubleshooting.md',
-    'api-integrations' => 'documentation/api/00-api-integrations.md'
+    'api-integrations' => 'documentation/api/00-api-integrations.md',
+    'ui-standard' => 'documentation/features/ui-standard.md'
 ];
 
 if (!isset($allowed_docs[$doc])) {
@@ -85,7 +37,8 @@ $html_content = markdownToHtml($markdown_content);
 $doc_titles = [
     'attribution-engine' => 'Advanced Attribution Engine',
     'attribution-troubleshooting' => 'Attribution Troubleshooting Guide',
-    'api-integrations' => 'API Integrations'
+    'api-integrations' => 'API Integrations',
+    'ui-standard' => 'The Prosper202 UI Standard'
 ];
 
 template_top($doc_titles[$doc]); ?>
@@ -116,6 +69,28 @@ template_top($doc_titles[$doc]); ?>
     color: #32383f;
     margin-top: 25px;
     margin-bottom: 10px;
+}
+
+.documentation .doc-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0 24px;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.documentation .doc-table th,
+.documentation .doc-table td {
+    padding: 8px 10px;
+    border: 1px solid #e7e8ea;
+    text-align: left;
+    vertical-align: top;
+}
+
+.documentation .doc-table th {
+    background: #fafbfc;
+    color: #32383f;
+    font-weight: 600;
 }
 
 .documentation code {

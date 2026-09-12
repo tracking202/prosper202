@@ -1,14 +1,11 @@
 /**
- * Sand-Signika theme for Highcharts JS
- * @author Torstein Honsi
+ * Chart theme for Highcharts JS, after the Sand-Signika theme by Torstein Honsi.
+ *
+ * Charts use the site's own font. The original theme fetched Signika from
+ * Google Fonts at runtime, which put every chart page's reader on a third-party
+ * request the install does not control; Lato ships with this repository and is
+ * what the rest of the interface uses, so the charts now match it.
  */
-
-// Load the fonts
-Highcharts.createElement('link', {
-   href: '//fonts.googleapis.com/css?family=Signika:400,700',
-   rel: 'stylesheet',
-   type: 'text/css'
-}, null, document.getElementsByTagName('head')[0]);
 
 // Add the background image to the container
 Highcharts.wrap(Highcharts.Chart.prototype, 'getContainer', function (proceed) {
@@ -23,7 +20,7 @@ Highcharts.theme = {
    chart: {
       backgroundColor: null,
       style: {
-         fontFamily: "Signika, serif"
+         fontFamily: "Lato, 'Helvetica Neue', Helvetica, Arial, sans-serif"
       }
    },
    title: {

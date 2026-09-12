@@ -1026,7 +1026,7 @@ template_top('Traffic Sources'); ?>
 }
 
 #trafficSourceList .source-item {
-    /* Override the shared `.setup-side-panel ul > li` flex rule (sub-menu.php):
+    /* Override the shared `.setup-side-panel ul > li` flex rule (custom.css, setup pages):
        this is a structured card (header + nested account list), not a flat
        flex row, so it must stack its children vertically. Without display:block
        an empty account list wraps beside the header instead of below it. */

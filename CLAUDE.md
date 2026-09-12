@@ -290,6 +290,40 @@ Check here before burning time on tooling failures.
   dropped errors rather than style. Run `golangci-lint run ./...` from
   `go-cli/` before pushing.
 
+- **`git checkout <file>` restores from the index, not from your working
+  copy.** Proving a new test is not vacuous means planting a defect and
+  reverting it, and that revert silently deleted an afternoon of unstaged work
+  in five files. The only symptom was the "clean" re-run still failing. Copy
+  the file to the scratchpad and copy it back, or stage everything first — and
+  always re-run the suite after the restore, which is what caught it.
+
+- **Two page shells, one chrome.** `template_top($title, ['ui' => 'v2'])`
+  renders a page on Bootstrap 5.3 with the Prosper202 theme and component
+  layer; pages that pass nothing get the classic Bootstrap 3 stack unchanged.
+  The two cannot share a page. The chrome (`202-config/template.php`,
+  `tracking202/_config/top.php`, `tracking202/_config/sub-menu.php`) is
+  framework-neutral markup styled by `202-css/p202-chrome.css` — never add a
+  Bootstrap class of either version to it; scope page-family styles with the
+  `p202-section-*` / `p202-sub-*` body classes instead. Every third-party file
+  is an entry in `202-config/assets.php` with its SHA-384, referenced by id
+  from `p202_shell_assets()` or emitted with `p202_asset_tag()`; nothing in the
+  tree loads a script or stylesheet from an external host except Highcharts at
+  a pinned version and two hosted-service loaders listed in
+  `ShellIsolationTest`.
+  Three structural tests guard this (`AssetManifestTest`, `ShellIsolationTest`,
+  `NoLegacyBootstrapClassesTest` under `tests/Api/V3/`), and
+  `202-account/ui-kit.php` shows every component. The standard's first rule
+  is that the app decides what it can and says so: a form shows the common
+  case, everything else sits under a closed `.p202-disclosure` labelled
+  Advanced, and a value the app can find (platform from a store link, the
+  name from the store, HTTPS from the install URL) is never asked for. See
+  `documentation/features/ui-standard.md`.
+- **`pgrep -f` / `pkill -f` with a pattern that also appears in your own
+  command line matches your own shell and kills it (exit 144).** This happened
+  three times in one session, including once with the `[i]nstall` bracket
+  trick, because the same command later invoked the script by name. Kill by
+  port (`fuser -k 8098/tcp`) or by a pid you looked up in a separate command.
+
 ## Closing the loop on mistakes
 
 <learn_from_mistakes>
@@ -419,6 +453,13 @@ where a check quietly fails to check what it appears to.
 - Read the file first, then think about what each line does, especially error paths.
 - After writing code, re-read it as a skeptic looking for the failure mode, not as the author expecting it to work.
 - When fixing a pattern (e.g., unchecked execute), grep the entire codebase for every instance — don't fix one and assume the rest are fine.
+- Deleting CSS is a code change, not housekeeping. Before removing a rule as
+  superseded, grep its selector against the markup: two content rules went out
+  with the old navbar in wave 0 (`.advertise`, the home page's offer iframe,
+  which fell back to a 300px default inside a full-width panel, and the
+  `small` override of Flat UI Pro's 2.067 line-height), and neither element is
+  anywhere near the chrome. Run the whole removed set through a usage sweep,
+  and measure the survivors in a browser rather than reasoning about cascade.
 - Per-file reading cannot catch a defect that lives in the *relationship* between two files: a handler and its dispatcher can each read correctly while the runtime binding between them is wrong. For cross-file mechanisms, execute the path instead of reading it.
 - Never report work as complete or merge-ready on the strength of tests that don't exercise the new path. State what was actually run and what could not be.
 

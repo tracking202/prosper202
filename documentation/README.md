@@ -83,6 +83,7 @@ A separate PHP/Symfony Console CLI also ships at `bin/p202` (run `php bin/p202 l
 
 - [Advanced Attribution Engine Rollout](features/advanced-attribution-engine.md)
 - [Multi-Touch Journeys](features/multi-touch-journeys.md)
+- [The Prosper202 UI Standard](features/ui-standard.md)
 
 ### Partnering With Us
 
