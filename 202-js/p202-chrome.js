@@ -6,9 +6,16 @@
  * progressive — the account menu is a <details> element that works with no
  * script at all; this only closes it when the user clicks elsewhere or presses
  * Escape, and wires the theme switch the v2 shell renders.
+ *
+ * The script is emitted in <head>, so it binds on DOMContentLoaded; binding at
+ * parse time found no header and silently did nothing (caught in review).
  */
 (function () {
     'use strict';
+
+    /* The shell loads this script in <head>, before the header exists, so
+       everything that touches the DOM waits for it to be parsed. */
+    function init() {
 
     var menus = document.querySelectorAll('details.p202c-menu');
 
@@ -94,5 +101,13 @@
                 media.addListener(onChange);
             }
         }
+    }
+
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
     }
 })();
