@@ -61,7 +61,8 @@ $doc = $_GET['doc'] ?? '';
 $allowed_docs = [
     'attribution-engine' => 'documentation/tutorials-and-guides/14-advanced-attribution-engine.md',
     'attribution-troubleshooting' => 'documentation/tutorials-and-guides/15-advanced-attribution-troubleshooting.md',
-    'api-integrations' => 'documentation/api/00-api-integrations.md'
+    'api-integrations' => 'documentation/api/00-api-integrations.md',
+    'ui-standard' => 'documentation/features/ui-standard.md'
 ];
 
 if (!isset($allowed_docs[$doc])) {
@@ -85,7 +86,8 @@ $html_content = markdownToHtml($markdown_content);
 $doc_titles = [
     'attribution-engine' => 'Advanced Attribution Engine',
     'attribution-troubleshooting' => 'Attribution Troubleshooting Guide',
-    'api-integrations' => 'API Integrations'
+    'api-integrations' => 'API Integrations',
+    'ui-standard' => 'The Prosper202 UI Standard'
 ];
 
 template_top($doc_titles[$doc]); ?>

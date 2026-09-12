@@ -103,50 +103,10 @@ small,
 }
 
 /* ---------- Top navigation (was solid brand blue) ---------- */
-.navbar-default {
-    background-color: #fff;
-    border: 1px solid var(--p202-hairline);
-    border-radius: 10px;
-    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
-    min-height: 44px;
-    margin-top: 6px;
-}
 
-.navbar-default .navbar-nav > li > a {
-    color: #5f6670;
-    font-size: 13.5px;
-    border-radius: 8px;
-    margin: 5px 2px;
-    padding-top: 8px;
-    padding-bottom: 8px;
-}
 
-.navbar-default .navbar-nav > li > a:hover,
-.navbar-default .navbar-nav > li > a:focus {
-    color: var(--p202-text);
-    background-color: var(--p202-bg);
-}
 
-.navbar-default .navbar-nav > .active > a,
-.navbar-default .navbar-nav > .active > a:hover,
-.navbar-default .navbar-nav > .active > a:focus {
-    color: var(--p202-accent);
-    background-color: var(--p202-accent-wash);
-}
 
-.navbar-default .navbar-nav > .open > a,
-.navbar-default .navbar-nav > .open > a:hover,
-.navbar-default .navbar-nav > .open > a:focus {
-    color: var(--p202-text);
-    background-color: var(--p202-bg);
-}
-
-.navbar-default .navbar-nav > .dropdown > a .caret,
-.navbar-default .navbar-nav > .dropdown > a:hover .caret,
-.navbar-default .navbar-nav > .dropdown > a:focus .caret {
-    border-top-color: var(--p202-muted);
-    border-bottom-color: var(--p202-muted);
-}
 
 /* Dropdown menus, in the navbar and everywhere else. */
 .dropdown-menu {
@@ -157,16 +117,8 @@ small,
     padding: 5px;
 }
 
-.navbar-default .dropdown-menu {
-    background-color: #fff;
-}
 
-.navbar-default .dropdown-arrow {
-    border-color: transparent transparent #fff transparent;
-}
-
-.dropdown-menu li > a,
-.navbar-default .dropdown-menu li > a {
+.dropdown-menu li > a {
     color: var(--p202-label);
     font-size: 13px;
     border-radius: 6px;
@@ -175,17 +127,13 @@ small,
 
 .dropdown-menu li > a:hover,
 .dropdown-menu li > a:focus,
-.dropdown-menu li > a:active,
-.navbar-default .dropdown-menu li > a:hover,
-.navbar-default .dropdown-menu li > a:focus {
+.dropdown-menu li > a:active {
     background: var(--p202-bg);
     color: var(--p202-text);
 }
 
 .dropdown-menu li.active > a,
-.dropdown-menu li.active > a:hover,
-.navbar-default .dropdown-menu li.active > a,
-.navbar-default .dropdown-menu li.active > a:hover {
+.dropdown-menu li.active > a:hover {
     background: var(--p202-accent-wash);
     color: var(--p202-accent);
 }
@@ -217,36 +165,8 @@ small,
     font-weight: 600;
 }
 
-#second-nav > li.active > a {
-    border-color: var(--p202-hairline);
-    color: var(--p202-accent);
-    border-bottom: none;
-}
 
-#second-nav > li > a:hover,
-#second-nav > li > a:focus {
-    color: var(--p202-accent);
-}
 
-#sub-menu .breadcrumb {
-    background-color: #fff;
-    border: 1px solid var(--p202-hairline);
-    border-radius: 10px;
-    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
-}
-
-#sub-menu .breadcrumb > li a {
-    color: var(--p202-muted-2);
-}
-
-#sub-menu .breadcrumb > li a:hover {
-    color: var(--p202-text);
-}
-
-#sub-menu .breadcrumb > li.active > a {
-    color: var(--p202-accent);
-    font-weight: 600;
-}
 
 /* ---------- Tables ---------- */
 .table {

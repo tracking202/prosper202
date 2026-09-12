@@ -307,6 +307,7 @@ include_once(CONFIG_PATH . '/functions-tracking202.php');
 include_once(CONFIG_PATH . '/functions.php');
 // Now that functions.php is included, we can use ipAddress()
 $ip_address = ipAddress($temp_ip_address);
+include_once(CONFIG_PATH . '/functions-ui.php');
 include_once(CONFIG_PATH . '/template.php');
 
 include_once(CONFIG_PATH . '/functions-auth.php');

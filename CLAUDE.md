@@ -290,6 +290,24 @@ Check here before burning time on tooling failures.
   dropped errors rather than style. Run `golangci-lint run ./...` from
   `go-cli/` before pushing.
 
+- **Two page shells, one chrome.** `template_top($title, ['ui' => 'v2'])`
+  renders a page on Bootstrap 5.3 with the Prosper202 theme and component
+  layer; pages that pass nothing get the classic Bootstrap 3 stack unchanged.
+  The two cannot share a page. The chrome (`202-config/template.php`,
+  `tracking202/_config/top.php`) is framework-neutral markup styled by
+  `202-css/p202-chrome.css` — never add a Bootstrap class of either version to
+  it. Every third-party file is an entry in `202-config/assets.php` with its
+  SHA-384; nothing loads from a CDN except Highcharts at a pinned version.
+  Three structural tests guard this (`AssetManifestTest`, `ShellIsolationTest`,
+  `NoLegacyBootstrapClassesTest` under `tests/Api/V3/`), and
+  `202-account/ui-kit.php` shows every component. See
+  `documentation/features/ui-standard.md`.
+- **`pgrep -f` / `pkill -f` with a pattern that also appears in your own
+  command line matches your own shell and kills it (exit 144).** This happened
+  three times in one session, including once with the `[i]nstall` bracket
+  trick, because the same command later invoked the script by name. Kill by
+  port (`fuser -k 8098/tcp`) or by a pid you looked up in a separate command.
+
 ## Closing the loop on mistakes
 
 <learn_from_mistakes>
