@@ -6,7 +6,9 @@ info:
     REST API for the Prosper202 affiliate tracking platform.
 
     ## Authentication
-    All endpoints except `GET /system/health` require a Bearer token:
+    All endpoints require a Bearer token except `GET /system/health`, the
+    token-gated public `GET /attribution/schema`, and the SKAdNetwork postback
+    receiver (see the SKAN tag):
     ```
     Authorization: Bearer <api_key>
     ```
@@ -57,6 +59,17 @@ info:
     mints propose-only keys. Fail-closed on unsupported endpoints;
     `staged` and `dry_run` are mutually exclusive. Advertised via
     `features.staged_writes`.
+
+    ## SKAdNetwork (SKAN)
+    The server is the developer-side SKAdNetwork endpoint: devices POST
+    signed install-validation postbacks to
+    `/.well-known/skadnetwork/report-attribution/` (site root, outside this
+    base path), and `/attribution/*` serves the stored postbacks, an aggregate
+    report with conversion-value decoding, the advertised-app registry, and
+    the decoding rules. `GET /attribution/schema` is public and gated by an app's
+    schema token instead of an API key, so an iOS build can fetch its
+    conversion-value mapping at runtime. Advertised via `features.attribution_postbacks`;
+    all `/attribution` routes live in the `attribution` scope area.
 
     ## Errors
     Error responses use a consistent format:
@@ -109,6 +122,8 @@ tags:
     description: Attribution models, snapshots, and exports
   - name: Users
     description: User, role, API key, and preference management
+  - name: Attribution postbacks
+    description: Apple SKAdNetwork install attribution — postback receiver, app registry, conversion-value rules, report, and the runtime schema
 
 paths:
   # ─── System ──────────────────────────────────────────────────────────
@@ -2153,6 +2168,660 @@ paths:
         "409":
           description: Not in the staged state
 
+  # ─── SKAN (SKAdNetwork) ──────────────────────────────────────────────
+
+  /attribution/apps:
+    get:
+      tags: [Attribution postbacks]
+      summary: List registered advertised apps
+      description: |
+        The App Store apps whose SKAdNetwork postbacks belong to the caller.
+        Each row carries the app's `schema_token` — the bearer capability an
+        iOS build presents to `GET /attribution/schema`. It is served only to the
+        owner; staged-change previews and apply results redact it.
+      operationId: listAttributionApps
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Paginated app registrations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionAppListResponse"
+    post:
+      tags: [Attribution postbacks]
+      summary: Register an advertised app
+      description: |
+        Registering claims the app's postbacks: rows that arrived before
+        registration (stored unclaimed) are adopted, and the receiver stamps
+        future ones with the caller's user id. An App Store id can be
+        registered by exactly one user across the install; a second
+        registration is `409`. The response mints and returns the app's
+        `schema_token`.
+
+        `Idempotency-Key` is deliberately not honored on this create — the
+        token must never persist as a replayable record. Retries are safe
+        anyway: the unique `app_id` answers `409`.
+      operationId: createAttributionApp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttributionAppCreate"
+      responses:
+        "201":
+          description: App registered; the response carries its schema token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionAppResponse"
+        "409":
+          description: This App Store id is already registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /attribution/apps/{id}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Attribution postbacks]
+      summary: Get an app registration
+      description: Addressed by the internal `attribution_app_id`, not the App Store id.
+      operationId: getAttributionApp
+      responses:
+        "200":
+          description: The registration, including its schema token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionAppResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Attribution postbacks]
+      summary: Update an app registration
+      description: Re-runs the postback claim, so any unclaimed history for the app is adopted on update.
+      operationId: updateAttributionApp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttributionAppUpdate"
+      responses:
+        "200":
+          description: Registration updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionAppResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The new App Store id is already registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
+      tags: [Attribution postbacks]
+      summary: Delete an app registration
+      description: |
+        Hard delete of the registration only: postbacks already claimed keep
+        their owner (history is never reassigned). The dry-run preview omits
+        the schema token.
+      operationId: deleteAttributionApp
+      responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
+        "204":
+          description: Registration deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /attribution/apps/{id}/schema-token/rotate:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    post:
+      tags: [Attribution postbacks]
+      summary: Rotate the app's schema token
+      description: |
+        Mints a replacement token and invalidates the old one immediately —
+        the remedy for a token leaked out of a shipped binary. Builds
+        configured with the old token can no longer fetch the schema until
+        updated. Stageable; an applied rotation's result is served with the
+        token redacted (the owner reads it via `GET /attribution/apps/{id}`).
+      operationId: rotateAttributionSchemaToken
+      responses:
+        "200":
+          description: The registration with its new schema token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionAppResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /attribution/conversion-values:
+    get:
+      tags: [Attribution postbacks]
+      summary: List conversion-value decoding rules
+      operationId: listAttributionConversionValues
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Paginated rules
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionConversionValueListResponse"
+    post:
+      tags: [Attribution postbacks]
+      summary: Create a decoding rule
+      description: |
+        A rule maps exactly one fine value (0–63) **or** one coarse value
+        (`low`/`medium`/`high`) to an event name and revenue; `app_id = 0`
+        rules are the account-wide defaults that app-specific rules
+        override. The same rows drive the report's decode and the schema
+        served to devices. Honors `Idempotency-Key`.
+      operationId: createAttributionConversionValue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttributionConversionValueCreate"
+      responses:
+        "201":
+          description: Rule created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionConversionValueResponse"
+        "409":
+          description: A rule for this conversion value already exists for this app
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /attribution/conversion-values/{id}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Attribution postbacks]
+      summary: Get a decoding rule
+      operationId: getAttributionConversionValue
+      responses:
+        "200":
+          description: The rule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionConversionValueResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Attribution postbacks]
+      summary: Update a decoding rule
+      description: |
+        The row is validated as it will exist after the update. To switch a
+        rule between kinds, send the clear and the replacement together — an
+        explicit `null` empties the old kind while the new value arrives
+        (`{"fine_value": null, "coarse_value": "high"}`). An absent field
+        means keep; clearing without a replacement is `422`.
+      operationId: updateAttributionConversionValue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttributionConversionValueUpdate"
+      responses:
+        "200":
+          description: Rule updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionConversionValueResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: A rule for this conversion value already exists for this app
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
+      tags: [Attribution postbacks]
+      summary: Delete a decoding rule
+      operationId: deleteAttributionConversionValue
+      responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
+        "204":
+          description: Rule deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /attribution/postbacks:
+    get:
+      tags: [Attribution postbacks]
+      summary: List received postbacks
+      description: |
+        Postbacks stored by the public receiver and claimed by the caller's
+        app registrations, newest first. Every string column is authored by
+        whoever POSTed to the open receiver, so values are sanitized at
+        serialization. Rows never carry the attribution signature (see
+        `GET /attribution/postbacks/{id}`) or the raw body. Malformed filter values
+        are rejected with `422` rather than ignored.
+      operationId: listAttributionPostbacks
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/timeFrom"
+        - $ref: "#/components/parameters/timeTo"
+        - $ref: "#/components/parameters/attributionAppId"
+        - $ref: "#/components/parameters/attributionAdNetworkId"
+        - $ref: "#/components/parameters/attributionVersion"
+        - $ref: "#/components/parameters/attributionTransactionId"
+        - $ref: "#/components/parameters/attributionCountryCode"
+        - $ref: "#/components/parameters/attributionSourceIdentifier"
+        - $ref: "#/components/parameters/attributionCampaignId"
+        - $ref: "#/components/parameters/attributionFidelityType"
+        - $ref: "#/components/parameters/attributionPostbackSequenceIndex"
+        - $ref: "#/components/parameters/attributionDidWin"
+        - $ref: "#/components/parameters/attributionRedownload"
+        - $ref: "#/components/parameters/attributionCoarseConversionValue"
+        - $ref: "#/components/parameters/attributionSignature"
+        - $ref: "#/components/parameters/attributionProtocol"
+        - $ref: "#/components/parameters/attributionConversionType"
+        - $ref: "#/components/parameters/attributionAdInteractionType"
+      responses:
+        "200":
+          description: Paginated postbacks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionPostbackListResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /attribution/postbacks/{id}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Attribution postbacks]
+      summary: Get one postback, including its attribution signature
+      description: |
+        The signature is served for forensics — copy it into
+        `POST /attribution/verify` or diff it against another implementation. The
+        raw request body is retained server-side but never served.
+      operationId: getAttributionPostback
+      responses:
+        "200":
+          description: The postback with its attribution signature
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionPostbackResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /attribution/report:
+    get:
+      tags: [Attribution postbacks]
+      summary: Aggregate attribution report with conversion-value decoding
+      description: |
+        Groups postbacks by `group_by` and decodes winning postbacks'
+        conversion values through the caller's rules (app-specific over
+        `app_id = 0` defaults; a fine value with no rule stays undecoded and
+        never falls back to a coarse rule). Days are UTC, oldest first.
+
+        **Trust default:** the receiver is public, so without an explicit
+        `signature` filter every headline metric — installs, losses,
+        redownloads, the whole decode — counts only signature-verified
+        postbacks (`meta.trusted: verified-only`). Forged and unverifiable
+        rows stay visible through the `signature_*_count` columns, which
+        count every unique postback in the group whatever its signature
+        state (a postback that belongs to two classes — an opted-in
+        development-signed one is both `valid` and `development` — counts in
+        each). Passing `signature=` recomputes the metrics over exactly that
+        class (`meta.trusted: as-filtered`). `meta.groups_truncated` is true
+        when more groups matched than `limit` allowed. Accepts the same
+        filters as the postback list.
+
+        Every metric counts **unique postbacks** (protocol, ad network,
+        postback id, conversion window) — `postbacks` and the four
+        `signature_*_count` columns included: the receiver stores a replay of
+        a signed postback whose unsigned fields differ as its own row, and
+        the report is where it collapses to one. `installs` are winning
+        first-window `download`s; `redownloads` and AdAttributionKit
+        `reengagements` are reported beside them.
+
+        **Which groups come back:** `group_by=day` returns the newest
+        `limit` populated days — a day no matching postback landed on is not
+        a group at all — and every other mode returns the `limit` busiest
+        groups. Neither `time_from` nor `time_to` has a default, so an
+        unfiltered day report picks those days out of the account's whole
+        retained history; to reach days older than the newest `limit`, raise
+        `limit` or move the window with `time_to`.
+      operationId: getAttributionReport
+      parameters:
+        - name: group_by
+          in: query
+          schema:
+            type: string
+            enum: [day, app, ad-network, source, country, version, protocol, conversion-type]
+            default: day
+        - name: limit
+          in: query
+          description: Maximum groups to return (default 100, max 500). Day mode keeps the newest days; other modes keep the busiest groups.
+          schema:
+            type: integer
+            default: 100
+            maximum: 500
+        - $ref: "#/components/parameters/timeFrom"
+        - $ref: "#/components/parameters/timeTo"
+        - $ref: "#/components/parameters/attributionAppId"
+        - $ref: "#/components/parameters/attributionAdNetworkId"
+        - $ref: "#/components/parameters/attributionVersion"
+        - $ref: "#/components/parameters/attributionTransactionId"
+        - $ref: "#/components/parameters/attributionCountryCode"
+        - $ref: "#/components/parameters/attributionSourceIdentifier"
+        - $ref: "#/components/parameters/attributionCampaignId"
+        - $ref: "#/components/parameters/attributionFidelityType"
+        - $ref: "#/components/parameters/attributionPostbackSequenceIndex"
+        - $ref: "#/components/parameters/attributionDidWin"
+        - $ref: "#/components/parameters/attributionRedownload"
+        - $ref: "#/components/parameters/attributionCoarseConversionValue"
+        - $ref: "#/components/parameters/attributionSignature"
+        - $ref: "#/components/parameters/attributionProtocol"
+        - $ref: "#/components/parameters/attributionConversionType"
+        - $ref: "#/components/parameters/attributionAdInteractionType"
+      responses:
+        "200":
+          description: Report groups
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionReportResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /attribution/verify:
+    post:
+      tags: [Attribution postbacks]
+      summary: Verify a postback payload's Apple signature
+      description: |
+        The protocol is detected from the body, exactly as the receivers do
+        it: a `jws-string` key is verified as AdAttributionKit — the compact
+        JWS alone is enough, so the unsigned envelope fields may be sent
+        with a copied postback but are not read — and the response carries
+        the decoded header and payload beside the verdict. Anything else is
+        verified as SKAdNetwork: the `attribution-signature` is checked
+        against Apple's published P-256 key using the exact per-version
+        signed-message composition, and the byte string that was (or should
+        have been) signed is returned for diffing. Nothing is stored. A read
+        that arrives as POST only because the postback is its input: it
+        requires `attribution:read`, and `staged=1` is rejected.
+
+        `422` covers an empty body and a `jws-string` that cannot be decoded.
+        A body with no `jws-string` always gets a SKAdNetwork verdict rather
+        than a validation error — `unverifiable` when its `version` is not
+        one this server can check (see `verifiable_versions`), `invalid` when
+        it claims a version whose signed fields it does not carry.
+      operationId: verifyAttributionPostback
+      requestBody:
+        required: true
+        description: >-
+          A SKAdNetwork postback, or an AdAttributionKit one — told apart by
+          the presence of `jws-string`. The two shapes overlap rather than
+          exclude each other: `jws-string` decides on its own, so a body that
+          also carries the SKAdNetwork fields (a postback copied from one
+          receiver into the other's envelope) is still verified as
+          AdAttributionKit.
+        content:
+          application/json:
+            schema:
+              anyOf:
+                - $ref: "#/components/schemas/SkadnetworkVerifyRequest"
+                - $ref: "#/components/schemas/AdAttributionKitVerifyRequest"
+      responses:
+        "200":
+          description: Verification verdict and the reconstructed signed message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionVerifyResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /attribution/schema:
+    get:
+      tags: [Attribution postbacks]
+      summary: Conversion-value schema for an iOS build (public, token-gated)
+      description: |
+        The ENCODE view of the app's decoding rules, fetched by the shipped
+        app at runtime so a mapping change needs no App Store resubmission.
+        No API key: access is gated by the app's `schema_token`, sent only
+        in the `X-P202-Schema-Token` header (never a query string, which
+        access logs would capture). Serves event names and values only —
+        never revenue. `ETag` equals `schema_version` and changes exactly
+        when encoding behaviour changes; `If-None-Match` answers `304`.
+        Rate-limited per source IP. The `events` value is always a JSON
+        object, even when empty.
+      operationId: getAttributionSchema
+      security: []
+      parameters:
+        - name: X-P202-Schema-Token
+          in: header
+          required: true
+          description: The app's schema token, minted at registration (`POST /attribution/apps`) and rotatable
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+        - name: If-None-Match
+          in: header
+          required: false
+          description: The `ETag` of a previously fetched document; an unchanged schema answers `304`
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The schema document
+          headers:
+            ETag:
+              description: Quoted `schema_version`; send back as `If-None-Match`
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionSchemaResponse"
+        "304":
+          description: Not modified — the cached document is current
+        "400":
+          description: Missing schema token header
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Unknown schema token (never minted, or rotated away)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/AttributionRateLimited"
+
+  /.well-known/skadnetwork/report-attribution/:
+    servers:
+      - url: /
+        description: Site root — Apple devices POST here directly; this path is outside the /api/v3 base
+    get:
+      tags: [Attribution postbacks]
+      summary: Receiver readiness probe
+      description: Lets an operator confirm the endpoint is reachable at the exact URL Apple will use, before pointing an app at it.
+      operationId: probeSkadnetworkReceiver
+      security: []
+      responses:
+        "200":
+          description: The receiver is ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkadnetworkReceiverProbeResponse"
+    post:
+      tags: [Attribution postbacks]
+      summary: Receive a SKAdNetwork install-validation postback
+      description: |
+        The developer-side `NSAdvertisingAttributionReportEndpoint`. Devices
+        POST signed postbacks here; the server verifies Apple's signature
+        (2.1, 2.2, 3.0, 4.0 — retired 1.0/2.0 and unknown versions store as
+        `unverifiable`), stores the row flagged with its signature state,
+        and answers `200` including for a byte-identical retry
+        (`duplicate: true`). Structurally broken bodies (which no genuine
+        device sends) are `400` with per-field errors; any non-`200`
+        makes the device retry later, so a storage outage loses nothing.
+        Bodies over 32 KB are rejected. Rate-limited per source IP.
+      operationId: receiveSkadnetworkPostback
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SkadnetworkPostback"
+      responses:
+        "200":
+          description: Stored (or recognized as a retry of a stored postback)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionPostbackReceiptResponse"
+        "400":
+          description: Structurally invalid postback (Apple's hyphenated field names in `field_errors`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationError"
+        "405":
+          description: Only GET (probe) and POST are served
+        "413":
+          description: >-
+            Body over 32 KB. Terminal: no genuine Apple postback approaches
+            this size, and the same body would fail every retry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/AttributionRateLimited"
+        "503":
+          description: Database unavailable — the device retries later
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /.well-known/appattribution/report-attribution/:
+    servers:
+      - url: /
+        description: Site root — Apple devices POST here directly; this path is outside the /api/v3 base
+    get:
+      tags: [Attribution postbacks]
+      summary: AdAttributionKit receiver readiness probe
+      description: Lets an operator confirm the endpoint is reachable at the exact URL Apple will use, before pointing an app at it.
+      operationId: probeAdAttributionKitReceiver
+      security: []
+      responses:
+        "200":
+          description: The receiver is ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdAttributionKitReceiverProbeResponse"
+    post:
+      tags: [Attribution postbacks]
+      summary: Receive an AdAttributionKit postback copy
+      description: |
+        The developer-side `AttributionCopyEndpoint` (iOS 17.4+). Devices
+        POST copies of winning AdAttributionKit postbacks here: a JSON
+        envelope whose `jws-string` is a compact JWS (ES256) carrying the
+        signed attribution fields, beside four unsigned fields. The server
+        decodes the JWS, verifies its signature against the key its `kid`
+        names — Apple's production key (`valid`), one of Apple's development
+        keys (`development`; trusted only for an app registration that opted
+        in), an unknown key (`unverifiable`) — validates the payload under
+        Apple's field names, stores the row flagged with its signature state,
+        and answers `200` including for a byte-identical retry
+        (`duplicate: true`). Structurally broken bodies — a `jws-string`
+        that is not a JWS, a payload missing required fields — are `400`
+        with per-field errors; any non-`200` makes the device retry later.
+        Bodies over 32 KB are rejected. Rate-limited per source IP, in one
+        bucket with the SKAdNetwork receiver.
+      operationId: receiveAdAttributionKitPostback
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdAttributionKitPostback"
+      responses:
+        "200":
+          description: Stored (or recognized as a retry of a stored postback)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionPostbackReceiptResponse"
+        "400":
+          description: Structurally invalid postback (Apple's hyphenated field names in `field_errors`; JWS payload fields under their own names)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationError"
+        "405":
+          description: Only GET (probe) and POST are served
+        "413":
+          description: >-
+            Body over 32 KB. Terminal: no genuine Apple postback approaches
+            this size, and the same body would fail every retry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/AttributionRateLimited"
+        "503":
+          description: Database unavailable — the device retries later
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+
 components:
   securitySchemes:
     BearerAuth:
@@ -2256,6 +2925,126 @@ components:
       schema:
         type: integer
 
+    # SKAN postback filters (list + report)
+    attributionAppId:
+      name: app_id
+      in: query
+      description: Advertised App Store id
+      schema:
+        type: integer
+    attributionAdNetworkId:
+      name: ad_network_id
+      in: query
+      schema:
+        type: string
+    attributionVersion:
+      name: version
+      in: query
+      description: SKAN postback version (e.g. `4.0`)
+      schema:
+        type: string
+    attributionTransactionId:
+      name: transaction_id
+      in: query
+      schema:
+        type: string
+    attributionCountryCode:
+      name: country_code
+      in: query
+      schema:
+        type: string
+    attributionSourceIdentifier:
+      name: source_identifier
+      in: query
+      description: SKAN 4 source identifier (1–4 digits)
+      schema:
+        type: string
+    attributionCampaignId:
+      name: campaign_id
+      in: query
+      description: SKAN 2/3 campaign id
+      schema:
+        type: integer
+    attributionFidelityType:
+      name: fidelity_type
+      in: query
+      description: >-
+        SKAdNetwork's spelling of `ad_interaction_type`: 1 = StoreKit-rendered
+        or web ad (click), 0 = view-through. Matched on the protocol-neutral
+        `ad_interaction_type` column, so it selects AdAttributionKit rows too
+        (they leave the raw `fidelity_type` column `NULL`); prefer
+        `ad_interaction_type=click|view`, which says the same thing.
+      schema:
+        type: integer
+        enum: [0, 1]
+    attributionPostbackSequenceIndex:
+      name: postback_sequence_index
+      in: query
+      description: SKAN 4 conversion window (0, 1, or 2)
+      schema:
+        type: integer
+        enum: [0, 1, 2]
+    attributionDidWin:
+      name: did_win
+      in: query
+      description: Winning (1/true) or losing (0/false) postbacks; anything else is a 422
+      schema:
+        type: string
+        enum: ["1", "0", "true", "false"]
+    attributionRedownload:
+      name: redownload
+      in: query
+      description: >-
+        SKAdNetwork's spelling of `conversion_type`: redownloads (1/true) or
+        first installs (0/false). Matched on the protocol-neutral
+        `conversion_type` column (`redownload` / `download`), so it selects
+        AdAttributionKit rows too (they leave the raw `redownload` column
+        `NULL`); prefer `conversion_type=redownload|download`, which says the
+        same thing and can also select `re-engagement` — a kind this flag
+        cannot name, and which `redownload=0` therefore excludes.
+      schema:
+        type: string
+        enum: ["1", "0", "true", "false"]
+    attributionCoarseConversionValue:
+      name: coarse_conversion_value
+      in: query
+      schema:
+        type: string
+        enum: [low, medium, high]
+    attributionSignature:
+      name: signature
+      in: query
+      description: >-
+        Signature class. `valid`, `invalid` and `unverifiable` select on the
+        trust bit the report keys on (`signature_valid` 1 / 0 / null);
+        `development` selects rows verified against one of Apple's
+        AdAttributionKit development keys whatever their trust bit. On the
+        report, an explicit value switches `meta.trusted` to `as-filtered`.
+      schema:
+        type: string
+        enum: [valid, invalid, unverifiable, development]
+    attributionProtocol:
+      name: protocol
+      in: query
+      description: Which framework delivered the postback; the shorthands `skan` and `aak` are accepted
+      schema:
+        type: string
+        enum: [skadnetwork, adattributionkit, skan, aak]
+    attributionConversionType:
+      name: conversion_type
+      in: query
+      description: Protocol-neutral conversion kind (`re-engagement` exists only in AdAttributionKit)
+      schema:
+        type: string
+        enum: [download, redownload, re-engagement]
+    attributionAdInteractionType:
+      name: ad_interaction_type
+      in: query
+      description: View-through or click-through
+      schema:
+        type: string
+        enum: [view, click]
+
   # ─── Shared responses ───────────────────────────────────────────────
 
   responses:
@@ -2283,6 +3072,23 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ValidationError"
+
+    AttributionRateLimited:
+      description: Per-source rate limit exceeded; retry after the indicated seconds
+      headers:
+        Retry-After:
+          description: Seconds until the window resets
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Error"
+              - type: object
+                properties:
+                  retry_after_seconds:
+                    type: integer
 
   # ─── Schemas ─────────────────────────────────────────────────────────
 
@@ -3596,3 +4402,710 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/User"
+
+    # ── SKAN (SKAdNetwork) ─────────────────────────────────────────────
+
+    AttributionApp:
+      type: object
+      properties:
+        attribution_app_id:
+          type: integer
+          description: Internal registration id — the `{id}` in `/attribution/apps/{id}`
+        app_id:
+          type: integer
+          description: Numeric App Store id of the advertised app (unique across the install)
+        app_name:
+          type: string
+        notes:
+          type: string
+          nullable: true
+        accept_development_postbacks:
+          type: integer
+          enum: [0, 1]
+          description: >-
+            1 = postbacks signed with Apple's development keys (AdAttributionKit)
+            store as trusted (`signature_valid = 1`) for this app and count in the
+            report — for integration-testing your own build; 0 (default) = they
+            store flagged `development` and count nowhere. SKAdNetwork has no
+            development key, so this never affects SKAdNetwork rows.
+        schema_token:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: Bearer capability the iOS build sends as `X-P202-Schema-Token`; owner-only, redacted from staged previews and apply results
+        user_id:
+          type: integer
+        version:
+          type: string
+          description: Content hash of the record; also its ETag
+        etag:
+          type: string
+
+    AttributionAppCreate:
+      type: object
+      required: [app_id, app_name]
+      properties:
+        app_id:
+          type: integer
+          description: Numeric App Store id (the number in the app's App Store URL)
+        app_name:
+          type: string
+          maxLength: 255
+        notes:
+          type: string
+          maxLength: 500
+        accept_development_postbacks:
+          type: integer
+          enum: [0, 1]
+          default: 0
+          description: Trust development-signed postbacks for this app (see `AttributionApp`)
+
+    AttributionAppUpdate:
+      type: object
+      properties:
+        app_id:
+          type: integer
+        app_name:
+          type: string
+          maxLength: 255
+        notes:
+          type: string
+          maxLength: 500
+        accept_development_postbacks:
+          type: integer
+          enum: [0, 1]
+          description: Trust development-signed postbacks for this app (see `AttributionApp`)
+
+    AttributionAppResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/AttributionApp"
+
+    AttributionAppListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttributionApp"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    AttributionConversionValue:
+      type: object
+      description: Exactly one of `fine_value` / `coarse_value` is non-null.
+      properties:
+        rule_id:
+          type: integer
+        app_id:
+          type: integer
+          description: App Store id this rule applies to; `0` = account-wide default
+        fine_value:
+          type: integer
+          nullable: true
+          minimum: 0
+          maximum: 63
+        coarse_value:
+          type: string
+          nullable: true
+          enum: [low, medium, high, null]
+        event_name:
+          type: string
+        revenue:
+          type: string
+          description: Decimal string (5 places), e.g. `"49.99000"`
+        user_id:
+          type: integer
+        version:
+          type: string
+        etag:
+          type: string
+
+    AttributionConversionValueCreate:
+      type: object
+      required: [event_name]
+      description: Set `fine_value` (0–63) or `coarse_value` — one of them, not both and not neither (`422` otherwise).
+      properties:
+        app_id:
+          type: integer
+          default: 0
+          description: App Store id, or `0` for the account-wide default rules
+        fine_value:
+          type: integer
+          minimum: 0
+          maximum: 63
+        coarse_value:
+          type: string
+          enum: [low, medium, high]
+        event_name:
+          type: string
+          maxLength: 255
+        revenue:
+          type: number
+          minimum: 0
+          default: 0
+          description: Revenue attributed per decoded postback
+
+    AttributionConversionValueUpdate:
+      type: object
+      description: |
+        An absent field is kept. An explicit `null` on `fine_value` or
+        `coarse_value` clears it, and must arrive together with the
+        replacement value of the other kind so the rule still maps exactly
+        one value.
+      properties:
+        app_id:
+          type: integer
+        fine_value:
+          type: integer
+          nullable: true
+          minimum: 0
+          maximum: 63
+        coarse_value:
+          type: string
+          nullable: true
+          enum: [low, medium, high, null]
+        event_name:
+          type: string
+          maxLength: 255
+        revenue:
+          type: number
+          minimum: 0
+
+    AttributionConversionValueResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/AttributionConversionValue"
+
+    AttributionConversionValueListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttributionConversionValue"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    AttributionPostback:
+      type: object
+      description: |
+        One stored postback. Every protocol's rows share this shape: the
+        generic columns (`protocol`, identity, window, `did_win`,
+        `conversion_type`, `ad_interaction_type`, signature verdict) are
+        filled for all of them; the protocol-specific columns mirror that
+        protocol's parameters with hyphens as underscores and are `null`
+        for the others. Fields Apple withheld for privacy are `null`.
+      properties:
+        postback_id:
+          type: integer
+        user_id:
+          type: integer
+          description: Owning user (`0` rows are unclaimed and not visible through the API)
+        received_at:
+          type: integer
+          description: Unix timestamp the receiver stored it
+        protocol:
+          type: string
+          enum: [skadnetwork, adattributionkit]
+          description: Which framework signed and delivered the postback
+        version:
+          type: string
+          nullable: true
+          description: SKAdNetwork postback version, e.g. `4.0`; `null` for AdAttributionKit (unversioned)
+        ad_network_id:
+          type: string
+        transaction_id:
+          type: string
+        app_id:
+          type: integer
+        source_identifier:
+          type: string
+          nullable: true
+          description: SKAN 4 hierarchical source identifier (1–4 digits)
+        campaign_id:
+          type: integer
+          nullable: true
+          description: SKAN ≤ 3 campaign id
+        conversion_value:
+          type: integer
+          nullable: true
+          minimum: 0
+          maximum: 63
+        coarse_conversion_value:
+          type: string
+          nullable: true
+          enum: [low, medium, high, null]
+        postback_sequence_index:
+          type: integer
+          nullable: true
+          description: Conversion window, 0–2 (SKAdNetwork 4 and AdAttributionKit)
+        conversion_type:
+          type: string
+          nullable: true
+          enum: [download, redownload, re-engagement, null]
+          description: >-
+            Protocol-neutral conversion kind: SKAdNetwork's `redownload` flag
+            read as `download`/`redownload`; AdAttributionKit's `conversion-type`
+            as sent (`re-engagement` exists only there)
+        redownload:
+          type: integer
+          nullable: true
+          description: SKAdNetwork's raw flag — 1 = redownload, 0 = first install; `null` for AdAttributionKit
+        did_win:
+          type: integer
+          nullable: true
+          description: 1 = winning postback, 0 = losing; `null` for SKAN ≤ 2.2 (counted as wins)
+        ad_interaction_type:
+          type: string
+          nullable: true
+          enum: [view, click, null]
+          description: >-
+            Protocol-neutral interaction kind: SKAdNetwork's `fidelity-type`
+            (1 = click, 0 = view); AdAttributionKit's `ad-interaction-type` as
+            sent. `null` when the postback carried neither (SKAdNetwork 2.1)
+        source_app_id:
+          type: integer
+          nullable: true
+          description: Publisher app (SKAdNetwork `source-app-id`, AdAttributionKit `publisher-item-identifier`)
+        source_domain:
+          type: string
+          nullable: true
+          description: SKAN 4 web-ad source domain
+        marketplace_id:
+          type: string
+          nullable: true
+          description: AdAttributionKit `marketplace-identifier` (e.g. `com.apple.AppStore`); `null` for SKAdNetwork
+        fidelity_type:
+          type: integer
+          nullable: true
+          description: SKAdNetwork's raw value — 1 = StoreKit-rendered or web ad, 0 = view-through
+        country_code:
+          type: string
+          nullable: true
+        signature_state:
+          type: string
+          enum: [valid, invalid, unverifiable, development]
+          description: >-
+            What the verifier established: `valid` against Apple's production key,
+            `invalid` (wrong or forged), `unverifiable` (unknown version or key,
+            or no OpenSSL), `development` (verified against one of Apple's
+            AdAttributionKit development keys)
+        signature_valid:
+          type: integer
+          nullable: true
+          description: >-
+            The trust bit reports key on: 1 = verified against Apple's production
+            key (or development-signed for an app that opted in), 0 = wrong or
+            forged, `null` = nobody vouched for it (unverifiable, or development-
+            signed without the opt-in)
+        key_id:
+          type: string
+          nullable: true
+          description: The signing key the postback named (AdAttributionKit JWS `kid`); `null` for SKAdNetwork
+        remote_ip:
+          type: string
+          description: Display value (proxy-header aware); not the rate-limit identity
+
+    AttributionPostbackDetail:
+      allOf:
+        - $ref: "#/components/schemas/AttributionPostback"
+        - type: object
+          properties:
+            attribution_signature:
+              type: string
+              description: Apple's base64 ECDSA signature as received (sanitized; up to 4096 chars), for forensics
+
+    AttributionPostbackResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/AttributionPostbackDetail"
+
+    AttributionPostbackListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttributionPostback"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    AttributionReportGroup:
+      type: object
+      description: |
+        One report group. Which dimension fields are present depends on
+        `group_by`: `date` (day), `app_id` + `app_name` (app),
+        `ad_network_id` (ad-network), `source_identifier` + `campaign_id`
+        (source), `country_code` (country), `version` (version),
+        `protocol` (protocol), `conversion_type` (conversion-type).
+      properties:
+        date:
+          type: string
+          format: date
+          description: UTC day (day mode)
+        app_id:
+          type: integer
+        app_name:
+          type: string
+          nullable: true
+          description: From the app registry (app mode); `null` when unregistered
+        ad_network_id:
+          type: string
+        source_identifier:
+          type: string
+          nullable: true
+        campaign_id:
+          type: integer
+          nullable: true
+        country_code:
+          type: string
+          nullable: true
+        version:
+          type: string
+          nullable: true
+        protocol:
+          type: string
+          enum: [skadnetwork, adattributionkit]
+        conversion_type:
+          type: string
+          nullable: true
+          enum: [download, redownload, re-engagement, null]
+        postbacks:
+          type: integer
+          description: Unique postbacks in the group, regardless of signature state
+        losses:
+          type: integer
+          description: Unique losing postbacks (`did_win = 0`, trusted rows only)
+        installs:
+          type: integer
+          description: Unique winning first-window `download` postbacks (trusted rows only)
+        redownloads:
+          type: integer
+          description: Unique winning first-window `redownload` postbacks (trusted rows only)
+        reengagements:
+          type: integer
+          description: Unique winning first-window `re-engagement` postbacks — AdAttributionKit only (trusted rows only)
+        signature_valid_count:
+          type: integer
+          description: Unique postbacks with `signature_valid = 1`
+        signature_invalid_count:
+          type: integer
+          description: Unique postbacks with `signature_valid = 0`
+        signature_unverified_count:
+          type: integer
+          description: Unique postbacks with `signature_valid = null`, including development-signed ones of apps that did not opt in
+        signature_development_count:
+          type: integer
+          description: Unique postbacks verified against an AdAttributionKit development key, whatever their trust bit — they also count in the valid or unverified column
+        measurable:
+          type: integer
+          description: Unique winning postbacks carrying a conversion value, across all three conversion windows (so it can exceed installs, which counts first-window postbacks only); a replayed postback decodes once, through its first-received copy
+        decoded:
+          type: integer
+        undecoded:
+          type: integer
+          description: Value present but no matching rule
+        null_conversion_values:
+          type: integer
+          description: Value withheld by Apple's privacy tier
+        decoded_revenue:
+          type: number
+        events:
+          type: object
+          description: Per-event counts and revenue, keyed by event name (always an object, `{}` when empty)
+          additionalProperties:
+            type: object
+            properties:
+              count:
+                type: integer
+              revenue:
+                type: number
+
+    AttributionReportResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            group_by:
+              type: string
+              enum: [day, app, ad-network, source, country, version, protocol, conversion-type]
+            groups:
+              type: array
+              items:
+                $ref: "#/components/schemas/AttributionReportGroup"
+        meta:
+          type: object
+          properties:
+            timezone:
+              type: string
+              example: UTC
+            trusted:
+              type: string
+              enum: [verified-only, as-filtered]
+              description: Which rows the headline metrics counted
+            groups_truncated:
+              type: boolean
+              description: More groups matched than `limit` allowed
+            notes:
+              type: string
+
+    SkadnetworkPostback:
+      type: object
+      description: |
+        A SKAdNetwork postback as Apple's devices send it (hyphenated
+        keys). Versions 2.1–4.0 verify; which fields are present depends on
+        the version and Apple's privacy tier. The conversion values are not
+        covered by Apple's signature in any version.
+      required: [version, ad-network-id, transaction-id, app-id, attribution-signature]
+      properties:
+        version:
+          type: string
+          example: "4.0"
+        ad-network-id:
+          type: string
+          maxLength: 100
+        transaction-id:
+          type: string
+          maxLength: 64
+        app-id:
+          type: integer
+        source-identifier:
+          type: string
+          description: SKAN 4; 1–4 digits
+        campaign-id:
+          type: integer
+          description: SKAN ≤ 3
+        conversion-value:
+          type: integer
+          minimum: 0
+          maximum: 63
+        coarse-conversion-value:
+          type: string
+          enum: [low, medium, high]
+        postback-sequence-index:
+          type: integer
+          enum: [0, 1, 2]
+        redownload:
+          type: boolean
+        did-win:
+          type: boolean
+        source-app-id:
+          type: integer
+        source-domain:
+          type: string
+        fidelity-type:
+          type: integer
+          enum: [0, 1]
+        country-code:
+          type: string
+        attribution-signature:
+          type: string
+          description: Base64 ECDSA (P-256/SHA-256) signature over the version-specific field composition
+
+    AttributionVerifyResponse:
+      type: object
+      description: |
+        The protocol is detected from the body: a `jws-string` key means
+        AdAttributionKit (the JWS alone is enough), anything else is
+        verified as SKAdNetwork. The SKAdNetwork fields
+        (`signed_message_base64`, `verifiable_versions`) and the
+        AdAttributionKit fields (`key_id`, `header`, `payload`,
+        `known_key_ids`, `development_key_ids`) are present for their own
+        protocol only.
+      properties:
+        data:
+          type: object
+          properties:
+            protocol:
+              type: string
+              enum: [skadnetwork, adattributionkit]
+            signature:
+              type: string
+              enum: [valid, invalid, unverifiable, development]
+            signed_message_base64:
+              type: string
+              nullable: true
+              description: SKAdNetwork — base64 of the exact byte string Apple signs for this version (fields joined with U+2063); `null` when the version is unverifiable
+            verifiable_versions:
+              type: array
+              items:
+                type: string
+              example: ["2.1", "2.2", "3.0", "4.0"]
+            key_id:
+              type: string
+              description: AdAttributionKit — the JWS header's `kid`
+              example: apple-development-identifier/1
+            header:
+              type: object
+              description: AdAttributionKit — the decoded JWS header
+            payload:
+              type: object
+              description: AdAttributionKit — the decoded JWS payload (the signed attribution fields)
+            known_key_ids:
+              type: array
+              items:
+                type: string
+              example: ["apple-cas-identifier/0", "apple-development-identifier/0", "apple-development-identifier/1"]
+            development_key_ids:
+              type: array
+              items:
+                type: string
+              example: ["apple-development-identifier/0", "apple-development-identifier/1"]
+
+    AttributionSchemaResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            app_id:
+              type: integer
+            schema_version:
+              type: string
+              description: Content hash of the mapping; also the ETag (unquoted)
+            events:
+              type: object
+              description: Event name → values to set when the app reports that event; always an object
+              additionalProperties:
+                type: object
+                properties:
+                  fine_value:
+                    type: integer
+                    nullable: true
+                    minimum: 0
+                    maximum: 63
+                  coarse_value:
+                    type: string
+                    nullable: true
+                    enum: [low, medium, high, null]
+            generated_at:
+              type: integer
+
+    AttributionPostbackReceiptResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            accepted:
+              type: boolean
+            duplicate:
+              type: boolean
+              description: A byte-identical retry of a postback already stored; nothing new was written
+            signature:
+              type: string
+              enum: [valid, invalid, unverifiable, development]
+
+    AdAttributionKitPostback:
+      type: object
+      description: |
+        The JSON envelope an Apple device POSTs to the `AttributionCopyEndpoint`
+        (Apple's "Identifying the parameters in a postback", AdAttributionKit).
+        `jws-string` is signed by Apple; the other four fields are not, exactly
+        as SKAdNetwork never signed conversion values. The JWS payload carries
+        `postback-identifier`, `ad-network-identifier`, `advertised-item-identifier`,
+        `impression-type`, `did-win`, `postback-sequence-index`, `conversion-type`
+        (`download`, `redownload`, `re-engagement`) and `source-identifier`, plus
+        the optional `publisher-item-identifier` and `marketplace-identifier`;
+        its header carries `alg` (`ES256`) and `kid`.
+      required: [jws-string, ad-interaction-type]
+      properties:
+        jws-string:
+          type: string
+          description: Compact JWS — header, payload and signature as unpadded base64url segments
+          example: eyJraWQiOiJhcHBsZS1kZXZlbG9wbWVudC1pZGVudGlmaWVyXC8xIiwiYWxnIjoiRVMyNTYifQ.eyJwb3N0YmFjay1pZGVudGlmaWVyIjoiODU1NDZFQjctRkQzOS00NEJDLTg5OTAtQzk4QTRBQzM2QTQ5IiwicHVibGlzaGVyLWl0ZW0taWRlbnRpZmllciI6MCwibWFya2V0cGxhY2UtaWRlbnRpZmllciI6ImNvbS5hcHBsZS5BcHBTdG9yZSIsImltcHJlc3Npb24tdHlwZSI6ImFwcC1pbXByZXNzaW9uIiwiYWQtbmV0d29yay1pZGVudGlmaWVyIjoiZGV2ZWxvcG1lbnQuYWRhdHRyaWJ1dGlvbmtpdCIsImRpZC13aW4iOnRydWUsInBvc3RiYWNrLXNlcXVlbmNlLWluZGV4IjowLCJjb252ZXJzaW9uLXR5cGUiOiJyZS1lbmdhZ2VtZW50Iiwic291cmNlLWlkZW50aWZpZXIiOiIxMjM0IiwiYWR2ZXJ0aXNlZC1pdGVtLWlkZW50aWZpZXIiOjEwNzM4MDI3NzU2fQ.bAdNwKd6OfHK9tofvjjua4X_JPcFTxXPQSspD9gZkinw97pY7R1aI-LSjl-oxZZF3_K2H5JK5TSEBee4_1U4oQ
+        conversion-value:
+          type: integer
+          minimum: 0
+          maximum: 63
+          description: Unsigned; withheld by Apple's postback data tier when absent
+        coarse-conversion-value:
+          type: string
+          enum: [low, medium, high]
+          description: Unsigned; withheld by the data tier when absent
+        ad-interaction-type:
+          type: string
+          enum: [view, click]
+          description: Unsigned
+        country-code:
+          type: string
+          description: Unsigned ISO 3166 identifier; withheld by the data tier when absent
+          example: US
+
+    SkadnetworkVerifyRequest:
+      type: object
+      minProperties: 1
+      additionalProperties: true
+      description: |
+        A SKAdNetwork postback submitted to `POST /attribution/verify`. The
+        fields and their meanings are `SkadnetworkPostback`'s; what differs
+        is that none of them is required here, so this schema deliberately
+        does not repeat the list (repeating it is how the two drift apart).
+
+        Verification reports what the body supports rather than refusing to
+        look at it, so a partial or mistyped postback gets a verdict, not a
+        validation error. Executed against the endpoint:
+        `{"version": "4.0", "attribution-signature": "AA=="}` answers
+        `invalid`, `{"attribution-signature": "AA=="}` answers
+        `unverifiable`, and a full 4.0 body answers `invalid` — all 200.
+        Only an empty object is a 422, which is what `minProperties` says.
+
+        `SkadnetworkPostback` keeps its five required fields because the
+        RECEIVER really does require them. Pointing this request body at
+        that schema made the spec reject bodies the endpoint answers, and
+        contradict this operation's own description.
+    AdAttributionKitVerifyRequest:
+      type: object
+      description: |
+        An AdAttributionKit postback submitted to `POST /attribution/verify`.
+        Only `jws-string` is required here: the signature covers the JWS and
+        nothing else, so the unsigned envelope fields of
+        `AdAttributionKitPostback` (`conversion-value`,
+        `coarse-conversion-value`, `ad-interaction-type`, `country-code`) may
+        be left on a copied receiver body but do not affect the verdict. The
+        receiver itself requires `ad-interaction-type`; this endpoint does not.
+      required: [jws-string]
+      properties:
+        jws-string:
+          type: string
+          description: Compact JWS — header, payload and signature as unpadded base64url segments (see `AdAttributionKitPostback` for an example)
+
+    SkadnetworkReceiverProbeResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            status:
+              type: string
+              example: ready
+            protocol:
+              type: string
+              example: skadnetwork
+            endpoint:
+              type: string
+              example: skadnetwork-report-attribution
+            accepts:
+              type: string
+    AdAttributionKitReceiverProbeResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            status:
+              type: string
+              example: ready
+            protocol:
+              type: string
+              example: adattributionkit
+            endpoint:
+              type: string
+              example: appattribution-report-attribution
+            accepts:
+              type: string
+

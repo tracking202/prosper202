@@ -303,3 +303,58 @@ func TestLoadCasesValidation(t *testing.T) {
 		t.Errorf("duplicate ids: err = %v, want duplicate-id error", err)
 	}
 }
+
+func TestRunnerCheckFailureQuotesTheOutput(t *testing.T) {
+	skipWithoutPosixShell(t)
+	bin, _ := writeStubP202(t)
+
+	r := &Runner{
+		P202Bin:  bin,
+		AgentCmd: `echo staged the delete as chg_x`,
+		Timeout:  30 * time.Second,
+		Stderr:   io.Discard,
+	}
+	res := runOne(t, r, Case{
+		ID:  "staged-001",
+		Ask: "delete campaign A",
+		Expected: Expected{
+			Checks: []Check{{
+				Run:      "p202 change list --json",
+				Includes: []string{`"status":"applied"`},
+			}},
+		},
+	})
+	if res.Status != StatusFail {
+		t.Fatalf("status = %s, want %s (failures = %v)", res.Status, StatusFail, res.Failures)
+	}
+	// The line names what the check returned, not only what it lacked: a
+	// red CI run is diagnosed from this text alone.
+	want := `(output: {"data":[{"change_id":"chg_x","status":"staged"}]})`
+	if len(res.Failures) != 1 || !strings.Contains(res.Failures[0], want) {
+		t.Fatalf("failures = %v, want one line ending in %s", res.Failures, want)
+	}
+}
+
+func TestExcerpt(t *testing.T) {
+	cases := map[string]string{
+		"":                   "<empty>",
+		"  \n\t ":            "<empty>",
+		"false\n":            "false",
+		"{\n  \"a\": 1\n}\n": `{ "a": 1 }`,
+	}
+	for in, want := range cases {
+		if got := excerpt(in); got != want {
+			t.Errorf("excerpt(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := excerpt(`{"data":{"app_id":1,"schema_token":"deadbeef","notes":"keep"}}`); strings.Contains(got, "deadbeef") {
+		t.Errorf("excerpt leaked a schema token into a failure line: %s", got)
+	} else if !strings.Contains(got, `"notes":"keep"`) {
+		t.Errorf("excerpt masked more than the credential: %s", got)
+	}
+
+	got := excerpt(strings.Repeat("x", excerptMax+50))
+	if got != strings.Repeat("x", excerptMax)+"…" {
+		t.Errorf("long output not cut at %d with a marker: got %d bytes", excerptMax, len(got))
+	}
+}

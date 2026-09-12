@@ -24,6 +24,12 @@ parameters:
         - 202-cronjobs
         - cli
         - tracking202
+        # The public postback receivers. They are the only callers of
+        # PostbackEndpoint::serve() that run outside the API router, so
+        # without them a change to that signature (or to a protocol's
+        # constructor) leaves the analysis green and the endpoints fatal on
+        # the first device postback.
+        - .well-known
     excludePaths:
         analyseAndScan:
             - vendor (?)
@@ -71,3 +77,18 @@ rules:
     - Prosper202\PHPStan\Rules\BindParamArityRule
     # CLAUDE.md #8 — assumed closure, reference, and capture semantics.
     - Prosper202\PHPStan\Rules\ForbidArrowFnByRefCaptureRule
+    # CLAUDE.md "Verify your assumptions" — a check that cannot fail is not a
+    # check. `assertSame('verified-only', 'verified-only')` stood in for the
+    # attribution report suite's only test of the verified-only default.
+    #
+    # The code this rule targets lives in tests/, which is deliberately NOT in
+    # `paths` above and cannot be added here: analysing tests/ reports 14
+    # pre-existing findings (8 from the other rules, 6 from PHPStan's own
+    # level-0 checks) in files this change does not own, plus — whenever dev
+    # dependencies are not installed — 84 non-ignorable "extends unknown class
+    # PHPUnit\Framework\TestCase" errors, one per suite. So registration alone
+    # would leave this rule looking at nothing.
+    # tests/Api/V3/VacuousAssertionRuleTest.php runs THIS config over tests/
+    # and fails on this identifier alone; that test is what gives the rule its
+    # reach, and registering it here is what makes the test's run real.
+    - Prosper202\PHPStan\Rules\VacuousAssertionRule

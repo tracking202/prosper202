@@ -1,0 +1,631 @@
+/*
+ * Prosper202 chrome: the page frame, navbar, section tabs, sub-menu strip and
+ * footer that every page shares.
+ *
+ * This sheet depends on neither Bootstrap 3 nor Bootstrap 5. Both page shells
+ * load it (the classic shell last, so it settles the chrome over the older
+ * layers; the v2 shell first, under the framework), which is what keeps the
+ * site looking whole while page bodies migrate one family at a time. Body
+ * content is not styled here; the markup it targets is only what
+ * 202-config/template.php, tracking202/_config/top.php and
+ * tracking202/_config/sub-menu.php emit.
+ *
+ * Tokens carry their own prefix so a chrome rule can never be changed by
+ * accident from a page stylesheet. The dark set keys on the attribute the v2
+ * shell manages; classic pages never set it, and their Bootstrap 3 bodies
+ * would not follow it if they did.
+ */
+
+:root {
+    --p202c-bg: #f4f5f7;
+    --p202c-surface: #ffffff;
+    --p202c-surface-2: #fafbfc;
+    --p202c-line: #e7e8ea;
+    --p202c-line-strong: #c9cdd3;
+    --p202c-ink: #1f2328;
+    --p202c-ink-2: #374151;
+    --p202c-muted: #6b7280;
+    --p202c-accent: #2f6fdd;
+    --p202c-accent-hover: #2861c4;
+    --p202c-accent-ink: #ffffff;
+    --p202c-accent-soft: #eaf2fc;
+    --p202c-danger: #c9372c;
+    --p202c-danger-ink: #ffffff;
+    --p202c-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+    --p202c-shadow-pop: 0 8px 24px rgba(16, 24, 40, 0.12);
+    --p202c-font: "Lato", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --p202c-max: 1450px;
+    --p202c-gutter: 16px;
+    --p202c-focus: 0 0 0 3px rgba(47, 111, 221, 0.28);
+}
+
+[data-bs-theme="dark"] {
+    --p202c-bg: #0f1216;
+    --p202c-surface: #171b21;
+    --p202c-surface-2: #1d222a;
+    --p202c-line: #2c323a;
+    --p202c-line-strong: #3d444d;
+    --p202c-ink: #e8eaed;
+    --p202c-ink-2: #c9d1d9;
+    --p202c-muted: #9aa3ad;
+    --p202c-accent: #6f9ff0;
+    --p202c-accent-hover: #8db3f5;
+    --p202c-accent-ink: #0f1a2e;
+    --p202c-accent-soft: #1e2a40;
+    --p202c-danger: #f07a70;
+    --p202c-danger-ink: #2a0f0d;
+    --p202c-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --p202c-shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.55);
+    --p202c-focus: 0 0 0 3px rgba(111, 159, 240, 0.4);
+}
+
+/* ---------- Ground and frame ---------- */
+
+body {
+    background: var(--p202c-bg);
+    background-image: none;
+    margin: 0;
+}
+
+.p202-frame {
+    max-width: var(--p202c-max);
+    margin: 0 auto;
+    padding-inline: var(--p202c-gutter);
+    padding-block: 0 32px;
+    box-sizing: border-box;
+}
+
+/* The content card. Pages keep the historical `main` class; the frame owns its look. */
+.p202-frame .main {
+    background: var(--p202c-surface);
+    border: 1px solid var(--p202c-line);
+    border-radius: 12px;
+    padding: 24px;
+    margin: 16px 0 0;
+    box-shadow: var(--p202c-shadow);
+    color: var(--p202c-ink);
+    box-sizing: border-box;
+}
+
+/* ---------- Header ---------- */
+
+.p202c-header {
+    background: var(--p202c-surface);
+    border: 1px solid var(--p202c-line);
+    border-radius: 12px;
+    box-shadow: var(--p202c-shadow);
+    margin-top: 16px;
+    font-family: var(--p202c-font);
+    color: var(--p202c-ink);
+}
+
+.p202c-header__inner {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    min-height: 64px;
+    padding: 8px 12px 8px 16px;
+    box-sizing: border-box;
+}
+
+/* The logo placement: an iframe served by Prosper202, 300x60, as the old
+   navbar had it. There is no second, static logo beside it. */
+.p202c-brand {
+    flex-shrink: 0;
+    width: 300px;
+    max-width: 100%;
+    height: 60px;
+    overflow: hidden;
+    border-radius: 8px;
+}
+
+.p202c-brand iframe {
+    display: block;
+    width: 100%;
+    height: 60px;
+    border: 0;
+}
+
+.p202c-nav {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.p202c-nav::-webkit-scrollbar {
+    display: none;
+}
+
+.p202c-account {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+.p202c-nav__link,
+.p202c-menu__toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    color: var(--p202c-muted);
+    font-family: var(--p202c-font);
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.2;
+    text-decoration: none;
+    white-space: nowrap;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.p202c-nav__link:hover,
+.p202c-nav__link:focus,
+.p202c-menu__toggle:hover,
+.p202c-menu[open] > .p202c-menu__toggle {
+    color: var(--p202c-ink);
+    background: var(--p202c-surface-2);
+    text-decoration: none;
+}
+
+.p202c-nav__link.is-active,
+.p202c-nav__link.is-active:hover,
+.p202c-menu.is-active > .p202c-menu__toggle {
+    color: var(--p202c-accent);
+    background: var(--p202c-accent-soft);
+}
+
+.p202c-nav__link:focus-visible,
+.p202c-menu__toggle:focus-visible,
+.p202c-menu__list a:focus-visible,
+.p202c-tabs__list a:focus-visible,
+.p202c-theme button:focus-visible {
+    outline: none;
+    box-shadow: var(--p202c-focus);
+}
+
+.p202c-icon {
+    flex-shrink: 0;
+    width: 15px;
+    height: 15px;
+}
+
+.p202c-nav__link > span,
+.p202c-menu__toggle > span {
+    flex-shrink: 0;
+}
+
+.p202c-badge {
+    display: inline-block;
+    min-width: 18px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--p202c-danger);
+    color: var(--p202c-danger-ink);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 16px;
+    text-align: center;
+}
+
+/* ---------- Account menu (a <details>, so it needs no framework script) ---------- */
+
+.p202c-menu {
+    position: relative;
+}
+
+.p202c-menu > summary {
+    list-style: none;
+}
+
+.p202c-menu > summary::-webkit-details-marker {
+    display: none;
+}
+
+.p202c-menu__chevron {
+    transition: transform 0.15s ease;
+}
+
+.p202c-menu[open] .p202c-menu__chevron {
+    transform: rotate(180deg);
+}
+
+.p202c-menu[open] .p202c-badge {
+    display: none;
+}
+
+.p202c-menu__list {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    z-index: 1040;
+    min-width: 236px;
+    margin: 0;
+    padding: 6px;
+    list-style: none;
+    background: var(--p202c-surface);
+    border: 1px solid var(--p202c-line);
+    border-radius: 10px;
+    box-shadow: var(--p202c-shadow-pop);
+}
+
+.p202c-menu__list li {
+    margin: 0;
+}
+
+.p202c-menu__list a {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 7px;
+    color: var(--p202c-ink);
+    font-family: var(--p202c-font);
+    font-size: 13.5px;
+    font-weight: 400;
+    text-decoration: none;
+}
+
+.p202c-menu__list a:hover,
+.p202c-menu__list a:focus {
+    background: var(--p202c-surface-2);
+    color: var(--p202c-ink);
+    text-decoration: none;
+}
+
+.p202c-menu__list li.active > a {
+    color: var(--p202c-accent);
+    background: var(--p202c-accent-soft);
+    font-weight: 700;
+}
+
+.p202c-menu__list a .p202c-badge {
+    margin-left: auto;
+}
+
+.p202c-menu__sep {
+    height: 1px;
+    margin: 6px 4px;
+    background: var(--p202c-line);
+}
+
+/* Theme switch, rendered by the v2 shell only. */
+.p202c-theme {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px 4px;
+    font-size: 12px;
+    color: var(--p202c-muted);
+}
+
+.p202c-theme span {
+    margin-right: auto;
+}
+
+.p202c-theme button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 26px;
+    border: 1px solid var(--p202c-line);
+    border-radius: 6px;
+    background: var(--p202c-surface);
+    color: var(--p202c-muted);
+    cursor: pointer;
+}
+
+.p202c-theme button[aria-pressed="true"] {
+    color: var(--p202c-accent);
+    background: var(--p202c-accent-soft);
+    border-color: transparent;
+}
+
+/* ---------- Section tabs (Prosper202 CS) ---------- */
+
+.p202c-tabs {
+    margin: 16px 0 0;
+    border-bottom: 1px solid var(--p202c-line);
+    font-family: var(--p202c-font);
+}
+
+#second-nav.p202c-tabs__list,
+.p202c-tabs__list {
+    display: flex;
+    gap: 4px;
+    margin: 0;
+    padding: 0 4px;
+    list-style: none;
+    overflow-x: auto;
+    scrollbar-width: none;
+    border: 0;
+}
+
+.p202c-tabs__list::-webkit-scrollbar {
+    display: none;
+}
+
+.p202c-tabs__list > li {
+    margin: 0;
+    flex-shrink: 0;
+}
+
+.p202c-tabs__list > li > a {
+    display: block;
+    padding: 10px 14px;
+    margin-bottom: -1px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 6px 6px 0 0;
+    background: transparent;
+    color: var(--p202c-muted);
+    font-size: 13.5px;
+    font-weight: 700;
+    line-height: 1.3;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.p202c-tabs__list > li > a:hover,
+.p202c-tabs__list > li > a:focus {
+    color: var(--p202c-ink);
+    background: var(--p202c-surface-2);
+    border-bottom-color: transparent;
+    text-decoration: none;
+}
+
+.p202c-tabs__list > li.active > a,
+.p202c-tabs__list > li.active > a:hover,
+.p202c-tabs__list > li.active > a:focus {
+    color: var(--p202c-accent);
+    border-bottom-color: var(--p202c-accent);
+    background: transparent;
+}
+
+/* ---------- Sub-menu strip (Overview, Analyze, Update) ---------- */
+
+.p202c-strip {
+    margin: 0 0 20px;
+    font-family: var(--p202c-font);
+}
+
+.p202c-strip__list {
+    display: flex;
+    gap: 2px;
+    margin: 0;
+    padding: 4px;
+    list-style: none;
+    overflow-x: auto;
+    scrollbar-width: none;
+    background: var(--p202c-surface-2);
+    border: 1px solid var(--p202c-line);
+    border-radius: 10px;
+    font-size: 12.5px;
+}
+
+.p202c-strip__list::-webkit-scrollbar {
+    display: none;
+}
+
+.p202c-strip__list > li {
+    margin: 0;
+    padding: 0;
+    flex-shrink: 0;
+}
+
+.p202c-strip__list > li > a {
+    display: block;
+    padding: 7px 12px;
+    border-radius: 7px;
+    color: var(--p202c-muted);
+    font-weight: 700;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.p202c-strip__list > li > a:hover,
+.p202c-strip__list > li > a:focus {
+    color: var(--p202c-ink);
+    background: var(--p202c-surface);
+    text-decoration: none;
+}
+
+.p202c-strip__list > li.active > a {
+    color: var(--p202c-accent);
+    background: var(--p202c-surface);
+    box-shadow: var(--p202c-shadow);
+}
+
+/* ---------- Setup sub-menu (button grid) ---------- */
+
+.p202c-subnav {
+    margin: 0 0 20px;
+    font-family: var(--p202c-font);
+}
+
+.p202c-subnav__list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.p202c-subnav__list > li {
+    margin: 0;
+}
+
+.p202c-subnav__link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px 14px;
+    background: var(--p202c-surface);
+    border: 1px solid var(--p202c-line);
+    border-radius: 8px;
+    color: var(--p202c-ink-2);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.2;
+    text-align: center;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.p202c-subnav__link:hover {
+    background: var(--p202c-surface-2);
+    border-color: var(--p202c-line-strong);
+    color: var(--p202c-ink);
+    text-decoration: none;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.p202c-subnav__link:focus-visible {
+    outline: none;
+    border-color: var(--p202c-accent);
+    box-shadow: var(--p202c-focus);
+}
+
+.p202c-subnav__link.is-active,
+.p202c-subnav__link.is-active:hover {
+    background: var(--p202c-accent);
+    border-color: transparent;
+    color: var(--p202c-accent-ink);
+    box-shadow: 0 2px 8px rgba(47, 111, 221, 0.25);
+}
+
+.p202c-subnav__link .p202c-icon {
+    width: 13px;
+    height: 13px;
+    opacity: 0.85;
+}
+
+.p202c-subnav__link.is-active .p202c-icon {
+    opacity: 1;
+}
+
+/* ---------- Footer ---------- */
+
+.p202c-footer {
+    margin-top: 16px;
+    padding: 18px 16px;
+    text-align: center;
+    font-family: var(--p202c-font);
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--p202c-muted);
+}
+
+.p202c-footer a {
+    color: var(--p202c-accent);
+    text-decoration: none;
+}
+
+.p202c-footer a:hover {
+    color: var(--p202c-accent-hover);
+    text-decoration: underline;
+}
+
+.p202c-footer .p202c-footer__warn {
+    color: var(--p202c-danger);
+    font-weight: 700;
+}
+
+/* ---------- Narrow screens ---------- */
+
+@media (max-width: 992px) {
+    .p202c-subnav__link {
+        padding: 8px 10px;
+        font-size: 11px;
+    }
+}
+
+@media (max-width: 767px) {
+    .p202c-header__inner {
+        padding: 8px 10px;
+    }
+
+    .p202c-subnav__list {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+    }
+
+    .p202c-subnav__link {
+        flex-direction: column;
+        gap: 4px;
+        padding: 10px 8px;
+        font-size: 11px;
+    }
+
+    .p202c-subnav__link .p202c-icon {
+        width: 14px;
+        height: 14px;
+    }
+
+    .p202c-nav {
+        order: 3;
+        flex-basis: 100%;
+        border-top: 1px solid var(--p202c-line);
+        padding-top: 6px;
+    }
+
+    .p202c-nav__link,
+    .p202c-menu__toggle {
+        padding: 7px 10px;
+        font-size: 13px;
+    }
+
+    .p202c-nav__label--long {
+        display: none;
+    }
+
+    .p202-frame .main {
+        padding: 16px;
+        border-radius: 10px;
+    }
+
+    .p202c-menu__list {
+        min-width: 210px;
+    }
+}
+
+@media (max-width: 480px) {
+    .p202c-subnav__list {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+    }
+
+    .p202c-subnav__link {
+        padding: 10px 6px;
+        border-radius: 6px;
+        font-size: 10px;
+    }
+
+    .p202c-subnav__link .p202c-icon {
+        width: 13px;
+        height: 13px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .p202c-nav__link,
+    .p202c-menu__toggle,
+    .p202c-menu__chevron,
+    .p202c-subnav__link {
+        transition: none;
+    }
+}

@@ -138,10 +138,17 @@ services:
   # Runs the standalone CLI cron workers that 202-cronjobs/index.php does NOT
   # cover (the repo docs schedule them from a host crontab, which this stack
   # promises you don't need): the attribution export queue and the API v3 sync
-  # worker every minute, the attribution snapshot rebuild hourly. Runs the
+  # worker every minute, the attribution snapshot rebuild and the attribution
+  # postback retention prune hourly (both share the one hourly timer). Runs the
   # image built by the web service so the code and composer dependencies always
   # match; the shared entrypoint writes this container's own 202-config.php
   # from the env below.
+  #
+  # Without the retention job here, aged postbacks on a Coolify deploy would be
+  # left to the receiver's 1-in-100 opportunistic pass, which only fires while
+  # new postbacks are arriving. Its windows are the shipped defaults; override
+  # them with P202_ATTRIBUTION_RETENTION_DAYS_* in the environment below, since
+  # this is the process that prunes.
   attribution-cron:
     image: prosper202-web-coolify
     restart: unless-stopped
@@ -164,14 +171,15 @@ services:
       - bash
       - -c
       - |
-        last_rebuild=0
+        last_hourly=0
         while true; do
           php 202-cronjobs/attribution-export.php || true
           php 202-cronjobs/sync-worker.php || true
           now=$$(date +%s)
-          if [ $$((now - last_rebuild)) -ge 3600 ]; then
+          if [ $$((now - last_hourly)) -ge 3600 ]; then
             php 202-cronjobs/attribution-rebuild.php || true
-            last_rebuild=$$now
+            php 202-cronjobs/attribution-retention.php || true
+            last_hourly=$$now
           fi
           sleep 60
         done

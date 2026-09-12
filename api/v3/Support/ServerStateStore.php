@@ -975,35 +975,157 @@ class ServerStateStore
         return $this->sanitizeSensitive($payload);
     }
 
+    /**
+     * Soft per-source rate limit for unauthenticated endpoints.
+     *
+     * The bucket is keyed on the validated TCP peer address (REMOTE_ADDR),
+     * never on client-supplied headers: X-Forwarded-For is attacker-chosen
+     * on an open endpoint, so keying on it lets a flooder mint a fresh
+     * bucket per request — the limit never fires AND every spoofed value
+     * becomes a state file (the p13n endpoints' "never raw spoofable
+     * headers" rule). Behind a TLS-terminating proxy the peer is the proxy,
+     * so callers size $maxPerWindow as an aggregate ceiling, not a
+     * per-device one.
+     *
+     * Soft means the limiter's own failure never blocks the request:
+     * returns the retry-after seconds when the limit is exceeded, and null
+     * when the request may proceed — including when the limiter itself
+     * errored (logged). Also opportunistically garbage-collects stale
+     * bucket files so the directory stays bounded by recent distinct peers.
+     */
+    public function softIpRateLimit(string $prefix, int $maxPerWindow, int $windowSeconds, ?string $peerIp = null): ?int
+    {
+        try {
+            $ip = $peerIp ?? (string)($_SERVER['REMOTE_ADDR'] ?? '');
+            if (filter_var($ip, FILTER_VALIDATE_IP) === false) {
+                // No validated peer (CLI, misconfigured SAPI): one shared
+                // bucket rather than an attacker-nameable one.
+                $ip = 'unknown';
+            }
+            if (mt_rand(1, 100) === 1) {
+                $this->pruneStaleRateLimits(max(3600, $windowSeconds * 10));
+            }
+            $rate = $this->consumeRateLimit($prefix . ':' . substr($ip, 0, 64), $maxPerWindow, $windowSeconds);
+            if (!$rate['allowed']) {
+                return max(1, (int)$rate['reset_at'] - time());
+            }
+            return null;
+        } catch (\Throwable $e) {
+            error_log('p202: rate limiter unavailable, serving request: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Delete rate-limit bucket files whose window is long over. Buckets are
+     * one small JSON file per distinct source; without collection the
+     * directory grows with every source ever seen.
+     */
+    public function pruneStaleRateLimits(int $maxAgeSeconds): void
+    {
+        $dir = $this->dir('rate_limits');
+        $entries = @scandir($dir);
+        if ($entries === false) {
+            return;
+        }
+        $cutoff = time() - $maxAgeSeconds;
+        foreach ($entries as $entry) {
+            if ($entry === '.' || $entry === '..') {
+                continue;
+            }
+            // Buckets, and the temp files a process killed between write and
+            // rename leaves behind (`<name>.json.tmp-xxxx`) — collecting only
+            // `.json` left those orphans to accumulate forever in the very
+            // directory this pass exists to bound.
+            $isBucket = str_ends_with($entry, '.json');
+            $isLock = str_ends_with($entry, '.json.lock');
+            $isOrphanTemp = str_contains($entry, '.json.tmp-');
+            if (!$isBucket && !$isLock && !$isOrphanTemp) {
+                continue;
+            }
+            $path = $dir . '/' . $entry;
+            $mtime = @filemtime($path);
+            if ($mtime === false || $mtime >= $cutoff) {
+                continue;
+            }
+            if ($isLock) {
+                // Neither of the cheap tests can decide a lock is free. Its
+                // mtime is its CREATION time — taking the lock does not
+                // touch it — and a missing bucket file is also the state of
+                // the request that revives an idle peer, possibly one this
+                // very pass emptied moments earlier. Deleting a held lock
+                // leaves two processes holding LOCK_EX on different inodes,
+                // which is the lost update the lock exists to prevent, so
+                // what protects it is taking it.
+                if (is_file(substr($path, 0, -strlen('.lock')))) {
+                    continue;
+                }
+                $this->unlinkUnheldLock($path);
+                continue;
+            }
+            @unlink($path);
+        }
+    }
+
+    /**
+     * Remove a stale lock file only when no one is inside its critical
+     * section: the unlink runs while this pass itself holds LOCK_EX, so a
+     * mutateJsonFile() that already has the lock keeps its file. The
+     * remaining window is the instant between fopen() and flock() there — a
+     * caller that opened this inode microseconds ago still ends up alone on
+     * it — versus the whole critical section before. 'r+' rather than 'c+':
+     * a collection pass must never create the file it came to delete.
+     */
+    private function unlinkUnheldLock(string $path): void
+    {
+        $fh = @fopen($path, 'r+');
+        if ($fh === false) {
+            return;
+        }
+        if (flock($fh, LOCK_EX | LOCK_NB)) {
+            @unlink($path);
+            flock($fh, LOCK_UN);
+        }
+        fclose($fh);
+    }
+
     /** @return array{allowed: bool, remaining: int, reset_at: int} */
     public function consumeRateLimit(string $bucket, int $maxPerWindow, int $windowSeconds): array
     {
-        $path = $this->dir('rate_limits') . '/' . $this->slug($bucket) . '.json';
-        $state = $this->readJsonFile($path, ['window_start' => 0, 'count' => 0]);
-
+        $path = $this->rateLimitPath($bucket);
         $now = time();
-        $windowStart = (int)($state['window_start'] ?? 0);
-        $count = (int)($state['count'] ?? 0);
-        if ($windowStart <= 0 || ($now - $windowStart) >= $windowSeconds) {
-            $windowStart = $now;
-            $count = 0;
-        }
 
-        $count++;
-        $allowed = $count <= $maxPerWindow;
-        $remaining = max(0, $maxPerWindow - $count);
-        $resetAt = $windowStart + $windowSeconds;
-
-        $this->writeJsonFileAtomic($path, [
-            'window_start' => $windowStart,
-            'count' => $count,
-            'updated_at' => gmdate('c'),
-        ]);
+        // The increment runs under mutateJsonFile's exclusive lock, not as a
+        // bare read-then-write: concurrent callers would otherwise all read
+        // the same count and each write count+1, so a burst of N requests
+        // advanced the window by 1. A limiter that under-counts under
+        // concurrency fails in exactly the situation it exists for, and this
+        // one now fronts two unauthenticated endpoints.
+        $windowStart = 0;
+        $count = 0;
+        $this->mutateJsonFile(
+            $path,
+            ['window_start' => 0, 'count' => 0],
+            static function (array $state) use ($now, $windowSeconds, &$windowStart, &$count): array {
+                $windowStart = (int)($state['window_start'] ?? 0);
+                $count = (int)($state['count'] ?? 0);
+                if ($windowStart <= 0 || ($now - $windowStart) >= $windowSeconds) {
+                    $windowStart = $now;
+                    $count = 0;
+                }
+                $count++;
+                return [
+                    'window_start' => $windowStart,
+                    'count' => $count,
+                    'updated_at' => gmdate('c'),
+                ];
+            }
+        );
 
         return [
-            'allowed' => $allowed,
-            'remaining' => $remaining,
-            'reset_at' => $resetAt,
+            'allowed' => $count <= $maxPerWindow,
+            'remaining' => max(0, $maxPerWindow - $count),
+            'reset_at' => $windowStart + $windowSeconds,
         ];
     }
 
@@ -1119,6 +1241,26 @@ class ServerStateStore
     private function manifestPath(string $pairKey): string
     {
         return $this->dir('manifests') . '/' . $this->slug($pairKey) . '.json';
+    }
+
+    /**
+     * Bucket file for one rate-limit key. slug() is not injective — it
+     * collapses every run of characters outside [a-z0-9._-] to a single '-'
+     * — so `<prefix>:2001:db8::1` and `<prefix>:2001:db8:1::`, both forms
+     * REMOTE_ADDR really produces, named the same file and shared one
+     * ceiling: a flooder's 429 was answered to an unrelated peer. The
+     * readable slug stays for whoever reads the directory; a short digest of
+     * the RAW key is what makes the name unique.
+     */
+    private function rateLimitPath(string $bucket): string
+    {
+        $slug = $this->slug($bucket);
+        if ($slug === '') {
+            // A key with no slug-safe characters at all would otherwise
+            // produce a filename starting with '-'.
+            $slug = 'bucket';
+        }
+        return $this->dir('rate_limits') . '/' . $slug . '-' . substr(hash('sha256', $bucket), 0, 12) . '.json';
     }
 
     private function dir(string $name): string

@@ -284,6 +284,7 @@ Empty response body.
 | Reports | Summary, breakdown, timeseries, daypart, weekpart | [Reports](11-reports.md) |
 | Rotators | CRUD + nested rules, criteria, redirects | [Rotators](12-rotators.md) |
 | Attribution | Models, snapshots, exports | [Attribution](13-attribution.md) |
+| Attribution postbacks | Apple SKAdNetwork and AdAttributionKit postbacks, apps, conversion values, report | [Attribution postbacks](19-attribution-postbacks.md) |
 | Forecast Events | CRUD + bulk-upsert | [Forecast Events](18-forecast-events.md) |
 | Users | CRUD + roles, API keys, preferences | [Users](14-users.md) |
 | System | Health, version, cron, errors, metrics, db-stats | [System](15-system.md) |

@@ -41,6 +41,7 @@
 - [Reports](api/11-reports.md)
 - [Rotators](api/12-rotators.md)
 - [Attribution](api/13-attribution.md)
+- [Attribution postbacks (SKAdNetwork, AdAttributionKit)](api/19-attribution-postbacks.md)
 - [Forecast Events](api/18-forecast-events.md)
 - [Users](api/14-users.md)
 - [System](api/15-system.md)
@@ -83,6 +84,7 @@ A separate PHP/Symfony Console CLI also ships at `bin/p202` (run `php bin/p202 l
 
 - [Advanced Attribution Engine Rollout](features/advanced-attribution-engine.md)
 - [Multi-Touch Journeys](features/multi-touch-journeys.md)
+- [The Prosper202 UI Standard](features/ui-standard.md)
 
 ### Partnering With Us
 

@@ -34,6 +34,19 @@ func TestEveryDeleteCommandHasTheSafetyFlags(t *testing.T) {
 				t.Errorf("%s is missing --%s", c.CommandPath(), flag)
 			}
 		}
+		// The shared registrars give --force the -f shorthand; a
+		// hand-rolled set loses it silently (the attribution postbacks set did), and scripts
+		// written against `-f` then hit "unknown shorthand flag".
+		if f := c.Flags().Lookup("force"); f != nil && f.Shorthand != "f" {
+			t.Errorf("%s --force has shorthand %q, want \"f\" (use registerDeleteFlags/registerSingleDeleteFlags)", c.CommandPath(), f.Shorthand)
+		}
+		// A bulk-capable delete — one positional id, so `delete <id>` or
+		// `delete [id]` — must take --ids; multi-key deletes (e.g.
+		// `delete <user_id> <api_key>`) address one record and do not.
+		rest := strings.TrimPrefix(c.Use, name+" ")
+		if !strings.Contains(rest, " ") && c.Flags().Lookup("ids") == nil {
+			t.Errorf("%s takes a single id but is missing --ids for bulk deletes (use registerDeleteFlags)", c.CommandPath())
+		}
 	}
 	walk(rootCmd)
 
