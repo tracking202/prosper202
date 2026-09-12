@@ -161,6 +161,8 @@ function upgrade_needed(): bool
 
 function info_top(): void
 {
+	require_once __DIR__ . '/functions-ui.php';
+	$p202Base = get_absolute_url();
 	$wp202 = getWallpaper();
 ?>
 
@@ -182,22 +184,15 @@ function info_top(): void
 		<meta http-equiv="imagetoolbar" content="no" />
 
 		<link rel="shortcut icon" href="../202-img/favicon.gif" type="image/ico" />
-		<!-- Loading Bootstrap -->
-		<link
-			href="<?php echo get_absolute_url(); ?>202-css/css/bootstrap.min.css"
-			rel="stylesheet" />
-		<!-- Loading Flat UI -->
-		<link
-			href="<?php echo get_absolute_url(); ?>202-css/css/flat-ui-pro.min.css"
-			rel="stylesheet" />
+		<!-- Bootstrap 3 and Flat UI Pro, pinned in 202-config/assets.php -->
+		<?php echo p202_asset_tag('legacy.bootstrap.css', $p202Base), "\n\t\t", p202_asset_tag('legacy.flat-ui.css', $p202Base); ?>
+
 		<!-- Loading Custom CSS -->
-		<link href="<?php echo get_absolute_url(); ?>202-css/custom.min.css"
+		<link href="<?php echo $p202Base; ?>202-css/custom.min.css"
 			rel="stylesheet" />
-		<!-- Load JS here -->
-		<script src="https://dp5k1x6z3k332.cloudfront.net/jquery-1.11.2.min.js"></script>
-		<script type="text/javascript"
-			src="https://dp5k1x6z3k332.cloudfront.net/jquery-ui.min.js"></script>
-		<script src="https://dp5k1x6z3k332.cloudfront.net/bootstrap.min.js"></script>
+		<!-- jQuery, jQuery UI and Bootstrap 3, pinned in 202-config/assets.php -->
+		<?php echo p202_asset_tag('legacy.jquery.js', $p202Base), "\n\t\t", p202_asset_tag('legacy.jquery-ui.js', $p202Base), "\n\t\t", p202_asset_tag('legacy.bootstrap.js', $p202Base); ?>
+
 		<script type='text/javascript'>
 			var googletag = googletag || {};
 			googletag.cmd = googletag.cmd || [];

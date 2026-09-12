@@ -36,15 +36,14 @@ GA_googleFetchAds();
 <meta http-equiv="refresh" content="10">
 <meta name="robots" content="noindex, nofollow" />
 
-<!-- Loading Bootstrap -->
-<link href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.2/css/bootstrap.min.css" rel="stylesheet">
-<!-- Loading Flat UI -->
-<link href="<?php echo get_absolute_url();?>202-css/css/flat-ui-pro.min.css" rel="stylesheet">
-<!-- Loading Custom CSS -->
-<link href="<?php echo get_absolute_url();?>202-css/custom.min.css" rel="stylesheet">
+<!-- Bootstrap 3, Flat UI Pro, jQuery: the pinned copies in 202-config/assets.php -->
+<?php $p202Base = get_absolute_url(); echo p202_asset_tag('legacy.bootstrap.css', $p202Base), "\n", p202_asset_tag('legacy.flat-ui.css', $p202Base); ?>
 
-<script src="http://ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js"></script>
-<script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.2/js/bootstrap.min.js"></script>
+<!-- Loading Custom CSS -->
+<link href="<?php echo $p202Base; ?>202-css/custom.min.css" rel="stylesheet">
+
+<?php echo p202_asset_tag('legacy.jquery.js', $p202Base), "\n", p202_asset_tag('legacy.bootstrap.js', $p202Base); ?>
+
 
 
 </head>
