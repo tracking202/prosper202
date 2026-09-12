@@ -340,6 +340,51 @@ final class AttributionControllersTest extends TestCase
         $this->assertNotEmpty($this->capturedStatements('DELETE'));
     }
 
+    public function testTheStoredPlatformIsCanonicalWhateverCaseWasSent(): void
+    {
+        // The guard compares case-insensitively, so 'iOS' is accepted. If the
+        // write path then stored 'iOS' verbatim, the row would not match a
+        // later `WHERE platform = 'ios'` — the value a report or a filter is
+        // written against. Reading the bound value rather than mocking the
+        // normaliser is the point: this fails if create() stops calling it.
+        $db = $this->capturingDb();
+        try {
+            (new AttributionAppsController($db, 1))->create([
+                'app_id' => 525463029,
+                'app_name' => 'Case Test',
+                'platform' => '  iOS  ',
+            ]);
+        } catch (\Throwable) {
+            // The double cannot expose insert_id, so create() fails after the
+            // INSERT. The statement it sent was still captured.
+        }
+
+        $inserts = array_values(array_filter(
+            $this->capturedStatements('INSERT'),
+            static fn(array $s): bool => str_contains($s['sql'], '202_attribution_apps')
+        ));
+        $this->assertCount(1, $inserts, 'the registration INSERT was captured');
+        $this->assertStringContainsString('platform', $inserts[0]['sql'], 'platform is written');
+        $this->assertContains('ios', $inserts[0]['values'], 'the canonical spelling is what is bound');
+        $this->assertNotContains('  iOS  ', $inserts[0]['values'], 'the raw spelling is not');
+    }
+
+    public function testAnUnsupportedPlatformIsRefusedBeforeAnyStatement(): void
+    {
+        $db = $this->capturingDb();
+        try {
+            (new AttributionAppsController($db, 1))->create([
+                'app_id' => 525463029,
+                'app_name' => 'Android Test',
+                'platform' => 'android',
+            ]);
+            $this->fail('android was accepted');
+        } catch (ValidationException $e) {
+            $this->assertStringContainsString('Android', $e->getFieldErrors()['platform'] ?? '');
+        }
+        $this->assertSame([], $this->captured, 'the refusal must land before anything is prepared');
+    }
+
     public function testARotationWhoseReadBackFailsReportsTheWriteAsCommitted(): void
     {
         // POST /attribution/apps/{id}/schema-token/rotate is stageable, and

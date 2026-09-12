@@ -1,6 +1,7 @@
 Release notes
 
 Version 1.9.76
+-- New: Setup › Mobile Apps — register the apps you advertise from one field (paste the App Store link and the id, platform and name are read from it), see both receivers check themselves, and open an app for its conversion-value rules, its schema token, the Info.plist keys and SDK snippet filled in with this install's URL, and the postbacks it has received. The first page built on the new UI standard
 -- New: One UI standard for the whole site, introduced without a big bang — a second page shell (`template_top($title, ['ui' => 'v2'])`) loads Bootstrap 5.3 with a Prosper202 theme expressed as Bootstrap's own CSS variables (light and dark, no Sass build) and a first-party component layer (`202-css/p202-components.css`: page header, tabs, panel, tiles, pills, report table, list, empty state, code box, status strip); pages migrate one family at a time while untouched pages keep today's stack unchanged
 -- New: The chrome every page shares — navbar, Prosper202 CS section tabs, sub-menu strip, content frame and footer — is rebuilt as framework-neutral markup styled by `202-css/p202-chrome.css`, so it looks the same on migrated and unmigrated pages; the account menu is a `<details>` element that works without a framework script, and the v2 shell adds a light/dark/system theme switch to it
 -- New: `202-account/ui-kit.php` (admins) renders every component of the standard in every state, as the reference for reviews and screenshots

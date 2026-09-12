@@ -31,6 +31,18 @@ use Api\V3\Exception\WriteCommittedException;
  */
 class AttributionAppsController extends Controller
 {
+    public const PLATFORM_IOS = 'ios';
+
+    /**
+     * Recognised platforms: true when this install can receive their
+     * postbacks, otherwise the sentence explaining why not.
+     */
+    private const PLATFORMS = [
+        self::PLATFORM_IOS => true,
+        'android' => 'Android apps are not supported yet: this install receives Apple\'s SKAdNetwork '
+            . 'and AdAttributionKit postbacks, and there is no Android receiver to point an app at.',
+    ];
+
     protected function tableName(): string
     {
         return '202_attribution_apps';
@@ -46,6 +58,12 @@ class AttributionAppsController extends Controller
         return [
             'app_id'       => ['type' => 'i', 'required' => true],
             'app_name'     => ['type' => 's', 'required' => true, 'max_length' => 255],
+            // The store the app is distributed through. Only Apple's
+            // frameworks have a receiver here, so 'ios' is the only accepted
+            // value and the only default; the column exists so an Android
+            // receiver can be added without a migration, and so the UI can
+            // show the platform it derived from a store link.
+            'platform'     => ['type' => 's', 'max_length' => 16, 'default' => self::PLATFORM_IOS],
             'notes'        => ['type' => 's', 'max_length' => 500],
             // 1 = development-signed postbacks for this app store as trusted
             // (signature_valid = 1) and count in the report; 0 = they store
@@ -81,6 +99,10 @@ class AttributionAppsController extends Controller
         // required check so the caller still gets every missing field at once.
         if (array_key_exists('app_id', $payload)) {
             self::assertUsableAppId($payload['app_id']);
+        }
+        self::assertSupportedPlatform($payload);
+        if (array_key_exists('platform', $payload) && $payload['platform'] !== null) {
+            $payload['platform'] = self::normalizePlatform($payload['platform']);
         }
         return parent::create($payload);
     }
@@ -148,6 +170,58 @@ class AttributionAppsController extends Controller
                 'app_id' => 'Must be a positive App Store id (the number in the app\'s App Store URL)',
             ]);
         }
+    }
+
+    /**
+     * Refuse a platform this install cannot receive postbacks for, and say
+     * why rather than listing the one value that works.
+     *
+     * Reads the RAW payload for the reason assertUsableAppId() does: by the
+     * time a hook sees the value, validatePayload() has already cast it, and
+     * a field-level 'allowed' list would answer "must be one of: ios" — true,
+     * but it does not tell an Android user that the answer is "not yet"
+     * rather than "you typed it wrong". The sentence comes from the platform's
+     * own entry in PLATFORMS, so adding a store here means writing the
+     * sentence for it; a generic branch would have answered every future
+     * unsupported store with the one about Android.
+     *
+     * @param array<string, mixed> $payload
+     */
+    public static function assertSupportedPlatform(array $payload): void
+    {
+        if (!array_key_exists('platform', $payload) || $payload['platform'] === null) {
+            return;
+        }
+        $value = self::normalizePlatform($payload['platform']);
+        $known = self::PLATFORMS[$value] ?? null;
+        if ($known === true) {
+            return;
+        }
+        throw new ValidationException('Validation failed', [
+            'platform' => is_string($known)
+                ? $known
+                : 'Must be one of: ' . implode(', ', self::supportedPlatforms()),
+        ]);
+    }
+
+    /**
+     * The spelling a platform is stored as.
+     *
+     * assertSupportedPlatform() compares case-insensitively, so 'iOS' passes;
+     * without this the row would then hold 'iOS' while every query that
+     * filters the column is written against 'ios'. Normalising at the two
+     * write paths keeps the stored value canonical, which is the only thing
+     * a later WHERE can rely on.
+     */
+    private static function normalizePlatform(mixed $platform): string
+    {
+        return is_scalar($platform) ? strtolower(trim((string)$platform)) : '';
+    }
+
+    /** @return list<string> */
+    private static function supportedPlatforms(): array
+    {
+        return array_keys(array_filter(self::PLATFORMS, static fn ($supported) => $supported === true));
     }
 
     /**
@@ -226,6 +300,10 @@ class AttributionAppsController extends Controller
         // only ever sees the already-cast int.
         if (array_key_exists('app_id', $payload)) {
             self::assertUsableAppId($payload['app_id']);
+        }
+        self::assertSupportedPlatform($payload);
+        if (array_key_exists('platform', $payload) && $payload['platform'] !== null) {
+            $payload['platform'] = self::normalizePlatform($payload['platform']);
         }
         $updated = parent::update($id, $payload);
         // Re-run the claim on every update so unclaimed history (or a claim

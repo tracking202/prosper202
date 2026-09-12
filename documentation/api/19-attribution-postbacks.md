@@ -22,6 +22,41 @@ the key its `kid` names — Apple's production key (the same key SKAdNetwork
 uses) or one of Apple's two development keys, which store as `development`
 (see [AdAttributionKit](#adattributionkit) below).
 
+## Registering an app in the web interface
+
+**Prosper202 CS › Setup › Mobile Apps** does everything this guide describes
+through the API, for people who would rather not use it.
+
+Paste the app's App Store link into the one field on that page. The App Store
+id, the platform and the app's name are read from the link, and the
+registration is one click; what was derived is then shown at the top of the
+app's page with a **change** link, so nothing is assumed silently. If the name
+cannot be looked up, the form comes back asking for that one field rather than
+registering the app under a placeholder.
+
+The page also:
+
+- fetches both receiver URLs **from your browser** and reports what came back,
+  with the exact origin to paste into `Info.plist`. An install whose URL is not
+  HTTPS is marked `Apple requires HTTPS` rather than fetched, because Apple
+  calls the receiver over public HTTPS on port 443 and nothing else. Read a
+  green `Ready` as "your browser reached it", not as "Apple can": a receiver on
+  `localhost` or behind a VPN answers you and not Apple;
+- offers a starter conversion-value schema (install, trial, purchase on fine
+  values 1, 10 and 40 and the three coarse buckets) when an app has no rules,
+  and edits rules one at a time afterwards;
+- shows the schema token masked, with Reveal, Copy and Rotate, and fills the
+  `Info.plist` keys and the Swift snippet in with this install's URL;
+- lists the newest ten postbacks the app has received, whatever their
+  signature state;
+- offers the development-postback opt-in where it matters: when development
+  postbacks have arrived for an app that does not trust them, the app's row
+  says so and accepts them in one click.
+
+Everything on that page goes through the same v3 controllers as the API and
+the CLI, so the validation and the error sentences are identical. Registering
+an app there is the same write as `POST /api/v3/attribution/apps`.
+
 ## Setup
 
 1. **Confirm the endpoints are reachable.** Postbacks arrive at

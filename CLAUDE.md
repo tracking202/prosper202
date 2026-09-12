@@ -223,6 +223,35 @@ prove otherwise by feeding a malformed value in at the outermost entry
 point (the decoded request body, not the hook's argument) and watching
 where it lands.
 
+### 19. A class name is not a contract, and a container is not a component
+CSS has no undefined-symbol error. `class="p202-flash p202-flash--warn"`
+renders as an ordinary `<div>`: the modifier was never written into any
+stylesheet, so it styles nothing, warns nothing, and looks in the source
+exactly like the modifiers that do exist. Two of these shipped in one
+feature — the second found only by diffing every `p202-*` token in the
+markup against the selectors in `202-css/`. That diff is now
+`ComponentClassIsConsumedTest`, which fails when a class in markup is
+named by no stylesheet rule and no script. A class that only a script
+selects on (`p202-copy-label`) counts as consumed: the test asks whether
+*anything* acts on the class, not whether it is styled.
+
+The half a checker cannot see is the one above it. `.p202-empty` is
+defined, so this passes:
+
+```html
+<div class="p202-empty"><h2>Nothing received yet</h2><p>…</p></div>
+```
+
+and it still renders wrong, because the component's typography lives in
+`.p202-empty__title`, not in the container — the `<h2>` comes out at
+browser-default heading size, louder than every panel title on the page.
+Reaching for a component means reaching for its parts. The rule at the top
+of `p202-components.css` says where they are: `202-account/ui-kit.php`
+renders every component in every state, so read the kit's markup for the
+component you want and copy its shape, rather than putting your own
+elements inside its container and assuming the container carries the
+styling.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure
@@ -324,6 +353,15 @@ Check here before burning time on tooling failures.
   installed.json, and the static map takes precedence). The tag ships
   `resources/regexes.php`, so full composer installs (CI) need none of
   this.
+- **`php -S` caches bytecode for 2 seconds, so an edit-then-request probe can
+  test the code you just replaced.** The web SAPI here runs with
+  `opcache.enable=On` and `opcache.revalidate_freq=2`; the CLI does not
+  (`enable_cli=Off`), so `php -l` and PHPUnit always see the new file while the
+  server may not. Forcing a failure into a method and immediately curling the
+  page returned the *old* behaviour and read as "the fix does not work" — the
+  fix was fine. Put a few seconds of real work (or `php -r 'usleep(3500000);'`)
+  between the write and the request, or restart the server. A full live-pass
+  script is slow enough not to hit this; a one-shot probe is not.
 - **A live local instance is achievable end to end**: install
   `mariadb-server` via apt, start `mariadbd --user=mysql` manually, create
   a DB/user, then run `tests/fixtures/agent-eval/ci/install-instance.sh`
@@ -394,9 +432,11 @@ Check here before burning time on tooling failures.
   tree loads a script or stylesheet from an external host except Highcharts at
   a pinned version and two hosted-service loaders listed in
   `ShellIsolationTest`.
-  Three structural tests guard this (`AssetManifestTest`, `ShellIsolationTest`,
-  `NoLegacyBootstrapClassesTest` under `tests/Api/V3/`), and
-  `202-account/ui-kit.php` shows every component. The standard's first rule
+  Four structural tests guard this (`AssetManifestTest`, `ShellIsolationTest`,
+  `NoLegacyBootstrapClassesTest`, `ComponentClassIsConsumedTest` under
+  `tests/Api/V3/`), and `202-account/ui-kit.php` shows every component —
+  copy a component's markup from the kit, parts included (error pattern #19).
+  The standard's first rule
   is that the app decides what it can and says so: a form shows the common
   case, everything else sits under a closed `.p202-disclosure` labelled
   Advanced, and a value the app can find (platform from a store link, the
@@ -424,7 +464,7 @@ bot, or by yourself — ends in one of three artefacts, chosen in this order:
      semantics, `bind_param` arity, forbidden call shapes;
    - a **structural test** under `tests/`, for anything that is really a
      question about the codebase rather than one file: `UncheckedExecuteTest`,
-     `DuplicateGlobalClassTest`, `ScopeCoverageTest`,
+     `DuplicateGlobalClassTest`, `ScopeCoverageTest`, `ComponentClassIsConsumedTest`,
      `ApiKeyAuthPathScopeTest`, `StaticSqlSchemaTest` are all this shape —
      they walk the tree or the schema and assert an invariant holds
      everywhere.
