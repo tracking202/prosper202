@@ -453,6 +453,13 @@ where a check quietly fails to check what it appears to.
 - Read the file first, then think about what each line does, especially error paths.
 - After writing code, re-read it as a skeptic looking for the failure mode, not as the author expecting it to work.
 - When fixing a pattern (e.g., unchecked execute), grep the entire codebase for every instance — don't fix one and assume the rest are fine.
+- Deleting CSS is a code change, not housekeeping. Before removing a rule as
+  superseded, grep its selector against the markup: two content rules went out
+  with the old navbar in wave 0 (`.advertise`, the home page's offer iframe,
+  which fell back to a 300px default inside a full-width panel, and the
+  `small` override of Flat UI Pro's 2.067 line-height), and neither element is
+  anywhere near the chrome. Run the whole removed set through a usage sweep,
+  and measure the survivors in a browser rather than reasoning about cascade.
 - Per-file reading cannot catch a defect that lives in the *relationship* between two files: a handler and its dispatcher can each read correctly while the runtime binding between them is wrong. For cross-file mechanisms, execute the path instead of reading it.
 - Never report work as complete or merge-ready on the strength of tests that don't exercise the new path. State what was actually run and what could not be.
 

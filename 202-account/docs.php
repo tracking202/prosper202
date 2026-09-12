@@ -4,82 +4,8 @@ include_once(str_repeat("../", 1).'202-config/connect.php');
 
 AUTH::require_user();
 
-// Simple markdown to HTML converter
-function markdownToHtml(string $markdown): string {
-    // Convert headers
-    $html = preg_replace('/^### (.+)$/m', '<h3>$1</h3>', $markdown);
-    $html = preg_replace('/^## (.+)$/m', '<h2>$1</h2>', $html);
-    $html = preg_replace('/^# (.+)$/m', '<h1>$1</h1>', $html);
-    
-    // Convert code blocks
-    $html = preg_replace('/```(\w+)?\n(.*?)```/s', '<pre><code class="language-$1">$2</code></pre>', $html);
-    $html = preg_replace('/`([^`]+)`/', '<code>$1</code>', $html);
-    
-    // Convert links
-    $html = preg_replace('/\[([^\]]+)\]\(([^)]+)\)/', '<a href="$2">$1</a>', $html);
-    
-    // Convert bold and italic
-    $html = preg_replace('/\*\*([^*]+)\*\*/', '<strong>$1</strong>', $html);
-    $html = preg_replace('/\*([^*]+)\*/', '<em>$1</em>', $html);
-    
-    // Convert lists
-    $html = preg_replace('/^\- (.+)$/m', '<li>$1</li>', $html);
-    $html = preg_replace('/(<li>.*<\/li>)/s', '<ul>$1</ul>', $html);
-    
-    // Convert line breaks to paragraphs; pipe tables become <table>
-    $lines = explode("\n", $html);
-    $paragraphs = [];
-    $current_paragraph = '';
-    $count = count($lines);
-    $cells = static fn (string $row): array => array_map('trim', explode('|', trim(trim($row), '|')));
-    $separator = '/^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/';
-
-    for ($i = 0; $i < $count; $i++) {
-        $line = trim($lines[$i]);
-        // A pipe table: a header row, a row of dashes, then the body rows.
-        if (str_starts_with($line, '|') && isset($lines[$i + 1]) && preg_match($separator, trim($lines[$i + 1])) === 1) {
-            if (!empty($current_paragraph)) {
-                $paragraphs[] = '<p>' . $current_paragraph . '</p>';
-                $current_paragraph = '';
-            }
-            $table = '<table class="doc-table"><thead><tr>';
-            foreach ($cells($line) as $cell) {
-                $table .= '<th>' . $cell . '</th>';
-            }
-            $table .= '</tr></thead><tbody>';
-            for ($i += 2; $i < $count && str_starts_with(trim($lines[$i]), '|'); $i++) {
-                $table .= '<tr>';
-                foreach ($cells($lines[$i]) as $cell) {
-                    $table .= '<td>' . $cell . '</td>';
-                }
-                $table .= '</tr>';
-            }
-            $i--; // the loop increment steps past the last row
-            $paragraphs[] = $table . '</tbody></table>';
-            continue;
-        }
-        if (empty($line)) {
-            if (!empty($current_paragraph)) {
-                $paragraphs[] = $current_paragraph;
-                $current_paragraph = '';
-            }
-        } elseif (preg_match('/^<(h[1-6]|pre|ul|li|table)/', $line)) {
-            if (!empty($current_paragraph)) {
-                $paragraphs[] = '<p>' . $current_paragraph . '</p>';
-                $current_paragraph = '';
-            }
-            $paragraphs[] = $line;
-        } else {
-            $current_paragraph .= ($current_paragraph ? ' ' : '') . $line;
-        }
-    }
-    
-    if (!empty($current_paragraph)) {
-        $paragraphs[] = '<p>' . $current_paragraph . '</p>';
-    }
-    
-    return implode("\n", $paragraphs);
-}
+// The Markdown renderer lives in 202-config/markdown.php so it can be tested.
+require_once __DIR__ . '/../202-config/markdown.php';
 
 // Get the document to display
 $doc = $_GET['doc'] ?? '';

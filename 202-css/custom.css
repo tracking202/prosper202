@@ -6,6 +6,13 @@ select.input-sm {
   line-height: 1;
 }
 
+/* Flat UI Pro gives <small> a line-height of 2.067, which is why this
+   override has always been here; it is typography, not chrome, and belongs
+   with the classic stack rather than with the superseded navbar rules. */
+small, .small {
+  line-height: 1;
+}
+
 .container{
   /* Keep the wide ~1450px layout on large screens, but use a fluid width so the
      container never exceeds the viewport (a hardcoded width:1450px overflowed by
@@ -119,6 +126,15 @@ select.input-sm {
   font-size: 12px;
 }
 
+
+/* The Special Offers placement on the account home page. Content, not
+   chrome: the header's own placement is styled by p202-chrome.css, and this
+   rule was removed with it by mistake, which left the iframe at a browser
+   default 300px inside a full-width panel. */
+.advertise{
+  padding: 22px 0px;
+  width: 100%;
+}
 
 .home-icons{
   font-size: 15px;
