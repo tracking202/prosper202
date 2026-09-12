@@ -499,6 +499,19 @@ XML
             if [ "$got" = "$want" ]; then printf '  ok    %-46s go=%s\n' "$name" "$got"; pass=$((pass + 1)); else printf '  FAIL  %-46s go=%s (wanted %s)\n' "$name" "$got" "$want"; fail=$((fail + 1)); fi
         }
         expect_go "go: healthy module PASSES" PASS
+        # If mktemp fails, HOME must not silently become empty: the
+        # empty-HOME step is an isolation probe and an unisolated run is not
+        # a pass. A PATH shim fails mktemp without touching TMPDIR, which go
+        # test itself needs.
+        # The shim fails only `mktemp -d`, which is the empty-HOME
+        # allocation; the plain `mktemp` the gofmt gate uses earlier in the
+        # same tier passes through to the real binary. A shim that failed
+        # every call tripped at the gofmt gate instead, and this case kept
+        # passing after the empty-HOME check it exists for was removed.
+        real_mktemp=$(command -v mktemp)
+        mkdir -p "$REPO/shim" && printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = "-d" ] && exit 1; done\nexec %s "$@"\n' "$real_mktemp" > "$REPO/shim/mktemp" && chmod +x "$REPO/shim/mktemp"
+        expect_go "go: a failing mktemp -d is SKIP, not an unisolated PASS" SKIP PATH="$REPO/shim:$PATH"
+        rm -rf "$REPO/shim"
         printf 'package main\n\n// #cgo LDFLAGS: -lp202_no_such_lib_zz\nimport "C"\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
         expect_go "go: a change with bad cgo is FAIL on a healthy host" FAIL
         expect_go "go: the same failure on a host that cannot build cgo is SKIP" SKIP CC=false
@@ -548,6 +561,28 @@ XML
         if [ -z "$(ci_go_toolchain)" ]; then printf '  ok    %-46s\n' "go: CI on the same Go needs no toolchain switch"; pass=$((pass + 1)); else printf '  FAIL  %-46s\n' "go: CI on the same Go needs no toolchain switch"; fail=$((fail + 1)); fi
         printf "          go-version: '1.1'\n" > .github/workflows/go-cli.yml
         expect_go "go: CI on a Go that cannot be fetched is SKIP, not PASS" SKIP
+        # gofmt needs no toolchain switch, so it must still report before
+        # the fetch-dependent SKIP.
+        printf 'package main\n\nfunc   ugly( ) {\n}\n' > go-cli/cmd/x/ugly.go
+        expect_go "go: an unformatted file is FAIL even when CI's Go cannot be fetched" FAIL
+        rm -f go-cli/cmd/x/ugly.go
+        # A parse failure is a verdict only when the local parser accepts
+        # at least what CI's does. CI on 1.1 is older than any local Go, so
+        # a syntax error is FAIL outright...
+        printf 'package main\n\nfunc main( {\n' > go-cli/cmd/x/broken.go
+        expect_go "go: a syntax error with CI on an older Go is FAIL" FAIL
+        # ...while CI on a Go newer than local (1.99 exists nowhere, so it
+        # cannot be fetched) leaves a syntax error and a version gap
+        # indistinguishable: SKIP, not FAIL, and not PASS.
+        printf "          go-version: '1.99'\n" > .github/workflows/go-cli.yml
+        expect_go "go: a syntax error with CI on a newer, unfetchable Go is SKIP" SKIP
+        # ...but an unformatted file next to it is a definite,
+        # version-independent failure and must not be deferred with it.
+        printf 'package main\n\nfunc   ugly( ) {\n}\n' > go-cli/cmd/x/ugly.go
+        expect_go "go: an unformatted file beside a deferred parse error is still FAIL" FAIL
+        rm -f go-cli/cmd/x/ugly.go
+        rm -f go-cli/cmd/x/broken.go
+        printf "          go-version: '1.1'\n" > .github/workflows/go-cli.yml
         # A real other minor: CI's toolchain is fetched and the tier runs
         # under it. Needs the toolchain module to be reachable; skip the
         # case, visibly, when it is not.
@@ -562,6 +597,16 @@ XML
             else
                 printf '  FAIL  %-46s\n' "go: a different CI minor runs under CI's toolchain"; fail=$((fail + 1))
                 printf '%s\n' "$go_out" | grep -E "^--- go|^  go " | sed 's/^/        | /'
+            fi
+            # The empty-HOME step must reuse the caches, not fetch the
+            # toolchain a second time into a temp tree.
+            # Count only after the marker: a first-ever fetch in the switch
+            # step is legitimate, a fetch inside the empty-HOME step is not.
+            dl=$(printf '%s\n' "$go_out" | sed -n '/^empty-HOME run:/,$p' | grep -c "downloading go1\.")
+            if [ "$dl" -eq 0 ]; then
+                printf '  ok    %-46s downloads=%s\n' "go: the empty-HOME run keeps the toolchain cache" "$dl"; pass=$((pass + 1))
+            else
+                printf '  FAIL  %-46s downloads=%s (wanted 0)\n' "go: the empty-HOME run keeps the toolchain cache" "$dl"; fail=$((fail + 1))
             fi
         fi
         rm -rf .github

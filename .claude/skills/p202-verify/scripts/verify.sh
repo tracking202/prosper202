@@ -610,6 +610,17 @@ go_version_mismatch_note() {
     echo "local Go is $local_v, CI pins $ci (.github/workflows/go-cli.yml)"
 }
 
+# True when the local Go minor is at least CI's (or either is unknown, in
+# which case the local parser is the only one there is).
+go_local_is_at_least_ci() {
+    local ci local_v
+    ci=$(ci_go_version)
+    local_v=$(local_go_version)
+    [ -n "$ci" ] && [ -n "$local_v" ] || return 0
+    [ "${local_v%%.*}" -gt "${ci%%.*}" ] && return 0
+    [ "${local_v%%.*}" -eq "${ci%%.*}" ] && [ "${local_v#*.}" -ge "${ci#*.}" ]
+}
+
 # The GOTOOLCHAIN value that makes the local go run CI's minor, or nothing
 # when the local go already is CI's. Prints "?" when the minors differ but
 # no toolchain for CI's minor can be resolved.
@@ -670,30 +681,66 @@ go_modules_unavailable() {
 run_go() {
     local out rc godir gofmt_bin unformatted
     godir=$(dirname "$GO_BIN")
-    use_ci_go_toolchain || return $TIER_COULD_NOT_RUN
     # CI's first gate (.github/workflows/go-cli.yml): any file gofmt would
     # reformat fails the job before vet or test run. It needs no module
-    # cache and no network, so it runs before the availability check: a
-    # tier that cannot fetch dependencies can still report a code failure
-    # it is able to see.
+    # cache, no network and no particular toolchain, so it runs before both
+    # the toolchain switch and the availability check: a tier that will
+    # SKIP for either reason can still report a code failure it is able to
+    # see. The previous commit put the switch first and moved this gate
+    # back behind a fetch-dependent SKIP, which a reviewer caught.
     gofmt_bin="$("$GO_BIN" env GOROOT 2>/dev/null)/bin/gofmt"
+    local gofmt_rc gofmt_err errf deferred_parse=""
     if [ -x "$gofmt_bin" ]; then
-        local gofmt_rc
-        # stderr kept and exit status checked: a file gofmt cannot parse
-        # produces a diagnostic on stderr, nothing on stdout, and exit 2. The
-        # first version discarded both and walked on to the module check,
-        # which on a machine that cannot fetch reported the whole tier SKIP
-        # for a syntax error. CI rejects that file at the same step.
-        unformatted=$( cd go-cli && "$gofmt_bin" -l . 2>&1 )
-        gofmt_rc=$?
-        if [ $gofmt_rc -ne 0 ]; then
-            printf 'gofmt failed:\n%s\n' "$unformatted"
-            FAIL_NOTE="gofmt exited $gofmt_rc, which means a file it could not parse; CI's Go workflow fails on this before vet or test"
-            return 1
+        # stdout and stderr kept apart, exit status checked. gofmt -l lists
+        # files it would reformat on stdout (a definite, version-independent
+        # failure) and prints parse diagnostics on stderr with exit 2 (which
+        # may be ambiguous, see below). The first version discarded both and
+        # walked on; the second merged them, so an unformatted file next to
+        # an unparsable one was deferred with it and could end as SKIP.
+        if ! errf=$(mktemp); then
+            COULD_NOT_RUN_REASON="mktemp failed; gofmt's diagnostics could not be captured"
+            return $TIER_COULD_NOT_RUN
         fi
+        unformatted=$( cd go-cli && "$gofmt_bin" -l . 2>"$errf" )
+        gofmt_rc=$?
+        gofmt_err=$(cat "$errf"); rm -f "$errf"
         if [ -n "$unformatted" ]; then
             printf 'gofmt would reformat:\n%s\n' "$unformatted"
             FAIL_NOTE="gofmt -l lists $(printf '%s\n' "$unformatted" | grep -c .) file(s); CI's Go workflow fails on this before vet or test"
+            return 1
+        fi
+        if [ $gofmt_rc -ne 0 ]; then
+            # A parse failure is only a verdict when the local parser accepts
+            # at least what CI's does, which is the case when the local Go is
+            # CI's minor or newer (Go never removes syntax). An older local
+            # Go can reject syntax CI's version introduced, so the decision
+            # is deferred until CI's toolchain has been selected and its own
+            # gofmt asked. A reviewer found this after the previous round
+            # had, correctly, moved the gate ahead of the toolchain switch.
+            if go_local_is_at_least_ci; then
+                printf 'gofmt failed:\n%s\n' "$gofmt_err"
+                FAIL_NOTE="gofmt exited $gofmt_rc, which means a file it could not parse; CI's Go workflow fails on this before vet or test"
+                return 1
+            fi
+            deferred_parse="$gofmt_err"
+        fi
+    fi
+    if ! use_ci_go_toolchain; then
+        if [ -n "$deferred_parse" ]; then
+            COULD_NOT_RUN_REASON="the local gofmt (older than CI's Go) could not parse a file, and CI's toolchain could not be fetched to ask its gofmt; a syntax error and a version gap look the same from here"
+        fi
+        return $TIER_COULD_NOT_RUN
+    fi
+    if [ -n "$deferred_parse" ]; then
+        # CI's gofmt gets the final word on the file the local one rejected.
+        gofmt_bin="$("$GO_BIN" env GOROOT 2>/dev/null)/bin/gofmt"
+        unformatted=$( cd go-cli && "$gofmt_bin" -l . 2>&1 )
+        gofmt_rc=$?
+        if [ $gofmt_rc -ne 0 ] || [ -n "$unformatted" ]; then
+            # Merged is fine here: any output from CI's own gofmt is a verdict.
+            printf 'gofmt (CI toolchain %s):\n%s\n' "${GOTOOLCHAIN:-}" "$unformatted"
+            FAIL_NOTE="gofmt under CI's ${GOTOOLCHAIN:-toolchain} rejects a file the local gofmt also rejected; CI's Go workflow fails on this before vet or test"
+            unset GOTOOLCHAIN
             return 1
         fi
     fi
@@ -732,9 +779,26 @@ run_go() {
     fi
 
     # An empty HOME catches flag checks that only pass because this machine
-    # has a CLI config. CI has none.
-    out=$( cd go-cli && HOME=$(mktemp -d) PATH="$godir:$PATH" "$GO_BIN" test ./cmd/... 2>&1 )
+    # has a CLI config. CI has none. Only the CLI's config home is isolated:
+    # Go's GOPATH, module cache and build cache default to $HOME/go and
+    # $HOME/.cache, so a bare HOME swap made this step refetch the toolchain
+    # into a temp tree it never removed, and let a proxy failure here read
+    # as a code FAIL. The caches are resolved first and passed through.
+    local tmp_home gopath gomodcache gocache
+    gopath=$("$GO_BIN" env GOPATH 2>/dev/null)
+    gomodcache=$("$GO_BIN" env GOMODCACHE 2>/dev/null)
+    gocache=$("$GO_BIN" env GOCACHE 2>/dev/null)
+    # Checked: if mktemp fails, HOME would be empty and the run would fall
+    # back to whatever go resolves, which is no longer an isolation probe.
+    if ! tmp_home=$(mktemp -d); then
+        COULD_NOT_RUN_REASON="mktemp -d failed, so HOME could not be isolated for the empty-HOME run; vet and test passed under ${GOTOOLCHAIN:-the local go}"
+        unset GOTOOLCHAIN
+        return $TIER_COULD_NOT_RUN
+    fi
+    printf 'empty-HOME run:\n'
+    out=$( cd go-cli && HOME="$tmp_home" GOPATH="$gopath" GOMODCACHE="$gomodcache" GOCACHE="$gocache" PATH="$godir:$PATH" "$GO_BIN" test ./cmd/... 2>&1 )
     rc=$?
+    rm -rf "$tmp_home"
     printf '%s\n' "$out"
     if [ $rc -ne 0 ] && go_env_broken "$out" && host_go_toolchain_broken; then
         COULD_NOT_RUN_REASON="the host Go toolchain cannot build a trivial cgo program (probe failed) during the empty-HOME run"

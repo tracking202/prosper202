@@ -545,7 +545,7 @@ where a check quietly fails to check what it appears to.
   A `--scope` check placed after `api.NewFromConfig()` passed here only
   because this sandbox has a URL configured; CI has none, so the config error
   won and the flag was never examined. Run CLI tests with an empty `HOME`
-  (`HOME=$(mktemp -d) go test ./cmd/...`) before pushing anything that touches
+  (`gopath=$(go env GOPATH); gomodcache=$(go env GOMODCACHE); gocache=$(go env GOCACHE); tmp=$(mktemp -d) && HOME="$tmp" GOPATH="$gopath" GOMODCACHE="$gomodcache" GOCACHE="$gocache" go test ./cmd/...; rc=$?; rm -rf "$tmp"; [ "$rc" -eq 0 ]`) before pushing anything that touches
   a command which builds a client. Flag validation belongs *before* the
   client is built anyway.
 
