@@ -109,7 +109,9 @@ function p202_ui_shell(mixed $requested): string
  * loaded before the page's own extra head markup) and 'js_page' (scripts that
  * depend on the section or page, loaded after it). Each item is either
  * ['asset' => <manifest id>] or ['path' => <repo-relative first-party file>],
- * the latter optionally with a 'query' string.
+ * the latter optionally with a 'query' string. A third-party file is always
+ * a manifest id — tests/Api/V3/ShellIsolationTest.php refuses a bare path
+ * that is not one of the first-party files it names.
  *
  * $context keys: section ($navigation[1]), sub ($navigation[2]),
  * page ($navigation[3]), logged_in (bool), ddlci (string, campaigns setup).
@@ -143,9 +145,6 @@ function p202_shell_assets(string $ui, array $context = []): array
         $jsHead = [
             ['asset' => 'jquery.js'],
             ['asset' => 'bootstrap.js'],
-            ['path' => '202-js/tablesort.min.js'],
-            ['path' => '202-js/list.min.js'],
-            ['path' => '202-js/list.fuzzysearch.min.js'],
         ];
         $jsPage = [];
         if ($wantsCharts) {
@@ -158,17 +157,17 @@ function p202_shell_assets(string $ui, array $context = []): array
     }
 
     $css = [
-        ['path' => '202-css/css/bootstrap.min.css'],
-        ['path' => '202-css/css/flat-ui-pro.min.css'],
-        ['path' => '202-css/css/font-awesome.min.css'],
-        ['path' => '202-css/css/bootstrap-tokenfield.min.css'],
-        ['path' => '202-css/css/tokenfield-typeahead.min.css'],
+        ['asset' => 'legacy.bootstrap.css'],
+        ['asset' => 'legacy.flat-ui.css'],
+        ['asset' => 'legacy.font-awesome.css'],
+        ['asset' => 'legacy.tokenfield.css'],
+        ['asset' => 'legacy.tokenfield-typeahead.css'],
     ];
     if ($isCampaignsSetup) {
         $css[] = ['asset' => 'legacy.tablesorter-pager.css'];
         $css[] = ['asset' => 'legacy.tablesorter-theme.css'];
     }
-    $css[] = ['path' => '202-css/css/select2.css'];
+    $css[] = ['asset' => 'legacy.select2.css'];
     $css[] = ['path' => '202-css/custom.css'];
     $css[] = ['path' => '202-css/p202-ui.css'];
     $css[] = ['path' => '202-css/design-system.css'];
@@ -183,14 +182,14 @@ function p202_shell_assets(string $ui, array $context = []): array
         ['asset' => 'legacy.jquery.js'],
         ['asset' => 'legacy.jquery-ui.js'],
         ['asset' => 'legacy.bootstrap.js'],
-        ['path' => '202-js/fileinput.js'],
-        ['path' => '202-js/radiocheck.js'],
-        ['path' => '202-js/jquery.validate.min.js'],
-        ['path' => '202-js/bootstrap-tokenfield.min.js'],
-        ['path' => '202-js/typeahead.bundle.js'],
-        ['path' => '202-js/tablesort.min.js'],
-        ['path' => '202-js/list.min.js'],
-        ['path' => '202-js/list.fuzzysearch.min.js'],
+        ['asset' => 'legacy.fileinput.js'],
+        ['asset' => 'legacy.radiocheck.js'],
+        ['asset' => 'legacy.jquery-validate.js'],
+        ['asset' => 'legacy.tokenfield.js'],
+        ['asset' => 'legacy.typeahead.js'],
+        ['asset' => 'tablesort.js'],
+        ['asset' => 'list.js'],
+        ['asset' => 'list-fuzzysearch.js'],
     ];
 
     $jsPage = [];
@@ -243,9 +242,14 @@ function p202_shell_asset_tag(array $item, string $base): string
 }
 
 /**
- * The inline Bootstrap Icons used by the shared chrome. Inline SVG so the
- * classic shell, which does not load the icon font, draws the same icons.
- * Paths are from Bootstrap Icons (MIT), 16x16 viewBox.
+ * The inline Bootstrap Icons used by the shared chrome (header, account menu,
+ * setup sub-menu). Inline SVG so the classic shell, which does not load the
+ * icon font, draws the same icons. Paths are from Bootstrap Icons (MIT), 16x16
+ * viewBox: house, heart, graph (bar-chart-line), play (tv), star, gear,
+ * question (question-circle), exit (box-arrow-right), chevron (chevron-down),
+ * person (person-circle), moon (moon-stars), sun; and for the setup sub-menu
+ * globe, grid, link (link-45deg), file (file-earmark), fonts, repeat
+ * (arrow-repeat), chart (bar-chart), terminal, transfer (arrow-left-right).
  */
 function p202_chrome_icon(string $name): string
 {
@@ -262,6 +266,15 @@ function p202_chrome_icon(string $name): string
         'person' => 'M11 6a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8m8-7a7 7 0 0 0-5.468 11.37C3.242 11.226 4.805 10 8 10s4.757 1.225 5.468 2.37A7 7 0 0 0 8 1',
         'moon' => 'M6 .278a.77.77 0 0 1 .08.858 7.2 7.2 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277q.792-.001 1.533-.16a.79.79 0 0 1 .81.316.73.73 0 0 1-.031.893A8.35 8.35 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.75.75 0 0 1 6 .278',
         'sun' => 'M8 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6m0 1a4 4 0 1 0 0-8 4 4 0 0 0 0 8M8 0a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 0m0 13a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 13m8-5a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2a.5.5 0 0 1 .5.5M3 8a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2A.5.5 0 0 1 3 8m10.657-5.657a.5.5 0 0 1 0 .707l-1.414 1.415a.5.5 0 1 1-.707-.708l1.414-1.414a.5.5 0 0 1 .707 0m-9.193 9.193a.5.5 0 0 1 0 .707L3.05 13.657a.5.5 0 0 1-.707-.707l1.414-1.414a.5.5 0 0 1 .707 0m9.193 2.121a.5.5 0 0 1-.707 0l-1.414-1.414a.5.5 0 0 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .707M4.464 4.465a.5.5 0 0 1-.707 0L2.343 3.05a.5.5 0 1 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .708',
+        'globe' => 'M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8m7.5-6.923c-.67.204-1.335.82-1.887 1.855A8 8 0 0 0 5.145 4H7.5zM4.09 4a9.3 9.3 0 0 1 .64-1.539 7 7 0 0 1 .597-.933A7.03 7.03 0 0 0 2.255 4zm-.582 3.5c.03-.877.138-1.718.312-2.5H1.674a7 7 0 0 0-.656 2.5zM4.847 5a12.5 12.5 0 0 0-.338 2.5H7.5V5zM8.5 5v2.5h2.99a12.5 12.5 0 0 0-.337-2.5zM4.51 8.5a12.5 12.5 0 0 0 .337 2.5H7.5V8.5zm3.99 0V11h2.653c.187-.765.306-1.608.338-2.5zM5.145 12q.208.58.468 1.068c.552 1.035 1.218 1.65 1.887 1.855V12zm.182 2.472a7 7 0 0 1-.597-.933A9.3 9.3 0 0 1 4.09 12H2.255a7 7 0 0 0 3.072 2.472M3.82 11a13.7 13.7 0 0 1-.312-2.5h-2.49c.062.89.291 1.733.656 2.5zm6.853 3.472A7 7 0 0 0 13.745 12H11.91a9.3 9.3 0 0 1-.64 1.539 7 7 0 0 1-.597.933M8.5 12v2.923c.67-.204 1.335-.82 1.887-1.855q.26-.487.468-1.068zm3.68-1h2.146c.365-.767.594-1.61.656-2.5h-2.49a13.7 13.7 0 0 1-.312 2.5m2.802-3.5a7 7 0 0 0-.656-2.5H12.18c.174.782.282 1.623.312 2.5zM11.27 2.461c.247.464.462.98.64 1.539h1.835a7 7 0 0 0-3.072-2.472c.218.284.418.598.597.933M10.855 4a8 8 0 0 0-.468-1.068C9.835 1.897 9.17 1.282 8.5 1.077V4z',
+        'grid' => 'M1 2.5A1.5 1.5 0 0 1 2.5 1h3A1.5 1.5 0 0 1 7 2.5v3A1.5 1.5 0 0 1 5.5 7h-3A1.5 1.5 0 0 1 1 5.5zM2.5 2a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 .5-.5v-3a.5.5 0 0 0-.5-.5zm6.5.5A1.5 1.5 0 0 1 10.5 1h3A1.5 1.5 0 0 1 15 2.5v3A1.5 1.5 0 0 1 13.5 7h-3A1.5 1.5 0 0 1 9 5.5zm1.5-.5a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 .5-.5v-3a.5.5 0 0 0-.5-.5zM1 10.5A1.5 1.5 0 0 1 2.5 9h3A1.5 1.5 0 0 1 7 10.5v3A1.5 1.5 0 0 1 5.5 15h-3A1.5 1.5 0 0 1 1 13.5zm1.5-.5a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 .5-.5v-3a.5.5 0 0 0-.5-.5zm6.5.5A1.5 1.5 0 0 1 10.5 9h3a1.5 1.5 0 0 1 1.5 1.5v3a1.5 1.5 0 0 1-1.5 1.5h-3A1.5 1.5 0 0 1 9 13.5zm1.5-.5a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 .5-.5v-3a.5.5 0 0 0-.5-.5z',
+        'link' => 'M4.715 6.542 3.343 7.914a3 3 0 1 0 4.243 4.243l1.828-1.829A3 3 0 0 0 8.586 5.5L8 6.086a1 1 0 0 0-.154.199 2 2 0 0 1 .861 3.337L6.88 11.45a2 2 0 1 1-2.83-2.83l.793-.792a4 4 0 0 1-.128-1.287z M6.586 4.672A3 3 0 0 0 7.414 9.5l.775-.776a2 2 0 0 1-.896-3.346L9.12 3.55a2 2 0 1 1 2.83 2.83l-.793.792c.112.42.155.855.128 1.287l1.372-1.372a3 3 0 1 0-4.243-4.243z',
+        'file' => 'M14 4.5V14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2h5.5zm-3 0A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V4.5z',
+        'fonts' => 'M12.258 3h-8.51l-.083 2.46h.479c.26-1.544.758-1.783 2.693-1.845l.424-.013v7.827c0 .663-.144.82-1.3.923v.52h4.082v-.52c-1.162-.103-1.306-.26-1.306-.923V3.602l.431.013c1.934.062 2.434.301 2.693 1.846h.479z',
+        'repeat' => 'M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41m-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9 M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5 5 0 0 0 8 3M3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9z',
+        'chart' => 'M4 11H2v3h2zm5-4H7v7h2zm5-5v12h-2V2zm-2-1a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zM6 7a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1zm-5 4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1z',
+        'terminal' => 'M6 9a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1h-3A.5.5 0 0 1 6 9M3.854 4.146a.5.5 0 1 0-.708.708L4.793 6.5 3.146 8.146a.5.5 0 1 0 .708.708l2-2a.5.5 0 0 0 0-.708z M2 1a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2zm12 1a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z',
+        'transfer' => 'M1 11.5a.5.5 0 0 0 .5.5h11.793l-3.147 3.146a.5.5 0 0 0 .708.708l4-4a.5.5 0 0 0 0-.708l-4-4a.5.5 0 0 0-.708.708L13.293 11H1.5a.5.5 0 0 0-.5.5m14-7a.5.5 0 0 1-.5.5H2.707l3.147 3.146a.5.5 0 1 1-.708.708l-4-4a.5.5 0 0 1 0-.708l4-4a.5.5 0 1 1 .708.708L2.707 4H14.5a.5.5 0 0 1 .5.5',
     ];
     if (!isset($paths[$name])) {
         throw new InvalidArgumentException("Unknown chrome icon '$name'");

@@ -29,9 +29,10 @@ require_once __DIR__ . '/functions-ui.php';
  * (Bootstrap 5.3 with the Prosper202 theme and component layer). The chrome
  * around the page — navbar, section tabs, sub-menu, footer — is the same
  * markup for both and is styled by 202-css/p202-chrome.css, which depends on
- * neither framework. Add Bootstrap classes to the chrome markup in this file
- * or in tracking202/_config/top.php and one of the two shells breaks;
- * tests/Api/V3/NoLegacyBootstrapClassesTest.php checks for the Bootstrap 3 ones.
+ * neither framework. Add Bootstrap classes to the chrome markup in this file,
+ * in tracking202/_config/top.php or in tracking202/_config/sub-menu.php and
+ * one of the two shells breaks; tests/Api/V3/NoLegacyBootstrapClassesTest.php
+ * checks for the Bootstrap 3 ones.
  *
  * Any unrecognised legacy positional arguments are ignored safely.
  *
@@ -118,7 +119,19 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 		$extraHeadMarkup = (string) $options['extra_head'];
 	}
 
+	// The shell, the section and the sub-section, so a stylesheet can scope
+	// rules to a page family (custom.css scopes the setup pages' styles to
+	// body.p202-sub-setup). Values come from the URL path, so they are slugged.
 	$bodyClasses = ['p202-shell-' . $ui];
+	$slug = static fn (string $part): string => trim((string) preg_replace('/[^a-z0-9]+/', '-', strtolower((string) preg_replace('/\.php$/', '', $part))), '-');
+	$sectionSlug = $slug((string) ($navigation[1] ?? ''));
+	$subSlug = $slug((string) ($navigation[2] ?? ''));
+	if ($sectionSlug !== '') {
+		$bodyClasses[] = 'p202-section-' . $sectionSlug;
+	}
+	if ($subSlug !== '') {
+		$bodyClasses[] = 'p202-sub-' . $subSlug;
+	}
 	if (isset($options['body_class'])) {
 		$bodyClassValue = $options['body_class'];
 		if (is_array($bodyClassValue)) {
@@ -251,7 +264,11 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 			<?php }
 
 /**
- * The shared header: brand, banner slot, primary navigation, account menu.
+ * The shared header: the logo placement, primary navigation, account menu.
+ *
+ * The logo is the Prosper202 banner iframe, as the old navbar had it, so it
+ * can change without a release. The static 202-img/prosper202.png that the
+ * first draft of this header put beside it is gone: it was a second logo.
  *
  * Framework-neutral markup (see the class comment above); icons are inline
  * SVG so the classic shell, which loads no icon font, draws the same ones.
@@ -298,9 +315,8 @@ function p202_chrome_header(string $ui, array $navigation, ?object $userObj, arr
 	$menu[] = ['id' => 'HelpPage', 'href' => '202-account/help.php', 'label' => 'Help', 'icon' => 'question', 'active' => $nav2 === 'help.php'];
 
 	$html = '<header class="p202c-header"><div class="p202c-header__inner">';
-	$html .= '<a class="p202c-brand" href="' . $e($base . '202-account/') . '"><img src="' . $e($base . '202-img/prosper202.png') . '" alt="Prosper202" width="113" height="30"></a>';
 	if (defined('TRACKING202_ADS_URL')) {
-		$html .= '<div class="p202c-adslot"><iframe class="advertise-top-left" src="' . $e(TRACKING202_ADS_URL . '/prosper202-cs-topleft/?t202aid=' . ($_SESSION['user_cirrus_link'] ?? '')) . '" scrolling="no" frameborder="0" title="Prosper202 news"></iframe></div>';
+		$html .= '<div class="p202c-brand"><iframe class="advertise-top-left" src="' . $e(TRACKING202_ADS_URL . '/prosper202-cs-topleft/?t202aid=' . ($_SESSION['user_cirrus_link'] ?? '')) . '" scrolling="no" frameborder="0" title="Prosper202"></iframe></div>';
 	}
 	$html .= '<nav class="p202c-nav" aria-label="Primary">';
 	foreach ($links as $link) {

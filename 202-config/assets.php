@@ -5,11 +5,13 @@ declare(strict_types=1);
 /**
  * Pinned front-end assets.
  *
- * Every third-party file the page shell loads is listed here with the version
+ * Every third-party file a page shell loads is listed here with the version
  * it was taken from and, for files served from this install, the SHA-384 of
  * the exact bytes in the repository. tests/Api/V3/AssetManifestTest.php checks
  * each file against this list, so a silently re-minified or swapped file, or a
- * version that drifted from its filename, fails the build instead of shipping.
+ * version that drifted from its filename, fails the build instead of shipping;
+ * tests/Api/V3/ShellIsolationTest.php checks that the shells load nothing
+ * third-party that is not listed here.
  *
  * Entry shape:
  *   'path'    repo-relative file served from the install (mutually exclusive with 'url')
@@ -17,6 +19,8 @@ declare(strict_types=1);
  *   'version' the upstream version string
  *   'sha384'  base64 SHA-384 of the local file
  *   'banner'  a substring the file must contain (its own version banner), when it has one
+ *   'patched' when the bytes are not an upstream release build, what differs;
+ *             absent means the file is byte-identical to the release it names
  *
  * Highcharts stays on its vendor CDN because its licence does not allow the
  * library to be redistributed in this repository; the URL pins the version
@@ -24,9 +28,17 @@ declare(strict_types=1);
  * Referer header and does not advertise CORS, so an integrity attribute would
  * block the script in browsers; the pinned version is the guarantee there.
  *
- * The 'legacy.*' entries are the files the classic shell used to load unversioned
- * from a CloudFront bucket; they are vendored so the bucket is no longer a
- * dependency, and they are deleted with the classic shell.
+ * The 'legacy.*' entries belong to the classic shell only — Bootstrap 3, Flat
+ * UI Pro and the plugins written against them — and are deleted with it. The
+ * first group among them is the files that used to load unversioned from a
+ * CloudFront bucket; the second is the files that were always in the
+ * repository but loaded by bare path, so their version was nowhere recorded.
+ * Entries without a prefix are framework-free and may be loaded by either
+ * shell.
+ *
+ * To add or upgrade one:
+ *   curl -sSL -o 202-js/vendor/<name>-<version>.min.js <release url>
+ *   openssl dgst -sha384 -binary 202-js/vendor/<name>-<version>.min.js | openssl base64 -A
  */
 return [
     'bootstrap.css' => [
@@ -68,7 +80,26 @@ return [
         'version' => '11.4.8',
     ],
 
-    // Classic shell only. Deleted with it.
+    // Framework-free; either shell may load them.
+    'tablesort.js' => [
+        'path' => '202-js/vendor/tablesort-3.0.2.min.js',
+        'version' => '3.0.2',
+        'sha384' => '3Ild5rUh1H8vi7yOiKeJP7BJBNQv4oAb4rK1zpF2tLJQQtaGo9v+7/KOdcEzKEI/',
+        'banner' => 'tablesort v3.0.2',
+        'patched' => 'the 3.0.2 release build with its tablesort.number sort appended',
+    ],
+    'list.js' => [
+        'path' => '202-js/vendor/list-1.1.1.min.js',
+        'version' => '1.1.1',
+        'sha384' => '+4Spd1QvcUfkebwFF4DGa6k0Sh5Vs8a+iI4Pd8+J0T15PyYXRtR0XoVfT3e3GgIH',
+    ],
+    'list-fuzzysearch.js' => [
+        'path' => '202-js/vendor/list.fuzzysearch-0.1.0.min.js',
+        'version' => '0.1.0',
+        'sha384' => 'my6xRC70guD47vxHJN4fuOHwJT9AgMPToZE6OJmLXFkaNLnV/29J7Co6uxHZdQRn',
+    ],
+
+    // Classic shell only. Deleted with it. These used to load from CloudFront.
     'legacy.jquery.js' => [
         'path' => '202-js/vendor/legacy/jquery-1.11.2.min.js',
         'version' => '1.11.2',
@@ -120,5 +151,76 @@ return [
         'path' => '202-css/vendor/legacy/tablesorter-theme.bootstrap-2.22.5.min.css',
         'version' => '2.22.5',
         'sha384' => 'v28LrrX3mEFXYteiYprAxnBOP17OB0r5MzBovmArLg6WECMnHPxiLTDu7mO6uNS2',
+    ],
+
+    // Classic shell only. Deleted with it. These were always in the repository.
+    // The stylesheets keep their directory because they locate their fonts by
+    // the relative ../fonts/ path.
+    'legacy.bootstrap.css' => [
+        'path' => '202-css/css/bootstrap-3.3.4.min.css',
+        'version' => '3.3.4',
+        'sha384' => '604wwakM23pEysLJAhja8Lm42IIwYrJ0dEAqzFsj9pJ/P5buiujjywArgPCi8eoz',
+        'banner' => 'Bootstrap v3.3.4',
+    ],
+    'legacy.flat-ui.css' => [
+        'path' => '202-css/css/flat-ui-pro-1.3.2.min.css',
+        'version' => '1.3.2',
+        'sha384' => 'FPnKZBp1dc0MdA/3JH+vlwH2tcY7pe7FNZpm4RJfh+R7sdWi+QF+GfPpdIzAGB9/',
+        'banner' => 'Flat UI Pro v1.3.2',
+    ],
+    'legacy.font-awesome.css' => [
+        'path' => '202-css/css/font-awesome-4.5.0.min.css',
+        'version' => '4.5.0',
+        'sha384' => 'XdYbMnZ/QjLh6iI4ogqCTaIjrFk87ip+ekIjefZch0Y+PvJ8CDYtEs1ipDmPorQ+',
+        'banner' => 'Font Awesome 4.5.0',
+    ],
+    'legacy.tokenfield.css' => [
+        'path' => '202-css/css/bootstrap-tokenfield-0.11.9.min.css',
+        'version' => '0.11.9',
+        'sha384' => 'cu7JuHifKOiMVER1OSMjuBV/vATSBP7dazbyVra6gBV3yOUs4Ptus8PIUUvESwg2',
+        'banner' => 'bootstrap-tokenfield',
+    ],
+    'legacy.tokenfield-typeahead.css' => [
+        'path' => '202-css/css/tokenfield-typeahead-0.11.9.min.css',
+        'version' => '0.11.9',
+        'sha384' => '8rXEF434gAZbQP/KijO9hDqn4wr6/fHnodowVqtR8s51wfrG4gOK64gUDQxLl/PZ',
+        'banner' => 'bootstrap-tokenfield',
+    ],
+    'legacy.select2.css' => [
+        'path' => '202-css/css/select2-4.0.1-rc.1.css',
+        'version' => '4.0.1-rc.1',
+        'sha384' => 'WDKNP0wfn6NjI9hT5RQvmZec+V38aA0uMwoYCY6xsexE1D+j9PO18tmvxdKXfjR7',
+        'patched' => 'a locally edited copy of the 4.0.x stylesheet (sizes and heights), not release bytes; no banner',
+    ],
+    'legacy.fileinput.js' => [
+        'path' => '202-js/vendor/legacy/flatui-fileinput-0.2.0.js',
+        'version' => '0.2.0',
+        'sha384' => 'JerWXvl6WLzWx1ww0znWYLeCWdGOp+G2c0mfJwXbi9026lobbrBSwb9hSywGk/nF',
+        'banner' => 'flatui-fileinput v0.2.0',
+    ],
+    'legacy.radiocheck.js' => [
+        'path' => '202-js/vendor/legacy/flatui-radiocheck-0.1.0.js',
+        'version' => '0.1.0',
+        'sha384' => 'waHL+xOzy2Qn/U/U7KA0u9e6L/J4s/m1iODGSTFoK1dpCC9JiY4qbSNnYwwa9Vhl',
+        'banner' => 'flatui-radiocheck v0.1.0',
+    ],
+    'legacy.jquery-validate.js' => [
+        'path' => '202-js/vendor/legacy/jquery.validate-1.11.1.min.js',
+        'version' => '1.11.1',
+        'sha384' => 'B1miHxuCmAMGc0405Cm/zSXCc38EP5hNOy2bblqF6yiX01Svinm1mWMwJDdNDBGr',
+        'banner' => 'jQuery Validation Plugin - v1.11.1',
+    ],
+    'legacy.tokenfield.js' => [
+        'path' => '202-js/vendor/legacy/bootstrap-tokenfield-0.11.9.min.js',
+        'version' => '0.11.9',
+        'sha384' => 'Vjbr4ITT7q1Bcs4EqrrxFUOZ8RB6Rf3h7ijE7VB80YOOBsVEd31MarCiybjLcMjH',
+        'banner' => 'bootstrap-tokenfield 0.11.9',
+        'patched' => 'one expression: the width of a tokenfield inside .form-inline is fixed at 400px instead of the computed width',
+    ],
+    'legacy.typeahead.js' => [
+        'path' => '202-js/vendor/legacy/typeahead.bundle-0.10.5.min.js',
+        'version' => '0.10.5',
+        'sha384' => '9tYTT4dZ4XM/9VE3SRm8qwNMN90aRdg1vIOkVEVUjaO+CDQAcDKFN6VgT10CZJKx',
+        'banner' => 'typeahead.js 0.10.5',
     ],
 ];

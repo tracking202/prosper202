@@ -38,7 +38,7 @@ pieces Bootstrap does not have. Each is a thin class on Bootstrap primitives:
 | `.p202-strip` | Stacked status rows: pill, label, value, aside. |
 | `.p202-flash` | An alert with an icon. |
 | `.p202-skeleton` | A loading placeholder. |
-| `.p202-disclosure` | The "Advanced" section of a form: a `<details>` closed by default; `data-p202-remember="<key>"` keeps the open state per browser. |
+| `.p202-disclosure` | The "Advanced" section of a form: a `<details>` closed by default; `data-p202-remember="<key>"` keeps the open state, per browser (it is `localStorage`, so it does not follow the user to another browser or machine). |
 | `.p202-decided` | A one-line note where the app made a decision, with a `change` link. |
 
 `202-account/ui-kit.php` (admin only) renders every component in every state.
@@ -69,8 +69,11 @@ user can still reach every setting. Concretely:
    step (development postbacks arriving for an app that rejects them, an
    unregistered app id in a report, a receiver that stopped answering), the
    page offers the action in place.
-8. **Remember choices.** Filters, date presets and open disclosures persist
-   per user, as the report preferences already do.
+8. **Remember choices.** Filters and date presets persist per user, as the
+   report preferences already do; an open "Advanced" disclosure persists per
+   browser, in `localStorage`, because it is a convenience rather than a
+   setting. Never put anything in browser storage that another account
+   sharing the browser must not see.
 
 And the mechanics that keep pages consistent: every page opens with a page
 header and a one-line purpose. Forms put labels above controls, hints below,
@@ -104,31 +107,61 @@ file and that an unknown `ui` value is an error, not a silent fallback.
 To move a page to v2: pass the option, rewrite its markup with Bootstrap 5
 classes and the component layer, and drop any inline `<style>` that duplicated
 the old kits. `tests/Api/V3/NoLegacyBootstrapClassesTest.php` fails the build if
-a v2 page still carries a Bootstrap 3 class (`col-xs-*`, `panel`, `glyphicon`,
-`form-horizontal`, `label label-*`, `data-toggle`, and so on), which is the
-list to work through.
+a v2 page still carries a Bootstrap 3 or Flat UI Pro class. Its banned set is
+not a hand-written list: it is every class Bootstrap 3.3.4 defines that
+Bootstrap 5.3 does not, read from the two stylesheets in the repository (about
+six hundred names — every grid offset, glyphicon, panel, well and navbar
+variant), plus Flat UI Pro's `fui-*` icons and component classes, plus the
+Bootstrap 3 data-API attributes (`data-toggle=` and friends; Bootstrap 5 uses
+`data-bs-*`). A class both versions define (`row`, `btn-primary`, `active`) is
+allowed. It reads class attributes wherever they are written — plain markup,
+inside a PHP string, with escaped quotes — and the ways a script names a class:
+`classList.add`, `className =`, jQuery's `addClass`, and selector strings.
 
 ## The chrome is framework-neutral
 
-The navbar, the Prosper202 CS section tabs, the sub-menu strip, the content
-frame and the footer are shared by both shells. Their markup, in
-`202-config/template.php` and `tracking202/_config/top.php`, uses only
-`.p202c-*` classes and inline SVG icons, and is styled by
-`202-css/p202-chrome.css`, which depends on neither framework and carries its
+The header, the Prosper202 CS section tabs, the sub-menu (the Setup button grid
+and the Overview/Analyze/Update strip), the content frame and the footer are
+shared by both shells. Their markup, in `202-config/template.php`,
+`tracking202/_config/top.php` and `tracking202/_config/sub-menu.php`, uses only
+`.p202c-*` classes and inline SVG icons from `p202_chrome_icon()`, and is styled
+by `202-css/p202-chrome.css`, which depends on neither framework and carries its
 own tokens (`--p202c-*`). Never add a Bootstrap class of either version to that
-markup; one of the shells would break. The account menu is a `<details>`
-element, so it works with no framework script; `202-js/p202-chrome.js` only
-closes it on outside clicks and Escape, and wires the theme switch on v2 pages.
+markup; one of the shells would break, and the structural test above scans all
+three files. The header's logo is the Prosper202 banner placement, an iframe, as
+it has always been; there is no second static logo beside it.
+
+The account menu is a `<details>` element, so it works with no framework
+script. `202-js/p202-chrome.js` closes it on outside clicks and Escape, scrolls
+the current tab and sub-menu item into view on narrow screens, and wires the
+theme switch on v2 pages. It is loaded in `<head>`, so everything it does runs
+from `DOMContentLoaded`.
+
+A page family can be styled without touching the chrome: `template_top()` puts
+the shell, the section and the sub-section on `<body>` as
+`p202-shell-<classic|v2> p202-section-<nav1> p202-sub-<nav2>`, which is how
+`custom.css` scopes the setup pages' panel styles to `body.p202-sub-setup`.
 
 ## Assets are pinned and served from the install
 
 Every third-party file is listed in `202-config/assets.php` with its version
-and, for files in this repository, the SHA-384 of the exact bytes.
+and, for files in this repository, the SHA-384 of the exact bytes — Bootstrap 5
+and its icons, jQuery, and on the classic side Bootstrap 3, Flat UI Pro, Font
+Awesome, Select2, tokenfield, typeahead, the tablesorter plugins, tablesort,
+List.js and the rest. A file whose bytes are not an upstream release build says
+so in a `patched` note.
+
 `tests/Api/V3/AssetManifestTest.php` checks each file against the list, so a
 re-minified or swapped file, or a version that drifted from its filename, fails
-the build. Nothing loads from a CDN except Highcharts, whose licence does not
-allow redistribution here; its URL pins the version instead of following the
-CDN's rolling build.
+the build. `tests/Api/V3/ShellIsolationTest.php` closes the other half: a shell
+may name a bare path only for a first-party file it lists, so a new third-party
+file cannot be added without a manifest entry, and it sweeps every PHP, JS and
+HTML file in the tree for a `<script src>`, a stylesheet `<link>` or a quoted
+`.js`/`.css` URL on an external host. Two hosted-service loaders (ProfitWell,
+and the Google ad tags on the standalone and mobile pages) are listed there with
+their reason; everything else must be served from the install. Highcharts is the
+one library on a CDN, because its licence does not allow redistribution here;
+its URL pins the version instead of following the CDN's rolling build.
 
 To add or upgrade an asset:
 
@@ -138,7 +171,8 @@ openssl dgst -sha384 -binary 202-js/vendor/<name>-<version>.min.js | openssl bas
 ```
 
 then add or update the entry (path, version, sha384, and the version banner
-the file carries) and reference it by id from `p202_shell_assets()`.
+the file carries) and reference it by id from `p202_shell_assets()` — or, on a
+page that builds its own head, with `p202_asset_tag('<id>', $base)`.
 
 ## Migration order
 

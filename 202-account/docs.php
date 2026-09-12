@@ -26,19 +26,44 @@ function markdownToHtml(string $markdown): string {
     $html = preg_replace('/^\- (.+)$/m', '<li>$1</li>', $html);
     $html = preg_replace('/(<li>.*<\/li>)/s', '<ul>$1</ul>', $html);
     
-    // Convert line breaks to paragraphs
+    // Convert line breaks to paragraphs; pipe tables become <table>
     $lines = explode("\n", $html);
     $paragraphs = [];
     $current_paragraph = '';
-    
-    foreach ($lines as $line) {
-        $line = trim($line);
+    $count = count($lines);
+    $cells = static fn (string $row): array => array_map('trim', explode('|', trim(trim($row), '|')));
+    $separator = '/^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/';
+
+    for ($i = 0; $i < $count; $i++) {
+        $line = trim($lines[$i]);
+        // A pipe table: a header row, a row of dashes, then the body rows.
+        if (str_starts_with($line, '|') && isset($lines[$i + 1]) && preg_match($separator, trim($lines[$i + 1])) === 1) {
+            if (!empty($current_paragraph)) {
+                $paragraphs[] = '<p>' . $current_paragraph . '</p>';
+                $current_paragraph = '';
+            }
+            $table = '<table class="doc-table"><thead><tr>';
+            foreach ($cells($line) as $cell) {
+                $table .= '<th>' . $cell . '</th>';
+            }
+            $table .= '</tr></thead><tbody>';
+            for ($i += 2; $i < $count && str_starts_with(trim($lines[$i]), '|'); $i++) {
+                $table .= '<tr>';
+                foreach ($cells($lines[$i]) as $cell) {
+                    $table .= '<td>' . $cell . '</td>';
+                }
+                $table .= '</tr>';
+            }
+            $i--; // the loop increment steps past the last row
+            $paragraphs[] = $table . '</tbody></table>';
+            continue;
+        }
         if (empty($line)) {
             if (!empty($current_paragraph)) {
                 $paragraphs[] = $current_paragraph;
                 $current_paragraph = '';
             }
-        } elseif (preg_match('/^<(h[1-6]|pre|ul|li)/', $line)) {
+        } elseif (preg_match('/^<(h[1-6]|pre|ul|li|table)/', $line)) {
             if (!empty($current_paragraph)) {
                 $paragraphs[] = '<p>' . $current_paragraph . '</p>';
                 $current_paragraph = '';
@@ -118,6 +143,28 @@ template_top($doc_titles[$doc]); ?>
     color: #32383f;
     margin-top: 25px;
     margin-bottom: 10px;
+}
+
+.documentation .doc-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0 24px;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.documentation .doc-table th,
+.documentation .doc-table td {
+    padding: 8px 10px;
+    border: 1px solid #e7e8ea;
+    text-align: left;
+    vertical-align: top;
+}
+
+.documentation .doc-table th {
+    background: #fafbfc;
+    color: #32383f;
+    font-weight: 600;
 }
 
 .documentation code {

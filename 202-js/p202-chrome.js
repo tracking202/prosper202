@@ -7,6 +7,9 @@
  * script at all; this only closes it when the user clicks elsewhere or presses
  * Escape, and wires the theme switch the v2 shell renders.
  *
+ * It also keeps the current section tab and sub-menu item in view on narrow
+ * screens, where those lists scroll sideways.
+ *
  * The script is emitted in <head>, so it binds on DOMContentLoaded; binding at
  * parse time found no header and silently did nothing (caught in review).
  */
@@ -38,6 +41,30 @@
             }
         });
     }
+
+    /* The section tabs and the sub-menu strip scroll sideways on narrow
+       screens; scroll the current item to the middle so it is never hidden
+       off the edge. */
+    var NARROW_MAX_WIDTH = 767;
+
+    function centreCurrent(list) {
+        var current = list.querySelector('li.active, .is-active');
+        if (!current || list.scrollWidth <= list.clientWidth) {
+            return;
+        }
+        var left = current.getBoundingClientRect().left - list.getBoundingClientRect().left + list.scrollLeft;
+        list.scrollLeft = left - (list.clientWidth - current.offsetWidth) / 2;
+    }
+
+    function centreCurrentEverywhere() {
+        if (window.innerWidth > NARROW_MAX_WIDTH) {
+            return;
+        }
+        Array.prototype.forEach.call(document.querySelectorAll('.p202c-tabs__list, .p202c-strip__list'), centreCurrent);
+    }
+
+    centreCurrentEverywhere();
+    window.addEventListener('resize', centreCurrentEverywhere);
 
     /* Theme switch: three states — follow the system, light, dark. The choice
        is a per-browser convenience, so localStorage is the right home; the v2

@@ -290,14 +290,26 @@ Check here before burning time on tooling failures.
   dropped errors rather than style. Run `golangci-lint run ./...` from
   `go-cli/` before pushing.
 
+- **`git checkout <file>` restores from the index, not from your working
+  copy.** Proving a new test is not vacuous means planting a defect and
+  reverting it, and that revert silently deleted an afternoon of unstaged work
+  in five files. The only symptom was the "clean" re-run still failing. Copy
+  the file to the scratchpad and copy it back, or stage everything first — and
+  always re-run the suite after the restore, which is what caught it.
+
 - **Two page shells, one chrome.** `template_top($title, ['ui' => 'v2'])`
   renders a page on Bootstrap 5.3 with the Prosper202 theme and component
   layer; pages that pass nothing get the classic Bootstrap 3 stack unchanged.
   The two cannot share a page. The chrome (`202-config/template.php`,
-  `tracking202/_config/top.php`) is framework-neutral markup styled by
-  `202-css/p202-chrome.css` — never add a Bootstrap class of either version to
-  it. Every third-party file is an entry in `202-config/assets.php` with its
-  SHA-384; nothing loads from a CDN except Highcharts at a pinned version.
+  `tracking202/_config/top.php`, `tracking202/_config/sub-menu.php`) is
+  framework-neutral markup styled by `202-css/p202-chrome.css` — never add a
+  Bootstrap class of either version to it; scope page-family styles with the
+  `p202-section-*` / `p202-sub-*` body classes instead. Every third-party file
+  is an entry in `202-config/assets.php` with its SHA-384, referenced by id
+  from `p202_shell_assets()` or emitted with `p202_asset_tag()`; nothing in the
+  tree loads a script or stylesheet from an external host except Highcharts at
+  a pinned version and two hosted-service loaders listed in
+  `ShellIsolationTest`.
   Three structural tests guard this (`AssetManifestTest`, `ShellIsolationTest`,
   `NoLegacyBootstrapClassesTest` under `tests/Api/V3/`), and
   `202-account/ui-kit.php` shows every component. The standard's first rule

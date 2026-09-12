@@ -26,10 +26,10 @@ if (!isset($userObj) || !$userObj->hasPermission('view_attribution_reports')) {
 }
 
 $assetBase = get_absolute_url();
+$highchartsTag = p202_asset_tag('highcharts.js', $assetBase);
 $extraHead = <<<HTML
-    <script src="https://code.highcharts.com/highcharts.js"></script>
-    <!-- Uncomment to enable Highcharts accessibility (screen readers, keyboard nav) -->
-    <!-- <script src="https://code.highcharts.com/modules/accessibility.js"></script> -->
+    {$highchartsTag}
+    <!-- Highcharts' accessibility module is not loaded; to add it, pin it in 202-config/assets.php and emit it here with p202_asset_tag(). -->
     <script src="{$assetBase}202-js/chart.theme.js"></script>
     <style>
         .attribution-dashboard .dashboard-panel { margin-top: 20px; }

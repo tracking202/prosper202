@@ -7,7 +7,8 @@
  * layers; the v2 shell first, under the framework), which is what keeps the
  * site looking whole while page bodies migrate one family at a time. Body
  * content is not styled here; the markup it targets is only what
- * 202-config/template.php and tracking202/_config/top.php emit.
+ * 202-config/template.php, tracking202/_config/top.php and
+ * tracking202/_config/sub-menu.php emit.
  *
  * Tokens carry their own prefix so a chrome rule can never be changed by
  * accident from a page stylesheet. The dark set keys on the attribute the v2
@@ -22,6 +23,7 @@
     --p202c-line: #e7e8ea;
     --p202c-line-strong: #c9cdd3;
     --p202c-ink: #1f2328;
+    --p202c-ink-2: #374151;
     --p202c-muted: #6b7280;
     --p202c-accent: #2f6fdd;
     --p202c-accent-hover: #2861c4;
@@ -44,6 +46,7 @@
     --p202c-line: #2c323a;
     --p202c-line-strong: #3d444d;
     --p202c-ink: #e8eaed;
+    --p202c-ink-2: #c9d1d9;
     --p202c-muted: #9aa3ad;
     --p202c-accent: #6f9ff0;
     --p202c-accent-hover: #8db3f5;
@@ -106,31 +109,18 @@ body {
     box-sizing: border-box;
 }
 
+/* The logo placement: an iframe served by Prosper202, 300x60, as the old
+   navbar had it. There is no second, static logo beside it. */
 .p202c-brand {
-    display: inline-flex;
-    align-items: center;
-    flex-shrink: 0;
-    text-decoration: none;
-    border-radius: 8px;
-}
-
-.p202c-brand img {
-    display: block;
-    height: 30px;
-    width: auto;
-}
-
-.p202c-adslot {
     flex-shrink: 0;
     width: 300px;
+    max-width: 100%;
     height: 60px;
     overflow: hidden;
     border-radius: 8px;
-    border: 1px solid var(--p202c-line);
-    background: var(--p202c-surface-2);
 }
 
-.p202c-adslot iframe {
+.p202c-brand iframe {
     display: block;
     width: 100%;
     height: 60px;
@@ -199,7 +189,6 @@ body {
 .p202c-menu__toggle:focus-visible,
 .p202c-menu__list a:focus-visible,
 .p202c-tabs__list a:focus-visible,
-.p202c-brand:focus-visible,
 .p202c-theme button:focus-visible {
     outline: none;
     box-shadow: var(--p202c-focus);
@@ -406,10 +395,15 @@ body {
 
 /* ---------- Sub-menu strip (Overview, Analyze, Update) ---------- */
 
-#sub-menu .breadcrumb {
+.p202c-strip {
+    margin: 0 0 20px;
+    font-family: var(--p202c-font);
+}
+
+.p202c-strip__list {
     display: flex;
     gap: 2px;
-    margin: 0 0 20px;
+    margin: 0;
     padding: 4px;
     list-style: none;
     overflow-x: auto;
@@ -417,29 +411,20 @@ body {
     background: var(--p202c-surface-2);
     border: 1px solid var(--p202c-line);
     border-radius: 10px;
-    box-shadow: none;
-    font-family: var(--p202c-font);
     font-size: 12.5px;
 }
 
-#sub-menu .breadcrumb::-webkit-scrollbar {
+.p202c-strip__list::-webkit-scrollbar {
     display: none;
 }
 
-#sub-menu .breadcrumb > li {
+.p202c-strip__list > li {
     margin: 0;
     padding: 0;
     flex-shrink: 0;
-    display: block;
 }
 
-#sub-menu .breadcrumb > li + li:before,
-#sub-menu .breadcrumb > li:after {
-    content: none;
-    padding: 0;
-}
-
-#sub-menu .breadcrumb > li > a {
+.p202c-strip__list > li > a {
     display: block;
     padding: 7px 12px;
     border-radius: 7px;
@@ -449,17 +434,88 @@ body {
     white-space: nowrap;
 }
 
-#sub-menu .breadcrumb > li > a:hover,
-#sub-menu .breadcrumb > li > a:focus {
+.p202c-strip__list > li > a:hover,
+.p202c-strip__list > li > a:focus {
     color: var(--p202c-ink);
     background: var(--p202c-surface);
     text-decoration: none;
 }
 
-#sub-menu .breadcrumb > li.active > a {
+.p202c-strip__list > li.active > a {
     color: var(--p202c-accent);
     background: var(--p202c-surface);
     box-shadow: var(--p202c-shadow);
+}
+
+/* ---------- Setup sub-menu (button grid) ---------- */
+
+.p202c-subnav {
+    margin: 0 0 20px;
+    font-family: var(--p202c-font);
+}
+
+.p202c-subnav__list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.p202c-subnav__list > li {
+    margin: 0;
+}
+
+.p202c-subnav__link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px 14px;
+    background: var(--p202c-surface);
+    border: 1px solid var(--p202c-line);
+    border-radius: 8px;
+    color: var(--p202c-ink-2);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.2;
+    text-align: center;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.p202c-subnav__link:hover {
+    background: var(--p202c-surface-2);
+    border-color: var(--p202c-line-strong);
+    color: var(--p202c-ink);
+    text-decoration: none;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.p202c-subnav__link:focus-visible {
+    outline: none;
+    border-color: var(--p202c-accent);
+    box-shadow: var(--p202c-focus);
+}
+
+.p202c-subnav__link.is-active,
+.p202c-subnav__link.is-active:hover {
+    background: var(--p202c-accent);
+    border-color: transparent;
+    color: var(--p202c-accent-ink);
+    box-shadow: 0 2px 8px rgba(47, 111, 221, 0.25);
+}
+
+.p202c-subnav__link .p202c-icon {
+    width: 13px;
+    height: 13px;
+    opacity: 0.85;
+}
+
+.p202c-subnav__link.is-active .p202c-icon {
+    opacity: 1;
 }
 
 /* ---------- Footer ---------- */
@@ -491,15 +547,33 @@ body {
 
 /* ---------- Narrow screens ---------- */
 
-@media (max-width: 1099px) {
-    .p202c-adslot {
-        display: none;
+@media (max-width: 992px) {
+    .p202c-subnav__link {
+        padding: 8px 10px;
+        font-size: 11px;
     }
 }
 
 @media (max-width: 767px) {
     .p202c-header__inner {
         padding: 8px 10px;
+    }
+
+    .p202c-subnav__list {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+    }
+
+    .p202c-subnav__link {
+        flex-direction: column;
+        gap: 4px;
+        padding: 10px 8px;
+        font-size: 11px;
+    }
+
+    .p202c-subnav__link .p202c-icon {
+        width: 14px;
+        height: 14px;
     }
 
     .p202c-nav {
@@ -529,10 +603,29 @@ body {
     }
 }
 
+@media (max-width: 480px) {
+    .p202c-subnav__list {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+    }
+
+    .p202c-subnav__link {
+        padding: 10px 6px;
+        border-radius: 6px;
+        font-size: 10px;
+    }
+
+    .p202c-subnav__link .p202c-icon {
+        width: 13px;
+        height: 13px;
+    }
+}
+
 @media (prefers-reduced-motion: reduce) {
     .p202c-nav__link,
     .p202c-menu__toggle,
-    .p202c-menu__chevron {
+    .p202c-menu__chevron,
+    .p202c-subnav__link {
         transition: none;
     }
 }

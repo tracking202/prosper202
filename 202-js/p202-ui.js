@@ -2,7 +2,10 @@
  * Behaviour for the v2 (Bootstrap 5.3) shell's component layer.
  *
  * Small and declarative: markup opts in with data attributes, nothing is
- * bound by id, and every hook works on content added later (event delegation).
+ * bound by id. The click, submit and toggle hooks are delegated, so they work
+ * on content added later; tooltips, popovers and the restore of remembered
+ * disclosures run at load, and again for any subtree a page passes to
+ * window.p202ui.init(root) after inserting markup.
  *
  *   [data-p202-copy="<text>"]     copies the text and says "Copied" for a moment
  *   [data-p202-reveal="#id"]      swaps a masked value for the real one held in
@@ -105,10 +108,21 @@
 
     /* Disclosures that opt in with data-p202-remember keep their open state
        per browser, so an advanced user who opened "Advanced" once finds it open
-       next time and everyone else never sees it. */
-    function initDisclosures() {
-        Array.prototype.forEach.call(document.querySelectorAll('details[data-p202-remember]'), function (element) {
-            var key = 'p202-disclosure:' + element.getAttribute('data-p202-remember');
+       next time and everyone else never sees it. Saving is delegated: toggle
+       does not bubble, so the listener sits on the document in the capture
+       phase, which reaches a <details> inserted at any time. Restoring runs at
+       load and for any subtree passed to p202ui.init(root). */
+    function rememberKey(element) {
+        var key = element.getAttribute('data-p202-remember');
+        return key ? 'p202-disclosure:' + key : null;
+    }
+
+    function restoreDisclosures(root) {
+        Array.prototype.forEach.call((root || document).querySelectorAll('details[data-p202-remember]'), function (element) {
+            var key = rememberKey(element);
+            if (!key) {
+                return;
+            }
             try {
                 var saved = localStorage.getItem(key);
                 if (saved === 'open') {
@@ -117,36 +131,46 @@
                     element.open = false;
                 }
             } catch (error) {}
-            element.addEventListener('toggle', function () {
-                try {
-                    localStorage.setItem(key, element.open ? 'open' : 'closed');
-                } catch (error) {}
-            });
         });
     }
 
-    function initBootstrapHints() {
+    document.addEventListener('toggle', function (event) {
+        var element = event.target;
+        if (!element || !element.getAttribute || !element.hasAttribute('data-p202-remember')) {
+            return;
+        }
+        var key = rememberKey(element);
+        try {
+            if (key) {
+                localStorage.setItem(key, element.open ? 'open' : 'closed');
+            }
+        } catch (error) {}
+    }, true);
+
+    function initBootstrapHints(root) {
         if (!window.bootstrap) {
             return;
         }
-        Array.prototype.forEach.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'), function (element) {
+        var scope = root || document;
+        Array.prototype.forEach.call(scope.querySelectorAll('[data-bs-toggle="tooltip"]'), function (element) {
             window.bootstrap.Tooltip.getOrCreateInstance(element);
         });
-        Array.prototype.forEach.call(document.querySelectorAll('[data-bs-toggle="popover"]'), function (element) {
+        Array.prototype.forEach.call(scope.querySelectorAll('[data-bs-toggle="popover"]'), function (element) {
             window.bootstrap.Popover.getOrCreateInstance(element);
         });
     }
 
-    function init() {
-        initDisclosures();
-        initBootstrapHints();
+    /* Prepare a subtree: pages call p202ui.init(root) after inserting markup. */
+    function init(root) {
+        restoreDisclosures(root);
+        initBootstrapHints(root);
     }
 
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
+        document.addEventListener('DOMContentLoaded', function () { init(); });
     } else {
         init();
     }
 
-    window.p202ui = { initHints: initBootstrapHints, copyText: copyText };
+    window.p202ui = { init: init, initHints: initBootstrapHints, copyText: copyText };
 })();

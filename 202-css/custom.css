@@ -1492,3 +1492,335 @@ th[role=columnheader]:not(.no-sort){cursor:pointer}th[role=columnheader]:not(.no
     outline-offset: 2px;
     box-shadow: 0 0 0 3px rgba(41, 128, 185, 0.4);
 }
+
+/* ===========================================
+SETUP PAGES (classic shell)
+The page header and side-panel styles of tracking202/setup/*. They
+were emitted inline by tracking202/_config/sub-menu.php on every
+setup page; body.p202-sub-setup (set by template_top()) keeps that
+scope. Bootstrap 3 selectors: deleted with the classic shell.
+=========================================== */
+
+body.p202-sub-setup .main .setup-page-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 24px;
+    background: #2f6fdd;
+    border-radius: 12px;
+    color: #fff;
+    box-shadow: 0 4px 15px rgba(47, 111, 221, 0.2);
+}
+
+body.p202-sub-setup .main .setup-page-header__icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 56px;
+    height: 56px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    flex-shrink: 0;
+}
+
+body.p202-sub-setup .main .setup-page-header__icon .glyphicon {
+    font-size: 24px;
+    color: #fff;
+}
+
+body.p202-sub-setup .main .setup-page-header__text {
+    flex: 1;
+}
+
+body.p202-sub-setup .main .setup-page-header__title {
+    margin: 0 0 4px 0;
+    font-size: 24px;
+    font-weight: 600;
+    color: #fff;
+}
+
+body.p202-sub-setup .main .setup-page-header__subtitle {
+    margin: 0;
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+body.p202-sub-setup .main .setup-side-panel.panel.panel-default {
+    border: 1px solid #e7e8ea;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+body.p202-sub-setup .main .setup-side-panel.panel.panel-default > .panel-heading {
+    background: #fafbfc;
+    border-bottom: 1px solid #e7e8ea;
+    color: #1f2328;
+    font-weight: 600;
+    padding: 16px 20px;
+}
+
+body.p202-sub-setup .main .setup-side-panel.panel.panel-default > .panel-body {
+    padding: 20px;
+}
+
+body.p202-sub-setup .main .setup-side-panel.lp-panel {
+    border: 1px solid #e7e8ea;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+body.p202-sub-setup .main .setup-side-panel.lp-panel .lp-panel-body {
+    padding: 20px;
+}
+
+body.p202-sub-setup .main .setup-side-panel.well {
+    border: 1px solid #e7e8ea;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    padding: 16px;
+}
+
+body.p202-sub-setup .main .setup-side-panel .form-control {
+    border: 1px solid #c9cdd3;
+    border-radius: 8px;
+    box-shadow: none;
+    -webkit-box-shadow: none;
+    transition: all 0.2s ease;
+}
+
+body.p202-sub-setup .main .setup-side-panel .form-control:focus {
+    border-color: #2f6fdd;
+    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1);
+    -webkit-box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1);
+}
+
+body.p202-sub-setup .main .setup-side-panel .fuzzy-search,
+body.p202-sub-setup .main .setup-side-panel .search {
+    min-height: 36px;
+    padding: 8px 12px;
+    height: 36px !important;
+}
+
+body.p202-sub-setup .main .form_seperator {
+    border-bottom: 2px solid #e7e8ea;
+    margin: 20px 0;
+}
+
+body.p202-sub-setup .main .setup-side-panel .list,
+body.p202-sub-setup .main .setup-side-panel .setup-list,
+body.p202-sub-setup .main .setup-side-panel ul {
+    list-style: none;
+    margin: 12px 0 0 0;
+    padding: 0;
+}
+
+body.p202-sub-setup .main .setup-side-panel .list > li,
+body.p202-sub-setup .main .setup-side-panel .setup-list > li,
+body.p202-sub-setup .main .setup-side-panel ul > li {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 11px 12px;
+    margin-bottom: 8px;
+    border: 1px solid #e7e8ea;
+    border-radius: 8px;
+    background: #fff;
+    transition: all 0.2s ease;
+}
+
+body.p202-sub-setup .main .setup-side-panel .list > li:hover,
+body.p202-sub-setup .main .setup-side-panel .setup-list > li:hover,
+body.p202-sub-setup .main .setup-side-panel ul > li:hover {
+    border-color: #bcd4f6;
+    background: #fafbfc;
+}
+
+body.p202-sub-setup .main .setup-side-panel ul ul {
+    margin-top: 8px;
+    margin-left: 12px;
+    padding-left: 10px;
+    border-left: 2px solid #e7e8ea;
+}
+
+body.p202-sub-setup .main .setup-side-panel ul ul > li {
+    background: #fafbfc;
+    border-color: #e7e8ea;
+    margin-bottom: 6px;
+    padding: 9px 10px;
+}
+
+body.p202-sub-setup .main .setup-side-panel ul ul ul > li {
+    background: #ffffff;
+}
+
+body.p202-sub-setup .main .setup-side-panel .filter_network_name,
+body.p202-sub-setup .main .setup-side-panel .filter_campaign_name,
+body.p202-sub-setup .main .setup-side-panel .filter_adv_lp_name,
+body.p202-sub-setup .main .setup-side-panel .filter_simple_lp_name,
+body.p202-sub-setup .main .setup-side-panel .filter_text_ad_name,
+body.p202-sub-setup .main .setup-side-panel .filter_rotator_name,
+body.p202-sub-setup .main .setup-side-panel .filter_rule_name,
+body.p202-sub-setup .main .setup-side-panel .filter_tracker_display_name,
+body.p202-sub-setup .main .setup-side-panel .filter_source_name,
+body.p202-sub-setup .main .setup-side-panel .filter_account_name,
+body.p202-sub-setup .main .setup-side-panel .filter_model_name {
+    font-weight: 600;
+    color: #32383f;
+    flex: 1;
+    min-width: 120px;
+}
+
+body.p202-sub-setup .main .setup-side-panel .filter_tracker_meta {
+    font-size: 12px;
+    color: #6b7280;
+    flex: 1 1 100%;
+}
+
+body.p202-sub-setup .main .setup-side-panel .list-action {
+    color: #2f6fdd;
+    text-decoration: none;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 9px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+body.p202-sub-setup .main .setup-side-panel .list-action:hover {
+    color: #2861c4;
+    background: #eaf2fc;
+    border-color: #bcd4f6;
+    text-decoration: none;
+}
+
+body.p202-sub-setup .main .setup-side-panel .list-action-danger {
+    color: #c9372c;
+}
+
+body.p202-sub-setup .main .setup-side-panel .list-action-danger:hover {
+    color: #b02a20;
+    background: #fdecec;
+    border-color: #fdecec;
+}
+
+body.p202-sub-setup .main .setup-side-panel .action-edit,
+body.p202-sub-setup .main .setup-side-panel .action-remove,
+body.p202-sub-setup .main .setup-side-panel .action-default {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 9px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    text-decoration: none;
+    background: #fff;
+    line-height: 1.4;
+}
+
+body.p202-sub-setup .main .setup-side-panel .action-edit {
+    color: #2f6fdd;
+}
+
+body.p202-sub-setup .main .setup-side-panel .action-edit:hover {
+    color: #2861c4;
+    background: #eaf2fc;
+    border-color: #bcd4f6;
+}
+
+body.p202-sub-setup .main .setup-side-panel .action-remove {
+    color: #c9372c;
+}
+
+body.p202-sub-setup .main .setup-side-panel .action-remove:hover {
+    color: #b02a20;
+    background: #fdecec;
+    border-color: #fdecec;
+}
+
+body.p202-sub-setup .main .setup-side-panel .action-default {
+    color: #374151;
+    background: #fafbfc;
+    border-color: #e7e8ea;
+}
+
+body.p202-sub-setup .main .setup-side-panel .action-default:hover {
+    color: #32383f;
+    background: #eaf2fc;
+}
+
+body.p202-sub-setup .main .setup-side-panel .list-meta {
+    font-size: 11px;
+    font-weight: 600;
+    color: #374151;
+    background: #f0f1f2;
+    border: 1px solid #e7e8ea;
+    border-radius: 999px;
+    padding: 2px 8px;
+}
+
+body.p202-sub-setup .main .setup-side-panel .empty-state {
+    text-align: center;
+    color: #6b7280;
+    border: 1px dashed #c9cdd3;
+    border-radius: 10px;
+    padding: 24px 16px;
+    background: #fafbfc;
+}
+
+@media (max-width: 767px) {
+    body.p202-sub-setup .main .setup-page-header {
+        flex-direction: column;
+        text-align: center;
+        padding: 20px 16px;
+    }
+
+    body.p202-sub-setup .main .setup-page-header__icon {
+        width: 48px;
+        height: 48px;
+    }
+
+    body.p202-sub-setup .main .setup-page-header__icon .glyphicon {
+        font-size: 20px;
+    }
+
+    body.p202-sub-setup .main .setup-page-header__title {
+        font-size: 20px;
+    }
+
+    body.p202-sub-setup .main .setup-page-header__subtitle {
+        font-size: 13px;
+    }
+
+    body.p202-sub-setup .main .setup-side-panel .list > li,
+    body.p202-sub-setup .main .setup-side-panel .setup-list > li,
+    body.p202-sub-setup .main .setup-side-panel ul > li {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    body.p202-sub-setup .main .setup-side-panel .list-action {
+        align-self: flex-start;
+    }
+}
+
+@media (max-width: 480px) {
+    body.p202-sub-setup .main .setup-page-header {
+        padding: 16px 12px;
+    }
+
+    body.p202-sub-setup .main .setup-page-header__title {
+        font-size: 18px;
+    }
+
+    body.p202-sub-setup .main .setup-page-header__subtitle {
+        font-size: 12px;
+    }
+}
