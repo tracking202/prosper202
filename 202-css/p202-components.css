@@ -524,6 +524,13 @@
 
 .p202-code__value--masked {
     letter-spacing: 0.08em;
+    /* A mask is dots: its length says nothing, so clip it rather than let
+       word-break stack a 64-character token into a column eight lines tall
+       on a phone. Reveal removes this class, and the real value wraps under
+       the rule above as usual. */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .p202-copy.is-copied,
