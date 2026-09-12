@@ -358,6 +358,14 @@ func (c *Client) Get(path string, params map[string]string) ([]byte, error) {
 	return c.do("GET", path, params, nil)
 }
 
+// GetWithHeaders is Get with extra request headers — for endpoints whose
+// credential travels as a header rather than as the API key or a query
+// parameter (the public SKAN schema endpoint's X-P202-Schema-Token; query
+// strings land in access logs, headers do not).
+func (c *Client) GetWithHeaders(path string, params map[string]string, headers map[string]string) ([]byte, error) {
+	return c.doWithHeaders("GET", path, params, nil, headers)
+}
+
 func (c *Client) Post(path string, body interface{}) ([]byte, error) {
 	return c.do("POST", path, nil, body)
 }
@@ -441,6 +449,11 @@ func (c *Client) doWithHeaders(method, path string, params map[string]string, bo
 	if stagedMode &&
 		(method == "POST" || method == "PUT" || method == "PATCH" || method == "DELETE") &&
 		!strings.HasPrefix(strings.TrimLeft(path, "/"), "staged-changes") &&
+		// attribution/verify computes over the submitted payload and stores
+		// nothing — a read that arrives as POST because the postback JSON
+		// is its input. There is no proposal to record; stamping staged=1
+		// would only earn the server's "staged is not supported" rejection.
+		strings.TrimLeft(path, "/") != "attribution/verify" &&
 		params["dry_run"] == "" {
 		// A dry-run preview is a read; staging it would be rejected by the
 		// server's mutual-exclusion check, so an explicit --dry-run wins

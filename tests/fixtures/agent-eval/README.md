@@ -104,8 +104,9 @@ cases report `needs_judge`. `p202 eval run --help` documents the contract.
 The `Agent Evals` workflow (`.github/workflows/agent-evals.yml`) runs this
 end to end on every relevant PR: it stands up a throwaway instance by
 driving the real web installer headlessly (`ci/install-instance.sh` —
-config file, `php -S`, cookie + CSRF form POST, prints the REST API key),
-seeds this fixture, and runs the suite with `reference-agent.sh` — a
+config file, `php -S` through `ci/router.php`, cookie + CSRF form POST,
+probes of both postback receiver URLs, prints the REST API key), seeds this
+fixture, and runs the suite with `reference-agent.sh` — a
 deterministic, model-free agent that expresses the pinned behaviors as
 `p202` calls, doubling as a worked example of the agent-command contract.
 Exit code 5 fails the job; results and the server log upload as artifacts.
@@ -115,6 +116,16 @@ Dispatch the workflow manually with `agent_cmd` (and optionally
 Rubric lines are graded only when a `judge_cmd` is supplied on dispatch;
 otherwise those cases report `needs_judge`, which does not fail the job —
 the deterministic graders gate fully on their own.
+
+The router exists because PHP's built-in server, before 8.4, treats any
+request path containing a `.` as a static file and never resolves the
+directory's `index.php` — so `/.well-known/skadnetwork/report-attribution/`
+(one of the URLs Apple posts to) was a 404 on the workflow's PHP 8.3 while the same
+instance worked on 8.4. Apache and nginx resolve the index themselves;
+production needs no router. The installer fails fast, naming the URL, when
+a probe does not get a 200, and the attribution cases' seeding `curl`s run with
+`-f` so an HTTP error surfaces as a setup failure rather than as a row
+count that does not add up.
 
 ## Cleaning up
 

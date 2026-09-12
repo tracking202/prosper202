@@ -295,6 +295,12 @@ final class ShellIsolationTest extends TestCase
         );
         foreach ($iterator as $file) {
             /** @var \SplFileInfo $file */
+            // A directory whose children the filter all rejected has no
+            // children left, so the iterator yields the directory itself as a
+            // leaf. Only files are readable.
+            if (!$file->isFile()) {
+                continue;
+            }
             $files[] = ltrim(str_replace($root, '', $file->getPathname()), '/');
         }
         sort($files);

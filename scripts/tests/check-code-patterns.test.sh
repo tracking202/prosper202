@@ -253,7 +253,11 @@ if [ -f "$VERIFY" ]; then
     # ── phpstan tier on a partial vendor: the documented Symfony errors are
     #    the environment; anything else is still a finding. ──
     mkdir -p vendor cli
-    printf '<?php\n' > vendor/autoload.php            # partial: autoload but no vendor/bin
+    # Partial: an autoload.php with no vendor/composer/installed.json beside
+    # it, which is what a composer install that never finished leaves. (The
+    # ladder used to decide this on `[ -d vendor/bin ]`, which one hand-made
+    # shim could satisfy; see the vendor-state comment in verify.sh.)
+    printf '<?php\n' > vendor/autoload.php
     printf 'parameters:\n    paths:\n        - cli\n' > phpstan.neon.dist
     # cli/A.php is committed and untouched by the change: an error there
     # cannot be the change's doing.

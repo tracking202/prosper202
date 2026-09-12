@@ -39,7 +39,7 @@ $allowedOrigin = defined('API_CORS_ORIGIN') ? API_CORS_ORIGIN : '';
 if ($allowedOrigin !== '') {
     header('Access-Control-Allow-Origin: ' . $allowedOrigin);
     header('Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    header('Access-Control-Allow-Headers: Authorization, Content-Type, X-P202-API-Version, Idempotency-Key, If-Match');
+    header('Access-Control-Allow-Headers: Authorization, Content-Type, X-P202-API-Version, Idempotency-Key, If-Match, If-None-Match, X-P202-Schema-Token');
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -121,6 +121,56 @@ try {
         Bootstrap::jsonResponse([
             'data' => ['status' => 'healthy', 'timestamp' => time(), 'api_version' => 'v3'],
         ]);
+        exit;
+    }
+
+    // Unauthenticated SKAN conversion-value schema, fetched by the
+    // advertised iOS app at runtime so mapping changes need no App Store
+    // resubmission. An app binary cannot hold an API key; access is gated
+    // by the app's rotatable schema token instead (AttributionSchemaController).
+    if ($path === '/attribution/schema' && $method === 'GET') {
+        // Soft per-source limit, mirroring the postback receiver: keyed on
+        // the validated TCP peer, never client headers (an attacker-chosen
+        // X-Forwarded-For would defeat the limit AND mint unbounded bucket
+        // files), fail-open so the limiter's own failure never blocks
+        // devices.
+        try {
+            $retryAfter = (new ServerStateStore())->softIpRateLimit('attribution-schema', 300, 60);
+        } catch (\Throwable $e) {
+            error_log('p202 attribution: schema rate limiter unavailable, serving request: ' . $e->getMessage());
+            $retryAfter = null;
+        }
+        if ($retryAfter !== null) {
+            header('Retry-After: ' . $retryAfter);
+            Bootstrap::errorResponse('Rate limit exceeded', 429, ['retry_after_seconds' => $retryAfter]);
+            exit;
+        }
+
+        // Header-only token transport: a token in a GET query string would
+        // be captured by ordinary request logging (the p13n endpoints'
+        // rule), and the iOS helper and CLI both send the header.
+        $schemaResult = (new \Api\V3\Controllers\AttributionSchemaController($db))
+            ->publicSchema(RequestContext::header('x-p202-schema-token'), RequestContext::header('if-none-match'));
+        // The document is selected by the token header, not by the URL, so
+        // every cache between here and the device must key on it too —
+        // without Vary a shared cache can serve one app's schema to another
+        // app's token, and a rotated token would keep working from cache.
+        header('Vary: X-P202-Schema-Token');
+        $schemaCacheControl = 'no-store';
+        if ($schemaResult['etag'] !== null) {
+            header('ETag: ' . $schemaResult['etag']);
+            $schemaCacheControl = 'private, max-age=300';
+            header('Cache-Control: ' . $schemaCacheControl);
+        }
+        if ($schemaResult['status'] === 304) {
+            http_response_code(304);
+            exit;
+        }
+        // Passed in, not left to the header() above: jsonResponse sets
+        // Cache-Control itself and would otherwise replace it with
+        // no-store, leaving the 200 uncacheable while the 304 above
+        // advertised five minutes.
+        Bootstrap::jsonResponse($schemaResult['body'] ?? [], $schemaResult['status'], $schemaCacheControl);
         exit;
     }
 
@@ -450,6 +500,41 @@ try {
             $r->post('/{id}/exports',  fn($ctx) => ['_status' => 201] + $idempotent('attribution/models/' . (int)$ctx['id'] . '/exports', $payload, fn() => $crud($cls)->scheduleExport((int)$ctx['id'], $payload)));
         });
 
+        // ── SKAdNetwork (SKAN) ───────────────────────────────────────────
+        // Postbacks arrive through the public receiver
+        // (/.well-known/skadnetwork/report-attribution/), never through this
+        // API — here they are read-only. Apps and conversion-value rules are
+        // per-user CRUD.
+        $router->group('/attribution', function (Router $r) use ($crud, $idempotent, $queryParams, $payload) {
+            $apps = \Api\V3\Controllers\AttributionAppsController::class;
+            $rules = \Api\V3\Controllers\AttributionConversionValuesController::class;
+            $postbacks = \Api\V3\Controllers\AttributionPostbacksController::class;
+
+            $r->get('/apps',            fn() => $crud($apps)->list($queryParams));
+            $r->get('/apps/{id}',       fn($ctx) => $crud($apps)->get((int)$ctx['id']));
+            // Deliberately NOT wrapped in $idempotent, for the same reason
+            // API-key creation is not: the response carries the app's schema
+            // token, which must never persist in the server-state store as a
+            // replayable record. Retry safety comes from the global UNIQUE
+            // app_id instead — a duplicate create answers 409 naming the
+            // registration.
+            $r->post('/apps',           fn() => ['_status' => 201] + $crud($apps)->create($payload));
+            $r->put('/apps/{id}',       fn($ctx) => $crud($apps)->update((int)$ctx['id'], $payload));
+            $r->delete('/apps/{id}',    fn($ctx) => tap($crud($apps), fn($c) => $c->delete((int)$ctx['id'])));
+            $r->post('/apps/{id}/schema-token/rotate', fn($ctx) => $crud($apps)->rotateSchemaToken((int)$ctx['id']));
+
+            $r->get('/conversion-values',         fn() => $crud($rules)->list($queryParams));
+            $r->get('/conversion-values/{id}',    fn($ctx) => $crud($rules)->get((int)$ctx['id']));
+            $r->post('/conversion-values',        fn() => ['_status' => 201] + $idempotent('attribution/conversion-values', $payload, fn() => $crud($rules)->create($payload)));
+            $r->put('/conversion-values/{id}',    fn($ctx) => $crud($rules)->update((int)$ctx['id'], $payload));
+            $r->delete('/conversion-values/{id}', fn($ctx) => tap($crud($rules), fn($c) => $c->delete((int)$ctx['id'])));
+
+            $r->get('/postbacks',      fn() => $crud($postbacks)->list($queryParams));
+            $r->get('/postbacks/{id}', fn($ctx) => $crud($postbacks)->get((int)$ctx['id']));
+            $r->get('/report',         fn() => $crud($postbacks)->report($queryParams));
+            $r->post('/verify',        fn() => $crud($postbacks)->verify($payload));
+        });
+
         // ── Users (admin-gated writes, self-or-admin for reads) ──────────
         $router->group('/users', function (Router $r) use ($db, $auth, $idempotent, $payload) {
             $make = fn() => new \Api\V3\Controllers\UsersController($db);
@@ -546,7 +631,7 @@ try {
                 'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart}',
                 'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}',
                 'rotators'      => '/rotators',
-                'attribution'   => '/attribution/models',
+                'attribution'   => '/attribution/{models|apps|conversion-values|postbacks|report|verify}',
                 'users'         => '/users',
                 'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics}',
                 'sync'          => '/sync/{plan|jobs|status|history|re-sync}',
@@ -573,6 +658,8 @@ try {
         $previewRouter->delete('/rotators/{id}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->delete('/rotators/{id}/rules/{ruleId}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deleteRulePreview((int)$ctx['id'], (int)$ctx['ruleId']));
         $previewRouter->delete('/attribution/models/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionController::class)->deleteModelPreview((int)$ctx['id']));
+        $previewRouter->delete('/attribution/apps/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionAppsController::class)->deletePreview((int)$ctx['id']));
+        $previewRouter->delete('/attribution/conversion-values/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionConversionValuesController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->group('/users', function (Router $r) use ($db, $auth) {
             $make = fn() => new \Api\V3\Controllers\UsersController($db);
             $r->delete('/{id}', function ($ctx) use ($auth, $make) {
@@ -630,6 +717,15 @@ try {
         $r->put('/{id}', $stageable);
         $r->delete('/{id}', $stageable);
         $r->post('/{id}/exports', $stageable);
+    });
+    $stageableRouter->group('/attribution', function (Router $r) use ($stageable) {
+        $r->post('/apps', $stageable);
+        $r->put('/apps/{id}', $stageable);
+        $r->delete('/apps/{id}', $stageable);
+        $r->post('/apps/{id}/schema-token/rotate', $stageable);
+        $r->post('/conversion-values', $stageable);
+        $r->put('/conversion-values/{id}', $stageable);
+        $r->delete('/conversion-values/{id}', $stageable);
     });
     $stageableRouter->group('/users', function (Router $r) use ($stageable) {
         $r->post('', $stageable);
@@ -725,6 +821,15 @@ try {
             // (`stage`) key suffices; the write scope is required of the
             // applier instead.
             $scopeAction = 'stage';
+        }
+        if ($method === 'POST' && $path === '/attribution/verify') {
+            // Signature verification computes over the submitted payload and
+            // stores nothing — a read that arrives as POST only because the
+            // postback JSON is its input. Deliberately AFTER the staged
+            // override: verify?staged=1 stays a read, so a read-scoped key
+            // reaches the staging branch's "staged is not supported here"
+            // 422 instead of a baffling 403 about stage scope.
+            $scopeAction = 'read';
         }
         if ($method === 'POST' && preg_match('#^/staged-changes/[^/]+/discard$#', $path) === 1) {
             // Gated on the change's own area, like apply below. Demanding

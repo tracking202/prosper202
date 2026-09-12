@@ -12,6 +12,7 @@ $version = defined('PROSPER202_VERSION') ? PROSPER202_VERSION : PROSPER202::pros
 if (!isset($db) || !($db instanceof mysqli)) {
 	_die('Database connection unavailable.');
 }
+
 $partition_support = 0;
 $partitionSql = "SELECT COUNT(*) as partition_support FROM INFORMATION_SCHEMA.PARTITIONS LIMIT 1";
 $partitionRow = memcache_mysql_fetch_assoc($partitionSql);

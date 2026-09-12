@@ -16,6 +16,7 @@ use Prosper202\Database\Tables\LtvTables;
 use Prosper202\Database\Tables\RotatorTables;
 use Prosper202\Database\Tables\AdNetworkTables;
 use Prosper202\Database\Tables\MiscTables;
+use Prosper202\Database\Tables\AttributionPostbackTables;
 use Prosper202\Database\Tables\SyncTables;
 use Prosper202\Database\Exceptions\SchemaInstallException;
 
@@ -57,6 +58,7 @@ final class SchemaInstaller
             $this->createLtvTables();
             $this->createRotatorTables();
             $this->createAdNetworkTables();
+            $this->createAttributionPostbackTables();
             $this->createMiscTables();
             $this->setCollations();
         } catch (SchemaInstallException $e) {
@@ -150,6 +152,14 @@ final class SchemaInstaller
     public function createAdNetworkTables(): void
     {
         $this->createTablesFromDefinitions(AdNetworkTables::getDefinitions());
+    }
+
+    /**
+     * Create SKAdNetwork (SKAN) attribution tables.
+     */
+    public function createAttributionPostbackTables(): void
+    {
+        $this->createTablesFromDefinitions(AttributionPostbackTables::getDefinitions());
     }
 
     /**

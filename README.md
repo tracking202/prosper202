@@ -10,6 +10,7 @@ Since 2007, Prosper202 has helped marketers take control of their tracking with 
 - **Click & Conversion Tracking** — Real-time click capture with sub-ID parameters, referrer tracking, and automatic IP/UA logging. Server-to-server postback and pixel tracking with revenue, payout, and status fields.
 - **12+ Report Types** — Keywords, geo, device, browser, OS, referrer, ISP, landing page, and custom dimension reports. Track profit and loss, conversion metrics, EPC per keyword, per text ad, per referrer, and more.
 - **Multi-Touch Attribution** — Six attribution models: first-touch, last-touch, linear, time-decay, position-based, and algorithmic.
+- **iOS SKAdNetwork (SKAN) Measurement** — Act as your iOS app's SKAN attribution endpoint: receive Apple's signed install postbacks, verify their signatures, decode conversion values into events and revenue, and report installs by ad network, campaign, and country. The bundled P202Attribution Swift helper fetches the conversion-value mapping from your server at runtime, so changing it never requires an App Store resubmission ([guide](documentation/api/19-attribution-postbacks.md)).
 - **Split Testing** — Run unlimited weighted split tests to discover your best marketing message and offer. Pause non-converting tests and automatically send all traffic to the winner.
 - **Smart Redirector & Traffic Rules** — Rule-based traffic distribution with weighted rotation, geo-targeting, and device filtering.
 - **BlazerCache Technology** — Fast redirects that continue working even if the database goes down, preventing lost revenue.
@@ -295,7 +296,7 @@ As with Nginx, throughput is ultimately capped by PHP-FPM, so size `pm.max_child
 
 ## API v3
 
-REST API under `/api/v3/` with bearer token authentication. Covers campaigns, affiliate and PPC networks, PPC accounts, trackers, landing pages, text ads, clicks, conversions, rotators, attribution models, forecast events, and users, plus server-side sync, capability discovery, and system operations.
+REST API under `/api/v3/` with bearer token authentication. Covers campaigns, affiliate and PPC networks, PPC accounts, trackers, landing pages, text ads, clicks, conversions, rotators, attribution models, SKAdNetwork postbacks and conversion-value rules, forecast events, and users, plus server-side sync, capability discovery, and system operations.
 
 ```bash
 curl -H "Authorization: Bearer <api-key>" https://your-server/api/v3/campaigns
@@ -338,6 +339,7 @@ cd go-cli && make build
 ```bash
 ./p202 campaign list --json                 # any entity: list / get / create / update / delete
 ./p202 report summary --period last7
+./p202 attribution report --group-by ad-network    # iOS SKAdNetwork / AdAttributionKit installs with decoded revenue
 ./p202 forecast --metric revenue --horizon 7
 ./p202 sync all --from prod --to staging    # replicate between instances
 ```

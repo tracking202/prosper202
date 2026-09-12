@@ -158,6 +158,71 @@ the lookup keys on (here the key itself, so the same key still lands in the
 same file) and bound what a shard retains, or the correctness fix ships a
 latency regression.
 
+### 16. On a public endpoint, identity is what the attacker cannot choose
+Every value a security decision keys on must be split into what the peer
+proved and what the request merely *claimed*. Two instances shipped in one
+feature: the receiver's rate limiter keyed buckets on `AUTH::client_ip()`,
+which honors `X-Forwarded-For` — one curl loop with random headers both
+dodges the limit and mints unbounded bucket files (key on `REMOTE_ADDR`;
+the XFF-aware value is for display); and the postback dedupe hash covered
+only fields an attacker can copy out of thin air (network, transaction,
+leg), so a forgery arriving first claimed the UNIQUE slot and the genuine
+signed postback was answered `duplicate: true` and dropped — the dedupe
+must cover the full body, so only a byte-identical retry collapses. The
+same review asks the report question: aggregates over rows anyone can
+insert must default to counting only rows that passed verification, with
+the unverified visible in separate columns — "stored and flagged" is not a
+trust decision, the read path makes one whether it means to or not.
+
+### 17. A key derived from an identity must be injective
+When a value exists to tell two things apart, every transform between the
+thing and the comparison has to preserve the distinction. Two instances
+shipped in one feature, both found only by reading:
+`ServerStateStore::slug()` turns a rate-limit bucket into a filename with
+`preg_replace('/[^a-z0-9._-]+/', '-', ...)`, which collapses every run of
+`:` — so `2001:db8::1` and `2001:db8:1::`, both canonical addresses that
+`REMOTE_ADDR` really produces, shared one bucket and one ceiling, and a
+flood from one peer answered 429 to the other; and the report's identity
+was `CONCAT_WS('|', protocol, ad_network_id, transaction_id, ...)` over
+fields no validator constrains the characters of, so a postback naming
+`acme.skadnetwork|A9F3` / `B7C2` and one naming `acme.skadnetwork` /
+`A9F3|B7C2` counted as one.
+
+The second is the sharper lesson, because the codebase already had the
+answer: `PostbackReceiver::dedupeHash()` length-prefixes every field and
+its comment says why — "with a plain joining character, an ad-network-id
+containing that character could collide with a different (network, id)
+pair". The guard existed, one file away, and the sibling was written with
+a bare delimiter anyway. Ask of any composite key, bucket name, cache key
+or `CONCAT_WS`: can two different inputs produce this same string? If a
+sanitizer, a truncation, a case fold or a delimiter sits between the value
+and the comparison, the answer is usually yes.
+
+This differs from #15: there the discriminator was *inside* the lookup
+path, so no lookup could see it change. Here the mapping itself is
+many-to-one, so two things that should differ never get the chance to.
+
+### 18. A guard that runs after the framework already normalized its input
+`assertUsableAppId()` rejected anything that was not a positive App Store
+id, and it never once saw a bad value. It ran from `beforeCreate()`, and
+`Controller::create()` calls `validatePayload()` — which casts every `'i'`
+field — *before* it calls the hook. So `1e20` was stored as
+7766279631452241920, `'99999999999999999999'` as `PHP_INT_MAX`, `1.5` as
+1, each answered 201 with an id the caller never sent, and the global
+UNIQUE key taken by a garbage number. The same shape sat two files away in
+the conversion-values controller, where the mis-scoped rule is then served
+to a device in another app's runtime schema.
+
+This is #12 seen from the inside: the layer that discarded the input was
+not a different service or a CLI, it was the base class on the same
+request path, three stack frames up, doing something entirely reasonable.
+A validation hook cannot see the raw request unless it is given it. When
+you add a check, find where the value it inspects came from — if a
+framework hook hands it to you, assume it has already been normalized, and
+prove otherwise by feeding a malformed value in at the outermost entry
+point (the decoded request body, not the hook's argument) and watching
+where it lands.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure
@@ -265,6 +330,19 @@ Check here before burning time on tooling failures.
   (headless web installer; prints the REST API key) and seed with
   `tests/fixtures/agent-eval/seed.sh`. Reports stay empty until the
   dataengine cron runs — the seeder triggers `202-cronjobs/dej.php` itself.
+- **This sandbox's PHP is 8.4; CI runs 8.3, and `php -S` differs between
+  them.** Before 8.4 the built-in server treats any request path containing
+  a `.` as a static file and never resolves its directory index, so
+  `/.well-known/skadnetwork/report-attribution/` is a 404 (logged
+  `- Success`) on 8.3 and fine on 8.4. `install-instance.sh` therefore serves
+  through `tests/fixtures/agent-eval/ci/router.php` and probes the receiver
+  URL after installing. To run CI's PHP here without touching the system
+  `php`: `apt-get download php8.3-cli php8.3-common php8.3-mysql
+  php8.3-mbstring php8.3-curl php8.3-xml php8.3-gd php8.3-zip` into the
+  scratchpad, `dpkg -x` each, and run `usr/bin/php8.3 -n -d
+  extension_dir=usr/lib/php/20230831 -d extension=mysqlnd -d extension=mysqli
+  ...` (a shim named `php` on PATH makes `install-instance.sh` use it). The
+  static builds on dl.static-php.dev ship without mysqli.
 - **phpstan is now configured and runs in CI** (`phpstan.neon.dist` +
   `phpstan-baseline.neon`, job `phpstan` in `.github/workflows/php-lint.yml`).
   In a sandbox where `composer install` failed there is no `vendor/bin/`, but
@@ -276,6 +354,12 @@ Check here before burning time on tooling failures.
   into `vendor/` by hand is invisible to it even after patching the
   autoloader. Add `scanDirectories: [vendor/<pkg>]` in a scratch config that
   `includes:` the dist file to confirm a clean run; do not commit that.
+- **The PHPUnit 9 phar takes ONE path argument; extra paths are silently
+  ignored.** `php phpunit-9.phar ... tests/A/FooTest.php tests/Schema/` ran
+  only `FooTest` and reported OK, and the schema suite it appeared to include
+  never executed — noticed only because 4 tests ran where 9 were expected.
+  Run one path per invocation, and compare the test count against what the
+  paths should contain before believing an OK line.
 - **`tests/Schema/StaticSqlSchemaTest.php` checks SQL against the schema** by
   preparing every statically-known v3 statement on a real server — MySQL is
   the only thing that knows whether a column exists, so no SQL parser is
@@ -402,6 +486,18 @@ Three habits, in order of how often they would have helped:
   nothing had been aimed at the wrong directory; a test that passed against a
   "reverted" fix had a revert that silently did not apply.
 
+- **A performance fix must be shown to return the same answer, not just to run
+  faster.** A day-grouped report was made to scan only the newest `limit + 1`
+  days, justified in a code comment, the OpenAPI spec and the guide with three
+  phrasings of "the days it cuts are days the LIMIT would have thrown away".
+  Executed, a tenant with six populated days spread over seven hundred returned
+  six groups before and two after — and low-volume accounts are exactly the ones
+  that hit it. The optimization was defensible; asserting its safety in three
+  places without running the sparse case was not, and prose that denies a
+  behaviour change reads as verified fact to the next reviewer. Before claiming
+  an optimization is invisible, construct the input where the shortcut and the
+  full computation could disagree and run both.
+
 The rest of this section is the same principle applied to checks — the places
 where a check quietly fails to check what it appears to.
 
@@ -438,6 +534,13 @@ where a check quietly fails to check what it appears to.
   partial `vendor/`), measure the exposure rather than waiting to find out —
   e.g. instrument a new rule to report every site it *declines* to analyse; if
   that count is zero, fuller symbol resolution cannot surface new findings.
+- **Local green is not CI green when the runtime version differs.** The
+  eval harness passed here three times on PHP 8.4 and failed in CI on 8.3,
+  because `php -S` changed its path rules between the two; an hour went to
+  the MySQL 8.0 service that the two setups also did not share. Before
+  suspecting the component that differs most visibly, diff the versions of
+  everything on the path (`php -v` against the workflow's `php-version`),
+  and read the server log the job uploads — the 404 was on its first page.
 - **Local green is not CI green when the environment carries ambient state.**
   A `--scope` check placed after `api.NewFromConfig()` passed here only
   because this sandbox has a URL configured; CI has none, so the config error

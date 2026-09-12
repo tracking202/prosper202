@@ -407,6 +407,14 @@ final class StagedChangesControllerTest extends TestCase
             'ipqs_api_key' => 'ipqs-live-secret',
             'user_slack_incoming_webhook' => 'https://hooks.slack.com/services/T0/B0/xxxxxxxx',
             'webhook_url' => 'https://example.com/hook/secret-token',
+            // The rest of the credential columns on that same table: the
+            // ClickBank key, the Zaxaa signing signature, and the two LPO
+            // bridge fields (lpo_bridge_config's value is JSON holding the
+            // derived t202ctx signing key, so the column goes whole).
+            'cb_key' => 'clickbank-live-secret',
+            'zaxaa_api_signature' => 'zaxaa-live-signature',
+            'lpo_site_key' => 'lpo-live-site-key',
+            'lpo_bridge_config' => '{"webhook_id":3,"ctx_key":"deadbeef"}',
         ] as $field => $value) {
             try {
                 $ctl->stage('PUT', '/users/5/preferences', [$field => $value], null);
@@ -438,6 +446,13 @@ final class StagedChangesControllerTest extends TestCase
             'aff_campaign_url', 'aff_campaign_payout', 'aff_network_id',
             'user_name', 'user_email', 'text_ad_id', 'keyword_id',
             'rotator_name', 'model_name', 'scope_type', 'requested_format',
+            // Names the broader forms of the credential needles would have
+            // swallowed, kept here so a later widening fails loudly:
+            // '_key' takes the keyword columns, 'signature' takes the
+            // attribution verification columns, 'config' takes these two.
+            'user_pref_keyword', 'user_keyword_searched_or_bidded',
+            'export_keyword_status', 'signature_valid', 'signature_state',
+            'attribution_signature', 'weighting_config', 'config',
         ] as $field) {
             $payload[$field] = 'x';
         }

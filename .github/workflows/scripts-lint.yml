@@ -113,6 +113,13 @@ jobs:
       - name: Run check-code-patterns tests
         run: ./scripts/tests/check-code-patterns.test.sh
 
+      # The ladder decides what it is allowed to claim. Two of its answers
+      # were wrong while looking ordinary: one hand-written file in vendor/bin
+      # made it call a partial vendor "full", and --changed on a clean tree
+      # selected nothing and reported skips that read like a run.
+      - name: Run verify-ladder tests
+        run: ./scripts/tests/verify-ladder.test.sh
+
   actionlint:
     name: actionlint
     runs-on: ubuntu-latest

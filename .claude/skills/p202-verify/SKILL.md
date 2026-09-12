@@ -75,9 +75,18 @@ suggestion.
 # see which tiers --changed would pick, without running any
 .claude/skills/p202-verify/scripts/verify.sh --plan
 
+# after committing, --changed has nothing left to look at and every tier it
+# selects from the diff skips. Compare against a ref instead, which covers the
+# commits AND anything still uncommitted:
+.claude/skills/p202-verify/scripts/verify.sh --since origin/master --changed
+
 # one tier
 .claude/skills/p202-verify/scripts/verify.sh --tier phpstan
 ```
+
+`--changed` reads the working tree, so on a clean tree it can only report
+skips — which is a scope report that looks like a run and verified nothing.
+Reach for `--since` whenever the change you want checked is already committed.
 
 The script exits non-zero only for real failures. A tier that could not run is
 reported as `SKIP` with its reason and does not affect the exit code, because

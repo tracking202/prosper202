@@ -62,12 +62,19 @@ final class Bootstrap
         }
     }
 
-    public static function jsonResponse(array $data, int $status = 200): void
+    /**
+     * @param string $cacheControl Cache-Control to send. Defaults to
+     *     no-store: an API response is not cacheable unless the endpoint
+     *     says otherwise. A caller that sets the header itself before
+     *     calling would have it REPLACED here (PHP's header() replaces by
+     *     default), so a cacheable endpoint passes its directives in.
+     */
+    public static function jsonResponse(array $data, int $status = 200, string $cacheControl = 'no-store'): void
     {
         http_response_code($status);
         header('Content-Type: application/json; charset=utf-8');
         header('X-Content-Type-Options: nosniff');
-        header('Cache-Control: no-store');
+        header('Cache-Control: ' . $cacheControl);
         $json = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         if ($json === false) {
             $json = json_encode(['error' => true, 'message' => 'Response encoding failed', 'status' => 500]);

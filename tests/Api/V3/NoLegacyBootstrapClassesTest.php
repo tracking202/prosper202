@@ -316,6 +316,12 @@ final class NoLegacyBootstrapClassesTest extends TestCase
         );
         foreach ($iterator as $file) {
             /** @var \SplFileInfo $file */
+            // A directory whose children the filter all rejected has no
+            // children left, so the iterator yields the directory itself as a
+            // leaf. Only files are readable.
+            if (!$file->isFile()) {
+                continue;
+            }
             $source = (string) file_get_contents($file->getPathname());
             if (preg_match("/['\"]ui['\"]\\s*=>\\s*['\"]v2['\"]/", $source) === 1) {
                 $pages[] = ltrim(str_replace($root, '', $file->getPathname()), '/');
