@@ -10,32 +10,70 @@ use PHPUnit\Framework\TestCase;
 /**
  * The account currency, from the column to the rendered amount.
  *
- * These two have to agree about one set, and they used to disagree: the
- * validator admitted any three letters while dollar_format() knew twenty-one
- * currencies, so a stored "XYZ" put "XYZ10.00" on every page that shows
- * money — a string indistinguishable, to a reader, from a real currency.
+ * Three lists, and the bugs have come from confusing two of them:
+ *
+ *   - what the settings page OFFERS, which is what an account may be set to;
+ *   - what dollar_format() has a GLYPH for, a subset;
+ *   - what the validator ADMITS, which must be the first, not the second.
+ *
+ * Admitting any three letters put "XYZ10.00" on every page that shows money,
+ * indistinguishable to a reader from a real currency. Fixing that by admitting
+ * only the glyph list then broke the six offered currencies that have no
+ * glyph and correctly render as their own code.
  */
 final class AccountCurrencyTest extends TestCase
 {
     /**
-     * Everything the validator admits must be something the renderer can
-     * render. dollar_format()'s last resort is to print the code itself, so
-     * a code with no symbol is exactly what this must not admit.
+     * The validator's set is what the settings page OFFERS, not what has a
+     * glyph. Deriving it from the symbol table instead rejected six real
+     * currencies — AUD, CAD, HKD, MXN, NZD, SGD — rewriting a legitimate
+     * stored preference to USD, tagging conversion-ledger writes USD, and
+     * making the API refuse a currency its own settings page lists.
      */
-    public function testEveryAdmittedCurrencyIsOneTheRendererHasASymbolFor(): void
+    public function testTheAdmittedSetIsExactlyWhatTheSettingsPageOffers(): void
     {
-        foreach (UsersController::CURRENCY_SYMBOLS as $code => $sides) {
-            $this->assertSame(
+        $page = file_get_contents(dirname(__DIR__, 2) . '/202-account/account.php');
+        $this->assertIsString($page);
+        $this->assertSame(
+            1,
+            preg_match_all('/<option value="([A-Z]{3})"/', $page, $m) > 0 ? 1 : 0,
+            'no currency options found in account.php; the extractor is broken'
+        );
+
+        $offered = array_values(array_unique($m[1]));
+        sort($offered);
+        $admitted = UsersController::SUPPORTED_CURRENCIES;
+        sort($admitted);
+
+        $this->assertSame($offered, $admitted, 'SUPPORTED_CURRENCIES must match the account page exactly');
+        $this->assertGreaterThan(20, count($offered), 'far fewer options than expected');
+    }
+
+    /** Everything admitted is admitted unchanged. */
+    public function testEveryAdmittedCurrencyPassesThroughUntouched(): void
+    {
+        foreach (UsersController::SUPPORTED_CURRENCIES as $code) {
+            $this->assertSame($code, UsersController::normalizeCurrency($code));
+        }
+    }
+
+    /**
+     * The symbol table is a SUBSET, not the same list. A code in it that the
+     * app does not offer would be a symbol nothing can ever select.
+     */
+    public function testEverySymbolBelongsToACurrencyTheAppOffers(): void
+    {
+        foreach (array_keys(UsersController::CURRENCY_SYMBOLS) as $code) {
+            $this->assertContains(
                 $code,
-                UsersController::normalizeCurrency($code),
-                "$code is in the symbol table, so it must be admitted unchanged"
-            );
-            $this->assertNotSame(
-                ['', ''],
-                $sides,
-                "$code would render as its own code, which is what the fallback does for unknown ones"
+                UsersController::SUPPORTED_CURRENCIES,
+                "$code has a symbol but is not a currency an account can be set to"
             );
         }
+        $this->assertLessThanOrEqual(
+            count(UsersController::SUPPORTED_CURRENCIES),
+            count(UsersController::CURRENCY_SYMBOLS)
+        );
     }
 
     /**

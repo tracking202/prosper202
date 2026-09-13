@@ -19,12 +19,39 @@ class UsersController
     public const DEFAULT_CURRENCY = 'USD';
 
     /**
-     * Every currency this install can render, and the symbol it renders with.
+     * Every currency an account may be set to — the list
+     * 202-account/account.php offers, which is the only thing that makes a
+     * stored value legitimate.
      *
-     * The one list: dollar_format() in 202-config/functions-tracking202.php
-     * reads it, and normalizeCurrency() below admits exactly its keys. A code
-     * outside it has no symbol, and dollar_format's last resort is to print
-     * the code itself — so "XYZ10.00" was reachable from any three letters.
+     * Kept apart from CURRENCY_SYMBOLS below, because "is this a currency this
+     * install supports" and "do we have a glyph for it" are different
+     * questions. Collapsing them into one broke six real currencies: AUD, CAD,
+     * HKD, MXN, NZD and SGD are all selectable on the settings page and none
+     * has a symbol here, so validating against the symbol table rewrote a
+     * legitimate stored preference to USD, tagged conversion-ledger writes
+     * USD, and made the v3 preferences endpoint reject a currency its own
+     * settings page offers.
+     *
+     * tests/User/AccountCurrencyTest.php holds this against the options in
+     * account.php, so the two cannot drift.
+     *
+     * @var list<string>
+     */
+    public const SUPPORTED_CURRENCIES = [
+        'AUD', 'BRL', 'CAD', 'CHF', 'CNY', 'CZK', 'DKK', 'EUR', 'GBP', 'HKD',
+        'HUF', 'ILS', 'INR', 'JPY', 'MXN', 'MYR', 'NOK', 'NZD', 'PHP', 'PLN',
+        'RUB', 'SEK', 'SGD', 'THB', 'TRY', 'TWD', 'USD',
+    ];
+
+    /**
+     * The subset of those that render as a symbol, and which symbol.
+     *
+     * dollar_format() in 202-config/functions-tracking202.php reads this and
+     * falls back to printing the CODE for a currency that is not here —
+     * "AUD10.00" rather than a glyph, which is a fine rendering for a real
+     * currency and the behaviour those six have always had. What that fallback
+     * must never be reached with is a value that is not a currency at all,
+     * which is what normalizeCurrency() and the preferences endpoint are for.
      *
      * A leading empty string means the symbol follows the amount instead.
      *
@@ -553,18 +580,18 @@ class UsersController
     /**
      * A stored currency as a code dollar_format() can actually render.
      *
-     * Membership of CURRENCY_SYMBOLS, not a three-letter shape. Those are not
-     * the same question, and the shape test let the wrong answer through: an
-     * empty column, a truncated write or a value of another type resolved to
-     * USD, but any three letters passed straight into dollar_format(), whose
-     * last resort is to print the code as the symbol — so a stored "XYZ" put
-     * "XYZ10.00" on every page, indistinguishable from a real currency.
+     * Membership of SUPPORTED_CURRENCIES, not a three-letter shape: the shape
+     * test let any three letters through to dollar_format(), whose last
+     * resort is to print the code as the symbol, so a stored "XYZ" put
+     * "XYZ10.00" on every page looking exactly like a real currency. Not
+     * membership of CURRENCY_SYMBOLS either — that rejected the six supported
+     * currencies which have no glyph and legitimately render as their code.
      */
     public static function normalizeCurrency(mixed $raw): string
     {
         $currency = is_scalar($raw) ? strtoupper(trim((string)$raw)) : '';
 
-        return isset(self::CURRENCY_SYMBOLS[$currency]) ? $currency : self::DEFAULT_CURRENCY;
+        return in_array($currency, self::SUPPORTED_CURRENCIES, true) ? $currency : self::DEFAULT_CURRENCY;
     }
 
     public function updatePreferences(int $userId, array $payload): array
@@ -588,10 +615,10 @@ class UsersController
         if (array_key_exists('user_account_currency', $payload)) {
             $raw = $payload['user_account_currency'];
             $currency = is_scalar($raw) ? strtoupper(trim((string)$raw)) : '';
-            if (!isset(self::CURRENCY_SYMBOLS[$currency])) {
+            if (!in_array($currency, self::SUPPORTED_CURRENCIES, true)) {
                 throw new ValidationException('Validation failed', [
                     'user_account_currency' => 'Must be one of: '
-                        . implode(', ', array_keys(self::CURRENCY_SYMBOLS)),
+                        . implode(', ', self::SUPPORTED_CURRENCIES),
                 ]);
             }
             $payload['user_account_currency'] = $currency;
