@@ -436,6 +436,13 @@ Check here before burning time on tooling failures.
   `NoLegacyBootstrapClassesTest`, `ComponentClassIsConsumedTest` under
   `tests/Api/V3/`), and `202-account/ui-kit.php` shows every component —
   copy a component's markup from the kit, parts included (error pattern #19).
+  What those cannot see — layout, theme, and the JavaScript a request never
+  runs — is covered by the browser passes in `tests/browser/` (local, not CI:
+  `node tests/browser/run.js`, see its README). Reach for one whenever a claim
+  is about a rendered pixel or an event handler: a belief about which flex
+  property made a row wrap survived a review and a push, and one measurement
+  settled it. Its `lib/checks.js` holds the per-page baseline, so migrating the
+  next family costs a line each.
   The standard's first rule
   is that the app decides what it can and says so: a form shows the common
   case, everything else sits under a closed `.p202-disclosure` labelled
