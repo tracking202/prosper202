@@ -756,11 +756,21 @@ class MobileAppsController extends SetupController
         // postbacks rather than stored rows, which is the number the Analyze
         // report would show for the same app: a replay stops being counted
         // twice here too.
+        //
+        // app_ids, not the limit. Groups come back busiest first, so asking
+        // for `count($waiting)` groups over EVERY app returned the busiest
+        // apps, not the waiting ones: one app that already accepts
+        // development postbacks and has more of them took the only slot, and
+        // the waiting app's nudge — the actionable one — was dropped by the
+        // isset() below. Narrowing the query to the waiting ids makes the
+        // limit a formality: there can be no more groups than ids.
+        $ids = array_keys($waiting);
         try {
             $answer = $this->postbacks->report([
                 'group_by' => 'app',
                 'signature' => 'development',
-                'limit' => max(1, count($waiting)),
+                'app_ids' => $ids,
+                'limit' => max(1, count($ids)),
             ]);
         } catch (HttpException) {
             return [];

@@ -93,6 +93,33 @@ final class RegisteredAppsTest extends TestCase
     /**
      * @param list<array<string, mixed>> $rows
      */
+    /**
+     * The ceiling here must fit inside the API's `app_ids` filter.
+     *
+     * MobileAppsController::developmentNudges() names every waiting app in
+     * one report() call, and that list is bounded by MAX below. The filter
+     * refuses more ids than AttributionPostbacksController::MAX_APP_IDS with
+     * a 422 — which developmentNudges() catches as an HttpException and turns
+     * into "no nudges". So raising MAX without raising the filter's bound
+     * would not fail; it would quietly stop showing development nudges on
+     * exactly the accounts large enough to have them. The two are in
+     * different tiers and cannot reference each other, so this asserts it.
+     */
+    public function testTheCeilingFitsTheApiFilterThatCarriesIt(): void
+    {
+        $filterBound = (new \ReflectionClassConstant(
+            \Api\V3\Controllers\AttributionPostbacksController::class,
+            'MAX_APP_IDS'
+        ))->getValue();
+
+        $this->assertLessThanOrEqual(
+            $filterBound,
+            RegisteredApps::MAX,
+            'RegisteredApps::MAX exceeds the app_ids filter bound, so a full page of'
+            . ' waiting apps would be refused and the nudges would disappear silently'
+        );
+    }
+
     private function apps(array $rows, ?int $total): AttributionAppsController
     {
         return new class ($rows, $total) extends AttributionAppsController {

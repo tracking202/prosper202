@@ -223,6 +223,35 @@ eq "$(Q 'SELECT COUNT(*) FROM 202_attribution_apps WHERE app_id=555000111')" "1"
 eq "$(Q 'SELECT user_id FROM 202_attribution_apps WHERE app_id=555000111')" "2" "their app still theirs"
 mysql_q "$DB" -e "DELETE FROM 202_attribution_apps WHERE user_id=2"
 
+say "the development nudge names the app that is WAITING, not the busiest one"
+# The nudge asks one grouped question for every waiting app at once. Groups
+# come back busiest first, so when the limit was the number of waiting apps
+# and the query ranked EVERY app, one already-trusted app with more
+# development postbacks took the only slot and the waiting app's nudge - the
+# actionable one - was dropped. Two apps, the trusted one busier, is the
+# smallest arrangement that shows it.
+# The owner is read from the database rather than hardcoded, so the pass
+# still works against an instance whose login is not user 1. Named OWNER
+# because bash's own user-id variable is readonly and cannot be assigned.
+OWNER=$(Q "SELECT user_id FROM 202_users WHERE user_name='$P202_USER'")
+mysql_q "$DB" -e "DELETE FROM 202_attribution_apps WHERE app_id IN (910000001, 910000002)"
+mysql_q "$DB" -e "INSERT INTO 202_attribution_apps (user_id, app_id, app_name, platform, accept_development_postbacks, schema_token, created_at, updated_at) VALUES ($OWNER, 910000001, 'Nudge Waiting App', 'ios', 0, 'tok-nudge-waiting', 1, 1), ($OWNER, 910000002, 'Nudge Trusted App', 'ios', 1, 'tok-nudge-trusted', 1, 1)"
+mysql_q "$DB" -e "DELETE FROM 202_attribution_postbacks WHERE transaction_id LIKE 'nudge-%'"
+for tx in w1 w2; do
+  mysql_q "$DB" -e "INSERT INTO 202_attribution_postbacks (user_id, received_at, protocol, version, ad_network_id, transaction_id, app_id, signature_state, signature_valid, attribution_signature, raw_payload, remote_ip, dedupe_hash, created_at) VALUES ($OWNER, UNIX_TIMESTAMP(), 'skadnetwork', '4.0', 'nudge.skadnetwork', 'nudge-$tx', 910000001, 'development', 1, 'sig', '{}', '127.0.0.1', SHA1('nudge-$tx'), UNIX_TIMESTAMP())"
+done
+# Strictly more, so it outranks the waiting app in a busiest-first ordering.
+for tx in t1 t2 t3 t4 t5; do
+  mysql_q "$DB" -e "INSERT INTO 202_attribution_postbacks (user_id, received_at, protocol, version, ad_network_id, transaction_id, app_id, signature_state, signature_valid, attribution_signature, raw_payload, remote_ip, dedupe_hash, created_at) VALUES ($OWNER, UNIX_TIMESTAMP(), 'skadnetwork', '4.0', 'nudge.skadnetwork', 'nudge-$tx', 910000002, 'development', 1, 'sig', '{}', '127.0.0.1', SHA1('nudge-$tx'), UNIX_TIMESTAMP())"
+done
+get "" "$OUT/nudge.html"
+eq "$(grep -c 'value="accept_dev"' "$OUT/nudge.html")" "1" "exactly one nudge, for the one waiting app"
+has "$OUT/nudge.html" "2 development postbacks have arrived" "it carries the waiting app's own count"
+hasnt "$OUT/nudge.html" "5 development postbacks have arrived" "not the trusted app's, which needs no nudge"
+hasnt "$OUT/nudge.html" "Fatal error" "no PHP fatal"
+mysql_q "$DB" -e "DELETE FROM 202_attribution_postbacks WHERE transaction_id LIKE 'nudge-%'"
+mysql_q "$DB" -e "DELETE FROM 202_attribution_apps WHERE app_id IN (910000001, 910000002)"
+
 say "removal"
 get "?app=$ROWID" "$OUT/page.html"
 post x "$OUT/rm.html" --data-urlencode action=remove --data-urlencode "attribution_app_id=$ROWID"

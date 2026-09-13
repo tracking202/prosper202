@@ -55,6 +55,19 @@ class AttributionPostbacksController
         . 'signature_state, signature_valid, key_id, remote_ip';
 
     /**
+     * Most app ids one `app_ids` filter may carry.
+     *
+     * Matches RegisteredApps::MAX, the most apps any page lists, so a page
+     * can always name every app it is showing. Not a reference to that
+     * constant: tracking202/ is the web tier and the API does not load it,
+     * and tests/Attribution/Apps/RegisteredAppsTest.php asserts the two
+     * agree — a ceiling raised there and not here would make the nudge query
+     * a 422 that developmentNudges() swallows, and the nudges would simply
+     * stop appearing.
+     */
+    private const MAX_APP_IDS = 500;
+
+    /**
      * Report grouping modes — the ONE table the SELECT list, the GROUP BY,
      * the retained-group restriction and the output row are all derived
      * from, so adding a mode is a single entry here.
@@ -780,6 +793,59 @@ class AttributionPostbacksController
             if (isset($params[$param]) && $params[$param] !== '') {
                 $where[] = "$param = ?";
                 $binds[] = self::strictInt($params[$param], $param, 'Invalid filter value', 'Must be an integer');
+                $types .= 'i';
+            }
+        }
+        // app_ids narrows to a SET of apps, which app_id alone cannot do.
+        // A caller that wants a per-app answer about apps it already knows
+        // (the Setup page's development nudges) otherwise has to either ask
+        // once per app or group over EVERYTHING and hope its own apps survive
+        // the LIMIT — and they do not, because groups come back busiest
+        // first, so apps the caller does not care about take the slots.
+        //
+        // Accepts a list or a comma string. Every element goes through the
+        // same strictInt as app_id: a value the int cast would MOVE is
+        // refused rather than silently selecting a different app's rows.
+        // Bounded at RegisteredApps::MAX, the most apps any page lists.
+        if (isset($params['app_ids']) && $params['app_ids'] !== '' && $params['app_ids'] !== []) {
+            $raw = $params['app_ids'];
+            if (!is_array($raw)) {
+                if (!is_scalar($raw)) {
+                    throw new ValidationException('Invalid filter value', [
+                        'app_ids' => 'Must be a list of App Store ids, or a comma-separated string of them',
+                    ]);
+                }
+                $raw = explode(',', (string)$raw);
+            }
+            // Trim before the emptiness test so "1, 2" is two ids, not an id
+            // and a blank. An empty element is an error, not a skip: dropping
+            // it silently would widen the filter the caller asked for.
+            $ids = [];
+            foreach ($raw as $element) {
+                if (!is_scalar($element)) {
+                    throw new ValidationException('Invalid filter value', [
+                        'app_ids' => 'Each app id must be an integer',
+                    ]);
+                }
+                $ids[] = self::strictInt(
+                    is_string($element) ? trim($element) : $element,
+                    'app_ids',
+                    'Invalid filter value',
+                    'Each app id must be an integer'
+                );
+            }
+            if (count($ids) > self::MAX_APP_IDS) {
+                throw new ValidationException('Invalid filter value', [
+                    'app_ids' => 'At most ' . self::MAX_APP_IDS . ' app ids',
+                ]);
+            }
+            // Duplicates would repeat a placeholder for no effect; the caller
+            // gets the same rows either way, so they are collapsed rather
+            // than refused.
+            $ids = array_values(array_unique($ids));
+            $where[] = 'app_id IN (' . implode(', ', array_fill(0, count($ids), '?')) . ')';
+            foreach ($ids as $id) {
+                $binds[] = $id;
                 $types .= 'i';
             }
         }

@@ -2441,6 +2441,7 @@ paths:
         - $ref: "#/components/parameters/timeFrom"
         - $ref: "#/components/parameters/timeTo"
         - $ref: "#/components/parameters/attributionAppId"
+        - $ref: "#/components/parameters/attributionAppIds"
         - $ref: "#/components/parameters/attributionAdNetworkId"
         - $ref: "#/components/parameters/attributionVersion"
         - $ref: "#/components/parameters/attributionTransactionId"
@@ -2543,6 +2544,7 @@ paths:
         - $ref: "#/components/parameters/timeFrom"
         - $ref: "#/components/parameters/timeTo"
         - $ref: "#/components/parameters/attributionAppId"
+        - $ref: "#/components/parameters/attributionAppIds"
         - $ref: "#/components/parameters/attributionAdNetworkId"
         - $ref: "#/components/parameters/attributionVersion"
         - $ref: "#/components/parameters/attributionTransactionId"
@@ -2932,6 +2934,19 @@ components:
       description: Advertised App Store id
       schema:
         type: integer
+    attributionAppIds:
+      name: app_ids
+      in: query
+      description: >
+        Several advertised App Store ids at once, as a comma-separated list
+        (`app_ids=990077001,525463029`). Narrows to that SET of apps, which
+        `app_id` cannot do; combine them and both apply. At most 500 ids, each
+        a whole number — a value an integer cast would change is rejected
+        rather than silently selecting a different app. Duplicates collapse;
+        a blank element is an error, not a skip.
+      schema:
+        type: string
+      example: "990077001,525463029"
     attributionAdNetworkId:
       name: ad_network_id
       in: query

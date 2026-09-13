@@ -922,6 +922,146 @@ final class AttributionControllersTest extends TestCase
         ));
     }
 
+    /**
+     * app_ids narrows to a SET of apps, which app_id alone cannot do.
+     *
+     * The Setup page's development nudges need one grouped read restricted
+     * to the apps it is asking about. Without this filter the only lever was
+     * the group LIMIT, and groups come back busiest first, so apps the caller
+     * did not ask about took the slots and the answer it wanted was cut.
+     */
+    public function testAppIdsFiltersToTheNamedAppsInEveryQuery(): void
+    {
+        $db = $this->capturingDb();
+        (new AttributionPostbacksController($db, 1))->report([
+            'group_by' => 'app',
+            'app_ids' => [990077001, 525463029],
+        ]);
+
+        $issued = [
+            'grouped' => $this->groupedAggregates(),
+            'totals' => $this->ungroupedTotals(),
+        ];
+        foreach ($issued as $which => $queries) {
+            $this->assertNotSame([], $queries, "$which query was not issued");
+            $this->assertStringContainsString('app_id IN (?, ?)', $queries[0]['sql'], $which);
+        }
+        // user_id, two app ids, then the grouped query's own LIMIT bind.
+        $this->assertSame('iiii', $this->groupedAggregates()[0]['types']);
+        $this->assertSame('iii', $this->ungroupedTotals()[0]['types']);
+    }
+
+    public function testAppIdsAcceptsACommaStringAndTrimsIt(): void
+    {
+        $db = $this->capturingDb();
+        (new AttributionPostbacksController($db, 1))->report([
+            'group_by' => 'app',
+            'app_ids' => ' 990077001 , 525463029 ',
+        ]);
+
+        $this->assertStringContainsString('app_id IN (?, ?)', $this->groupedAggregates()[0]['sql']);
+        $this->assertSame('iiii', $this->groupedAggregates()[0]['types']);
+    }
+
+    public function testAppIdsCollapsesDuplicatesRatherThanRepeatingAPlaceholder(): void
+    {
+        $db = $this->capturingDb();
+        (new AttributionPostbacksController($db, 1))->report([
+            'group_by' => 'app',
+            'app_ids' => [990077001, 990077001, 525463029],
+        ]);
+
+        $this->assertStringContainsString('app_id IN (?, ?)', $this->groupedAggregates()[0]['sql']);
+    }
+
+    public function testAnAbsentAppIdsFilterAddsNothing(): void
+    {
+        foreach ([[], '', null] as $absent) {
+            $db = $this->capturingDb();
+            (new AttributionPostbacksController($db, 1))->report(['group_by' => 'app', 'app_ids' => $absent]);
+            $this->assertStringNotContainsString(
+                'app_id IN',
+                $this->groupedAggregates()[0]['sql'],
+                'an empty app_ids must not narrow anything: ' . var_export($absent, true)
+            );
+        }
+    }
+
+    /**
+     * @dataProvider refusedAppIds
+     * @param mixed $ids
+     */
+    public function testAppIdsRefusesWhatItCannotBindFaithfully(mixed $ids, string $because): void
+    {
+        $db = $this->capturingDb();
+        try {
+            (new AttributionPostbacksController($db, 1))->report(['group_by' => 'app', 'app_ids' => $ids]);
+            $this->fail("app_ids accepted $because");
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('app_ids', $e->getFieldErrors(), $because);
+        }
+        $this->assertSame([], $this->groupedAggregates(), "the query ran anyway for $because");
+    }
+
+    /** @return array<string, array{0: mixed, 1: string}> */
+    public static function refusedAppIds(): array
+    {
+        return [
+            // The saturating case app_id itself refuses: the int cast MOVES
+            // this to PHP_INT_MAX, so an accepted filter would silently be
+            // about a different app than the caller named.
+            'a value the int cast moves' => [['99999999999999999999'], 'a saturating id'],
+            'a float string' => [['1.5'], 'a non-integer id'],
+            'a word' => [['nine'], 'a word'],
+            // '1,,2' is three elements, the middle one empty. Dropping it
+            // silently would widen the filter the caller asked for.
+            'an empty element in a comma string' => ['990077001,,525463029', 'a blank element'],
+            'a trailing comma' => ['990077001,', 'a trailing comma'],
+            'a nested array' => [[[990077001]], 'a nested array'],
+            'an object where a list belongs' => [new \stdClass(), 'an object'],
+            'more ids than any page lists' => [range(1, 501), '501 ids'],
+        ];
+    }
+
+    /**
+     * app_id and app_ids are ANDed, which is what the guide promises.
+     *
+     * Stated in documentation/api/19-attribution-postbacks.md, so it is
+     * executed here rather than asserted in prose: both clauses go into the
+     * same WHERE, so the two must agree for a row to match.
+     */
+    public function testAppIdAndAppIdsBothApply(): void
+    {
+        $db = $this->capturingDb();
+        (new AttributionPostbacksController($db, 1))->report([
+            'group_by' => 'app',
+            'app_id' => 990077001,
+            'app_ids' => [990077001, 525463029],
+        ]);
+
+        $sql = $this->groupedAggregates()[0]['sql'];
+        $this->assertStringContainsString('app_id = ?', $sql);
+        $this->assertStringContainsString('app_id IN (?, ?)', $sql);
+        // user_id, the single app_id, two list ids, the LIMIT.
+        $this->assertSame('iiiii', $this->groupedAggregates()[0]['types']);
+    }
+
+    public function testAppIdsAcceptsExactlyTheCeiling(): void
+    {
+        $db = $this->capturingDb();
+        (new AttributionPostbacksController($db, 1))->report([
+            'group_by' => 'app',
+            'app_ids' => range(1, 500),
+        ]);
+
+        $this->assertStringContainsString(
+            'app_id IN (' . implode(', ', array_fill(0, 500, '?')) . ')',
+            $this->groupedAggregates()[0]['sql']
+        );
+        // user_id + 500 ids + the LIMIT bind, and one type letter each.
+        $this->assertSame(502, strlen($this->groupedAggregates()[0]['types']));
+    }
+
     /** @return array<string, string> */
     private function metricColumns(): array
     {

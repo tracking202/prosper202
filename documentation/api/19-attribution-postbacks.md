@@ -363,6 +363,19 @@ what the default report counts, opted-in development rows included);
 `development` selects rows verified against a development key whatever
 their trust bit. Unknown values are `422`s naming the choices.
 
+`app_ids` names SEVERAL apps at once, as a comma-separated list
+(`app_ids=990077001,525463029`); `app_id` can only ever name one. Use it
+whenever you want a per-app answer about apps you already know — grouping
+over everything and reading the first N groups is not the same question,
+because groups come back busiest first and the apps you asked about can be
+cut. At most 500 ids. Each must be a whole number, checked the same way
+`app_id` is: a value an integer cast would change (`99999999999999999999`,
+`1.5`) is a `422` rather than a filter about some other app. Duplicates
+collapse to one; a blank element (`1,,2`, or a trailing comma) is a `422`,
+because dropping it would quietly widen the filter you asked for. Combining
+`app_id` and `app_ids` applies both, so they must agree for any row to
+match.
+
 `redownload` and `fidelity_type` are SKAdNetwork's spellings of
 `conversion_type` and `ad_interaction_type`, and are matched on those
 protocol-neutral columns: `redownload=1` selects `conversion_type =
