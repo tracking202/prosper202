@@ -37,11 +37,14 @@ bash tests/live/analyze-mobile-apps.sh
 | `P202_BASE` | `http://127.0.0.1:8097` | where the instance answers |
 | `P202_DB` | `p202_live` | scratch database; truncated |
 | `P202_DB_USER` / `P202_DB_PASS` | `root` / empty | MySQL credentials |
-| `P202_USER` / `P202_PASS` | `evalci` / **required** | the account to log in as |
+| `P202_USER` / `P202_PASS` | `evalci` / **required by the two passes** | the account to log in as |
 
-Every variable is exported, because `analyze-mobile-apps.sh` runs the seeder
-as a child process — an unexported one would leave the child on its own
-defaults, truncating a different database than the pass then reads.
+`seed-mobile-apps.sh` writes rows and makes no request, so it takes the three
+`P202_DB*` variables only and needs no login. Those three are exported by
+`analyze-mobile-apps.sh`, which runs the seeder as a child process: an
+unexported one would leave the child on its own defaults, truncating a
+different database than the pass then reads. That pass also stops if the
+seeder fails, rather than checking whatever the previous run left behind.
 
 `tests/fixtures/agent-eval/ci/install-instance.sh` stands up an instance from
 nothing if you do not have one.

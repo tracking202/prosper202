@@ -9,21 +9,15 @@
 # tables and rewrites the account currency; the guard below refuses a name
 # that does not read as disposable, which is the same protection
 # tests/browser/lib/db.js applies.
-# Exported, not plain locals: the seeder below runs as a child process and
-# inherits nothing otherwise, so it would fall back to its OWN defaults and
-# truncate a different database than the one this pass then reads
-# (CLAUDE.md error pattern #14).
-export P202_BASE=${P202_BASE:-http://127.0.0.1:8097}
-export P202_DB=${P202_DB:-p202_live}
-export P202_DB_USER=${P202_DB_USER:-root}
-export P202_DB_PASS=${P202_DB_PASS:-}
-export P202_USER=${P202_USER:-evalci}
-export P202_PASS=${P202_PASS:-}
-
-BASE=$P202_BASE
-DB=$P202_DB
-DB_USER=$P202_DB_USER
-DB_PASS=$P202_DB_PASS
+# This pass registers and removes apps through the pages themselves, so it
+# needs both an instance to log into and the database to check the writes
+# landed. It spawns nothing, so these stay plain locals.
+BASE=${P202_BASE:-http://127.0.0.1:8097}
+DB=${P202_DB:-p202_live}
+DB_USER=${P202_DB_USER:-root}
+DB_PASS=${P202_DB_PASS:-}
+P202_USER=${P202_USER:-evalci}
+P202_PASS=${P202_PASS:-}
 
 if [ -z "$P202_PASS" ]; then
     echo "P202_PASS is not set: this pass logs in as $P202_USER and needs its password." >&2

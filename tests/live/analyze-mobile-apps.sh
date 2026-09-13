@@ -9,21 +9,21 @@
 # tables and rewrites the account currency; the guard below refuses a name
 # that does not read as disposable, which is the same protection
 # tests/browser/lib/db.js applies.
-# Exported, not plain locals: the seeder below runs as a child process and
-# inherits nothing otherwise, so it would fall back to its OWN defaults and
-# truncate a different database than the one this pass then reads
-# (CLAUDE.md error pattern #14).
-export P202_BASE=${P202_BASE:-http://127.0.0.1:8097}
+# The three database variables are EXPORTED because seed-mobile-apps.sh runs
+# as a child process below and inherits nothing otherwise: it would fall back
+# to its own defaults and truncate a different database than this pass then
+# reads (CLAUDE.md error pattern #14). The rest stay local — the seeder makes
+# no request and logs in as nobody.
 export P202_DB=${P202_DB:-p202_live}
 export P202_DB_USER=${P202_DB_USER:-root}
 export P202_DB_PASS=${P202_DB_PASS:-}
-export P202_USER=${P202_USER:-evalci}
-export P202_PASS=${P202_PASS:-}
 
-BASE=$P202_BASE
+BASE=${P202_BASE:-http://127.0.0.1:8097}
 DB=$P202_DB
 DB_USER=$P202_DB_USER
 DB_PASS=$P202_DB_PASS
+P202_USER=${P202_USER:-evalci}
+P202_PASS=${P202_PASS:-}
 
 if [ -z "$P202_PASS" ]; then
     echo "P202_PASS is not set: this pass logs in as $P202_USER and needs its password." >&2
@@ -73,7 +73,15 @@ clean() { tr -d '\n' < "$1" | sed -E 's/<[^>]*>/ /g'; }
 # where it wrapped is testing the formatting, not the page.
 saystext() { if clean "$1" | tr -s '[:space:]' ' ' | grep -qF "$2"; then ok "$3"; else bad "$3"; fi; }
 
-bash "$(dirname "${BASH_SOURCE[0]}")/seed-mobile-apps.sh" > /dev/null
+# Checked, and stderr kept. The seeder's stdout is a row summary nobody
+# needs here, but a seeder that DIED leaves the tables holding whatever the
+# last run put there — and every check below would then pass against stale
+# rows and report a green run. Silence is the failure mode this whole pass
+# exists to avoid.
+if ! bash "$(dirname "${BASH_SOURCE[0]}")/seed-mobile-apps.sh" > /dev/null; then
+    echo "The seeder failed, so there is nothing trustworthy to check. Stopping." >&2
+    exit 2
+fi
 
 say "login"
 curl -sS -c "$JAR" -b "$JAR" "$BASE/202-login.php" -o "$OUT/login.html"

@@ -2,38 +2,22 @@
 # Seed a spread of postbacks wide enough that every grouping, every signature
 # class and the pagination have something real to show.
 # --- environment -------------------------------------------------------
-# Everything the pass needs to reach an instance, overridable so this runs
-# somewhere other than the machine it was written on. The names match
-# tests/browser (see its README): one instance can serve both passes.
+# Writes rows and nothing else: no HTTP, no login, so it takes the database
+# variables only. analyze-mobile-apps.sh exports those before running this as
+# a child, and the browser pass runs it on its own. The names match
+# tests/browser (see its README): one instance can serve every pass.
 #
-# P202_DB must be a SCRATCH database. This pass TRUNCATEs the attribution
-# tables and rewrites the account currency; the guard below refuses a name
-# that does not read as disposable, which is the same protection
-# tests/browser/lib/db.js applies.
-# Exported, not plain locals: the seeder below runs as a child process and
-# inherits nothing otherwise, so it would fall back to its OWN defaults and
-# truncate a different database than the one this pass then reads
-# (CLAUDE.md error pattern #14).
-export P202_BASE=${P202_BASE:-http://127.0.0.1:8097}
-export P202_DB=${P202_DB:-p202_live}
-export P202_DB_USER=${P202_DB_USER:-root}
-export P202_DB_PASS=${P202_DB_PASS:-}
-export P202_USER=${P202_USER:-evalci}
-export P202_PASS=${P202_PASS:-}
+# P202_DB must be a SCRATCH database — this TRUNCATEs the attribution tables,
+# and the guard below refuses a name that does not read as disposable, which
+# is the protection tests/browser/lib/db.js applies.
+DB=${P202_DB:-p202_live}
+DB_USER=${P202_DB_USER:-root}
+DB_PASS=${P202_DB_PASS:-}
 
-BASE=$P202_BASE
-DB=$P202_DB
-DB_USER=$P202_DB_USER
-DB_PASS=$P202_DB_PASS
-
-if [ -z "$P202_PASS" ]; then
-    echo "P202_PASS is not set: this pass logs in as $P202_USER and needs its password." >&2
-    exit 2
-fi
 case "$DB" in
     *test*|*scratch*|*sandbox*|*_ci*|*eval*|*live*|p202_w*) ;;
     *)
-        echo "Refusing to run against '$DB': this pass truncates tables, so point" >&2
+        echo "Refusing to run against '$DB': this truncates tables, so point" >&2
         echo "P202_DB at a scratch database (a name containing test/scratch/sandbox/ci/eval/live)." >&2
         exit 2
         ;;
