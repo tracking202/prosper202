@@ -331,16 +331,25 @@ Tests: 2, Assertions: 1, Skipped: 1." yes
 Tests: 2, Assertions: 40, Failures: 1." no
 
     # ── phpcs ratchet, behaviourally, using the repo's own vendor/ ──
-    # The report line is the only version-stable signal of a completed
-    # analysis; exit codes disagree between the documented bitmask and what
-    # phpcs 3.13 actually returns, in both directions.
+    # The totals object in --report=json is the only signal that separates a
+    # completed analysis from a tool that never ran. Exit codes cannot: they
+    # disagree between the documented bitmask and what phpcs 3.13 returns, in
+    # both directions. Neither can --report=summary, which this used to read:
+    # a CLEAN file and a stub interpreter both produce exit 0 and zero bytes
+    # there, so a floor built on it either passes stubs or rejects clean
+    # files. json prints totals even when they are zero.
     eval "$(sed -n '/^phpcs_counts_from_run() {/,/^}/p' ./verify.sh)"
-    if [ "$(phpcs_counts_from_run 2 'A TOTAL OF 23 ERRORS AND 12 WARNINGS WERE FOUND IN 1 FILE')" = "23 12" ] \
-       && [ "$(phpcs_counts_from_run 1 'A TOTAL OF 0 ERRORS AND 1 WARNING WERE FOUND IN 1 FILE')" = "0 1" ] \
-       && [ "$(phpcs_counts_from_run 0 '')" = "0 0" ] \
+    json_totals() { # errors warnings -> a --report=json body carrying them
+        printf '{"totals":{"errors":%s,"warnings":%s,"fixable":0},"files":{}}' "$1" "$2"
+    }
+    if [ "$(phpcs_counts_from_run 2 "$(json_totals 23 12)")" = "23 12" ] \
+       && [ "$(phpcs_counts_from_run 1 "$(json_totals 0 1)")" = "0 1" ] \
+       && [ "$(phpcs_counts_from_run 0 "$(json_totals 0 0)")" = "0 0" ] \
        && [ "$(phpcs_counts_from_run 3 'ERROR: the "X" coding standard is not installed')" = "?" ] \
        && [ "$(phpcs_counts_from_run 2 'PHP Warning:  Failed to set memory limit')" = "?" ] \
-       && [ "$(phpcs_counts_from_run 0 'something unexpected with exit 0')" = "?" ]; then
+       && [ "$(phpcs_counts_from_run 0 'something unexpected with exit 0')" = "?" ] \
+       && [ "$(phpcs_counts_from_run 0 '')" = "?" ] \
+       && [ "$(phpcs_counts_from_run 2 'A TOTAL OF 23 ERRORS AND 12 WARNINGS WERE FOUND IN 1 FILE')" = "?" ]; then
         printf '  ok    %-46s\n' "phpcs: report parsing, tool failures never read as 0"; pass=$((pass + 1))
     else
         printf '  FAIL  %-46s\n' "phpcs: report parsing, tool failures never read as 0"; fail=$((fail + 1))
