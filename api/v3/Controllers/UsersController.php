@@ -18,6 +18,42 @@ class UsersController
      */
     public const DEFAULT_CURRENCY = 'USD';
 
+    /**
+     * Every currency this install can render, and the symbol it renders with.
+     *
+     * The one list: dollar_format() in 202-config/functions-tracking202.php
+     * reads it, and normalizeCurrency() below admits exactly its keys. A code
+     * outside it has no symbol, and dollar_format's last resort is to print
+     * the code itself — so "XYZ10.00" was reachable from any three letters.
+     *
+     * A leading empty string means the symbol follows the amount instead.
+     *
+     * @var array<string, array{0: string, 1: string}> code => [before, after]
+     */
+    public const CURRENCY_SYMBOLS = [
+        'USD' => ['$', ''],
+        'BRL' => ['R$', ''],
+        'CZK' => ['', 'Kč'],
+        'DKK' => ['kr.', ''],
+        'EUR' => ['€', ''],
+        'HUF' => ['', 'Ft'],
+        'ILS' => ['₪', ''],
+        'JPY' => ['¥', ''],
+        'MYR' => ['RM', ''],
+        'NOK' => ['kr', ''],
+        'PHP' => ['₱', ''],
+        'PLN' => ['zł', ''],
+        'GBP' => ['£', ''],
+        'SEK' => ['kr', ''],
+        'CHF' => ['SFr.', ''],
+        'TWD' => ['NT$', ''],
+        'THB' => ['฿', ''],
+        'TRY' => ['', '₺'],
+        'CNY' => ['¥', ''],
+        'INR' => ['₹', ''],
+        'RUB' => ['₽', ''],
+    ];
+
     public function __construct(private readonly \mysqli $db)
     {
     }
@@ -515,20 +551,20 @@ class UsersController
     }
 
     /**
-     * A stored currency as a code dollar_format() can use.
+     * A stored currency as a code dollar_format() can actually render.
      *
-     * Anything that is not three letters — an empty column on an install that
-     * predates it, a truncated write, a value of another type — resolves to
-     * USD rather than being passed through. An unrecognised code is not
-     * dangerous (dollar_format prints the code itself in place of a symbol),
-     * but it would put "XX" in front of every amount on a page with no way to
-     * tell that from a real currency.
+     * Membership of CURRENCY_SYMBOLS, not a three-letter shape. Those are not
+     * the same question, and the shape test let the wrong answer through: an
+     * empty column, a truncated write or a value of another type resolved to
+     * USD, but any three letters passed straight into dollar_format(), whose
+     * last resort is to print the code as the symbol — so a stored "XYZ" put
+     * "XYZ10.00" on every page, indistinguishable from a real currency.
      */
     public static function normalizeCurrency(mixed $raw): string
     {
         $currency = is_scalar($raw) ? strtoupper(trim((string)$raw)) : '';
 
-        return preg_match('/^[A-Z]{3}$/', $currency) === 1 ? $currency : self::DEFAULT_CURRENCY;
+        return isset(self::CURRENCY_SYMBOLS[$currency]) ? $currency : self::DEFAULT_CURRENCY;
     }
 
     public function updatePreferences(int $userId, array $payload): array
@@ -542,6 +578,24 @@ class UsersController
             'user_pref_cloak_referer' => 's', 'user_daily_email' => 's',
             'ipqs_api_key' => 's', 'chart_time_range' => 's',
         ];
+
+        // Refused here, not normalised on the way out. The read path resolves
+        // an unrenderable code to USD so no page prints "XYZ10.00", but that
+        // is a repair for rows already stored — applying it to a write would
+        // answer 200 and quietly keep a currency the caller did not choose
+        // (error pattern #4). The check belongs at the layer that accepts the
+        // value (#12), and it names what it will take.
+        if (array_key_exists('user_account_currency', $payload)) {
+            $raw = $payload['user_account_currency'];
+            $currency = is_scalar($raw) ? strtoupper(trim((string)$raw)) : '';
+            if (!isset(self::CURRENCY_SYMBOLS[$currency])) {
+                throw new ValidationException('Validation failed', [
+                    'user_account_currency' => 'Must be one of: '
+                        . implode(', ', array_keys(self::CURRENCY_SYMBOLS)),
+                ]);
+            }
+            $payload['user_account_currency'] = $currency;
+        }
 
         $sets = [];
         $binds = [];

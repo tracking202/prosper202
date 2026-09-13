@@ -4408,6 +4408,20 @@ components:
     AttributionApp:
       type: object
       properties:
+        platform:
+          type: string
+          enum: [ios]
+          default: ios
+          description: |
+            The store the app is on, stored lower-case. Derived from an App
+            Store link when one is pasted, so a caller rarely sets it.
+
+            Only a platform this install can receive postbacks for is
+            accepted; `ios` is the one today. `android` is recognised and
+            refused with a sentence saying there is no Android receiver to
+            point an app at, rather than "you typed it wrong". Any other
+            value is refused with the list of accepted ones. Compared
+            case-insensitively, so `iOS` is accepted and stored as `ios`.
         attribution_app_id:
           type: integer
           description: Internal registration id — the `{id}` in `/attribution/apps/{id}`
@@ -4444,6 +4458,20 @@ components:
       type: object
       required: [app_id, app_name]
       properties:
+        platform:
+          type: string
+          enum: [ios]
+          default: ios
+          description: |
+            The store the app is on, stored lower-case. Derived from an App
+            Store link when one is pasted, so a caller rarely sets it.
+
+            Only a platform this install can receive postbacks for is
+            accepted; `ios` is the one today. `android` is recognised and
+            refused with a sentence saying there is no Android receiver to
+            point an app at, rather than "you typed it wrong". Any other
+            value is refused with the list of accepted ones. Compared
+            case-insensitively, so `iOS` is accepted and stored as `ios`.
         app_id:
           type: integer
           description: Numeric App Store id (the number in the app's App Store URL)
@@ -4462,6 +4490,20 @@ components:
     AttributionAppUpdate:
       type: object
       properties:
+        platform:
+          type: string
+          enum: [ios]
+          default: ios
+          description: |
+            The store the app is on, stored lower-case. Derived from an App
+            Store link when one is pasted, so a caller rarely sets it.
+
+            Only a platform this install can receive postbacks for is
+            accepted; `ios` is the one today. `android` is recognised and
+            refused with a sentence saying there is no Android receiver to
+            point an app at, rather than "you typed it wrong". Any other
+            value is refused with the list of accepted ones. Compared
+            case-insensitively, so `iOS` is accepted and stored as `ios`.
         app_id:
           type: integer
         app_name:

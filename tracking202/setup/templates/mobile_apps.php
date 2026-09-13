@@ -298,9 +298,19 @@ if (!$canManage) {
     $appStoreId = (int)$app['app_id'];
     $token = (string)($app['schema_token'] ?? '');
     $masked = $token === '' ? '' : mb_substr($token, 0, 4) . str_repeat('•', max(0, mb_strlen($token) - 8)) . mb_substr($token, -4);
+    /*
+     * Which rule the form is editing. The link carries ?rule_edit=N, but the
+     * form posts to $self with NO query string — so after a refused save the
+     * re-render saw no rule_edit, dropped the hidden rule_id, and the
+     * corrected resubmission created a new rule instead of updating the one
+     * being edited: usually a duplicate conflict, and no way to finish the
+     * edit without starting over. The submitted body is the other record of
+     * which rule it was, and it is the one that survives the POST.
+     */
+    $editingRuleId = (int)($_GET['rule_edit'] ?? $mobileApps['form']['rule_id'] ?? 0);
     $editRule = null;
     foreach ($mobileApps['rules'] as $candidate) {
-        if ((int)($candidate['rule_id'] ?? 0) === (int)($_GET['rule_edit'] ?? 0)) {
+        if ($editingRuleId > 0 && (int)($candidate['rule_id'] ?? 0) === $editingRuleId) {
             $editRule = $candidate;
         }
     }
@@ -349,7 +359,7 @@ if (!$canManage) {
                                 <?php if ($canManage) { ?>
                                     <td class="num">
                                         <a class="p202-list__action" href="<?php echo $e($self . '?app=' . $rowId . '&rule_edit=' . (int)$rule['rule_id']); ?>">edit</a>
-                                        <form method="post" action="<?php echo $e($self); ?>" class="d-inline" data-p202-confirm="Remove this rule? Postbacks already decoded keep the event they were given; new ones stop decoding for this value.">
+                                        <form method="post" action="<?php echo $e($self); ?>" class="d-inline" data-p202-confirm="Remove this rule? Reports decode from the current rules every time they are run, so postbacks already received stop showing this event and its revenue too.">
                                             <?php echo $mobileApps['csrf']; ?>
                                             <input type="hidden" name="action" value="rule_remove">
                                             <input type="hidden" name="attribution_app_id" value="<?php echo $rowId; ?>">

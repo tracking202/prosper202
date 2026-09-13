@@ -8,6 +8,7 @@ use Api\V3\Controllers\AttributionAppsController;
 use Api\V3\Controllers\AttributionConversionValuesController;
 use Api\V3\Controllers\AttributionPostbacksController;
 use Api\V3\Controllers\UsersController;
+use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\HttpException;
@@ -378,9 +379,17 @@ class MobileAppsController extends SetupController
             try {
                 $this->rules->create($rule + ['app_id' => $appStoreId]);
                 $added++;
-            } catch (HttpException) {
+            } catch (ConflictException) {
                 // A value already mapped keeps the rule it has: the starter
-                // schema fills the gaps, it never overwrites a decision.
+                // schema fills the gaps, it never overwrites a decision. Only
+                // the conflict is caught — catching HttpException swallowed a
+                // failed prepare, a rejected payload and a
+                // WriteCommittedException alike, counted each as "already
+                // mapped", and then redirected to a success message computed
+                // from $added. A database that faltered halfway left a
+                // partial schema while the page said the rest were already
+                // there. Everything else reaches handleRequest()'s handler,
+                // which says what went wrong.
             }
         }
         $this->redirect('tracking202/setup/mobile_apps.php?app=' . $appRowId . '&starter=' . $added);
