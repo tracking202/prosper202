@@ -502,11 +502,17 @@
 .p202-code {
     display: flex;
     align-items: flex-start;
+    flex-wrap: wrap;
     gap: 0.5rem;
 }
 
 .p202-code__value {
-    flex: 1 1 auto;
+    /* The basis, not `auto`, is what makes the row wrap: once the value's
+       preferred width plus the buttons no longer fit, the buttons drop to
+       their own line and the value gets the full width. With `auto` the
+       value shrank instead — at 400px a schema token had 94px of a 300px
+       row while Reveal/Copy/Rotate took 182px, which reads as broken. */
+    flex: 1 1 16rem;
     min-width: 0;
     margin: 0;
     padding: 0.6rem 0.75rem;

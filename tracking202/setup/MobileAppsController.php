@@ -7,6 +7,7 @@ namespace Tracking202\Setup;
 use Api\V3\Controllers\AttributionAppsController;
 use Api\V3\Controllers\AttributionConversionValuesController;
 use Api\V3\Controllers\AttributionPostbacksController;
+use Api\V3\Controllers\UsersController;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\HttpException;
@@ -38,6 +39,7 @@ class MobileAppsController extends SetupController
     private AttributionAppsController $apps;
     private AttributionConversionValuesController $rules;
     private AttributionPostbacksController $postbacks;
+    private UsersController $users;
 
     /** @var list<array{kind: string, text: string}> */
     private array $flashes = [];
@@ -60,6 +62,7 @@ class MobileAppsController extends SetupController
         $this->apps = new AttributionAppsController($db, $userId);
         $this->rules = new AttributionConversionValuesController($db, $userId);
         $this->postbacks = new AttributionPostbacksController($db, $userId);
+        $this->users = new UsersController($db);
     }
 
     /** Reading the list needs Setup (the base class); changing anything needs the models permission. */
@@ -120,13 +123,68 @@ class MobileAppsController extends SetupController
                 $this->flash('bad', $e->getMessage());
             }
             $this->formState = $_POST;
-            $this->handleGet();
+            $this->restoreContext($action);
         } catch (HttpException $e) {
             // 409 duplicate, 404, and the rest: the API's own message.
             $this->flash('bad', $e->getMessage());
             $this->formState = $_POST;
-            $this->handleGet();
+            $this->restoreContext($action);
         }
+    }
+
+    /**
+     * Put the page back where the failed submit came from.
+     *
+     * handleGet() reads the app id from the query string, and a POST to this
+     * page has none — so a refused rule save re-rendered the apps LIST, where
+     * neither the rules form nor its per-field error exists. The user's
+     * revenue was rejected and the page said nothing at all (error pattern
+     * #4). The id is in the submitted body, which is where it has to come
+     * from: it is the only record of which app the form belonged to.
+     *
+     * A missing or foreign id falls through to the list rather than throwing;
+     * apps->get() is scoped to this user, so it cannot restore somebody
+     * else's app.
+     */
+    private function restoreContext(string $action): void
+    {
+        $id = (int)($_POST['attribution_app_id'] ?? 0);
+        if ($id <= 0) {
+            $this->fallBackToList();
+            return;
+        }
+
+        try {
+            $app = $this->apps->get($id)['data'];
+        } catch (HttpException) {
+            $this->fallBackToList();
+            return;
+        }
+
+        // 'update' is submitted from the edit form, so that is the form the
+        // error belongs under; everything else is on the app's own page.
+        if ($action === 'update') {
+            $this->editingApp = $app;
+            return;
+        }
+        $this->currentApp = $app;
+    }
+
+    /**
+     * Render the apps list after a submit whose form cannot be restored.
+     *
+     * Per-field errors are drawn beside their fields, and the list has none of
+     * those fields — so on this path they would be silently dropped, which is
+     * the failure this whole branch exists to avoid. Say them as flashes
+     * instead: the wrong words in the wrong place still beat none.
+     */
+    private function fallBackToList(): void
+    {
+        foreach ($this->fieldErrors as $message) {
+            $this->flash('bad', $message);
+        }
+        $this->fieldErrors = [];
+        $this->handleGet();
     }
 
     // ─── Apps ────────────────────────────────────────────────────────
@@ -450,6 +508,7 @@ class MobileAppsController extends SetupController
             // documents that the Host header is attacker-controlled, which is
             // why every use of it in the template is escaped.
             'origin' => install_request_base_url($_SERVER, get_absolute_url()),
+            'currency' => $this->accountCurrency(),
             'apps' => $this->listApps(),
             'app' => $this->currentApp,
             'editing' => $this->editingApp,
@@ -502,6 +561,44 @@ class MobileAppsController extends SetupController
                 : 'Every starter value is already mapped, so nothing was changed.'];
         }
         return $out;
+    }
+
+    /**
+     * The account's currency, for rendering revenue.
+     *
+     * Amounts on this page are money, and this install is not necessarily a
+     * dollar one — 202_users_pref.user_account_currency is one of twenty-one
+     * codes and dollar_format() knows where each symbol goes. Anything that is
+     * not a three-letter code (an unreadable row, an empty column on an old
+     * install) falls back to USD, which is the column's own default; the same
+     * shape as Ltv\MysqlCustomerRepository::accountCurrency().
+     */
+    private function accountCurrency(): string
+    {
+        try {
+            $preferences = $this->users->getPreferences($this->getUserId())['data'];
+        } catch (HttpException) {
+            return 'USD';
+        }
+
+        return self::normalizeCurrency($preferences['user_account_currency'] ?? null);
+    }
+
+    /**
+     * A stored currency as a code dollar_format() can use.
+     *
+     * Anything that is not three letters — an empty column on an install that
+     * predates it, a truncated write, a value of another type — resolves to
+     * USD, the column's own default, rather than being passed through. A code
+     * it does not recognise is not dangerous (dollar_format prints the code
+     * itself in place of a symbol), but it would put "XX" in front of every
+     * amount on the page with no way to tell that from a real currency.
+     */
+    public static function normalizeCurrency(mixed $raw): string
+    {
+        $currency = is_scalar($raw) ? strtoupper(trim((string)$raw)) : '';
+
+        return preg_match('/^[A-Z]{3}$/', $currency) === 1 ? $currency : 'USD';
     }
 
     /** @return list<array<string, mixed>> */

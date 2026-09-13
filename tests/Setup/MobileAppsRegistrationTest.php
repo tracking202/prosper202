@@ -105,6 +105,36 @@ final class MobileAppsRegistrationTest extends TestCase
         AttributionAppsController::assertSupportedPlatform(['platform' => ['ios']]);
     }
 
+    /**
+     * @dataProvider currencies
+     */
+    public function testAStoredCurrencyResolvesToACodeTheFormatterCanUse(mixed $stored, string $expected): void
+    {
+        self::assertSame($expected, MobileAppsController::normalizeCurrency($stored));
+    }
+
+    /** @return array<string, array{0: mixed, 1: string}> */
+    public static function currencies(): array
+    {
+        return [
+            'a plain code'          => ['EUR', 'EUR'],
+            'lower case'            => ['eur', 'EUR'],
+            'padded'                => ['  gbp  ', 'GBP'],
+            'the column default'    => ['USD', 'USD'],
+            // Everything below is a value the column should never hold. Each
+            // resolves to USD rather than reaching dollar_format(), which
+            // would print it verbatim in front of every amount on the page.
+            'empty'                 => ['', 'USD'],
+            'missing'               => [null, 'USD'],
+            'two letters'           => ['US', 'USD'],
+            'four letters'          => ['USDX', 'USD'],
+            'digits'                => ['123', 'USD'],
+            'punctuation'           => ['U$D', 'USD'],
+            'not a string'          => [['EUR'], 'USD'],
+            'a number'              => [840, 'USD'],
+        ];
+    }
+
     public function testThePlatformFieldIsDeclaredWithIosAsItsDefault(): void
     {
         $reflection = new \ReflectionClass(AttributionAppsController::class);

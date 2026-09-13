@@ -28,6 +28,19 @@ $app = $mobileApps['app'];
 // header is attacker-controlled.
 $origin = rtrim((string)$mobileApps['origin'], '/');
 
+// Revenue is money, so it is rendered through the app's own formatter with
+// the account's currency rather than a bare number_format — this install is
+// not necessarily a dollar one. The symbol for the input's addon is read back
+// out of a formatted zero instead of being a second copy of dollar_format()'s
+// twenty-one-currency table, which could drift from it; and because three of
+// those currencies put the symbol after the amount, where the addon goes is
+// read from the formatter too rather than assumed to be the left.
+$currency = (string)$mobileApps['currency'];
+$money = static fn (mixed $v): string => (string)dollar_format((float)$v, $currency);
+$formattedZero = (string)dollar_format(0, $currency);
+$currencySymbol = str_replace(number_format(0, 2), '', $formattedZero);
+$symbolLeads = $currencySymbol !== '' && str_starts_with($formattedZero, $currencySymbol);
+
 /** The API's own sentence for a field, rendered where the field is. */
 $fieldError = static function (string $field) use ($fieldErrors, $e): string {
     return isset($fieldErrors[$field])
@@ -334,7 +347,7 @@ if (!$canManage) {
                                 <td><?php echo $rule['fine_value'] === null ? 'Coarse' : 'Fine'; ?></td>
                                 <td><?php echo $e($rule['fine_value'] === null ? (string)$rule['coarse_value'] : (string)$rule['fine_value']); ?></td>
                                 <td><?php echo $e($rule['event_name']); ?></td>
-                                <td class="num"><?php echo $e(number_format((float)$rule['revenue'], 2)); ?></td>
+                                <td class="num"><?php echo $e($money($rule['revenue'])); ?></td>
                                 <?php if ($canManage) { ?>
                                     <td class="num">
                                         <a class="p202-list__action" href="<?php echo $e($self . '?app=' . $rowId . '&rule_edit=' . (int)$rule['rule_id']); ?>">edit</a>
@@ -400,7 +413,11 @@ if (!$canManage) {
                         </div>
                         <div class="col-6 col-md-2">
                             <label class="form-label" for="revenue">Revenue</label>
-                            <input class="form-control<?php echo $invalid('revenue'); ?>" type="text" inputmode="decimal" id="revenue" name="revenue" value="<?php echo $e($editRule !== null ? number_format((float)$editRule['revenue'], 2, '.', '') : ($form['revenue'] ?? '0.00')); ?>">
+                            <div class="input-group">
+                                <?php if ($currencySymbol !== '' && $symbolLeads) { ?><span class="input-group-text"><?php echo $e($currencySymbol); ?></span><?php } ?>
+                                <input class="form-control<?php echo $invalid('revenue'); ?>" type="text" inputmode="decimal" id="revenue" name="revenue" value="<?php echo $e($editRule !== null ? number_format((float)$editRule['revenue'], 2, '.', '') : ($form['revenue'] ?? '0.00')); ?>">
+                                <?php if ($currencySymbol !== '' && !$symbolLeads) { ?><span class="input-group-text"><?php echo $e($currencySymbol); ?></span><?php } ?>
+                            </div>
                             <?php echo $fieldError('revenue'); ?>
                         </div>
                     </div>
@@ -425,7 +442,7 @@ if (!$canManage) {
                                         <td><?php echo $rule['fine_value'] === null ? 'Coarse' : 'Fine'; ?></td>
                                         <td><?php echo $e($rule['fine_value'] === null ? (string)$rule['coarse_value'] : (string)$rule['fine_value']); ?></td>
                                         <td><?php echo $e($rule['event_name']); ?> <span class="p202-pill">default</span></td>
-                                        <td class="num"><?php echo $e(number_format((float)$rule['revenue'], 2)); ?></td>
+                                        <td class="num"><?php echo $e($money($rule['revenue'])); ?></td>
                                     </tr>
                                 <?php } ?>
                                 </tbody>
