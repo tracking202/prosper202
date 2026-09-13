@@ -539,7 +539,12 @@ class MobileAppsReportController
 
         $revenue = 0.0;
         foreach ((array)($group['events'] ?? []) as $event) {
-            $revenue += (float)((array)$event)['revenue'] ?? 0;
+            // Coalesce INSIDE the cast. `(float)$e['revenue'] ?? 0` indexes
+            // first, so a legacy event without the key emits "Undefined array
+            // key" and the ?? never fires — dead code plus a warning an
+            // error handler can turn into an aborted report. The sibling
+            // fold below always had it the right way round.
+            $revenue += (float)(((array)$event)['revenue'] ?? 0);
         }
 
         return $revenue;
@@ -589,7 +594,15 @@ class MobileAppsReportController
 
         try {
             $answer = $this->postbacks->list($base + ['offset' => ($asked - 1) * self::PER_PAGE]);
-            $total = (int)($answer['pagination']['total'] ?? 0);
+            // A missing total resolves to what the rows already prove, never
+            // to zero. Zero is the EMPTY answer, so an absent total would
+            // have rendered the rows under "No postbacks in this range",
+            // hidden the pager, and clamped every page back to the first.
+            // offset + rows-in-hand is a floor: exact on the last page, and
+            // never smaller than what is on screen.
+            $total = isset($answer['pagination']['total'])
+                ? (int)$answer['pagination']['total']
+                : ($asked - 1) * self::PER_PAGE + count($answer['data'] ?? []);
             $pages = max(1, (int)ceil($total / self::PER_PAGE));
             $page = min($asked, $pages);
             if ($page !== $asked) {

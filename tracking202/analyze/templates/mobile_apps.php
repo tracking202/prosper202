@@ -500,7 +500,13 @@ template_top('Analyze Mobile Apps', ['ui' => 'v2']);
             <section class="p202-panel">
                 <div class="p202-panel__head">
                     <h2 class="p202-panel__title">Decoded events</h2>
-                    <p class="p202-panel__sub">Conversion values read through the rules on Setup &rsaquo; Mobile Apps.</p>
+                    <p class="p202-panel__sub">Conversion values read through the rules on Setup &rsaquo; Mobile Apps.<?php
+                        // eventTotals() folds the groups on the page, so a
+                        // truncated report leaves matching groups out of this
+                        // panel too. The revenue tile and the table say so;
+                        // this said nothing, which made it look complete.
+                        echo $report['truncated'] ? ' Listed groups only, as above.' : '';
+                    ?></p>
                     <span class="p202-pill p202-pill--accent"><?php echo count($mobileReport['events']); ?> <?php echo count($mobileReport['events']) === 1 ? 'event' : 'events'; ?></span>
                 </div>
                 <div class="p202-panel__body">

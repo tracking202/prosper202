@@ -424,6 +424,44 @@ class MobileAppsController extends SetupController
         return $id > 0 && (string)$id === $digits ? $id : null;
     }
 
+    /**
+     * How many apps the page is showing, in the two wordings it needs.
+     *
+     * The "Your apps" pill and the "Getting started" checklist are two
+     * readings of one list, so they are derived together: a checklist saying
+     * "500 registered" beside a pill saying "500 of 620 apps" is two numbers
+     * for one list, on one page, and that is what a second copy of this rule
+     * produced. Truncation is never rounded away — a bare count would state
+     * a wrong number as fact and the list below would simply end.
+     *
+     * @param  int      $shown      rows this render is actually displaying
+     * @param  int|null $total      rows that exist, or null when unknown
+     * @param  bool     $truncated  whether the read hit RegisteredApps::MAX
+     * @return array{pill: string, checklist: string}
+     */
+    public static function appCountLabels(int $shown, ?int $total, bool $truncated): array
+    {
+        if (!$truncated) {
+            return [
+                'pill' => $shown . ($shown === 1 ? ' app' : ' apps'),
+                'checklist' => $shown . ' registered',
+            ];
+        }
+        if ($total !== null) {
+            return [
+                'pill' => $shown . ' of ' . $total . ' apps',
+                'checklist' => $shown . ' of ' . $total,
+            ];
+        }
+
+        // Cut, and the total unknown: "500 of 500" would be a figure the
+        // reader believes and the reader should not.
+        return [
+            'pill' => 'first ' . $shown . ' apps',
+            'checklist' => 'first ' . $shown . ' shown',
+        ];
+    }
+
     public static function parseStoreReference(string $reference): array
     {
         $reference = trim($reference);

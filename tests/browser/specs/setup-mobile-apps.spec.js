@@ -93,8 +93,11 @@ module.exports = {
         expect.eq(pills.length, 2, 'both receivers are listed');
         // This instance is plain HTTP, which Apple cannot call. A green
         // "Ready" here would be a lie, and used to be exactly what it said.
-        expect.ok(pills.every((p) => p === 'Apple requires HTTPS'),
-          'an http origin is flagged rather than shown ready', JSON.stringify(pills));
+        // The label covers the port as well as the scheme now: Apple calls
+        // these endpoints on 443 and nothing else, so https://host:8443 is
+        // just as unreachable as http:// and says so in the same words.
+        expect.ok(pills.every((p) => p === 'Apple cannot reach this'),
+          'an origin Apple cannot call is flagged rather than shown ready', JSON.stringify(pills));
 
         await ui.page.$eval('[data-receiver-pill]', (el) => { el.textContent = 'stale'; });
         await ui.click('[data-receiver-recheck]');

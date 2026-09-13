@@ -49,6 +49,18 @@ $fieldError = static function (string $field) use ($fieldErrors, $e): string {
 };
 $invalid = static fn (string $field): string => isset($fieldErrors[$field]) ? ' is-invalid' : '';
 
+/**
+ * The "Your apps" pill and the "Getting started" checklist count one list, so
+ * they read it from one place. Both wordings carry the truncation: the pill
+ * says "500 of 620 apps", the checklist "500 of 620". Kept on the controller
+ * where it is unit-tested, like the analyze page's own derivations.
+ */
+$appCount = \Tracking202\Setup\MobileAppsController::appCountLabels(
+    count($mobileApps['apps']),
+    $mobileApps['appsTotal'],
+    $mobileApps['appsTruncated']
+);
+
 template_top('Mobile Apps - Setup', ['ui' => 'v2']);
 ?>
 
@@ -212,8 +224,8 @@ if (!$canManage) {
                     </div>
                     <div class="p202-panel__body">
                         <ol class="p202-list">
-                            <li class="p202-list__item"><span class="p202-list__name">Both receivers answer over HTTPS</span><span class="p202-list__meta" data-receiver-summary>checking…</span></li>
-                            <li class="p202-list__item"><span class="p202-list__name">Register the app you advertise</span><span class="p202-list__meta"><?php echo count($mobileApps['apps']); ?> registered</span></li>
+                            <li class="p202-list__item"><span class="p202-list__name">Both receivers answer over HTTPS</span><span class="p202-list__meta" data-receiver-summary role="status" aria-live="polite">checking…</span></li>
+                            <li class="p202-list__item"><span class="p202-list__name">Register the app you advertise</span><span class="p202-list__meta"><?php echo $e($appCount['checklist']); ?></span></li>
                             <li class="p202-list__item"><span class="p202-list__name">Add conversion-value rules so postbacks decode to events and revenue</span><span class="p202-list__meta">open an app below</span></li>
                             <li class="p202-list__item"><span class="p202-list__name">Add the Info.plist keys and configure the SDK with the schema token</span><span class="p202-list__meta">on the app page</span></li>
                         </ol>
@@ -227,22 +239,7 @@ if (!$canManage) {
             <section class="p202-panel">
                 <div class="p202-panel__head">
                     <h2 class="p202-panel__title">Your apps</h2>
-                    <?php
-                    // "500 of 620 apps" when the read hit its ceiling. A bare
-                    // count would state the wrong number as fact, and the list
-                    // below would simply end.
-                    $shown = count($mobileApps['apps']);
-                    if (!$mobileApps['appsTruncated']) {
-                        $appsLabel = $shown . ($shown === 1 ? ' app' : ' apps');
-                    } elseif ($mobileApps['appsTotal'] !== null) {
-                        $appsLabel = $shown . ' of ' . $mobileApps['appsTotal'] . ' apps';
-                    } else {
-                        // Cut, and the count unknown: "500 of 500" would be a
-                        // figure the reader believes and the reader should not.
-                        $appsLabel = 'first ' . $shown . ' apps';
-                    }
-                    ?>
-                    <span class="p202-pill p202-pill--accent"><?php echo $e($appsLabel); ?></span>
+                    <span class="p202-pill p202-pill--accent"><?php echo $e($appCount['pill']); ?></span>
                 </div>
                 <div class="p202-panel__body">
                     <?php if ($mobileApps['apps'] === []) { ?>
@@ -605,14 +602,29 @@ if (!$canManage) {
             var url = pill.getAttribute('data-url') || '';
             pill.textContent = 'Checking…';
             pill.className = 'p202-pill';
-            if (url.indexOf('https:') !== 0) {
-                /* Apple calls the receiver over public HTTPS on port 443 and
-                   nothing else, so a non-HTTPS origin cannot work however the
-                   fetch below turns out. Saying "Ready" here because the
-                   browser reached it would be a green light for a URL Apple
-                   will never call — the check keyed on the PAGE's protocol
-                   instead, which warned only when HTTPS was configured. */
-                pill.textContent = 'Apple requires HTTPS';
+            /* Apple calls the receiver over public HTTPS on port 443 and
+               nothing else, so neither another scheme nor another port can
+               work however the fetch below turns out. Saying "Ready" because
+               the browser reached it would be a green light for a URL Apple
+               will never call — the check keyed on the PAGE's protocol
+               first, which warned only when HTTPS was configured, and then
+               on the scheme alone, which passed https://host:8443 as Ready
+               while this very comment said port 443 and nothing else. The
+               port is part of the rule, so it is part of the test. */
+            var reachableByApple = false;
+            try {
+                /* No base: data-url is always absolute (origin + path), so
+                   resolving a blank or malformed one against this page would
+                   turn it into the page's own URL and read Ready. Without a
+                   base it throws, and the catch refuses it. */
+                var parsed = new URL(url);
+                reachableByApple = parsed.protocol === 'https:'
+                    && (parsed.port === '' || parsed.port === '443');
+            } catch (error) {
+                reachableByApple = false;
+            }
+            if (!reachableByApple) {
+                pill.textContent = 'Apple cannot reach this';
                 pill.className = 'p202-pill p202-pill--warn';
                 pill.title = 'Apple only calls this endpoint over HTTPS on port 443. This install advertises '
                     + url + '. Reachable from here, but not from Apple.';
