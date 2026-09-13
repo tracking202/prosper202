@@ -689,8 +689,9 @@ run_go() {
     # see. The previous commit put the switch first and moved this gate
     # back behind a fetch-dependent SKIP, which a reviewer caught.
     gofmt_bin="$("$GO_BIN" env GOROOT 2>/dev/null)/bin/gofmt"
-    local gofmt_rc gofmt_err errf deferred_parse=""
+    local gofmt_rc gofmt_err errf deferred_parse="" gofmt_ran=""
     if [ -x "$gofmt_bin" ]; then
+        gofmt_ran=1
         # stdout and stderr kept apart, exit status checked. gofmt -l lists
         # files it would reformat on stdout (a definite, version-independent
         # failure) and prints parse diagnostics on stderr with exit 2 (which
@@ -731,17 +732,30 @@ run_go() {
         fi
         return $TIER_COULD_NOT_RUN
     fi
-    if [ -n "$deferred_parse" ]; then
-        # CI's gofmt gets the final word on the file the local one rejected.
+    if [ -n "$deferred_parse" ] || [ -z "$gofmt_ran" ]; then
+        # CI's gofmt gets the final word on the file the local one rejected,
+        # and is the only formatter there is when the installed toolchain
+        # ships none: the block above then ran nothing, which an earlier
+        # version let through to a PASS (a reviewer caught it). GOROOT is
+        # resolved again because GOTOOLCHAIN, if set, points it at the
+        # fetched toolchain. If no switch happened, this is the same missing
+        # binary, nothing runs here either, and the tier ends as SKIP below.
         gofmt_bin="$("$GO_BIN" env GOROOT 2>/dev/null)/bin/gofmt"
-        unformatted=$( cd go-cli && "$gofmt_bin" -l . 2>&1 )
-        gofmt_rc=$?
-        if [ $gofmt_rc -ne 0 ] || [ -n "$unformatted" ]; then
-            # Merged is fine here: any output from CI's own gofmt is a verdict.
-            printf 'gofmt (CI toolchain %s):\n%s\n' "${GOTOOLCHAIN:-}" "$unformatted"
-            FAIL_NOTE="gofmt under CI's ${GOTOOLCHAIN:-toolchain} rejects a file the local gofmt also rejected; CI's Go workflow fails on this before vet or test"
-            unset GOTOOLCHAIN
-            return 1
+        if [ -x "$gofmt_bin" ]; then
+            gofmt_ran=1
+            unformatted=$( cd go-cli && "$gofmt_bin" -l . 2>&1 )
+            gofmt_rc=$?
+            if [ $gofmt_rc -ne 0 ] || [ -n "$unformatted" ]; then
+                # Merged is fine here: any output from CI's own gofmt is a verdict.
+                printf 'gofmt (CI toolchain %s):\n%s\n' "${GOTOOLCHAIN:-}" "$unformatted"
+                if [ -n "$deferred_parse" ]; then
+                    FAIL_NOTE="gofmt under CI's ${GOTOOLCHAIN:-toolchain} rejects a file the local gofmt also rejected; CI's Go workflow fails on this before vet or test"
+                else
+                    FAIL_NOTE="gofmt under CI's ${GOTOOLCHAIN:-toolchain} rejects a file (the local toolchain ships no gofmt to ask); CI's Go workflow fails on this before vet or test"
+                fi
+                unset GOTOOLCHAIN
+                return 1
+            fi
         fi
     fi
     if go_modules_unavailable; then
@@ -804,8 +818,17 @@ run_go() {
         COULD_NOT_RUN_REASON="the host Go toolchain cannot build a trivial cgo program (probe failed) during the empty-HOME run"
         return $TIER_COULD_NOT_RUN
     fi
+    local ran_under="${GOTOOLCHAIN:-the local go}"
     unset GOTOOLCHAIN
-    return $rc
+    [ $rc -eq 0 ] || return $rc
+    if [ -z "$gofmt_ran" ]; then
+        # Vet and test passed, but CI's first gate never ran: no gofmt beside
+        # this go and no toolchain switch to supply one. A PASS would claim
+        # the Go workflow passes while its formatting step was never asked.
+        COULD_NOT_RUN_REASON="vet and test passed under $ran_under, including the empty-HOME run, but no gofmt was found beside $GO_BIN (GOROOT/bin/gofmt) and no toolchain switch supplied one, so CI's formatting gate was not mirrored"
+        return $TIER_COULD_NOT_RUN
+    fi
+    return 0
 }
 
 # Output that MIGHT mean golangci-lint cannot run on this host. As with the

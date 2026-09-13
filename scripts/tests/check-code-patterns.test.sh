@@ -499,6 +499,19 @@ XML
             if [ "$got" = "$want" ]; then printf '  ok    %-46s go=%s\n' "$name" "$got"; pass=$((pass + 1)); else printf '  FAIL  %-46s go=%s (wanted %s)\n' "$name" "$got" "$want"; fail=$((fail + 1)); fi
         }
         expect_go "go: healthy module PASSES" PASS
+        # A Go install without gofmt must not PASS: gofmt is CI's first
+        # gate, and a tier that never ran one has not mirrored it. A PATH
+        # shim answers `go env GOROOT` with a directory that has no
+        # bin/gofmt, for the local go only: under GOTOOLCHAIN it defers to
+        # the real go, whose fetched toolchain ships its own, so a later
+        # case can prove that one is used after the switch. The shim execs
+        # GOROOT's own binary, not `command -v go`: on a machine where that
+        # is itself a wrapper that re-resolves `go` through PATH, the shim
+        # would find itself first and recurse without end.
+        real_go="$(go env GOROOT)/bin/go"
+        mkdir -p "$REPO/nogofmt/bin" "$REPO/goshim"
+        printf '#!/bin/sh\nif [ "$1" = env ] && [ "$2" = GOROOT ] && [ -z "${GOTOOLCHAIN:-}" ]; then echo %s; exit 0; fi\nexec %s "$@"\n' "$REPO/nogofmt" "$real_go" > "$REPO/goshim/go" && chmod +x "$REPO/goshim/go"
+        expect_go "go: a toolchain without gofmt is SKIP, not PASS" SKIP PATH="$REPO/goshim:$PATH"
         # If mktemp fails, HOME must not silently become empty: the
         # empty-HOME step is an isolation probe and an unisolated run is not
         # a pass. A PATH shim fails mktemp without touching TMPDIR, which go
@@ -608,7 +621,16 @@ XML
             else
                 printf '  FAIL  %-46s downloads=%s (wanted 0)\n' "go: the empty-HOME run keeps the toolchain cache" "$dl"; fail=$((fail + 1))
             fi
+            # Without a local gofmt, the formatter bundled with CI's
+            # toolchain must run after the switch: an unformatted file is
+            # FAIL, and a clean tree is a PASS under CI's Go, not the SKIP
+            # the same shim earns when there is no switch to supply one.
+            printf 'package main\n\nfunc   ugly( ) {\n}\n' > go-cli/cmd/x/ugly.go
+            expect_go "go: without a local gofmt, CI's toolchain formats after the switch" FAIL PATH="$REPO/goshim:$PATH"
+            rm -f go-cli/cmd/x/ugly.go
+            expect_go "go: without a local gofmt, a clean tree PASSES under CI's toolchain" PASS PATH="$REPO/goshim:$PATH"
         fi
+        rm -rf "$REPO/goshim" "$REPO/nogofmt"
         rm -rf .github
         eval "$(sed -n '/^host_go_toolchain_broken() {/,/^}/p' ./verify.sh)"
         # Read by the sourced host_go_toolchain_broken, which shellcheck cannot see.
