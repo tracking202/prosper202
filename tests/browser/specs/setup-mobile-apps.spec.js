@@ -60,6 +60,8 @@ module.exports = {
         expect.eq(new URL(ui.page.url()).pathname, PAGE, 'the sub-menu leads to the page');
         expect.eq(await app.currentSubMenuItem(), 'Mobile Apps', 'and marks it as current');
         await checks.baseline(ctx);
+        await checks.flexContainersKeepTheirSpaces(ctx);
+        await checks.currentSubMenuItemIsVisible(ctx);
       },
     },
 

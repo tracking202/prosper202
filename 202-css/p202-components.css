@@ -299,6 +299,21 @@
     color: var(--bs-danger-text-emphasis);
 }
 
+/* A pill that navigates: the report groupings are links so they still switch
+   with JavaScript off. The pill shape is the affordance, so the browser's
+   underline only makes it look like prose; hover and focus move it toward the
+   accent instead, which changes nothing about its size and so cannot make the
+   row it sits in reflow. */
+a.p202-pill {
+    text-decoration: none;
+}
+
+a.p202-pill:hover,
+a.p202-pill:focus-visible {
+    background: var(--bs-primary-bg-subtle);
+    color: var(--bs-primary-text-emphasis);
+}
+
 /* ---------- Table ---------- */
 
 .p202-table-wrap {

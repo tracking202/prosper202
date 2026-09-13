@@ -11,6 +11,9 @@
  *   [data-p202-reveal="#id"]      swaps a masked value for the real one held in
  *                                 the target's data-p202-value attribute
  *   form[data-p202-confirm="…"]   asks before submitting
+ *   select[data-p202-range="…"]   a report's range picker; the value names the
+ *                                 option that means "custom"
+ *   [data-p202-range-field]       a date input that range picker governs
  *   [data-bs-toggle="tooltip"]    Bootstrap tooltips and popovers, initialised
  *   [data-bs-toggle="popover"]    here so pages never have to
  *   details[data-p202-remember]   keeps a disclosure's open state per browser
@@ -95,6 +98,57 @@
         }
     });
 
+    /* A report's range picker and the two date inputs it governs.
+       The dates are submitted only while the picker reads its custom value,
+       so the server has one unambiguous answer to "which window is this":
+       without that, choosing a preset while the inputs still held the old
+       window would silently keep the old window. A browser with JavaScript
+       off gets the same answer, because the page renders the inputs disabled
+       whenever the picker is not on custom. What this adds is that choosing
+       custom enables them at once, and editing one selects custom, so neither
+       costs a second trip through the server. */
+    function rangeFields(select) {
+        var form = select.form || (select.closest ? select.closest('form') : null);
+        return form ? form.querySelectorAll('[data-p202-range-field]') : [];
+    }
+
+    function syncRange(select) {
+        var live = select.value === select.getAttribute('data-p202-range');
+        Array.prototype.forEach.call(rangeFields(select), function (field) {
+            field.disabled = !live;
+        });
+    }
+
+    document.addEventListener('change', function (event) {
+        var target = event.target;
+        if (!target || !target.hasAttribute) {
+            return;
+        }
+        if (target.hasAttribute('data-p202-range')) {
+            syncRange(target);
+            return;
+        }
+        if (!target.hasAttribute('data-p202-range-field')) {
+            return;
+        }
+        var form = target.form || (target.closest ? target.closest('form') : null);
+        var select = form ? form.querySelector('[data-p202-range]') : null;
+        if (!select) {
+            return;
+        }
+        /* Only if the picker really has that option: assigning a value a
+           <select> does not carry blanks it, which would send no range at
+           all. */
+        var custom = select.getAttribute('data-p202-range');
+        var previous = select.value;
+        select.value = custom;
+        if (select.value !== custom) {
+            select.value = previous;
+            return;
+        }
+        syncRange(select);
+    });
+
     document.addEventListener('submit', function (event) {
         var form = event.target;
         if (!form || !form.getAttribute || !form.hasAttribute('data-p202-confirm')) {
@@ -164,6 +218,9 @@
     function init(root) {
         restoreDisclosures(root);
         initBootstrapHints(root);
+        Array.prototype.forEach.call((root || document).querySelectorAll('[data-p202-range]'), function (select) {
+            syncRange(select);
+        });
     }
 
     if (document.readyState === 'loading') {

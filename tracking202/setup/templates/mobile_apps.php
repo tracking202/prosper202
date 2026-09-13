@@ -448,7 +448,7 @@ if (!$canManage) {
                                 </tbody>
                             </table>
                         </div>
-                        <p class="p202-help">This app's own rule for a value always wins over the account-wide one.</p>
+                        <p class="text-secondary small">This app's own rule for a value always wins over the account-wide one.</p>
                     </div>
                 </details>
             <?php } ?>
@@ -496,7 +496,8 @@ if (!$canManage) {
                 <pre class="p202-code__value mb-0"><?php echo $e($swift); ?></pre>
                 <button type="button" class="btn btn-sm btn-outline-secondary p202-copy" data-p202-copy="<?php echo $e(str_replace(mb_substr($token, 0, 4) . '…' . mb_substr($token, -4), $token, $swift)); ?>">Copy</button>
             </div>
-            <p class="p202-help">Copy puts the whole token in; the snippet shows it shortened so a screenshot of this page does not leak it.</p>
+            <p class="text-secondary small">Copy puts the whole token in; the snippet shows it shortened
+                so a screenshot of this page does not leak it.</p>
         </div>
     </section>
 

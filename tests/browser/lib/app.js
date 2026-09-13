@@ -12,8 +12,11 @@
 /** The component layer's own selectors, in one place so a rename is one edit. */
 const SELECTORS = {
   shellBody: 'body',
-  subNavLink: '.p202c-subnav__link',
-  subNavCurrent: '.p202c-subnav__link[aria-current="page"]',
+  // Two shapes, one job: Setup renders a button grid, every other family a
+  // scrolling strip. A spec names the entry, not the chrome it happens to be
+  // in, so both are listed and openFromSubMenu tries each.
+  subNavLink: ['.p202c-subnav__link', '.p202c-strip__list a'],
+  subNavCurrent: '.p202c-subnav__link[aria-current="page"], .p202c-strip__list a[aria-current="page"]',
   flashBody: '.p202-flash__body',
   fieldError: '.invalid-feedback',
   panel: '.p202-panel',
@@ -87,7 +90,12 @@ class App {
 
   /** Click a sub-menu entry by its label, the way a person reaches a page. */
   async openFromSubMenu(label) {
-    const link = await this.page.$(SELECTORS.subNavLink + ':has-text("' + label + '")');
+    // :has-text() binds to the selector it sits on, so it goes on each
+    // alternative rather than once after a comma-joined list.
+    const selector = SELECTORS.subNavLink
+      .map((base) => base + ':has-text("' + label + '")')
+      .join(', ');
+    const link = await this.page.$(selector);
     if (!link) {
       throw new Error('No sub-menu entry labelled "' + label + '" on ' + this.page.url());
     }

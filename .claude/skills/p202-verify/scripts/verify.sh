@@ -317,6 +317,15 @@ run_phpstan() {
     out=$( $PHPSTAN_CMD analyse -c phpstan.neon.dist --no-progress --memory-limit=512M 2>&1 )
     rc=$?
     printf '%s\n' "$out"
+    # A green exit with no output is not a clean analysis, it is an analysis
+    # that never happened. The unit tier has a floor on its test count for the
+    # same reason; this tier reported PASS for a whole run in which `php` on
+    # PATH was a stub that echoed and exited 0, which is the worst possible
+    # outcome for a check.
+    if [ $rc -eq 0 ] && ! printf '%s' "$out" | grep -qE 'No errors|\[OK\]|Found [0-9]+ error'; then
+        COULD_NOT_RUN_REASON="PHPStan exited 0 but printed no result line; the analysis did not run (is \`php\` on PATH the real interpreter?)"
+        return $TIER_COULD_NOT_RUN
+    fi
     if [ $rc -ne 0 ] && [ "$VENDOR_STATE" = partial ]; then
         local json split env other
         # shellcheck disable=SC2086
@@ -445,8 +454,13 @@ phpcs_counts_from_run() { # $1 = exit code, $2 = output
 
 phpcs_counts_file() {
     local out rc
+    # </dev/null is load-bearing. PHP_CodeSniffer reads standard input when it
+    # is not a terminal, even with a file argument, so inside the file loop in
+    # run_phpcs it swallowed the rest of the here-string: the tier examined the
+    # FIRST changed file, reported "1 file(s) examined", and passed. The count
+    # check at the end of run_phpcs is the backstop for the same shape.
     # shellcheck disable=SC2086
-    out=$( $PHPCS_CMD -d memory_limit=512M --standard=PSR12 --report=summary "$1" 2>&1 )
+    out=$( $PHPCS_CMD -d memory_limit=512M --standard=PSR12 --report=summary "$1" 2>&1 </dev/null )
     rc=$?
     phpcs_counts_from_run "$rc" "$out"
 }
@@ -526,6 +540,15 @@ run_phpcs() {
     # pass of anything.
     if [ "$examined" -eq 0 ]; then
         COULD_NOT_RUN_REASON="every changed .php file has been deleted, so nothing was examined"
+        return $TIER_COULD_NOT_RUN
+    fi
+    # Every changed file that still exists must have been looked at. A loop
+    # that stops early still reaches this line with a plausible count and a
+    # clean verdict, which is the worst way for a check to fail.
+    local expected
+    expected=$(existing_changed_php_files | wc -l | tr -d ' ')
+    if [ "$examined" -ne "$expected" ]; then
+        COULD_NOT_RUN_REASON="examined $examined of $expected changed .php files; the loop stopped early (a command inside it consuming stdin?)"
         return $TIER_COULD_NOT_RUN
     fi
     printf 'phpcs: %s file(s) examined, %s made worse\n' "$examined" "$worse"

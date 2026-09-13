@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Setup;
 
 use Api\V3\Controllers\AttributionAppsController;
+use Api\V3\Controllers\UsersController;
 use Api\V3\Exception\ValidationException;
 use PHPUnit\Framework\TestCase;
 use Tracking202\Setup\MobileAppsController;
@@ -106,11 +107,15 @@ final class MobileAppsRegistrationTest extends TestCase
     }
 
     /**
+     * The validator lives on UsersController, which owns preferences, because
+     * Analyze > Mobile Apps prints the same amounts and must not resolve an
+     * unreadable currency differently from this page.
+     *
      * @dataProvider currencies
      */
     public function testAStoredCurrencyResolvesToACodeTheFormatterCanUse(mixed $stored, string $expected): void
     {
-        self::assertSame($expected, MobileAppsController::normalizeCurrency($stored));
+        self::assertSame($expected, UsersController::normalizeCurrency($stored));
     }
 
     /** @return array<string, array{0: mixed, 1: string}> */

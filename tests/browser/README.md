@@ -57,6 +57,13 @@ scenario, which is usually the fastest way to see what went wrong.
 - **Chromium.** Found via `P202_CHROMIUM`, `PLAYWRIGHT_BROWSERS_PATH`, or the
   usual system locations. If Playwright downloaded its own, leave it unset.
 - **`mysql` on PATH**, pointed at the instance's database.
+- **`--cdn <dir>` / `P202_CDN_MIRROR`**, a directory of files named
+  `<host>__<path with / as __>`, which the harness serves in place of the
+  external hosts it blocks. Without it every `tracking202` page throws
+  `Highcharts is not defined` — the shell loads Highcharts from its vendor CDN
+  on that whole section — and the baseline check reports a page defect that is
+  really a missing mirror. Each error now names the URL it came from, so the
+  message says which page is throwing.
 
 ## Writing a spec
 

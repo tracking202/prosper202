@@ -15,7 +15,10 @@
  *    appears goes on to eat the NEXT dialog, which is exactly what a missing
  *    confirm looks like — the harness broke on the defect it should report.
  *  - Page errors and console errors are collected for the whole session, so a
- *    spec can assert that nothing threw anywhere along the way.
+ *    spec can assert that nothing threw anywhere along the way. Each one
+ *    remembers the URL it came from: a spec that reaches its page by clicking
+ *    through another one would otherwise inherit that page's errors, and
+ *    "no JavaScript errors on this page" would be reporting a different page.
  */
 
 const fs = require('fs');
@@ -54,8 +57,20 @@ async function newSession(browser, config, options = {}) {
   const session = {
     context,
     page,
-    /** Errors the page threw, and console errors worth caring about. */
+    /**
+     * Errors the page threw, and console errors worth caring about. Each
+     * entry stringifies to its message, so joining or printing the list
+     * reads as it always did.
+     *
+     * @type {Array<{url: string, message: string}>}
+     */
     errors: [],
+
+    /** Just the ones this page produced, for a per-page assertion. */
+    errorsHere() {
+      const here = session.page.url();
+      return session.errors.filter((entry) => entry.url === here);
+    },
     /** Dialogs nobody asked for, which is a finding in itself. */
     unexpectedDialogs: [],
     lastDialog: '',
@@ -83,15 +98,23 @@ async function newSession(browser, config, options = {}) {
     await dialog.dismiss();
   });
 
+  const record = (message) => {
+    session.errors.push({
+      url: page.url(),
+      message,
+      toString() { return this.message + '  [' + this.url + ']'; },
+    });
+  };
+
   page.on('pageerror', (error) => {
-    session.errors.push('pageerror: ' + (error && error.message ? error.message : String(error)));
+    record('pageerror: ' + (error && error.message ? error.message : String(error)));
   });
   page.on('console', (message) => {
     if (message.type() !== 'error') { return; }
     const text = message.text();
     // A blocked third-party request is this harness's doing, not the page's.
     if (/net::ERR_FAILED|Failed to load resource/.test(text)) { return; }
-    session.errors.push('console: ' + text);
+    record('console: ' + text);
   });
 
   await routeOffline(page, config);

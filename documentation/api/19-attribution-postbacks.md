@@ -57,6 +57,49 @@ Everything on that page goes through the same v3 controllers as the API and
 the CLI, so the validation and the error sentences are identical. Registering
 an app there is the same write as `POST /api/v3/attribution/apps`.
 
+## Reading the report in the web interface
+
+**Prosper202 CS › Analyze › Mobile Apps** is `GET /attribution/report`,
+`GET /attribution/postbacks` and `POST /attribution/verify` rendered, as three
+tabs over one set of filters:
+
+- **Report** — the totals, and the same numbers grouped by day, app, ad
+  network, source, country, protocol, version or conversion type. Six tiles
+  head it (postbacks, installs, re-downloads, re-engagements, losses, decoded
+  revenue), and below the table a **Decoded events** panel adds up the named
+  events the conversion-value rules produced. When the range holds postbacks
+  that did not verify, a line says so and gives the count for each signature
+  state, because installs, losses and revenue count signature-verified
+  postbacks only unless the signature filter says otherwise — the same
+  `meta.trusted` the API reports. **Download to CSV** takes the grouped table
+  as it stands, with revenue as a bare number a spreadsheet can add up.
+- **Postbacks** — the individual rows behind those totals, fifty to a page,
+  for the moment a total looks wrong and the question becomes which ones. Each
+  row carries its transaction id, so a disagreement about one postback can be
+  taken to the ad network that claims it, and its conversion window, because
+  the report's install counts only the first one.
+- **Verify** — paste a postback and the page says whether its signature is
+  genuine, without storing anything. A SKAdNetwork body comes back with the
+  exact bytes Apple signs, in base64, for diffing against another
+  implementation; an AdAttributionKit body (the object holding `jws-string`)
+  comes back decoded, with the key id that signed it. When the answer is that
+  nothing could be checked, the page says why: a field the version requires is
+  missing, the version is not one this install verifies, or the key id is not
+  one it knows.
+
+The range picker offers the same preset windows as the click reports (Today,
+Yesterday, Last 7/14/30/90 Days, This Month, Last Month) plus Custom Date,
+which is what makes the two date fields live. **The dates on this page are
+UTC**, unlike the click reports, which use your account timezone: postbacks
+are grouped into whole UTC days by the report itself, so a window anchored to
+a local midnight would split its first and last day across groups the report
+does not show.
+
+Every filter is in the URL, so a report someone is looking at is a link they
+can send. A filter the page cannot use — a non-numeric app id, an unknown
+signature state, a date that is not `YYYY-MM-DD` or does not exist — is
+dropped with a line saying so, and the rest of the report is still shown.
+
 ## Setup
 
 1. **Confirm the endpoints are reachable.** Postbacks arrive at

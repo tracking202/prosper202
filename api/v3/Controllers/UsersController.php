@@ -12,6 +12,12 @@ use Api\V3\Exception\ValidationException;
 
 class UsersController
 {
+    /**
+     * The currency column's own default, and the fallback for anything
+     * unusable. See normalizeCurrency() below.
+     */
+    public const DEFAULT_CURRENCY = 'USD';
+
     public function __construct(private readonly \mysqli $db)
     {
     }
@@ -469,6 +475,46 @@ class UsersController
             throw new NotFoundException('User preferences not found');
         }
         return ['data' => $row];
+    }
+
+    /**
+     * The currency this account's money is denominated in.
+     *
+     * Every page that prints an amount needs this, and each one reaching for
+     * the raw column would be a second place to get the fallback wrong. Lives
+     * here because preferences do: 202_users_pref.user_account_currency is one
+     * of the twenty-one codes dollar_format() knows, USD when unset.
+     *
+     * A failed read answers USD rather than propagating: an amount rendered
+     * in the wrong symbol is a cosmetic error, and a report that 500s because
+     * a preferences row could not be read is not.
+     */
+    public function accountCurrency(int $userId): string
+    {
+        try {
+            $preferences = $this->getPreferences($userId)['data'];
+        } catch (\Api\V3\HttpException) {
+            return self::DEFAULT_CURRENCY;
+        }
+
+        return self::normalizeCurrency($preferences['user_account_currency'] ?? null);
+    }
+
+    /**
+     * A stored currency as a code dollar_format() can use.
+     *
+     * Anything that is not three letters — an empty column on an install that
+     * predates it, a truncated write, a value of another type — resolves to
+     * USD rather than being passed through. An unrecognised code is not
+     * dangerous (dollar_format prints the code itself in place of a symbol),
+     * but it would put "XX" in front of every amount on a page with no way to
+     * tell that from a real currency.
+     */
+    public static function normalizeCurrency(mixed $raw): string
+    {
+        $currency = is_scalar($raw) ? strtoupper(trim((string)$raw)) : '';
+
+        return preg_match('/^[A-Z]{3}$/', $currency) === 1 ? $currency : self::DEFAULT_CURRENCY;
     }
 
     public function updatePreferences(int $userId, array $payload): array

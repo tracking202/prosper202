@@ -567,38 +567,14 @@ class MobileAppsController extends SetupController
      * The account's currency, for rendering revenue.
      *
      * Amounts on this page are money, and this install is not necessarily a
-     * dollar one — 202_users_pref.user_account_currency is one of twenty-one
-     * codes and dollar_format() knows where each symbol goes. Anything that is
-     * not a three-letter code (an unreadable row, an empty column on an old
-     * install) falls back to USD, which is the column's own default; the same
-     * shape as Ltv\MysqlCustomerRepository::accountCurrency().
+     * dollar one. UsersController owns the answer because it owns preferences,
+     * and Analyze > Mobile Apps asks the same question — one validator, so the
+     * fallback for an unreadable value cannot differ between two pages that
+     * print the same amounts.
      */
     private function accountCurrency(): string
     {
-        try {
-            $preferences = $this->users->getPreferences($this->getUserId())['data'];
-        } catch (HttpException) {
-            return 'USD';
-        }
-
-        return self::normalizeCurrency($preferences['user_account_currency'] ?? null);
-    }
-
-    /**
-     * A stored currency as a code dollar_format() can use.
-     *
-     * Anything that is not three letters — an empty column on an install that
-     * predates it, a truncated write, a value of another type — resolves to
-     * USD, the column's own default, rather than being passed through. A code
-     * it does not recognise is not dangerous (dollar_format prints the code
-     * itself in place of a symbol), but it would put "XX" in front of every
-     * amount on the page with no way to tell that from a real currency.
-     */
-    public static function normalizeCurrency(mixed $raw): string
-    {
-        $currency = is_scalar($raw) ? strtoupper(trim((string)$raw)) : '';
-
-        return preg_match('/^[A-Z]{3}$/', $currency) === 1 ? $currency : 'USD';
+        return $this->users->accountCurrency($this->getUserId());
     }
 
     /** @return list<array<string, mixed>> */

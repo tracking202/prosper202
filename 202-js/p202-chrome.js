@@ -42,11 +42,11 @@
         });
     }
 
-    /* The section tabs and the sub-menu strip scroll sideways on narrow
-       screens; scroll the current item to the middle so it is never hidden
-       off the edge. */
-    var NARROW_MAX_WIDTH = 767;
-
+    /* The section tabs and the sub-menu strip scroll sideways when they do not
+       fit; scroll the current item to the middle so it is never hidden off the
+       edge. Whether they fit is a question about the list, not about the
+       window: the Analyze strip overflows a 1280px desktop, and a width
+       threshold here left its last entry — the current one — clipped. */
     function centreCurrent(list) {
         var current = list.querySelector('li.active, .is-active');
         if (!current || list.scrollWidth <= list.clientWidth) {
@@ -57,9 +57,6 @@
     }
 
     function centreCurrentEverywhere() {
-        if (window.innerWidth > NARROW_MAX_WIDTH) {
-            return;
-        }
         Array.prototype.forEach.call(document.querySelectorAll('.p202c-tabs__list, .p202c-strip__list'), centreCurrent);
     }
 

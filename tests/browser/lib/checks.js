@@ -23,7 +23,9 @@ async function baseline(ctx, options = {}) {
   expect.eq(await app.shell(), shell, 'the page renders on the ' + shell + ' shell');
   expect.eq(await ui.horizontalOverflow(), 0, 'the page does not scroll sideways');
 
-  const errors = session.errors;
+  // This page's errors, not the session's: a spec that arrives by clicking
+  // through another page would otherwise be told about that page.
+  const errors = session.errorsHere();
   expect.ok(errors.length === 0, 'no JavaScript errors on this page', errors.slice(0, 3).join(' | '));
 
   const dialogs = session.unexpectedDialogs;
@@ -116,6 +118,89 @@ async function componentClassesAreStyled(ctx, scriptOnly = []) {
 }
 
 /**
+ * No flex container silently eats the spaces between its words.
+ *
+ * A flex container's children each become a flex item, and the whitespace
+ * BETWEEN them is discarded — so `<span class="x">Choose <em>Custom Date</em>
+ * to set these.</span>` renders as "ChooseCustom Dateto set these." when `.x`
+ * happens to be `display: inline-flex`. Nothing in the source looks wrong,
+ * the class exists, the test for unstyled classes passes, and the sentence is
+ * broken. `.p202-help` is inline-flex because it is an icon component; prose
+ * was put inside it twice, one wave apart, before anyone read the rendering.
+ *
+ * A `gap` makes the mix deliberate and is left alone. So is a container whose
+ * children are all elements, or all text: the defect needs both at once.
+ */
+async function flexContainersKeepTheirSpaces(ctx) {
+  const { ui, expect } = ctx;
+  const offenders = await ui.page.evaluate(() => {
+    const hits = [];
+    document.querySelectorAll('*').forEach((el) => {
+      const style = getComputedStyle(el);
+      if (style.display !== 'flex' && style.display !== 'inline-flex') { return; }
+      // 'normal' is the initial value, i.e. no gap was asked for.
+      if (style.columnGap !== 'normal' && parseFloat(style.columnGap) > 0) { return; }
+
+      let text = false;
+      let element = false;
+      el.childNodes.forEach((node) => {
+        if (node.nodeType === 3 && node.textContent.trim() !== '') { text = true; }
+        if (node.nodeType === 1) { element = true; }
+      });
+      if (!text || !element) { return; }
+
+      hits.push(
+        '<' + el.tagName.toLowerCase() + (el.className ? ' class="' + el.className + '"' : '') + '> '
+        + JSON.stringify((el.textContent || '').trim().slice(0, 60))
+      );
+    });
+    return hits.slice(0, 6);
+  });
+
+  expect.ok(offenders.length === 0,
+    'no flex container mixes text and elements without a gap',
+    offenders.join(' | '));
+}
+
+/**
+ * The sub-menu entry for the current page is on screen, not off the edge.
+ *
+ * The strip scrolls sideways when it does not fit and the chrome script
+ * scrolls the current entry into view. Whether it fits is a question about
+ * the list rather than the window — the Analyze strip overflows a 1280px
+ * desktop — so this is asserted at whatever width the caller is at, and it is
+ * a measurement because "the script runs" and "the item is visible" are not
+ * the same claim.
+ */
+async function currentSubMenuItemIsVisible(ctx) {
+  const { ui, expect } = ctx;
+  const placement = await ui.page.evaluate(() => {
+    const current = document.querySelector(
+      '.p202c-subnav__link[aria-current="page"], .p202c-strip__list a[aria-current="page"]'
+    );
+    if (!current) { return null; }
+    const list = current.closest('.p202c-subnav__list, .p202c-strip__list');
+    if (!list) { return null; }
+    const item = current.getBoundingClientRect();
+    const box = list.getBoundingClientRect();
+    return {
+      label: (current.textContent || '').trim(),
+      clippedLeft: Math.round(box.left - item.left),
+      clippedRight: Math.round(item.right - box.right),
+    };
+  });
+
+  if (placement === null) {
+    expect.skip('the current sub-menu entry is fully visible', 'no current entry on this page');
+    return;
+  }
+  // A pixel of anti-aliasing is not a clipped label.
+  expect.ok(placement.clippedLeft <= 1 && placement.clippedRight <= 1,
+    'the current sub-menu entry is fully visible',
+    placement.label + ' clipped by ' + placement.clippedLeft + 'px left, ' + placement.clippedRight + 'px right');
+}
+
+/**
  * Run a body of checks at several widths, restoring the viewport afterwards.
  *
  * @param {(width: number) => Promise<void>} body
@@ -179,6 +264,8 @@ module.exports = {
   baseline,
   noLegacyClasses,
   componentClassesAreStyled,
+  flexContainersKeepTheirSpaces,
+  currentSubMenuItemIsVisible,
   atWidths,
   darkThemeApplies,
   tablesScrollThemselves,

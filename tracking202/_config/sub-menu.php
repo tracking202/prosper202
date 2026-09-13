@@ -78,6 +78,7 @@ if (($p202Nav1 === 'account' && $p202Nav2 === '') || $p202Nav2 === 'overview') {
 		['Platforms', 'tracking202/analyze/platforms.php', ['platforms.php']],
 		['Custom Variables', 'tracking202/analyze/variables.php', ['variables.php']],
 		['Customer LTV', 'tracking202/analyze/ltv.php', ['ltv.php']],
+		['Mobile Apps', 'tracking202/analyze/mobile_apps.php', ['mobile_apps.php']],
 	];
 } elseif ($p202Nav2 === 'update') {
 	$p202StripLabel = 'Update tools';
