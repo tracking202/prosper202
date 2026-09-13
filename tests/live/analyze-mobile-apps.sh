@@ -14,7 +14,7 @@
 # to its own defaults and truncate a different database than this pass then
 # reads (CLAUDE.md error pattern #14). The rest stay local — the seeder makes
 # no request and logs in as nobody.
-export P202_DB=${P202_DB:-p202_live}
+export P202_DB=${P202_DB:-p202_test}
 export P202_DB_USER=${P202_DB_USER:-root}
 export P202_DB_PASS=${P202_DB_PASS:-}
 
@@ -29,14 +29,9 @@ if [ -z "$P202_PASS" ]; then
     echo "P202_PASS is not set: this pass logs in as $P202_USER and needs its password." >&2
     exit 2
 fi
-case "$DB" in
-    *test*|*scratch*|*sandbox*|*_ci*|*eval*|*live*|p202_w*) ;;
-    *)
-        echo "Refusing to run against '$DB': this pass truncates tables, so point" >&2
-        echo "P202_DB at a scratch database (a name containing test/scratch/sandbox/ci/eval/live)." >&2
-        exit 2
-        ;;
-esac
+# shellcheck source=tests/live/guard.sh
+. "$(dirname "${BASH_SOURCE[0]}")/guard.sh"
+p202_require_scratch_db "$DB" || exit 2
 
 MYSQL_ARGS=(-u "$DB_USER")
 [ -n "$DB_PASS" ] && MYSQL_ARGS+=("-p$DB_PASS")

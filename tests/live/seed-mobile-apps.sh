@@ -10,18 +10,13 @@
 # P202_DB must be a SCRATCH database — this TRUNCATEs the attribution tables,
 # and the guard below refuses a name that does not read as disposable, which
 # is the protection tests/browser/lib/db.js applies.
-DB=${P202_DB:-p202_live}
+DB=${P202_DB:-p202_test}
 DB_USER=${P202_DB_USER:-root}
 DB_PASS=${P202_DB_PASS:-}
 
-case "$DB" in
-    *test*|*scratch*|*sandbox*|*_ci*|*eval*|*live*|p202_w*) ;;
-    *)
-        echo "Refusing to run against '$DB': this truncates tables, so point" >&2
-        echo "P202_DB at a scratch database (a name containing test/scratch/sandbox/ci/eval/live)." >&2
-        exit 2
-        ;;
-esac
+# shellcheck source=tests/live/guard.sh
+. "$(dirname "${BASH_SOURCE[0]}")/guard.sh"
+p202_require_scratch_db "$DB" || exit 2
 
 MYSQL_ARGS=(-u "$DB_USER")
 [ -n "$DB_PASS" ] && MYSQL_ARGS+=("-p$DB_PASS")

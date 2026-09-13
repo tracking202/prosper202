@@ -402,6 +402,28 @@ class MobileAppsController extends SetupController
      *
      * @return array{app_id: int|null, platform: string, slug: string}
      */
+    /**
+     * A run of digits as an App Store id, or null when it is not one.
+     *
+     * The round trip is the whole point: (int) SATURATES, so a twenty-digit
+     * number becomes PHP_INT_MAX — a positive integer the API accepts, which
+     * would register an app nobody named. Casting back and comparing is what
+     * catches it (CLAUDE.md error pattern #18).
+     *
+     * One implementation because parseStoreReference() reads a bare id and an
+     * id inside a store URL, and only the bare one used to check: the URL
+     * form, which is the paste the page actually invites, saturated. The
+     * comparison is against the digits exactly as given — the bare branch's
+     * rule, unchanged — so a leading zero is still refused rather than
+     * quietly meaning some other app.
+     */
+    private static function appStoreId(string $digits): ?int
+    {
+        $id = (int)$digits;
+
+        return $id > 0 && (string)$id === $digits ? $id : null;
+    }
+
     public static function parseStoreReference(string $reference): array
     {
         $reference = trim($reference);
@@ -412,8 +434,7 @@ class MobileAppsController extends SetupController
 
         // A bare id: the common paste from App Store Connect.
         if (preg_match('/^\d+$/', $reference) === 1) {
-            $id = (int)$reference;
-            $result['app_id'] = $id > 0 && (string)$id === $reference ? $id : null;
+            $result['app_id'] = self::appStoreId($reference);
             return $result;
         }
 
@@ -433,7 +454,7 @@ class MobileAppsController extends SetupController
         // lands on, and the refusal sentence invites exactly that paste.
         // Anchored to a segment boundary so "covid19" is not an app id.
         if (preg_match('~(?:^|/)id(\d+)~', $path, $m) === 1) {
-            $result['app_id'] = (int)$m[1];
+            $result['app_id'] = self::appStoreId($m[1]);
             if (preg_match('~/app/([^/]+)/id\d+~', $path, $slug) === 1) {
                 $result['slug'] = urldecode($slug[1]);
             }

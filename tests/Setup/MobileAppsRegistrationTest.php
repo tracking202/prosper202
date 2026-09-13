@@ -43,6 +43,20 @@ final class MobileAppsRegistrationTest extends TestCase
             'zero' => ['0', null, 'ios', ''],
             'decimal' => ['990077001.5', null, 'ios', ''],
             'id too big for an int' => ['99999999999999999999999', null, 'ios', ''],
+            // The same number inside a store URL, which is the paste the page
+            // actually invites. This branch cast the digits straight to int
+            // and handed on PHP_INT_MAX while the bare form above refused it.
+            // The slug still comes back — it only prefills the name field, and
+            // the refused id is what stops the registration.
+            'store link whose id is too big' => [
+                'https://apps.apple.com/us/app/summit-run/id99999999999999999999999',
+                null,
+                'ios',
+                'summit-run',
+            ],
+            'bare id-prefixed segment, too big' => ['id99999999999999999999999', null, 'ios', ''],
+            'a leading zero is not the same id' => ['0990077001', null, 'ios', ''],
+            'nor inside a link' => ['https://apps.apple.com/us/app/x/id0990077001', null, 'ios', 'x'],
             'link to something else' => ['https://example.com/app/id123', 123, 'ios', ''],
         ];
     }

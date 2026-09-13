@@ -20,14 +20,22 @@ stops proving anything (CLAUDE.md error pattern #9).
 ## Running
 
 You need a running instance and a **scratch** database — these passes
-`TRUNCATE` the attribution tables and rewrite the account's currency. Each
-script refuses a database whose name does not read as disposable, so
+`TRUNCATE` the attribution tables and rewrite the account's currency.
+`guard.sh` refuses a database whose name does not read as disposable, so
 pointing one at a real install fails with a sentence rather than deleting
 data.
 
+It is a port of `tests/browser/lib/db.js`, not a second opinion: the two
+harnesses truncate the same tables on the same instance, so a name one
+accepts and the other refuses would be a trap. The disposable word has to be
+a whole segment — `test`, `scratch`, `tmp`, `temp`, `ci`, `eval`, `fixture`,
+`sandbox`, `probe`, `check`, or a `w<digits>` suffix — which is why
+`production_live` is refused and `p202_w1` is not. To override it deliberately:
+`P202_DB_ALLOW_DESTRUCTIVE=yes-i-mean-it`.
+
 ```sh
 P202_BASE=http://127.0.0.1:8097 \
-P202_DB=p202_live P202_DB_USER=root \
+P202_DB=p202_test P202_DB_USER=root \
 P202_USER=evalci P202_PASS=... \
 bash tests/live/analyze-mobile-apps.sh
 ```
@@ -35,7 +43,7 @@ bash tests/live/analyze-mobile-apps.sh
 | variable | default | |
 |---|---|---|
 | `P202_BASE` | `http://127.0.0.1:8097` | where the instance answers |
-| `P202_DB` | `p202_live` | scratch database; truncated |
+| `P202_DB` | `p202_test` | scratch database; truncated |
 | `P202_DB_USER` / `P202_DB_PASS` | `root` / empty | MySQL credentials |
 | `P202_USER` / `P202_PASS` | `evalci` / **required by the two passes** | the account to log in as |
 
@@ -53,7 +61,8 @@ nothing if you do not have one.
 
 | script | |
 |---|---|
-| `seed-mobile-apps.sh` | postbacks spread wide enough that every grouping, signature class and page of the pager has something real to show. Run by the analyze pass; standalone for the browser pass. |
+| `guard.sh` | the scratch-database check the other three source. Not a pass. |
+| `seed-mobile-apps.sh` | postbacks spread wide enough that every grouping, signature class and page of the pager has something real to show. Run by the analyze pass; standalone for the browser pass, and it needs no login. |
 | `analyze-mobile-apps.sh` | Analyze › Mobile Apps: the three views, every grouping, the filters and the window each preset means, the totals against `SELECT COUNT(*)`, the CSV, the pager, and the permission gate. |
 | `setup-mobile-apps.sh` | Setup › Mobile Apps: registering, editing and removing an app, the conversion-value rules, the currency, and CSRF. |
 
