@@ -507,11 +507,14 @@
 }
 
 .p202-code__value {
-    /* The basis, not `auto`, is what makes the row wrap: once the value's
-       preferred width plus the buttons no longer fit, the buttons drop to
-       their own line and the value gets the full width. With `auto` the
-       value shrank instead — at 400px a schema token had 94px of a 300px
-       row while Reveal/Copy/Rotate took 182px, which reads as broken. */
+    /* Two separate jobs, measured at 400px in a 300px row:
+       flex-wrap above is what lets the buttons drop to their own line at all
+       — without it a schema token had 94px of the row while Reveal/Copy/
+       Rotate took 182px, which reads as broken. The 16rem basis sets the
+       width below which that happens, so a SHORT value gets its own row too
+       rather than being squeezed beside the buttons (105px with `auto`,
+       the full row with this). A long value would wrap on content alone;
+       a short one would not. */
     flex: 1 1 16rem;
     min-width: 0;
     margin: 0;
