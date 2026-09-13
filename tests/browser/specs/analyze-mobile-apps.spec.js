@@ -237,7 +237,9 @@ module.exports = {
 
         const state = await rangeState(ui);
         expect.eq(state.range, 'custom', 'the picker comes back on Custom Date');
-        expect.ok(!state.fromDisabled, 'with the dates still editable');
+        expect.ok(state.from.editable && state.to.editable, 'with the dates still editable');
+        expect.ok(state.from.submitted && state.to.submitted,
+          'and now submitted, because a custom window is what they describe');
 
         await ui.select('#range', 'last7');
         await ui.clickThrough('.p202-table-toolbar button:has-text("Apply")');

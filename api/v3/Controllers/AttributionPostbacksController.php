@@ -388,7 +388,17 @@ class AttributionPostbacksController
         // fields differ) counts once in each day it landed in, and a
         // truncated report is missing whole groups besides. Both make a sum
         // over groups wrong in ways nothing in the response would reveal.
-        $totals = $this->reportTotals($where, $binds, $types, $metrics);
+        //
+        // Built from $params, never from the $where above. A day report with
+        // no time_from tries a window bounded to the newest limit + 1 days
+        // first, and when that attempt FILLS the page it stands — leaving
+        // $where carrying a synthetic lower bound the caller never asked for.
+        // Reusing it here made "the whole window" mean those few days, and
+        // the busier the install, the more it hid: exactly the accounts whose
+        // lifetime totals matter most. The bound exists to choose which
+        // groups come back; it has no business in a total.
+        [$totalsWhere, $totalsBinds, $totalsTypes] = $this->buildFilters($params);
+        $totals = $this->reportTotals($totalsWhere, $totalsBinds, $totalsTypes, $metrics);
 
         // Conversion-value decode: distribution of values per group, folded
         // through the user's rules in PHP (rule resolution — app-specific

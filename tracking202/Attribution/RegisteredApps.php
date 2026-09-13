@@ -31,7 +31,12 @@ final class RegisteredApps
     public const MAX = 500;
 
     /**
-     * @return array{apps: list<array<string, mixed>>, total: int, truncated: bool}
+     * `total` is null exactly when the list may be cut and the count is not
+     * known — so a caller cannot render an exact figure the reader would
+     * believe. Reporting count() there produced "500 of 500 apps", which
+     * states as fact the one thing this could not establish.
+     *
+     * @return array{apps: list<array<string, mixed>>, total: int|null, truncated: bool}
      */
     public static function read(AttributionAppsController $apps): array
     {
@@ -59,7 +64,7 @@ final class RegisteredApps
 
         return [
             'apps' => $rows,
-            'total' => $total ?? $count,
+            'total' => $total,
             'truncated' => $total === null ? $count >= self::MAX : $total > $count,
         ];
     }

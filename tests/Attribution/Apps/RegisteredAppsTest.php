@@ -75,14 +75,19 @@ final class RegisteredAppsTest extends TestCase
             range(1, RegisteredApps::MAX)
         );
 
+        $cut = RegisteredApps::read($this->apps($full, total: null));
         $this->assertTrue(
-            RegisteredApps::read($this->apps($full, total: null))['truncated'],
+            $cut['truncated'],
             'a page at the ceiling with no total must not claim to be the whole list'
         );
-        $this->assertFalse(
-            RegisteredApps::read($this->apps(array_slice($full, 0, 3), total: null))['truncated'],
-            'a page short of the ceiling is the whole list, total or no total'
-        );
+        // And it must not invent one either. Falling back to the row count
+        // here rendered "500 of 500 apps" — an exact figure, stated to the
+        // reader, in the one case this cannot establish.
+        $this->assertNull($cut['total'], 'an unknown total must stay unknown, not become the row count');
+
+        $whole = RegisteredApps::read($this->apps(array_slice($full, 0, 3), total: null));
+        $this->assertFalse($whole['truncated'], 'a page short of the ceiling is the whole list, total or no total');
+        $this->assertNull($whole['total'], 'still unknown; the caller renders a plain count when nothing was cut');
     }
 
     /**

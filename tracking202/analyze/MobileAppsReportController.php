@@ -152,6 +152,9 @@ class MobileAppsReportController
      */
     private const DEFAULT_CURRENCY_FALLBACK = UsersController::DEFAULT_CURRENCY;
 
+    /** Set when readFilters() could not use a filter the URL carried. */
+    private bool $filterDropped = false;
+
     private int $userId;
     private AttributionPostbacksController $postbacks;
     private AttributionAppsController $apps;
@@ -251,13 +254,13 @@ class MobileAppsReportController
         // default answers a question nobody asked while looking exactly like
         // the answer to the one they did (error pattern #4).
         foreach ($window['notes'] as $note) {
-            $this->flash('warn', $note);
+            $this->flashFilterDropped($note);
         }
 
         $groupBy = (string)($_GET['group_by'] ?? self::DEFAULT_GROUPING);
         if (!isset(self::GROUPINGS[$groupBy])) {
             if ($groupBy !== self::DEFAULT_GROUPING) {
-                $this->flash('warn', 'That grouping is not one this report offers, so it is grouped by '
+                $this->flashFilterDropped('That grouping is not one this report offers, so it is grouped by '
                     . self::GROUPINGS[self::DEFAULT_GROUPING] . '.');
             }
             $groupBy = self::DEFAULT_GROUPING;
@@ -269,7 +272,7 @@ class MobileAppsReportController
         // the whole report with an error message.
         $appId = trim((string)($_GET['app_id'] ?? ''));
         if ($appId !== '' && ($appId !== (string)(int)$appId || (int)$appId <= 0)) {
-            $this->flash('warn', 'The app filter was ignored: an App Store id is a whole number.');
+            $this->flashFilterDropped('The app filter was ignored: an App Store id is a whole number.');
             $appId = '';
         }
 
@@ -281,7 +284,7 @@ class MobileAppsReportController
         // another to this page.
         $signature = strtolower(trim((string)($_GET['signature'] ?? '')));
         if ($signature !== '' && !in_array($signature, SignatureState::values(), true)) {
-            $this->flash('warn', 'The signature filter was ignored: it must be one of '
+            $this->flashFilterDropped('The signature filter was ignored: it must be one of '
                 . implode(', ', SignatureState::values()) . '.');
             $signature = '';
         }
@@ -709,8 +712,9 @@ class MobileAppsReportController
             // the template renders an option for a value it was not given,
             // labelled "not in your list" — so name the escape hatch that
             // exists rather than a control that does not.
-            $this->flash('warn', 'The App filter lists the first ' . count($registered['apps']) . ' of '
-                . $registered['total'] . ' registered apps, by name. To report on one that is not listed,'
+            $of = $registered['total'] === null ? '' : ' of ' . $registered['total'];
+            $this->flash('warn', 'The App filter lists the first ' . count($registered['apps']) . $of
+                . ' registered apps, by name. To report on one that is not listed,'
                 . " add app_id=<App Store id> to this page's address.");
         }
 
@@ -733,12 +737,17 @@ class MobileAppsReportController
         $filters = $mobileReport['filters'];
         $label = self::GROUPINGS[$filters['group_by']] ?? 'Group';
 
-        // A download cannot carry a flash, and every warning readFilters()
-        // raised is about a filter that was DROPPED — so the file would cover
-        // a wider set of rows than the URL asked for, look complete, and say
-        // nothing. Refuse instead and let the page render with the reasons
-        // on it; the link is still there once they are read.
-        if ($this->flashes !== []) {
+        // A download cannot carry a flash, so a report built from filters the
+        // page could not use would cover a wider set of rows than the URL
+        // asked for, look complete, and say nothing. Refuse that, and let the
+        // page render with the reasons on it; the link is still there once
+        // they are read.
+        //
+        // Only a DROPPED FILTER, not any flash: the App-filter truncation
+        // notice is about the menu, not about this report, and gating on the
+        // whole list meant an account with more than 500 registered apps
+        // could never download a CSV that was in fact exact.
+        if ($this->filterDropped) {
             $this->flash('bad', 'Nothing was downloaded: the report is not the one the link asked for. '
                 . 'Check the messages above, then use Download to CSV again.');
 
@@ -937,5 +946,23 @@ class MobileAppsReportController
     private function flash(string $kind, string $text): void
     {
         $this->flashes[] = ['kind' => $kind, 'text' => $text];
+    }
+
+    /**
+     * A flash that also records that the report is NOT the one the URL asked
+     * for, because a filter in it could not be used.
+     *
+     * Separate from the flash list because sendCsv() needs the distinction
+     * and the list cannot carry it. The gate there used to read "any flash at
+     * all", on the reasoning that every warning came from readFilters(); the
+     * apps-truncation notice broke that premise a wave later and silently
+     * made the CSV undownloadable for exactly the accounts big enough to
+     * trigger it. A premise about where warnings come from does not survive
+     * the next warning.
+     */
+    private function flashFilterDropped(string $text): void
+    {
+        $this->filterDropped = true;
+        $this->flash('warn', $text);
     }
 }

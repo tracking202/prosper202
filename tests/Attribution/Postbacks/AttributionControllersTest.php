@@ -694,7 +694,20 @@ final class AttributionControllersTest extends TestCase
 
         $aggregates = $this->groupedAggregates();
         $this->assertCount(1, $aggregates, 'a full page is provably the whole answer; the second query is skipped');
-        $this->assertCount(1, $this->ungroupedTotals(), 'the totals are read once either way');
+
+        // The bound is an optimisation for choosing WHICH days to return. The
+        // totals are the whole window by definition, so they must not inherit
+        // it — an established install whose newest limit + 1 days are busy
+        // would otherwise be told its lifetime totals were those few days.
+        $totals = $this->ungroupedTotals();
+        $this->assertCount(1, $totals, 'the totals are read once either way');
+        $this->assertStringContainsString('received_at >= ?', $aggregates[0]['sql'], 'the GROUPED query is bounded');
+        $this->assertStringNotContainsString(
+            'received_at >= ?',
+            $totals[0]['sql'],
+            'the totals query must not carry the window the group query bounded itself with'
+        );
+        $this->assertSame('i', $totals[0]['types'], 'user_id only: no synthetic time_from');
         $this->assertTrue($report['meta']['groups_truncated']);
         $this->assertCount(2, $report['data']['groups']);
     }

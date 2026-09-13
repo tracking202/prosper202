@@ -232,9 +232,15 @@ if (!$canManage) {
                     // count would state the wrong number as fact, and the list
                     // below would simply end.
                     $shown = count($mobileApps['apps']);
-                    $appsLabel = $mobileApps['appsTruncated']
-                        ? $shown . ' of ' . $mobileApps['appsTotal'] . ' apps'
-                        : $shown . ($shown === 1 ? ' app' : ' apps');
+                    if (!$mobileApps['appsTruncated']) {
+                        $appsLabel = $shown . ($shown === 1 ? ' app' : ' apps');
+                    } elseif ($mobileApps['appsTotal'] !== null) {
+                        $appsLabel = $shown . ' of ' . $mobileApps['appsTotal'] . ' apps';
+                    } else {
+                        // Cut, and the count unknown: "500 of 500" would be a
+                        // figure the reader believes and the reader should not.
+                        $appsLabel = 'first ' . $shown . ' apps';
+                    }
                     ?>
                     <span class="p202-pill p202-pill--accent"><?php echo $e($appsLabel); ?></span>
                 </div>
@@ -376,7 +382,23 @@ if (!$canManage) {
             <?php } ?>
 
             <?php if ($canManage) {
-                $kind = $editRule !== null ? ($editRule['fine_value'] === null ? 'coarse' : 'fine') : (string)($form['kind'] ?? 'fine'); ?>
+                $kind = $editRule !== null ? ($editRule['fine_value'] === null ? 'coarse' : 'fine') : (string)($form['kind'] ?? 'fine');
+                /*
+                 * What each value field should show: the rule being edited,
+                 * else what was just submitted. The selects below used to
+                 * consult $editRule only, so a new rule refused for an
+                 * unrelated field (a non-numeric revenue, say) came back with
+                 * the conversion value reset to the first option — and
+                 * correcting the revenue then created a rule for 0 instead of
+                 * the value that was chosen. $kind and $event_name already
+                 * fell back this way; these two were simply missed.
+                 */
+                $shownFine = $editRule !== null
+                    ? ($editRule['fine_value'] ?? null)
+                    : ($form['fine_value'] ?? null);
+                $shownCoarse = $editRule !== null
+                    ? (string)($editRule['coarse_value'] ?? '')
+                    : (string)($form['coarse_value'] ?? ''); ?>
                 <form method="post" action="<?php echo $e($self); ?>" class="p202-section">
                     <?php echo $mobileApps['csrf']; ?>
                     <input type="hidden" name="action" value="rule_save">
@@ -399,7 +421,7 @@ if (!$canManage) {
                             <label class="form-label" for="fine_value">Fine value</label>
                             <select class="form-select<?php echo $invalid('fine_value'); ?>" id="fine_value" name="fine_value">
                                 <?php for ($i = 0; $i <= 63; $i++) {
-                                    $selected = $editRule !== null && (int)($editRule['fine_value'] ?? -1) === $i; ?>
+                                    $selected = $shownFine !== null && (int)$shownFine === $i; ?>
                                     <option value="<?php echo $i; ?>" <?php echo $selected ? 'selected' : ''; ?>><?php echo $i; ?></option>
                                 <?php } ?>
                             </select>
@@ -409,7 +431,7 @@ if (!$canManage) {
                             <label class="form-label" for="coarse_value">Coarse value</label>
                             <select class="form-select<?php echo $invalid('coarse_value'); ?>" id="coarse_value" name="coarse_value">
                                 <?php foreach (['low', 'medium', 'high'] as $coarse) { ?>
-                                    <option value="<?php echo $coarse; ?>" <?php echo $editRule !== null && (string)($editRule['coarse_value'] ?? '') === $coarse ? 'selected' : ''; ?>><?php echo $coarse; ?></option>
+                                    <option value="<?php echo $coarse; ?>" <?php echo $shownCoarse === $coarse ? 'selected' : ''; ?>><?php echo $coarse; ?></option>
                                 <?php } ?>
                             </select>
                             <?php echo $fieldError('coarse_value'); ?>

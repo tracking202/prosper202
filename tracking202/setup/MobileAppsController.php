@@ -696,25 +696,47 @@ class MobileAppsController extends SetupController
      */
     private function developmentNudges(array $apps): array
     {
-        $nudges = [];
+        $waiting = [];
         foreach ($apps as $app) {
-            if ((int)($app['accept_development_postbacks'] ?? 0) === 1) {
-                continue;
-            }
-            try {
-                $result = $this->postbacks->list([
-                    'app_id' => (int)($app['app_id'] ?? 0),
-                    'signature' => 'development',
-                    'limit' => 1,
-                ]);
-            } catch (HttpException) {
-                continue;
-            }
-            $count = (int)($result['pagination']['total'] ?? 0);
-            if ($count > 0) {
-                $nudges[(int)$app['attribution_app_id']] = $count;
+            if ((int)($app['accept_development_postbacks'] ?? 0) !== 1) {
+                $waiting[(int)($app['app_id'] ?? 0)] = (int)$app['attribution_app_id'];
             }
         }
+        if ($waiting === []) {
+            return [];
+        }
+
+        // ONE grouped read, not one per app. This asked the postback list for
+        // a count per app, and list() runs a COUNT and a row SELECT each — so
+        // an account near the app ceiling issued something like a thousand
+        // queries before the page rendered, every time, including when
+        // opening a single app.
+        //
+        // report() already answers exactly this question — postbacks per app,
+        // filtered by signature state — so the grouping is reused rather than
+        // a second piece of SQL written for it. Its `postbacks` counts unique
+        // postbacks rather than stored rows, which is the number the Analyze
+        // report would show for the same app: a replay stops being counted
+        // twice here too.
+        try {
+            $answer = $this->postbacks->report([
+                'group_by' => 'app',
+                'signature' => 'development',
+                'limit' => max(1, count($waiting)),
+            ]);
+        } catch (HttpException) {
+            return [];
+        }
+
+        $nudges = [];
+        foreach ($answer['data']['groups'] ?? [] as $group) {
+            $appStoreId = (int)($group['app_id'] ?? 0);
+            $count = (int)($group['postbacks'] ?? 0);
+            if ($count > 0 && isset($waiting[$appStoreId])) {
+                $nudges[$waiting[$appStoreId]] = $count;
+            }
+        }
+
         return $nudges;
     }
 }
