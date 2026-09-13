@@ -193,6 +193,7 @@ reason_for() {
     case "$1" in
         syntax)
             have php || { echo "php not on PATH"; return; }
+            php_is_real || { echo "the \`php\` on PATH does not answer as an interpreter (a stub or wrapper?), so no PHP tier can run"; return; }
             ;;
         phpstan)
             [ -n "$PHPSTAN_CMD" ] || { echo "no vendor/bin/phpstan and no phpstan.phar (see references/sandbox-recovery.md)"; return; }
@@ -354,6 +355,15 @@ local_php_version() {
     php -r 'echo PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION;' 2>/dev/null
 }
 
+# True when `php` on PATH really runs PHP. A scratchpad bin/ can hold a stub
+# from some earlier experiment — one that echoes and exits 0 — and putting
+# that directory on PATH made every PHP tier "pass" over an empty run: the
+# unit tier's floor on its test count was the only thing that noticed. This
+# is the question all of them were really asking, asked once.
+php_is_real() {
+    [ "$(php -r 'echo 6 * 7;' 2>/dev/null)" = "42" ]
+}
+
 # Non-empty when the local interpreter is not the one CI tests on. Attached
 # to a FAIL as a note so the reader can judge whether the failures are the
 # interpreter (a newer PHP promotes deprecations) or the change. It never
@@ -430,23 +440,30 @@ phpunit_ran_nothing() {
 # only when a change makes a file worse than it was at HEAD; a brand-new file
 # has no HEAD and must be clean.
 # Turns one phpcs run into "ERRORS WARNINGS", or "?" when phpcs did not
-# actually analyse the file. The exit code cannot be trusted for that: the
-# documented bitmask (1 errors, 2 warnings, 3 both) does not match what
-# PHP_CodeSniffer 3.13 does (2 for errors, 1 for warnings only, 3 for a
-# missing file or unknown standard, 2 for out-of-memory). The first version
-# read exit 3 as a tool failure and would have skipped the ratchet for a
-# file with both errors and warnings. The stable signal is the report: a
-# successful analysis either prints "A TOTAL OF N ERRORS AND M WARNINGS" or
-# prints nothing at all with exit 0 (clean). Anything else is "?", which
-# must never be read as 0 (CLAUDE.md error pattern #11).
-phpcs_counts_from_run() { # $1 = exit code, $2 = output
-    local e w
-    e=$(printf '%s' "$2" | grep -oE 'A TOTAL OF [0-9]+ ERROR' | grep -oE '[0-9]+' | head -1)
-    w=$(printf '%s' "$2" | grep -oE '[0-9]+ WARNING' | grep -oE '[0-9]+' | head -1)
+# actually analyse the file. Neither the exit code nor the summary report
+# can carry that distinction, and both were tried:
+#
+#   - The exit code is not the documented bitmask (1 errors, 2 warnings, 3
+#     both). PHP_CodeSniffer 3.13 exits 2 for errors, 1 for warnings only,
+#     and 3 for a missing file OR an unknown standard. Reading 3 as "tool
+#     failure" would have skipped the ratchet for a file with both.
+#   - --report=summary prints nothing at all for a clean file, exit 0 --
+#     byte for byte what a stub interpreter or a phar that failed to boot
+#     produces. Executed, not assumed: a clean file really does emit zero
+#     bytes, so a floor written against that report either passes stubs or
+#     rejects clean files. There is no third reading.
+#
+# --report=json has the property the floor needs: a run that analysed
+# anything prints a totals object, zeros included, and a run that did not
+# prints no JSON whatever its exit code. Anything without totals is "?",
+# which must never be read as 0 (CLAUDE.md error pattern #11).
+phpcs_counts_from_run() { # $1 = exit code (unused; see above), $2 = output
+    local totals e w
+    totals=$(printf '%s' "$2" | sed -n 's/.*"totals"[[:space:]]*:[[:space:]]*{\([^}]*\)}.*/\1/p' | head -1)
+    e=$(printf '%s' "$totals" | sed -n 's/.*"errors"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')
+    w=$(printf '%s' "$totals" | sed -n 's/.*"warnings"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')
     if [ -n "$e" ] && [ -n "$w" ]; then
         echo "$e $w"
-    elif [ "$1" -eq 0 ] && [ -z "$(printf '%s' "$2" | tr -d '[:space:]')" ]; then
-        echo "0 0"
     else
         echo "?"
     fi
@@ -460,7 +477,7 @@ phpcs_counts_file() {
     # FIRST changed file, reported "1 file(s) examined", and passed. The count
     # check at the end of run_phpcs is the backstop for the same shape.
     # shellcheck disable=SC2086
-    out=$( $PHPCS_CMD -d memory_limit=512M --standard=PSR12 --report=summary "$1" 2>&1 </dev/null )
+    out=$( $PHPCS_CMD -d memory_limit=512M --standard=PSR12 --report=json "$1" 2>&1 </dev/null )
     rc=$?
     phpcs_counts_from_run "$rc" "$out"
 }
@@ -495,7 +512,7 @@ phpcs_baseline_path() {
 phpcs_counts_at_head() {
     local out rc
     # shellcheck disable=SC2086
-    out=$( git show "HEAD:$1" 2>/dev/null | $PHPCS_CMD -d memory_limit=512M --standard=PSR12 --report=summary --stdin-path="$1" - 2>&1 )
+    out=$( git show "HEAD:$1" 2>/dev/null | $PHPCS_CMD -d memory_limit=512M --standard=PSR12 --report=json --stdin-path="$1" - 2>&1 )
     rc=$?
     phpcs_counts_from_run "$rc" "$out"
 }
@@ -507,7 +524,12 @@ run_phpcs() {
         COULD_NOT_RUN_REASON="no new or modified .php files, so nothing was examined"
         return $TIER_COULD_NOT_RUN
     fi
-    while IFS= read -r f; do
+    # Descriptor 3, not stdin. `</dev/null` on the one helper that was caught
+    # consuming the list fixes that helper; this fixes the loop, so the next
+    # command added inside it cannot re-create the bug. Two more already run
+    # here (phpcs_baseline_path shells out to git four times,
+    # phpcs_counts_at_head pipes into phpcs) and were safe only by accident.
+    while IFS= read -r f <&3; do
         [ -f "$f" ] || continue
         examined=$((examined + 1))
         wt=$(phpcs_counts_file "$f")
@@ -534,7 +556,7 @@ run_phpcs() {
         elif [ "$we" -gt 0 ] || [ "$ww" -gt 0 ]; then
             printf 'phpcs: %s: %s pre-existing errors / %s warnings, none added\n' "$f" "$we" "$ww"
         fi
-    done <<< "$files"
+    done 3<<< "$files"
     # A change consisting only of deletions lists files that no longer
     # exist; the loop above skips them and examines nothing. That is not a
     # pass of anything.

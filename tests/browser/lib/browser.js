@@ -37,6 +37,16 @@ async function launch(config) {
   });
 }
 
+/** A URL reduced to the page it names: origin + path, no query, no hash. */
+function samePage(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.origin + parsed.pathname;
+  } catch (error) {
+    return String(url);
+  }
+}
+
 /**
  * A page with its watchers attached.
  *
@@ -66,10 +76,19 @@ async function newSession(browser, config, options = {}) {
      */
     errors: [],
 
-    /** Just the ones this page produced, for a per-page assertion. */
+    /**
+     * Just the ones this page produced, for a per-page assertion.
+     *
+     * Matched on origin + path, not the whole URL: an error recorded before
+     * a redirect, a replaceState or a query-string change would otherwise
+     * match nothing, and a filter that always returns [] makes the caller's
+     * "no JavaScript errors on this page" pass without asserting anything.
+     * A spec still owes a session-wide check; this narrows where the blame
+     * goes, it does not replace it.
+     */
     errorsHere() {
-      const here = session.page.url();
-      return session.errors.filter((entry) => entry.url === here);
+      const here = samePage(session.page.url());
+      return session.errors.filter((entry) => samePage(entry.url) === here);
     },
     /** Dialogs nobody asked for, which is a finding in itself. */
     unexpectedDialogs: [],

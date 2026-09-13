@@ -468,7 +468,17 @@ class UsersController
         $stmt = $this->prepare('SELECT * FROM 202_users_pref WHERE user_id = ? LIMIT 1');
         $this->bind($stmt, 'i', $userId);
         $this->execute($stmt, 'Query failed');
-        $row = $stmt->get_result()->fetch_assoc();
+        // Checked: get_result() returns false on failure, and false read as
+        // "no row" is indistinguishable from a user who has no preferences —
+        // the silent shape CLAUDE.md error pattern #1 names get_result() for.
+        // Unchecked, the ->fetch_assoc() below raises \Error, which is not an
+        // \Exception and escapes every catch on the page path.
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            throw new DatabaseException('Query failed');
+        }
+        $row = $result->fetch_assoc();
         $stmt->close();
 
         if (!$row) {
@@ -487,13 +497,17 @@ class UsersController
      *
      * A failed read answers USD rather than propagating: an amount rendered
      * in the wrong symbol is a cosmetic error, and a report that 500s because
-     * a preferences row could not be read is not.
+     * a preferences row could not be read is not. \Throwable, not
+     * HttpException: the promise is "this never takes the page down", and
+     * narrowing it to the exception type the happy path throws would have
+     * been a promise the code did not keep — a driver-level \Error is exactly
+     * the case worth surviving.
      */
     public function accountCurrency(int $userId): string
     {
         try {
             $preferences = $this->getPreferences($userId)['data'];
-        } catch (\Api\V3\HttpException) {
+        } catch (\Throwable) {
             return self::DEFAULT_CURRENCY;
         }
 

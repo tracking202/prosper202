@@ -86,6 +86,24 @@ class AttributionPostbacksController
     ];
 
     /**
+     * The response field each grouping's first column arrives under.
+     *
+     * Derived from GROUP_MODES rather than restated, so a consumer that
+     * renders a group's key — the web report and its CSV both do — cannot
+     * drift from the SQL. The first column is the one a mode is named for;
+     * 'source' has a second (campaign_id) its caller spells out.
+     *
+     * @return array<string, string>
+     */
+    public static function groupKeys(): array
+    {
+        return array_map(
+            static fn (array $columns): string => (string)$columns[0]['key'],
+            self::GROUP_MODES
+        );
+    }
+
+    /**
      * What makes two rows the same postback: the framework's postback id,
      * namespaced by protocol and ad network, per conversion window. Apple
      * says to count unique postback ids, and the receiver deliberately
@@ -306,6 +324,7 @@ class AttributionPostbacksController
         // conversion_type is the protocol-neutral reading of SKAdNetwork's
         // redownload flag and AdAttributionKit's conversion-type: a
         // re-engagement is neither an install nor a redownload.
+        $metrics = self::metricColumns($trusted, $identity, $winCondition, $firstWindow, $development);
 
         // Day groups keep the NEWEST window (DESC + limit, re-sorted
         // ascending for output); other modes keep the busiest groups.
@@ -320,23 +339,11 @@ class AttributionPostbacksController
             $orderBy,
             $groupColumns,
             $maxGroups,
-            $trusted,
-            $identity,
-            $winCondition,
-            $firstWindow,
-            $development
+            $metrics
         ): array {
             $whereClause = 'WHERE ' . implode(' AND ', $where);
-            $sql = 'SELECT ' . implode(', ', $selectGroup) . ",
-                COUNT(DISTINCT $identity) AS postbacks,
-                COUNT(DISTINCT CASE WHEN $trusted AND did_win = 0 THEN $identity END) AS losses,
-                COUNT(DISTINCT CASE WHEN $trusted AND $winCondition AND $firstWindow AND conversion_type = 'download' THEN $identity END) AS installs,
-                COUNT(DISTINCT CASE WHEN $trusted AND $winCondition AND $firstWindow AND conversion_type = 'redownload' THEN $identity END) AS redownloads,
-                COUNT(DISTINCT CASE WHEN $trusted AND $winCondition AND $firstWindow AND conversion_type = 're-engagement' THEN $identity END) AS reengagements,
-                COUNT(DISTINCT CASE WHEN signature_valid = 1 THEN $identity END) AS signature_valid_count,
-                COUNT(DISTINCT CASE WHEN signature_valid = 0 THEN $identity END) AS signature_invalid_count,
-                COUNT(DISTINCT CASE WHEN signature_valid IS NULL THEN $identity END) AS signature_unverified_count,
-                COUNT(DISTINCT CASE WHEN signature_state = '$development' THEN $identity END) AS signature_development_count
+            $sql = 'SELECT ' . implode(', ', $selectGroup) . ', '
+                . self::metricSelectList($metrics) . "
             FROM 202_attribution_postbacks
             $whereClause
             GROUP BY $groupByExpr
@@ -374,6 +381,14 @@ class AttributionPostbacksController
         if ($truncated) {
             $groupsOut = array_slice($groupsOut, 0, $maxGroups, preserve_keys: true);
         }
+
+        // The same metrics over the whole window, ungrouped. A caller cannot
+        // get these by summing the groups: COUNT(DISTINCT identity) is
+        // per-group, so one postback stored twice (a replay whose unsigned
+        // fields differ) counts once in each day it landed in, and a
+        // truncated report is missing whole groups besides. Both make a sum
+        // over groups wrong in ways nothing in the response would reveal.
+        $totals = $this->reportTotals($where, $binds, $types, $metrics);
 
         // Conversion-value decode: distribution of values per group, folded
         // through the user's rules in PHP (rule resolution — app-specific
@@ -462,6 +477,7 @@ class AttributionPostbacksController
             'data' => [
                 'group_by' => $groupBy,
                 'groups' => $groups,
+                'totals' => $totals,
             ],
             'meta' => [
                 'timezone' => 'UTC',
@@ -474,9 +490,126 @@ class AttributionPostbacksController
                     . '; the signature_*_count columns count unique postbacks per signature class, so a postback stored in two classes counts in each'
                     . '; installs = winning first-window downloads; redownloads and re-engagements (AdAttributionKit) are reported separately'
                     . '; conversion values decode across all three windows, so measurable/decoded can exceed installs'
-                    . '; conversion values decode through /attribution/conversion-values rules',
+                    . '; conversion values decode through /attribution/conversion-values rules'
+                    . '; data.totals holds the same metrics ungrouped and over the whole window — summing the groups'
+                    . ' double-counts a postback that landed in two of them and misses any the truncation dropped',
             ],
         ];
+    }
+
+    /**
+     * The conversion_type values the report counts as their own metric, and
+     * the alias each one reports under. Keys are the stored vocabulary
+     * (AdAttributionKitProtocol::CONVERSION_TYPES); a type missing here is
+     * still counted in `postbacks`, just not broken out.
+     */
+    private const CONVERSION_METRICS = [
+        'download' => 'installs',
+        'redownload' => 'redownloads',
+        're-engagement' => 'reengagements',
+    ];
+
+    /**
+     * The report's metric columns: alias => the aggregate that fills it.
+     *
+     * One list, because four places have to agree about it — the grouped
+     * query, the ungrouped totals beside it, and the two readers that pull
+     * the aliases back out of a row. It was four copies of the same nine
+     * lines, which is the shape where a metric added to one, or a CASE
+     * corrected in one, leaves the page's header disagreeing with its own
+     * table: both queries still succeed, both return rows, and nothing
+     * downstream can tell the two answers were computed differently.
+     *
+     * Every argument is a SQL fragment built from constants in report()
+     * (never from request input), so interpolating them is safe here.
+     *
+     * @return array<string, string>
+     */
+    private static function metricColumns(
+        string $trusted,
+        string $identity,
+        string $winCondition,
+        string $firstWindow,
+        string $development
+    ): array {
+        $won = "$trusted AND $winCondition AND $firstWindow";
+        $distinct = static fn(string $when): string
+            => "COUNT(DISTINCT CASE WHEN $when THEN $identity END)";
+
+        $columns = [
+            'postbacks' => "COUNT(DISTINCT $identity)",
+            'losses' => $distinct("$trusted AND did_win = 0"),
+        ];
+        foreach (self::CONVERSION_METRICS as $conversionType => $alias) {
+            $columns[$alias] = $distinct("$won AND conversion_type = '$conversionType'");
+        }
+        $columns['signature_valid_count'] = $distinct('signature_valid = 1');
+        $columns['signature_invalid_count'] = $distinct('signature_valid = 0');
+        $columns['signature_unverified_count'] = $distinct('signature_valid IS NULL');
+        $columns['signature_development_count'] = $distinct("signature_state = '$development'");
+
+        return $columns;
+    }
+
+    /**
+     * Every metric alias the report exposes, in SELECT order. Derived from
+     * metricColumns() rather than restated, so the readers cannot drift from
+     * the query that fills them. The SQL fragments passed in are throwaway:
+     * only the expressions depend on them, and only the keys are kept.
+     *
+     * @return list<string>
+     */
+    public static function metricKeys(): array
+    {
+        return array_keys(self::metricColumns('1 = 1', '1', '1 = 1', '1 = 1', ''));
+    }
+
+    /**
+     * @param array<string, string> $metrics alias => expression
+     */
+    private static function metricSelectList(array $metrics): string
+    {
+        $parts = [];
+        foreach ($metrics as $alias => $expression) {
+            $parts[] = "$expression AS $alias";
+        }
+
+        return implode(', ', $parts);
+    }
+
+    /**
+     * The report's metrics over the whole window with no GROUP BY.
+     *
+     * One row, from the same expressions the grouped query uses, so the two
+     * can only disagree if their filters do. Every count is over the
+     * identity, so a postback stored as two rows counts once here however
+     * many groups it would have been spread across.
+     *
+     * @param list<string> $where
+     * @param list<mixed> $binds
+     * @param array<string, string> $metrics alias => expression, from metricColumns()
+     * @return array<string, int>
+     */
+    private function reportTotals(array $where, array $binds, string $types, array $metrics): array
+    {
+        $sql = 'SELECT ' . self::metricSelectList($metrics)
+            . ' FROM 202_attribution_postbacks WHERE ' . implode(' AND ', $where);
+
+        $stmt = $this->prepare($sql);
+        if ($types !== '') {
+            $this->bind($stmt, $types, ...$binds);
+        }
+        $this->execute($stmt, 'Report totals query failed');
+        $result = $this->result($stmt);
+        $row = $result->fetch_assoc() ?: [];
+        $stmt->close();
+
+        $totals = [];
+        foreach (array_keys($metrics) as $key) {
+            $totals[$key] = (int)($row[$key] ?? 0);
+        }
+
+        return $totals;
     }
 
     /**
@@ -858,16 +991,12 @@ class AttributionPostbacksController
             };
         }
 
-        return $group + [
-            'postbacks' => (int)$row['postbacks'],
-            'losses' => (int)$row['losses'],
-            'installs' => (int)$row['installs'],
-            'redownloads' => (int)$row['redownloads'],
-            'reengagements' => (int)$row['reengagements'],
-            'signature_valid_count' => (int)$row['signature_valid_count'],
-            'signature_invalid_count' => (int)$row['signature_invalid_count'],
-            'signature_unverified_count' => (int)$row['signature_unverified_count'],
-            'signature_development_count' => (int)$row['signature_development_count'],
+        $metrics = [];
+        foreach (self::metricKeys() as $key) {
+            $metrics[$key] = (int)($row[$key] ?? 0);
+        }
+
+        return $group + $metrics + [
             'measurable' => 0,
             'decoded' => 0,
             'undecoded' => 0,

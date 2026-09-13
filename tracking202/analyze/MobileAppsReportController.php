@@ -10,6 +10,7 @@ use Api\V3\Attribution\SignatureState;
 use Api\V3\Controllers\UsersController;
 use Api\V3\Exception\ValidationException;
 use Api\V3\HttpException;
+use Tracking202\Attribution\RegisteredApps;
 
 /**
  * Analyze › Mobile Apps: what the SKAdNetwork and AdAttributionKit postbacks
@@ -62,31 +63,33 @@ class MobileAppsReportController
     /**
      * The response field each grouping's first column comes out of.
      *
-     * One table, because the rendered table and the CSV both need it, and a
-     * grouping whose key is spelled out in only one of them is a column that
-     * reads correctly in one place and wrongly in the other. Day, app and
-     * source are rendered specially (a formatted date, a name beside its id,
-     * two fields joined) and appear here so the key sets can be compared:
-     * tests/Analyze asserts this covers exactly GROUPINGS.
+     * Asked of the API rather than restated here. It is one list — the SQL
+     * that names the key and the two renderers that read it — and a local
+     * copy would go on resolving to '' (an empty first column, in both the
+     * table and the CSV, with nothing erroring) after a rename upstream.
+     *
+     * @return array<string, string>
      */
-    public const GROUP_KEYS = [
-        'day'             => 'date',
-        'app'             => 'app_id',
-        'ad-network'      => 'ad_network_id',
-        'source'          => 'source_identifier',
-        'country'         => 'country_code',
-        'protocol'        => 'protocol',
-        'version'         => 'version',
-        'conversion-type' => 'conversion_type',
-    ];
+    public static function groupKeys(): array
+    {
+        return AttributionPostbacksController::groupKeys();
+    }
 
     /**
      * The ranges the toolbar offers, under the names the rest of the app
-     * already uses for them (the calendar in functions-tracking202.php), so
-     * somebody moving between a click report and this one reads the same
-     * words. Last 90 Days is the one addition: a conversion window runs to
-     * 35 days and postbacks trickle in behind it, so the long look is a
-     * question this report gets asked and the others do not.
+     * already uses for them, so somebody moving between a click report and
+     * this one reads the same words. Last 90 Days is the one addition: a
+     * conversion window runs to 35 days and postbacks trickle in behind it,
+     * so the long look is a question this report gets asked and the others
+     * are not.
+     *
+     * The windows match too, which is the part that was wrong when this
+     * shipped: grab_timeframe()'s 'last7' is `-7 days 00:00:00` through
+     * today, i.e. EIGHT whole days, and 'This Month' runs to the last day of
+     * the month. Naming the presets after the calendar's while resolving
+     * them a day shorter gave one label two meanings, and an operator
+     * reconciling clicks against installs would have read the gap as missing
+     * postbacks. tests/Analyze executes both and fails if they diverge.
      */
     public const RANGES = [
         'today'     => 'Today',
@@ -97,6 +100,21 @@ class MobileAppsReportController
         'last90'    => 'Last 90 Days',
         'thismonth' => 'This Month',
         'lastmonth' => 'Last Month',
+    ];
+
+    /**
+     * The "last N days" presets, as the calendar counts them: N days back
+     * from midnight, through the end of today, so the window spans N + 1
+     * whole days. One table rather than an arm each — four arms of the same
+     * expression re-derived the offset four times, and the arm that also
+     * served "anything unknown" meant a preset added without one reported
+     * the default window under its own name.
+     */
+    private const RANGE_DAYS = [
+        'last7'  => 7,
+        'last14' => 14,
+        'last30' => 30,
+        'last90' => 90,
     ];
 
     /**
@@ -127,10 +145,12 @@ class MobileAppsReportController
     private const MAX_PAGE = 1000000;
 
     /**
-     * How many apps the filter menu lists — the API's own ceiling, so the
-     * menu is complete for any account that is not extraordinary.
+     * Stands in for the account currency on the views that render no money
+     * and so never read it. How many apps the filter menu lists is
+     * RegisteredApps::MAX now, shared with Setup so the two pages cannot
+     * disagree about which apps exist.
      */
-    private const MAX_APPS = 500;
+    private const DEFAULT_CURRENCY_FALLBACK = UsersController::DEFAULT_CURRENCY;
 
     private int $userId;
     private AttributionPostbacksController $postbacks;
@@ -163,17 +183,23 @@ class MobileAppsReportController
             $view = 'report';
         }
 
+        // Verify renders neither the app menu nor an amount, so it pays for
+        // neither: listApps() is a 500-row read and a sort, and the currency
+        // is another statement. Filters are read first either way, because
+        // everything below reports on them.
+        $needsApps = $view !== 'verify';
         $mobileReport = [
             'view' => $view,
             'self' => rtrim(get_absolute_url(), '/') . '/tracking202/analyze/mobile_apps.php',
-            'apps' => $this->listApps(),
             'filters' => $this->readFilters(),
+            'apps' => $needsApps ? $this->listApps() : [],
             'groupings' => self::GROUPINGS,
+            'groupKeys' => self::groupKeys(),
             'ranges' => self::RANGES,
             'customRange' => self::CUSTOM_RANGE,
             // Revenue on this page is money; UsersController owns the account's
             // currency so this page and Setup > Mobile Apps cannot disagree.
-            'currency' => $this->users->accountCurrency($this->userId),
+            'currency' => $needsApps ? $this->users->accountCurrency($this->userId) : self::DEFAULT_CURRENCY_FALLBACK,
         ];
 
         if ($view === 'report') {
@@ -218,13 +244,22 @@ class MobileAppsReportController
             trim((string)($_GET['to'] ?? '')),
             time()
         );
+        [$range, $timeFrom, $timeTo] = [$window['range'], $window['from'], $window['to']];
+
+        // Unknown values are replaced, and SAID — the two filters below
+        // already did, and a range or grouping silently swapped for the
+        // default answers a question nobody asked while looking exactly like
+        // the answer to the one they did (error pattern #4).
         foreach ($window['notes'] as $note) {
             $this->flash('warn', $note);
         }
-        [$range, $timeFrom, $timeTo] = [$window['range'], $window['from'], $window['to']];
 
         $groupBy = (string)($_GET['group_by'] ?? self::DEFAULT_GROUPING);
         if (!isset(self::GROUPINGS[$groupBy])) {
+            if ($groupBy !== self::DEFAULT_GROUPING) {
+                $this->flash('warn', 'That grouping is not one this report offers, so it is grouped by '
+                    . self::GROUPINGS[self::DEFAULT_GROUPING] . '.');
+            }
             $groupBy = self::DEFAULT_GROUPING;
         }
 
@@ -238,9 +273,13 @@ class MobileAppsReportController
             $appId = '';
         }
 
-        // The states the column really holds, from the enum that defines them,
-        // so a state added there is not silently rejected here.
-        $signature = trim((string)($_GET['signature'] ?? ''));
+        // The states the column really holds, from the enum that defines
+        // them, so a state added there is not silently rejected here — and
+        // folded the way the API folds it (strtolower + trim, see
+        // buildFilters), because a URL copied out of the documentation or a
+        // support ticket must not mean one thing to the REST caller and
+        // another to this page.
+        $signature = strtolower(trim((string)($_GET['signature'] ?? '')));
         if ($signature !== '' && !in_array($signature, SignatureState::values(), true)) {
             $this->flash('warn', 'The signature filter was ignored: it must be one of '
                 . implode(', ', SignatureState::values()) . '.');
@@ -291,15 +330,29 @@ class MobileAppsReportController
     {
         $day = 86400;
         $today = (int)(floor($now / $day) * $day);
+        $endOfToday = $today + $day - 1;
         $notes = [];
 
         if ($range === null) {
             $range = ($from !== '' || $to !== '') ? self::CUSTOM_RANGE : self::DEFAULT_RANGE;
         } elseif ($range !== self::CUSTOM_RANGE && !isset(self::RANGES[$range])) {
+            if ($range !== '') {
+                $notes[] = 'That range is not one this report offers, so it shows '
+                    . self::RANGES[self::DEFAULT_RANGE] . '.';
+            }
             $range = self::DEFAULT_RANGE;
         }
 
         if ($range !== self::CUSTOM_RANGE) {
+            if (isset(self::RANGE_DAYS[$range])) {
+                return [
+                    'range' => $range,
+                    'from' => $today - self::RANGE_DAYS[$range] * $day,
+                    'to' => $endOfToday,
+                    'notes' => $notes,
+                ];
+            }
+
             // Month 0 is December of the year before, which is what gmmktime()
             // does with it; verified rather than assumed.
             $monthStart = static fn (int $monthsBack): int => (int)gmmktime(
@@ -310,35 +363,42 @@ class MobileAppsReportController
                 1,
                 (int)gmdate('Y', $now)
             );
+            // No default arm: every name in RANGES is answered here or in
+            // RANGE_DAYS above, and a preset added to one without the other
+            // must fail loudly rather than quietly report the default window
+            // under its own name. readFilters() has already replaced anything
+            // that is not in RANGES, so this cannot be reached from a request.
             [$start, $end] = match ($range) {
-                'today' => [$today, $today + $day - 1],
+                'today' => [$today, $endOfToday],
                 'yesterday' => [$today - $day, $today - 1],
-                'last7' => [$today - 6 * $day, $today + $day - 1],
-                'last14' => [$today - 13 * $day, $today + $day - 1],
-                'last90' => [$today - 89 * $day, $today + $day - 1],
-                'thismonth' => [$monthStart(0), $today + $day - 1],
+                // To the end of the month, as the click calendar's own
+                // "This Month" does. Days with no postbacks cost nothing.
+                'thismonth' => [$monthStart(0), $monthStart(-1) - 1],
                 'lastmonth' => [$monthStart(1), $monthStart(0) - 1],
-                // last30, and the value DEFAULT_RANGE names. An unknown value
-                // cannot reach here — it was replaced above.
-                default => [$today - 29 * $day, $today + $day - 1],
             };
 
             return ['range' => $range, 'from' => $start, 'to' => $end, 'notes' => $notes];
         }
 
-        $start = self::parseUtcDay($from);
-        $end = self::parseUtcDay($to);
-        if (($from !== '' && $start === null) || ($to !== '' && $end === null)) {
-            $notes[] = 'A date was not in YYYY-MM-DD form, so it was ignored.';
+        // A date that is present and unreadable is refused, not quietly
+        // replaced: only an ABSENT one falls back. The two cases produced the
+        // same window and the same sentence before, so a typo was answered
+        // with a different month's report under a message about formatting.
+        [$start, $startWhy] = self::parseUtcDay($from);
+        [$end, $endWhy] = self::parseUtcDay($to);
+        foreach ([[$from, $startWhy], [$to, $endWhy]] as [$typed, $why]) {
+            if ($typed !== '' && $why !== null) {
+                $notes[] = $why;
+            }
         }
 
-        // A missing or unreadable end is today; a missing or unreadable start
-        // is thirty days before the end, which is the default window.
+        // A missing end is today; a missing start is the default window
+        // before the end.
         if ($end === null) {
             $end = $today;
         }
         if ($start === null) {
-            $start = $end - 29 * $day;
+            $start = $end - self::RANGE_DAYS[self::DEFAULT_RANGE] * $day;
         }
         // Swapped rather than refused: it is obvious what was meant, and an
         // error here costs the whole report.
@@ -350,11 +410,18 @@ class MobileAppsReportController
         return ['range' => self::CUSTOM_RANGE, 'from' => $start, 'to' => $end + $day - 1, 'notes' => $notes];
     }
 
-    /** Midnight UTC for a YYYY-MM-DD string, or null when it is not one. */
-    private static function parseUtcDay(string $date): ?int
+    /**
+     * Midnight UTC for a YYYY-MM-DD string, with the reason when it is not
+     * one — the two ways to fail need different sentences, and answering a
+     * date that does not exist with a complaint about formatting sends the
+     * reader hunting a problem they do not have.
+     *
+     * @return array{0: int|null, 1: string|null}
+     */
+    private static function parseUtcDay(string $date): array
     {
         if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $date, $m) !== 1) {
-            return null;
+            return [null, 'A date was not in YYYY-MM-DD form, so it was ignored.'];
         }
         $stamp = gmmktime(0, 0, 0, (int)$m[2], (int)$m[3], (int)$m[1]);
         // gmmktime() rolls an impossible date forward: 2026-02-31 comes back
@@ -362,13 +429,33 @@ class MobileAppsReportController
         // report and nothing said about it. The round trip is the proof the
         // date exists.
         if ($stamp === false || gmdate('Y-m-d', $stamp) !== $date) {
-            return null;
+            return [null, 'There is no such date as ' . $date . ', so it was ignored.'];
         }
 
-        return $stamp;
+        return [$stamp, null];
     }
 
     // ─── The three views ─────────────────────────────────────────────
+
+    /**
+     * The filters both reads send on, so a filter wired into one of them and
+     * not the other cannot become a control that narrows the Report tab and
+     * is ignored by the Postbacks tab.
+     *
+     * @param array<string, mixed> $filters
+     * @return array<string, mixed>
+     */
+    private function apiFilters(array $filters): array
+    {
+        $params = [];
+        foreach (['app_id', 'signature'] as $key) {
+            if ($filters[$key] !== '') {
+                $params[$key] = $filters[$key];
+            }
+        }
+
+        return $params;
+    }
 
     /**
      * @param array<string, mixed> $filters
@@ -376,18 +463,12 @@ class MobileAppsReportController
      */
     private function buildReport(array $filters): array
     {
-        $params = [
+        $params = $this->apiFilters($filters) + [
             'group_by' => $filters['group_by'],
             'time_from' => $filters['time_from'],
             'time_to' => $filters['time_to'],
             'limit' => self::MAX_GROUPS,
         ];
-        if ($filters['app_id'] !== '') {
-            $params['app_id'] = $filters['app_id'];
-        }
-        if ($filters['signature'] !== '') {
-            $params['signature'] = $filters['signature'];
-        }
 
         try {
             $answer = $this->postbacks->report($params);
@@ -401,55 +482,68 @@ class MobileAppsReportController
         }
 
         $groups = $answer['data']['groups'] ?? [];
+        $truncated = (bool)($answer['meta']['groups_truncated'] ?? false);
+
+        // The API's ungrouped totals, never a sum over the groups: a sum is
+        // wrong by a replayed postback that landed in two of them, and wrong
+        // by every group the truncation dropped.
+        $totals = $answer['data']['totals'] ?? null;
+        if (!is_array($totals)) {
+            $this->flash(
+                'bad',
+                'The report came back without its totals, so the figures above the table are not shown.'
+            );
+            $totals = null;
+        } else {
+            // Revenue is the one metric that is not a distinct count: the
+            // decode picks one copy per postback across the whole window, so
+            // a group holds its own decoded events and summing them is
+            // summing distinct postbacks. It is still only the groups that
+            // survived, which is why a truncated report says so.
+            $totals['revenue'] = round(array_sum(array_map(
+                static fn (array $group): float => self::groupRevenue($group),
+                $groups
+            )), 5);
+        }
 
         return [
             'report' => [
                 'groups' => $groups,
-                'truncated' => (bool)($answer['meta']['groups_truncated'] ?? false),
+                'truncated' => $truncated,
                 'trusted' => (string)($answer['meta']['trusted'] ?? 'verified-only'),
+                'notes' => (string)($answer['meta']['notes'] ?? ''),
             ],
-            'totals' => $this->totals($groups),
+            'totals' => $totals,
             'events' => $this->eventTotals($groups),
         ];
     }
 
     /**
-     * Column totals for the tiles and the table's totals row.
+     * One group's decoded revenue.
      *
-     * Summed here rather than asked of the API because the API answers per
-     * group; the same postback cannot appear in two groups of one report, so
-     * a sum over groups is a sum over distinct postbacks.
+     * The API publishes it per group as decoded_revenue; the events are the
+     * fallback for a response that predates it, and are what the per-event
+     * panel adds up anyway. Written once because the tile, the table cell and
+     * the CSV column all need it and three copies could round differently.
      *
-     * @param list<array<string, mixed>> $groups
-     * @return array<string, float|int>
+     * @param array<string, mixed> $group
      */
-    private function totals(array $groups): array
+    public static function groupRevenue(array $group): float
     {
-        $counters = [
-            'postbacks', 'installs', 'redownloads', 'reengagements', 'losses',
-            'signature_valid_count', 'signature_invalid_count',
-            'signature_unverified_count', 'signature_development_count',
-        ];
-        $totals = array_fill_keys($counters, 0) + ['revenue' => 0.0];
-
-        foreach ($groups as $group) {
-            foreach ($counters as $key) {
-                $totals[$key] += (int)($group[$key] ?? 0);
-            }
-            // Revenue is not a group column: it is the sum of the group's
-            // decoded events, the same way the table's revenue cell is.
-            foreach ((array)($group['events'] ?? []) as $event) {
-                $totals['revenue'] += (float)($event['revenue'] ?? 0);
-            }
+        if (isset($group['decoded_revenue']) && is_numeric($group['decoded_revenue'])) {
+            return (float)$group['decoded_revenue'];
         }
-        // Five places, which is what the revenue column stores.
-        $totals['revenue'] = round($totals['revenue'], 5);
 
-        return $totals;
+        $revenue = 0.0;
+        foreach ((array)($group['events'] ?? []) as $event) {
+            $revenue += (float)((array)$event)['revenue'] ?? 0;
+        }
+
+        return $revenue;
     }
 
     /**
-     * Decoded events across the whole report, biggest first.
+     * Decoded events across the groups the report kept, biggest first.
      *
      * @param list<array<string, mixed>> $groups
      * @return list<array{name: string, count: int, revenue: float}>
@@ -476,23 +570,29 @@ class MobileAppsReportController
      */
     private function buildPostbacks(array $filters): array
     {
-        $page = min(max(1, (int)($_GET['page'] ?? 1)), self::MAX_PAGE);
-
-        $params = [
+        // MAX_PAGE only stops (page - 1) * PER_PAGE overflowing into a float.
+        // The real ceiling is the last page there is, and it is not known
+        // until the count comes back — so ask, clamp, and ask again only if
+        // the clamp moved. Without it a hand-edited ?page=1000000 becomes
+        // OFFSET 49999950, which the server walks row by row to return
+        // nothing, and the empty answer renders as "No postbacks in this
+        // range" — a sentence about the range that is false.
+        $asked = min(max(1, (int)($_GET['page'] ?? 1)), self::MAX_PAGE);
+        $base = $this->apiFilters($filters) + [
             'time_from' => $filters['time_from'],
             'time_to' => $filters['time_to'],
             'limit' => self::PER_PAGE,
-            'offset' => ($page - 1) * self::PER_PAGE,
         ];
-        if ($filters['app_id'] !== '') {
-            $params['app_id'] = $filters['app_id'];
-        }
-        if ($filters['signature'] !== '') {
-            $params['signature'] = $filters['signature'];
-        }
 
         try {
-            $answer = $this->postbacks->list($params);
+            $answer = $this->postbacks->list($base + ['offset' => ($asked - 1) * self::PER_PAGE]);
+            $total = (int)($answer['pagination']['total'] ?? 0);
+            $pages = max(1, (int)ceil($total / self::PER_PAGE));
+            $page = min($asked, $pages);
+            if ($page !== $asked) {
+                $this->flash('warn', 'There is no page ' . $asked . ' of these postbacks, so this is the last one.');
+                $answer = $this->postbacks->list($base + ['offset' => ($page - 1) * self::PER_PAGE]);
+            }
         } catch (HttpException $e) {
             $this->flash('bad', $e->getMessage());
 
@@ -501,14 +601,16 @@ class MobileAppsReportController
             return ['postbacks' => null, 'pagination' => null];
         }
 
-        $total = (int)($answer['pagination']['total'] ?? 0);
-
         return [
             'postbacks' => $answer['data'] ?? [],
             'pagination' => [
-                'total' => $total,
+                // Rows, not distinct postbacks: list() counts what it returns,
+                // while the Report tab counts one per replayed postback. The
+                // template says "rows" so the two tabs cannot look like they
+                // disagree about the same number.
+                'rows' => $total,
                 'page' => $page,
-                'pages' => max(1, (int)ceil($total / self::PER_PAGE)),
+                'pages' => $pages,
                 'per_page' => self::PER_PAGE,
             ],
         ];
@@ -529,17 +631,33 @@ class MobileAppsReportController
 
         // Malformed JSON is told to the user, never coerced into an empty
         // object that would then be "verified" and answered with a confident
-        // no (error pattern #4).
+        // no (error pattern #4). Two ways to not be an object, two sentences:
+        // json_last_error_msg() reads "No error" for `null`, `123` or a bare
+        // string, because those parse fine — it is only the truth on the
+        // branch where the parse actually failed.
         $decoded = json_decode($payload, true);
         if (!is_array($decoded)) {
-            $this->flash('bad', 'That is not a JSON object: ' . json_last_error_msg() . '.');
+            $this->flash('bad', json_last_error() === JSON_ERROR_NONE
+                ? 'That is valid JSON but not an object; paste the whole postback, braces included.'
+                : 'That is not JSON: ' . json_last_error_msg() . '.');
 
             return $nothing;
         }
 
         try {
             $answer = $this->postbacks->verify($decoded);
-        } catch (ValidationException | HttpException $e) {
+        } catch (ValidationException $e) {
+            // The API's per-field sentences say WHICH field and why; the
+            // message alone is "Invalid postback", which tells an operator
+            // nothing they can act on. The sibling setup page shows them too.
+            $this->flash('bad', trim($e->getMessage() . ' ' . implode(' ', array_map(
+                static fn (string $field, string $why): string => $field . ': ' . $why,
+                array_keys($e->getFieldErrors()),
+                array_values(array_map('strval', $e->getFieldErrors()))
+            ))));
+
+            return $nothing;
+        } catch (HttpException $e) {
             $this->flash('bad', $e->getMessage());
 
             return $nothing;
@@ -558,20 +676,45 @@ class MobileAppsReportController
 
     // ─── Bits the template needs ─────────────────────────────────────
 
-    /** @return list<array<string, mixed>> */
+    /**
+     * The registered apps, for the filter menu and the Postbacks tab's app
+     * column.
+     *
+     * RegisteredApps carries the ceiling and the ordering, so this menu and
+     * Setup's panel cannot disagree about which apps exist — a filter missing
+     * an app the other page lists reads as "that app is not registered".
+     *
+     * A failed read is said out loud, for the reason buildReport() says its
+     * own (error pattern #11): an empty menu is indistinguishable from an
+     * account with no apps, and if a filter IS applied the menu then shows
+     * "All apps" over a report that is still narrowed to one.
+     *
+     * @return list<array<string, mixed>>
+     */
     private function listApps(): array
     {
         try {
-            $rows = $this->apps->list(['limit' => self::MAX_APPS])['data'] ?? [];
-        } catch (HttpException) {
+            $registered = RegisteredApps::read($this->apps);
+        } catch (HttpException $e) {
+            $this->flash('bad', 'The list of registered apps could not be read, so the App filter is empty: '
+                . $e->getMessage());
+
             return [];
         }
-        usort($rows, static fn(array $a, array $b): int => strcasecmp(
-            (string)($a['app_name'] ?? ''),
-            (string)($b['app_name'] ?? '')
-        ));
 
-        return $rows;
+        if ($registered['truncated']) {
+            // A menu cannot offer what it does not list, so an app past the
+            // ceiling reads as unregistered rather than unlisted. The filter
+            // has no free-text entry, but app_id in the address does work —
+            // the template renders an option for a value it was not given,
+            // labelled "not in your list" — so name the escape hatch that
+            // exists rather than a control that does not.
+            $this->flash('warn', 'The App filter lists the first ' . count($registered['apps']) . ' of '
+                . $registered['total'] . ' registered apps, by name. To report on one that is not listed,'
+                . " add app_id=<App Store id> to this page's address.");
+        }
+
+        return $registered['apps'];
     }
 
     /**
@@ -590,16 +733,24 @@ class MobileAppsReportController
         $filters = $mobileReport['filters'];
         $label = self::GROUPINGS[$filters['group_by']] ?? 'Group';
 
+        // A download cannot carry a flash, and every warning readFilters()
+        // raised is about a filter that was DROPPED — so the file would cover
+        // a wider set of rows than the URL asked for, look complete, and say
+        // nothing. Refuse instead and let the page render with the reasons
+        // on it; the link is still there once they are read.
+        if ($this->flashes !== []) {
+            $this->flash('bad', 'Nothing was downloaded: the report is not the one the link asked for. '
+                . 'Check the messages above, then use Download to CSV again.');
+
+            return;
+        }
+
         $rows = [[
             $label, 'Postbacks', 'Installs', 'Re-downloads', 'Re-engagements', 'Losses',
             'Revenue', 'Signature verified', 'Signature invalid', 'Signature unverifiable',
             'Signature development',
         ]];
         foreach ($mobileReport['report']['groups'] as $group) {
-            $revenue = 0.0;
-            foreach ((array)($group['events'] ?? []) as $event) {
-                $revenue += (float)($event['revenue'] ?? 0);
-            }
             $rows[] = [
                 $this->csvGroupLabel($group, $filters['group_by']),
                 (int)($group['postbacks'] ?? 0),
@@ -609,12 +760,19 @@ class MobileAppsReportController
                 (int)($group['losses'] ?? 0),
                 // The bare number, not dollar_format's rendering: a
                 // spreadsheet should get something it can add up.
-                round($revenue, 5),
+                round(self::groupRevenue($group), 5),
                 (int)($group['signature_valid_count'] ?? 0),
                 (int)($group['signature_invalid_count'] ?? 0),
                 (int)($group['signature_unverified_count'] ?? 0),
                 (int)($group['signature_development_count'] ?? 0),
             ];
+        }
+        if ($mobileReport['report']['truncated']) {
+            // The file leaves the page behind, so the qualification has to
+            // travel with it. Without this the partial total is carried into
+            // whatever the reader reconciles it against.
+            $rows[] = [];
+            $rows[] = ['More groups matched than are listed here. Narrow the range or filter by app to see the rest.'];
         }
 
         // Built in memory first — MAX_GROUPS rows at the very most — because
@@ -626,6 +784,15 @@ class MobileAppsReportController
             $this->flash('bad', 'The CSV could not be built, so nothing was downloaded.');
 
             return;
+        }
+
+        // 202-config/template.php opens an output buffer at include time and
+        // anything already in it — a PHP warning, which a non-production
+        // install displays — would be flushed in front of the CSV at
+        // shutdown, past a Content-Length that counts only the CSV. Discard
+        // it: this response is a file, not a page.
+        while (ob_get_level() > 0) {
+            ob_end_clean();
         }
 
         header('Content-Type: text/csv; charset=utf-8');
@@ -646,10 +813,21 @@ class MobileAppsReportController
     /**
      * Rows as CSV text, or null if any part of the encoding failed.
      *
-     * fputcsv is what quotes a field containing a comma, a quote or a newline;
-     * a join would turn one app name into a row with the wrong number of
-     * columns. Its return value is checked for the reason every return value
-     * here is: a short write is indistinguishable from a short report.
+     * fputcsv is what quotes a field containing a comma, a quote or a
+     * newline; a join would turn one app name into a row with the wrong
+     * number of columns. Its return value is checked for the reason every
+     * return value here is: a short write is indistinguishable from a short
+     * report.
+     *
+     * `escape: ''` is not optional. PHP's default escape character is a
+     * backslash, which is NOT part of RFC 4180: a field containing `\"`
+     * comes out as `"ad\",BOOM"`, and every reader that does not share
+     * PHP's private convention — Excel, LibreOffice, str_getcsv with the
+     * same argument — sees the quote as closing the field and reads one row
+     * as four. ad_network_id and transaction_id are free-form strings from a
+     * public receiver, so that is reachable input, not a hypothetical. It
+     * also silences PHP 8.4's deprecation notice, which would otherwise be
+     * emitted from here — before sendCsv() sends a single header.
      *
      * @param list<list<string|int|float>> $rows
      */
@@ -661,7 +839,7 @@ class MobileAppsReportController
         }
 
         foreach ($rows as $row) {
-            if (fputcsv($handle, $row) === false) {
+            if (fputcsv($handle, array_map([self::class, 'csvCell'], $row), ',', '"', '') === false) {
                 fclose($handle);
 
                 return null;
@@ -675,21 +853,85 @@ class MobileAppsReportController
         return $body === false ? null : $body;
     }
 
-    /** The first column's value for one group, as plain text. */
+    /**
+     * One cell, safe to open in a spreadsheet.
+     *
+     * A leading =, +, - or @ makes Excel, LibreOffice and Sheets treat the
+     * cell as a formula, and the first column of this file is an ad network
+     * id, a source identifier or a country code — strings an unauthenticated
+     * device postback puts there verbatim. Anyone who knows a victim's App
+     * Store id (it is on the App Store) can therefore choose text in their
+     * download. Prefixing an apostrophe is the interoperable neutraliser:
+     * spreadsheets read it as "the rest is literal" and drop it on display.
+     * The JSON API has no such sink, which is why this is the page's problem
+     * rather than the receiver's.
+     */
+    private static function csvCell(string|int|float $value): string|int|float
+    {
+        if (!is_string($value) || $value === '' || strpos('=+-@', $value[0]) === false) {
+            return $value;
+        }
+
+        return "'" . $value;
+    }
+
+    /**
+     * The first column's value for one group, as plain text.
+     *
+     * The values come from groupLabelParts, which the rendered table reads
+     * too; only the punctuation is the file's own. An app is "Name (id)"
+     * because the id qualifies the name, while a source's two parts are
+     * peers and are joined.
+     */
     private function csvGroupLabel(array $group, string $groupBy): string
     {
-        return match ($groupBy) {
-            'app' => trim((string)($group['app_name'] ?? '')) !== ''
-                ? $group['app_name'] . ' (' . (int)($group['app_id'] ?? 0) . ')'
-                : (string)(int)($group['app_id'] ?? 0),
+        $parts = self::groupLabelParts($group, $groupBy);
+        if ($parts === []) {
+            return '';
+        }
+        if ($groupBy === 'app' && count($parts) > 1) {
+            return $parts[0] . ' (' . $parts[1] . ')';
+        }
+
+        return implode(' / ', $parts);
+    }
+
+    /**
+     * What the first column says about one group, in pieces, as plain text.
+     *
+     * One implementation because three read it — the rendered table, the
+     * Postbacks tab's own app and source cells, and the CSV — and they had
+     * already drifted: the CSV joined a source with ' / ' where the table
+     * used ' · ', and printed nothing where the table said "not given". A
+     * download that reads differently from the table it is a download of is
+     * the exact drift one implementation exists to prevent, as groupKeys()
+     * does for the field the value comes out of. The caller joins and
+     * decorates; the empty list means "the report has no value here".
+     *
+     * @param array<string, mixed> $group
+     * @return list<string>
+     */
+    public static function groupLabelParts(array $group, string $groupBy): array
+    {
+        if ($groupBy === 'app') {
+            $name = trim((string)($group['app_name'] ?? ''));
+            $id = (string)(int)($group['app_id'] ?? 0);
+
+            return $name === '' ? [$id] : [$name, $id];
+        }
+
+        if ($groupBy === 'source') {
             // A source identifier of '0' is a real one, so the empties are
             // named rather than left to array_filter's falsiness.
-            'source' => implode(' / ', array_filter([
+            return array_values(array_filter([
                 (string)($group['source_identifier'] ?? ''),
                 ($group['campaign_id'] ?? null) === null ? '' : (string)$group['campaign_id'],
-            ], static fn (string $part): bool => $part !== '')),
-            default => (string)($group[self::GROUP_KEYS[$groupBy] ?? ''] ?? ''),
-        };
+            ], static fn (string $part): bool => $part !== ''));
+        }
+
+        $value = (string)($group[self::groupKeys()[$groupBy] ?? ''] ?? '');
+
+        return $value === '' ? [] : [$value];
     }
 
     private function flash(string $kind, string $text): void

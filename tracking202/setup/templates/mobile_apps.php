@@ -61,22 +61,11 @@ template_top('Mobile Apps - Setup', ['ui' => 'v2']);
 </div>
 
 <?php
-/* An alert wearing the component class, with its icon: the shape the UI kit
-   defines. .p202-flash carries no colour of its own. */
-$flashMarkup = static function (string $kind, string $text) use ($e): string {
-    [$variant, $icon] = [
-        'ok' => ['alert-success', 'bi-check-circle'],
-        'bad' => ['alert-danger', 'bi-x-circle'],
-        'warn' => ['alert-warning', 'bi-exclamation-triangle'],
-    ][$kind] ?? ['alert-info', 'bi-info-circle'];
-    return '<div class="alert ' . $variant . ' p202-flash" role="status"><i class="bi ' . $icon . '"></i>'
-        . '<div class="p202-flash__body">' . $e($text) . '</div></div>';
-};
 foreach ($mobileApps['flashes'] as $flash) {
-    echo $flashMarkup($flash['kind'], $flash['text']);
+    echo p202_flash($flash['kind'], $flash['text']);
 }
 if (!$canManage) {
-    echo $flashMarkup('warn', 'You can see the registered apps here. Changing them needs the attribution models permission.');
+    echo p202_flash('warn', 'You can see the registered apps here. Changing them needs the attribution models permission.');
 }
 ?>
 
@@ -238,7 +227,16 @@ if (!$canManage) {
             <section class="p202-panel">
                 <div class="p202-panel__head">
                     <h2 class="p202-panel__title">Your apps</h2>
-                    <span class="p202-pill p202-pill--accent"><?php echo count($mobileApps['apps']); ?> <?php echo count($mobileApps['apps']) === 1 ? 'app' : 'apps'; ?></span>
+                    <?php
+                    // "500 of 620 apps" when the read hit its ceiling. A bare
+                    // count would state the wrong number as fact, and the list
+                    // below would simply end.
+                    $shown = count($mobileApps['apps']);
+                    $appsLabel = $mobileApps['appsTruncated']
+                        ? $shown . ' of ' . $mobileApps['appsTotal'] . ' apps'
+                        : $shown . ($shown === 1 ? ' app' : ' apps');
+                    ?>
+                    <span class="p202-pill p202-pill--accent"><?php echo $e($appsLabel); ?></span>
                 </div>
                 <div class="p202-panel__body">
                     <?php if ($mobileApps['apps'] === []) { ?>

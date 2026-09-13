@@ -1,5 +1,7 @@
 'use strict';
 
+const { SELECTORS } = require('./app');
+
 /*
  * Checks every page on the v2 shell should pass, written once.
  *
@@ -128,37 +130,57 @@ async function componentClassesAreStyled(ctx, scriptOnly = []) {
  * broken. `.p202-help` is inline-flex because it is an icon component; prose
  * was put inside it twice, one wave apart, before anyone read the rendering.
  *
- * A `gap` makes the mix deliberate and is left alone. So is a container whose
- * children are all elements, or all text: the defect needs both at once.
+ * Two shapes, because only one of them is about whitespace:
+ *
+ *  - text next to an element with no `gap` — the spaces between them are
+ *    dropped, which is the "ChooseCustom Dateto set these" case;
+ *  - a run of prose as the container's only child — no whitespace is lost,
+ *    but a paragraph has been handed to a component built for one icon, and
+ *    it inherits that component's font size, colour and cursor. Both of the
+ *    instances that actually shipped were this one, and the first version of
+ *    this check could not see either of them.
+ *
+ * A `gap` settles the first; nothing settles the second but reading, so it
+ * is reported once a container holds more than a few words.
  */
+const PROSE_IN_A_LAYOUT_BOX = 24;
+
 async function flexContainersKeepTheirSpaces(ctx) {
   const { ui, expect } = ctx;
-  const offenders = await ui.page.evaluate(() => {
+  const offenders = await ui.page.evaluate((proseLength) => {
     const hits = [];
     document.querySelectorAll('*').forEach((el) => {
-      const style = getComputedStyle(el);
-      if (style.display !== 'flex' && style.display !== 'inline-flex') { return; }
-      // 'normal' is the initial value, i.e. no gap was asked for.
-      if (style.columnGap !== 'normal' && parseFloat(style.columnGap) > 0) { return; }
-
-      let text = false;
+      // The structural question first: it is pure DOM, while getComputedStyle
+      // resolves style for every element it is asked about, and a report page
+      // is a couple of thousand of them.
+      let text = '';
       let element = false;
       el.childNodes.forEach((node) => {
-        if (node.nodeType === 3 && node.textContent.trim() !== '') { text = true; }
+        if (node.nodeType === 3) { text += node.textContent; }
         if (node.nodeType === 1) { element = true; }
       });
-      if (!text || !element) { return; }
+      const words = text.trim();
+      const mixed = words !== '' && element;
+      const prose = words.length >= proseLength && !element;
+      if (!mixed && !prose) { return; }
+
+      const style = getComputedStyle(el);
+      if (style.display !== 'flex' && style.display !== 'inline-flex') { return; }
+      // 'normal' is the initial value, i.e. no gap was asked for. A gap only
+      // settles the whitespace case; prose in a layout box is wrong either way.
+      if (mixed && style.columnGap !== 'normal' && parseFloat(style.columnGap) > 0) { return; }
 
       hits.push(
-        '<' + el.tagName.toLowerCase() + (el.className ? ' class="' + el.className + '"' : '') + '> '
+        (mixed ? 'text beside an element: ' : 'prose in a layout box: ')
+        + '<' + el.tagName.toLowerCase() + (el.className ? ' class="' + el.className + '"' : '') + '> '
         + JSON.stringify((el.textContent || '').trim().slice(0, 60))
       );
     });
     return hits.slice(0, 6);
-  });
+  }, PROSE_IN_A_LAYOUT_BOX);
 
   expect.ok(offenders.length === 0,
-    'no flex container mixes text and elements without a gap',
+    'no flex container eats its spaces or holds a paragraph',
     offenders.join(' | '));
 }
 
@@ -174,10 +196,8 @@ async function flexContainersKeepTheirSpaces(ctx) {
  */
 async function currentSubMenuItemIsVisible(ctx) {
   const { ui, expect } = ctx;
-  const placement = await ui.page.evaluate(() => {
-    const current = document.querySelector(
-      '.p202c-subnav__link[aria-current="page"], .p202c-strip__list a[aria-current="page"]'
-    );
+  const placement = await ui.page.evaluate((selector) => {
+    const current = document.querySelector(selector);
     if (!current) { return null; }
     const list = current.closest('.p202c-subnav__list, .p202c-strip__list');
     if (!list) { return null; }
@@ -188,7 +208,7 @@ async function currentSubMenuItemIsVisible(ctx) {
       clippedLeft: Math.round(box.left - item.left),
       clippedRight: Math.round(item.right - box.right),
     };
-  });
+  }, SELECTORS.subNavCurrent);
 
   if (placement === null) {
     expect.skip('the current sub-menu entry is fully visible', 'no current entry on this page');

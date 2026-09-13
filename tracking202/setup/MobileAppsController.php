@@ -11,6 +11,7 @@ use Api\V3\Controllers\UsersController;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\HttpException;
+use Tracking202\Attribution\RegisteredApps;
 
 require_once __DIR__ . '/_base/SetupController.php';
 require_once __DIR__ . '/../../202-config/functions-install-helpers.php';
@@ -495,6 +496,12 @@ class MobileAppsController extends SetupController
             $this->flashes[] = $flash;
         }
 
+        // The count pill in the "Your apps" panel says whether the list was
+        // cut, rather than a flash at the top of the page: the fact belongs
+        // beside the list it is about, and an account large enough to hit the
+        // ceiling would see that flash on every single page load.
+        $registered = $this->listApps();
+
         $view = [
             'canManage' => $this->canManage(),
             'csrf' => $this->renderCsrfField(),
@@ -509,7 +516,9 @@ class MobileAppsController extends SetupController
             // why every use of it in the template is escaped.
             'origin' => install_request_base_url($_SERVER, get_absolute_url()),
             'currency' => $this->accountCurrency(),
-            'apps' => $this->listApps(),
+            'apps' => $registered['apps'],
+            'appsTotal' => $registered['total'],
+            'appsTruncated' => $registered['truncated'],
             'app' => $this->currentApp,
             'editing' => $this->editingApp,
         ];
@@ -577,14 +586,17 @@ class MobileAppsController extends SetupController
         return $this->users->accountCurrency($this->getUserId());
     }
 
-    /** @return list<array<string, mixed>> */
+    /**
+     * The registered apps for the panel. RegisteredApps carries the ceiling
+     * and the ordering, so this page and Analyze's App filter cannot disagree
+     * about which apps exist; a read failure keeps propagating to the page's
+     * own handler, which is what turns it into a redirect.
+     *
+     * @return array{apps: list<array<string, mixed>>, total: int, truncated: bool}
+     */
     private function listApps(): array
     {
-        $result = $this->apps->list(['limit' => 200]);
-        $rows = $result['data'] ?? [];
-        // The API orders by primary key; the panel reads better by name.
-        usort($rows, static fn (array $a, array $b): int => strcasecmp((string)($a['app_name'] ?? ''), (string)($b['app_name'] ?? '')));
-        return $rows;
+        return RegisteredApps::read($this->apps);
     }
 
     /** @return list<array<string, mixed>> */

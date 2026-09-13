@@ -3,14 +3,16 @@
 /*
  * Analyze › Mobile Apps, driven the way a person drives it.
  *
- * A shell script already checks what this page answers over HTTP — the
- * numbers against the database, every grouping, the filters, the CSV, the
+ * tests/live/analyze-mobile-apps.sh checks what this page answers over HTTP —
+ * the numbers against the database, every grouping, the filters, the CSV, the
  * three views. None of that is repeated here. What is here is what only a
  * rendering engine can answer:
  *
- *  - the range picker, whose whole behaviour is a change handler: the date
- *    inputs are disabled until Custom Date is chosen, and editing a date
- *    chooses it. Without JavaScript the same page is still correct but costs
+ *  - the range picker, whose whole behaviour is a change handler. The date
+ *    inputs stay editable at every range — a field a person cannot type into
+ *    is the wrong way to say "this is not the control you want" — but they
+ *    are only SUBMITTED for a custom window, and typing in one selects
+ *    Custom Date. Without JavaScript the same page is still correct but costs
  *    two round trips, so the thing being checked is the enhancement.
  *  - that one Apply is enough to get a custom window, which is the claim the
  *    handler exists to make.
@@ -78,18 +80,27 @@ function postbackSql(n, daysBack, overrides) {
     + ')';
 }
 
-/** What the range picker and its two date inputs currently are. */
+/**
+ * What the range picker and its two date inputs currently are.
+ *
+ * Two separate questions: whether a field is EDITABLE, and whether it is
+ * SUBMITTED. Without JavaScript the server answers both with `disabled`;
+ * p202-ui.js separates them, leaving the field typeable and dropping its
+ * `name` — which is what makes "type a date, get a custom range" possible
+ * at all.
+ */
 async function rangeState(ui) {
   return ui.page.evaluate(() => {
     const select = document.querySelector('#range');
-    const from = document.querySelector('#from');
-    const to = document.querySelector('#to');
+    const read = (el) => (el === null ? null : {
+      editable: !el.disabled && !el.readOnly,
+      submitted: el.hasAttribute('name'),
+      value: el.value,
+    });
     return {
       range: select ? select.value : null,
-      fromDisabled: from ? from.disabled : null,
-      toDisabled: to ? to.disabled : null,
-      from: from ? from.value : null,
-      to: to ? to.value : null,
+      from: read(document.querySelector('#from')),
+      to: read(document.querySelector('#to')),
     };
   });
 }
@@ -176,37 +187,34 @@ module.exports = {
 
         let state = await rangeState(ui);
         expect.eq(state.range, 'last30', 'the page opens on Last 30 Days');
-        // This is the live state, which the server renders AND the behaviour
-        // layer re-asserts at load — so it does not prove the server half.
-        // That is the HTTP pass's job; here it means "a browser does not
-        // submit a window it is only displaying", whichever of the two did it.
-        expect.ok(state.fromDisabled && state.toDisabled,
-          'the date inputs are disabled while a preset is selected');
-        expect.eq(state.from, utcDay(29), 'and show the window that is being reported');
-        expect.eq(state.to, utcDay(0), 'up to today');
-        expect.ok(await ui.visible('text=Choose'), 'with a line saying how to set them');
+        expect.ok(!state.from.submitted && !state.to.submitted,
+          'the date inputs are withheld from the request while a preset is selected');
+        expect.ok(state.from.editable && state.to.editable,
+          'but they stay editable, which is what lets typing in one mean anything');
+        expect.notOk(await ui.visible('[data-p202-range-hint]'),
+          'and the line telling a no-JavaScript reader to use the picker is not shown');
+        expect.eq(state.from.value, utcDay(30), 'and show the window that is being reported');
+        expect.eq(state.to.value, utcDay(0), 'up to today');
 
         await ui.select('#range', 'custom');
         state = await rangeState(ui);
-        expect.ok(!state.fromDisabled && !state.toDisabled,
-          'choosing Custom Date enables them at once, without a round trip');
+        expect.ok(state.from.submitted && state.to.submitted,
+          'choosing Custom Date puts them in the request at once, without a round trip');
 
         await ui.select('#range', 'last7');
         state = await rangeState(ui);
-        expect.ok(state.fromDisabled && state.toDisabled, 'and choosing a preset again disables them');
+        expect.ok(!state.from.submitted, 'and choosing a preset again withdraws them');
 
-        // The other half of the handler: touching a date is itself a choice.
-        await ui.select('#range', 'custom');
-        await ui.fill({ '#from': utcDay(9) });
-        await ui.select('#range', 'last7');
-        await ui.page.$eval('#to', (el) => {
-          el.disabled = false;
-          el.value = el.value;
-          el.dispatchEvent(new Event('change', { bubbles: true }));
-        });
+        // The other half of the handler, driven the way a person drives it:
+        // no DOM surgery. An earlier version of this spec re-enabled the
+        // field itself before dispatching a synthetic event, which is why it
+        // passed while the branch could not fire at all (error pattern #9).
+        await ui.fill({ '#to': utcDay(3) });
         state = await rangeState(ui);
-        expect.eq(state.range, 'custom', 'editing a date selects Custom Date');
-        expect.ok(!state.fromDisabled, 'and re-enables the pair');
+        expect.eq(state.range, 'custom', 'typing in a date selects Custom Date');
+        expect.ok(state.from.submitted && state.to.submitted,
+          'and puts the pair in the request');
+        expect.eq(state.to.value, utcDay(3), 'keeping what was typed');
       },
     },
 
@@ -299,8 +307,8 @@ module.exports = {
 
         await ui.fill({ 'textarea[name="payload"]': '{ this is not json' });
         await app.submit('button:has-text("Check signature")');
-        expect.match(await app.messages(), /not a JSON object/i,
-          'malformed JSON is refused out loud');
+        expect.match(await app.messages(), /not JSON: Syntax error/i,
+          'malformed JSON is refused with the parser\'s own reason');
         expect.notOk(await ui.exists('.p202-strip__row'),
           'and no verdict is invented for it');
       },
@@ -311,8 +319,11 @@ module.exports = {
       async run(ctx) {
         const { app, ui, expect, shot } = ctx;
 
+        // The markup is server-rendered and width-independent, so each URL is
+        // loaded once per sweep rather than once per width; setViewport is
+        // what re-lays it out.
+        await app.goto(PAGE + '?range=last30');
         await checks.atWidths(ctx, [1280, 900, 400], async (width) => {
-          await app.goto(PAGE + '?range=last30');
           await checks.tablesScrollThemselves(ctx);
 
           const tiles = await ui.page.evaluate(() => {
@@ -327,7 +338,10 @@ module.exports = {
             expect.ok(tiles.rows > 1, 'the tiles wrap onto more than one row on a phone', String(tiles.rows));
           }
 
-          await app.goto(PAGE + '?view=postbacks&range=last30');
+        });
+
+        await app.goto(PAGE + '?view=postbacks&range=last30');
+        await checks.atWidths(ctx, [1280, 400], async () => {
           await checks.tablesScrollThemselves(ctx);
           expect.eq(await ui.count('table.p202-table thead th'), 10, 'the postbacks table keeps all ten columns');
         });
@@ -336,6 +350,20 @@ module.exports = {
         await shot('report');
         await app.goto(PAGE + '?view=postbacks&range=last30');
         await shot('postbacks');
+      },
+    },
+
+    {
+      name: 'Nothing broke along the way',
+      async run(ctx) {
+        const { session, expect } = ctx;
+        // checks.baseline() is scoped to the page it runs on, so without this
+        // the seven scenarios above — the range picker, the tabs, Copy, the
+        // CSV link — would have no error assertion at all.
+        expect.ok(session.errors.length === 0,
+          'no JavaScript errors during the whole pass', session.errors.slice(0, 3).join(' | '));
+        expect.ok(session.unexpectedDialogs.length === 0,
+          'and no confirm appeared anywhere', session.unexpectedDialogs.join(' | '));
       },
     },
 

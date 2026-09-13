@@ -7,6 +7,7 @@ namespace Tests\Attribution\Postbacks;
 use Api\V3\Controllers\AttributionAppsController;
 use Api\V3\Controllers\AttributionConversionValuesController;
 use Api\V3\Controllers\AttributionPostbacksController;
+use Api\V3\Attribution\AdAttributionKitProtocol;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ValidationException;
@@ -621,7 +622,11 @@ final class AttributionControllersTest extends TestCase
             $this->capturedStatements('SELECT'),
             static fn(array $s): bool => str_contains($s['sql'], 'COUNT(DISTINCT') || str_contains($s['sql'], 'MIN(postback_id)')
         ));
-        $this->assertCount(2, $usingIdentity, 'the aggregate and the first-copy decode subquery both key on the identity');
+        $this->assertCount(
+            3,
+            $usingIdentity,
+            'the grouped aggregate, the ungrouped totals beside it and the first-copy decode subquery all key on the identity'
+        );
         foreach ($usingIdentity as $statement) {
             foreach (['protocol', 'ad_network_id', 'transaction_id'] as $field) {
                 $this->assertStringContainsString(
@@ -649,11 +654,12 @@ final class AttributionControllersTest extends TestCase
         $db = $this->capturingDb();
         $report = (new AttributionPostbacksController($db, 1))->report([]);
 
-        $aggregates = array_values(array_filter(
-            $this->capturedStatements('SELECT'),
-            static fn(array $s): bool => str_contains($s['sql'], 'AS postbacks')
-        ));
+        // GROUP BY, not just 'AS postbacks': the ungrouped totals query
+        // selects the same metric columns, and counting it here would hide
+        // whichever grouped query stopped being issued.
+        $aggregates = $this->groupedAggregates();
         $this->assertCount(2, $aggregates, 'a short page cannot stand as the answer');
+        $this->assertCount(1, $this->ungroupedTotals(), 'the totals are read once, whichever attempt wins');
         // user_id, the bounded time_from, the LIMIT.
         $this->assertStringContainsString('received_at >= ?', $aggregates[0]['sql']);
         $this->assertSame('iii', $aggregates[0]['types']);
@@ -686,11 +692,9 @@ final class AttributionControllersTest extends TestCase
         ]]);
         $report = (new AttributionPostbacksController($db, 1))->report(['limit' => 2]);
 
-        $aggregates = array_values(array_filter(
-            $this->capturedStatements('SELECT'),
-            static fn(array $s): bool => str_contains($s['sql'], 'AS postbacks')
-        ));
+        $aggregates = $this->groupedAggregates();
         $this->assertCount(1, $aggregates, 'a full page is provably the whole answer; the second query is skipped');
+        $this->assertCount(1, $this->ungroupedTotals(), 'the totals are read once either way');
         $this->assertTrue($report['meta']['groups_truncated']);
         $this->assertCount(2, $report['data']['groups']);
     }
@@ -817,5 +821,108 @@ final class AttributionControllersTest extends TestCase
         } catch (ValidationException $e) {
             $this->assertArrayHasKey('jws-string', $e->getFieldErrors());
         }
+    }
+
+    // ─── The report's metric list ────────────────────────────────────
+
+    /**
+     * The grouped query, the ungrouped totals beside it and the row readers
+     * were four copies of the same nine COUNT(DISTINCT ...) columns. They are
+     * one list now; this is the floor under that, because the failure mode of
+     * a fifth copy drifting is silent — both queries still succeed and return
+     * rows, and only the numbers disagree.
+     */
+    public function testEveryMetricTheReportSelectsIsOneTheReadersLookFor(): void
+    {
+        $columns = $this->metricColumns();
+
+        $this->assertSame(
+            array_keys($columns),
+            AttributionPostbacksController::metricKeys(),
+            'metricKeys() must name exactly the aliases metricColumns() selects, in order'
+        );
+
+        foreach ($columns as $alias => $expression) {
+            // Every metric counts distinct identities, so a postback stored
+            // twice cannot inflate one. `postbacks` counts them all; the rest
+            // narrow with a CASE.
+            $this->assertStringStartsWith('COUNT(DISTINCT', $expression, "metric $alias must de-duplicate");
+            if ($alias !== 'postbacks') {
+                $this->assertStringContainsString('CASE WHEN', $expression, "metric $alias should be conditional");
+            }
+        }
+    }
+
+    /**
+     * The report breaks conversion_type out into its own metrics. The stored
+     * vocabulary lives in AdAttributionKitProtocol; a type added there and not
+     * here still lands in `postbacks` but silently gets no column of its own,
+     * so the page would under-report a whole class of conversion without any
+     * query failing.
+     */
+    public function testEveryStoredConversionTypeGetsItsOwnMetric(): void
+    {
+        $this->assertSame(
+            AdAttributionKitProtocol::CONVERSION_TYPES,
+            array_keys($this->conversionMetrics()),
+            'CONVERSION_METRICS must cover exactly the stored conversion_type vocabulary'
+        );
+
+        $columns = $this->metricColumns();
+        foreach ($this->conversionMetrics() as $conversionType => $alias) {
+            $this->assertArrayHasKey($alias, $columns, "no column for conversion type $conversionType");
+            $this->assertStringContainsString(
+                "conversion_type = '$conversionType'",
+                $columns[$alias],
+                "column $alias must count $conversionType rows"
+            );
+        }
+    }
+
+    /**
+     * The report's grouped aggregate queries. The ungrouped totals select the
+     * same metric columns, so 'AS postbacks' alone no longer tells the two
+     * apart; GROUP BY does.
+     *
+     * @return list<array{sql: string, types: string}>
+     */
+    private function groupedAggregates(): array
+    {
+        return array_values(array_filter(
+            $this->capturedStatements('SELECT'),
+            static fn(array $s): bool => str_contains($s['sql'], 'AS postbacks')
+                && str_contains($s['sql'], 'GROUP BY')
+        ));
+    }
+
+    /**
+     * Its ungrouped counterpart: the same metrics over the whole window.
+     *
+     * @return list<array{sql: string, types: string}>
+     */
+    private function ungroupedTotals(): array
+    {
+        return array_values(array_filter(
+            $this->capturedStatements('SELECT'),
+            static fn(array $s): bool => str_contains($s['sql'], 'AS postbacks')
+                && !str_contains($s['sql'], 'GROUP BY')
+        ));
+    }
+
+    /** @return array<string, string> */
+    private function metricColumns(): array
+    {
+        $method = new \ReflectionMethod(AttributionPostbacksController::class, 'metricColumns');
+        $method->setAccessible(true);
+
+        return $method->invoke(null, 'signature_valid = 1', 'ident', 'won', 'first', 'development');
+    }
+
+    /** @return array<string, string> */
+    private function conversionMetrics(): array
+    {
+        $constant = new \ReflectionClassConstant(AttributionPostbacksController::class, 'CONVERSION_METRICS');
+
+        return $constant->getValue();
     }
 }

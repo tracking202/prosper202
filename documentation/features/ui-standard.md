@@ -79,11 +79,17 @@ user can still reach every setting. Concretely:
    step (development postbacks arriving for an app that rejects them, an
    unregistered app id in a report, a receiver that stopped answering), the
    page offers the action in place.
-8. **Remember choices.** Filters and date presets persist per user, as the
-   report preferences already do; an open "Advanced" disclosure persists per
-   browser, in `localStorage`, because it is a convenience rather than a
-   setting. Never put anything in browser storage that another account
-   sharing the browser must not see.
+8. **Remember choices, but let the URL win.** A report's filters belong in
+   the query string, so what someone is looking at is a link they can send,
+   and nothing may silently override what that link says. A per-user default
+   is for the *first* visit only: the classic reports keep one in
+   `202_users_pref` (`user_pref_time_predefined`, and a column per
+   dimension), and a page that reads it must still yield to the URL wherever
+   the URL speaks. Analyze › Mobile Apps is URL-only so far — it defaults to
+   Last 30 Days rather than to anything stored. An open "Advanced" disclosure
+   persists per browser, in `localStorage`, because it is a convenience
+   rather than a setting. Never put anything in browser storage that another
+   account sharing the browser must not see.
 
 And the mechanics that keep pages consistent: every page opens with a page
 header and a one-line purpose. Forms put labels above controls, hints below,

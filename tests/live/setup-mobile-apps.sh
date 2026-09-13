@@ -1,0 +1,249 @@
+#!/bin/bash
+# Live pass for Setup > Mobile Apps. Drives the real page over HTTP with the
+# --- environment -------------------------------------------------------
+# Everything the pass needs to reach an instance, overridable so this runs
+# somewhere other than the machine it was written on. The names match
+# tests/browser (see its README): one instance can serve both passes.
+#
+# P202_DB must be a SCRATCH database. This pass TRUNCATEs the attribution
+# tables and rewrites the account currency; the guard below refuses a name
+# that does not read as disposable, which is the same protection
+# tests/browser/lib/db.js applies.
+# Exported, not plain locals: the seeder below runs as a child process and
+# inherits nothing otherwise, so it would fall back to its OWN defaults and
+# truncate a different database than the one this pass then reads
+# (CLAUDE.md error pattern #14).
+export P202_BASE=${P202_BASE:-http://127.0.0.1:8097}
+export P202_DB=${P202_DB:-p202_live}
+export P202_DB_USER=${P202_DB_USER:-root}
+export P202_DB_PASS=${P202_DB_PASS:-}
+export P202_USER=${P202_USER:-evalci}
+export P202_PASS=${P202_PASS:-}
+
+BASE=$P202_BASE
+DB=$P202_DB
+DB_USER=$P202_DB_USER
+DB_PASS=$P202_DB_PASS
+
+if [ -z "$P202_PASS" ]; then
+    echo "P202_PASS is not set: this pass logs in as $P202_USER and needs its password." >&2
+    exit 2
+fi
+case "$DB" in
+    *test*|*scratch*|*sandbox*|*_ci*|*eval*|*live*|p202_w*) ;;
+    *)
+        echo "Refusing to run against '$DB': this pass truncates tables, so point" >&2
+        echo "P202_DB at a scratch database (a name containing test/scratch/sandbox/ci/eval/live)." >&2
+        exit 2
+        ;;
+esac
+
+MYSQL_ARGS=(-u "$DB_USER")
+[ -n "$DB_PASS" ] && MYSQL_ARGS+=("-p$DB_PASS")
+mysql_q() { mysql "${MYSQL_ARGS[@]}" "$@"; }
+# -----------------------------------------------------------------------
+
+# field names the rendered forms actually carry.
+JAR=$(mktemp)
+OUT=$(mktemp -d)
+PASS=0; FAIL=0
+Q() { mysql_q -N "$DB" -e "$1"; }
+
+say()  { printf '\n\033[1m== %s\033[0m\n' "$1"; }
+ok()   { PASS=$((PASS+1)); printf '  \033[32mPASS\033[0m %s\n' "$1"; }
+bad()  { FAIL=$((FAIL+1)); printf '  \033[31mFAIL\033[0m %s\n' "$1"; }
+has()  { if grep -qF "$2" "$1"; then ok "$3"; else bad "$3"; fi; }
+hasnt(){ if grep -qF "$2" "$1"; then bad "$3"; else ok "$3"; fi; }
+eq()   { if [ "$1" = "$2" ]; then ok "$3"; else bad "$3 (got '$1' want '$2')"; fi; }
+msgs() { grep -oE '<div class="p202-flash__body">[^<]*|<div class="invalid-feedback[^"]*">[^<]*' "$1" \
+           | sed -E 's/<[^>]*>//' | sed 's/^/    | /'; }
+
+mysql_q "$DB" -e "TRUNCATE 202_attribution_apps; TRUNCATE 202_attribution_conversion_values; TRUNCATE 202_attribution_postbacks;"
+
+say "login"
+curl -sS -c "$JAR" -b "$JAR" "$BASE/202-login.php" -o "$OUT/login.html"
+LT=$(grep -oE 'name="token" value="[^"]+"' "$OUT/login.html" | head -1 | sed 's/.*value="//; s/"//')
+curl -sS -c "$JAR" -b "$JAR" -L "$BASE/202-login.php" \
+  --data-urlencode "token=$LT" --data-urlencode "user_name=$P202_USER" \
+  --data-urlencode "user_pass=$P202_PASS" -o "$OUT/pl.html"
+curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/" -o "$OUT/home.html"
+# The login page is the only page with a password field; a page without one
+# is proof the session took. A bare URL-string check passed against the
+# login page itself.
+hasnt "$OUT/home.html" 'name="user_pass"' "session established"
+
+get()  { curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/setup/mobile_apps.php$1" -o "$2"; }
+# POST and follow the PRG redirect; -w reports the FIRST status so a 200 where
+# a 302 belongs (the error re-render) is visible rather than hidden by -L.
+post() {
+  local out="$2"; shift 2
+  LAST_REDIRECTS=0
+  local tok
+  tok=$(grep -oE 'name="csrf_token" value="[^"]+"' "$OUT/page.html" | head -1 | sed 's/.*value="//; s/"//')
+  curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/setup/mobile_apps.php" \
+    --data-urlencode "csrf_token=$tok" "$@" -o "$out" \
+    -w "%{num_redirects} %{http_code}" > "$OUT/.w"
+  LAST_REDIRECTS=$(cut -d' ' -f1 "$OUT/.w")
+  printf '    redirects=%s final=%s\n' "$(cut -d' ' -f1 "$OUT/.w")" "$(cut -d' ' -f2 "$OUT/.w")"
+}
+
+say "page renders in the v2 shell"
+get "" "$OUT/page.html"
+has "$OUT/page.html" "p202-shell-v2"  "body carries p202-shell-v2"
+has "$OUT/page.html" "Mobile Apps"    "page title present"
+has "$OUT/page.html" "csrf_token"     "CSRF field rendered"
+hasnt "$OUT/page.html" "Fatal error"  "no PHP fatal"
+hasnt "$OUT/page.html" "Warning:"     "no PHP warning"
+hasnt "$OUT/page.html" "Notice:"      "no PHP notice"
+hasnt "$OUT/page.html" "Deprecated:"  "no PHP deprecation"
+has "$OUT/page.html" "setup/mobile_apps.php" "sub-menu links the page"
+has "$OUT/page.html" ".well-known/skadnetwork/report-attribution"  "SKAdNetwork receiver URL shown"
+has "$OUT/page.html" ".well-known/appattribution/report-attribution" "AdAttributionKit receiver URL shown"
+
+say "register: a Play Store link gets the Android sentence"
+post x "$OUT/android.html" --data-urlencode action=register \
+  --data-urlencode "app_reference=https://play.google.com/store/apps/details?id=com.example.app"
+msgs "$OUT/android.html"
+has "$OUT/android.html" "Android apps are not supported yet" "Android refusal sentence"
+eq "$(Q 'SELECT COUNT(*) FROM 202_attribution_apps')" "0" "no app was created"
+
+say "register: junk gets the App Store sentence"
+get "" "$OUT/page.html"
+post x "$OUT/junk.html" --data-urlencode action=register --data-urlencode "app_reference=not-a-link"
+msgs "$OUT/junk.html"
+has "$OUT/junk.html" "Must be an App Store link" "junk refusal sentence"
+eq "$(Q 'SELECT COUNT(*) FROM 202_attribution_apps')" "0" "still no app"
+
+say "register: empty asks for the link rather than failing oddly"
+get "" "$OUT/page.html"
+post x "$OUT/empty.html" --data-urlencode action=register --data-urlencode "app_reference="
+msgs "$OUT/empty.html"
+has "$OUT/empty.html" "Paste the app" "empty-field sentence"
+
+# A PRG write must redirect; a 200 with no redirect is the error re-render,
+# which the flash text alone does not distinguish from a success page.
+redirected() { if [ "$LAST_REDIRECTS" = "1" ]; then ok "$2"; else bad "$2 (redirects=$LAST_REDIRECTS)"; fi; }
+
+say "register: an App Store link works"
+get "" "$OUT/page.html"
+post x "$OUT/reg.html" --data-urlencode action=register \
+  --data-urlencode "app_reference=https://apps.apple.com/us/app/summit-run/id990077001"
+msgs "$OUT/reg.html"
+eq "$(Q 'SELECT COUNT(*) FROM 202_attribution_apps')" "1" "exactly one app row"
+eq "$(Q 'SELECT app_id FROM 202_attribution_apps')"   "990077001" "app_id derived from the link"
+eq "$(Q 'SELECT platform FROM 202_attribution_apps')" "ios" "platform derived as ios"
+eq "$(Q 'SELECT LENGTH(schema_token) FROM 202_attribution_apps')" "64" "schema token is 64 chars"
+printf '    name=%s\n' "$(Q 'SELECT app_name FROM 202_attribution_apps')"
+ROWID=$(Q 'SELECT attribution_app_id FROM 202_attribution_apps')
+
+say "app detail"
+get "?app=$ROWID" "$OUT/page.html"
+hasnt "$OUT/page.html" "Warning:" "no PHP warning on detail"
+hasnt "$OUT/page.html" "Fatal error" "no PHP fatal on detail"
+has "$OUT/page.html" "http://127.0.0.1:8097" "origin resolved absolutely in the snippets"
+has "$OUT/page.html" "990077001" "app id shown on detail"
+has "$OUT/page.html" "iOS" "platform label reads iOS"
+hasnt "$OUT/page.html" ">IOS<" "platform label never upper-cased"
+
+say "starter schema"
+post x "$OUT/schema.html" --data-urlencode action=starter_schema \
+  --data-urlencode "attribution_app_id=$ROWID" --data-urlencode "app_id=990077001"
+eq "$(Q 'SELECT COUNT(*) FROM 202_attribution_conversion_values WHERE app_id=990077001')" "6" "starter schema added 6 rules"
+say "starter schema is idempotent (never overwrites a decision)"
+get "?app=$ROWID" "$OUT/page.html"
+post x "$OUT/schema2.html" --data-urlencode action=starter_schema \
+  --data-urlencode "attribution_app_id=$ROWID" --data-urlencode "app_id=990077001"
+eq "$(Q 'SELECT COUNT(*) FROM 202_attribution_conversion_values WHERE app_id=990077001')" "6" "still 6 rules after a second click"
+
+say "development postbacks toggle"
+get "?app=$ROWID" "$OUT/page.html"
+post x "$OUT/dev.html" --data-urlencode action=accept_dev \
+  --data-urlencode "attribution_app_id=$ROWID" --data-urlencode "accept=1"
+eq "$(Q 'SELECT accept_development_postbacks FROM 202_attribution_apps')" "1" "accept_development_postbacks set"
+
+say "token rotation changes the token"
+BEFORE=$(Q 'SELECT schema_token FROM 202_attribution_apps')
+get "?app=$ROWID" "$OUT/page.html"
+post x "$OUT/rot.html" --data-urlencode action=rotate_token --data-urlencode "attribution_app_id=$ROWID"
+AFTER=$(Q 'SELECT schema_token FROM 202_attribution_apps')
+if [ "$BEFORE" != "$AFTER" ] && [ ${#AFTER} = 64 ]; then ok "token rotated to a new 64-char value"; else bad "token rotation: before=$BEFORE after=$AFTER"; fi
+
+say "a rule can be added by hand"
+get "?app=$ROWID" "$OUT/page.html"
+post x "$OUT/rule.html" --data-urlencode action=rule_save \
+  --data-urlencode "attribution_app_id=$ROWID" --data-urlencode "app_id=990077001" \
+  --data-urlencode "kind=fine" --data-urlencode "fine_value=7" \
+  --data-urlencode "event_name=subscribed" --data-urlencode "revenue=9.99"
+eq "$(Q 'SELECT event_name FROM 202_attribution_conversion_values WHERE app_id=990077001 AND fine_value=7')" "subscribed" "rule stored"
+eq "$(Q 'SELECT revenue FROM 202_attribution_conversion_values WHERE app_id=990077001 AND fine_value=7')" "9.99000" "revenue stored"
+
+say "a refused rule save says why, on the page it was submitted from"
+# handleGet() reads the app id from the query string and a POST has none, so
+# this used to re-render the apps LIST: no rules form, no field error, and a
+# rejected value that the page never mentioned.
+get "?app=$ROWID" "$OUT/page.html"
+post x "$OUT/badrule.html" --data-urlencode action=rule_save \
+  --data-urlencode "attribution_app_id=$ROWID" --data-urlencode "app_id=990077001" \
+  --data-urlencode "kind=fine" --data-urlencode "fine_value=33" \
+  --data-urlencode "event_name=refused_probe" --data-urlencode "revenue=-5"
+msgs "$OUT/badrule.html"
+has "$OUT/badrule.html" "Conversion values" "lands back on the app, not the apps list"
+has "$OUT/badrule.html" "invalid-feedback" "the API's sentence is shown under the field"
+has "$OUT/badrule.html" 'value="refused_probe"' "what was typed is still in the form"
+eq "$(Q "SELECT COUNT(*) FROM 202_attribution_conversion_values WHERE event_name='refused_probe'")" "0" "and no rule was created"
+
+say "revenue renders as money in the account's currency"
+get "?app=$ROWID" "$OUT/page.html"
+has "$OUT/page.html" '<td class="num">$9.99</td>' "the rule's revenue carries the currency symbol"
+has "$OUT/page.html" '<span class="input-group-text">$</span>' "the revenue field names its currency"
+has "$OUT/page.html" 'name="revenue" value="0.00"' "but the field's own value stays a bare number"
+# The symbol is the account's, not a hardcoded dollar: a euro account must
+# render euros, and a koruna account puts the symbol after the amount.
+mysql_q "$DB" -e "UPDATE 202_users_pref SET user_account_currency='EUR' WHERE user_id=1"
+get "?app=$ROWID" "$OUT/eur.html"
+has "$OUT/eur.html" '<td class="num">€9.99</td>' "a EUR account renders euros"
+mysql_q "$DB" -e "UPDATE 202_users_pref SET user_account_currency='CZK' WHERE user_id=1"
+get "?app=$ROWID" "$OUT/czk.html"
+has "$OUT/czk.html" '<td class="num">9.99Kč</td>' "a CZK account puts the symbol after the amount"
+mysql_q "$DB" -e "UPDATE 202_users_pref SET user_account_currency='USD' WHERE user_id=1"
+
+say "duplicate registration is refused, not duplicated"
+get "" "$OUT/page.html"
+post x "$OUT/dup.html" --data-urlencode action=register --data-urlencode "app_reference=id990077001"
+msgs "$OUT/dup.html"
+has "$OUT/dup.html" "already registered this app" "re-paste lands on the app you have"
+redirected "$OUT/dup.html" "re-paste redirects rather than re-rendering the form"
+eq "$(Q 'SELECT COUNT(*) FROM 202_attribution_apps')" "1" "still exactly one row"
+
+say "an app registered by SOMEBODY ELSE is refused, never revealed"
+# The registration is unique across all users (the receiver resolves ownership
+# by app id alone). The re-paste fast path above is user-scoped, so this must
+# fall through to the API's conflict sentence and must not name the other app.
+mysql_q "$DB" -e "INSERT INTO 202_attribution_apps (user_id, app_id, app_name, platform, accept_development_postbacks, schema_token, created_at, updated_at) VALUES (2, 555000111, 'Somebody Elses App', 'ios', 0, 'tok-theirs', 1, 1)"
+get "" "$OUT/page.html"
+# A full store link so the name resolves from the slug without the network,
+# which is what production does via the store lookup. With a bare id and no
+# reachable store there is no name, and the page asks for one first.
+post x "$OUT/other.html" --data-urlencode action=register \
+  --data-urlencode "app_reference=https://apps.apple.com/us/app/their-app/id555000111"
+msgs "$OUT/other.html"
+has "$OUT/other.html" "already registered" "the API's conflict sentence is shown"
+hasnt "$OUT/other.html" "Somebody Elses App" "the other user's app name is not leaked"
+hasnt "$OUT/other.html" "already registered this app. Here it is" "no redirect into another user's app"
+eq "$(Q 'SELECT COUNT(*) FROM 202_attribution_apps WHERE app_id=555000111')" "1" "no second row for their app"
+eq "$(Q 'SELECT user_id FROM 202_attribution_apps WHERE app_id=555000111')" "2" "their app still theirs"
+mysql_q "$DB" -e "DELETE FROM 202_attribution_apps WHERE user_id=2"
+
+say "removal"
+get "?app=$ROWID" "$OUT/page.html"
+post x "$OUT/rm.html" --data-urlencode action=remove --data-urlencode "attribution_app_id=$ROWID"
+eq "$(Q 'SELECT COUNT(*) FROM 202_attribution_apps')" "0" "app removed"
+
+say "CSRF is enforced"
+curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/setup/mobile_apps.php" \
+  --data-urlencode "csrf_token=wrong" --data-urlencode action=register \
+  --data-urlencode "app_reference=id123456789" -o "$OUT/csrf.html"
+eq "$(Q 'SELECT COUNT(*) FROM 202_attribution_apps')" "0" "a bad CSRF token writes nothing"
+
+printf '\n\033[1mLive pass: %d passed, %d failed\033[0m  (artifacts: %s)\n' "$PASS" "$FAIL" "$OUT"
+[ "$FAIL" = 0 ]

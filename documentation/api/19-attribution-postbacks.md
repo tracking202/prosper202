@@ -509,6 +509,15 @@ conversion values and mint installs and revenue. `postbacks` and the four
 report exposes the stored row count — it answers "how many postbacks",
 never "how many rows".
 
+**`data.totals`** holds the same metrics over the whole window, ungrouped —
+the same keys a group carries, minus the conversion-value decode. Read the
+headline numbers from there rather than summing `data.groups`, which gives a
+different answer for two reasons: every metric counts *unique* postbacks
+per group, so one postback stored twice (a replay whose unsigned fields
+differ) counts once in each day it landed in; and a truncated report is
+missing whole groups besides. `totals` is computed by one ungrouped query
+over the same filters, so neither applies to it.
+
 **Trust default:** the receiver is public, so unless you pass an explicit
 `signature` filter, every headline metric — installs, losses, redownloads,
 the whole conversion-value decode — counts **only signature-verified

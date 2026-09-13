@@ -4824,6 +4824,40 @@ components:
               revenue:
                 type: number
 
+    AttributionReportTotals:
+      type: object
+      description: |
+        The same metrics as a group, over the whole window and ungrouped.
+
+        Read the headline numbers from here rather than summing `groups`.
+        A sum gives a different answer for two reasons: every metric counts
+        *unique* postbacks per group, so one postback stored twice (a replay
+        whose unsigned fields differ) counts once in each day it landed in;
+        and a truncated report is missing whole groups besides. These come
+        from one ungrouped query over the same filters, so neither applies.
+
+        The conversion-value decode (`measurable`, `decoded`, `events`,
+        `decoded_revenue`) is per-group only and is not repeated here.
+      properties:
+        postbacks:
+          type: integer
+        losses:
+          type: integer
+        installs:
+          type: integer
+        redownloads:
+          type: integer
+        reengagements:
+          type: integer
+        signature_valid_count:
+          type: integer
+        signature_invalid_count:
+          type: integer
+        signature_unverified_count:
+          type: integer
+        signature_development_count:
+          type: integer
+
     AttributionReportResponse:
       type: object
       properties:
@@ -4837,6 +4871,8 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/AttributionReportGroup"
+            totals:
+              $ref: "#/components/schemas/AttributionReportTotals"
         meta:
           type: object
           properties:

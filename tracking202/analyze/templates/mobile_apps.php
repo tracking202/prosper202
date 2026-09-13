@@ -15,6 +15,8 @@ declare(strict_types=1);
  * @var array<string, mixed> $mobileReport  built by MobileAppsReportController
  */
 
+$C = \Tracking202\Analyze\MobileAppsReportController::class;
+
 $e = static fn (mixed $v): string => htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
 $num = static fn (mixed $v): string => number_format((float)$v);
 $currency = (string)$mobileReport['currency'];
@@ -25,6 +27,30 @@ $appNames = [];
 foreach ($mobileReport['apps'] as $knownApp) {
     $appNames[(string)$knownApp['app_id']] = (string)($knownApp['app_name'] ?? '');
 }
+
+$setupUrl = rtrim((string)$mobileReport['self'], '/');
+$setupUrl = substr($setupUrl, 0, strrpos($setupUrl, '/tracking202/')) . '/tracking202/setup/mobile_apps.php';
+
+/**
+ * An empty state, with its parts — the container alone carries none of the
+ * component's typography (error pattern #19) and the standard asks for one
+ * click rather than a paragraph of directions.
+ */
+$empty = static function (
+    string $icon,
+    string $title,
+    string $body,
+    string $action = '',
+    string $href = ''
+) use ($e): string {
+    return '<div class="p202-empty">'
+        . '<i class="bi ' . $e($icon) . ' p202-empty__icon"></i>'
+        . '<strong class="p202-empty__title">' . $e($title) . '</strong>'
+        . '<div>' . $body . '</div>'
+        . ($action === '' ? '' : '<div class="p202-empty__action">'
+            . '<a class="btn btn-primary btn-sm" href="' . $e($href) . '">' . $e($action) . '</a></div>')
+        . '</div>';
+};
 
 $self = (string)$mobileReport['self'];
 $view = (string)$mobileReport['view'];
@@ -42,16 +68,21 @@ $isCustom = $filters['range'] === $customRange;
  * would say two different things about which window it means.
  */
 $link = static function (array $changes) use ($self, $filters, $view, $customRange): string {
-    $range = (string)($changes['range'] ?? $filters['range']);
+    // array_key_exists, not ??: a key given as null means "drop this one",
+    // which `?? $filters[...]` would silently read as "keep it".
+    $pick = static fn (string $key, mixed $current): mixed
+        => array_key_exists($key, $changes) ? $changes[$key] : $current;
+
+    $range = (string)$pick('range', $filters['range']);
     $custom = $range === $customRange;
     $query = array_filter([
-        'view' => $changes['view'] ?? $view,
-        'group_by' => $changes['group_by'] ?? $filters['group_by'],
+        'view' => $pick('view', $view),
+        'group_by' => $pick('group_by', $filters['group_by']),
         'range' => $range,
-        'from' => $custom ? ($changes['from'] ?? $filters['from']) : null,
-        'to' => $custom ? ($changes['to'] ?? $filters['to']) : null,
-        'app_id' => $changes['app_id'] ?? $filters['app_id'],
-        'signature' => $changes['signature'] ?? $filters['signature'],
+        'from' => $custom ? $pick('from', $filters['from']) : null,
+        'to' => $custom ? $pick('to', $filters['to']) : null,
+        'app_id' => $pick('app_id', $filters['app_id']),
+        'signature' => $pick('signature', $filters['signature']),
         'page' => $changes['page'] ?? null,
         'download' => $changes['download'] ?? null,
     ], static fn ($v): bool => $v !== null && $v !== '');
@@ -66,49 +97,27 @@ $signatureTone = static fn (mixed $state): string => [
     'development' => 'p202-pill p202-pill--warn',
 ][(string)$state] ?? 'p202-pill';
 
-/* An alert wearing the component class, with its icon: the shape the UI kit
-   defines. .p202-flash carries no colour of its own. */
-$flashMarkup = static function (string $kind, string $text) use ($e): string {
-    [$variant, $icon] = [
-        'ok' => ['alert-success', 'bi-check-circle'],
-        'bad' => ['alert-danger', 'bi-x-circle'],
-        'warn' => ['alert-warning', 'bi-exclamation-triangle'],
-    ][$kind] ?? ['alert-info', 'bi-info-circle'];
-
-    return '<div class="alert ' . $variant . ' p202-flash" role="status"><i class="bi ' . $icon . '"></i>'
-        . '<div class="p202-flash__body">' . $e($text) . '</div></div>';
-};
-
 /** A value the report did not receive, said rather than left blank. */
 $notGiven = '<span class="text-secondary">not given</span>';
 
 /**
  * What the first column holds, per grouping.
  *
- * Which field that is comes from the controller's GROUP_KEYS, the same table
- * the CSV reads, so the two columns cannot come out of different fields.
+ * The pieces come from the controller, which the CSV reads too, so the two
+ * columns cannot say different things about the same group. Only the
+ * decoration is local: an app's id and a source's campaign are muted here
+ * and plain in the file.
  */
-$groupCell = static function (array $group, string $groupBy) use ($e, $notGiven): string {
-    switch ($groupBy) {
-        case 'app':
-            $name = trim((string)($group['app_name'] ?? ''));
-            $id = (int)($group['app_id'] ?? 0);
-            return $name !== ''
-                ? $e($name) . ' <span class="text-secondary">' . $e((string)$id) . '</span>'
-                : $e((string)$id);
-        case 'source':
-            // '0' is a real source identifier, so an empty part is named
-            // rather than left to array_filter's idea of falsiness.
-            $parts = array_filter([
-                (string)($group['source_identifier'] ?? ''),
-                ($group['campaign_id'] ?? null) === null ? '' : (string)$group['campaign_id'],
-            ], static fn (string $part): bool => $part !== '');
-            return $parts === [] ? $notGiven : $e(implode(' · ', $parts));
-        default:
-            $key = \Tracking202\Analyze\MobileAppsReportController::GROUP_KEYS[$groupBy] ?? '';
-            $value = (string)($group[$key] ?? '');
-            return $value === '' ? $notGiven : $e($value);
+$groupCell = static function (array $group, string $groupBy) use ($e, $notGiven, $C): string {
+    $parts = $C::groupLabelParts($group, $groupBy);
+    if ($parts === []) {
+        return $notGiven;
     }
+    $first = $e(array_shift($parts));
+
+    return $parts === []
+        ? $first
+        : $first . ' <span class="text-secondary">' . $e(implode(' · ', $parts)) . '</span>';
 };
 
 template_top('Analyze Mobile Apps', ['ui' => 'v2']);
@@ -123,7 +132,7 @@ template_top('Analyze Mobile Apps', ['ui' => 'v2']);
 </div>
 
 <?php foreach ($mobileReport['flashes'] as $flash) {
-    echo $flashMarkup($flash['kind'], $flash['text']);
+    echo p202_flash($flash['kind'], $flash['text']);
 } ?>
 
 <nav class="nav p202-tabs" aria-label="Mobile app views">
@@ -246,24 +255,48 @@ template_top('Analyze Mobile Apps', ['ui' => 'v2']);
                 <option value="<?php echo $e($customRange); ?>"<?php echo $isCustom ? ' selected' : ''; ?>>Custom Date</option>
             </select>
 
-            <?php /* Disabled off a custom window, so a browser does not submit
-                     the window it is only displaying; p202-ui.js enables them
-                     the moment Custom Date is chosen. */ ?>
+            <?php /* Disabled off a custom window, so a browser with no
+                     JavaScript does not submit the window it is only
+                     displaying. As soon as p202-ui.js runs it drops the
+                     `disabled` and withholds the fields from the request by
+                     removing their `name` instead — same effect on what is
+                     submitted, but the fields can be typed in, which is what
+                     lets typing a date select Custom Date. Not readonly: a
+                     readonly input cannot be edited either, so that branch
+                     would be just as unreachable. */ ?>
             <label class="form-label mb-0" for="from">From</label>
             <input class="form-control form-control-sm" style="width:auto" type="date"
                    id="from" name="from" value="<?php echo $e($filters['from']); ?>"
-                   data-p202-range-field<?php echo $isCustom ? '' : ' disabled'; ?>>
+                   data-p202-range-field="from"<?php echo $isCustom ? '' : ' disabled'; ?>>
             <label class="form-label mb-0" for="to">To</label>
             <input class="form-control form-control-sm" style="width:auto" type="date"
                    id="to" name="to" value="<?php echo $e($filters['to']); ?>"
-                   data-p202-range-field<?php echo $isCustom ? '' : ' disabled'; ?>>
+                   data-p202-range-field="to"<?php echo $isCustom ? '' : ' disabled'; ?>>
+            <?php /* Only true without JavaScript, which is the only case
+                     where the fields above are really disabled; p202-ui.js
+                     hides it and lets a date be typed directly. */ ?>
             <?php if (!$isCustom) { ?>
-                <span class="form-text">Choose <em>Custom Date</em> to set these.</span>
+                <span class="form-text" data-p202-range-hint>Choose <em>Custom Date</em> to set these.</span>
             <?php } ?>
 
             <label class="form-label mb-0" for="app_id">App</label>
+            <?php
+            // An app_id with no option of its own would leave the menu on
+            // "All apps" over a report that IS still filtered — and the next
+            // Apply would submit the empty value and widen it without a word.
+            // It happens: an app deleted since the link was made, one past
+            // RegisteredApps::MAX, a postback for an app that was never
+            // registered, or an apps read that failed.
+            $appIds = array_map(static fn (array $a): string => (string)($a['app_id'] ?? ''), $apps);
+            $unlisted = $filters['app_id'] !== '' && !in_array((string)$filters['app_id'], $appIds, true);
+            ?>
             <select class="form-select form-select-sm" id="app_id" name="app_id" style="width:auto">
                 <option value="">All apps</option>
+                <?php if ($unlisted) { ?>
+                    <option value="<?php echo $e($filters['app_id']); ?>" selected>
+                        <?php echo $e($filters['app_id']); ?> (not in your list)
+                    </option>
+                <?php } ?>
                 <?php foreach ($apps as $app) { ?>
                     <option value="<?php echo (int)$app['app_id']; ?>"<?php echo (string)$filters['app_id'] === (string)$app['app_id'] ? ' selected' : ''; ?>><?php echo $e($app['app_name'] ?? ''); ?></option>
                 <?php } ?>
@@ -284,7 +317,14 @@ template_top('Analyze Mobile Apps', ['ui' => 'v2']);
         </div>
         <div class="p202-table-toolbar__aside">
             <span class="text-secondary small">
-                <span class="p202-help" data-bs-toggle="tooltip" title="Postbacks are grouped into whole UTC days, so these dates are UTC — unlike the click reports, which use your account timezone."><i class="bi bi-clock"></i></span>
+                <?php /* An <a>, as the kit renders it: a <span> takes no
+                         focus, so the only explanation of the UTC rule would
+                         be reachable by mouse alone, and .p202-help's own
+                         stylesheet carries a :focus rule for an element that
+                         can never have it. */ ?>
+                <a href="#" class="p202-help" role="button" data-bs-toggle="tooltip"
+                   aria-label="Why these dates are UTC"
+                   title="Postbacks are grouped into whole UTC days, so these dates are UTC — unlike the click reports, which use your account timezone."><i class="bi bi-clock"></i></a>
                 UTC days
             </span>
         </div>
@@ -295,13 +335,21 @@ template_top('Analyze Mobile Apps', ['ui' => 'v2']);
 <?php if ($view === 'report') { ?>
     <?php $report = $mobileReport['report'];
     $totals = $mobileReport['totals']; ?>
+    <?php if ($report !== null && $totals === null) { ?>
+        <?php echo $empty(
+            'bi-exclamation-triangle',
+            'The totals could not be read',
+            'The table below is still the report for this range; only the figures above it are missing.'
+        ); ?>
+    <?php } ?>
     <?php if ($report === null) { ?>
-        <div class="p202-empty">
-            <i class="bi bi-exclamation-triangle p202-empty__icon"></i>
-            <strong class="p202-empty__title">The report could not be read</strong>
-            <div>The message above says why. This is not a statement that there are no postbacks.</div>
-        </div>
+        <?php echo $empty(
+            'bi-exclamation-triangle',
+            'The report could not be read',
+            'The message above says why. This is not a statement that there are no postbacks.'
+        ); ?>
     <?php } else { ?>
+        <?php if ($totals !== null) { ?>
         <div class="p202-tiles">
             <div class="p202-tile">
                 <div class="p202-tile__label">Postbacks</div>
@@ -331,19 +379,43 @@ template_top('Analyze Mobile Apps', ['ui' => 'v2']);
             <div class="p202-tile">
                 <div class="p202-tile__label">Decoded revenue</div>
                 <div class="p202-tile__value"><?php echo $e($money($totals['revenue'])); ?></div>
+                <?php /* The counters above are the whole window, asked of the
+                         API ungrouped. Revenue is the one summed over the
+                         groups on the page, so it alone shrinks when the
+                         report is truncated — and says so. */ ?>
+                <?php if ($report['truncated']) { ?>
+                    <div class="p202-tile__sub">listed groups only</div>
+                <?php } ?>
             </div>
         </div>
+        <?php } ?>
 
-        <?php if ($report['trusted'] === 'verified-only' && $totals['postbacks'] > $totals['signature_valid_count']) { ?>
+        <?php if ($totals !== null && $report['trusted'] !== 'verified-only') { ?>
+            <?php /* The opposite of reassurance: a signature filter turns the
+                     trust gate OFF, so these numbers are computed over rows
+                     that failed verification, could not be verified, or were
+                     minted by any phone in Developer Mode. The banner used to
+                     be hidden in exactly this case. */ ?>
+            <div class="alert alert-warning p202-flash" role="status">
+                <i class="bi bi-exclamation-triangle"></i>
+                <div class="p202-flash__body">
+                    Every figure here counts <strong><?php echo $e($filters['signature']); ?></strong>-signature postbacks,
+                    not signature-verified ones — the signature filter replaces the usual trust gate.
+                    <a href="<?php echo $e($link(['signature' => null])); ?>">Drop the filter</a> to count verified postbacks only.
+                </div>
+            </div>
+        <?php } elseif ($totals !== null && $totals['postbacks'] > $totals['signature_valid_count']) { ?>
             <div class="alert alert-info p202-flash" role="status">
                 <i class="bi bi-info-circle"></i>
                 <div class="p202-flash__body">
                     Installs, losses and revenue count <strong>signature-verified postbacks only</strong>.
                     Of <?php echo $num($totals['postbacks']); ?> postbacks in this range,
                     <?php echo $num($totals['signature_valid_count']); ?> verified,
-                    <?php echo $num($totals['signature_invalid_count']); ?> failed verification,
-                    <?php echo $num($totals['signature_unverified_count']); ?> could not be verified and
-                    <?php echo $num($totals['signature_development_count']); ?> were development-signed.
+                    <?php echo $num($totals['signature_invalid_count']); ?> failed verification and
+                    <?php echo $num($totals['signature_unverified_count']); ?> could not be verified;
+                    <?php echo $num($totals['signature_development_count']); ?> of them
+                    <?php echo $totals['signature_development_count'] === 1 ? 'was' : 'were'; ?> development-signed,
+                    which is a class the others overlap rather than a fourth share of the total.
                     Filter by signature above to count a different class.
                 </div>
             </div>
@@ -363,11 +435,13 @@ template_top('Analyze Mobile Apps', ['ui' => 'v2']);
             </div>
 
             <?php if ($report['groups'] === []) { ?>
-                <div class="p202-empty">
-                    <i class="bi bi-inbox p202-empty__icon"></i>
-                    <strong class="p202-empty__title">No postbacks in this range</strong>
-                    <div>Apple sends a postback a day or more after an install, and only when a campaign wins attribution. Widen the range, or check the receivers on Setup &rsaquo; Mobile Apps.</div>
-                </div>
+                <?php echo $empty(
+                    'bi-inbox',
+                    'No postbacks in this range',
+                    'Apple sends a postback a day or more after an install, and only when a campaign wins attribution. Widen the range, or check that the receivers are reachable.',
+                    'Check the receivers',
+                    $setupUrl
+                ); ?>
             <?php } else { ?>
                 <div class="p202-table-wrap">
                     <table class="table table-hover p202-table">
@@ -385,12 +459,7 @@ template_top('Analyze Mobile Apps', ['ui' => 'v2']);
                         </thead>
                         <tbody>
                         <?php foreach ($report['groups'] as $group) { ?>
-                            <?php
-                            $groupRevenue = 0.0;
-                            foreach ((array)($group['events'] ?? []) as $event) {
-                                $groupRevenue += (float)($event['revenue'] ?? 0);
-                            }
-                            ?>
+                            <?php $groupRevenue = $C::groupRevenue($group); ?>
                             <tr>
                                 <td><?php echo $groupCell($group, $filters['group_by']); ?></td>
                                 <td class="num"><?php echo $num($group['postbacks'] ?? 0); ?></td>
@@ -402,8 +471,9 @@ template_top('Analyze Mobile Apps', ['ui' => 'v2']);
                                 <td class="num"><?php echo $num($group['signature_valid_count'] ?? 0); ?></td>
                             </tr>
                         <?php } ?>
+                            <?php if ($totals !== null) { ?>
                             <tr class="p202-table__totals">
-                                <td>Totals for report</td>
+                                <td><?php echo $report['truncated'] ? 'Totals for the range' : 'Totals for report'; ?></td>
                                 <td class="num"><?php echo $num($totals['postbacks']); ?></td>
                                 <td class="num"><?php echo $num($totals['installs']); ?></td>
                                 <td class="num"><?php echo $num($totals['redownloads']); ?></td>
@@ -412,12 +482,16 @@ template_top('Analyze Mobile Apps', ['ui' => 'v2']);
                                 <td class="num"><?php echo $e($money($totals['revenue'])); ?></td>
                                 <td class="num"><?php echo $num($totals['signature_valid_count']); ?></td>
                             </tr>
+                            <?php } ?>
                         </tbody>
                     </table>
                 </div>
 
                 <?php if ($report['truncated']) { ?>
-                    <p class="text-secondary small"><i class="bi bi-exclamation-triangle"></i> More groups matched than are shown. Narrow the range or filter by app to see the rest.</p>
+                    <p class="text-secondary small"><i class="bi bi-exclamation-triangle"></i>
+                        More groups matched than are shown, so the rows below are the busiest ones and
+                        <em>Decoded revenue</em> covers only them. The other figures above the table are
+                        the whole range. Narrow the range or filter by app to see the rest.</p>
                 <?php } ?>
             <?php } ?>
         </section>
@@ -455,17 +529,19 @@ template_top('Analyze Mobile Apps', ['ui' => 'v2']);
     <?php $rows = $mobileReport['postbacks'];
     $pagination = $mobileReport['pagination']; ?>
     <?php if ($rows === null) { ?>
-        <div class="p202-empty">
-            <i class="bi bi-exclamation-triangle p202-empty__icon"></i>
-            <strong class="p202-empty__title">The postbacks could not be read</strong>
-            <div>The message above says why. This is not a statement that none have arrived.</div>
-        </div>
+        <?php echo $empty(
+            'bi-exclamation-triangle',
+            'The postbacks could not be read',
+            'The message above says why. This is not a statement that none have arrived.'
+        ); ?>
     <?php } elseif ($rows === []) { ?>
-        <div class="p202-empty">
-            <i class="bi bi-inbox p202-empty__icon"></i>
-            <strong class="p202-empty__title">No postbacks in this range</strong>
-            <div>Widen the range, or check the receivers on Setup &rsaquo; Mobile Apps.</div>
-        </div>
+        <?php echo $empty(
+            'bi-inbox',
+            'No postbacks in this range',
+            'Widen the range, or check that the receivers are reachable.',
+            'Check the receivers',
+            $setupUrl
+        ); ?>
     <?php } else { ?>
         <section class="p202-section">
             <div class="p202-table-wrap">
@@ -529,7 +605,16 @@ template_top('Analyze Mobile Apps', ['ui' => 'v2']);
                 </table>
             </div>
 
-            <p class="text-secondary small"><?php echo $num($pagination['total']); ?> <?php echo $pagination['total'] === 1 ? 'postback' : 'postbacks'; ?> in this range.</p>
+            <?php /* Rows, not postbacks: list() counts stored rows while the
+                     Report tab counts one per replayed postback, so calling
+                     both "postbacks" makes the two tabs look like they
+                     disagree about the same number. */ ?>
+            <p class="text-secondary small">
+                <?php echo $num($pagination['rows']); ?>
+                <?php echo $pagination['rows'] === 1 ? 'row' : 'rows'; ?> in this range.
+                A postback replayed with different unsigned values is stored as its own row,
+                so this can exceed the Report tab's postback count.
+            </p>
 
             <?php if ($pagination['pages'] > 1) { ?>
                 <nav class="mt-3" aria-label="Pages">

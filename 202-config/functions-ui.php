@@ -242,6 +242,31 @@ function p202_shell_asset_tag(array $item, string $base): string
 }
 
 /**
+ * One flash message, in the shape 202-account/ui-kit.php renders: the alert
+ * carries the component class, an icon sits beside the text, and the text
+ * itself lives in .p202-flash__body. The container alone styles nothing —
+ * .p202-flash is a grid whose second cell is the body — so a page that puts
+ * its own markup inside the alert loses the layout (error pattern #19).
+ *
+ * $kind is the page's own vocabulary, not Bootstrap's; an unknown one reads
+ * as neutral information rather than throwing, because a flash exists to tell
+ * the user something and swallowing the message would be the worse failure.
+ *
+ * $text is escaped here, so callers pass a plain string.
+ */
+function p202_flash(string $kind, string $text): string
+{
+    [$variant, $icon] = [
+        'ok' => ['alert-success', 'bi-check-circle'],
+        'bad' => ['alert-danger', 'bi-x-circle'],
+        'warn' => ['alert-warning', 'bi-exclamation-triangle'],
+    ][$kind] ?? ['alert-info', 'bi-info-circle'];
+
+    return '<div class="alert ' . $variant . ' p202-flash" role="status"><i class="bi ' . $icon . '"></i>'
+        . '<div class="p202-flash__body">' . htmlspecialchars($text, ENT_QUOTES, 'UTF-8') . '</div></div>';
+}
+
+/**
  * The inline Bootstrap Icons used by the shared chrome (header, account menu,
  * setup sub-menu). Inline SVG so the classic shell, which does not load the
  * icon font, draws the same icons. Paths are from Bootstrap Icons (MIT), 16x16

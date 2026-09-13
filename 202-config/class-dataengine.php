@@ -749,12 +749,21 @@ ORDER BY ppc_network_id , name , variable";
     private function formatter(): HtmlReportFormatter
     {
         if ($this->formatter === null) {
-            $currency = '$';
+            // Same validator as every other reader of this column. This
+            // passed whatever was stored straight to dollar_format(), which
+            // expects a three-letter CODE and prepends anything it does not
+            // recognise verbatim: a column holding 'XX' rendered
+            // 'XX1,234.50', and a lowercase 'eur' rendered 'eur1,234.50'
+            // instead of '€1,234.50'. Measured, not assumed — the old '$'
+            // default was in fact fine.
+            $stored = null;
             $result = self::$db->query("SELECT user_account_currency FROM 202_users_pref WHERE user_id = '" . ($this->mysql['user_id'] ?? '') . "'");
             if ($result && ($row = $result->fetch_assoc())) {
-                $currency = (string) ($row['user_account_currency'] ?? '$');
+                $stored = $row['user_account_currency'] ?? null;
             }
-            $this->formatter = new HtmlReportFormatter($currency);
+            $this->formatter = new HtmlReportFormatter(
+                \Api\V3\Controllers\UsersController::normalizeCurrency($stored)
+            );
         }
 
         return $this->formatter;
