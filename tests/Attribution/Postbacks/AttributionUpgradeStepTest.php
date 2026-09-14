@@ -18,26 +18,29 @@ use Tests\TestCase;
  * the downgrade guard have to agree with each other. CI never catches a
  * disagreement because CI always installs fresh. This pins it textually.
  *
- * Two shapes of disagreement have shipped. F1: a version whose schema no
- * upgrade step created. Then its mirror image: a step that reshaped the
- * tables under a version number the code ALREADY carried — the 1.9.76 block
- * ran unconditionally and could only be reached by the 1-click pages, because
- * upgrade_needed() is `stored != code` and both said 1.9.76. A git or
- * container deployment (documentation/deploying-on-coolify.md disables the
- * 1-click pages outright) therefore never ran it, and the attribution-app API
- * and both Mobile Apps pages died with "Unknown column 'platform'". A block
- * gated on the code's own version is unreachable by construction, and
- * testNoUpgradeBlockIsGatedOnTheCodeVersion() now says so.
+ * Two shapes of disagreement have been written. F1: a version whose schema
+ * no upgrade step created. Then its mirror image: the 1.9.76 tables were
+ * reshaped in place before 1.9.76 shipped, and a block gated on 1.9.76 was
+ * added to converge deployments of the unreleased branch — which could
+ * never run through upgrade.php, because upgrade_needed() is `stored !=
+ * code` and both said 1.9.76. Had 1.9.76 been released with that block as
+ * the only caller of the reconciler, every git or container deployment that
+ * had taken an earlier shape (documentation/deploying-on-coolify.md disables
+ * the 1-click pages, the one other way in) would have kept it, and the
+ * attribution-app API and both Mobile Apps pages would have died with
+ * "Unknown column 'platform'". The block is gone: released installs are at
+ * 1.9.75 or older and converge through the 1.9.75 step, which reconciles,
+ * and a pre-release deployment is repaired by setting 202_version back to
+ * 1.9.75. testNoUpgradeBlockIsGatedOnTheCodeVersion() keeps it gone.
  */
 final class AttributionUpgradeStepTest extends TestCase
 {
-    private const CURRENT_VERSION = '1.9.77';
-    private const PRIOR_VERSION = '1.9.76';
+    private const CURRENT_VERSION = '1.9.76';
+    private const PRIOR_VERSION = '1.9.75';
 
     /** Every step that reconciles the attribution tables, oldest first. */
     private const ATTRIBUTION_STEPS = [
         ['1.9.75', '1.9.76'],
-        ['1.9.76', '1.9.77'],
     ];
 
     private function upgradeSource(): string
@@ -126,9 +129,8 @@ final class AttributionUpgradeStepTest extends TestCase
      * The step gated on PRIOR_VERSION persists CURRENT_VERSION, so an install
      * that reports the previous release converges through the ordinary
      * upgrade page: upgrade_needed() is true, connect.php redirects there,
-     * and the block runs. That is the whole fix for the stranded 1.9.76
-     * installs, and it holds for every deployment mode, the ones with the
-     * 1-click pages disabled included.
+     * and the block runs. That holds for every deployment mode, the ones
+     * with the 1-click pages disabled included.
      */
     public function testTheStepGatedOnThePriorVersionPersistsTheCodeVersion(): void
     {
@@ -143,11 +145,13 @@ final class AttributionUpgradeStepTest extends TestCase
      * upgrade_needed() is `stored != code`. A block gated on the code's own
      * version can therefore only run when the stored version already equals
      * it — exactly the case upgrade.php refuses with "Already Upgraded". Such
-     * a block is dead on the normal path by construction; the 1.9.76 block
-     * was one, and every git deployment that carried the pre-`platform`
-     * table shape was stranded on it. Reshaping tables under a released
-     * number is what makes a block like this feel necessary; the answer is
-     * the next number, never an ungated block.
+     * a block is dead on the normal path by construction; a block gated on
+     * 1.9.76 was one, written to converge pre-release deployments that had
+     * taken an earlier shape of the 1.9.76 tables. Reshaping tables under a
+     * number the code already carries is what makes a block like this feel
+     * necessary; the answer is to fold the reshape into the step that
+     * introduces the number while it is unreleased, or to take the next
+     * number once it has shipped — never an ungated block.
      */
     public function testNoUpgradeBlockIsGatedOnTheCodeVersion(): void
     {
@@ -192,8 +196,8 @@ final class AttributionUpgradeStepTest extends TestCase
      * The other half of the guard above: a step that persists a version the
      * code does not know strands the install ABOVE the ladder (the guard then
      * pulls it back down on the next run, and the two fight). Derived from
-     * the source, so a future step cannot persist 1.9.78 while version.php
-     * still says 1.9.77.
+     * the source, so a future step cannot persist 1.9.77 while version.php
+     * still says 1.9.76.
      */
     public function testTheLadderTopIsTheCodeVersion(): void
     {

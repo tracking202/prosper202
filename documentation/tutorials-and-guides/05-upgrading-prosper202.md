@@ -8,9 +8,6 @@ Upgrading your Prosper202 software is extremely easy. Make sure you back up your
 
 Simply follow the instructions, please follow them exactly.
 
-## What’s new in 1.9.77
-- After deploying 1.9.77 over a 1.9.76 install — by any method: the 1-click upgrade, an upload, a `git pull` or a container redeploy — the next page load takes you to the database upgrade screen. Run it. It adds the attribution-table columns a 1.9.76 install may be missing (nothing is dropped or rewritten) and records the new version. Until it runs, Setup › Mobile Apps, Analyze › Mobile Apps and the `/attribution` API can fail with an unknown-column error on installs that took an earlier shape of the 1.9.76 tables.
-
 ## What’s new in 1.9.56
 - Installs the Advanced Attribution Engine schema and registers the rebuild cron job (`202-cronjobs/attribution-rebuild.php`).
 - Adds new permissions (`view_attribution_reports`, `manage_attribution_models`). After upgrading, review role assignments under **Administration → User Management**.
