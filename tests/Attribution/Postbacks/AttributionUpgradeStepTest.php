@@ -37,6 +37,8 @@ final class AttributionUpgradeStepTest extends TestCase
      * version_compare is deliberately not matched: no gate uses it, and the
      * ladder's only one is the downgrade guard, pinned by its own test.
      */
+    private const RECONCILE_CALL = '_upgrade_attribution_tables(';
+
     private const GATE_PATTERN = '/if\\s*\\(\\s*\\$prosper202_version\\s*={2,3}\\s*(?:\'([^\']+)\'|"([^"]+)")\\s*\\)/';
 
     private function upgradeSource(): string
@@ -55,25 +57,35 @@ final class AttributionUpgradeStepTest extends TestCase
      */
     private function upgradeCode(): string
     {
+        return implode('', array_column($this->upgradeTokens(), 'text'));
+    }
+
+    /**
+     * The same, as tokens, so blocks can be bounded by brace depth.
+     *
+     * @return list<array{id: int|null, text: string}>
+     */
+    private function upgradeTokens(): array
+    {
         $tokens = token_get_all('<?php ' . $this->upgradeSource());
         $this->assertGreaterThan(100, count($tokens), 'the ladder could not be tokenized');
 
-        $code = '';
+        $out = [];
         foreach ($tokens as $token) {
             if (is_array($token)) {
                 if ($token[0] === T_COMMENT || $token[0] === T_DOC_COMMENT) {
                     // Keep the newlines it spanned so failure messages still
                     // read as lines.
-                    $code .= str_repeat("\n", substr_count($token[1], "\n"));
+                    $out[] = ['id' => T_WHITESPACE, 'text' => str_repeat("\n", substr_count($token[1], "\n"))];
                     continue;
                 }
-                $code .= $token[1];
+                $out[] = ['id' => $token[0], 'text' => $token[1]];
                 continue;
             }
-            $code .= $token;
+            $out[] = ['id' => null, 'text' => $token];
         }
 
-        return $code;
+        return $out;
     }
 
     public function testVersionConstantIsTheBumpedVersion(): void
@@ -164,6 +176,50 @@ final class AttributionUpgradeStepTest extends TestCase
                 );
             }
         }
+    }
+
+    /**
+     * Every reconcile call sits inside a version gate.
+     *
+     * Brace-bounding stops an escaped call being credited to the gate above
+     * it, but a call added BESIDE a still-correct gated one would otherwise
+     * go unseen: it runs for every stored version, which is the ungated shape
+     * this file exists to refuse.
+     */
+    public function testEveryReconcileCallIsInsideAVersionGate(): void
+    {
+        $tokens = $this->upgradeTokens();
+        $steps = $this->ladderSteps();
+        $name = rtrim(self::RECONCILE_CALL, '(');
+
+        $calls = 0;
+        $ungated = [];
+        foreach ($tokens as $i => $token) {
+            if ($token['id'] !== T_STRING || $token['text'] !== $name) {
+                continue;
+            }
+            // The function's own declaration is not a call.
+            for ($j = $i - 1; $j >= 0 && $tokens[$j]['id'] === T_WHITESPACE; $j--);
+            if ($j >= 0 && $tokens[$j]['id'] === T_FUNCTION) {
+                continue;
+            }
+
+            $calls++;
+            foreach ($steps as $step) {
+                if ($i >= $step['from'] && $i <= $step['to']) {
+                    continue 2;
+                }
+            }
+            $ungated[] = $i;
+        }
+
+        $this->assertGreaterThan(0, $calls, 'no reconcile call found; this test reads them by name');
+        $this->assertSame(
+            [],
+            $ungated,
+            $name . '() is called outside every version gate, so it reconciles on every upgrade run'
+            . ' whatever version the install is stored at'
+        );
     }
 
     /**
@@ -301,46 +357,90 @@ final class AttributionUpgradeStepTest extends TestCase
 
     /**
      * The ladder as the source declares it: one entry per gate, in source
-     * order, with the block that follows it (bounded by the next gate, or
-     * the downgrade guard for the last), the versions it persists, and
-     * whether it reconciles the attribution tables.
+     * order, with the block it actually encloses, the versions that block
+     * persists, and whether it reconciles the attribution tables.
+     *
+     * Bounded by brace depth, not "up to the next gate": a byte range
+     * attributes anything before the next gate to the preceding one, so a
+     * reconcile moved OUT of its gate still read as gated and inherited that
+     * gate's version persist — passing every assertion here while running
+     * for every stored version.
      *
      * @return list<array{gate: string, persists: list<string>, reconciles: bool, block: string}>
      */
     private function ladderSteps(): array
     {
-        $source = $this->upgradeCode();
-        $found = preg_match_all(self::GATE_PATTERN, $source, $gates, PREG_OFFSET_CAPTURE);
-        // A floor: a regex matching nothing would make every caller pass by
-        // having no work to do.
-        $this->assertGreaterThan(
-            20,
-            (int)$found,
-            'the version gates could not be parsed; this test reads them by shape'
-        );
-
-        // The guard's comment is gone from the code view, so bound the last
-        // block on the guard's code.
-        $guard = strpos($source, 'version_compare((string) $prosper202_version');
-        $this->assertNotFalse($guard, 'the downgrade guard closes the ladder and bounds its last block');
+        $tokens = $this->upgradeTokens();
+        $significant = [];
+        foreach ($tokens as $i => $token) {
+            if ($token['id'] !== T_WHITESPACE) {
+                $significant[] = $i;
+            }
+        }
 
         $steps = [];
-        foreach ($gates[0] as $i => $match) {
-            $start = (int)$match[1];
-            $end = isset($gates[0][$i + 1]) ? (int)$gates[0][$i + 1][1] : (int)$guard;
-            $block = substr($source, $start, $end - $start);
+        foreach (array_keys($significant) as $k) {
+            $seq = array_slice($significant, $k, 7);
+            if (count($seq) < 7) {
+                break;
+            }
+            $t = array_map(static fn(int $i): array => $tokens[$i], $seq);
 
+            // if ( $prosper202_version ==|=== 'X' ) {
+            if ($t[0]['id'] !== T_IF || $t[1]['text'] !== '(' || $t[6]['text'] !== '{') {
+                continue;
+            }
+            if ($t[2]['id'] !== T_VARIABLE || $t[2]['text'] !== '$prosper202_version') {
+                continue;
+            }
+            if (!in_array($t[3]['id'], [T_IS_EQUAL, T_IS_IDENTICAL], true)) {
+                continue;
+            }
+            if ($t[4]['id'] !== T_CONSTANT_ENCAPSED_STRING) {
+                continue;
+            }
+
+            $end = $this->matchingBrace($tokens, $seq[6]);
+            $this->assertNotNull($end, 'unbalanced braces after a version gate');
+
+            $block = implode('', array_column(array_slice($tokens, $seq[0], $end - $seq[0] + 1), 'text'));
             preg_match_all("/UPDATE 202_version SET version='([^']+)'/", $block, $persisted);
 
             $steps[] = [
-                'gate' => (string)($gates[1][$i][0] !== '' ? $gates[1][$i][0] : $gates[2][$i][0]),
+                'gate' => trim($t[4]['text'], '\'"'),
                 'persists' => array_values(array_unique($persisted[1])),
-                'reconciles' => str_contains($block, '_upgrade_attribution_tables('),
+                'reconciles' => str_contains($block, self::RECONCILE_CALL),
                 'block' => $block,
+                'from' => $seq[0],
+                'to' => (int)$end,
             ];
         }
 
+        // A floor: a matcher finding nothing would make every caller pass by
+        // having no work to do.
+        $this->assertGreaterThan(20, count($steps), 'the version gates could not be parsed');
+
         return $steps;
+    }
+
+    /** Index of the `}` closing the `{` at $open, or null if unbalanced. */
+    private function matchingBrace(array $tokens, int $open): ?int
+    {
+        $depth = 0;
+        for ($i = $open, $n = count($tokens); $i < $n; $i++) {
+            $text = $tokens[$i]['text'];
+            // '${' and T_CURLY_OPEN's '{' both open a brace a plain '}' closes.
+            if ($text === '{' || $text === '${') {
+                $depth++;
+            } elseif ($text === '}') {
+                $depth--;
+                if ($depth === 0) {
+                    return $i;
+                }
+            }
+        }
+
+        return null;
     }
 
     /**
