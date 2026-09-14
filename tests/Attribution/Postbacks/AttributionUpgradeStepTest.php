@@ -30,6 +30,21 @@ final class AttributionUpgradeStepTest extends TestCase
     /** The reconcile call a step must make; also how a step is recognised. */
     private const RECONCILE_CALL = '_upgrade_attribution_tables(';
 
+    /**
+     * A statement writing a version into 202_version, with the version captured.
+     *
+     * Tolerant of what SQL allows around the same statement, because
+     * `UPDATE 202_version SET version='…'` is this file's convention, not a
+     * rule. The exact-text pattern it replaces already missed one write the
+     * ladder has always contained — `INSERT INTO 202_version SET
+     * version='1.0.3'`, the row's first insertion — so a reformatted rung
+     * would have dropped out of the ordering in silence.
+     * testEveryVersionWriteIsInASpellingTheScanCanRead refuses a spelling
+     * this cannot read rather than ignoring it.
+     */
+    private const PERSIST_PATTERN =
+        '/\\b(?:UPDATE|INSERT\\s+INTO)\\s+`?202_version`?\\s+SET\\s+`?version`?\\s*=\\s*\'([^\']*)\'/i';
+
     /** @var list<array{id: int|null, text: string}>|null */
     private ?array $tokenCache = null;
 
@@ -283,9 +298,76 @@ final class AttributionUpgradeStepTest extends TestCase
      */
     public function testTheStepGatedOnThePriorVersionPersistsTheCodeVersion(): void
     {
-        $block = $this->blockGatedOn(self::PRIOR_VERSION);
+        // Asked of the parsed persists, not matched as one spelling of the
+        // statement: reformatting the UPDATE must not be able to fail this.
+        foreach ($this->ladderSteps() as $step) {
+            if (in_array(self::PRIOR_VERSION, $step['gates'], true)) {
+                $this->assertContains(self::CURRENT_VERSION, $step['persists']);
 
-        $this->assertStringContainsString("UPDATE 202_version SET version='" . self::CURRENT_VERSION . "'", $block);
+                return;
+            }
+        }
+
+        $this->fail('there must be an upgrade block gated on ' . self::PRIOR_VERSION);
+    }
+
+    /**
+     * Every write to 202_version is in a spelling PERSIST_PATTERN can read.
+     *
+     * The other half of the persist scans: they answer "the top is 1.9.76"
+     * from the writes they recognise, and a write they do not recognise is
+     * indistinguishable from one that is not there. A rung added as
+     * ``UPDATE `202_version` SET `version` = '1.9.77'`` left the 100-plus
+     * matches and their maximum untouched, so the very regression
+     * testTheLadderTopIsTheCodeVersion exists to catch passed.
+     */
+    public function testEveryVersionWriteIsInASpellingTheScanCanRead(): void
+    {
+        $writes = 0;
+        $unreadable = [];
+
+        foreach ($this->upgradeTokens() as $token) {
+            if (!in_array($token['id'], [T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE], true)) {
+                continue;
+            }
+
+            $text = $token['text'];
+            if (stripos($text, '202_version') === false) {
+                continue;
+            }
+            if (preg_match('/\\b(?:UPDATE|INSERT\\s+INTO)\\b/i', $text) !== 1) {
+                // A read or the CREATE TABLE, not a write.
+                continue;
+            }
+
+            $writes++;
+            if (preg_match(self::PERSIST_PATTERN, $text) === 1) {
+                continue;
+            }
+
+            // The value may be concatenated on rather than quoted inline —
+            // the downgrade guard writes `version='" . $prosper202_version . "'`
+            // — so a literal that ends with the value still open is read by
+            // the scan over the joined code, not by this one over one token.
+            $inner = preg_match('/^[\'"]/', $text) === 1 ? substr($text, 1, -1) : $text;
+            if (preg_match('/`?version`?\\s*=\\s*\'$/i', $inner) === 1) {
+                continue;
+            }
+
+            $unreadable[] = trim($text);
+        }
+
+        $this->assertGreaterThan(
+            100,
+            $writes,
+            'the ladder writes fewer versions than it has steps; this scan is reading the wrong thing'
+        );
+        $this->assertSame(
+            [],
+            array_values(array_unique($unreadable)),
+            'a statement writes 202_version in a spelling PERSIST_PATTERN cannot read, so the version'
+            . ' it writes is invisible to every persist scan. Widen the pattern to cover it.'
+        );
     }
 
     /**
@@ -466,7 +548,7 @@ final class AttributionUpgradeStepTest extends TestCase
      */
     public function testTheLadderTopIsTheCodeVersion(): void
     {
-        preg_match_all("/UPDATE 202_version SET version='([^']*)'/", $this->upgradeCode(), $m);
+        preg_match_all(self::PERSIST_PATTERN, $this->upgradeCode(), $m);
 
         // `\d+\.\d+\.\d+` read only 112 of the ladder's 123 persists: 1.4,
         // 1.5, 1.6, 1.7, the four-part 1.8.2.x/1.8.3.x and 1.9.30b all fell
@@ -557,7 +639,7 @@ final class AttributionUpgradeStepTest extends TestCase
             $this->assertNotNull($end, 'unbalanced braces after a version gate');
 
             $block = implode('', array_column(array_slice($tokens, $i, $end - $i + 1), 'text'));
-            preg_match_all("/UPDATE 202_version SET version='([^']+)'/", $block, $persisted);
+            preg_match_all(self::PERSIST_PATTERN, $block, $persisted);
 
             $steps[] = [
                 'gates' => $gates,
@@ -603,6 +685,39 @@ final class AttributionUpgradeStepTest extends TestCase
         $to = $position[$close];
 
         return $this->versionsComparedAmong($tokens, array_slice($significant, $from, max(0, $to - $from)));
+    }
+
+    /**
+     * An operand that did not reduce to one token is not skipped when the
+     * stored version is inside it.
+     *
+     * `((string) $prosper202_version) === PROSPER202_VERSION` reduces to two
+     * tokens, so neither side read as the variable and the whole comparison
+     * was dropped — the code-version gate invisible once more, by the route
+     * the unwrapping was added to close. What a wrapper does to the value is
+     * not something this scan can know, so it says so instead of guessing.
+     */
+    private function refuseUnreadableOperand(array $tokens, array $inside, int $a, int $b): void
+    {
+        $holdsVersion = false;
+        $text = '';
+        for ($rank = min($a, $b), $end = max($a, $b); $rank <= $end; $rank++) {
+            $token = $tokens[$inside[$rank]];
+            $text .= $token['text'];
+            if ($token['id'] === T_VARIABLE && $token['text'] === '$prosper202_version') {
+                $holdsVersion = true;
+            }
+        }
+
+        if (!$holdsVersion) {
+            return;
+        }
+
+        $this->fail(
+            'a comparison wraps $prosper202_version in an expression this test cannot reduce to a'
+            . ' single token (' . trim($text) . '), so it cannot say which version the gate names.'
+            . ' Resolve it here rather than letting the gate go unseen.'
+        );
     }
 
     /**
@@ -697,7 +812,13 @@ final class AttributionUpgradeStepTest extends TestCase
             if ($tokens[$inside[$rank]]['text'] !== $open) {
                 // Anything left between here and the far edge means the
                 // parentheses held an expression, not an operand.
-                return ($limit === null || $rank === $limit) ? $rank : null;
+                if ($limit === null || $rank === $limit) {
+                    return $rank;
+                }
+
+                $this->refuseUnreadableOperand($tokens, $inside, $rank, $limit);
+
+                return null;
             }
 
             $depth = 0;
