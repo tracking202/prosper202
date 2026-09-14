@@ -450,16 +450,43 @@ final class AttributionUpgradeStepTest extends TestCase
 
             $isVar = static fn(?array $t): bool => $t !== null
                 && $t['id'] === T_VARIABLE && $t['text'] === '$prosper202_version';
-            $isLiteral = static fn(?array $t): bool => $t !== null && $t['id'] === T_CONSTANT_ENCAPSED_STRING;
 
-            if ($isVar($left) && $isLiteral($right)) {
-                $versions[] = trim($right['text'], '\'"');
-            } elseif ($isLiteral($left) && $isVar($right)) {
-                $versions[] = trim($left['text'], '\'"');
+            if ($isVar($left) && !$isVar($right)) {
+                $versions[] = $this->versionOperand($right);
+            } elseif ($isVar($right) && !$isVar($left)) {
+                $versions[] = $this->versionOperand($left);
             }
         }
 
-        return array_values(array_unique($versions));
+        return array_values(array_unique(array_filter($versions)));
+    }
+
+    /**
+     * The version an operand compared against $prosper202_version names.
+     *
+     * A string literal is itself; PROSPER202_VERSION is the code version —
+     * and `if ($prosper202_version === PROSPER202_VERSION)` is the most
+     * natural way to write the gate this suite forbids, so leaving it
+     * unrecognised would have left the guard blind to its likeliest spelling.
+     *
+     * Anything else FAILS rather than being skipped. A scanner that cannot
+     * tell which version a gate names must not answer "no such gate" — that
+     * silence is how every hole in this parser has looked.
+     */
+    private function versionOperand(array $token): string
+    {
+        if ($token['id'] === T_CONSTANT_ENCAPSED_STRING) {
+            return trim($token['text'], '\'"');
+        }
+        if ($this->namesFunction($token, 'PROSPER202_VERSION')) {
+            return $this->codeVersion();
+        }
+
+        $this->fail(
+            'a version gate compares $prosper202_version against ' . $token['text']
+            . ', which this test cannot resolve to a version. Resolve it here rather than'
+            . ' letting the gate go unseen.'
+        );
     }
 
     /** Index of the `)` closing the `(` at $open, or null if unbalanced. */
