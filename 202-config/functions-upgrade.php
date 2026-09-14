@@ -3566,22 +3566,6 @@ class UPGRADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
             $result = _upgrade_query($sql);
 
-            $sql = "SHOW COLUMNS FROM `202_api_keys` LIKE 'scope'";
-            $result = _upgrade_query($sql);
-            if (!($result && mysqli_num_rows($result) > 0)) {
-                $sql = "ALTER TABLE `202_api_keys` ADD COLUMN `scope` text DEFAULT NULL AFTER `api_key`";
-                // The version advances below whatever this returns, so a
-                // failure here leaves the install at 1.9.60 without the
-                // column. The 1.9.75 step repairs that; say so here rather
-                // than failing in silence (error pattern #1).
-                if (_upgrade_query($sql) === false) {
-                    error_log(
-                        'Prosper202 upgrade: could not add 202_api_keys.scope during the 1.9.60 step; '
-                        . 'the 1.9.75 step will retry it.'
-                    );
-                }
-            }
-
             // Composite indexes for AUTH::is_rate_limited()'s per-login throttle
             // query (login_success = 0 AND <key> = ? AND login_time >= ?). Added
             // only if missing so re-running the upgrade is safe; the per-username
@@ -4168,17 +4152,19 @@ class UPGRADE
 
             // API key scopes (agent least-privilege): the v3 API enforces
             // read/write scopes per route family and key creation accepts a
-            // scope. Fresh installs get the column from UserTables::apiKeys(),
-            // and the 1.9.60 step adds it for older ones — so this looks
-            // redundant, and a review flagged it as a no-op.
+            // scope, so every install needs 202_api_keys.scope. Fresh
+            // installs get it from UserTables::apiKeys(); every upgrading
+            // install gets it here, and only here.
             //
-            // It is not. The 1.9.60 step now logs a failed ALTER but still
-            // advances the version regardless of it, so an install whose
-            // ALTER failed (permissions, lock timeout, disk) sits at 1.9.60+
-            // with no scope column. This guarded repeat is the only thing
-            // that repairs that install, and the v3 API's whole scope
-            // enforcement depends on the column existing. Keep it until
-            // 1.9.60 gates its own version bump.
+            // The SHOW COLUMNS check is what makes re-running an upgrade
+            // safe, not a repair path: an install that already has the column
+            // (a fresh install walking the chain, or a previous run that got
+            // this far) skips the ALTER and advances. The version bump is
+            // gated on the column existing because that is the ordinary
+            // contract for a migration step — never record a version you did
+            // not actually migrate to. A failed ALTER logs and leaves the
+            // version at 1.9.74, so the next run retries. That is the whole
+            // error handling.
             $check = _upgrade_query("SHOW COLUMNS FROM `202_api_keys` LIKE 'scope'");
             $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
             $scope_ok = $exists || _upgrade_query(
