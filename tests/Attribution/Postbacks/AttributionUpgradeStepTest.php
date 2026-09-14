@@ -30,9 +30,10 @@ final class AttributionUpgradeStepTest extends TestCase
     /**
      * A version gate, in any spelling that means the same. Every gate is
      * written one way today, and matching that text literally would answer
-     * "no such gate" for an identical one using `===`, double quotes or
-     * different spacing — a clean bill of health for the shape these tests
-     * refuse.
+     * "no such gate" for an identical one using `===`, double quotes,
+     * different spacing or a reversed comparison — a clean bill of health for
+     * the shape these tests refuse. (ladderSteps() matches on tokens; this
+     * pattern is kept for callers that scan text.)
      *
      * version_compare is deliberately not matched: no gate uses it, and the
      * ladder's only one is the downgrade guard, pinned by its own test.
@@ -386,19 +387,21 @@ final class AttributionUpgradeStepTest extends TestCase
             }
             $t = array_map(static fn(int $i): array => $tokens[$i], $seq);
 
-            // if ( $prosper202_version ==|=== 'X' ) {
+            // if ( $prosper202_version ==|=== 'X' ) {  — either operand order.
             if ($t[0]['id'] !== T_IF || $t[1]['text'] !== '(' || $t[6]['text'] !== '{') {
                 continue;
             }
-            if ($t[2]['id'] !== T_VARIABLE || $t[2]['text'] !== '$prosper202_version') {
+            if (!in_array($t[3]['id'], [T_IS_EQUAL, T_IS_IDENTICAL], true) || $t[5]['text'] !== ')') {
                 continue;
             }
-            if (!in_array($t[3]['id'], [T_IS_EQUAL, T_IS_IDENTICAL], true)) {
+            $variableFirst = $t[2]['id'] === T_VARIABLE && $t[2]['text'] === '$prosper202_version'
+                && $t[4]['id'] === T_CONSTANT_ENCAPSED_STRING;
+            $literalFirst = $t[4]['id'] === T_VARIABLE && $t[4]['text'] === '$prosper202_version'
+                && $t[2]['id'] === T_CONSTANT_ENCAPSED_STRING;
+            if (!$variableFirst && !$literalFirst) {
                 continue;
             }
-            if ($t[4]['id'] !== T_CONSTANT_ENCAPSED_STRING) {
-                continue;
-            }
+            $literal = $variableFirst ? $t[4]['text'] : $t[2]['text'];
 
             $end = $this->matchingBrace($tokens, $seq[6]);
             $this->assertNotNull($end, 'unbalanced braces after a version gate');
@@ -407,7 +410,7 @@ final class AttributionUpgradeStepTest extends TestCase
             preg_match_all("/UPDATE 202_version SET version='([^']+)'/", $block, $persisted);
 
             $steps[] = [
-                'gate' => trim($t[4]['text'], '\'"'),
+                'gate' => trim($literal, '\'"'),
                 'persists' => array_values(array_unique($persisted[1])),
                 'reconciles' => str_contains($block, self::RECONCILE_CALL),
                 'block' => $block,
