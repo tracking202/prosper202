@@ -7,8 +7,9 @@
  * script at all; this only closes it when the user clicks elsewhere or presses
  * Escape, and wires the theme switch the v2 shell renders.
  *
- * It also keeps the current section tab and sub-menu item in view on narrow
- * screens, where those lists scroll sideways.
+ * It also keeps the current section tab and sub-menu item in view whenever
+ * those lists are too long to fit, which is a question about the list rather
+ * than about the window — the Analyze strip overflows a 1280px desktop.
  *
  * The script is emitted in <head>, so it binds on DOMContentLoaded; binding at
  * parse time found no header and silently did nothing (caught in review).
@@ -42,11 +43,11 @@
         });
     }
 
-    /* The section tabs and the sub-menu strip scroll sideways on narrow
-       screens; scroll the current item to the middle so it is never hidden
-       off the edge. */
-    var NARROW_MAX_WIDTH = 767;
-
+    /* The section tabs and the sub-menu strip scroll sideways when they do not
+       fit; scroll the current item to the middle so it is never hidden off the
+       edge. Whether they fit is a question about the list, not about the
+       window: the Analyze strip overflows a 1280px desktop, and a width
+       threshold here left its last entry — the current one — clipped. */
     function centreCurrent(list) {
         var current = list.querySelector('li.active, .is-active');
         if (!current || list.scrollWidth <= list.clientWidth) {
@@ -57,14 +58,36 @@
     }
 
     function centreCurrentEverywhere() {
-        if (window.innerWidth > NARROW_MAX_WIDTH) {
-            return;
-        }
         Array.prototype.forEach.call(document.querySelectorAll('.p202c-tabs__list, .p202c-strip__list'), centreCurrent);
     }
 
     centreCurrentEverywhere();
-    window.addEventListener('resize', centreCurrentEverywhere);
+
+    /* Once per frame, and only for a resize that changed the width. Reading
+       scrollWidth and two bounding rects per list then writing scrollLeft is
+       a forced layout, and this used to return after one innerWidth read on
+       desktop; without the width guard a window drag would run it at the
+       event rate. Skipping equal widths also stops a soft-keyboard's height
+       change from throwing away a scroll position the reader set by hand. */
+    var lastWidth = window.innerWidth;
+    var pending = 0;
+    window.addEventListener('resize', function () {
+        if (window.innerWidth === lastWidth) {
+            return;
+        }
+        /* Recorded before the pending check, not after it: a drag out to one
+           width and back while a frame was still queued would otherwise leave
+           lastWidth naming a width the window no longer has, and the return
+           trip — the one that needs re-centring — would compare equal and be
+           dropped. */
+        lastWidth = window.innerWidth;
+        if (pending) {
+            return;
+        }
+        pending = window.requestAnimationFrame
+            ? window.requestAnimationFrame(function () { pending = 0; centreCurrentEverywhere(); })
+            : window.setTimeout(function () { pending = 0; centreCurrentEverywhere(); }, 16);
+    });
 
     /* Theme switch: three states — follow the system, light, dark. The choice
        is a per-browser convenience, so localStorage is the right home; the v2

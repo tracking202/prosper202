@@ -99,6 +99,7 @@ final class AttributionPostbackTables
                 `user_id` mediumint(8) unsigned NOT NULL,
                 `app_id` bigint(20) unsigned NOT NULL,
                 `app_name` varchar(255) NOT NULL,
+                `platform` varchar(16) NOT NULL DEFAULT 'ios',
                 `notes` varchar(500) DEFAULT NULL,
                 `accept_development_postbacks` tinyint(1) unsigned NOT NULL DEFAULT '0',
                 `schema_token` varchar(64) NOT NULL DEFAULT '',

@@ -2441,6 +2441,7 @@ paths:
         - $ref: "#/components/parameters/timeFrom"
         - $ref: "#/components/parameters/timeTo"
         - $ref: "#/components/parameters/attributionAppId"
+        - $ref: "#/components/parameters/attributionAppIds"
         - $ref: "#/components/parameters/attributionAdNetworkId"
         - $ref: "#/components/parameters/attributionVersion"
         - $ref: "#/components/parameters/attributionTransactionId"
@@ -2543,6 +2544,7 @@ paths:
         - $ref: "#/components/parameters/timeFrom"
         - $ref: "#/components/parameters/timeTo"
         - $ref: "#/components/parameters/attributionAppId"
+        - $ref: "#/components/parameters/attributionAppIds"
         - $ref: "#/components/parameters/attributionAdNetworkId"
         - $ref: "#/components/parameters/attributionVersion"
         - $ref: "#/components/parameters/attributionTransactionId"
@@ -2932,6 +2934,19 @@ components:
       description: Advertised App Store id
       schema:
         type: integer
+    attributionAppIds:
+      name: app_ids
+      in: query
+      description: >
+        Several advertised App Store ids at once, as a comma-separated list
+        (`app_ids=990077001,525463029`). Narrows to that SET of apps, which
+        `app_id` cannot do; combine them and both apply. At most 500 ids, each
+        a whole number — a value an integer cast would change is rejected
+        rather than silently selecting a different app. Duplicates collapse;
+        a blank element is an error, not a skip.
+      schema:
+        type: string
+      example: "990077001,525463029"
     attributionAdNetworkId:
       name: ad_network_id
       in: query
@@ -4408,6 +4423,20 @@ components:
     AttributionApp:
       type: object
       properties:
+        platform:
+          type: string
+          enum: [ios]
+          default: ios
+          description: |
+            The store the app is on, stored lower-case. Derived from an App
+            Store link when one is pasted, so a caller rarely sets it.
+
+            Only a platform this install can receive postbacks for is
+            accepted; `ios` is the one today. `android` is recognised and
+            refused with a sentence saying there is no Android receiver to
+            point an app at, rather than "you typed it wrong". Any other
+            value is refused with the list of accepted ones. Compared
+            case-insensitively, so `iOS` is accepted and stored as `ios`.
         attribution_app_id:
           type: integer
           description: Internal registration id — the `{id}` in `/attribution/apps/{id}`
@@ -4444,6 +4473,20 @@ components:
       type: object
       required: [app_id, app_name]
       properties:
+        platform:
+          type: string
+          enum: [ios]
+          default: ios
+          description: |
+            The store the app is on, stored lower-case. Derived from an App
+            Store link when one is pasted, so a caller rarely sets it.
+
+            Only a platform this install can receive postbacks for is
+            accepted; `ios` is the one today. `android` is recognised and
+            refused with a sentence saying there is no Android receiver to
+            point an app at, rather than "you typed it wrong". Any other
+            value is refused with the list of accepted ones. Compared
+            case-insensitively, so `iOS` is accepted and stored as `ios`.
         app_id:
           type: integer
           description: Numeric App Store id (the number in the app's App Store URL)
@@ -4462,6 +4505,20 @@ components:
     AttributionAppUpdate:
       type: object
       properties:
+        platform:
+          type: string
+          enum: [ios]
+          default: ios
+          description: |
+            The store the app is on, stored lower-case. Derived from an App
+            Store link when one is pasted, so a caller rarely sets it.
+
+            Only a platform this install can receive postbacks for is
+            accepted; `ios` is the one today. `android` is recognised and
+            refused with a sentence saying there is no Android receiver to
+            point an app at, rather than "you typed it wrong". Any other
+            value is refused with the list of accepted ones. Compared
+            case-insensitively, so `iOS` is accepted and stored as `ios`.
         app_id:
           type: integer
         app_name:
@@ -4824,6 +4881,40 @@ components:
               revenue:
                 type: number
 
+    AttributionReportTotals:
+      type: object
+      description: |
+        The same metrics as a group, over the whole window and ungrouped.
+
+        Read the headline numbers from here rather than summing `groups`.
+        A sum gives a different answer for two reasons: every metric counts
+        *unique* postbacks per group, so one postback stored twice (a replay
+        whose unsigned fields differ) counts once in each day it landed in;
+        and a truncated report is missing whole groups besides. These come
+        from one ungrouped query over the same filters, so neither applies.
+
+        The conversion-value decode (`measurable`, `decoded`, `events`,
+        `decoded_revenue`) is per-group only and is not repeated here.
+      properties:
+        postbacks:
+          type: integer
+        losses:
+          type: integer
+        installs:
+          type: integer
+        redownloads:
+          type: integer
+        reengagements:
+          type: integer
+        signature_valid_count:
+          type: integer
+        signature_invalid_count:
+          type: integer
+        signature_unverified_count:
+          type: integer
+        signature_development_count:
+          type: integer
+
     AttributionReportResponse:
       type: object
       properties:
@@ -4837,6 +4928,8 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/AttributionReportGroup"
+            totals:
+              $ref: "#/components/schemas/AttributionReportTotals"
         meta:
           type: object
           properties:

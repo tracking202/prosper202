@@ -234,13 +234,13 @@ $sections = [
 
 <section class="p202-section" id="pills">
 	<h2 class="p202-section__title">Pills</h2>
-	<p class="text-secondary">Status only, never decoration. Five tones with fixed meanings.</p>
+	<p class="text-secondary">Status, never decoration. Five tones, plus a link that regroups a table.</p>
 	<div class="p202-toolbar">
 		<span class="p202-pill">neutral · 990077001</span>
 		<span class="p202-pill p202-pill--accent">accent · 5 rules</span>
 		<span class="p202-pill p202-pill--good">good · valid</span>
 		<span class="p202-pill p202-pill--warn">warning · development</span>
-		<span class="p202-pill p202-pill--bad">danger · invalid</span>
+		<span class="p202-pill p202-pill--bad">danger · invalid</span><a href="#pills" class="p202-pill">link</a>
 		<span class="badge text-bg-primary rounded-pill">Bootstrap badge</span>
 		<span class="badge text-bg-secondary rounded-pill">12</span>
 	</div>
@@ -262,7 +262,7 @@ $sections = [
 	<h2 class="p202-section__title">Table</h2>
 	<div class="p202-table-toolbar">
 		<div class="p202-toolbar">
-			<span class="p202-pill p202-pill--accent">Day</span><span class="p202-pill">App</span><span class="p202-pill">Ad network</span><span class="p202-pill">Country</span>
+			<a href="#table" class="p202-pill p202-pill--accent">Day</a><a href="#table" class="p202-pill">App</a><a href="#table" class="p202-pill">Ad network</a><a href="#table" class="p202-pill">Country</a>
 		</div>
 		<div class="p202-table-toolbar__aside">
 			<a href="#table" class="btn btn-secondary btn-sm"><i class="bi bi-file-earmark-spreadsheet"></i> Download to excel</a>

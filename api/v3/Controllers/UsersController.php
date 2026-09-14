@@ -12,6 +12,75 @@ use Api\V3\Exception\ValidationException;
 
 class UsersController
 {
+    /**
+     * The currency column's own default, and the fallback for anything
+     * unusable. See normalizeCurrency() below.
+     */
+    public const DEFAULT_CURRENCY = 'USD';
+
+    /**
+     * Every currency an account may be set to — the list
+     * 202-account/account.php offers, which is the only thing that makes a
+     * stored value legitimate.
+     *
+     * Kept apart from CURRENCY_SYMBOLS below, because "is this a currency this
+     * install supports" and "do we have a glyph for it" are different
+     * questions. Collapsing them into one broke six real currencies: AUD, CAD,
+     * HKD, MXN, NZD and SGD are all selectable on the settings page and none
+     * has a symbol here, so validating against the symbol table rewrote a
+     * legitimate stored preference to USD, tagged conversion-ledger writes
+     * USD, and made the v3 preferences endpoint reject a currency its own
+     * settings page offers.
+     *
+     * tests/User/AccountCurrencyTest.php holds this against the options in
+     * account.php, so the two cannot drift.
+     *
+     * @var list<string>
+     */
+    public const SUPPORTED_CURRENCIES = [
+        'AUD', 'BRL', 'CAD', 'CHF', 'CNY', 'CZK', 'DKK', 'EUR', 'GBP', 'HKD',
+        'HUF', 'ILS', 'INR', 'JPY', 'MXN', 'MYR', 'NOK', 'NZD', 'PHP', 'PLN',
+        'RUB', 'SEK', 'SGD', 'THB', 'TRY', 'TWD', 'USD',
+    ];
+
+    /**
+     * The subset of those that render as a symbol, and which symbol.
+     *
+     * dollar_format() in 202-config/functions-tracking202.php reads this and
+     * falls back to printing the CODE for a currency that is not here —
+     * "AUD10.00" rather than a glyph, which is a fine rendering for a real
+     * currency and the behaviour those six have always had. What that fallback
+     * must never be reached with is a value that is not a currency at all,
+     * which is what normalizeCurrency() and the preferences endpoint are for.
+     *
+     * A leading empty string means the symbol follows the amount instead.
+     *
+     * @var array<string, array{0: string, 1: string}> code => [before, after]
+     */
+    public const CURRENCY_SYMBOLS = [
+        'USD' => ['$', ''],
+        'BRL' => ['R$', ''],
+        'CZK' => ['', 'Kč'],
+        'DKK' => ['kr.', ''],
+        'EUR' => ['€', ''],
+        'HUF' => ['', 'Ft'],
+        'ILS' => ['₪', ''],
+        'JPY' => ['¥', ''],
+        'MYR' => ['RM', ''],
+        'NOK' => ['kr', ''],
+        'PHP' => ['₱', ''],
+        'PLN' => ['zł', ''],
+        'GBP' => ['£', ''],
+        'SEK' => ['kr', ''],
+        'CHF' => ['SFr.', ''],
+        'TWD' => ['NT$', ''],
+        'THB' => ['฿', ''],
+        'TRY' => ['', '₺'],
+        'CNY' => ['¥', ''],
+        'INR' => ['₹', ''],
+        'RUB' => ['₽', ''],
+    ];
+
     public function __construct(private readonly \mysqli $db)
     {
     }
@@ -462,13 +531,67 @@ class UsersController
         $stmt = $this->prepare('SELECT * FROM 202_users_pref WHERE user_id = ? LIMIT 1');
         $this->bind($stmt, 'i', $userId);
         $this->execute($stmt, 'Query failed');
-        $row = $stmt->get_result()->fetch_assoc();
+        // Checked: get_result() returns false on failure, and false read as
+        // "no row" is indistinguishable from a user who has no preferences —
+        // the silent shape CLAUDE.md error pattern #1 names get_result() for.
+        // Unchecked, the ->fetch_assoc() below raises \Error, which is not an
+        // \Exception and escapes every catch on the page path.
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            throw new DatabaseException('Query failed');
+        }
+        $row = $result->fetch_assoc();
         $stmt->close();
 
         if (!$row) {
             throw new NotFoundException('User preferences not found');
         }
         return ['data' => $row];
+    }
+
+    /**
+     * The currency this account's money is denominated in.
+     *
+     * Every page that prints an amount needs this, and each one reaching for
+     * the raw column would be a second place to get the fallback wrong. Lives
+     * here because preferences do: 202_users_pref.user_account_currency is one
+     * of the twenty-one codes dollar_format() knows, USD when unset.
+     *
+     * A failed read answers USD rather than propagating: an amount rendered
+     * in the wrong symbol is a cosmetic error, and a report that 500s because
+     * a preferences row could not be read is not. \Throwable, not
+     * HttpException: the promise is "this never takes the page down", and
+     * narrowing it to the exception type the happy path throws would have
+     * been a promise the code did not keep — a driver-level \Error is exactly
+     * the case worth surviving.
+     */
+    public function accountCurrency(int $userId): string
+    {
+        try {
+            $preferences = $this->getPreferences($userId)['data'];
+        } catch (\Throwable) {
+            return self::DEFAULT_CURRENCY;
+        }
+
+        return self::normalizeCurrency($preferences['user_account_currency'] ?? null);
+    }
+
+    /**
+     * A stored currency as a code dollar_format() can actually render.
+     *
+     * Membership of SUPPORTED_CURRENCIES, not a three-letter shape: the shape
+     * test let any three letters through to dollar_format(), whose last
+     * resort is to print the code as the symbol, so a stored "XYZ" put
+     * "XYZ10.00" on every page looking exactly like a real currency. Not
+     * membership of CURRENCY_SYMBOLS either — that rejected the six supported
+     * currencies which have no glyph and legitimately render as their code.
+     */
+    public static function normalizeCurrency(mixed $raw): string
+    {
+        $currency = is_scalar($raw) ? strtoupper(trim((string)$raw)) : '';
+
+        return in_array($currency, self::SUPPORTED_CURRENCIES, true) ? $currency : self::DEFAULT_CURRENCY;
     }
 
     public function updatePreferences(int $userId, array $payload): array
@@ -482,6 +605,24 @@ class UsersController
             'user_pref_cloak_referer' => 's', 'user_daily_email' => 's',
             'ipqs_api_key' => 's', 'chart_time_range' => 's',
         ];
+
+        // Refused here, not normalised on the way out. The read path resolves
+        // an unrenderable code to USD so no page prints "XYZ10.00", but that
+        // is a repair for rows already stored — applying it to a write would
+        // answer 200 and quietly keep a currency the caller did not choose
+        // (error pattern #4). The check belongs at the layer that accepts the
+        // value (#12), and it names what it will take.
+        if (array_key_exists('user_account_currency', $payload)) {
+            $raw = $payload['user_account_currency'];
+            $currency = is_scalar($raw) ? strtoupper(trim((string)$raw)) : '';
+            if (!in_array($currency, self::SUPPORTED_CURRENCIES, true)) {
+                throw new ValidationException('Validation failed', [
+                    'user_account_currency' => 'Must be one of: '
+                        . implode(', ', self::SUPPORTED_CURRENCIES),
+                ]);
+            }
+            $payload['user_account_currency'] = $currency;
+        }
 
         $sets = [];
         $binds = [];

@@ -495,9 +495,14 @@ final class MysqlCustomerRepository
         );
         $this->conn->bind($stmt, 'i', [$userId]);
         $row = $this->conn->fetchOne($stmt);
-        $currency = strtoupper(trim((string) ($row['user_account_currency'] ?? '')));
 
-        return preg_match('/^[A-Z]{3}$/', $currency) === 1 ? $currency : 'USD';
+        // The rule lives on UsersController, which owns preferences: the
+        // ledger and every page that prints an amount must resolve an
+        // unreadable currency the same way, and this held its own copy of
+        // the regex and the fallback until they were one edit apart.
+        return \Api\V3\Controllers\UsersController::normalizeCurrency(
+            $row['user_account_currency'] ?? null
+        );
     }
 
     /**

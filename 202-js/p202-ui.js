@@ -11,6 +11,13 @@
  *   [data-p202-reveal="#id"]      swaps a masked value for the real one held in
  *                                 the target's data-p202-value attribute
  *   form[data-p202-confirm="…"]   asks before submitting
+ *   select[data-p202-range="…"]   a report's range picker; the value names the
+ *                                 option that means "custom"
+ *   [data-p202-range-field="n"]   a date input that range picker governs; the
+ *                                 value is the form field name it submits
+ *                                 under while the picker reads "custom"
+ *   [data-p202-range-hint]        a line shown only when those inputs are
+ *                                 disabled, i.e. only without this script
  *   [data-bs-toggle="tooltip"]    Bootstrap tooltips and popovers, initialised
  *   [data-bs-toggle="popover"]    here so pages never have to
  *   details[data-p202-remember]   keeps a disclosure's open state per browser
@@ -95,6 +102,82 @@
         }
     });
 
+    /* A report's range picker and the two date inputs it governs.
+       The dates are submitted only while the picker reads its custom value,
+       so the server has one unambiguous answer to "which window is this":
+       without that, choosing a preset while the inputs still held the old
+       window would silently keep the old window. A browser with JavaScript
+       off gets the same answer, because the page renders the inputs disabled
+       whenever the picker is not on custom.
+
+       With JavaScript the inputs stay EDITABLE and are withheld from the
+       request by dropping their `name` instead. A disabled input — and a
+       readonly one — cannot be typed in, so "editing a date selects custom"
+       could never once have fired: the first version of this shipped that
+       branch unreachable, and the browser test that appeared to cover it
+       had re-enabled the field itself before dispatching a synthetic event.
+       Nothing is submitted either way; the difference is that a person can
+       now pick a date without visiting the picker first, which is what the
+       hint beside them says when they cannot. */
+    function rangeFields(select) {
+        var form = select.form || (select.closest ? select.closest('form') : null);
+        return form ? form.querySelectorAll('[data-p202-range-field]') : [];
+    }
+
+    function syncRange(select) {
+        var live = select.value === select.getAttribute('data-p202-range');
+        Array.prototype.forEach.call(rangeFields(select), function (field) {
+            /* The name is what a form submits, so removing it is what keeps
+               a preset's window out of the request. The field itself stays
+               editable — that is the whole point. */
+            field.disabled = false;
+            field.readOnly = false;
+            if (live) {
+                field.setAttribute('name', field.getAttribute('data-p202-range-field') || field.id);
+            } else {
+                field.removeAttribute('name');
+            }
+        });
+        /* The server-rendered hint tells a reader with no JavaScript to use
+           the picker, because without it the fields really are disabled.
+           Here they are not, so the hint would be false. */
+        var form = select.form || (select.closest ? select.closest('form') : null);
+        var hint = form ? form.querySelector('[data-p202-range-hint]') : null;
+        if (hint) {
+            hint.hidden = true;
+        }
+    }
+
+    document.addEventListener('change', function (event) {
+        var target = event.target;
+        if (!target || !target.hasAttribute) {
+            return;
+        }
+        if (target.hasAttribute('data-p202-range')) {
+            syncRange(target);
+            return;
+        }
+        if (!target.hasAttribute('data-p202-range-field')) {
+            return;
+        }
+        var form = target.form || (target.closest ? target.closest('form') : null);
+        var select = form ? form.querySelector('[data-p202-range]') : null;
+        if (!select) {
+            return;
+        }
+        /* Only if the picker really has that option: assigning a value a
+           <select> does not carry blanks it, which would send no range at
+           all. */
+        var custom = select.getAttribute('data-p202-range');
+        var previous = select.value;
+        select.value = custom;
+        if (select.value !== custom) {
+            select.value = previous;
+            return;
+        }
+        syncRange(select);
+    });
+
     document.addEventListener('submit', function (event) {
         var form = event.target;
         if (!form || !form.getAttribute || !form.hasAttribute('data-p202-confirm')) {
@@ -164,6 +247,9 @@
     function init(root) {
         restoreDisclosures(root);
         initBootstrapHints(root);
+        Array.prototype.forEach.call((root || document).querySelectorAll('[data-p202-range]'), function (select) {
+            syncRange(select);
+        });
     }
 
     if (document.readyState === 'loading') {

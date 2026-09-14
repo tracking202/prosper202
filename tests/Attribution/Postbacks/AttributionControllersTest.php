@@ -7,6 +7,7 @@ namespace Tests\Attribution\Postbacks;
 use Api\V3\Controllers\AttributionAppsController;
 use Api\V3\Controllers\AttributionConversionValuesController;
 use Api\V3\Controllers\AttributionPostbacksController;
+use Api\V3\Attribution\AdAttributionKitProtocol;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ValidationException;
@@ -340,6 +341,51 @@ final class AttributionControllersTest extends TestCase
         $this->assertNotEmpty($this->capturedStatements('DELETE'));
     }
 
+    public function testTheStoredPlatformIsCanonicalWhateverCaseWasSent(): void
+    {
+        // The guard compares case-insensitively, so 'iOS' is accepted. If the
+        // write path then stored 'iOS' verbatim, the row would not match a
+        // later `WHERE platform = 'ios'` — the value a report or a filter is
+        // written against. Reading the bound value rather than mocking the
+        // normaliser is the point: this fails if create() stops calling it.
+        $db = $this->capturingDb();
+        try {
+            (new AttributionAppsController($db, 1))->create([
+                'app_id' => 525463029,
+                'app_name' => 'Case Test',
+                'platform' => '  iOS  ',
+            ]);
+        } catch (\Throwable) {
+            // The double cannot expose insert_id, so create() fails after the
+            // INSERT. The statement it sent was still captured.
+        }
+
+        $inserts = array_values(array_filter(
+            $this->capturedStatements('INSERT'),
+            static fn(array $s): bool => str_contains($s['sql'], '202_attribution_apps')
+        ));
+        $this->assertCount(1, $inserts, 'the registration INSERT was captured');
+        $this->assertStringContainsString('platform', $inserts[0]['sql'], 'platform is written');
+        $this->assertContains('ios', $inserts[0]['values'], 'the canonical spelling is what is bound');
+        $this->assertNotContains('  iOS  ', $inserts[0]['values'], 'the raw spelling is not');
+    }
+
+    public function testAnUnsupportedPlatformIsRefusedBeforeAnyStatement(): void
+    {
+        $db = $this->capturingDb();
+        try {
+            (new AttributionAppsController($db, 1))->create([
+                'app_id' => 525463029,
+                'app_name' => 'Android Test',
+                'platform' => 'android',
+            ]);
+            $this->fail('android was accepted');
+        } catch (ValidationException $e) {
+            $this->assertStringContainsString('Android', $e->getFieldErrors()['platform'] ?? '');
+        }
+        $this->assertSame([], $this->captured, 'the refusal must land before anything is prepared');
+    }
+
     public function testARotationWhoseReadBackFailsReportsTheWriteAsCommitted(): void
     {
         // POST /attribution/apps/{id}/schema-token/rotate is stageable, and
@@ -576,7 +622,11 @@ final class AttributionControllersTest extends TestCase
             $this->capturedStatements('SELECT'),
             static fn(array $s): bool => str_contains($s['sql'], 'COUNT(DISTINCT') || str_contains($s['sql'], 'MIN(postback_id)')
         ));
-        $this->assertCount(2, $usingIdentity, 'the aggregate and the first-copy decode subquery both key on the identity');
+        $this->assertCount(
+            3,
+            $usingIdentity,
+            'the grouped aggregate, the ungrouped totals beside it and the first-copy decode subquery all key on the identity'
+        );
         foreach ($usingIdentity as $statement) {
             foreach (['protocol', 'ad_network_id', 'transaction_id'] as $field) {
                 $this->assertStringContainsString(
@@ -604,11 +654,12 @@ final class AttributionControllersTest extends TestCase
         $db = $this->capturingDb();
         $report = (new AttributionPostbacksController($db, 1))->report([]);
 
-        $aggregates = array_values(array_filter(
-            $this->capturedStatements('SELECT'),
-            static fn(array $s): bool => str_contains($s['sql'], 'AS postbacks')
-        ));
+        // GROUP BY, not just 'AS postbacks': the ungrouped totals query
+        // selects the same metric columns, and counting it here would hide
+        // whichever grouped query stopped being issued.
+        $aggregates = $this->groupedAggregates();
         $this->assertCount(2, $aggregates, 'a short page cannot stand as the answer');
+        $this->assertCount(1, $this->ungroupedTotals(), 'the totals are read once, whichever attempt wins');
         // user_id, the bounded time_from, the LIMIT.
         $this->assertStringContainsString('received_at >= ?', $aggregates[0]['sql']);
         $this->assertSame('iii', $aggregates[0]['types']);
@@ -641,11 +692,22 @@ final class AttributionControllersTest extends TestCase
         ]]);
         $report = (new AttributionPostbacksController($db, 1))->report(['limit' => 2]);
 
-        $aggregates = array_values(array_filter(
-            $this->capturedStatements('SELECT'),
-            static fn(array $s): bool => str_contains($s['sql'], 'AS postbacks')
-        ));
+        $aggregates = $this->groupedAggregates();
         $this->assertCount(1, $aggregates, 'a full page is provably the whole answer; the second query is skipped');
+
+        // The bound is an optimisation for choosing WHICH days to return. The
+        // totals are the whole window by definition, so they must not inherit
+        // it — an established install whose newest limit + 1 days are busy
+        // would otherwise be told its lifetime totals were those few days.
+        $totals = $this->ungroupedTotals();
+        $this->assertCount(1, $totals, 'the totals are read once either way');
+        $this->assertStringContainsString('received_at >= ?', $aggregates[0]['sql'], 'the GROUPED query is bounded');
+        $this->assertStringNotContainsString(
+            'received_at >= ?',
+            $totals[0]['sql'],
+            'the totals query must not carry the window the group query bounded itself with'
+        );
+        $this->assertSame('i', $totals[0]['types'], 'user_id only: no synthetic time_from');
         $this->assertTrue($report['meta']['groups_truncated']);
         $this->assertCount(2, $report['data']['groups']);
     }
@@ -772,5 +834,248 @@ final class AttributionControllersTest extends TestCase
         } catch (ValidationException $e) {
             $this->assertArrayHasKey('jws-string', $e->getFieldErrors());
         }
+    }
+
+    // ─── The report's metric list ────────────────────────────────────
+
+    /**
+     * The grouped query, the ungrouped totals beside it and the row readers
+     * were four copies of the same nine COUNT(DISTINCT ...) columns. They are
+     * one list now; this is the floor under that, because the failure mode of
+     * a fifth copy drifting is silent — both queries still succeed and return
+     * rows, and only the numbers disagree.
+     */
+    public function testEveryMetricTheReportSelectsIsOneTheReadersLookFor(): void
+    {
+        $columns = $this->metricColumns();
+
+        $this->assertSame(
+            array_keys($columns),
+            AttributionPostbacksController::metricKeys(),
+            'metricKeys() must name exactly the aliases metricColumns() selects, in order'
+        );
+
+        foreach ($columns as $alias => $expression) {
+            // Every metric counts distinct identities, so a postback stored
+            // twice cannot inflate one. `postbacks` counts them all; the rest
+            // narrow with a CASE.
+            $this->assertStringStartsWith('COUNT(DISTINCT', $expression, "metric $alias must de-duplicate");
+            if ($alias !== 'postbacks') {
+                $this->assertStringContainsString('CASE WHEN', $expression, "metric $alias should be conditional");
+            }
+        }
+    }
+
+    /**
+     * The report breaks conversion_type out into its own metrics. The stored
+     * vocabulary lives in AdAttributionKitProtocol; a type added there and not
+     * here still lands in `postbacks` but silently gets no column of its own,
+     * so the page would under-report a whole class of conversion without any
+     * query failing.
+     */
+    public function testEveryStoredConversionTypeGetsItsOwnMetric(): void
+    {
+        $this->assertSame(
+            AdAttributionKitProtocol::CONVERSION_TYPES,
+            array_keys($this->conversionMetrics()),
+            'CONVERSION_METRICS must cover exactly the stored conversion_type vocabulary'
+        );
+
+        $columns = $this->metricColumns();
+        foreach ($this->conversionMetrics() as $conversionType => $alias) {
+            $this->assertArrayHasKey($alias, $columns, "no column for conversion type $conversionType");
+            $this->assertStringContainsString(
+                "conversion_type = '$conversionType'",
+                $columns[$alias],
+                "column $alias must count $conversionType rows"
+            );
+        }
+    }
+
+    /**
+     * The report's grouped aggregate queries. The ungrouped totals select the
+     * same metric columns, so 'AS postbacks' alone no longer tells the two
+     * apart; GROUP BY does.
+     *
+     * @return list<array{sql: string, types: string}>
+     */
+    private function groupedAggregates(): array
+    {
+        return array_values(array_filter(
+            $this->capturedStatements('SELECT'),
+            static fn(array $s): bool => str_contains($s['sql'], 'AS postbacks')
+                && str_contains($s['sql'], 'GROUP BY')
+        ));
+    }
+
+    /**
+     * Its ungrouped counterpart: the same metrics over the whole window.
+     *
+     * @return list<array{sql: string, types: string}>
+     */
+    private function ungroupedTotals(): array
+    {
+        return array_values(array_filter(
+            $this->capturedStatements('SELECT'),
+            static fn(array $s): bool => str_contains($s['sql'], 'AS postbacks')
+                && !str_contains($s['sql'], 'GROUP BY')
+        ));
+    }
+
+    /**
+     * app_ids narrows to a SET of apps, which app_id alone cannot do.
+     *
+     * The Setup page's development nudges need one grouped read restricted
+     * to the apps it is asking about. Without this filter the only lever was
+     * the group LIMIT, and groups come back busiest first, so apps the caller
+     * did not ask about took the slots and the answer it wanted was cut.
+     */
+    public function testAppIdsFiltersToTheNamedAppsInEveryQuery(): void
+    {
+        $db = $this->capturingDb();
+        (new AttributionPostbacksController($db, 1))->report([
+            'group_by' => 'app',
+            'app_ids' => [990077001, 525463029],
+        ]);
+
+        $issued = [
+            'grouped' => $this->groupedAggregates(),
+            'totals' => $this->ungroupedTotals(),
+        ];
+        foreach ($issued as $which => $queries) {
+            $this->assertNotSame([], $queries, "$which query was not issued");
+            $this->assertStringContainsString('app_id IN (?, ?)', $queries[0]['sql'], $which);
+        }
+        // user_id, two app ids, then the grouped query's own LIMIT bind.
+        $this->assertSame('iiii', $this->groupedAggregates()[0]['types']);
+        $this->assertSame('iii', $this->ungroupedTotals()[0]['types']);
+    }
+
+    public function testAppIdsAcceptsACommaStringAndTrimsIt(): void
+    {
+        $db = $this->capturingDb();
+        (new AttributionPostbacksController($db, 1))->report([
+            'group_by' => 'app',
+            'app_ids' => ' 990077001 , 525463029 ',
+        ]);
+
+        $this->assertStringContainsString('app_id IN (?, ?)', $this->groupedAggregates()[0]['sql']);
+        $this->assertSame('iiii', $this->groupedAggregates()[0]['types']);
+    }
+
+    public function testAppIdsCollapsesDuplicatesRatherThanRepeatingAPlaceholder(): void
+    {
+        $db = $this->capturingDb();
+        (new AttributionPostbacksController($db, 1))->report([
+            'group_by' => 'app',
+            'app_ids' => [990077001, 990077001, 525463029],
+        ]);
+
+        $this->assertStringContainsString('app_id IN (?, ?)', $this->groupedAggregates()[0]['sql']);
+    }
+
+    public function testAnAbsentAppIdsFilterAddsNothing(): void
+    {
+        foreach ([[], '', null] as $absent) {
+            $db = $this->capturingDb();
+            (new AttributionPostbacksController($db, 1))->report(['group_by' => 'app', 'app_ids' => $absent]);
+            $this->assertStringNotContainsString(
+                'app_id IN',
+                $this->groupedAggregates()[0]['sql'],
+                'an empty app_ids must not narrow anything: ' . var_export($absent, true)
+            );
+        }
+    }
+
+    /**
+     * @dataProvider refusedAppIds
+     * @param mixed $ids
+     */
+    public function testAppIdsRefusesWhatItCannotBindFaithfully(mixed $ids, string $because): void
+    {
+        $db = $this->capturingDb();
+        try {
+            (new AttributionPostbacksController($db, 1))->report(['group_by' => 'app', 'app_ids' => $ids]);
+            $this->fail("app_ids accepted $because");
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('app_ids', $e->getFieldErrors(), $because);
+        }
+        $this->assertSame([], $this->groupedAggregates(), "the query ran anyway for $because");
+    }
+
+    /** @return array<string, array{0: mixed, 1: string}> */
+    public static function refusedAppIds(): array
+    {
+        return [
+            // The saturating case app_id itself refuses: the int cast MOVES
+            // this to PHP_INT_MAX, so an accepted filter would silently be
+            // about a different app than the caller named.
+            'a value the int cast moves' => [['99999999999999999999'], 'a saturating id'],
+            'a float string' => [['1.5'], 'a non-integer id'],
+            'a word' => [['nine'], 'a word'],
+            // '1,,2' is three elements, the middle one empty. Dropping it
+            // silently would widen the filter the caller asked for.
+            'an empty element in a comma string' => ['990077001,,525463029', 'a blank element'],
+            'a trailing comma' => ['990077001,', 'a trailing comma'],
+            'a nested array' => [[[990077001]], 'a nested array'],
+            'an object where a list belongs' => [new \stdClass(), 'an object'],
+            'more ids than any page lists' => [range(1, 501), '501 ids'],
+        ];
+    }
+
+    /**
+     * app_id and app_ids are ANDed, which is what the guide promises.
+     *
+     * Stated in documentation/api/19-attribution-postbacks.md, so it is
+     * executed here rather than asserted in prose: both clauses go into the
+     * same WHERE, so the two must agree for a row to match.
+     */
+    public function testAppIdAndAppIdsBothApply(): void
+    {
+        $db = $this->capturingDb();
+        (new AttributionPostbacksController($db, 1))->report([
+            'group_by' => 'app',
+            'app_id' => 990077001,
+            'app_ids' => [990077001, 525463029],
+        ]);
+
+        $sql = $this->groupedAggregates()[0]['sql'];
+        $this->assertStringContainsString('app_id = ?', $sql);
+        $this->assertStringContainsString('app_id IN (?, ?)', $sql);
+        // user_id, the single app_id, two list ids, the LIMIT.
+        $this->assertSame('iiiii', $this->groupedAggregates()[0]['types']);
+    }
+
+    public function testAppIdsAcceptsExactlyTheCeiling(): void
+    {
+        $db = $this->capturingDb();
+        (new AttributionPostbacksController($db, 1))->report([
+            'group_by' => 'app',
+            'app_ids' => range(1, 500),
+        ]);
+
+        $this->assertStringContainsString(
+            'app_id IN (' . implode(', ', array_fill(0, 500, '?')) . ')',
+            $this->groupedAggregates()[0]['sql']
+        );
+        // user_id + 500 ids + the LIMIT bind, and one type letter each.
+        $this->assertSame(502, strlen($this->groupedAggregates()[0]['types']));
+    }
+
+    /** @return array<string, string> */
+    private function metricColumns(): array
+    {
+        $method = new \ReflectionMethod(AttributionPostbacksController::class, 'metricColumns');
+        $method->setAccessible(true);
+
+        return $method->invoke(null, 'signature_valid = 1', 'ident', 'won', 'first', 'development');
+    }
+
+    /** @return array<string, string> */
+    private function conversionMetrics(): array
+    {
+        $constant = new \ReflectionClassConstant(AttributionPostbacksController::class, 'CONVERSION_METRICS');
+
+        return $constant->getValue();
     }
 }
