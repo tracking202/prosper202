@@ -258,13 +258,14 @@ final class AttributionUpgradeStepTest extends TestCase
      * run — planted as the stronger `|| true` on the real reconcile gate, the
      * whole suite stayed green.
      *
-     * The condition must therefore BE the version equalities: parentheses and
-     * the boolean connectives around them are fine (`||` over two equalities
-     * is the ladder's own compound gate; `&&` only narrows), and any other
-     * operand is a path in that no version equality accounts for. A negation
-     * or a cast lands here too, which is the safe direction: this fails
-     * naming the tokens rather than calling a condition it cannot reason
-     * about a gate.
+     * The condition must therefore BE the version equalities: `||` between
+     * them is the ladder's own compound gate, parentheses are free, and
+     * nothing else. Not `&&` — a conjunct keeps other versions out and can
+     * keep this one out too, which strands every install at the version the
+     * rung was written to move. Not a cast — `(bool) $prosper202_version ==
+     * '1.9.75'` coerces both sides and admits every non-empty version. Not a
+     * negation. Each of those fails naming the condition rather than being
+     * reasoned about.
      */
     public function testEveryVersionGateAdmitsOnlyTheStoredVersion(): void
     {
@@ -1004,18 +1005,23 @@ final class AttributionUpgradeStepTest extends TestCase
      * Does every path into a block with this condition go through one of the
      * version equalities the condition names?
      *
-     * Asked of the condition's boolean structure rather than its tokens,
-     * because the two connectives are not symmetric and a flat token
-     * whitelist cannot tell them apart: under `||` EVERY alternative has to
-     * gate, under `&&` ONE conjunct is enough and the rest only narrow. A
-     * whitelist that allowed both would pass `== '1.9.75' || $force`; one
-     * that allowed neither would fail the entirely correct
-     * `== '1.9.75' && !$skip`.
+     * A rung's gate has to admit the versions it names and no others, and
+     * BOTH halves of that are load-bearing. An earlier draft of this checked
+     * only the first: it allowed `&&` on the reasoning that a conjunct can
+     * only narrow, which is true and beside the point —
+     * `$prosper202_version == '1.9.75' && $enabled` keeps other versions out
+     * and keeps 1.9.75 out too whenever the flag is false, so the install
+     * sits at 1.9.75 forever and the rung never converges it. There is no
+     * conjunct this scan can prove always true, so there is no `&&` in a
+     * gate: a condition is a disjunction of version equalities, or it is not
+     * a gate.
      *
-     * A bare term gates only if it IS one version equality — nothing else
-     * left over but parentheses and casts, neither of which can create a path
-     * in. So `!($prosper202_version == '1.9.75')` does not gate, which is
-     * right: it runs at every version but that one.
+     * A bare term gates only if it IS one version equality, with nothing left
+     * over but parentheses. Casts were briefly allowed here as
+     * "value-preserving"; `(bool) $prosper202_version == '1.9.75'` coerces
+     * both sides and admits every non-empty stored version, measured. A
+     * negation is refused for the same reason as a conjunct:
+     * `!($prosper202_version == '1.9.75')` runs at every version but that one.
      *
      * @param list<int> $inside significant token indices of the condition
      */
@@ -1037,17 +1043,6 @@ final class AttributionUpgradeStepTest extends TestCase
             return true;
         }
 
-        $conjuncts = $this->splitTopLevel($tokens, $inside, [T_BOOLEAN_AND, T_LOGICAL_AND]);
-        if (count($conjuncts) > 1) {
-            foreach ($conjuncts as $conjunct) {
-                if ($this->conditionGatesOnVersion($tokens, $conjunct)) {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
         $last = $inside[count($inside) - 1];
         if ($tokens[$inside[0]]['text'] === '(' && $this->matchingParen($tokens, $inside[0]) === $last) {
             return $this->conditionGatesOnVersion($tokens, array_slice($inside, 1, count($inside) - 2));
@@ -1058,15 +1053,8 @@ final class AttributionUpgradeStepTest extends TestCase
             return false;
         }
 
-        $casts = [
-            T_INT_CAST, T_DOUBLE_CAST, T_STRING_CAST,
-            T_ARRAY_CAST, T_OBJECT_CAST, T_BOOL_CAST, T_UNSET_CAST,
-        ];
         foreach ($inside as $i) {
-            if (isset($consumed[$i]) || in_array($tokens[$i]['id'], $casts, true)) {
-                continue;
-            }
-            if ($tokens[$i]['text'] === '(' || $tokens[$i]['text'] === ')') {
+            if (isset($consumed[$i]) || $tokens[$i]['text'] === '(' || $tokens[$i]['text'] === ')') {
                 continue;
             }
 

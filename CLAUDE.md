@@ -309,16 +309,26 @@ other version too. Planted as the stronger `|| true` on the real reconcile
 gate, twelve structural checks stayed green — including the one whose entire
 subject is "every reconcile call sits inside a version gate".
 
-The fix is not a longer token whitelist, because the two connectives are not
-symmetric and a flat scan cannot tell them apart: under `||` **every**
-alternative must gate, under `&&` **one** conjunct is enough and the rest only
-narrow. A whitelist permissive enough for the correct `== 'x' && !$skip` also
-passes the bypass `== 'x' || $force`; one strict enough to reject the bypass
-rejects the correct form. The check has to walk the boolean structure — split
-at top-level `||` and require all, split at top-level `&&` and require any,
-strip parentheses, and a bare term must *be* the comparison with nothing left
-over. Forty lines, and then neither false positives nor holes, where the
-whitelist had one or the other by construction.
+The first fix walked the condition's boolean structure and allowed `&&`,
+reasoning that a conjunct can only narrow. True, and beside the point: the
+same reviewer then planted `== '1.9.75' && $enabled` and showed that a gate
+carries **two** obligations — admit the versions it names, and admit no others
+— and that narrowing breaks the first. A false flag keeps 1.9.75 installs out
+of the 1.9.75 rung, so they sit at 1.9.75 forever and nothing ever converges
+them. One direction of the invariant had been checked and called done. No
+token scan can prove a conjunct always true, so the answer was subtraction: a
+gate is a disjunction of version equalities, or it is not a gate.
+
+The same round killed a cast allowance justified in a comment as
+"value-preserving". Executed, `(bool) $prosper202_version == '1.9.75'` is true
+for every non-empty stored version and `(int) … == 1` matches every 1.x —
+"value-preserving" was a claim about seven cast operators, none of which had
+been run.
+
+The shape to carry away: when an invariant reads *only X* **and** *all X*, a
+check enforcing one of those halves looks exactly like a check enforcing both.
+Write both halves down before writing the check, and ask of every relaxation
+which half it relaxes.
 
 The general shape is not confined to conditions: whenever one check extracts a
 value from an expression and another treats that value as a constraint, ask
