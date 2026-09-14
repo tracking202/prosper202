@@ -13,22 +13,113 @@ use Prosper202\Database\Tables\AttributionPostbackTables;
 use Tests\TestCase;
 
 /**
- * The SKAN tables ship in version 1.9.76. An install sitting at 1.9.75
- * (master's version) reaches them only through a normal version-gated
- * upgrade step, so the bump must be internally consistent: version.php's
- * constant, an upgrade block that creates the tables and persists that
- * constant, and the downgrade guard all have to agree. F1 was exactly this
- * going wrong — a version whose schema no upgrade step created — and CI
- * never catches it because CI always installs fresh. This pins it textually.
+ * The ladder, version.php's constant and the downgrade guard must agree. CI
+ * never catches a disagreement because CI always installs fresh, so this
+ * pins them textually.
+ *
+ * Two shapes have been written. F1: a version whose schema no step created.
+ * Its mirror image: a block gated on 1.9.76 while the code was 1.9.76, so
+ * upgrade_needed() (`stored != code`) meant upgrade.php never ran it for the
+ * installs it existed to serve.
  */
 final class AttributionUpgradeStepTest extends TestCase
 {
     private const CURRENT_VERSION = '1.9.76';
     private const PRIOR_VERSION = '1.9.75';
 
+    /** The reconcile call a step must make; also how a step is recognised. */
+    private const RECONCILE_CALL = '_upgrade_attribution_tables(';
+
+    /**
+     * A statement writing a version into 202_version, with the version captured.
+     *
+     * Tolerant of what SQL allows around the same statement, because
+     * `UPDATE 202_version SET version='…'` is this file's convention, not a
+     * rule. The exact-text pattern it replaces already missed one write the
+     * ladder has always contained — `INSERT INTO 202_version SET
+     * version='1.0.3'`, the row's first insertion — so a reformatted rung
+     * would have dropped out of the ordering in silence.
+     * testEveryVersionWriteIsInASpellingTheScanCanRead refuses a spelling
+     * this cannot read rather than ignoring it.
+     */
+    private const PERSIST_PATTERN =
+        '/\\b(?:UPDATE|INSERT\\s+INTO)\\s+`?202_version`?\\s+SET\\s+`?version`?\\s*=\\s*\'([^\']*)\'/i';
+
+    /** @var list<array{id: int|null, text: string}>|null */
+    private ?array $tokenCache = null;
+
+    /**
+     * @var list<array{gates: list<string>, gatesOnly: bool, condition: string,
+     *     persists: list<string>, reconciles: bool, block: string, from: int, to: int}>|null
+     */
+    private ?array $stepCache = null;
+
     private function upgradeSource(): string
     {
         return (string)file_get_contents(dirname(__DIR__, 3) . '/202-config/functions-upgrade.php');
+    }
+
+    /**
+     * The ladder with its comments removed.
+     *
+     * Every scan below keys on tokens the blocks also mention in prose, so
+     * scanning the raw file matched comments: a planted
+     * `_upgrade_attribution_tables([])` left this suite green because the
+     * sentence above it still named getDefinitions(). String literals
+     * survive the strip, so the UPDATE 202_version scan still works.
+     */
+    private function upgradeCode(): string
+    {
+        return implode('', array_column($this->upgradeTokens(), 'text'));
+    }
+
+    /**
+     * The same, as tokens, so blocks can be bounded by brace depth.
+     *
+     * @return list<array{id: int|null, text: string}>
+     */
+    private function upgradeTokens(): array
+    {
+        if ($this->tokenCache !== null) {
+            return $this->tokenCache;
+        }
+
+        $tokens = token_get_all('<?php ' . $this->upgradeSource());
+        $this->assertGreaterThan(100, count($tokens), 'the ladder could not be tokenized');
+
+        $out = [];
+        foreach ($tokens as $token) {
+            if (is_array($token)) {
+                if ($token[0] === T_COMMENT || $token[0] === T_DOC_COMMENT) {
+                    // Keep the newlines it spanned so failure messages still
+                    // read as lines.
+                    $out[] = ['id' => T_WHITESPACE, 'text' => str_repeat("\n", substr_count($token[1], "\n"))];
+                    continue;
+                }
+                $out[] = ['id' => $token[0], 'text' => $token[1]];
+                continue;
+            }
+            $out[] = ['id' => null, 'text' => $token];
+        }
+
+        return $this->tokenCache = $out;
+    }
+
+    /**
+     * The indices of every token that is not whitespace, in source order.
+     *
+     * @return list<int>
+     */
+    private function significantTokens(array $tokens): array
+    {
+        $significant = [];
+        foreach ($tokens as $i => $token) {
+            if ($token['id'] !== T_WHITESPACE) {
+                $significant[] = $i;
+            }
+        }
+
+        return $significant;
     }
 
     public function testVersionConstantIsTheBumpedVersion(): void
@@ -39,24 +130,14 @@ final class AttributionUpgradeStepTest extends TestCase
 
     public function testAnUpgradeStepGatedOnThePriorVersionCreatesTheAttributionPostbackTables(): void
     {
-        $source = $this->upgradeSource();
-
-        $gate = strpos($source, "if (\$prosper202_version == '" . self::PRIOR_VERSION . "')");
-        $this->assertNotFalse($gate, 'there must be an upgrade block gated on ' . self::PRIOR_VERSION);
+        // Brace-bounded, not "up to the next gate": the 1.9.75 step is now
+        // the ladder's last, so a strpos window found no next gate and ran to
+        // the end of the file, swallowing the downgrade guard.
+        $block = $this->blockGatedOn(self::PRIOR_VERSION);
 
         // The block's DDL must come from the installer definitions (never a
         // hand-copied CREATE that can drift), and it must persist the bumped
         // version so a 1.9.75 install converges to 1.9.76.
-        // Bounded by the NEXT version gate rather than a byte count: a
-        // fixed window silently slides off the end as the block grows (a
-        // false failure) or, once a 1.9.76 block is appended, spills into
-        // it and matches ITS version UPDATE — passing while this block no
-        // longer persists a version at all, the exact defect this test
-        // exists to catch.
-        $nextGate = strpos($source, "if (\$prosper202_version == '", $gate + 1);
-        $block = $nextGate === false
-            ? substr($source, $gate)
-            : substr($source, $gate, $nextGate - $gate);
         $this->assertStringContainsString('AttributionPostbackTables::getDefinitions()', $block);
         $this->assertStringContainsString("version='" . self::CURRENT_VERSION . "'", $block);
     }
@@ -68,53 +149,1237 @@ final class AttributionUpgradeStepTest extends TestCase
         // to contain nothing else. An install carrying an earlier shape of
         // these tables therefore came out of the upgrade still missing
         // columns the running code selects.
-        $source = $this->upgradeSource();
-
-        $gate = strpos($source, "if (\$prosper202_version == '" . self::PRIOR_VERSION . "')");
-        $this->assertNotFalse($gate);
-        $nextGate = strpos($source, "if (\$prosper202_version == '", $gate + 1);
-        $block = $nextGate === false
-            ? substr($source, $gate)
-            : substr($source, $gate, $nextGate - $gate);
-
-        $this->assertStringContainsString('_upgrade_attribution_tables(', $block);
-        $this->assertStringContainsString('SchemaReconciler', $source);
+        $this->assertStringContainsString(
+            self::RECONCILE_CALL,
+            $this->blockGatedOn(self::PRIOR_VERSION)
+        );
+        $this->assertStringContainsString('SchemaReconciler', $this->upgradeCode());
     }
 
-    public function testAnUpgradeStepConvergesInstallsAlreadyAtTheCurrentVersion(): void
+    /**
+     * Every step that reconciles the attribution tables advances the version.
+     *
+     * Derived, not listed: a listed pair goes stale in silence once the
+     * version moves twice. Asserting the derived pair would be circular, so
+     * these are the properties a reconciling step must have whatever its
+     * numbers.
+     */
+    public function testEveryAttributionStepUsesTheSharedDefinitionsAndAdvancesTheVersion(): void
     {
-        // The 1.9.76 attribution tables were reshaped in place before
-        // release, so an install can read 1.9.76 and still hold a table
-        // shape the running code cannot query. That install never enters the
-        // 1.9.75 gate, so a step gated on the CURRENT version has to converge
-        // it. Bounded by the downgrade guard that closes the ladder.
-        //
-        // 202-config/upgrade.php cannot reach this block — upgrade_needed()
-        // is false when the stored and code versions match, and the page
-        // _die()s "Already Upgraded" first. The 1-click upgrade pages can:
-        // 202-account/auto-upgrade.php:204 and auto-upgrade-premium.php:147
-        // call UPGRADE::upgrade_databases() with no upgrade_needed() gate,
-        // and the include_once of the already-loaded functions-upgrade.php
-        // is a no-op, so THIS release's ladder runs against a stored 1.9.76.
-        // Executed against a scratch database, not inferred.
-        $source = $this->upgradeSource();
+        foreach ($this->attributionSteps() as $step) {
+            $gate = implode('/', $step['gates']);
 
-        $gate = strpos($source, "if (\$prosper202_version == '" . self::CURRENT_VERSION . "')");
-        $this->assertNotFalse(
-            $gate,
-            'there must be an upgrade block gated on ' . self::CURRENT_VERSION . ' that converges the reshaped tables'
+            $this->assertStringContainsString(
+                'AttributionPostbackTables::getDefinitions()',
+                $step['block'],
+                "the step gated on $gate must reconcile from the installer's definitions, not a copied CREATE"
+            );
+            $this->assertNotSame(
+                [],
+                $step['persists'],
+                "the step gated on $gate reconciles the attribution tables but persists no version, so it"
+                . ' either never advances or is an ungated block in disguise'
+            );
+
+            foreach ($step['persists'] as $to) {
+                foreach ($step['gates'] as $from) {
+                    $this->assertTrue(
+                        version_compare($to, $from, '>'),
+                        "the step gated on $gate persists $to, which does not move $from forward"
+                    );
+                }
+                $this->assertTrue(
+                    version_compare($to, self::CURRENT_VERSION, '<='),
+                    "the step gated on $gate persists $to, a version this release does not know;"
+                    . ' the install would be stranded above the ladder and the downgrade guard would'
+                    . ' pull it back down on the next run'
+                );
+            }
+        }
+    }
+
+    /**
+     * Every reconcile call sits inside a version gate.
+     *
+     * Brace-bounding stops an escaped call being credited to the gate above
+     * it, but a call added BESIDE a still-correct gated one would otherwise
+     * go unseen: it runs for every stored version, which is the ungated shape
+     * this file exists to refuse.
+     */
+    public function testEveryReconcileCallIsInsideAVersionGate(): void
+    {
+        $tokens = $this->upgradeTokens();
+        $steps = $this->ladderSteps();
+        $name = rtrim(self::RECONCILE_CALL, '(');
+
+        $calls = 0;
+        $ungated = [];
+        foreach ($tokens as $i => $token) {
+            if (!$this->namesFunction($token, $name)) {
+                continue;
+            }
+            // The function's own declaration is not a call.
+            for ($j = $i - 1; $j >= 0 && $tokens[$j]['id'] === T_WHITESPACE; $j--);
+            if ($j >= 0 && $tokens[$j]['id'] === T_FUNCTION) {
+                continue;
+            }
+
+            $calls++;
+            foreach ($steps as $step) {
+                // gatesOnly, not merely enclosing: a condition that names a
+                // version but admits another path
+                // (`$prosper202_version == '1.9.75' || $force`) encloses the
+                // call while letting it run at every other stored version,
+                // which is the ungated shape this test exists to refuse.
+                if ($step['gatesOnly'] && $i >= $step['from'] && $i <= $step['to']) {
+                    continue 2;
+                }
+            }
+            $ungated[] = $i;
+        }
+
+        $this->assertGreaterThan(0, $calls, 'no reconcile call found; this test reads them by name');
+        $this->assertSame(
+            [],
+            $ungated,
+            $name . '() is called outside every version gate, so it reconciles on every upgrade run'
+            . ' whatever version the install is stored at'
+        );
+    }
+
+    /**
+     * A version gate admits the stored versions it names, and nothing else.
+     *
+     * `versionsComparedIn()` reports the versions a condition compares
+     * against, which is not the same question as whether the condition is
+     * those comparisons. `if ($prosper202_version == '1.9.75' || $force)`
+     * answers 1.9.75 to the first question and runs at every version, so a
+     * step was read as gated on 1.9.75 while reconciling on every upgrade
+     * run — planted as the stronger `|| true` on the real reconcile gate, the
+     * whole suite stayed green.
+     *
+     * The condition must therefore BE the version equalities: `||` between
+     * them is the ladder's own compound gate, parentheses are free, and
+     * nothing else. Not `&&` — a conjunct keeps other versions out and can
+     * keep this one out too, which strands every install at the version the
+     * rung was written to move. Not a cast — `(bool) $prosper202_version ==
+     * '1.9.75'` coerces both sides and admits every non-empty version. Not a
+     * negation. Each of those fails naming the condition rather than being
+     * reasoned about.
+     */
+    public function testEveryVersionGateAdmitsOnlyTheStoredVersion(): void
+    {
+        $leaky = [];
+        foreach ($this->ladderSteps() as $step) {
+            if ($step['gatesOnly']) {
+                continue;
+            }
+            $leaky[] = $step['condition'];
+        }
+
+        $this->assertSame(
+            [],
+            $leaky,
+            'an upgrade block names a version but its condition admits another path in, so the'
+            . ' block runs for stored versions it does not name. Every path into a gated block'
+            . ' must go through one of its version equalities.'
+        );
+    }
+
+    /**
+     * An install that converges its attribution tables must go on to reach
+     * CURRENT_VERSION, not stop at a rung whose successor nobody wrote.
+     *
+     * Walked from the step's GATE, not from what it persists. Seeded with the
+     * persist, the loop exited before its first iteration whenever the newest
+     * step already writes CURRENT_VERSION — which is the arrangement today,
+     * so the walk ran zero times and proved nothing. From the gate it climbs
+     * at least one rung, and $rungs asserts that it did.
+     */
+    public function testTheNewestAttributionStepChainsToTheCodeVersion(): void
+    {
+        $steps = $this->attributionSteps();
+        $newest = $steps[count($steps) - 1];
+
+        $ladder = [];
+        foreach ($this->ladderSteps() as $step) {
+            foreach ($step['persists'] as $to) {
+                foreach ($step['gates'] as $from) {
+                    if (version_compare($to, $from, '>')) {
+                        $ladder[$from] = $to;
+                    }
+                }
+            }
+        }
+
+        $rungs = 0;
+        foreach ($newest['gates'] as $gate) {
+            $at = $gate;
+            $seen = [];
+            while ($at !== self::CURRENT_VERSION) {
+                $this->assertArrayNotHasKey($at, $seen, "the ladder loops at $at");
+                $seen[$at] = true;
+                $this->assertArrayHasKey(
+                    $at,
+                    $ladder,
+                    "the ladder stops at $at, short of " . self::CURRENT_VERSION
+                    . '; an install that converged its attribution tables would be stranded there'
+                );
+                $at = $ladder[$at];
+                $rungs++;
+            }
+            $this->assertSame(self::CURRENT_VERSION, $at);
+        }
+
+        $this->assertGreaterThan(0, $rungs, 'the walk never ran, so it checked nothing');
+    }
+
+    /**
+     * The ladder's last rung is the code's version.
+     *
+     * The step gated on PRIOR_VERSION persists CURRENT_VERSION, so an install
+     * that reports the previous release converges through the ordinary
+     * upgrade page: upgrade_needed() is true, connect.php redirects there,
+     * and the block runs. That holds for every deployment mode, the ones
+     * with the 1-click pages disabled included.
+     */
+    public function testTheStepGatedOnThePriorVersionPersistsTheCodeVersion(): void
+    {
+        // Asked of the parsed persists, not matched as one spelling of the
+        // statement: reformatting the UPDATE must not be able to fail this.
+        foreach ($this->ladderSteps() as $step) {
+            if (in_array(self::PRIOR_VERSION, $step['gates'], true)) {
+                $this->assertContains(self::CURRENT_VERSION, $step['persists']);
+
+                return;
+            }
+        }
+
+        $this->fail('there must be an upgrade block gated on ' . self::PRIOR_VERSION);
+    }
+
+    /**
+     * Every write to 202_version is in a spelling PERSIST_PATTERN can read.
+     *
+     * The other half of the persist scans: they answer "the top is 1.9.76"
+     * from the writes they recognise, and a write they do not recognise is
+     * indistinguishable from one that is not there. A rung added as
+     * ``UPDATE `202_version` SET `version` = '1.9.77'`` left the 100-plus
+     * matches and their maximum untouched, so the very regression
+     * testTheLadderTopIsTheCodeVersion exists to catch passed.
+     */
+    public function testEveryVersionWriteIsInASpellingTheScanCanRead(): void
+    {
+        $writes = 0;
+        $unreadable = [];
+
+        foreach ($this->upgradeTokens() as $token) {
+            if (!in_array($token['id'], [T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE], true)) {
+                continue;
+            }
+
+            $text = $token['text'];
+            if (stripos($text, '202_version') === false) {
+                continue;
+            }
+            if (preg_match('/\\b(?:UPDATE|INSERT\\s+INTO)\\b/i', $text) !== 1) {
+                // A read or the CREATE TABLE, not a write.
+                continue;
+            }
+
+            $writes++;
+            if (preg_match(self::PERSIST_PATTERN, $text) === 1) {
+                continue;
+            }
+
+            // The value may be concatenated on rather than quoted inline —
+            // the downgrade guard writes `version='" . $prosper202_version . "'`
+            // — so a literal that ends with the value still open is read by
+            // the scan over the joined code, not by this one over one token.
+            $inner = preg_match('/^[\'"]/', $text) === 1 ? substr($text, 1, -1) : $text;
+            if (preg_match('/`?version`?\\s*=\\s*\'$/i', $inner) === 1) {
+                continue;
+            }
+
+            $unreadable[] = trim($text);
+        }
+
+        $this->assertGreaterThan(
+            100,
+            $writes,
+            'the ladder writes fewer versions than it has steps; this scan is reading the wrong thing'
+        );
+        $this->assertSame(
+            [],
+            array_values(array_unique($unreadable)),
+            'a statement writes 202_version in a spelling PERSIST_PATTERN cannot read, so the version'
+            . ' it writes is invisible to every persist scan. Widen the pattern to cover it.'
+        );
+    }
+
+    /**
+     * No upgrade block may be gated on the version the code itself carries.
+     *
+     * Such a block only runs when the stored version already equals the code
+     * version. upgrade.php refuses that case with "Already Upgraded" before
+     * the ladder is reached (upgrade_needed() is `stored != code`), and
+     * upgrade.php is where connect.php redirects and the only upgrade entry
+     * point a deployment with the 1-click pages disabled has. The 1-click
+     * pages do NOT check upgrade_needed() — their POST handler runs the
+     * ladder once a download has unpacked — so the block is reachable by
+     * re-installing the same release over itself, which is not something an
+     * existing install does and not a convergence mechanism a release can
+     * rely on.
+     *
+     * A block gated on 1.9.76 was one of these, written to converge
+     * pre-release deployments holding an earlier shape of the 1.9.76 tables.
+     * The answer is to fold the reshape into the step that introduces the
+     * number while it is unreleased, or to take the next number once it has
+     * shipped.
+     *
+     * Read from the whole token stream, deliberately not from ladderSteps().
+     * ladderSteps() recognises `if (…) {` and `elseif (…) {` only, so
+     * `if (…):`, a braceless body, and a comparison buried in a ternary were
+     * spellings of this gate it would not report — and a scanner that cannot
+     * see a gate answers "no such gate", the one direction in which a hole
+     * here passes in silence. Asking the question without looking at
+     * statement structure has no shape left to miss.
+     */
+    public function testNoUpgradeBlockIsGatedOnTheCodeVersion(): void
+    {
+        $code = $this->codeVersion();
+        $this->assertSame(self::CURRENT_VERSION, $code, 'CURRENT_VERSION must track version.php');
+
+        $tokens = $this->upgradeTokens();
+        $compared = $this->versionsComparedAmong($tokens, $this->significantTokens($tokens));
+        $this->assertNotSame([], $compared, 'no version comparison found at all; this scan is broken');
+
+        $this->assertNotContains(
+            $code,
+            $compared,
+            "an upgrade block gated on the code's own version ($code) is dead where it matters."
+            . ' upgrade_needed() is `stored != code`, so upgrade.php answers "Already Upgraded"'
+            . ' before the ladder runs — and that is the entry point connect.php redirects to,'
+            . ' and the only one a deployment with the 1-click pages disabled has. Fold the'
+            . ' change into the step that introduces the number while it is unreleased, or take'
+            . ' the next number once it has shipped.'
+        );
+    }
+
+    /**
+     * The ladder gates on equality, never on a switch over the stored version.
+     *
+     * A `case` arm carries no T_IS_EQUAL, so the scan above cannot see
+     * `switch ($prosper202_version) { case '1.9.76': }` — the one spelling of
+     * the forbidden gate that survives dropping statement structure. Rather
+     * than teach that scan to follow arms, which is the structure-following
+     * whose holes it exists to close, the construct is forbidden outright:
+     * the ladder is 120-odd equality gates and a switch over it would be a
+     * rewrite. Teach both scans before writing one.
+     *
+     * The construct is read WHOLE — subject and body, `switch`/`match` to
+     * its closing brace — and the version may not appear anywhere in it.
+     * Every earlier draft read one position inside it instead and something
+     * equivalent kept turning up there: the token after `(` missed
+     * `switch ((string) $v)` and `match (($v))`, and then the token after
+     * `case` missed `case ($v):`. Reading one position is what keeps being
+     * wrong, so no position is read.
+     *
+     * Two deliberate over-approximations follow from reading it whole, and
+     * the file contains no switch, match or case today, so neither costs a
+     * false positive now: a construct that mentions the version for an
+     * unrelated reason fails, and so does any switch in the alternative
+     * syntax, whose body this cannot bound at a brace. Both say to teach the
+     * scans first, which is the right way round — the alternative is a hole
+     * that says nothing.
+     *
+     * Not covered, and named so it is not mistaken for an oversight: a
+     * version reached through an intermediate (`$v = $prosper202_version;
+     * switch ($v)`). The scan sees names, not dataflow.
+     */
+    public function testTheLadderNeverSwitchesOnTheStoredVersion(): void
+    {
+        $tokens = $this->upgradeTokens();
+        $significant = $this->significantTokens($tokens);
+        $position = array_flip($significant);
+        $name = '$prosper202_version';
+
+        $found = [];
+        foreach ($significant as $k => $i) {
+            if (!in_array($tokens[$i]['id'], [T_SWITCH, T_MATCH], true)) {
+                continue;
+            }
+
+            $open = $significant[$k + 1] ?? null;
+            $this->assertNotNull($open, 'a ' . $tokens[$i]['text'] . ' with no subject');
+            $this->assertSame('(', $tokens[$open]['text'], 'a ' . $tokens[$i]['text'] . ' with no subject');
+
+            $close = $this->matchingParen($tokens, $open);
+            $this->assertNotNull($close, 'unbalanced parentheses after ' . $tokens[$i]['text']);
+            $this->assertArrayHasKey($close, $position, 'the subject\'s ) is not significant');
+
+            $brace = $significant[$position[$close] + 1] ?? null;
+            $this->assertNotNull($brace, 'a ' . $tokens[$i]['text'] . ' with no body');
+            $this->assertSame(
+                '{',
+                $tokens[$brace]['text'],
+                'a switch in the alternative syntax (`switch (…): … endswitch;`). This scan reads'
+                . ' `{ … }` only, so teach it that form before writing one.'
+            );
+
+            $end = $this->matchingBrace($tokens, $brace);
+            $this->assertNotNull($end, 'unbalanced braces in a ' . $tokens[$i]['text']);
+
+            for ($j = $i; $j <= $end; $j++) {
+                if ($tokens[$j]['id'] === T_VARIABLE && $tokens[$j]['text'] === $name) {
+                    $found[] = $tokens[$i]['text'] . ' naming ' . $name;
+                    break;
+                }
+            }
+        }
+
+        $this->assertSame(
+            [],
+            array_values(array_unique($found)),
+            'a switch or match names $prosper202_version, and its arms carry no equality token for'
+            . ' testNoUpgradeBlockIsGatedOnTheCodeVersion to read, so a gate on the code version'
+            . ' would pass both guards. Teach both scans before writing one.'
+        );
+    }
+
+    /**
+     * The downgrade guard names the code version.
+     *
+     * The ladder ends with `if (stored > X) set X`, so an install that is
+     * ahead of the code is pulled back to it. If X lags version.php, every
+     * upgrade run clamps a converged install back BELOW the code version,
+     * upgrade_needed() turns true again, and connect.php redirects every
+     * page to the upgrade screen forever. That is a version bump that forgot
+     * one line, and nothing else in the tree would notice.
+     */
+    public function testTheDowngradeGuardNamesTheCodeVersion(): void
+    {
+        $guard = $this->downgradeGuard();
+
+        // The whole condition, not a pattern that may match part of it: a
+        // greedy `/^version_compare\(.*'>'\)$/` accepted
+        // `version_compare(…, '<') || version_compare(…, '>')`, which runs
+        // the clamp for every version BUT the current one — so a step that
+        // failed and left the version behind would be marked current and
+        // never retried.
+        $this->assertSame(
+            [self::CURRENT_VERSION, '>'],
+            $this->downgradeComparison($guard['conditionTokens']),
+            'the downgrade guard must be exactly version_compare($prosper202_version, \''
+            . self::CURRENT_VERSION . '\', \'>\'), which pulls an install that is AHEAD of the'
+            . ' code back to it. Its condition reads: ' . $guard['condition']
         );
 
-        $end = strpos($source, 'This will enable p202 to downgrade', $gate);
-        $this->assertNotFalse($end);
-        $block = substr($source, $gate, $end - $gate);
+        $this->assertStringContainsString(
+            "\$prosper202_version = '" . self::CURRENT_VERSION . "';",
+            $guard['block'],
+            'the downgrade guard must clamp the stored version to ' . self::CURRENT_VERSION
+        );
 
-        $this->assertStringContainsString('_upgrade_attribution_tables(', $block);
-        $this->assertStringContainsString('AttributionPostbackTables::getDefinitions()', $block);
-        // It must not bump the version: 1.9.76 is the current one, and
-        // writing a version this release does not know would strand the
-        // install above the ladder.
-        $this->assertStringNotContainsString('UPDATE 202_version', $block);
+        // In memory is not enough, and asserting only the assignment let the
+        // UPDATE and its _upgrade_query() call be deleted with this green.
+        // Without the write, 202_version keeps the higher number,
+        // upgrade_needed() stays true, and connect.php redirects every page
+        // to the upgrade screen on every request — the exact failure the
+        // guard exists to prevent, and the one its clamp only appears to fix.
+        //
+        // Asserting the persist and the call separately was not enough
+        // either: the guard could build $sql and hand _upgrade_query() a
+        // different variable, and both assertions passed. The call has to
+        // receive the persist.
+        $this->assertTrue(
+            $this->guardRunsItsPersist($guard['from'], $guard['to']),
+            'the downgrade guard does not run a query carrying its UPDATE of 202_version, so the'
+            . ' stored version stays above the code version and every request keeps entering the'
+            . ' upgrade flow'
+        );
+    }
+
+    /**
+     * The version and operator of a condition that is exactly one
+     * `version_compare($prosper202_version, 'X', 'OP')`, or [] for anything
+     * else — another call beside it, a disjunction, a negation.
+     *
+     * @param  list<int> $inside significant token indices of the condition
+     * @return list<string>
+     */
+    private function downgradeComparison(array $inside): array
+    {
+        $tokens = $this->upgradeTokens();
+        $inside = array_values($inside);
+
+        $connectives = [T_BOOLEAN_OR, T_LOGICAL_OR, T_BOOLEAN_AND, T_LOGICAL_AND];
+        if (count($this->splitTopLevel($tokens, $inside, $connectives)) > 1) {
+            return [];
+        }
+        if ($inside === [] || !$this->namesFunction($tokens[$inside[0]], 'version_compare')) {
+            return [];
+        }
+
+        $open = $inside[1] ?? null;
+        if ($open === null || $tokens[$open]['text'] !== '(') {
+            return [];
+        }
+        $close = $this->matchingParen($tokens, $open);
+        if ($close === null || $close !== $inside[count($inside) - 1]) {
+            // Something follows the call, so the call is not the condition.
+            return [];
+        }
+
+        $arguments = $this->splitTopLevel($tokens, array_slice($inside, 2, count($inside) - 3), [], [',']);
+        if (count($arguments) !== 3) {
+            return [];
+        }
+
+        $text = [];
+        foreach ($arguments as $argument) {
+            $joined = '';
+            foreach ($argument as $j) {
+                $joined .= $tokens[$j]['text'];
+            }
+            $text[] = trim($joined);
+        }
+
+        if (!str_contains($text[0], '$prosper202_version')) {
+            return [];
+        }
+
+        return [trim($text[1], '\'"'), trim($text[2], '\'"')];
+    }
+
+    /**
+     * Does the guard hand a query carrying its 202_version UPDATE to
+     * _upgrade_query()?
+     *
+     * Follows one assignment, which is how the guard is written
+     * (`$sql = "UPDATE …"; _upgrade_query($sql);`) and no further: a longer
+     * chain fails here rather than being followed, because a scan that
+     * guesses at dataflow is worse than one that says it cannot.
+     */
+    private function guardRunsItsPersist(int $from, int $to): bool
+    {
+        $tokens = $this->upgradeTokens();
+
+        // Variables assigned an expression that carries a persist.
+        $carries = [];
+        for ($i = $from; $i <= $to; $i++) {
+            if ($tokens[$i]['id'] !== T_VARIABLE) {
+                continue;
+            }
+            $next = $this->nextSignificant($tokens, $i + 1, $to);
+            if ($next === null || $tokens[$next]['text'] !== '=') {
+                continue;
+            }
+
+            $expression = '';
+            for ($j = $next + 1; $j <= $to && $tokens[$j]['text'] !== ';'; $j++) {
+                $expression .= $tokens[$j]['text'];
+            }
+            if (preg_match(self::PERSIST_PATTERN, $expression) === 1) {
+                $carries[$tokens[$i]['text']] = true;
+            }
+        }
+
+        for ($i = $from; $i <= $to; $i++) {
+            if (!$this->namesFunction($tokens[$i], '_upgrade_query')) {
+                continue;
+            }
+            $open = $this->nextSignificant($tokens, $i + 1, $to);
+            if ($open === null || $tokens[$open]['text'] !== '(') {
+                continue;
+            }
+            $close = $this->matchingParen($tokens, $open);
+            if ($close === null || $close > $to) {
+                continue;
+            }
+
+            $argument = '';
+            for ($j = $open + 1; $j < $close; $j++) {
+                $argument .= $tokens[$j]['text'];
+            }
+            $argument = trim($argument);
+
+            if (preg_match(self::PERSIST_PATTERN, $argument) === 1) {
+                return true;
+            }
+            if (isset($carries[$argument])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** The next non-whitespace token index in [$from, $to], or null. */
+    private function nextSignificant(array $tokens, int $from, int $to): ?int
+    {
+        for ($i = $from; $i <= $to; $i++) {
+            if ($tokens[$i]['id'] !== T_WHITESPACE) {
+                return $i;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The ladder's downgrade guard: its condition, and its body bounded at
+     * the real closing brace.
+     *
+     * Found by the condition in the comment-stripped code, never by the
+     * comment above it — anchored on that prose, this check passed against a
+     * guard commented out in its entirety, because the prose was all that
+     * survived.
+     *
+     * @return array{condition: string, conditionTokens: list<int>, block: string, from: int, to: int}
+     */
+    private function downgradeGuard(): array
+    {
+        $tokens = $this->upgradeTokens();
+        $significant = $this->significantTokens($tokens);
+        $position = array_flip($significant);
+
+        foreach ($significant as $k => $i) {
+            if ($tokens[$i]['id'] !== T_IF) {
+                continue;
+            }
+            $open = $significant[$k + 1] ?? null;
+            if ($open === null || $tokens[$open]['text'] !== '(') {
+                continue;
+            }
+            $close = $this->matchingParen($tokens, $open);
+            if ($close === null || !isset($position[$close])) {
+                continue;
+            }
+
+            $from = $position[$open] + 1;
+            $conditionTokens = array_slice($significant, $from, max(0, $position[$close] - $from));
+            $condition = '';
+            foreach ($conditionTokens as $j) {
+                $condition .= $tokens[$j]['text'];
+            }
+
+            $isGuard = str_contains($condition, 'version_compare')
+                && str_contains($condition, '$prosper202_version')
+                && str_contains($condition, "'" . self::CURRENT_VERSION . "'");
+            if (!$isGuard) {
+                continue;
+            }
+
+            $brace = $significant[$position[$close] + 1] ?? null;
+            if ($brace === null || $tokens[$brace]['text'] !== '{') {
+                continue;
+            }
+            $end = $this->matchingBrace($tokens, $brace);
+            $this->assertNotNull($end, 'unbalanced braces in the downgrade guard');
+
+            return [
+                'condition' => trim($condition),
+                'conditionTokens' => $conditionTokens,
+                'block' => implode('', array_column(array_slice($tokens, $i, $end - $i + 1), 'text')),
+                'from' => $i,
+                'to' => (int)$end,
+            ];
+        }
+
+        $this->fail(
+            'the ladder must end with a guard comparing the stored version against '
+            . self::CURRENT_VERSION . ' with version_compare, which pulls an install that is'
+            . ' ahead of the code back to it'
+        );
+    }
+
+    /**
+     * The highest version any step persists is the code version.
+     *
+     * The other half of the guard above: a step that persists a version the
+     * code does not know strands the install ABOVE the ladder (the guard then
+     * pulls it back down on the next run, and the two fight). Derived from
+     * the source, so a future step cannot persist 1.9.77 while version.php
+     * still says 1.9.76.
+     */
+    public function testTheLadderTopIsTheCodeVersion(): void
+    {
+        preg_match_all(self::PERSIST_PATTERN, $this->upgradeCode(), $m);
+
+        // `\d+\.\d+\.\d+` read only 112 of the ladder's 123 persists: 1.4,
+        // 1.5, 1.6, 1.7, the four-part 1.8.2.x/1.8.3.x and 1.9.30b all fell
+        // out, so "the top" was the top of a subset and a two-part version
+        // could have sat above it unseen.
+        $literal = [];
+        $dynamic = [];
+        foreach ($m[1] as $version) {
+            if (preg_match('/^\d+(\.\d+)*[a-z]?$/i', $version) === 1) {
+                $literal[] = $version;
+                continue;
+            }
+            $dynamic[] = $version;
+        }
+
+        $this->assertGreaterThan(
+            100,
+            count($literal),
+            'the ladder persists far fewer versions than it has steps; this scan is reading the wrong thing'
+        );
+
+        // The one non-literal write is the downgrade guard clamping to the
+        // value it has just set. Any other is a persist this scan cannot
+        // rank, and must fail rather than be dropped from the ordering.
+        foreach ($dynamic as $version) {
+            $this->assertStringContainsString(
+                '$prosper202_version',
+                $version,
+                "a persisted version this scan cannot rank: $version"
+            );
+        }
+
+        usort($literal, 'version_compare');
+        $this->assertSame(self::CURRENT_VERSION, end($literal));
+    }
+
+    /**
+     * The ladder as the source declares it: one entry per gate, in source
+     * order, with the block it actually encloses, the versions that block
+     * persists, and whether it reconciles the attribution tables.
+     *
+     * Bounded by brace depth, not "up to the next gate": a byte range
+     * attributes anything before the next gate to the preceding one, so a
+     * reconcile moved OUT of its gate still read as gated and inherited that
+     * gate's version persist — passing every assertion here while running
+     * for every stored version.
+     *
+     * @return list<array{gates: list<string>, persists: list<string>, reconciles: bool, block: string}>
+     */
+    private function ladderSteps(): array
+    {
+        if ($this->stepCache !== null) {
+            return $this->stepCache;
+        }
+
+        $tokens = $this->upgradeTokens();
+        $significant = $this->significantTokens($tokens);
+        $position = array_flip($significant);
+
+        $steps = [];
+        foreach ($significant as $k => $i) {
+            // T_ELSEIF as well as T_IF: an `elseif` gate is a gate, and a
+            // step this misses reads to testEveryReconcileCallIsInsideAVersionGate
+            // as a reconcile call belonging to no gate at all. (`} else if (`
+            // needs nothing — it tokenizes as T_ELSE then T_IF.)
+            if ($tokens[$i]['id'] !== T_IF && $tokens[$i]['id'] !== T_ELSEIF) {
+                continue;
+            }
+            $open = $significant[$k + 1] ?? null;
+            if ($open === null || $tokens[$open]['text'] !== '(') {
+                continue;
+            }
+            $close = $this->matchingParen($tokens, $open);
+            if ($close === null) {
+                continue;
+            }
+            $brace = $significant[($position[$close] ?? -1) + 1] ?? null;
+            if ($brace === null || $tokens[$brace]['text'] !== '{') {
+                continue;
+            }
+
+            $consumed = [];
+            $gates = $this->versionsComparedIn($tokens, $significant, $position, $open, $close, $consumed);
+            if ($gates === []) {
+                continue;
+            }
+
+            // Naming a version is not the same as being gated on one:
+            // `$prosper202_version == '1.9.75' || $force` names 1.9.75 and
+            // runs at every other version too. conditionGatesOnVersion()
+            // asks the harder question over the condition's boolean
+            // structure.
+            $inside = array_slice(
+                $significant,
+                $position[$open] + 1,
+                max(0, $position[$close] - $position[$open] - 1)
+            );
+            $condition = '';
+            foreach ($inside as $j) {
+                $condition .= $tokens[$j]['text'];
+            }
+            $gatesOnly = $this->conditionGatesOnVersion($tokens, $inside);
+
+            $end = $this->matchingBrace($tokens, $brace);
+            $this->assertNotNull($end, 'unbalanced braces after a version gate');
+
+            $block = implode('', array_column(array_slice($tokens, $i, $end - $i + 1), 'text'));
+            preg_match_all(self::PERSIST_PATTERN, $block, $persisted);
+
+            $steps[] = [
+                'gates' => $gates,
+                'gatesOnly' => $gatesOnly,
+                'condition' => trim($condition),
+                'persists' => array_values(array_unique($persisted[1])),
+                'reconciles' => str_contains($block, self::RECONCILE_CALL),
+                'block' => $block,
+                'from' => $i,
+                'to' => (int)$end,
+            ];
+        }
+
+        // A floor: a matcher finding nothing would make every caller pass by
+        // having no work to do.
+        $this->assertGreaterThan(20, count($steps), 'the version gates could not be parsed');
+
+        return $this->stepCache = $steps;
+    }
+
+    /**
+     * Every version `$prosper202_version` is compared equal to inside the
+     * condition spanning $open..$close.
+     *
+     * Sliced off $significant by rank rather than filtered by index: filtering
+     * walks all ~100k significant tokens once per gate, and with 120-odd gates
+     * that was 13.9M closure calls and most of this file's runtime.
+     *
+     * @return list<string>
+     */
+    private function versionsComparedIn(
+        array $tokens,
+        array $significant,
+        array $position,
+        int $open,
+        int $close,
+        ?array &$consumed = null
+    ): array {
+        // Both bounds are punctuation, so both are in $significant. Asserted
+        // rather than defaulted: a miss would silently widen the slice, and a
+        // scan that reads the wrong range must not report on it.
+        $this->assertArrayHasKey($open, $position, 'the condition\'s ( is not a significant token');
+        $this->assertArrayHasKey($close, $position, 'the condition\'s ) is not a significant token');
+
+        $from = $position[$open] + 1;
+        $to = $position[$close];
+
+        return $this->versionsComparedAmong(
+            $tokens,
+            array_slice($significant, $from, max(0, $to - $from)),
+            $consumed
+        );
+    }
+
+    /**
+     * An operand that did not reduce to one token is not skipped when the
+     * stored version is inside it.
+     *
+     * `((string) $prosper202_version) === PROSPER202_VERSION` reduces to two
+     * tokens, so neither side read as the variable and the whole comparison
+     * was dropped — the code-version gate invisible once more, by the route
+     * the unwrapping was added to close. What a wrapper does to the value is
+     * not something this scan can know, so it says so instead of guessing.
+     */
+    private function refuseUnreadableOperand(array $tokens, array $inside, int $a, int $b): void
+    {
+        $holdsVersion = false;
+        $text = '';
+        for ($rank = min($a, $b), $end = max($a, $b); $rank <= $end; $rank++) {
+            $token = $tokens[$inside[$rank]];
+            $text .= $token['text'];
+            if ($token['id'] === T_VARIABLE && $token['text'] === '$prosper202_version') {
+                $holdsVersion = true;
+            }
+        }
+
+        if (!$holdsVersion) {
+            return;
+        }
+
+        $this->fail(
+            'a comparison wraps $prosper202_version in an expression this test cannot reduce to a'
+            . ' single token (' . trim($text) . '), so it cannot say which version the gate names.'
+            . ' Resolve it here rather than letting the gate go unseen.'
+        );
+    }
+
+    /**
+     * Does every path into a block with this condition go through one of the
+     * version equalities the condition names?
+     *
+     * A rung's gate has to admit the versions it names and no others, and
+     * BOTH halves of that are load-bearing. An earlier draft of this checked
+     * only the first: it allowed `&&` on the reasoning that a conjunct can
+     * only narrow, which is true and beside the point —
+     * `$prosper202_version == '1.9.75' && $enabled` keeps other versions out
+     * and keeps 1.9.75 out too whenever the flag is false, so the install
+     * sits at 1.9.75 forever and the rung never converges it. There is no
+     * conjunct this scan can prove always true, so there is no `&&` in a
+     * gate: a condition is a disjunction of version equalities, or it is not
+     * a gate.
+     *
+     * A bare term gates only if it IS one version equality, with nothing left
+     * over but parentheses. Casts were briefly allowed here as
+     * "value-preserving"; `(bool) $prosper202_version == '1.9.75'` coerces
+     * both sides and admits every non-empty stored version, measured. A
+     * negation is refused for the same reason as a conjunct:
+     * `!($prosper202_version == '1.9.75')` runs at every version but that one.
+     *
+     * @param list<int> $inside significant token indices of the condition
+     */
+    private function conditionGatesOnVersion(array $tokens, array $inside): bool
+    {
+        $inside = array_values($inside);
+        if ($inside === []) {
+            return false;
+        }
+
+        $alternatives = $this->splitTopLevel($tokens, $inside, [T_BOOLEAN_OR, T_LOGICAL_OR]);
+        if (count($alternatives) > 1) {
+            foreach ($alternatives as $alternative) {
+                if (!$this->conditionGatesOnVersion($tokens, $alternative)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        $last = $inside[count($inside) - 1];
+        if ($tokens[$inside[0]]['text'] === '(' && $this->matchingParen($tokens, $inside[0]) === $last) {
+            return $this->conditionGatesOnVersion($tokens, array_slice($inside, 1, count($inside) - 2));
+        }
+
+        $consumed = [];
+        if ($this->versionsComparedAmong($tokens, $inside, $consumed) === []) {
+            return false;
+        }
+
+        foreach ($inside as $i) {
+            if (isset($consumed[$i]) || $tokens[$i]['text'] === '(' || $tokens[$i]['text'] === ')') {
+                continue;
+            }
+
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Split a run of significant tokens at the given operators, ignoring any
+     * that sit inside parentheses.
+     *
+     * Separators are named by token id, or by text for punctuation — `,` and
+     * the rest tokenize with no id at all, so an id list containing null
+     * would split on every operator in the run.
+     *
+     * @param  list<int> $inside
+     * @param  list<int> $ids
+     * @param  list<string> $texts
+     * @return list<list<int>>
+     */
+    private function splitTopLevel(array $tokens, array $inside, array $ids, array $texts = []): array
+    {
+        $parts = [];
+        $current = [];
+        $depth = 0;
+
+        foreach ($inside as $i) {
+            $text = $tokens[$i]['text'];
+            $isSeparator = ($tokens[$i]['id'] !== null && in_array($tokens[$i]['id'], $ids, true))
+                || ($tokens[$i]['id'] === null && in_array($text, $texts, true));
+            if ($text === '(') {
+                $depth++;
+            } elseif ($text === ')') {
+                $depth--;
+            } elseif ($depth === 0 && $isSeparator) {
+                $parts[] = $current;
+                $current = [];
+                continue;
+            }
+            $current[] = $i;
+        }
+        $parts[] = $current;
+
+        return $parts;
+    }
+
+    /**
+     * The same question asked of an arbitrary run of significant tokens.
+     *
+     * Comparisons are walked rather than shape-matched: the ladder already
+     * has compound gates (`== 'a' || == 'b' || == 'c'`), and a matcher that
+     * insisted the comparison fill the whole condition skipped those blocks
+     * entirely. Either operand order counts; `!=` and version_compare() are
+     * not equality gates and are ignored.
+     *
+     * Taking a token run rather than a statement is what lets
+     * testNoUpgradeBlockIsGatedOnTheCodeVersion ask it of the whole file,
+     * where no statement form can hide a gate from it.
+     *
+     * @param  list<int> $inside
+     * @return list<string>
+     */
+    private function versionsComparedAmong(array $tokens, array $inside, ?array &$consumed = null): array
+    {
+        $inside = array_values($inside);
+
+        $consumed = [];
+        $versions = [];
+        foreach ($inside as $n => $i) {
+            if (!in_array($tokens[$i]['id'], [T_IS_EQUAL, T_IS_IDENTICAL], true)) {
+                continue;
+            }
+
+            $leftAt = $this->operandRank($tokens, $inside, $n - 1, -1);
+            $rightAt = $this->operandRank($tokens, $inside, $n + 1, +1);
+            $left = $leftAt === null ? null : $tokens[$inside[$leftAt]];
+            $right = $rightAt === null ? null : $tokens[$inside[$rightAt]];
+
+            $isVar = static fn(?array $t): bool => $t !== null
+                && $t['id'] === T_VARIABLE && $t['text'] === '$prosper202_version';
+
+            if ($isVar($left) === $isVar($right)) {
+                // Neither side is the stored version (not a gate), or both
+                // are (compares the value with itself, which names no
+                // version). A side that did not reduce to one token is null,
+                // so it is never the variable and lands here too — unless the
+                // OTHER side is, which the branches below then resolve or
+                // fail on.
+                continue;
+            }
+
+            $other = $isVar($left) ? $right : $left;
+            if ($other === null) {
+                $this->fail(
+                    'a gate compares $prosper202_version against an expression this test cannot'
+                    . ' reduce to a single token. Resolve it here rather than letting the gate go'
+                    . ' unseen.'
+                );
+            }
+
+            $version = $this->versionOperand($other);
+            if ($version === '') {
+                continue;
+            }
+
+            // Which tokens this comparison accounted for, so a caller can ask
+            // what ELSE the condition contains. Keyed by token index.
+            $consumed[$i] = true;
+            $consumed[$inside[$leftAt]] = true;
+            $consumed[$inside[$rightAt]] = true;
+
+            $versions[] = $version;
+        }
+
+        return array_values(array_unique($versions));
+    }
+
+    /**
+     * The rank in $inside of the single token an operand reduces to, or null
+     * when it reduces to more than one.
+     *
+     * Balanced parentheses are unwrapped first. `($prosper202_version) ===
+     * PROSPER202_VERSION` puts a `)` next to the operator, so reading the
+     * adjacent token saw punctuation, matched nothing, and reported no gate —
+     * and `(($prosper202_version))` did it twice. Unwrapping is iterative for
+     * that reason.
+     *
+     * $step is the direction of travel away from the operator: -1 for the
+     * left operand, +1 for the right.
+     */
+    private function operandRank(array $tokens, array $inside, int $rank, int $step): ?int
+    {
+        $count = count($inside);
+        $open = $step < 0 ? ')' : '(';
+        $close = $step < 0 ? '(' : ')';
+
+        // The far edge of what the parentheses stripped so far enclose. Null
+        // until the first unwrap, because an unparenthesised operand is
+        // whatever token sits next to the operator.
+        $limit = null;
+
+        // A bound on nesting, so a malformed run cannot spin here.
+        for ($unwraps = 0; $unwraps < 64; $unwraps++) {
+            if ($rank < 0 || $rank >= $count) {
+                return null;
+            }
+
+            if ($tokens[$inside[$rank]]['text'] !== $open) {
+                // Anything left between here and the far edge means the
+                // parentheses held an expression, not an operand.
+                if ($limit === null || $rank === $limit) {
+                    return $rank;
+                }
+
+                $this->refuseUnreadableOperand($tokens, $inside, $rank, $limit);
+
+                return null;
+            }
+
+            $depth = 0;
+            $far = null;
+            for ($j = $rank; $j >= 0 && $j < $count; $j += $step) {
+                $text = $tokens[$inside[$j]]['text'];
+                if ($text === $open) {
+                    $depth++;
+                } elseif ($text === $close) {
+                    $depth--;
+                    if ($depth === 0) {
+                        $far = $j;
+                        break;
+                    }
+                }
+            }
+            if ($far === null) {
+                return null;
+            }
+
+            // Step inside from both brackets and go round again, so `(($v))`
+            // unwraps twice. Checking for a single token before stripping
+            // instead of after saw three tokens inside the outer pair and
+            // gave up — which is the silent skip this whole helper exists to
+            // remove.
+            $limit = $far - $step;
+            $rank += $step;
+        }
+
+        return null;
+    }
+
+    /**
+     * The version an operand compared against $prosper202_version names.
+     *
+     * A string literal is itself; PROSPER202_VERSION is the code version —
+     * and `if ($prosper202_version === PROSPER202_VERSION)` is the most
+     * natural way to write the gate this suite forbids, so leaving it
+     * unrecognised would have left the guard blind to its likeliest spelling.
+     *
+     * Anything else FAILS rather than being skipped. A scanner that cannot
+     * tell which version a gate names must not answer "no such gate" — that
+     * silence is how every hole in this parser has looked.
+     */
+    private function versionOperand(array $token): string
+    {
+        if ($token['id'] === T_CONSTANT_ENCAPSED_STRING) {
+            return trim($token['text'], '\'"');
+        }
+        if ($this->namesFunction($token, 'PROSPER202_VERSION')) {
+            return $this->codeVersion();
+        }
+
+        $this->fail(
+            'a version gate compares $prosper202_version against ' . $token['text']
+            . ', which this test cannot resolve to a version. Resolve it here rather than'
+            . ' letting the gate go unseen.'
+        );
+    }
+
+    /** Index of the `)` closing the `(` at $open, or null if unbalanced. */
+    private function matchingParen(array $tokens, int $open): ?int
+    {
+        $depth = 0;
+        for ($i = $open, $n = count($tokens); $i < $n; $i++) {
+            $text = $tokens[$i]['text'];
+            if ($text === '(') {
+                $depth++;
+            } elseif ($text === ')') {
+                $depth--;
+                if ($depth === 0) {
+                    return $i;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Does this token name the global function $name?
+     *
+     * `\_upgrade_attribution_tables()` is the same call as
+     * `_upgrade_attribution_tables()`, but PHP tokenizes the qualified
+     * spelling as T_NAME_FULLY_QUALIFIED, so a T_STRING-only filter ignored
+     * it — an ungated qualified call passed. Both token kinds count, and the
+     * name is compared on its last segment.
+     */
+    private function namesFunction(array $token, string $name): bool
+    {
+        $kinds = [T_STRING, T_NAME_FULLY_QUALIFIED, T_NAME_QUALIFIED, T_NAME_RELATIVE];
+        if (!in_array($token['id'], $kinds, true)) {
+            return false;
+        }
+
+        $segments = explode('\\', $token['text']);
+
+        return end($segments) === $name;
+    }
+
+    /** Index of the `}` closing the `{` at $open, or null if unbalanced. */
+    private function matchingBrace(array $tokens, int $open): ?int
+    {
+        $depth = 0;
+        for ($i = $open, $n = count($tokens); $i < $n; $i++) {
+            $text = $tokens[$i]['text'];
+            // '${' and T_CURLY_OPEN's '{' both open a brace a plain '}' closes.
+            if ($text === '{' || $text === '${') {
+                $depth++;
+            } elseif ($text === '}') {
+                $depth--;
+                if ($depth === 0) {
+                    return $i;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The ladder steps that reconcile the attribution tables, oldest first.
+     *
+     * @return list<array{gates: list<string>, persists: list<string>, reconciles: bool, block: string}>
+     */
+    private function attributionSteps(): array
+    {
+        $steps = array_values(array_filter(
+            $this->ladderSteps(),
+            static fn(array $step): bool => $step['reconciles']
+        ));
+        $this->assertNotSame(
+            [],
+            $steps,
+            'no upgrade step reconciles the attribution tables, so no existing install ever receives them'
+        );
+
+        return $steps;
+    }
+
+    private function codeVersion(): string
+    {
+        $source = (string)file_get_contents(dirname(__DIR__, 3) . '/202-config/version.php');
+        // Single-quoted: in a double-quoted pattern the $ would interpolate.
+        $found = preg_match('/\\$version_string = \'([^\']+)\'/', $source, $m);
+        $this->assertSame(1, $found, 'version.php lost its constant');
+
+        return $m[1];
+    }
+
+    /**
+     * The code of the block gated on $version.
+     *
+     * Read from ladderSteps() so it is bounded exactly as every other scan
+     * bounds it — at the next gate, or the downgrade guard for the last — and
+     * a window never spills into the following block and matches ITS persist.
+     */
+    private function blockGatedOn(string $version): string
+    {
+        foreach ($this->ladderSteps() as $step) {
+            if (in_array($version, $step['gates'], true)) {
+                return $step['block'];
+            }
+        }
+
+        $this->fail('there must be an upgrade block gated on ' . $version);
     }
 
     public function testTheRenamedLegacyTablesAreDetectedRatherThanSilentlyReplaced(): void
@@ -496,15 +1761,6 @@ final class AttributionUpgradeStepTest extends TestCase
         preg_match('/^([a-z]+(?:\s*\([^)]*\))?(?:\s+unsigned)?)/i', $afterName, $match);
 
         return $match[1] ?? '';
-    }
-
-    public function testDowngradeGuardMatchesTheCurrentVersion(): void
-    {
-        $source = $this->upgradeSource();
-        $this->assertStringContainsString(
-            "version_compare((string) \$prosper202_version, '" . self::CURRENT_VERSION . "', '>')",
-            $source
-        );
     }
 
     public function testTheConvergenceHackIsGone(): void

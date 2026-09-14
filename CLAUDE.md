@@ -268,6 +268,88 @@ container with no `gap` whose children mix text and elements. The sibling
 lesson is that a class name is not a synonym: before using one for
 something that is not what the kit shows it doing, read its rule.
 
+### 20. A checker only sees the syntax it follows
+
+The upgrade-ladder guard walked tokens for `T_IF` `(` … `)` `{`, so `elseif`,
+the alternative syntax (`if (…): … endif;`), a braceless body, a ternary, a
+`while`, and `switch`/`case` were all spellings of the forbidden gate that it
+reported as **absent** — six silent passes, each measured by planting it. That
+is #11 in a checker rather than a predicate: a scanner that cannot see a
+construct must not answer "no such construct".
+
+Two ways out, in that order. **Ask the question in a form that has no
+structure to miss**: the invariant here was "`$prosper202_version` is never
+compared equal to the code version", which is a property of the token stream,
+not of any statement — scanning every token for the comparison and never
+looking at statement shape has nothing left to evade it. Where that is
+impossible, **forbid the construct you cannot read and name it**: a `case` arm
+carries no comparison token at all, so the arms are not parsed, the `switch`
+subject is banned outright and the message says to teach both scans before
+writing one. A ban is only a ban if it reads the whole construct, though —
+the first draft of that one checked the single token after `switch (`, which
+`switch ((string) $v)` and `match (($v))` both walk straight past. Search the
+balanced subject, and cover the mirror image (`case $v:`, `$v => …`) where
+the version is the arm and the thing it is compared against is the subject.
+
+Then prove it. Plant the defect in *every* spelling, and run the same plants
+against the version you are replacing — "this closes a hole" is then a
+measurement with a before and an after, not a claim. Note which direction a
+hole falls in: the same `elseif` blindness that let a forbidden gate through
+also made a correctly gated call read as ungated in a sibling test, a false
+*failure*. Only one of those two directions is silent, and it is the one worth
+hunting.
+
+### 21. Naming a thing is not being guarded by it
+
+`versionsComparedIn()` reported which versions a gate's condition compares
+against, and every check downstream read that as "the block runs only at those
+versions". Those are different questions and `||` is the gap between them:
+`if ($prosper202_version == '1.9.75' || $force)` names 1.9.75 and runs at every
+other version too. Planted as the stronger `|| true` on the real reconcile
+gate, twelve structural checks stayed green — including the one whose entire
+subject is "every reconcile call sits inside a version gate".
+
+The first fix walked the condition's boolean structure and allowed `&&`,
+reasoning that a conjunct can only narrow. True, and beside the point: the
+same reviewer then planted `== '1.9.75' && $enabled` and showed that a gate
+carries **two** obligations — admit the versions it names, and admit no others
+— and that narrowing breaks the first. A false flag keeps 1.9.75 installs out
+of the 1.9.75 rung, so they sit at 1.9.75 forever and nothing ever converges
+them. One direction of the invariant had been checked and called done. No
+token scan can prove a conjunct always true, so the answer was subtraction: a
+gate is a disjunction of version equalities, or it is not a gate.
+
+The same round killed a cast allowance justified in a comment as
+"value-preserving". Executed, `(bool) $prosper202_version == '1.9.75'` is true
+for every non-empty stored version and `(int) … == 1` matches every 1.x —
+"value-preserving" was a claim about seven cast operators, none of which had
+been run.
+
+The shape to carry away: when an invariant reads *only X* **and** *all X*, a
+check enforcing one of those halves looks exactly like a check enforcing both.
+Write both halves down before writing the check, and ask of every relaxation
+which half it relaxes.
+
+The general shape is not confined to conditions: whenever one check extracts a
+value from an expression and another treats that value as a constraint, ask
+what else the expression admits. *Contains x* and *implies x* read the same in
+a grep and are not the same claim.
+
+Two smaller forms of the same error shipped in the fix for this one, both
+found by the same reviewer within the hour:
+
+- **A greedy `.*` turns "is" into "contains".** `/^version_compare\(.*'>'\)$/`
+  was written to say the condition *is* that call, and it accepted
+  `version_compare(…, '<') || version_compare(…, '>')` — a guard that fires
+  for every version but the current one. Anchors do not make a pattern exact
+  when what sits between them can swallow an operator.
+- **Assertions compose only if they name the same thing.** The guard was
+  asserted to contain an `UPDATE` and to contain an `_upgrade_query(` call.
+  Both held while the call received a different variable, so the write never
+  ran. Two true statements about different parts of a block are not one
+  statement about the block; when the claim is "this value reaches that
+  call", follow the value.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure
@@ -568,6 +650,17 @@ Three habits, in order of how often they would have helped:
   behaviour change reads as verified fact to the next reviewer. Before claiming
   an optimization is invisible, construct the input where the shortcut and the
   full computation could disagree and run both.
+
+- **Answering a reviewer is reporting.** A P2 was declined here with "the
+  1-click pages only call `upgrade_databases()` once the feed advertises a
+  newer version", cited to a file and line, recalled from a path read earlier
+  and never reopened. That gate is real but lives in a different function
+  (`functions.php`'s `update_needed()`); `202-account/auto-upgrade.php`'s POST
+  handler checks a CSRF token and nothing else, so the reviewer was right and
+  the decline was wrong. The reply then became a code comment and a test's
+  failure message, where it read as established fact to everyone after. Open
+  the file before you answer, and where a claim about reachability decides
+  something, execute the path.
 
 The rest of this section is the same principle applied to checks — the places
 where a check quietly fails to check what it appears to.
