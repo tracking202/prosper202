@@ -13,25 +13,14 @@ use Prosper202\Database\Tables\AttributionPostbackTables;
 use Tests\TestCase;
 
 /**
- * The attribution tables reach an existing install only through the version
- * ladder in functions-upgrade.php, so the ladder, version.php's constant and
- * the downgrade guard have to agree with each other. CI never catches a
- * disagreement because CI always installs fresh. This pins it textually.
+ * The ladder, version.php's constant and the downgrade guard must agree. CI
+ * never catches a disagreement because CI always installs fresh, so this
+ * pins them textually.
  *
- * Two shapes of disagreement have been written. F1: a version whose schema
- * no upgrade step created. Then its mirror image: the 1.9.76 tables were
- * reshaped in place before 1.9.76 shipped, and a block gated on 1.9.76 was
- * added to converge deployments of the unreleased branch — which could
- * never run through upgrade.php, because upgrade_needed() is `stored !=
- * code` and both said 1.9.76. Had 1.9.76 been released with that block as
- * the only caller of the reconciler, every git or container deployment that
- * had taken an earlier shape (documentation/deploying-on-coolify.md disables
- * the 1-click pages, the one other way in) would have kept it, and the
- * attribution-app API and both Mobile Apps pages would have died with
- * "Unknown column 'platform'". The block is gone: released installs are at
- * 1.9.75 or older and converge through the 1.9.75 step, which reconciles,
- * and a pre-release deployment is repaired by setting 202_version back to
- * 1.9.75. testNoUpgradeBlockIsGatedOnTheCodeVersion() keeps it gone.
+ * Two shapes have been written. F1: a version whose schema no step created.
+ * Its mirror image: a block gated on 1.9.76 while the code was 1.9.76, so
+ * upgrade_needed() (`stored != code`) meant upgrade.php never ran it for the
+ * installs it existed to serve.
  */
 final class AttributionUpgradeStepTest extends TestCase
 {
@@ -39,20 +28,14 @@ final class AttributionUpgradeStepTest extends TestCase
     private const PRIOR_VERSION = '1.9.75';
 
     /**
-     * A version gate in the ladder, in any spelling that means the same.
+     * A version gate, in any spelling that means the same. Every gate is
+     * written one way today, and matching that text literally would answer
+     * "no such gate" for an identical one using `===`, double quotes or
+     * different spacing — a clean bill of health for the shape these tests
+     * refuse.
      *
-     * The ladder writes all 123 of its gates one way today
-     * (`if ($prosper202_version == '1.9.75')`), and a scan pinned to that
-     * exact text would answer "no such gate" for a semantically identical one
-     * written with `===`, double quotes, or extra whitespace — a false clean
-     * bill of health for precisely the shape these tests exist to refuse.
-     * Whitespace is free, either equality operator counts, and either quote
-     * style does; the version comes back in group 1 whichever quote wraps it.
-     *
-     * `version_compare($prosper202_version, 'X', '==')` would be a third
-     * spelling. It is not matched here and no gate uses it; the downgrade
-     * guard is the ladder's only version_compare, and
-     * testTheDowngradeGuardNamesTheCodeVersion pins that one by name.
+     * version_compare is deliberately not matched: no gate uses it, and the
+     * ladder's only one is the downgrade guard, pinned by its own test.
      */
     private const GATE_PATTERN = '/if\\s*\\(\\s*\\$prosper202_version\\s*={2,3}\\s*(?:\'([^\']+)\'|"([^"]+)")\\s*\\)/';
 
@@ -64,17 +47,11 @@ final class AttributionUpgradeStepTest extends TestCase
     /**
      * The ladder with its comments removed.
      *
-     * Every scan below keys on code tokens — a version gate, a call to
-     * `_upgrade_attribution_tables(`, `getDefinitions()` — and the blocks
-     * are heavily commented in exactly those words. Scanning the raw file
-     * therefore matches prose: a planted `_upgrade_attribution_tables([])`
-     * that bypasses the shared definitions left this suite green, because the
-     * sentence above it still said `AttributionPostbackTables::getDefinitions()`.
-     * Worse than a miss, a comment could also invent a step that is not there.
-     *
-     * PHP's own tokenizer draws the line rather than a regex guessing at it;
-     * string literals survive, so `UPDATE 202_version SET version='...'` is
-     * still readable here.
+     * Every scan below keys on tokens the blocks also mention in prose, so
+     * scanning the raw file matched comments: a planted
+     * `_upgrade_attribution_tables([])` left this suite green because the
+     * sentence above it still named getDefinitions(). String literals
+     * survive the strip, so the UPDATE 202_version scan still works.
      */
     private function upgradeCode(): string
     {
@@ -85,8 +62,8 @@ final class AttributionUpgradeStepTest extends TestCase
         foreach ($tokens as $token) {
             if (is_array($token)) {
                 if ($token[0] === T_COMMENT || $token[0] === T_DOC_COMMENT) {
-                    // Keep the newlines a comment spanned so the remaining
-                    // text still reads as lines in a failure message.
+                    // Keep the newlines it spanned so failure messages still
+                    // read as lines.
                     $code .= str_repeat("\n", substr_count($token[1], "\n"));
                     continue;
                 }
@@ -152,19 +129,10 @@ final class AttributionUpgradeStepTest extends TestCase
     /**
      * Every step that reconciles the attribution tables advances the version.
      *
-     * The steps are DERIVED from the source, not listed. A listed pair goes
-     * stale in silence — bump CURRENT_VERSION/PRIOR_VERSION without extending
-     * the list and every test stays green, because the dedicated
-     * prior-version test covers the new rung; bump again and the rung in
-     * between is checked by nothing, free to lose its reconcile or its
-     * persist. That is this file's own subject matter (a check that stops
-     * checking) turned on the file itself, so the list is gone.
-     *
-     * What is asserted is not the pair — reading `to` out of the block and
-     * then asserting the block contains `to` proves nothing — but the
-     * properties a reconciling step must have whatever its numbers: the
-     * shared definitions rather than a hand-copied CREATE, a version
-     * persisted at all, one that moves forward, and one this release knows.
+     * Derived, not listed: a listed pair goes stale in silence once the
+     * version moves twice. Asserting the derived pair would be circular, so
+     * these are the properties a reconciling step must have whatever its
+     * numbers.
      */
     public function testEveryAttributionStepUsesTheSharedDefinitionsAndAdvancesTheVersion(): void
     {
@@ -199,12 +167,8 @@ final class AttributionUpgradeStepTest extends TestCase
     }
 
     /**
-     * From the newest attribution step, the ladder chains up to the code.
-     *
-     * This is what "the older rung stays checked" has to mean once the list
-     * is derived: an install that converges its attribution tables must go on
-     * to reach CURRENT_VERSION, rather than stopping at a rung whose
-     * successor nobody wrote.
+     * An install that converges its attribution tables must go on to reach
+     * CURRENT_VERSION, not stop at a rung whose successor nobody wrote.
      */
     public function testTheNewestAttributionStepChainsToTheCodeVersion(): void
     {
@@ -271,10 +235,8 @@ final class AttributionUpgradeStepTest extends TestCase
         $code = $this->codeVersion();
         $this->assertSame(self::CURRENT_VERSION, $code, 'CURRENT_VERSION must track version.php');
 
-        // Asked of the parsed ladder rather than matched as a literal string,
-        // so a gate written `===`, double-quoted or differently spaced is
-        // caught too: a guard that only knows today's spelling would pass a
-        // new gate in a new spelling, which is the shape it exists to refuse.
+        // Asked of the parsed ladder, not matched as a literal string, so a
+        // gate in a new spelling is caught too.
         $gated = array_values(array_filter(
             $this->ladderSteps(),
             static fn(array $step): bool => $step['gate'] === $code
@@ -338,11 +300,10 @@ final class AttributionUpgradeStepTest extends TestCase
     }
 
     /**
-     * The ladder as the source declares it: one entry per
-     * `$prosper202_version == 'X'` gate, in source order, carrying the block
-     * that follows it (up to the next gate, or the downgrade guard for the
-     * last), the versions it persists, and whether it reconciles the
-     * attribution tables.
+     * The ladder as the source declares it: one entry per gate, in source
+     * order, with the block that follows it (bounded by the next gate, or
+     * the downgrade guard for the last), the versions it persists, and
+     * whether it reconciles the attribution tables.
      *
      * @return list<array{gate: string, persists: list<string>, reconciles: bool, block: string}>
      */
@@ -350,18 +311,16 @@ final class AttributionUpgradeStepTest extends TestCase
     {
         $source = $this->upgradeCode();
         $found = preg_match_all(self::GATE_PATTERN, $source, $gates, PREG_OFFSET_CAPTURE);
-        // A floor, because a regex that matched nothing would make every
-        // caller pass by having no work to do. The ladder is dozens of gates
-        // deep and only grows.
+        // A floor: a regex matching nothing would make every caller pass by
+        // having no work to do.
         $this->assertGreaterThan(
             20,
             (int)$found,
             'the version gates could not be parsed; this test reads them by shape'
         );
 
-        // The guard's own comment is gone from the code view, so bound the
-        // last block on the guard's code: the version_compare that clamps an
-        // install installed over a newer release.
+        // The guard's comment is gone from the code view, so bound the last
+        // block on the guard's code.
         $guard = strpos($source, 'version_compare((string) $prosper202_version');
         $this->assertNotFalse($guard, 'the downgrade guard closes the ladder and bounds its last block');
 

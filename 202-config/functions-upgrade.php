@@ -4201,37 +4201,17 @@ class UPGRADE
         if ($prosper202_version == '1.9.75') {
 
             // Platform-signed attribution postbacks (SKAdNetwork and
-            // AdAttributionKit): the postback store, the advertised-app
-            // registry (its rotatable schema_token column and unique index
-            // are part of the definition), and the conversion-value decoding
-            // rules. The DDL comes from
-            // AttributionPostbackTables::getDefinitions() — the same definitions the fresh
-            // installer uses — so this block cannot drift from it, and every
-            // CREATE is IF NOT EXISTS so a partial failure safely retries on
-            // the next run.
+            // AdAttributionKit): the postback store, the app registry and the
+            // conversion-value rules. The DDL is the installer's own
+            // definitions, so this block cannot drift from them.
             //
-            // _upgrade_attribution_tables() does not only create: it also
-            // reconciles a table that already exists with its definition,
-            // because an install can arrive here holding an older shape of
-            // these tables, and against an existing table a CREATE IF NOT
-            // EXISTS changes nothing at all. The 1.9.76 tables were reshaped
-            // in place more than once before 1.9.76 shipped, so a deployment
-            // of an unreleased branch can hold such a shape while already
-            // reading 1.9.76; the repair for that is to set 202_version back
-            // to 1.9.75 and re-run the upgrade page, which lands here; it is
-            // written up under Troubleshooting in RELEASING.md.
-            //
-            // What must NOT be added for that case is a block gated on 1.9.76
-            // itself. Such a block does run for an install climbing the
-            // ladder — this block advances $prosper202_version to 1.9.76 in
-            // memory, so a later 1.9.76 gate matches in the same invocation —
-            // but it can never run for an install whose STORED version is
-            // already 1.9.76, because upgrade_needed() is `stored != code`
-            // and upgrade.php answers "Already Upgraded" before any step
-            // runs. An install already at the number is the only thing such a
-            // block is ever written to serve, so it is dead where it matters
-            // and redundant where it runs. AttributionUpgradeStepTest refuses
-            // one.
+            // It reconciles as well as creates: CREATE IF NOT EXISTS is a
+            // no-op against a table that exists in an older shape, which a
+            // branch deployment can hold while already reading 1.9.76. The
+            // repair for that is in RELEASING.md (Troubleshooting) — never a
+            // block gated on 1.9.76, which could never run for an install
+            // already stored at 1.9.76, the only case it would serve.
+            // AttributionUpgradeStepTest refuses one.
             $attribution_ok = _upgrade_attribution_tables(
                 \Prosper202\Database\Tables\AttributionPostbackTables::getDefinitions()
             );
