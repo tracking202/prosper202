@@ -1,13 +1,16 @@
+# PHPStan baseline.
+#
+# EMPTY, and meant to stay that way.
+#
+# It held 114 frozen `prosper202.directStmtCall` findings across seven files —
+# direct $stmt->bind_param()/execute() calls that bypassed the checked
+# Connection wrapper. All seven have been migrated, so there is nothing left
+# to freeze.
+#
+# `reportUnmatchedIgnoredErrors: true` in phpstan.neon.dist keeps this honest:
+# an entry whose findings are fixed fails the build until it is removed, so
+# the file can only ever shrink. Adding an entry here to get a build green is
+# the one thing this file must never be used for — a finding belongs fixed, or
+# argued out in the ruleset, not parked.
 parameters:
-	ignoreErrors:
-		-
-			message: '#^Direct \$stmt\-\>bind_param\(\) bypasses Connection\:\:bind\(\) ref safety\. Use \$this\-\>conn\-\>bind\(\$stmt, \$types, \$values\) instead\. \(CLAUDE\.md \#7\)$#'
-			identifier: prosper202.directStmtCall
-			count: 37
-			path: '202-config/Messaging/MessagingService.class.php'
-
-		-
-			message: '#^Direct \$stmt\-\>execute\(\) bypasses Connection\:\:execute\(\) checked execution\. Use \$this\-\>conn\-\>execute\(\$stmt\) instead\. \(CLAUDE\.md \#1\)$#'
-			identifier: prosper202.directStmtCall
-			count: 37
-			path: '202-config/Messaging/MessagingService.class.php'
+	ignoreErrors: []

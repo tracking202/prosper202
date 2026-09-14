@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 include_once(__DIR__ . '/MessagingClient.class.php');
 
+use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
+
 /**
  * MessagingService
  *
@@ -30,6 +33,7 @@ class MessagingService
     /** @var array<string,mixed> */
     private array $identity;
     private ?MessagingClient $client = null;
+    private ?Connection $conn = null;
 
     /**
      * @param array<string,mixed> $identity Identity payload for the central API.
@@ -99,14 +103,75 @@ class MessagingService
         if (!$stmt) {
             return null;
         }
-        $stmt->bind_param('s', $installHash);
-        if (!$stmt->execute()) {
-            $stmt->close();
+        // Static context: no $this, so the wrapper is built on the connection
+        // this method was handed.
+        if (!self::execStatementOn(new Connection($db), $stmt, 's', [$installHash])) {
             return null;
         }
-        $row = $stmt->get_result()->fetch_assoc();
+        $result = $stmt->get_result();
+        $row = ($result instanceof mysqli_result ? $result->fetch_assoc() : null);
         $stmt->close();
         return $row ? (string) $row['p202_customer_api_key'] : null;
+    }
+
+    private function conn(): Connection
+    {
+        return $this->conn ??= new Connection($this->db);
+    }
+
+    /**
+     * Bind and execute one statement through the checked wrapper.
+     *
+     * Every call site here already checked its own execute() by hand — the
+     * class docblock says so and it was true — so this is not a fix for a
+     * missing check. It is the same check in one place, with two things the
+     * hand-written version could not have: Connection::bind() compares the
+     * type string against the value count before binding, and the
+     * QueryException carries the driver's actual error, which the
+     * `throw new RuntimeException('insert message failed')` callers used to
+     * discard entirely. That message is now logged.
+     *
+     * Contract, relied on by every caller: a false return means the statement
+     * is CLOSED. Connection::execute() closes it before throwing; bind()
+     * throws before the statement is closed, so that path closes it here.
+     * On true the statement is still open, which is what the insert_id and
+     * get_result() reads after these calls need.
+     *
+     * @param array<int, mixed> $values
+     */
+    private function execStatement(\mysqli_stmt $stmt, string $types, array $values): bool
+    {
+        return self::execStatementOn($this->conn(), $stmt, $types, $values);
+    }
+
+    /**
+     * The same, for the static entry points that have no $this.
+     *
+     * @param array<int, mixed> $values
+     */
+    private static function execStatementOn(
+        Connection $conn,
+        \mysqli_stmt $stmt,
+        string $types,
+        array $values
+    ): bool {
+        try {
+            $conn->bind($stmt, $types, $values);
+        } catch (QueryException $e) {
+            error_log('MessagingService: bind failed: ' . $e->getMessage());
+            $stmt->close();
+            return false;
+        }
+
+        try {
+            $conn->execute($stmt);
+        } catch (QueryException $e) {
+            // execute() has already closed the statement.
+            error_log('MessagingService: ' . $e->getMessage());
+            return false;
+        }
+
+        return true;
     }
 
     private function client(): MessagingClient
@@ -245,9 +310,7 @@ class MessagingService
             if (!$stmt) {
                 throw new RuntimeException('prepare update conversation failed');
             }
-            $stmt->bind_param('ssssi', $type, $subject, $status, $lastAt, $existingId);
-            if (!$stmt->execute()) {
-                $stmt->close();
+            if (!$this->execStatement($stmt, 'ssssi', [$type, $subject, $status, $lastAt, $existingId])) {
                 throw new RuntimeException('update conversation failed');
             }
             $stmt->close();
@@ -261,9 +324,7 @@ class MessagingService
         if (!$stmt) {
             throw new RuntimeException('prepare insert conversation failed');
         }
-        $stmt->bind_param('isssss', $this->userId, $externalId, $type, $subject, $status, $lastAt);
-        if (!$stmt->execute()) {
-            $stmt->close();
+        if (!$this->execStatement($stmt, 'isssss', [$this->userId, $externalId, $type, $subject, $status, $lastAt])) {
             throw new RuntimeException('insert conversation failed');
         }
         $newId = (int) $stmt->insert_id;
@@ -284,9 +345,7 @@ class MessagingService
         if (!$stmt) {
             throw new RuntimeException('prepare insert local conversation failed');
         }
-        $stmt->bind_param('iss', $this->userId, $externalId, $now);
-        if (!$stmt->execute()) {
-            $stmt->close();
+        if (!$this->execStatement($stmt, 'iss', [$this->userId, $externalId, $now])) {
             throw new RuntimeException('insert local conversation failed');
         }
         $newId = (int) $stmt->insert_id;
@@ -301,12 +360,11 @@ class MessagingService
         if (!$stmt) {
             return false;
         }
-        $stmt->bind_param('i', $conversationId);
-        if (!$stmt->execute()) {
-            $stmt->close();
+        if (!$this->execStatement($stmt, 'i', [$conversationId])) {
             return false;
         }
-        $row = $stmt->get_result()->fetch_assoc();
+        $result = $stmt->get_result();
+        $row = ($result instanceof mysqli_result ? $result->fetch_assoc() : null);
         $stmt->close();
         return $row ? ((int) $row['local_only'] === 1) : false;
     }
@@ -334,9 +392,7 @@ class MessagingService
                 if (!$stmt) {
                     throw new RuntimeException('prepare delete conversation failed');
                 }
-                $stmt->bind_param('i', $conversationId);
-                if (!$stmt->execute()) {
-                    $stmt->close();
+                if (!$this->execStatement($stmt, 'i', [$conversationId])) {
                     throw new RuntimeException('delete conversation failed');
                 }
                 $stmt->close();
@@ -374,9 +430,7 @@ class MessagingService
                 if (!$stmt) {
                     throw new RuntimeException('prepare reconcile message failed');
                 }
-                $stmt->bind_param('ssi', $externalId, $createdAt, $localId);
-                if (!$stmt->execute()) {
-                    $stmt->close();
+                if (!$this->execStatement($stmt, 'ssi', [$externalId, $createdAt, $localId])) {
                     throw new RuntimeException('reconcile message failed');
                 }
                 $stmt->close();
@@ -405,9 +459,7 @@ class MessagingService
         if (!$stmt) {
             throw new RuntimeException('prepare insert message failed');
         }
-        $stmt->bind_param('isssssss', $conversationId, $externalId, $clientToken, $direction, $author, $body, $createdAt, $deliveryStatus);
-        if (!$stmt->execute()) {
-            $stmt->close();
+        if (!$this->execStatement($stmt, 'isssssss', [$conversationId, $externalId, $clientToken, $direction, $author, $body, $createdAt, $deliveryStatus])) {
             throw new RuntimeException('insert message failed');
         }
         $stmt->close();
@@ -428,9 +480,7 @@ class MessagingService
         if (!$stmt) {
             throw new RuntimeException('prepare touch conversation failed');
         }
-        $stmt->bind_param('ssssi', $createdAt, $preview, $createdAt, $createdAt, $conversationId);
-        if (!$stmt->execute()) {
-            $stmt->close();
+        if (!$this->execStatement($stmt, 'ssssi', [$createdAt, $preview, $createdAt, $createdAt, $conversationId])) {
             throw new RuntimeException('touch conversation failed');
         }
         $stmt->close();
@@ -482,9 +532,7 @@ class MessagingService
             error_log('MessagingService: prepare queue outbound failed');
             return null;
         }
-        $stmt->bind_param('isss', $conversationId, $clientToken, $body, $now);
-        if (!$stmt->execute()) {
-            $stmt->close();
+        if (!$this->execStatement($stmt, 'isss', [$conversationId, $clientToken, $body, $now])) {
             error_log('MessagingService: queue outbound failed');
             return null;
         }
@@ -521,9 +569,7 @@ class MessagingService
             return;
         }
         $max = self::MAX_PUSH_ATTEMPTS;
-        $stmt->bind_param('ii', $max, $this->userId);
-        if (!$stmt->execute()) {
-            $stmt->close();
+        if (!$this->execStatement($stmt, 'ii', [$max, $this->userId])) {
             return;
         }
         $result = $stmt->get_result();
@@ -590,9 +636,7 @@ class MessagingService
             if (!$stmt) {
                 throw new RuntimeException('prepare push reconcile failed');
             }
-            $stmt->bind_param('ssi', $externalId, $createdAt, $messageId);
-            if (!$stmt->execute()) {
-                $stmt->close();
+            if (!$this->execStatement($stmt, 'ssi', [$externalId, $createdAt, $messageId])) {
                 throw new RuntimeException('push reconcile failed');
             }
             $stmt->close();
@@ -628,9 +672,7 @@ class MessagingService
         if (!$stmt) {
             throw new RuntimeException('prepare reconcile conversation failed');
         }
-        $stmt->bind_param('ssssi', $externalId, $type, $status, $subject, $conversationId);
-        if (!$stmt->execute()) {
-            $stmt->close();
+        if (!$this->execStatement($stmt, 'ssssi', [$externalId, $type, $status, $subject, $conversationId])) {
             throw new RuntimeException('reconcile conversation failed');
         }
         $stmt->close();
@@ -647,11 +689,11 @@ class MessagingService
             return;
         }
         $max = self::MAX_PUSH_ATTEMPTS;
-        $stmt->bind_param('ii', $max, $messageId);
-        if (!$stmt->execute()) {
+        if ($this->execStatement($stmt, 'ii', [$max, $messageId])) {
+            $stmt->close();
+        } else {
             error_log('MessagingService: incrementPushAttempts failed for message ' . $messageId);
         }
-        $stmt->close();
     }
 
     // ---------------------------------------------------------------------
@@ -681,11 +723,11 @@ class MessagingService
         if (!$stmt) {
             return;
         }
-        $stmt->bind_param('si', $now, $conversationId);
-        if (!$stmt->execute()) {
+        if ($this->execStatement($stmt, 'si', [$now, $conversationId])) {
+            $stmt->close();
+        } else {
             error_log('MessagingService: markConversationRead update failed');
         }
-        $stmt->close();
     }
 
     /**
@@ -708,14 +750,16 @@ class MessagingService
         if (!$stmt) {
             return;
         }
-        $stmt->bind_param('i', $this->userId);
-        if ($stmt->execute()) {
+        if ($this->execStatement($stmt, 'i', [$this->userId])) {
             $result = $stmt->get_result();
-            while ($row = $result->fetch_assoc()) {
-                $rows[(int) $row['id']] = (string) $row['external_id'];
+            if ($result instanceof mysqli_result) {
+                while ($row = $result->fetch_assoc()) {
+                    $rows[(int) $row['id']] = (string) $row['external_id'];
+                }
             }
+            // Only on this branch: a false return already closed it.
+            $stmt->close();
         }
-        $stmt->close();
 
         if ($rows === []) {
             return;
@@ -776,11 +820,11 @@ class MessagingService
             error_log('MessagingService: prepare updateAttributes failed');
             return;
         }
-        $stmt->bind_param('iss', $this->userId, $json, $now);
-        if (!$stmt->execute()) {
+        if ($this->execStatement($stmt, 'iss', [$this->userId, $json, $now])) {
+            $stmt->close();
+        } else {
             error_log('MessagingService: updateAttributes failed');
         }
-        $stmt->close();
 
         // Keep the in-memory identity fresh for any send/pull later this request.
         $this->identity['attributes'] = $current;
@@ -818,11 +862,11 @@ class MessagingService
             error_log('MessagingService: prepare recordEvent failed');
             return;
         }
-        $stmt->bind_param('issss', $this->userId, $name, $metaJson, $now, $token);
-        if (!$stmt->execute()) {
+        if ($this->execStatement($stmt, 'issss', [$this->userId, $name, $metaJson, $now, $token])) {
+            $stmt->close();
+        } else {
             error_log('MessagingService: recordEvent failed');
         }
-        $stmt->close();
     }
 
     /**
@@ -840,10 +884,9 @@ class MessagingService
         $stmt = $this->db->prepare($sql);
         if ($stmt) {
             $max = self::MAX_PUSH_ATTEMPTS;
-            $stmt->bind_param('ii', $this->userId, $max);
-            if ($stmt->execute()) {
+            if ($this->execStatement($stmt, 'ii', [$this->userId, $max])) {
                 $result = $stmt->get_result();
-                while ($row = $result->fetch_assoc()) {
+                while ($result instanceof mysqli_result && $row = $result->fetch_assoc()) {
                     $metadata = null;
                     if ($row['metadata'] !== null) {
                         $decoded = json_decode((string) $row['metadata'], true);
@@ -857,8 +900,9 @@ class MessagingService
                         'client_token' => $row['client_token'],
                     ];
                 }
+                // Only on this branch: a false return already closed it.
+                $stmt->close();
             }
-            $stmt->close();
         }
 
         $attributesDirty = $this->areAttributesDirty();
@@ -903,11 +947,11 @@ class MessagingService
             return;
         }
         $max = self::MAX_PUSH_ATTEMPTS;
-        $stmt->bind_param('ii', $max, $eventId);
-        if (!$stmt->execute()) {
+        if ($this->execStatement($stmt, 'ii', [$max, $eventId])) {
+            $stmt->close();
+        } else {
             error_log('MessagingService: incrementEventAttempts failed for event ' . $eventId);
         }
-        $stmt->close();
     }
 
     private function markEventSent(int $eventId): void
@@ -917,11 +961,11 @@ class MessagingService
         if (!$stmt) {
             return;
         }
-        $stmt->bind_param('i', $eventId);
-        if (!$stmt->execute()) {
+        if ($this->execStatement($stmt, 'i', [$eventId])) {
+            $stmt->close();
+        } else {
             error_log('MessagingService: markEventSent failed for event ' . $eventId);
         }
-        $stmt->close();
     }
 
     // ---------------------------------------------------------------------
@@ -946,15 +990,15 @@ class MessagingService
                  LIMIT 50";
         $stmt = $this->db->prepare($sql);
         if ($stmt) {
-            $stmt->bind_param('i', $this->userId);
-            if ($stmt->execute()) {
+            if ($this->execStatement($stmt, 'i', [$this->userId])) {
                 $result = $stmt->get_result();
-                while ($row = $result->fetch_assoc()) {
+                while ($result instanceof mysqli_result && $row = $result->fetch_assoc()) {
                     $row['unread'] = (int) $row['unread'];
                     $conversations[] = $row;
                 }
+                // Only on this branch: a false return already closed it.
+                $stmt->close();
             }
-            $stmt->close();
         }
 
         $unreadTotal = 0;
@@ -983,11 +1027,14 @@ class MessagingService
                   FROM 202_messaging_conversations WHERE id = ?";
         $stmt = $this->db->prepare($sql);
         if ($stmt) {
-            $stmt->bind_param('i', $conversationId);
-            if ($stmt->execute()) {
-                $conversation = $stmt->get_result()->fetch_assoc() ?: null;
+            if ($this->execStatement($stmt, 'i', [$conversationId])) {
+                $result = $stmt->get_result();
+                $conversation = ($result instanceof mysqli_result)
+                    ? ($result->fetch_assoc() ?: null)
+                    : null;
+                // Only on this branch: a false return already closed it.
+                $stmt->close();
             }
-            $stmt->close();
         }
 
         $messages = [];
@@ -998,14 +1045,14 @@ class MessagingService
                  LIMIT 500";
         $stmt = $this->db->prepare($sql);
         if ($stmt) {
-            $stmt->bind_param('i', $conversationId);
-            if ($stmt->execute()) {
+            if ($this->execStatement($stmt, 'i', [$conversationId])) {
                 $result = $stmt->get_result();
-                while ($row = $result->fetch_assoc()) {
+                while ($result instanceof mysqli_result && $row = $result->fetch_assoc()) {
                     $messages[] = $row;
                 }
+                // Only on this branch: a false return already closed it.
+                $stmt->close();
             }
-            $stmt->close();
         }
 
         return ['conversation' => $conversation, 'messages' => $messages];
@@ -1022,12 +1069,11 @@ class MessagingService
         if (!$stmt) {
             return null;
         }
-        $stmt->bind_param('is', $this->userId, $externalId);
-        if (!$stmt->execute()) {
-            $stmt->close();
+        if (!$this->execStatement($stmt, 'is', [$this->userId, $externalId])) {
             return null;
         }
-        $row = $stmt->get_result()->fetch_assoc();
+        $result = $stmt->get_result();
+        $row = ($result instanceof mysqli_result ? $result->fetch_assoc() : null);
         $stmt->close();
         return $row ? (int) $row['id'] : null;
     }
@@ -1039,12 +1085,11 @@ class MessagingService
         if (!$stmt) {
             return null;
         }
-        $stmt->bind_param('i', $conversationId);
-        if (!$stmt->execute()) {
-            $stmt->close();
+        if (!$this->execStatement($stmt, 'i', [$conversationId])) {
             return null;
         }
-        $row = $stmt->get_result()->fetch_assoc();
+        $result = $stmt->get_result();
+        $row = ($result instanceof mysqli_result ? $result->fetch_assoc() : null);
         $stmt->close();
         return $row ? (string) $row['external_id'] : null;
     }
@@ -1056,12 +1101,11 @@ class MessagingService
         if (!$stmt) {
             return null;
         }
-        $stmt->bind_param('is', $conversationId, $clientToken);
-        if (!$stmt->execute()) {
-            $stmt->close();
+        if (!$this->execStatement($stmt, 'is', [$conversationId, $clientToken])) {
             return null;
         }
-        $row = $stmt->get_result()->fetch_assoc();
+        $result = $stmt->get_result();
+        $row = ($result instanceof mysqli_result ? $result->fetch_assoc() : null);
         $stmt->close();
         return $row ? (int) $row['id'] : null;
     }
@@ -1073,12 +1117,11 @@ class MessagingService
         if (!$stmt) {
             return false;
         }
-        $stmt->bind_param('is', $conversationId, $externalId);
-        if (!$stmt->execute()) {
-            $stmt->close();
+        if (!$this->execStatement($stmt, 'is', [$conversationId, $externalId])) {
             return false;
         }
-        $exists = (bool) $stmt->get_result()->fetch_assoc();
+        $result = $stmt->get_result();
+        $exists = (bool) ($result instanceof mysqli_result ? $result->fetch_assoc() : null);
         $stmt->close();
         return $exists;
     }
@@ -1095,12 +1138,11 @@ class MessagingService
         if (!$stmt) {
             return null;
         }
-        $stmt->bind_param('i', $messageId);
-        if (!$stmt->execute()) {
-            $stmt->close();
+        if (!$this->execStatement($stmt, 'i', [$messageId])) {
             return null;
         }
-        $row = $stmt->get_result()->fetch_assoc();
+        $result = $stmt->get_result();
+        $row = ($result instanceof mysqli_result ? $result->fetch_assoc() : null);
         $stmt->close();
         return $row ?: null;
     }
@@ -1115,12 +1157,11 @@ class MessagingService
         if (!$stmt) {
             return [];
         }
-        $stmt->bind_param('i', $this->userId);
-        if (!$stmt->execute()) {
-            $stmt->close();
+        if (!$this->execStatement($stmt, 'i', [$this->userId])) {
             return [];
         }
-        $row = $stmt->get_result()->fetch_assoc();
+        $result = $stmt->get_result();
+        $row = ($result instanceof mysqli_result ? $result->fetch_assoc() : null);
         $stmt->close();
 
         if (!$row || $row['data'] === null) {
@@ -1144,12 +1185,11 @@ class MessagingService
         if (!$stmt) {
             return false;
         }
-        $stmt->bind_param('i', $this->userId);
-        if (!$stmt->execute()) {
-            $stmt->close();
+        if (!$this->execStatement($stmt, 'i', [$this->userId])) {
             return false;
         }
-        $row = $stmt->get_result()->fetch_assoc();
+        $result = $stmt->get_result();
+        $row = ($result instanceof mysqli_result ? $result->fetch_assoc() : null);
         $stmt->close();
         return $row ? ((int) $row['dirty'] === 1) : false;
     }
@@ -1161,11 +1201,11 @@ class MessagingService
         if (!$stmt) {
             return;
         }
-        $stmt->bind_param('i', $this->userId);
-        if (!$stmt->execute()) {
+        if ($this->execStatement($stmt, 'i', [$this->userId])) {
+            $stmt->close();
+        } else {
             error_log('MessagingService: clearAttributesDirty failed');
         }
-        $stmt->close();
     }
 
     // ---------------------------------------------------------------------
@@ -1181,12 +1221,11 @@ class MessagingService
         if (!$stmt) {
             return true;
         }
-        $stmt->bind_param('i', $this->userId);
-        if (!$stmt->execute()) {
-            $stmt->close();
+        if (!$this->execStatement($stmt, 'i', [$this->userId])) {
             return true;
         }
-        $row = $stmt->get_result()->fetch_assoc();
+        $result = $stmt->get_result();
+        $row = ($result instanceof mysqli_result ? $result->fetch_assoc() : null);
         $stmt->close();
 
         if (!$row || $row['last_sync'] === null) {
@@ -1202,12 +1241,11 @@ class MessagingService
         if (!$stmt) {
             return null;
         }
-        $stmt->bind_param('i', $this->userId);
-        if (!$stmt->execute()) {
-            $stmt->close();
+        if (!$this->execStatement($stmt, 'i', [$this->userId])) {
             return null;
         }
-        $row = $stmt->get_result()->fetch_assoc();
+        $result = $stmt->get_result();
+        $row = ($result instanceof mysqli_result ? $result->fetch_assoc() : null);
         $stmt->close();
         return $row && $row['sync_cursor'] !== null ? (string) $row['sync_cursor'] : null;
     }
@@ -1221,11 +1259,11 @@ class MessagingService
         if (!$stmt) {
             return;
         }
-        $stmt->bind_param('is', $this->userId, $now);
-        if (!$stmt->execute()) {
+        if ($this->execStatement($stmt, 'is', [$this->userId, $now])) {
+            $stmt->close();
+        } else {
             error_log('MessagingService: markSyncStart failed');
         }
-        $stmt->close();
     }
 
     private function recordSyncSuccess(?string $cursor): void
@@ -1241,11 +1279,11 @@ class MessagingService
         if (!$stmt) {
             return;
         }
-        $stmt->bind_param('isss', $this->userId, $now, $now, $cursor);
-        if (!$stmt->execute()) {
+        if ($this->execStatement($stmt, 'isss', [$this->userId, $now, $now, $cursor])) {
+            $stmt->close();
+        } else {
             error_log('MessagingService: recordSyncSuccess failed');
         }
-        $stmt->close();
     }
 
     private function recordSyncError(string $error): void
@@ -1257,11 +1295,11 @@ class MessagingService
         if (!$stmt) {
             return;
         }
-        $stmt->bind_param('is', $this->userId, $error);
-        if (!$stmt->execute()) {
+        if ($this->execStatement($stmt, 'is', [$this->userId, $error])) {
+            $stmt->close();
+        } else {
             error_log('MessagingService: recordSyncError failed');
         }
-        $stmt->close();
     }
 
     // ---------------------------------------------------------------------
