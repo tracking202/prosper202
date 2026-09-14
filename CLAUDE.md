@@ -285,7 +285,11 @@ looking at statement shape has nothing left to evade it. Where that is
 impossible, **forbid the construct you cannot read and name it**: a `case` arm
 carries no comparison token at all, so the arms are not parsed, the `switch`
 subject is banned outright and the message says to teach both scans before
-writing one.
+writing one. A ban is only a ban if it reads the whole construct, though —
+the first draft of that one checked the single token after `switch (`, which
+`switch ((string) $v)` and `match (($v))` both walk straight past. Search the
+balanced subject, and cover the mirror image (`case $v:`, `$v => …`) where
+the version is the arm and the thing it is compared against is the subject.
 
 Then prove it. Plant the defect in *every* spelling, and run the same plants
 against the version you are replacing — "this closes a hole" is then a

@@ -344,33 +344,75 @@ final class AttributionUpgradeStepTest extends TestCase
      * `switch ($prosper202_version) { case '1.9.76': }` — the one spelling of
      * the forbidden gate that survives dropping statement structure. Rather
      * than teach that scan to follow arms, which is the structure-following
-     * whose holes it exists to close, the subject is forbidden outright: the
-     * ladder is 120-odd equality gates and a switch over it would be a
+     * whose holes it exists to close, the construct is forbidden outright:
+     * the ladder is 120-odd equality gates and a switch over it would be a
      * rewrite. Teach both scans before writing one.
+     *
+     * Three shapes, none of which looks at statement structure:
+     *
+     *  1. the version anywhere in the subject. The WHOLE balanced subject is
+     *     searched, not the token after the `(` — `switch ((string) $v)` puts
+     *     a cast there and `match (($v))` a paren, and reading one token
+     *     reported no switch for either.
+     *  2. `case $prosper202_version:` and 3. `$prosper202_version => …`, the
+     *     mirror image, where the version is the arm and the thing it is
+     *     compared against is the subject. Both are two-token adjacencies.
+     *
+     * Not covered, and named so it is not mistaken for an oversight: a
+     * version reached through an intermediate (`$v = $prosper202_version;
+     * switch ($v)`). The scan sees names, not dataflow.
      */
     public function testTheLadderNeverSwitchesOnTheStoredVersion(): void
     {
         $tokens = $this->upgradeTokens();
         $significant = $this->significantTokens($tokens);
+        $position = array_flip($significant);
+        $name = '$prosper202_version';
+
+        $isStored = static fn(array $token): bool => $token['id'] === T_VARIABLE
+            && $token['text'] === $name;
 
         $found = [];
         foreach ($significant as $k => $i) {
-            if (!in_array($tokens[$i]['id'], [T_SWITCH, T_MATCH], true)) {
+            if (in_array($tokens[$i]['id'], [T_SWITCH, T_MATCH], true)) {
+                $open = $significant[$k + 1] ?? null;
+                if ($open === null || $tokens[$open]['text'] !== '(') {
+                    continue;
+                }
+
+                $close = $this->matchingParen($tokens, $open);
+                $this->assertNotNull($close, 'unbalanced parentheses after ' . $tokens[$i]['text']);
+                $this->assertArrayHasKey($close, $position, 'the subject\'s ) is not significant');
+
+                $from = $position[$open] + 1;
+                foreach (array_slice($significant, $from, max(0, $position[$close] - $from)) as $j) {
+                    if ($isStored($tokens[$j])) {
+                        $found[] = $tokens[$i]['text'] . ' over ' . $name;
+                        break;
+                    }
+                }
                 continue;
             }
-            $open = $significant[$k + 1] ?? null;
-            $subject = $significant[$k + 2] ?? null;
-            if ($open === null || $subject === null || $tokens[$open]['text'] !== '(') {
+
+            if ($tokens[$i]['id'] === T_CASE) {
+                $arm = $significant[$k + 1] ?? null;
+                if ($arm !== null && $isStored($tokens[$arm])) {
+                    $found[] = 'case ' . $name;
+                }
                 continue;
             }
-            if ($tokens[$subject]['id'] === T_VARIABLE && $tokens[$subject]['text'] === '$prosper202_version') {
-                $found[] = $tokens[$i]['text'];
+
+            if ($isStored($tokens[$i])) {
+                $arrow = $significant[$k + 1] ?? null;
+                if ($arrow !== null && $tokens[$arrow]['id'] === T_DOUBLE_ARROW) {
+                    $found[] = $name . ' as a match arm';
+                }
             }
         }
 
         $this->assertSame(
             [],
-            $found,
+            array_values(array_unique($found)),
             'the ladder gates on $prosper202_version with a switch or match, whose arms'
             . ' testNoUpgradeBlockIsGatedOnTheCodeVersion cannot read. Teach that scan to read'
             . ' them before writing one, or the code-version gate it forbids becomes invisible.'
