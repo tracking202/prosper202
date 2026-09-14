@@ -37,8 +37,44 @@ final class DuplicateGlobalClassTest extends TestCase
         // Tracking (connect2.php) and UI/API (connect.php via
         // functions-tracking202.php) each declare their own, with different
         // signatures; class-indexes.php yields to whichever loaded first.
+        //
+        // Measured, rather than assumed, by booting each path and reflecting
+        // on the class that won:
+        //
+        //  - UI/API (connect.php:306 includes functions-tracking202.php)
+        //    wins with a 12-method copy that is itself half static and half
+        //    not: get_ip_id, insert_ip, get_site_domain_id and
+        //    get_site_url_id are static; get_country_id, get_city_id,
+        //    get_isp_id, get_keyword_id and get_c1_id..get_c4_id are not.
+        //    It has no get_browser_id / get_platform_id / get_device_id.
+        //  - Tracking (tracking202/* includes connect2.php) wins with an
+        //    all-static copy whose methods take $db first, and which carries
+        //    hand-written $dbOr... overloads on seven of them so both
+        //    calling conventions reach it.
+        //  - class-indexes.php (all static, 20 methods, no $db) is the only
+        //    guarded copy and therefore never wins on either path. Its one
+        //    includer, functions-indexes.php, is a shim of 15 global
+        //    wrappers that nothing calls — and 11 of the 14 callable ones
+        //    raise an Error against the copy the UI path actually loads
+        //    ("Non-static method ... cannot be called statically" for eight,
+        //    "Call to undefined method" for the three missing ones).
+        //
+        // So "each execution path loads exactly one" is true, and is what
+        // keeps this from being a live fault; the shim is dead code, not a
+        // working abstraction over the three.
+        //
+        // Note for whoever picks this up: class_exists()-guarding the two
+        // unguarded copies is NOT the safe floor it looks like. They have
+        // different method sets and different calling conventions, so a
+        // guard would turn "Cannot redeclare class INDEXES" — loud, at
+        // include time — into the wrong implementation silently answering
+        // calls written for the other one. Consolidating onto one class and
+        // one convention is the fix; guarding is a regression.
         'INDEXES' => 'per-bootstrap copies with incompatible signatures',
-        // Full and slim dataengine implementations.
+        // Full and slim dataengine implementations. The slim copy is the
+        // guarded one, so a path that loads it first would make the full
+        // copy fatal; call sites defend with method_exists() instead (see
+        // functions-upgrade.php around the 1.9.3 and 1.9.31 steps).
         'DataEngine' => 'full and slim implementations',
     ];
 
