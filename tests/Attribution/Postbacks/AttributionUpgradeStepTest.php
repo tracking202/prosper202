@@ -38,6 +38,24 @@ final class AttributionUpgradeStepTest extends TestCase
     private const CURRENT_VERSION = '1.9.76';
     private const PRIOR_VERSION = '1.9.75';
 
+    /**
+     * A version gate in the ladder, in any spelling that means the same.
+     *
+     * The ladder writes all 123 of its gates one way today
+     * (`if ($prosper202_version == '1.9.75')`), and a scan pinned to that
+     * exact text would answer "no such gate" for a semantically identical one
+     * written with `===`, double quotes, or extra whitespace — a false clean
+     * bill of health for precisely the shape these tests exist to refuse.
+     * Whitespace is free, either equality operator counts, and either quote
+     * style does; the version comes back in group 1 whichever quote wraps it.
+     *
+     * `version_compare($prosper202_version, 'X', '==')` would be a third
+     * spelling. It is not matched here and no gate uses it; the downgrade
+     * guard is the ladder's only version_compare, and
+     * testTheDowngradeGuardNamesTheCodeVersion pins that one by name.
+     */
+    private const GATE_PATTERN = '/if\\s*\\(\\s*\\$prosper202_version\\s*={2,3}\\s*(?:\'([^\']+)\'|"([^"]+)")\\s*\\)/';
+
     private function upgradeSource(): string
     {
         return (string)file_get_contents(dirname(__DIR__, 3) . '/202-config/functions-upgrade.php');
@@ -253,10 +271,24 @@ final class AttributionUpgradeStepTest extends TestCase
         $code = $this->codeVersion();
         $this->assertSame(self::CURRENT_VERSION, $code, 'CURRENT_VERSION must track version.php');
 
-        $this->assertStringNotContainsString(
-            "if (\$prosper202_version == '" . $code . "')",
-            $this->upgradeCode(),
-            "an upgrade block gated on the code's own version ($code) can never run through upgrade.php"
+        // Asked of the parsed ladder rather than matched as a literal string,
+        // so a gate written `===`, double-quoted or differently spaced is
+        // caught too: a guard that only knows today's spelling would pass a
+        // new gate in a new spelling, which is the shape it exists to refuse.
+        $gated = array_values(array_filter(
+            $this->ladderSteps(),
+            static fn(array $step): bool => $step['gate'] === $code
+        ));
+
+        $this->assertSame(
+            [],
+            array_map(static fn(array $step): string => $step['gate'], $gated),
+            "an upgrade block gated on the code's own version ($code) is dead where it matters:"
+            . ' an install whose stored version is already that number never reaches the ladder,'
+            . ' because upgrade_needed() is `stored != code` and upgrade.php answers "Already'
+            . ' Upgraded" first. An install climbing the ladder does run it, but the preceding'
+            . " step can do that work. Fold the change into the step that introduces the number"
+            . ' while it is unreleased, or take the next number once it has shipped.'
         );
     }
 
@@ -317,12 +349,7 @@ final class AttributionUpgradeStepTest extends TestCase
     private function ladderSteps(): array
     {
         $source = $this->upgradeCode();
-        $found = preg_match_all(
-            '/if \\(\\$prosper202_version == \'([^\']+)\'\\)/',
-            $source,
-            $gates,
-            PREG_OFFSET_CAPTURE
-        );
+        $found = preg_match_all(self::GATE_PATTERN, $source, $gates, PREG_OFFSET_CAPTURE);
         // A floor, because a regex that matched nothing would make every
         // caller pass by having no work to do. The ladder is dozens of gates
         // deep and only grows.
@@ -347,7 +374,7 @@ final class AttributionUpgradeStepTest extends TestCase
             preg_match_all("/UPDATE 202_version SET version='([^']+)'/", $block, $persisted);
 
             $steps[] = [
-                'gate' => (string)$gates[1][$i][0],
+                'gate' => (string)($gates[1][$i][0] !== '' ? $gates[1][$i][0] : $gates[2][$i][0]),
                 'persists' => array_values(array_unique($persisted[1])),
                 'reconciles' => str_contains($block, '_upgrade_attribution_tables('),
                 'block' => $block,
@@ -388,22 +415,21 @@ final class AttributionUpgradeStepTest extends TestCase
     }
 
     /**
-     * The source of the block gated on $version, up to the next gate or the
-     * downgrade guard — whichever comes first — so a window never spills into
-     * the following block and matches ITS persist.
+     * The code of the block gated on $version.
+     *
+     * Read from ladderSteps() so it is bounded exactly as every other scan
+     * bounds it — at the next gate, or the downgrade guard for the last — and
+     * a window never spills into the following block and matches ITS persist.
      */
     private function blockGatedOn(string $version): string
     {
-        $source = $this->upgradeCode();
-        $gate = strpos($source, "if (\$prosper202_version == '" . $version . "')");
-        $this->assertNotFalse($gate, 'there must be an upgrade block gated on ' . $version);
+        foreach ($this->ladderSteps() as $step) {
+            if ($step['gate'] === $version) {
+                return $step['block'];
+            }
+        }
 
-        $ends = array_filter([
-            strpos($source, "if (\$prosper202_version == '", $gate + 1),
-            strpos($source, 'version_compare((string) $prosper202_version', $gate),
-        ], static fn($pos): bool => $pos !== false);
-
-        return $ends === [] ? substr($source, $gate) : substr($source, $gate, min($ends) - $gate);
+        $this->fail('there must be an upgrade block gated on ' . $version);
     }
 
     public function testTheRenamedLegacyTablesAreDetectedRatherThanSilentlyReplaced(): void

@@ -108,6 +108,32 @@ missing): `php`, `composer`, `go`, `git`, `zip`. The script exports the current
   `CGO_ENABLED=0`, so no C toolchain is needed.
 - **Zip name doesn't match the tag** — you tagged without bumping
   `202-config/version.php`. Delete the tag, bump the file, re-tag.
+- **A branch deployment's schema is behind, but the upgrade page says "Already
+  Upgraded"** — only happens on installs built from an unreleased branch. The
+  upgrade page runs when the stored version differs from the code's
+  (`upgrade_needed()`), so an install that already recorded the version you are
+  developing never re-runs its step, even if the tables were reshaped under
+  that number since. Symptom: a page or API call fails with an unknown-column
+  error on a table the release added.
+
+  Repair, on that install only:
+
+  1. **Back up the database.** This edits the row the upgrade ladder keys on.
+  2. Set the stored version back to the release *before* the one whose step
+     creates the tables — for the 1.9.76 attribution tables that is 1.9.75:
+     `UPDATE 202_version SET version='1.9.75';`
+  3. Load any page and follow the redirect to the database upgrade screen, or
+     go to `202-config/upgrade.php` directly, and run it.
+
+  The step is additive and idempotent: it adds missing columns and indexes and
+  never drops, renames or retypes, so an install whose tables already match
+  runs no statements and only moves its version forward again.
+
+  This is a development-only procedure. Released installs never need it,
+  because each release's schema arrives through the step gated on the previous
+  release — which is why an upgrade block must never be gated on the version
+  the code itself carries (`AttributionUpgradeStepTest` enforces that).
+
 - **`fail_on_unmatched_files`** trips when the build produced no zip — read the
   "Build release artifact" step log; the publish step is working as intended by
   refusing to create an empty release.
