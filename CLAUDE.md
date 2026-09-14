@@ -299,6 +299,32 @@ also made a correctly gated call read as ungated in a sibling test, a false
 *failure*. Only one of those two directions is silent, and it is the one worth
 hunting.
 
+### 21. Naming a thing is not being guarded by it
+
+`versionsComparedIn()` reported which versions a gate's condition compares
+against, and every check downstream read that as "the block runs only at those
+versions". Those are different questions and `||` is the gap between them:
+`if ($prosper202_version == '1.9.75' || $force)` names 1.9.75 and runs at every
+other version too. Planted as the stronger `|| true` on the real reconcile
+gate, twelve structural checks stayed green — including the one whose entire
+subject is "every reconcile call sits inside a version gate".
+
+The fix is not a longer token whitelist, because the two connectives are not
+symmetric and a flat scan cannot tell them apart: under `||` **every**
+alternative must gate, under `&&` **one** conjunct is enough and the rest only
+narrow. A whitelist permissive enough for the correct `== 'x' && !$skip` also
+passes the bypass `== 'x' || $force`; one strict enough to reject the bypass
+rejects the correct form. The check has to walk the boolean structure — split
+at top-level `||` and require all, split at top-level `&&` and require any,
+strip parentheses, and a bare term must *be* the comparison with nothing left
+over. Forty lines, and then neither false positives nor holes, where the
+whitelist had one or the other by construction.
+
+The general shape is not confined to conditions: whenever one check extracts a
+value from an expression and another treats that value as a constraint, ask
+what else the expression admits. *Contains x* and *implies x* read the same in
+a grep and are not the same claim.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure

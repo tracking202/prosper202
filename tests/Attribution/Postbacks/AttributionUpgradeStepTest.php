@@ -48,7 +48,10 @@ final class AttributionUpgradeStepTest extends TestCase
     /** @var list<array{id: int|null, text: string}>|null */
     private ?array $tokenCache = null;
 
-    /** @var list<array{gates: list<string>, persists: list<string>, reconciles: bool, block: string, from: int, to: int}>|null */
+    /**
+     * @var list<array{gates: list<string>, gatesOnly: bool, condition: string,
+     *     persists: list<string>, reconciles: bool, block: string, from: int, to: int}>|null
+     */
     private ?array $stepCache = null;
 
     private function upgradeSource(): string
@@ -223,7 +226,12 @@ final class AttributionUpgradeStepTest extends TestCase
 
             $calls++;
             foreach ($steps as $step) {
-                if ($i >= $step['from'] && $i <= $step['to']) {
+                // gatesOnly, not merely enclosing: a condition that names a
+                // version but admits another path
+                // (`$prosper202_version == '1.9.75' || $force`) encloses the
+                // call while letting it run at every other stored version,
+                // which is the ungated shape this test exists to refuse.
+                if ($step['gatesOnly'] && $i >= $step['from'] && $i <= $step['to']) {
                     continue 2;
                 }
             }
@@ -236,6 +244,44 @@ final class AttributionUpgradeStepTest extends TestCase
             $ungated,
             $name . '() is called outside every version gate, so it reconciles on every upgrade run'
             . ' whatever version the install is stored at'
+        );
+    }
+
+    /**
+     * A version gate admits the stored versions it names, and nothing else.
+     *
+     * `versionsComparedIn()` reports the versions a condition compares
+     * against, which is not the same question as whether the condition is
+     * those comparisons. `if ($prosper202_version == '1.9.75' || $force)`
+     * answers 1.9.75 to the first question and runs at every version, so a
+     * step was read as gated on 1.9.75 while reconciling on every upgrade
+     * run — planted as the stronger `|| true` on the real reconcile gate, the
+     * whole suite stayed green.
+     *
+     * The condition must therefore BE the version equalities: parentheses and
+     * the boolean connectives around them are fine (`||` over two equalities
+     * is the ladder's own compound gate; `&&` only narrows), and any other
+     * operand is a path in that no version equality accounts for. A negation
+     * or a cast lands here too, which is the safe direction: this fails
+     * naming the tokens rather than calling a condition it cannot reason
+     * about a gate.
+     */
+    public function testEveryVersionGateAdmitsOnlyTheStoredVersion(): void
+    {
+        $leaky = [];
+        foreach ($this->ladderSteps() as $step) {
+            if ($step['gatesOnly']) {
+                continue;
+            }
+            $leaky[] = $step['condition'];
+        }
+
+        $this->assertSame(
+            [],
+            $leaky,
+            'an upgrade block names a version but its condition admits another path in, so the'
+            . ' block runs for stored versions it does not name. Every path into a gated block'
+            . ' must go through one of its version equalities.'
         );
     }
 
@@ -701,10 +747,27 @@ final class AttributionUpgradeStepTest extends TestCase
                 continue;
             }
 
-            $gates = $this->versionsComparedIn($tokens, $significant, $position, $open, $close);
+            $consumed = [];
+            $gates = $this->versionsComparedIn($tokens, $significant, $position, $open, $close, $consumed);
             if ($gates === []) {
                 continue;
             }
+
+            // Naming a version is not the same as being gated on one:
+            // `$prosper202_version == '1.9.75' || $force` names 1.9.75 and
+            // runs at every other version too. conditionGatesOnVersion()
+            // asks the harder question over the condition's boolean
+            // structure.
+            $inside = array_slice(
+                $significant,
+                $position[$open] + 1,
+                max(0, $position[$close] - $position[$open] - 1)
+            );
+            $condition = '';
+            foreach ($inside as $j) {
+                $condition .= $tokens[$j]['text'];
+            }
+            $gatesOnly = $this->conditionGatesOnVersion($tokens, $inside);
 
             $end = $this->matchingBrace($tokens, $brace);
             $this->assertNotNull($end, 'unbalanced braces after a version gate');
@@ -714,6 +777,8 @@ final class AttributionUpgradeStepTest extends TestCase
 
             $steps[] = [
                 'gates' => $gates,
+                'gatesOnly' => $gatesOnly,
+                'condition' => trim($condition),
                 'persists' => array_values(array_unique($persisted[1])),
                 'reconciles' => str_contains($block, self::RECONCILE_CALL),
                 'block' => $block,
@@ -744,7 +809,8 @@ final class AttributionUpgradeStepTest extends TestCase
         array $significant,
         array $position,
         int $open,
-        int $close
+        int $close,
+        ?array &$consumed = null
     ): array {
         // Both bounds are punctuation, so both are in $significant. Asserted
         // rather than defaulted: a miss would silently widen the slice, and a
@@ -755,7 +821,11 @@ final class AttributionUpgradeStepTest extends TestCase
         $from = $position[$open] + 1;
         $to = $position[$close];
 
-        return $this->versionsComparedAmong($tokens, array_slice($significant, $from, max(0, $to - $from)));
+        return $this->versionsComparedAmong(
+            $tokens,
+            array_slice($significant, $from, max(0, $to - $from)),
+            $consumed
+        );
     }
 
     /**
@@ -792,6 +862,114 @@ final class AttributionUpgradeStepTest extends TestCase
     }
 
     /**
+     * Does every path into a block with this condition go through one of the
+     * version equalities the condition names?
+     *
+     * Asked of the condition's boolean structure rather than its tokens,
+     * because the two connectives are not symmetric and a flat token
+     * whitelist cannot tell them apart: under `||` EVERY alternative has to
+     * gate, under `&&` ONE conjunct is enough and the rest only narrow. A
+     * whitelist that allowed both would pass `== '1.9.75' || $force`; one
+     * that allowed neither would fail the entirely correct
+     * `== '1.9.75' && !$skip`.
+     *
+     * A bare term gates only if it IS one version equality — nothing else
+     * left over but parentheses and casts, neither of which can create a path
+     * in. So `!($prosper202_version == '1.9.75')` does not gate, which is
+     * right: it runs at every version but that one.
+     *
+     * @param list<int> $inside significant token indices of the condition
+     */
+    private function conditionGatesOnVersion(array $tokens, array $inside): bool
+    {
+        $inside = array_values($inside);
+        if ($inside === []) {
+            return false;
+        }
+
+        $alternatives = $this->splitTopLevel($tokens, $inside, [T_BOOLEAN_OR, T_LOGICAL_OR]);
+        if (count($alternatives) > 1) {
+            foreach ($alternatives as $alternative) {
+                if (!$this->conditionGatesOnVersion($tokens, $alternative)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        $conjuncts = $this->splitTopLevel($tokens, $inside, [T_BOOLEAN_AND, T_LOGICAL_AND]);
+        if (count($conjuncts) > 1) {
+            foreach ($conjuncts as $conjunct) {
+                if ($this->conditionGatesOnVersion($tokens, $conjunct)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        $last = $inside[count($inside) - 1];
+        if ($tokens[$inside[0]]['text'] === '(' && $this->matchingParen($tokens, $inside[0]) === $last) {
+            return $this->conditionGatesOnVersion($tokens, array_slice($inside, 1, count($inside) - 2));
+        }
+
+        $consumed = [];
+        if ($this->versionsComparedAmong($tokens, $inside, $consumed) === []) {
+            return false;
+        }
+
+        $casts = [
+            T_INT_CAST, T_DOUBLE_CAST, T_STRING_CAST,
+            T_ARRAY_CAST, T_OBJECT_CAST, T_BOOL_CAST, T_UNSET_CAST,
+        ];
+        foreach ($inside as $i) {
+            if (isset($consumed[$i]) || in_array($tokens[$i]['id'], $casts, true)) {
+                continue;
+            }
+            if ($tokens[$i]['text'] === '(' || $tokens[$i]['text'] === ')') {
+                continue;
+            }
+
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Split a run of significant tokens at the given operators, ignoring any
+     * that sit inside parentheses.
+     *
+     * @param  list<int> $inside
+     * @param  list<int> $ids
+     * @return list<list<int>>
+     */
+    private function splitTopLevel(array $tokens, array $inside, array $ids): array
+    {
+        $parts = [];
+        $current = [];
+        $depth = 0;
+
+        foreach ($inside as $i) {
+            $text = $tokens[$i]['text'];
+            if ($text === '(') {
+                $depth++;
+            } elseif ($text === ')') {
+                $depth--;
+            } elseif ($depth === 0 && in_array($tokens[$i]['id'], $ids, true)) {
+                $parts[] = $current;
+                $current = [];
+                continue;
+            }
+            $current[] = $i;
+        }
+        $parts[] = $current;
+
+        return $parts;
+    }
+
+    /**
      * The same question asked of an arbitrary run of significant tokens.
      *
      * Comparisons are walked rather than shape-matched: the ladder already
@@ -807,10 +985,11 @@ final class AttributionUpgradeStepTest extends TestCase
      * @param  list<int> $inside
      * @return list<string>
      */
-    private function versionsComparedAmong(array $tokens, array $inside): array
+    private function versionsComparedAmong(array $tokens, array $inside, ?array &$consumed = null): array
     {
         $inside = array_values($inside);
 
+        $consumed = [];
         $versions = [];
         foreach ($inside as $n => $i) {
             if (!in_array($tokens[$i]['id'], [T_IS_EQUAL, T_IS_IDENTICAL], true)) {
@@ -844,10 +1023,21 @@ final class AttributionUpgradeStepTest extends TestCase
                 );
             }
 
-            $versions[] = $this->versionOperand($other);
+            $version = $this->versionOperand($other);
+            if ($version === '') {
+                continue;
+            }
+
+            // Which tokens this comparison accounted for, so a caller can ask
+            // what ELSE the condition contains. Keyed by token index.
+            $consumed[$i] = true;
+            $consumed[$inside[$leftAt]] = true;
+            $consumed[$inside[$rightAt]] = true;
+
+            $versions[] = $version;
         }
 
-        return array_values(array_unique(array_filter($versions)));
+        return array_values(array_unique($versions));
     }
 
     /**
