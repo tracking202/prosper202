@@ -2906,7 +2906,10 @@ function getPublisher($pubid)
 		WHERE
 			`user_public_publisher_id`='" . $pubid . "'";
 
-    // @phpstan-ignore-next-line -- $db+sql overload defined in connect2.php
+    // Calls the ($db, $sql) overload declared in this file. The symbol has
+    // three global declarations with different arities (see also
+    // functions-db.php and functions-tracking202.php), so which one a reader
+    // — or a static analyser — resolves depends on the execution path.
     $pubid_row = memcache_mysql_fetch_assoc($db, $publisher_id_sql);
     if ($pubid_row) {
         return $db->real_escape_string($pubid_row['user_id']);
@@ -3042,7 +3045,10 @@ function getTrackerDetail(&$mysql)
 				WHERE tracker_id_public='" . $mysql['tracker_id_public'] . "'";
 
 
-    // @phpstan-ignore-next-line -- $db+sql overload defined in connect2.php
+    // Calls the ($db, $sql) overload declared in this file. The symbol has
+    // three global declarations with different arities (see also
+    // functions-db.php and functions-tracking202.php), so which one a reader
+    // — or a static analyser — resolves depends on the execution path.
     $tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
 
     //set all mysql vars
@@ -3113,7 +3119,10 @@ function getTrackerDetailPT(&$mysql)
 				WHERE tracker_id_public='" . $mysql['tracker_id_public'] . "'";
 
 
-    // @phpstan-ignore-next-line -- $db+sql overload defined in connect2.php
+    // Calls the ($db, $sql) overload declared in this file. The symbol has
+    // three global declarations with different arities (see also
+    // functions-db.php and functions-tracking202.php), so which one a reader
+    // — or a static analyser — resolves depends on the execution path.
     $tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
 
     //set all mysql vars

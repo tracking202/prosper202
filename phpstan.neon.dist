@@ -35,15 +35,44 @@ parameters:
             - vendor (?)
             - node_modules (?)
 
-    # Inline @phpstan-ignore comments predate this config and reference rules
-    # it does not register; an unmatched one is not a failure here.
-    reportUnmatchedIgnoredErrors: false
+    # PHPStan's own default, restored. It governs the baseline as well as
+    # ignoreErrors, so with it off the baseline could rot silently: an entry
+    # whose findings were fixed (or whose file was deleted) stayed frozen at
+    # its old count and nothing said so. On, the baseline can only shrink —
+    # fixing a finding fails the build until the entry is updated to match.
+    #
+    # It is the machine check for a dead `@phpstan-ignore` comment too. The
+    # nine this flag found on its first run all claimed to suppress something
+    # this analysis does not produce, and had to be read one by one to
+    # discover that; from here CI says so on the first push.
+    #
+    # Ignores that are conditional *by design* carry `reportUnmatched: false`
+    # individually — see the block below for which, and why each one is.
+    reportUnmatchedIgnoredErrors: true
 
     # Symbol resolution is not what this job checks. Large parts of the legacy
     # codebase are procedural includes with no autoloadable symbols, and the
     # analysis must not depend on which optional packages happen to be
     # installed — a missing dev dependency would otherwise bury the custom
     # rule findings this job exists to surface.
+    #
+    # Every entry here fires in some environments and not others, which is the
+    # whole reason it exists, so each one sets `reportUnmatched: false`: being
+    # unmatched is the *expected* state on a complete install, and the global
+    # flag above would otherwise turn "your vendor/ is fine" into a build
+    # failure. Measured on this tree at the time of writing — stashing a
+    # single Composer package took class.notFound from 0 to 453,
+    # method.notFound 0 to 136, staticMethod.notFound 0 to 5 and
+    # class.noParent 0 to 1; includeOnce.fileNotFound's two findings are both
+    # `202-config/connect.php`, which does not exist until an install
+    # generates it; and function.notFound and include.fileNotFound resolve
+    # only because the procedural file defining the symbol happens to be in
+    # `paths` (verified by planting a call to a nonexistent function and a
+    # bare `include` of a missing file — both are reported, so neither entry
+    # is dead).
+    #
+    # This is NOT a place to park findings. An ignore that is unconditional
+    # belongs in the baseline, where its count is tracked and has to shrink.
     ignoreErrors:
         # Three files declare a global `class INDEXES` with incompatible
         # signatures (202-config/class-indexes.php, functions-tracking202.php,
@@ -57,14 +86,30 @@ parameters:
         # identifiers that catch real problems elsewhere. The duplicate
         # declarations themselves are tracked by DuplicateGlobalClassTest,
         # which is where that hazard belongs.
-        - '#\bINDEXES::#'
-        - identifier: class.notFound
-        - identifier: class.noParent
-        - identifier: method.notFound
-        - identifier: staticMethod.notFound
-        - identifier: function.notFound
-        - identifier: includeOnce.fileNotFound
-        - identifier: include.fileNotFound
+        -
+            message: '#\bINDEXES::#'
+            reportUnmatched: false
+        -
+            identifier: class.notFound
+            reportUnmatched: false
+        -
+            identifier: class.noParent
+            reportUnmatched: false
+        -
+            identifier: method.notFound
+            reportUnmatched: false
+        -
+            identifier: staticMethod.notFound
+            reportUnmatched: false
+        -
+            identifier: function.notFound
+            reportUnmatched: false
+        -
+            identifier: includeOnce.fileNotFound
+            reportUnmatched: false
+        -
+            identifier: include.fileNotFound
+            reportUnmatched: false
 
 rules:
     # CLAUDE.md #1 — unchecked return values after fallible calls.

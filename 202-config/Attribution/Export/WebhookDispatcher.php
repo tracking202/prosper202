@@ -174,7 +174,8 @@ final class WebhookDispatcher
         if (function_exists('http_get_last_response_headers')) {
             $responseHeaders = http_get_last_response_headers();
         } else {
-            // @phpstan-ignore-next-line -- magic var may be unset if no response was received
+            // The magic variable is only defined once a response has been
+            // received, so the ?? is load-bearing rather than defensive.
             $responseHeaders = $http_response_header ?? null;
         }
         if (!empty($responseHeaders)) {

@@ -1751,9 +1751,9 @@ class UPGRADE
             $de = new DataEngine();
             // DataEngine has two declarations: the full class (class-dataengine.php, loaded
             // here) and a class_exists()-guarded slim stub (static endpoints). PHPStan resolves
-            // the symbol to the slim stub, so it flags this guard as always-false; at runtime in
-            // the upgrade path the full class is loaded and exposes setRowsForOldClickUpgrade().
-            // @phpstan-ignore function.impossibleType
+            // the symbol to whichever copy it sees first, so the guard can look always-false to
+            // it; at runtime in the upgrade path the full class is loaded and exposes
+            // setRowsForOldClickUpgrade().
             if (method_exists($de, 'setRowsForOldClickUpgrade')) {
                 $de->setRowsForOldClickUpgrade($time_from);
             }
@@ -2105,12 +2105,10 @@ class UPGRADE
             $result = _upgrade_query($sql);
 
             $de = new DataEngine();
-            // PHPStan resolves DataEngine to the slim stub (see note above); the full class
-            // loaded here exposes getSummary(), which runs the dataengine rebuild for its side
-            // effects — the returned debug string is intentionally discarded.
-            // @phpstan-ignore function.alreadyNarrowedType
+            // DataEngine has two declarations (see note above); the full class loaded here
+            // exposes getSummary(), which runs the dataengine rebuild for its side effects —
+            // the returned debug string is intentionally discarded.
             if (method_exists($de, 'getSummary')) {
-                // @phpstan-ignore method.resultUnused
                 $de->getSummary($time_from, $time_to, $snippet, 1, true, false);
             }
 

@@ -122,7 +122,8 @@ final class LookupRepositoryFactory
     private static function cacheGetFn(): \Closure
     {
         return static function (string $key): mixed {
-            return getCache($key); // @phpstan-ignore function.notFound
+            // Legacy procedural helper, declared in 202-config/connect2.php.
+            return getCache($key);
         };
     }
 
@@ -130,7 +131,8 @@ final class LookupRepositoryFactory
     private static function cacheSetFn(): \Closure
     {
         return static function (string $key, mixed $value, int $ttl): void {
-            setCache($key, $value, $ttl); // @phpstan-ignore function.notFound
+            // Legacy procedural helper, declared in 202-config/connect2.php.
+            setCache($key, $value, $ttl);
         };
     }
 }
