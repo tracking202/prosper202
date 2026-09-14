@@ -27,15 +27,13 @@ final class UncheckedExecuteTest extends TestCase
      * and should be worked through; the point of the list is that it only
      * ever shrinks.
      *
+     * It is now empty, and testTheKnownListHasNoStaleEntries keeps it that
+     * way: every entry must still have a bare execute(), so an unchecked call
+     * cannot be parked here. Anything this scanner finds is a new one.
+     *
      * @var string[]
      */
-    private const KNOWN_UNCHECKED = [
-        '202-Mobile/202-login.php',
-        '202-login.php',
-        '202-account/account.php',
-        'api/v2/app.php',
-        '202-config/Attribution/AttributionIntegrationService.php',
-    ];
+    private const KNOWN_UNCHECKED = [];
 
     /** @return array<string, int> file (repo-relative) => count of bare execute() calls */
     private function bareExecuteCalls(): array
@@ -96,12 +94,25 @@ final class UncheckedExecuteTest extends TestCase
     public function testTheKnownListHasNoStaleEntries(): void
     {
         $current = $this->bareExecuteCalls();
-        foreach (self::KNOWN_UNCHECKED as $file) {
-            $this->assertArrayHasKey(
-                $file,
-                $current,
-                "$file no longer has an unchecked execute() — remove it from KNOWN_UNCHECKED."
-            );
-        }
+
+        $stale = array_values(array_diff(self::KNOWN_UNCHECKED, array_keys($current)));
+        $this->assertSame(
+            [],
+            $stale,
+            'These no longer have an unchecked execute() — remove them from KNOWN_UNCHECKED: '
+            . implode(', ', $stale)
+        );
+
+        // The list is empty, so the check above has nothing to iterate and
+        // cannot fail — and a check that cannot fail is not a check. What can
+        // still fail is the list growing back: it only ever shrinks, so once
+        // empty it stays empty. Working a site off the list means fixing the
+        // code, never re-adding the entry.
+        $this->assertCount(
+            0,
+            self::KNOWN_UNCHECKED,
+            'KNOWN_UNCHECKED is empty and only ever shrinks. A new unchecked execute() belongs '
+            . 'fixed, not parked here.'
+        );
     }
 }

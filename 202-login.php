@@ -149,7 +149,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$login_server_serialized,
 			$login_session_serialized
 		);
-		$login_log_stmt->execute();
+		// Warn, not fail: a failed audit write must not become a lockout. But
+		// AUTH::is_rate_limited() throttles on 202_users_log, so an attempt
+		// that never lands is one the brute-force limiter never counts.
+		if (!$login_log_stmt->execute()) {
+			prosper_log('login', 'Unable to record login attempt: ' . $login_log_stmt->error);
+		}
 		$login_log_stmt->close();
 	} elseif ($should_log_attempt) {
 		prosper_log('login', 'Unable to prepare login log statement: ' . $db->error);
@@ -168,8 +173,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		if ($update_stmt) {
 			$user_id = (int) $user_row['user_id'];
 			$update_stmt->bind_param('iiii', $ip_id, $modal_status, $vip_perks_status, $user_id);
-			$update_stmt->execute();
+			// Warn, not fail: bookkeeping only; the session is authenticated.
+			if (!$update_stmt->execute()) {
+				prosper_log('login', 'Unable to update last-login state for user_id ' . $user_id . ': ' . $update_stmt->error);
+			}
 			$update_stmt->close();
+		} else {
+			// MySQL rejects a denied privilege at prepare, so this is the
+			// branch that fires when 202_users is not writable.
+			prosper_log('login', 'Unable to prepare last-login update: ' . $db->error);
 		}
 
 		$mod_sql = "SHOW COLUMNS FROM 202_landing_pages LIKE 'leave_behind_page_url'";

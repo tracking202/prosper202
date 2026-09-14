@@ -5,6 +5,8 @@ declare(strict_types=1);
 use Api\Attribution\Controller;
 use Prosper202\Attribution\AttributionService;
 use Prosper202\Attribution\AttributionServiceFactory;
+use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -171,16 +173,28 @@ function register_attribution_routes(\Slim\App $app, Controller $controller): vo
                     $bindValues[] = $scopeId;
                 }
 
-                $stmt = $db->prepare($clickSql);
-                if ($stmt) {
-                    $stmt->bind_param($bindTypes, ...$bindValues);
-                    $stmt->execute();
-                    $clickResult = $stmt->get_result();
-                    $row = $clickResult ? $clickResult->fetch_assoc() : null;
-                    $stmt->close();
-                    if ($row && isset($result['payload']['data']['totals'])) {
+                // Recover, but say so. Every one of prepare, execute and
+                // get_result was unchecked, and each failure arrived as
+                // $row === null — the same value the guard below reads as
+                // "nothing to apply". The endpoint then served the
+                // unreconciled total, silently inconsistent with the scope
+                // filter the rest of the payload was built with. Leaving the
+                // total alone is still the right recovery — a supplementary
+                // metric should not fail the whole report — but it is no
+                // longer indistinguishable from success.
+                try {
+                    $conn = new Connection($db);
+                    $stmt = $conn->prepareRead($clickSql);
+                    $conn->bind($stmt, $bindTypes, $bindValues);
+                    $row = $conn->fetchOne($stmt);
+                    if ($row !== null && isset($result['payload']['data']['totals'])) {
                         $result['payload']['data']['totals']['clicks'] = (int) $row['total'];
                     }
+                } catch (QueryException $e) {
+                    error_log(
+                        '[Prosper202][api/v2] scoped click count failed, serving the unscoped total: '
+                        . $e->getMessage()
+                    );
                 }
             }
 

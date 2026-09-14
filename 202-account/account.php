@@ -560,12 +560,30 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 		if ($verify_stmt) {
 			$current_user_id = (int) ($_SESSION['user_own_id'] ?? 0);
 			$verify_stmt->bind_param('i', $current_user_id);
-			$verify_stmt->execute();
-			$result = $verify_stmt->get_result();
-			$stored = $result ? $result->fetch_assoc() : null;
+
+			// Three outcomes, not two. A failed execute() left $stored null,
+			// which fell into the "typed incorrectly" branch AND counted a
+			// wrong-password attempt, so a database fault could trip the
+			// lockout and destroy the session. "I could not check" blocks the
+			// change like a wrong password, but must move the counter in
+			// neither direction: clearing it on an error would let an attacker
+			// reset their own attempts.
+			$verified = $verify_stmt->execute();
+			$result = $verified ? $verify_stmt->get_result() : false;
+			$stored = ($result instanceof mysqli_result) ? $result->fetch_assoc() : null;
+			$lookup_failed = !$verified || !($result instanceof mysqli_result);
+			if ($lookup_failed) {
+				prosper_log(
+					'account',
+					'Unable to verify current password for user_id ' . $current_user_id . ': ' . $verify_stmt->error
+				);
+			}
 			$verify_stmt->close();
-			if (!$stored || !verify_user_pass((string) $_POST['user_pass'], (string) ($stored['user_pass'] ?? ''))['valid']) {
-				$error['user_pass'] .= 'Your old password was typed incorrectly.';
+
+			if ($lookup_failed) {
+				$error['user_pass'] = ($error['user_pass'] ?? '') . 'Unable to verify your current password at this time.';
+			} elseif (!$stored || !verify_user_pass((string) $_POST['user_pass'], (string) ($stored['user_pass'] ?? ''))['valid']) {
+				$error['user_pass'] = ($error['user_pass'] ?? '') . 'Your old password was typed incorrectly.';
 
 				// Count wrong current-password attempts within this session (only
 				// when the request is genuine — a valid CSRF token — so a forged
@@ -601,16 +619,31 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 
 	$new_hash = hash_user_pass((string) $_POST['new_user_pass']);
 	$update_stmt = $db->prepare('UPDATE 202_users SET user_pass = ? WHERE user_id = ?');
+
+	// Fail loudly. $change_user_pass was set unconditionally, so a failed
+	// execute() — and a failed prepare() before it — told the user their
+	// password had changed when it had not, leaving them holding a password
+	// the database never saw.
+	$password_saved = false;
 	if ($update_stmt) {
 		$current_user_id = (int) ($_SESSION['user_own_id'] ?? 0);
 		$update_stmt->bind_param('si', $new_hash, $current_user_id);
-		$update_stmt->execute();
+		if ($update_stmt->execute()) {
+			$password_saved = true;
+		} else {
+			prosper_log('account', 'Failed to update password for user_id ' . $current_user_id . ': ' . $update_stmt->error);
+		}
 		$update_stmt->close();
 	} else {
 		prosper_log('account', 'Failed to prepare password update statement: ' . $db->error);
 	}
 
-	$change_user_pass = true;
+	if ($password_saved) {
+		$change_user_pass = true;
+	} else {
+		$error['user_pass'] = ($error['user_pass'] ?? '')
+			. 'We could not save your new password. Your existing password is unchanged; please try again.';
+	}
 	}
 }
 
