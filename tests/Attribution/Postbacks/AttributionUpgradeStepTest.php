@@ -430,15 +430,21 @@ final class AttributionUpgradeStepTest extends TestCase
      * the ladder is 120-odd equality gates and a switch over it would be a
      * rewrite. Teach both scans before writing one.
      *
-     * Three shapes, none of which looks at statement structure:
+     * The construct is read WHOLE — subject and body, `switch`/`match` to
+     * its closing brace — and the version may not appear anywhere in it.
+     * Every earlier draft read one position inside it instead and something
+     * equivalent kept turning up there: the token after `(` missed
+     * `switch ((string) $v)` and `match (($v))`, and then the token after
+     * `case` missed `case ($v):`. Reading one position is what keeps being
+     * wrong, so no position is read.
      *
-     *  1. the version anywhere in the subject. The WHOLE balanced subject is
-     *     searched, not the token after the `(` — `switch ((string) $v)` puts
-     *     a cast there and `match (($v))` a paren, and reading one token
-     *     reported no switch for either.
-     *  2. `case $prosper202_version:` and 3. `$prosper202_version => …`, the
-     *     mirror image, where the version is the arm and the thing it is
-     *     compared against is the subject. Both are two-token adjacencies.
+     * Two deliberate over-approximations follow from reading it whole, and
+     * the file contains no switch, match or case today, so neither costs a
+     * false positive now: a construct that mentions the version for an
+     * unrelated reason fails, and so does any switch in the alternative
+     * syntax, whose body this cannot bound at a brace. Both say to teach the
+     * scans first, which is the right way round — the alternative is a hole
+     * that says nothing.
      *
      * Not covered, and named so it is not mistaken for an oversight: a
      * version reached through an intermediate (`$v = $prosper202_version;
@@ -451,43 +457,36 @@ final class AttributionUpgradeStepTest extends TestCase
         $position = array_flip($significant);
         $name = '$prosper202_version';
 
-        $isStored = static fn(array $token): bool => $token['id'] === T_VARIABLE
-            && $token['text'] === $name;
-
         $found = [];
         foreach ($significant as $k => $i) {
-            if (in_array($tokens[$i]['id'], [T_SWITCH, T_MATCH], true)) {
-                $open = $significant[$k + 1] ?? null;
-                if ($open === null || $tokens[$open]['text'] !== '(') {
-                    continue;
-                }
-
-                $close = $this->matchingParen($tokens, $open);
-                $this->assertNotNull($close, 'unbalanced parentheses after ' . $tokens[$i]['text']);
-                $this->assertArrayHasKey($close, $position, 'the subject\'s ) is not significant');
-
-                $from = $position[$open] + 1;
-                foreach (array_slice($significant, $from, max(0, $position[$close] - $from)) as $j) {
-                    if ($isStored($tokens[$j])) {
-                        $found[] = $tokens[$i]['text'] . ' over ' . $name;
-                        break;
-                    }
-                }
+            if (!in_array($tokens[$i]['id'], [T_SWITCH, T_MATCH], true)) {
                 continue;
             }
 
-            if ($tokens[$i]['id'] === T_CASE) {
-                $arm = $significant[$k + 1] ?? null;
-                if ($arm !== null && $isStored($tokens[$arm])) {
-                    $found[] = 'case ' . $name;
-                }
-                continue;
-            }
+            $open = $significant[$k + 1] ?? null;
+            $this->assertNotNull($open, 'a ' . $tokens[$i]['text'] . ' with no subject');
+            $this->assertSame('(', $tokens[$open]['text'], 'a ' . $tokens[$i]['text'] . ' with no subject');
 
-            if ($isStored($tokens[$i])) {
-                $arrow = $significant[$k + 1] ?? null;
-                if ($arrow !== null && $tokens[$arrow]['id'] === T_DOUBLE_ARROW) {
-                    $found[] = $name . ' as a match arm';
+            $close = $this->matchingParen($tokens, $open);
+            $this->assertNotNull($close, 'unbalanced parentheses after ' . $tokens[$i]['text']);
+            $this->assertArrayHasKey($close, $position, 'the subject\'s ) is not significant');
+
+            $brace = $significant[$position[$close] + 1] ?? null;
+            $this->assertNotNull($brace, 'a ' . $tokens[$i]['text'] . ' with no body');
+            $this->assertSame(
+                '{',
+                $tokens[$brace]['text'],
+                'a switch in the alternative syntax (`switch (…): … endswitch;`). This scan reads'
+                . ' `{ … }` only, so teach it that form before writing one.'
+            );
+
+            $end = $this->matchingBrace($tokens, $brace);
+            $this->assertNotNull($end, 'unbalanced braces in a ' . $tokens[$i]['text']);
+
+            for ($j = $i; $j <= $end; $j++) {
+                if ($tokens[$j]['id'] === T_VARIABLE && $tokens[$j]['text'] === $name) {
+                    $found[] = $tokens[$i]['text'] . ' naming ' . $name;
+                    break;
                 }
             }
         }
@@ -495,9 +494,9 @@ final class AttributionUpgradeStepTest extends TestCase
         $this->assertSame(
             [],
             array_values(array_unique($found)),
-            'the ladder gates on $prosper202_version with a switch or match, whose arms'
-            . ' testNoUpgradeBlockIsGatedOnTheCodeVersion cannot read. Teach that scan to read'
-            . ' them before writing one, or the code-version gate it forbids becomes invisible.'
+            'a switch or match names $prosper202_version, and its arms carry no equality token for'
+            . ' testNoUpgradeBlockIsGatedOnTheCodeVersion to read, so a gate on the code version'
+            . ' would pass both guards. Teach both scans before writing one.'
         );
     }
 
@@ -513,27 +512,99 @@ final class AttributionUpgradeStepTest extends TestCase
      */
     public function testTheDowngradeGuardNamesTheCodeVersion(): void
     {
-        // Anchored on the guard's own condition in the COMMENT-STRIPPED code.
-        // Anchored on its comment in the raw file, both assertions passed
-        // against a guard that had been commented out in its entirety — the
-        // prose it was anchored to was all that survived.
-        $code = $this->upgradeCode();
-        $condition = "version_compare((string) \$prosper202_version, '" . self::CURRENT_VERSION . "', '>')";
+        $guard = $this->downgradeGuard();
 
-        $at = strpos($code, $condition);
-        $this->assertNotFalse(
-            $at,
-            'the ladder must end with ' . $condition . ', which pulls an install that is ahead of'
-            . ' the code back to it'
+        $this->assertSame(
+            1,
+            preg_match("/^version_compare\\(.*,\\s*'>'\\s*\\)$/s", $guard['condition']),
+            'the downgrade guard must compare with \'>\'; any other operator clamps installs it'
+            . ' should leave alone. Its condition reads: ' . $guard['condition']
         );
 
-        // The clamp is asserted after the condition, not anywhere in the
-        // file: the step gated on PRIOR_VERSION assigns the same literal, so
-        // an unanchored search passes with the guard deleted.
         $this->assertStringContainsString(
             "\$prosper202_version = '" . self::CURRENT_VERSION . "';",
-            substr($code, $at),
+            $guard['block'],
             'the downgrade guard must clamp the stored version to ' . self::CURRENT_VERSION
+        );
+
+        // In memory is not enough, and asserting only the assignment let the
+        // UPDATE and its _upgrade_query() call be deleted with this green.
+        // Without the write, 202_version keeps the higher number,
+        // upgrade_needed() stays true, and connect.php redirects every page
+        // to the upgrade screen on every request — the exact failure the
+        // guard exists to prevent, and the one its clamp only appears to fix.
+        $this->assertSame(
+            1,
+            preg_match(self::PERSIST_PATTERN, $guard['block']),
+            'the downgrade guard clamps $prosper202_version but writes no version to 202_version'
+        );
+        $this->assertStringContainsString(
+            '_upgrade_query(',
+            $guard['block'],
+            'the downgrade guard builds its UPDATE but never runs it'
+        );
+    }
+
+    /**
+     * The ladder's downgrade guard: its condition, and its body bounded at
+     * the real closing brace.
+     *
+     * Found by the condition in the comment-stripped code, never by the
+     * comment above it — anchored on that prose, this check passed against a
+     * guard commented out in its entirety, because the prose was all that
+     * survived.
+     *
+     * @return array{condition: string, block: string}
+     */
+    private function downgradeGuard(): array
+    {
+        $tokens = $this->upgradeTokens();
+        $significant = $this->significantTokens($tokens);
+        $position = array_flip($significant);
+
+        foreach ($significant as $k => $i) {
+            if ($tokens[$i]['id'] !== T_IF) {
+                continue;
+            }
+            $open = $significant[$k + 1] ?? null;
+            if ($open === null || $tokens[$open]['text'] !== '(') {
+                continue;
+            }
+            $close = $this->matchingParen($tokens, $open);
+            if ($close === null || !isset($position[$close])) {
+                continue;
+            }
+
+            $from = $position[$open] + 1;
+            $condition = '';
+            foreach (array_slice($significant, $from, max(0, $position[$close] - $from)) as $j) {
+                $condition .= $tokens[$j]['text'];
+            }
+
+            $isGuard = str_contains($condition, 'version_compare')
+                && str_contains($condition, '$prosper202_version')
+                && str_contains($condition, "'" . self::CURRENT_VERSION . "'");
+            if (!$isGuard) {
+                continue;
+            }
+
+            $brace = $significant[$position[$close] + 1] ?? null;
+            if ($brace === null || $tokens[$brace]['text'] !== '{') {
+                continue;
+            }
+            $end = $this->matchingBrace($tokens, $brace);
+            $this->assertNotNull($end, 'unbalanced braces in the downgrade guard');
+
+            return [
+                'condition' => trim($condition),
+                'block' => implode('', array_column(array_slice($tokens, $i, $end - $i + 1), 'text')),
+            ];
+        }
+
+        $this->fail(
+            'the ladder must end with a guard comparing the stored version against '
+            . self::CURRENT_VERSION . ' with version_compare, which pulls an install that is'
+            . ' ahead of the code back to it'
         );
     }
 
