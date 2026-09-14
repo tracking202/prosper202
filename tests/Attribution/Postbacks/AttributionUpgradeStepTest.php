@@ -27,20 +27,8 @@ final class AttributionUpgradeStepTest extends TestCase
     private const CURRENT_VERSION = '1.9.76';
     private const PRIOR_VERSION = '1.9.75';
 
-    /**
-     * A version gate, in any spelling that means the same. Every gate is
-     * written one way today, and matching that text literally would answer
-     * "no such gate" for an identical one using `===`, double quotes,
-     * different spacing or a reversed comparison — a clean bill of health for
-     * the shape these tests refuse. (ladderSteps() matches on tokens; this
-     * pattern is kept for callers that scan text.)
-     *
-     * version_compare is deliberately not matched: no gate uses it, and the
-     * ladder's only one is the downgrade guard, pinned by its own test.
-     */
+    /** The reconcile call a step must make; also how a step is recognised. */
     private const RECONCILE_CALL = '_upgrade_attribution_tables(';
-
-    private const GATE_PATTERN = '/if\\s*\\(\\s*\\$prosper202_version\\s*={2,3}\\s*(?:\'([^\']+)\'|"([^"]+)")\\s*\\)/';
 
     private function upgradeSource(): string
     {
@@ -150,7 +138,7 @@ final class AttributionUpgradeStepTest extends TestCase
     public function testEveryAttributionStepUsesTheSharedDefinitionsAndAdvancesTheVersion(): void
     {
         foreach ($this->attributionSteps() as $step) {
-            $gate = $step['gate'];
+            $gate = implode('/', $step['gates']);
 
             $this->assertStringContainsString(
                 'AttributionPostbackTables::getDefinitions()',
@@ -165,10 +153,12 @@ final class AttributionUpgradeStepTest extends TestCase
             );
 
             foreach ($step['persists'] as $to) {
-                $this->assertTrue(
-                    version_compare($to, $gate, '>'),
-                    "the step gated on $gate persists $to, which does not move the install forward"
-                );
+                foreach ($step['gates'] as $from) {
+                    $this->assertTrue(
+                        version_compare($to, $from, '>'),
+                        "the step gated on $gate persists $to, which does not move $from forward"
+                    );
+                }
                 $this->assertTrue(
                     version_compare($to, self::CURRENT_VERSION, '<='),
                     "the step gated on $gate persists $to, a version this release does not know;"
@@ -235,8 +225,10 @@ final class AttributionUpgradeStepTest extends TestCase
         $ladder = [];
         foreach ($this->ladderSteps() as $step) {
             foreach ($step['persists'] as $to) {
-                if (version_compare($to, $step['gate'], '>')) {
-                    $ladder[$step['gate']] = $to;
+                foreach ($step['gates'] as $from) {
+                    if (version_compare($to, $from, '>')) {
+                        $ladder[$from] = $to;
+                    }
                 }
             }
         }
@@ -296,12 +288,12 @@ final class AttributionUpgradeStepTest extends TestCase
         // gate in a new spelling is caught too.
         $gated = array_values(array_filter(
             $this->ladderSteps(),
-            static fn(array $step): bool => $step['gate'] === $code
+            static fn(array $step): bool => in_array($code, $step['gates'], true)
         ));
 
         $this->assertSame(
             [],
-            array_map(static fn(array $step): string => $step['gate'], $gated),
+            array_map(static fn(array $step): string => implode('/', $step['gates']), $gated),
             "an upgrade block gated on the code's own version ($code) is dead where it matters:"
             . ' an install whose stored version is already that number never reaches the ladder,'
             . ' because upgrade_needed() is `stored != code` and upgrade.php answers "Already'
@@ -367,7 +359,7 @@ final class AttributionUpgradeStepTest extends TestCase
      * gate's version persist — passing every assertion here while running
      * for every stored version.
      *
-     * @return list<array{gate: string, persists: list<string>, reconciles: bool, block: string}>
+     * @return list<array{gates: list<string>, persists: list<string>, reconciles: bool, block: string}>
      */
     private function ladderSteps(): array
     {
@@ -378,43 +370,43 @@ final class AttributionUpgradeStepTest extends TestCase
                 $significant[] = $i;
             }
         }
+        $position = array_flip($significant);
 
         $steps = [];
-        foreach (array_keys($significant) as $k) {
-            $seq = array_slice($significant, $k, 7);
-            if (count($seq) < 7) {
-                break;
+        foreach ($significant as $k => $i) {
+            if ($tokens[$i]['id'] !== T_IF) {
+                continue;
             }
-            $t = array_map(static fn(int $i): array => $tokens[$i], $seq);
+            $open = $significant[$k + 1] ?? null;
+            if ($open === null || $tokens[$open]['text'] !== '(') {
+                continue;
+            }
+            $close = $this->matchingParen($tokens, $open);
+            if ($close === null) {
+                continue;
+            }
+            $brace = $significant[($position[$close] ?? -1) + 1] ?? null;
+            if ($brace === null || $tokens[$brace]['text'] !== '{') {
+                continue;
+            }
 
-            // if ( $prosper202_version ==|=== 'X' ) {  — either operand order.
-            if ($t[0]['id'] !== T_IF || $t[1]['text'] !== '(' || $t[6]['text'] !== '{') {
+            $gates = $this->versionsComparedIn($tokens, $significant, $open, $close);
+            if ($gates === []) {
                 continue;
             }
-            if (!in_array($t[3]['id'], [T_IS_EQUAL, T_IS_IDENTICAL], true) || $t[5]['text'] !== ')') {
-                continue;
-            }
-            $variableFirst = $t[2]['id'] === T_VARIABLE && $t[2]['text'] === '$prosper202_version'
-                && $t[4]['id'] === T_CONSTANT_ENCAPSED_STRING;
-            $literalFirst = $t[4]['id'] === T_VARIABLE && $t[4]['text'] === '$prosper202_version'
-                && $t[2]['id'] === T_CONSTANT_ENCAPSED_STRING;
-            if (!$variableFirst && !$literalFirst) {
-                continue;
-            }
-            $literal = $variableFirst ? $t[4]['text'] : $t[2]['text'];
 
-            $end = $this->matchingBrace($tokens, $seq[6]);
+            $end = $this->matchingBrace($tokens, $brace);
             $this->assertNotNull($end, 'unbalanced braces after a version gate');
 
-            $block = implode('', array_column(array_slice($tokens, $seq[0], $end - $seq[0] + 1), 'text'));
+            $block = implode('', array_column(array_slice($tokens, $i, $end - $i + 1), 'text'));
             preg_match_all("/UPDATE 202_version SET version='([^']+)'/", $block, $persisted);
 
             $steps[] = [
-                'gate' => trim($literal, '\'"'),
+                'gates' => $gates,
                 'persists' => array_values(array_unique($persisted[1])),
                 'reconciles' => str_contains($block, self::RECONCILE_CALL),
                 'block' => $block,
-                'from' => $seq[0],
+                'from' => $i,
                 'to' => (int)$end,
             ];
         }
@@ -424,6 +416,69 @@ final class AttributionUpgradeStepTest extends TestCase
         $this->assertGreaterThan(20, count($steps), 'the version gates could not be parsed');
 
         return $steps;
+    }
+
+    /**
+     * Every version `$prosper202_version` is compared equal to inside the
+     * condition spanning $open..$close.
+     *
+     * A condition is walked rather than shape-matched: the ladder already has
+     * compound gates (`== 'a' || == 'b' || == 'c'`), and a matcher that
+     * insisted the comparison fill the whole condition skipped those blocks
+     * entirely. Either operand order counts; `!=` and version_compare() are
+     * not equality gates and are ignored.
+     *
+     * @return list<string>
+     */
+    private function versionsComparedIn(array $tokens, array $significant, int $open, int $close): array
+    {
+        $inside = array_values(array_filter(
+            $significant,
+            static fn(int $i): bool => $i > $open && $i < $close
+        ));
+
+        $versions = [];
+        foreach ($inside as $n => $i) {
+            if (!in_array($tokens[$i]['id'], [T_IS_EQUAL, T_IS_IDENTICAL], true)) {
+                continue;
+            }
+            $left = $tokens[$inside[$n - 1] ?? -1] ?? null;
+            $right = $tokens[$inside[$n + 1] ?? -1] ?? null;
+            if ($left === null || $right === null) {
+                continue;
+            }
+
+            $isVar = static fn(?array $t): bool => $t !== null
+                && $t['id'] === T_VARIABLE && $t['text'] === '$prosper202_version';
+            $isLiteral = static fn(?array $t): bool => $t !== null && $t['id'] === T_CONSTANT_ENCAPSED_STRING;
+
+            if ($isVar($left) && $isLiteral($right)) {
+                $versions[] = trim($right['text'], '\'"');
+            } elseif ($isLiteral($left) && $isVar($right)) {
+                $versions[] = trim($left['text'], '\'"');
+            }
+        }
+
+        return array_values(array_unique($versions));
+    }
+
+    /** Index of the `)` closing the `(` at $open, or null if unbalanced. */
+    private function matchingParen(array $tokens, int $open): ?int
+    {
+        $depth = 0;
+        for ($i = $open, $n = count($tokens); $i < $n; $i++) {
+            $text = $tokens[$i]['text'];
+            if ($text === '(') {
+                $depth++;
+            } elseif ($text === ')') {
+                $depth--;
+                if ($depth === 0) {
+                    return $i;
+                }
+            }
+        }
+
+        return null;
     }
 
     /** Index of the `}` closing the `{` at $open, or null if unbalanced. */
@@ -449,7 +504,7 @@ final class AttributionUpgradeStepTest extends TestCase
     /**
      * The ladder steps that reconcile the attribution tables, oldest first.
      *
-     * @return list<array{gate: string, persists: list<string>, reconciles: bool, block: string}>
+     * @return list<array{gates: list<string>, persists: list<string>, reconciles: bool, block: string}>
      */
     private function attributionSteps(): array
     {
@@ -486,7 +541,7 @@ final class AttributionUpgradeStepTest extends TestCase
     private function blockGatedOn(string $version): string
     {
         foreach ($this->ladderSteps() as $step) {
-            if ($step['gate'] === $version) {
+            if (in_array($version, $step['gates'], true)) {
                 return $step['block'];
             }
         }
