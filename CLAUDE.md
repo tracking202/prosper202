@@ -268,6 +268,33 @@ container with no `gap` whose children mix text and elements. The sibling
 lesson is that a class name is not a synonym: before using one for
 something that is not what the kit shows it doing, read its rule.
 
+### 20. A checker only sees the syntax it follows
+
+The upgrade-ladder guard walked tokens for `T_IF` `(` … `)` `{`, so `elseif`,
+the alternative syntax (`if (…): … endif;`), a braceless body, a ternary, a
+`while`, and `switch`/`case` were all spellings of the forbidden gate that it
+reported as **absent** — six silent passes, each measured by planting it. That
+is #11 in a checker rather than a predicate: a scanner that cannot see a
+construct must not answer "no such construct".
+
+Two ways out, in that order. **Ask the question in a form that has no
+structure to miss**: the invariant here was "`$prosper202_version` is never
+compared equal to the code version", which is a property of the token stream,
+not of any statement — scanning every token for the comparison and never
+looking at statement shape has nothing left to evade it. Where that is
+impossible, **forbid the construct you cannot read and name it**: a `case` arm
+carries no comparison token at all, so the arms are not parsed, the `switch`
+subject is banned outright and the message says to teach both scans before
+writing one.
+
+Then prove it. Plant the defect in *every* spelling, and run the same plants
+against the version you are replacing — "this closes a hole" is then a
+measurement with a before and an after, not a claim. Note which direction a
+hole falls in: the same `elseif` blindness that let a forbidden gate through
+also made a correctly gated call read as ungated in a sibling test, a false
+*failure*. Only one of those two directions is silent, and it is the one worth
+hunting.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure
@@ -568,6 +595,17 @@ Three habits, in order of how often they would have helped:
   behaviour change reads as verified fact to the next reviewer. Before claiming
   an optimization is invisible, construct the input where the shortcut and the
   full computation could disagree and run both.
+
+- **Answering a reviewer is reporting.** A P2 was declined here with "the
+  1-click pages only call `upgrade_databases()` once the feed advertises a
+  newer version", cited to a file and line, recalled from a path read earlier
+  and never reopened. That gate is real but lives in a different function
+  (`functions.php`'s `update_needed()`); `202-account/auto-upgrade.php`'s POST
+  handler checks a CSRF token and nothing else, so the reviewer was right and
+  the decline was wrong. The reply then became a code comment and a test's
+  failure message, where it read as established fact to everyone after. Open
+  the file before you answer, and where a claim about reachability decides
+  something, execute the path.
 
 The rest of this section is the same principle applied to checks — the places
 where a check quietly fails to check what it appears to.

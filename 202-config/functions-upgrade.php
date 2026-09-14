@@ -4206,12 +4206,13 @@ class UPGRADE
             // definitions, so this block cannot drift from them.
             //
             // It reconciles as well as creates: CREATE IF NOT EXISTS is a
-            // no-op against a table that exists in an older shape, which a
-            // branch deployment can hold while already reading 1.9.76. The
-            // repair for that is in RELEASING.md (Troubleshooting) — never a
-            // block gated on 1.9.76, which could never run for an install
-            // already stored at 1.9.76, the only case it would serve.
-            // AttributionUpgradeStepTest refuses one.
+            // no-op against a table already present in an older shape. Folded
+            // in here rather than gated on 1.9.76: nothing but a branch
+            // deployment can be stored at 1.9.76 before it ships, and a block
+            // gated on the code version is unreachable from upgrade.php
+            // anyway (upgrade_needed() is `stored != code`). RELEASING.md has
+            // the branch-deployment repair; AttributionUpgradeStepTest
+            // refuses the block.
             $attribution_ok = _upgrade_attribution_tables(
                 \Prosper202\Database\Tables\AttributionPostbackTables::getDefinitions()
             );

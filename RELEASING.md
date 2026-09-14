@@ -116,8 +116,20 @@ missing): `php`, `composer`, `go`, `git`, `zip`. The script exports the current
   install: **back up the database**, set the stored version back to the release
   before the step that creates the tables (`UPDATE 202_version SET
   version='1.9.75';` for the 1.9.76 attribution tables), then run
-  `202-config/upgrade.php`. Re-running is safe — the step only adds columns and
-  indexes, so matching tables get no statements at all.
+  `202-config/upgrade.php`.
+
+  Two things to know first. `202-config/upgrade.php` takes its POST without a
+  login — that is how a fresh upgrade runs before there is a session, and
+  `upgrade_needed()` is the only thing holding it shut — so winding the version
+  back opens it to anyone who can reach the host until the upgrade finishes. Do
+  it behind a firewall or in a maintenance window. And re-running the step is
+  idempotent but not inert: `SchemaReconciler` adds the columns and indexes the
+  live table is missing and issues `MODIFY COLUMN` where a column is `NOT NULL`
+  and the definition is not, the backfill `UPDATE`s run every time (on a
+  matching table they change no rows), and the step stops the whole upgrade
+  with `Upgrade paused` while pre-release `202_skan_*` tables still hold rows,
+  because creating the `202_attribution_*` tables alongside them would strand
+  those postbacks.
 
 - **`fail_on_unmatched_files`** trips when the build produced no zip — read the
   "Build release artifact" step log; the publish step is working as intended by
