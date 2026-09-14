@@ -560,11 +560,18 @@ final class AttributionUpgradeStepTest extends TestCase
     {
         $guard = $this->downgradeGuard();
 
+        // The whole condition, not a pattern that may match part of it: a
+        // greedy `/^version_compare\(.*'>'\)$/` accepted
+        // `version_compare(…, '<') || version_compare(…, '>')`, which runs
+        // the clamp for every version BUT the current one — so a step that
+        // failed and left the version behind would be marked current and
+        // never retried.
         $this->assertSame(
-            1,
-            preg_match("/^version_compare\\(.*,\\s*'>'\\s*\\)$/s", $guard['condition']),
-            'the downgrade guard must compare with \'>\'; any other operator clamps installs it'
-            . ' should leave alone. Its condition reads: ' . $guard['condition']
+            [self::CURRENT_VERSION, '>'],
+            $this->downgradeComparison($guard['conditionTokens']),
+            'the downgrade guard must be exactly version_compare($prosper202_version, \''
+            . self::CURRENT_VERSION . '\', \'>\'), which pulls an install that is AHEAD of the'
+            . ' code back to it. Its condition reads: ' . $guard['condition']
         );
 
         $this->assertStringContainsString(
@@ -579,16 +586,144 @@ final class AttributionUpgradeStepTest extends TestCase
         // upgrade_needed() stays true, and connect.php redirects every page
         // to the upgrade screen on every request — the exact failure the
         // guard exists to prevent, and the one its clamp only appears to fix.
-        $this->assertSame(
-            1,
-            preg_match(self::PERSIST_PATTERN, $guard['block']),
-            'the downgrade guard clamps $prosper202_version but writes no version to 202_version'
+        //
+        // Asserting the persist and the call separately was not enough
+        // either: the guard could build $sql and hand _upgrade_query() a
+        // different variable, and both assertions passed. The call has to
+        // receive the persist.
+        $this->assertTrue(
+            $this->guardRunsItsPersist($guard['from'], $guard['to']),
+            'the downgrade guard does not run a query carrying its UPDATE of 202_version, so the'
+            . ' stored version stays above the code version and every request keeps entering the'
+            . ' upgrade flow'
         );
-        $this->assertStringContainsString(
-            '_upgrade_query(',
-            $guard['block'],
-            'the downgrade guard builds its UPDATE but never runs it'
-        );
+    }
+
+    /**
+     * The version and operator of a condition that is exactly one
+     * `version_compare($prosper202_version, 'X', 'OP')`, or [] for anything
+     * else — another call beside it, a disjunction, a negation.
+     *
+     * @param  list<int> $inside significant token indices of the condition
+     * @return list<string>
+     */
+    private function downgradeComparison(array $inside): array
+    {
+        $tokens = $this->upgradeTokens();
+        $inside = array_values($inside);
+
+        $connectives = [T_BOOLEAN_OR, T_LOGICAL_OR, T_BOOLEAN_AND, T_LOGICAL_AND];
+        if (count($this->splitTopLevel($tokens, $inside, $connectives)) > 1) {
+            return [];
+        }
+        if ($inside === [] || !$this->namesFunction($tokens[$inside[0]], 'version_compare')) {
+            return [];
+        }
+
+        $open = $inside[1] ?? null;
+        if ($open === null || $tokens[$open]['text'] !== '(') {
+            return [];
+        }
+        $close = $this->matchingParen($tokens, $open);
+        if ($close === null || $close !== $inside[count($inside) - 1]) {
+            // Something follows the call, so the call is not the condition.
+            return [];
+        }
+
+        $arguments = $this->splitTopLevel($tokens, array_slice($inside, 2, count($inside) - 3), [], [',']);
+        if (count($arguments) !== 3) {
+            return [];
+        }
+
+        $text = [];
+        foreach ($arguments as $argument) {
+            $joined = '';
+            foreach ($argument as $j) {
+                $joined .= $tokens[$j]['text'];
+            }
+            $text[] = trim($joined);
+        }
+
+        if (!str_contains($text[0], '$prosper202_version')) {
+            return [];
+        }
+
+        return [trim($text[1], '\'"'), trim($text[2], '\'"')];
+    }
+
+    /**
+     * Does the guard hand a query carrying its 202_version UPDATE to
+     * _upgrade_query()?
+     *
+     * Follows one assignment, which is how the guard is written
+     * (`$sql = "UPDATE …"; _upgrade_query($sql);`) and no further: a longer
+     * chain fails here rather than being followed, because a scan that
+     * guesses at dataflow is worse than one that says it cannot.
+     */
+    private function guardRunsItsPersist(int $from, int $to): bool
+    {
+        $tokens = $this->upgradeTokens();
+
+        // Variables assigned an expression that carries a persist.
+        $carries = [];
+        for ($i = $from; $i <= $to; $i++) {
+            if ($tokens[$i]['id'] !== T_VARIABLE) {
+                continue;
+            }
+            $next = $this->nextSignificant($tokens, $i + 1, $to);
+            if ($next === null || $tokens[$next]['text'] !== '=') {
+                continue;
+            }
+
+            $expression = '';
+            for ($j = $next + 1; $j <= $to && $tokens[$j]['text'] !== ';'; $j++) {
+                $expression .= $tokens[$j]['text'];
+            }
+            if (preg_match(self::PERSIST_PATTERN, $expression) === 1) {
+                $carries[$tokens[$i]['text']] = true;
+            }
+        }
+
+        for ($i = $from; $i <= $to; $i++) {
+            if (!$this->namesFunction($tokens[$i], '_upgrade_query')) {
+                continue;
+            }
+            $open = $this->nextSignificant($tokens, $i + 1, $to);
+            if ($open === null || $tokens[$open]['text'] !== '(') {
+                continue;
+            }
+            $close = $this->matchingParen($tokens, $open);
+            if ($close === null || $close > $to) {
+                continue;
+            }
+
+            $argument = '';
+            for ($j = $open + 1; $j < $close; $j++) {
+                $argument .= $tokens[$j]['text'];
+            }
+            $argument = trim($argument);
+
+            if (preg_match(self::PERSIST_PATTERN, $argument) === 1) {
+                return true;
+            }
+            if (isset($carries[$argument])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** The next non-whitespace token index in [$from, $to], or null. */
+    private function nextSignificant(array $tokens, int $from, int $to): ?int
+    {
+        for ($i = $from; $i <= $to; $i++) {
+            if ($tokens[$i]['id'] !== T_WHITESPACE) {
+                return $i;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -600,7 +735,7 @@ final class AttributionUpgradeStepTest extends TestCase
      * guard commented out in its entirety, because the prose was all that
      * survived.
      *
-     * @return array{condition: string, block: string}
+     * @return array{condition: string, conditionTokens: list<int>, block: string, from: int, to: int}
      */
     private function downgradeGuard(): array
     {
@@ -622,8 +757,9 @@ final class AttributionUpgradeStepTest extends TestCase
             }
 
             $from = $position[$open] + 1;
+            $conditionTokens = array_slice($significant, $from, max(0, $position[$close] - $from));
             $condition = '';
-            foreach (array_slice($significant, $from, max(0, $position[$close] - $from)) as $j) {
+            foreach ($conditionTokens as $j) {
                 $condition .= $tokens[$j]['text'];
             }
 
@@ -643,7 +779,10 @@ final class AttributionUpgradeStepTest extends TestCase
 
             return [
                 'condition' => trim($condition),
+                'conditionTokens' => $conditionTokens,
                 'block' => implode('', array_column(array_slice($tokens, $i, $end - $i + 1), 'text')),
+                'from' => $i,
+                'to' => (int)$end,
             ];
         }
 
@@ -941,11 +1080,16 @@ final class AttributionUpgradeStepTest extends TestCase
      * Split a run of significant tokens at the given operators, ignoring any
      * that sit inside parentheses.
      *
+     * Separators are named by token id, or by text for punctuation — `,` and
+     * the rest tokenize with no id at all, so an id list containing null
+     * would split on every operator in the run.
+     *
      * @param  list<int> $inside
      * @param  list<int> $ids
+     * @param  list<string> $texts
      * @return list<list<int>>
      */
-    private function splitTopLevel(array $tokens, array $inside, array $ids): array
+    private function splitTopLevel(array $tokens, array $inside, array $ids, array $texts = []): array
     {
         $parts = [];
         $current = [];
@@ -953,11 +1097,13 @@ final class AttributionUpgradeStepTest extends TestCase
 
         foreach ($inside as $i) {
             $text = $tokens[$i]['text'];
+            $isSeparator = ($tokens[$i]['id'] !== null && in_array($tokens[$i]['id'], $ids, true))
+                || ($tokens[$i]['id'] === null && in_array($text, $texts, true));
             if ($text === '(') {
                 $depth++;
             } elseif ($text === ')') {
                 $depth--;
-            } elseif ($depth === 0 && in_array($tokens[$i]['id'], $ids, true)) {
+            } elseif ($depth === 0 && $isSeparator) {
                 $parts[] = $current;
                 $current = [];
                 continue;

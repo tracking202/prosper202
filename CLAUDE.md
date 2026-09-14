@@ -325,6 +325,21 @@ value from an expression and another treats that value as a constraint, ask
 what else the expression admits. *Contains x* and *implies x* read the same in
 a grep and are not the same claim.
 
+Two smaller forms of the same error shipped in the fix for this one, both
+found by the same reviewer within the hour:
+
+- **A greedy `.*` turns "is" into "contains".** `/^version_compare\(.*'>'\)$/`
+  was written to say the condition *is* that call, and it accepted
+  `version_compare(…, '<') || version_compare(…, '>')` — a guard that fires
+  for every version but the current one. Anchors do not make a pattern exact
+  when what sits between them can swallow an operator.
+- **Assertions compose only if they name the same thing.** The guard was
+  asserted to contain an `UPDATE` and to contain an `_upgrade_query(` call.
+  Both held while the call received a different variable, so the write never
+  ran. Two true statements about different parts of a block are not one
+  statement about the block; when the claim is "this value reaches that
+  call", follow the value.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure
