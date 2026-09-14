@@ -186,7 +186,7 @@ final class AttributionUpgradeStepTest extends TestCase
         $calls = 0;
         $ungated = [];
         foreach ($tokens as $i => $token) {
-            if ($token['id'] !== T_STRING || $token['text'] !== $name) {
+            if (!$this->namesFunction($token, $name)) {
                 continue;
             }
             // The function's own declaration is not a call.
@@ -479,6 +479,27 @@ final class AttributionUpgradeStepTest extends TestCase
         }
 
         return null;
+    }
+
+    /**
+     * Does this token name the global function $name?
+     *
+     * `\_upgrade_attribution_tables()` is the same call as
+     * `_upgrade_attribution_tables()`, but PHP tokenizes the qualified
+     * spelling as T_NAME_FULLY_QUALIFIED, so a T_STRING-only filter ignored
+     * it — an ungated qualified call passed. Both token kinds count, and the
+     * name is compared on its last segment.
+     */
+    private function namesFunction(array $token, string $name): bool
+    {
+        $kinds = [T_STRING, T_NAME_FULLY_QUALIFIED, T_NAME_QUALIFIED, T_NAME_RELATIVE];
+        if (!in_array($token['id'], $kinds, true)) {
+            return false;
+        }
+
+        $segments = explode('\\', $token['text']);
+
+        return end($segments) === $name;
     }
 
     /** Index of the `}` closing the `{` at $open, or null if unbalanced. */
