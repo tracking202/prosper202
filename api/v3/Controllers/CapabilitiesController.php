@@ -4,15 +4,29 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
+use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
 use Prosper202\License\ClickServerKeyValidator;
 use Prosper202\License\ShellAccessCache;
 
 class CapabilitiesController
 {
+    /**
+     * Checked wrapper over $db, for the statements below.
+     *
+     * Every probe in this class degrades to 'unknown' / '' rather than
+     * failing the request, which is right for a capability report — but it
+     * also means a bypassed check would never be noticed. Connection makes
+     * the failure an exception that each probe catches deliberately, instead
+     * of a return value it is free to forget.
+     */
+    private readonly Connection $conn;
+
     public function __construct(
         private readonly \mysqli $db,
         private readonly ?int $userId = null,
     ) {
+        $this->conn = new Connection($this->db);
     }
 
     public function versions(): array
@@ -151,23 +165,16 @@ class CapabilitiesController
 
     private function timezoneSupport(): string
     {
-        $stmt = $this->db->prepare("SELECT CONVERT_TZ('2000-01-01 00:00:00', '+00:00', 'UTC') AS tz");
-        if (!$stmt) {
+        try {
+            $row = $this->conn->fetchOne(
+                $this->conn->prepareRead("SELECT CONVERT_TZ('2000-01-01 00:00:00', '+00:00', 'UTC') AS tz")
+            );
+        } catch (QueryException) {
+            // The probe could not run, which is not the same as the server
+            // having no timezone tables — say so rather than reporting a
+            // capability either way.
             return 'unknown';
         }
-
-        // @phpstan-ignore-next-line capability probe; execute is return-checked with graceful 'unknown' fallback, no Connection in scope
-        if (!$stmt->execute()) {
-            $stmt->close();
-            return 'unknown';
-        }
-        $result = $stmt->get_result();
-        if ($result === false) {
-            $stmt->close();
-            return 'unknown';
-        }
-        $row = $result->fetch_assoc();
-        $stmt->close();
 
         return ($row['tz'] ?? null) === null ? 'fallback-only' : 'named-timezone';
     }
@@ -222,28 +229,19 @@ class CapabilitiesController
 
     private function loadClickServerKey(): string
     {
-        $stmt = $this->db->prepare(
-            'SELECT p202_customer_api_key FROM 202_users WHERE user_id = ? LIMIT 1'
-        );
-        if (!$stmt) {
+        try {
+            $stmt = $this->conn->prepareRead(
+                'SELECT p202_customer_api_key FROM 202_users WHERE user_id = ? LIMIT 1'
+            );
+            // Connection::bind() takes the values by array, which also
+            // sidesteps what the hand-written bind_param needed a local for:
+            // it binds by reference, and a readonly property cannot be passed
+            // by reference ("Cannot indirectly modify readonly property").
+            $this->conn->bind($stmt, 'i', [$this->userId]);
+            $row = $this->conn->fetchOne($stmt);
+        } catch (QueryException) {
             return '';
         }
-        // bind_param() binds by reference; a readonly property can't be passed
-        // by reference (PHP 8: "Cannot indirectly modify readonly property"),
-        // so copy it to a local first.
-        $userId = $this->userId;
-        $stmt->bind_param('i', $userId);
-        if (!mysqli_stmt_execute($stmt)) {
-            $stmt->close();
-            return '';
-        }
-        $result = $stmt->get_result();
-        if ($result === false) {
-            $stmt->close();
-            return '';
-        }
-        $row = $result->fetch_assoc();
-        $stmt->close();
 
         return trim((string)($row['p202_customer_api_key'] ?? ''));
     }

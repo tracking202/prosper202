@@ -25,6 +25,7 @@ declare(strict_types=1);
 
 include_once dirname(__DIR__) . '/connect.php';
 
+use Prosper202\Database\Connection;
 use Prosper202\Database\Tables\LtvTables;
 
 if (!isset($db) || !($db instanceof mysqli)) {
@@ -38,21 +39,22 @@ echo "Starting LTV migration...\n";
  */
 function ltv_column_exists(mysqli $db, string $table, string $column): bool
 {
-    $stmt = $db->prepare(
+    $conn = new Connection($db);
+    $stmt = $conn->prepareRead(
         'SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.COLUMNS
          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
     );
-    if ($stmt === false) {
-        throw new Exception('Failed to prepare column check: ' . $db->error);
+    $conn->bind($stmt, 'ss', [$table, $column]);
+    $row = $conn->fetchOne($stmt);
+
+    // A predicate must not answer when it does not know (CLAUDE.md #11).
+    // COUNT(*) always returns a row, so a null one means the fetch failed —
+    // and reading that as "the column is absent" would send the migration
+    // back to ADD COLUMN on a column that may well be there.
+    if ($row === null) {
+        throw new Exception('Failed to read column check for ' . $table . '.' . $column . ': ' . $db->error);
     }
-    $stmt->bind_param('ss', $table, $column);
-    if (!$stmt->execute()) {
-        $stmt->close();
-        throw new Exception('Failed to check column ' . $table . '.' . $column . ': ' . $db->error);
-    }
-    $result = $stmt->get_result();
-    $row = $result ? $result->fetch_assoc() : null;
-    $stmt->close();
+
     return ((int) ($row['c'] ?? 0)) > 0;
 }
 
@@ -61,21 +63,20 @@ function ltv_column_exists(mysqli $db, string $table, string $column): bool
  */
 function ltv_index_exists(mysqli $db, string $table, string $index): bool
 {
-    $stmt = $db->prepare(
+    $conn = new Connection($db);
+    $stmt = $conn->prepareRead(
         'SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.STATISTICS
          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ?'
     );
-    if ($stmt === false) {
-        throw new Exception('Failed to prepare index check: ' . $db->error);
+    $conn->bind($stmt, 'ss', [$table, $index]);
+    $row = $conn->fetchOne($stmt);
+
+    // Same as ltv_column_exists(): "I could not find out" must not resolve to
+    // "it is not there", which here would re-run a CREATE INDEX.
+    if ($row === null) {
+        throw new Exception('Failed to read index check for ' . $table . '.' . $index . ': ' . $db->error);
     }
-    $stmt->bind_param('ss', $table, $index);
-    if (!$stmt->execute()) {
-        $stmt->close();
-        throw new Exception('Failed to check index ' . $table . '.' . $index . ': ' . $db->error);
-    }
-    $result = $stmt->get_result();
-    $row = $result ? $result->fetch_assoc() : null;
-    $stmt->close();
+
     return ((int) ($row['c'] ?? 0)) > 0;
 }
 

@@ -5,6 +5,8 @@ declare(strict_types=1);
 
 use Prosper202\Attribution\AttributionServiceFactory;
 use Prosper202\Attribution\Repository\Mysql\ConversionJourneyRepository;
+use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
 
 /**
  * @param array<int, ?int> $cache
@@ -25,21 +27,36 @@ function resolveAdvertiserId(\mysqli $connection, int $campaignId, array &$cache
         exit(1);
     }
 
-    $stmt->bind_param('i', $campaignId);
     // A failed execute must not be cached as "no advertiser": that would put
     // this campaign in a different settings scope for the rest of the run and
-    // silently change which conversions get a journey built.
-    if (!$stmt->execute()) {
-        $error = $stmt->error;
-        $stmt->close();
-        fwrite(STDERR, sprintf("Advertiser lookup failed for campaign %d: %s\n", $campaignId, $error));
+    // silently change which conversions get a journey built. Connection turns
+    // it into an exception, and closes the statement on the way out.
+    //
+    // get_result() is handled here rather than via Connection::fetchOne()
+    // because fetchOne() reads a false return as an absent row — the same
+    // silent miscache, one layer down. A SELECT always yields a result set,
+    // so false is a transport failure and nothing else.
+    $checkedConn = new Connection($connection);
+    try {
+        $checkedConn->bind($stmt, 'i', [$campaignId]);
+        $checkedConn->execute($stmt);
+    } catch (QueryException $exception) {
+        fwrite(STDERR, sprintf(
+            "Advertiser lookup failed for campaign %d: %s\n",
+            $campaignId,
+            $exception->getMessage()
+        ));
         exit(1);
     }
     $result = $stmt->get_result();
-    $row = $result ? $result->fetch_assoc() : null;
-    if ($result) {
-        $result->free();
+    if (!($result instanceof mysqli_result)) {
+        $error = $stmt->error;
+        $stmt->close();
+        fwrite(STDERR, sprintf("Advertiser lookup returned no result set for campaign %d: %s\n", $campaignId, $error));
+        exit(1);
     }
+    $row = $result->fetch_assoc();
+    $result->free();
     $stmt->close();
 
     if (!is_array($row)) {
@@ -98,6 +115,8 @@ if ($userIdFilter !== null) {
 
 $sqlBase .= ' ORDER BY conv_id ASC LIMIT ?';
 
+$checkedConn = new Connection($connection);
+
 while (true) {
     $stmt = $connection->prepare($sqlBase);
     if ($stmt === false) {
@@ -105,22 +124,23 @@ while (true) {
         exit(1);
     }
 
-    if ($userIdFilter !== null) {
-        $stmt->bind_param('iiiii', $afterConvId, $startTime, $endTime, $userIdFilter, $batchSize);
-    } else {
-        $stmt->bind_param('iiii', $afterConvId, $startTime, $endTime, $batchSize);
-    }
-
     // Unchecked, a failed execute produces no rows, which the loop below
     // reads as "nothing left to do" — the backfill would stop early and
-    // still report success.
-    if (!$stmt->execute()) {
-        $error = $stmt->error;
-        $stmt->close();
+    // still report success. Connection::bind() also checks the type string
+    // against the value count, which matters here because the two branches
+    // bind different arities against the same prepared statement.
+    try {
+        if ($userIdFilter !== null) {
+            $checkedConn->bind($stmt, 'iiiii', [$afterConvId, $startTime, $endTime, $userIdFilter, $batchSize]);
+        } else {
+            $checkedConn->bind($stmt, 'iiii', [$afterConvId, $startTime, $endTime, $batchSize]);
+        }
+        $checkedConn->execute($stmt);
+    } catch (QueryException $exception) {
         fwrite(STDERR, sprintf(
             "Conversion batch fetch failed after conv_id %d: %s\n",
             $afterConvId,
-            $error
+            $exception->getMessage()
         ));
         exit(1);
     }

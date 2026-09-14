@@ -55,6 +55,12 @@ $now = time();
 /**
  * Run a query, throwing on failure (CLAUDE.md: no unchecked query results).
  */
+// One checked wrapper for every prepared statement below. It validates the
+// bind type string against the value count, keeps bound values alive until
+// execute, and raises QueryException — which extends RuntimeException — so
+// the existing catch (Throwable) handlers keep working unchanged.
+$conn = new \Prosper202\Database\Connection($db);
+
 $run = function (string $sql) use ($db): mysqli_result|bool {
     $result = $db->query($sql);
     if ($result === false) {
@@ -79,20 +85,10 @@ try {
     if ($idStmt === false) {
         throw new RuntimeException('prepare failed: ' . $db->error);
     }
-    $idStmt->bind_param('ii', $now, $now);
-    if (!$idStmt->execute()) {
-        $idStmt->close();
-        throw new RuntimeException('sweep owner select failed: ' . $db->error);
-    }
-    $idResult = $idStmt->get_result();
-    if ($idResult === false) {
-        $idStmt->close();
-        throw new RuntimeException('sweep owner fetch failed: ' . $db->error);
-    }
-    while (($idRow = $idResult->fetch_assoc()) !== null) {
+    $conn->bind($idStmt, 'ii', [$now, $now]);
+    foreach ($conn->fetchAll($idStmt) as $idRow) {
         $sweepCustomerIds[] = (int) $idRow['customer_id'];
     }
-    $idStmt->close();
 
     // active -> past_due once the paid-through period plus grace has lapsed
     // with no renewal (a renewal event pushes current_period_end forward).
@@ -104,13 +100,8 @@ try {
     if ($stmt === false) {
         throw new RuntimeException('prepare failed: ' . $db->error);
     }
-    $stmt->bind_param('ii', $now, $now);
-    if (!$stmt->execute()) {
-        $stmt->close();
-        throw new RuntimeException('past_due sweep failed: ' . $db->error);
-    }
-    $pastDue = $stmt->affected_rows;
-    $stmt->close();
+    $conn->bind($stmt, 'ii', [$now, $now]);
+    $pastDue = $conn->executeUpdate($stmt);
 
     // past_due -> canceled after a further 30-day recovery window.
     $stmt = $db->prepare(
@@ -121,13 +112,8 @@ try {
     if ($stmt === false) {
         throw new RuntimeException('prepare failed: ' . $db->error);
     }
-    $stmt->bind_param('iii', $now, $now, $now);
-    if (!$stmt->execute()) {
-        $stmt->close();
-        throw new RuntimeException('cancel sweep failed: ' . $db->error);
-    }
-    $canceled = $stmt->affected_rows;
-    $stmt->close();
+    $conn->bind($stmt, 'iii', [$now, $now, $now]);
+    $canceled = $conn->executeUpdate($stmt);
 
     // Refresh the swept owners' subscription rollups immediately (chunked;
     // only mrr/active_subscription_count change on a status flip).
@@ -221,7 +207,6 @@ try {
         $transitionRows = 0;
         $recConversions = 0;
         if ($usersResult instanceof mysqli_result) {
-            $conn = new \Prosper202\Database\Connection($db);
             $recommendations = new \Prosper202\Ltv\MysqlRecommendationRepository($conn);
             while ($userRow = $usersResult->fetch_assoc()) {
                 $transitionRows += $recommendations->rebuildTransitions((int) $userRow['user_id'], $now);
@@ -247,7 +232,6 @@ try {
     // personalization PII purge below, which ran fine on older schemas.
     try {
         $companiesLinked = 0;
-        $conn = $conn ?? new \Prosper202\Database\Connection($db);
         $companies = new \Prosper202\Ltv\MysqlCompanyRepository($conn);
         // Per-user existence probes ride the (user_id, company_id) index; a
         // single global DISTINCT over the predicate would full-scan the
@@ -266,11 +250,8 @@ try {
             }
             while ($userRow = $companyUsers->fetch_assoc()) {
                 $probeUserId = (int) $userRow['user_id'];
-                $probe->bind_param('i', $probeUserId);
-                if (!$probe->execute()) {
-                    $probe->close();
-                    throw new RuntimeException('company-link probe failed: ' . $db->error);
-                }
+                $conn->bind($probe, 'i', [$probeUserId]);
+                $conn->execute($probe);
                 $probeResult = $probe->get_result();
                 if (!($probeResult instanceof mysqli_result)) {
                     // false here is a transport failure, not an empty result
@@ -304,13 +285,8 @@ try {
     if ($stmt === false) {
         throw new RuntimeException('prepare failed: ' . $db->error);
     }
-    $stmt->bind_param('i', $now);
-    if (!$stmt->execute()) {
-        $stmt->close();
-        throw new RuntimeException('personalization purge failed: ' . $db->error);
-    }
-    $purged = $stmt->affected_rows;
-    $stmt->close();
+    $conn->bind($stmt, 'i', [$now]);
+    $purged = $conn->executeUpdate($stmt);
     echo "personalization purge: {$purged} expired tokens removed\n";
 } catch (Throwable $e) {
     fwrite(STDERR, 'ltv_maintenance failed: ' . $e->getMessage() . "\n");

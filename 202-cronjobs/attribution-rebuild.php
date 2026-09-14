@@ -4,6 +4,8 @@
 declare(strict_types=1);
 
 use Prosper202\Attribution\AttributionServiceFactory;
+use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
 
 require_once __DIR__ . '/../202-config/connect.php';
 
@@ -47,6 +49,15 @@ $cronType = 'attr';
 $database = DB::getInstance();
 $connection = $database?->getConnection();
 if ($connection instanceof mysqli) {
+    // bind() and execute() go through the wrapper: it validates the type
+    // string against the value count and keeps the bound values alive, and it
+    // turns a false execute into an exception rather than a return value a
+    // future edit can forget. The store_result()/num_rows pair below stays as
+    // it is on purpose — Connection::fetchOne() reads a failed get_result()
+    // as an empty row, which here is exactly the "this window has not been
+    // processed" misreading these guards exist to prevent.
+    $checkedConn = new Connection($connection);
+
     $checkStmt = $connection->prepare('SELECT 1 FROM 202_cronjobs WHERE cronjob_type = ? AND cronjob_time = ? LIMIT 1');
     if (!$checkStmt) {
         // Skipping the check silently would rebuild a window that may already
@@ -55,14 +66,15 @@ if ($connection instanceof mysqli) {
         fwrite(STDERR, 'Failed to prepare the attribution cron marker check: ' . $connection->error . "\n");
         exit(1);
     }
-    $checkStmt->bind_param('si', $cronType, $cronBucket);
     // Unchecked, a failed execute leaves num_rows at 0, which reads as
     // "this window has not been processed" — so the job would rebuild
-    // attribution for a window it had already done.
-    if (!$checkStmt->execute()) {
-        $error = $checkStmt->error;
-        $checkStmt->close();
-        fwrite(STDERR, 'Failed to check the attribution cron marker: ' . $error . "\n");
+    // attribution for a window it had already done. Connection::execute()
+    // throws instead, and closes the statement before it does.
+    try {
+        $checkedConn->bind($checkStmt, 'si', [$cronType, $cronBucket]);
+        $checkedConn->execute($checkStmt);
+    } catch (QueryException $exception) {
+        fwrite(STDERR, 'Failed to check the attribution cron marker: ' . $exception->getMessage() . "\n");
         exit(1);
     }
     // store_result() has the same failure mode as execute(): a false
@@ -86,25 +98,27 @@ if ($connection instanceof mysqli) {
         fwrite(STDERR, 'Failed to prepare the attribution cron marker insert: ' . $connection->error . "\n");
         exit(1);
     }
-    $insertStmt->bind_param('si', $cronType, $cronBucket);
     // Without the marker the next run reprocesses this same window.
-    if (!$insertStmt->execute()) {
-        $error = $insertStmt->error;
-        $insertStmt->close();
-        fwrite(STDERR, 'Failed to record the attribution cron marker: ' . $error . "\n");
+    try {
+        $checkedConn->bind($insertStmt, 'si', [$cronType, $cronBucket]);
+        $checkedConn->execute($insertStmt);
+    } catch (QueryException $exception) {
+        fwrite(STDERR, 'Failed to record the attribution cron marker: ' . $exception->getMessage() . "\n");
         exit(1);
     }
     $insertStmt->close();
 
     $cleanupStmt = $connection->prepare('DELETE FROM 202_cronjobs WHERE cronjob_type = ? AND cronjob_time < ?');
     if ($cleanupStmt) {
-        $cleanupStmt->bind_param('si', $cronType, $cronBucket);
         // Pruning old markers is housekeeping: a failure leaves stale
         // rows but does not affect this run, so warn and carry on.
-        if (!$cleanupStmt->execute()) {
-            fwrite(STDERR, 'Warning: could not prune old attribution cron markers: ' . $cleanupStmt->error . "\n");
+        try {
+            $checkedConn->bind($cleanupStmt, 'si', [$cronType, $cronBucket]);
+            $checkedConn->execute($cleanupStmt);
+            $cleanupStmt->close();
+        } catch (QueryException $exception) {
+            fwrite(STDERR, 'Warning: could not prune old attribution cron markers: ' . $exception->getMessage() . "\n");
         }
-        $cleanupStmt->close();
     }
 }
 

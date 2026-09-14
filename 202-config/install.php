@@ -150,6 +150,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			return $stmt;
 		};
 
+		// bind/execute go through the checked wrapper. Its QueryException
+		// carries the driver errno as the exception CODE, which is what the
+		// catch below keys its transient-retry decision on — the hand-written
+		// checks these replace did the same by hand, and dropping the code
+		// would have quietly turned every recoverable deadlock into a failed
+		// install with no retry.
+		$conn = new \Prosper202\Database\Connection($db);
+
 		// Build the schema, then create the user / preference / role rows atomically
 		// so a mid-way failure can't leave a half-built account behind.
 		$inTransaction = false;
@@ -171,8 +179,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					SET user_email=?, user_dash_email=?, user_name=?, user_pass=?, user_timezone=?,
 						user_time_register=?, install_hash=?, user_hash=?, p202_customer_api_key=?"
 			);
-			$stmt->bind_param(
-				'sssssisss',
+			// The wrapper captures the real driver errno (STRICT-only report
+			// mode means execute() returns false instead of throwing) so the
+			// catch below can tell a transient failure from a permanent one.
+			$conn->bind($stmt, 'sssssisss', [
 				$user_email,
 				$user_email,
 				$user_name,
@@ -181,17 +191,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$user_time_register,
 				$hash,
 				$user_hash,
-				$user_api
-			);
-			if (!$stmt->execute()) {
-				// Capture the real driver errno (STRICT-only report mode means
-				// execute() returns false instead of throwing) so the catch below
-				// can tell a transient failure from a permanent one.
-				$errno = (int) $stmt->errno;
-				$stmtError = $stmt->error;
-				$stmt->close();
-				throw new \RuntimeException('Failed to insert user: ' . $stmtError, $errno);
-			}
+				$user_api,
+			]);
+			// executeUpdate() closes the statement; insert_id is read from the
+			// CONNECTION, not the statement, so it survives that close. Proven
+			// by a real install rather than assumed — see the commit message.
+			$conn->executeUpdate($stmt);
 			$user_id = (int) $db->insert_id;
 			// Whether THIS request created the user, vs. INSERT IGNORE finding an
 			// existing row in the lookup below. Only a newly-created account gets a
@@ -199,24 +204,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			// already-existing user (e.g. two concurrent same-username installs) would
 			// duplicate it. The pref/role rows are INSERT IGNORE, so they're already safe.
 			$user_created = $user_id > 0;
-			$stmt->close();
 
 			// INSERT IGNORE yields insert_id 0 when the row already exists;
 			// look up the existing id so the rest of setup can proceed.
 			if ($user_id === 0) {
 				$stmt = $prepare("SELECT user_id FROM 202_users WHERE user_name=? LIMIT 1");
-				$stmt->bind_param('s', $user_name);
-				if (!$stmt->execute()) {
-					$errno = (int) $stmt->errno;
-					$stmtError = $stmt->error;
-					$stmt->close();
-					throw new \RuntimeException('Failed to look up user: ' . $stmtError, $errno);
-				}
-				$lookup = $stmt->get_result();
-				if ($lookup && $row = $lookup->fetch_assoc()) {
+				$conn->bind($stmt, 's', [$user_name]);
+				$row = $conn->fetchOne($stmt);
+				if ($row !== null) {
 					$user_id = (int) $row['user_id'];
 				}
-				$stmt->close();
 			}
 
 			if ($user_id <= 0) {
@@ -224,24 +221,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			}
 
 			$stmt = $prepare("INSERT IGNORE INTO 202_users_pref SET user_id=?");
-			$stmt->bind_param('i', $user_id);
-			if (!$stmt->execute()) {
-				$errno = (int) $stmt->errno;
-				$stmtError = $stmt->error;
-				$stmt->close();
-				throw new \RuntimeException('Failed to insert user preferences: ' . $stmtError, $errno);
-			}
-			$stmt->close();
+			$conn->bind($stmt, 'i', [$user_id]);
+			$conn->executeUpdate($stmt);
 
 			$stmt = $prepare("INSERT IGNORE INTO `202_user_role` (`user_id`, `role_id`) VALUES (?, 1)");
-			$stmt->bind_param('i', $user_id);
-			if (!$stmt->execute()) {
-				$errno = (int) $stmt->errno;
-				$stmtError = $stmt->error;
-				$stmt->close();
-				throw new \RuntimeException('Failed to insert user role: ' . $stmtError, $errno);
-			}
-			$stmt->close();
+			$conn->bind($stmt, 'i', [$user_id]);
+			$conn->executeUpdate($stmt);
 
 			if ($user_created) {
 				// Default dashboard chart for the new account, keyed on the committed
@@ -251,14 +236,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$chart_data = 'a:3:{i:0;a:2:{s:11:"campaign_id";s:1:"0";s:10:"value_type";s:6:"clicks";}i:1;a:2:{s:11:"campaign_id";s:1:"0";s:10:"value_type";s:9:"click_out";}i:2;a:2:{s:11:"campaign_id";s:1:"0";s:10:"value_type";s:5:"leads";}}';
 				$chart_range = 'days';
 				$stmt = $prepare("INSERT INTO `202_charts` (`user_id`, `data`, `chart_time_range`) VALUES (?, ?, ?)");
-				$stmt->bind_param('iss', $user_id, $chart_data, $chart_range);
-				if (!$stmt->execute()) {
-					$errno = (int) $stmt->errno;
-					$stmtError = $stmt->error;
-					$stmt->close();
-					throw new \RuntimeException('Failed to insert default chart: ' . $stmtError, $errno);
-				}
-				$stmt->close();
+				$conn->bind($stmt, 'iss', [$user_id, $chart_data, $chart_range]);
+				$conn->executeUpdate($stmt);
 			}
 
 			if (!$db->commit()) {
@@ -295,14 +274,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$cron = callAutoCron('register');
 				if (is_array($cron) && ($cron['status'] ?? null) === 'success') {
 					$stmt = $prepare("UPDATE 202_users_pref SET auto_cron = '1' WHERE user_id = ?");
-					$stmt->bind_param('i', $user_id);
-					if (!$stmt->execute()) {
-						$errno = (int) $stmt->errno;
-						$stmtError = $stmt->error;
-						$stmt->close();
-						throw new \RuntimeException('auto_cron flag update failed (' . $errno . '): ' . $stmtError);
-					}
-					$stmt->close();
+					$conn->bind($stmt, 'i', [$user_id]);
+					$conn->executeUpdate($stmt);
 				}
 			} catch (\Throwable $e) {
 				error_log('Prosper202 install: auto cron setup failed: ' . $e->getMessage());
@@ -315,18 +288,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			// install key (p202_customer_api_key) collected above. Best-effort:
 			// failing to persist a key just means it isn't shown, not a failed install.
 			$rest_api_key = bin2hex(random_bytes(32));
-			$apikey_stmt = $db->prepare("INSERT INTO 202_api_keys (user_id, api_key, created_at) VALUES (?, ?, ?)");
-			if ($apikey_stmt === false) {
-				$rest_api_key = '';
-			} else {
-				$apikey_created_at = time();
+			try {
+				$apikey_stmt = $conn->prepareWrite(
+					"INSERT INTO 202_api_keys (user_id, api_key, created_at) VALUES (?, ?, ?)"
+				);
 				// $user_id is already a real int in this flow (cast on insert and lookup).
-				$apikey_stmt->bind_param('isi', $user_id, $rest_api_key, $apikey_created_at);
-				if (!$apikey_stmt->execute()) {
-					// Don't surface a key we failed to persist.
-					$rest_api_key = '';
-				}
-				$apikey_stmt->close();
+				$conn->bind($apikey_stmt, 'isi', [$user_id, $rest_api_key, time()]);
+				$conn->executeUpdate($apikey_stmt);
+			} catch (\Throwable $e) {
+				// Best effort: don't surface a key we failed to persist, and
+				// never fail an otherwise-complete install over it.
+				error_log('Prosper202 install: REST API key not stored: ' . $e->getMessage());
+				$rest_api_key = '';
 			}
 			$html['rest_api_key'] = htmlentities($rest_api_key, ENT_QUOTES, 'UTF-8');
 			$html['user_id'] = $user_id;

@@ -140,8 +140,18 @@ final class Connection
             // The errno tag makes error-class detection (deadlock, duplicate
             // key, unknown column) locale-independent — the message text
             // follows the server's lc_messages setting.
+            //
+            // It is also carried as the exception CODE, which is what a
+            // caller deciding whether to retry actually reaches for:
+            // 202-config/install.php keys its retry loop on
+            // in_array($e->getCode(), [1213, 1205]), and a hand-written
+            // execute check that threw with the errno as its code is only
+            // replaceable by this one if the code survives. Previously it was
+            // 0, so nothing can depend on the old value; isMysqlError() reads
+            // the tag and the previous-chain either way.
             throw new QueryException(
-                'MySQL execute failed: ' . $error . ($errno > 0 ? ' [errno ' . $errno . ']' : '')
+                'MySQL execute failed: ' . $error . ($errno > 0 ? ' [errno ' . $errno . ']' : ''),
+                $errno
             );
         }
         unset($this->boundValues[spl_object_id($stmt)]);
