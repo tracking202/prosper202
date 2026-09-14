@@ -588,23 +588,104 @@ final class AttributionUpgradeStepTest extends TestCase
             if (!in_array($tokens[$i]['id'], [T_IS_EQUAL, T_IS_IDENTICAL], true)) {
                 continue;
             }
-            $left = $tokens[$inside[$n - 1] ?? -1] ?? null;
-            $right = $tokens[$inside[$n + 1] ?? -1] ?? null;
-            if ($left === null || $right === null) {
-                continue;
-            }
+
+            $leftAt = $this->operandRank($tokens, $inside, $n - 1, -1);
+            $rightAt = $this->operandRank($tokens, $inside, $n + 1, +1);
+            $left = $leftAt === null ? null : $tokens[$inside[$leftAt]];
+            $right = $rightAt === null ? null : $tokens[$inside[$rightAt]];
 
             $isVar = static fn(?array $t): bool => $t !== null
                 && $t['id'] === T_VARIABLE && $t['text'] === '$prosper202_version';
 
-            if ($isVar($left) && !$isVar($right)) {
-                $versions[] = $this->versionOperand($right);
-            } elseif ($isVar($right) && !$isVar($left)) {
-                $versions[] = $this->versionOperand($left);
+            if ($isVar($left) === $isVar($right)) {
+                // Neither side is the stored version (not a gate), or both
+                // are (compares the value with itself, which names no
+                // version). A side that did not reduce to one token is null,
+                // so it is never the variable and lands here too — unless the
+                // OTHER side is, which the branches below then resolve or
+                // fail on.
+                continue;
             }
+
+            $other = $isVar($left) ? $right : $left;
+            if ($other === null) {
+                $this->fail(
+                    'a gate compares $prosper202_version against an expression this test cannot'
+                    . ' reduce to a single token. Resolve it here rather than letting the gate go'
+                    . ' unseen.'
+                );
+            }
+
+            $versions[] = $this->versionOperand($other);
         }
 
         return array_values(array_unique(array_filter($versions)));
+    }
+
+    /**
+     * The rank in $inside of the single token an operand reduces to, or null
+     * when it reduces to more than one.
+     *
+     * Balanced parentheses are unwrapped first. `($prosper202_version) ===
+     * PROSPER202_VERSION` puts a `)` next to the operator, so reading the
+     * adjacent token saw punctuation, matched nothing, and reported no gate —
+     * and `(($prosper202_version))` did it twice. Unwrapping is iterative for
+     * that reason.
+     *
+     * $step is the direction of travel away from the operator: -1 for the
+     * left operand, +1 for the right.
+     */
+    private function operandRank(array $tokens, array $inside, int $rank, int $step): ?int
+    {
+        $count = count($inside);
+        $open = $step < 0 ? ')' : '(';
+        $close = $step < 0 ? '(' : ')';
+
+        // The far edge of what the parentheses stripped so far enclose. Null
+        // until the first unwrap, because an unparenthesised operand is
+        // whatever token sits next to the operator.
+        $limit = null;
+
+        // A bound on nesting, so a malformed run cannot spin here.
+        for ($unwraps = 0; $unwraps < 64; $unwraps++) {
+            if ($rank < 0 || $rank >= $count) {
+                return null;
+            }
+
+            if ($tokens[$inside[$rank]]['text'] !== $open) {
+                // Anything left between here and the far edge means the
+                // parentheses held an expression, not an operand.
+                return ($limit === null || $rank === $limit) ? $rank : null;
+            }
+
+            $depth = 0;
+            $far = null;
+            for ($j = $rank; $j >= 0 && $j < $count; $j += $step) {
+                $text = $tokens[$inside[$j]]['text'];
+                if ($text === $open) {
+                    $depth++;
+                } elseif ($text === $close) {
+                    $depth--;
+                    if ($depth === 0) {
+                        $far = $j;
+                        break;
+                    }
+                }
+            }
+            if ($far === null) {
+                return null;
+            }
+
+            // Step inside from both brackets and go round again, so `(($v))`
+            // unwraps twice. Checking for a single token before stripping
+            // instead of after saw three tokens inside the outer pair and
+            // gave up — which is the silent skip this whole helper exists to
+            // remove.
+            $limit = $far - $step;
+            $rank += $step;
+        }
+
+        return null;
     }
 
     /**
