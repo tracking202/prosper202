@@ -194,8 +194,211 @@ final class AttributionUpgradeStepTest extends TestCase
                     . ' the install would be stranded above the ladder and the downgrade guard would'
                     . ' pull it back down on the next run'
                 );
+
+                // Writing it, not just spelling it. A rung whose UPDATE is
+                // assigned or logged rather than run reads as persisted here
+                // while the database stays where it was, so the rung
+                // re-enters on every upgrade run forever.
+                $this->assertContains(
+                    $to,
+                    $this->persistsThatReachAQuery($step['from'], $step['to']),
+                    "the step gated on $gate spells an UPDATE to $to but never hands it to"
+                    . ' _upgrade_query(), so the version is never written'
+                );
+            }
+
+            $this->assertPersistsAreGuardedByReconcileSuccess($step);
+        }
+    }
+
+    /**
+     * A step's version persists must run only when the reconcile succeeded.
+     *
+     * Advancing on a failed reconcile is the ladder's worst outcome: the
+     * install is recorded at the new version with incomplete tables, the rung
+     * that would repair them never runs again, and no later release is
+     * looking for it. The block's own comment promises the opposite —
+     * "Advance the version only once every DDL statement succeeded, so a
+     * partial failure re-enters this block on the next run" — and asserting
+     * only that a reconcile call and a persist share a block left that
+     * promise unguarded: replacing `if ($attribution_ok)` with `if (true)`
+     * kept the whole suite green.
+     *
+     * The recognised shape is the one the ladder uses: the reconcile result
+     * assigned to a variable, and the persist inside the braces of an `if`
+     * whose condition is that variable. A different shape — `!$ok` with an
+     * early return, a ternary — fails here rather than being reasoned about,
+     * because the failure direction matters: reading the negated branch as
+     * the success branch would call an unguarded persist guarded.
+     */
+    private function assertPersistsAreGuardedByReconcileSuccess(array $step): void
+    {
+        $tokens = $this->upgradeTokens();
+        $gate = implode('/', $step['gates']);
+
+        $ranges = $this->reconcileSuccessRanges($step['from'], $step['to']);
+        $this->assertNotSame(
+            [],
+            $ranges,
+            "the step gated on $gate does not guard anything on the result of "
+            . rtrim(self::RECONCILE_CALL, '(') . '(). Expected the result assigned to a variable'
+            . " and the version persisted inside `if (\$that_variable) { … }`; teach this check"
+            . ' the new shape before writing one.'
+        );
+
+        // A floor, because everything below is a loop over what this finds:
+        // a step whose UPDATE is built by concatenation rather than written
+        // as one literal yields nothing here, and a scan with nothing to
+        // check reports no unguarded persist — which is the answer it gives
+        // when there are none.
+        //
+        // Unreached, and left in deliberately. Every concatenated shape tried
+        // against it is intercepted first by testTheLadderTopIsTheCodeVersion,
+        // which cannot rank the dynamic value or loses the literal top. So
+        // this is a floor under a floor: it does nothing today and stops the
+        // loop below going vacuous if that scan is ever loosened. It is not a
+        // check that has been shown to fail.
+        $writes = $this->persistTokensIn($step['from'], $step['to']);
+        $this->assertNotSame(
+            [],
+            $writes,
+            "the step gated on $gate persists " . implode('/', $step['persists']) . ' but no single'
+            . ' string literal in it carries that UPDATE, so this check cannot locate the write to'
+            . ' say whether it is guarded. Teach it the new shape before writing one.'
+        );
+
+        $unguarded = [];
+        foreach ($writes as $at) {
+            foreach ($ranges as [$start, $end]) {
+                if ($at >= $start && $at <= $end) {
+                    continue 2;
+                }
+            }
+            $unguarded[] = trim($tokens[$at]['text']);
+        }
+
+        $this->assertSame(
+            [],
+            $unguarded,
+            "the step gated on $gate writes a version outside the branch guarded by the reconcile"
+            . " result, so a failed reconcile would record the new version anyway and the step"
+            . ' would never re-run to finish the schema'
+        );
+    }
+
+    /**
+     * The token ranges inside a step that run only when the reconcile call
+     * reported success — the braces of each `if` whose condition is exactly
+     * the variable holding that result.
+     *
+     * Exactly the variable, not merely mentioning it: `if (!$attribution_ok)`
+     * mentions it and its braces are the FAILURE branch, so a mention-based
+     * match would read the one place a persist must never be as the one place
+     * it must.
+     *
+     * @return list<array{0: int, 1: int}>
+     */
+    private function reconcileSuccessRanges(int $from, int $to): array
+    {
+        $tokens = $this->upgradeTokens();
+        $name = rtrim(self::RECONCILE_CALL, '(');
+
+        $result = null;
+        for ($i = $from; $i <= $to; $i++) {
+            if (!$this->namesFunction($tokens[$i], $name)) {
+                continue;
+            }
+            $equals = $this->previousSignificant($tokens, $i - 1, $from);
+            if ($equals === null || $tokens[$equals]['text'] !== '=') {
+                continue;
+            }
+            $variable = $this->previousSignificant($tokens, $equals - 1, $from);
+            if ($variable === null || $tokens[$variable]['id'] !== T_VARIABLE) {
+                continue;
+            }
+
+            $result = $tokens[$variable]['text'];
+            break;
+        }
+
+        if ($result === null) {
+            return [];
+        }
+
+        $ranges = [];
+        for ($i = $from; $i <= $to; $i++) {
+            if ($tokens[$i]['id'] !== T_IF && $tokens[$i]['id'] !== T_ELSEIF) {
+                continue;
+            }
+            $open = $this->nextSignificant($tokens, $i + 1, $to);
+            if ($open === null || $tokens[$open]['text'] !== '(') {
+                continue;
+            }
+            $close = $this->matchingParen($tokens, $open);
+            if ($close === null || $close > $to) {
+                continue;
+            }
+
+            $condition = [];
+            for ($j = $open + 1; $j < $close; $j++) {
+                if ($tokens[$j]['id'] !== T_WHITESPACE) {
+                    $condition[] = $j;
+                }
+            }
+            $condition = $this->stripParentheses($tokens, $condition);
+            if (count($condition) !== 1 || $tokens[$condition[0]]['text'] !== $result) {
+                continue;
+            }
+
+            $brace = $this->nextSignificant($tokens, $close + 1, $to);
+            if ($brace === null || $tokens[$brace]['text'] !== '{') {
+                continue;
+            }
+            $end = $this->matchingBrace($tokens, $brace);
+            if ($end === null || $end > $to) {
+                continue;
+            }
+
+            $ranges[] = [$brace, (int)$end];
+        }
+
+        return $ranges;
+    }
+
+    /**
+     * The indices of the string literals in [$from, $to] that carry a
+     * `202_version` write.
+     *
+     * @return list<int>
+     */
+    private function persistTokensIn(int $from, int $to): array
+    {
+        $tokens = $this->upgradeTokens();
+        $kinds = [T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE];
+
+        $found = [];
+        for ($i = $from; $i <= $to; $i++) {
+            if (!in_array($tokens[$i]['id'], $kinds, true)) {
+                continue;
+            }
+            if (preg_match(self::PERSIST_PATTERN, $tokens[$i]['text']) === 1) {
+                $found[] = $i;
             }
         }
+
+        return $found;
+    }
+
+    /** The previous non-whitespace token index in [$floor, $from], or null. */
+    private function previousSignificant(array $tokens, int $from, int $floor): ?int
+    {
+        for ($i = $from; $i >= $floor; $i--) {
+            if ($tokens[$i]['id'] !== T_WHITESPACE) {
+                return $i;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -592,8 +795,9 @@ final class AttributionUpgradeStepTest extends TestCase
         // either: the guard could build $sql and hand _upgrade_query() a
         // different variable, and both assertions passed. The call has to
         // receive the persist.
-        $this->assertTrue(
-            $this->guardRunsItsPersist($guard['from'], $guard['to']),
+        $this->assertNotSame(
+            [],
+            $this->persistsThatReachAQuery($guard['from'], $guard['to']),
             'the downgrade guard does not run a query carrying its UPDATE of 202_version, so the'
             . ' stored version stays above the code version and every request keeps entering the'
             . ' upgrade flow'
@@ -645,7 +849,7 @@ final class AttributionUpgradeStepTest extends TestCase
             $text[] = trim($joined);
         }
 
-        if (!str_contains($text[0], '$prosper202_version')) {
+        if (!$this->isStoredVersionOperand($tokens, $arguments[0])) {
             return [];
         }
 
@@ -653,19 +857,87 @@ final class AttributionUpgradeStepTest extends TestCase
     }
 
     /**
-     * Does the guard hand a query carrying its 202_version UPDATE to
-     * _upgrade_query()?
+     * Is this argument the stored version itself?
+     *
+     * `str_contains($argument, '$prosper202_version')` accepted
+     * `(bool) $prosper202_version`, which stringifies to "1" — so
+     * `version_compare("1", '1.9.76', '>')` is false for every stored
+     * version, the clamp never fires, and an install ahead of the code keeps
+     * entering the upgrade flow while this check stays green. Measured
+     * against 1.9.77, 1.10.0 and 2.0.0.
+     *
+     * Parentheses are free and one `(string)` cast is allowed, because the
+     * value is already a string and the guard is written with it. Every
+     * other cast changes what is compared, so it is refused rather than
+     * reasoned about — the same call made for gate operands.
+     *
+     * @param list<int> $argument significant token indices of the argument
+     */
+    private function isStoredVersionOperand(array $tokens, array $argument): bool
+    {
+        $argument = $this->stripParentheses($tokens, $argument);
+
+        if ($argument !== [] && $tokens[$argument[0]]['id'] === T_STRING_CAST) {
+            if (preg_replace('/\\s+/', '', strtolower($tokens[$argument[0]]['text'])) !== '(string)') {
+                return false;
+            }
+            $argument = $this->stripParentheses($tokens, array_slice($argument, 1));
+        }
+
+        return count($argument) === 1
+            && $tokens[$argument[0]]['id'] === T_VARIABLE
+            && $tokens[$argument[0]]['text'] === '$prosper202_version';
+    }
+
+    /**
+     * Drop every pair of parentheses that encloses the whole run.
+     *
+     * @param  list<int> $run
+     * @return list<int>
+     */
+    private function stripParentheses(array $tokens, array $run): array
+    {
+        $run = array_values($run);
+
+        for ($guard = 0; $guard < 64; $guard++) {
+            $last = count($run) - 1;
+            if ($last < 1 || $tokens[$run[0]]['text'] !== '(') {
+                return $run;
+            }
+            if ($this->matchingParen($tokens, $run[0]) !== $run[$last]) {
+                return $run;
+            }
+            $run = array_slice($run, 1, $last - 1);
+        }
+
+        return $run;
+    }
+
+    /**
+     * The versions a range actually writes: those whose `UPDATE 202_version`
+     * reaches an `_upgrade_query()` call.
+     *
+     * A literal is not a write. A rung keeping
+     * `_upgrade_query("UPDATE 202_version SET version='1.9.76'")` as a bare
+     * string — assigned, logged, refactored past — still satisfies a scan
+     * that reads the block for the statement, so the version reads as
+     * persisted while the database stays where it was and the rung re-enters
+     * on every run. The downgrade guard was held to this first; every
+     * attribution rung is held to it too.
      *
      * Follows one assignment, which is how the guard is written
      * (`$sql = "UPDATE …"; _upgrade_query($sql);`) and no further: a longer
-     * chain fails here rather than being followed, because a scan that
+     * chain drops out here rather than being followed, because a scan that
      * guesses at dataflow is worse than one that says it cannot.
+     *
+     * @return list<string> the versions written, as the statements spell them
      */
-    private function guardRunsItsPersist(int $from, int $to): bool
+    private function persistsThatReachAQuery(int $from, int $to): array
     {
         $tokens = $this->upgradeTokens();
 
-        // Variables assigned an expression that carries a persist.
+        // Variables assigned an expression that carries a persist, and the
+        // version that expression writes.
         $carries = [];
         for ($i = $from; $i <= $to; $i++) {
             if ($tokens[$i]['id'] !== T_VARIABLE) {
@@ -680,11 +952,12 @@ final class AttributionUpgradeStepTest extends TestCase
             for ($j = $next + 1; $j <= $to && $tokens[$j]['text'] !== ';'; $j++) {
                 $expression .= $tokens[$j]['text'];
             }
-            if (preg_match(self::PERSIST_PATTERN, $expression) === 1) {
-                $carries[$tokens[$i]['text']] = true;
+            if (preg_match(self::PERSIST_PATTERN, $expression, $written) === 1) {
+                $carries[$tokens[$i]['text']] = $written[1];
             }
         }
 
+        $reach = [];
         for ($i = $from; $i <= $to; $i++) {
             if (!$this->namesFunction($tokens[$i], '_upgrade_query')) {
                 continue;
@@ -704,15 +977,16 @@ final class AttributionUpgradeStepTest extends TestCase
             }
             $argument = trim($argument);
 
-            if (preg_match(self::PERSIST_PATTERN, $argument) === 1) {
-                return true;
+            if (preg_match(self::PERSIST_PATTERN, $argument, $written) === 1) {
+                $reach[] = $written[1];
+                continue;
             }
             if (isset($carries[$argument])) {
-                return true;
+                $reach[] = $carries[$argument];
             }
         }
 
-        return false;
+        return array_values(array_unique($reach));
     }
 
     /** The next non-whitespace token index in [$from, $to], or null. */
