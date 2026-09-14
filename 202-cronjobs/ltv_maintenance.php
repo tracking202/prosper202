@@ -52,15 +52,17 @@ if (!isset($db) || !($db instanceof mysqli)) {
 
 $now = time();
 
-/**
- * Run a query, throwing on failure (CLAUDE.md: no unchecked query results).
- */
 // One checked wrapper for every prepared statement below. It validates the
 // bind type string against the value count, keeps bound values alive until
 // execute, and raises QueryException — which extends RuntimeException — so
-// the existing catch (Throwable) handlers keep working unchanged.
+// the existing catch (Throwable) handlers keep working unchanged. Its
+// fetchOne()/fetchAll() also raise on a result set they could not read, so
+// "I could not find out" cannot arrive here as an empty sweep.
 $conn = new \Prosper202\Database\Connection($db);
 
+/**
+ * Run a query, throwing on failure (CLAUDE.md: no unchecked query results).
+ */
 $run = function (string $sql) use ($db): mysqli_result|bool {
     $result = $db->query($sql);
     if ($result === false) {

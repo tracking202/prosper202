@@ -574,8 +574,10 @@ class MessagingService
         }
         $result = $stmt->get_result();
         $ids = [];
-        while ($row = $result->fetch_assoc()) {
-            $ids[] = (int) $row['id'];
+        if ($result instanceof mysqli_result) {
+            while ($row = $result->fetch_assoc()) {
+                $ids[] = (int) $row['id'];
+            }
         }
         $stmt->close();
 

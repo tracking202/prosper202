@@ -53,9 +53,9 @@ if ($connection instanceof mysqli) {
     // string against the value count and keeps the bound values alive, and it
     // turns a false execute into an exception rather than a return value a
     // future edit can forget. The store_result()/num_rows pair below stays as
-    // it is on purpose — Connection::fetchOne() reads a failed get_result()
-    // as an empty row, which here is exactly the "this window has not been
-    // processed" misreading these guards exist to prevent.
+    // it is because Connection has no store_result() wrapper — its false
+    // return leaves num_rows at 0, which reads as "this window has not been
+    // processed", so it is checked by hand right where it happens.
     $checkedConn = new Connection($connection);
 
     $checkStmt = $connection->prepare('SELECT 1 FROM 202_cronjobs WHERE cronjob_type = ? AND cronjob_time = ? LIMIT 1');
@@ -113,10 +113,20 @@ if ($connection instanceof mysqli) {
         // Pruning old markers is housekeeping: a failure leaves stale
         // rows but does not affect this run, so warn and carry on.
         try {
+            // bind() throws BEFORE the statement is closed (only execute()
+            // closes on the way out), so this path has to release it itself
+            // or a type-string bug leaks the statement.
             $checkedConn->bind($cleanupStmt, 'si', [$cronType, $cronBucket]);
             $checkedConn->execute($cleanupStmt);
             $cleanupStmt->close();
         } catch (QueryException $exception) {
+            try {
+                // Only reached when bind() threw; execute() already closed it,
+                // and closing twice raises an Error rather than being a no-op.
+                $cleanupStmt->close();
+            } catch (\Error) {
+                // Already closed on the way out of execute().
+            }
             fwrite(STDERR, 'Warning: could not prune old attribution cron markers: ' . $exception->getMessage() . "\n");
         }
     }

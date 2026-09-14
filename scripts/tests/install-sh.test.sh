@@ -80,6 +80,13 @@ sed 's/^main "\$@"$/: # main call suppressed by install-sh.test.sh/' \
 # shellcheck disable=SC1090,SC1091
 source "$WORK/installer.sh"
 
+# install.sh installs `trap cleanup EXIT INT TERM` at top level, and sourcing
+# it REPLACES the cleanup trap set above — one EXIT trap per shell, last one
+# wins — so $WORK leaked a directory under /tmp on every run, here and on
+# every CI run of this job. Reinstate ours, and keep the installer's cleanup
+# (it restores the cursor after the spinner) by calling it first.
+trap 'cleanup; rm -rf "$WORK"' EXIT
+
 echo "install.sh"
 
 # ---------------------------------------------------------------- extensions

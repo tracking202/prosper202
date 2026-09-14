@@ -35,11 +35,27 @@ if (!isset($db) || !($db instanceof mysqli)) {
 echo "Starting LTV migration...\n";
 
 /**
+ * One wrapper per handle rather than one per probe: the two existence checks
+ * below run fifteen times across this migration, and a Connection built and
+ * thrown away each time is pure churn. Keyed by a WeakMap on the connection
+ * itself, not spl_object_id — object ids are reused after free, so an id key
+ * can hand a reconnect the freed handle's entry (CLAUDE.md #11).
+ */
+function ltv_connection(mysqli $db): Connection
+{
+    /** @var \WeakMap<mysqli, Connection>|null $wrappers */
+    static $wrappers = null;
+    $wrappers ??= new \WeakMap();
+
+    return $wrappers[$db] ??= new Connection($db);
+}
+
+/**
  * @return bool True if the column exists on the table in the current schema.
  */
 function ltv_column_exists(mysqli $db, string $table, string $column): bool
 {
-    $conn = new Connection($db);
+    $conn = ltv_connection($db);
     $stmt = $conn->prepareRead(
         'SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.COLUMNS
          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
@@ -48,9 +64,11 @@ function ltv_column_exists(mysqli $db, string $table, string $column): bool
     $row = $conn->fetchOne($stmt);
 
     // A predicate must not answer when it does not know (CLAUDE.md #11).
-    // COUNT(*) always returns a row, so a null one means the fetch failed —
-    // and reading that as "the column is absent" would send the migration
-    // back to ADD COLUMN on a column that may well be there.
+    // fetchOne() now raises on a result set it could not read, so the real
+    // failure arrives as a QueryException; this stays as the last-ditch guard
+    // on the same invariant — COUNT(*) always returns a row, so a null one is
+    // never "the column is absent", and treating it as such would send the
+    // migration back to ADD COLUMN on a column that may well be there.
     if ($row === null) {
         throw new Exception('Failed to read column check for ' . $table . '.' . $column . ': ' . $db->error);
     }
@@ -63,7 +81,7 @@ function ltv_column_exists(mysqli $db, string $table, string $column): bool
  */
 function ltv_index_exists(mysqli $db, string $table, string $index): bool
 {
-    $conn = new Connection($db);
+    $conn = ltv_connection($db);
     $stmt = $conn->prepareRead(
         'SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.STATISTICS
          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ?'

@@ -143,12 +143,12 @@ final class Connection
             //
             // It is also carried as the exception CODE, which is what a
             // caller deciding whether to retry actually reaches for:
-            // 202-config/install.php keys its retry loop on
-            // in_array($e->getCode(), [1213, 1205]), and a hand-written
-            // execute check that threw with the errno as its code is only
-            // replaceable by this one if the code survives. Previously it was
-            // 0, so nothing can depend on the old value; isMysqlError() reads
-            // the tag and the previous-chain either way.
+            // 202-config/install.php keys its transient-retry on
+            // in_array($e->getCode(), [1205, 1213, 2006, 2013]), and a
+            // hand-written execute check that threw with the errno as its
+            // code is only replaceable by this one if the code survives.
+            // Previously it was 0, so nothing can depend on the old value;
+            // isMysqlError() reads the tag and the previous-chain either way.
             throw new QueryException(
                 'MySQL execute failed: ' . $error . ($errno > 0 ? ' [errno ' . $errno . ']' : ''),
                 $errno
@@ -197,19 +197,91 @@ final class Connection
     }
 
     /**
+     * A false get_result() after a SUCCESSFUL execute() is a legitimate
+     * "nothing to read" only when the statement produced no result set at all
+     * — an INSERT/UPDATE/DELETE, where field_count is 0. When the statement
+     * DID produce one, false is a transport failure, and reading it as an
+     * empty answer is the silent-failure shape CLAUDE.md error pattern #1
+     * names by function: "false reads as an empty result set". It is not
+     * hypothetical here — safeDeleteModel() reads [] as "no campaigns use
+     * this model" and deletes it, and ltv_maintenance reads [] as "no owners
+     * to sweep" and leaves churned MRR on the books, both while reporting
+     * success. Checking it once, here, is what lets those callers stop
+     * hand-rolling the check (and stop getting it wrong).
+     *
+     * Returning is the "this was legitimately empty" answer; throwing is
+     * "I could not find out". How field_count is read, and why it is read
+     * that way rather than plainly, is in the comment on the read itself.
+     *
+     * @param mysqli_stmt $stmt
+     * @throws QueryException when a result set existed but could not be read
+     */
+    private function assertResultSetWasReadable(object $stmt): void
+    {
+        // isset(), not a bare read, and measured on all four shapes this is
+        // called with rather than assumed. On a live statement it is true and
+        // the value is right (2 for a two-column SELECT, 0 for an INSERT). On
+        // a mysqli_stmt subclass that skipped the real constructor it is false
+        // instead of throwing, and on a plain fake object with no such
+        // property it is false WITHOUT emitting "Undefined property" — which a
+        // bare read does, and which PHPUnit promotes to a test error. Same
+        // constraint as ::$affected_rows in executeUpdate(); a double that
+        // wants to exercise this path says so through a plain method, since
+        // redeclaring the property in a subclass does not take (the internal
+        // handler wins). Absent all of that, treat the statement as having
+        // produced no result set — the pre-existing behaviour.
+        if (method_exists($stmt, 'fieldCountFallback')) {
+            $fieldCount = (int) $stmt->fieldCountFallback();
+        } else {
+            $fieldCount = isset($stmt->field_count) ? (int) $stmt->field_count : 0;
+        }
+        if ($fieldCount === 0) {
+            return;
+        }
+
+        try {
+            $error = $stmt->error;
+        } catch (\Error) {
+            $error = '(unknown)';
+        }
+        try {
+            $errno = (int) $stmt->errno;
+        } catch (\Error) {
+            $errno = 0;
+        }
+        unset($this->boundValues[spl_object_id($stmt)]);
+        // Closed before throwing, the same contract execute() keeps, so a
+        // caller's catch never has to guess whether the statement is still open.
+        $stmt->close();
+        throw new QueryException(
+            'MySQL result set could not be read: ' . $error . ($errno > 0 ? ' [errno ' . $errno . ']' : ''),
+            $errno
+        );
+    }
+
+    /**
      * Execute a statement, fetch a single row, and close the statement.
+     *
+     * Returns null when the query genuinely matched nothing. A result set
+     * that could not be read raises QueryException instead — see
+     * assertResultSetWasReadable().
      *
      * @param mysqli_stmt $stmt
      * @return array<string, mixed>|null
+     * @throws QueryException if the execute fails or the result set is unreadable
      */
     public function fetchOne(object $stmt): ?array
     {
         $this->execute($stmt);
         $result = $stmt->get_result();
-        $row = ($result instanceof mysqli_result) ? $result->fetch_assoc() : null;
-        if ($result instanceof mysqli_result) {
-            $result->free();
+        if (!($result instanceof mysqli_result)) {
+            $this->assertResultSetWasReadable($stmt);
+            $stmt->close();
+
+            return null;
         }
+        $row = $result->fetch_assoc();
+        $result->free();
         $stmt->close();
 
         return $row ?? null;
@@ -218,20 +290,29 @@ final class Connection
     /**
      * Execute a statement, fetch all rows, and close the statement.
      *
+     * Returns [] when the query genuinely matched nothing. A result set that
+     * could not be read raises QueryException instead — see
+     * assertResultSetWasReadable().
+     *
      * @param mysqli_stmt $stmt
      * @return list<array<string, mixed>>
+     * @throws QueryException if the execute fails or the result set is unreadable
      */
     public function fetchAll(object $stmt): array
     {
         $this->execute($stmt);
         $result = $stmt->get_result();
-        $rows = [];
-        if ($result instanceof mysqli_result) {
-            while ($row = $result->fetch_assoc()) {
-                $rows[] = $row;
-            }
-            $result->free();
+        if (!($result instanceof mysqli_result)) {
+            $this->assertResultSetWasReadable($stmt);
+            $stmt->close();
+
+            return [];
         }
+        $rows = [];
+        while ($row = $result->fetch_assoc()) {
+            $rows[] = $row;
+        }
+        $result->free();
         $stmt->close();
 
         return $rows;
@@ -377,8 +458,16 @@ final class Connection
             } catch (\Error) {
                 $errno = 0;
             }
+            // Errno as the exception CODE, for the same reason execute() does
+            // it: a caller deciding whether to retry reaches for getCode()
+            // (202-config/install.php keys its transient-retry on
+            // in_array($e->getCode(), [1205, 1213, 2006, 2013])). A lost
+            // connection — 2006/2013 — surfaces at prepare at least as often
+            // as at execute, so leaving this at 0 made exactly those failures
+            // look permanent. Additive: it was always 0.
             throw new QueryException(
-                'Failed to prepare MySQL statement: ' . $error . ($errno > 0 ? ' [errno ' . $errno . ']' : '')
+                'Failed to prepare MySQL statement: ' . $error . ($errno > 0 ? ' [errno ' . $errno . ']' : ''),
+                $errno
             );
         }
 

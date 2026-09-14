@@ -24,14 +24,26 @@ use mysqli;
  * The seam being fixed IS the database wiring, so a fake statement would prove
  * nothing about it (error pattern #9): a stub that returns false on demand
  * tests the stub. These run the real service, against a real MySQL, and make
- * the statement fail the way MySQL actually fails it — by dropping the table
- * the prepared statement reads, between prepare and execute.
+ * the statement fail the way MySQL actually fails it.
+ *
+ * There are two distinct ways for it to fail, and the difference matters
+ * because the original defect was on the SECOND one:
+ *
+ *   - Dropping the table fails the PREPARE. MySQL resolves table names at
+ *     prepare time, so nothing downstream of it ever runs. This is the cheap
+ *     case and it is what breakTheCampaignsTable() does — worth having, but on
+ *     its own it never exercises the code the bug lived in.
+ *   - A view over a function that SIGNALs fails the EXECUTE, with the prepare
+ *     succeeding. That is the real shape: execute returns false, get_result()
+ *     is then false too, and the unchecked code read that as "no campaigns use
+ *     this model". breakTheCampaignsTableAtExecuteTime() reproduces it.
  *
  * @group integration
  */
 final class AttributionIntegrationServiceTest extends TestCase
 {
     private ?mysqli $db = null;
+    private ?int $reportModeToRestore = null;
 
     protected function setUp(): void
     {
@@ -40,13 +52,32 @@ final class AttributionIntegrationServiceTest extends TestCase
             $this->markTestSkipped('Set P202_TEST_DB_HOST to run the attribution integration tests.');
         }
 
+        // No default database name. These tests DROP 202_aff_campaigns and
+        // 202_attribution_models and do not put them back — that is the point,
+        // it is how a statement is made to fail for real — so defaulting to
+        // 'prosper202' would mean anyone who exports P202_TEST_DB_HOST to run
+        // the schema suite destroys the campaign and attribution-model tables
+        // of whatever install that host is serving. The database has to be
+        // named deliberately, and it has to be a scratch one.
+        $name = getenv('P202_TEST_DB_NAME');
+        if ($name === false || $name === '') {
+            $this->markTestSkipped(
+                'Set P202_TEST_DB_NAME to a SCRATCH database: these tests drop 202_aff_campaigns '
+                . 'and 202_attribution_models and leave them dropped.'
+            );
+        }
+
+        // Restored in tearDown: the app runs under STRICT-only (connect.php),
+        // which is what makes execute() return false instead of throwing, but
+        // leaving the mode changed leaks into every later test in the process.
+        $this->reportModeToRestore = MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT;
         mysqli_report(MYSQLI_REPORT_STRICT);
         try {
             $this->db = new mysqli(
                 (string) $host,
                 (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
                 (string) (getenv('P202_TEST_DB_PASS') ?: ''),
-                (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
+                (string) $name,
                 (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
             );
         } catch (\Throwable $e) {
@@ -68,9 +99,19 @@ final class AttributionIntegrationServiceTest extends TestCase
     protected function tearDown(): void
     {
         if ($this->db instanceof mysqli) {
+            // The execute-time break replaces the table with a view over a
+            // renamed base and a stored function; all three have to go, or the
+            // next test's setUp cannot create its table.
+            $this->db->query('DROP VIEW IF EXISTS `202_aff_campaigns`');
+            $this->db->query('DROP FUNCTION IF EXISTS `p202_test_signal`');
+            $this->db->query('DROP TABLE IF EXISTS `202_aff_campaigns_base`');
             $this->db->query('DROP TABLE IF EXISTS `202_aff_campaigns`');
             $this->db->close();
             $this->db = null;
+        }
+        if ($this->reportModeToRestore !== null) {
+            mysqli_report($this->reportModeToRestore);
+            $this->reportModeToRestore = null;
         }
     }
 
@@ -109,10 +150,45 @@ final class AttributionIntegrationServiceTest extends TestCase
         return $id;
     }
 
-    /** Breaks every prepared read against the campaigns table, for real. */
+    /**
+     * Breaks every read against the campaigns table at PREPARE time — MySQL
+     * resolves table names before the statement is ever executed.
+     */
     private function breakTheCampaignsTable(): void
     {
         $this->assertTrue($this->db()->query('DROP TABLE `202_aff_campaigns`'), 'could not drop the table');
+    }
+
+    /**
+     * Breaks it at EXECUTE time instead, which is the leg the defect lived on:
+     * prepare succeeds, execute returns false, and get_result() is false after
+     * it. Swaps the table for a view of the same shape whose WHERE clause calls
+     * a function that SIGNALs — the name and columns resolve, so the prepare is
+     * clean, and the error only happens when a row is actually read.
+     */
+    private function breakTheCampaignsTableAtExecuteTime(): void
+    {
+        $db = $this->db();
+        $this->assertTrue(
+            $db->query('RENAME TABLE `202_aff_campaigns` TO `202_aff_campaigns_base`'),
+            'could not rename the table'
+        );
+        $db->query('DROP FUNCTION IF EXISTS `p202_test_signal`');
+        $this->assertTrue(
+            $db->query(
+                "CREATE FUNCTION `p202_test_signal`() RETURNS INT DETERMINISTIC
+                 BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'result set unavailable'; RETURN 1; END"
+            ),
+            'could not create the signalling function'
+        );
+        $this->assertTrue(
+            $db->query(
+                'CREATE VIEW `202_aff_campaigns` AS
+                 SELECT aff_campaign_id, user_id, aff_campaign_name, attribution_model_id
+                 FROM `202_aff_campaigns_base` WHERE `p202_test_signal`() = 1'
+            ),
+            'could not create the signalling view'
+        );
     }
 
     // ── the answer that mattered ─────────────────────────────────────
@@ -146,6 +222,42 @@ final class AttributionIntegrationServiceTest extends TestCase
 
         $this->expectException(QueryException::class);
         $this->service()->getCampaignsUsingModel(42, 7);
+    }
+
+    /**
+     * The same promise on the leg the defect actually lived on. Dropping the
+     * table only ever failed the prepare; here the prepare succeeds and the
+     * EXECUTE fails, which is when get_result() returns false and the old code
+     * answered [].
+     */
+    public function testCampaignsUsingModelThrowsWhenTheExecuteFails(): void
+    {
+        $this->seedCampaign(7, 'Alpha', 42);
+        $this->breakTheCampaignsTableAtExecuteTime();
+
+        $this->expectException(QueryException::class);
+        $this->service()->getCampaignsUsingModel(42, 7);
+    }
+
+    /**
+     * And the consequence: an in-use model must survive a failure on that leg.
+     * This is the case that reported success:true and deleted the model.
+     */
+    public function testSafeDeleteRefusesWhenTheInUseCheckFailsAtExecuteTime(): void
+    {
+        $this->seedCampaign(7, 'Alpha', 42);
+        $repo = $this->stubRepository(model: $this->model(42, 7));
+        $this->breakTheCampaignsTableAtExecuteTime();
+
+        $result = $this->service($repo)->safeDeleteModel(42, 7);
+
+        $this->assertFalse($result['success']);
+        $this->assertSame(
+            0,
+            $repo->deleteCalls,
+            'the model was deleted despite the in-use check failing at execute time'
+        );
+        $this->assertStringContainsString('Could not check', (string) $result['error']);
     }
 
     // ── and what that answer is used for ─────────────────────────────

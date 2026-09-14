@@ -9,9 +9,13 @@ use Prosper202\Database\Connection;
 use Prosper202\Database\Exceptions\QueryException;
 
 /**
+ * Takes the wrapper rather than the raw handle: this runs once per distinct
+ * campaign inside the batch loop, and building a Connection per call only to
+ * throw it away is work the caller has already done.
+ *
  * @param array<int, ?int> $cache
  */
-function resolveAdvertiserId(\mysqli $connection, int $campaignId, array &$cache): ?int
+function resolveAdvertiserId(Connection $checkedConn, int $campaignId, array &$cache): ?int
 {
     if ($campaignId <= 0) {
         return null;
@@ -21,25 +25,19 @@ function resolveAdvertiserId(\mysqli $connection, int $campaignId, array &$cache
         return $cache[$campaignId];
     }
 
-    $stmt = $connection->prepare('SELECT aff_network_id FROM 202_aff_campaigns WHERE aff_campaign_id = ? LIMIT 1');
-    if ($stmt === false) {
-        fwrite(STDERR, 'Failed to prepare advertiser lookup statement: ' . $connection->error . "\n");
-        exit(1);
-    }
-
-    // A failed execute must not be cached as "no advertiser": that would put
-    // this campaign in a different settings scope for the rest of the run and
-    // silently change which conversions get a journey built. Connection turns
-    // it into an exception, and closes the statement on the way out.
-    //
-    // get_result() is handled here rather than via Connection::fetchOne()
-    // because fetchOne() reads a false return as an absent row — the same
-    // silent miscache, one layer down. A SELECT always yields a result set,
-    // so false is a transport failure and nothing else.
-    $checkedConn = new Connection($connection);
+    // Neither a failed execute nor an unreadable result set may be cached as
+    // "no advertiser": that would put this campaign in a different settings
+    // scope for the rest of the run and silently change which conversions get
+    // a journey built. fetchOne() distinguishes both from a genuine miss — it
+    // returns null only when the SELECT matched nothing, and throws when the
+    // statement produced a result set it could not read — so the miscache is
+    // no longer reachable through any leg.
     try {
+        $stmt = $checkedConn->prepareRead(
+            'SELECT aff_network_id FROM 202_aff_campaigns WHERE aff_campaign_id = ? LIMIT 1'
+        );
         $checkedConn->bind($stmt, 'i', [$campaignId]);
-        $checkedConn->execute($stmt);
+        $row = $checkedConn->fetchOne($stmt);
     } catch (QueryException $exception) {
         fwrite(STDERR, sprintf(
             "Advertiser lookup failed for campaign %d: %s\n",
@@ -48,16 +46,6 @@ function resolveAdvertiserId(\mysqli $connection, int $campaignId, array &$cache
         ));
         exit(1);
     }
-    $result = $stmt->get_result();
-    if (!($result instanceof mysqli_result)) {
-        $error = $stmt->error;
-        $stmt->close();
-        fwrite(STDERR, sprintf("Advertiser lookup returned no result set for campaign %d: %s\n", $campaignId, $error));
-        exit(1);
-    }
-    $row = $result->fetch_assoc();
-    $result->free();
-    $stmt->close();
 
     if (!is_array($row)) {
         $cache[$campaignId] = null;
@@ -124,18 +112,21 @@ while (true) {
         exit(1);
     }
 
-    // Unchecked, a failed execute produces no rows, which the loop below
-    // reads as "nothing left to do" — the backfill would stop early and
-    // still report success. Connection::bind() also checks the type string
-    // against the value count, which matters here because the two branches
-    // bind different arities against the same prepared statement.
+    // Every failure here has to be told apart from an empty batch: $rows
+    // staying empty breaks the loop below, so the backfill would stop early
+    // and still report success. fetchAll() raises on all three legs — a
+    // failed execute, and a result set that was produced but could not be
+    // read — and returns [] only when the batch genuinely ran out.
+    // Connection::bind() also checks the type string against the value count,
+    // which matters here because the two branches bind different arities
+    // against the same prepared statement.
     try {
         if ($userIdFilter !== null) {
             $checkedConn->bind($stmt, 'iiiii', [$afterConvId, $startTime, $endTime, $userIdFilter, $batchSize]);
         } else {
             $checkedConn->bind($stmt, 'iiii', [$afterConvId, $startTime, $endTime, $batchSize]);
         }
-        $checkedConn->execute($stmt);
+        $rows = $checkedConn->fetchAll($stmt);
     } catch (QueryException $exception) {
         fwrite(STDERR, sprintf(
             "Conversion batch fetch failed after conv_id %d: %s\n",
@@ -144,30 +135,6 @@ while (true) {
         ));
         exit(1);
     }
-    // get_result() signals failure by returning false, and an unchecked
-    // false is indistinguishable from an empty batch: $rows stays empty, the
-    // loop breaks, and the run reports success having silently skipped every
-    // conversion after this point. Same reason the execute() above is
-    // checked.
-    $result = $stmt->get_result();
-    if ($result === false) {
-        $error = $stmt->error;
-        $stmt->close();
-        fwrite(STDERR, sprintf(
-            "Conversion batch fetch returned no result set after conv_id %d: %s\n",
-            $afterConvId,
-            $error
-        ));
-        exit(1);
-    }
-
-    $rows = [];
-    while ($row = $result->fetch_assoc()) {
-        $rows[] = $row;
-    }
-    $result->free();
-
-    $stmt->close();
 
     if ($rows === []) {
         break;
@@ -182,7 +149,7 @@ while (true) {
             'user_id' => (int) $row['user_id'],
             'campaign_id' => $campaignId,
         ];
-        $advertiserId = resolveAdvertiserId($connection, $campaignId, $campaignAdvertiserCache);
+        $advertiserId = resolveAdvertiserId($checkedConn, $campaignId, $campaignAdvertiserCache);
         if ($advertiserId !== null) {
             $scope['advertiser_id'] = $advertiserId;
         }

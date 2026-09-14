@@ -9,6 +9,7 @@ use mysqli_result;
 use mysqli_stmt;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
 use RuntimeException;
 
 /**
@@ -115,7 +116,14 @@ final class ConnectionTest extends TestCase
         $this->assertNull($conn->fetchOne($stmt));
     }
 
-    public function testFetchOneReturnsNullWhenGetResultReturnsFalse(): void
+    /**
+     * A statement that produced NO result set — an INSERT/UPDATE/DELETE, where
+     * field_count is 0 — returns false from get_result() legitimately, and that
+     * is the one case fetchOne() may read as "nothing to fetch". The mock cannot
+     * answer field_count at all (virtual property, no real constructor), which
+     * Connection treats the same way for exactly this reason.
+     */
+    public function testFetchOneReturnsNullWhenTheStatementHadNoResultSet(): void
     {
         $stmt = $this->createMock(mysqli_stmt::class);
         $stmt->method('execute')->willReturn(true);
@@ -124,6 +132,29 @@ final class ConnectionTest extends TestCase
 
         $conn = new Connection($this->createFakeMysqli());
         $this->assertNull($conn->fetchOne($stmt));
+    }
+
+    /**
+     * The case that matters. A SELECT DID produce a result set (field_count > 0)
+     * and get_result() still returned false: that is a transport failure, and
+     * answering null would make it indistinguishable from "no such row" —
+     * CLAUDE.md error pattern #1, and the exact leg that let safeDeleteModel()
+     * delete a model it could not check.
+     */
+    public function testFetchOneThrowsWhenAResultSetCouldNotBeRead(): void
+    {
+        $stmt = new UnreadableResultStmt();
+
+        $conn = new Connection($this->createFakeMysqli());
+
+        try {
+            $conn->fetchOne($stmt);
+            $this->fail('fetchOne() must not answer null for a result set it could not read');
+        } catch (QueryException $e) {
+            $this->assertStringContainsString('result set could not be read', $e->getMessage());
+        }
+
+        $this->assertSame(1, $stmt->closeCount, 'the statement must be closed before the throw');
     }
 
     // ── FetchAll ─────────────────────────────────────────────────────
@@ -152,7 +183,8 @@ final class ConnectionTest extends TestCase
         $this->assertSame($rows, $conn->fetchAll($stmt));
     }
 
-    public function testFetchAllReturnsEmptyArrayWhenGetResultReturnsFalse(): void
+    /** @see testFetchOneReturnsNullWhenTheStatementHadNoResultSet */
+    public function testFetchAllReturnsEmptyArrayWhenTheStatementHadNoResultSet(): void
     {
         $stmt = $this->createMock(mysqli_stmt::class);
         $stmt->method('execute')->willReturn(true);
@@ -161,6 +193,26 @@ final class ConnectionTest extends TestCase
 
         $conn = new Connection($this->createFakeMysqli());
         $this->assertSame([], $conn->fetchAll($stmt));
+    }
+
+    /**
+     * The ltv_maintenance shape: an unreadable sweep must not arrive as "no
+     * owners to sweep", which the job would report as a clean run.
+     */
+    public function testFetchAllThrowsWhenAResultSetCouldNotBeRead(): void
+    {
+        $stmt = new UnreadableResultStmt();
+
+        $conn = new Connection($this->createFakeMysqli());
+
+        try {
+            $conn->fetchAll($stmt);
+            $this->fail('fetchAll() must not answer [] for a result set it could not read');
+        } catch (QueryException $e) {
+            $this->assertStringContainsString('result set could not be read', $e->getMessage());
+        }
+
+        $this->assertSame(1, $stmt->closeCount, 'the statement must be closed before the throw');
     }
 
     // ── ExecuteInsert ────────────────────────────────────────────────
@@ -384,6 +436,59 @@ class FakeMysqli extends mysqli
 
     public function close(): true
     {
+        return true;
+    }
+}
+
+/**
+ * A statement that DID produce a result set and then could not hand it over.
+ *
+ * A PHPUnit mock cannot express this: field_count on an object that skipped
+ * mysqli_stmt's real constructor throws, which Connection reads as "no result
+ * set" — the safe default for a double, and the wrong one for this case. A
+ * subclass can declare the property outright, the way FakeMysqli already does
+ * for mysqli::$error and ::$insert_id.
+ */
+// Test doubles live beside the suite they serve, as FakeMysqli and
+// BindCapturingStmt already do in this file.
+// phpcs:ignore PSR1.Classes.ClassDeclaration.MultipleClasses
+final class UnreadableResultStmt extends mysqli_stmt
+{
+    public int $closeCount = 0;
+
+    public function __construct()
+    {
+        // Skip parent constructor — no real connection.
+    }
+
+    /**
+     * Redeclaring $field_count as a subclass property does NOT work — the
+     * internal virtual-property handler wins and throws "object is already
+     * closed" — which is why Connection reads it through this fallback, the
+     * same escape hatch executeUpdate() uses for affected_rows.
+     */
+    public function fieldCountFallback(): int
+    {
+        return 3;
+    }
+
+    public function execute(?array $params = null): bool
+    {
+        return true;
+    }
+
+    // Overrides mysqli_stmt::get_result(); the name is not ours to choose.
+    #[\ReturnTypeWillChange]
+    // phpcs:ignore PSR1.Methods.CamelCapsMethodName.NotCamelCaps
+    public function get_result(): mysqli_result|false
+    {
+        return false;
+    }
+
+    public function close(): true
+    {
+        $this->closeCount++;
+
         return true;
     }
 }

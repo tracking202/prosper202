@@ -91,28 +91,23 @@ final class UncheckedExecuteTest extends TestCase
         ));
     }
 
-    public function testTheKnownListHasNoStaleEntries(): void
+    /**
+     * The list only ever shrinks, so now that it is empty the invariant is
+     * simply that it stays that way — a stale-entry check has nothing left to
+     * be stale about, and pairing one with this assertion would be dead code:
+     * a non-empty list fails here and never reaches it.
+     *
+     * testNoNewUncheckedExecuteIsIntroduced() is what catches a new site; this
+     * is what stops one being parked here instead of fixed.
+     */
+    public function testTheKnownListStaysEmpty(): void
     {
-        $current = $this->bareExecuteCalls();
-
-        $stale = array_values(array_diff(self::KNOWN_UNCHECKED, array_keys($current)));
         $this->assertSame(
             [],
-            $stale,
-            'These no longer have an unchecked execute() — remove them from KNOWN_UNCHECKED: '
-            . implode(', ', $stale)
-        );
-
-        // The list is empty, so the check above has nothing to iterate and
-        // cannot fail — and a check that cannot fail is not a check. What can
-        // still fail is the list growing back: it only ever shrinks, so once
-        // empty it stays empty. Working a site off the list means fixing the
-        // code, never re-adding the entry.
-        $this->assertCount(
-            0,
             self::KNOWN_UNCHECKED,
             'KNOWN_UNCHECKED is empty and only ever shrinks. A new unchecked execute() belongs '
-            . 'fixed, not parked here.'
+            . 'fixed, not parked here — and if one is ever re-added, restore a stale-entry check '
+            . 'alongside it so the entry cannot outlive the code it describes.'
         );
     }
 }
