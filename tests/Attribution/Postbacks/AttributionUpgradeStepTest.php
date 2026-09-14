@@ -13,18 +13,32 @@ use Prosper202\Database\Tables\AttributionPostbackTables;
 use Tests\TestCase;
 
 /**
- * The SKAN tables ship in version 1.9.76. An install sitting at 1.9.75
- * (master's version) reaches them only through a normal version-gated
- * upgrade step, so the bump must be internally consistent: version.php's
- * constant, an upgrade block that creates the tables and persists that
- * constant, and the downgrade guard all have to agree. F1 was exactly this
- * going wrong — a version whose schema no upgrade step created — and CI
- * never catches it because CI always installs fresh. This pins it textually.
+ * The attribution tables reach an existing install only through the version
+ * ladder in functions-upgrade.php, so the ladder, version.php's constant and
+ * the downgrade guard have to agree with each other. CI never catches a
+ * disagreement because CI always installs fresh. This pins it textually.
+ *
+ * Two shapes of disagreement have shipped. F1: a version whose schema no
+ * upgrade step created. Then its mirror image: a step that reshaped the
+ * tables under a version number the code ALREADY carried — the 1.9.76 block
+ * ran unconditionally and could only be reached by the 1-click pages, because
+ * upgrade_needed() is `stored != code` and both said 1.9.76. A git or
+ * container deployment (documentation/deploying-on-coolify.md disables the
+ * 1-click pages outright) therefore never ran it, and the attribution-app API
+ * and both Mobile Apps pages died with "Unknown column 'platform'". A block
+ * gated on the code's own version is unreachable by construction, and
+ * testNoUpgradeBlockIsGatedOnTheCodeVersion() now says so.
  */
 final class AttributionUpgradeStepTest extends TestCase
 {
-    private const CURRENT_VERSION = '1.9.76';
-    private const PRIOR_VERSION = '1.9.75';
+    private const CURRENT_VERSION = '1.9.77';
+    private const PRIOR_VERSION = '1.9.76';
+
+    /** Every step that reconciles the attribution tables, oldest first. */
+    private const ATTRIBUTION_STEPS = [
+        ['1.9.75', '1.9.76'],
+        ['1.9.76', '1.9.77'],
+    ];
 
     private function upgradeSource(): string
     {
@@ -81,40 +95,142 @@ final class AttributionUpgradeStepTest extends TestCase
         $this->assertStringContainsString('SchemaReconciler', $source);
     }
 
-    public function testAnUpgradeStepConvergesInstallsAlreadyAtTheCurrentVersion(): void
+    /**
+     * The block for each (from, to) step reconciles and then persists `to`.
+     *
+     * Iterated rather than pinned to one pair so the older step stays checked
+     * when a new one is appended: the 1.9.75 block used to be the only one
+     * these assertions looked at, and appending the 1.9.76 block meant its
+     * own persist was never asked for.
+     *
+     * @dataProvider attributionSteps
+     */
+    public function testEachAttributionStepReconcilesAndPersistsTheNextVersion(string $from, string $to): void
     {
-        // The 1.9.76 attribution tables were reshaped in place before
-        // release, so an install can read 1.9.76 and still hold a table
-        // shape the running code cannot query. That install never enters the
-        // 1.9.75 gate, so a step gated on the CURRENT version has to converge
-        // it. Bounded by the downgrade guard that closes the ladder.
-        //
-        // 202-config/upgrade.php cannot reach this block — upgrade_needed()
-        // is false when the stored and code versions match, and the page
-        // _die()s "Already Upgraded" first. The 1-click upgrade pages can:
-        // 202-account/auto-upgrade.php:204 and auto-upgrade-premium.php:147
-        // call UPGRADE::upgrade_databases() with no upgrade_needed() gate,
-        // and the include_once of the already-loaded functions-upgrade.php
-        // is a no-op, so THIS release's ladder runs against a stored 1.9.76.
-        // Executed against a scratch database, not inferred.
-        $source = $this->upgradeSource();
+        $block = $this->blockGatedOn($from);
 
-        $gate = strpos($source, "if (\$prosper202_version == '" . self::CURRENT_VERSION . "')");
-        $this->assertNotFalse(
-            $gate,
-            'there must be an upgrade block gated on ' . self::CURRENT_VERSION . ' that converges the reshaped tables'
-        );
-
-        $end = strpos($source, 'This will enable p202 to downgrade', $gate);
-        $this->assertNotFalse($end);
-        $block = substr($source, $gate, $end - $gate);
-
-        $this->assertStringContainsString('_upgrade_attribution_tables(', $block);
+        $this->assertStringContainsString('_upgrade_attribution_tables(', $block, "the $from step must reconcile");
         $this->assertStringContainsString('AttributionPostbackTables::getDefinitions()', $block);
-        // It must not bump the version: 1.9.76 is the current one, and
-        // writing a version this release does not know would strand the
-        // install above the ladder.
-        $this->assertStringNotContainsString('UPDATE 202_version', $block);
+        $this->assertStringContainsString("version='" . $to . "'", $block, "the $from step must persist $to");
+    }
+
+    /** @return list<array{0: string, 1: string}> */
+    public static function attributionSteps(): array
+    {
+        return self::ATTRIBUTION_STEPS;
+    }
+
+    /**
+     * The ladder's last rung is the code's version.
+     *
+     * The step gated on PRIOR_VERSION persists CURRENT_VERSION, so an install
+     * that reports the previous release converges through the ordinary
+     * upgrade page: upgrade_needed() is true, connect.php redirects there,
+     * and the block runs. That is the whole fix for the stranded 1.9.76
+     * installs, and it holds for every deployment mode, the ones with the
+     * 1-click pages disabled included.
+     */
+    public function testTheStepGatedOnThePriorVersionPersistsTheCodeVersion(): void
+    {
+        $block = $this->blockGatedOn(self::PRIOR_VERSION);
+
+        $this->assertStringContainsString("UPDATE 202_version SET version='" . self::CURRENT_VERSION . "'", $block);
+    }
+
+    /**
+     * No upgrade block may be gated on the version the code itself carries.
+     *
+     * upgrade_needed() is `stored != code`. A block gated on the code's own
+     * version can therefore only run when the stored version already equals
+     * it — exactly the case upgrade.php refuses with "Already Upgraded". Such
+     * a block is dead on the normal path by construction; the 1.9.76 block
+     * was one, and every git deployment that carried the pre-`platform`
+     * table shape was stranded on it. Reshaping tables under a released
+     * number is what makes a block like this feel necessary; the answer is
+     * the next number, never an ungated block.
+     */
+    public function testNoUpgradeBlockIsGatedOnTheCodeVersion(): void
+    {
+        $code = $this->codeVersion();
+        $this->assertSame(self::CURRENT_VERSION, $code, 'CURRENT_VERSION must track version.php');
+
+        $this->assertStringNotContainsString(
+            "if (\$prosper202_version == '" . $code . "')",
+            $this->upgradeSource(),
+            "an upgrade block gated on the code's own version ($code) can never run through upgrade.php"
+        );
+    }
+
+    /**
+     * The downgrade guard names the code version.
+     *
+     * The ladder ends with `if (stored > X) set X`, so an install that is
+     * ahead of the code is pulled back to it. If X lags version.php, every
+     * upgrade run clamps a converged install back BELOW the code version,
+     * upgrade_needed() turns true again, and connect.php redirects every
+     * page to the upgrade screen forever. That is a version bump that forgot
+     * one line, and nothing else in the tree would notice.
+     */
+    public function testTheDowngradeGuardNamesTheCodeVersion(): void
+    {
+        $source = $this->upgradeSource();
+        $marker = 'This will enable p202 to downgrade';
+        $at = strpos($source, $marker);
+        $this->assertNotFalse($at, 'the downgrade guard comment is the anchor for this check');
+
+        $guard = substr($source, $at, 400);
+        $this->assertStringContainsString(
+            "version_compare((string) \$prosper202_version, '" . self::CURRENT_VERSION . "', '>')",
+            $guard
+        );
+        $this->assertStringContainsString("\$prosper202_version = '" . self::CURRENT_VERSION . "';", $guard);
+    }
+
+    /**
+     * The highest version any step persists is the code version.
+     *
+     * The other half of the guard above: a step that persists a version the
+     * code does not know strands the install ABOVE the ladder (the guard then
+     * pulls it back down on the next run, and the two fight). Derived from
+     * the source, so a future step cannot persist 1.9.78 while version.php
+     * still says 1.9.77.
+     */
+    public function testTheLadderTopIsTheCodeVersion(): void
+    {
+        preg_match_all("/UPDATE 202_version SET version='(\\d+\\.\\d+\\.\\d+)'/", $this->upgradeSource(), $m);
+        $this->assertNotSame([], $m[1], 'no persisted version found; the regex is wrong');
+
+        usort($m[1], 'version_compare');
+        $this->assertSame(self::CURRENT_VERSION, end($m[1]));
+    }
+
+    private function codeVersion(): string
+    {
+        $source = (string)file_get_contents(dirname(__DIR__, 3) . '/202-config/version.php');
+        // Single-quoted: in a double-quoted pattern the $ would interpolate.
+        $found = preg_match('/\\$version_string = \'([^\']+)\'/', $source, $m);
+        $this->assertSame(1, $found, 'version.php lost its constant');
+
+        return $m[1];
+    }
+
+    /**
+     * The source of the block gated on $version, up to the next gate or the
+     * downgrade guard — whichever comes first — so a window never spills into
+     * the following block and matches ITS persist.
+     */
+    private function blockGatedOn(string $version): string
+    {
+        $source = $this->upgradeSource();
+        $gate = strpos($source, "if (\$prosper202_version == '" . $version . "')");
+        $this->assertNotFalse($gate, 'there must be an upgrade block gated on ' . $version);
+
+        $ends = array_filter([
+            strpos($source, "if (\$prosper202_version == '", $gate + 1),
+            strpos($source, 'This will enable p202 to downgrade', $gate),
+        ], static fn($pos): bool => $pos !== false);
+
+        return $ends === [] ? substr($source, $gate) : substr($source, $gate, min($ends) - $gate);
     }
 
     public function testTheRenamedLegacyTablesAreDetectedRatherThanSilentlyReplaced(): void
@@ -496,15 +612,6 @@ final class AttributionUpgradeStepTest extends TestCase
         preg_match('/^([a-z]+(?:\s*\([^)]*\))?(?:\s+unsigned)?)/i', $afterName, $match);
 
         return $match[1] ?? '';
-    }
-
-    public function testDowngradeGuardMatchesTheCurrentVersion(): void
-    {
-        $source = $this->upgradeSource();
-        $this->assertStringContainsString(
-            "version_compare((string) \$prosper202_version, '" . self::CURRENT_VERSION . "', '>')",
-            $source
-        );
     }
 
     public function testTheConvergenceHackIsGone(): void
