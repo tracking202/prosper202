@@ -24,15 +24,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # install.sh carries 22 pre-existing warnings and is excluded until they
-      # are worked through; every other script is held at warning level. Drop
-      # the exclusion, don't widen it.
+      # Every script in the tree is held at warning level, install.sh
+      # included: its 22 warnings were worked off and the exclusion that
+      # carried them is gone. Don't add another one — a script that cannot
+      # pass is a script nothing is checking.
       - name: Run ShellCheck
         run: |
           set -o pipefail
           mapfile -t scripts < <(
             find . -path ./vendor -prune -o -path ./node_modules -prune -o \
-                 -name '*.sh' -print | grep -v '^\./install\.sh$' | sort
+                 -name '*.sh' -print | sort
           )
           if [ "${#scripts[@]}" -eq 0 ]; then
             echo "no shell scripts found" >&2
@@ -119,6 +120,13 @@ jobs:
       # selected nothing and reported skips that read like a run.
       - name: Run verify-ladder tests
         run: ./scripts/tests/verify-ladder.test.sh
+
+      # install.sh is the highest-stakes script here and had no test of any
+      # kind while it sat outside the ShellCheck gate. Clearing its warnings
+      # meant editing eight functions, so the behaviour those functions had
+      # is now pinned rather than taken on trust from a quiet linter.
+      - name: Run install.sh tests
+        run: ./scripts/tests/install-sh.test.sh
 
   actionlint:
     name: actionlint

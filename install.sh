@@ -44,7 +44,6 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
 DIM='\033[2m'
@@ -363,8 +362,9 @@ check_php_version() {
         return 1
     fi
 
-    local major=$(echo "$DETECTED_PHP" | cut -d. -f1)
-    local minor=$(echo "$DETECTED_PHP" | cut -d. -f2)
+    local major minor
+    major=$(echo "$DETECTED_PHP" | cut -d. -f1)
+    minor=$(echo "$DETECTED_PHP" | cut -d. -f2)
 
     # Require PHP 8.3+
     if [ "$major" -lt 8 ]; then
@@ -377,16 +377,21 @@ check_php_version() {
 
 check_php_extensions() {
     local required_extensions=("mysqli" "pdo" "curl" "json" "mbstring")
-    local missing=()
+    # Named apart from the `missing` string parameter that
+    # show_extension_install_instructions() and install_php_extensions() take:
+    # this is the array, that is the space-joined string echoed below. One name
+    # for both types is what made ShellCheck report SC2178/SC2128 across all
+    # three functions, and it is a real trap for anyone dropping a `local`.
+    local missing_extensions=()
 
     for ext in "${required_extensions[@]}"; do
         if ! php -m 2>/dev/null | grep -qi "^${ext}$"; then
-            missing+=("$ext")
+            missing_extensions+=("$ext")
         fi
     done
 
-    if [ ${#missing[@]} -gt 0 ]; then
-        echo "${missing[*]}"
+    if [ ${#missing_extensions[@]} -gt 0 ]; then
+        echo "${missing_extensions[*]}"
         return 1
     fi
     return 0
@@ -484,8 +489,8 @@ show_extension_install_instructions() {
             print_info "If missing, try: brew reinstall php"
             ;;
         Ubuntu*|Debian*)
-            local php_version=$(php -r "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;" 2>/dev/null)
-            local packages=""
+            local php_version packages=""
+            php_version=$(php -r "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;" 2>/dev/null)
             for ext in $missing; do
                 packages="$packages php${php_version}-${ext}"
             done
@@ -529,8 +534,8 @@ install_php_extensions() {
             fi
             ;;
         Ubuntu*|Debian*)
-            local php_version=$(php -r "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;" 2>/dev/null)
-            local packages=""
+            local php_version packages=""
+            php_version=$(php -r "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;" 2>/dev/null)
             for ext in $missing; do
                 packages="$packages php${php_version}-${ext}"
             done
@@ -540,10 +545,18 @@ install_php_extensions() {
 
             # Check if we can use sudo
             if command -v sudo &>/dev/null; then
+                # SC2024 (sudo does not affect redirects) is not a problem for
+                # these three: the redirect is performed by this shell, and
+                # $TMP_DIR belongs to the invoking user, so no root privilege
+                # is needed to create the log. Rewriting them as `| sudo tee`
+                # would also break the `$!` / `wait` pair that reads the
+                # installer's exit status, since $! would become tee's pid.
+                # shellcheck disable=SC2024
                 sudo apt-get update -qq > "$TMP_DIR/apt_update.log" 2>&1 &
                 spinner $! "Updating package lists..."
                 wait $!
 
+                # shellcheck disable=SC2024
                 sudo apt-get install -y $packages > "$TMP_DIR/php_install.log" 2>&1 &
                 spinner $! "Installing PHP extensions..."
                 wait $!
@@ -565,6 +578,8 @@ install_php_extensions() {
             print_info "Installing:$packages"
 
             if command -v sudo &>/dev/null; then
+                # See the apt branch above for why SC2024 is not a problem here.
+                # shellcheck disable=SC2024
                 sudo dnf install -y $packages > "$TMP_DIR/php_install.log" 2>&1 &
                 spinner $! "Installing PHP extensions..."
                 wait $!
@@ -652,14 +667,15 @@ get_composer_command() {
 }
 
 install_dependencies() {
-    local composer_cmd=$(get_composer_command)
+    local composer_cmd
+    composer_cmd=$(get_composer_command)
 
     if [ -z "$composer_cmd" ]; then
         print_error "Composer not available"
         return 1
     fi
 
-    cd "$SCRIPT_DIR"
+    cd "$SCRIPT_DIR" || { print_error "Cannot enter $SCRIPT_DIR"; return 1; }
 
     local composer_args="--no-interaction"
 
@@ -692,7 +708,8 @@ install_dependencies() {
     fi
 
     # Count installed packages
-    local package_count=$(grep -c '"name"' "$SCRIPT_DIR/vendor/composer/installed.json" 2>/dev/null || echo "0")
+    local package_count
+    package_count=$(grep -c '"name"' "$SCRIPT_DIR/vendor/composer/installed.json" 2>/dev/null || echo "0")
     print_success "Dependencies installed (${package_count} packages)"
 
     return 0
@@ -731,7 +748,8 @@ try {
     }
 }"
 
-    local result=$(php -r "$test_script" 2>/dev/null)
+    local result
+    result=$(php -r "$test_script" 2>/dev/null)
 
     if [[ "$result" == "OK" ]]; then
         return 0
@@ -772,7 +790,8 @@ try {
     exit(1);
 }"
 
-    local result=$(php -r "$create_script" 2>/dev/null)
+    local result
+    result=$(php -r "$create_script" 2>/dev/null)
 
     if [[ "$result" == "OK" ]]; then
         return 0
@@ -929,7 +948,7 @@ start_docker_containers() {
     print_subheader "Starting Docker Containers"
     echo ""
 
-    cd "$SCRIPT_DIR"
+    cd "$SCRIPT_DIR" || { print_error "Cannot enter $SCRIPT_DIR"; return 1; }
 
     # Determine docker compose command
     local compose_cmd
@@ -1180,7 +1199,7 @@ run_preflight_checks() {
     if [ "$DOCKER_MODE" = true ] || [ "$IN_DOCKER" = true ]; then
         print_step "Composer" "skip" ""
     elif detect_composer; then
-        print_step "Composer" "ok" "Found"
+        print_step "Composer" "ok" "$DETECTED_COMPOSER"
     else
         print_step "Composer" "warn" "Not found"
 
@@ -1305,8 +1324,10 @@ show_error_summary() {
 }
 
 main() {
-    # Change to script directory
-    cd "$SCRIPT_DIR"
+    # Change to script directory. Everything below is written relative to it,
+    # so continuing from wherever the caller happened to be would install into
+    # the wrong tree rather than fail.
+    cd "$SCRIPT_DIR" || { echo "Cannot enter $SCRIPT_DIR" >&2; exit 1; }
 
     # Parse command line arguments
     parse_arguments "$@"
