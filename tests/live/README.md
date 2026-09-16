@@ -20,7 +20,8 @@ stops proving anything (CLAUDE.md error pattern #9).
 ## Running
 
 You need a running instance and a **scratch** database — these passes
-`TRUNCATE` the attribution tables and rewrite the account's currency.
+`TRUNCATE` the attribution tables, rewrite the account's currency, and one
+of them winds `202_version` back and lets the upgrade ladder climb again.
 `guard.sh` refuses a database whose name does not read as disposable, so
 pointing one at a real install fails with a sentence rather than deleting
 data.
@@ -45,7 +46,7 @@ bash tests/live/analyze-mobile-apps.sh
 | `P202_BASE` | `http://127.0.0.1:8097` | where the instance answers |
 | `P202_DB` | `p202_test` | scratch database; truncated |
 | `P202_DB_USER` / `P202_DB_PASS` | `root` / empty | MySQL credentials |
-| `P202_USER` / `P202_PASS` | `evalci` / **required by the two passes** | the account to log in as |
+| `P202_USER` / `P202_PASS` | `evalci` / **required by the two mobile-apps passes** | the account to log in as; `upgrade-csrf.sh` needs no login |
 
 `seed-mobile-apps.sh` writes rows and makes no request, so it takes the three
 `P202_DB*` variables only and needs no login. Those three are exported by
@@ -61,9 +62,10 @@ nothing if you do not have one.
 
 | script | |
 |---|---|
-| `guard.sh` | the scratch-database check the other three source. Not a pass. |
+| `guard.sh` | the scratch-database check the other passes source. Not a pass. |
 | `seed-mobile-apps.sh` | postbacks spread wide enough that every grouping, signature class and page of the pager has something real to show. Run by the analyze pass; standalone for the browser pass, and it needs no login. |
 | `analyze-mobile-apps.sh` | Analyze › Mobile Apps: the three views, every grouping, the filters and the window each preset means, the totals against `SELECT COUNT(*)`, the CSV, the pager, and the permission gate. |
 | `setup-mobile-apps.sh` | Setup › Mobile Apps: registering, editing and removing an app, the conversion-value rules, the currency, and CSRF. |
+| `upgrade-csrf.sh` | `202-config/upgrade.php`, the one page that takes a POST before there is a login: no token, a wrong token and a session-less replay are each refused with `202_version` untouched, and the page's own token runs the ladder. Winds `202_version` back to `P202_PRIOR_VERSION` (default `1.9.75`) and leaves it at the code version. |
 
 Each prints `N passed, M failed` and exits non-zero on a failure.

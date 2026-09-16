@@ -30,6 +30,16 @@ Never use `json_decode(...) ?? []` or similar fallbacks that silently discard ba
 ### 5. Inconsistent security patterns across similar operations
 If create has secure password input, update must too. If one delete command has confirmation, all must. When implementing a security measure, grep for every analogous code path and apply the same pattern. Spot-checking misses these — review exhaustively.
 
+The pre-login pages are the sharp instance. `install.php` and `202-login.php`
+checked the session token on their POST; `upgrade.php` — the same
+no-login-yet situation, one directory over — did not, and the repair
+RELEASING.md gives for a stranded branch deployment (wind `202_version` back,
+open that page) is exactly when the gap was open.
+`tests/Auth/PreLoginPostRequiresTokenTest` now pins all three, and
+`tests/live/upgrade-csrf.sh` proves it over HTTP. The wider number is the one
+to know: 74 files in the tree read `$_POST` and 27 check a token. That sweep
+is open; anything that adds a POST handler should be held to it.
+
 ### 6. Empty response rendering for void operations
 DELETE/204 responses return empty arrays. Rendering an empty array produces no output. Void operations (delete, remove, revoke) need explicit success messages, not render calls.
 

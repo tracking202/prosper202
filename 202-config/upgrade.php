@@ -7,6 +7,7 @@ set_time_limit(0);
 include_once(__DIR__ . '/connect.php');
 include_once(__DIR__ . '/class-dataengine.php');
 include_once(__DIR__ . '/functions-upgrade.php');
+include_once(__DIR__ . '/functions-install-helpers.php');
 
 $version = defined('PROSPER202_VERSION') ? PROSPER202_VERSION : PROSPER202::prosper202_version();
 if (!isset($db) || !($db instanceof mysqli)) {
@@ -201,8 +202,13 @@ if (!empty($version_error)) {
         if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         // Initialize upgrade result variables
-        $error = false;
         $success = false;
+
+        // CSRF, before any work. This page runs with no login, so the session
+        // token connect.php mints on every request is what a cross-site form
+        // cannot supply. Same check as install.php; a failed check is the error.
+        $csrf_error = !install_csrf_ok((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''));
+        $error = $csrf_error;
 
         if (version_compare(PROSPER202::prosper202_version(), '1.9.3', '<')) {
 
@@ -231,8 +237,9 @@ if (!empty($version_error)) {
     info_top();
 
     // Initialize upgrade result variables for display
-    if (!isset($error)) $error = false;
-    if (!isset($success)) $success = false;
+    $error = $error ?? false;
+    $success = $success ?? false;
+    $csrf_error = $csrf_error ?? false;
 
     if (version_compare(PROSPER202::prosper202_version(), $version) > 0) {
         $task_202 = "Downgrade";
@@ -245,13 +252,19 @@ if (!empty($version_error)) {
     ?>
     <div class="main col-xs-7 install">
         <center><img src="<?php echo get_absolute_url(); ?>202-img/prosper202.png"></center>
-        <?php if ($error == true) { ?>
+        <?php if ($csrf_error == true) { ?>
+            <h2 style="color: #900;">Security check failed</h2>
+            <span style="color: #900;">Your session has expired or the security check failed.
+                Please refresh the page and submit again.</span>
+            <br /><br />
+
+        <?php } elseif ($error == true) { ?>
 
             <h2 style="color: #900;">An error occured</h2>
             <span style="color: #900;">An unexpected error occured while you were trying to <?php echo strtolower($task_202); ?>, please try again or if you keep encountering problems review our <a href="http://support.tracking202.com">support docs</a>.</span>
             <br /><br />
 
-        <?php } else if ($success == true) {
+        <?php } elseif ($success == true) {
             unset($_SESSION['user_id']);
             //('location: '.get_absolute_url().'202-account/signout.php');
         ?>
@@ -299,6 +312,9 @@ if (!empty($version_error)) {
             </div>
             <br></br>
             <form method="post" id="upgrade-form" action="">
+                <input type="hidden" name="token" value="<?php
+                    echo htmlentities((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8');
+                ?>">
                 <?php if (version_compare(PROSPER202::prosper202_version(), '1.9.3', '<')) {
                     $first_click_sql = "select DATE_FORMAT(FROM_UNIXTIME(min(click_time)),'%d-%m-%Y') as first_click_time from 202_clicks";
                     $first_click_row = memcache_mysql_fetch_assoc($first_click_sql);
