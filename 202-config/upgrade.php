@@ -66,131 +66,131 @@ if (!empty($version_error)) {
     info_top();
 
 ?>
-	<div class="main col-xs-7">
-		<h4 style="color:#e74c3c">Warning: Your current host does not meet the minimum Prosper202 Server Requirements! <br><br>Please switch to an Official Hosting Partner below to upgrade without issues:</h4>
-		<br></br>
-		<?php
+    <div class="main col-xs-7">
+        <h4 style="color:#e74c3c">Warning: Your current host does not meet the minimum Prosper202 Server Requirements! <br><br>Please switch to an Official Hosting Partner below to upgrade without issues:</h4>
+        <br></br>
+        <?php
 
         $partners = json_decode((string) getData('https://my.tracking202.com/api/v2/hostings'), true);
 
         foreach ($partners as $partner) { ?>
-			<div class="media">
-				<div class="media-left">
-					<a href="<?php echo $partner['url']; ?>">
-						<img class="media-object" style="width: 64px; height: 64px;" src="<?php echo $partner['thumb']; ?>">
-					</a>
-				</div>
-				<div class="media-body">
-					<a href="<?php echo $partner['url']; ?>" style="color: #337ab7;"><strong><?php echo $partner['title']; ?></strong></a>
-					<p class="infotext"><a href="<?php echo $partner['url']; ?>" style="color: #333;"><?php echo $partner['description']; ?></a></p>
-				</div>
-			</div>
-		<?php }
+            <div class="media">
+                <div class="media-left">
+                    <a href="<?php echo $partner['url']; ?>">
+                        <img class="media-object" style="width: 64px; height: 64px;" src="<?php echo $partner['thumb']; ?>">
+                    </a>
+                </div>
+                <div class="media-body">
+                    <a href="<?php echo $partner['url']; ?>" style="color: #337ab7;"><strong><?php echo $partner['title']; ?></strong></a>
+                    <p class="infotext"><a href="<?php echo $partner['url']; ?>" style="color: #333;"><?php echo $partner['description']; ?></a></p>
+                </div>
+            </div>
+        <?php }
         ?>
-		<h6>System requirements</h6>
-		<table class="table table-bordered">
-			<thead>
-				<tr class="info">
-					<th>Software / Function</th>
-					<th>Status</th>
-				</tr>
-			</thead>
-			<tbody>
-				<tr>
-					<td>PHP >= 8.3</td>
-					<td><span class="label label-<?php if (!empty($version_error['phpversion'])) {
+        <h6>System requirements</h6>
+        <table class="table table-bordered">
+            <thead>
+                <tr class="info">
+                    <th>Software / Function</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>PHP >= 8.3</td>
+                    <td><span class="label label-<?php if (!empty($version_error['phpversion'])) {
                                                             echo "important";
                                                         } else {
                                                             echo "primary";
                                                         } ?>" style="font-size: 100%;"><?php echo phpversion(); ?></span></td>
-					</tr>
-					<tr>
-						<td>MySQL >= 5.6</td>
-						<td><span class="label label-<?php if (!empty($version_error['mysqlversion'])) {
+                    </tr>
+                    <tr>
+                        <td>MySQL >= 5.6</td>
+                        <td><span class="label label-<?php if (!empty($version_error['mysqlversion'])) {
                                                             echo "important";
                                                         } else {
                                                             echo "primary";
                                                         } ?>" style="font-size: 100%;"><?php echo $html['mysqlversion']; ?></span></td>
-					</tr>
-					<tr>
-						<td>CURL</td>
-						<td><span class="label label-<?php if (!empty($version_error['curl'])) {
+                    </tr>
+                    <tr>
+                        <td>CURL</td>
+                        <td><span class="label label-<?php if (!empty($version_error['curl'])) {
                                                             echo "important";
                                                         } else {
                                                             echo "primary";
                                                         } ?>" style="font-size: 100%;"><?php if (!empty($version_error['curl'])) echo $version_error['curl'];
                                                                                         else echo "Installed"; ?></span></td>
-					</tr>
-					<tr>
-						<td>xml_parser_create()</td>
-						<td><span class="label label-<?php if (!empty($version_error['xml_parser_create'])) {
+                    </tr>
+                    <tr>
+                        <td>xml_parser_create()</td>
+                        <td><span class="label label-<?php if (!empty($version_error['xml_parser_create'])) {
                                                             echo "important";
                                                         } else {
                                                             echo "primary";
                                                         } ?>" style="font-size: 100%;"><?php if (!empty($version_error['xml_parser_create'])) echo $version_error['xml_parser_create'];
                                                                                         else echo "Installed"; ?></span></td>
-					</tr>
-				<tr>
-					<td>MySQL Partitioning</td>
-					<td><span class="label label-<?php if ($partition_support == 0) {
+                    </tr>
+                <tr>
+                    <td>MySQL Partitioning</td>
+                    <td><span class="label label-<?php if ($partition_support == 0) {
                                                         echo "warning";
                                                     } else {
                                                         echo "primary";
                                                     } ?>" style="font-size: 100%;"><?php if ($partition_support == 0) echo "Missing";
                                                                                     else echo "Enabled"; ?></span></td>
-				</tr>
-				<tr>
-					<td>PHP Memcache or Memcached (recommended)</td>
-					<td><span class="label label-<?php if (!$memcacheInstalled) {
+                </tr>
+                <tr>
+                    <td>PHP Memcache or Memcached (recommended)</td>
+                    <td><span class="label label-<?php if (!$memcacheInstalled) {
                                                         echo "warning";
                                                     } else {
                                                         echo "primary";
                                                     } ?>" style="font-size: 100%;"><?php if (!$memcacheInstalled) echo "Missing";
                                                                                     else echo "Installed"; ?></span></td>
-				</tr>
+                </tr>
 
-				<tr>
-					<td>PHP zip_open() <br>(required for 1-Click Upgrade)</td>
-					<td><span class="label label-<?php if (!function_exists('zip_open')) {
+                <tr>
+                    <td>PHP zip_open() <br>(required for 1-Click Upgrade)</td>
+                    <td><span class="label label-<?php if (!function_exists('zip_open')) {
                                                         echo "warning";
                                                     } else {
                                                         echo "primary";
                                                     } ?>" style="font-size: 100%;"><?php if (!function_exists('zip_open')) echo "Missing";
                                                                                     else echo "Installed"; ?></span></td>
-				</tr>
+                </tr>
 
-				<tr>
-					<td>PHP Mycrypt <br>(required for Enhanced Account Security and Clickbank Sales Notification Integration)</td>
-					<td><span class="label label-<?php if (!function_exists('mcrypt_encrypt')) {
+                <tr>
+                    <td>PHP Mycrypt <br>(required for Enhanced Account Security and Clickbank Sales Notification Integration)</td>
+                    <td><span class="label label-<?php if (!function_exists('mcrypt_encrypt')) {
                                                         echo "warning";
                                                     } else {
                                                         echo "primary";
                                                     } ?>" style="font-size: 100%;"><?php if (!function_exists('mcrypt_encrypt')) echo "Missing";
                                                                                     else echo "Installed"; ?></span></td>
-				</tr>
+                </tr>
 
-			</tbody>
-		</table>
+            </tbody>
+        </table>
 
 
 
-		<h6>Prosper202 Official Hosting Partners:</h6>
+        <h6>Prosper202 Official Hosting Partners:</h6>
 
-		<?php
+        <?php
 
         foreach ($partners as $partner) { ?>
-			<div class="media">
-				<div class="media-left">
-					<a href="<?php echo $partner['url']; ?>">
-						<img class="media-object" style="width: 64px; height: 64px;" src="<?php echo $partner['thumb']; ?>">
-					</a>
-				</div>
-				<div class="media-body">
-					<a href="<?php echo $partner['url']; ?>" style="color: #337ab7;"><strong><?php echo $partner['title']; ?></strong></a>
-					<p class="infotext"><a href="<?php echo $partner['url']; ?>" style="color: #333;"><?php echo $partner['description']; ?></a></p>
-				</div>
-			</div>
-	<?php }
+            <div class="media">
+                <div class="media-left">
+                    <a href="<?php echo $partner['url']; ?>">
+                        <img class="media-object" style="width: 64px; height: 64px;" src="<?php echo $partner['thumb']; ?>">
+                    </a>
+                </div>
+                <div class="media-body">
+                    <a href="<?php echo $partner['url']; ?>" style="color: #337ab7;"><strong><?php echo $partner['title']; ?></strong></a>
+                    <p class="infotext"><a href="<?php echo $partner['url']; ?>" style="color: #333;"><?php echo $partner['description']; ?></a></p>
+                </div>
+            </div>
+    <?php }
         info_bottom();
         die();
     } //end error check
@@ -243,104 +243,104 @@ if (!empty($version_error)) {
     }
 
     ?>
-	<div class="main col-xs-7 install">
-		<center><img src="<?php echo get_absolute_url(); ?>202-img/prosper202.png"></center>
-		<?php if ($error == true) { ?>
+    <div class="main col-xs-7 install">
+        <center><img src="<?php echo get_absolute_url(); ?>202-img/prosper202.png"></center>
+        <?php if ($error == true) { ?>
 
-			<h2 style="color: #900;">An error occured</h2>
-			<span style="color: #900;">An unexpected error occured while you were trying to <?php echo strtolower($task_202); ?>, please try again or if you keep encountering problems review our <a href="http://support.tracking202.com">support docs</a>.</span>
-			<br /><br />
+            <h2 style="color: #900;">An error occured</h2>
+            <span style="color: #900;">An unexpected error occured while you were trying to <?php echo strtolower($task_202); ?>, please try again or if you keep encountering problems review our <a href="http://support.tracking202.com">support docs</a>.</span>
+            <br /><br />
 
-		<?php } else if ($success == true) {
+        <?php } else if ($success == true) {
             unset($_SESSION['user_id']);
             //('location: '.get_absolute_url().'202-account/signout.php');
         ?>
-			<h6>Success!</h6>
-			<small>Prosper202 <?php echo strtolower($task_202); ?> Completed! Now you can <a href="<?php echo get_absolute_url(); ?>202-account/signout.php">log in</a>.</small>
+            <h6>Success!</h6>
+            <small>Prosper202 <?php echo strtolower($task_202); ?> Completed! Now you can <a href="<?php echo get_absolute_url(); ?>202-account/signout.php">log in</a>.</small>
 
-		<?php } else { ?>
+        <?php } else { ?>
 
-			<h6><?php echo $task_202; ?> to Prosper202 <?php echo $version; ?></h6>
-			<small>You are <?php echo strtolower($task_202_2); ?> from version <span class="label label-primary"><?php echo PROSPER202::prosper202_version(); ?></span> to <span class="label label-primary"><?php echo $version; ?></span>. To continue with the <?php echo strtolower($task_202); ?> press the button below to begin the process. This could take a while depending on the last time you updated your software.</small>
-			<div class="row">
-				<div class="col-xs-12">
-					<br />
-					<small>Changelogs:</small>
-					<div class="panel-group" id="changelog_accordion" style="margin-top:10px;">
-						<?php $change_logs = changelog();
+            <h6><?php echo $task_202; ?> to Prosper202 <?php echo $version; ?></h6>
+            <small>You are <?php echo strtolower($task_202_2); ?> from version <span class="label label-primary"><?php echo PROSPER202::prosper202_version(); ?></span> to <span class="label label-primary"><?php echo $version; ?></span>. To continue with the <?php echo strtolower($task_202); ?> press the button below to begin the process. This could take a while depending on the last time you updated your software.</small>
+            <div class="row">
+                <div class="col-xs-12">
+                    <br />
+                    <small>Changelogs:</small>
+                    <div class="panel-group" id="changelog_accordion" style="margin-top:10px;">
+                        <?php $change_logs = changelog();
                         if (!empty($change_logs)) {
                             foreach ($change_logs as $logs) {
                                 if (version_compare(PROSPER202::prosper202_version(), $logs['version'], '<')) { ?>
-									<div class="panel panel-default">
-										<div class="panel-heading">
-											<a data-toggle="collapse" data-parent="#changelog_accordion" href="#release_<?php echo str_replace('.', '', $logs['version']); ?>">
-												<h4 class="panel-title">
-													v<?php echo $logs['version']; ?>
-												</h4>
-											</a>
-										</div>
-										<div id="release_<?php echo str_replace('.', '', $logs['version']); ?>" class="panel-collapse in">
-											<div class="panel-body">
-												<ul id="list">
-													<?php foreach ($logs['logs'] as $log) { ?>
-														<li>
-															<?php echo $log; ?>
-														</li>
-													<?php } ?>
-												</ul>
-											</div>
-										</div>
-									</div>
-						<?php }
+                                    <div class="panel panel-default">
+                                        <div class="panel-heading">
+                                            <a data-toggle="collapse" data-parent="#changelog_accordion" href="#release_<?php echo str_replace('.', '', $logs['version']); ?>">
+                                                <h4 class="panel-title">
+                                                    v<?php echo $logs['version']; ?>
+                                                </h4>
+                                            </a>
+                                        </div>
+                                        <div id="release_<?php echo str_replace('.', '', $logs['version']); ?>" class="panel-collapse in">
+                                            <div class="panel-body">
+                                                <ul id="list">
+                                                    <?php foreach ($logs['logs'] as $log) { ?>
+                                                        <li>
+                                                            <?php echo $log; ?>
+                                                        </li>
+                                                    <?php } ?>
+                                                </ul>
+                                            </div>
+                                        </div>
+                                    </div>
+                        <?php }
                             }
                         } ?>
-					</div>
-				</div>
-			</div>
-			<br></br>
-			<form method="post" id="upgrade-form" action="">
-				<?php if (version_compare(PROSPER202::prosper202_version(), '1.9.3', '<')) {
+                    </div>
+                </div>
+            </div>
+            <br></br>
+            <form method="post" id="upgrade-form" action="">
+                <?php if (version_compare(PROSPER202::prosper202_version(), '1.9.3', '<')) {
                     $first_click_sql = "select DATE_FORMAT(FROM_UNIXTIME(min(click_time)),'%d-%m-%Y') as first_click_time from 202_clicks";
                     $first_click_row = memcache_mysql_fetch_assoc($first_click_sql);
 
                 ?>
-					<div class="form-group">
-						<label for="date_from">Choose a date from which to process clicks for new Data Engine:</label>
-						<input type="text" class="form-control input-sm" id="date_from" name="date_from" placeholder="dd-mm-yyyy" value="<?php echo $first_click_row['first_click_time']; ?>">
-					</div>
-					<br></br>
-				<?php } ?>
-				<?php if (version_compare(PROSPER202::prosper202_version(), PROSPER202_VERSION, '<')) { ?>
-					<div class="form-group">
-						Modern browsers require landing pages to be served over HTTPS, or your tracking won't work. Can Prosper202 automatically upgrade your old landing page URLs to HTTPS?<br />
-						<br></br>
-						<div class="form-group">
-							<label for="lp_ssl" class="radio-inline" style="line-height:1.3">
-								<input type="radio" name="lp_ssl" id="lp_ssl_yes" value="1" Checked> Yes
-							</label>
-						</div>
-						<div class="form-group">
-							<label for="lp_ssl_no" class="radio-inline" style="line-height:1.3">
-								<input type="radio" name="lp_ssl" id="lp_ssl_no" value="0"> No
-							</label>
-						</div>
-					</div>
-					<br></br>
-				<?php } ?>
+                    <div class="form-group">
+                        <label for="date_from">Choose a date from which to process clicks for new Data Engine:</label>
+                        <input type="text" class="form-control input-sm" id="date_from" name="date_from" placeholder="dd-mm-yyyy" value="<?php echo $first_click_row['first_click_time']; ?>">
+                    </div>
+                    <br></br>
+                <?php } ?>
+                <?php if (version_compare(PROSPER202::prosper202_version(), PROSPER202_VERSION, '<')) { ?>
+                    <div class="form-group">
+                        Modern browsers require landing pages to be served over HTTPS, or your tracking won't work. Can Prosper202 automatically upgrade your old landing page URLs to HTTPS?<br />
+                        <br></br>
+                        <div class="form-group">
+                            <label for="lp_ssl" class="radio-inline" style="line-height:1.3">
+                                <input type="radio" name="lp_ssl" id="lp_ssl_yes" value="1" Checked> Yes
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label for="lp_ssl_no" class="radio-inline" style="line-height:1.3">
+                                <input type="radio" name="lp_ssl" id="lp_ssl_no" value="0"> No
+                            </label>
+                        </div>
+                    </div>
+                    <br></br>
+                <?php } ?>
 
-				<button class="btn btn-lg btn-p202 btn-block" id="upgrade-submit" type="submit"><?php echo $task_202; ?> Prosper202<span class="fui-check-inverted pull-right"></span></button>
-			</form>
-	</div>
+                <button class="btn btn-lg btn-p202 btn-block" id="upgrade-submit" type="submit"><?php echo $task_202; ?> Prosper202<span class="fui-check-inverted pull-right"></span></button>
+            </form>
+    </div>
 
-	<script type="text/javascript">
-		$(document).ready(function() {
-			$("#date_from").datepicker({
-				dateFormat: 'dd-mm-yy'
-			});
-			$("#upgrade-form").submit(function(event) {
-				$("#upgrade-submit").attr('disabled', 'disabled');
-			});
-		});
-	</script>
+    <script type="text/javascript">
+        $(document).ready(function() {
+            $("#date_from").datepicker({
+                dateFormat: 'dd-mm-yy'
+            });
+            $("#upgrade-form").submit(function(event) {
+                $("#upgrade-submit").attr('disabled', 'disabled');
+            });
+        });
+    </script>
 <?php }
         info_bottom();
