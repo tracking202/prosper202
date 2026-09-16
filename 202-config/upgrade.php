@@ -210,9 +210,9 @@ if (!empty($version_error)) {
         $csrf_error = !install_csrf_ok((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''));
         $error = $csrf_error;
 
-        if (version_compare(PROSPER202::prosper202_version(), '1.9.3', '<')) {
+        if (!$error && version_compare(PROSPER202::prosper202_version(), '1.9.3', '<')) {
 
-            $date = DateTime::createFromFormat('d-m-Y', $_POST['date_from']);
+            $date = DateTime::createFromFormat('d-m-Y', (string) ($_POST['date_from'] ?? ''));
             if (!$date) {
                 $error = true;
             } else {
