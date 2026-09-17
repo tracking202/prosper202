@@ -389,6 +389,18 @@ from a write, and says so), and refuse by line anything else — the loud
 direction. Twin of #15: there the discriminator was folded into the key;
 here the order was.
 
+Its sibling, one review later, in the check that replaced the unordered one:
+the seed of the error flag was found *anywhere* after the guard and credited
+though it sat inside a conditional that could skip it, and any whole
+assignment in the failure branch counted as a seed whatever it assigned —
+`$error = [];` there leaves the flag empty and the work reachable. Where a
+value is set and what it is set to are both part of "A guards B". A
+statement the invariant depends on has to be shown to run on every path
+(directly in the block, first in its own statement, not the body of a
+braceless `if`) and to assign what the invariant needs; and the work has to
+sit inside the block whose entry the guard assumes, because outside the
+POST block a GET runs it with no token asked for.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure

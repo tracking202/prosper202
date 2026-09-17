@@ -98,16 +98,20 @@ final class PreLoginPostRequiresTokenTest extends TestCase
     /**
      * The guard's result decides whether the work runs.
      *
-     * Read from the tokens, in this order: the guard is called once after
-     * the POST branch and its result assigned on its own; the flag, when
-     * there is one, takes that result the declared way; every call of the
-     * work sits inside an `if` whose condition has the result — or the
+     * Read from the tokens, in this order: the guard is called once, its
+     * result assigned on its own directly inside the POST block as a
+     * statement of its own; the flag, when there is one, takes that result
+     * the declared way, just as directly; every call of the work sits inside
+     * the POST block, inside an `if` whose condition has the result — or the
      * negated flag — as a whole conjunct (a conjunct can only narrow); and
      * between the guard and that `if` neither variable is written in a way
      * that could weaken it. `$error = true;` narrows and is allowed; a
      * `$error = false;`, an `unset`, a compound assignment, a reference or a
      * call taking the variable is refused by line, because this check does
-     * not tell a read from a write and says so.
+     * not tell a read from a write and says so. Directly, because a guard or
+     * a seed inside a further condition can be skipped, and the branch then
+     * tests a flag nothing set; inside the POST block, because outside it a
+     * GET runs the work with no token asked for at all.
      *
      * @dataProvider pages
      * @param array{file: string, work: string, result: string, negated: bool, gate: string, seed: ?string} $page
@@ -121,6 +125,16 @@ final class PreLoginPostRequiresTokenTest extends TestCase
 
         $post = strpos($code, "\$_SERVER['REQUEST_METHOD'] == 'POST'");
         $this->assertNotFalse($post, "$file no longer branches on a POST; this test's subject has moved");
+        $postOpen = $this->enclosingOpener($tokens, $this->tokenAt($tokens, (int) $post));
+        $postBrace = $postOpen === null || !isset($pairs[$postOpen])
+            ? null
+            : $this->nextSignificant($tokens, $pairs[$postOpen] + 1);
+        $this->assertTrue(
+            $postBrace !== null && $tokens[$postBrace]['text'] === '{' && isset($pairs[$postBrace]),
+            "$file's POST branch is not `if (…) { … }`; this check reads that shape only"
+        );
+        $postBrace = (int) $postBrace;
+        $postClose = $pairs[$postBrace];
 
         // 1. One guard call after the POST branch, assigned on its own, so
         //    the variable holds that result and only that result.
@@ -165,9 +179,16 @@ final class PreLoginPostRequiresTokenTest extends TestCase
             . '); a different shape is refused here rather than read'
         );
         $resultEnd = (int) $end;
+        $this->assertTrue(
+            $this->runsWheneverTheBlockRuns($tokens, $pairs, $postBrace, (int) $variable),
+            "$file must assign the guard's result directly inside its POST block, as a statement of its own"
+            . ' (line ' . $this->lineOf($tokens, (int) $variable) . '); inside a further condition, a request'
+            . ' that skips it reaches the work with nothing checked'
+        );
 
-        // 2. Every call of the work: a second one, unguarded, is the same
-        //    hole as the first.
+        // 2. Every call of the work, each inside the POST block: a second
+        //    one, unguarded, is the same hole as the first, and one outside
+        //    the block runs on a GET.
         $works = [];
         for ($w = strpos($code, $page['work']); $w !== false; $w = strpos($code, $page['work'], $w + 1)) {
             $works[] = $this->tokenAt($tokens, $w);
@@ -177,11 +198,18 @@ final class PreLoginPostRequiresTokenTest extends TestCase
             $works,
             "$file no longer calls {$page['work']}; the work this guard protects has moved"
         );
+        foreach ($works as $work) {
+            $this->assertTrue(
+                $work > $postBrace && $work < $postClose,
+                "$file calls {$page['work']} at line " . $this->lineOf($tokens, $work)
+                . ' outside its POST block, so a GET runs it with no token asked for at all'
+            );
+        }
 
         // 3. Where the flag takes the result.
         $seedEnd = $page['gate'] === $page['result']
             ? $resultEnd
-            : $this->seedEnd($tokens, $pairs, $page, $resultEnd);
+            : $this->seedEnd($tokens, $pairs, $page, $resultEnd, $postBrace);
 
         foreach ($works as $work) {
             $this->assertGreaterThan(
@@ -331,15 +359,22 @@ final class PreLoginPostRequiresTokenTest extends TestCase
 
     /**
      * The index of the `;` (statement seed) or `}` (branch seed) that ends
-     * the seeding of the flag from the result, after $resultEnd.
+     * the seeding of the flag from the result — a seed that runs whenever
+     * the POST block runs, directly inside it as a statement of its own,
+     * because one inside a further condition can be skipped, and the work's
+     * branch then tests a flag nothing set. The first version of this found
+     * the seed anywhere after the guard, and counted any whole assignment
+     * in the failure branch as one: `$error = [];` there leaves the flag
+     * empty and the work reachable.
      *
      * @param array{file: string, result: string, gate: string, seed: ?string} $page
      */
-    private function seedEnd(array $tokens, array $pairs, array $page, int $resultEnd): int
+    private function seedEnd(array $tokens, array $pairs, array $page, int $resultEnd, int $postBrace): int
     {
         $file = $page['file'];
         $seed = (string) $page['seed'];
         $count = count($tokens);
+        $conditional = [];
 
         if (str_starts_with($seed, $page['gate'])) {
             // `$flag = $result;`
@@ -350,18 +385,31 @@ final class PreLoginPostRequiresTokenTest extends TestCase
                 $equals = $this->nextSignificant($tokens, $i + 1);
                 $value = $equals === null ? null : $this->nextSignificant($tokens, $equals + 1);
                 $end = $value === null ? null : $this->nextSignificant($tokens, $value + 1);
-                if (
-                    $equals !== null && $tokens[$equals]['text'] === '='
+                $matches = $equals !== null && $tokens[$equals]['text'] === '='
                     && $value !== null && $tokens[$value]['text'] === $page['result']
-                    && $end !== null && $tokens[$end]['text'] === ';'
-                ) {
-                    return $end;
+                    && $end !== null && $tokens[$end]['text'] === ';';
+                if (!$matches) {
+                    continue;
                 }
+                if (!$this->runsWheneverTheBlockRuns($tokens, $pairs, $postBrace, $i)) {
+                    $conditional[] = $this->lineOf($tokens, $i);
+                    continue;
+                }
+
+                return (int) $end;
             }
-            $this->fail("$file no longer seeds {$page['gate']} from {$page['result']} as `$seed` after the guard");
+            $this->fail(
+                "$file no longer seeds {$page['gate']} from {$page['result']} as `$seed` directly inside its"
+                . ' POST block as a statement of its own'
+                . ($conditional === [] ? '' : ' (found inside a further condition at line '
+                    . implode(', ', $conditional) . ')')
+                . '; a request that skips the seed reaches the work with the flag unset'
+            );
         }
 
-        // `if (!$result) {` writing an element of the flag, directly inside.
+        // `if (!$result) {` setting the flag to something the work's branch
+        // refuses — an element write, or `= true` — directly inside it.
+        $weak = [];
         for ($i = $resultEnd + 1; $i < $count; $i++) {
             if ($tokens[$i]['id'] !== T_IF) {
                 continue;
@@ -383,6 +431,10 @@ final class PreLoginPostRequiresTokenTest extends TestCase
             if ($brace === null || $tokens[$brace]['text'] !== '{' || !isset($pairs[$brace])) {
                 continue;
             }
+            if (!$this->runsWheneverTheBlockRuns($tokens, $pairs, $postBrace, $i)) {
+                $conditional[] = $this->lineOf($tokens, $i);
+                continue;
+            }
             $depth = 0;
             for ($j = $brace + 1; $j < $pairs[$brace]; $j++) {
                 $text = $tokens[$j]['text'];
@@ -390,17 +442,25 @@ final class PreLoginPostRequiresTokenTest extends TestCase
                     $depth++;
                 } elseif ($text === '}') {
                     $depth--;
-                } elseif (
-                    $depth === 0 && $tokens[$j]['id'] === T_VARIABLE && $tokens[$j]['text'] === $page['gate']
-                    && in_array($this->useOf($tokens, $pairs, $j), ['element write', 'assignment'], true)
-                ) {
-                    return $pairs[$brace];
+                } elseif ($depth === 0 && $tokens[$j]['id'] === T_VARIABLE && $tokens[$j]['text'] === $page['gate']) {
+                    $use = $this->useOf($tokens, $pairs, $j);
+                    if ($use === 'element write' || ($use === 'assignment' && $this->rhsOf($tokens, $j) === ['true'])) {
+                        return $pairs[$brace];
+                    }
+                    if ($use === 'assignment') {
+                        $weak[] = $this->lineOf($tokens, $j);
+                    }
                 }
             }
         }
         $this->fail(
-            "$file no longer seeds {$page['gate']} inside `$seed` after the guard: the failure branch must write"
-            . " an element of {$page['gate']} directly, not inside a further condition"
+            "$file no longer seeds {$page['gate']} inside `$seed` directly inside its POST block: the failure"
+            . " branch must set {$page['gate']} to something the work's branch refuses — an element write, or"
+            . ' `= true` — directly inside it, not inside a further condition'
+            . ($weak === [] ? '' : '; the assignment at line ' . implode(', ', $weak)
+                . ' assigns something else, which can leave the flag empty')
+            . ($conditional === [] ? '' : '; the branch at line ' . implode(', ', $conditional)
+                . ' is itself inside a further condition')
         );
     }
 
@@ -496,13 +556,7 @@ final class PreLoginPostRequiresTokenTest extends TestCase
                 continue;
             }
             if ($use === 'assignment') {
-                $equals = (int) $this->nextSignificant($tokens, $i + 1);
-                $value = [];
-                for ($j = $equals + 1; $j < count($tokens) && $tokens[$j]['text'] !== ';'; $j++) {
-                    if ($tokens[$j]['id'] !== T_WHITESPACE) {
-                        $value[] = strtolower($tokens[$j]['text']);
-                    }
-                }
+                $value = $this->rhsOf($tokens, $i);
                 if (count($value) === 1 && in_array($value[0], array_map('strtolower', $allowed), true)) {
                     continue;
                 }
@@ -580,6 +634,52 @@ final class PreLoginPostRequiresTokenTest extends TestCase
         }
 
         return 'read';
+    }
+
+    /**
+     * The right-hand side of the assignment whose left-hand side is the
+     * variable at $at: its significant token texts, lowercased, up to the `;`.
+     *
+     * @return list<string>
+     */
+    private function rhsOf(array $tokens, int $at): array
+    {
+        $equals = $this->nextSignificant($tokens, $at + 1);
+        $value = [];
+        for ($j = ($equals ?? $at) + 1, $n = count($tokens); $j < $n && $tokens[$j]['text'] !== ';'; $j++) {
+            if ($tokens[$j]['id'] !== T_WHITESPACE) {
+                $value[] = strtolower($tokens[$j]['text']);
+            }
+        }
+
+        return $value;
+    }
+
+    /**
+     * Does the token at $at start a statement that runs whenever the block
+     * opened at $open runs — inside its braces at no deeper level, and first
+     * in its statement, so not the body of a braceless `if` or of an `else`?
+     */
+    private function runsWheneverTheBlockRuns(array $tokens, array $pairs, int $open, int $at): bool
+    {
+        if ($at <= $open || $at >= ($pairs[$open] ?? -1)) {
+            return false;
+        }
+        $depth = 0;
+        for ($i = $open + 1; $i < $at; $i++) {
+            $text = $tokens[$i]['text'];
+            if ($text === '{' || $text === '${') {
+                $depth++;
+            } elseif ($text === '}') {
+                $depth--;
+            }
+        }
+        if ($depth !== 0) {
+            return false;
+        }
+        $prev = $this->previousSignificant($tokens, $at - 1);
+
+        return $prev !== null && in_array($tokens[$prev]['text'], [';', '{', '}'], true);
     }
 
     /** The innermost unmatched `(` or `[` before $at, or null. */
