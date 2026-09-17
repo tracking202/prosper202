@@ -42,8 +42,16 @@ final class AttributionUpgradeStepTest extends TestCase
      * testEveryVersionWriteIsInASpellingTheScanCanRead refuses a spelling
      * this cannot read rather than ignoring it.
      */
-    private const PERSIST_PATTERN =
-        '/\\b(?:UPDATE|INSERT\\s+INTO)\\s+`?202_version`?\\s+SET\\s+`?version`?\\s*=\\s*\'([^\']*)\'/i';
+    private const PERSIST_BODY =
+        '(?:UPDATE|INSERT\\s+INTO)\\s+`?202_version`?\\s+SET\\s+`?version`?\\s*=\\s*\'([^\']*)\'';
+    private const PERSIST_PATTERN = '/\\b' . self::PERSIST_BODY . '/i';
+
+    /**
+     * The same as the whole statement. What a query call receives has to be
+     * the write and nothing after it: a clause appended to it changes what
+     * the statement does while PERSIST_PATTERN still reads the version.
+     */
+    private const PERSIST_STATEMENT = '/^\\s*' . self::PERSIST_BODY . '\\s*;?\\s*$/i';
 
     /** @var list<array{id: int|null, text: string}>|null */
     private ?array $tokenCache = null;
@@ -202,8 +210,9 @@ final class AttributionUpgradeStepTest extends TestCase
                 $this->assertContains(
                     $to,
                     $this->persistsThatReachAQuery($step['from'], $step['to']),
-                    "the step gated on $gate spells an UPDATE to $to but never hands it to"
-                    . ' _upgrade_query(), so the version is never written'
+                    "the step gated on $gate spells an UPDATE to $to but no _upgrade_query() call"
+                    . ' receives that statement whole — as a literal, or as a variable assigned it'
+                    . ' and not touched again before the call — so the version is never written'
                 );
             }
 
@@ -225,25 +234,26 @@ final class AttributionUpgradeStepTest extends TestCase
      * kept the whole suite green.
      *
      * The recognised shape is the one the ladder uses: the reconcile result
-     * assigned to a variable, and the persist inside the braces of an `if`
-     * whose condition is that variable. A different shape — `!$ok` with an
-     * early return, a ternary — fails here rather than being reasoned about,
-     * because the failure direction matters: reading the negated branch as
-     * the success branch would call an unguarded persist guarded.
+     * assigned to a variable on its own, and the persist inside the braces of
+     * an `if` below it whose condition is that variable. A different shape —
+     * `!$ok` with an early return, a ternary — fails here rather than being
+     * reasoned about, because the failure direction matters: reading the
+     * negated branch as the success branch would call an unguarded persist
+     * guarded.
      */
     private function assertPersistsAreGuardedByReconcileSuccess(array $step): void
     {
         $tokens = $this->upgradeTokens();
         $gate = implode('/', $step['gates']);
 
-        $ranges = $this->reconcileSuccessRanges($step['from'], $step['to']);
+        $ranges = $this->reconcileSuccessRanges($step['from'], $step['to'], $gate);
         $this->assertNotSame(
             [],
             $ranges,
-            "the step gated on $gate does not guard anything on the result of "
-            . rtrim(self::RECONCILE_CALL, '(') . '(). Expected the result assigned to a variable'
-            . " and the version persisted inside `if (\$that_variable) { … }`; teach this check"
-            . ' the new shape before writing one.'
+            "the step gated on $gate assigns the result of "
+            . rtrim(self::RECONCILE_CALL, '(') . '() but never tests it. Expected the version'
+            . " persisted inside `if (\$that_variable) { … }` below the assignment; teach this"
+            . ' check the new shape before writing one.'
         );
 
         // A floor, because everything below is a loop over what this finds:
@@ -288,44 +298,97 @@ final class AttributionUpgradeStepTest extends TestCase
 
     /**
      * The token ranges inside a step that run only when the reconcile call
-     * reported success — the braces of each `if` whose condition is exactly
-     * the variable holding that result.
+     * reported success — the braces of each `if`/`elseif` whose condition is
+     * exactly the variable holding that result, below the assignment.
      *
      * Exactly the variable, not merely mentioning it: `if (!$attribution_ok)`
      * mentions it and its braces are the FAILURE branch, so a mention-based
      * match would read the one place a persist must never be as the one place
      * it must.
      *
+     * Below the assignment, with the variable untouched between: the first
+     * version of this found the assignment anywhere in the step and then
+     * credited every `if ($ok) {` from the step's start, so a guard above the
+     * assignment — reading nothing, or a stale value, so the rung never
+     * advances or advances over a failed reconcile — and a guard below a
+     * second write (`$ok = true;`) both read as guarded. Now the assignment
+     * has to be `$ok = _upgrade_attribution_tables(…);` on its own, made once,
+     * directly inside the step's braces; a guard counts only below it; and any
+     * other appearance of the variable in the step fails here by line,
+     * because a scan that cannot tell a read from a write must not answer
+     * "unchanged".
+     *
      * @return list<array{0: int, 1: int}>
      */
-    private function reconcileSuccessRanges(int $from, int $to): array
+    private function reconcileSuccessRanges(int $from, int $to, string $gate): array
     {
         $tokens = $this->upgradeTokens();
         $name = rtrim(self::RECONCILE_CALL, '(');
 
-        $result = null;
+        $calls = [];
         for ($i = $from; $i <= $to; $i++) {
-            if (!$this->namesFunction($tokens[$i], $name)) {
-                continue;
+            if ($this->namesFunction($tokens[$i], $name)) {
+                $calls[] = $i;
             }
-            $equals = $this->previousSignificant($tokens, $i - 1, $from);
-            if ($equals === null || $tokens[$equals]['text'] !== '=') {
-                continue;
-            }
-            $variable = $this->previousSignificant($tokens, $equals - 1, $from);
-            if ($variable === null || $tokens[$variable]['id'] !== T_VARIABLE) {
-                continue;
-            }
-
-            $result = $tokens[$variable]['text'];
-            break;
         }
+        $this->assertCount(
+            1,
+            $calls,
+            "the step gated on $gate calls $name() " . count($calls) . ' times; this check reads'
+            . ' one call, whose result guards the persist. A second result nothing tests would'
+            . ' let the version advance over its failure — teach this check the new shape'
+            . ' before writing one.'
+        );
 
-        if ($result === null) {
-            return [];
+        // `$variable = _upgrade_attribution_tables(…);` and nothing else on
+        // the statement, so the variable holds that result and only that
+        // result: `… || true;` holds true.
+        $call = $calls[0];
+        $equals = $this->previousSignificant($tokens, $call - 1, $from);
+        $variable = $equals === null ? null : $this->previousSignificant($tokens, $equals - 1, $from);
+        $open = $this->nextSignificant($tokens, $call + 1, $to);
+        $close = $open !== null && $tokens[$open]['text'] === '(' ? $this->matchingParen($tokens, $open) : null;
+        $end = $close !== null && $close <= $to ? $this->nextSignificant($tokens, $close + 1, $to) : null;
+        $this->assertTrue(
+            $equals !== null && $tokens[$equals]['text'] === '='
+            && $variable !== null && $tokens[$variable]['id'] === T_VARIABLE
+            && $end !== null && $tokens[$end]['text'] === ';',
+            "the step gated on $gate does not assign the result of $name() on its own (line "
+            . $this->lineOf($tokens, $call) . '). Expected `$variable = ' . $name . '(…);`, so the'
+            . ' variable holds nothing but that result, and the version persisted inside'
+            . ' `if ($variable) { … }` below it; teach this check the new shape before writing one.'
+        );
+        $variable = (int) $variable;
+        $statementEnd = (int) $end;
+        $result = $tokens[$variable]['text'];
+
+        // Directly inside the step's braces: assigned in a nested block, a
+        // guard below can read a value that was never set, and the rung
+        // never advances.
+        $gateOpen = $this->nextSignificant($tokens, $from + 1, $to);
+        $gateClose = $gateOpen === null ? null : $this->matchingParen($tokens, $gateOpen);
+        $stepBrace = $gateClose === null ? null : $this->nextSignificant($tokens, $gateClose + 1, $to);
+        $this->assertNotNull($stepBrace, "the step gated on $gate has no opening brace");
+        $depth = 0;
+        for ($i = (int) $stepBrace + 1; $i < $variable; $i++) {
+            $text = $tokens[$i]['text'];
+            if ($text === '{' || $text === '${') {
+                $depth++;
+            } elseif ($text === '}') {
+                $depth--;
+            }
         }
+        $this->assertSame(
+            0,
+            $depth,
+            "the step gated on $gate assigns the result of $name() inside a nested block (line "
+            . $this->lineOf($tokens, $variable) . '), so a guard below it can read a value that'
+            . ' was never set and the rung never advances. Assign it directly inside the step.'
+        );
 
+        $recognised = [$variable => true];
         $ranges = [];
+        $early = [];
         for ($i = $from; $i <= $to; $i++) {
             if ($tokens[$i]['id'] !== T_IF && $tokens[$i]['id'] !== T_ELSEIF) {
                 continue;
@@ -349,18 +412,52 @@ final class AttributionUpgradeStepTest extends TestCase
             if (count($condition) !== 1 || $tokens[$condition[0]]['text'] !== $result) {
                 continue;
             }
+            $recognised[$condition[0]] = true;
 
             $brace = $this->nextSignificant($tokens, $close + 1, $to);
-            if ($brace === null || $tokens[$brace]['text'] !== '{') {
-                continue;
-            }
-            $end = $this->matchingBrace($tokens, $brace);
-            if ($end === null || $end > $to) {
-                continue;
-            }
+            $this->assertTrue(
+                $brace !== null && $tokens[$brace]['text'] === '{',
+                "the step gated on $gate tests the reconcile result without braces (line "
+                . $this->lineOf($tokens, $i) . "); this check reads `if ($result) { … }` only"
+            );
+            $end = $this->matchingBrace($tokens, (int) $brace);
+            $this->assertTrue(
+                $end !== null && $end <= $to,
+                "the step gated on $gate has an unbalanced guard at line " . $this->lineOf($tokens, $i)
+            );
 
-            $ranges[] = [$brace, (int)$end];
+            if ($i < $statementEnd) {
+                $early[] = $this->lineOf($tokens, $i);
+                continue;
+            }
+            $ranges[] = [(int) $brace, (int) $end];
         }
+        $this->assertSame(
+            [],
+            $early,
+            "the step gated on $gate tests the reconcile result $result at line(s) "
+            . implode(', ', $early) . ' before assigning it at line '
+            . $this->lineOf($tokens, $variable) . ': that guard reads nothing, or a stale value,'
+            . ' so the persist inside it never runs and the rung never advances — or runs over a'
+            . ' failed reconcile. Move the guard below the assignment.'
+        );
+
+        $stray = [];
+        for ($i = $from; $i <= $to; $i++) {
+            if ($tokens[$i]['id'] === T_VARIABLE && $tokens[$i]['text'] === $result && !isset($recognised[$i])) {
+                $stray[] = $this->lineOf($tokens, $i);
+            }
+        }
+        $this->assertSame(
+            [],
+            $stray,
+            "the step gated on $gate uses the reconcile result $result at line(s) "
+            . implode(', ', $stray) . ' other than as the whole condition of an `if` below its'
+            . ' assignment. A write there — an assignment, a compound assignment, a reference, a'
+            . ' destructuring — would make the guard test something other than the reconcile'
+            . ' result, and this check does not tell a read from a write. Keep the variable to'
+            . ' its assignment and its guards, or teach this check the new shape.'
+        );
 
         return $ranges;
     }
@@ -399,6 +496,17 @@ final class AttributionUpgradeStepTest extends TestCase
         }
 
         return null;
+    }
+
+    /** The 1-based line of the ladder source that the token at $at starts on. */
+    private function lineOf(array $tokens, int $at): int
+    {
+        $line = 1;
+        for ($i = 0; $i < $at; $i++) {
+            $line += substr_count($tokens[$i]['text'], "\n");
+        }
+
+        return $line;
     }
 
     /**
@@ -795,12 +903,17 @@ final class AttributionUpgradeStepTest extends TestCase
         // either: the guard could build $sql and hand _upgrade_query() a
         // different variable, and both assertions passed. The call has to
         // receive the persist.
-        $this->assertNotSame(
-            [],
+        //
+        // And the version it writes is read, not assumed: the guard builds
+        // its statement from $prosper202_version, which it has just set, so
+        // the fold in persistsThatReachAQuery() resolves it to the code
+        // version — and a guard that writes anything else fails here.
+        $this->assertContains(
+            self::CURRENT_VERSION,
             $this->persistsThatReachAQuery($guard['from'], $guard['to']),
-            'the downgrade guard does not run a query carrying its UPDATE of 202_version, so the'
-            . ' stored version stays above the code version and every request keeps entering the'
-            . ' upgrade flow'
+            'the downgrade guard does not run a query carrying its UPDATE of 202_version to '
+            . self::CURRENT_VERSION . ', so the stored version stays above the code version and'
+            . ' every request keeps entering the upgrade flow'
         );
     }
 
@@ -925,10 +1038,23 @@ final class AttributionUpgradeStepTest extends TestCase
      * on every run. The downgrade guard was held to this first; every
      * attribution rung is held to it too.
      *
-     * Follows one assignment, which is how the guard is written
-     * (`$sql = "UPDATE …"; _upgrade_query($sql);`) and no further: a longer
-     * chain drops out here rather than being followed, because a scan that
-     * guesses at dataflow is worse than one that says it cannot.
+     * One walk in source order. A variable holds a value from a plain
+     * assignment whose right-hand side this can read — string literals and
+     * variables already held, joined with `.` — and holds it until the
+     * variable next appears anywhere but as the sole argument of
+     * `_upgrade_query()`: a compound assignment, an increment, a reference, a
+     * destructuring, an argument to a call that may take it by reference.
+     * This check does not tell a read from a write, so any of them ends the
+     * hold, and a persist that then reaches no call is reported as never
+     * written — the loud direction. What reaches the call has to be the whole
+     * statement, `UPDATE 202_version SET version='X'` and nothing after it: a
+     * clause appended to it changes what the statement does while the
+     * spelling scan still reads the version.
+     *
+     * The first version of this collected every `$v = "UPDATE …"` in the
+     * range with no order and credited each `_upgrade_query($v)` from that
+     * map, so `$sql = "UPDATE …"; $sql = "SELECT …"; _upgrade_query($sql);`
+     * read as a persist, and so did a call above its assignment.
      *
      * @return list<string> the versions written, as the statements spell them
      */
@@ -936,30 +1062,36 @@ final class AttributionUpgradeStepTest extends TestCase
     {
         $tokens = $this->upgradeTokens();
 
-        // Variables assigned an expression that carries a persist, and the
-        // version that expression writes.
-        $carries = [];
-        for ($i = $from; $i <= $to; $i++) {
-            if ($tokens[$i]['id'] !== T_VARIABLE) {
-                continue;
-            }
-            $next = $this->nextSignificant($tokens, $i + 1, $to);
-            if ($next === null || $tokens[$next]['text'] !== '=') {
-                continue;
-            }
-
-            $expression = '';
-            for ($j = $next + 1; $j <= $to && $tokens[$j]['text'] !== ';'; $j++) {
-                $expression .= $tokens[$j]['text'];
-            }
-            if (preg_match(self::PERSIST_PATTERN, $expression, $written) === 1) {
-                $carries[$tokens[$i]['text']] = $written[1];
-            }
-        }
-
+        $holds = [];
         $reach = [];
         for ($i = $from; $i <= $to; $i++) {
-            if (!$this->namesFunction($tokens[$i], '_upgrade_query')) {
+            $token = $tokens[$i];
+
+            if ($token['id'] === T_VARIABLE) {
+                $next = $this->nextSignificant($tokens, $i + 1, $to);
+                if ($next === null || $tokens[$next]['text'] !== '=') {
+                    unset($holds[$token['text']]);
+                    continue;
+                }
+
+                $end = $next + 1;
+                while ($end <= $to && $tokens[$end]['text'] !== ';') {
+                    $end++;
+                }
+                $value = $this->foldedString($tokens, $next + 1, $end - 1, $holds);
+                unset($holds[$token['text']]);
+                if ($value === null) {
+                    // An unreadable right-hand side is walked into, so a call
+                    // in it is still seen and the variables it uses lose
+                    // their holds.
+                    continue;
+                }
+                $holds[$token['text']] = $value;
+                $i = $end;
+                continue;
+            }
+
+            if (!$this->namesFunction($token, '_upgrade_query')) {
                 continue;
             }
             $open = $this->nextSignificant($tokens, $i + 1, $to);
@@ -971,22 +1103,84 @@ final class AttributionUpgradeStepTest extends TestCase
                 continue;
             }
 
-            $argument = '';
+            $argument = [];
             for ($j = $open + 1; $j < $close; $j++) {
-                $argument .= $tokens[$j]['text'];
+                if ($tokens[$j]['id'] !== T_WHITESPACE) {
+                    $argument[] = $j;
+                }
             }
-            $argument = trim($argument);
-
-            if (preg_match(self::PERSIST_PATTERN, $argument, $written) === 1) {
-                $reach[] = $written[1];
+            if (count($argument) !== 1) {
+                // Walked into rather than skipped: a variable in it is a use
+                // this cannot read.
                 continue;
             }
-            if (isset($carries[$argument])) {
-                $reach[] = $carries[$argument];
+            $statement = $this->literalString($tokens[$argument[0]]);
+            if ($tokens[$argument[0]]['id'] === T_VARIABLE) {
+                $statement = $holds[$tokens[$argument[0]]['text']] ?? null;
+            }
+            // The call's own argument is a read this has accounted for.
+            $i = $close;
+            if ($statement !== null && preg_match(self::PERSIST_STATEMENT, $statement, $written) === 1) {
+                $reach[] = $written[1];
             }
         }
 
         return array_values(array_unique($reach));
+    }
+
+    /**
+     * The string an expression denotes when it is string literals and held
+     * variables joined with `.`, or null for anything this cannot read — a
+     * call, a cast, an unknown variable, an interpolated string.
+     *
+     * @param array<string, string> $holds variable name => the string it holds
+     */
+    private function foldedString(array $tokens, int $from, int $to, array $holds): ?string
+    {
+        $value = '';
+        $operand = true;
+        for ($i = $from; $i <= $to; $i++) {
+            $token = $tokens[$i];
+            if ($token['id'] === T_WHITESPACE) {
+                continue;
+            }
+            if ($operand) {
+                $part = $this->literalString($token);
+                if ($part === null && $token['id'] === T_VARIABLE) {
+                    $part = $holds[$token['text']] ?? null;
+                }
+                if ($part === null) {
+                    return null;
+                }
+                $value .= $part;
+            } elseif ($token['text'] !== '.') {
+                return null;
+            }
+            $operand = !$operand;
+        }
+
+        return $operand ? null : $value;
+    }
+
+    /**
+     * The string a T_CONSTANT_ENCAPSED_STRING token denotes, or null when the
+     * token is not one or spells an escape this does not decode.
+     */
+    private function literalString(array $token): ?string
+    {
+        if ($token['id'] !== T_CONSTANT_ENCAPSED_STRING) {
+            return null;
+        }
+        $text = $token['text'];
+        $inner = substr($text, 1, -1);
+        if ($text[0] === "'") {
+            return preg_replace('/\\\\([\\\\\'])/', '$1', $inner);
+        }
+        if ($text[0] !== '"' || str_contains($inner, '\\')) {
+            return null;
+        }
+
+        return $inner;
     }
 
     /** The next non-whitespace token index in [$from, $to], or null. */

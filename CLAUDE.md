@@ -360,6 +360,26 @@ found by the same reviewer within the hour:
   statement about the block; when the claim is "this value reaches that
   call", follow the value.
 
+### 22. "Somewhere in the block" is not an order
+
+`reconcileSuccessRanges()` found the reconcile assignment anywhere in the
+step and then credited every `if ($ok) {` from the step's start;
+`persistsThatReachAQuery()` built its variable-to-statement map over the
+whole step and then credited every `_upgrade_query($sql)` from it. Both
+answered a question about order — *is the guard below the assignment, is
+the value at the call the one that was assigned* — with a lookup that had
+thrown the order away, so a guard above its assignment, a `$ok = true;`
+between the two, and `$sql = "UPDATE …"; $sql = "SELECT …";
+_upgrade_query($sql);` all read as correct. Planted, fourteen shapes
+passed. When a check's claim is "A guards B" or "A reaches B", it is a
+claim about sequence *and* about nothing changing in between, and a check
+that matches A and B separately and joins them by name proves neither
+half. Walk the range once in source order, carry the value forward, drop it
+at the first appearance you cannot read (the check does not tell a read
+from a write, and says so), and refuse by line anything else — the loud
+direction. Twin of #15: there the discriminator was folded into the key;
+here the order was.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure
