@@ -526,6 +526,17 @@ make it. When a check vouches that a variable is untouched between two
 points, ask what can touch it *without naming it there*, and look for that
 over the whole scope.
 
+A reference has two ends, and the fix for the paragraph above read one.
+`$alias =& $error;` puts the `&` before the guarded name, which is what the
+check looked for; `$error =& $alias;` binds the same two slots with the
+guarded name on the left and nothing before it but whitespace, and the
+reviewer planted that one within the hour. Executed, every spelling
+tokenizes as `=` then `&`, and the reverse alias flips every page and the
+ladder rung exactly as the forward one did. A construct that binds two
+names has to be read from both of them: when a check looks for a
+variable's part in a relation, ask which other positions the grammar lets
+that variable occupy in the same relation, and plant each.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure

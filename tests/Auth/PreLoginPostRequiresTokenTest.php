@@ -772,6 +772,15 @@ final class PreLoginPostRequiresTokenTest extends TestCase
      * teaches this check first. An `include` before the range is not read:
      * the pages load their configuration that way.
      *
+     * A reference has two ends. `$alias =& $error;` puts the `&` before
+     * the guarded name; `$error =& $alias;` binds the same two slots with
+     * the guarded name on the left and nothing before it but whitespace —
+     * the shape the same reviewer planted next, against a check that read
+     * only the token before the name. Executed: with it made above the
+     * guard, `$alias = false;` after the seed reaches the work on every
+     * page, and the element form `$error =& $holders['e'];` the same. Both
+     * ends are read: a `&` before the name, and a `=` then `&` after it.
+     *
      * @param list<string> $names
      */
     private function assertNoWritePathTheScanCannotFollow(array $tokens, array $names, string $file): void
@@ -783,6 +792,14 @@ final class PreLoginPostRequiresTokenTest extends TestCase
                 $prev = $this->previousSignificant($tokens, $i - 1);
                 if ($prev !== null && $tokens[$prev]['text'] === '&') {
                     $found[] = "a reference to {$token['text']} at line $line";
+                }
+                $next = $this->nextSignificant($tokens, $i + 1);
+                $after = $next === null ? null : $this->nextSignificant($tokens, $next + 1);
+                if (
+                    $next !== null && $tokens[$next]['text'] === '='
+                    && $after !== null && $tokens[$after]['text'] === '&'
+                ) {
+                    $found[] = "a reference taken by {$token['text']} at line $line";
                 }
                 if (in_array($this->statementKeyword($tokens, $i), [T_GLOBAL, T_STATIC], true)) {
                     $found[] = "a global or static declaration of {$token['text']} at line $line";

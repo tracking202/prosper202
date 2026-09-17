@@ -467,11 +467,22 @@ final class AttributionUpgradeStepTest extends TestCase
      * was listed. The constructs that make such a path without naming the
      * variable at all are testTheLadderMakesNoWriteAScanCannotFollow()'s.
      *
+     * A reference has two ends. `$alias =& $attribution_ok;` puts the `&`
+     * before the name; `$attribution_ok =& $alias;` binds the same two
+     * slots with the name on the left, and the first version of this read
+     * only the token before the name — the reviewer planted that one next.
+     * Executed: made above the gate, `$alias = true;` between the reconcile
+     * and its guard persists over a failed reconcile, and `$sql =&
+     * $carried;` lets `$carried = "SELECT 1";` reach the query call as the
+     * held UPDATE. Both ends are read: a `&` before the name, and a `=`
+     * then `&` after it.
+     *
      * @param list<string> $names
      */
     private function assertNoWritePathTheScanCannotFollow(array $names, string $what): void
     {
         $tokens = $this->upgradeTokens();
+        $last = count($tokens) - 1;
         $found = [];
         foreach ($tokens as $i => $token) {
             if ($token['id'] !== T_VARIABLE || !in_array($token['text'], $names, true)) {
@@ -480,6 +491,14 @@ final class AttributionUpgradeStepTest extends TestCase
             $prev = $this->previousSignificant($tokens, $i - 1, 0);
             if ($prev !== null && $tokens[$prev]['text'] === '&') {
                 $found[] = "a reference to {$token['text']} at line " . $this->lineOf($tokens, $i);
+            }
+            $next = $this->nextSignificant($tokens, $i + 1, $last);
+            $after = $next === null ? null : $this->nextSignificant($tokens, $next + 1, $last);
+            if (
+                $next !== null && $tokens[$next]['text'] === '='
+                && $after !== null && $tokens[$after]['text'] === '&'
+            ) {
+                $found[] = "a reference taken by {$token['text']} at line " . $this->lineOf($tokens, $i);
             }
             if (in_array($this->statementKeyword($tokens, $i), [T_GLOBAL, T_STATIC], true)) {
                 $found[] = "a global or static declaration of {$token['text']} at line "
