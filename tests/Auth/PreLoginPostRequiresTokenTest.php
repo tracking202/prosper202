@@ -111,7 +111,10 @@ final class PreLoginPostRequiresTokenTest extends TestCase
      * not tell a read from a write and says so. Directly, because a guard or
      * a seed inside a further condition can be skipped, and the branch then
      * tests a flag nothing set; inside the POST block, because outside it a
-     * GET runs the work with no token asked for at all.
+     * GET runs the work with no token asked for at all. The scan for writes
+     * runs up to the branch's opening brace rather than its `if`, because
+     * the condition is code: `if (($error = false) === false && !$error)`
+     * carries the accepted conjunct and resets the flag before testing it.
      *
      * @dataProvider pages
      * @param array{file: string, work: string, result: string, negated: bool, gate: string, seed: ?string} $page
@@ -221,7 +224,21 @@ final class PreLoginPostRequiresTokenTest extends TestCase
             // 4. The branch the work sits under, and 5. nothing in between
             //    that could weaken what it tests.
             $gate = $this->gateOf($tokens, $pairs, $page, $work, $seedEnd);
-            $this->assertUntouched($tokens, $pairs, $page['result'], $resultEnd, $gate, [], $file, 'the guard result');
+            // Up to the branch's opening brace, so the condition itself is
+            // scanned: `if (($error = false) === false && !$error)` has the
+            // accepted conjunct and resets the flag before testing it.
+            $gateOpen = (int) $this->nextSignificant($tokens, $gate + 1);
+            $gateBrace = (int) $this->nextSignificant($tokens, $pairs[$gateOpen] + 1);
+            $this->assertUntouched(
+                $tokens,
+                $pairs,
+                $page['result'],
+                $resultEnd,
+                $gateBrace,
+                [],
+                $file,
+                'the guard result'
+            );
             if ($page['gate'] !== $page['result']) {
                 $allowed = ['true'];
                 if ($page['negated']) {
@@ -232,7 +249,7 @@ final class PreLoginPostRequiresTokenTest extends TestCase
                     $pairs,
                     $page['gate'],
                     $seedEnd,
-                    $gate,
+                    $gateBrace,
                     $allowed,
                     $file,
                     'the error flag'
@@ -638,7 +655,9 @@ final class PreLoginPostRequiresTokenTest extends TestCase
 
     /**
      * The right-hand side of the assignment whose left-hand side is the
-     * variable at $at: its significant token texts, lowercased, up to the `;`.
+     * variable at $at: its significant token texts, lowercased, up to the
+     * `;` or to the close of the parentheses the assignment sits in,
+     * whichever comes first — `($error = false) === false` assigns `false`.
      *
      * @return list<string>
      */
@@ -646,9 +665,16 @@ final class PreLoginPostRequiresTokenTest extends TestCase
     {
         $equals = $this->nextSignificant($tokens, $at + 1);
         $value = [];
+        $depth = 0;
         for ($j = ($equals ?? $at) + 1, $n = count($tokens); $j < $n && $tokens[$j]['text'] !== ';'; $j++) {
+            $text = $tokens[$j]['text'];
+            if ($text === '(' || $text === '[') {
+                $depth++;
+            } elseif (($text === ')' || $text === ']') && --$depth < 0) {
+                break;
+            }
             if ($tokens[$j]['id'] !== T_WHITESPACE) {
-                $value[] = strtolower($tokens[$j]['text']);
+                $value[] = strtolower($text);
             }
         }
 

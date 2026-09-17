@@ -405,7 +405,14 @@ matters is the *act's*, not the value's: the ladder check located the
 branch, so a literal assigned inside the branch and handed to
 `_upgrade_query()` after its closing brace read as guarded, and one assigned
 above the branch and queried inside it read as unguarded. The write is the
-call; anchor on the call.
+call; anchor on the call. Two more of the same family, one review later: a
+scan for writes that stopped at the branch's `if` keyword left the condition
+unread, and `if (($error = false) === false && !$error)` carries the accepted
+conjunct while resetting the flag inside it — a condition is code, so scan to
+the brace; and a value carried across statements was carried through braces
+as if they were not there, so an assignment inside a nested condition was
+credited at a call after it — a hold lives in the block that set it, and
+leaving the block drops it, because the block may not have run.
 
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 

@@ -1024,7 +1024,13 @@ final class AttributionUpgradeStepTest extends TestCase
      * The first version of this collected every `$v = "UPDATE …"` in the
      * range with no order and credited each `_upgrade_query($v)` from that
      * map, so `$sql = "UPDATE …"; $sql = "SELECT …"; _upgrade_query($sql);`
-     * read as a persist, and so did a call above its assignment.
+     * read as a persist, and so did a call above its assignment. The second
+     * walked in order but through braces as if they were not there, so a
+     * value set inside a nested condition was credited at a call after it.
+     * A hold now lives in the block that set it and leaving the block drops
+     * it. PHP's scope is the function, so this is stricter than the
+     * language: a shape that is only conditionally correct is refused
+     * rather than reasoned about.
      *
      * @return array<string, list<int>> the versions written, as the statements
      *     spell them, each to the `_upgrade_query()` calls (token indices of
@@ -1036,8 +1042,23 @@ final class AttributionUpgradeStepTest extends TestCase
 
         $holds = [];
         $reach = [];
+        $depth = 0;
         for ($i = $from; $i <= $to; $i++) {
             $token = $tokens[$i];
+
+            if ($token['text'] === '{' || $token['text'] === '${') {
+                $depth++;
+                continue;
+            }
+            if ($token['text'] === '}') {
+                $depth--;
+                foreach ($holds as $name => $hold) {
+                    if ($hold['depth'] > $depth) {
+                        unset($holds[$name]);
+                    }
+                }
+                continue;
+            }
 
             if ($token['id'] === T_VARIABLE) {
                 $next = $this->nextSignificant($tokens, $i + 1, $to);
@@ -1050,7 +1071,12 @@ final class AttributionUpgradeStepTest extends TestCase
                 while ($end <= $to && $tokens[$end]['text'] !== ';') {
                     $end++;
                 }
-                $value = $this->foldedString($tokens, $next + 1, $end - 1, $holds);
+                $value = $this->foldedString(
+                    $tokens,
+                    $next + 1,
+                    $end - 1,
+                    array_map(static fn(array $hold): string => $hold['value'], $holds)
+                );
                 unset($holds[$token['text']]);
                 if ($value === null) {
                     // An unreadable right-hand side is walked into, so a call
@@ -1058,7 +1084,7 @@ final class AttributionUpgradeStepTest extends TestCase
                     // their holds.
                     continue;
                 }
-                $holds[$token['text']] = $value;
+                $holds[$token['text']] = ['value' => $value, 'depth' => $depth];
                 $i = $end;
                 continue;
             }
@@ -1089,7 +1115,7 @@ final class AttributionUpgradeStepTest extends TestCase
             }
             $statement = $this->literalString($tokens[$argument[0]]);
             if ($tokens[$argument[0]]['id'] === T_VARIABLE) {
-                $statement = $holds[$tokens[$argument[0]]['text']] ?? null;
+                $statement = $holds[$tokens[$argument[0]]['text']]['value'] ?? null;
             }
             // The call's own argument is a read this has accounted for.
             $i = $close;
