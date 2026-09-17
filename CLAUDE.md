@@ -317,9 +317,11 @@ ways than that: a named argument (`f(name: $x)`, a `:` before the variable
 where the classifier looked for `(` or `,`), a `foreach` target (`as $x`,
 `=> $x`), a `catch` target, keyed destructuring (`['k' => $x] = …`), a
 `global`/`static` declaration, and then the writes that never name the
-variable at all — `$$name`, `${'name'}`, `extract()`, `eval()`, an
-`include` — which no scan for the variable's token can see and which the
-scanned range now refuses outright. Enumerate from the language reference
+variable at all — `$$name`, `${'name'}`, `$GLOBALS['name']` (the pages run
+at file scope, where that is the same variable — the one the first sweep of
+this list still missed), `extract()`, `eval()`, an `include` — which no
+scan for the variable's token can see and which the scanned range now
+refuses outright. Enumerate from the language reference
 before writing the classifier, plant every shape on the list, and refuse by
 name the ones that cannot be read.
 

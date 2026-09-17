@@ -748,16 +748,20 @@ final class PreLoginPostRequiresTokenTest extends TestCase
 
     /**
      * A construct at $at that can write a variable without naming it — a
-     * variable variable (`$$name`, `${'name'}`), `extract()`, `eval()`, or
-     * an `include`/`require` — or null. The scan for writes looks for the
-     * variable's own token, and none of these carries it, so each is
-     * refused in the range rather than read past.
+     * variable variable (`$$name`, `${'name'}`), `$GLOBALS['name']` (the
+     * pages run at file scope, where that is the same variable),
+     * `extract()`, `eval()`, or an `include`/`require` — or null. The scan
+     * for writes looks for the variable's own token, and none of these
+     * carries it, so each is refused in the range rather than read past.
      */
     private function writesNoScanCanSee(array $tokens, int $at): ?string
     {
         $id = $tokens[$at]['id'];
         if ($id === null && $tokens[$at]['text'] === '$') {
             return 'a variable variable';
+        }
+        if ($id === T_VARIABLE && $tokens[$at]['text'] === '$GLOBALS') {
+            return 'a use of $GLOBALS';
         }
         if (in_array($id, [T_INCLUDE, T_INCLUDE_ONCE, T_REQUIRE, T_REQUIRE_ONCE], true)) {
             return 'an include';
@@ -788,8 +792,8 @@ final class PreLoginPostRequiresTokenTest extends TestCase
      * $x)` has a `:` before the variable, which the first version read as
      * harmless), a `foreach` target (`as $x`, `=> $x`), a `catch` target,
      * and a `global` or `static` declaration. Writes that never name the
-     * variable — `$$name`, `extract()`, `eval()`, an `include` — are
-     * refused in the scanned range by writesNoScanCanSee().
+     * variable — `$$name`, `$GLOBALS['name']`, `extract()`, `eval()`, an
+     * `include` — are refused in the scanned range by writesNoScanCanSee().
      */
     private function useOf(array $tokens, array $pairs, int $at): string
     {
