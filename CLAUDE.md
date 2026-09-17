@@ -377,7 +377,12 @@ first token it found and posted it by hand, so it would have stayed green
 too. The claim was "the form that posts carries the token"; the check has
 to find that form, bound it, and read the input inside it, and the live
 pass has to submit the form's own fields rather than a token it found
-anywhere on the page.
+anywhere on the page. And its value, the round after that: "the escaper's
+first argument contains `$_SESSION['token']`" accepted
+`'prefix' . $_SESSION['token']`, which the server's `hash_equals()` refuses
+on every submission — a login page nobody can log in through, green in CI.
+Parse the expression the claim is about and accept the spellings you can
+name; a substring test of an expression is #21 every time.
 
 ### 22. "Somewhere in the block" is not an order
 
@@ -447,6 +452,14 @@ so every return, exit, throw, break, continue and goto above the statement
 is refused by line, and `goto` is refused for the whole file, because PHP
 lets one enter an `if` from anywhere in the same scope and no brace-bounded
 range can see it come in.
+
+And depth is not position: `if ($enabled) $ok = reconcile();` sits at the
+step's brace depth and runs only when `$enabled` is true. The assignment
+check counted braces while the guard check, two screens down in the same
+file, already asked the whole question — first in its statement, at the
+block's depth, nothing above it that leaves — through one helper. When an
+invariant says "runs whenever the block runs", ask it with that helper at
+every site, not with a fresh depth loop that answers a smaller question.
 
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 

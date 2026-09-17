@@ -434,28 +434,25 @@ final class AttributionUpgradeStepTest extends TestCase
         $statementEnd = (int) $end;
         $result = $tokens[$variable]['text'];
 
-        // Directly inside the step's braces: assigned in a nested block, a
-        // guard below can read a value that was never set, and the rung
-        // never advances.
+        // Directly inside the step's braces, as a statement of its own, with
+        // nothing above it that can leave: assigned in a nested block, as the
+        // body of a braceless `if` or of an `else`, or below a jump, a guard
+        // below can read a value that was never set, and the rung never
+        // advances — or advances over a reconcile that never ran. Depth alone
+        // read `if ($enabled) $ok = …;` as directly inside the step; the
+        // question is the one the guard is asked, so it is asked the same way.
         $gateOpen = $this->nextSignificant($tokens, $from + 1, $to);
         $gateClose = $gateOpen === null ? null : $this->matchingParen($tokens, $gateOpen);
         $stepBrace = $gateClose === null ? null : $this->nextSignificant($tokens, $gateClose + 1, $to);
         $this->assertNotNull($stepBrace, "the step gated on $gate has no opening brace");
-        $depth = 0;
-        for ($i = (int) $stepBrace + 1; $i < $variable; $i++) {
-            $text = $tokens[$i]['text'];
-            if ($text === '{' || $text === '${') {
-                $depth++;
-            } elseif ($text === '}') {
-                $depth--;
-            }
-        }
-        $this->assertSame(
-            0,
-            $depth,
-            "the step gated on $gate assigns the result of $name() inside a nested block (line "
-            . $this->lineOf($tokens, $variable) . '), so a guard below it can read a value that'
-            . ' was never set and the rung never advances. Assign it directly inside the step.'
+        $this->assertTrue(
+            $this->runsWheneverTheBlockRuns($tokens, (int) $stepBrace, $variable),
+            "the step gated on $gate does not assign the result of $name() as a statement of its own"
+            . ' directly inside the step (line ' . $this->lineOf($tokens, $variable) . '): nested in a'
+            . ' block, as the body of a braceless `if` or of an `else`, or below a return, exit,'
+            . ' throw, break, continue or goto, a guard below it can read a value that was never'
+            . ' set, and the rung never advances or advances over a reconcile that never ran.'
+            . ' Assign it directly inside the step, first in its statement.'
         );
 
         $recognised = [$variable => true];

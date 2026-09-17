@@ -1164,9 +1164,14 @@ final class PreLoginPostRequiresTokenTest extends TestCase
      * session token through an HTML escaper with ENT_QUOTES —
      * `<?php echo htmlentities((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>`,
      * its htmlspecialchars() spelling, or either after `<?=` — or null when
-     * it is. Read from the value's own tokens, argument by argument, rather
-     * than matched as a substring: "contains htmlentities( and $_SESSION"
-     * would accept the token concatenated onto an escaped string.
+     * it is. Read from the value's own tokens, argument by argument, and
+     * the first argument parsed as the session-token expression rather than
+     * searched for it: "contains $_SESSION['token']" accepted
+     * `'prefix' . $_SESSION['token']`, a value the server's hash_equals()
+     * refuses on every submission, so the page could never log anyone in
+     * and this test stayed green. The flags have to be ENT_QUOTES, alone or
+     * joined by `|` with other ENT_ constants; a charset, when given, a
+     * string literal; a double_encode, when given, true or false.
      */
     private function echoesEscapedSessionToken(string $value): ?string
     {
@@ -1227,19 +1232,98 @@ final class PreLoginPostRequiresTokenTest extends TestCase
             return 'has more in it than the one escaper call';
         }
 
-        $subject = implode('', array_column($arguments[0], 'text'));
-        if (!str_contains($subject, "\$_SESSION['token']") && !str_contains($subject, '$_SESSION["token"]')) {
-            return "does not read \$_SESSION['token']";
+        if (!$this->isTheSessionToken($arguments[0])) {
+            return "does not hand the escaper \$_SESSION['token'] itself as its first argument";
         }
-        foreach (array_slice($arguments, 1) as $argument) {
-            foreach ($argument as $token) {
-                if ($token['id'] === T_STRING && $token['text'] === 'ENT_QUOTES') {
-                    return null;
-                }
+        if (count($arguments) < 2 || count($arguments) > 4) {
+            return 'does not call the escaper with two to four arguments';
+        }
+        $quotes = false;
+        foreach ($arguments[1] as $token) {
+            if ($token['id'] === T_STRING && str_starts_with($token['text'], 'ENT_')) {
+                $quotes = $quotes || $token['text'] === 'ENT_QUOTES';
+            } elseif ($token['text'] !== '|') {
+                return 'has escaper flags this check does not read (ENT_ constants joined by | only)';
             }
         }
+        if (!$quotes) {
+            return 'does not escape with ENT_QUOTES';
+        }
+        $charset = $arguments[2] ?? null;
+        if ($charset !== null && (count($charset) !== 1 || $charset[0]['id'] !== T_CONSTANT_ENCAPSED_STRING)) {
+            return 'has a charset argument that is not a string literal';
+        }
+        $doubleEncode = $arguments[3] ?? null;
+        if (
+            $doubleEncode !== null
+            && (count($doubleEncode) !== 1 || !in_array(strtolower($doubleEncode[0]['text']), ['true', 'false'], true))
+        ) {
+            return 'has a double_encode argument that is not true or false';
+        }
 
-        return 'does not escape with ENT_QUOTES';
+        return null;
+    }
+
+    /**
+     * Is this run of tokens the session token itself — `$_SESSION['token']`
+     * or `$_SESSION['token'] ?? ''`, either under a `(string)` cast, any of
+     * them in redundant parentheses — and nothing more? A prefix, a suffix,
+     * another default or a call around it is refused: the server compares
+     * the submitted value with hash_equals(), so anything but the token
+     * itself is a form that never passes.
+     *
+     * @param list<array{id: int|null, text: string}> $run
+     */
+    private function isTheSessionToken(array $run): bool
+    {
+        $run = $this->unwrapped($run);
+        if (($run[0]['id'] ?? null) === T_STRING_CAST) {
+            $run = $this->unwrapped(array_slice($run, 1));
+        }
+        $reads = count($run) >= 4
+            && $run[0]['id'] === T_VARIABLE && $run[0]['text'] === '$_SESSION'
+            && $run[1]['text'] === '['
+            && $run[2]['id'] === T_CONSTANT_ENCAPSED_STRING && in_array($run[2]['text'], ["'token'", '"token"'], true)
+            && $run[3]['text'] === ']';
+        if (!$reads) {
+            return false;
+        }
+        $rest = array_slice($run, 4);
+        if ($rest === []) {
+            return true;
+        }
+
+        return count($rest) === 2
+            && $rest[0]['id'] === T_COALESCE
+            && $rest[1]['id'] === T_CONSTANT_ENCAPSED_STRING && in_array($rest[1]['text'], ["''", '""'], true);
+    }
+
+    /**
+     * The run with every pair of parentheses enclosing the whole of it
+     * removed — only a pair whose `(` closes at the run's last `)`, so
+     * `(a) . (b)` keeps both of its.
+     *
+     * @param list<array{id: int|null, text: string}> $run
+     * @return list<array{id: int|null, text: string}>
+     */
+    private function unwrapped(array $run): array
+    {
+        while (count($run) >= 2 && $run[0]['text'] === '(' && $run[count($run) - 1]['text'] === ')') {
+            $depth = 0;
+            foreach ($run as $k => $token) {
+                if ($token['text'] === '(') {
+                    $depth++;
+                } elseif ($token['text'] === ')') {
+                    $depth--;
+                    if ($depth === 0 && $k !== count($run) - 1) {
+                        return $run;
+                    }
+                }
+            }
+            $run = array_slice($run, 1, -1);
+        }
+
+        return $run;
     }
 
     /**
