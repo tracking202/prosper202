@@ -420,6 +420,27 @@ on every submission — a login page nobody can log in through, green in CI.
 Parse the expression the claim is about and accept the spellings you can
 name; a substring test of an expression is #21 every time.
 
+Two more, one review later, both about what a call *is*. The ladder's walk
+credited `$logger->_upgrade_query($sql)` and `Log\_upgrade_query($sql)` as
+the query that wrote the version, and the page test found its guard by the
+substring `AUTH::check_csrf_token(`, which `MyAUTH::check_csrf_token(`
+contains: a name is not a call site. A callee is the token *and what
+precedes it* — `->`, `?->`, `::`, `new` and `function` each make the same
+final token something else, `Other\name` is another function — and an
+unqualified name is the global one only in a file that declares no
+namespace and imports no function, which both tests now assert (a `use
+function Other\version_compare;` at the top of the ladder rebound the
+downgrade guard's comparison with every check green). And bounding the
+guard call was not reading it: `install_csrf_ok($expected, $submitted)`
+was shown to decide the work and executed on token pairs, and never asked
+what the page hands it — `install_csrf_ok($_POST['token'],
+$_POST['token'])` accepts every non-empty token and left everything green.
+That is #12 seen from the call site: the arguments are now parsed as the
+session token and the posted token, in that order, read where they are or
+through a variable assigned exactly that once, directly in the block,
+untouched to the call and alias-free. When a check says "X is called", ask
+what X is called *with*, and whether the thing named is the thing meant.
+
 ### 22. "Somewhere in the block" is not an order
 
 `reconcileSuccessRanges()` found the reconcile assignment anywhere in the

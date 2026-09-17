@@ -365,6 +365,42 @@ final class AttributionUpgradeStepTest extends TestCase
     }
 
     /**
+     * The ladder declares no namespace and imports no function, so an
+     * unqualified `_upgrade_query(` or `_upgrade_attribution_tables(` is
+     * the global helper. namesFunction() reads a call site by its token and
+     * what precedes it; under a `namespace` declaration the same token
+     * would resolve to that namespace's function first, and `use function
+     * Other\log as _upgrade_query;` would rebind the name outright — and
+     * neither is visible at the call site. Refused here, by line, so every
+     * check that reads a call by name keeps its ground.
+     */
+    public function testTheLadderNamesItsHelpersGlobally(): void
+    {
+        $tokens = $this->upgradeTokens();
+        $last = count($tokens) - 1;
+        $found = [];
+        foreach ($tokens as $i => $token) {
+            if ($token['id'] === T_NAMESPACE) {
+                $found[] = 'a namespace declaration at line ' . $this->lineOf($tokens, $i);
+            }
+            if ($token['id'] === T_USE) {
+                $next = $this->nextSignificant($tokens, $i + 1, $last);
+                if ($next !== null && $tokens[$next]['id'] === T_FUNCTION) {
+                    $found[] = 'a function import at line ' . $this->lineOf($tokens, $i);
+                }
+            }
+        }
+        $this->assertSame(
+            [],
+            $found,
+            'the ladder makes ' . implode(', ', $found) . ': an unqualified `_upgrade_query(` or'
+            . ' `_upgrade_attribution_tables(` is then not certainly the global helper, and every check'
+            . ' here that reads a call by name assumes it is. Teach namesFunction() the new resolution'
+            . ' before adding one.'
+        );
+    }
+
+    /**
      * No construct anywhere in the ladder can write a variable without
      * naming it.
      *
@@ -601,7 +637,7 @@ final class AttributionUpgradeStepTest extends TestCase
 
         $calls = [];
         for ($i = $from; $i <= $to; $i++) {
-            if ($this->namesFunction($tokens[$i], $name)) {
+            if ($this->namesFunction($tokens, $i, $name)) {
                 $calls[] = $i;
             }
         }
@@ -925,12 +961,7 @@ final class AttributionUpgradeStepTest extends TestCase
         $calls = 0;
         $ungated = [];
         foreach ($tokens as $i => $token) {
-            if (!$this->namesFunction($token, $name)) {
-                continue;
-            }
-            // The function's own declaration is not a call.
-            for ($j = $i - 1; $j >= 0 && $tokens[$j]['id'] === T_WHITESPACE; $j--);
-            if ($j >= 0 && $tokens[$j]['id'] === T_FUNCTION) {
+            if (!$this->namesFunction($tokens, $i, $name)) {
                 continue;
             }
 
@@ -1333,7 +1364,7 @@ final class AttributionUpgradeStepTest extends TestCase
         if (count($this->splitTopLevel($tokens, $inside, $connectives)) > 1) {
             return [];
         }
-        if ($inside === [] || !$this->namesFunction($tokens[$inside[0]], 'version_compare')) {
+        if ($inside === [] || !$this->namesFunction($tokens, $inside[0], 'version_compare')) {
             return [];
         }
 
@@ -1540,7 +1571,7 @@ final class AttributionUpgradeStepTest extends TestCase
                 continue;
             }
 
-            if (!$this->namesFunction($token, '_upgrade_query')) {
+            if (!$this->namesFunction($tokens, $i, '_upgrade_query')) {
                 continue;
             }
             $call = $i;
@@ -2071,8 +2102,8 @@ final class AttributionUpgradeStepTest extends TestCase
                 continue;
             }
 
-            $other = $isVar($left) ? $right : $left;
-            if ($other === null) {
+            $otherAt = $isVar($left) ? $rightAt : $leftAt;
+            if ($otherAt === null) {
                 $this->fail(
                     'a gate compares $prosper202_version against an expression this test cannot'
                     . ' reduce to a single token. Resolve it here rather than letting the gate go'
@@ -2080,7 +2111,7 @@ final class AttributionUpgradeStepTest extends TestCase
                 );
             }
 
-            $version = $this->versionOperand($other);
+            $version = $this->versionOperand($tokens, $inside[$otherAt]);
             if ($version === '') {
                 continue;
             }
@@ -2181,12 +2212,13 @@ final class AttributionUpgradeStepTest extends TestCase
      * tell which version a gate names must not answer "no such gate" — that
      * silence is how every hole in this parser has looked.
      */
-    private function versionOperand(array $token): string
+    private function versionOperand(array $tokens, int $at): string
     {
+        $token = $tokens[$at];
         if ($token['id'] === T_CONSTANT_ENCAPSED_STRING) {
             return trim($token['text'], '\'"');
         }
-        if ($this->namesFunction($token, 'PROSPER202_VERSION')) {
+        if ($this->namesFunction($tokens, $at, 'PROSPER202_VERSION')) {
             return $this->codeVersion();
         }
 
@@ -2217,24 +2249,38 @@ final class AttributionUpgradeStepTest extends TestCase
     }
 
     /**
-     * Does this token name the global function $name?
-     *
-     * `\_upgrade_attribution_tables()` is the same call as
-     * `_upgrade_attribution_tables()`, but PHP tokenizes the qualified
-     * spelling as T_NAME_FULLY_QUALIFIED, so a T_STRING-only filter ignored
-     * it — an ungated qualified call passed. Both token kinds count, and the
-     * name is compared on its last segment.
+     * Does the token at $at name the global function or constant $name the
+     * way a call site does — an unqualified `name`, a fully qualified
+     * `\name` or a relative `namespace\name`, with nothing before it that
+     * makes it something else? `$x->name(`, `$x?->name(` and `Foo::name(`
+     * are methods of whatever `$x` and `Foo` are, `new name(` a
+     * constructor, `function name(` (or `function &name(`) a declaration,
+     * `const name` a constant declaration, and `Foo\name(` a function in
+     * another namespace. Every one of them carries the same final token,
+     * and the first version of this read the final token only, so a
+     * `$logger->_upgrade_query($sql)` that logged the statement was
+     * credited as the query that wrote it — the reviewer planted exactly
+     * that. An unqualified name is the global one only because the ladder
+     * declares no namespace and imports no function, which
+     * testTheLadderNamesItsHelpersGlobally() holds.
      */
-    private function namesFunction(array $token, string $name): bool
+    private function namesFunction(array $tokens, int $at, string $name): bool
     {
-        $kinds = [T_STRING, T_NAME_FULLY_QUALIFIED, T_NAME_QUALIFIED, T_NAME_RELATIVE];
-        if (!in_array($token['id'], $kinds, true)) {
+        $token = $tokens[$at];
+        if (!in_array($token['id'], [T_STRING, T_NAME_FULLY_QUALIFIED, T_NAME_RELATIVE], true)) {
             return false;
         }
-
         $segments = explode('\\', $token['text']);
+        if (end($segments) !== $name) {
+            return false;
+        }
+        $prev = $this->previousSignificant($tokens, $at - 1, 0);
+        if ($prev !== null && $tokens[$prev]['text'] === '&') {
+            $prev = $this->previousSignificant($tokens, $prev - 1, 0);
+        }
+        $owners = [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON, T_NEW, T_FUNCTION, T_CONST];
 
-        return end($segments) === $name;
+        return $prev === null || !in_array($tokens[$prev]['id'], $owners, true);
     }
 
     /** Index of the `}` closing the `{` at $open, or null if unbalanced. */

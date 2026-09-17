@@ -41,10 +41,13 @@ use PHPUnit\Framework\TestCase;
  */
 final class PreLoginPostRequiresTokenTest extends TestCase
 {
-    /** The guard spellings the tree uses: the call as a page writes it => [defining file, function]. */
+    /**
+     * The guard spellings the tree uses: the call as a page writes it =>
+     * [defining file, function, the superglobal each argument must read, in order].
+     */
     private const GUARDS = [
-        'install_csrf_ok(' => ['202-config/functions-install-helpers.php', 'install_csrf_ok'],
-        'AUTH::check_csrf_token(' => ['202-config/functions-auth.php', 'check_csrf_token'],
+        'install_csrf_ok(' => ['202-config/functions-install-helpers.php', 'install_csrf_ok', ['$_SESSION', '$_POST']],
+        'AUTH::check_csrf_token(' => ['202-config/functions-auth.php', 'check_csrf_token', []],
     ];
 
     /** Assignment operators other than `=`; each rewrites the variable on its left. */
@@ -153,6 +156,7 @@ final class PreLoginPostRequiresTokenTest extends TestCase
             . ' block below its guard, or skip the guard, from anywhere in the file, and this check'
             . ' reads no jump targets. Teach it before writing one.'
         );
+        $this->assertNamesResolveGlobally($tokens, $file);
         $this->assertNoWritePathTheScanCannotFollow($tokens, array_unique([$page['result'], $page['gate']]), $file);
 
         $post = strpos($code, "\$_SERVER['REQUEST_METHOD'] == 'POST'");
@@ -189,6 +193,34 @@ final class PreLoginPostRequiresTokenTest extends TestCase
         $this->assertNotNull($close, "$file: unbalanced guard call at line " . $this->lineOf($tokens, $first));
         $end = $this->nextSignificant($tokens, (int) $close + 1);
 
+        // The call is the global helper, or the static method of the named
+        // class, by token: `$x->install_csrf_ok(`, `Helpers\install_csrf_ok(`,
+        // `new install_csrf_ok(` and `MyAUTH::check_csrf_token(` all contain
+        // the marker and are none of those, and the first version of this
+        // read the marker only.
+        $callee = explode('::', rtrim($marker, '('));
+        $head = $tokens[$first];
+        $before = $this->previousSignificant($tokens, $first - 1);
+        $owners = [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON, T_NEW, T_FUNCTION];
+        $isCallee = in_array($head['id'], [T_STRING, T_NAME_FULLY_QUALIFIED, T_NAME_RELATIVE], true)
+            && in_array($head['text'], [$callee[0], '\\' . $callee[0], 'namespace\\' . $callee[0]], true)
+            && ($before === null || !in_array($tokens[$before]['id'], $owners, true));
+        $next = $this->nextSignificant($tokens, $first + 1);
+        if ($isCallee && count($callee) === 2) {
+            $method = $next === null ? null : $this->nextSignificant($tokens, $next + 1);
+            $isCallee = $next !== null && $tokens[$next]['id'] === T_DOUBLE_COLON
+                && $method !== null && $tokens[$method]['id'] === T_STRING && $tokens[$method]['text'] === $callee[1];
+            $next = $method === null ? null : $this->nextSignificant($tokens, $method + 1);
+        }
+        $this->assertTrue(
+            $isCallee && $next === $open,
+            "$file's token guard at line " . $this->lineOf($tokens, $first) . " is not `{$marker}…)` as this"
+            . ' test reads it — the global function, or the static method of that class, by token. A'
+            . ' method of some object, a function in another namespace, a constructor or a class'
+            . ' whose name merely ends the same way carries the same marker and decides nothing here;'
+            . ' teach this check the new shape before writing one.'
+        );
+
         $operator = $this->previousSignificant($tokens, $first - 1);
         if ($page['negated']) {
             // The polarity is part of the shape: without the `!`, the flag
@@ -216,6 +248,16 @@ final class PreLoginPostRequiresTokenTest extends TestCase
             "$file must assign the guard's result directly inside its POST block, as a statement of its own"
             . ' (line ' . $this->lineOf($tokens, (int) $variable) . '); inside a further condition, a request'
             . ' that skips it reaches the work with nothing checked'
+        );
+        $this->assertGuardArguments(
+            $tokens,
+            $pairs,
+            $file,
+            self::GUARDS[$marker][2],
+            $marker,
+            (int) $open,
+            (int) $close,
+            $postBrace
         );
 
         // 2. Every call of the work, each inside the POST block: a second
@@ -475,6 +517,7 @@ final class PreLoginPostRequiresTokenTest extends TestCase
             $tokens = $this->tokensOf($file);
             $pairs = $this->pairs($tokens, $file);
             [$from, $to] = $this->functionRange($tokens, $pairs, $file, $name);
+            $this->assertNamesResolveGlobally($tokens, $file);
 
             $compared = 0;
             for ($i = $from; $i <= $to; $i++) {
@@ -820,6 +863,188 @@ final class PreLoginPostRequiresTokenTest extends TestCase
             . ' global, or a construct that names no variable at all. Refuse it, or teach this'
             . ' check the new shape.'
         );
+    }
+
+    /**
+     * $file declares no namespace and imports no function, so an unqualified
+     * `install_csrf_ok(` or `hash_equals(` in it is the global one. A
+     * `namespace` declaration would resolve the same token to that
+     * namespace's function first, and `use function Other\ok as
+     * install_csrf_ok;` would rebind it outright; neither is visible at the
+     * call site the checks here read, so both are refused by line.
+     */
+    private function assertNamesResolveGlobally(array $tokens, string $file): void
+    {
+        $found = [];
+        foreach ($tokens as $i => $token) {
+            if ($token['id'] === T_NAMESPACE) {
+                $found[] = 'a namespace declaration at line ' . $this->lineOf($tokens, $i);
+            }
+            if ($token['id'] === T_USE) {
+                $next = $this->nextSignificant($tokens, $i + 1);
+                if ($next !== null && $tokens[$next]['id'] === T_FUNCTION) {
+                    $found[] = 'a function import at line ' . $this->lineOf($tokens, $i);
+                }
+            }
+        }
+        $this->assertSame(
+            [],
+            $found,
+            "$file makes " . implode(', ', $found) . ': an unqualified call in it is then not certainly'
+            . ' the global function this test reads it as. Teach the call-site checks the new'
+            . ' resolution before adding one.'
+        );
+    }
+
+    /**
+     * The guard's arguments are the session token and the posted token, in
+     * that order. `install_csrf_ok($expected, $submitted)` decides nothing
+     * about the request when the page hands it `$_POST['token']` twice, and
+     * every other check here — the helper executed on token pairs, the
+     * result controlling the work, the form carrying the token — stays
+     * green while every non-empty token an attacker sends is accepted; the
+     * reviewer planted exactly that. Each argument is read where it is
+     * (`$_SESSION['token']` or `$_POST['token']`, with or without `?? ''`
+     * and a `(string)` cast, in redundant parentheses or not — the
+     * expression the form's value is already held to), or is a variable
+     * assigned exactly that, once, directly inside the POST block as a
+     * statement of its own, untouched between that assignment and the
+     * call, and with no path to it the scan cannot follow. A guard that
+     * takes no arguments (`AUTH::check_csrf_token()`) reads the two itself,
+     * which testEveryGuardFailsClosedWhenExecuted() executes on token
+     * pairs; an argument handed to it is a shape this check does not read.
+     *
+     * @param list<string> $sources the superglobal each argument must read, in order
+     */
+    private function assertGuardArguments(
+        array $tokens,
+        array $pairs,
+        string $file,
+        array $sources,
+        string $marker,
+        int $open,
+        int $close,
+        int $postBrace
+    ): void {
+        $line = $this->lineOf($tokens, $open);
+        $name = rtrim($marker, '(');
+        $inside = $this->significantBetween($tokens, $open, $close);
+        $arguments = $inside === [] ? [] : $this->splitTopLevelCommas($tokens, $inside);
+        $this->assertCount(
+            count($sources),
+            $arguments,
+            "$file hands $name() " . count($arguments) . " argument(s) at line $line; it takes "
+            . count($sources)
+            . ($sources === []
+                ? ', reading the session and posted tokens itself'
+                : ': the session token and the posted token, in that order')
+            . '. Teach this check the new shape before changing the call.'
+        );
+        $what = ['the session token', 'the posted token'];
+        foreach ($sources as $k => $source) {
+            $run = $this->stripParentheses($tokens, $pairs, $arguments[$k]);
+            if (count($run) === 1 && $tokens[$run[0]]['id'] === T_VARIABLE) {
+                $run = $this->assignedTokenRead(
+                    $tokens,
+                    $pairs,
+                    $file,
+                    $tokens[$run[0]]['text'],
+                    $postBrace,
+                    $open,
+                    $what[$k]
+                );
+            }
+            $this->assertTrue(
+                $this->isTheTokenRead(array_map(static fn(int $i): array => $tokens[$i], $run), $source),
+                "$file's token guard at line $line is not handed {$what[$k]} as argument " . ($k + 1)
+                . ": expected $source" . "['token'], with or without `?? ''` and a `(string)` cast, or a"
+                . ' variable assigned exactly that; a guard handed anything else decides nothing about'
+                . ' the request'
+            );
+        }
+    }
+
+    /**
+     * The right-hand side of the one assignment of $name inside the POST
+     * block before the guard call at $call — `$name = …;` directly inside
+     * the block as a statement of its own — with the variable untouched
+     * from there to the call and no path to it the scan cannot follow.
+     *
+     * @return list<int> significant token indices of the right-hand side
+     */
+    private function assignedTokenRead(
+        array $tokens,
+        array $pairs,
+        string $file,
+        string $name,
+        int $postBrace,
+        int $call,
+        string $what
+    ): array {
+        $assignments = [];
+        for ($i = $postBrace + 1; $i < $call; $i++) {
+            if (
+                $tokens[$i]['id'] === T_VARIABLE && $tokens[$i]['text'] === $name
+                && $this->useOf($tokens, $pairs, $i) === 'assignment'
+            ) {
+                $assignments[] = $i;
+            }
+        }
+        $this->assertCount(
+            1,
+            $assignments,
+            "$file hands the token guard $name as $what, which is assigned " . count($assignments)
+            . ' times inside the POST block before the call; this check reads exactly one'
+            . " `$name = …;` there, so the value the guard compares is the one it reads"
+        );
+        $assign = $assignments[0];
+        $this->assertTrue(
+            $this->runsWheneverTheBlockRuns($tokens, $pairs, $postBrace, $assign),
+            "$file assigns $name (line " . $this->lineOf($tokens, $assign) . ') inside a further condition,'
+            . ' or not as a statement of its own; a request that skips it hands the guard something else'
+        );
+        $equals = (int) $this->nextSignificant($tokens, $assign + 1);
+        $end = $equals + 1;
+        while ($end < $call && $tokens[$end]['text'] !== ';') {
+            $end++;
+        }
+        $this->assertSame(
+            ';',
+            $tokens[$end]['text'],
+            "$file: the assignment of $name at line " . $this->lineOf($tokens, $assign)
+            . ' does not end before the guard call'
+        );
+        $this->assertUntouched($tokens, $pairs, $name, $end, $call, [], $file, "$what the guard is handed");
+        $this->assertNoWritePathTheScanCannotFollow($tokens, [$name], $file);
+
+        return $this->significantBetween($tokens, $equals, $end);
+    }
+
+    /**
+     * $run split at its top-level commas, each part a list of significant
+     * token indices.
+     *
+     * @param  list<int> $run
+     * @return list<list<int>>
+     */
+    private function splitTopLevelCommas(array $tokens, array $run): array
+    {
+        $parts = [[]];
+        $depth = 0;
+        foreach ($run as $i) {
+            $text = $tokens[$i]['text'];
+            if ($text === '(' || $text === '[' || $text === '{' || $text === '${') {
+                $depth++;
+            } elseif ($text === ')' || $text === ']' || $text === '}') {
+                $depth--;
+            } elseif ($depth === 0 && $text === ',') {
+                $parts[] = [];
+                continue;
+            }
+            $parts[count($parts) - 1][] = $i;
+        }
+
+        return $parts;
     }
 
     /**
@@ -1197,10 +1422,16 @@ final class PreLoginPostRequiresTokenTest extends TestCase
         return $inside;
     }
 
-    /** Does this token name the global function $name, qualified or not? */
+    /**
+     * Does this token name the global function $name — unqualified, fully
+     * qualified or `namespace\`-relative? `Other\name` is a function in
+     * another namespace and is not it; a file that declares a namespace or
+     * imports a function is refused by assertNamesResolveGlobally() before
+     * this is asked, so an unqualified name here is the global one.
+     */
     private function namesFunction(array $token, string $name): bool
     {
-        if (!in_array($token['id'], [T_STRING, T_NAME_FULLY_QUALIFIED, T_NAME_QUALIFIED, T_NAME_RELATIVE], true)) {
+        if (!in_array($token['id'], [T_STRING, T_NAME_FULLY_QUALIFIED, T_NAME_RELATIVE], true)) {
             return false;
         }
         $segments = explode('\\', $token['text']);
@@ -1525,12 +1756,25 @@ final class PreLoginPostRequiresTokenTest extends TestCase
      */
     private function isTheSessionToken(array $run): bool
     {
+        return $this->isTheTokenRead($run, '$_SESSION');
+    }
+
+    /**
+     * Is $run the read of `$superglobal['token']` — bare, or with `?? ''`,
+     * under a `(string)` cast or not, in redundant parentheses or not — and
+     * nothing else? The form's value is held to it for `$_SESSION`, and
+     * the guard's two arguments for `$_SESSION` and `$_POST`.
+     *
+     * @param list<array{id: int|null, text: string}> $run
+     */
+    private function isTheTokenRead(array $run, string $superglobal): bool
+    {
         $run = $this->unwrapped($run);
         if (($run[0]['id'] ?? null) === T_STRING_CAST) {
             $run = $this->unwrapped(array_slice($run, 1));
         }
         $reads = count($run) >= 4
-            && $run[0]['id'] === T_VARIABLE && $run[0]['text'] === '$_SESSION'
+            && $run[0]['id'] === T_VARIABLE && $run[0]['text'] === $superglobal
             && $run[1]['text'] === '['
             && $run[2]['id'] === T_CONSTANT_ENCAPSED_STRING && in_array($run[2]['text'], ["'token'", '"token"'], true)
             && $run[3]['text'] === ']';
