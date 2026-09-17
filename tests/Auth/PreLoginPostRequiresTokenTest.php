@@ -193,27 +193,14 @@ final class PreLoginPostRequiresTokenTest extends TestCase
         $this->assertNotNull($close, "$file: unbalanced guard call at line " . $this->lineOf($tokens, $first));
         $end = $this->nextSignificant($tokens, (int) $close + 1);
 
-        // The call is the global helper, or the static method of the named
-        // class, by token: `$x->install_csrf_ok(`, `Helpers\install_csrf_ok(`,
-        // `new install_csrf_ok(` and `MyAUTH::check_csrf_token(` all contain
-        // the marker and are none of those, and the first version of this
-        // read the marker only.
-        $callee = explode('::', rtrim($marker, '('));
-        $head = $tokens[$first];
-        $before = $this->previousSignificant($tokens, $first - 1);
-        $owners = [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON, T_NEW, T_FUNCTION];
-        $isCallee = in_array($head['id'], [T_STRING, T_NAME_FULLY_QUALIFIED, T_NAME_RELATIVE], true)
-            && in_array($head['text'], [$callee[0], '\\' . $callee[0], 'namespace\\' . $callee[0]], true)
-            && ($before === null || !in_array($tokens[$before]['id'], $owners, true));
-        $next = $this->nextSignificant($tokens, $first + 1);
-        if ($isCallee && count($callee) === 2) {
-            $method = $next === null ? null : $this->nextSignificant($tokens, $next + 1);
-            $isCallee = $next !== null && $tokens[$next]['id'] === T_DOUBLE_COLON
-                && $method !== null && $tokens[$method]['id'] === T_STRING && $tokens[$method]['text'] === $callee[1];
-            $next = $method === null ? null : $this->nextSignificant($tokens, $method + 1);
-        }
-        $this->assertTrue(
-            $isCallee && $next === $open,
+        // The call is the guard by token — the global function, or the static
+        // method of the named class — not merely a string containing its
+        // name: `$x->install_csrf_ok(`, `Helpers\install_csrf_ok(` and
+        // `MyAUTH::check_csrf_token(` all contain the marker and are none of
+        // it, and the first version of this read the marker only.
+        $this->assertSame(
+            $open,
+            $this->callSiteOf($tokens, $first, $marker),
             "$file's token guard at line " . $this->lineOf($tokens, $first) . " is not `{$marker}…)` as this"
             . ' test reads it — the global function, or the static method of that class, by token. A'
             . ' method of some object, a function in another namespace, a constructor or a class'
@@ -265,7 +252,19 @@ final class PreLoginPostRequiresTokenTest extends TestCase
         //    the block runs on a GET.
         $works = [];
         for ($w = strpos($code, $page['work']); $w !== false; $w = strpos($code, $page['work'], $w + 1)) {
-            $works[] = $this->tokenAt($tokens, $w);
+            $first = $this->tokenAt($tokens, $w);
+            // By token, as the guard is: `MyUPGRADE::upgrade_databases(`
+            // contains the marker and is another class, and a lookalike
+            // credited as the work leaves the real one unwatched — the
+            // reviewer planted exactly that, one review after the guard.
+            $this->assertNotNull(
+                $this->callSiteOf($tokens, $first, $page['work']),
+                "$file has `{$page['work']}` at line " . $this->lineOf($tokens, $first) . ' inside something'
+                . ' that is not that call — a class whose name merely ends the same way, a method of'
+                . ' some object, or a name in another namespace. This test reads the work by token;'
+                . ' teach it the new shape before writing one.'
+            );
+            $works[] = $first;
         }
         $this->assertNotSame(
             [],
@@ -863,6 +862,57 @@ final class PreLoginPostRequiresTokenTest extends TestCase
             . ' global, or a construct that names no variable at all. Refuse it, or teach this'
             . ' check the new shape.'
         );
+    }
+
+    /**
+     * The `(` of the call at $first when the tokens there spell $marker as
+     * a call site does — `function(`, `Class::method(` or `new Class(` —
+     * each name its own exact token, the function or class unqualified,
+     * fully qualified or `namespace\`-relative, and nothing before it that
+     * makes it something else (`->`, `?->`, `::`, `new`, `function`); or
+     * null. `MyUPGRADE::upgrade_databases(` and `Helpers\install_csrf_ok(`
+     * contain a marker and are a different class and a different function,
+     * and the first version of this found the guard and the work by
+     * substring and read both as the real thing — the reviewer planted the
+     * lookalike on each, one review apart.
+     */
+    private function callSiteOf(array $tokens, int $first, string $marker): ?int
+    {
+        $isNew = str_starts_with($marker, 'new ');
+        $path = explode('::', rtrim($isNew ? substr($marker, 4) : $marker, '('));
+        $at = $first;
+        if ($isNew) {
+            if ($tokens[$at]['id'] !== T_NEW) {
+                return null;
+            }
+            $at = $this->nextSignificant($tokens, $at + 1);
+            if ($at === null) {
+                return null;
+            }
+        }
+        $head = $tokens[$at];
+        $before = $this->previousSignificant($tokens, $at - 1);
+        $owners = [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON, T_NEW, T_FUNCTION];
+        if (
+            !in_array($head['id'], [T_STRING, T_NAME_FULLY_QUALIFIED, T_NAME_RELATIVE], true)
+            || !in_array($head['text'], [$path[0], '\\' . $path[0], 'namespace\\' . $path[0]], true)
+            || (!$isNew && $before !== null && in_array($tokens[$before]['id'], $owners, true))
+        ) {
+            return null;
+        }
+        $next = $this->nextSignificant($tokens, $at + 1);
+        if (count($path) === 2) {
+            $method = $next === null ? null : $this->nextSignificant($tokens, $next + 1);
+            if (
+                $next === null || $tokens[$next]['id'] !== T_DOUBLE_COLON
+                || $method === null || $tokens[$method]['id'] !== T_STRING || $tokens[$method]['text'] !== $path[1]
+            ) {
+                return null;
+            }
+            $next = $this->nextSignificant($tokens, $method + 1);
+        }
+
+        return $next !== null && $tokens[$next]['text'] === '(' ? $next : null;
     }
 
     /**

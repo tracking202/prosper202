@@ -438,8 +438,15 @@ $_POST['token'])` accepts every non-empty token and left everything green.
 That is #12 seen from the call site: the arguments are now parsed as the
 session token and the posted token, in that order, read where they are or
 through a variable assigned exactly that once, directly in the block,
-untouched to the call and alias-free. When a check says "X is called", ask
-what X is called *with*, and whether the thing named is the thing meant.
+untouched to the call and alias-free. One review later the same substring
+found the *work*: `MyUPGRADE::upgrade_databases(` satisfied the marker for
+the protected operation, so a page calling a lookalike class read as
+guarded while the real operation went unwatched — the guard had been fixed
+and the three work sites, found the same way two screens down, had not.
+One helper now reads guard and work alike. When a check says "X is
+called", ask what X is called *with*, and whether the thing named is the
+thing meant; and when one site read by name is fixed, every site read by
+name is the sweep.
 
 ### 22. "Somewhere in the block" is not an order
 
