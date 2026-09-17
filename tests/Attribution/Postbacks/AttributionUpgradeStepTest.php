@@ -31,6 +31,13 @@ final class AttributionUpgradeStepTest extends TestCase
     private const RECONCILE_CALL = '_upgrade_attribution_tables(';
 
     /**
+     * Statements that leave: return, exit/die, throw, break, continue, goto.
+     * A statement below one of these, or below a block holding one, may
+     * never run — jumpsBetween() has the reasoning.
+     */
+    private const JUMPS = [T_RETURN, T_EXIT, T_THROW, T_BREAK, T_CONTINUE, T_GOTO];
+
+    /**
      * A statement writing a version into 202_version, with the version captured.
      *
      * Tolerant of what SQL allows around the same statement, because
@@ -272,9 +279,13 @@ final class AttributionUpgradeStepTest extends TestCase
         // a call nested in a further condition inside the success branch, or
         // behind a short-circuit, leaves a successful reconcile without its
         // version write when that condition is false, and the rung is stuck.
+        // So does a call below a branch that can leave — `if ($skip) {
+        // return false; }` above it — which reads as a statement after a
+        // closing brace unless the jump is read too.
         $reach = $this->persistsThatReachAQuery($step['from'], $step['to']);
         $unguarded = [];
         $conditional = [];
+        $leaves = [];
         foreach ($step['persists'] as $version) {
             foreach ($reach[$version] ?? [] as $call) {
                 $inside = null;
@@ -286,6 +297,9 @@ final class AttributionUpgradeStepTest extends TestCase
                 }
                 if ($inside === null) {
                     $unguarded[] = "$version at line " . $this->lineOf($tokens, $call);
+                } elseif (($jumps = $this->jumpsBetween($tokens, $inside, $call)) !== []) {
+                    $leaves[] = "$version at line " . $this->lineOf($tokens, $call)
+                        . ' below a jump at line(s) ' . implode(', ', $jumps);
                 } elseif (!$this->runsOnEveryPathOf($tokens, $inside, $call)) {
                     $conditional[] = "$version at line " . $this->lineOf($tokens, $call);
                 }
@@ -309,6 +323,44 @@ final class AttributionUpgradeStepTest extends TestCase
             . ' converges. The call has to run on every path through that branch: as a statement'
             . ' of its own, as `$v = _upgrade_query(…);`, or as the first operand of an `if` that'
             . ' starts a statement, directly inside the branch.'
+        );
+        $this->assertSame(
+            [],
+            $leaves,
+            "the step gated on $gate runs the query writing a version below a jump inside the branch"
+            . ' guarded by the reconcile result (' . implode('; ', $leaves) . '), so on the path that'
+            . ' jump takes a successful reconcile never advances the version and the rung never'
+            . ' converges. This check does not read where a jump lands — a return, exit, throw,'
+            . ' break, continue or goto above the call is refused whatever it does; teach it the'
+            . ' new shape before writing one.'
+        );
+    }
+
+    /**
+     * No `goto` anywhere in the ladder.
+     *
+     * PHP lets a goto enter an `if` block from anywhere in the same scope —
+     * only loops and switches are closed to it — so a label inside a success
+     * branch would run the persist with no reconcile before it, and every
+     * range check here, which reads a branch's braces as its only way in,
+     * would stay green. The checks read no jump targets; the file has never
+     * needed one.
+     */
+    public function testTheLadderHasNoGoto(): void
+    {
+        $tokens = $this->upgradeTokens();
+        $gotos = [];
+        foreach ($tokens as $i => $token) {
+            if ($token['id'] === T_GOTO) {
+                $gotos[] = $this->lineOf($tokens, $i);
+            }
+        }
+        $this->assertSame(
+            [],
+            $gotos,
+            'the ladder uses goto at line(s) ' . implode(', ', $gotos) . ': a goto can enter a'
+            . ' success branch from anywhere in the same scope, and the checks here read no jump'
+            . ' targets. Teach them before writing one.'
         );
     }
 
@@ -410,6 +462,7 @@ final class AttributionUpgradeStepTest extends TestCase
         $ranges = [];
         $early = [];
         $conditional = [];
+        $leaves = [];
         for ($i = $from; $i <= $to; $i++) {
             if ($tokens[$i]['id'] !== T_IF && $tokens[$i]['id'] !== T_ELSEIF) {
                 continue;
@@ -451,10 +504,17 @@ final class AttributionUpgradeStepTest extends TestCase
                 $early[] = $this->lineOf($tokens, $i);
                 continue;
             }
-            // An `if` of its own, directly inside the step: nested in a
-            // further condition, or an `elseif` that runs only when the
-            // branch before it did not, a successful reconcile may never
-            // reach its persist and the rung never converges.
+            // An `if` of its own, directly inside the step, with nothing
+            // above it that can leave: nested in a further condition, or an
+            // `elseif` that runs only when the branch before it did not, or
+            // below `if ($skip) { return false; }`, a successful reconcile
+            // may never reach its persist and the rung never converges.
+            $jumps = $this->jumpsBetween($tokens, (int) $stepBrace, $i);
+            if ($jumps !== []) {
+                $leaves[] = 'line ' . $this->lineOf($tokens, $i)
+                    . ' below a jump at line(s) ' . implode(', ', $jumps);
+                continue;
+            }
             if ($tokens[$i]['id'] !== T_IF || !$this->runsWheneverTheBlockRuns($tokens, (int) $stepBrace, $i)) {
                 $conditional[] = $this->lineOf($tokens, $i);
                 continue;
@@ -477,6 +537,15 @@ final class AttributionUpgradeStepTest extends TestCase
             . implode(', ', $conditional) . ' inside a further condition, or as an `elseif`, so a'
             . ' successful reconcile may never reach its persist and the rung never converges.'
             . ' The guard has to be an `if` of its own, directly inside the step.'
+        );
+        $this->assertSame(
+            [],
+            $leaves,
+            "the step gated on $gate tests the reconcile result $result at " . implode('; ', $leaves)
+            . ': on the path that jump takes, a successful reconcile never reaches its persist and'
+            . ' the rung never converges. This check does not read where a jump lands — a return,'
+            . ' exit, throw, break, continue or goto above the guard is refused whatever it does;'
+            . ' teach it the new shape before writing one.'
         );
 
         $stray = [];
@@ -513,13 +582,19 @@ final class AttributionUpgradeStepTest extends TestCase
 
     /**
      * Does the token at $at start a statement that runs whenever the block
-     * opened at $open runs — inside its braces at no deeper level, and first
-     * in its statement, so not the body of a braceless `if` or of an `else`?
+     * opened at $open runs — inside its braces at no deeper level, first in
+     * its statement, so not the body of a braceless `if` or of an `else`,
+     * and with nothing above it in the block that can leave? A statement
+     * after a closing brace runs only if the branch that brace closed cannot
+     * return, throw or exit first; jumpsBetween() has the shapes.
      */
     private function runsWheneverTheBlockRuns(array $tokens, int $open, int $at): bool
     {
         $close = $this->matchingBrace($tokens, $open);
         if ($close === null || $at <= $open || $at >= $close) {
+            return false;
+        }
+        if ($this->jumpsBetween($tokens, $open, $at) !== []) {
             return false;
         }
         $depth = 0;
@@ -537,6 +612,35 @@ final class AttributionUpgradeStepTest extends TestCase
         $prev = $this->previousSignificant($tokens, $at - 1, $open);
 
         return $prev !== null && in_array($tokens[$prev]['text'], [';', '{', '}'], true);
+    }
+
+    /**
+     * The lines of every jump — return, exit/die, throw, break, continue,
+     * goto — between the block opened at $open and the token at $at, at any
+     * depth.
+     *
+     * A statement after a closing brace runs whenever the block runs only if
+     * the branch that brace closed cannot leave first: `if ($skip) { return
+     * false; }` above the guard, or above the persist call inside it, is a
+     * path on which a successful reconcile never records its version and
+     * the rung is stuck. This check does not read where a jump lands — a
+     * `break` in a nested loop, a `return` in a closure, a `throw` a nested
+     * `try` catches would all stay inside the block — so every one in the
+     * range is refused, by line, and a step that needs one teaches the check
+     * first. A call to a function that never returns is not read at all.
+     *
+     * @return list<int>
+     */
+    private function jumpsBetween(array $tokens, int $open, int $at): array
+    {
+        $lines = [];
+        for ($i = $open + 1; $i < $at; $i++) {
+            if (in_array($tokens[$i]['id'], self::JUMPS, true)) {
+                $lines[] = $this->lineOf($tokens, $i);
+            }
+        }
+
+        return $lines;
     }
 
     /**

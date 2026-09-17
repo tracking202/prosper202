@@ -29,6 +29,12 @@ use PHPUnit\Framework\TestCase;
  * on the guard's result with nothing between the guard and that branch able
  * to weaken it, and the helpers are executed as well as read.
  *
+ * The form is held to the same standard. `name="token"` anywhere in the
+ * file said nothing about which form carried it, so the token input now has
+ * to sit inside every form that posts to the page — hidden, enabled, owned
+ * by no other form, outside any HTML comment, in the same PHP block as its
+ * form tag — with the escaped session token as its value.
+ *
  * Scoped to the pre-login pages on purpose: of the 74 files in the tree that
  * read $_POST, 27 check a token, so the tree-wide invariant cannot land as one
  * change. Those are a sweep of their own.
@@ -115,6 +121,10 @@ final class PreLoginPostRequiresTokenTest extends TestCase
      * runs up to the branch's opening brace rather than its `if`, because
      * the condition is code: `if (($error = false) === false && !$error)`
      * carries the accepted conjunct and resets the flag before testing it.
+     * And no `goto` in the file at all: PHP lets one enter an `if` block
+     * from anywhere in the same scope, so a goto could land inside the POST
+     * block below its guard, or past the seed, and nothing here reads a
+     * jump target.
      *
      * @dataProvider pages
      * @param array{file: string, work: string, result: string, negated: bool, gate: string, seed: ?string} $page
@@ -125,6 +135,20 @@ final class PreLoginPostRequiresTokenTest extends TestCase
         $tokens = $this->tokensOf($file);
         $pairs = $this->pairs($tokens, $file);
         $code = implode('', array_column($tokens, 'text'));
+
+        $gotos = [];
+        foreach ($tokens as $i => $token) {
+            if ($token['id'] === T_GOTO) {
+                $gotos[] = $this->lineOf($tokens, $i);
+            }
+        }
+        $this->assertSame(
+            [],
+            $gotos,
+            "$file uses goto at line(s) " . implode(', ', $gotos) . ': a goto can enter the POST'
+            . ' block below its guard, or skip the guard, from anywhere in the file, and this check'
+            . ' reads no jump targets. Teach it before writing one.'
+        );
 
         $post = strpos($code, "\$_SERVER['REQUEST_METHOD'] == 'POST'");
         $this->assertNotFalse($post, "$file no longer branches on a POST; this test's subject has moved");
@@ -259,16 +283,126 @@ final class PreLoginPostRequiresTokenTest extends TestCase
     }
 
     /**
+     * Every form that posts to the page carries the token, inside it.
+     *
+     * The first version asserted that `name="token"` appeared somewhere in
+     * the file, which said nothing about which form carried it: the input
+     * moved below `</form>`, into a second form, disabled, or inside an HTML
+     * comment all kept it green while the page's own submissions failed the
+     * guard. Now every `method="post"` form is found, its `</form>` located
+     * with no form nested between, and inside that span there has to be an
+     * `<input>` named token that is hidden, not disabled, owned by no other
+     * form (`form="…"`), outside any `<!-- -->`, in the same PHP block as
+     * its form tag — a `<?php if (…) { ?>` around it can render the form
+     * without it, and this check reads no conditions — and whose value is
+     * one echo of the session token through htmlentities() or
+     * htmlspecialchars() with ENT_QUOTES. At least one such form has to post
+     * to the page itself (no action, or an empty one), or nothing reaches
+     * the handler this suite guards.
+     *
+     * Read from the source, so a closing tag echoed from PHP, or a form
+     * assembled in a string, is not seen; the three pages write their forms
+     * as markup. tests/live/upgrade-csrf.sh submits the upgrader's rendered
+     * form with the fields a browser would send.
+     *
      * @dataProvider pages
      * @param array{file: string} $page
      */
     public function testTheFormCarriesTheToken(array $page): void
     {
-        $this->assertStringContainsString(
-            'name="token"',
-            implode('', array_column($this->tokensOf($page['file']), 'text')),
-            "{$page['file']} renders a form with no token field, so its own submissions would fail the check"
+        $file = $page['file'];
+        $tokens = $this->tokensOf($file);
+        $pairs = $this->pairs($tokens, $file);
+        $code = implode('', array_column($tokens, 'text'));
+
+        $forms = [];
+        $selfPosting = 0;
+        foreach ($this->tagsNamed($tokens, $code, 'form') as $form) {
+            $attributes = $this->attributesOf($form['tag']);
+            if (strtolower($attributes['method'] ?? '') !== 'post') {
+                continue;
+            }
+            $forms[] = $form;
+            if (trim($attributes['action'] ?? '') === '') {
+                $selfPosting++;
+            }
+        }
+        $this->assertGreaterThan(
+            0,
+            $selfPosting,
+            "$file has no `method=\"post\"` form posting to itself (no action, or an empty one), so"
+            . ' nothing reaches the POST handler this suite guards; this check reads that shape only'
         );
+
+        foreach ($forms as $form) {
+            $line = $this->lineOf($tokens, $form['token']);
+            $close = $this->closingTagOf($tokens, $code, 'form', $form['end']);
+            $this->assertNotNull(
+                $close,
+                "$file: the form at line $line is never closed, or another form opens inside it"
+            );
+
+            $comments = $this->commentsBetween($tokens, $code, $form['end'], (int) $close);
+            $candidates = [];
+            $commented = [];
+            foreach ($this->tagsNamed($tokens, $code, 'input', $form['end'], (int) $close) as $input) {
+                $attributes = $this->attributesOf($input['tag']);
+                if (($attributes['name'] ?? null) !== 'token') {
+                    continue;
+                }
+                foreach ($comments as [$from, $to]) {
+                    if ($input['start'] > $from && $input['start'] < $to) {
+                        $commented[] = $this->lineOf($tokens, $input['token']);
+                        continue 2;
+                    }
+                }
+                $candidates[] = $input + ['attributes' => $attributes];
+            }
+            $this->assertNotSame(
+                [],
+                $candidates,
+                "$file: the form at line $line carries no token input"
+                . ($commented === [] ? '' : ' (one sits inside an HTML comment at line '
+                    . implode(', ', $commented) . ')')
+                . ', so its own submissions fail the check the POST handler makes'
+            );
+
+            foreach ($candidates as $input) {
+                $at = $this->lineOf($tokens, $input['token']);
+                $attributes = $input['attributes'];
+                $this->assertSame(
+                    'hidden',
+                    strtolower($attributes['type'] ?? ''),
+                    "$file: the token input at line $at is not type=\"hidden\"; a visible field, a"
+                    . ' checkbox or a button named token is submitted only sometimes, or shown'
+                );
+                $this->assertArrayNotHasKey(
+                    'disabled',
+                    $attributes,
+                    "$file: the token input at line $at is disabled, and a disabled field is not submitted"
+                );
+                $this->assertArrayNotHasKey(
+                    'form',
+                    $attributes,
+                    "$file: the token input at line $at names another form as its owner, so this form"
+                    . ' does not submit it'
+                );
+                $why = $this->echoesEscapedSessionToken($attributes['value'] ?? '');
+                $this->assertNull(
+                    $why,
+                    "$file: the value of the token input at line $at $why; this check reads one echo of"
+                    . " \$_SESSION['token'] through htmlentities() or htmlspecialchars() with ENT_QUOTES"
+                );
+                $depth = $this->phpDepthBetween($tokens, $pairs, $form['token'], $input['token']);
+                $this->assertSame(
+                    0,
+                    $depth,
+                    "$file: the token input at line $at sits in a different PHP block from its form tag"
+                    . " at line $line (depth $depth): a condition around it can render the form without"
+                    . ' its token, and this check does not read conditions'
+                );
+            }
+        }
     }
 
     /**
@@ -701,6 +835,15 @@ final class PreLoginPostRequiresTokenTest extends TestCase
      * Does the token at $at start a statement that runs whenever the block
      * opened at $open runs — inside its braces at no deeper level, and first
      * in its statement, so not the body of a braceless `if` or of an `else`?
+     *
+     * A return, exit or throw above the statement is not read here, unlike
+     * in AttributionUpgradeStepTest's twin of this: there the invariant is
+     * that the statement runs, and a jump above it is a path on which it
+     * does not; here it is that the work never runs unguarded, and a jump
+     * above the guard leaves the block without the work — the safe
+     * direction. The one jump that can skip a statement and still reach a
+     * later one, `goto`, is refused for the whole file by
+     * testTheGuardResultControlsTheWork().
      */
     private function runsWheneverTheBlockRuns(array $tokens, array $pairs, int $open, int $at): bool
     {
@@ -867,6 +1010,275 @@ final class PreLoginPostRequiresTokenTest extends TestCase
         $this->assertSame([], $stack, "$file: an opener is never closed");
 
         return $pairs;
+    }
+
+    /**
+     * Every `<$name` tag in the inline HTML between the offsets $from and
+     * $to: where it starts, where its `>` ends (PHP blocks and quoted values
+     * skipped), its text, and the token it starts in. A `<$name` inside a
+     * PHP string or comment is not a tag and is not returned.
+     *
+     * @return list<array{start: int, end: int, tag: string, token: int}>
+     */
+    private function tagsNamed(array $tokens, string $code, string $name, int $from = 0, ?int $to = null): array
+    {
+        $to ??= strlen($code);
+        $needle = '<' . $name;
+        $found = [];
+        for ($p = stripos($code, $needle, $from); $p !== false && $p < $to; $p = stripos($code, $needle, $p + 1)) {
+            $after = $code[$p + strlen($needle)] ?? '';
+            if (!in_array($after, [' ', "\t", "\n", "\r", '>', '/'], true)) {
+                continue;
+            }
+            $token = $this->tokenAt($tokens, $p);
+            if ($tokens[$token]['id'] !== T_INLINE_HTML) {
+                continue;
+            }
+            $end = $this->tagEnd($code, $p);
+            $this->assertNotNull($end, "an unclosed <$name tag at line " . $this->lineOf($tokens, $token));
+            $found[] = [
+                'start' => $p,
+                'end' => (int) $end,
+                'tag' => substr($code, $p, (int) $end - $p),
+                'token' => $token,
+            ];
+        }
+
+        return $found;
+    }
+
+    /**
+     * The offset just past the `>` that closes the tag opening at $start —
+     * a `>` inside a quoted value, or inside a `<?php … ?>` block, is not it
+     * — or null when the tag never closes.
+     */
+    private function tagEnd(string $code, int $start): ?int
+    {
+        $length = strlen($code);
+        $quote = null;
+        for ($i = $start; $i < $length; $i++) {
+            $char = $code[$i];
+            if ($char === '<' && ($code[$i + 1] ?? '') === '?') {
+                $close = strpos($code, '?>', $i + 2);
+                if ($close === false) {
+                    return null;
+                }
+                $i = $close + 1;
+                continue;
+            }
+            if ($quote !== null) {
+                if ($char === $quote) {
+                    $quote = null;
+                }
+                continue;
+            }
+            if ($char === '"' || $char === "'") {
+                $quote = $char;
+            } elseif ($char === '>') {
+                return $i + 1;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The offset of the `</$name` closing the tag whose `>` ended at $from,
+     * or null when there is none in the inline HTML, or another `<$name`
+     * opens before it (a form inside a form is not a form).
+     */
+    private function closingTagOf(array $tokens, string $code, string $name, int $from): ?int
+    {
+        $close = stripos($code, '</' . $name, $from);
+        while ($close !== false && $tokens[$this->tokenAt($tokens, $close)]['id'] !== T_INLINE_HTML) {
+            $close = stripos($code, '</' . $name, $close + 1);
+        }
+        if ($close === false) {
+            return null;
+        }
+
+        return $this->tagsNamed($tokens, $code, $name, $from, $close) === [] ? $close : null;
+    }
+
+    /**
+     * The `<!-- … -->` regions of the inline HTML between $from and $to, as
+     * [start, end) offset pairs; a comment left open runs to $to.
+     *
+     * @return list<array{0: int, 1: int}>
+     */
+    private function commentsBetween(array $tokens, string $code, int $from, int $to): array
+    {
+        $regions = [];
+        for ($p = strpos($code, '<!--', $from); $p !== false && $p < $to; $p = strpos($code, '<!--', $p + 4)) {
+            if ($tokens[$this->tokenAt($tokens, $p)]['id'] !== T_INLINE_HTML) {
+                continue;
+            }
+            $end = strpos($code, '-->', $p + 4);
+            $regions[] = [$p, $end === false ? $to : $end + 3];
+        }
+
+        return $regions;
+    }
+
+    /**
+     * The attributes of one tag, names lowercased, values unquoted, a
+     * valueless attribute (`disabled`, `checked`) mapped to ''. The first of
+     * a repeated name wins, as in a browser. A `<?php … ?>` block inside the
+     * tag is kept whole in the value it sits in; one standing as an
+     * attribute of its own is not read.
+     *
+     * @return array<string, string>
+     */
+    private function attributesOf(string $tag): array
+    {
+        $php = [];
+        $tag = (string) preg_replace_callback('/<\?.*?\?>/s', static function (array $m) use (&$php): string {
+            $php[] = $m[0];
+
+            return "\0" . (count($php) - 1) . "\0";
+        }, $tag);
+        $body = (string) preg_replace('/^<[a-zA-Z][a-zA-Z0-9-]*\s*|\/?>$/', '', $tag);
+
+        $attributes = [];
+        preg_match_all(
+            '/([^\s=\/>"\']+)(?:\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s"\'>]+)))?/',
+            $body,
+            $matches,
+            PREG_SET_ORDER | PREG_UNMATCHED_AS_NULL
+        );
+        foreach ($matches as $m) {
+            $value = $m[2] ?? $m[3] ?? $m[4] ?? '';
+            $value = (string) preg_replace_callback(
+                '/\0(\d+)\0/',
+                static fn (array $m): string => $php[(int) $m[1]],
+                $value
+            );
+            $attributes[strtolower($m[1])] ??= $value;
+        }
+
+        return $attributes;
+    }
+
+    /**
+     * Why $value, the token input's value attribute, is not one echo of the
+     * session token through an HTML escaper with ENT_QUOTES —
+     * `<?php echo htmlentities((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>`,
+     * its htmlspecialchars() spelling, or either after `<?=` — or null when
+     * it is. Read from the value's own tokens, argument by argument, rather
+     * than matched as a substring: "contains htmlentities( and $_SESSION"
+     * would accept the token concatenated onto an escaped string.
+     */
+    private function echoesEscapedSessionToken(string $value): ?string
+    {
+        $raw = [];
+        foreach (token_get_all($value) as $token) {
+            $id = is_array($token) ? $token[0] : null;
+            if ($id === T_WHITESPACE || $id === T_COMMENT || $id === T_DOC_COMMENT) {
+                continue;
+            }
+            $raw[] = ['id' => $id, 'text' => is_array($token) ? $token[1] : $token];
+        }
+        $count = count($raw);
+        if ($count === 0 || !in_array($raw[0]['id'], [T_OPEN_TAG, T_OPEN_TAG_WITH_ECHO], true)) {
+            return 'is not a PHP echo';
+        }
+        $k = 1;
+        if ($raw[0]['id'] === T_OPEN_TAG) {
+            if (($raw[$k]['id'] ?? null) !== T_ECHO) {
+                return 'does not echo';
+            }
+            $k++;
+        }
+        $escapers = ['htmlentities', 'htmlspecialchars'];
+        if (($raw[$k]['id'] ?? null) !== T_STRING || !in_array(strtolower($raw[$k]['text']), $escapers, true)) {
+            return 'does not pass through htmlentities() or htmlspecialchars()';
+        }
+        $k++;
+        if (($raw[$k]['text'] ?? null) !== '(') {
+            return 'does not call the escaper';
+        }
+
+        // The escaper's arguments, split at the commas between them.
+        $depth = 0;
+        $arguments = [[]];
+        for ($k++; $k < $count; $k++) {
+            $text = $raw[$k]['text'];
+            if ($text === '(' || $text === '[') {
+                $depth++;
+            } elseif ($text === ')' || $text === ']') {
+                if ($depth === 0) {
+                    break;
+                }
+                $depth--;
+            } elseif ($text === ',' && $depth === 0) {
+                $arguments[] = [];
+                continue;
+            }
+            $arguments[count($arguments) - 1][] = $raw[$k];
+        }
+        if (($raw[$k]['text'] ?? null) !== ')') {
+            return 'has an unbalanced escaper call';
+        }
+        $k++;
+        if (($raw[$k]['text'] ?? null) === ';') {
+            $k++;
+        }
+        if (($raw[$k]['id'] ?? null) !== T_CLOSE_TAG || $k !== $count - 1) {
+            return 'has more in it than the one escaper call';
+        }
+
+        $subject = implode('', array_column($arguments[0], 'text'));
+        if (!str_contains($subject, "\$_SESSION['token']") && !str_contains($subject, '$_SESSION["token"]')) {
+            return "does not read \$_SESSION['token']";
+        }
+        foreach (array_slice($arguments, 1) as $argument) {
+            foreach ($argument as $token) {
+                if ($token['id'] === T_STRING && $token['text'] === 'ENT_QUOTES') {
+                    return null;
+                }
+            }
+        }
+
+        return 'does not escape with ENT_QUOTES';
+    }
+
+    /**
+     * The PHP block depth at $to relative to $from: braces opened and closed
+     * between the two tokens, and the alternative syntax's `if (…):` …
+     * `endif;` (foreach, for, while and switch alike). Zero means the two
+     * sit in the same block. Anything else, or a dip below zero on the way
+     * (a block opened above $from closing between them), means a condition
+     * or a loop between the two can render one without the other; the dip
+     * is returned so the message can say which.
+     */
+    private function phpDepthBetween(array $tokens, array $pairs, int $from, int $to): int
+    {
+        $openers = [T_IF, T_ELSEIF, T_FOREACH, T_FOR, T_WHILE, T_SWITCH];
+        $closers = [T_ENDIF, T_ENDFOREACH, T_ENDFOR, T_ENDWHILE, T_ENDSWITCH];
+        $depth = 0;
+        $lowest = 0;
+        for ($i = $from + 1; $i < $to; $i++) {
+            $id = $tokens[$i]['id'];
+            $text = $tokens[$i]['text'];
+            if ($text === '{' || $text === '${') {
+                $depth++;
+            } elseif ($text === '}') {
+                $depth--;
+            } elseif (in_array($id, $openers, true)) {
+                $open = $this->nextSignificant($tokens, $i + 1);
+                $after = $open !== null && isset($pairs[$open])
+                    ? $this->nextSignificant($tokens, $pairs[$open] + 1)
+                    : null;
+                if ($after !== null && $tokens[$after]['text'] === ':' && $id !== T_ELSEIF) {
+                    $depth++;
+                }
+            } elseif (in_array($id, $closers, true)) {
+                $depth--;
+            }
+            $lowest = min($lowest, $depth);
+        }
+
+        return $lowest < 0 ? $lowest : $depth;
     }
 
     /** The token whose text spans character $offset of the joined code. */

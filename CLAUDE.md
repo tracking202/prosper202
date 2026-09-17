@@ -369,6 +369,16 @@ is "this result decides that", execute it where the code is pure enough
 (both helpers were), and otherwise prove the branch the work sits under and
 that nothing between the guard and the branch can change what it tests.
 
+And its form, one round later: the same test asserted that `name="token"`
+appeared somewhere in the file, which said nothing about which form carried
+it — below `</form>`, in a second form, disabled, or inside `<!-- -->`, it
+was on the page and not in the submission, and the live pass scraped the
+first token it found and posted it by hand, so it would have stayed green
+too. The claim was "the form that posts carries the token"; the check has
+to find that form, bound it, and read the input inside it, and the live
+pass has to submit the form's own fields rather than a token it found
+anywhere on the page.
+
 ### 22. "Somewhere in the block" is not an order
 
 `reconcileSuccessRanges()` found the reconcile assignment anywhere in the
@@ -424,6 +434,19 @@ unread. Both halves need the same treatment: the act must run on every path
 through the branch (directly inside it, in a shape that evaluates it
 unconditionally), and a scan that accepts a write has to read the rest of
 the block for the one that undoes it.
+
+One more, the round after: "runs whenever the block runs" was read as
+*directly inside the braces, first in its statement*, and a statement after
+a closing brace passed — as if the branch that brace closed could not have
+left. `if ($skip) { return false; }` above the guard, or above the persist
+inside it, is a path on which a successful reconcile never records its
+version, and the check called both unconditional. A jump is the third thing
+"runs on every path" has to read, after depth and order; the check cannot
+tell where one lands (a `break` in a nested loop, a `return` in a closure),
+so every return, exit, throw, break, continue and goto above the statement
+is refused by line, and `goto` is refused for the whole file, because PHP
+lets one enter an `if` from anywhere in the same scope and no brace-bounded
+range can see it come in.
 
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
