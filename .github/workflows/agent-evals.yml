@@ -137,6 +137,23 @@ jobs:
           echo "::add-mask::$KEY"
           echo "P202_EVAL_API_KEY=$KEY" >> "$GITHUB_ENV"
 
+      - name: Prove the upgrade page refuses a POST without the session token
+        # tests/live/upgrade-csrf.sh drives the real page over HTTP: it winds
+        # 202_version back, POSTs with no token, a wrong token and from a
+        # session-less client (each refused, the version untouched), then with
+        # the page's own token (the ladder runs), and leaves the instance at
+        # the code version. The service container is disposable, which is what
+        # the override tells tests/live/guard.sh.
+        env:
+          P202_BASE: http://127.0.0.1:8000
+          P202_DB: prosper202
+          P202_DB_HOST: 127.0.0.1
+          P202_DB_PORT: '3306'
+          P202_DB_USER: root
+          P202_DB_PASS: root
+          P202_DB_ALLOW_DESTRUCTIVE: yes-i-mean-it
+        run: bash tests/live/upgrade-csrf.sh
+
       - name: Configure the CLI
         run: |
           go-cli/p202 config set-url http://127.0.0.1:8000

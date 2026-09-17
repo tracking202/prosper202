@@ -18,6 +18,11 @@
 # version), so the pass is self-restoring; the rung it climbs is the
 # reconciler, which is idempotent.
 #
+# Runs in CI as well: the Agent Evals job (.github/workflows/agent-evals.yml)
+# runs it against the instance it installs, right after installing, so the
+# page is driven over HTTP on every push and not only when someone runs this
+# by hand. tests/Auth/PreLoginPostRequiresTokenTest is the static half.
+#
 # --- environment -------------------------------------------------------
 # The names match the other passes here and tests/browser. P202_DB must be a
 # SCRATCH database: this pass rewrites 202_version, and guard.sh refuses a
@@ -27,6 +32,10 @@ BASE=${P202_BASE:-http://127.0.0.1:8097}
 DB=${P202_DB:-p202_test}
 DB_USER=${P202_DB_USER:-root}
 DB_PASS=${P202_DB_PASS:-}
+# Empty means the mysql client's default, the local socket. CI's MySQL is a
+# service container reached over TCP, so the Agent Evals job sets both.
+DB_HOST=${P202_DB_HOST:-}
+DB_PORT=${P202_DB_PORT:-}
 # The rung to wind back to. Any version below the code version works — the
 # ladder climbs from wherever it starts — and 1.9.75 is the one RELEASING.md
 # names for the attribution tables.
@@ -49,6 +58,8 @@ fi
 
 MYSQL_ARGS=(-u "$DB_USER")
 [ -n "$DB_PASS" ] && MYSQL_ARGS+=("-p$DB_PASS")
+[ -n "$DB_HOST" ] && MYSQL_ARGS+=(-h "$DB_HOST" --protocol=TCP)
+[ -n "$DB_PORT" ] && MYSQL_ARGS+=(-P "$DB_PORT")
 mysql_q() { mysql "${MYSQL_ARGS[@]}" "$@"; }
 # -----------------------------------------------------------------------
 

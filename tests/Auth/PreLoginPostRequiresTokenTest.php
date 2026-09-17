@@ -8,7 +8,7 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * Every page that takes a POST before there is a login checks the session
- * token before it does any work.
+ * token, and the check decides whether the work runs.
  *
  * Three pages answer a POST with nobody logged in: the installer, the
  * upgrader and the login form. For them the token connect.php mints on every
@@ -17,8 +17,17 @@ use PHPUnit\Framework\TestCase;
  * 202-login.php made the check; upgrade.php did not, and the repair
  * RELEASING.md gives for a stranded branch deployment — wind 202_version back
  * and open that page — is exactly when the gap was open.
- * tests/live/upgrade-csrf.sh proves the same over HTTP against a running
- * instance; this is the part that runs in CI.
+ * tests/live/upgrade-csrf.sh proves the upgrader over HTTP against a running
+ * instance, locally and in the Agent Evals job; this is the part that runs
+ * on every push.
+ *
+ * Two claims, each held to the code rather than to a name. The first version
+ * asserted that the guard call came before the work in the source, and that
+ * the helpers' bodies contained `hash_equals(`: `$error = false;` after the
+ * guard passed the first, and a helper that evaluated hash_equals() and then
+ * returned true passed the second. Now the work has to sit inside a branch
+ * on the guard's result with nothing between the guard and that branch able
+ * to weaken it, and the helpers are executed as well as read.
  *
  * Scoped to the pre-login pages on purpose: of the 74 files in the tree that
  * read $_POST, 27 check a token, so the tree-wide invariant cannot land as one
@@ -26,96 +35,756 @@ use PHPUnit\Framework\TestCase;
  */
 final class PreLoginPostRequiresTokenTest extends TestCase
 {
-    /** The guard spellings the tree uses. Each is held to a real comparison below. */
-    private const GUARDS = ['install_csrf_ok(', 'AUTH::check_csrf_token('];
+    /** The guard spellings the tree uses: the call as a page writes it => [defining file, function]. */
+    private const GUARDS = [
+        'install_csrf_ok(' => ['202-config/functions-install-helpers.php', 'install_csrf_ok'],
+        'AUTH::check_csrf_token(' => ['202-config/functions-auth.php', 'check_csrf_token'],
+    ];
+
+    /** Assignment operators other than `=`; each rewrites the variable on its left. */
+    private const COMPOUND_ASSIGNMENTS = [
+        T_PLUS_EQUAL, T_MINUS_EQUAL, T_MUL_EQUAL, T_DIV_EQUAL, T_CONCAT_EQUAL, T_MOD_EQUAL,
+        T_AND_EQUAL, T_OR_EQUAL, T_XOR_EQUAL, T_SL_EQUAL, T_SR_EQUAL, T_POW_EQUAL, T_COALESCE_EQUAL,
+    ];
 
     /**
-     * Each pre-login page with the call its guard must precede. Order in the
-     * source is the assertion: a check that runs after the work is decoration.
+     * Each pre-login page, the call its guard protects, and the shape the
+     * page gates that call in. The shape is declared rather than inferred: a
+     * page written another way fails here and says how it was read, instead
+     * of being reasoned about.
      *
-     * @return array<string, array{0: string, 1: string}>
+     *   result   the variable the guard's return value is assigned to, once,
+     *            as `$result = guard(…);` — or `$result = !guard(…);` when
+     *            `negated`, so that true means the check FAILED
+     *   gate     the variable the work's branch tests: the result itself, or
+     *            an error flag that is true whenever the check failed
+     *   seed     how the flag takes the result when it is not the result: the
+     *            statement `$flag = $result;`, or the failure branch
+     *            `if (!$result) {` writing an element of the flag
+     *
+     * @return array<string, array{0: array{file: string, work: string, result: string, negated: bool,
+     *     gate: string, seed: ?string}}>
      */
     public static function pages(): array
     {
         return [
-            'installer' => ['202-config/install.php', 'new INSTALL('],
-            'upgrader'  => ['202-config/upgrade.php', 'UPGRADE::upgrade_databases('],
-            'login'     => ['202-login.php', 'AUTH::authenticate('],
+            'installer' => [[
+                'file' => '202-config/install.php',
+                'work' => 'new INSTALL(',
+                'result' => '$csrf_ok',
+                'negated' => false,
+                'gate' => '$csrf_ok',
+                'seed' => null,
+            ]],
+            'upgrader' => [[
+                'file' => '202-config/upgrade.php',
+                'work' => 'UPGRADE::upgrade_databases(',
+                'result' => '$csrf_error',
+                'negated' => true,
+                'gate' => '$error',
+                'seed' => '$error = $csrf_error;',
+            ]],
+            'login' => [[
+                'file' => '202-login.php',
+                'work' => 'AUTH::authenticate(',
+                'result' => '$csrf_ok',
+                'negated' => false,
+                'gate' => '$error',
+                'seed' => 'if (!$csrf_ok) {',
+            ]],
         ];
     }
 
-    /** @dataProvider pages */
-    public function testThePostIsGuardedBeforeTheWork(string $file, string $work): void
+    /**
+     * The guard's result decides whether the work runs.
+     *
+     * Read from the tokens, in this order: the guard is called once after
+     * the POST branch and its result assigned on its own; the flag, when
+     * there is one, takes that result the declared way; every call of the
+     * work sits inside an `if` whose condition has the result — or the
+     * negated flag — as a whole conjunct (a conjunct can only narrow); and
+     * between the guard and that `if` neither variable is written in a way
+     * that could weaken it. `$error = true;` narrows and is allowed; a
+     * `$error = false;`, an `unset`, a compound assignment, a reference or a
+     * call taking the variable is refused by line, because this check does
+     * not tell a read from a write and says so.
+     *
+     * @dataProvider pages
+     * @param array{file: string, work: string, result: string, negated: bool, gate: string, seed: ?string} $page
+     */
+    public function testTheGuardResultControlsTheWork(array $page): void
     {
-        $code = $this->codeOf($file);
+        $file = $page['file'];
+        $tokens = $this->tokensOf($file);
+        $pairs = $this->pairs($tokens, $file);
+        $code = implode('', array_column($tokens, 'text'));
 
         $post = strpos($code, "\$_SERVER['REQUEST_METHOD'] == 'POST'");
         $this->assertNotFalse($post, "$file no longer branches on a POST; this test's subject has moved");
 
-        $workAt = strpos($code, $work);
-        $this->assertNotFalse($workAt, "$file no longer calls $work; the work this guard protects has moved");
-
-        $guardAt = false;
-        foreach (self::GUARDS as $guard) {
-            $at = strpos($code, $guard, $post);
-            if ($at !== false && ($guardAt === false || $at < $guardAt)) {
-                $guardAt = $at;
+        // 1. One guard call after the POST branch, assigned on its own, so
+        //    the variable holds that result and only that result.
+        $calls = [];
+        foreach (array_keys(self::GUARDS) as $marker) {
+            for ($at = strpos($code, $marker, $post); $at !== false; $at = strpos($code, $marker, $at + 1)) {
+                $calls[] = [$marker, $at];
             }
         }
-        $this->assertNotFalse(
-            $guardAt,
-            "$file takes a POST without checking the session token (" . implode(' or ', self::GUARDS) . ')'
+        $this->assertCount(
+            1,
+            $calls,
+            "$file must call the token guard exactly once after its POST branch ("
+            . implode(' or ', array_keys(self::GUARDS)) . '); found ' . count($calls)
         );
-        $this->assertLessThan($workAt, $guardAt, "$file checks the token only after $work has already run");
+        [$marker, $at] = $calls[0];
+        $first = $this->tokenAt($tokens, $at);
+        $open = $this->tokenAt($tokens, $at + strlen($marker) - 1);
+        $close = $pairs[$open] ?? null;
+        $this->assertNotNull($close, "$file: unbalanced guard call at line " . $this->lineOf($tokens, $first));
+        $end = $this->nextSignificant($tokens, (int) $close + 1);
+
+        $operator = $this->previousSignificant($tokens, $first - 1);
+        if ($page['negated']) {
+            // The polarity is part of the shape: without the `!`, the flag
+            // is true when the token MATCHED and the work runs when it did not.
+            $this->assertTrue(
+                $operator !== null && $tokens[$operator]['text'] === '!',
+                "$file must store the guard's failure as `{$page['result']} = !guard(…);` (line "
+                . $this->lineOf($tokens, $first) . '); without the negation the flag means the opposite'
+            );
+            $operator = $this->previousSignificant($tokens, (int) $operator - 1);
+        }
+        $variable = $operator === null ? null : $this->previousSignificant($tokens, $operator - 1);
+        $this->assertTrue(
+            $operator !== null && $tokens[$operator]['text'] === '='
+            && $variable !== null && $tokens[$variable]['id'] === T_VARIABLE
+            && $tokens[$variable]['text'] === $page['result']
+            && $end !== null && $tokens[$end]['text'] === ';',
+            "$file must assign the guard's result on its own, as `{$page['result']} = "
+            . ($page['negated'] ? '!' : '') . 'guard(…);` (line ' . $this->lineOf($tokens, $first)
+            . '); a different shape is refused here rather than read'
+        );
+        $resultEnd = (int) $end;
+
+        // 2. Every call of the work: a second one, unguarded, is the same
+        //    hole as the first.
+        $works = [];
+        for ($w = strpos($code, $page['work']); $w !== false; $w = strpos($code, $page['work'], $w + 1)) {
+            $works[] = $this->tokenAt($tokens, $w);
+        }
+        $this->assertNotSame(
+            [],
+            $works,
+            "$file no longer calls {$page['work']}; the work this guard protects has moved"
+        );
+
+        // 3. Where the flag takes the result.
+        $seedEnd = $page['gate'] === $page['result']
+            ? $resultEnd
+            : $this->seedEnd($tokens, $pairs, $page, $resultEnd);
+
+        foreach ($works as $work) {
+            $this->assertGreaterThan(
+                $seedEnd,
+                $work,
+                "$file calls {$page['work']} at line " . $this->lineOf($tokens, $work)
+                . ' before the token guard has run'
+            );
+            // 4. The branch the work sits under, and 5. nothing in between
+            //    that could weaken what it tests.
+            $gate = $this->gateOf($tokens, $pairs, $page, $work, $seedEnd);
+            $this->assertUntouched($tokens, $pairs, $page['result'], $resultEnd, $gate, [], $file, 'the guard result');
+            if ($page['gate'] !== $page['result']) {
+                $allowed = ['true'];
+                if ($page['negated']) {
+                    $allowed[] = $page['result'];
+                }
+                $this->assertUntouched(
+                    $tokens,
+                    $pairs,
+                    $page['gate'],
+                    $seedEnd,
+                    $gate,
+                    $allowed,
+                    $file,
+                    'the error flag'
+                );
+            }
+        }
     }
 
-    /** @dataProvider pages */
-    public function testTheFormCarriesTheToken(string $file): void
+    /**
+     * @dataProvider pages
+     * @param array{file: string} $page
+     */
+    public function testTheFormCarriesTheToken(array $page): void
     {
         $this->assertStringContainsString(
             'name="token"',
-            $this->codeOf($file),
-            "$file renders a form with no token field, so its own submissions would fail the check"
+            implode('', array_column($this->tokensOf($page['file']), 'text')),
+            "{$page['file']} renders a form with no token field, so its own submissions would fail the check"
         );
     }
 
     /**
-     * A guard is only a guard if its name resolves to a real comparison. Both
-     * spellings must fail closed on an empty token and compare with
-     * hash_equals — asserted on the definitions, so "guarded" above is a
-     * statement about code rather than about a function name.
+     * Executed, not read: each helper with both tokens empty (hash_equals('',
+     * '') is true, which is why the empty check exists), one empty, a
+     * mismatch, a prefix, and a match — and the AUTH one with a session that
+     * was never seeded and a POST that carries no token at all.
      */
-    public function testEveryGuardSpellingFailsClosedAndUsesHashEquals(): void
+    public function testEveryGuardFailsClosedWhenExecuted(): void
     {
-        $definitions = [
-            '202-config/functions-install-helpers.php' => 'install_csrf_ok',
-            '202-config/functions-auth.php' => 'check_csrf_token',
+        foreach (self::GUARDS as [$file]) {
+            require_once dirname(__DIR__, 2) . '/' . $file;
+        }
+
+        $cases = [
+            ['', '', false],
+            ['abc', '', false],
+            ['', 'abc', false],
+            ['abc', 'abd', false],
+            ['abc', 'ab', false],
+            ['abc', 'abc', true],
         ];
 
-        foreach ($definitions as $file => $name) {
-            $body = $this->functionBody($file, $name);
-
-            $this->assertStringContainsString('hash_equals(', $body, "$name() no longer compares with hash_equals()");
-            $this->assertMatchesRegularExpression(
-                "/[!=]== *''/",
-                $body,
-                "$name() no longer refuses an empty token; hash_equals('', '') is true"
-            );
+        $session = $_SESSION ?? [];
+        $post = $_POST;
+        try {
+            foreach ($cases as [$expected, $submitted, $want]) {
+                $this->assertSame(
+                    $want,
+                    \install_csrf_ok($expected, $submitted),
+                    "install_csrf_ok('$expected', '$submitted')"
+                );
+                $_SESSION = ['token' => $expected];
+                $_POST = ['token' => $submitted];
+                $this->assertSame(
+                    $want,
+                    \AUTH::check_csrf_token(),
+                    "AUTH::check_csrf_token() with session token '$expected' and posted token '$submitted'"
+                );
+            }
+            $_SESSION = [];
+            $_POST = ['token' => 'abc'];
+            $this->assertFalse(\AUTH::check_csrf_token(), 'AUTH::check_csrf_token() with no session token at all');
+            $_SESSION = ['token' => 'abc'];
+            $_POST = [];
+            $this->assertFalse(\AUTH::check_csrf_token(), 'AUTH::check_csrf_token() with no posted token at all');
+        } finally {
+            $_SESSION = $session;
+            $_POST = $post;
         }
     }
 
-    /** The file with comments removed, so prose cannot satisfy a scan. */
-    private function codeOf(string $file): string
+    /**
+     * Read as well as run: what each helper returns IS the hash_equals()
+     * comparison, so the constant-time compare is what decides and not
+     * something beside it. Every `return` is `return false;` or a
+     * conjunction one of whose conjuncts is exactly a hash_equals(…) call — a
+     * conjunct can only narrow, so `$expected !== '' && hash_equals(…)` is the
+     * shape and `hash_equals(…); return true;` is not. Anything else, a
+     * disjunction, a negation, a ternary, a variable, is refused by line.
+     */
+    public function testEveryGuardReturnsTheHashEqualsComparison(): void
     {
-        return implode('', array_column($this->tokensOf($file), 'text'));
+        foreach (self::GUARDS as [$file, $name]) {
+            $tokens = $this->tokensOf($file);
+            $pairs = $this->pairs($tokens, $file);
+            [$from, $to] = $this->functionRange($tokens, $pairs, $file, $name);
+
+            $compared = 0;
+            for ($i = $from; $i <= $to; $i++) {
+                if ($tokens[$i]['id'] !== T_RETURN) {
+                    continue;
+                }
+                $expression = [];
+                for ($j = $i + 1; $j <= $to && $tokens[$j]['text'] !== ';'; $j++) {
+                    if ($tokens[$j]['id'] !== T_WHITESPACE) {
+                        $expression[] = $j;
+                    }
+                }
+                if (count($expression) === 1 && strtolower($tokens[$expression[0]]['text']) === 'false') {
+                    continue;
+                }
+
+                $decides = false;
+                foreach ($this->splitTopLevelAnd($tokens, $expression) as $conjunct) {
+                    $conjunct = $this->stripParentheses($tokens, $pairs, $conjunct);
+                    $decides = $decides || (
+                        count($conjunct) >= 3
+                        && $this->namesFunction($tokens[$conjunct[0]], 'hash_equals')
+                        && $tokens[$conjunct[1]]['text'] === '('
+                        && ($pairs[$conjunct[1]] ?? null) === $conjunct[count($conjunct) - 1]
+                    );
+                }
+                $this->assertTrue(
+                    $decides,
+                    "$name() in $file returns something other than false or the hash_equals() comparison at line "
+                    . $this->lineOf($tokens, $i) . ': `return false;` and `return … && hash_equals(…);` are the'
+                    . ' shapes this check reads, because only those make the constant-time compare decide'
+                );
+                $compared++;
+            }
+            $this->assertGreaterThan(0, $compared, "$name() in $file never returns the hash_equals() comparison");
+        }
     }
 
     /**
+     * The index of the `;` (statement seed) or `}` (branch seed) that ends
+     * the seeding of the flag from the result, after $resultEnd.
+     *
+     * @param array{file: string, result: string, gate: string, seed: ?string} $page
+     */
+    private function seedEnd(array $tokens, array $pairs, array $page, int $resultEnd): int
+    {
+        $file = $page['file'];
+        $seed = (string) $page['seed'];
+        $count = count($tokens);
+
+        if (str_starts_with($seed, $page['gate'])) {
+            // `$flag = $result;`
+            for ($i = $resultEnd + 1; $i < $count; $i++) {
+                if ($tokens[$i]['id'] !== T_VARIABLE || $tokens[$i]['text'] !== $page['gate']) {
+                    continue;
+                }
+                $equals = $this->nextSignificant($tokens, $i + 1);
+                $value = $equals === null ? null : $this->nextSignificant($tokens, $equals + 1);
+                $end = $value === null ? null : $this->nextSignificant($tokens, $value + 1);
+                if (
+                    $equals !== null && $tokens[$equals]['text'] === '='
+                    && $value !== null && $tokens[$value]['text'] === $page['result']
+                    && $end !== null && $tokens[$end]['text'] === ';'
+                ) {
+                    return $end;
+                }
+            }
+            $this->fail("$file no longer seeds {$page['gate']} from {$page['result']} as `$seed` after the guard");
+        }
+
+        // `if (!$result) {` writing an element of the flag, directly inside.
+        for ($i = $resultEnd + 1; $i < $count; $i++) {
+            if ($tokens[$i]['id'] !== T_IF) {
+                continue;
+            }
+            $open = $this->nextSignificant($tokens, $i + 1);
+            if ($open === null || $tokens[$open]['text'] !== '(' || !isset($pairs[$open])) {
+                continue;
+            }
+            $inside = $this->significantBetween($tokens, $open, $pairs[$open]);
+            $condition = $this->stripParentheses($tokens, $pairs, $inside);
+            if (
+                count($condition) !== 2
+                || $tokens[$condition[0]]['text'] !== '!'
+                || $tokens[$condition[1]]['text'] !== $page['result']
+            ) {
+                continue;
+            }
+            $brace = $this->nextSignificant($tokens, $pairs[$open] + 1);
+            if ($brace === null || $tokens[$brace]['text'] !== '{' || !isset($pairs[$brace])) {
+                continue;
+            }
+            $depth = 0;
+            for ($j = $brace + 1; $j < $pairs[$brace]; $j++) {
+                $text = $tokens[$j]['text'];
+                if ($text === '{' || $text === '${') {
+                    $depth++;
+                } elseif ($text === '}') {
+                    $depth--;
+                } elseif (
+                    $depth === 0 && $tokens[$j]['id'] === T_VARIABLE && $tokens[$j]['text'] === $page['gate']
+                    && in_array($this->useOf($tokens, $pairs, $j), ['element write', 'assignment'], true)
+                ) {
+                    return $pairs[$brace];
+                }
+            }
+        }
+        $this->fail(
+            "$file no longer seeds {$page['gate']} inside `$seed` after the guard: the failure branch must write"
+            . " an element of {$page['gate']} directly, not inside a further condition"
+        );
+    }
+
+    /**
+     * The index of the `if`/`elseif` the work at $work sits under, whose
+     * condition has the result (or the negated flag) as a whole conjunct and
+     * which comes after the seed.
+     *
+     * @param array{file: string, work: string, result: string, negated: bool, gate: string} $page
+     */
+    private function gateOf(array $tokens, array $pairs, array $page, int $work, int $seedEnd): int
+    {
+        $file = $page['file'];
+        $accepted = [$page['negated'] ? ['!', $page['result']] : [$page['result']]];
+        if ($page['gate'] !== $page['result']) {
+            $accepted[] = ['!', $page['gate']];
+        }
+        $spellings = implode(' or ', array_map(static fn(array $a): string => '`' . implode('', $a) . '`', $accepted));
+
+        $early = [];
+        foreach ($pairs as $open => $close) {
+            if ($tokens[$open]['text'] !== '{' || $open >= $work || $close <= $work) {
+                continue;
+            }
+            $closeParen = $this->previousSignificant($tokens, $open - 1);
+            if ($closeParen === null || $tokens[$closeParen]['text'] !== ')' || !isset($pairs[$closeParen])) {
+                continue;
+            }
+            $openParen = $pairs[$closeParen];
+            $keyword = $this->previousSignificant($tokens, $openParen - 1);
+            if ($keyword === null || ($tokens[$keyword]['id'] !== T_IF && $tokens[$keyword]['id'] !== T_ELSEIF)) {
+                continue;
+            }
+            $condition = $this->significantBetween($tokens, $openParen, $closeParen);
+            foreach ($this->splitTopLevelAnd($tokens, $condition) as $conjunct) {
+                $conjunct = $this->stripParentheses($tokens, $pairs, $conjunct);
+                $texts = array_map(static fn(int $k): string => $tokens[$k]['text'], $conjunct);
+                if (!in_array($texts, $accepted, true)) {
+                    continue;
+                }
+                if ($keyword <= $seedEnd) {
+                    $early[] = $this->lineOf($tokens, $keyword);
+                    continue;
+                }
+
+                return $keyword;
+            }
+        }
+
+        $this->fail(
+            "$file calls {$page['work']} at line " . $this->lineOf($tokens, $work) . ' outside any `if` whose condition'
+            . " has the guard's result as a whole conjunct ($spellings)"
+            . ($early === [] ? '' : '; the branch at line ' . implode(', ', $early) . ' tests it before it is seeded')
+            . ', so the work runs whatever the token check said'
+        );
+    }
+
+    /**
+     * Every appearance of $name in ($from, $to) is a read, an element write,
+     * or an assignment of one of $allowed — nothing that could make the
+     * variable falsy when the guard said no.
+     *
+     * @param list<string> $allowed right-hand sides a whole assignment may have
+     */
+    private function assertUntouched(
+        array $tokens,
+        array $pairs,
+        string $name,
+        int $from,
+        int $to,
+        array $allowed,
+        string $file,
+        string $what
+    ): void {
+        $touched = [];
+        for ($i = $from + 1; $i < $to; $i++) {
+            if ($tokens[$i]['id'] === T_UNSET) {
+                $open = $this->nextSignificant($tokens, $i + 1);
+                if ($open !== null && isset($pairs[$open])) {
+                    foreach ($this->significantBetween($tokens, $open, $pairs[$open]) as $k) {
+                        if ($tokens[$k]['id'] === T_VARIABLE && $tokens[$k]['text'] === $name) {
+                            $touched[] = 'unset at line ' . $this->lineOf($tokens, $k);
+                        }
+                    }
+                }
+                continue;
+            }
+            if ($tokens[$i]['id'] !== T_VARIABLE || $tokens[$i]['text'] !== $name) {
+                continue;
+            }
+            $use = $this->useOf($tokens, $pairs, $i);
+            if ($use === 'read' || ($use === 'element write' && $allowed !== [])) {
+                continue;
+            }
+            if ($use === 'assignment') {
+                $equals = (int) $this->nextSignificant($tokens, $i + 1);
+                $value = [];
+                for ($j = $equals + 1; $j < count($tokens) && $tokens[$j]['text'] !== ';'; $j++) {
+                    if ($tokens[$j]['id'] !== T_WHITESPACE) {
+                        $value[] = strtolower($tokens[$j]['text']);
+                    }
+                }
+                if (count($value) === 1 && in_array($value[0], array_map('strtolower', $allowed), true)) {
+                    continue;
+                }
+            }
+            $touched[] = "$use at line " . $this->lineOf($tokens, $i);
+        }
+
+        $this->assertSame(
+            [],
+            $touched,
+            "$file changes $what ($name) between the guard and the branch that tests it: " . implode(', ', $touched)
+            . '. Only a read, an element write'
+            . ($allowed === [] ? '' : ', or assigning ' . implode(' or ', $allowed))
+            . ' is read as safe; anything else could let the work run when the token check failed'
+        );
+    }
+
+    /**
+     * How the variable at $at is used: 'read', 'element write', 'assignment',
+     * or a kind this refuses — a compound assignment, an increment, a
+     * reference, a destructuring, or an argument to a call that may take it
+     * by reference.
+     */
+    private function useOf(array $tokens, array $pairs, int $at): string
+    {
+        $prev = $this->previousSignificant($tokens, $at - 1);
+        $next = $this->nextSignificant($tokens, $at + 1);
+
+        $stepped = $prev !== null && in_array($tokens[$prev]['id'], [T_INC, T_DEC], true);
+        if ($prev !== null && ($tokens[$prev]['text'] === '&' || $stepped)) {
+            return 'reference or increment';
+        }
+        if ($next !== null) {
+            if ($tokens[$next]['text'] === '=') {
+                return 'assignment';
+            }
+            if (in_array($tokens[$next]['id'], self::COMPOUND_ASSIGNMENTS, true)) {
+                return 'compound assignment';
+            }
+            if (in_array($tokens[$next]['id'], [T_INC, T_DEC], true)) {
+                return 'increment';
+            }
+            if ($tokens[$next]['text'] === '[' && isset($pairs[$next])) {
+                $after = $this->nextSignificant($tokens, $pairs[$next] + 1);
+                $written = $after !== null && (
+                    $tokens[$after]['text'] === '='
+                    || in_array($tokens[$after]['id'], self::COMPOUND_ASSIGNMENTS, true)
+                );
+                if ($written) {
+                    return 'element write';
+                }
+                return 'read';
+            }
+        }
+        if ($prev !== null && in_array($tokens[$prev]['text'], ['(', ',', '['], true)) {
+            $opener = $this->enclosingOpener($tokens, $at);
+            if ($opener !== null) {
+                $after = isset($pairs[$opener]) ? $this->nextSignificant($tokens, $pairs[$opener] + 1) : null;
+                if ($tokens[$opener]['text'] === '[') {
+                    return $after !== null && $tokens[$after]['text'] === '=' ? 'destructuring' : 'read';
+                }
+                $before = $this->previousSignificant($tokens, $opener - 1);
+                if ($before !== null) {
+                    if ($tokens[$before]['id'] === T_LIST) {
+                        return 'destructuring';
+                    }
+                    $callee = [T_STRING, T_NAME_FULLY_QUALIFIED, T_NAME_QUALIFIED, T_NAME_RELATIVE, T_VARIABLE];
+                    $isCall = in_array($tokens[$before]['id'], $callee, true)
+                        || in_array($tokens[$before]['text'], [')', ']'], true);
+                    if ($isCall) {
+                        return 'argument to a call';
+                    }
+                }
+            }
+        }
+
+        return 'read';
+    }
+
+    /** The innermost unmatched `(` or `[` before $at, or null. */
+    private function enclosingOpener(array $tokens, int $at): ?int
+    {
+        $depth = 0;
+        for ($i = $at - 1; $i >= 0; $i--) {
+            $text = $tokens[$i]['text'];
+            if ($text === ')' || $text === ']') {
+                $depth++;
+            } elseif ($text === '(' || $text === '[') {
+                if ($depth === 0) {
+                    return $i;
+                }
+                $depth--;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The conjuncts of $run split at top-level `&&` / `and`, each a list of
+     * significant token indices.
+     *
+     * @param  list<int> $run
+     * @return list<list<int>>
+     */
+    private function splitTopLevelAnd(array $tokens, array $run): array
+    {
+        $parts = [[]];
+        $depth = 0;
+        foreach ($run as $i) {
+            $text = $tokens[$i]['text'];
+            if ($text === '(' || $text === '[' || $text === '{' || $text === '${') {
+                $depth++;
+            } elseif ($text === ')' || $text === ']' || $text === '}') {
+                $depth--;
+            } elseif ($depth === 0 && in_array($tokens[$i]['id'], [T_BOOLEAN_AND, T_LOGICAL_AND], true)) {
+                $parts[] = [];
+                continue;
+            }
+            $parts[count($parts) - 1][] = $i;
+        }
+
+        return $parts;
+    }
+
+    /**
+     * Drop every pair of parentheses that encloses the whole run.
+     *
+     * @param  list<int> $run significant token indices
+     * @return list<int>
+     */
+    private function stripParentheses(array $tokens, array $pairs, array $run): array
+    {
+        $run = array_values($run);
+        while (
+            count($run) >= 2
+            && $tokens[$run[0]]['text'] === '('
+            && ($pairs[$run[0]] ?? null) === $run[count($run) - 1]
+        ) {
+            $run = array_slice($run, 1, -1);
+        }
+
+        return $run;
+    }
+
+    /**
+     * @return list<int> significant token indices strictly between $open and $close
+     */
+    private function significantBetween(array $tokens, int $open, int $close): array
+    {
+        $inside = [];
+        for ($i = $open + 1; $i < $close; $i++) {
+            if ($tokens[$i]['id'] !== T_WHITESPACE) {
+                $inside[] = $i;
+            }
+        }
+
+        return $inside;
+    }
+
+    /** Does this token name the global function $name, qualified or not? */
+    private function namesFunction(array $token, string $name): bool
+    {
+        if (!in_array($token['id'], [T_STRING, T_NAME_FULLY_QUALIFIED, T_NAME_QUALIFIED, T_NAME_RELATIVE], true)) {
+            return false;
+        }
+        $segments = explode('\\', $token['text']);
+
+        return strtolower((string) end($segments)) === $name;
+    }
+
+    /**
+     * The `{` and `}` bounding the body of `function $name`.
+     *
+     * @return array{0: int, 1: int}
+     */
+    private function functionRange(array $tokens, array $pairs, string $file, string $name): array
+    {
+        $count = count($tokens);
+        for ($i = 0; $i < $count; $i++) {
+            if ($tokens[$i]['id'] !== T_FUNCTION) {
+                continue;
+            }
+            $j = $this->nextSignificant($tokens, $i + 1);
+            if ($j === null || $tokens[$j]['id'] !== T_STRING || $tokens[$j]['text'] !== $name) {
+                continue;
+            }
+            for ($k = $j; $k < $count; $k++) {
+                if ($tokens[$k]['text'] === '{') {
+                    $this->assertArrayHasKey($k, $pairs, "$name() in $file has no closing brace");
+
+                    return [$k, $pairs[$k]];
+                }
+            }
+        }
+
+        $this->fail("$name() is not defined in $file");
+    }
+
+    /**
+     * Every `(`, `[`, `{`/`${` mapped to its closer and back.
+     *
+     * @return array<int, int>
+     */
+    private function pairs(array $tokens, string $file): array
+    {
+        $pairs = [];
+        $stack = [];
+        foreach ($tokens as $i => $token) {
+            $text = $token['text'];
+            if ($text === '(' || $text === '[' || $text === '{' || $text === '${') {
+                $stack[] = $i;
+            } elseif ($text === ')' || $text === ']' || $text === '}') {
+                $open = array_pop($stack);
+                $this->assertNotNull($open, "$file: unbalanced `$text` at line " . $this->lineOf($tokens, $i));
+                $pairs[(int) $open] = $i;
+                $pairs[$i] = (int) $open;
+            }
+        }
+        $this->assertSame([], $stack, "$file: an opener is never closed");
+
+        return $pairs;
+    }
+
+    /** The token whose text spans character $offset of the joined code. */
+    private function tokenAt(array $tokens, int $offset): int
+    {
+        $start = 0;
+        foreach ($tokens as $i => $token) {
+            $start += strlen($token['text']);
+            if ($start > $offset) {
+                return $i;
+            }
+        }
+
+        $this->fail("offset $offset is past the end of the code");
+    }
+
+    /** The 1-based source line the token at $at starts on. */
+    private function lineOf(array $tokens, int $at): int
+    {
+        $line = 1;
+        for ($i = 0; $i < $at; $i++) {
+            $line += substr_count($tokens[$i]['text'], "\n");
+        }
+
+        return $line;
+    }
+
+    /** The next non-whitespace token index at or after $from, or null. */
+    private function nextSignificant(array $tokens, int $from): ?int
+    {
+        for ($i = $from, $n = count($tokens); $i < $n; $i++) {
+            if ($tokens[$i]['id'] !== T_WHITESPACE) {
+                return $i;
+            }
+        }
+
+        return null;
+    }
+
+    /** The previous non-whitespace token index at or before $from, or null. */
+    private function previousSignificant(array $tokens, int $from): ?int
+    {
+        for ($i = $from; $i >= 0; $i--) {
+            if ($tokens[$i]['id'] !== T_WHITESPACE) {
+                return $i;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The file's tokens with comments reduced to the newlines they spanned,
+     * so prose cannot satisfy a scan and lines in messages still match.
+     *
      * @return list<array{id: int|null, text: string}>
      */
     private function tokensOf(string $file): array
     {
-        $source = (string)file_get_contents(dirname(__DIR__, 2) . '/' . $file);
+        $source = (string) file_get_contents(dirname(__DIR__, 2) . '/' . $file);
         $this->assertNotSame('', $source, "$file is empty or missing");
 
         $out = [];
@@ -125,47 +794,12 @@ final class PreLoginPostRequiresTokenTest extends TestCase
                 continue;
             }
             if ($token[0] === T_COMMENT || $token[0] === T_DOC_COMMENT) {
+                $out[] = ['id' => T_WHITESPACE, 'text' => str_repeat("\n", substr_count($token[1], "\n"))];
                 continue;
             }
             $out[] = ['id' => $token[0], 'text' => $token[1]];
         }
 
         return $out;
-    }
-
-    /** The body of `function $name`, bounded at its closing brace. */
-    private function functionBody(string $file, string $name): string
-    {
-        $tokens = $this->tokensOf($file);
-        $count = count($tokens);
-
-        for ($i = 0; $i < $count; $i++) {
-            if ($tokens[$i]['id'] !== T_FUNCTION) {
-                continue;
-            }
-            for ($j = $i + 1; $j < $count && $tokens[$j]['id'] === T_WHITESPACE; $j++) {
-            }
-            if ($j >= $count || $tokens[$j]['id'] !== T_STRING || $tokens[$j]['text'] !== $name) {
-                continue;
-            }
-
-            $depth = 0;
-            $body = '';
-            for ($k = $j; $k < $count; $k++) {
-                $text = $tokens[$k]['text'];
-                if ($text === '{' || $text === '${') {
-                    $depth++;
-                } elseif ($text === '}') {
-                    $depth--;
-                    if ($depth === 0) {
-                        return $body . $text;
-                    }
-                }
-                $body .= $text;
-            }
-            $this->fail("$name() in $file has no closing brace");
-        }
-
-        $this->fail("$name() is not defined in $file");
     }
 }

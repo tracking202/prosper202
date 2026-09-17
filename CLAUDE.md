@@ -360,6 +360,15 @@ found by the same reviewer within the hour:
   statement about the block; when the claim is "this value reaches that
   call", follow the value.
 
+The same shape shipped again one PR later, in `PreLoginPostRequiresTokenTest`:
+the token guard was asserted to *precede* the protected work, and the helper
+to *contain* `hash_equals(`. `$error = false;` between the guard and the work
+passed the first; `hash_equals(…); return true;` passed the second — 22 of 24
+planted defects, against a test whose docblock said "guarded". When the claim
+is "this result decides that", execute it where the code is pure enough
+(both helpers were), and otherwise prove the branch the work sits under and
+that nothing between the guard and the branch can change what it tests.
+
 ### 22. "Somewhere in the block" is not an order
 
 `reconcileSuccessRanges()` found the reconcile assignment anywhere in the
