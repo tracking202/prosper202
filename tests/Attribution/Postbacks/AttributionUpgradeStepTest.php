@@ -216,7 +216,7 @@ final class AttributionUpgradeStepTest extends TestCase
                 // re-enters on every upgrade run forever.
                 $this->assertArrayHasKey(
                     $to,
-                    $this->persistsThatReachAQuery($step['from'], $step['to']),
+                    $this->persistsThatReachAQuery($step['from'], $step['to'], "the step gated on $gate"),
                     "the step gated on $gate spells an UPDATE to $to but no _upgrade_query() call"
                     . ' receives that statement whole — as a literal, or as a variable assigned it'
                     . ' and not touched again before the call — so the version is never written'
@@ -282,7 +282,7 @@ final class AttributionUpgradeStepTest extends TestCase
         // So does a call below a branch that can leave — `if ($skip) {
         // return false; }` above it — which reads as a statement after a
         // closing brace unless the jump is read too.
-        $reach = $this->persistsThatReachAQuery($step['from'], $step['to']);
+        $reach = $this->persistsThatReachAQuery($step['from'], $step['to'], "the step gated on $gate");
         $unguarded = [];
         $conditional = [];
         $leaves = [];
@@ -362,6 +362,189 @@ final class AttributionUpgradeStepTest extends TestCase
             . ' success branch from anywhere in the same scope, and the checks here read no jump'
             . ' targets. Teach them before writing one.'
         );
+    }
+
+    /**
+     * No construct anywhere in the ladder can write a variable without
+     * naming it.
+     *
+     * Every scan here that vouches for a variable — the reconcile result
+     * between its assignment and the guard, a held persist between its
+     * assignment and the call — looks for the variable's own token, and
+     * these carry none: a variable variable (`$$name`, `${'name'}`),
+     * `$GLOBALS['name']`, `extract()`, `eval()`, and an `include` or
+     * `require`, which runs the included file in the scope of the line it
+     * sits on. Each can write inside a scanned range where it sits, and
+     * each can make the alias assertNoWritePathTheScanCannotFollow()
+     * refuses (`extract($vars, EXTR_REFS)`, `$$a = &$$b`, an included line
+     * `$alias = &$attribution_ok;`) from anywhere in the same method, so
+     * the refusal is file-wide rather than by range. Executed against a
+     * method-local variable before they were listed: every one of them
+     * writes it, except `$GLOBALS`, which reaches a method's local only
+     * through a `global` declaration and is refused without reading for
+     * one.
+     *
+     * An include outside every function body is the one exception: it runs
+     * the file in whatever scope included the ladder, never in a method's.
+     * The ladder's own, at its top, is that — and it sits inside an `if`,
+     * so the line is "in a function body", not "at brace depth zero". The
+     * check does not read which function an include sits in; one in any
+     * body is refused.
+     */
+    public function testTheLadderMakesNoWriteAScanCannotFollow(): void
+    {
+        $tokens = $this->upgradeTokens();
+        $last = count($tokens) - 1;
+        $found = [];
+        $depth = 0;
+        // The brace depths at which a function body is open; `function`
+        // keywords whose `{` has not come yet. `use function Foo\bar;` and
+        // an abstract signature end at a `;` with no body.
+        $bodies = [];
+        $pending = false;
+        foreach ($tokens as $i => $token) {
+            $text = $token['text'];
+            if ($token['id'] === T_FUNCTION) {
+                $pending = true;
+                continue;
+            }
+            if ($text === ';' && $pending) {
+                $pending = false;
+                continue;
+            }
+            if ($text === '{' || $text === '${') {
+                $depth++;
+                if ($pending && $text === '{') {
+                    $bodies[] = $depth;
+                    $pending = false;
+                }
+                continue;
+            }
+            if ($text === '}') {
+                if ($bodies !== [] && end($bodies) === $depth) {
+                    array_pop($bodies);
+                }
+                $depth--;
+                continue;
+            }
+            $blind = $this->writesNoScanCanSee($tokens, $i, $last);
+            if ($blind === null || ($blind === 'an include' && $bodies === [])) {
+                continue;
+            }
+            $found[] = "$blind at line " . $this->lineOf($tokens, $i)
+                . ($blind === 'an include' ? ', inside a function body' : '');
+        }
+        $this->assertSame(0, $depth, 'the ladder\'s braces are unbalanced, so this scan read the wrong scopes');
+
+        $this->assertSame(
+            [],
+            $found,
+            'the ladder makes ' . implode(', ', $found) . ': a construct that names no variable can'
+            . ' write any variable the checks here vouch for, and make the aliases they refuse, and'
+            . ' the scans read a variable\'s own token only. Refuse it, or teach this file the new'
+            . ' shape.'
+        );
+    }
+
+    /**
+     * Nothing anywhere in the ladder makes a path by which one of $names
+     * can be written without naming it: no reference to it, and no
+     * `global` or `static` declaration of it.
+     *
+     * reconcileSuccessRanges() vouches for the reconcile result by finding
+     * its own token between the assignment and the guard, and
+     * persistsThatReachAQuery() vouches for a held persist the same way. An
+     * alias made elsewhere carries a write in unnamed: `$alias =
+     * &$attribution_ok;` above the gate, then `$alias = true;` between the
+     * assignment and the guard — the shape a reviewer planted against the
+     * sibling test in tests/Auth and watched pass — or a closure's `use
+     * (&$attribution_ok)`, a `foreach` by reference, or a `global`
+     * declaration paired with a function that declares the same name and
+     * is called in the range as a bare call, which names nothing. Each is
+     * refused where it is made, by line, anywhere in the file: the ladder's
+     * scope is the method it runs in, and a step is a range inside it.
+     * Every shape was executed against a method-local variable before it
+     * was listed. The constructs that make such a path without naming the
+     * variable at all are testTheLadderMakesNoWriteAScanCannotFollow()'s.
+     *
+     * @param list<string> $names
+     */
+    private function assertNoWritePathTheScanCannotFollow(array $names, string $what): void
+    {
+        $tokens = $this->upgradeTokens();
+        $found = [];
+        foreach ($tokens as $i => $token) {
+            if ($token['id'] !== T_VARIABLE || !in_array($token['text'], $names, true)) {
+                continue;
+            }
+            $prev = $this->previousSignificant($tokens, $i - 1, 0);
+            if ($prev !== null && $tokens[$prev]['text'] === '&') {
+                $found[] = "a reference to {$token['text']} at line " . $this->lineOf($tokens, $i);
+            }
+            if (in_array($this->statementKeyword($tokens, $i), [T_GLOBAL, T_STATIC], true)) {
+                $found[] = "a global or static declaration of {$token['text']} at line "
+                    . $this->lineOf($tokens, $i);
+            }
+        }
+
+        $this->assertSame(
+            [],
+            $found,
+            "$what relies on " . implode(' and ', $names) . ' being written only where this check'
+            . ' reads it, and the ladder makes ' . implode(', ', $found) . ', through which it can'
+            . ' be written inside the range this check scans without being named there. Refuse'
+            . ' it, or teach this check the new shape.'
+        );
+    }
+
+    /**
+     * A construct at $at that can write a variable without naming it — a
+     * variable variable (`$$name`, `${'name'}`), `$GLOBALS['name']`,
+     * `extract()`, `eval()`, or an `include`/`require` — or null. The
+     * scans for writes look for the variable's own token, and none of
+     * these carries it.
+     */
+    private function writesNoScanCanSee(array $tokens, int $at, int $last): ?string
+    {
+        $id = $tokens[$at]['id'];
+        if ($id === null && $tokens[$at]['text'] === '$') {
+            return 'a variable variable';
+        }
+        if ($id === T_VARIABLE && $tokens[$at]['text'] === '$GLOBALS') {
+            return 'a use of $GLOBALS';
+        }
+        if (in_array($id, [T_INCLUDE, T_INCLUDE_ONCE, T_REQUIRE, T_REQUIRE_ONCE], true)) {
+            return 'an include';
+        }
+        if ($id === T_EVAL) {
+            return 'an eval()';
+        }
+        if ($id === T_STRING && strtolower($tokens[$at]['text']) === 'extract') {
+            $next = $this->nextSignificant($tokens, $at + 1, $last);
+            if ($next !== null && $tokens[$next]['text'] === '(') {
+                return 'an extract()';
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The id of the first significant token of the statement the token at
+     * $at sits in — what follows the nearest `;`, `{`, `}` or `:` before
+     * it — so `global $a, $attribution_ok;` is read as the declaration it
+     * is for every variable it names, not only the first.
+     */
+    private function statementKeyword(array $tokens, int $at): ?int
+    {
+        for ($j = $at - 1; $j >= 0; $j--) {
+            if (in_array($tokens[$j]['text'], [';', '{', '}', ':'], true)) {
+                break;
+            }
+        }
+        $first = $this->nextSignificant($tokens, $j + 1, $at);
+
+        return $first === null ? null : $tokens[$first]['id'];
     }
 
     /**
@@ -561,6 +744,11 @@ final class AttributionUpgradeStepTest extends TestCase
             . ' result, and this check does not tell a read from a write. Keep the variable to'
             . ' its assignment and its guards, or teach this check the new shape.'
         );
+
+        // And nothing outside the step that can write it without naming it
+        // here: the scan above reads the step, and an alias made above the
+        // gate is not in the step.
+        $this->assertNoWritePathTheScanCannotFollow([$result], "the step gated on $gate");
 
         return $ranges;
     }
@@ -1102,7 +1290,7 @@ final class AttributionUpgradeStepTest extends TestCase
         // version — and a guard that writes anything else fails here.
         $this->assertArrayHasKey(
             self::CURRENT_VERSION,
-            $this->persistsThatReachAQuery($guard['from'], $guard['to']),
+            $this->persistsThatReachAQuery($guard['from'], $guard['to'], 'the downgrade guard'),
             'the downgrade guard does not run a query carrying its UPDATE of 202_version to '
             . self::CURRENT_VERSION . ', so the stored version stays above the code version and'
             . ' every request keeps entering the upgrade flow'
@@ -1254,6 +1442,7 @@ final class AttributionUpgradeStepTest extends TestCase
      * language: a shape that is only conditionally correct is refused
      * rather than reasoned about.
      *
+     * @param  string $what the block, for the failure message
      * @return array<string, list<int>> the versions written, as the statements
      *     spell them, each to the `_upgrade_query()` calls (token indices of
      *     the name) that receive it
@@ -1266,11 +1455,12 @@ final class AttributionUpgradeStepTest extends TestCase
      * for. The same question the guard and the reconcile assignment are
      * asked, asked here as well.
      */
-    private function persistsThatReachAQuery(int $from, int $to): array
+    private function persistsThatReachAQuery(int $from, int $to, string $what): array
     {
         $tokens = $this->upgradeTokens();
 
         $holds = [];
+        $held = [];
         $reach = [];
         $depth = 0;
         for ($i = $from; $i <= $to; $i++) {
@@ -1326,6 +1516,7 @@ final class AttributionUpgradeStepTest extends TestCase
                     continue;
                 }
                 $holds[$token['text']] = ['value' => $value, 'depth' => $depth];
+                $held[$token['text']] = true;
                 $i = $end;
                 continue;
             }
@@ -1364,6 +1555,11 @@ final class AttributionUpgradeStepTest extends TestCase
                 $reach[$written[1]][] = $call;
             }
         }
+
+        // A hold says the variable was not touched between its assignment
+        // and the call, which the walk above knows only for writes that
+        // name it in the range. Nothing elsewhere may alias it.
+        $this->assertNoWritePathTheScanCannotFollow(array_keys($held), $what);
 
         return $reach;
     }

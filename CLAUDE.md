@@ -483,6 +483,29 @@ site" is a list to be enumerated from the code — every place that decides a
 statement ran — not recalled; the sweep after a finding has to grep for the
 mechanism (here, every depth counter) rather than for the symptom.
 
+The range is not the scope. Every scan above vouches for a variable by
+finding its own token between two points in a block, and PHP's scope is the
+function, not the block. Codex planted `$error_alias =& $error;` above the
+guard and `$error_alias = false;` inside the scanned interval: the interval
+never names `$error`, the guard's result was rewritten, and every check
+stayed green. A closure's `use (&$x)`, a `foreach` by reference and a
+`global` declaration paired with a function that declares the same name
+(called in the range as a bare call, which names nothing) do the same, and
+the constructs that name no variable at all — `$$name`, `extract()`,
+`eval()`, an `include` — both write inside the range where they sit and make
+the alias from anywhere in the same function, so refusing them in the range
+was half a refusal. Both tests now refuse each of these where it is made,
+file-wide, for every name a scan vouches for (the ladder's held persist
+variables included), and the unnamed constructs outright; an include outside
+every function body is the ladder's one exception, and one above the range
+is the pages', which load their configuration that way. Every shape was
+executed against a local before it was listed — which is how `$GLOBALS`
+turned out to be the one that does not reach a method's local; it is refused
+anyway, because the scan cannot read for the `global` declaration that would
+make it. When a check vouches that a variable is untouched between two
+points, ask what can touch it *without naming it there*, and look for that
+over the whole scope.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure

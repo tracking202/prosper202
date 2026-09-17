@@ -124,7 +124,11 @@ final class PreLoginPostRequiresTokenTest extends TestCase
      * And no `goto` in the file at all: PHP lets one enter an `if` block
      * from anywhere in the same scope, so a goto could land inside the POST
      * block below its guard, or past the seed, and nothing here reads a
-     * jump target.
+     * jump target. Nor, anywhere in the file, a write path into the guarded
+     * variables that the scan for writes could not follow — a reference to
+     * one, a `global` declaration of one, `$GLOBALS`, a variable variable,
+     * `extract()` or `eval()` — because an alias made above the guard
+     * carries a write below it that never names the variable.
      *
      * @dataProvider pages
      * @param array{file: string, work: string, result: string, negated: bool, gate: string, seed: ?string} $page
@@ -149,6 +153,7 @@ final class PreLoginPostRequiresTokenTest extends TestCase
             . ' block below its guard, or skip the guard, from anywhere in the file, and this check'
             . ' reads no jump targets. Teach it before writing one.'
         );
+        $this->assertNoWritePathTheScanCannotFollow($tokens, array_unique([$page['result'], $page['gate']]), $file);
 
         $post = strpos($code, "\$_SERVER['REQUEST_METHOD'] == 'POST'");
         $this->assertNotFalse($post, "$file no longer branches on a POST; this test's subject has moved");
@@ -743,6 +748,53 @@ final class PreLoginPostRequiresTokenTest extends TestCase
             . '. Only a read, an element write'
             . ($allowed === [] ? '' : ', or assigning ' . implode(' or ', $allowed))
             . ' is read as safe; anything else could let the work run when the token check failed'
+        );
+    }
+
+    /**
+     * Nothing anywhere in the file can write one of $names without naming
+     * it inside the ranges this test scans. The scan for writes looks for
+     * the variable's own token between the guard and the branch, and a
+     * write path made elsewhere carries a write in unnamed: an alias
+     * (`$alias =& $error;` above the guard, then `$alias = false;` below
+     * it — the shape a reviewer planted and watched pass), a closure's
+     * `use (&$error)`, a `foreach` by reference, a function's `global
+     * $error` (called in the range as a bare call, which names nothing), or
+     * `$GLOBALS`, a variable variable, `extract()` and `eval()` anywhere.
+     * Each is refused where it is made, by line; a page that needs one
+     * teaches this check first. An `include` before the range is not read:
+     * the pages load their configuration that way.
+     *
+     * @param list<string> $names
+     */
+    private function assertNoWritePathTheScanCannotFollow(array $tokens, array $names, string $file): void
+    {
+        $found = [];
+        foreach ($tokens as $i => $token) {
+            $line = $this->lineOf($tokens, $i);
+            if ($token['id'] === T_VARIABLE && in_array($token['text'], $names, true)) {
+                $prev = $this->previousSignificant($tokens, $i - 1);
+                if ($prev !== null && $tokens[$prev]['text'] === '&') {
+                    $found[] = "a reference to {$token['text']} at line $line";
+                }
+                if (in_array($this->statementKeyword($tokens, $i), [T_GLOBAL, T_STATIC], true)) {
+                    $found[] = "a global or static declaration of {$token['text']} at line $line";
+                }
+                continue;
+            }
+            $blind = $this->writesNoScanCanSee($tokens, $i);
+            if ($blind !== null && $blind !== 'an include') {
+                $found[] = "$blind at line $line";
+            }
+        }
+
+        $this->assertSame(
+            [],
+            $found,
+            "$file makes " . implode(', ', $found) . ', which can write ' . implode(' or ', $names)
+            . ' inside the ranges this test scans without naming it there — through an alias, a'
+            . ' global, or a construct that names no variable at all. Refuse it, or teach this'
+            . ' check the new shape.'
         );
     }
 
