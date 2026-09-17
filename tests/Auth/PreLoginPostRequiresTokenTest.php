@@ -715,6 +715,11 @@ final class PreLoginPostRequiresTokenTest extends TestCase
                 }
                 continue;
             }
+            $blind = $this->writesNoScanCanSee($tokens, $i);
+            if ($blind !== null) {
+                $touched[] = "$blind at line " . $this->lineOf($tokens, $i);
+                continue;
+            }
             if ($tokens[$i]['id'] !== T_VARIABLE || $tokens[$i]['text'] !== $name) {
                 continue;
             }
@@ -742,10 +747,49 @@ final class PreLoginPostRequiresTokenTest extends TestCase
     }
 
     /**
+     * A construct at $at that can write a variable without naming it — a
+     * variable variable (`$$name`, `${'name'}`), `extract()`, `eval()`, or
+     * an `include`/`require` — or null. The scan for writes looks for the
+     * variable's own token, and none of these carries it, so each is
+     * refused in the range rather than read past.
+     */
+    private function writesNoScanCanSee(array $tokens, int $at): ?string
+    {
+        $id = $tokens[$at]['id'];
+        if ($id === null && $tokens[$at]['text'] === '$') {
+            return 'a variable variable';
+        }
+        if (in_array($id, [T_INCLUDE, T_INCLUDE_ONCE, T_REQUIRE, T_REQUIRE_ONCE], true)) {
+            return 'an include';
+        }
+        if ($id === T_EVAL) {
+            return 'an eval()';
+        }
+        if ($id === T_STRING && strtolower($tokens[$at]['text']) === 'extract') {
+            $next = $this->nextSignificant($tokens, $at + 1);
+            if ($next !== null && $tokens[$next]['text'] === '(') {
+                return 'an extract()';
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * How the variable at $at is used: 'read', 'element write', 'assignment',
      * or a kind this refuses — a compound assignment, an increment, a
      * reference, a destructuring, or an argument to a call that may take it
      * by reference.
+     *
+     * The write shapes are the ones PHP's grammar has, not the ones that
+     * came to mind: assignment, compound assignment, increment, element
+     * write, destructuring (`[…] =`, `list(…) =`, keyed or not), a
+     * reference, an argument to a call (positional or named — `f(name:
+     * $x)` has a `:` before the variable, which the first version read as
+     * harmless), a `foreach` target (`as $x`, `=> $x`), a `catch` target,
+     * and a `global` or `static` declaration. Writes that never name the
+     * variable — `$$name`, `extract()`, `eval()`, an `include` — are
+     * refused in the scanned range by writesNoScanCanSee().
      */
     private function useOf(array $tokens, array $pairs, int $at): string
     {
@@ -755,6 +799,9 @@ final class PreLoginPostRequiresTokenTest extends TestCase
         $stepped = $prev !== null && in_array($tokens[$prev]['id'], [T_INC, T_DEC], true);
         if ($prev !== null && ($tokens[$prev]['text'] === '&' || $stepped)) {
             return 'reference or increment';
+        }
+        if (in_array($this->statementKeyword($tokens, $at), [T_GLOBAL, T_STATIC], true)) {
+            return 'global or static declaration';
         }
         if ($next !== null) {
             if ($tokens[$next]['text'] === '=') {
@@ -778,29 +825,82 @@ final class PreLoginPostRequiresTokenTest extends TestCase
                 return 'read';
             }
         }
-        if ($prev !== null && in_array($tokens[$prev]['text'], ['(', ',', '['], true)) {
-            $opener = $this->enclosingOpener($tokens, $at);
-            if ($opener !== null) {
-                $after = isset($pairs[$opener]) ? $this->nextSignificant($tokens, $pairs[$opener] + 1) : null;
-                if ($tokens[$opener]['text'] === '[') {
-                    return $after !== null && $tokens[$after]['text'] === '=' ? 'destructuring' : 'read';
-                }
-                $before = $this->previousSignificant($tokens, $opener - 1);
-                if ($before !== null) {
-                    if ($tokens[$before]['id'] === T_LIST) {
-                        return 'destructuring';
-                    }
-                    $callee = [T_STRING, T_NAME_FULLY_QUALIFIED, T_NAME_QUALIFIED, T_NAME_RELATIVE, T_VARIABLE];
-                    $isCall = in_array($tokens[$before]['id'], $callee, true)
-                        || in_array($tokens[$before]['text'], [')', ']'], true);
-                    if ($isCall) {
-                        return 'argument to a call';
-                    }
-                }
+
+        // Inside brackets, what the variable is to them is told by the
+        // opener and the token before it. `f(name: $x)` puts a `:` before
+        // the variable, so the call's `(` or `,` is two tokens further
+        // back — the first version read that shape as a read.
+        $named = false;
+        if ($prev !== null && $tokens[$prev]['text'] === ':') {
+            $label = $this->previousSignificant($tokens, $prev - 1);
+            $beforeLabel = $label === null ? null : $this->previousSignificant($tokens, $label - 1);
+            $named = $label !== null && $tokens[$label]['id'] === T_STRING
+                && $beforeLabel !== null && in_array($tokens[$beforeLabel]['text'], ['(', ','], true);
+        }
+        $listed = $prev !== null && (
+            in_array($tokens[$prev]['text'], ['(', ',', '['], true)
+            || in_array($tokens[$prev]['id'], [T_AS, T_DOUBLE_ARROW], true)
+            || $named
+        );
+        $opener = $this->enclosingOpener($tokens, $at);
+        if ($opener === null) {
+            return 'read';
+        }
+        $after = isset($pairs[$opener]) ? $this->nextSignificant($tokens, $pairs[$opener] + 1) : null;
+        $before = $this->previousSignificant($tokens, $opener - 1);
+        if ($tokens[$opener]['text'] === '[') {
+            // An index (`$x[$v]`) follows a variable, a call or another
+            // index; a list literal follows anything else, and is a
+            // destructuring when `=` follows its `]`.
+            $indexes = $before !== null && (
+                in_array($tokens[$before]['id'], [T_VARIABLE, T_STRING], true)
+                || in_array($tokens[$before]['text'], [')', ']'], true)
+            );
+
+            $assigned = $after !== null && $tokens[$after]['text'] === '=';
+
+            return !$indexes && $listed && $assigned ? 'destructuring' : 'read';
+        }
+        if ($before === null) {
+            return 'read';
+        }
+        if ($tokens[$before]['id'] === T_CATCH) {
+            return 'catch target';
+        }
+        if ($tokens[$before]['id'] === T_FOREACH) {
+            return $prev !== null && in_array($tokens[$prev]['id'], [T_AS, T_DOUBLE_ARROW], true)
+                ? 'foreach target'
+                : 'read';
+        }
+        if (!$listed) {
+            return 'read';
+        }
+        if ($tokens[$before]['id'] === T_LIST) {
+            return 'destructuring';
+        }
+        $callee = [T_STRING, T_NAME_FULLY_QUALIFIED, T_NAME_QUALIFIED, T_NAME_RELATIVE, T_VARIABLE];
+        $isCall = in_array($tokens[$before]['id'], $callee, true)
+            || in_array($tokens[$before]['text'], [')', ']'], true);
+
+        return $isCall ? 'argument to a call' : 'read';
+    }
+
+    /**
+     * The id of the first significant token of the statement the token at
+     * $at sits in — what follows the nearest `;`, `{`, `}` or `:` before
+     * it — so `global $a, $error;` is read as the declaration it is for
+     * every variable it names, not only the first.
+     */
+    private function statementKeyword(array $tokens, int $at): ?int
+    {
+        for ($j = $at - 1; $j >= 0; $j--) {
+            if (in_array($tokens[$j]['text'], [';', '{', '}', ':'], true)) {
+                break;
             }
         }
+        $first = $this->nextSignificant($tokens, $j + 1);
 
-        return 'read';
+        return $first === null ? null : $tokens[$first]['id'];
     }
 
     /**

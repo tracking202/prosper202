@@ -309,6 +309,20 @@ also made a correctly gated call read as ungated in a sibling test, a false
 *failure*. Only one of those two directions is silent, and it is the one worth
 hunting.
 
+The list of shapes a checker reads has to come from the grammar, not from
+memory. `PreLoginPostRequiresTokenTest`'s use classifier knew assignment,
+compound assignment, `++`, element write, `list()`, `&` and a positional
+argument — the shapes that came to mind — and PHP writes a variable in more
+ways than that: a named argument (`f(name: $x)`, a `:` before the variable
+where the classifier looked for `(` or `,`), a `foreach` target (`as $x`,
+`=> $x`), a `catch` target, keyed destructuring (`['k' => $x] = …`), a
+`global`/`static` declaration, and then the writes that never name the
+variable at all — `$$name`, `${'name'}`, `extract()`, `eval()`, an
+`include` — which no scan for the variable's token can see and which the
+scanned range now refuses outright. Enumerate from the language reference
+before writing the classifier, plant every shape on the list, and refuse by
+name the ones that cannot be read.
+
 ### 21. Naming a thing is not being guarded by it
 
 `versionsComparedIn()` reported which versions a gate's condition compares
@@ -460,6 +474,12 @@ file, already asked the whole question — first in its statement, at the
 block's depth, nothing above it that leaves — through one helper. When an
 invariant says "runs whenever the block runs", ask it with that helper at
 every site, not with a fresh depth loop that answers a smaller question.
+The very next review found the site that sentence had missed: the walk that
+carries a `$sql = "UPDATE …"` to its call recorded the hold by depth, so
+`if ($enabled) $sql = …; _upgrade_query($sql);` was credited too. "Every
+site" is a list to be enumerated from the code — every place that decides a
+statement ran — not recalled; the sweep after a finding has to grep for the
+mechanism (here, every depth counter) rather than for the symptom.
 
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 

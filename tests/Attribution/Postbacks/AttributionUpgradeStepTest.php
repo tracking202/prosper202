@@ -1257,6 +1257,14 @@ final class AttributionUpgradeStepTest extends TestCase
      * @return array<string, list<int>> the versions written, as the statements
      *     spell them, each to the `_upgrade_query()` calls (token indices of
      *     the name) that receive it
+     *
+     * A hold is established only by an assignment that starts a statement
+     * of its own — the previous significant token a `;`, `{` or `}` — so
+     * `if ($enabled) $sql = "UPDATE …";` and `else $sql = …;`, which sit at
+     * their block's depth and run only sometimes, establish none, and the
+     * call below them then receives a variable this walk does not vouch
+     * for. The same question the guard and the reconcile assignment are
+     * asked, asked here as well.
      */
     private function persistsThatReachAQuery(int $from, int $to): array
     {
@@ -1285,6 +1293,17 @@ final class AttributionUpgradeStepTest extends TestCase
             if ($token['id'] === T_VARIABLE) {
                 $next = $this->nextSignificant($tokens, $i + 1, $to);
                 if ($next === null || $tokens[$next]['text'] !== '=') {
+                    unset($holds[$token['text']]);
+                    continue;
+                }
+                // Only an assignment that starts a statement of its own can
+                // establish a hold: `if ($enabled) $sql = …;` sits at its
+                // block's depth and runs only when $enabled is true, so a
+                // call below it would receive whatever $sql held before.
+                // Depth alone read it as unconditional. The right-hand side
+                // is still walked, for the calls and the variables in it.
+                $prev = $this->previousSignificant($tokens, $i - 1, $from);
+                if ($prev === null || !in_array($tokens[$prev]['text'], [';', '{', '}'], true)) {
                     unset($holds[$token['text']]);
                     continue;
                 }
