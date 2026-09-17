@@ -795,6 +795,15 @@ where a check quietly fails to check what it appears to.
   more workers never hit the adoption-rename race. Inserting a deliberate
   sleep between the guard and the rename reproduced it on the first try, and
   demonstrated the fix. Scratch-only: never commit the sleep.
+- **"Not succeeded" is not "refused".** The live pass's session-less replay
+  asserted that `Success!` was absent from the body and `202_version`
+  unchanged — both true of a 500 thrown before the guard ran. Planted (a
+  cookie-less POST answering 500 and exiting), the pass stayed 16/16 green
+  with the guard never reached. A negative assertion plus an unchanged side
+  effect is satisfied by every failure there is; a refusal has to be
+  asserted positively — the status the page answers with and the sentence
+  the guard itself writes — and the sibling cases already did, one screen
+  up.
 - **A new lint rule is not done when it fires on the bug you wrote it for.**
   Run it against the whole clean tree first (a rule with false positives is
   worse than no rule — one draft produced 194), then plant a defect in *every*

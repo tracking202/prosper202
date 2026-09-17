@@ -10,7 +10,8 @@
 #   1. wind the stored version back so upgrade_needed() is true
 #   2. GET the page: the form carries a token, inside the form
 #   3. POST without a token, with a wrong token, and from a client with no
-#      session at all: each is refused, says why, and 202_version is untouched
+#      session at all: each is answered 200 and refused with the guard's own
+#      sentence, and 202_version is untouched
 #   4. POST the form as a browser would — the fields inside it, token
 #      included: the ladder runs, 202_version is the
 #      code version, and the page answers "Already Upgraded" after
@@ -78,13 +79,24 @@ hasnt(){ if grep -qF "$2" "$1"; then bad "$3"; else ok "$3"; fi; }
 eq()   { if [ "$1" = "$2" ]; then ok "$3"; else bad "$3 (got '$1' want '$2')"; fi; }
 stored() { Q "SELECT version FROM 202_version"; }
 wind_back() { Q "UPDATE 202_version SET version='$PRIOR'"; }
+# One request, its body to a file, its HTTP status on stdout. Every request
+# below asserts the status: a refusal is the page's answer, not a failure of
+# the page, and "no Success! and 202_version untouched" is true of a 500
+# thrown before the guard ran as well — the first version of the no-session
+# case read exactly that as a refusal.
+fetch() { # $1 = cookie jar, $2 = body file, rest = curl arguments
+    local jar="$1" body="$2"
+    shift 2
+    curl -sS -c "$jar" -b "$jar" "$URL" "$@" -o "$body" -w '%{http_code}'
+}
 
 say "wind the stored version back to $PRIOR (code is $CODE)"
 wind_back
 eq "$(stored)" "$PRIOR" "stored version is $PRIOR, so upgrade_needed() is true"
 
 say "GET the upgrade page"
-curl -sS -c "$JAR" -b "$JAR" "$URL" -o "$OUT/get.html"
+STATUS=$(fetch "$JAR" "$OUT/get.html")
+eq "$STATUS" 200 "answered 200"
 # The form, not the page. The first version of this took the first
 # name="token" anywhere in the response and posted it by hand, so a token
 # input moved outside the form would have kept it green while every browser
@@ -132,31 +144,40 @@ for field in "${FIELDS[@]}"; do
 done
 
 say "POST with no token at all — what a cross-site form sends"
-curl -sS -c "$JAR" -b "$JAR" "$URL" "${NO_TOKEN[@]}" -o "$OUT/no-token.html"
+STATUS=$(fetch "$JAR" "$OUT/no-token.html" "${NO_TOKEN[@]}")
+eq "$STATUS" 200 "answered 200, so the refusal below is the page's own"
 hasnt "$OUT/no-token.html" 'Success!' "not upgraded"
 has   "$OUT/no-token.html" 'security check failed' "says why"
 eq "$(stored)" "$PRIOR" "202_version untouched"
 
 say "POST with a wrong token"
-curl -sS -c "$JAR" -b "$JAR" "$URL" "${WRONG_TOKEN[@]}" -o "$OUT/wrong-token.html"
+STATUS=$(fetch "$JAR" "$OUT/wrong-token.html" "${WRONG_TOKEN[@]}")
+eq "$STATUS" 200 "answered 200, so the refusal below is the page's own"
 hasnt "$OUT/wrong-token.html" 'Success!' "not upgraded"
 has   "$OUT/wrong-token.html" 'security check failed' "says why"
 eq "$(stored)" "$PRIOR" "202_version untouched"
 
 say "POST from a client with no session, replaying this session's token"
 JAR2=$(mktemp)
-curl -sS -c "$JAR2" -b "$JAR2" "$URL" "${SUBMIT[@]}" -o "$OUT/no-session.html"
+STATUS=$(fetch "$JAR2" "$OUT/no-session.html" "${SUBMIT[@]}")
+eq "$STATUS" 200 "answered 200, so the refusal below is the page's own"
 hasnt "$OUT/no-session.html" 'Success!' "not upgraded"
+has   "$OUT/no-session.html" 'security check failed' "says why"
 eq "$(stored)" "$PRIOR" "202_version untouched"
 rm -f "$JAR2"
 
 say "POST the form as a browser would — its own fields, token included"
-curl -sS -c "$JAR" -b "$JAR" "$URL" "${SUBMIT[@]}" -o "$OUT/ok.html"
+STATUS=$(fetch "$JAR" "$OUT/ok.html" "${SUBMIT[@]}")
+eq "$STATUS" 200 "answered 200"
 has "$OUT/ok.html" 'Success!' "the upgrade ran"
 eq "$(stored)" "$CODE" "202_version is the code version"
 
 say "the page now refuses to run again"
-curl -sS -c "$JAR" -b "$JAR" "$URL" -o "$OUT/again.html"
+# Measured, not assumed: with nothing left to upgrade the page sends a
+# Location header and still renders its "Already Upgraded" body, so a 302
+# carrying that sentence is the page's answer here.
+STATUS=$(fetch "$JAR" "$OUT/again.html")
+eq "$STATUS" 302 "answered 302, sent on because there is nothing left to upgrade"
 has "$OUT/again.html" 'Already Upgraded' "Already Upgraded"
 
 rm -rf "$JAR" "$OUT"
