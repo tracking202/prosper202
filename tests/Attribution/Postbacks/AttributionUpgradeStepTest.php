@@ -207,7 +207,7 @@ final class AttributionUpgradeStepTest extends TestCase
                 // assigned or logged rather than run reads as persisted here
                 // while the database stays where it was, so the rung
                 // re-enters on every upgrade run forever.
-                $this->assertContains(
+                $this->assertArrayHasKey(
                     $to,
                     $this->persistsThatReachAQuery($step['from'], $step['to']),
                     "the step gated on $gate spells an UPDATE to $to but no _upgrade_query() call"
@@ -234,8 +234,9 @@ final class AttributionUpgradeStepTest extends TestCase
      * kept the whole suite green.
      *
      * The recognised shape is the one the ladder uses: the reconcile result
-     * assigned to a variable on its own, and the persist inside the braces of
-     * an `if` below it whose condition is that variable. A different shape —
+     * assigned to a variable on its own, and the `_upgrade_query()` call that
+     * receives the persist inside the braces of an `if` below it whose
+     * condition is that variable. A different shape —
      * `!$ok` with an early return, a ternary — fails here rather than being
      * reasoned about, because the failure direction matters: reading the
      * negated branch as the success branch would call an unguarded persist
@@ -256,43 +257,36 @@ final class AttributionUpgradeStepTest extends TestCase
             . ' check the new shape before writing one.'
         );
 
-        // A floor, because everything below is a loop over what this finds:
-        // a step whose UPDATE is built by concatenation rather than written
-        // as one literal yields nothing here, and a scan with nothing to
-        // check reports no unguarded persist — which is the answer it gives
-        // when there are none.
-        //
-        // Unreached, and left in deliberately. Every concatenated shape tried
-        // against it is intercepted first by testTheLadderTopIsTheCodeVersion,
-        // which cannot rank the dynamic value or loses the literal top. So
-        // this is a floor under a floor: it does nothing today and stops the
-        // loop below going vacuous if that scan is ever loosened. It is not a
-        // check that has been shown to fail.
-        $writes = $this->persistTokensIn($step['from'], $step['to']);
-        $this->assertNotSame(
-            [],
-            $writes,
-            "the step gated on $gate persists " . implode('/', $step['persists']) . ' but no single'
-            . ' string literal in it carries that UPDATE, so this check cannot locate the write to'
-            . ' say whether it is guarded. Teach it the new shape before writing one.'
-        );
-
+        // The calls, not the literals. A literal assigned inside the branch
+        // and handed to _upgrade_query() after its closing brace is a write
+        // outside the branch — a failed reconcile then runs a query with
+        // whatever $sql holds — and a literal assigned above the branch and
+        // handed to a call inside it is a write inside. The first version of
+        // this located the literal, so it passed the first shape and failed
+        // the second. persistsThatReachAQuery() says which calls receive
+        // which persist; every call receiving one of this step's persists
+        // has to sit inside a success range. Not vacuous: the caller has
+        // already asserted that each persisted version reaches a call.
+        $reach = $this->persistsThatReachAQuery($step['from'], $step['to']);
         $unguarded = [];
-        foreach ($writes as $at) {
-            foreach ($ranges as [$start, $end]) {
-                if ($at >= $start && $at <= $end) {
-                    continue 2;
+        foreach ($step['persists'] as $version) {
+            foreach ($reach[$version] ?? [] as $call) {
+                foreach ($ranges as [$start, $end]) {
+                    if ($call >= $start && $call <= $end) {
+                        continue 2;
+                    }
                 }
+                $unguarded[] = "$version at line " . $this->lineOf($tokens, $call);
             }
-            $unguarded[] = trim($tokens[$at]['text']);
         }
 
         $this->assertSame(
             [],
             $unguarded,
-            "the step gated on $gate writes a version outside the branch guarded by the reconcile"
-            . " result, so a failed reconcile would record the new version anyway and the step"
-            . ' would never re-run to finish the schema'
+            "the step gated on $gate hands _upgrade_query() a write of a version outside the branch"
+            . ' guarded by the reconcile result (' . implode(', ', $unguarded) . '), so a failed'
+            . ' reconcile would record the new version anyway and the step would never re-run to'
+            . ' finish the schema'
         );
     }
 
@@ -460,30 +454,6 @@ final class AttributionUpgradeStepTest extends TestCase
         );
 
         return $ranges;
-    }
-
-    /**
-     * The indices of the string literals in [$from, $to] that carry a
-     * `202_version` write.
-     *
-     * @return list<int>
-     */
-    private function persistTokensIn(int $from, int $to): array
-    {
-        $tokens = $this->upgradeTokens();
-        $kinds = [T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE];
-
-        $found = [];
-        for ($i = $from; $i <= $to; $i++) {
-            if (!in_array($tokens[$i]['id'], $kinds, true)) {
-                continue;
-            }
-            if (preg_match(self::PERSIST_PATTERN, $tokens[$i]['text']) === 1) {
-                $found[] = $i;
-            }
-        }
-
-        return $found;
     }
 
     /** The previous non-whitespace token index in [$floor, $from], or null. */
@@ -908,7 +878,7 @@ final class AttributionUpgradeStepTest extends TestCase
         // its statement from $prosper202_version, which it has just set, so
         // the fold in persistsThatReachAQuery() resolves it to the code
         // version — and a guard that writes anything else fails here.
-        $this->assertContains(
+        $this->assertArrayHasKey(
             self::CURRENT_VERSION,
             $this->persistsThatReachAQuery($guard['from'], $guard['to']),
             'the downgrade guard does not run a query carrying its UPDATE of 202_version to '
@@ -1056,7 +1026,9 @@ final class AttributionUpgradeStepTest extends TestCase
      * map, so `$sql = "UPDATE …"; $sql = "SELECT …"; _upgrade_query($sql);`
      * read as a persist, and so did a call above its assignment.
      *
-     * @return list<string> the versions written, as the statements spell them
+     * @return array<string, list<int>> the versions written, as the statements
+     *     spell them, each to the `_upgrade_query()` calls (token indices of
+     *     the name) that receive it
      */
     private function persistsThatReachAQuery(int $from, int $to): array
     {
@@ -1094,6 +1066,7 @@ final class AttributionUpgradeStepTest extends TestCase
             if (!$this->namesFunction($token, '_upgrade_query')) {
                 continue;
             }
+            $call = $i;
             $open = $this->nextSignificant($tokens, $i + 1, $to);
             if ($open === null || $tokens[$open]['text'] !== '(') {
                 continue;
@@ -1121,11 +1094,11 @@ final class AttributionUpgradeStepTest extends TestCase
             // The call's own argument is a read this has accounted for.
             $i = $close;
             if ($statement !== null && preg_match(self::PERSIST_STATEMENT, $statement, $written) === 1) {
-                $reach[] = $written[1];
+                $reach[$written[1]][] = $call;
             }
         }
 
-        return array_values(array_unique($reach));
+        return $reach;
     }
 
     /**

@@ -399,7 +399,13 @@ statement the invariant depends on has to be shown to run on every path
 (directly in the block, first in its own statement, not the body of a
 braceless `if`) and to assign what the invariant needs; and the work has to
 sit inside the block whose entry the guard assumes, because outside the
-POST block a GET runs it with no token asked for.
+POST block a GET runs it with no token asked for. And the position that
+matters is the *act's*, not the value's: the ladder check located the
+`UPDATE 202_version` literal and asked whether *it* sat in the success
+branch, so a literal assigned inside the branch and handed to
+`_upgrade_query()` after its closing brace read as guarded, and one assigned
+above the branch and queried inside it read as unguarded. The write is the
+call; anchor on the call.
 
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 

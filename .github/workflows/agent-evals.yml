@@ -18,6 +18,7 @@ on:
       - '202-config/**'
       - 'tracking202/**'
       - 'tests/fixtures/agent-eval/**'
+      - 'tests/live/**'
       - '.github/workflows/agent-evals.yml'
   push:
     branches: [master]
@@ -27,6 +28,7 @@ on:
       - '202-config/**'
       - 'tracking202/**'
       - 'tests/fixtures/agent-eval/**'
+      - 'tests/live/**'
       - '.github/workflows/agent-evals.yml'
   workflow_dispatch:
     inputs:
