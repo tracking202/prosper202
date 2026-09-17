@@ -382,7 +382,9 @@ final class PreLoginPostRequiresTokenTest extends TestCase
      * branch then tests a flag nothing set. The first version of this found
      * the seed anywhere after the guard, and counted any whole assignment
      * in the failure branch as one: `$error = [];` there leaves the flag
-     * empty and the work reachable.
+     * empty and the work reachable. The second stopped at the first good
+     * write, so a reset after it in the same branch went unread; the whole
+     * branch is scanned now.
      *
      * @param array{file: string, result: string, gate: string, seed: ?string} $page
      */
@@ -462,6 +464,20 @@ final class PreLoginPostRequiresTokenTest extends TestCase
                 } elseif ($depth === 0 && $tokens[$j]['id'] === T_VARIABLE && $tokens[$j]['text'] === $page['gate']) {
                     $use = $this->useOf($tokens, $pairs, $j);
                     if ($use === 'element write' || ($use === 'assignment' && $this->rhsOf($tokens, $j) === ['true'])) {
+                        // The rest of the branch as well: a reset after the
+                        // seed (`$error['user'] = …; $error = [];`) leaves
+                        // the flag empty on the way out.
+                        $this->assertUntouched(
+                            $tokens,
+                            $pairs,
+                            $page['gate'],
+                            $brace,
+                            $pairs[$brace],
+                            ['true'],
+                            $file,
+                            'the error flag inside its failure branch'
+                        );
+
                         return $pairs[$brace];
                     }
                     if ($use === 'assignment') {

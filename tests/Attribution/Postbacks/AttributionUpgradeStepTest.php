@@ -267,16 +267,28 @@ final class AttributionUpgradeStepTest extends TestCase
         // which persist; every call receiving one of this step's persists
         // has to sit inside a success range. Not vacuous: the caller has
         // already asserted that each persisted version reaches a call.
+        //
+        // And on every path through that range, not merely somewhere in it:
+        // a call nested in a further condition inside the success branch, or
+        // behind a short-circuit, leaves a successful reconcile without its
+        // version write when that condition is false, and the rung is stuck.
         $reach = $this->persistsThatReachAQuery($step['from'], $step['to']);
         $unguarded = [];
+        $conditional = [];
         foreach ($step['persists'] as $version) {
             foreach ($reach[$version] ?? [] as $call) {
+                $inside = null;
                 foreach ($ranges as [$start, $end]) {
                     if ($call >= $start && $call <= $end) {
-                        continue 2;
+                        $inside = $start;
+                        break;
                     }
                 }
-                $unguarded[] = "$version at line " . $this->lineOf($tokens, $call);
+                if ($inside === null) {
+                    $unguarded[] = "$version at line " . $this->lineOf($tokens, $call);
+                } elseif (!$this->runsOnEveryPathOf($tokens, $inside, $call)) {
+                    $conditional[] = "$version at line " . $this->lineOf($tokens, $call);
+                }
             }
         }
 
@@ -287,6 +299,16 @@ final class AttributionUpgradeStepTest extends TestCase
             . ' guarded by the reconcile result (' . implode(', ', $unguarded) . '), so a failed'
             . ' reconcile would record the new version anyway and the step would never re-run to'
             . ' finish the schema'
+        );
+        $this->assertSame(
+            [],
+            $conditional,
+            "the step gated on $gate runs the query writing a version inside a further condition"
+            . ' within the branch guarded by the reconcile result (' . implode(', ', $conditional)
+            . '), so a successful reconcile may not advance the version and the rung never'
+            . ' converges. The call has to run on every path through that branch: as a statement'
+            . ' of its own, as `$v = _upgrade_query(…);`, or as the first operand of an `if` that'
+            . ' starts a statement, directly inside the branch.'
         );
     }
 
@@ -299,6 +321,10 @@ final class AttributionUpgradeStepTest extends TestCase
      * mentions it and its braces are the FAILURE branch, so a mention-based
      * match would read the one place a persist must never be as the one place
      * it must.
+     *
+     * An `if` of its own, directly inside the step: nested in a further
+     * condition, or an `elseif`, the success branch may never run for a
+     * reconcile that succeeded, and the rung then never converges.
      *
      * Below the assignment, with the variable untouched between: the first
      * version of this found the assignment anywhere in the step and then
@@ -383,6 +409,7 @@ final class AttributionUpgradeStepTest extends TestCase
         $recognised = [$variable => true];
         $ranges = [];
         $early = [];
+        $conditional = [];
         for ($i = $from; $i <= $to; $i++) {
             if ($tokens[$i]['id'] !== T_IF && $tokens[$i]['id'] !== T_ELSEIF) {
                 continue;
@@ -424,6 +451,14 @@ final class AttributionUpgradeStepTest extends TestCase
                 $early[] = $this->lineOf($tokens, $i);
                 continue;
             }
+            // An `if` of its own, directly inside the step: nested in a
+            // further condition, or an `elseif` that runs only when the
+            // branch before it did not, a successful reconcile may never
+            // reach its persist and the rung never converges.
+            if ($tokens[$i]['id'] !== T_IF || !$this->runsWheneverTheBlockRuns($tokens, (int) $stepBrace, $i)) {
+                $conditional[] = $this->lineOf($tokens, $i);
+                continue;
+            }
             $ranges[] = [(int) $brace, (int) $end];
         }
         $this->assertSame(
@@ -434,6 +469,14 @@ final class AttributionUpgradeStepTest extends TestCase
             . $this->lineOf($tokens, $variable) . ': that guard reads nothing, or a stale value,'
             . ' so the persist inside it never runs and the rung never advances — or runs over a'
             . ' failed reconcile. Move the guard below the assignment.'
+        );
+        $this->assertSame(
+            [],
+            $conditional,
+            "the step gated on $gate tests the reconcile result $result at line(s) "
+            . implode(', ', $conditional) . ' inside a further condition, or as an `elseif`, so a'
+            . ' successful reconcile may never reach its persist and the rung never converges.'
+            . ' The guard has to be an `if` of its own, directly inside the step.'
         );
 
         $stray = [];
@@ -466,6 +509,84 @@ final class AttributionUpgradeStepTest extends TestCase
         }
 
         return null;
+    }
+
+    /**
+     * Does the token at $at start a statement that runs whenever the block
+     * opened at $open runs — inside its braces at no deeper level, and first
+     * in its statement, so not the body of a braceless `if` or of an `else`?
+     */
+    private function runsWheneverTheBlockRuns(array $tokens, int $open, int $at): bool
+    {
+        $close = $this->matchingBrace($tokens, $open);
+        if ($close === null || $at <= $open || $at >= $close) {
+            return false;
+        }
+        $depth = 0;
+        for ($i = $open + 1; $i < $at; $i++) {
+            $text = $tokens[$i]['text'];
+            if ($text === '{' || $text === '${') {
+                $depth++;
+            } elseif ($text === '}') {
+                $depth--;
+            }
+        }
+        if ($depth !== 0) {
+            return false;
+        }
+        $prev = $this->previousSignificant($tokens, $at - 1, $open);
+
+        return $prev !== null && in_array($tokens[$prev]['text'], [';', '{', '}'], true);
+    }
+
+    /**
+     * Does the call whose name is at $call run on every path through the
+     * block opened at $open? Directly inside it, and in one of three shapes
+     * that evaluate the call unconditionally: a statement of its own,
+     * `$v = call(…);`, or the first operand of an `if` that starts a
+     * statement — so `if ($enabled && call(…))` is refused, the short-circuit
+     * skipping the call when $enabled is false.
+     */
+    private function runsOnEveryPathOf(array $tokens, int $open, int $call): bool
+    {
+        if ($this->runsWheneverTheBlockRuns($tokens, $open, $call)) {
+            return true;
+        }
+        $close = $this->matchingBrace($tokens, $open);
+        if ($close === null || $call <= $open || $call >= $close) {
+            return false;
+        }
+        $depth = 0;
+        for ($i = $open + 1; $i < $call; $i++) {
+            $text = $tokens[$i]['text'];
+            if ($text === '{' || $text === '${') {
+                $depth++;
+            } elseif ($text === '}') {
+                $depth--;
+            }
+        }
+        if ($depth !== 0) {
+            return false;
+        }
+
+        $prev = $this->previousSignificant($tokens, $call - 1, $open);
+        if ($prev === null) {
+            return false;
+        }
+        if ($tokens[$prev]['text'] === '=') {
+            $variable = $this->previousSignificant($tokens, $prev - 1, $open);
+
+            return $variable !== null && $tokens[$variable]['id'] === T_VARIABLE
+                && $this->runsWheneverTheBlockRuns($tokens, $open, $variable);
+        }
+        if ($tokens[$prev]['text'] === '(') {
+            $keyword = $this->previousSignificant($tokens, $prev - 1, $open);
+
+            return $keyword !== null && $tokens[$keyword]['id'] === T_IF
+                && $this->runsWheneverTheBlockRuns($tokens, $open, $keyword);
+        }
+
+        return false;
     }
 
     /** The 1-based line of the ladder source that the token at $at starts on. */

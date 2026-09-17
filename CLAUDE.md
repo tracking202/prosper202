@@ -414,6 +414,17 @@ as if they were not there, so an assignment inside a nested condition was
 credited at a call after it — a hold lives in the block that set it, and
 leaving the block drops it, because the block may not have run.
 
+The last two rounds of this were the *other half* of "A guards B": not only
+must B never run when A said no, B must run whenever A said yes. A persist
+accepted anywhere inside the success branch — in a nested condition, or
+behind `$enabled && _upgrade_query(…)` — leaves a successful reconcile
+without its version write, and the rung is stuck; and a seed scan that
+returned at the first good write left `$error['user'] = …; $error = [];`
+unread. Both halves need the same treatment: the act must run on every path
+through the branch (directly inside it, in a shape that evaluates it
+unconditionally), and a scan that accepts a write has to read the rest of
+the block for the one that undoes it.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure
