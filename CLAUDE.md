@@ -325,6 +325,26 @@ refuses outright. Enumerate from the language reference
 before writing the classifier, plant every shape on the list, and refuse by
 name the ones that cannot be read.
 
+Beside the variable is not around the expression. The classifier read the
+token before the variable and the token after it, and `weaken(($error))`
+showed it a `(` on each side, which it called a read — while PHP passes the
+parenthesized variable by reference exactly as it passes the bare one, and
+`[($e)] = …` and `list(($e)) = …` assign it. The same lens found the element
+shapes: `weaken($csrf_ok[0])`, `$csrf_ok[0]++`, `[$csrf_ok[0]] = …`,
+`foreach (… as $csrf_ok[0])` and `$csrf_ok[0][0] = …` each read as a read,
+and each turns a `false` result into a truthy array, so the work runs. What
+is done to a variable is done to the expression it roots, and the tokens to
+read are the ones beside that expression: gather its index chain and the
+redundant parentheses around it first, then classify from the edges. The
+parentheses to cross are the ones nothing owns — after another `(`, a `,`,
+a `[`, a `:` or a `=>` — and never a callee's or a keyword's, because
+crossing `weaken(` puts the callee beside the extent and reads the argument
+as a read, the silent direction. Every spelling was executed before it was
+listed; the ones the grammar refuses (`($x) = …`, `&($x)`, `as ($x)`) are
+parse errors, and the docblock says so rather than guarding against them.
+When a classifier keys on adjacency, ask what the language lets sit
+between the variable and the thing that acts on it.
+
 ### 21. Naming a thing is not being guarded by it
 
 `versionsComparedIn()` reported which versions a gate's condition compares

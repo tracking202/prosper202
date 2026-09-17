@@ -691,9 +691,16 @@ final class PreLoginPostRequiresTokenTest extends TestCase
     }
 
     /**
-     * Every appearance of $name in ($from, $to) is a read, an element write,
-     * or an assignment of one of $allowed — nothing that could make the
-     * variable falsy when the guard said no.
+     * Every appearance of $name in ($from, $to) is a read, or — when
+     * $allowed is not empty, so the variable is the flag whose truth
+     * withholds the work — a use of one of its elements or an assignment of
+     * one of $allowed: nothing that could make the variable falsy when the
+     * guard said no. An element cannot empty the flag (`weaken($e['user'])`
+     * leaves `(bool) $e` true), but the result admits the work when true,
+     * and a `false` result becomes a truthy array through any element-level
+     * use — executed: `weaken($ok[0])`, `[$ok[0]] = …`, `foreach (… as
+     * $ok[0])` and `$ok[0][0] = …` each leave `(bool) $ok` true — so for the
+     * result nothing but a read passes.
      *
      * @param list<string> $allowed right-hand sides a whole assignment may have
      */
@@ -729,7 +736,7 @@ final class PreLoginPostRequiresTokenTest extends TestCase
                 continue;
             }
             $use = $this->useOf($tokens, $pairs, $i);
-            if ($use === 'read' || ($use === 'element write' && $allowed !== [])) {
+            if ($use === 'read' || (str_starts_with($use, 'element ') && $allowed !== [])) {
                 continue;
             }
             if ($use === 'assignment') {
@@ -745,8 +752,8 @@ final class PreLoginPostRequiresTokenTest extends TestCase
             [],
             $touched,
             "$file changes $what ($name) between the guard and the branch that tests it: " . implode(', ', $touched)
-            . '. Only a read, an element write'
-            . ($allowed === [] ? '' : ', or assigning ' . implode(' or ', $allowed))
+            . '. Only a read'
+            . ($allowed === [] ? '' : ', a use of one of its elements, or assigning ' . implode(' or ', $allowed))
             . ' is read as safe; anything else could let the work run when the token check failed'
         );
     }
@@ -832,10 +839,11 @@ final class PreLoginPostRequiresTokenTest extends TestCase
     }
 
     /**
-     * How the variable at $at is used: 'read', 'element write', 'assignment',
-     * or a kind this refuses — a compound assignment, an increment, a
-     * reference, a destructuring, or an argument to a call that may take it
-     * by reference.
+     * How the variable at $at is used: 'read', 'assignment', a kind this
+     * refuses — a compound assignment, an increment, a reference, a
+     * destructuring, a foreach or catch target, an argument to a call that
+     * may take it by reference — or the same done to one of its elements,
+     * prefixed 'element ' ('element write', 'element argument to a call').
      *
      * The write shapes are the ones PHP's grammar has, not the ones that
      * came to mind: assignment, compound assignment, increment, element
@@ -846,11 +854,17 @@ final class PreLoginPostRequiresTokenTest extends TestCase
      * and a `global` or `static` declaration. Writes that never name the
      * variable — `$$name`, `$GLOBALS['name']`, `extract()`, `eval()`, an
      * `include` — are refused in the scanned range by writesNoScanCanSee().
+     *
+     * What is done to the variable is done to the expression it roots —
+     * its index chain and the redundant parentheses around it — so the
+     * tokens read are the ones beside that expression (extentOf()), not
+     * beside the variable. `weaken(($error))` passes the variable by
+     * reference exactly as `weaken($error)` does; beside the variable it
+     * is a `(` on each side, which the second version called a read.
      */
     private function useOf(array $tokens, array $pairs, int $at): string
     {
         $prev = $this->previousSignificant($tokens, $at - 1);
-        $next = $this->nextSignificant($tokens, $at + 1);
 
         $stepped = $prev !== null && in_array($tokens[$prev]['id'], [T_INC, T_DEC], true);
         if ($prev !== null && ($tokens[$prev]['text'] === '&' || $stepped)) {
@@ -859,30 +873,92 @@ final class PreLoginPostRequiresTokenTest extends TestCase
         if (in_array($this->statementKeyword($tokens, $at), [T_GLOBAL, T_STATIC], true)) {
             return 'global or static declaration';
         }
+
+        [$start, $end, $indexed] = $this->extentOf($tokens, $pairs, $at);
+        $prev = $this->previousSignificant($tokens, $start - 1);
+        $next = $this->nextSignificant($tokens, $end + 1);
+
         if ($next !== null) {
             if ($tokens[$next]['text'] === '=') {
-                return 'assignment';
+                return $indexed ? 'element write' : 'assignment';
             }
             if (in_array($tokens[$next]['id'], self::COMPOUND_ASSIGNMENTS, true)) {
-                return 'compound assignment';
+                return $indexed ? 'element write' : 'compound assignment';
             }
             if (in_array($tokens[$next]['id'], [T_INC, T_DEC], true)) {
-                return 'increment';
-            }
-            if ($tokens[$next]['text'] === '[' && isset($pairs[$next])) {
-                $after = $this->nextSignificant($tokens, $pairs[$next] + 1);
-                $written = $after !== null && (
-                    $tokens[$after]['text'] === '='
-                    || in_array($tokens[$after]['id'], self::COMPOUND_ASSIGNMENTS, true)
-                );
-                if ($written) {
-                    return 'element write';
-                }
-                return 'read';
+                return $indexed ? 'element write' : 'increment';
             }
         }
 
-        // Inside brackets, what the variable is to them is told by the
+        $use = $this->useInContext($tokens, $pairs, $start, $prev);
+
+        return $indexed && $use !== 'read' ? "element $use" : $use;
+    }
+
+    /**
+     * The expression the variable at $at roots: its index chain
+     * (`$x[0]['k']`) and each pair of redundant parentheses around what has
+     * been gathered (`(($x))`, `($x)[0]`), in whichever order they come,
+     * until neither does. Executed before it was written: `weaken(($x))`,
+     * `weaken((($x)))` and `weaken(value: ($x))` pass the variable by
+     * reference; `[($x)] = …` and `list(($x)) = …` assign it; and on a
+     * `false` result `weaken($x[0])`, `weaken(($x)[0])`, `[$x[0]] = …`,
+     * `foreach (… as $x[0])` and `$x[0][0] = …` each turn it into a truthy
+     * array. Every other parenthesized spelling of a write — `($x) = …`,
+     * `&($x)`, `($x)++`, `as ($x)`, `global ($x)`, `use (&($x))` — is a
+     * parse error.
+     *
+     * A parenthesis is redundant when the token before it cannot own it:
+     * another `(`, a `,`, a `[`, a `:` or a `=>`, which are also the only
+     * positions a by-reference write can sit in. After a callee or a
+     * keyword the parenthesis is the construct's own and is not crossed —
+     * crossing `weaken(` would put the callee beside the extent and read
+     * its argument as a read, the silent direction.
+     *
+     * @return array{0: int, 1: int, 2: bool} first and last token index of
+     *     the extent, and whether it crossed an index
+     */
+    private function extentOf(array $tokens, array $pairs, int $at): array
+    {
+        $start = $at;
+        $end = $at;
+        $indexed = false;
+        while (true) {
+            $next = $this->nextSignificant($tokens, $end + 1);
+            if ($next !== null && $tokens[$next]['text'] === '[' && isset($pairs[$next])) {
+                $end = $pairs[$next];
+                $indexed = true;
+                continue;
+            }
+            $prev = $this->previousSignificant($tokens, $start - 1);
+            if (
+                $prev === null || $next === null
+                || $tokens[$prev]['text'] !== '(' || ($pairs[$prev] ?? null) !== $next
+            ) {
+                break;
+            }
+            $owner = $this->previousSignificant($tokens, $prev - 1);
+            $grouping = $owner === null
+                || in_array($tokens[$owner]['text'], ['(', ',', '[', ':'], true)
+                || $tokens[$owner]['id'] === T_DOUBLE_ARROW;
+            if (!$grouping) {
+                break;
+            }
+            $start = $prev;
+            $end = $next;
+        }
+
+        return [$start, $end, $indexed];
+    }
+
+    /**
+     * What the brackets around the expression starting at $start, whose
+     * previous significant token is $prev, do with it: 'destructuring',
+     * 'catch target', 'foreach target', 'argument to a call', or 'read'.
+     */
+    private function useInContext(array $tokens, array $pairs, int $start, ?int $prev): string
+    {
+        // Inside brackets, what the expression is to them is told by the
         // opener and the token before it. `f(name: $x)` puts a `:` before
         // the variable, so the call's `(` or `,` is two tokens further
         // back — the first version read that shape as a read.
@@ -898,7 +974,7 @@ final class PreLoginPostRequiresTokenTest extends TestCase
             || in_array($tokens[$prev]['id'], [T_AS, T_DOUBLE_ARROW], true)
             || $named
         );
-        $opener = $this->enclosingOpener($tokens, $at);
+        $opener = $this->enclosingOpener($tokens, $start);
         if ($opener === null) {
             return 'read';
         }
