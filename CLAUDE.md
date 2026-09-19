@@ -30,6 +30,16 @@ Never use `json_decode(...) ?? []` or similar fallbacks that silently discard ba
 ### 5. Inconsistent security patterns across similar operations
 If create has secure password input, update must too. If one delete command has confirmation, all must. When implementing a security measure, grep for every analogous code path and apply the same pattern. Spot-checking misses these — review exhaustively.
 
+The pre-login pages are the sharp instance. `install.php` and `202-login.php`
+checked the session token on their POST; `upgrade.php` — the same
+no-login-yet situation, one directory over — did not, and the repair
+RELEASING.md gives for a stranded branch deployment (wind `202_version` back,
+open that page) is exactly when the gap was open.
+`tests/Auth/PreLoginPostRequiresTokenTest` now pins all three, and
+`tests/live/upgrade-csrf.sh` proves it over HTTP. The wider number is the one
+to know: 74 files in the tree read `$_POST` and 27 check a token. That sweep
+is open; anything that adds a POST handler should be held to it.
+
 ### 6. Empty response rendering for void operations
 DELETE/204 responses return empty arrays. Rendering an empty array produces no output. Void operations (delete, remove, revoke) need explicit success messages, not render calls.
 
@@ -299,6 +309,42 @@ also made a correctly gated call read as ungated in a sibling test, a false
 *failure*. Only one of those two directions is silent, and it is the one worth
 hunting.
 
+The list of shapes a checker reads has to come from the grammar, not from
+memory. `PreLoginPostRequiresTokenTest`'s use classifier knew assignment,
+compound assignment, `++`, element write, `list()`, `&` and a positional
+argument — the shapes that came to mind — and PHP writes a variable in more
+ways than that: a named argument (`f(name: $x)`, a `:` before the variable
+where the classifier looked for `(` or `,`), a `foreach` target (`as $x`,
+`=> $x`), a `catch` target, keyed destructuring (`['k' => $x] = …`), a
+`global`/`static` declaration, and then the writes that never name the
+variable at all — `$$name`, `${'name'}`, `$GLOBALS['name']` (the pages run
+at file scope, where that is the same variable — the one the first sweep of
+this list still missed), `extract()`, `eval()`, an `include` — which no
+scan for the variable's token can see and which the scanned range now
+refuses outright. Enumerate from the language reference
+before writing the classifier, plant every shape on the list, and refuse by
+name the ones that cannot be read.
+
+Beside the variable is not around the expression. The classifier read the
+token before the variable and the token after it, and `weaken(($error))`
+showed it a `(` on each side, which it called a read — while PHP passes the
+parenthesized variable by reference exactly as it passes the bare one, and
+`[($e)] = …` and `list(($e)) = …` assign it. The same lens found the element
+shapes: `weaken($csrf_ok[0])`, `$csrf_ok[0]++`, `[$csrf_ok[0]] = …`,
+`foreach (… as $csrf_ok[0])` and `$csrf_ok[0][0] = …` each read as a read,
+and each turns a `false` result into a truthy array, so the work runs. What
+is done to a variable is done to the expression it roots, and the tokens to
+read are the ones beside that expression: gather its index chain and the
+redundant parentheses around it first, then classify from the edges. The
+parentheses to cross are the ones nothing owns — after another `(`, a `,`,
+a `[`, a `:` or a `=>` — and never a callee's or a keyword's, because
+crossing `weaken(` puts the callee beside the extent and reads the argument
+as a read, the silent direction. Every spelling was executed before it was
+listed; the ones the grammar refuses (`($x) = …`, `&($x)`, `as ($x)`) are
+parse errors, and the docblock says so rather than guarding against them.
+When a classifier keys on adjacency, ask what the language lets sit
+between the variable and the thing that acts on it.
+
 ### 21. Naming a thing is not being guarded by it
 
 `versionsComparedIn()` reported which versions a gate's condition compares
@@ -349,6 +395,175 @@ found by the same reviewer within the hour:
   ran. Two true statements about different parts of a block are not one
   statement about the block; when the claim is "this value reaches that
   call", follow the value.
+
+The same shape shipped again one PR later, in `PreLoginPostRequiresTokenTest`:
+the token guard was asserted to *precede* the protected work, and the helper
+to *contain* `hash_equals(`. `$error = false;` between the guard and the work
+passed the first; `hash_equals(…); return true;` passed the second — 22 of 24
+planted defects, against a test whose docblock said "guarded". When the claim
+is "this result decides that", execute it where the code is pure enough
+(both helpers were), and otherwise prove the branch the work sits under and
+that nothing between the guard and the branch can change what it tests.
+
+And its form, one round later: the same test asserted that `name="token"`
+appeared somewhere in the file, which said nothing about which form carried
+it — below `</form>`, in a second form, disabled, or inside `<!-- -->`, it
+was on the page and not in the submission, and the live pass scraped the
+first token it found and posted it by hand, so it would have stayed green
+too. The claim was "the form that posts carries the token"; the check has
+to find that form, bound it, and read the input inside it, and the live
+pass has to submit the form's own fields rather than a token it found
+anywhere on the page. And its value, the round after that: "the escaper's
+first argument contains `$_SESSION['token']`" accepted
+`'prefix' . $_SESSION['token']`, which the server's `hash_equals()` refuses
+on every submission — a login page nobody can log in through, green in CI.
+Parse the expression the claim is about and accept the spellings you can
+name; a substring test of an expression is #21 every time.
+
+Two more, one review later, both about what a call *is*. The ladder's walk
+credited `$logger->_upgrade_query($sql)` and `Log\_upgrade_query($sql)` as
+the query that wrote the version, and the page test found its guard by the
+substring `AUTH::check_csrf_token(`, which `MyAUTH::check_csrf_token(`
+contains: a name is not a call site. A callee is the token *and what
+precedes it* — `->`, `?->`, `::`, `new` and `function` each make the same
+final token something else, `Other\name` is another function — and an
+unqualified name is the global one only in a file that declares no
+namespace and imports no function, which both tests now assert (a `use
+function Other\version_compare;` at the top of the ladder rebound the
+downgrade guard's comparison with every check green). And bounding the
+guard call was not reading it: `install_csrf_ok($expected, $submitted)`
+was shown to decide the work and executed on token pairs, and never asked
+what the page hands it — `install_csrf_ok($_POST['token'],
+$_POST['token'])` accepts every non-empty token and left everything green.
+That is #12 seen from the call site: the arguments are now parsed as the
+session token and the posted token, in that order, read where they are or
+through a variable assigned exactly that once, directly in the block,
+untouched to the call and alias-free. One review later the same substring
+found the *work*: `MyUPGRADE::upgrade_databases(` satisfied the marker for
+the protected operation, so a page calling a lookalike class read as
+guarded while the real operation went unwatched — the guard had been fixed
+and the three work sites, found the same way two screens down, had not.
+One helper now reads guard and work alike. When a check says "X is
+called", ask what X is called *with*, and whether the thing named is the
+thing meant; and when one site read by name is fixed, every site read by
+name is the sweep.
+
+### 22. "Somewhere in the block" is not an order
+
+`reconcileSuccessRanges()` found the reconcile assignment anywhere in the
+step and then credited every `if ($ok) {` from the step's start;
+`persistsThatReachAQuery()` built its variable-to-statement map over the
+whole step and then credited every `_upgrade_query($sql)` from it. Both
+answered a question about order — *is the guard below the assignment, is
+the value at the call the one that was assigned* — with a lookup that had
+thrown the order away, so a guard above its assignment, a `$ok = true;`
+between the two, and `$sql = "UPDATE …"; $sql = "SELECT …";
+_upgrade_query($sql);` all read as correct. Planted, fourteen shapes
+passed. When a check's claim is "A guards B" or "A reaches B", it is a
+claim about sequence *and* about nothing changing in between, and a check
+that matches A and B separately and joins them by name proves neither
+half. Walk the range once in source order, carry the value forward, drop it
+at the first appearance you cannot read (the check does not tell a read
+from a write, and says so), and refuse by line anything else — the loud
+direction. Twin of #15: there the discriminator was folded into the key;
+here the order was.
+
+Its sibling, one review later, in the check that replaced the unordered one:
+the seed of the error flag was found *anywhere* after the guard and credited
+though it sat inside a conditional that could skip it, and any whole
+assignment in the failure branch counted as a seed whatever it assigned —
+`$error = [];` there leaves the flag empty and the work reachable. Where a
+value is set and what it is set to are both part of "A guards B". A
+statement the invariant depends on has to be shown to run on every path
+(directly in the block, first in its own statement, not the body of a
+braceless `if`) and to assign what the invariant needs; and the work has to
+sit inside the block whose entry the guard assumes, because outside the
+POST block a GET runs it with no token asked for. And the position that
+matters is the *act's*, not the value's: the ladder check located the
+`UPDATE 202_version` literal and asked whether *it* sat in the success
+branch, so a literal assigned inside the branch and handed to
+`_upgrade_query()` after its closing brace read as guarded, and one assigned
+above the branch and queried inside it read as unguarded. The write is the
+call; anchor on the call. Two more of the same family, one review later: a
+scan for writes that stopped at the branch's `if` keyword left the condition
+unread, and `if (($error = false) === false && !$error)` carries the accepted
+conjunct while resetting the flag inside it — a condition is code, so scan to
+the brace; and a value carried across statements was carried through braces
+as if they were not there, so an assignment inside a nested condition was
+credited at a call after it — a hold lives in the block that set it, and
+leaving the block drops it, because the block may not have run.
+
+The last two rounds of this were the *other half* of "A guards B": not only
+must B never run when A said no, B must run whenever A said yes. A persist
+accepted anywhere inside the success branch — in a nested condition, or
+behind `$enabled && _upgrade_query(…)` — leaves a successful reconcile
+without its version write, and the rung is stuck; and a seed scan that
+returned at the first good write left `$error['user'] = …; $error = [];`
+unread. Both halves need the same treatment: the act must run on every path
+through the branch (directly inside it, in a shape that evaluates it
+unconditionally), and a scan that accepts a write has to read the rest of
+the block for the one that undoes it.
+
+One more, the round after: "runs whenever the block runs" was read as
+*directly inside the braces, first in its statement*, and a statement after
+a closing brace passed — as if the branch that brace closed could not have
+left. `if ($skip) { return false; }` above the guard, or above the persist
+inside it, is a path on which a successful reconcile never records its
+version, and the check called both unconditional. A jump is the third thing
+"runs on every path" has to read, after depth and order; the check cannot
+tell where one lands (a `break` in a nested loop, a `return` in a closure),
+so every return, exit, throw, break, continue and goto above the statement
+is refused by line, and `goto` is refused for the whole file, because PHP
+lets one enter an `if` from anywhere in the same scope and no brace-bounded
+range can see it come in.
+
+And depth is not position: `if ($enabled) $ok = reconcile();` sits at the
+step's brace depth and runs only when `$enabled` is true. The assignment
+check counted braces while the guard check, two screens down in the same
+file, already asked the whole question — first in its statement, at the
+block's depth, nothing above it that leaves — through one helper. When an
+invariant says "runs whenever the block runs", ask it with that helper at
+every site, not with a fresh depth loop that answers a smaller question.
+The very next review found the site that sentence had missed: the walk that
+carries a `$sql = "UPDATE …"` to its call recorded the hold by depth, so
+`if ($enabled) $sql = …; _upgrade_query($sql);` was credited too. "Every
+site" is a list to be enumerated from the code — every place that decides a
+statement ran — not recalled; the sweep after a finding has to grep for the
+mechanism (here, every depth counter) rather than for the symptom.
+
+The range is not the scope. Every scan above vouches for a variable by
+finding its own token between two points in a block, and PHP's scope is the
+function, not the block. Codex planted `$error_alias =& $error;` above the
+guard and `$error_alias = false;` inside the scanned interval: the interval
+never names `$error`, the guard's result was rewritten, and every check
+stayed green. A closure's `use (&$x)`, a `foreach` by reference and a
+`global` declaration paired with a function that declares the same name
+(called in the range as a bare call, which names nothing) do the same, and
+the constructs that name no variable at all — `$$name`, `extract()`,
+`eval()`, an `include` — both write inside the range where they sit and make
+the alias from anywhere in the same function, so refusing them in the range
+was half a refusal. Both tests now refuse each of these where it is made,
+file-wide, for every name a scan vouches for (the ladder's held persist
+variables included), and the unnamed constructs outright; an include outside
+every function body is the ladder's one exception, and one above the range
+is the pages', which load their configuration that way. Every shape was
+executed against a local before it was listed — which is how `$GLOBALS`
+turned out to be the one that does not reach a method's local; it is refused
+anyway, because the scan cannot read for the `global` declaration that would
+make it. When a check vouches that a variable is untouched between two
+points, ask what can touch it *without naming it there*, and look for that
+over the whole scope.
+
+A reference has two ends, and the fix for the paragraph above read one.
+`$alias =& $error;` puts the `&` before the guarded name, which is what the
+check looked for; `$error =& $alias;` binds the same two slots with the
+guarded name on the left and nothing before it but whitespace, and the
+reviewer planted that one within the hour. Executed, every spelling
+tokenizes as `=` then `&`, and the reverse alias flips every page and the
+ladder rung exactly as the forward one did. A construct that binds two
+names has to be read from both of them: when a check looks for a
+variable's part in a relation, ask which other positions the grammar lets
+that variable occupy in the same relation, and plant each.
 
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
@@ -684,6 +899,15 @@ where a check quietly fails to check what it appears to.
   more workers never hit the adoption-rename race. Inserting a deliberate
   sleep between the guard and the rename reproduced it on the first try, and
   demonstrated the fix. Scratch-only: never commit the sleep.
+- **"Not succeeded" is not "refused".** The live pass's session-less replay
+  asserted that `Success!` was absent from the body and `202_version`
+  unchanged — both true of a 500 thrown before the guard ran. Planted (a
+  cookie-less POST answering 500 and exiting), the pass stayed 16/16 green
+  with the guard never reached. A negative assertion plus an unchanged side
+  effect is satisfied by every failure there is; a refusal has to be
+  asserted positively — the status the page answers with and the sentence
+  the guard itself writes — and the sibling cases already did, one screen
+  up.
 - **A new lint rule is not done when it fires on the bug you wrote it for.**
   Run it against the whole clean tree first (a rule with false positives is
   worse than no rule — one draft produced 194), then plant a defect in *every*

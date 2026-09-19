@@ -118,10 +118,12 @@ missing): `php`, `composer`, `go`, `git`, `zip`. The script exports the current
   version='1.9.75';` for the 1.9.76 attribution tables), then run
   `202-config/upgrade.php`.
 
-  Two things to know first. `202-config/upgrade.php` takes its POST without a
-  login — that is how a fresh upgrade runs before there is a session, and
-  `upgrade_needed()` is the only thing holding it shut — so winding the version
-  back opens it to anyone who can reach the host until the upgrade finishes. Do
+  Two things to know first. `202-config/upgrade.php` needs no login — that is
+  how a fresh upgrade runs before there is a session — so while the version is
+  wound back, anyone who can reach the host can load the page and run the
+  upgrade themselves. They cannot do it from another site: the POST requires
+  the session token the page embeds, the same check `install.php` makes, and
+  `tests/live/upgrade-csrf.sh` proves it against a running instance. Still, do
   it behind a firewall or in a maintenance window. And re-running the step is
   idempotent but not inert: `SchemaReconciler` adds the columns and indexes the
   live table is missing and issues `MODIFY COLUMN` where a column is `NOT NULL`
