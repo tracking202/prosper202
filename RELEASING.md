@@ -94,8 +94,11 @@ This is the normal path. CI builds and publishes; you only tag.
 
 3. **Let CI do the rest.** The [`Release` workflow](.github/workflows/release.yml)
    fires on `v*` tags. It:
-   - provisions PHP 8.3 + Composer and Go 1.22 (matching `composer.json` and
-     `go-cli/go.mod`),
+   - runs on `ubuntu-24.04`, using the image's own PHP 8.3 and Composer
+     (checked, with the extensions the build needs, before anything else) and
+     Go 1.22 via `setup-go` (matching `composer.json` and `go-cli/go.mod`). No
+     third-party action touches the release job's PHP, and every action is
+     pinned to a commit SHA; Dependabot proposes the updates,
    - runs `build/scripts/package-release.sh` (no build logic is duplicated in
      YAML),
    - writes a job summary with the artifact name, size, and SHA256, and

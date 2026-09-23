@@ -27,17 +27,17 @@ jobs:
           --health-retries=10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
           php-version: '8.3'
           # See php-unit.yml for why the procedural `memcache` extension is disabled.
           extensions: mysqli, pdo, pdo_mysql, memcached, :memcache, mbstring, curl, zip, dom, xml, gd, zlib
 
       - name: Cache Composer downloads
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.composer/cache

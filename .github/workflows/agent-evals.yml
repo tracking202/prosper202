@@ -65,7 +65,7 @@ jobs:
           --health-retries=10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # The `runner` context is not available in a job-level env block (it
       # expands to empty there), so publish the path from a step instead.
@@ -73,20 +73,20 @@ jobs:
         run: echo "P202_SERVER_STATE_DIR=${{ runner.temp }}/p202-state" >> "$GITHUB_ENV"
 
       - name: Set up PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
           php-version: '8.3'
           # See php-unit.yml for why the procedural `memcache` extension is disabled.
           extensions: mysqli, pdo, pdo_mysql, memcached, :memcache, mbstring, curl, zip, dom, xml, gd, zlib
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.22'   # matches go-cli/go.mod
           cache-dependency-path: go-cli/go.sum
 
       - name: Cache Composer downloads
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.composer/cache
@@ -186,7 +186,7 @@ jobs:
 
       - name: Upload results and server log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: agent-eval-results
           path: |
