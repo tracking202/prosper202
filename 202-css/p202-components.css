@@ -299,6 +299,21 @@
     color: var(--bs-danger-text-emphasis);
 }
 
+/* A pill that navigates: the report groupings are links so they still switch
+   with JavaScript off. The pill shape is the affordance, so the browser's
+   underline only makes it look like prose; hover and focus move it toward the
+   accent instead, which changes nothing about its size and so cannot make the
+   row it sits in reflow. */
+a.p202-pill {
+    text-decoration: none;
+}
+
+a.p202-pill:hover,
+a.p202-pill:focus-visible {
+    background: var(--bs-primary-bg-subtle);
+    color: var(--bs-primary-text-emphasis);
+}
+
 /* ---------- Table ---------- */
 
 .p202-table-wrap {
@@ -502,11 +517,20 @@
 .p202-code {
     display: flex;
     align-items: flex-start;
+    flex-wrap: wrap;
     gap: 0.5rem;
 }
 
 .p202-code__value {
-    flex: 1 1 auto;
+    /* Two separate jobs, measured at 400px in a 300px row:
+       flex-wrap above is what lets the buttons drop to their own line at all
+       — without it a schema token had 94px of the row while Reveal/Copy/
+       Rotate took 182px, which reads as broken. The 16rem basis sets the
+       width below which that happens, so a SHORT value gets its own row too
+       rather than being squeezed beside the buttons (105px with `auto`,
+       the full row with this). A long value would wrap on content alone;
+       a short one would not. */
+    flex: 1 1 16rem;
     min-width: 0;
     margin: 0;
     padding: 0.6rem 0.75rem;
@@ -524,6 +548,13 @@
 
 .p202-code__value--masked {
     letter-spacing: 0.08em;
+    /* A mask is dots: its length says nothing, so clip it rather than let
+       word-break stack a 64-character token into a column eight lines tall
+       on a phone. Reveal removes this class, and the real value wraps under
+       the rule above as usual. */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .p202-copy.is-copied,

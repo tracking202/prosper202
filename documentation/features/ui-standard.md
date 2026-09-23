@@ -30,7 +30,7 @@ pieces Bootstrap does not have. Each is a thin class on Bootstrap primitives:
 | `.p202-tabs` | The in-page tab strip, a `.nav.nav-tabs` with the accent underline. `--compact` for dense strips. |
 | `.p202-panel` | A titled card with a count pill, an aside slot and a body. |
 | `.p202-tile` | A KPI tile: uppercase label, tabular number, sub-line; `is-good`, `is-bad`, `is-muted`. |
-| `.p202-pill` | A status pill: neutral, `--accent`, `--good`, `--warn`, `--bad`. Status only. |
+| `.p202-pill` | A status pill: neutral, `--accent`, `--good`, `--warn`, `--bad`. Status, or — as an `<a>` — a switch between readings of one table, which is how the report's groupings work without JavaScript. |
 | `.p202-table` | The report table inside `.p202-table-wrap`: uppercase headers, `.num` columns, `.p202-table__totals` row. |
 | `.p202-list` | The side-panel list: `__item`, `__name`, `__actions`, `__children`, `is-active`. |
 | `.p202-empty` | An empty state: icon, title, one sentence, one action. |
@@ -43,6 +43,16 @@ pieces Bootstrap does not have. Each is a thin class on Bootstrap primitives:
 
 `202-account/ui-kit.php` (admin only) renders every component in every state.
 Check it before inventing a class, and add the new state there when you add one.
+
+Reach for a component's parts, not just its container, and read the kit's
+markup for the shape — a `<h2>` dropped inside `.p202-empty` instead of
+`.p202-empty__title` renders at the browser's default heading size, and prose
+put inside `.p202-help` (an inline-flex icon component) loses the spaces around
+its inline children, so "Choose <em>Custom Date</em> to set these" renders as
+one word. Both shipped. `tests/Api/V3/ComponentClassIsConsumedTest.php` catches
+a class no stylesheet names; the two browser checks
+`flexContainersKeepTheirSpaces` and `currentSubMenuItemIsVisible` in
+`tests/browser/lib/checks.js` catch what only a rendering engine can see.
 
 **The principle: the app decides what it can, and says so.** A page should
 need as little thought as possible from the person using it, while an advanced
@@ -69,11 +79,17 @@ user can still reach every setting. Concretely:
    step (development postbacks arriving for an app that rejects them, an
    unregistered app id in a report, a receiver that stopped answering), the
    page offers the action in place.
-8. **Remember choices.** Filters and date presets persist per user, as the
-   report preferences already do; an open "Advanced" disclosure persists per
-   browser, in `localStorage`, because it is a convenience rather than a
-   setting. Never put anything in browser storage that another account
-   sharing the browser must not see.
+8. **Remember choices, but let the URL win.** A report's filters belong in
+   the query string, so what someone is looking at is a link they can send,
+   and nothing may silently override what that link says. A per-user default
+   is for the *first* visit only: the classic reports keep one in
+   `202_users_pref` (`user_pref_time_predefined`, and a column per
+   dimension), and a page that reads it must still yield to the URL wherever
+   the URL speaks. Analyze › Mobile Apps is URL-only so far — it defaults to
+   Last 30 Days rather than to anything stored. An open "Advanced" disclosure
+   persists per browser, in `localStorage`, because it is a convenience
+   rather than a setting. Never put anything in browser storage that another
+   account sharing the browser must not see.
 
 And the mechanics that keep pages consistent: every page opens with a page
 header and a one-line purpose. Forms put labels above controls, hints below,
@@ -133,9 +149,10 @@ it has always been; there is no second static logo beside it.
 
 The account menu is a `<details>` element, so it works with no framework
 script. `202-js/p202-chrome.js` closes it on outside clicks and Escape, scrolls
-the current tab and sub-menu item into view on narrow screens, and wires the
-theme switch on v2 pages. It is loaded in `<head>`, so everything it does runs
-from `DOMContentLoaded`.
+the current tab and sub-menu item into view whenever the strip does not fit
+(which is a question about the strip, not the window — the Analyze strip
+overflows a 1280px desktop), and wires the theme switch on v2 pages. It is
+loaded in `<head>`, so everything it does runs from `DOMContentLoaded`.
 
 A page family can be styled without touching the chrome: `template_top()` puts
 the shell, the section and the sub-section on `<body>` as
@@ -177,7 +194,10 @@ page that builds its own head, with `p202_asset_tag('<id>', $base)`.
 ## Migration order
 
 0. Tokens, component layer, chrome, v2 shell, asset manifest, UI kit (this).
-1. New pages are built on v2 from day one.
+1. New pages are built on v2 from day one — Setup › Mobile Apps and
+   Analyze › Mobile Apps are the first two, and the second is the pattern a
+   migrated report follows: a filter row in the query string, tiles, a
+   grouped table with a totals row, and a CSV of exactly what is shown.
 2. The Attribution dashboard moves under Analyze on v2.
 3. Setup pages.
 4. Reports: `display_calendar()`, `DisplayData` and the AJAX partials.

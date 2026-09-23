@@ -4201,20 +4201,18 @@ class UPGRADE
         if ($prosper202_version == '1.9.75') {
 
             // Platform-signed attribution postbacks (SKAdNetwork and
-            // AdAttributionKit): the postback store, the advertised-app
-            // registry (its rotatable schema_token column and unique index
-            // are part of the definition), and the conversion-value decoding
-            // rules. The DDL comes from
-            // AttributionPostbackTables::getDefinitions() — the same definitions the fresh
-            // installer uses — so this block cannot drift from it, and every
-            // CREATE is IF NOT EXISTS so a partial failure safely retries on
-            // the next run.
+            // AdAttributionKit): the postback store, the app registry and the
+            // conversion-value rules. The DDL is the installer's own
+            // definitions, so this block cannot drift from them.
             //
-            // _upgrade_attribution_tables() does not only create: it also
-            // reconciles a table that already exists with its definition,
-            // because an install can arrive here holding an older shape of
-            // these tables (see the 1.9.76 block below), and against an
-            // existing table a CREATE IF NOT EXISTS changes nothing at all.
+            // It reconciles as well as creates: CREATE IF NOT EXISTS is a
+            // no-op against a table already present in an older shape. Folded
+            // in here rather than gated on 1.9.76: nothing but a branch
+            // deployment can be stored at 1.9.76 before it ships, and a block
+            // gated on the code version is unreachable from upgrade.php
+            // anyway (upgrade_needed() is `stored != code`). RELEASING.md has
+            // the branch-deployment repair; AttributionUpgradeStepTest
+            // refuses the block.
             $attribution_ok = _upgrade_attribution_tables(
                 \Prosper202\Database\Tables\AttributionPostbackTables::getDefinitions()
             );
@@ -4230,55 +4228,6 @@ class UPGRADE
                 }
             } else {
                 error_log('Prosper202 upgrade: SKAN schema incomplete; leaving version at 1.9.75 so the next run retries.');
-            }
-        }
-
-        if ($prosper202_version == '1.9.76') {
-
-            // Converge an install that is ALREADY at 1.9.76 but whose
-            // attribution tables are an older shape of 1.9.76.
-            //
-            // This exists because the 1.9.76 attribution tables were reshaped
-            // in place after version.php already said 1.9.76 and before the
-            // release: 202_attribution_postbacks gained protocol,
-            // conversion_type, ad_interaction_type, marketplace_id,
-            // signature_state and key_id (and version became nullable), and
-            // 202_attribution_apps gained accept_development_postbacks. One
-            // version number therefore covers more than one table shape, and
-            // an install that took an earlier one reads 1.9.76, never enters
-            // the 1.9.75 block, and would keep answering device postbacks
-            // with "Unknown column 'protocol'" — a 500 the device retries
-            // nine times and then drops the only copy Apple sends.
-            //
-            // How this block is reached, because one of the two ways in is
-            // NOT the obvious one: 202-config/upgrade.php can never enter it.
-            // upgrade_needed() compares the stored version with the code's and
-            // returns false when they match, and upgrade.php then redirects
-            // and _die()s "Already Upgraded" before any step runs. The two
-            // live entries are:
-            //   1. the 1-click upgrade pages, 202-account/auto-upgrade.php and
-            //      auto-upgrade-premium.php, which call
-            //      UPGRADE::upgrade_databases() after unpacking a download
-            //      with no upgrade_needed() gate in front of it (and with this
-            //      release's class still in memory, since the include_once of
-            //      an already-loaded file is a no-op);
-            //   2. the documented repair for a branch deployment: set
-            //      202_version back to 1.9.75 and re-run the upgrade page,
-            //      which enters the 1.9.75 block above and falls into this one
-            //      with $prosper202_version already advanced.
-            // Both were executed against a scratch database before this
-            // comment was written; neither is inferred from reading.
-            //
-            // Scope, deliberately narrow: only the three attribution tables,
-            // additive, and idempotent — an install whose tables already match
-            // runs no statements at all. It persists no version because
-            // 1.9.76 is the current one; when 1.9.77 arrives this block should
-            // move into that step's gate and stop running unconditionally.
-            if (!_upgrade_attribution_tables(
-                \Prosper202\Database\Tables\AttributionPostbackTables::getDefinitions()
-            )) {
-                error_log('Prosper202 upgrade: could not converge the 1.9.76 attribution tables; '
-                    . 'the attribution API and the postback receiver may still fail on this install.');
             }
         }
 
