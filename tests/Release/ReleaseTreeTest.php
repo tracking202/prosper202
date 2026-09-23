@@ -235,6 +235,30 @@ final class ReleaseTreeTest extends TestCase
         ], $refs);
     }
 
+    public function testDeclarationsInFindsEveryKindAndSkipsClassConstants(): void
+    {
+        $code = <<<'PHP'
+            <?php
+            namespace A\B;
+            final class C {}
+            interface I {}
+            trait T {}
+            enum E: string {}
+            readonly class R {}
+            $x = C::class;
+            $y = new class {};
+            PHP;
+
+        self::assertSame(
+            ['A\B\C', 'A\B\I', 'A\B\T', 'A\B\E', 'A\B\R'],
+            ReleaseTree::declarationsIn($code)
+        );
+        self::assertSame(
+            ['G', 'N\In'],
+            ReleaseTree::declarationsIn("<?php\nclass G {}\nnamespace N { class In {} }\n")
+        );
+    }
+
     public function testTraitUseInsideABracketedNamespaceIsNotAnImport(): void
     {
         $code = <<<'PHP'
@@ -268,6 +292,7 @@ final class ReleaseTreeTest extends TestCase
                 . "}\n"
                 . "\$loader = new \\Composer\\Autoload\\ClassLoader();\n"
                 . "\$loader->addPsr4('App\\\\', dirname(__DIR__) . '/src/');\n"
+                . "\$loader->addPsr4('Acme\\\\', __DIR__ . '/acme/src/');\n"
                 . "\$loader->register();\n"
                 . "return \$loader;\n",
             'src/Present.php' => "<?php\nnamespace App;\nfinal class Present {}\n",
@@ -279,14 +304,19 @@ final class ReleaseTreeTest extends TestCase
                 . "use Gone\\Package\\Thing;\n"
                 . "new \\Tolerated\\Legacy();\n",
             'bin/tool' => "#!/usr/bin/env php\n<?php\n\\Cli\\Absent::run();\n",
-            // PSR-4 expects src/Sub/Thing.php. On a case-insensitive disk
-            // (macOS) is_file() finds src/sub/Thing.php anyway; Linux does
-            // not, so the verifier must not either.
-            'src/sub/Thing.php' => "<?php\nnamespace App\\Sub;\nfinal class Thing {}\n",
-            'case.php' => "<?php\nuse App\\Sub\\Thing;\n",
+            // A vendor class only the autoloader can answer for. PSR-4 maps
+            // Acme\\ to vendor/acme/src/ but the file is in Src/: on a
+            // case-insensitive disk (macOS) is_file() finds it anyway; Linux
+            // does not, so the verifier must not either.
+            'vendor/acme/Src/Widget.php' => "<?php\nnamespace Acme;\nfinal class Widget {}\n",
+            'case.php' => "<?php\nuse Acme\\Widget;\n",
+            // Declared in the shipped tree but in no PSR-4 directory, like the
+            // page controllers beside their pages: present, so resolved.
+            'pages/controller.php' => "<?php\nnamespace App\\Pages;\nfinal class Controller {}\n",
+            'page.php' => "<?php\nrequire_once __DIR__ . '/pages/controller.php';\nnew \\App\\Pages\\Controller();\n",
         ]);
         $tree = new ReleaseTree($this->manifest(
-            ship: ['index.php', 'src', 'vendor', 'bin', 'case.php'],
+            ship: ['index.php', 'src', 'vendor', 'bin', 'case.php', 'pages', 'page.php'],
             knownUnresolved: ['Tolerated\Legacy' => 'test', 'Long\Fixed' => 'test'],
         ));
 
@@ -295,14 +325,15 @@ final class ReleaseTreeTest extends TestCase
         self::assertSame([], preg_grep('/did not finish/', $problems), implode("\n", $problems));
         $unresolved = [];
         foreach ($problems as $problem) {
-            if (preg_match("/^'([^']+)' \\(referenced at ([^)]+)\\) does not resolve/", $problem, $m) === 1) {
+            $pattern = "/^'([^']+)' \\(referenced at ([^)]+)\\) is not declared in the shipped code/";
+            if (preg_match($pattern, $problem, $m) === 1) {
                 $unresolved[$m[1]] = $m[2];
             }
         }
         ksort($unresolved);
         self::assertSame([
+            'Acme\Widget' => 'case.php:2',
             'App\Missing' => 'index.php:4',
-            'App\Sub\Thing' => 'case.php:2',
             'Cli\Absent' => 'bin/tool:3',
             'Gone\Package\Thing' => 'index.php:5',
         ], $unresolved);

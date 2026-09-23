@@ -48,8 +48,10 @@ and the messaging mock server.
 - **`verify`** checks the pruned tree before it is zipped:
   - nothing excluded remains;
   - `vendor/` is exactly the locked runtime set, with no dev packages;
-  - every namespaced class the shipped PHP imports or fully qualifies resolves
-    through the shipped autoloader;
+  - every namespaced class the shipped PHP imports or fully qualifies is
+    declared in the shipped code or found by the shipped autoloader
+    (case-exactly, as on Linux), so a missing vendor package or a dev-only
+    class fails the build;
   - every tracked file that ships is in the tree at exactly its tracked path
     (see "Building locally" for why case matters);
   - all six Go binaries are present;

@@ -13,8 +13,9 @@
  *   php build/scripts/release-tree.php verify <stage>
  *       Check a pruned tree is what a no-terminal host needs: nothing
  *       excluded, vendor/ exactly the locked runtime set, every class the
- *       shipped PHP names resolvable through the shipped autoloader, the Go
- *       binaries present, and no group- or world-writable file.
+ *       shipped PHP names declared in it or found by the shipped autoloader,
+ *       every shipped tracked file at its exact path, the Go binaries
+ *       present, and no group- or world-writable file.
  *
  * Each command prints its problems and exits 1 when there are any.
  * build/scripts/package-release.sh runs prune and verify on every build.

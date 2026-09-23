@@ -208,9 +208,9 @@ final class ReleaseTree
             $known = $this->manifest['known_unresolved'];
             foreach ($result as $name => $site) {
                 if (!array_key_exists($name, $known)) {
-                    $problems[] = "'{$name}' (referenced at {$site}) does not resolve through the shipped"
-                        . ' vendor/autoload.php; a runtime dependency is missing from composer.json "require",'
-                        . ' or shipped code depends on a dev-only class';
+                    $problems[] = "'{$name}' (referenced at {$site}) is not declared in the shipped code and"
+                        . ' does not resolve through the shipped vendor/autoload.php; a runtime dependency is'
+                        . ' missing from composer.json "require", or shipped code depends on a dev-only class';
                 }
             }
             foreach (array_keys($known) as $name) {
@@ -434,7 +434,8 @@ final class ReleaseTree
 
     /**
      * Runs in the child. Every namespaced name the shipped PHP imports or
-     * fully qualifies must resolve through the shipped autoloader. Unqualified
+     * fully qualifies must be declared in the shipped code or found by the
+     * shipped autoloader. Unqualified
      * and global names are left alone: every Composer package here is
      * namespaced, and global symbols come from the app's own includes.
      *
@@ -451,12 +452,33 @@ final class ReleaseTree
         if (!$loader instanceof \Composer\Autoload\ClassLoader) {
             throw new \RuntimeException('vendor/autoload.php did not return a Composer ClassLoader');
         }
-        $classResolves = static function (string $name) use ($loader): bool {
+        // Read every shipped file once: its references, and the classes it
+        // declares. A class declared in the shipped tree is present whether or
+        // not PSR-4 can find it; page controllers live beside their pages in
+        // lowercase URL directories (tracking202/setup/) and are loaded by an
+        // explicit require_once, which no autoloader lookup can see.
+        $declared = [];
+        $references = [];
+        foreach (self::shippedPhpFiles($root) as $relative) {
+            $code = file_get_contents("{$root}/{$relative}");
+            if ($code === false) {
+                throw new \RuntimeException("cannot read {$relative}");
+            }
+            foreach (self::declarationsIn($code) as $name) {
+                $declared[strtolower($name)] = true;
+            }
+            $references[$relative] = self::referencesIn($code);
+        }
+
+        $classResolves = static function (string $name) use ($loader, $declared): bool {
             if (
                 class_exists($name, false) || interface_exists($name, false) || trait_exists($name, false)
                 || enum_exists($name, false) || defined($name)
             ) {
                 return true; // built in, or defined by autoload.php itself
+            }
+            if (isset($declared[strtolower($name)])) {
+                return true; // class names are case-insensitive in PHP
             }
             $file = $loader->findFile($name);
 
@@ -464,12 +486,8 @@ final class ReleaseTree
         };
 
         $unresolved = [];
-        foreach (self::shippedPhpFiles($root) as $relative) {
-            $code = file_get_contents("{$root}/{$relative}");
-            if ($code === false) {
-                throw new \RuntimeException("cannot read {$relative}");
-            }
-            foreach (self::referencesIn($code) as [$name, $kind, $line]) {
+        foreach ($references as $relative => $refs) {
+            foreach ($refs as [$name, $kind, $line]) {
                 if (isset($unresolved[$name]) || !str_contains($name, '\\')) {
                     continue;
                 }
@@ -642,6 +660,59 @@ final class ReleaseTree
         }
 
         return $refs;
+    }
+
+    /**
+     * Fully qualified names of the classes, interfaces, traits and enums a
+     * file declares. Skips `Foo::class` and anonymous `new class`.
+     *
+     * @return list<string>
+     */
+    public static function declarationsIn(string $code): array
+    {
+        $tokens = token_get_all($code);
+        $count = count($tokens);
+        $namespace = '';
+        $names = [];
+        $prev = null; // last significant token
+        for ($i = 0; $i < $count; $i++) {
+            $t = $tokens[$i];
+            if (is_array($t) && in_array($t[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+                continue;
+            }
+            if (is_array($t) && $t[0] === T_NAMESPACE) {
+                $namespace = '';
+                for ($j = $i + 1; $j < $count; $j++) {
+                    $n = $tokens[$j];
+                    if ($n === ';' || $n === '{') {
+                        break;
+                    }
+                    if (is_array($n) && in_array($n[0], [T_STRING, T_NAME_QUALIFIED], true)) {
+                        $namespace = $n[1];
+                    }
+                }
+                $i = $j;
+                $prev = null;
+                continue;
+            }
+            $isDeclaration = is_array($t) && in_array($t[0], [T_CLASS, T_INTERFACE, T_TRAIT, T_ENUM], true)
+                && !(is_array($prev) && in_array($prev[0], [T_DOUBLE_COLON, T_NEW], true));
+            if ($isDeclaration) {
+                for ($j = $i + 1; $j < $count; $j++) {
+                    $n = $tokens[$j];
+                    if (is_array($n) && $n[0] === T_WHITESPACE) {
+                        continue;
+                    }
+                    if (is_array($n) && $n[0] === T_STRING) {
+                        $names[] = ltrim($namespace . '\\' . $n[1], '\\');
+                    }
+                    break;
+                }
+            }
+            $prev = $t;
+        }
+
+        return $names;
     }
 
     /**

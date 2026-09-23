@@ -142,19 +142,12 @@ return [
         'go-cli/dist/windows-arm64/p202.exe',
     ],
 
-    // Names the shipped PHP references that the shipped autoloader cannot
-    // resolve (checked case-sensitively, as on the Linux hosts that run the
-    // zip), each with why that does not break a user: a dead reference, or a
-    // class its only caller loads with an explicit require. This list exists
-    // to stop growing; anything new here means vendor/ is missing something.
+    // Names the shipped PHP references that neither the shipped code declares
+    // nor the shipped autoloader finds (case-sensitively, as on the Linux hosts
+    // that run the zip), each with why that does not break a user. This list
+    // exists to stop growing; anything new here means vendor/ is missing
+    // something.
     'known_unresolved' => [
-        // PSR-4 would look in tracking202/Setup/; the file is in lowercase
-        // setup/, the page's URL directory. Its only caller,
-        // tracking202/setup/attribution_models.php, require_once's it from the
-        // same directory, and the file boots connect.php at file scope, so it
-        // must not be autoloaded anyway.
-        'Tracking202\Setup\AttributionController' => 'loaded by explicit require_once in attribution_models.php;'
-            . ' not autoloadable on case-sensitive filesystems',
         // class-indexes.php is reached only through functions-indexes.php,
         // which connect.php includes after functions-tracking202.php has
         // declared INDEXES, so the file returns before its class is declared.
