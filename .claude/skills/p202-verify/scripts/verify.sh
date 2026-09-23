@@ -726,13 +726,19 @@ run_go() {
             deferred_parse="$gofmt_err"
         fi
     fi
+    local tc_before="${GOTOOLCHAIN:-}" switched=""
     if ! use_ci_go_toolchain; then
         if [ -n "$deferred_parse" ]; then
             COULD_NOT_RUN_REASON="the local gofmt (older than CI's Go) could not parse a file, and CI's toolchain could not be fetched to ask its gofmt; a syntax error and a version gap look the same from here"
         fi
         return $TIER_COULD_NOT_RUN
     fi
-    if [ -n "$deferred_parse" ] || [ -z "$gofmt_ran" ]; then
+    [ "${GOTOOLCHAIN:-}" = "$tc_before" ] || switched=1
+    # After a switch CI's gofmt runs even when the local one was clean: the
+    # local gofmt is a different version, and a clean answer from it is not
+    # CI's answer (a listed file stays FAIL above, since no version accepts
+    # a file it would reformat without being asked).
+    if [ -n "$deferred_parse" ] || [ -z "$gofmt_ran" ] || [ -n "$switched" ]; then
         # CI's gofmt gets the final word on the file the local one rejected,
         # and is the only formatter there is when the installed toolchain
         # ships none: the block above then ran nothing, which an earlier
@@ -740,6 +746,7 @@ run_go() {
         # resolved again because GOTOOLCHAIN, if set, points it at the
         # fetched toolchain. If no switch happened, this is the same missing
         # binary, nothing runs here either, and the tier ends as SKIP below.
+        local gofmt_was_local="$gofmt_ran"
         gofmt_bin="$("$GO_BIN" env GOROOT 2>/dev/null)/bin/gofmt"
         if [ -x "$gofmt_bin" ]; then
             gofmt_ran=1
@@ -750,6 +757,8 @@ run_go() {
                 printf 'gofmt (CI toolchain %s):\n%s\n' "${GOTOOLCHAIN:-}" "$unformatted"
                 if [ -n "$deferred_parse" ]; then
                     FAIL_NOTE="gofmt under CI's ${GOTOOLCHAIN:-toolchain} rejects a file the local gofmt also rejected; CI's Go workflow fails on this before vet or test"
+                elif [ -n "$gofmt_was_local" ]; then
+                    FAIL_NOTE="gofmt under CI's ${GOTOOLCHAIN:-toolchain} rejects a file the local gofmt accepted; CI's Go workflow fails on this before vet or test"
                 else
                     FAIL_NOTE="gofmt under CI's ${GOTOOLCHAIN:-toolchain} rejects a file (the local toolchain ships no gofmt to ask); CI's Go workflow fails on this before vet or test"
                 fi
@@ -798,7 +807,11 @@ run_go() {
     # $HOME/.cache, so a bare HOME swap made this step refetch the toolchain
     # into a temp tree it never removed, and let a proxy failure here read
     # as a code FAIL. The caches are resolved first and passed through.
-    local tmp_home gopath gomodcache gocache
+    local tmp_home gopath gomodcache gocache goenv_file
+    # GOENV too: its default also lives under HOME, and it is where
+    # `go env -w` keeps GOPROXY, GOFLAGS and GOPRIVATE, so dropping it would
+    # run this step under different Go settings than vet and test.
+    goenv_file=$("$GO_BIN" env GOENV 2>/dev/null)
     gopath=$("$GO_BIN" env GOPATH 2>/dev/null)
     gomodcache=$("$GO_BIN" env GOMODCACHE 2>/dev/null)
     gocache=$("$GO_BIN" env GOCACHE 2>/dev/null)
@@ -810,7 +823,7 @@ run_go() {
         return $TIER_COULD_NOT_RUN
     fi
     printf 'empty-HOME run:\n'
-    out=$( cd go-cli && HOME="$tmp_home" GOPATH="$gopath" GOMODCACHE="$gomodcache" GOCACHE="$gocache" PATH="$godir:$PATH" "$GO_BIN" test ./cmd/... 2>&1 )
+    out=$( cd go-cli && HOME="$tmp_home" GOENV="$goenv_file" GOPATH="$gopath" GOMODCACHE="$gomodcache" GOCACHE="$gocache" PATH="$godir:$PATH" "$GO_BIN" test ./cmd/... 2>&1 )
     rc=$?
     rm -rf "$tmp_home"
     printf '%s\n' "$out"

@@ -225,14 +225,15 @@ cd go-cli
 go vet ./...
 go test ./...              # forecast acceptance suites take ~40s; -short skips them
 golangci-lint run ./...    # .golangci.yml scopes linters to dropped errors, not style
-gopath=$(go env GOPATH); gomodcache=$(go env GOMODCACHE); gocache=$(go env GOCACHE); rc=1; if tmp=$(mktemp -d); then if HOME="$tmp" GOPATH="$gopath" GOMODCACHE="$gomodcache" GOCACHE="$gocache" go test ./cmd/...; then rc=0; else rc=$?; fi; rm -rf "$tmp"; fi; [ "$rc" -eq 0 ]
+goenv=$(go env GOENV); gopath=$(go env GOPATH); gomodcache=$(go env GOMODCACHE); gocache=$(go env GOCACHE); rc=1; if tmp=$(mktemp -d); then if HOME="$tmp" GOENV="$goenv" GOPATH="$gopath" GOMODCACHE="$gomodcache" GOCACHE="$gocache" go test ./cmd/...; then rc=0; else rc=$?; fi; rm -rf "$tmp"; fi; [ "$rc" -eq 0 ]
 ```
 
 The empty-`HOME` run matters for anything touching a command that builds a
 client. Swap only `HOME`: Go's `GOPATH`, module cache and build cache default
 to `$HOME/go` and `$HOME/.cache`, so a bare `HOME=$(mktemp -d)` moves them too,
 refetches any toolchain selected through `GOTOOLCHAIN` into the temp tree, and
-turns a proxy hiccup there into a failure. The command above resolves the three
+turns a proxy hiccup there into a failure. The same goes for `GOENV`, where `go env -w`
+keeps `GOPROXY` and `GOFLAGS`. The command above resolves all four
 before the `HOME` assignment (bash applies a command's leading assignments
 left to right, so a `$(go env ...)` written after `HOME=` already sees the
 temp home), passes them through, removes the temp home afterwards, and ends with the test's own status rather than `rm`'s: a trailing cleanup command is the last command, so without saving `$?` first a failing run exits 0. The test runs as an `if` condition so that under `set -e` a failing run still reaches the cleanup: as the last command of an `&&` list it would have exited the shell first, leaving the temp home behind and `rc` unset. The `go` tier does the same. A flag check placed after `api.NewFromConfig()` passes locally only
