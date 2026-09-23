@@ -15,9 +15,11 @@ docker-compose.staging.yml
 docker-compose.*.yml
 
 # Dependencies
+# composer.lock is tracked on purpose: the release zip bundles vendor/ for
+# hosts that cannot run Composer, and without a lock every release build
+# resolved "latest" instead of the set CI tested.
 /node_modules/
 /vendor/
-composer.lock
 
 # Build and cache files
 *.cache
