@@ -66,6 +66,7 @@ on first boot, so the setup wizard opens with the database step already done.
 | `test-install-config.php` | Pre-baked `202-config.php` mounted into the **test-install** stack (`docker-compose.test-install.yml`). Points at the `db-test` service. Credentials (`root` / `root_password`) are throwaway container defaults reachable only inside the compose network — not secrets. Committed on purpose so the test stack is one command. |
 | `staging-config.php` | Same idea for the **staging** stack (`docker-compose.staging.yml`), pointing at the `db2` service. *Gitignored* — `cp build/staging-config.sample.php build/staging-config.php` before bringing the staging stack up. |
 | `staging-config.sample.php` | Committed template for the above; defaults already match the staging compose stack, so the copy works as-is. |
+| `coolify-service-template/` | Ready-to-submit kit for listing Prosper202 in Coolify's one-click service catalog: the image-based service template, logo SVG, and submission checklist (see its README). Derived from `../docker-compose.coolify.yaml` — keep the two in sync. |
 | `apache/my-tracking-proxy.conf` | Example **host-side** Apache reverse-proxy vhost (port 80/443 → the app container) so you can hit a real hostname like `my.tracking202.com` with TLS during local dev. Not part of any compose file; drop it into a host Apache and adjust the `ProxyPass` target port to whatever you bound the app to. |
 
 ---
