@@ -21,10 +21,11 @@
 #     nothing, applying replaces the outcome one for one (funnel count 1) and
 #     re-values the click; staged, it is a proposal until applied;
 #   - SKAN encodings point at goals: the old shape is refused by name, an
-#     encoding names a plain goal of its app or the account, the schema
-#     document encodes by the goal's event and never shows revenue, the
-#     report decodes to the goal's name at the override, and the goal an
-#     encoding names can neither stop being plain nor be archived.
+#     encoding names a goal of its app or the account that a device can
+#     reach (PR 8: the device evaluates it; a click window is refused), the
+#     schema document carries the goals and never shows revenue, the report
+#     decodes to the goal's name at the override, and the goal an encoding
+#     names can neither become unreachable nor be archived.
 #
 # Events reach the engine through tests/live/goals-ingest.php — the engine's
 # own entry point — because the HTTP paths that feed it (pixels with event=,
@@ -102,7 +103,7 @@ DELETE FROM 202_clicks_tracking WHERE click_id IN ($CLICKS);
 DELETE FROM 202_aff_campaigns WHERE aff_campaign_id_public IN ($ACIP_A, $ACIP_R);
 TRUNCATE 202_goals; TRUNCATE 202_goal_versions; TRUNCATE 202_campaign_goals; TRUNCATE 202_goal_subjects;
 TRUNCATE 202_goal_events; TRUNCATE 202_goal_progress; TRUNCATE 202_goal_outcomes;
-TRUNCATE 202_app_registrations; TRUNCATE 202_app_postbacks; TRUNCATE 202_app_skan_encodings;
+TRUNCATE 202_app_registrations; TRUNCATE 202_app_postbacks; TRUNCATE 202_app_skan_encodings; TRUNCATE 202_app_skan_encoding_history;
 SQL
 }
 cleanup
@@ -342,12 +343,16 @@ eq "$(api POST /apps/skan-encodings "{\"registration_id\":$RID,\"fine_value\":3,
    "an encoding names the app's goal, with a tiered revenue"
 ENC=$(field "d['data']['encoding_id']")
 eq "$(api POST /apps/skan-encodings "{\"registration_id\":$RID,\"coarse_value\":\"high\",\"goal_id\":$G_ACCT}")" 201 "or an account goal"
-eq "$(api POST /apps/skan-encodings "{\"registration_id\":$RID,\"fine_value\":4,\"goal_id\":$G_FANCY}")" 422 "not a goal that is not a plain event goal"
+eq "$(api POST /apps/skan-encodings "{\"registration_id\":$RID,\"fine_value\":4,\"goal_id\":$G_FANCY}")" 201 "a goal with conditions too: the device evaluates it (PR 8)"
+api POST /goals "{\"scope\":\"registration\",\"scope_id\":$RID,\"definition\":{\"name\":\"Quick\",\"trigger\":{\"event\":\"buy\"},\"within\":{\"days\":1,\"from\":\"click\"}}}" > /dev/null
+G_CLICK=$(field "d['data']['goal_id']")
+eq "$(api POST /apps/skan-encodings "{\"registration_id\":$RID,\"fine_value\":6,\"goal_id\":$G_CLICK}")" 422 "but not one that counts from the click, which a device never knows"
+has "$OUT/body" "from the click" "saying why"
 eq "$(api POST /apps/skan-encodings "{\"registration_id\":0,\"fine_value\":4,\"goal_id\":$G_APP}")" 422 "an account-wide encoding names an account goal only"
 eq "$(api POST /apps/skan-encodings "{\"registration_id\":$RID,\"fine_value\":4,\"goal_id\":\"$G_APP.0\"}")" 422 "a goal id is read raw, not cast"
 eq "$(curl -s -o "$OUT/body" -w '%{http_code}' -H "X-P202-App-Token: $TOKEN" "$BASE/api/v3/apps/schema")" 200 "the app's schema document"
-eq "$(field "d['data']['events']")" '{"purchase": {"fine_value": 3, "coarse_value": null}, "whale": {"fine_value": null, "coarse_value": "high"}}' \
-   "encodes by each goal's event"
+eq "$(field "sorted([e['goal_id'], e['fine_value'], e['coarse_value']] for e in d['data']['encodings'])")" \
+   "$(python3 -c "import json; print(json.dumps(sorted([[$G_APP, 3, None], [$G_FANCY, 4, None], [$G_ACCT, None, 'high']])))")" "carries each encoded goal's values"
 hasnt "$OUT/body" "4.99" "and never shows revenue"
 NOWS=$(date +%s)
 Q "INSERT INTO 202_app_postbacks (user_id, registration_id, received_at, protocol, version, ad_network_id, transaction_id, app_id, conversion_value,
@@ -355,8 +360,10 @@ Q "INSERT INTO 202_app_postbacks (user_id, registration_id, received_at, protoco
    VALUES ($OWNER, $RID, $NOWS, 'skadnetwork', '4.0', 'goals.skadnetwork', 'goals-t1', 990099001, 3, 0, 1, 'x', 'valid', 1, SHA1('goals-t1'), '{}', $NOWS)"
 eq "$(api GET "/apps/report?group_by=registration")" 200 "the report"
 eq "$(field "d['data']['groups'][0]['events']")" '{"Purchase": {"count": 1, "revenue": 4.99}}' "decodes the value to the goal's name, at the override"
-eq "$(api PUT "/goals/$G_APP" '{"definition":{"name":"Purchase","trigger":{"event":"purchase"},"threshold":{"count":2}}}')" 422 \
-   "the encoded goal cannot stop being a plain event goal"
+eq "$(api PUT "/goals/$G_APP" '{"definition":{"name":"Purchase","trigger":{"event":"purchase"},"threshold":{"count":2}}}')" 200 \
+   "the encoded goal can become any goal a device reaches"
+eq "$(api PUT "/goals/$G_APP" '{"definition":{"name":"Purchase","trigger":{"event":"purchase"},"within":{"days":2,"from":"click"}}}')" 422 \
+   "but not one counting from the click"
 has "$OUT/body" "SKAN encodings $ENC" "naming the encoding"
 eq "$(api DELETE "/goals/$G_APP")" 409 "nor be archived under it"
 eq "$(api DELETE "/apps/$RID")" 204 "deleting the registration"

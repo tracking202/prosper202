@@ -214,12 +214,18 @@ func TestGoalRefusalsNameTheCommandThatHasTheRightValue(t *testing.T) {
 }
 
 func TestAppEncodingNamesTheGoalCommandsForARefusedGoal(t *testing.T) {
-	goalServer(t, 422, `{"error":true,"message":"Invalid goal_id","status":422,"field_errors":{"goal_id":"Goal 4 is not a plain event goal"}}`)
+	goalServer(t, 422, `{"error":true,"message":"Invalid goal_id","status":422,"field_errors":{"goal_id":"Goal 4 counts from the click (within.from = \"click\")."}}`)
 	_, _, err := executeCommand("app", "encoding", "create", "--registration-id", "3", "--fine-value", "1", "--goal-id", "4")
 	if err == nil {
 		t.Fatal("expected the 422")
 	}
 	if hint := hintFor(err); !strings.Contains(hint, "p202 goal list --registration-id") || !strings.Contains(hint, "p202 goal create") {
 		t.Errorf("hint = %q, want the goal commands", hint)
+	}
+	if hint := hintFor(err); !strings.Contains(hint, `"from": "click"`) || strings.Contains(hint, "plain event") {
+		t.Errorf("hint = %q, want the device-reachability rule, not the retired plain-goal one", hint)
+	}
+	if code := exitCodeForError(err); code != ExitValidation {
+		t.Errorf("exit code = %d, want %d", code, ExitValidation)
 	}
 }

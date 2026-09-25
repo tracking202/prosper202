@@ -583,7 +583,7 @@ func hintRegistrationID(err error) error {
 			return withHint(err, "--registration-id takes an iOS registration's id from `p202 app list --platform ios`, or 0 for the account-wide encodings.")
 		}
 		if _, ok := apiErr.FieldErrors["goal_id"]; ok {
-			return withHint(err, "--goal-id takes a plain event goal of that app (`p202 goal list --registration-id <id>`) or of the account (`p202 goal list --account`); create one with `p202 goal create --registration-id <id> --name <event> --event <event>`.")
+			return withHint(err, "--goal-id takes a live goal of that app (`p202 goal list --registration-id <id>`) or of the account (`p202 goal list --account`) that a device can reach: the iOS SDK evaluates it on the device, where there is no click, so neither the goal nor any goal it waits for may count `within` \"from\": \"click\". Create one with `p202 goal create --registration-id <id> --name <event> --event <event>`.")
 		}
 	}
 	return err
@@ -734,7 +734,7 @@ func init() {
 		cmd.Flags().String("registration-id", "", "iOS registration the encoding applies to (from `p202 app list`; 0 = account-wide)")
 		cmd.Flags().String("fine-value", "", "Fine conversion value 0-63")
 		cmd.Flags().String("coarse-value", "", "Coarse conversion value: low, medium, high")
-		cmd.Flags().String("goal-id", "", "The goal the value means (`p202 goal list --registration-id <id>`; a plain event goal)")
+		cmd.Flags().String("goal-id", "", "The goal the value means (`p202 goal list --registration-id <id>`; evaluated on the device, so no click window)")
 		cmd.Flags().String("revenue-override", "", "Revenue per decoded postback, instead of the goal's own value (tiered decoding)")
 	}
 	appEncodingUpdateCmd.Flags().Bool("clear-revenue-override", false, "Go back to the goal's own value")

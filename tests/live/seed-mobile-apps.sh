@@ -28,7 +28,7 @@ NOW=$(date -u +%s)
 DAY=86400
 TODAY=$(( NOW / DAY * DAY ))
 
-mysql_q "$DB" -e "TRUNCATE 202_app_postbacks; TRUNCATE 202_app_registrations; TRUNCATE 202_app_skan_encodings; TRUNCATE 202_goals; TRUNCATE 202_goal_versions;"
+mysql_q "$DB" -e "TRUNCATE 202_app_postbacks; TRUNCATE 202_app_registrations; TRUNCATE 202_app_skan_encodings; TRUNCATE 202_app_skan_encoding_history; TRUNCATE 202_goals; TRUNCATE 202_goal_versions;"
 
 mysql_q "$DB" <<SQL
 INSERT INTO 202_app_registrations (user_id, platform, app_key, app_name, notes, accept_test_signals, app_token, created_at, updated_at) VALUES
@@ -47,8 +47,8 @@ INSERT INTO 202_goals (user_id, scope, scope_id, name, current_version, archived
 INSERT INTO 202_goal_versions (goal_id, version, definition, effective_at, created_at)
  SELECT goal_id, 1, CONCAT('{"name":"', name, '","trigger":{"event":"', name, '","where":[]},"threshold":{"count":1},"after":[],"within":null,"repeat":{"mode":"once"},"value":{"type":"none"}}'), $NOW, $NOW
    FROM 202_goals;
-INSERT INTO 202_app_skan_encodings (user_id, registration_id, fine_value, coarse_value, goal_id, revenue_override, created_at, updated_at)
- SELECT 1, r.registration_id, v.fine_value, v.coarse_value, g.goal_id, v.revenue, $NOW, $NOW
+INSERT INTO 202_app_skan_encodings (user_id, registration_id, fine_value, coarse_value, goal_id, revenue_override, effective_at, created_at, updated_at)
+ SELECT 1, r.registration_id, v.fine_value, v.coarse_value, g.goal_id, v.revenue, $NOW, $NOW, $NOW
    FROM (SELECT '990077001' AS app_key, 3 AS fine_value, NULL AS coarse_value, 'purchase' AS event_name, 4.99000 AS revenue
          UNION ALL SELECT '990077001', 5, NULL, 'subscribe', 9.99000
          UNION ALL SELECT '990077002', NULL, 'high', 'big_spender', 25.00000) v

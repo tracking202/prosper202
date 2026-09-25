@@ -409,9 +409,10 @@ final class GoalDefinition
 
     /**
      * A plain event goal: reached by the first occurrence of one named
-     * event, with nothing else to evaluate. Until the on-device evaluator
-     * ships (plan §5.5), an SKAN encoding may only name such a goal: the iOS
-     * SDK encodes by event name.
+     * event, with nothing else to evaluate. What Setup › Mobile Apps makes
+     * from an event name (PlainGoals). An SKAN encoding may name any goal a
+     * device can reach (SkanEncodingRules), since the iOS SDK evaluates
+     * goals on the device.
      */
     public function isPlainEvent(): bool
     {

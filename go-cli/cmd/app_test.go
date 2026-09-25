@@ -336,7 +336,9 @@ func TestAppSchemaFetchesTheDeviceFacingDocumentByHeaderToken(t *testing.T) {
 			schemaHeaderToken = r.Header.Get("X-P202-App-Token")
 			schemaRawQuery = r.URL.RawQuery
 			w.WriteHeader(200)
-			w.Write([]byte(`{"data":{"app_id":525463029,"schema_version":"v1","events":{"purchase":{"fine_value":63,"coarse_value":"high"}}}}`))
+			w.Write([]byte(`{"data":{"platform":"ios","app_key":"525463029","app_id":525463029,"schema_version":"v1",` +
+				`"goals":[{"goal_id":4,"starts_at":0,"ends_at":null,"versions":[{"version":1,"effective_at":1,"definition":{"name":"Purchase","trigger":{"event":"purchase","where":[]}}}]}],` +
+				`"encodings":[{"goal_id":4,"fine_value":63,"coarse_value":"high"}]}}`))
 		default:
 			t.Errorf("unexpected request %s", r.URL.Path)
 			w.WriteHeader(404)
@@ -360,7 +362,7 @@ func TestAppSchemaFetchesTheDeviceFacingDocumentByHeaderToken(t *testing.T) {
 	if strings.Contains(schemaRawQuery, "token") {
 		t.Errorf("the token must not appear in the query string, got %q", schemaRawQuery)
 	}
-	if !strings.Contains(stdout, `"schema_version"`) || !strings.Contains(stdout, "purchase") {
+	if !strings.Contains(stdout, `"schema_version"`) || !strings.Contains(stdout, "purchase") || !strings.Contains(stdout, `"encodings"`) {
 		t.Errorf("stdout should render the device-facing document, got:\n%s", stdout)
 	}
 }

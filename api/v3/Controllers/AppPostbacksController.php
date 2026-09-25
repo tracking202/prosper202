@@ -12,6 +12,7 @@ use Api\V3\Apps\Apple\PostbackVerifier;
 use Api\V3\Apps\Apple\Protocols;
 use Api\V3\Apps\Apple\SignatureState;
 use Api\V3\Apps\Apple\SkadnetworkProtocol;
+use Api\V3\Apps\Apple\SkanEncodingTimeline;
 use Api\V3\Support\MysqliStatements;
 use Api\V3\Support\ResponseSanitizer;
 
@@ -434,8 +435,21 @@ class AppPostbacksController
         $this->restrictToRetainedGroups($groupBy, $groupsOut, $cvWhere, $cvBinds, $cvTypes);
         $cvWhereClause = 'WHERE ' . implode(' AND ', $cvWhere);
 
+        //
+        // What a value means depends on when the postback arrived: an
+        // encoding edited inside the 35-day postback horizon has two
+        // meanings a device could have used (SkanEncodingTimeline). Rows are
+        // therefore also grouped by the segment of time between two points
+        // where some decode can change — a handful per encoding edit, not
+        // one per postback — and each segment is decoded once.
+        [$timeline, $goals] = $this->encodingTimeline();
+        $breakpoints = $timeline->breakpoints();
+        $segmentExpr = $breakpoints === []
+            ? '0'
+            : 'INTERVAL(received_at, ' . implode(', ', array_fill(0, count($breakpoints), '?')) . ')';
         $cvSql = 'SELECT ' . implode(', ', $selectGroup) . ",
-                registration_id AS cv_registration_id, conversion_value, coarse_conversion_value, COUNT(*) AS cnt
+                registration_id AS cv_registration_id, conversion_value, coarse_conversion_value,
+                $segmentExpr AS cv_segment, COUNT(*) AS cnt
             FROM 202_app_postbacks
             $cvWhereClause AND $trusted AND $winCondition
             AND postback_id IN (
@@ -443,15 +457,21 @@ class AppPostbacksController
                 $cvWhereClause AND $trusted AND $winCondition
                 GROUP BY $identity
             )
-            GROUP BY $groupByExpr, registration_id, conversion_value, coarse_conversion_value";
+            GROUP BY $groupByExpr, registration_id, conversion_value, coarse_conversion_value, cv_segment";
         $stmt = $this->prepare($cvSql);
-        // The where clause appears twice (outer query and the first-copy
-        // subquery), so its binds do too.
-        $this->bind($stmt, $cvTypes . $cvTypes, ...$cvBinds, ...$cvBinds);
+        // The breakpoints bind first (they sit in the SELECT list); the where
+        // clause appears twice (outer query and the first-copy subquery), so
+        // its binds do too.
+        $this->bind(
+            $stmt,
+            str_repeat('i', count($breakpoints)) . $cvTypes . $cvTypes,
+            ...$breakpoints,
+            ...$cvBinds,
+            ...$cvBinds
+        );
         $this->execute($stmt, 'Report decode query failed');
         $result = $this->result($stmt);
 
-        $encodings = $this->encodings();
         while ($row = $result->fetch_assoc()) {
             $key = $this->groupKey($groupColumns, $row);
             if (!isset($groupsOut[$key])) {
@@ -465,10 +485,25 @@ class AppPostbacksController
                 continue;
             }
             $groupsOut[$key]['measurable'] += $count;
-            $rule = $this->resolveEncoding($encodings, (int)($row['cv_registration_id'] ?? 0), $fine, $coarse);
+            $decode = $timeline->decode(
+                (int)($row['cv_registration_id'] ?? 0),
+                $fine,
+                $coarse,
+                $timeline->representativeTime((int)$row['cv_segment'])
+            );
+            if ($decode['status'] === SkanEncodingTimeline::AMBIGUOUS) {
+                // Two meanings a device could have used: credited to neither.
+                $groupsOut[$key]['ambiguous_encoding'] += $count;
+                continue;
+            }
+            $rule = $decode['status'] === SkanEncodingTimeline::DECODED ? ($goals[(int)$decode['goal_id']] ?? null) : null;
             if ($rule === null) {
+                // Undecoded, or its goal is gone (damage, logged when loaded).
                 $groupsOut[$key]['undecoded'] += $count;
                 continue;
+            }
+            if ($decode['revenue_override'] !== null) {
+                $rule['revenue'] = $decode['revenue_override'];
             }
             $groupsOut[$key]['decoded'] += $count;
             $revenue = (float)$rule['revenue'] * $count;
@@ -518,6 +553,8 @@ class AppPostbacksController
                     . '; installs = winning first-window downloads; redownloads and re-engagements (AdAttributionKit) are reported separately'
                     . '; conversion values decode across all three windows, so measurable/decoded can exceed installs'
                     . '; conversion values decode through the /apps/skan-encodings of the registration that claimed the postback, then the account-wide ones'
+                    . ', under every meaning the value had in the ' . SkanEncodingTimeline::HORIZON_DAYS . ' days before the postback arrived'
+                    . ' (a device may still hold the document from before an edit): a value whose meanings there disagree counts as ambiguous_encoding and is credited to no goal'
                     . '; data.totals holds the same metrics ungrouped and over the whole window — summing the groups'
                     . ' double-counts a postback that landed in two of them and misses any the truncation dropped',
             ],
@@ -1081,6 +1118,7 @@ class AppPostbacksController
             'measurable' => 0,
             'decoded' => 0,
             'undecoded' => 0,
+            'ambiguous_encoding' => 0,
             'null_conversion_values' => 0,
             'decoded_revenue' => 0.0,
             'events' => [],
@@ -1088,47 +1126,72 @@ class AppPostbacksController
     }
 
     /**
-     * The user's SKAN encodings, indexed by registration for resolution.
-     * Each decodes to its goal's name, worth the encoding's revenue_override
-     * when it has one (tiered decoding), else the goal's own fixed value,
-     * else nothing. A goal is named by its CURRENT version: the report is a
+     * Every meaning the user's SKAN encodings have had (the current ones and
+     * the history of what they replaced), as a timeline to decode through,
+     * and each goal they name: its name and its own fixed value, which a
+     * decode reports unless the meaning carries a revenue_override (tiered
+     * decoding). A goal is named by its CURRENT version: the report is a
      * reading of what the operator calls the outcome today.
      *
-     * @return array{fine: array<int, array<int, array{event_name: string, revenue: string}>>,
-     *               coarse: array<int, array<string, array{event_name: string, revenue: string}>>}
+     * @return array{0: SkanEncodingTimeline, 1: array<int, array{event_name: string, revenue: string}>}
      */
-    private function encodings(): array
+    private function encodingTimeline(): array
     {
-        $sql = 'SELECT e.encoding_id, e.registration_id, e.fine_value, e.coarse_value, e.goal_id, e.revenue_override, g.name, v.definition
-                FROM 202_app_skan_encodings e
-                LEFT JOIN 202_goals g ON g.goal_id = e.goal_id AND g.user_id = e.user_id
-                LEFT JOIN 202_goal_versions v ON v.goal_id = g.goal_id AND v.version = g.current_version
-                WHERE e.user_id = ?';
-        $stmt = $this->prepare($sql);
-        $this->bind($stmt, 'i', $this->userId);
-        $this->execute($stmt, 'Encodings query failed');
-        $result = $this->result($stmt);
-
-        $encodings = ['fine' => [], 'coarse' => []];
-        while ($row = $result->fetch_assoc()) {
-            $registrationId = (int)$row['registration_id'];
-            if ($row['name'] === null) {
-                // The goal is gone (it cannot be archived or deleted while an
-                // encoding names it, so this is damage): say so, and let the
-                // value count as undecoded rather than as some other goal.
-                error_log('p202 app report: SKAN encoding ' . (int)$row['encoding_id'] . ' names goal ' . (int)$row['goal_id'] . ', which does not exist');
-                continue;
+        $meanings = [];
+        foreach ([
+            'SELECT registration_id, fine_value, coarse_value, goal_id, revenue_override, effective_at, NULL AS retired_at
+             FROM 202_app_skan_encodings WHERE user_id = ?',
+            'SELECT registration_id, fine_value, coarse_value, goal_id, revenue_override, effective_at, retired_at
+             FROM 202_app_skan_encoding_history WHERE user_id = ?',
+        ] as $sql) {
+            $stmt = $this->prepare($sql);
+            $this->bind($stmt, 'i', $this->userId);
+            $this->execute($stmt, 'Encodings query failed');
+            $result = $this->result($stmt);
+            while ($row = $result->fetch_assoc()) {
+                $meanings[] = [
+                    'registration_id' => (int)$row['registration_id'],
+                    'fine_value' => $row['fine_value'] === null ? null : (int)$row['fine_value'],
+                    'coarse_value' => $row['coarse_value'] === null ? null : (string)$row['coarse_value'],
+                    'goal_id' => (int)$row['goal_id'],
+                    'revenue_override' => $row['revenue_override'] === null ? null : (string)$row['revenue_override'],
+                    'effective_at' => (int)$row['effective_at'],
+                    'retired_at' => $row['retired_at'] === null ? null : (int)$row['retired_at'],
+                ];
             }
-            $revenue = $row['revenue_override'] !== null ? (string)$row['revenue_override'] : self::fixedValueOf($row['definition']);
-            $encoding = ['event_name' => (string)$row['name'], 'revenue' => $revenue];
-            if ($row['fine_value'] !== null) {
-                $encodings['fine'][$registrationId][(int)$row['fine_value']] = $encoding;
-            } elseif ($row['coarse_value'] !== null) {
-                $encodings['coarse'][$registrationId][(string)$row['coarse_value']] = $encoding;
+            $stmt->close();
+        }
+
+        $goals = [];
+        $goalIds = array_values(array_unique(array_column($meanings, 'goal_id')));
+        if ($goalIds !== []) {
+            $marks = implode(', ', array_fill(0, count($goalIds), '?'));
+            $stmt = $this->prepare(
+                "SELECT g.goal_id, g.name, v.definition FROM 202_goals g
+                 LEFT JOIN 202_goal_versions v ON v.goal_id = g.goal_id AND v.version = g.current_version
+                 WHERE g.user_id = ? AND g.goal_id IN ($marks)"
+            );
+            $this->bind($stmt, 'i' . str_repeat('i', count($goalIds)), $this->userId, ...$goalIds);
+            $this->execute($stmt, 'Encoded goals query failed');
+            $result = $this->result($stmt);
+            while ($row = $result->fetch_assoc()) {
+                $goals[(int)$row['goal_id']] = [
+                    'event_name' => (string)$row['name'],
+                    'revenue' => self::fixedValueOf($row['definition']),
+                ];
+            }
+            $stmt->close();
+            foreach ($goalIds as $goalId) {
+                if (!isset($goals[$goalId])) {
+                    // A goal an encoding names cannot be archived away or
+                    // deleted, so this is damage: say so, and let the value
+                    // count as undecoded rather than as some other goal.
+                    error_log('p202 app report: a SKAN encoding names goal ' . $goalId . ', which does not exist');
+                }
             }
         }
-        $stmt->close();
-        return $encodings;
+
+        return [new SkanEncodingTimeline($meanings), $goals];
     }
 
     /** A goal's fixed value as a decimal string, or '0' when it has none. */
@@ -1146,30 +1209,6 @@ class AppPostbacksController
         return $definition->valueType === 'fixed' && $definition->valueUnits !== null
             ? \Prosper202\Conversion\Ledger\Amount::fromUnits($definition->valueUnits)
             : '0';
-    }
-
-    /**
-     * The registration's own encoding wins over the account-wide one
-     * (registration_id = 0); a postback no registration claims decodes
-     * through the account-wide set only. A fine value that has no encoding
-     * falls back to nothing (never to the coarse ones — the fine value is the
-     * more precise signal and a silent remap would misreport).
-     *
-     * @param array{fine: array<int, array<int, array{event_name: string, revenue: string}>>,
-     *              coarse: array<int, array<string, array{event_name: string, revenue: string}>>} $encodings
-     * @return array{event_name: string, revenue: string}|null
-     */
-    private function resolveEncoding(array $encodings, int $registrationId, ?int $fine, ?string $coarse): ?array
-    {
-        if ($fine !== null) {
-            return ($registrationId > 0 ? ($encodings['fine'][$registrationId][$fine] ?? null) : null)
-                ?? $encodings['fine'][0][$fine] ?? null;
-        }
-        if ($coarse !== null) {
-            return ($registrationId > 0 ? ($encodings['coarse'][$registrationId][$coarse] ?? null) : null)
-                ?? $encodings['coarse'][0][$coarse] ?? null;
-        }
-        return null;
     }
 
     /**

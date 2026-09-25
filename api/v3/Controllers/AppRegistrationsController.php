@@ -244,7 +244,10 @@ class AppRegistrationsController extends Controller
         $stmt->close();
 
         // Encodings exist only for their registration; left behind they
-        // would decode nothing and hold UNIQUE slots nobody can see.
+        // would decode nothing and hold UNIQUE slots nobody can see. What
+        // they meant goes to the history first, as every removed encoding's
+        // does (SkanEncodingHistory).
+        (new \Api\V3\Apps\Apple\SkanEncodingHistory($this->db))->retireRegistration($this->userId, $registrationId, time());
         $stmt = $this->prepare('DELETE FROM 202_app_skan_encodings WHERE registration_id = ? AND user_id = ?');
         $this->bind($stmt, 'ii', $registrationId, $this->userId);
         $this->execute($stmt, 'Encoding delete failed');
