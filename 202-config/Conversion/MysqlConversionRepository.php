@@ -12,6 +12,7 @@ use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\Ledger\PayoutMode;
 use Prosper202\Conversion\Ledger\ReversalException;
 use Prosper202\Database\Connection;
+use Prosper202\DataEngine\ClickRollupSql;
 use Prosper202\Ltv\MysqlCustomerRepository;
 use RuntimeException;
 use Throwable;
@@ -439,6 +440,10 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $result = $this->conn->transaction($work);
         }
 
+        if ($result['clickFound'] && !$result['duplicate']) {
+            $this->refreshReportRollup($clickId);
+        }
+
         // Landing Page Optimizer bridge: post-commit, NEW conversions only (duplicates and
         // missing clicks never emit). EventBridge swallows its own failures, so a
         // bridge hiccup never breaks recording.
@@ -522,7 +527,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
     {
         $ledger = new MysqlConversionLedger($this->conn);
 
-        $work = function () use ($id, $userId, $ledger): void {
+        $work = function () use ($id, $userId, $ledger): ?int {
             // Lock order is click, then conversion, on every path that writes
             // both (record() locks the click first), so find the click before
             // taking any lock.
@@ -532,7 +537,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $this->conn->bind($findStmt, 'ii', [$id, $userId]);
             $found = $this->conn->fetchOne($findStmt);
             if ($found === null) {
-                return;
+                return null;
             }
             $clickId = (int) $found['click_id'];
 
@@ -553,7 +558,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             if ($conv === null || (int) $conv['deleted'] === 1) {
                 // Missing or already deleted: nothing to do (matches the
                 // historical silent-no-op semantics of this method).
-                return;
+                return null;
             }
 
             if ($click !== null) {
@@ -589,15 +594,46 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $ledger->enqueue($affected, 'counted_state');
 
             $this->voidRevenueEvent($id, $conv['customer_id'] !== null ? (int) $conv['customer_id'] : 0, $userId);
+
+            return $clickId;
         };
 
         try {
-            $this->conn->transaction($work);
+            $touched = $this->conn->transaction($work);
         } catch (Throwable $e) {
             if (!self::isRetryableLockError($e)) {
                 throw $e;
             }
-            $this->conn->transaction($work);
+            $touched = $this->conn->transaction($work);
+        }
+        if ($touched !== null) {
+            $this->refreshReportRollup($touched);
+        }
+    }
+
+    /**
+     * Refresh the click's row in 202_dataengine, the table every report
+     * reads, after a committed change to its value. The ledger updates
+     * 202_clicks inside the transaction; without this the reports kept the
+     * old figures until something else happened to re-roll the click, and a
+     * conversion recorded through the API, the revenue upload or the subid
+     * pages never reached them at all (only the pixel helpers re-rolled).
+     *
+     * Post-commit and best-effort: the write has landed, so a failure here
+     * must not read as a failed write (CLAUDE.md #13). It is logged with the
+     * click id, and the next change to the click re-rolls it.
+     */
+    private function refreshReportRollup(int $clickId): void
+    {
+        try {
+            $stmt = $this->conn->prepareWrite(ClickRollupSql::insertSelect(
+                '202_dataengine',
+                '2c.click_id=' . $clickId,
+                updateLandingPageId: true
+            ));
+            $this->conn->executeUpdate($stmt);
+        } catch (Throwable $e) {
+            error_log('conversion ledger: click ' . $clickId . ' changed but its report row was not refreshed: ' . $e->getMessage());
         }
     }
 
@@ -734,6 +770,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             }
             if ($ok) {
                 $cleared++;
+                $this->refreshReportRollup($clickId);
             }
         }
 
