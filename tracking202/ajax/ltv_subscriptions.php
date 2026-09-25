@@ -47,7 +47,7 @@ try {
 <?php echo p202_ltv_tabs('subscriptions'); ?>
 
 <!-- Recurring revenue summary -->
-<div class="ltv-stats">
+<div class="p202-tiles">
     <?php echo p202_ltv_stat('MRR', '$' . $money($mrr['mrr'] ?? 0)); ?>
     <?php echo p202_ltv_stat('ARR', '$' . $money(((float) ($mrr['mrr'] ?? 0)) * 12)); ?>
     <?php echo p202_ltv_stat('Active', number_format((int) ($mrr['active_subscriptions'] ?? 0))); ?>
@@ -60,11 +60,11 @@ try {
 </div>
 
 <?php echo p202_ltv_card_open('Subscriptions', number_format((int) $list['total']) . ' record(s)'); ?>
-    <div class="ltv-toolbar" style="padding-top: 4px;">
+    <div class="p202-toolbar p202-panel__filter" style="padding-top: 4px;">
         <?php echo p202_ltv_chips('ltv-sub-status', $statuses, $status, 'ltvSubsLoad(0);'); ?>
     </div>
-    <div class="ltv-table-wrap">
-        <table class="ltv-table ltv-table-hover">
+    <div class="p202-table-wrap">
+        <table class="table p202-table table-hover">
             <thead>
                 <tr>
                     <th>Plan</th>
@@ -81,7 +81,7 @@ try {
             <tbody>
                 <?php if ($list['rows'] === []) { ?>
                     <tr><td colspan="9">
-                        <?php echo p202_ltv_empty('fa-refresh',
+                        <?php echo p202_ltv_empty('bi-arrow-repeat',
                             $status !== '' ? 'No subscriptions with this status' : 'No subscriptions recorded yet',
                             $status !== '' ? '' : 'Push them via <code>POST /api/v3/ltv/subscriptions</code>.'); ?>
                     </td></tr>
@@ -96,23 +96,23 @@ try {
                     }
                     $subStatus = (string) ($sub['status'] ?? '');
                 ?>
-                    <tr class="ltv-row-link" onclick="ltvSubCustomer(<?php echo (int) ($sub['customer_id'] ?? 0); ?>);" title="View customer">
+                    <tr class="p202-table__link-row" onclick="ltvSubCustomer(<?php echo (int) ($sub['customer_id'] ?? 0); ?>);" title="View customer">
                         <td title="<?php echo $esc($sub['external_sub_id'] ?? ''); ?>">
                             <?php echo $esc(($sub['plan_name'] ?? '') !== '' && $sub['plan_name'] !== null ? $sub['plan_name'] : ($sub['external_sub_id'] ?? '')); ?>
                         </td>
                         <td><?php echo $esc($customerName); ?>
                             <?php if (($sub['company'] ?? '') !== '' && $sub['company'] !== null) { ?>
-                                <span class="ltv-dim" style="font-size: 12px;">(<?php echo $esc($sub['company']); ?>)</span>
+                                <span class="text-secondary" style="font-size: 12px;">(<?php echo $esc($sub['company']); ?>)</span>
                             <?php } ?>
                         </td>
-                        <td class="num ltv-strong">$<?php echo $money($sub['customer_ltv'] ?? 0); ?></td>
+                        <td class="num fw-bold">$<?php echo $money($sub['customer_ltv'] ?? 0); ?></td>
                         <td><?php echo p202_ltv_status_pill($subStatus); ?></td>
-                        <td class="num">$<?php echo $money($sub['amount'] ?? 0); ?> <span class="ltv-dim">/
+                        <td class="num">$<?php echo $money($sub['amount'] ?? 0); ?> <span class="text-secondary">/
                             <?php echo ((int) ($sub['billing_interval_count'] ?? 1)) > 1 ? (int) $sub['billing_interval_count'] . ' ' : ''; ?><?php echo $esc($sub['billing_interval'] ?? 'month'); ?></span></td>
                         <td class="num">$<?php echo $money($sub['mrr'] ?? 0); ?></td>
                         <td><?php echo $when($sub['started_at'] ?? 0); ?></td>
                         <td><?php echo $when($sub['current_period_end'] ?? 0); ?></td>
-                        <td><?php echo !empty($sub['canceled_at']) ? $when($sub['canceled_at']) : '<span class="ltv-dim">—</span>'; ?></td>
+                        <td><?php echo !empty($sub['canceled_at']) ? $when($sub['canceled_at']) : '<span class="text-secondary">—</span>'; ?></td>
                     </tr>
                 <?php } ?>
             </tbody>

@@ -36,24 +36,24 @@ try {
 
 <?php echo p202_ltv_ui_styles(); ?>
 
-<a href="#" class="ltv-back" onclick="ltvNav('companies'); return false;"><i class="fa fa-angle-left"></i> All companies</a>
+<a href="#" class="btn btn-link btn-sm px-0 mb-2" onclick="ltvNav('companies'); return false;"><i class="bi bi-chevron-left"></i> All companies</a>
 
 <?php if ($company === '' || $contacts === []) { ?>
     <?php echo p202_ltv_flash('warn', 'No contacts found for this company.'); ?>
     <?php return; ?>
 <?php } ?>
 
-<div class="ltv-page-head">
-    <span class="ltv-avatar"><i class="fa fa-building-o"></i></span>
-    <div>
-        <div class="ltv-page-title"><?php echo $esc($company); ?></div>
-        <div class="ltv-page-sub">Account view &middot; <?php echo count($contacts); ?> contact(s) &middot; last 90 days</div>
+<div class="p202-page-header">
+    <span class="p202-page-header__icon"><i class="bi bi-building"></i></span>
+    <div class="p202-page-header__text">
+        <div class="p202-page-header__title"><?php echo $esc($company); ?></div>
+        <div class="p202-page-header__desc">Account view &middot; <?php echo count($contacts); ?> contact(s) &middot; last 90 days</div>
     </div>
 </div>
 
 <?php echo p202_ltv_card_open('Contacts'); ?>
-    <div class="ltv-table-wrap">
-        <table class="ltv-table ltv-table-hover">
+    <div class="p202-table-wrap">
+        <table class="table p202-table table-hover">
             <thead>
                 <tr>
                     <th>Contact</th>
@@ -71,13 +71,13 @@ try {
                     $name = trim(((string) ($contact['first_name'] ?? '')) . ' ' . ((string) ($contact['last_name'] ?? '')));
                     $score = (int) ($contact['engagement_score'] ?? 0);
                 ?>
-                    <tr class="ltv-row-link" onclick="ltvCompanyCustomer(<?php echo (int) $contact['customer_id']; ?>);" title="View customer detail">
-                        <td class="ltv-strong"><?php echo $esc($name !== '' ? $name : ('#' . $contact['customer_id'])); ?></td>
-                        <td><?php echo $esc($contact['email'] ?? '') ?: '<span class="ltv-dim">—</span>'; ?></td>
+                    <tr class="p202-table__link-row" onclick="ltvCompanyCustomer(<?php echo (int) $contact['customer_id']; ?>);" title="View customer detail">
+                        <td class="fw-bold"><?php echo $esc($name !== '' ? $name : ('#' . $contact['customer_id'])); ?></td>
+                        <td><?php echo $esc($contact['email'] ?? '') ?: '<span class="text-secondary">—</span>'; ?></td>
                         <td class="num"><?php echo p202_ltv_pill($score . '/100', $score >= 70 ? 'green' : ($score >= 40 ? 'blue' : 'gray')); ?></td>
                         <td class="num"><?php echo number_format((int) ($contact['engagements'] ?? 0)); ?></td>
                         <td class="num"><?php echo number_format((int) ($contact['order_count'] ?? 0)); ?></td>
-                        <td class="num ltv-strong">$<?php echo $money($contact['total_revenue'] ?? 0); ?></td>
+                        <td class="num fw-bold">$<?php echo $money($contact['total_revenue'] ?? 0); ?></td>
                         <td class="num">$<?php echo $money($contact['mrr'] ?? 0); ?></td>
                         <td><?php echo $when($contact['last_activity_time'] ?? 0); ?></td>
                     </tr>
