@@ -137,6 +137,20 @@ $groupCell = static function (array $group, string $groupBy) use ($e, $notGiven,
 };
 
 $tabs = ['report' => 'Report', 'funnel' => 'Funnel', 'postbacks' => 'iOS postbacks', 'notifications' => 'Postbacks sent', 'verify' => 'Verify'];
+// The funnel and the outbox are an Android install's: an account with no
+// Android app is not offered two tabs that can only say so. Their URLs
+// still answer (a link someone kept, the view it names), explaining why.
+$hasAndroid = false;
+foreach ((array)($mobileReport['apps'] ?? []) as $appRow) {
+    $hasAndroid = $hasAndroid || strtolower((string)($appRow['platform'] ?? '')) === 'android';
+}
+if (!$hasAndroid) {
+    foreach (['funnel', 'notifications'] as $androidOnly) {
+        if ($view !== $androidOnly) {
+            unset($tabs[$androidOnly]);
+        }
+    }
+}
 
 template_top('Analyze Mobile Apps', ['ui' => 'v2']);
 ?>

@@ -266,7 +266,7 @@ say "goals and the funnel"
 get "$SETUP?app=$RA" "$OUT/app-a.html"
 G_INSTALL=$(Q "SELECT goal_id FROM 202_goals WHERE scope='registration' AND scope_id=$RA AND builtin='install'")
 post "$SETUP" "$OUT/app-a.html" "$OUT/g1.html" action=goal_save "registration_id=$RA" goal_id= "goal_name=Tutorial" goal_event=tutorial_done \
-    goal_value=none goal_count=1 goal_repeat=once goal_within_days=7 "goal_after=$G_INSTALL" goal_where_prop= goal_where_op=eq goal_where_value=
+    goal_value=none goal_count=1 goal_repeat=once goal_within_days=7 "goal_after=$G_INSTALL" goal_where_prop= goal_where_op=eq goal_where_value= goal_where_type=auto
 msgs "$OUT/g1.html"
 eq "$REDIRECTS" 1 "a goal from the form"
 G_TUT=$(Q "SELECT goal_id FROM 202_goals WHERE scope='registration' AND scope_id=$RA AND name='Tutorial'")
@@ -299,7 +299,7 @@ eq "$(cat "$OUT/order")" True "the goals are listed in funnel order: install, tu
 say "iOS: a SKAN value names a goal from the menu, and an edit is warned"
 get "$SETUP?app=$RI" "$OUT/app-i.html"
 post "$SETUP" "$OUT/app-i.html" "$OUT/ig1.html" action=goal_save "registration_id=$RI" goal_id= "goal_name=Level 5" goal_event=level_up \
-    goal_value=fixed goal_amount=2.50 goal_count=1 goal_repeat=once goal_where_prop=level goal_where_op=gte goal_where_value=5
+    goal_value=fixed goal_amount=2.50 goal_count=1 goal_repeat=once goal_where_prop=level goal_where_op=gte goal_where_value=5 goal_where_type=auto
 G_L5=$(Q "SELECT goal_id FROM 202_goals WHERE scope='registration' AND scope_id=$RI AND name='Level 5'")
 [ -n "$G_L5" ] && ok "an iOS app goal ($G_L5)" || bad "no iOS app goal"
 has "$OUT/ig1.html" "<option value=\"$G_L5\">Level 5</option>" "the value editor's goal menu offers it"
@@ -507,6 +507,9 @@ page = open(sys.argv[1]).read()
 print(sum(int(v.replace(',', '')) for v in re.findall(r'data-outbox-status="\w+">\s*<div class="p202-tile__label">\w+</div>\s*<div class="p202-tile__value">([\d,]+)', page)))
 PY
 eq "$(cat "$OUT/an5.txt")" "$DB_Q" "its tiles add up to the outbox"
+eq "$(grep -c "data-outbox-destination=\"$PIXEL:0\"" "$OUT/an5.html")" "$(Q "SELECT COUNT(*) FROM 202_notification_pending WHERE pixel_id=$PIXEL AND destination=0")" \
+   "one row per destination: each outbox row names its pixel and URL"
+has "$OUT/an5.html" "Pixel $PIXEL, URL 1" "and says which URL of which pixel it is"
 
 get "/tracking202/setup/ppc_accounts.php?edit_ppc_account_id=$PACC" "$OUT/ts1.html"
 has "$OUT/ts1.html" 'name="pixel_correction_url[]"' "Setup › Traffic Sources offers a correction URL per pixel"
@@ -515,7 +518,12 @@ curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/setup/ppc_accounts.php?edit_p
     --data-urlencode "token=$TS_TOK" --data-urlencode do_edit_ppc_account=1 --data-urlencode "ppc_network_id=$PNET" \
     --data-urlencode "ppc_account_name=apps-ui-pass" --data-urlencode "pixel_type_id[]=4" --data-urlencode "pixel_id[]=$PIXEL" \
     --data-urlencode "pixel_code[]=$BASE/api/v3/versions?pr11=reached&goal=[[p202_goal]]" --data-urlencode "pixel_correction_url[]=ftp://nope" -o "$OUT/ts2.html"
-has "$OUT/ts2.html" "A correction URL is one http:// or https:// address" "an address that is not http(s) is refused"
+has "$OUT/ts2.html" "A correction URL is an http:// or https:// address" "an address that is not http(s) is refused"
+curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/setup/ppc_accounts.php?edit_ppc_account_id=$PACC" \
+    --data-urlencode "token=$TS_TOK" --data-urlencode do_edit_ppc_account=1 --data-urlencode "ppc_network_id=$PNET" \
+    --data-urlencode "ppc_account_name=apps-ui-pass" --data-urlencode "pixel_type_id[]=4" --data-urlencode "pixel_id[]=$PIXEL" \
+    --data-urlencode "pixel_code[]=$BASE/api/v3/versions?pr11=reached&goal=[[p202_goal]]" --data-urlencode "pixel_correction_url[]=https://a.example/c https://b.example/c" -o "$OUT/ts3.html"
+has "$OUT/ts3.html" "matched by position" "two correction URLs for a one-URL pixel are refused by count"
 eq "$(Q "SELECT COUNT(*) FROM 202_notification_correction_urls")" 0 "and nothing is stored"
 curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/setup/ppc_accounts.php?edit_ppc_account_id=$PACC" \
     --data-urlencode "token=$TS_TOK" --data-urlencode do_edit_ppc_account=1 --data-urlencode "ppc_network_id=$PNET" \

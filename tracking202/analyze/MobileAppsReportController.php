@@ -236,11 +236,12 @@ class MobileAppsReportController
             $view = 'report';
         }
 
-        // Verify renders neither the app menu nor an amount, so it pays for
-        // neither: listApps() is a 500-row read and a sort, and the currency
-        // is another statement.
+        // Verify renders no amount, so it does not pay for the currency
+        // statement. It does read the apps: the tabs every view shows depend
+        // on whether the account has an Android app, and a tab that came and
+        // went with the view would be a menu that moves under the pointer.
         $needsApps = $view !== 'verify';
-        $apps = $needsApps ? $this->listApps() : [];
+        $apps = $this->listApps();
         $mobileReport = [
             'view' => $view,
             'self' => rtrim(get_absolute_url(), '/') . '/tracking202/analyze/mobile_apps.php',

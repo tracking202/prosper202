@@ -131,12 +131,18 @@ module.exports = {
       async run(ctx) {
         const { db, ui, expect, shot } = ctx;
 
-        expect.match(await register(ctx, PLAY_LINK), /That is a Google Play app \(com\.example\.app\)/,
-          'a Play Store link is read, and pointed at the API and CLI that register it');
-        expect.eq(db.count('202_app_registrations'), 0, 'and nothing was registered');
+        // No store answers here (P202_APP_STORE_LOOKUP_ORIGIN, if set, names
+        // nothing listening), so a Play link that could not be named asks
+        // for the name, saying what it read.
+        expect.match(await register(ctx, PLAY_LINK), /Google Play did not answer, so the name could not be looked up/,
+          'a Play Store link is read as the Android app it names, and asks only for the name');
+        expect.match(await ui.bodyText(), /Read as Android/, 'saying what it read the link as');
+        expect.ok(await ui.visible('input[name="app_name"]'), 'with the name field shown');
+        expect.eq(db.count('202_app_registrations'), 0, 'and nothing was registered without it');
 
+        await ctx.app.goto(PAGE);
         expect.match(await register(ctx, 'not-a-link'), /Must be an App Store link/,
-          'junk gets the App Store sentence');
+          'junk gets the store-link sentence');
 
         // The field is `required`, so an empty submit never reaches the
         // server: what a user meets is the browser's own refusal.
@@ -323,12 +329,15 @@ module.exports = {
         expect.ok(await ui.count('[data-p202-copy]') >= 3,
           'the token, Info.plist and SDK snippet each copy');
 
-        expect.eq(await app.copy('.p202-code button[data-p202-copy]'), state.token,
+        const tokenButton = '.p202-code:has(#app-token) button[data-p202-copy]';
+        expect.eq(await app.copy(tokenButton), state.token,
           'the token copies in full, not masked');
-        expect.eq(await ui.text('.p202-code button[data-p202-copy]'), 'Copied', 'and the button says so');
+        expect.eq(await ui.text(tokenButton), 'Copied', 'and the button says so');
 
-        const buttons = await ui.page.$$('[data-p202-copy]');
-        await buttons[1].click();
+        expect.eq(await app.copy('.p202-code:has(#store-link) button[data-p202-copy]'), 'https://apps.apple.com/app/id' + APP_ID,
+          'the link builder copies the App Store link a campaign should send its clicks to');
+
+        await ui.page.click('button[data-p202-copy*="NSAdvertisingAttributionReportEndpoint"]');
         const plist = await ui.until(async () => {
           const text = await ui.clipboard();
           return /NSAdvertisingAttributionReportEndpoint/.test(text) ? text : false;
@@ -548,6 +557,175 @@ module.exports = {
 
         await app.confirmAnd('accept', selector);
         expect.eq(db.count('202_app_registrations'), 0, 'saying yes removes it');
+      },
+    },
+
+    {
+      name: 'Registering an Android app: the store is silent, so only the name is asked',
+      async run(ctx) {
+        const { app, db, ui, expect, state, shot } = ctx;
+        await app.goto(PAGE);
+        await register(ctx, PLAY_LINK);
+        expect.ok(await ui.visible('input[name="app_name"]'), 'the name field appears, and nothing else is asked');
+        await ui.fill({ 'input[name="app_name"]': 'Example Android' });
+        await app.submit('button:has-text("Register app")');
+
+        expect.eq(db.value("SELECT CONCAT(platform, '|', app_key, '|', app_name) FROM 202_app_registrations"),
+          'android|com.example.app|Example Android', 'the platform and package came from the link, the name from the field');
+        state.androidId = db.value('SELECT registration_id FROM 202_app_registrations');
+        state.installGoal = db.value("SELECT goal_id FROM 202_goals WHERE scope = 'registration' AND scope_id = "
+          + state.androidId + " AND builtin = 'install'");
+        expect.ok(Number(state.installGoal) > 0, 'with its built-in install goal', String(state.installGoal));
+        expect.match(ui.page.url(), new RegExp('app=' + state.androidId), 'landing on the app');
+        await shot('android-registered');
+      },
+    },
+
+    {
+      name: 'The Android page holds up: 1280, 390 and dark',
+      async run(ctx) {
+        const { app, ui, expect, state, withSession } = ctx;
+        await app.goto(PAGE + '?app=' + state.androidId);
+        await checks.v2PageBaseline(ctx, { scriptOnly: SCRIPT_ONLY_CLASSES });
+        expect.ok(await ui.visible('text=Play Integrity'), 'the Play Integrity panel is on the page');
+        expect.notOk(await ui.visible('#credential'), 'its service account field is under a closed Advanced');
+
+        await checks.atWidths(ctx, [390], async () => {
+          await checks.tablesScrollThemselves(ctx);
+          await checks.flexContainersKeepTheirSpaces(ctx);
+        });
+
+        await withSession({ colorScheme: 'dark' }, async (dark) => {
+          await dark.app.goto(PAGE + '?app=' + state.androidId);
+          await checks.darkThemeApplies({ ...ctx, ui: dark.ui, page: dark.page });
+          await dark.page.screenshot({
+            path: require('path').join(ctx.config.shots, 'setup-mobile-apps-android-dark.png'),
+            fullPage: true,
+          });
+        });
+      },
+    },
+
+    {
+      name: 'The Play link copies with the install token in it',
+      async run(ctx) {
+        const { app, expect, state } = ctx;
+        await app.goto(PAGE + '?app=' + state.androidId);
+        expect.eq(await app.copy('.p202-code:has(#store-link) button[data-p202-copy]'),
+          PLAY_LINK + '&referrer=p202%3D[[p202_install_token]]',
+          'Copy puts the store link on the clipboard with [[p202_install_token]] in its referrer, as a campaign needs it');
+      },
+    },
+
+    {
+      name: 'Android settings: the window is checked, and saved',
+      async run(ctx) {
+        const { app, db, ui, expect, state } = ctx;
+        await app.goto(PAGE + '?app=' + state.androidId);
+        const settings = '[data-p202-remember="setup-mobile-apps-settings"]';
+        if (await app.disclosureOpen(settings) === false) {
+          await app.openDisclosure(settings);
+        }
+        await ui.fill({ '#settings_attribution_window_days': '400' });
+        await app.submit('form:has(#settings_attribution_window_days) button:has-text("Save changes")');
+        expect.ok((await app.fieldErrors()).length > 0, 'a window the API refuses is said under the field',
+          (await app.fieldErrors()).join(' | '));
+        expect.eq(db.value('SELECT attribution_window_days FROM 202_app_registrations WHERE registration_id = ' + state.androidId), 7,
+          'and nothing is stored');
+
+        if (await app.disclosureOpen(settings) === false) {
+          await app.openDisclosure(settings);
+        }
+        await ui.fill({ '#settings_attribution_window_days': '14' });
+        await app.submit('form:has(#settings_attribution_window_days) button:has-text("Save changes")');
+        expect.eq(db.value('SELECT attribution_window_days FROM 202_app_registrations WHERE registration_id = ' + state.androidId), 14,
+          '14 days is saved');
+      },
+    },
+
+    {
+      name: 'Play Integrity refuses what it cannot do yet, and never shows a key back',
+      async run(ctx) {
+        const { app, db, ui, expect, state } = ctx;
+        await app.goto(PAGE + '?app=' + state.androidId);
+        const integrity = '[data-p202-remember="setup-mobile-apps-integrity"]';
+        await app.openDisclosure(integrity);
+        await ui.check('#integrity_mode_observe');
+        await app.submit('button:has-text("Save mode")');
+        expect.match(await app.messages(), /service account|credential/i, 'observe without a service account is refused, saying what comes first');
+        expect.eq(db.value('SELECT integrity_mode FROM 202_app_registrations WHERE registration_id = ' + state.androidId), 'off',
+          'and the mode stays off');
+
+        if (await app.disclosureOpen(integrity) === false) {
+          await app.openDisclosure(integrity);
+        }
+        await ui.fill({ '#credential': '{"type": "service_account", "private_key": "-----BEGIN' });
+        await app.submit('button:has-text("Save service account")');
+        expect.ok((await app.fieldErrors()).length > 0, 'a key file that is not JSON is refused under the field',
+          (await app.fieldErrors()).join(' | '));
+        expect.eq(await ui.value('#credential'), '', 'and what was pasted is not put back on the page');
+        expect.notMatch(await ui.html(), /BEGIN/, 'nowhere on the page');
+        expect.eq(db.count('202_app_integrity_credentials'), 0, 'nothing was stored');
+      },
+    },
+
+    {
+      name: 'An app goal after the install, counted from the install',
+      async run(ctx) {
+        const { app, db, ui, expect, state } = ctx;
+        await app.goto(PAGE + '?app=' + state.androidId);
+        await ui.fill({ '#goal_name': 'Tutorial', '#goal_event': 'tutorial_done' });
+        await ui.check('#goal_value_none');
+        const advanced = '[data-p202-remember="setup-mobile-apps-goal-advanced"]';
+        if (await app.disclosureOpen(advanced) === false) {
+          await app.openDisclosure(advanced);
+        }
+        await ui.select('#goal_after', state.installGoal);
+        await ui.fill({ '#goal_within_days': '7' });
+        await app.submit('#saveGoal');
+
+        const goal = db.value("SELECT goal_id FROM 202_goals WHERE scope = 'registration' AND scope_id = " + state.androidId + " AND name = 'Tutorial'");
+        expect.ok(Number(goal) > 0, 'the goal is stored', String(goal));
+        expect.eq(db.value("SELECT CONCAT_WS('|', JSON_UNQUOTE(JSON_EXTRACT(definition, '$.within.from')), JSON_EXTRACT(definition, '$.within.days'), JSON_EXTRACT(definition, '$.after'))"
+          + ' FROM 202_goal_versions WHERE goal_id = ' + goal), 'install|7|[' + state.installGoal + ']',
+        'its window counts from the install, and it waits for the install goal');
+        const order = await ui.page.$$eval('[data-goal-id]', (items) => items.map((el) => el.getAttribute('data-goal-id')));
+        expect.ok(order.indexOf(String(state.installGoal)) >= 0 && order.indexOf(String(state.installGoal)) < order.indexOf(String(goal)),
+          'the list shows the funnel in order, the install first', JSON.stringify(order));
+      },
+    },
+
+    {
+      name: 'The link builder points a campaign at the app',
+      async run(ctx) {
+        const { app, db, ui, expect, state } = ctx;
+        db.temporarily(
+          "INSERT INTO 202_aff_networks (user_id, aff_network_name, aff_network_time) VALUES (1, 'browser-apps-net', UNIX_TIMESTAMP())",
+          "DELETE FROM 202_aff_networks WHERE aff_network_name = 'browser-apps-net'"
+        );
+        db.temporarily(
+          'INSERT INTO 202_aff_campaigns (user_id, aff_network_id, aff_campaign_name, aff_campaign_url, aff_campaign_payout, aff_campaign_time, aff_campaign_foreign_payout)'
+          + " SELECT 1, aff_network_id, 'browser-apps-campaign', 'https://example.com/offer', 1.00, UNIX_TIMESTAMP(), 0 FROM 202_aff_networks WHERE aff_network_name = 'browser-apps-net'",
+          "DELETE FROM 202_aff_campaigns WHERE aff_campaign_name = 'browser-apps-campaign'"
+        );
+        const campaign = db.value("SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_name = 'browser-apps-campaign'");
+
+        await app.goto(PAGE + '?app=' + state.androidId);
+        await ui.select('#link_campaign', campaign);
+        await ui.clickThrough('button:has-text("Check")');
+        expect.eq(await ui.text('#link-state .p202-pill'), 'Not yet', 'a campaign still on its web offer is not ready');
+
+        const apply = 'button:has-text("Use this link on the campaign")';
+        const said = await app.confirmAnd('dismiss', apply);
+        expect.match(said, /Its offer URL becomes this app's store link/, 'changing a campaign asks first, saying what changes',
+          said || '(no dialog appeared)');
+        expect.eq(db.value('SELECT aff_campaign_url FROM 202_aff_campaigns WHERE aff_campaign_id = ' + campaign), 'https://example.com/offer',
+          'saying no changes nothing');
+        await app.confirmAnd('accept', apply);
+        expect.eq(db.value('SELECT CONCAT(aff_campaign_url, \'|\', app_registration_id) FROM 202_aff_campaigns WHERE aff_campaign_id = ' + campaign),
+          PLAY_LINK + '&referrer=p202%3D[[p202_install_token]]|' + state.androidId,
+          'one click makes its offer URL the Play link with the token, and links it to the app');
+        expect.eq(await ui.text('#link-state .p202-pill'), 'Ready', 'and the builder says it is ready');
       },
     },
 

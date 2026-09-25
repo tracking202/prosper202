@@ -36,9 +36,9 @@ $sAdvancedOpen = $sPosted && (isset($mobileApps['fieldErrors']['attribution_wind
     <input type="hidden" name="return_to" value="<?php echo $e($settingsReturn); ?>">
     <input type="hidden" name="registration_id" value="<?php echo (int)$sApp['registration_id']; ?>">
     <input type="hidden" name="platform" value="<?php echo $e($sApp['platform'] ?? ''); ?>">
-    <p class="p202-decided">
+    <div class="p202-decided mb-3"><i class="bi bi-check2-circle"></i>
         <?php echo $e($sApp['app_name']); ?> · <?php echo $e($platformLabel($sApp['platform'] ?? 'ios')); ?> · <?php echo $e($keyLabel($sApp['platform'] ?? 'ios')); ?> <?php echo $e($sApp['app_key']); ?>
-    </p>
+    </div>
     <div class="mb-3">
         <label class="form-label" for="settings_app_name">App name</label>
         <input class="form-control<?php echo $invalid('app_name'); ?>" type="text" id="settings_app_name" name="app_name" value="<?php echo $e($sValue('app_name', $sApp['app_name'])); ?>" maxlength="255" required>

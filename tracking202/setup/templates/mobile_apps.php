@@ -161,9 +161,9 @@ if (!$canManage) {
                             </div>
 
                             <?php if (!empty($form['needs_name'])) { ?>
-                                <p class="p202-decided">
+                                <div class="p202-decided mb-3"><i class="bi bi-check2-circle"></i>
                                     Read as <?php echo $e($platformLabel($form['derived_platform'])); ?> · <?php echo $e($keyLabel($form['derived_platform'])); ?> <?php echo $e($form['derived_app_key']); ?>
-                                </p>
+                                </div>
                                 <div class="mb-3">
                                     <label class="form-label" for="app_name">App name</label>
                                     <input class="form-control<?php echo $invalid('app_name'); ?>" type="text" id="app_name" name="app_name" value="<?php echo $e($form['app_name'] ?? ''); ?>" maxlength="255" required autofocus>
@@ -291,12 +291,12 @@ if (!$canManage) {
     $masked = $token === '' ? '' : mb_substr($token, 0, 4) . str_repeat('•', max(0, mb_strlen($token) - 8)) . mb_substr($token, -4);
     $analyzeUrl = $base . 'tracking202/analyze/mobile_apps.php?registration_id=' . $rowId . '&platform=' . ($isIos ? 'ios' : 'android');
     ?>
-    <p class="p202-decided">
+    <div class="p202-decided mb-3">
         <a href="<?php echo $e($self); ?>">Your apps</a> › <?php echo $appMark($app); ?> <?php echo $e($app['app_name']); ?> ·
         <?php echo $e($platformLabel($app['platform'] ?? 'ios')); ?> · <?php echo $e($keyLabel($app['platform'] ?? 'ios')); ?> <?php echo $e($app['app_key']); ?>
         <?php if ($canManage) { ?> · <a href="#settings">change</a><?php } ?>
         · <a href="<?php echo $e($analyzeUrl); ?>">report</a>
-    </p>
+    </div>
 
     <?php
     if ($isIos) {

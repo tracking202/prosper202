@@ -5,7 +5,7 @@
  *
  * tests/live/analyze-mobile-apps.sh checks what this page answers over HTTP —
  * the numbers against the database, every grouping, the filters, the CSV, the
- * three views. None of that is repeated here. What is here is what only a
+ * views. None of that is repeated here. What is here is what only a
  * rendering engine can answer:
  *
  *  - the range picker, whose whole behaviour is a change handler. The date
@@ -31,6 +31,9 @@ const PAGE = '/tracking202/analyze/mobile_apps.php';
 const APP_ID = 990077001;
 const OTHER_APP_ID = 990077002;
 const DAY = 86400;
+const ANDROID_REG = 99001;
+const INSTALL_GOAL = 990001;
+const TUTORIAL_GOAL = 990002;
 
 /** Midnight UTC today, the anchor every preset is measured from. */
 function todayUtc() {
@@ -175,19 +178,19 @@ module.exports = {
     },
 
     {
-      name: 'The three views are three tabs',
+      name: 'The views are tabs',
       async run(ctx) {
         const { app, ui, expect } = ctx;
         await app.goto(PAGE);
 
-        expect.eq(await ui.texts('.p202-tabs .nav-link'), ['Report', 'Postbacks', 'Verify'],
-          'the tabs are Report, Postbacks and Verify');
+        expect.eq(await ui.texts('.p202-tabs .nav-link'), ['Report', 'iOS postbacks', 'Verify'],
+          'an account with only iOS apps has Report, iOS postbacks and Verify: the funnel and the outbox are an Android install\'s');
         expect.eq(await ui.attr('.p202-tabs .nav-link.active', 'aria-current'), 'page',
           'the current tab says so to a screen reader');
 
-        await ui.clickThrough('.p202-tabs .nav-link:has-text("Postbacks")');
-        expect.eq(new URL(ui.page.url()).searchParams.get('view'), 'postbacks', 'Postbacks opens its view');
-        expect.eq(await ui.text('.p202-tabs .nav-link.active'), 'Postbacks', 'and becomes the current tab');
+        await ui.clickThrough('.p202-tabs .nav-link:has-text("iOS postbacks")');
+        expect.eq(new URL(ui.page.url()).searchParams.get('view'), 'postbacks', 'iOS postbacks opens its view');
+        expect.eq(await ui.text('.p202-tabs .nav-link.active'), 'iOS postbacks', 'and becomes the current tab');
 
         await ui.clickThrough('.p202-tabs .nav-link:has-text("Verify")');
         expect.ok(await ui.exists('textarea[name="payload"]'), 'Verify opens a place to paste a postback');
@@ -371,6 +374,96 @@ module.exports = {
         await shot('report');
         await app.goto(PAGE + '?view=postbacks&range=last30');
         await shot('postbacks');
+      },
+    },
+
+    {
+      name: 'An account with an Android app: its tabs, its report, its funnel',
+      async run(ctx) {
+        const { app, db, ui, expect, shot, withSession } = ctx;
+        const now = Math.floor(Date.now() / 1000);
+        const at = now - 3600;
+        // One Android app with two goals (the install, then a tutorial after
+        // it), four installs of every trust class, and what they reached.
+        // Written as rows, as the postbacks above are: the intake is
+        // tests/live/mobile-apps-ui.sh's to drive; this is about what the
+        // page draws. Every row goes again when the scenario ends.
+        db.temporarily(
+          'INSERT INTO 202_app_registrations (registration_id, user_id, platform, app_key, app_name, accept_test_signals, app_token, created_at, updated_at) VALUES '
+          + "(" + ANDROID_REG + ", 1, 'android', 'com.p202.browser.summit', 'Summit Quest', 0, REPEAT('ef', 32), " + now + ', ' + now + ')',
+          'DELETE FROM 202_app_registrations WHERE registration_id = ' + ANDROID_REG
+        );
+        db.temporarily(
+          'INSERT INTO 202_goals (goal_id, user_id, scope, scope_id, name, builtin, current_version, created_at, updated_at) VALUES '
+          + "(" + INSTALL_GOAL + ", 1, 'registration', " + ANDROID_REG + ", 'install', 'install', 1, " + now + ', ' + now + '), '
+          + "(" + TUTORIAL_GOAL + ", 1, 'registration', " + ANDROID_REG + ", 'Tutorial', NULL, 1, " + now + ', ' + now + ')',
+          'DELETE FROM 202_goals WHERE goal_id IN (' + INSTALL_GOAL + ', ' + TUTORIAL_GOAL + ')'
+        );
+        const def = (name, event, after) => JSON.stringify({ name, trigger: { event, where: [] }, threshold: { count: 1 }, after,
+          within: null, repeat: { mode: 'once' }, value: { type: 'none' } });
+        db.temporarily(
+          'INSERT INTO 202_goal_versions (goal_id, version, definition, effective_at, created_at) VALUES '
+          + '(' + INSTALL_GOAL + ", 1, '" + def('install', 'install', []) + "', " + now + ', ' + now + '), '
+          + '(' + TUTORIAL_GOAL + ", 1, '" + def('Tutorial', 'tutorial_done', [INSTALL_GOAL]) + "', " + now + ', ' + now + ')',
+          'DELETE FROM 202_goal_versions WHERE goal_id IN (' + INSTALL_GOAL + ', ' + TUTORIAL_GOAL + ')'
+        );
+        const install = (n, state, trusted) => '(' + (ANDROID_REG * 10 + n) + ', 1, ' + ANDROID_REG + ", '00000000-0000-4000-8000-00000000000" + n + "', REPEAT('a', 64), 'google_play', "
+          + "'" + state + "', 'seeded', " + (trusted === null ? 'NULL' : trusted) + ", 'ok', " + at + ", '{}')";
+        db.temporarily(
+          'INSERT INTO 202_app_installs (install_row_id, user_id, registration_id, install_uuid, body_hash, store, match_state, match_reason, trusted, referrer_status, received_at, raw_payload) VALUES '
+          + [install(1, 'attributed', 1), install(2, 'attributed', 1), install(3, 'organic', null), install(4, 'bad_token', 0)].join(', '),
+          'DELETE FROM 202_app_installs WHERE registration_id = ' + ANDROID_REG
+        );
+        const outcome = (n, goal, value, payable) => "(1, 'install', " + (ANDROID_REG * 10 + n) + ', ' + goal + ", 1, 1, 'e" + n + '-' + goal + "', " + at
+          + ', ' + value + ", 'goal', " + payable + ', ' + ANDROID_REG + ', ' + at + ')';
+        db.temporarily(
+          'INSERT INTO 202_goal_outcomes (user_id, subject_type, subject_id, goal_id, goal_version, n, event_id, reached_at, value, value_source, payable, app_registration_id, created_at) VALUES '
+          + [outcome(1, INSTALL_GOAL, 'NULL', 0), outcome(2, INSTALL_GOAL, 'NULL', 0), outcome(3, INSTALL_GOAL, 'NULL', 0),
+            outcome(1, TUTORIAL_GOAL, '2.50000', 1)].join(', '),
+          'DELETE FROM 202_goal_outcomes WHERE app_registration_id = ' + ANDROID_REG
+        );
+
+        await app.goto(PAGE);
+        expect.eq(await ui.texts('.p202-tabs .nav-link'), ['Report', 'Funnel', 'iOS postbacks', 'Postbacks sent', 'Verify'],
+          'an Android app brings the funnel and the outbox into the tabs');
+
+        await app.goto(PAGE + '?platform=android&group_by=registration&range=last7');
+        await checks.v2PageBaseline(ctx);
+        expect.eq(await ui.text('.p202-tile:has-text("Installs") .p202-tile__value'), '2', 'the attributed installs, trusted only');
+        expect.eq(await ui.text('.p202-tile:has-text("Refuted") .p202-tile__value'), '1', 'the forged one beside them');
+        expect.ok(await ui.visible('text=How installs were matched'), 'with the match-state breakdown');
+        await shot('android-report');
+
+        await ui.clickThrough('.p202-tabs .nav-link:has-text("Funnel")');
+        const bars = await ui.page.$$eval('tr[data-funnel-goal] .progress', (els) => els.map((el) => {
+          const bar = el.querySelector('.progress-bar');
+          return { track: el.getBoundingClientRect().width, bar: bar.getBoundingClientRect().width };
+        }));
+        expect.eq(bars.length, 2, 'the funnel has its two steps');
+        if (bars.length === 2) {
+          expect.ok(Math.abs(bars[0].bar - bars[0].track) < 2, 'the install step fills its track', JSON.stringify(bars[0]));
+          expect.ok(Math.abs(bars[1].bar / bars[1].track - 0.5) < 0.05, 'and the tutorial, reached by one of two, fills half of it', JSON.stringify(bars[1]));
+        }
+
+        await checks.atWidths(ctx, [1280, 390], async () => {
+          await checks.tablesScrollThemselves(ctx);
+        });
+        await shot('android-funnel');
+
+        await ui.clickThrough('.p202-tabs .nav-link:has-text("Postbacks sent")');
+        expect.eq(await ui.count('[data-outbox-status]'), 5, 'the outbox tab counts its five states');
+        await checks.atWidths(ctx, [390], async () => {
+          expect.ok(true, 'the outbox tiles fit a phone');
+        });
+
+        await withSession({ colorScheme: 'dark' }, async (dark) => {
+          await dark.app.goto(PAGE + '?view=funnel&registration_id=' + ANDROID_REG);
+          await checks.darkThemeApplies({ ...ctx, ui: dark.ui, page: dark.page });
+          await dark.page.screenshot({
+            path: path.join(ctx.config.shots, 'analyze-mobile-apps-funnel-dark.png'),
+            fullPage: true,
+          });
+        });
       },
     },
 

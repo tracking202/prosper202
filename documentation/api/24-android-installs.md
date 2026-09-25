@@ -201,10 +201,7 @@ same transaction: `integrity_state` becomes `error` and a held
 `pending_integrity` install `integrity_unverified` — recorded, never paid,
 with a reason naming the deletion. (A `pending_click` install of a deleted
 registration stays `pending_click`: there is no policy left to settle it
-under.) Both unlink the campaigns linked to the deleted registration
-(`app_registration_id` back to `null`), so registering the app again and
-linking the campaign to the new registration is all it takes to attribute
-its clicks again.
+under.)
 
 ## 9. Play Integrity
 
