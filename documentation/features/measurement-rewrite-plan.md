@@ -185,9 +185,9 @@ makes that boundary explicit:
 
 A class belongs in the core only if both sources call it.
 
-## 4. Phase 0: reshape the iOS implementation onto the core
+## 4. App core reshape (PR 3)
 
-Phase 0 changes no user-visible iOS behaviour except the renames below. It is
+PR 3 changes no user-visible iOS behaviour except the renames below. It is
 done when:
 
 - every existing iOS test is **ported, not deleted**, and green;
@@ -358,7 +358,7 @@ it to be far more expressive than "this event name" (§5.5). The split:
   `registration_id(s)`. The postback's own `app_id` stays as a forensic column
   and filter.
 
-## 5. Phase 1: Android on the core
+## 5. Android on the core (PRs 4–7)
 
 ### 5.1 The click id in the store link
 
@@ -584,25 +584,60 @@ because the same app is often sold under different deals.
 
 **One click, several payouts: a real constraint in the core.** Classic
 campaign reports allow one lead and one payout per click. Income is
-`IF(click_lead>0, click_payout, 0)` (`202-config/DataEngine/ClickRollupSql.php:68`),
-and every conversion **overwrites** `click_payout`; nothing adds to it
+`IF(click_lead>0, click_payout, 0)` (`202-config/DataEngine/ClickRollupSql.php:68`).
+Every conversion **overwrites** `click_payout` rather than adding to it
 (`MysqlConversionRepository::applyStandardClickUpdate()`, `:345-353`;
-`p202ApplyConversionUpdate()`, `static-endpoint-helpers.php:57-118`).
+`p202ApplyConversionUpdate()`, `static-endpoint-helpers.php:57-118`). A
+campaign paying $1 for the install and $4 for level 3 would show $4 of
+income, not $5.
 
-- A campaign paying $1 for the install and $4 for level 3 would show $4 of
-  income, not $5.
-- This is already wrong today for any click with two web conversions carrying
-  different transaction ids.
-- The fix belongs in the one writer: after inserting a conversion, `record()`
-  sets `click_payout` to the **sum of the click's non-deleted conversions**,
-  under the click lock it already holds (`:136-144`), and `softDelete()`
-  recomputes it the same way. `click_lead` stays a flag, so "leads" still
-  counts converting clicks, and income becomes correct.
-- **This changes what existing reports show for multi-conversion clicks on
-  upgraded installs**, from the moment of upgrade. Historical rows are left as
-  stored.
-- It is the one change in this plan outside the two features. It is listed
-  as a decision (§9) because it is a change in meaning, not a refactor.
+**The precedent: the revenue CSV upload already consolidates.**
+`tracking202/update/upload.php:128-165` (Update › Upload Revenue Reports)
+adds up every row for the same subid in one file and writes the total to
+`click_payout`. Several conversions for one click then show as one
+consolidated value. Consolidation is therefore already a behaviour
+Prosper202 has, but it is limited in three ways that decide the design here:
+
+- **It consolidates within one upload only.** The first row for a click in
+  each file *replaces* whatever the click held, so a second upload or a later
+  pixel still overwrites.
+- **It writes no conversion rows.** `202_conversion_logs` never sees an
+  uploaded payout. That rules out the fix this plan proposed before, which was
+  to recompute `click_payout` as the sum of the click's conversion rows: it
+  would silently wipe uploaded revenue the first time a pixel conversion
+  landed on the same click.
+- **Some operators rely on overwrite.** Networks that send a second postback
+  to *correct* a payout (pending → approved, a different transaction id,
+  a new amount) would be double-counted if every conversion added.
+
+**Design: a per-campaign payout mode, applied in the one writer.**
+
+- **`202_aff_campaigns.payout_mode`**
+  - `replace`: today's behaviour. It is the default for every existing
+    campaign and every web campaign.
+  - `accumulate`: each new conversion **adds** its payout to the click's.
+    It is the default for campaigns linked to an app registration, and
+    selectable on any campaign.
+- **In `accumulate` mode**, `record()` does the addition under the click lock
+  it already holds (`MysqlConversionRepository.php:136-144`):
+  - the first conversion on a click (`click_lead = 0`) **sets** `click_payout`,
+    replacing the campaign default the click was recorded with (`dl.php:282`);
+  - each later conversion **adds** to it;
+  - `softDelete()` subtracts the deleted conversion's payout.
+  - A duplicate never reaches the update, because the dedupe runs before it.
+- **Default payouts come from the campaign or goal, never from
+  `click_payout`.** Today a conversion without an amount takes its payout from
+  `click_payout` (`:165`). Under `accumulate` that field is a running total, so
+  the second amount-less conversion would pay the total again. In
+  `accumulate` mode the default comes from the goal's payout or the
+  campaign's `aff_campaign_payout`.
+- **The CSV upload keeps its meaning.** It replaces with the file's
+  consolidated total, as it does now. It is an import and correction tool,
+  and the docs say it replaces in both modes.
+- **`click_lead` stays a flag,** so "leads" still counts converting clicks,
+  and income becomes the consolidated value.
+- **What does not change:** nothing changes for any existing campaign. Only
+  campaigns an operator switches, or new app campaigns, accumulate.
 
 **Revenue trust.** Anyone holding the app token can post events.
 
@@ -672,7 +707,7 @@ shared partials with the iOS page.
 - No advertising ID and no `AD_ID` permission.
 - Tests: JVM tests over the contract vectors, plus a live integration test.
 
-**Play Integrity, in phase 1, opt-in per registration.** It is the only
+**Play Integrity, in the first release, opt-in per registration (PR 6).** It is the only
 control that tells a real app on a real device from a click-spamming script,
 and this plan attaches payouts to installs and goals. It therefore belongs
 next to the payouts, not two phases later. It needs the app owner's Google
@@ -710,7 +745,7 @@ who deleted it and for apps without the permission. If an ad network later
 requires a device id in its postback, it can be added as an opt-in SDK field
 without changing anything here.
 
-**Phase 3, each part independent:**
+**After the release, each part independent:**
 
 - Meta referrer decryption: AES-256-GCM with the per-app key.
 - Huawei, Samsung and Xiaomi stores. Huawei reports milliseconds.
@@ -836,7 +871,7 @@ labelled as such.
   release containing visitor capture have no visitor id and cannot be
   backfilled. Every install upgrading from 1.9.55 or older starts with
   one-touch journeys, and they fill in as new clicks arrive. That is why
-  visitor capture must be in the first release that goes out (§8, phase M0).
+  visitor capture must be in the first release that goes out (§8, PR 2).
 
 ### 6.3 Engine
 
@@ -1073,7 +1108,7 @@ answer as the unoptimised path on a sparse and a dense dataset (CLAUDE.md,
 
 ### 7.6 Verification: what "done" means
 
-**Phase 0 (iOS reshape):**
+**PR 3 (app core reshape):**
 - iOS tests are ported and green, and the signature vectors are unchanged.
 - **Upgrade equals install.** The test goes in three steps:
   1. Build a 1.9.55 database by running the installer from the last commit
@@ -1088,7 +1123,7 @@ answer as the unoptimised path on a sparse and a dense dataset (CLAUDE.md,
   as well as the app tables'.
 - The iOS live, browser and SDK suites are green.
 
-**Phase 1 (Android):**
+**PRs 5–7 (Android):**
 - **Unit tests:** referrer parser, token (including the missing-key case),
   timing rules, `AppIdentity` on raw payloads.
 - **Contract vectors:** exercised in PHP, Swift and Kotlin.
@@ -1132,8 +1167,9 @@ answer as the unoptimised path on a sparse and a dense dataset (CLAUDE.md,
 - **Live pass:** an install on a campaign paying install $1 and level 3 $4:
   1. post `level_reached` with levels 1, 2 and 3, plus a replay of level 3;
   2. assert exactly two conversions;
-  3. if decision 1 stands, assert `click_payout` = 5.00 and campaign-report
-     income 5.00;
+  3. with the campaign in `accumulate` mode, assert `click_payout` = 5.00 and
+     campaign-report income 5.00. Then repeat in `replace` mode and assert
+     4.00;
   4. assert two traffic-source notifications, carrying the goal tokens;
   5. assert the MTA credits for both conversions.
 - **Versioning:** edit the goal; the old conversions keep their version;
@@ -1171,7 +1207,7 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 
 - **Every release adds an upgrade origin.** Anything released becomes a
   version some database can sit at, and the ladder must upgrade it forever.
-  Today the only origin is ≤ 1.9.55. Shipping phase 0 first would add a
+  Today the only origin is ≤ 1.9.55. Shipping PR 3 on its own would add a
   second: a database with the reshaped app tables but no Android or goal
   tables. The next release would have to reconcile that, which is exactly the
   machinery this plan deletes.
@@ -1184,7 +1220,7 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 
 | # | PR | Depends on |
 |---|---|---|
-| 1 | **Conversion writer:** outbox row in `record()`; `click_payout` as the sum of the click's conversions (if decision 1 below stands); `ConversionTables` split out; `gpb.php` pixel-firing logic extracted to one function | — |
+| 1 | **Conversion writer:** outbox row in `record()`; per-campaign `payout_mode` (`replace` default, `accumulate`) in `record()` and `softDelete()`; `ConversionTables` split out; `gpb.php` pixel-firing logic extracted to one function | — |
 | 2 | **Identity capture:** `p202vid`, LP first-party id and `p202.js`, `cust` on clicks, `202_identity_*`, `202_clicks_visitor`, consent switch | — |
 | 3 | **App core reshape** (§4): registry, `AppIdentity`, token rename, verdicts, `PublicIntake`, retention, user-deletion purge, `/apps` and `p202 app` renames, legacy guard deleted | — |
 | 4 | **Goals engine:** definitions, validation, versioning, server evaluator, cross-language vectors, campaign goal payouts, SKAN encodings pointing at goals | 1, 3 |
@@ -1198,7 +1234,7 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 | 12 | **Release gate:** upgrade-equals-install from a real 1.9.55 database, full live passes, agent-eval cases, docs and OpenAPI | all |
 
 - PRs 1–3 have no dependencies and can proceed in parallel.
-- Phase 3 extensions (Meta decryption, other stores, deep links) come after
+- The later extensions (Meta decryption, other stores, deep links) come after
   the release.
 
 Identity capture (PR 2) gets no special ordering: with a single release, it is
@@ -1212,18 +1248,12 @@ in the first release by construction.
 |---|---|---|---|
 | 1 | Install as a conversion by default? | Yes, and any engagement after it can be the conversion too, through versioned, data-defined goals: event predicates, counts and sums, sequences, windows, repeats, fixed or property values, chosen per campaign | §5.5 |
 | 2 | Traffic-source postbacks? | An option per payable goal per campaign, default on, with `[[p202_goal]]` / `[[p202_goal_value]]` tokens | §5.5 |
-| 3 | Play Integrity | Phase 1, opt-in per registration: `off` / `observe` / `require` | §5.6 |
+| 3 | Play Integrity | In the first release (PR 6), opt-in per registration: `off` / `observe` / `require` | §5.6 |
 | 4 | Advertising ID | Not collected; nothing in the design needs it | §5.6 |
 | 5 | Journey identity | An identity graph: tracking-domain cookie, landing-page first-party id, hashed customer id; merge caps; never IP or fingerprinting | §6.2 |
 | 6 | Release shape | Small PRs in dependency order, one 1.9.76 release | §8 |
 | 7 | Naming | App measurement: `202_app_*`, `/apps/*`, scope `apps`, `p202 app`, `app_key`, `app_token`, `accept_test_signals`. MTA: `202_attribution_*`, `/attribution/*`, scope `attribution`, `p202 attribution` | §1 |
+| 8 | Several payouts on one click | A per-campaign `payout_mode`. `replace` keeps today's behaviour and is the default for every existing and web campaign. `accumulate` consolidates payouts into one value per click, like the revenue CSV upload already does within a file, and is the default for app campaigns | §5.5 |
 
-**Still open, one question:**
-
-1. **Should `click_payout` become the sum of a click's conversions?** Without
-   it, multi-step payouts (install $1 + level 3 $4) show only the last payout
-   in classic campaign reports. The same is already true of web clicks with
-   two conversions. The change is in the conversion writer, outside the two
-   features, and it changes what upgraded installs' reports show for
-   multi-conversion clicks from the upgrade on (§5.5). The plan recommends
-   yes.
+Nothing is open. Decision 8 was the only candidate for changing existing
+reports, and the per-campaign mode avoids that change entirely.
