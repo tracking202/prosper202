@@ -35,9 +35,12 @@ use Prosper202\Database\Connection;
  * `reached` whose outcome is replaced is cancelled and the replacement's own
  * `reached` goes out instead; one that went out (or may have: an attempt was
  * made) cannot be recalled, so the replacement's `reached` is cancelled and
- * a `correction` — or, with no replacement, a `retraction` — is recorded as
- * `suppressed`, because no pixel has a correction URL to carry it yet. An
- * event a replay moved to another n is announced once too (onEventMoved()).
+ * a `correction` — or, with no replacement, a `retraction` — is recorded.
+ * It is queued like any postback when the pixel has a correction URL
+ * (CorrectionUrls, set on Setup › Traffic Sources), and stored `suppressed`
+ * with the reason when it has none, which is the default: most networks
+ * have no endpoint for one. An event a replay moved to another n is
+ * announced once too (onEventMoved()).
  *
  * Sending (sendDue()) is the worker's: never on the request path, which
  * makes no external calls (plan §7.3). Each row is claimed with a
@@ -169,17 +172,109 @@ final class NotificationOutbox implements OutcomeNotificationSink
             $this->conn->executeUpdate($cancel);
         }
         foreach (array_keys($delivered) as $pixelId) {
-            $this->insert(
+            $this->recordCorrection(
                 $userId,
-                $newConvId ?? $oldConvId,
                 $pixelId,
                 $newConvId !== null ? self::KIND_CORRECTION : self::KIND_RETRACTION,
-                'suppressed',
-                '',
-                self::NO_CORRECTION_URL . ' (announced by conversion ' . $oldConvId . ')',
+                $oldConvId,
+                $newConvId,
+                '(announced by conversion ' . $oldConvId . ')',
                 $now
             );
         }
+    }
+
+    /**
+     * Record a correction or retraction for one pixel: queued to the pixel's
+     * correction URL when it has one, `suppressed` with the reason when it
+     * has none (or when the URL cannot be filled — the conversion it speaks
+     * for could not be read, which is said rather than sent half-filled).
+     * In the caller's transaction, beside the ledger rows it describes.
+     */
+    private function recordCorrection(int $userId, int $pixelId, string $kind, int $oldConvId, ?int $newConvId, string $context, int $now): void
+    {
+        $convId = $newConvId ?? $oldConvId;
+        $template = (new CorrectionUrls($this->conn))->forPixel($userId, $pixelId);
+        if ($template === null) {
+            $this->insert($userId, $convId, $pixelId, $kind, 'suppressed', '', self::NO_CORRECTION_URL . ' ' . $context, $now);
+
+            return;
+        }
+        $url = $this->correctionUrl($userId, $template, $kind, $oldConvId, $newConvId);
+        if ($url === null) {
+            $this->insert($userId, $convId, $pixelId, $kind, 'suppressed', '',
+                'the conversion this ' . $kind . ' is about could not be read, so its correction URL was not filled ' . $context, $now);
+
+            return;
+        }
+        $this->insert($userId, $convId, $pixelId, $kind, 'pending', $url, null, $now);
+    }
+
+    /**
+     * The correction URL with its tokens filled: the click's tokens, as a
+     * reached postback has them, and the correction's own —
+     * [[p202_goal_value]] the new value (0.00 for a retraction),
+     * [[p202_previous_value]] what was announced, [[p202_original_conv_id]]
+     * the conversion that announced it, [[p202_notification_kind]]
+     * correction or retraction — or null when a conversion it needs is gone.
+     */
+    private function correctionUrl(int $userId, string $template, string $kind, int $oldConvId, ?int $newConvId): ?string
+    {
+        $old = $this->conversion($userId, $oldConvId);
+        $new = $newConvId === null ? null : $this->conversion($userId, $newConvId);
+        if ($old === null || ($newConvId !== null && $new === null)) {
+            return null;
+        }
+        $current = $new ?? $old;
+        $click = TrafficSourcePixels::clickTokens($this->conn, $userId, (int) $current['click_id'], true);
+        if ($click === null) {
+            return null;
+        }
+        $value = $new === null ? '0.00' : self::money((string) $new['click_payout']);
+        $goalId = preg_match('/^goal:(\d+):/', (string) ($current['source_ref'] ?? ''), $m) === 1 ? $m[1] : null;
+        $tokens = [
+            'sourceid' => (string) $click['ppc_account_id'],
+            'timestamp' => (string) $this->now(),
+            'payout' => $value,
+            'transactionid' => ($current['transaction_id'] ?? '') !== '' ? (string) $current['transaction_id'] : (string) $current['dedupe_key'],
+            'p202_goal' => $this->goalName($userId, $goalId) ?? (string) ($current['event_name'] ?? ''),
+            'p202_goal_id' => $goalId,
+            'p202_goal_value' => $value,
+            'p202_previous_value' => self::money((string) $old['click_payout']),
+            'p202_original_conv_id' => (string) $oldConvId,
+            'p202_notification_kind' => $kind,
+        ] + $click['tokens'];
+
+        return self::replaceTokens($template, $tokens);
+    }
+
+    /**
+     * The goal's name, as a reached postback's [[p202_goal]] carries it
+     * (the ledger row holds the event name); null for a row that names no
+     * goal (the install conversion, whose event name is the install goal's).
+     */
+    private function goalName(int $userId, ?string $goalId): ?string
+    {
+        if ($goalId === null) {
+            return null;
+        }
+        $stmt = $this->conn->prepareWrite('SELECT name FROM 202_goals WHERE goal_id = ? AND user_id = ? LIMIT 1');
+        $this->conn->bind($stmt, 'ii', [(int) $goalId, $userId]);
+        $row = $this->conn->fetchOne($stmt);
+
+        return $row === null ? null : (string) $row['name'];
+    }
+
+    /** @return array<string, mixed>|null */
+    private function conversion(int $userId, int $convId): ?array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT conv_id, click_id, click_payout, event_name, source_ref, transaction_id, dedupe_key
+             FROM 202_conversion_logs WHERE conv_id = ? AND user_id = ? LIMIT 1'
+        );
+        $this->conn->bind($stmt, 'ii', [$convId, $userId]);
+
+        return $this->conn->fetchOne($stmt);
     }
 
     /**
@@ -321,8 +416,10 @@ final class NotificationOutbox implements OutcomeNotificationSink
         $this->conn->executeUpdate($cancel);
         $now = $this->now();
         foreach ($delivered as $pixelId) {
-            $this->insert($userId, $newConvId, $pixelId, self::KIND_CORRECTION, 'suppressed', '',
-                self::NO_CORRECTION_URL . ' (the event was announced by conversion ' . implode(', ', $priorConvIds) . ')', $now);
+            // The earliest announcing conversion is the one the network
+            // heard first: the correction's "original".
+            $this->recordCorrection($userId, $pixelId, self::KIND_CORRECTION, min($priorConvIds), $newConvId,
+                '(the event was announced by conversion ' . implode(', ', $priorConvIds) . ')', $now);
         }
 
         return true;

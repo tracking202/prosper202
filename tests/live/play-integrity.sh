@@ -446,6 +446,12 @@ else
 fi
 if [ -f "$ROOT/vendor/symfony/console/Application.php" ]; then
   PHPCLI=("$PHP" -d "auto_prepend_file=$ROOT/vendor/symfony/deprecation-contracts/function.php" "$ROOT/bin/p202")
+  # P202_PHP_CLI, as the other passes read it, when a partial vendor/ needs
+  # more than that prepend (CLAUDE.md: running bin/p202 on a partial vendor).
+  if [ -n "${P202_PHP_CLI:-}" ]; then
+    read -r -a PHPCLI <<< "$P202_PHP_CLI"
+    [ "${PHPCLI[${#PHPCLI[@]}-1]}" = bin/p202 ] && PHPCLI[${#PHPCLI[@]}-1]="$ROOT/bin/p202"
+  fi
   mkdir -p "$OUT/phphome"
   HOME="$OUT/phphome" "${PHPCLI[@]}" config:set-url "$BASE" > /dev/null 2>&1
   HOME="$OUT/phphome" "${PHPCLI[@]}" config:set-key "$P202_API_KEY" > /dev/null 2>&1

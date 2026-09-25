@@ -109,7 +109,7 @@ trait AndroidDatabase
             '202_conversion_logs', '202_clicks', '202_clicks_spy', '202_aff_campaigns', '202_attribution_pending', '202_dataengine',
             '202_goals', '202_goal_versions', '202_campaign_goals', '202_goal_subjects', '202_goal_events', '202_goal_progress',
             '202_goal_outcomes', '202_app_registrations', '202_app_installs', '202_notification_pending', '202_ppc_account_pixels',
-            '202_app_integrity_credentials',
+            '202_app_integrity_credentials', '202_notification_correction_urls',
         ] as $t) {
             self::$db->query('TRUNCATE TABLE ' . $t);
         }

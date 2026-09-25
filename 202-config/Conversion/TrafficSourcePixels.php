@@ -45,6 +45,11 @@ final class TrafficSourcePixels
         'referer' => ['referer', 'referrer'], 'sourceid' => ['sourceid'],
         'transactionid' => ['transactionid', 't202txid'],
         'p202_goal' => ['p202_goal'], 'p202_goal_id' => ['p202_goal_id'], 'p202_goal_value' => ['p202_goal_value'],
+        // A correction or retraction (NotificationOutbox, sent only to a
+        // pixel's correction URL): what was announced before, by which
+        // conversion, and which of the two this is.
+        'p202_previous_value' => ['p202_previous_value'], 'p202_original_conv_id' => ['p202_original_conv_id'],
+        'p202_notification_kind' => ['p202_notification_kind'],
         // The Android install token (plan §5.1): computed by the caller from
         // the raw click id (connect2.php's replaceTokens(), which knows the
         // key); here only placed, like any other token.

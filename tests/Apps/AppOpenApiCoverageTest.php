@@ -131,4 +131,35 @@ final class AppOpenApiCoverageTest extends TestCase
         }
         $this->assertContains('app_registration_id', $this->documentedProperties('Campaign'));
     }
+
+    /**
+     * The cross-platform report (PR 11): every grouping the server answers
+     * is documented, in both enums (the parameter and the response), and
+     * so is every Android filter it reads; the notifications read and the
+     * link builder's route are documented.
+     */
+    public function testTheCrossPlatformReportSurfaceIsDocumented(): void
+    {
+        $spec = $this->spec();
+        $groupings = [
+            ...\Api\V3\Controllers\AppReportController::SHARED_GROUPINGS,
+            ...\Api\V3\Controllers\AppReportController::IOS_GROUPINGS,
+            ...\Api\V3\Controllers\AppReportController::ANDROID_GROUPINGS,
+        ];
+        $this->assertSame(2, preg_match_all('/enum: \[(day, registration, platform[^\]]*)\]/', $spec, $m), 'the group_by parameter and the response each list the groupings');
+        foreach ($m[1] as $enum) {
+            $this->assertEqualsCanonicalizing($groupings, array_map('trim', explode(',', $enum)));
+        }
+        $report = substr($spec, (int) strpos($spec, "\n  /apps/report:\n"), 12000);
+        foreach ([...\Api\V3\Apps\Android\InstallReport::FILTERS, 'platform'] as $param) {
+            $this->assertMatchesRegularExpression('/- name: ' . $param . '\n/', $report, "the report reads $param but does not document it");
+        }
+        foreach (['/apps/notifications', '/apps/{id}/store-link'] as $path) {
+            $this->assertStringContainsString("\n  $path:\n", $spec, "$path is served but not documented");
+        }
+        $this->assertSame([], array_values(array_diff(\Api\V3\Controllers\AppNotificationsController::STATUSES, ['pending', 'sent', 'failed', 'cancelled', 'suppressed'])));
+        foreach (['kind', 'status', 'url', 'last_error', 'registration_id', 'goal_name'] as $field) {
+            $this->assertContains($field, $this->documentedProperties('AppNotification'));
+        }
+    }
 }

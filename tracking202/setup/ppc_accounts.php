@@ -97,6 +97,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	if (isset($_POST['ppc_network_id']) && ($network_editing == false)) {
 
 		$pixel_ids = [];
+		// pixel id => [type, correction URL], saved once the pixels are.
+		$correctionPixels = [];
 
 		$ppc_account_name = trim((string) $_POST['ppc_account_name']);
 		$do_edit_ppc_account = trim(filter_input(INPUT_POST, 'do_edit_ppc_account', FILTER_SANITIZE_NUMBER_INT));
@@ -107,6 +109,26 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$ppc_network_id = trim((string) $_POST['ppc_network_id']);
 		if ($ppc_network_id == '') {
 			$error['ppc_network_id'] = 'What traffic source is this account attached to?';
+		}
+
+		// A correction URL (plan §5.5, PR 11) is read before anything is
+		// written: a server-to-server pixel's only, one http(s) address.
+		// Refused here, it is refused with the rest of the form, which keeps
+		// what was typed; the pixels below are never half-saved around it.
+		foreach ((array) ($_POST['pixel_correction_url'] ?? []) as $key => $correctionUrl) {
+			$correctionUrl = trim((string) $correctionUrl);
+			if ($correctionUrl === '') {
+				continue;
+			}
+			if ((string) ($_POST['pixel_type_id'][$key] ?? '') !== (string) \Prosper202\Notifications\CorrectionUrls::SERVER_PIXEL_TYPE) {
+				$error['pixel_correction_url'] = 'A correction URL goes on a server-to-server (Postback URL) pixel only: the other pixel types are fired by a browser, which is not there when a correction is sent.';
+				break;
+			}
+			$problem = \Prosper202\Notifications\CorrectionUrls::problem($correctionUrl);
+			if ($problem !== null) {
+				$error['pixel_correction_url'] = $problem;
+				break;
+			}
 		}
 
 		if (empty($error)) {
@@ -206,6 +228,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 						}
 						$db->query($pixel_sql);
 						$pixel_ids[] = (int)$mysql['pixel_id'];
+						$correctionPixels[(int)$mysql['pixel_id']] = [(int)$mysql['pixel_type_id'], trim((string) ($_POST['pixel_correction_url'][$key] ?? ''))];
 					} else {
 						$pixel_sql = "INSERT INTO 202_ppc_account_pixels (ppc_account_id, pixel_code,pixel_type_id)
 								VALUES(" . $the_ppc_account_id . ",'"
@@ -217,6 +240,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 						$db->query($pixel_sql);
 						$pixel_ids[] = $db->insert_id;
+						if ((int) $db->insert_id > 0) {
+							$correctionPixels[(int) $db->insert_id] = [(int)$mysql['pixel_type_id'], trim((string) ($_POST['pixel_correction_url'][$key] ?? ''))];
+						}
 					}
 
 					$sql = "DELETE FROM 202_ppc_account_pixels WHERE pixel_id NOT IN (" . implode(",", $pixel_ids) . ") AND ppc_account_id=" . $the_ppc_account_id;
@@ -245,6 +271,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			if (isset($sql) && !empty($sql)) {
 				_mysqli_query($sql);
 			}
+			// Each server pixel's correction URL, set or cleared; a pixel that
+			// stopped being a server pixel, or stopped existing, keeps none.
+			// saveForAccount() reads which pixels the account has, and their
+			// types, itself: the ids above came from the request.
+			(new \Prosper202\Notifications\CorrectionUrls(new \Prosper202\Database\Connection($db)))->saveForAccount(
+				(int) $_SESSION['user_id'],
+				$the_ppc_account_id,
+				array_map(static fn (array $pixel): string => $pixel[1], $correctionPixels),
+				time()
+			);
 			header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
 		}
 	}
@@ -368,6 +404,12 @@ if (!empty($_GET['edit_ppc_account_id'])) {
 			$pixel_array[] = ['pixel_type_id' => $ppc_account_pixel_row['pixel_type_id'], 'pixel_code' => $selected['pixel_code'], 'pixel_id' => $ppc_account_pixel_row['pixel_id']];
 		}
 	}
+	$correctionUrls = (new \Prosper202\Notifications\CorrectionUrls(new \Prosper202\Database\Connection($db)))
+		->forPixels((int) $_SESSION['user_id'], array_map(static fn (array $p): int => (int) $p['pixel_id'], $pixel_array));
+	foreach ($pixel_array as &$pixelWithCorrection) {
+		$pixelWithCorrection['correction_url'] = $correctionUrls[(int) $pixelWithCorrection['pixel_id']] ?? '';
+	}
+	unset($pixelWithCorrection);
 }
 
 if (!empty($error)) {
@@ -428,6 +470,7 @@ if ($accountPosted) {
 			'pixel_type_id' => (string) $typeId,
 			'pixel_code' => (string) ($_POST['pixel_code'][$key] ?? ''),
 			'pixel_id' => (string) ($_POST['pixel_id'][$key] ?? ''),
+			'correction_url' => (string) ($_POST['pixel_correction_url'][$key] ?? ''),
 		];
 	}
 }
@@ -457,6 +500,7 @@ if ($accountSource === '' && count($sourceOptions) === 1) {
 $pixelRow = static function (array $pixel, string $index, array $pixelTypes): string {
 	$typeId = 'pixel-type-' . $index;
 	$codeId = 'pixel-code-' . $index;
+	$correctionId = 'pixel-correction-' . $index;
 	return '<div class="p202-panel mb-3" data-p202-row>'
 		. '<div class="p202-panel__body">'
 		. '<div class="mb-2"><label class="form-label" for="' . $typeId . '">Pixel type</label>'
@@ -464,6 +508,9 @@ $pixelRow = static function (array $pixel, string $index, array $pixelTypes): st
 		. '<div class="mb-2"><label class="form-label" for="' . $codeId . '">Pixel code</label>'
 		. '<textarea class="form-control font-monospace" id="' . $codeId . '" name="pixel_code[]" rows="3">' . p202_setup_e($pixel['pixel_code']) . '</textarea>'
 		. '<div class="form-text">For every type except Raw, paste only the URL from the pixel\'s src.</div></div>'
+		. '<div class="mb-2"><label class="form-label" for="' . $correctionId . '">Correction URL <span class="text-body-secondary">Postback URL pixels only, optional</span></label>'
+		. '<input type="url" class="form-control font-monospace" id="' . $correctionId . '" name="pixel_correction_url[]" value="' . p202_setup_e($pixel['correction_url'] ?? '') . '" placeholder="https://network.example/correct?tx=[[transactionid]]&amp;value=[[p202_goal_value]]">'
+		. '<div class="form-text">Empty by default: most networks cannot take a correction. When a goal this pixel already announced is replaced, the correction goes here with <code>[[p202_goal_value]]</code>, <code>[[p202_previous_value]]</code>, <code>[[p202_original_conv_id]]</code> and <code>[[p202_notification_kind]]</code> filled in.</div></div>'
 		. '<input type="hidden" name="pixel_id[]" value="' . p202_setup_e($pixel['pixel_id']) . '">'
 		. ($index !== '0' ? '<button type="button" class="btn btn-link btn-sm text-danger p-0" data-p202-remove-row>Remove this pixel</button>' : '')
 		. '</div></div>';
@@ -490,6 +537,11 @@ echo p202_setup_query_flashes([
 ], $_GET);
 if ($error) {
 	echo p202_setup_error_flashes($error, ['ppc_network_name', 'ppc_network_id', 'ppc_account_name']);
+	if (isset($error['pixel_correction_url'])) {
+		// The pixels sit under a disclosure, so the sentence is said at the
+		// top as well as opening it (below).
+		$hasPixels = true;
+	}
 }
 ?>
 
@@ -553,7 +605,7 @@ if ($error) {
 									echo $pixelRow($pixel, (string) $index, $pixelTypes);
 								} ?>
 							</div>
-							<template id="pixel-row-template"><?php echo $pixelRow(['pixel_type_id' => '', 'pixel_code' => '', 'pixel_id' => ''], 'new', $pixelTypes); ?></template>
+							<template id="pixel-row-template"><?php echo $pixelRow(['pixel_type_id' => '', 'pixel_code' => '', 'pixel_id' => '', 'correction_url' => ''], 'new', $pixelTypes); ?></template>
 							<button type="button" class="btn btn-secondary btn-sm" data-p202-add-row="#pixel-row-template" data-p202-add-into="#pixel-rows"><i class="bi bi-plus"></i> Add a pixel</button>
 						</div>
 					</details>

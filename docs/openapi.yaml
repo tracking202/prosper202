@@ -3285,6 +3285,41 @@ paths:
         "503":
           description: No install-token key
 
+  /apps/{id}/store-link:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Apps]
+      summary: The store link a campaign should send this app's clicks to (the link builder)
+      description: |
+        Android: the Play link with `[[p202_install_token]]` in its
+        `referrer` (the redirect fills it per click; the SDK reads it back
+        from the Install Referrer). iOS: the App Store link, the Info.plist
+        keys and the receiver paths Apple appends to the origin — a campaign
+        is not linked to an iOS app, since Apple's postback names the app,
+        not the click. With `campaign_id`, whether that campaign is ready:
+        its offer URL names this app (and, for Android, carries the token
+        in the referrer) and, for Android, it is linked to this
+        registration; `apply` is the PUT /campaigns/{id} body that makes it
+        so. Nothing is written.
+      operationId: getAppStoreLink
+      parameters:
+        - {name: campaign_id, in: query, schema: {type: integer}}
+      responses:
+        "200":
+          description: The store link
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AppStoreLink"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /apps/{id}/integrity:
     parameters:
       - $ref: "#/components/parameters/resourceId"
@@ -3523,6 +3558,57 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /apps/notifications:
+    get:
+      tags: [Apps]
+      summary: Traffic-source postbacks app installs' goals queued, and where each stands
+      description: |
+        The notification outbox for app installs, newest first: every
+        server-to-server postback an install's goal outcome queued, with
+        its kind and status — `pending` (waiting, or backing off after a
+        failed attempt), `sent`, `failed` (attempts ran out; `last_error`
+        says why), `cancelled` (replaced before it went out) or
+        `suppressed` (a correction or retraction for a pixel with no
+        correction URL). `meta.summary` counts every status under the same
+        filters except `status`. Web clicks' postbacks go through the same
+        outbox and are not listed here.
+      operationId: listAppNotifications
+      parameters:
+        - {name: registration_id, in: query, schema: {type: integer}}
+        - {name: status, in: query, schema: {type: string, enum: [pending, sent, failed, cancelled, suppressed]}}
+        - {name: kind, in: query, schema: {type: string, enum: [reached, correction, retraction]}}
+        - $ref: "#/components/parameters/timeFrom"
+        - $ref: "#/components/parameters/timeTo"
+        - {name: limit, in: query, schema: {type: integer, default: 50, maximum: 500}}
+        - {name: offset, in: query, schema: {type: integer, default: 0}}
+      responses:
+        "200":
+          description: Notifications
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AppNotification"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+                  meta:
+                    type: object
+                    properties:
+                      summary:
+                        type: object
+                        properties:
+                          pending: {type: integer}
+                          sent: {type: integer}
+                          failed: {type: integer}
+                          cancelled: {type: integer}
+                          suppressed: {type: integer}
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /apps/postbacks:
     get:
       tags: [Apps]
@@ -3592,9 +3678,41 @@ paths:
   /apps/report:
     get:
       tags: [Apps]
-      summary: Aggregate postback report with SKAN decoding
+      summary: Cross-platform app report (iOS postbacks, Android installs, the goals they reached)
       description: |
-        Groups postbacks by `group_by` and decodes winning postbacks'
+        **Platforms.** `platform=ios` reports Apple's SKAdNetwork and
+        AdAttributionKit postbacks, `platform=android` the installs the
+        Android SDK reported, and no `platform` (or `all`) both. `day`,
+        `registration` and `platform` group either; `ad-network`, `source`,
+        `country`, `version`, `protocol` and `conversion-type` are Apple's
+        dimensions and need `platform=ios`; `campaign`, `match-state`,
+        `integrity-state` and `goal` are Android's and need
+        `platform=android`. A one-platform grouping or filter without its
+        platform is a `422` naming the platform to add — never a report
+        that silently leaves the other platform out. `limit` applies per
+        platform.
+
+        Every group carries `platform` and the metrics both platforms share
+        — `installs`, the four trust-class counts, `goals_reached`,
+        `revenue`, `events` — beside its platform's own. `data.totals` is
+        the platform's totals for one platform, and `{ios, android,
+        combined}` for both, where `combined` adds only the shared
+        metrics. `group_by=platform` returns one row per platform asked
+        for, zeros included.
+
+        **Android** figures are by install (a cohort): a goal an install
+        reached counts in its install's group, however much later it was
+        reached. `installs` are trusted (attributed) installs; `organic`,
+        `refuted_count`, `unvouched_count`, `test_count`, `pending` and the
+        `match_states` / `integrity_states` breakdowns count every install
+        beside them. `events`, `goals_reached` and `revenue` are the goals
+        trusted installs reached (`trusted=` recomputes them over that
+        class, `meta.trusted: as-filtered`); `revenue` is the value of
+        payable outcomes. `group_by=goal` is the funnel: one row per goal
+        with the installs that reached it (distinct, per trust class), its
+        `after` and owner.
+
+        **iOS** — the rest of this description. Groups postbacks by `group_by` and decodes winning postbacks'
         conversion values through the caller's SKAN encodings (the claiming
         registration's own over the account-wide ones, `registration_id = 0`;
         a postback no registration claims decodes through the account-wide
@@ -3635,15 +3753,22 @@ paths:
         `limit` or move the window with `time_to`.
       operationId: getAppReport
       parameters:
-        - name: group_by
+        - name: platform
           in: query
+          description: ios, android, or both (omitted or `all`)
           schema:
             type: string
-            enum: [day, registration, ad-network, source, country, version, protocol, conversion-type]
+            enum: [ios, android, all]
+        - name: group_by
+          in: query
+          description: day, registration and platform for either platform; the iOS and Android dimensions need their `platform`
+          schema:
+            type: string
+            enum: [day, registration, platform, ad-network, source, country, version, protocol, conversion-type, campaign, match-state, integrity-state, goal]
             default: day
         - name: limit
           in: query
-          description: Maximum groups to return (default 100, max 500). Day mode keeps the newest days; other modes keep the busiest groups.
+          description: Maximum groups to return per platform (default 100, max 500). Day mode keeps the newest days; other modes keep the busiest groups.
           schema:
             type: integer
             default: 100
@@ -3668,6 +3793,35 @@ paths:
         - $ref: "#/components/parameters/postbackProtocol"
         - $ref: "#/components/parameters/postbackConversionType"
         - $ref: "#/components/parameters/postbackAdInteractionType"
+        - name: match_state
+          in: query
+          description: Android (needs platform=android) — only installs in this match state
+          schema:
+            type: string
+            enum: [attributed, organic, third_party, unavailable, pending_click, bad_token, foreign_click, implausible, outside_window, duplicate_click, pending_integrity, integrity_failed, integrity_unverified]
+        - name: integrity_state
+          in: query
+          description: Android — only installs whose Play Integrity verdict is in this state
+          schema:
+            type: string
+            enum: [not_requested, received, missing, pending, valid, invalid, error, skipped]
+        - name: trusted
+          in: query
+          description: Android — only this trust class; the goal figures are then counted over it (`meta.trusted` as-filtered)
+          schema:
+            type: string
+            enum: [trusted, refuted, unvouched]
+        - name: test
+          in: query
+          description: Android — 1 only test installs, 0 only real ones
+          schema:
+            type: integer
+            enum: [0, 1]
+        - name: aff_campaign_id
+          in: query
+          description: Android — only installs on this campaign's clicks
+          schema:
+            type: integer
       responses:
         "200":
           description: Report groups
@@ -7264,10 +7418,16 @@ components:
       description: |
         One report group. Which dimension fields are present depends on
         `group_by`: `date` (day), `registration_id` + `app_name` +
-        `platform` + `app_key` (registration),
+        `app_key` (registration), `platform` (always),
         `ad_network_id` (ad-network), `source_identifier` + `campaign_id`
         (source), `country_code` (country), `version` (version),
-        `protocol` (protocol), `conversion_type` (conversion-type).
+        `protocol` (protocol), `conversion_type` (conversion-type) for iOS;
+        `aff_campaign_id` + `aff_campaign_name` (campaign), `match_state`
+        (match-state), `integrity_state` (integrity-state), `goal_id` +
+        `goal_name` + `goal_scope` + `goal_scope_id` + `builtin` + `after` +
+        `archived` (goal) for Android. The postback metrics (`postbacks`
+        through `decoded_revenue`) are iOS rows'; `received`, `organic`,
+        `pending`, `match_states` and `integrity_states` Android rows'.
       properties:
         date:
           type: string
@@ -7351,9 +7511,67 @@ components:
           description: Value withheld by Apple's privacy tier
         decoded_revenue:
           type: number
+        goals_reached:
+          type: integer
+          description: Both platforms — iOS the decoded postbacks (each decodes to one goal), Android the goal outcomes of trusted installs
+        revenue:
+          type: number
+          description: Both platforms — iOS `decoded_revenue`, Android the value of trusted installs' payable outcomes
+        received:
+          type: integer
+          description: Android — every install in the group, whatever its state
+        organic:
+          type: integer
+          description: Android — installs Play's referrer called organic (unvouched)
+        pending:
+          type: integer
+          description: Android — installs waiting for their click or their Play Integrity verdict
+        match_states:
+          type: object
+          description: Android — installs per match state (always an object)
+          additionalProperties:
+            type: integer
+        integrity_states:
+          type: object
+          description: Android — installs per Play Integrity state (always an object)
+          additionalProperties:
+            type: integer
+        aff_campaign_id:
+          type: integer
+          nullable: true
+          description: Android campaign mode; `null` for installs with no click of the caller's (organic, refuted)
+        aff_campaign_name:
+          type: string
+          nullable: true
+        match_state:
+          type: string
+        integrity_state:
+          type: string
+        goal_id:
+          type: integer
+        goal_name:
+          type: string
+        goal_scope:
+          type: string
+          nullable: true
+          enum: [campaign, registration, account, null]
+        goal_scope_id:
+          type: integer
+          nullable: true
+        builtin:
+          type: string
+          nullable: true
+          description: "`install` for a registration's built-in install goal"
+        after:
+          type: array
+          description: The goals this one waits for (its funnel predecessors)
+          items:
+            type: integer
+        archived:
+          type: boolean
         events:
           type: object
-          description: Per-event counts and revenue, keyed by event name (always an object, `{}` when empty)
+          description: Per-goal counts and revenue, keyed by goal name (always an object, `{}` when empty)
           additionalProperties:
             type: object
             properties:
@@ -7374,9 +7592,54 @@ components:
         and a truncated report is missing whole groups besides. These come
         from one ungrouped query over the same filters, so neither applies.
 
-        The conversion-value decode (`measurable`, `decoded`, `events`,
-        `decoded_revenue`) is per-group only and is not repeated here.
+        For iOS the decode over the whole window (`measurable`, `decoded`,
+        `undecoded`, `ambiguous_encoding`, `null_conversion_values`,
+        `decoded_revenue`, `events`) is here too, with `revenue` and
+        `goals_reached` as their shared names. Android totals carry the
+        Android group metrics (see AppReportGroup).
       properties:
+        platform:
+          type: string
+          enum: [ios, android]
+        goals_reached:
+          type: integer
+        revenue:
+          type: number
+        measurable:
+          type: integer
+        decoded:
+          type: integer
+        undecoded:
+          type: integer
+        ambiguous_encoding:
+          type: integer
+        null_conversion_values:
+          type: integer
+        decoded_revenue:
+          type: number
+        events:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              count:
+                type: integer
+              revenue:
+                type: number
+        received:
+          type: integer
+        organic:
+          type: integer
+        pending:
+          type: integer
+        match_states:
+          type: object
+          additionalProperties:
+            type: integer
+        integrity_states:
+          type: object
+          additionalProperties:
+            type: integer
         postbacks:
           type: integer
         losses:
@@ -7396,6 +7659,140 @@ components:
         test_count:
           type: integer
 
+    AppReportTotalsByPlatform:
+      type: object
+      properties:
+        ios:
+          $ref: "#/components/schemas/AppReportTotals"
+        android:
+          $ref: "#/components/schemas/AppReportTotals"
+        combined:
+          type: object
+          description: The metrics that mean the same on both platforms, added up
+          properties:
+            installs:
+              type: integer
+            trusted_count:
+              type: integer
+            refuted_count:
+              type: integer
+            unvouched_count:
+              type: integer
+            test_count:
+              type: integer
+            goals_reached:
+              type: integer
+            revenue:
+              type: number
+
+    AppNotification:
+      type: object
+      description: One traffic-source postback an app install's goal queued (the notification outbox).
+      properties:
+        notification_id:
+          type: integer
+        conv_id:
+          type: integer
+          description: The conversion (ledger row) it announces
+        pixel_id:
+          type: integer
+          description: The traffic source's server-to-server pixel
+        kind:
+          type: string
+          enum: [reached, correction, retraction]
+        status:
+          type: string
+          enum: [pending, sent, failed, cancelled, suppressed]
+        url:
+          type: string
+          description: The URL as filled when queued (empty for a suppressed correction)
+        attempts:
+          type: integer
+        next_attempt_at:
+          type: integer
+        last_error:
+          type: string
+          nullable: true
+        created_at:
+          type: integer
+        sent_at:
+          type: integer
+          nullable: true
+        registration_id:
+          type: integer
+          nullable: true
+        app_name:
+          type: string
+          nullable: true
+        goal_id:
+          type: integer
+        goal_name:
+          type: string
+          nullable: true
+        install_row_id:
+          type: integer
+        campaign_id:
+          type: integer
+          nullable: true
+
+    AppStoreLink:
+      type: object
+      properties:
+        registration_id:
+          type: integer
+        platform:
+          type: string
+          enum: [ios, android]
+        app_key:
+          type: string
+        app_name:
+          type: string
+        store_link:
+          type: string
+          description: Android — the Play link with `[[p202_install_token]]` in its referrer; iOS — the App Store link
+        android:
+          type: object
+          properties:
+            token:
+              type: string
+            note:
+              type: string
+        ios:
+          type: object
+          properties:
+            info_plist:
+              type: object
+              additionalProperties: true
+            receiver_paths:
+              type: object
+              additionalProperties:
+                type: string
+            note:
+              type: string
+        campaign:
+          type: object
+          description: With `campaign_id` — whether that campaign sends its clicks to the store link
+          properties:
+            aff_campaign_id:
+              type: integer
+            aff_campaign_name:
+              type: string
+            aff_campaign_url:
+              type: string
+            app_registration_id:
+              type: integer
+              nullable: true
+            ready:
+              type: boolean
+            needs:
+              type: array
+              items:
+                type: string
+            apply:
+              type: object
+              description: What PUT /campaigns/{id} needs to make it ready (`aff_campaign_url`, and for Android `app_registration_id`); `{}` when ready
+              additionalProperties: true
+
     AppReportResponse:
       type: object
       properties:
@@ -7404,13 +7801,19 @@ components:
           properties:
             group_by:
               type: string
-              enum: [day, registration, ad-network, source, country, version, protocol, conversion-type]
+              enum: [day, registration, platform, ad-network, source, country, version, protocol, conversion-type, campaign, match-state, integrity-state, goal]
+            platform:
+              type: string
+              enum: [ios, android, all]
             groups:
               type: array
               items:
                 $ref: "#/components/schemas/AppReportGroup"
             totals:
-              $ref: "#/components/schemas/AppReportTotals"
+              description: One platform's totals, or with both `{ios, android, combined}`
+              oneOf:
+                - $ref: "#/components/schemas/AppReportTotals"
+                - $ref: "#/components/schemas/AppReportTotalsByPlatform"
         meta:
           type: object
           properties:

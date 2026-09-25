@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Tracking202\Apps;
 
-use Api\V3\Apps\AppIdentity;
 use Api\V3\Controllers\AppRegistrationsController;
 
 /**
@@ -41,10 +40,10 @@ final class RegisteredApps
      */
     public static function read(AppRegistrationsController $apps): array
     {
-        // iOS only: both pages are about Apple's postbacks, and an Android
-        // registration (made through the API or the CLI) has nothing to show
-        // on either until the Android pages arrive.
-        $result = $apps->list(['limit' => self::MAX, 'filter' => ['platform' => AppIdentity::IOS]]);
+        // Both platforms: Setup registers and configures either, and the
+        // Analyze report covers either (PR 11). Each row carries its
+        // `platform`, which is how the pages label and route it.
+        $result = $apps->list(['limit' => self::MAX]);
         $rows = array_values($result['data'] ?? []);
 
         // The API orders by primary key; both pages read better by name.

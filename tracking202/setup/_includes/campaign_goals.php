@@ -34,9 +34,15 @@ const P202_GOAL_OPS = [
 /**
  * Whether the form can show a goal's definition without losing any of it.
  *
+ * The form has one window, counted from the owner's subject: the click for a
+ * campaign's goal, the install for an app's (Setup › Mobile Apps, PR 11). A
+ * window from the other one is a goal the form cannot show, and is edited
+ * with `p202 goal update` instead of being rewritten here.
+ *
  * @param array<string, mixed> $def the stored (canonical) definition
+ * @param 'click'|'install' $windowFrom what the form's window counts from
  */
-function p202_goal_form_fits(array $def): bool
+function p202_goal_form_fits(array $def, string $windowFrom = 'click'): bool
 {
     $trigger = $def['trigger'] ?? [];
     $where = $trigger['where'] ?? [];
@@ -47,7 +53,7 @@ function p202_goal_form_fits(array $def): bool
         && ($where === [] || isset(P202_GOAL_OPS[$where[0]['op'] ?? '']))
         && isset($def['threshold']['count'])
         && count($def['after'] ?? []) <= 1
-        && ($within === null || ($within['from'] ?? '') === 'click')
+        && ($within === null || ($within['from'] ?? '') === $windowFrom)
         && (($def['value']['type'] ?? '') !== 'from_property' || ($def['value']['prop'] ?? GoalDefinition::REVENUE_PROP) === GoalDefinition::REVENUE_PROP);
 }
 
@@ -115,9 +121,10 @@ function p202_goal_form_values(?array $goal, ?array $posted): array
  * GoalDefinition's to judge, through the controller.
  *
  * @param array<string, string> $v
+ * @param 'click'|'install' $windowFrom what the form's window counts from (p202_goal_form_fits())
  * @return array{definition: array<string, mixed>, errors: array<string, string>}
  */
-function p202_goal_definition_from_form(array $v): array
+function p202_goal_definition_from_form(array $v, string $windowFrom = 'click'): array
 {
     $errors = [];
     $int = static function (string $raw, string $field, string $sentence, int $max) use (&$errors): ?int {
@@ -144,7 +151,7 @@ function p202_goal_definition_from_form(array $v): array
     $within = null;
     if ($v['goal_within_days'] !== '') {
         $days = $int($v['goal_within_days'], 'goal_within_days', 'Within: a whole number of days from 1 to 3650, or empty for no limit.', GoalDefinition::MAX_DAYS);
-        $within = $days === null ? null : ['days' => $days, 'from' => 'click'];
+        $within = $days === null ? null : ['days' => $days, 'from' => $windowFrom];
     }
     $after = [];
     if ($v['goal_after'] !== '') {

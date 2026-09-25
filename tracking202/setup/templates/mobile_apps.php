@@ -3,25 +3,38 @@
 declare(strict_types=1);
 
 /**
- * Setup › Mobile Apps.
+ * Setup › Mobile Apps (plan §5.6, PR 11): register iOS and Android apps and
+ * set each one up.
  *
- * The first page on the v2 shell: Bootstrap 5.3 with the Prosper202 theme and
- * the component layer from 202-css/p202-components.css. No Bootstrap 3 or
- * Flat UI class appears here — tests/Api/V3/NoLegacyBootstrapClassesTest.php
- * scans every file that passes 'ui' => 'v2' and fails the build if one does.
+ * On the v2 shell: Bootstrap 5.3 with the Prosper202 theme and the component
+ * layer from 202-css/p202-components.css, every component copied from
+ * 202-account/ui-kit.php with its parts (error pattern #19). No Bootstrap 3
+ * or Flat UI class appears here or in the partials under mobile_apps/ —
+ * tests/Api/V3/NoLegacyBootstrapClassesTest.php scans them and fails the
+ * build if one does.
+ *
+ * The app page is one panel per job, in the order a new app needs them:
+ * for iOS the conversion values first (nothing decodes without them); for
+ * Android the store link first (nothing is attributed without it). Every
+ * rarely-changed setting sits under a closed `Advanced` disclosure.
  *
  * @var array<string, mixed> $mobileApps  built by MobileAppsController::render()
  */
 
+require_once dirname(__DIR__) . '/_includes/setup_ui.php';
+
 $e = static fn (mixed $v): string => htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
 /** Apple writes it iOS, so the page does too; strtoupper() shouted IOS. */
 $platformLabel = static fn (mixed $p): string => ['ios' => 'iOS', 'android' => 'Android'][strtolower((string)$p)] ?? (string)$p;
+/** What an app key is called on its platform. */
+$keyLabel = static fn (mixed $p): string => strtolower((string)$p) === 'android' ? 'Package' : 'App Store ID';
 $base = (string)$mobileApps['baseUrl'];
 $self = $base . 'tracking202/setup/mobile_apps.php';
 $canManage = (bool)$mobileApps['canManage'];
 $fieldErrors = $mobileApps['fieldErrors'];
 $form = $mobileApps['form'];
 $app = $mobileApps['app'];
+$icons = $mobileApps['icons'];
 // scheme://host + app path. get_absolute_url() returns only the path, so the
 // receiver URLs, the Info.plist keys and the SDK snippet all showed an empty
 // origin without this. Escaped on output like everything else here: the Host
@@ -50,6 +63,18 @@ $fieldError = static function (string $field) use ($fieldErrors, $e): string {
 $invalid = static fn (string $field): string => isset($fieldErrors[$field]) ? ' is-invalid' : '';
 
 /**
+ * An app's mark: its store icon when the store gave one (a data: URI kept at
+ * registration, so the viewer's browser calls no store), else the platform's.
+ */
+$appMark = static function (array $row) use ($icons, $e): string {
+    $icon = $icons[(int)$row['registration_id']] ?? null;
+    if ($icon !== null) {
+        return '<img class="rounded align-text-bottom me-1" src="' . $e($icon) . '" alt="" width="20" height="20">';
+    }
+    return '<i class="bi ' . ((string)($row['platform'] ?? '') === 'android' ? 'bi-android2' : 'bi-apple') . ' me-1 text-body-secondary" aria-hidden="true"></i>';
+};
+
+/**
  * The "Your apps" pill and the "Getting started" checklist count one list, so
  * they read it from one place. Both wordings carry the truncation: the pill
  * says "500 of 620 apps", the checklist "500 of 620". Kept on the controller
@@ -68,7 +93,7 @@ template_top('Mobile Apps - Setup', ['ui' => 'v2']);
     <div class="p202-page-header__icon"><i class="bi bi-phone"></i></div>
     <div class="p202-page-header__text">
         <h1 class="p202-page-header__title">Mobile App Attribution</h1>
-        <p class="p202-page-header__desc">Register the apps you advertise, decode their SKAdNetwork and AdAttributionKit conversion values, and connect the Swift SDK.</p>
+        <p class="p202-page-header__desc">Register the iOS and Android apps you advertise, give their campaigns the right store link, and choose the goals each app reports.</p>
     </div>
 </div>
 
@@ -88,8 +113,8 @@ if (!$canManage) {
         <div class="p202-strip" data-receiver-strip data-origin="<?php echo $e($origin); ?>">
             <?php
             $receivers = [
-                ['label' => 'SKAdNetwork receiver', 'path' => '/.well-known/skadnetwork/report-attribution/'],
-                ['label' => 'AdAttributionKit receiver', 'path' => '/.well-known/appattribution/report-attribution/'],
+                ['label' => 'SKAdNetwork receiver (iOS)', 'path' => '/.well-known/skadnetwork/report-attribution/'],
+                ['label' => 'AdAttributionKit receiver (iOS)', 'path' => '/.well-known/appattribution/report-attribution/'],
             ];
             foreach ($receivers as $receiver) { ?>
                 <div class="p202-strip__row">
@@ -102,7 +127,7 @@ if (!$canManage) {
                 </div>
             <?php } ?>
             <p class="p202-strip__note">
-                Give Apple the bare origin <code><?php echo $e($origin); ?></code> in <code>Info.plist</code>; Apple appends the paths itself.
+                Give Apple the bare origin <code><?php echo $e($origin); ?></code> in <code>Info.plist</code>; Apple appends the paths itself. Android apps report to this server through the SDK instead: each Android app's page checks that.
                 <button type="button" class="btn btn-link btn-sm p-0 align-baseline" data-receiver-recheck>Re-check</button>
             </p>
         </div>
@@ -115,56 +140,29 @@ if (!$canManage) {
             <section class="p202-panel" id="register">
                 <div class="p202-panel__head">
                     <h2 class="p202-panel__title"><?php echo $mobileApps['editing'] ? 'Edit app' : 'Register an app'; ?></h2>
-                    <p class="p202-panel__sub"><?php echo $mobileApps['editing'] ? 'The App Store id cannot change; register a second app instead.' : 'One field. The name and platform are picked up for you.'; ?></p>
+                    <p class="p202-panel__sub"><?php echo $mobileApps['editing'] ? 'Which app it is cannot change; register a second app instead.' : 'One field. The platform, name and icon are picked up for you.'; ?></p>
                 </div>
                 <div class="p202-panel__body">
                     <?php if ($mobileApps['editing']) {
-                        $editing = $mobileApps['editing']; ?>
-                        <form method="post" action="<?php echo $e($self); ?>">
-                            <?php echo $mobileApps['csrf']; ?>
-                            <input type="hidden" name="action" value="update">
-                            <input type="hidden" name="registration_id" value="<?php echo (int)$editing['registration_id']; ?>">
-                            <p class="p202-decided">
-                                <?php echo $e($editing['app_name']); ?> · <?php echo $e($platformLabel($editing['platform'] ?? 'ios')); ?> · App Store ID <?php echo $e($editing['app_key']); ?>
-                            </p>
-                            <div class="mb-3">
-                                <label class="form-label" for="app_name">App name</label>
-                                <input class="form-control<?php echo $invalid('app_name'); ?>" type="text" id="app_name" name="app_name" value="<?php echo $e($form['app_name'] ?? $editing['app_name']); ?>" maxlength="255" required>
-                                <?php echo $fieldError('app_name'); ?>
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label" for="notes">Notes <span class="text-body-secondary">optional</span></label>
-                                <input class="form-control<?php echo $invalid('notes'); ?>" type="text" id="notes" name="notes" value="<?php echo $e($form['notes'] ?? ($editing['notes'] ?? '')); ?>" maxlength="500">
-                                <?php echo $fieldError('notes'); ?>
-                            </div>
-                            <div class="form-check mb-3">
-                                <input class="form-check-input" type="checkbox" id="accept_test_signals" name="accept_test_signals" value="1" <?php echo (int)($editing['accept_test_signals'] ?? 0) === 1 ? 'checked' : ''; ?>>
-                                <label class="form-check-label" for="accept_test_signals">
-                                    Accept development postbacks
-                                    <span class="d-block form-text">Counts postbacks signed with Apple's development key for this app. Anyone in Developer Mode can mint those, so leave it off outside testing.</span>
-                                </label>
-                            </div>
-                            <div class="p202-form-actions">
-                                <button class="btn btn-primary" type="submit">Save changes</button>
-                                <a class="btn btn-link" href="<?php echo $e($self); ?>">Cancel</a>
-                            </div>
-                        </form>
-                    <?php } else { ?>
+                        $settingsApp = $mobileApps['editing'];
+                        $settingsReturn = 'list';
+                        require __DIR__ . '/mobile_apps/_settings.php';
+                    } else { ?>
                         <form method="post" action="<?php echo $e($self); ?>">
                             <?php echo $mobileApps['csrf']; ?>
                             <input type="hidden" name="action" value="register">
                             <div class="mb-3">
-                                <label class="form-label" for="app_reference">App Store link or ID</label>
+                                <label class="form-label" for="app_reference">App Store or Google Play link</label>
                                 <input class="form-control<?php echo $invalid('app_reference'); ?>" type="text" id="app_reference" name="app_reference"
                                        value="<?php echo $e($form['app_reference'] ?? ''); ?>"
-                                       placeholder="https://apps.apple.com/us/app/summit-run/id990077001" required autofocus>
-                                <div class="form-text">Paste the App Store link. The name and platform are picked up for you.</div>
+                                       placeholder="https://play.google.com/store/apps/details?id=com.example.summit" required autofocus>
+                                <div class="form-text">Paste the store link. An App Store id or a package name works too.</div>
                                 <?php echo $fieldError('app_reference'); ?>
                             </div>
 
                             <?php if (!empty($form['needs_name'])) { ?>
                                 <p class="p202-decided">
-                                    Read as App Store ID <?php echo $e($form['derived_app_key']); ?> · <?php echo $e($platformLabel($form['derived_platform'])); ?>
+                                    Read as <?php echo $e($platformLabel($form['derived_platform'])); ?> · <?php echo $e($keyLabel($form['derived_platform'])); ?> <?php echo $e($form['derived_app_key']); ?>
                                 </p>
                                 <div class="mb-3">
                                     <label class="form-label" for="app_name">App name</label>
@@ -174,7 +172,7 @@ if (!$canManage) {
                             <?php } ?>
 
                             <details class="p202-disclosure" data-p202-remember="setup-mobile-apps-advanced" <?php echo ($form['notes'] ?? '') !== '' || isset($form['accept_test_signals']) ? 'open' : ''; ?>>
-                                <summary>Advanced <span class="p202-disclosure__hint">notes, development postbacks</span></summary>
+                                <summary>Advanced <span class="p202-disclosure__hint">notes, test signals</span></summary>
                                 <div class="p202-disclosure__body">
                                     <div class="mb-3">
                                         <label class="form-label" for="notes">Notes</label>
@@ -183,8 +181,8 @@ if (!$canManage) {
                                     <div class="form-check mb-3">
                                         <input class="form-check-input" type="checkbox" id="accept_test_signals" name="accept_test_signals" value="1" <?php echo isset($form['accept_test_signals']) ? 'checked' : ''; ?>>
                                         <label class="form-check-label" for="accept_test_signals">
-                                            Accept development postbacks while testing
-                                            <span class="d-block form-text">Off by default: a development signature proves only that some device was in Developer Mode, not that the install was real.</span>
+                                            Count test signals while testing
+                                            <span class="d-block form-text">Off by default. iOS: development-signed postbacks, which prove only that some device was in Developer Mode. Android: installs a debug build marks as tests.</span>
                                         </label>
                                     </div>
                                 </div>
@@ -203,7 +201,7 @@ if (!$canManage) {
                 <div class="p202-empty">
                     <i class="bi bi-phone p202-empty__icon"></i>
                     <strong class="p202-empty__title">No apps registered yet</strong>
-                    <div>Register the app you advertise so its postbacks are claimed and decoded. Postbacks that arrive before you register are kept for 30 days and claimed when you do.</div>
+                    <div>Paste the store link of the app you advertise above. iOS postbacks that arrive before you register are kept for 30 days and claimed when you do.</div>
                 </div>
             <?php } else { ?>
                 <section class="p202-panel">
@@ -212,10 +210,11 @@ if (!$canManage) {
                     </div>
                     <div class="p202-panel__body">
                         <ol class="p202-list">
-                            <li class="p202-list__item"><span class="p202-list__name">Both receivers answer over HTTPS</span><span class="p202-list__meta" data-receiver-summary role="status" aria-live="polite">checking…</span></li>
                             <li class="p202-list__item"><span class="p202-list__name">Register the app you advertise</span><span class="p202-list__meta"><?php echo $e($appCount['checklist']); ?></span></li>
-                            <li class="p202-list__item"><span class="p202-list__name">Add conversion-value rules so postbacks decode to events and revenue</span><span class="p202-list__meta">open an app below</span></li>
-                            <li class="p202-list__item"><span class="p202-list__name">Add the Info.plist keys and configure the SDK with the app token</span><span class="p202-list__meta">on the app page</span></li>
+                            <li class="p202-list__item"><span class="p202-list__name">Point its campaigns at the store link the app's page builds</span><span class="p202-list__meta">Link builder, on the app page</span></li>
+                            <li class="p202-list__item"><span class="p202-list__name">Choose the goals the app reports, and for iOS the conversion values that decode them</span><span class="p202-list__meta">on the app page</span></li>
+                            <li class="p202-list__item"><span class="p202-list__name">Build the app with the SDK and its app token</span><span class="p202-list__meta">on the app page</span></li>
+                            <li class="p202-list__item"><span class="p202-list__name">iOS: both receivers answer over HTTPS</span><span class="p202-list__meta" data-receiver-summary role="status" aria-live="polite">checking…</span></li>
                         </ol>
                     </div>
                 </section>
@@ -239,19 +238,20 @@ if (!$canManage) {
                                 $nudge = $mobileApps['nudges'][$rowId] ?? 0; ?>
                                 <li class="p202-list__item">
                                     <span class="p202-list__name">
+                                        <?php echo $appMark($row); ?>
                                         <a href="<?php echo $e($self . '?app=' . $rowId); ?>"><?php echo $e($row['app_name']); ?></a>
                                     </span>
                                     <span class="p202-list__meta">
                                         <?php echo $e($platformLabel($row['platform'] ?? 'ios')); ?> · <?php echo $e($row['app_key']); ?>
                                         <?php if ((int)($row['accept_test_signals'] ?? 0) === 1) { ?>
-                                            <span class="p202-pill p202-pill--warn">dev postbacks on</span>
+                                            <span class="p202-pill p202-pill--warn">test signals on</span>
                                         <?php } ?>
                                     </span>
                                     <span class="p202-list__actions">
                                         <a class="p202-list__action" href="<?php echo $e($self . '?app=' . $rowId); ?>">open</a>
                                         <?php if ($canManage) { ?>
                                             <a class="p202-list__action" href="<?php echo $e($self . '?edit=' . $rowId); ?>">edit</a>
-                                            <form method="post" action="<?php echo $e($self); ?>" class="d-inline" data-p202-confirm="Remove this registration? Postbacks it already claimed keep their owner. Development trust is withdrawn.">
+                                            <form method="post" action="<?php echo $e($self); ?>" class="d-inline" data-p202-confirm="Remove this registration? iOS postbacks it already claimed keep their owner, and Android installs keep their conversions; its goals are archived and test trust is withdrawn.">
                                                 <?php echo $mobileApps['csrf']; ?>
                                                 <input type="hidden" name="action" value="remove">
                                                 <input type="hidden" name="registration_id" value="<?php echo $rowId; ?>">
@@ -286,281 +286,54 @@ if (!$canManage) {
 <?php } else {
     // ── App detail ──────────────────────────────────────────────────
     $rowId = (int)$app['registration_id'];
+    $isIos = (string)($app['platform'] ?? 'ios') === 'ios';
     $token = (string)($app['app_token'] ?? '');
     $masked = $token === '' ? '' : mb_substr($token, 0, 4) . str_repeat('•', max(0, mb_strlen($token) - 8)) . mb_substr($token, -4);
-    /*
-     * Which rule the form is editing. The link carries ?rule_edit=N, but the
-     * form posts to $self with NO query string — so after a refused save the
-     * re-render saw no rule_edit, dropped the hidden rule_id, and the
-     * corrected resubmission created a new rule instead of updating the one
-     * being edited: usually a duplicate conflict, and no way to finish the
-     * edit without starting over. The submitted body is the other record of
-     * which rule it was, and it is the one that survives the POST.
-     */
-    $editingRuleId = (int)($_GET['rule_edit'] ?? $mobileApps['form']['rule_id'] ?? 0);
-    $editRule = null;
-    foreach ($mobileApps['rules'] as $candidate) {
-        if ($editingRuleId > 0 && (int)($candidate['encoding_id'] ?? 0) === $editingRuleId) {
-            $editRule = $candidate;
-        }
-    }
+    $analyzeUrl = $base . 'tracking202/analyze/mobile_apps.php?registration_id=' . $rowId . '&platform=' . ($isIos ? 'ios' : 'android');
     ?>
     <p class="p202-decided">
-        <a href="<?php echo $e($self); ?>">Your apps</a> › <?php echo $e($app['app_name']); ?> ·
-        <?php echo $e($platformLabel($app['platform'] ?? 'ios')); ?> · App Store ID <?php echo $e($app['app_key']); ?>
-        <?php if ($canManage) { ?> · <a href="<?php echo $e($self . '?edit=' . $rowId); ?>">change</a><?php } ?>
+        <a href="<?php echo $e($self); ?>">Your apps</a> › <?php echo $appMark($app); ?> <?php echo $e($app['app_name']); ?> ·
+        <?php echo $e($platformLabel($app['platform'] ?? 'ios')); ?> · <?php echo $e($keyLabel($app['platform'] ?? 'ios')); ?> <?php echo $e($app['app_key']); ?>
+        <?php if ($canManage) { ?> · <a href="#settings">change</a><?php } ?>
+        · <a href="<?php echo $e($analyzeUrl); ?>">report</a>
     </p>
 
-    <section class="p202-panel">
+    <?php
+    if ($isIos) {
+        require __DIR__ . '/mobile_apps/_ios_values.php';
+        require __DIR__ . '/mobile_apps/_goals.php';
+        require __DIR__ . '/mobile_apps/_link_builder.php';
+        require __DIR__ . '/mobile_apps/_ios_sdk.php';
+    } else {
+        require __DIR__ . '/mobile_apps/_link_builder.php';
+        require __DIR__ . '/mobile_apps/_android_sdk.php';
+        require __DIR__ . '/mobile_apps/_goals.php';
+        require __DIR__ . '/mobile_apps/_integrity.php';
+    }
+    ?>
+
+    <section class="p202-panel" id="settings">
         <div class="p202-panel__head">
-            <h2 class="p202-panel__title">Conversion values</h2>
-            <p class="p202-panel__sub">Rules that decode a postback's value into an event and revenue.</p>
-            <span class="p202-pill p202-pill--accent"><?php echo count($mobileApps['rules']); ?> <?php echo count($mobileApps['rules']) === 1 ? 'rule' : 'rules'; ?></span>
+            <h2 class="p202-panel__title">Settings</h2>
+            <p class="p202-panel__sub">The name reports show, and how this app's signals are counted.</p>
         </div>
         <div class="p202-panel__body">
-            <?php if ($mobileApps['rules'] === []) { ?>
-                <div class="p202-empty">
-                    <i class="bi bi-sliders p202-empty__icon"></i>
-                    <strong class="p202-empty__title">No rules yet, so nothing decodes</strong>
-                    <div>Most apps start with install, trial and purchase on fine values 1, 10 and 40, and the three coarse buckets. Add those now and edit them to match what your app reports.</div>
-                    <?php if ($canManage) { ?>
-                        <div class="p202-empty__action">
-                            <form method="post" action="<?php echo $e($self); ?>">
-                                <?php echo $mobileApps['csrf']; ?>
-                                <input type="hidden" name="action" value="starter_schema">
-                                <input type="hidden" name="registration_id" value="<?php echo $rowId; ?>">
-                                <button class="btn btn-primary btn-sm" type="submit">Use starter schema</button>
-                            </form>
-                        </div>
-                    <?php } ?>
-                </div>
-            <?php } else { ?>
-                <div class="p202-table-wrap">
-                    <table class="table table-hover p202-table">
-                        <thead><tr><th>Kind</th><th>Value</th><th>Event</th><th class="num">Revenue</th><?php if ($canManage) { ?><th></th><?php } ?></tr></thead>
-                        <tbody>
-                        <?php foreach ($mobileApps['rules'] as $rule) { ?>
-                            <tr>
-                                <td><?php echo $rule['fine_value'] === null ? 'Coarse' : 'Fine'; ?></td>
-                                <td><?php echo $e($rule['fine_value'] === null ? (string)$rule['coarse_value'] : (string)$rule['fine_value']); ?></td>
-                                <td><?php echo $e($rule['event_name']); ?></td>
-                                <td class="num"><?php echo $e($money($rule['revenue'])); ?></td>
-                                <?php if ($canManage) { ?>
-                                    <td class="num">
-                                        <a class="p202-list__action" href="<?php echo $e($self . '?app=' . $rowId . '&rule_edit=' . (int)$rule['encoding_id']); ?>">edit</a>
-                                        <form method="post" action="<?php echo $e($self); ?>" class="d-inline" data-p202-confirm="Remove this rule? Reports decode from the current rules every time they are run, so postbacks already received stop showing this event and its revenue too.">
-                                            <?php echo $mobileApps['csrf']; ?>
-                                            <input type="hidden" name="action" value="rule_remove">
-                                            <input type="hidden" name="registration_id" value="<?php echo $rowId; ?>">
-                                            <input type="hidden" name="rule_id" value="<?php echo (int)$rule['encoding_id']; ?>">
-                                            <button class="p202-list__action p202-list__action--danger" type="submit">remove</button>
-                                        </form>
-                                    </td>
-                                <?php } ?>
-                            </tr>
-                        <?php } ?>
-                        </tbody>
-                    </table>
-                </div>
-            <?php } ?>
-
             <?php if ($canManage) {
-                $kind = $editRule !== null ? ($editRule['fine_value'] === null ? 'coarse' : 'fine') : (string)($form['kind'] ?? 'fine');
-                /*
-                 * What each value field should show: the rule being edited,
-                 * else what was just submitted. The selects below used to
-                 * consult $editRule only, so a new rule refused for an
-                 * unrelated field (a non-numeric revenue, say) came back with
-                 * the conversion value reset to the first option — and
-                 * correcting the revenue then created a rule for 0 instead of
-                 * the value that was chosen. $kind and $event_name already
-                 * fell back this way; these two were simply missed.
-                 */
-                $shownFine = $editRule !== null
-                    ? ($editRule['fine_value'] ?? null)
-                    : ($form['fine_value'] ?? null);
-                $shownCoarse = $editRule !== null
-                    ? (string)($editRule['coarse_value'] ?? '')
-                    : (string)($form['coarse_value'] ?? ''); ?>
-                <form method="post" action="<?php echo $e($self); ?>" class="p202-section">
-                    <?php echo $mobileApps['csrf']; ?>
-                    <input type="hidden" name="action" value="rule_save">
-                    <input type="hidden" name="registration_id" value="<?php echo $rowId; ?>">
-                    <?php if ($editRule !== null) { ?><input type="hidden" name="rule_id" value="<?php echo (int)$editRule['encoding_id']; ?>"><?php } ?>
-                    <div class="row g-3 align-items-end">
-                        <div class="col-12 col-md-3">
-                            <span class="form-label d-block">Kind</span>
-                            <div class="form-check form-check-inline">
-                                <input class="form-check-input" type="radio" name="kind" id="kind_fine" value="fine" <?php echo $kind === 'fine' ? 'checked' : ''; ?>>
-                                <label class="form-check-label" for="kind_fine">Fine value</label>
-                            </div>
-                            <div class="form-check form-check-inline">
-                                <input class="form-check-input" type="radio" name="kind" id="kind_coarse" value="coarse" <?php echo $kind === 'coarse' ? 'checked' : ''; ?>>
-                                <label class="form-check-label" for="kind_coarse">Coarse</label>
-                            </div>
-                        </div>
-                        <div class="col-6 col-md-2" data-kind-fine>
-                            <label class="form-label" for="fine_value">Fine value</label>
-                            <select class="form-select<?php echo $invalid('fine_value'); ?>" id="fine_value" name="fine_value">
-                                <?php for ($i = 0; $i <= 63; $i++) {
-                                    $selected = $shownFine !== null && (int)$shownFine === $i; ?>
-                                    <option value="<?php echo $i; ?>" <?php echo $selected ? 'selected' : ''; ?>><?php echo $i; ?></option>
-                                <?php } ?>
-                            </select>
-                            <?php echo $fieldError('fine_value'); ?>
-                        </div>
-                        <div class="col-6 col-md-2" data-kind-coarse hidden>
-                            <label class="form-label" for="coarse_value">Coarse value</label>
-                            <select class="form-select<?php echo $invalid('coarse_value'); ?>" id="coarse_value" name="coarse_value">
-                                <?php foreach (['low', 'medium', 'high'] as $coarse) { ?>
-                                    <option value="<?php echo $coarse; ?>" <?php echo $shownCoarse === $coarse ? 'selected' : ''; ?>><?php echo $coarse; ?></option>
-                                <?php } ?>
-                            </select>
-                            <?php echo $fieldError('coarse_value'); ?>
-                        </div>
-                        <div class="col-12 col-md-3">
-                            <label class="form-label" for="event_name">Event</label>
-                            <input class="form-control<?php echo $invalid('event_name'); ?>" type="text" id="event_name" name="event_name" value="<?php echo $e($editRule['event_name'] ?? ($form['event_name'] ?? '')); ?>" placeholder="purchase" maxlength="255" required>
-                            <?php echo $fieldError('event_name'); ?>
-                        </div>
-                        <div class="col-6 col-md-2">
-                            <label class="form-label" for="revenue">Revenue</label>
-                            <div class="input-group">
-                                <?php if ($currencySymbol !== '' && $symbolLeads) { ?><span class="input-group-text"><?php echo $e($currencySymbol); ?></span><?php } ?>
-                                <input class="form-control<?php echo $invalid('revenue'); ?>" type="text" inputmode="decimal" id="revenue" name="revenue" value="<?php echo $e($editRule !== null ? number_format((float)$editRule['revenue'], 2, '.', '') : ($form['revenue'] ?? '0.00')); ?>">
-                                <?php if ($currencySymbol !== '' && !$symbolLeads) { ?><span class="input-group-text"><?php echo $e($currencySymbol); ?></span><?php } ?>
-                            </div>
-                            <?php echo $fieldError('revenue'); ?>
-                        </div>
-                    </div>
-                    <div class="p202-form-actions">
-                        <button class="btn btn-primary" type="submit"><?php echo $editRule !== null ? 'Save rule' : 'Add rule'; ?></button>
-                        <?php if ($editRule !== null) { ?><a class="btn btn-link" href="<?php echo $e($self . '?app=' . $rowId); ?>">Cancel</a><?php } ?>
-                    </div>
-                    <p class="form-text mb-0">A rule maps exactly one value. Each fine value and each coarse value can be used once per app.</p>
-                </form>
-            <?php } ?>
-
-            <?php if ($mobileApps['defaultRules'] !== []) { ?>
-                <details class="p202-disclosure" data-p202-remember="setup-mobile-apps-defaults">
-                    <summary>Account-wide default rules <span class="p202-disclosure__hint"><?php echo count($mobileApps['defaultRules']); ?> apply to apps with no rule of their own</span></summary>
-                    <div class="p202-disclosure__body">
-                        <div class="p202-table-wrap">
-                            <table class="table table-hover p202-table">
-                                <thead><tr><th>Kind</th><th>Value</th><th>Event</th><th class="num">Revenue</th></tr></thead>
-                                <tbody>
-                                <?php foreach ($mobileApps['defaultRules'] as $rule) { ?>
-                                    <tr class="text-body-secondary">
-                                        <td><?php echo $rule['fine_value'] === null ? 'Coarse' : 'Fine'; ?></td>
-                                        <td><?php echo $e($rule['fine_value'] === null ? (string)$rule['coarse_value'] : (string)$rule['fine_value']); ?></td>
-                                        <td><?php echo $e($rule['event_name']); ?> <span class="p202-pill">default</span></td>
-                                        <td class="num"><?php echo $e($money($rule['revenue'])); ?></td>
-                                    </tr>
-                                <?php } ?>
-                                </tbody>
-                            </table>
-                        </div>
-                        <p class="text-secondary small">This app's own rule for a value always wins over the account-wide one.</p>
-                    </div>
-                </details>
-            <?php } ?>
-        </div>
-    </section>
-
-    <section class="p202-panel">
-        <div class="p202-panel__head">
-            <h2 class="p202-panel__title">App token &amp; SDK</h2>
-            <p class="p202-panel__sub">Devices fetch this app's conversion values with the token. It ships inside the app, so it identifies the app rather than protecting anything.</p>
-        </div>
-        <div class="p202-panel__body">
-            <div class="p202-code">
-                <span class="p202-code__value p202-code__value--masked" id="app-token"
-                      data-p202-value="<?php echo $e($token); ?>"
-                      data-p202-masked="<?php echo $e($masked); ?>"><?php echo $e($masked); ?></span>
-                <button type="button" class="btn btn-sm btn-outline-secondary" data-p202-reveal="#app-token">Reveal</button>
-                <button type="button" class="btn btn-sm btn-outline-secondary p202-copy" data-p202-copy="<?php echo $e($token); ?>">Copy</button>
-                <?php if ($canManage) { ?>
-                    <form method="post" action="<?php echo $e($self); ?>" class="d-inline" data-p202-confirm="Replace this app token? The old token stops working immediately. Apps keep their last cached schema until they fetch with the new one.">
-                        <?php echo $mobileApps['csrf']; ?>
-                        <input type="hidden" name="action" value="rotate_token">
-                        <input type="hidden" name="registration_id" value="<?php echo $rowId; ?>">
-                        <button class="btn btn-sm btn-outline-danger" type="submit">Rotate…</button>
-                    </form>
-                <?php } ?>
-            </div>
-
-            <h3 class="p202-panel__title mt-4">Info.plist keys</h3>
-            <?php
-            $plist = "<key>NSAdvertisingAttributionReportEndpoint</key>\n<string>{$origin}</string>\n"
-                . "<key>AttributionCopyEndpoint</key>\n<string>{$origin}</string>\n"
-                . "<key>EligibleForAdAttributionKitReengagementPostbackCopies</key>\n<true/>";
-            ?>
-            <div class="p202-code">
-                <pre class="p202-code__value mb-0"><?php echo $e($plist); ?></pre>
-                <button type="button" class="btn btn-sm btn-outline-secondary p202-copy" data-p202-copy="<?php echo $e($plist); ?>">Copy</button>
-            </div>
-
-            <h3 class="p202-panel__title mt-4">Swift package: P202Attribution</h3>
-            <?php
-            // The SDK's real API (sdk/ios-attribution/README.md): configure
-            // once at launch, then log events for the goals to evaluate on
-            // the device.
-            $swift = "P202Attribution.shared.configure(\n    endpoint: URL(string: \"{$origin}\")!,\n    appToken: \"" . ($token === '' ? '' : mb_substr($token, 0, 4) . '…' . mb_substr($token, -4)) . "\"\n)\ntry P202Attribution.shared.logEvent(\"purchase\")";
-            ?>
-            <div class="p202-code">
-                <pre class="p202-code__value mb-0"><?php echo $e($swift); ?></pre>
-                <button type="button" class="btn btn-sm btn-outline-secondary p202-copy" data-p202-copy="<?php echo $e(str_replace(mb_substr($token, 0, 4) . '…' . mb_substr($token, -4), $token, $swift)); ?>">Copy</button>
-            </div>
-            <p class="text-secondary small">Copy puts the whole token in; the snippet shows it shortened
-                so a screenshot of this page does not leak it.</p>
-        </div>
-    </section>
-
-    <section class="p202-panel">
-        <div class="p202-panel__head">
-            <h2 class="p202-panel__title">Recent postbacks</h2>
-            <p class="p202-panel__sub">The newest ten Apple sent for this app, whatever their signature.</p>
-        </div>
-        <div class="p202-panel__body">
-            <?php if ($mobileApps['recent'] === null) { ?>
-                <div class="alert alert-warning p202-flash" role="status">
-                    <i class="bi bi-exclamation-triangle"></i>
-                    <div class="p202-flash__body">The postbacks for this app could not be read just now, so this list is not showing whether any have arrived. Reload the page; if it keeps happening the server log has the reason.</div>
-                </div>
-            <?php } elseif ($mobileApps['recent'] === []) { ?>
-                <div class="p202-empty">
-                    <i class="bi bi-inbox p202-empty__icon"></i>
-                    <strong class="p202-empty__title">Nothing received yet</strong>
-                    <div>Apple sends a postback a day or more after an install, and only when a campaign wins attribution. Ship a build with the Info.plist keys above, then check back.</div>
-                </div>
-            <?php } else { ?>
-                <div class="p202-table-wrap">
-                    <table class="table table-hover p202-table">
-                        <thead><tr><th>Received</th><th>Protocol</th><th>Ad network</th><th>Type</th><th>Value</th><th>Signature</th></tr></thead>
-                        <tbody>
-                        <?php foreach ($mobileApps['recent'] as $postback) {
-                            $state = (string)($postback['signature_state'] ?? '');
-                            $tone = ['valid' => 'p202-pill--good', 'invalid' => 'p202-pill--bad', 'development' => 'p202-pill--warn'][$state] ?? ''; ?>
-                            <tr>
-                                <td><?php echo $e(date('M j, H:i', (int)$postback['received_at'])); ?></td>
-                                <td><?php echo $e((string)($postback['protocol'] ?? '')); ?> <?php echo $e((string)($postback['version'] ?? '')); ?></td>
-                                <td><?php echo $e((string)($postback['ad_network_id'] ?? '')); ?></td>
-                                <td><?php echo $e((string)($postback['conversion_type'] ?? '')); ?></td>
-                                <td><?php echo $e($postback['conversion_value'] ?? ($postback['coarse_conversion_value'] ?? '')); ?></td>
-                                <td><span class="p202-pill <?php echo $tone; ?>"><?php echo $e($state); ?></span></td>
-                            </tr>
-                        <?php } ?>
-                        </tbody>
-                    </table>
-                </div>
+                $settingsApp = $app;
+                $settingsReturn = 'app';
+                require __DIR__ . '/mobile_apps/_settings.php';
+            } else { ?>
+                <p class="text-body-secondary mb-0">Changing these needs the attribution models permission.</p>
             <?php } ?>
         </div>
     </section>
 <?php } ?>
 
+<?php echo p202_setup_script_tag($base); ?>
 <script>
-/* Three things only, as the page design says: the receiver check, the
-   fine/coarse swap, and the copy buttons (those come from p202-ui.js). */
+/* The receiver checks (iOS on the list, the install intake on an Android
+   app), the fine/coarse swap, and the goal menu; copy, reveal, confirm and
+   the disclosures come from p202-ui.js, show-when from p202-setup.js. */
 (function () {
     'use strict';
 
@@ -588,38 +361,41 @@ if (!$canManage) {
         }
         Array.prototype.forEach.call(pills, function (pill) {
             var url = pill.getAttribute('data-url') || '';
+            var token = pill.getAttribute('data-app-token');
             pill.textContent = 'Checking…';
             pill.className = 'p202-pill';
             /* Apple calls the receiver over public HTTPS on port 443 and
-               nothing else, so neither another scheme nor another port can
-               work however the fetch below turns out. Saying "Ready" because
-               the browser reached it would be a green light for a URL Apple
-               will never call — the check keyed on the PAGE's protocol
-               first, which warned only when HTTPS was configured, and then
-               on the scheme alone, which passed https://host:8443 as Ready
-               while this very comment said port 443 and nothing else. The
-               port is part of the rule, so it is part of the test. */
-            var reachableByApple = false;
+               nothing else, and an Android device refuses cleartext by
+               default, so neither another scheme nor another port can work
+               however the fetch below turns out. Saying "Ready" because the
+               browser reached it would be a green light for a URL the
+               platform will never call. The port is part of the rule, so it
+               is part of the test. */
+            var reachable = false;
             try {
                 /* No base: data-url is always absolute (origin + path), so
                    resolving a blank or malformed one against this page would
                    turn it into the page's own URL and read Ready. Without a
                    base it throws, and the catch refuses it. */
                 var parsed = new URL(url);
-                reachableByApple = parsed.protocol === 'https:'
+                reachable = parsed.protocol === 'https:'
                     && (parsed.port === '' || parsed.port === '443');
             } catch (error) {
-                reachableByApple = false;
+                reachable = false;
             }
-            if (!reachableByApple) {
-                pill.textContent = 'Apple cannot reach this';
+            if (!reachable) {
+                pill.textContent = token ? 'Devices cannot reach this' : 'Apple cannot reach this';
                 pill.className = 'p202-pill p202-pill--warn';
-                pill.title = 'Apple only calls this endpoint over HTTPS on port 443. This install advertises '
-                    + url + '. Reachable from here, but not from Apple.';
+                pill.title = (token ? 'Android devices refuse cleartext and the SDK calls HTTPS on port 443.' : 'Apple only calls this endpoint over HTTPS on port 443.')
+                    + ' This install advertises ' + url + '. Reachable from here, but not from a device.';
                 settle();
                 return;
             }
-            fetch(url, { method: 'GET', credentials: 'omit' }).then(function (response) {
+            var init = { method: 'GET', credentials: 'omit' };
+            if (token) {
+                init.headers = { 'X-P202-App-Token': token };
+            }
+            fetch(url, init).then(function (response) {
                 if (response.ok) {
                     pill.textContent = 'Ready';
                     pill.className = 'p202-pill p202-pill--good';
@@ -631,7 +407,7 @@ if (!$canManage) {
             }).catch(function () {
                 pill.textContent = 'Not reachable';
                 pill.className = 'p202-pill p202-pill--bad';
-                pill.title = 'Apple needs this URL on public HTTPS, port 443.';
+                pill.title = 'Devices need this URL on public HTTPS, port 443.';
             }).then(settle);
         });
     }
@@ -648,7 +424,7 @@ if (!$canManage) {
     }
 
     function init() {
-        if (document.querySelector('[data-receiver-strip]')) {
+        if (document.querySelector('[data-receiver-pill]')) {
             checkReceivers();
         }
         var recheck = document.querySelector('[data-receiver-recheck]');

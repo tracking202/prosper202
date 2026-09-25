@@ -14,7 +14,10 @@ use Prosper202\Database\Schema\TableRegistry;
  * app, identified by (platform, app_key) — the App Store item id as
  * canonical decimal for iOS, the application id (package name) for Android.
  * `registration_id` is the key every other app table links through; nothing
- * links to a registration by a raw app id.
+ * links to a registration by a raw app id. `app_icon` is the store's icon as
+ * a data: URI, fetched once at registration (Tracking202\Apps\StoreListing)
+ * so a page never makes a viewer's browser call the store; the API does not
+ * serve it.
  *
  * 202_app_postbacks is the Apple signal source's store. Devices POST signed
  * SKAdNetwork and AdAttributionKit postbacks to the /.well-known/ endpoints
@@ -112,6 +115,7 @@ final class AppTables
                 `integrity_mode` varchar(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'off',
                 `integrity_cloud_project_number` bigint(20) unsigned DEFAULT NULL,
                 `app_token` varchar(64) NOT NULL,
+                `app_icon` text DEFAULT NULL,
                 `created_at` int(10) unsigned NOT NULL,
                 `updated_at` int(10) unsigned NOT NULL,
                 PRIMARY KEY (`registration_id`),

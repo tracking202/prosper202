@@ -49,6 +49,16 @@ final class GoalWritersTest extends TestCase
         '202-config/Goals/MysqlGoalRepository.php' => 2, // liveOutcomes(), countLiveOutcomes()
         '202-config/Goals/GoalEngine.php' => 1,          // the revive lookup
         '202-config/User/UserDataPurge.php' => 1,        // the purge's DELETE … FROM
+        // The app report's aggregates (GROUP BY over outcomes joined to
+        // their installs), which liveOutcomes()' paged rows cannot answer;
+        // each carries the live filter itself, which
+        // testTheReportsOutcomeAggregatesReadLiveRowsOnly() holds it to.
+        'api/v3/Apps/Android/InstallReport.php' => 3,
+        // Which app a queued postback belongs to: the outcome a conversion
+        // is, retired or not — a correction announces a replaced outcome,
+        // so the live filter would lose exactly the rows it lists. Nothing
+        // is counted from it.
+        'api/v3/Controllers/AppNotificationsController.php' => 2,
     ];
 
     /** @return array<string, string> relative path => SQL text */
@@ -174,6 +184,31 @@ final class GoalWritersTest extends TestCase
         self::assertMatchesRegularExpression("/function outcomeFilter\\(.*?\\\$where = \\['user_id = \\?', 'superseded_at IS NULL'\\];/s", $repo,
             'the one filter every outcome read uses starts from the live rows');
         self::assertSame(2, substr_count($repo, 'self::outcomeFilter('), 'both readers use the filter');
+    }
+
+    /**
+     * The app report counts outcomes in SQL (it cannot page through
+     * liveOutcomes() to add them up), so each of its reads has to carry
+     * the live filter liveOutcomes() starts from: one `o.superseded_at IS
+     * NULL` per statement that reads the table, in that statement.
+     */
+    public function testTheReportsOutcomeAggregatesReadLiveRowsOnly(): void
+    {
+        // The source, not the literal text tree() keeps: the statements
+        // are told apart by the call that runs each one.
+        $sql = (string) file_get_contents(dirname(__DIR__, 2) . '/api/v3/Apps/Android/InstallReport.php');
+        self::assertNotSame('', $sql);
+        $statements = preg_split('/\$this->fetchAll\(/', $sql) ?: [];
+        $reads = 0;
+        foreach ($statements as $statement) {
+            if (self::outcomeReads($statement) === 0) {
+                continue;
+            }
+            $reads++;
+            self::assertStringContainsString('o.superseded_at IS NULL', $statement,
+                'a report read of 202_goal_outcomes without the live filter counts a replaced outcome twice');
+        }
+        self::assertSame(self::OUTCOME_READERS['api/v3/Apps/Android/InstallReport.php'], $reads, 'every read was split out and checked');
     }
 
     /** @dataProvider plantedLedgerInserts */

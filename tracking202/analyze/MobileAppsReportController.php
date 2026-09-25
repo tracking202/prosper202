@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace Tracking202\Analyze;
 
+use Api\V3\Controllers\AppNotificationsController;
 use Api\V3\Controllers\AppRegistrationsController;
 use Api\V3\Controllers\AppPostbacksController;
+use Api\V3\Controllers\AppReportController;
+use Api\V3\Controllers\GoalsController;
 use Api\V3\Apps\Apple\SignatureState;
 use Api\V3\Controllers\UsersController;
 use Api\V3\Exception\ValidationException;
@@ -13,16 +16,20 @@ use Api\V3\HttpException;
 use Tracking202\Apps\RegisteredApps;
 
 /**
- * Analyze › Mobile Apps: what the SKAdNetwork and AdAttributionKit postbacks
- * add up to.
+ * Analyze › Mobile Apps: what the apps' signals add up to, on both
+ * platforms (plan §5.6, PR 11).
  *
- * Three readings of the same rows, as tabs:
+ * Five readings, as tabs:
  *
- *  - Report, the grouped totals, in whichever dimension answers the question
- *    (day, app, ad network, source, country, version, protocol, conversion
- *    type). This is /apps/report, rendered.
- *  - Postbacks, the individual rows behind those totals, for the moment a
+ *  - Report, the grouped totals — /apps/report, rendered. Both platforms
+ *    together by day, app or platform; iOS alone by Apple's dimensions (ad
+ *    network, source, country, version, protocol, conversion type); Android
+ *    alone by campaign, match state, Play Integrity state or goal.
+ *  - Funnel, an app's goals in order with the installs that reached each.
+ *  - Postbacks, the individual iOS rows behind the totals, for the moment a
  *    total looks wrong and the question becomes "which ones".
+ *  - Postbacks sent, the traffic-source postbacks the app installs' goals
+ *    queued, and whether each went out (the notification outbox).
  *  - Verify, a scratch pad for checking that a captured postback's signature
  *    is genuine. Nothing is stored; it exists so an operator can answer "is
  *    this real" without trusting the pipeline that would store it.
@@ -30,24 +37,30 @@ use Tracking202\Apps\RegisteredApps;
  * Every read goes through the v3 controllers in-process, so this page and the
  * REST API answer with the same numbers and the same sentences.
  *
- * State lives in the query string rather than the session: a report someone
- * is looking at has a URL they can send to somebody else, and the back button
- * does what it looks like it does.
+ * State lives in the query string rather than the session — and never in
+ * 202_users_pref, the stored filters another tab writes (which is what
+ * DataEngine\ReportView exists to override for the click reports): a report
+ * someone is looking at has a URL they can send to somebody else, every
+ * request the page makes carries its own filters, and the back button does
+ * what it looks like it does. tests/Report/ReportViewReadersTest checks this
+ * page reads no stored filter.
  */
 class MobileAppsReportController
 {
     /** Reading the report. Managing apps is a different permission. */
     private const VIEW_PERMISSION = 'view_attribution_reports';
 
-    public const VIEWS = ['report', 'postbacks', 'verify'];
+    public const VIEWS = ['report', 'funnel', 'postbacks', 'notifications', 'verify'];
+
+    /** The platform switch, in the order it is shown. */
+    public const PLATFORMS = ['all' => 'Both', 'ios' => 'iOS', 'android' => 'Android'];
 
     /**
-     * How the report can be grouped, in the order the pills are shown.
+     * How the iOS report can be grouped, in the order the pills are shown.
      *
      * Keys are the API's own group_by values; an unknown one from the query
-     * string falls back to 'day' rather than erroring, because a mistyped URL
-     * should show a report rather than a stack trace. The label is what the
-     * first column is called once grouped that way.
+     * string falls back to 'day' and says so. The label is what the first
+     * column is called once grouped that way.
      */
     public const GROUPINGS = [
         'day'             => 'Day',
@@ -60,8 +73,39 @@ class MobileAppsReportController
         'conversion-type' => 'Type',
     ];
 
+    /** How the Android report can be grouped. */
+    public const ANDROID_GROUPINGS = [
+        'day'             => 'Day',
+        'registration'    => 'App',
+        'campaign'        => 'Campaign',
+        'match-state'     => 'Match state',
+        'integrity-state' => 'Play Integrity',
+        'goal'            => 'Goal',
+    ];
+
+    /** How both platforms together can be grouped: the dimensions they share. */
+    public const SHARED_GROUPINGS = [
+        'day'          => 'Day',
+        'registration' => 'App',
+        'platform'     => 'Platform',
+    ];
+
     /**
-     * The response field each grouping's first column comes out of.
+     * The groupings a platform's report offers.
+     *
+     * @return array<string, string>
+     */
+    public static function groupingsFor(string $platform): array
+    {
+        return match ($platform) {
+            'ios' => self::GROUPINGS,
+            'android' => self::ANDROID_GROUPINGS,
+            default => self::SHARED_GROUPINGS,
+        };
+    }
+
+    /**
+     * The response field each iOS grouping's first column comes out of.
      *
      * Asked of the API rather than restated here. It is one list — the SQL
      * that names the key and the two renderers that read it — and a local
@@ -129,10 +173,14 @@ class MobileAppsReportController
     /** A day at a time is what someone opening a report wants first. */
     private const DEFAULT_GROUPING = 'day';
 
+    /** The Android trust classes a report can be recomputed over. */
+    public const TRUST_CLASSES = ['trusted', 'refuted', 'unvouched'];
+
     /**
-     * How many group rows one report may hold, and how many postbacks a page
-     * of the Postbacks tab holds. The report says so when it hit the ceiling
-     * (meta.groups_truncated); the list pages instead.
+     * How many group rows one report may hold (per platform), and how many
+     * rows a page of the Postbacks and Postbacks sent tabs holds. The report
+     * says so when it hit the ceiling (meta.groups_truncated); the lists
+     * page instead.
      */
     private const MAX_GROUPS = 200;
     private const PER_PAGE = 50;
@@ -156,6 +204,7 @@ class MobileAppsReportController
     private bool $filterDropped = false;
 
     private int $userId;
+    private \mysqli $db;
     private AppPostbacksController $postbacks;
     private AppRegistrationsController $apps;
     private UsersController $users;
@@ -174,6 +223,7 @@ class MobileAppsReportController
         }
 
         $this->userId = (int)$_SESSION['user_own_id'];
+        $this->db = $db;
         $this->postbacks = new AppPostbacksController($db, $this->userId);
         $this->apps = new AppRegistrationsController($db, $this->userId);
         $this->users = new UsersController($db);
@@ -188,22 +238,22 @@ class MobileAppsReportController
 
         // Verify renders neither the app menu nor an amount, so it pays for
         // neither: listApps() is a 500-row read and a sort, and the currency
-        // is another statement. Filters are read first either way, because
-        // everything below reports on them.
+        // is another statement.
         $needsApps = $view !== 'verify';
+        $apps = $needsApps ? $this->listApps() : [];
         $mobileReport = [
             'view' => $view,
             'self' => rtrim(get_absolute_url(), '/') . '/tracking202/analyze/mobile_apps.php',
-            'filters' => $this->readFilters(),
-            'apps' => $needsApps ? $this->listApps() : [],
-            'groupings' => self::GROUPINGS,
-            'groupKeys' => self::groupKeys(),
+            'filters' => $this->readFilters($apps),
+            'apps' => $apps,
+            'platforms' => self::PLATFORMS,
             'ranges' => self::RANGES,
             'customRange' => self::CUSTOM_RANGE,
             // Revenue on this page is money; UsersController owns the account's
             // currency so this page and Setup > Mobile Apps cannot disagree.
             'currency' => $needsApps ? $this->users->accountCurrency($this->userId) : self::DEFAULT_CURRENCY_FALLBACK,
         ];
+        $mobileReport['groupings'] = self::groupingsFor($mobileReport['filters']['platform']);
 
         if ($view === 'report') {
             $mobileReport += $this->buildReport($mobileReport['filters']);
@@ -216,8 +266,12 @@ class MobileAppsReportController
                     $this->sendCsv($mobileReport);
                 }
             }
+        } elseif ($view === 'funnel') {
+            $mobileReport += $this->buildFunnel($mobileReport['filters'], $apps);
         } elseif ($view === 'postbacks') {
             $mobileReport += $this->buildPostbacks($mobileReport['filters']);
+        } elseif ($view === 'notifications') {
+            $mobileReport += $this->buildNotifications($mobileReport['filters']);
         } else {
             $mobileReport += $this->buildVerify();
         }
@@ -237,9 +291,10 @@ class MobileAppsReportController
      * better behaviour is to show the report it can and say what it ignored,
      * which is what dropping an unusable filter does.
      *
+     * @param list<array<string, mixed>> $apps
      * @return array<string, mixed>
      */
-    private function readFilters(): array
+    private function readFilters(array $apps): array
     {
         $window = self::resolveWindow(
             isset($_GET['range']) ? (string)$_GET['range'] : null,
@@ -257,15 +312,6 @@ class MobileAppsReportController
             $this->flashFilterDropped($note);
         }
 
-        $groupBy = (string)($_GET['group_by'] ?? self::DEFAULT_GROUPING);
-        if (!isset(self::GROUPINGS[$groupBy])) {
-            if ($groupBy !== self::DEFAULT_GROUPING) {
-                $this->flashFilterDropped('That grouping is not one this report offers, so it is grouped by '
-                    . self::GROUPINGS[self::DEFAULT_GROUPING] . '.');
-            }
-            $groupBy = self::DEFAULT_GROUPING;
-        }
-
         // Round-tripped rather than pattern-matched: '0012' and a number too
         // big for an integer both match /^\d+$/ and then reach the API as a
         // different registration than the one typed, or as a 422 that would
@@ -274,6 +320,26 @@ class MobileAppsReportController
         if ($registrationId !== '' && ($registrationId !== (string)(int)$registrationId || (int)$registrationId <= 0)) {
             $this->flashFilterDropped('The app filter was ignored: an app is chosen by its registration number, a whole number.');
             $registrationId = '';
+        }
+
+        $platform = self::resolvePlatform(
+            isset($_GET['platform']) ? (string)$_GET['platform'] : null,
+            $apps,
+            $registrationId
+        );
+        foreach ($platform['notes'] as $note) {
+            $this->flashFilterDropped($note);
+        }
+        $platform = $platform['platform'];
+
+        $groupings = self::groupingsFor($platform);
+        $groupBy = (string)($_GET['group_by'] ?? self::DEFAULT_GROUPING);
+        if (!isset($groupings[$groupBy])) {
+            if ($groupBy !== self::DEFAULT_GROUPING) {
+                $this->flashFilterDropped('That grouping is not one the ' . self::PLATFORMS[$platform] . ' report offers, so it is grouped by '
+                    . $groupings[self::DEFAULT_GROUPING] . '.');
+            }
+            $groupBy = self::DEFAULT_GROUPING;
         }
 
         // The states the column really holds, from the enum that defines
@@ -288,6 +354,22 @@ class MobileAppsReportController
                 . implode(', ', SignatureState::values()) . '.');
             $signature = '';
         }
+        if ($signature !== '' && $platform !== 'ios') {
+            $this->flashFilterDropped('The signature filter was ignored: it filters Apple\'s postbacks, so it applies to the iOS report only.');
+            $signature = '';
+        }
+        $trusted = strtolower(trim((string)($_GET['trusted'] ?? '')));
+        if ($trusted !== '' && (!in_array($trusted, self::TRUST_CLASSES, true) || $platform !== 'android')) {
+            $this->flashFilterDropped($platform !== 'android'
+                ? 'The trust filter was ignored: it filters Android installs, so it applies to the Android report only.'
+                : 'The trust filter was ignored: it must be one of ' . implode(', ', self::TRUST_CLASSES) . '.');
+            $trusted = '';
+        }
+        $status = strtolower(trim((string)($_GET['status'] ?? '')));
+        if ($status !== '' && !in_array($status, AppNotificationsController::STATUSES, true)) {
+            $this->flashFilterDropped('The status filter was ignored: it must be one of ' . implode(', ', AppNotificationsController::STATUSES) . '.');
+            $status = '';
+        }
 
         return [
             'range' => $range,
@@ -297,10 +379,55 @@ class MobileAppsReportController
             'to' => gmdate('Y-m-d', $timeTo),
             'time_from' => $timeFrom,
             'time_to' => $timeTo,
+            'platform' => $platform,
             'group_by' => $groupBy,
             'registration_id' => $registrationId,
             'signature' => $signature,
+            'trusted' => $trusted,
+            'status' => $status,
         ];
+    }
+
+    /**
+     * Which platform's report to show.
+     *
+     * The URL decides when it says. When it does not, the app decides
+     * (UI standard, rule 3): an app filter means that app's platform, and
+     * an account with apps on one platform only sees that platform's report
+     * — the one with every dimension it can use — rather than a combined
+     * report whose second half is always empty. Anything else is both.
+     *
+     * @param list<array<string, mixed>> $apps
+     * @return array{platform: string, notes: list<string>}
+     */
+    public static function resolvePlatform(?string $asked, array $apps, string $registrationId): array
+    {
+        $asked = $asked === null ? null : strtolower(trim($asked));
+        if ($asked !== null && $asked !== '') {
+            if (isset(self::PLATFORMS[$asked])) {
+                return ['platform' => $asked, 'notes' => []];
+            }
+            return ['platform' => self::defaultPlatform($apps, $registrationId), 'notes' => ['That platform is not one this report offers, so it shows '
+                . self::PLATFORMS[self::defaultPlatform($apps, $registrationId)] . '.']];
+        }
+
+        return ['platform' => self::defaultPlatform($apps, $registrationId), 'notes' => []];
+    }
+
+    /** @param list<array<string, mixed>> $apps */
+    private static function defaultPlatform(array $apps, string $registrationId): string
+    {
+        $platforms = [];
+        foreach ($apps as $app) {
+            $platform = (string)($app['platform'] ?? '');
+            if ($registrationId !== '' && (string)($app['registration_id'] ?? '') === $registrationId && isset(self::PLATFORMS[$platform])) {
+                return $platform;
+            }
+            $platforms[$platform] = true;
+        }
+        $platforms = array_keys($platforms);
+
+        return count($platforms) === 1 && isset(self::PLATFORMS[$platforms[0]]) ? $platforms[0] : 'all';
     }
 
     /**
@@ -438,20 +565,23 @@ class MobileAppsReportController
         return [$stamp, null];
     }
 
-    // ─── The three views ─────────────────────────────────────────────
+    // ─── The views ───────────────────────────────────────────────────
 
     /**
-     * The filters both reads send on, so a filter wired into one of them and
-     * not the other cannot become a control that narrows the Report tab and
-     * is ignored by the Postbacks tab.
+     * The report's filters, as /apps/report takes them: the window, the
+     * app, and the one trust filter the platform has.
      *
      * @param array<string, mixed> $filters
      * @return array<string, mixed>
      */
-    private function apiFilters(array $filters): array
+    private function reportParams(array $filters): array
     {
-        $params = [];
-        foreach (['registration_id', 'signature'] as $key) {
+        $params = [
+            'platform' => $filters['platform'],
+            'time_from' => $filters['time_from'],
+            'time_to' => $filters['time_to'],
+        ];
+        foreach (['registration_id', 'signature', 'trusted'] as $key) {
             if ($filters[$key] !== '') {
                 $params[$key] = $filters[$key];
             }
@@ -466,15 +596,13 @@ class MobileAppsReportController
      */
     private function buildReport(array $filters): array
     {
-        $params = $this->apiFilters($filters) + [
+        $params = $this->reportParams($filters) + [
             'group_by' => $filters['group_by'],
-            'time_from' => $filters['time_from'],
-            'time_to' => $filters['time_to'],
             'limit' => self::MAX_GROUPS,
         ];
 
         try {
-            $answer = $this->postbacks->report($params);
+            $answer = (new AppReportController($this->db, $this->userId))->report($params);
         } catch (HttpException $e) {
             // The report is the page; without it there is nothing to show,
             // so say what happened rather than rendering an empty table that
@@ -484,57 +612,43 @@ class MobileAppsReportController
             return ['report' => null, 'totals' => null, 'events' => []];
         }
 
-        $groups = $answer['data']['groups'] ?? [];
-        $truncated = (bool)($answer['meta']['groups_truncated'] ?? false);
-
         // The API's ungrouped totals, never a sum over the groups: a sum is
         // wrong by a replayed postback that landed in two of them, and wrong
         // by every group the truncation dropped.
         $totals = $answer['data']['totals'] ?? null;
         if (!is_array($totals)) {
-            $this->flash(
-                'bad',
-                'The report came back without its totals, so the figures above the table are not shown.'
-            );
+            $this->flash('bad', 'The report came back without its totals, so the figures above the table are not shown.');
             $totals = null;
-        } else {
-            // Revenue is the one metric that is not a distinct count: the
-            // decode picks one copy per postback across the whole window, so
-            // a group holds its own decoded events and summing them is
-            // summing distinct postbacks. It is still only the groups that
-            // survived, which is why a truncated report says so.
-            $totals['revenue'] = round(array_sum(array_map(
-                static fn (array $group): float => self::groupRevenue($group),
-                $groups
-            )), 5);
         }
+        $json = static fn (mixed $v): mixed => json_decode((string)json_encode($v), true);
 
         return [
             'report' => [
-                'groups' => $groups,
-                'truncated' => $truncated,
+                'groups' => $json($answer['data']['groups'] ?? []),
+                'truncated' => (bool)($answer['meta']['groups_truncated'] ?? false),
                 'trusted' => (string)($answer['meta']['trusted'] ?? 'trusted-only'),
                 'notes' => (string)($answer['meta']['notes'] ?? ''),
             ],
-            'totals' => $totals,
-            'events' => $this->eventTotals($groups),
+            'totals' => $totals === null ? null : $json($totals),
+            'events' => $totals === null ? [] : self::eventList($filters['platform'] === 'all'
+                ? []
+                : (array)$json($totals['events'] ?? [])),
         ];
     }
 
     /**
-     * One group's decoded revenue.
-     *
-     * The API publishes it per group as decoded_revenue; the events are the
-     * fallback for a response that predates it, and are what the per-event
-     * panel adds up anyway. Written once because the tile, the table cell and
-     * the CSV column all need it and three copies could round differently.
+     * One group's decoded revenue — the shared `revenue` field, which is
+     * `decoded_revenue` on an iOS row and the payable outcomes on an Android
+     * one. The events are the fallback for a response that predates it.
      *
      * @param array<string, mixed> $group
      */
     public static function groupRevenue(array $group): float
     {
-        if (isset($group['decoded_revenue']) && is_numeric($group['decoded_revenue'])) {
-            return (float)$group['decoded_revenue'];
+        foreach (['revenue', 'decoded_revenue'] as $key) {
+            if (isset($group[$key]) && is_numeric($group[$key])) {
+                return (float)$group[$key];
+            }
         }
 
         $revenue = 0.0;
@@ -542,8 +656,7 @@ class MobileAppsReportController
             // Coalesce INSIDE the cast. `(float)$e['revenue'] ?? 0` indexes
             // first, so a legacy event without the key emits "Undefined array
             // key" and the ?? never fires — dead code plus a warning an
-            // error handler can turn into an aborted report. The sibling
-            // fold below always had it the right way round.
+            // error handler can turn into an aborted report.
             $revenue += (float)(((array)$event)['revenue'] ?? 0);
         }
 
@@ -551,25 +664,168 @@ class MobileAppsReportController
     }
 
     /**
-     * Decoded events across the groups the report kept, biggest first.
+     * The totals' per-goal events, biggest first.
      *
-     * @param list<array<string, mixed>> $groups
+     * @param array<string, mixed> $events name => {count, revenue}
      * @return list<array{name: string, count: int, revenue: float}>
      */
-    private function eventTotals(array $groups): array
+    private static function eventList(array $events): array
     {
-        $events = [];
-        foreach ($groups as $group) {
-            foreach ((array)($group['events'] ?? []) as $name => $event) {
-                $key = (string)$name;
-                $events[$key] ??= ['name' => $key, 'count' => 0, 'revenue' => 0.0];
-                $events[$key]['count'] += (int)($event['count'] ?? 0);
-                $events[$key]['revenue'] += (float)($event['revenue'] ?? 0);
+        $out = [];
+        foreach ($events as $name => $event) {
+            $out[] = ['name' => (string)$name, 'count' => (int)($event['count'] ?? 0), 'revenue' => (float)($event['revenue'] ?? 0)];
+        }
+        usort($out, static fn (array $a, array $b): int => $b['count'] <=> $a['count'] ?: strcmp($a['name'], $b['name']));
+
+        return $out;
+    }
+
+    /**
+     * An app's funnel: its goals in order, each with the installs that
+     * reached it in the window (trusted, the unvouched beside them), as a
+     * share of the first step and of the step it waits for.
+     *
+     * The app is the one the filter names; with none, the account's only
+     * Android app when it has exactly one (the app decides what it can).
+     * An iOS app has no funnel to read — Apple's postback carries one value,
+     * the highest step the device reached, not each step — so its view says
+     * that and shows the decoded goals instead.
+     *
+     * @param array<string, mixed> $filters
+     * @param list<array<string, mixed>> $apps
+     * @return array<string, mixed>
+     */
+    private function buildFunnel(array $filters, array $apps): array
+    {
+        $android = array_values(array_filter($apps, static fn (array $a): bool => (string)($a['platform'] ?? '') === 'android'));
+        $chosen = null;
+        foreach ($apps as $app) {
+            if ($filters['registration_id'] !== '' && (string)$app['registration_id'] === $filters['registration_id']) {
+                $chosen = $app;
             }
         }
-        usort($events, static fn(array $a, array $b): int => $b['count'] <=> $a['count']);
+        if ($chosen === null && $filters['registration_id'] === '' && count($android) === 1) {
+            $chosen = $android[0];
+        }
+        $out = ['funnel' => null, 'funnelApp' => $chosen, 'funnelApps' => $android, 'funnelEvents' => null];
+        if ($chosen === null) {
+            return $out;
+        }
+        $window = ['time_from' => $filters['time_from'], 'time_to' => $filters['time_to'], 'registration_id' => (string)$chosen['registration_id']];
+        $report = new AppReportController($this->db, $this->userId);
 
-        return array_values($events);
+        if ((string)$chosen['platform'] !== 'android') {
+            try {
+                $answer = $report->report($window + ['platform' => 'ios', 'group_by' => 'platform']);
+                $out['funnelEvents'] = self::eventList((array)json_decode((string)json_encode($answer['data']['totals']['events'] ?? []), true));
+            } catch (HttpException $e) {
+                $this->flash('bad', $e->getMessage());
+            }
+            return $out;
+        }
+
+        try {
+            $answer = $report->report($window + ['platform' => 'android', 'group_by' => 'goal', 'limit' => 500]);
+            $goals = (new GoalsController($this->db, $this->userId))->list([
+                'registration_id' => (string)$chosen['registration_id'], 'limit' => '500',
+            ])['data'];
+        } catch (HttpException $e) {
+            $this->flash('bad', $e->getMessage());
+            return $out;
+        }
+        $reached = [];
+        foreach ($answer['data']['groups'] as $group) {
+            $reached[(int)$group['goal_id']] = $group;
+        }
+        $out['funnel'] = self::funnelSteps($goals, $reached);
+
+        return $out;
+    }
+
+    /**
+     * The funnel's rows: every current goal of the app in `after` order —
+     * the install goal, then each goal after the ones it waits for, ties by
+     * id — with what the report says reached it (zeros for a goal nothing
+     * reached, which is a step of the funnel all the same).
+     *
+     * @param list<array<string, mixed>> $goals the app's goals (GoalsController::list())
+     * @param array<int, array<string, mixed>> $reached goal id => the report's goal row
+     * @return list<array<string, mixed>>
+     */
+    public static function funnelSteps(array $goals, array $reached): array
+    {
+        $byId = [];
+        foreach ($goals as $goal) {
+            if (($goal['archived_at'] ?? null) === null) {
+                $byId[(int)$goal['goal_id']] = $goal;
+            }
+        }
+        ksort($byId);
+        $depth = [];
+        $depthOf = static function (int $id, array $seen) use (&$depthOf, &$depth, $byId): int {
+            if (isset($depth[$id])) {
+                return $depth[$id];
+            }
+            if (isset($seen[$id])) {
+                return 0; // a cycle (which the API refuses to create) cannot hang the page
+            }
+            $seen[$id] = true;
+            $d = ($byId[$id]['builtin'] ?? null) === 'install' ? 0 : 1;
+            foreach ((array)($byId[$id]['definition']['after'] ?? []) as $after) {
+                if (isset($byId[(int)$after])) {
+                    $d = max($d, $depthOf((int)$after, $seen) + 1);
+                }
+            }
+            return $depth[$id] = $d;
+        };
+        $order = [];
+        foreach (array_keys($byId) as $id) {
+            $order[] = [$depthOf($id, []), $id];
+        }
+        sort($order);
+
+        $count = static fn (int $id): int => (int)($reached[$id]['installs'] ?? 0);
+        $installStep = null;
+        foreach ($byId as $id => $goal) {
+            if (($goal['builtin'] ?? null) === 'install') {
+                $installStep = $id;
+                break;
+            }
+        }
+
+        $steps = [];
+        $first = null;
+        foreach ($order as [$level, $id]) {
+            $row = $reached[$id] ?? [];
+            $installs = $count($id);
+            $first ??= $installs;
+            // The step before is the one this goal waits for, not the row
+            // above it: two goals at one depth are siblings, not a sequence.
+            // `after` means every named goal first, so the smallest of them
+            // bounds who could reach this one; a goal that waits for nothing
+            // follows the install.
+            $waitsFor = array_values(array_filter(array_map('intval', (array)($byId[$id]['definition']['after'] ?? [])), static fn (int $a): bool => isset($byId[$a])));
+            if ($waitsFor === [] && $installStep !== null && $installStep !== $id) {
+                $waitsFor = [$installStep];
+            }
+            $previous = $waitsFor === [] ? null : min(array_map($count, $waitsFor));
+            $steps[] = [
+                'goal_id' => $id,
+                'name' => (string)$byId[$id]['name'],
+                'level' => $level,
+                'builtin' => $byId[$id]['builtin'] ?? null,
+                'after' => array_values(array_map('intval', (array)($byId[$id]['definition']['after'] ?? []))),
+                'installs' => $installs,
+                'unvouched' => (int)($row['unvouched_count'] ?? 0),
+                'goals_reached' => (int)($row['goals_reached'] ?? 0),
+                'revenue' => (float)($row['revenue'] ?? 0),
+                // A share of nothing is not zero percent, it is no share.
+                'of_first' => $first > 0 ? (float)$installs / $first : null,
+                'of_previous' => $previous !== null && $previous > 0 ? (float)$installs / $previous : null,
+            ];
+        }
+
+        return $steps;
     }
 
     /**
@@ -586,11 +842,16 @@ class MobileAppsReportController
         // nothing, and the empty answer renders as "No postbacks in this
         // range" — a sentence about the range that is false.
         $asked = min(max(1, (int)($_GET['page'] ?? 1)), self::MAX_PAGE);
-        $base = $this->apiFilters($filters) + [
+        $base = [
             'time_from' => $filters['time_from'],
             'time_to' => $filters['time_to'],
             'limit' => self::PER_PAGE,
         ];
+        foreach (['registration_id', 'signature'] as $key) {
+            if ($filters[$key] !== '') {
+                $base[$key] = $filters[$key];
+            }
+        }
 
         try {
             $answer = $this->postbacks->list($base + ['offset' => ($asked - 1) * self::PER_PAGE]);
@@ -629,6 +890,45 @@ class MobileAppsReportController
                 'pages' => $pages,
                 'per_page' => self::PER_PAGE,
             ],
+        ];
+    }
+
+    /**
+     * The traffic-source postbacks app installs' goals queued in the window,
+     * newest first, and the summary by status.
+     *
+     * @param array<string, mixed> $filters
+     * @return array<string, mixed>
+     */
+    private function buildNotifications(array $filters): array
+    {
+        $asked = min(max(1, (int)($_GET['page'] ?? 1)), self::MAX_PAGE);
+        $params = ['time_from' => $filters['time_from'], 'time_to' => $filters['time_to'], 'limit' => self::PER_PAGE];
+        foreach (['registration_id', 'status'] as $key) {
+            if ($filters[$key] !== '') {
+                $params[$key] = $filters[$key];
+            }
+        }
+        $read = new AppNotificationsController($this->db, $this->userId);
+        try {
+            $answer = $read->list($params + ['offset' => ($asked - 1) * self::PER_PAGE]);
+            $total = (int)$answer['pagination']['total'];
+            $pages = max(1, (int)ceil($total / self::PER_PAGE));
+            $page = min($asked, $pages);
+            if ($page !== $asked) {
+                $this->flash('warn', 'There is no page ' . $asked . ' of these postbacks, so this is the last one.');
+                $answer = $read->list($params + ['offset' => ($page - 1) * self::PER_PAGE]);
+            }
+        } catch (HttpException $e) {
+            $this->flash('bad', $e->getMessage());
+
+            return ['notifications' => null, 'summary' => null, 'pagination' => null];
+        }
+
+        return [
+            'notifications' => $answer['data'],
+            'summary' => $answer['meta']['summary'],
+            'pagination' => ['rows' => $total, 'page' => $page, 'pages' => $pages, 'per_page' => self::PER_PAGE],
         ];
     }
 
@@ -693,8 +993,8 @@ class MobileAppsReportController
     // ─── Bits the template needs ─────────────────────────────────────
 
     /**
-     * The registered apps, for the filter menu and the Postbacks tab's app
-     * column.
+     * The registered apps, both platforms, for the filter menu, the funnel's
+     * app menu and the Postbacks tab's app column.
      *
      * RegisteredApps carries the ceiling and the ordering, so this menu and
      * Setup's panel cannot disagree about which apps exist — a filter missing
@@ -748,7 +1048,7 @@ class MobileAppsReportController
     private function sendCsv(array $mobileReport): void
     {
         $filters = $mobileReport['filters'];
-        $label = self::GROUPINGS[$filters['group_by']] ?? 'Group';
+        $label = $mobileReport['groupings'][$filters['group_by']] ?? 'Group';
 
         // A download cannot carry a flash, so a report built from filters the
         // page could not use would cover a wider set of rows than the URL
@@ -767,26 +1067,17 @@ class MobileAppsReportController
             return;
         }
 
-        $rows = [[
-            $label, 'Postbacks', 'Installs', 'Re-downloads', 'Re-engagements', 'Losses',
-            'Revenue', 'Trusted', 'Refuted', 'Unvouched', 'Development-signed',
-        ]];
+        $columns = self::csvColumns($filters['platform']);
+        $rows = [array_merge([$label], array_keys($columns))];
         foreach ($mobileReport['report']['groups'] as $group) {
-            $rows[] = [
-                $this->csvGroupLabel($group, $filters['group_by']),
-                (int)($group['postbacks'] ?? 0),
-                (int)($group['installs'] ?? 0),
-                (int)($group['redownloads'] ?? 0),
-                (int)($group['reengagements'] ?? 0),
-                (int)($group['losses'] ?? 0),
+            $row = [self::csvGroupLabel($group, $filters['group_by'])];
+            foreach ($columns as $field) {
                 // The bare number, not dollar_format's rendering: a
                 // spreadsheet should get something it can add up.
-                round(self::groupRevenue($group), 5),
-                (int)($group['trusted_count'] ?? 0),
-                (int)($group['refuted_count'] ?? 0),
-                (int)($group['unvouched_count'] ?? 0),
-                (int)($group['test_count'] ?? 0),
-            ];
+                $row[] = $field === 'revenue' ? round(self::groupRevenue($group), 5)
+                    : ($field === 'platform' ? (string)($group['platform'] ?? '') : (int)($group[$field] ?? 0));
+            }
+            $rows[] = $row;
         }
         if ($mobileReport['report']['truncated']) {
             // The file leaves the page behind, so the qualification has to
@@ -796,10 +1087,10 @@ class MobileAppsReportController
             $rows[] = ['More groups matched than are listed here. Narrow the range or filter by app to see the rest.'];
         }
 
-        // Built in memory first — MAX_GROUPS rows at the very most — because
-        // once a Content-Disposition header is out, a write that fails leaves
-        // a short file the reader has no way to know is short. Returning
-        // instead renders the page with the message on it.
+        // Built in memory first — MAX_GROUPS rows per platform at the very
+        // most — because once a Content-Disposition header is out, a write
+        // that fails leaves a short file the reader has no way to know is
+        // short. Returning instead renders the page with the message on it.
         $body = self::csvBody($rows);
         if ($body === null) {
             $this->flash('bad', 'The CSV could not be built, so nothing was downloaded.');
@@ -823,12 +1114,37 @@ class MobileAppsReportController
         $name = preg_replace(
             '/[^A-Za-z0-9._-]+/',
             '-',
-            'mobile-apps-' . $filters['group_by'] . '-' . $filters['from'] . '-to-' . $filters['to'] . '.csv'
+            'mobile-apps-' . $filters['platform'] . '-' . $filters['group_by'] . '-' . $filters['from'] . '-to-' . $filters['to'] . '.csv'
         ) ?? 'mobile-apps.csv';
         header('Content-Disposition: attachment; filename="' . $name . '"');
         header('Content-Length: ' . strlen($body));
         echo $body;
         exit;
+    }
+
+    /**
+     * A platform's CSV columns, header => the group field it reads.
+     *
+     * @return array<string, string>
+     */
+    public static function csvColumns(string $platform): array
+    {
+        return match ($platform) {
+            'ios' => [
+                'Postbacks' => 'postbacks', 'Installs' => 'installs', 'Re-downloads' => 'redownloads', 'Re-engagements' => 'reengagements',
+                'Losses' => 'losses', 'Revenue' => 'revenue', 'Decoded' => 'decoded', 'Ambiguous encoding' => 'ambiguous_encoding',
+                'Trusted' => 'trusted_count', 'Refuted' => 'refuted_count', 'Unvouched' => 'unvouched_count', 'Development-signed' => 'test_count',
+            ],
+            'android' => [
+                'Received' => 'received', 'Installs' => 'installs', 'Organic' => 'organic', 'Pending' => 'pending',
+                'Refuted' => 'refuted_count', 'Unvouched' => 'unvouched_count', 'Test' => 'test_count',
+                'Goals reached' => 'goals_reached', 'Revenue' => 'revenue',
+            ],
+            default => [
+                'Platform' => 'platform', 'Installs' => 'installs', 'Goals reached' => 'goals_reached', 'Revenue' => 'revenue',
+                'Trusted' => 'trusted_count', 'Refuted' => 'refuted_count', 'Unvouched' => 'unvouched_count', 'Test' => 'test_count',
+            ],
+        };
     }
 
     /**
@@ -904,13 +1220,13 @@ class MobileAppsReportController
      * because the id qualifies the name, while a source's two parts are
      * peers and are joined.
      */
-    private function csvGroupLabel(array $group, string $groupBy): string
+    private static function csvGroupLabel(array $group, string $groupBy): string
     {
         $parts = self::groupLabelParts($group, $groupBy);
         if ($parts === []) {
             return '';
         }
-        if ($groupBy === 'registration' && count($parts) > 1) {
+        if (in_array($groupBy, ['registration', 'campaign'], true) && count($parts) > 1) {
             return $parts[0] . ' (' . $parts[1] . ')';
         }
 
@@ -935,9 +1251,9 @@ class MobileAppsReportController
     public static function groupLabelParts(array $group, string $groupBy): array
     {
         if ($groupBy === 'registration') {
-            // The name, qualified by the app's own id (its App Store id),
-            // which is what an operator recognises; a registration since
-            // deleted keeps only its number.
+            // The name, qualified by the app's own key (its App Store id or
+            // package), which is what an operator recognises; a
+            // registration since deleted keeps only its number.
             $name = trim((string)($group['app_name'] ?? ''));
             $key = trim((string)($group['app_key'] ?? ''));
             if ($key === '') {
@@ -957,7 +1273,30 @@ class MobileAppsReportController
             ], static fn (string $part): bool => $part !== ''));
         }
 
-        $value = (string)($group[self::groupKeys()[$groupBy] ?? ''] ?? '');
+        if ($groupBy === 'campaign') {
+            $id = $group['aff_campaign_id'] ?? null;
+            if ($id === null) {
+                return [];
+            }
+            $name = trim((string)($group['aff_campaign_name'] ?? ''));
+
+            return $name === '' ? ['campaign ' . (int)$id] : [$name, 'campaign ' . (int)$id];
+        }
+
+        $field = match ($groupBy) {
+            'platform' => 'platform',
+            'match-state' => 'match_state',
+            'integrity-state' => 'integrity_state',
+            'goal' => 'goal_name',
+            'day' => 'date',
+            default => self::groupKeys()[$groupBy] ?? '',
+        };
+        $value = (string)($group[$field] ?? '');
+        if ($groupBy === 'platform') {
+            $value = self::PLATFORMS[$value] ?? $value;
+        } elseif ($groupBy === 'match-state' || $groupBy === 'integrity-state') {
+            $value = str_replace('_', ' ', $value);
+        }
 
         return $value === '' ? [] : [$value];
     }

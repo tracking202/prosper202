@@ -69,7 +69,7 @@ func TestAppReportLiftsGroupsIntoTheListShape(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	stdout, _, err := executeCommand("app", "report", "--group-by", "ad-network", "--json")
+	stdout, _, err := executeCommand("app", "report", "--platform", "ios", "--group-by", "ad-network", "--json")
 	if err != nil {
 		t.Fatalf("app report error: %v", err)
 	}

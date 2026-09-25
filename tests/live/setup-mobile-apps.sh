@@ -93,13 +93,19 @@ has "$OUT/page.html" "setup/mobile_apps.php" "sub-menu links the page"
 has "$OUT/page.html" ".well-known/skadnetwork/report-attribution"  "SKAdNetwork receiver URL shown"
 has "$OUT/page.html" ".well-known/appattribution/report-attribution" "AdAttributionKit receiver URL shown"
 
-say "register: a Play Store link is read, and pointed at the API"
+say "register: a Play Store link is read as the Android app it names"
+# No store answers in this pass (tests/live/mobile-apps-ui.sh runs a fake
+# one), so the name cannot be looked up: the page asks for it once.
 post x "$OUT/android.html" --data-urlencode action=register \
   --data-urlencode "app_reference=https://play.google.com/store/apps/details?id=com.example.app"
 msgs "$OUT/android.html"
-has "$OUT/android.html" "That is a Google Play app (com.example.app)" "the link was read as the Android app it names"
-has "$OUT/android.html" "p202 app create --store-link" "and the sentence says where Android apps register"
-eq "$(Q 'SELECT COUNT(*) FROM 202_app_registrations')" "0" "no app was created"
+has "$OUT/android.html" "Google Play did not answer, so the name could not be looked up" "the link was read as a Google Play app, and the name is asked for"
+eq "$(Q 'SELECT COUNT(*) FROM 202_app_registrations')" "0" "no app was created without one"
+post x "$OUT/android2.html" --data-urlencode action=register \
+  --data-urlencode "app_reference=https://play.google.com/store/apps/details?id=com.example.app" --data-urlencode "app_name=Example Android"
+eq "$LAST_REDIRECTS" 1 "with the name typed, it registers (a redirect, not the re-render)"
+eq "$(Q "SELECT CONCAT(platform, '|', app_key, '|', app_name) FROM 202_app_registrations")" "android|com.example.app|Example Android" "as the Android app the link names"
+mysql_q "$DB" -e "DELETE FROM 202_app_registrations WHERE platform='android'"
 
 say "register: junk gets the App Store sentence"
 get "" "$OUT/page.html"

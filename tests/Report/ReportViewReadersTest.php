@@ -146,6 +146,46 @@ final class ReportViewReadersTest extends TestCase
         self::assertStringContainsString('href="/d/?' . $view . '"', $html, 'the download exports it');
     }
 
+    /**
+     * Analyze › Mobile Apps keeps its filters in its own URL (plan §5.6,
+     * PR 11): every read it makes — the report, the funnel, the postbacks,
+     * the outbox, and the CSV it serves — is built from that request's query
+     * string, so there is no stored row for another tab to change under it
+     * and no view to hand on. This holds it there: nothing on the page's
+     * path reads the stored report filters (a table, a column, or the
+     * helpers that read them), and its download is the page itself, not a
+     * separate request that would need a view installed.
+     */
+    public function testTheMobileAppsReportReadsNoStoredFilter(): void
+    {
+        $files = ['tracking202/analyze/mobile_apps.php', 'tracking202/analyze/MobileAppsReportController.php', 'tracking202/analyze/templates/mobile_apps.php'];
+        foreach (glob($this->root . '/tracking202/analyze/templates/mobile_apps/*.php') ?: [] as $partial) {
+            $files[] = substr($partial, strlen($this->root) + 1);
+        }
+        self::assertGreaterThan(5, count($files), 'the page and its partials were found');
+        foreach ($files as $file) {
+            $code = $this->codeOnly((string) file_get_contents($this->root . '/' . $file));
+            foreach (['202_users_pref', 'user_pref_', 'grab_timeframe(', 'p202_report_view_', 'ReportView::'] as $reader) {
+                self::assertStringNotContainsString($reader, $code, "$file reads the stored report filters ($reader); this page's filters are its URL's");
+            }
+        }
+        $template = (string) file_get_contents($this->root . '/tracking202/analyze/templates/mobile_apps/_report.php');
+        self::assertMatchesRegularExpression("/\\\$link\\(\\['view' => 'report', 'download' => 'csv'\\]\\)/", $template, 'the CSV is this page, under this URL\'s filters');
+    }
+
+    /** The source without comments, which may name what the code must not do. */
+    private function codeOnly(string $source): string
+    {
+        $out = '';
+        foreach (token_get_all($source) as $token) {
+            if (is_array($token) && in_array($token[0], [T_COMMENT, T_DOC_COMMENT], true)) {
+                continue;
+            }
+            $out .= is_array($token) ? $token[1] : $token;
+        }
+        return $out;
+    }
+
     /** @return list<string> */
     private function filesInstallingAView(): array
     {

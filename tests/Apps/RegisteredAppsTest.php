@@ -57,8 +57,8 @@ final class RegisteredAppsTest extends TestCase
         // Asking for more than the API serves would be silently clamped, so a
         // larger number here would only make the code look as though it read
         // more than it does.
-        $this->assertSame(['limit' => RegisteredApps::MAX, 'filter' => ['platform' => 'ios']], $apps->lastParams,
-            'the two pages read iOS registrations only: both are about Apple postbacks');
+        $this->assertSame(['limit' => RegisteredApps::MAX], $apps->lastParams,
+            'the two pages read both platforms: Setup registers either and the report covers either');
         $this->assertSame(500, RegisteredApps::MAX, 'api/v3/Controller::list() clamps limit to 500');
     }
 

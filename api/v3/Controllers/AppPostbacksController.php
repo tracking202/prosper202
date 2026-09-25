@@ -99,6 +99,11 @@ class AppPostbacksController
         'version'         => [['alias' => 'grp_version', 'expr' => 'version', 'key' => 'version', 'kind' => 'nullable-string']],
         'protocol'        => [['alias' => 'grp_protocol', 'expr' => 'protocol', 'key' => 'protocol', 'kind' => 'string']],
         'conversion-type' => [['alias' => 'grp_conversion_type', 'expr' => 'conversion_type', 'key' => 'conversion_type', 'kind' => 'nullable-string']],
+        // One group holding the whole window, decode included: the iOS side
+        // of the cross-platform report's per-platform rows and totals
+        // (AppReportController). A constant groups every row together, and
+        // restrictToRetainedGroups() binds it like any string key.
+        'platform'        => [['alias' => 'grp_platform', 'expr' => "'ios'", 'key' => 'platform', 'kind' => 'string']],
     ];
 
     /**
@@ -754,7 +759,7 @@ class AppPostbacksController
      *
      * @param array<string, mixed> $params
      */
-    private static function boundedInt(array $params, string $key, int $default, int $min, int $max): int
+    public static function boundedInt(array $params, string $key, int $default, int $min, int $max): int
     {
         if (!isset($params[$key]) || $params[$key] === '') {
             return $default;
@@ -772,7 +777,7 @@ class AppPostbacksController
      * integer — a mistyped filter answering a question the caller never
      * asked (error patterns #4 and #5).
      */
-    private static function strictInt(mixed $raw, string $param, string $title, string $requirement): int
+    public static function strictInt(mixed $raw, string $param, string $title, string $requirement): int
     {
         if (!is_int($raw) && !(is_string($raw) && self::isIntegerString($raw))) {
             throw new ValidationException($title, [
