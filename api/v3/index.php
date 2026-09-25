@@ -589,6 +589,22 @@ try {
                 return null;
             });
 
+            // Identity linking key (self-or-admin): what the operator's
+            // server signs customer ids with (cust_sig).
+            $r->get('/{id}/identity-key', function ($ctx) use ($auth, $make) {
+                $auth->requireSelfOrAdmin((int)$ctx['id']);
+                // A read that hands out a signing secret: whoever holds the
+                // key can link any click to any customer id, which is a write
+                // to the account's identity graph. So a read-only or
+                // propose-only key (a reporting agent's) cannot fetch it.
+                $auth->requireScope('users:write');
+                return $make()->identityKey((int)$ctx['id']);
+            });
+            $r->post('/{id}/identity-key/rotate', function ($ctx) use ($auth, $make) {
+                $auth->requireSelfOrAdmin((int)$ctx['id']);
+                return $make()->rotateIdentityKey((int)$ctx['id']);
+            });
+
             // Preferences (self-or-admin)
             $r->get('/{id}/preferences', function ($ctx) use ($auth, $make) {
                 $auth->requireSelfOrAdmin((int)$ctx['id']);
@@ -734,6 +750,7 @@ try {
         $r->post('/{id}/roles', $stageable);
         $r->delete('/{id}/roles/{roleId}', $stageable);
         $r->delete('/{id}/api-keys/{keyId}', $stageable);
+        $r->post('/{id}/identity-key/rotate', $stageable);
         $r->put('/{id}/preferences', $stageable);
     });
 

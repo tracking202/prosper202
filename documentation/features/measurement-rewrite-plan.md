@@ -1,6 +1,6 @@
 # Measurement rewrite: app measurement (iOS + Android) and multi-touch attribution
 
-Status: **proposal, not implemented.**
+Status: **in progress.** PR 0 (legacy endpoints) and PR 1 (the conversion ledger) are built; the rest is proposal.
 
 ## Scope
 
@@ -172,8 +172,10 @@ generated it.
   conversion overwrites (§5.5).
 - **Several paths wrote no row at all**, so their amounts could never be
   broken down:
-  - the revenue CSV upload (`tracking202/update/upload.php:128-165`) sums per
-    subid within a file and writes only the total. **Still open; PR 1.**
+  - the revenue CSV upload (`tracking202/update/upload.php:128-165`) summed per
+    subid within a file and wrote only the total. **Done (PR 1):** every line
+    is a ledger row of its upload batch (`RevenueUploadImporter`); see
+    point 3.
   - the legacy `px.php` / `pb.php` pixels only flagged the click, and the
     ClickBank endpoint (`cb202.php`) overwrote `click_payout` with the order
     total. **Done (PR 0, 2026-09-25):** all three now record through
@@ -212,6 +214,8 @@ becomes a cache of it.**
    | `event_name` | The event that reached the goal, or the postback's `event=` value |
    | `payable` | `1` counts toward income and leads. `0` is a tracked outcome on a click: an unpaid goal, or an event reported for visibility. Outcomes on a subject with no click (an organic install) live only in `202_goal_outcomes`, §5.5 |
    | `superseded_by` | Set in `replace` mode when a later payable row replaced this one's value, so the breakdown can say *why* a row is not in the total |
+   | `superseded_reason` | Why (PR 1 added it, because "superseded" has owners): `replace` and `batch` are derived by the recompute and cleared by it when the row that replaced this one is deleted; `pre_ledger`, `replay` and `reevaluation` are decisions made once elsewhere, which the recompute never touches |
+   | `reverses_conv_id` | On a reversal, the row it reverses (indexed lookups; `source_ref` also names it as `conv:<id>`) |
 
    A reversal (below) is a row with a negative amount whose `source` is the
    path it arrived by and whose `source_ref` names the row it reverses.
@@ -234,14 +238,20 @@ becomes a cache of it.**
      that click, which supersedes earlier batches' rows and earlier plain
      rows. That is today's "sum within the file, replace across files",
      kept exactly, with the lines now visible.
-   - **A click converted before the upgrade has no rows, only a cached
-     value.** Such clicks are never recomputed on their own. The first time
-     a new row lands on one (`click_lead = 1`, no ledger rows), the writer
-     first inserts a **`legacy_baseline`** row (amount = the cached
-     `click_payout`, `dedupe_key = legacy`, payable) under the same lock, so
-     the recompute preserves the income and the breakdown shows where it
-     came from. Historical amounts are not otherwise backfilled, because
-     their individual parts were never stored.
+   - **A click converted before the upgrade holds its value in its cache,
+     not in its rows.** Its rows (if any) were overwritten by later writes
+     or undercount a revenue upload that left none, so they cannot be
+     re-added into the value; and a click cleared before the upgrade still
+     has its old rows. So (as built in PR 1) the upgrade marks **every
+     pre-existing row** `superseded_reason = pre_ledger`, and the first
+     ledger write on a click that is still a lead with no ledger-managed row
+     inserts a **`legacy_baseline`** row (amount = the cached
+     `click_payout`, `dedupe_key = legacy`, payable) under the same lock and
+     points the old rows at it. The recompute then preserves the income, the
+     breakdown shows where it came from, and a conversion cleared before the
+     upgrade cannot come back. Such clicks are never recomputed on their
+     own. Historical amounts are not otherwise backfilled, because their
+     individual parts were never stored.
 
    The earlier objection to summing rows was that uploads write none. It
    disappears once every path writes rows.
@@ -267,6 +277,35 @@ becomes a cache of it.**
 7. **Leads stay "converting clicks".** A click is a lead if it has at least
    one payable, non-deleted row, whatever its net value after reversals.
    Unpaid outcomes are counted separately, as events.
+
+**Built in PR 1** (the paths, and what each now does):
+
+- `MysqlConversionRepository::record()` builds the row's key
+  (`DedupeKey`), carries a pre-ledger click in (`ensureManaged`), inserts,
+  recomputes the click from its rows (`MysqlConversionLedger`, rules in
+  `ClickValueCalculator`) and writes the MTA outbox row, in one
+  transaction. `softDelete()` and the new `clearClicks()` do the same.
+- `ClickValueWritersTest` fails on any UPDATE of `click_lead` or
+  `click_payout` outside the ledger. The one other writer it allows is the
+  offer redirects' routing seed (`off.php`, `offrtr.php`), which now only
+  touches a click that has not converted (`AND click_lead = 0`).
+- The static endpoints' click update (`p202ApplyConversionUpdate`) became
+  `p202ApplyConversionClickSide` (CPA cost and the filtered flag only).
+  The subid-upload, delete-subids and clear-subids pages record and clear
+  through the ledger, and carry and check the session token; the revenue
+  upload applies a report by token-checked POST (it ran from a GET) and
+  reads the whole file (it read the first 100,000 bytes).
+- The traffic-source pixel (`p202FireTrafficSourcePixels`, used by gpb and
+  upx) fires after recording, only for a newly recorded conversion that is
+  not a reversal, for every pixel row of the account, with
+  `[[transactionid]]` and the conversion's own `[[payout]]`. It used to fire
+  before recording, on replays and failed writes too, and read only the
+  account's first pixel row. gpb answers 500 when recording fails.
+- gpx, upx and gpb read click ids with the exact parser PR 0 gave px and pb;
+  a present-but-malformed value is refused, never cast or sent to the IP
+  fallback.
+- Deferred to PR 1b: `source_ref` naming the API key that wrote an API row
+  (the key id is not available to controllers today).
 
 **Compatibility.**
 
@@ -1290,8 +1329,8 @@ first-party signals**, each allowed only to *link*, never to *guess*.
 | Signal | Where it comes from | What it links | Why it helps |
 |---|---|---|---|
 | **Tracking-domain cookie** `p202vid` | 128-bit random, set by `dl.php`/`rtr.php` (`Secure`, `HttpOnly`, `SameSite=Lax`, 400-day cap) | Clicks through redirects in one browser | Works everywhere redirects do; the baseline |
-| **Landing-page first-party id** | The LP script (`record_simple.php`/`record_adv.php` and a new small `p202.js`) stores an id in the **landing page's own** first-party storage and sends it with LP clicks and with the next outbound click | Clicks on the operator's own sites | The LP domain is a site the user actually interacts with, so browsers treat its storage as first-party. It survives where a bounce-only tracking domain is cleared |
-| **Customer id, signed** | `cust` plus `cust_sig` on a click or conversion, and `setCustomerId(id, signature)` in both SDKs; stored hashed. `cust_sig = HMAC-SHA256(account linking key, canonical id)`, computed by the operator's own server, which is the only party that holds the key | A person across browsers, **and web → app** | The only deterministic cross-device link. `cust` is request-controlled on public pixels, so an **unsigned** id keeps its LTV role exactly as today and links no journeys: anyone who learns someone's customer id could otherwise join their clicks. The signature is what makes the id a proof rather than a claim |
+| **Landing-page first-party id** `p202lpid` | The LP script (`tracking202/static/landing.php`, which every LP already loads) stores an id in the **landing page's own** `localStorage` and sends it with the pageview beacon (`record_simple.php`/`record_adv.php`) and on every link into the tracker when it is followed | Clicks on the operator's own sites | The LP domain is a site the user actually interacts with, so browsers treat its storage as first-party. It survives where a bounce-only tracking domain is cleared |
+| **Customer id, signed** | `cust` plus `cust_sig` on a click or conversion, and `setCustomerId(id, signature)` in both SDKs; stored hashed. `cust_sig = HMAC-SHA256(account linking key, "<type>:<value>")`, computed by the operator's own server, which is the only party that holds the key. The type is the LTV alias vocabulary (`cust_type`, default `custom`; email digests fold to lower case), and it is inside the signed string so a signature for one namespace cannot be replayed in another. A `customer_ref` on an authenticated `POST /api/v3/conversions` is the operator's own statement and links without a signature | A person across browsers, **and web → app** | The only deterministic cross-device link. `cust` is request-controlled on public pixels, so an **unsigned** id keeps its LTV role exactly as today and links no journeys: anyone who learns someone's customer id could otherwise join their clicks. The signature is what makes the id a proof rather than a claim |
 | IP address, user agent, fingerprinting | — | **Never used** | Carrier-grade NAT and offices merge strangers, which is today's defect in another form. Fingerprinting is a privacy and platform-policy problem, and it is wrong often enough to corrupt credit silently |
 
 **How the graph works.** Each click records the signals it carried in
@@ -1332,8 +1371,13 @@ install click with a different visitor key, the install conversion (journey
 built one-touch), then the signed customer id on both, and asserts the
 journey is rebuilt with two touches and credits under every active model. The click row itself stores its canonical `visitor_key`
 in `202_clicks_visitor (click_id PK, user_id, visitor_key, click_time)`, with
-`KEY (user_id, visitor_key, click_time)`, written in the same `recordClick()`
-transaction. It is not a column on the hot `202_clicks`.
+`KEY (user_id, visitor_key, click_time)`. It is not a column on the hot
+`202_clicks`. **As built,** it is written in its own transaction immediately
+after `recordClick()` commits, not inside it: identity is an enrichment, and a
+lock error or a failure in the graph must never cost the click it rides on.
+A failed link is retried once on a deadlock, then logged with the click id,
+and the click is a one-touch journey. The rotator writes its click rows
+inline, so it links after them the same way.
 
 **Guards against over-merging.** A graph that merges too eagerly collapses
 strangers, which is the failure being replaced.
@@ -1364,6 +1408,18 @@ labelled as such.
   the tracking domain are the same site. The docs say so.
 - **Cross-device only through customer ids.** Without `cust` or
   `setCustomerId()`, a person on two devices is two visitors.
+- **Consent is one switch.** `p202_consent=0` on a tracking URL, or
+  `p202.consent(false)` on a landing page (remembered in its storage, and
+  sent on the beacon and on every link into the tracker), or a campaign's
+  `identity_signals = 0`, captures nothing: no cookie is set or read, the LP
+  id is deleted, and the click is a one-touch journey. The identity
+  parameters (`p202lpid`, `cust_sig`, `p202_consent`) never ride the redirect
+  to the offer.
+- **A cross-site LP beacon mints nothing.** When the LP and the tracker are
+  different sites (`Sec-Fetch-Site: cross-site`) the browser neither sends
+  nor keeps the tracker's cookie on the beacon, so the beacon links by
+  `p202lpid` alone rather than minting a fresh one-click visitor per
+  pageview.
 - **Nothing before the upgrade.** Clicks recorded before an install runs the
   release containing visitor capture have no visitor id and cannot be
   backfilled. Every install upgrading from 1.9.55 or older starts with
@@ -1594,7 +1650,7 @@ The worker computes credits for every active model, the default included.
   parties.
 - **Consent:** operators must cover these in their consent flow where their
   jurisdiction requires it. One switch suppresses every browser signal: a
-  `p202_consent=0` parameter, `p202.js`'s `consent(false)`, or a per-campaign
+  `p202_consent=0` parameter, `p202.consent(false)` from the landing-page script (`landing.php`), or a per-campaign
   setting. The journey is then one touch.
 - **Browser limits on landing-page storage:** Safari caps storage written by
   scripts (seven days without interaction) and may clear it sooner. The
@@ -1845,9 +1901,9 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 | # | PR | Depends on |
 |---|---|---|
 | 0 | **Legacy endpoints record conversions** (§2.1): `px.php`, `pb.php` and `cb202.php` through the shared writer; `tests/live/legacy-pixels.sh`. **Merged first, alone.** | — |
-| 1 | **Conversion ledger** (§2.1): provenance columns; the CSV upload writes rows (the last path that does not); click value derived from rows under `payout_mode`; outbox row in `record()`; `ConversionTables` split out; `gpb.php` pixel-firing logic extracted to one function | — |
+| 1 | **Conversion ledger** (§2.1): provenance columns; the CSV upload writes rows (the last path that does not); click value derived from rows under `payout_mode`; outbox row in `record()`; `ConversionTables` split out; `gpb.php` pixel-firing logic extracted to one function. **Built; `tests/live/conversion-ledger.sh`.** | — |
 | 1b | **Breakdown reads:** `GET /clicks/{id}/conversions` and `p202 click conversions <id>`, `/conversions` filters, the click-history breakdown view, Group Overview's Goal/source level, and the Transaction ID level fixed to sum rows | 1, 4 (for goal names); U2 |
-| 2 | **Identity capture:** `p202vid`, LP first-party id and `p202.js`, `cust` on clicks, `202_identity_*`, `202_clicks_visitor`, consent switch | — |
+| 2 | **Identity capture:** `p202vid`, LP first-party id (in `landing.php`, with `p202.consent()`), signed `cust` on clicks and conversions, `202_identity_*`, `202_clicks_visitor`, consent switch and per-campaign `identity_signals`. **Built; `tests/live/identity-graph.sh`, `tests/browser/specs/identity-landing.spec.js`.** | — |
 | 3 | **App core reshape** (§4): registry, `AppIdentity`, token rename, verdicts, `PublicIntake`, retention, user-deletion purge, `/apps` and `p202 app` renames, legacy guard deleted | — |
 | 4 | **Goals engine** (core): definitions, validation, versioning, server evaluator keyed by subject (click or install), cross-language vectors, campaign goal payouts, SKAN encodings pointing at goals, `/goals` API and `p202 goal …` | 1, 3 |
 | 4b | **Web events:** `event=` on pixels and postbacks, `POST /events`, `p202.js` `track()`, the web campaign goal editor, the Transactions ID docs pointing to goals | 2, 4 |

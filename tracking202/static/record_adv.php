@@ -75,6 +75,7 @@ if ($_GET['t202id']) {
 			tr.click_cloaking,
 			tr.aff_campaign_id,
 			ac.aff_campaign_payout,
+			ac.identity_signals,
 			2cv.ppc_variable_ids,
 			2cv.parameters
 		FROM
@@ -406,12 +407,26 @@ $mysql['click_redirect_site_url_id'] = '0';
 
 // Record click via repository (replaces 9 raw INSERT statements with parameterized, transactional writes)
 $clickRecord = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql);
+// Identity signals (plan §6.2): the tracking domain's p202vid cookie, the
+// p202lpid the landing page's script sends, a signed customer id — linked
+// after the click is stored; nothing when consent is withheld or the
+// campaign's identity capture is off.
+$clickIdentity = \Prosper202\Identity\ClickIdentity::fromRequest(
+	$_GET,
+	$_COOKIE,
+	\Prosper202\Identity\RequestSignals::campaignAllows(array_key_exists('identity_signals', $tracker_row) ? $tracker_row['identity_signals'] : null),
+	// Minted only when the landing page is on the tracker's own site; a
+	// cross-site script request links by the page's p202lpid instead.
+	(string) ($_SERVER['HTTP_SEC_FETCH_SITE'] ?? '') !== 'cross-site'
+);
 $clickRecord->clickId = $click_id;
+$clickRecord->identity = $clickIdentity;
 $clickRepo->recordClick($clickRecord);
 
 
 //set the cookie
 setClickIdCookie($mysql['click_id'], $mysql['aff_campaign_id']);
+$clickIdentity->sendCookie($_SERVER);
 //set the PCI Cookie
 setPCIdCookie($mysql['click_id_public']);
 

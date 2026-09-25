@@ -69,6 +69,9 @@ if ($click_id > 0) {
 			'ip'         => p202ClientIp($_SERVER),
 			'user_agent' => (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''),
 		]);
+		if ($outcome['recorded'] || ($outcome['duplicate'] ?? false)) {
+			p202LinkConversionIdentity($db, $click_id, $_GET);
+		}
 		if (!$outcome['recorded'] && $outcome['reason'] !== 'already_lead') {
 			error_log('px: no conversion recorded for click ' . $click_id . ': ' . $outcome['reason']);
 		}
