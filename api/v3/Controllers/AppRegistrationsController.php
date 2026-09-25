@@ -7,6 +7,8 @@ namespace Api\V3\Controllers;
 use Api\V3\Apps\Android\Integrity\IntegrityCredentialStore;
 use Api\V3\Apps\Android\Integrity\IntegrityMode;
 use Api\V3\Apps\Android\Integrity\UnverifiableInstalls;
+use Api\V3\Apps\Android\InstallIntake;
+use Api\V3\Apps\Android\OrphanedPendingClicks;
 use Api\V3\Apps\AppIdentity;
 use Api\V3\Apps\AppPolicy;
 use Api\V3\Apps\AppToken;
@@ -36,7 +38,10 @@ use Api\V3\Exception\WriteCommittedException;
  * `accept_test_signals`, whether development-signed postbacks count as
  * trusted — is applied to the rows already stored on every write, because it
  * is a live policy rather than a receipt-time snapshot; deleting the
- * registration withdraws it.
+ * registration withdraws it. The same flag governs an Android app's test
+ * installs, and is applied to the stored ones the same way: each whose
+ * trust changes has its outcomes moved onto or off its click
+ * (InstallIntake::rejudgeTestInstalls()).
  */
 class AppRegistrationsController extends Controller
 {
@@ -275,16 +280,42 @@ class AppRegistrationsController extends Controller
         }
 
         $policyFields = ['attribution_window_days', 'trust_client_revenue', 'integrity_mode', 'integrity_cloud_project_number'];
-        if (array_intersect(array_keys($payload), $policyFields) !== []) {
-            $current = (array)$this->get($id)['data'];
-            self::assertAndroidPolicy($payload, (string)$current['platform']);
-            if (array_key_exists('integrity_mode', $payload) || array_key_exists('integrity_cloud_project_number', $payload)) {
-                // Only a write that names Play Integrity is held to it: an
-                // unrelated field is never refused over the stored setting.
-                $this->assertIntegrityUsable((int)$id, $payload, $current);
-            }
+        $namesIntegrity = array_key_exists('integrity_mode', $payload) || array_key_exists('integrity_cloud_project_number', $payload);
+        if (array_intersect(array_keys($payload), $policyFields) !== [] && !$namesIntegrity) {
+            self::assertAndroidPolicy($payload, (string)((array)$this->get($id)['data'])['platform']);
         }
-        $updated = parent::update($id, $payload);
+        if ($namesIntegrity) {
+            // Only a write that names Play Integrity is held to it: an
+            // unrelated field is never refused over the stored setting. The
+            // check and the write commit under the registration's row lock,
+            // which DELETE /apps/{id}/integrity-credential takes for its own
+            // check and delete: checked apart from the write, a credential
+            // cleared in between leaves observe or require committed with
+            // nothing to decode (AppIntegrityController::clearCredential()).
+            $committed = null;
+            $updated = $this->transaction(function () use ($id, $payload, &$committed): ?array {
+                $current = AppIntegrityController::lockRegistration($this->db, $this->userId, (int)$id);
+                self::assertAndroidPolicy($payload, (string)$current['platform']);
+                $this->assertIntegrityUsable((int)$id, $payload, $current);
+                try {
+                    return parent::update($id, $payload);
+                } catch (WriteCommittedException $e) {
+                    // The write stands: let the transaction commit it, and
+                    // say so after (CLAUDE.md #13).
+                    $committed = $e;
+
+                    return null;
+                }
+            });
+            if ($committed !== null) {
+                throw $committed;
+            }
+            if ($updated === null) {
+                throw new \LogicException('the locked registration update returned nothing');
+            }
+        } else {
+            $updated = parent::update($id, $payload);
+        }
         // Re-run the claim on every update so unclaimed history (or a claim
         // that failed at create time) is picked up by touching the
         // registration, and re-apply the test-signal policy so toggling it
@@ -346,7 +377,7 @@ class AppRegistrationsController extends Controller
             return; // off, or a mode assertAndroidPolicy() already refused
         }
         $errors = [];
-        if ((new IntegrityCredentialStore(new \Prosper202\Database\Connection($this->db)))->summary($this->userId, $id) === null) {
+        if (!(new IntegrityCredentialStore(new \Prosper202\Database\Connection($this->db)))->existsLocked($this->userId, $id)) {
             // Refused rather than accepted into a state where every install
             // waits for a verdict nothing can decode (observe would record
             // only errors; require would pay nothing).
@@ -411,8 +442,25 @@ class AppRegistrationsController extends Controller
         (new UnverifiableInstalls(new \Prosper202\Database\Connection($this->db)))
             ->settleForDeletedRegistration($this->userId, $registrationId, time());
 
+        // Installs still waiting for their click can never settle once the
+        // registration is gone: the settler reads an install only through
+        // its registration, retention never prunes a pending install, and no
+        // app token reaches it. Settled here, in the same transaction, to the
+        // state the pending-click deadline leaves them in — bad_token, never
+        // paid (OrphanedPendingClicks).
+        (new OrphanedPendingClicks(new \Prosper202\Database\Connection($this->db)))
+            ->settleForDeletedRegistration($this->userId, $registrationId, time());
+
         // The Play Integrity credential is the operator's secret for this
-        // app; nothing may sign with it once the registration is gone.
+        // app; nothing may sign with it once the registration is gone. It is
+        // deleted under the registration's row lock, the lock a Play
+        // Integrity mode write and the credential routes take
+        // (AppIntegrityController::lockRegistration()), so none of them can
+        // land between this DELETE and the commit and leave a key stored for
+        // an app that no longer exists. Taken after the install writes
+        // above, in the order the settlers take theirs (the install, then
+        // its registration), so the two never wait on each other in a cycle.
+        AppIntegrityController::lockRegistration($this->db, $this->userId, $registrationId);
         $stmt = $this->prepare('DELETE FROM 202_app_integrity_credentials WHERE registration_id = ? AND user_id = ?');
         $this->bind($stmt, 'ii', $registrationId, $this->userId);
         $this->execute($stmt, 'Integrity credential delete failed');
@@ -471,6 +519,7 @@ class AppRegistrationsController extends Controller
             ['resource' => 'goals', 'action' => 'archive (versions, outcomes and conversions kept)', 'where' => 'scope = registration, scope_id = ' . (int)$id],
             ['resource' => 'app-installs', 'action' => 'kept (history; their conversions stay on the ledger), no longer reachable by any app token', 'where' => 'registration_id = ' . (int)$id],
             ['resource' => 'app-installs', 'action' => 'settle the Play Integrity queue: integrity_state pending → error, match_state pending_integrity → integrity_unverified (never paid)', 'where' => 'registration_id = ' . (int)$id . ', still waiting for a verdict'],
+            ['resource' => 'app-installs', 'action' => 'settle the pending clicks: match_state pending_click → bad_token (never paid)', 'where' => 'registration_id = ' . (int)$id . ', still waiting for their click'],
         ];
         return $preview;
     }
@@ -487,9 +536,15 @@ class AppRegistrationsController extends Controller
         AppPolicy $policy,
         bool $claimHistory
     ): void {
+        if ($platform === AppIdentity::ANDROID) {
+            // Android installs are claimed at receipt (the token names the
+            // registration), so there is no history to claim; the policy is
+            // re-applied to the test installs already stored, and each one
+            // whose trust changes moves its outcomes onto or off its click.
+            (new InstallIntake($this->db))->rejudgeTestInstalls($this->userId, $registrationId);
+            return;
+        }
         if ($platform !== AppIdentity::IOS) {
-            // Only the Apple source stores signals today; the Android intake
-            // adds its own claim here.
             return;
         }
         if ($claimHistory) {
