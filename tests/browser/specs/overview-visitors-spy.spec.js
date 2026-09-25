@@ -25,8 +25,10 @@
  * It runs against the seeded agent-eval fixture (tests/fixtures/agent-eval/
  * seed.sh) and asserts figures read from the database or from the page
  * itself before the change, never constants, so it holds on any data that
- * has clicks today. It writes only report preferences and the chart setup,
- * and puts both back.
+ * has clicks today. It writes report preferences and the chart setup, and
+ * puts both back; and its setup converts three of today's clicks through
+ * the global postback (seed.sh records no conversions), with a fixed
+ * transaction id per click, so a second run records nothing new.
  */
 
 const checks = require('../lib/checks');
@@ -58,6 +60,35 @@ async function totals(ui, tableSelector) {
   }, tableSelector);
 }
 
+/** How many of today's seeded clicks this spec converts. */
+const CONVERSIONS = 3;
+
+/**
+ * Convert a few of today's clicks, so the reports have some converted clicks
+ * and some not (seed.sh records no conversions). Through the real path — the
+ * global postback, which records into the ledger and rolls the click's report
+ * row — and idempotently: each transaction id is fixed per click, so a second
+ * run is a duplicate the ledger answers without recording again.
+ */
+async function recordConversions(ctx) {
+  const { db, ui, config } = ctx;
+  const clicks = db.rows('SELECT click_id FROM 202_clicks WHERE user_id=1 AND click_time >= UNIX_TIMESTAMP(CURDATE())'
+    + ' ORDER BY click_id LIMIT ' + CONVERSIONS).map((r) => String(r[0]));
+  if (clicks.length < CONVERSIONS) {
+    throw new Error('the fixture has ' + clicks.length + ' clicks today; seed it (tests/fixtures/agent-eval/seed.sh) before this spec');
+  }
+  for (const click of clicks) {
+    const response = await ui.page.request.get(config.base + '/tracking202/static/gpb.php?subid=' + click + '&amount=5&txid=overview-spec-' + click);
+    if (response.status() >= 400) {
+      throw new Error('the postback for click ' + click + ' answered ' + response.status() + ': ' + (await response.text()).slice(0, 200));
+    }
+  }
+  const converted = Number(db.value('SELECT COUNT(*) FROM 202_dataengine WHERE user_id=1 AND click_lead=1 AND click_id IN (' + clicks.join(',') + ')'));
+  if (converted !== CONVERSIONS) {
+    throw new Error('the postbacks were accepted but ' + converted + ' of ' + CONVERSIONS + ' clicks read as converted in 202_dataengine');
+  }
+}
+
 async function applyFilters(ui, formId) {
   await ui.clickThrough('#' + formId + ' button[type="submit"]');
 }
@@ -69,6 +100,7 @@ module.exports = {
   async setup(ctx) {
     ctx.db.write(PREF_RESET);
     await ctx.app.login();
+    await recordConversions(ctx);
   },
 
   scenarios: [
@@ -212,16 +244,103 @@ module.exports = {
         expect.match(summary, /Clicks 1.10 of/, 'the first ten are shown');
         expect.eq(await ui.count('#stats-table tbody tr'), 10, 'ten rows');
 
+        // Page two ends at the twentieth click or the last, whichever is
+        // first: three seeds of the fixture are eighteen clicks.
+        const pageTwo = new RegExp('Clicks 11.' + Math.min(20, total) + ' of');
         await ui.click('#visitors-report [data-p202-offset="1"]:not([aria-label])');
-        await ui.untilInPage(() => /Clicks 11.20/.test((document.querySelector('#visitors-report p') || {}).textContent || ''), undefined, { describe: 'page two to load' });
+        await ui.untilInPage((pattern) => new RegExp(pattern).test((document.querySelector('#visitors-report p') || {}).textContent || ''), pageTwo.source, { describe: 'page two to load' });
         expect.eq(new URL(ui.page.url()).searchParams.get('offset'), '1', 'the address bar names the page');
         expect.eq(await ui.text('#visitors-report .page-item.active'), '2', 'and the links mark it');
 
         await ui.page.reload();
         await checks.overviewReportDrawn(ui, '#visitors-report');
-        expect.match(await ui.text('#visitors-report p'), /Clicks 11.20/, 'a reload, or a link sent to someone, opens the same page');
+        expect.match(await ui.text('#visitors-report p'), pageTwo, 'a reload, or a link sent to someone, opens the same page');
         await checks.baseline(ctx);
         db.write(PREF_RESET);
+      },
+    },
+
+    {
+      // The stored filters are one row per user, and a second tab writes it.
+      // What the first tab asks for afterwards — its next page, its download
+      // — must still be the report its own URL and form describe.
+      name: 'A second tab with other filters does not change what the first tab draws or downloads',
+      async run(ctx) {
+        const { app, ui, db, expect, config } = ctx;
+        db.write(PREF_RESET);
+        await app.goto('/tracking202/visitors/?user_pref_show=all&user_pref_limit=10');
+        await checks.overviewReportDrawn(ui, '#visitors-report');
+        const summary = await ui.text('#visitors-report p');
+        const total = Number(((summary.match(/of ([\d,]+)/) || [])[1] || '0').replace(/,/g, ''));
+        const leads = Number(db.value('SELECT COUNT(*) FROM 202_dataengine WHERE user_id=1 AND click_lead=1'
+          + ' AND click_time BETWEEN UNIX_TIMESTAMP(CURDATE()) AND UNIX_TIMESTAMP(CURDATE() + INTERVAL 1 DAY)'));
+        expect.ok(total > 10 && leads < total, 'tab A has more than one page of clicks, not all of them converted', summary + ' / leads ' + leads);
+        const download = await ui.page.$eval('.p202-table-toolbar__aside a', (a) => a.href);
+
+        const tabB = await ui.page.context().newPage();
+        try {
+          await tabB.goto(config.base + '/tracking202/visitors/?user_pref_show=leads&user_pref_limit=50');
+          await tabB.waitForSelector('#visitors-report[aria-busy="false"]');
+        } finally {
+          await tabB.close();
+        }
+        expect.eq(pref(db, 'user_pref_show'), 'leads', 'tab B stored its filters: the row tab A would otherwise read has changed');
+        expect.eq(pref(db, 'user_pref_limit'), '50', 'rows as well');
+
+        await ui.click('#visitors-report [data-p202-offset="1"]:not([aria-label])');
+        await ui.untilInPage(() => /Clicks 11.[0-9]/.test((document.querySelector('#visitors-report p') || {}).textContent || ''), undefined, { describe: 'tab A\'s page two to load' });
+        expect.match(await ui.text('#visitors-report p'), new RegExp('of ' + total.toLocaleString('en-US') + ','),
+          'tab A\'s next page is still every click, ten a page, as its URL says');
+        expect.eq(await ui.value('#visitors-filters-user_pref_show'), 'all', 'and its form still says so');
+
+        const response = await ui.page.request.get(download);
+        expect.eq(response.status(), 200, 'tab A\'s download answers');
+        const rows = (await response.text()).split('\n').filter((line) => /^\d+\t/.test(line)).length;
+        // The classic download exports the first page at the page size; tab
+        // A's is ten of every click, tab B's would be its converted ones.
+        expect.ok(leads < 10, 'the fixture has fewer than ten converted clicks, so the two views export different rows', String(leads));
+        expect.eq(rows, Math.min(total, 10), 'and exports tab A\'s clicks at tab A\'s page size, not tab B\'s converted ones');
+        db.write(PREF_RESET);
+      },
+    },
+
+    {
+      // Every ISP any account's clicks have named is a row of
+      // 202_locations_isp; the menu is this account's, from its clicks.
+      name: 'The ISP menu lists this account\'s ISPs, not the install\'s, and keeps the one in force',
+      async run(ctx) {
+        const { app, ui, db, expect } = ctx;
+        db.write(PREF_RESET);
+        const name = 'Probe ISP ' + Date.now();
+        // The stored ISP filter is a TINYINT, so a filterable ISP has an id
+        // of 255 or less: take the highest free one.
+        const used = new Set(db.rows('SELECT isp_id FROM 202_locations_isp WHERE isp_id <= 255').map((r) => String(r[0])));
+        let id = '';
+        for (let n = 255; n >= 1 && id === ''; n--) {
+          if (!used.has(String(n))) { id = String(n); }
+        }
+        if (id === '') {
+          expect.skip('the ISP menu', 'every ISP id a filter can store is taken');
+          return;
+        }
+        db.write('INSERT INTO 202_locations_isp (isp_id, isp_name) VALUES (' + Number(id) + ", '" + name + "')");
+        try {
+          await app.goto('/tracking202/visitors/');
+          await checks.overviewReportDrawn(ui, '#visitors-report');
+          const options = await ui.page.$$eval('#visitors-filters-isp_id option', (os) => os.map((o) => o.textContent.trim()));
+          const seen = Number(db.value('SELECT COUNT(DISTINCT isp_id) FROM 202_dataengine WHERE user_id=1 AND isp_id IS NOT NULL'
+            + ' AND click_time BETWEEN UNIX_TIMESTAMP(CURDATE()) AND UNIX_TIMESTAMP(CURDATE() + INTERVAL 1 DAY)'));
+          expect.eq(options.length, seen + 1, 'the menu is "All" and the ISPs this account\'s clicks came through today', JSON.stringify(options));
+          expect.notOk(options.includes(name), 'an ISP no click of this account came through is not offered');
+
+          await app.goto('/tracking202/visitors/?isp_id=' + id);
+          await checks.overviewReportDrawn(ui, '#visitors-report');
+          expect.eq(await ui.value('#visitors-filters-isp_id'), id, 'a filter in force stays selected');
+          expect.eq(await ui.page.$eval('#visitors-filters-isp_id option:checked', (o) => o.textContent.trim()), name, 'under its name, not as a bare number');
+        } finally {
+          db.write('DELETE FROM 202_locations_isp WHERE isp_id=' + Number(id));
+          db.write(PREF_RESET);
+        }
       },
     },
 

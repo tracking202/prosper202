@@ -104,6 +104,25 @@ final class ReportFilterInputTest extends TestCase
         self::assertArrayHasKey('range', $unknown->errors);
     }
 
+    /**
+     * Dates with no range are a custom window, and are held to the same
+     * checks: the reversed pair was stored as a window that ends before it
+     * starts.
+     */
+    public function testDatesWithNoRangeAreCheckedAsACustomWindowIs(): void
+    {
+        $reversed = ReportFilterInput::fromQuery(['from' => '2026-09-10', 'to' => '2026-09-01'], self::ALL);
+        self::assertNull($reversed->window, 'nothing to store');
+        self::assertSame('The start date is after the end date.', $reversed->errors['range'] ?? null, 'and the field says why, in the range=custom sentence');
+        self::assertTrue($reversed->speaks, 'the URL still speaks, so the refusal is shown rather than the stored report');
+
+        $oneDay = ReportFilterInput::fromQuery(['from' => '2026-09-10', 'to' => '09/10/2026'], self::ALL);
+        self::assertSame(['range' => 'custom', 'from' => [2026, 9, 10], 'to' => [2026, 9, 10]], $oneDay->window, 'one day, in either shape, is a window');
+
+        $half = ReportFilterInput::fromQuery(['to' => '2026-09-01'], self::ALL);
+        self::assertSame('Choose a start and an end date for a custom range.', $half->errors['range'] ?? null);
+    }
+
     // ── Each field's rule ──────────────────────────────────────────────
 
     public function testAnIdIsAPositiveNumberAndZeroMeansNotFiltering(): void
