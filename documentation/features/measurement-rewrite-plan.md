@@ -524,13 +524,21 @@ Overview's Goal / source level and the repaired Transaction ID level.
   is the API's answer unchanged. Both check `--source` against their own copy
   of the source list before any request; `ConversionSourceListsTest` pins
   both copies to the enum.
-- **Found, not fixed: dedupe keys fold case.** `dedupe_key` is
-  utf8mb4_general_ci, so on one click `tx:A-1` and `tx:a-1` are one key (a
-  UNIQUE violation, executed): a network that sends ids differing only in
-  case has the second answered as a duplicate. Fixing it is a column change
-  in the 1.9.76 rung (utf8mb4_bin on `dedupe_key`, and the same question for
-  `transaction_id` lookups of reversals); it belongs with the ledger's
-  schema, not these reads, and is left to PR 12's release gate to schedule.
+- **Dedupe keys no longer fold case.** Found here and fixed when the PRs
+  were combined: `dedupe_key` was utf8mb4_general_ci, so on one click
+  `tx:A-1` and `tx:a-1` were one key (a UNIQUE violation, executed) and a
+  network that sends ids differing only in case had the second answered as
+  a duplicate. `dedupe_key` and `transaction_id` are now utf8mb4_bin in
+  `ConversionTables` and in the 1.9.75 → 1.9.76 ledger step (which converges
+  an existing column's collation too), so both sales are stored and counted,
+  and a reversal names its sale exactly instead of the first case variant.
+  A `transaction_id` filter matches exactly. The same review found
+  `202_revenue_events.idempotency_key` (LTV) caller-chosen and
+  case-insensitive; it is utf8mb4_bin as well. Checked by
+  `ConversionLedgerIntegrationTest::testTransactionIdsThatDifferOnlyInCaseAreTwoSales`,
+  `ConversionLedgerUpgradeIntegrationTest` (upgrade == install per column,
+  collation included) and
+  `LtvDatabaseIntegrationTest::testIdempotencyKeysThatDifferOnlyInCaseAreTwoEvents`.
 
 Checked by `tests/Conversion/Ledger/` (`LedgerExplainerTest`,
 `LedgerReadsIntegrationTest`, `LedgerReadsOpenApiTest`,

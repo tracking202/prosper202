@@ -137,7 +137,7 @@ if (!function_exists('_upgrade_conversion_ledger_columns')) {
             ['reverses_conv_id', '`reverses_conv_id` int(11) unsigned DEFAULT NULL'],
             ['superseded_by', '`superseded_by` int(11) unsigned DEFAULT NULL'],
             ['superseded_reason', '`superseded_reason` varchar(16) DEFAULT NULL'],
-            ['dedupe_key', '`dedupe_key` varchar(320) DEFAULT NULL'],
+            ['dedupe_key', '`dedupe_key` varchar(320) COLLATE utf8mb4_bin DEFAULT NULL'],
         ];
     }
 }
@@ -187,7 +187,8 @@ if (!function_exists('_upgrade_conversion_ledger')) {
      *
      *   1. add each missing ledger column (dedupe_key nullable);
      *   2. backfill the rows that have no dedupe key;
-     *   3. make dedupe_key NOT NULL;
+     *   3. make dedupe_key NOT NULL; make transaction_id and dedupe_key
+     *      binary-collated (exact, case-sensitive comparison);
      *   4. add KEY click_transaction and UNIQUE uniq_click_dedupe, then drop
      *      the old UNIQUE (click_id, transaction_id) — a reversal carries the
      *      transaction id of the row it reverses, so the id cannot stay
@@ -224,8 +225,35 @@ if (!function_exists('_upgrade_conversion_ledger')) {
         }
 
         if (($columns['dedupe_key'] ?? 'YES') === 'YES') {
-            if (_upgrade_query('ALTER TABLE `202_conversion_logs` MODIFY `dedupe_key` varchar(320) NOT NULL') === false) {
+            if (_upgrade_query('ALTER TABLE `202_conversion_logs` MODIFY `dedupe_key` varchar(320) COLLATE utf8mb4_bin NOT NULL') === false) {
                 error_log('Prosper202 upgrade: failed to make 202_conversion_logs.dedupe_key NOT NULL; the ledger step will retry.');
+                return false;
+            }
+        }
+
+        // The ledger's keys compare byte for byte (ConversionTables):
+        // under the table's case-insensitive collation, tx:A-1 and tx:a-1
+        // on one click were one key, so the second sale was answered as a
+        // duplicate of the first, and a reversal naming one transaction id
+        // could net the other. transaction_id is the column every
+        // pre-ledger table already has; dedupe_key is binary from the ADD
+        // above, and is checked too so a table from any earlier run of this
+        // step converges. Making a column binary only makes more values
+        // distinct, so no existing unique key can fail on it.
+        $collations = _upgrade_conversion_ledger_probe('SHOW FULL COLUMNS FROM `202_conversion_logs`', 'Field', 'Collation');
+        if ($collations === null) {
+            error_log('Prosper202 upgrade: could not read the collations of 202_conversion_logs; the ledger step will retry.');
+            return false;
+        }
+        foreach ([
+            'transaction_id' => '`transaction_id` varchar(255) COLLATE utf8mb4_bin DEFAULT NULL',
+            'dedupe_key' => '`dedupe_key` varchar(320) COLLATE utf8mb4_bin NOT NULL',
+        ] as $column => $ddl) {
+            if (($collations[$column] ?? '') === 'utf8mb4_bin') {
+                continue;
+            }
+            if (_upgrade_query('ALTER TABLE `202_conversion_logs` MODIFY ' . $ddl) === false) {
+                error_log('Prosper202 upgrade: failed to make 202_conversion_logs.' . $column . ' compare exactly; the ledger step will retry.');
                 return false;
             }
         }

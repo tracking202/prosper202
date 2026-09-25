@@ -18,6 +18,14 @@ use Prosper202\Database\Schema\TableRegistry;
  * Column order matters to one reader: the upgrade appends the ledger columns
  * to a table that already exists, so they are declared after customer_id in
  * the order _upgrade_conversion_ledger() adds them.
+ *
+ * transaction_id and dedupe_key are utf8mb4_bin. They are identities a
+ * network or a source chose, and UNIQUE (click_id, dedupe_key) is what makes
+ * a retry a duplicate: under the table's case-insensitive collation `tx:A-1`
+ * and `tx:a-1` on one click were one key, so a second, different sale was
+ * answered as a replay of the first (CLAUDE.md #17: the key must be
+ * injective), and a reversal naming one transaction id could net the other.
+ * The upgrade converges an existing table to the same collations.
  */
 final class ConversionTables
 {
@@ -40,7 +48,7 @@ final class ConversionTables
             "CREATE TABLE IF NOT EXISTS `" . TableRegistry::CONVERSION_LOGS . "` (
                 `conv_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
                 `click_id` bigint(20) unsigned NOT NULL,
-                `transaction_id` varchar(255) DEFAULT NULL,
+                `transaction_id` varchar(255) COLLATE utf8mb4_bin DEFAULT NULL,
                 `campaign_id` mediumint(8) unsigned NOT NULL,
                 `click_payout` decimal(11,5) NOT NULL,
                 `user_id` mediumint(8) unsigned NOT NULL,
@@ -59,7 +67,7 @@ final class ConversionTables
                 `reverses_conv_id` int(11) unsigned DEFAULT NULL,
                 `superseded_by` int(11) unsigned DEFAULT NULL,
                 `superseded_reason` varchar(16) DEFAULT NULL,
-                `dedupe_key` varchar(320) NOT NULL,
+                `dedupe_key` varchar(320) COLLATE utf8mb4_bin NOT NULL,
                 PRIMARY KEY (`conv_id`),
                 UNIQUE KEY `uniq_click_dedupe` (`click_id`,`dedupe_key`),
                 KEY `click_transaction` (`click_id`,`transaction_id`),

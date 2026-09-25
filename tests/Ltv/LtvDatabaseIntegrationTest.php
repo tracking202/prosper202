@@ -473,6 +473,54 @@ final class LtvDatabaseIntegrationTest extends TestCase
         self::assertSame(2, (int) $this->scalar('SELECT COUNT(*) FROM 202_revenue_line_items'));
     }
 
+    /**
+     * A caller's idempotency key is compared exactly: `Order-A` and
+     * `order-a` are two requests. Under the table's case-insensitive
+     * collation the second was a replay of the first and its revenue was
+     * dropped (CLAUDE.md #17).
+     */
+    public function testIdempotencyKeysThatDifferOnlyInCaseAreTwoEvents(): void
+    {
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $customerId = $customers->resolveOrCreateByAlias(1, 'custom', 'case-keys', [], null, 1700000000);
+        $event = static fn (string $key, float $amount): array => [
+            'event_type' => 'purchase', 'amount' => $amount, 'currency' => 'USD',
+            'occurred_at' => 1700000000, 'source' => 'api', 'idempotency_key' => $key,
+        ];
+
+        $upper = $customers->insertRevenueEvent(1, $customerId, $event('Order-A', 10.0), 1700000000);
+        $lower = $customers->insertRevenueEvent(1, $customerId, $event('order-a', 7.0), 1700000000);
+
+        self::assertTrue($upper['inserted']);
+        self::assertTrue($lower['inserted'], 'order-a is not a replay of Order-A');
+        self::assertNotSame($upper['eventId'], $lower['eventId']);
+        self::assertSame(['event_id' => $lower['eventId'], 'customer_id' => $customerId], $customers->findEventByIdempotencyKey(1, 'order-a'));
+        self::assertSame(17.0, (float) $this->scalar("SELECT SUM(amount) FROM 202_revenue_events WHERE user_id=1 AND idempotency_key IN ('Order-A', 'order-a')"));
+
+        $replay = $customers->insertRevenueEvent(1, $customerId, $event('order-a', 7.0), 1700000000);
+        self::assertFalse($replay['inserted'], 'each still deduplicates against itself');
+        self::assertSame($lower['eventId'], $replay['eventId']);
+    }
+
+    /** External ids the merchant or billing system chose are compared exactly, like idempotency keys. */
+    public function testExternalIdsThatDifferOnlyInCaseAreTwoRecords(): void
+    {
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $customerId = $customers->resolveOrCreateByAlias(1, 'custom', 'case-ext', [], null, 1700000000);
+        $subs = new \Prosper202\Ltv\MysqlSubscriptionRepository(self::$conn, $customers);
+
+        $upper = $subs->upsert(1, ['external_sub_id' => 'sub_Ab1', 'amount' => 30.0, 'customer_id' => $customerId]);
+        $lower = $subs->upsert(1, ['external_sub_id' => 'sub_ab1', 'amount' => 10.0, 'customer_id' => $customerId]);
+        self::assertNotSame($upper['subscriptionId'], $lower['subscriptionId'], 'sub_ab1 is not an update of sub_Ab1');
+        self::assertSame(2, (int) $this->scalar("SELECT COUNT(*) FROM 202_subscriptions WHERE user_id=1 AND external_sub_id IN ('sub_Ab1', 'sub_ab1')"));
+        self::assertSame($lower['subscriptionId'], $subs->upsert(1, ['external_sub_id' => 'sub_ab1', 'amount' => 12.0, 'customer_id' => $customerId])['subscriptionId'], 'and each still upserts itself');
+
+        $a = $customers->upsertProduct(1, ['external_product_id' => 'Var-9'], 'USD', 1700000000);
+        $b = $customers->upsertProduct(1, ['external_product_id' => 'var-9'], 'USD', 1700000000);
+        self::assertNotSame($a, $b, 'var-9 is not Var-9');
+        self::assertSame($b, $customers->upsertProduct(1, ['external_product_id' => 'var-9'], 'USD', 1700000000));
+    }
+
     public function testRefundLineItemsStoreNegativeAmounts(): void
     {
         $customers = new MysqlCustomerRepository(self::$conn);

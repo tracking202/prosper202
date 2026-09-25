@@ -208,6 +208,17 @@ or `CONCAT_WS`: can two different inputs produce this same string? If a
 sanitizer, a truncation, a case fold or a delimiter sits between the value
 and the comparison, the answer is usually yes.
 
+The collation is the transform nobody writes down. Every table defaults to
+`utf8mb4_general_ci`, so a UNIQUE key over a value someone else chose folds
+case: `tx:A-1` and `tx:a-1` on one click were one ledger key, and the
+second sale was answered `duplicate` with its money dropped; LTV's
+idempotency key and external subscription/product ids did the same.
+`UniqueKeyCollationTest` now requires every text column in a UNIQUE or
+PRIMARY key to declare `COLLATE utf8mb4_bin` or to be listed with the
+reason folding is right — and a column's collation lives in the upgrade
+too, not only the table definition (the reconciler compares names and
+nullability, not collations).
+
 This differs from #15: there the discriminator was *inside* the lookup
 path, so no lookup could see it change. Here the mapping itself is
 many-to-one, so two things that should differ never get the chance to.

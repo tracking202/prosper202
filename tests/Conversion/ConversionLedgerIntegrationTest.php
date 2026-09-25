@@ -166,6 +166,44 @@ final class ConversionLedgerIntegrationTest extends TestCase
         self::assertSame('5.00000', $this->clickState(100)['payout']);
     }
 
+    /**
+     * A network's transaction id is its own identity, byte for byte. Under
+     * the table's case-insensitive collation `tx:A-1` and `tx:a-1` were one
+     * key on a click, so the second sale was answered as a replay of the
+     * first and its money dropped (CLAUDE.md #17); dedupe_key and
+     * transaction_id are binary-collated so both are stored and counted.
+     */
+    public function testTransactionIdsThatDifferOnlyInCaseAreTwoSales(): void
+    {
+        $this->campaign(8, 'accumulate', '4.00');
+        $this->click(200, 8, '4.00');
+
+        $upper = $this->record(200, ['payout' => '5', 'transaction_id' => 'A-1']);
+        $lower = $this->record(200, ['payout' => '3', 'transaction_id' => 'a-1']);
+
+        self::assertFalse($lower['duplicate'], 'a-1 is not a replay of A-1');
+        self::assertNotSame($upper['convId'], $lower['convId']);
+        self::assertSame(['tx:A-1', 'tx:a-1'], array_column($this->rows(200), 'dedupe_key'), 'both are stored');
+        self::assertSame('8.00000', $this->clickState(200)['payout'], 'both are counted');
+
+        $breakdown = (new \Prosper202\Conversion\Ledger\ClickBreakdown(new Connection(self::$db)))->forClick(200, 1);
+        self::assertNotNull($breakdown);
+        self::assertSame([true, true], array_column($breakdown['rows'], 'counted'), 'the click breakdown counts both');
+
+        // Each still deduplicates against itself, exactly.
+        $again = $this->record(200, ['payout' => '3', 'transaction_id' => 'a-1']);
+        self::assertTrue($again['duplicate']);
+        self::assertSame($lower['convId'], $again['convId']);
+        self::assertCount(2, $this->rows(200));
+
+        // A reversal names its sale exactly: reversing a-1 nets the $3, not
+        // the older A-1 the case-insensitive lookup found first.
+        $rev = $this->record(200, ['transaction_id' => 'a-1', 'reversal' => true]);
+        self::assertSame((string) $lower['convId'], (string) $this->rows(200)[2]['reverses_conv_id']);
+        self::assertSame('5.00000', $this->clickState(200)['payout']);
+        self::assertFalse($rev['duplicate']);
+    }
+
     public function testAccumulateAddsAndAPlainConversionHappensOnce(): void
     {
         $this->campaign(8, 'accumulate', '4.00');
