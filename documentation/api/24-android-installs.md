@@ -9,9 +9,10 @@ report and in multi-touch attribution.
 
 This guide covers the server side: the store link, the intake the SDK
 calls, how an install is classified, what it pays, events after the
-install, traffic-source postbacks, the operator's reads, and Play
-Integrity (§9). The wire
-contract the SDK is built against is
+install, the signed customer id, traffic-source postbacks, the operator's
+reads, and Play Integrity (§9). The SDK itself is
+[25-android-sdk.md](25-android-sdk.md); the wire contract it is built
+against is
 [21-app-sdk-contract.md](21-app-sdk-contract.md); goals are
 [22-goals.md](22-goals.md); the app registry is
 [19-app-measurement.md](19-app-measurement.md#apps).
@@ -141,6 +142,18 @@ given.
   and evaluated once it settles; for a **refuted** one they are refused
   (`409`); for an install the app never reported, `404`.
 
+### The signed customer id
+
+The SDK's `setCustomerId(id, signature)` sends a customer id your server
+signed with the account's linking key
+([visitor identity](../features/visitor-identity.md)) on the install body or
+an events request. Once the install is attributed and trusted, the server
+verifies the signature and links the install's click to that customer, so
+a user who clicked on the desktop and installed on the phone is one
+journey. The answer says `linked`, `unverified`, `no_click` or `not_linked`
+([contract](21-app-sdk-contract.md#the-signed-customer-id)). An id that does
+not verify links nothing and stays only in the install's stored body.
+
 ## 6. Traffic-source postbacks
 
 Each paid install or goal conversion with "notify traffic source" on queues
@@ -172,12 +185,14 @@ matched to the code's URLs by position — the correction for the pixel's
 second URL goes to the second correction URL, never to another endpoint's —
 and more correction URLs than the code has are refused. A URL with no
 correction URL at its position records the correction `suppressed`, with
-the reason. The correction URL takes the click's tokens and the row's own,
-plus `[[p202_goal_value]]` (the new value; `0.00` for a retraction),
-`[[p202_previous_value]]` (what was announced), `[[p202_original_conv_id]]`
-(the conversion that announced it) and `[[p202_notification_kind]]`
-(`correction` or `retraction`), and is queued, retried and sent like any
-postback.
+the reason. The correction URL takes `[[p202_goal_value]]` and
+`[[payout]]` (the value the network should now hold; `0.00` for a
+retraction), `[[p202_previous_value]]` (what was announced),
+`[[p202_conv_id]]` (the conversion this is about),
+`[[p202_original_conv_id]]` (the one that announced it),
+`[[p202_notification]]` (`correction` or `retraction`), `[[subid]]`,
+`[[transactionid]]` / `[[t202txid]]`, `[[timestamp]]` and `[[random]]`, and
+is queued, retried and sent like any postback.
 
 `GET /apps/notifications` (`p202 app notifications`, `bin/p202
 app:notifications`; filters `registration_id`, `status`, `kind`,
@@ -185,6 +200,13 @@ app:notifications`; filters `registration_id`, `status`, `kind`,
 URL with its `destination`, and `meta.summary` counts every status under the
 same filters except `status`. Analyze › Mobile Apps › Postbacks sent is the
 same read.
+
+What a network knows is decided per goal and `n`, not per conversion. A
+goal re-evaluation that retires an outcome and a later one that brings the
+same outcome back never announces it twice: the retraction is cancelled if
+it never went out, and a `correction` is recorded if it did. An outcome a
+new goal version writes for an `n` an earlier version already announced
+is a `correction` at that URL, not a new postback.
 
 Schedule the job every minute:
 

@@ -25,10 +25,12 @@ final class NotificationOutboxIntegrationTest extends TestCase
 
     private const OLD = 1000;
     private const NEW = 2000;
+    private const FIX = 'https://ts.example/fix?v=[[p202_goal_value]]&was=[[p202_previous_value]]&k=[[p202_notification]]';
 
-    private function outboxWith(callable $fetch): NotificationOutbox
+    private function outboxWith(callable $fetch, ?string $correctionUrl = null): NotificationOutbox
     {
-        return new NotificationOutbox(new Connection(self::$db), fn (): int => $this->clock, $fetch);
+        return new NotificationOutbox(new Connection(self::$db), fn (): int => $this->clock, $fetch,
+            $correctionUrl === null ? null : static fn (int $pixel, int $destination): ?string => $correctionUrl);
     }
 
     /** Replace account 70's server pixels with these (pixel id => code). */
@@ -232,6 +234,147 @@ final class NotificationOutboxIntegrationTest extends TestCase
             '1003 retraction suppressed',
         ], array_map(static fn (array $r): string => $r['conv_id'] . ' ' . $r['kind'] . ' ' . $r['status'], $rows),
             'the second replacement never re-announces what the first one\'s predecessor sent');
+    }
+
+    /**
+     * Plan §5.7 (1), one destination per state of the revived row's latest
+     * retraction there. A retraction that never went out is cancelled and
+     * nothing replaces it; one that may have landed is stopped (if it was
+     * still retrying) and answered by a correction from 0; a destination
+     * whose reached the retirement cancelled unsent hears the reached now.
+     * Nothing already sent is sent again.
+     *
+     *   pixel  reached     retraction                 after the revival
+     *   121    sent        pending, unattempted       retraction cancelled
+     *   122    sent        suppressed                 retraction cancelled
+     *   123    sent        sent                       + correction, pending
+     *   124    sent        pending, attempted         retraction cancelled + correction
+     *   125    sent        failed                     + correction
+     *   126    cancelled   none                       reached pending again
+     *   127    sent        sent, then a correction    nothing (settled earlier)
+     */
+    public function testARevivedRowIsNeverAnnouncedTwiceAndItsRetractionIsSettledPerDestination(): void
+    {
+        $this->click(100);
+        self::conversionRow(self::OLD, '4.00000');
+        self::pixels(array_fill_keys(range(121, 127), 'https://ts.example/pb?s=[[subid]]'));
+        self::assertSame(7, $this->queue(self::OLD));
+        self::$db->query("UPDATE 202_notification_pending SET status = 'sent', attempts = 1, sent_at = 1 WHERE conv_id = " . self::OLD . ' AND pixel_id <> 126');
+        $withUrl = $this->outboxWith(static fn (string $u): bool => true, self::FIX);
+        $withUrl->onReplaced(1, self::OLD, null);
+        self::assertSame(['cancelled'], [self::reachedByPixel(self::OLD)[126]['status']], 'unsent, so cancelled rather than retracted');
+        foreach ([
+            122 => "status = 'suppressed', url = ''",
+            123 => "status = 'sent', attempts = 1",
+            124 => "attempts = 2",
+            125 => "status = 'failed', attempts = 8",
+            127 => "status = 'sent', attempts = 1",
+        ] as $pixel => $set) {
+            self::$db->query('UPDATE 202_notification_pending SET ' . $set . ' WHERE conv_id = ' . self::OLD . " AND pixel_id = $pixel AND kind = 'retraction'");
+        }
+        self::fixture('INSERT INTO 202_notification_pending SET user_id = 1, conv_id = ' . self::OLD . ", pixel_id = 127, kind = 'correction',
+            status = 'sent', url = 'x', attempts = 1, next_attempt_at = 1, created_at = 1");
+
+        $withUrl->onRevived(1, self::OLD);
+
+        self::assertSame([
+            121 => ['reached:sent', 'retraction:cancelled'],
+            122 => ['reached:sent', 'retraction:cancelled'],
+            123 => ['reached:sent', 'retraction:sent', 'correction:pending'],
+            124 => ['reached:sent', 'retraction:cancelled', 'correction:pending'],
+            125 => ['reached:sent', 'retraction:failed', 'correction:pending'],
+            126 => ['reached:pending'],
+            127 => ['reached:sent', 'retraction:sent', 'correction:sent'],
+        ], self::byPixel(self::OLD));
+
+        $sent = [];
+        $this->outboxWith(function (string $u) use (&$sent): bool {
+            $sent[] = $u;
+
+            return true;
+        })->sendDue(50);
+        self::assertSame([
+            'https://ts.example/pb?s=100',
+            'https://ts.example/fix?v=4.00&was=0.00&k=correction',
+            'https://ts.example/fix?v=4.00&was=0.00&k=correction',
+            'https://ts.example/fix?v=4.00&was=0.00&k=correction',
+        ], $sent, 'the reached that never went out, and a correction from 0 wherever the retraction may have landed');
+    }
+
+    public function testWithoutACorrectionUrlARevivalAfterADeliveredRetractionRecordsTheCorrectionSuppressed(): void
+    {
+        $this->click(100);
+        self::pixels([90 => 'https://ts.example/pb?s=[[subid]]']);
+        $this->queue(self::OLD);
+        self::$db->query("UPDATE 202_notification_pending SET status = 'sent', attempts = 1 WHERE conv_id = " . self::OLD);
+        $outbox = $this->outboxWith(static fn (string $u): bool => true);
+        $outbox->onReplaced(1, self::OLD, null);
+        // Delivered by whatever carried it (a URL since removed): the
+        // network holds 0 now.
+        self::$db->query("UPDATE 202_notification_pending SET status = 'sent', attempts = 1 WHERE conv_id = " . self::OLD . " AND kind = 'retraction'");
+        $outbox->onRevived(1, self::OLD);
+        self::assertSame([90 => ['reached:sent', 'retraction:sent', 'correction:suppressed']], self::byPixel(self::OLD));
+        self::assertStringStartsWith('no correction URL', (string) self::$db->query("SELECT last_error FROM 202_notification_pending WHERE kind = 'correction'")->fetch_assoc()['last_error']);
+        self::assertSame(['sent' => 0, 'failed' => 0, 'retrying' => 0], $outbox->sendDue(10));
+    }
+
+    /**
+     * Plan §5.7 (2): a new row for an (subject, goal, n) an earlier row was
+     * announced for — here retired long ago, not the row it replaces — is a
+     * correction wherever that one was heard, and a fresh reached only where
+     * it was not. A correction onReplaced() already recorded on the new row
+     * is not recorded twice.
+     */
+    public function testANewRowIsACorrectionWhereAnEarlierRowForItsNWasAnnounced(): void
+    {
+        $this->click(100);
+        self::conversionRow(self::OLD, '4.00000');
+        self::conversionRow(self::NEW, '6.00000');
+        self::pixels([131 => 'https://ts.example/pb?s=[[subid]]', 132 => 'https://ts.example/pb?s=[[subid]]', 133 => 'https://ts.example/pb?s=[[subid]]']);
+        $this->queue(self::OLD);
+        // 131 heard OLD, 132 never did (cancelled unsent), 133 heard OLD and
+        // then its delivered retraction.
+        self::$db->query("UPDATE 202_notification_pending SET status = 'sent', attempts = 1 WHERE conv_id = " . self::OLD . ' AND pixel_id IN (131, 133)');
+        self::$db->query("UPDATE 202_notification_pending SET status = 'cancelled' WHERE conv_id = " . self::OLD . ' AND pixel_id = 132');
+        $withUrl = $this->outboxWith(static fn (string $u): bool => true, self::FIX);
+        $withUrl->onReplaced(1, self::OLD, null);
+        self::$db->query("UPDATE 202_notification_pending SET status = 'sent', attempts = 1 WHERE kind = 'retraction' AND pixel_id = 133");
+        self::$db->query("UPDATE 202_notification_pending SET status = 'suppressed', url = '' WHERE kind = 'retraction' AND pixel_id = 131");
+
+        $this->queue(self::NEW);
+        self::assertTrue($withUrl->onAnnouncedBefore(1, self::NEW, [self::OLD]));
+        self::assertFalse($withUrl->onAnnouncedBefore(1, self::NEW, []), 'no earlier row, nothing withheld');
+        self::assertTrue($withUrl->onAnnouncedBefore(1, self::NEW, [self::OLD]), 'asked again: withheld, and nothing recorded twice');
+
+        self::assertSame([
+            131 => ['reached:cancelled', 'correction:pending'],
+            132 => ['reached:pending'],
+            133 => ['reached:cancelled', 'correction:pending'],
+        ], self::byPixel(self::NEW));
+        self::assertSame([
+            'https://ts.example/fix?v=6.00&was=4.00&k=correction',
+            'https://ts.example/fix?v=6.00&was=0.00&k=correction',
+        ], array_column(self::$db->query("SELECT url FROM 202_notification_pending WHERE conv_id = " . self::NEW . " AND kind = 'correction' ORDER BY pixel_id")->fetch_all(MYSQLI_ASSOC), 'url'),
+            '131 still holds 4.00 (its retraction never went out); 133 was told 0');
+    }
+
+    /** @return array<int, list<string>> "kind:status" of one conversion's rows, by pixel, in id order */
+    private static function byPixel(int $convId): array
+    {
+        $out = [];
+        foreach (self::$db->query("SELECT pixel_id, kind, status FROM 202_notification_pending WHERE conv_id = $convId ORDER BY notification_id")->fetch_all(MYSQLI_ASSOC) as $r) {
+            $out[(int) $r['pixel_id']][] = $r['kind'] . ':' . $r['status'];
+        }
+        ksort($out);
+
+        return $out;
+    }
+
+    /** A ledger row for an amendment to read its value from. */
+    private static function conversionRow(int $convId, string $payout): void
+    {
+        self::fixture("INSERT INTO 202_conversion_logs SET conv_id = $convId, click_id = 100, campaign_id = 30, user_id = 1, click_payout = $payout,
+            click_time = 1, conv_time = 1, source = 'goal', dedupe_key = 'goal:1:1:1:e$convId', payable = 1");
     }
 
     /**

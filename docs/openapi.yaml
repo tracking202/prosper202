@@ -4026,6 +4026,8 @@ paths:
         the same body answers `200` with `duplicate: true` and the stored
         state; the same `install_uuid` with other content is `409`. The
         answer never carries the click, the conversion or any money.
+        A `customer` (a signed customer id) is linked to the install's click
+        after the commit, and the answer's `customer` says whether it was.
         Rate-limited per peer address.
       operationId: reportAppInstall
       security: []
@@ -4089,7 +4091,9 @@ paths:
         are evaluated once it settles); for a refuted one (`bad_token`,
         `foreign_click`, `implausible`) `409`; for an unknown one `404`. A
         reused `event_id` with other content is `409`; the 10,001st event of
-        an install is `422`. Rate-limited per peer address.
+        an install is `422`. A body may carry a `customer` (a signed customer
+        id) beside its events, or alone; it is linked to the install's click
+        after the events commit. Rate-limited per peer address.
       operationId: reportAppInstallEvents
       security: []
       parameters:
@@ -7361,7 +7365,7 @@ components:
                 default_daily_quota: {type: integer, example: 10000}
             policy:
               type: object
-              description: The verdict policy's constants (documentation/api/23-android-installs.md §9)
+              description: The verdict policy's constants (documentation/api/24-android-installs.md §9)
 
     AppInstallTokenResponse:
       type: object
@@ -7414,6 +7418,35 @@ components:
         os_version: {type: string, nullable: true, maxLength: 32}
         test: {type: boolean, default: false}
         integrity_token: {type: string, nullable: true, maxLength: 8192, description: "A STANDARD Play Integrity token requested with requestHash = the lower-case hex SHA-256 of this body's canonical form (integrity_token excluded); decoded off the request path when the registration's integrity_mode is observe or require"}
+        customer:
+          $ref: "#/components/schemas/AppCustomerClaim"
+
+    AppCustomerClaim:
+      type: object
+      nullable: true
+      additionalProperties: false
+      required: [id, signature]
+      description: >-
+        A customer id the operator's own server signed (the SDKs'
+        setCustomerId; documentation/features/visitor-identity.md). After the
+        request commits it links the install's click to the customer — only
+        for an attributed, trusted install, and only when the signature
+        verifies under the account's linking key. Vectors:
+        tests/fixtures/app-sdk-contract/customer-id.json.
+      properties:
+        id: {type: string, maxLength: 255, description: "Trimmed; an email digest folds to lower case and must be hex of its length"}
+        type: {type: string, nullable: true, enum: [custom, email_md5, email_sha256, esp_id, merchant_id, subid], description: "Absent or null means custom"}
+        signature: {type: string, pattern: "^[0-9a-fA-F]{64}$", description: "cust_sig: hex(HMAC-SHA256(linking key, \"<type>:<id>\"))"}
+
+    AppCustomerLinkStatus:
+      type: string
+      enum: [linked, unverified, no_click, not_linked]
+      description: >-
+        Present when the request carried a customer: linked; unverified (the
+        signature is not the operator's); no_click (the install proved no
+        click to link — organic, pending, refuted or untrusted); not_linked
+        (the campaign's identity capture is off, or linking failed and was
+        logged).
 
     AppInstallReceiptResponse:
       type: object
@@ -7428,13 +7461,19 @@ components:
             test: {type: boolean}
             integrity: {type: string, enum: [not_requested, received, missing, pending, valid, invalid, error, skipped]}
             duplicate: {type: boolean}
+            customer:
+              $ref: "#/components/schemas/AppCustomerLinkStatus"
 
     AppInstallEventsRequest:
       type: object
-      required: [events]
       additionalProperties: false
-      description: "Vectors: tests/fixtures/app-sdk-contract/android/events-requests.json"
+      description: >-
+        Vectors: tests/fixtures/app-sdk-contract/android/events-requests.json.
+        `events` may be left out only when `customer` is present (a customer
+        id on its own); when present it holds 1-100 events.
       properties:
+        customer:
+          $ref: "#/components/schemas/AppCustomerClaim"
         events:
           type: array
           minItems: 1
@@ -7460,6 +7499,8 @@ components:
             install_uuid: {type: string}
             accepted: {type: array, items: {type: string}}
             duplicates: {type: array, items: {type: string}}
+            customer:
+              $ref: "#/components/schemas/AppCustomerLinkStatus"
 
     AppPostbackListResponse:
       type: object

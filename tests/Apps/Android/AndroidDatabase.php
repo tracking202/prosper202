@@ -121,6 +121,10 @@ trait AndroidDatabase
         self::fixture("INSERT INTO 202_app_registrations SET registration_id=6, user_id=2, platform='android', app_key='com.other.app',
             app_name='Other', accept_test_signals=0, attribution_window_days=7, trust_client_revenue=0, app_token='" . self::OTHER_TOKEN . "', created_at=1, updated_at=1");
         $this->campaign(30, 5);
+        // The traffic-source account the pixels hang off, user 1's: a
+        // correction URL counts only while its user owns the pixel
+        // (CorrectionUrls::resolver()).
+        self::fixture("REPLACE INTO 202_ppc_accounts SET ppc_account_id=70, user_id=1, ppc_network_id=1, ppc_account_name='fixture', ppc_account_time=1");
         self::fixture("INSERT INTO 202_ppc_account_pixels SET pixel_id=90, ppc_account_id=70, pixel_type_id=4,
             pixel_code='https://ts.example/pb?sub=[[subid]]&goal=[[p202_goal]]&v=[[p202_goal_value]]&tx=[[transactionid]]&p=[[payout]]'");
         // A browser (image) pixel on the same account: the page fires it,

@@ -27,7 +27,7 @@ final class CorrectionUrlIntegrationTest extends TestCase
     public function testASentOutcomeThatIsReplacedIsCorrectedThroughTheCorrectionUrl(): void
     {
         (new CorrectionUrls(new Connection(self::$db)))->set(1, 90,
-            'https://ts.example/correct?sub=[[subid]]&goal=[[p202_goal]]&v=[[p202_goal_value]]&was=[[p202_previous_value]]&orig=[[p202_original_conv_id]]&k=[[p202_notification_kind]]', 1);
+            'https://ts.example/correct?sub=[[subid]]&v=[[p202_goal_value]]&was=[[p202_previous_value]]&orig=[[p202_original_conv_id]]&k=[[p202_notification]]', 1);
         self::fixture('UPDATE 202_app_registrations SET trust_client_revenue = 1 WHERE registration_id = 5');
         $this->click(100);
         $this->campaignGoal(30, ['name' => 'Second purchase', 'trigger' => ['event' => 'purchase'], 'threshold' => ['count' => 2],
@@ -51,7 +51,7 @@ final class CorrectionUrlIntegrationTest extends TestCase
         self::assertCount(1, $corrections);
         self::assertSame('pending', $corrections[0]['status'], 'queued, not suppressed: the pixel has a correction URL');
         self::assertSame(
-            'https://ts.example/correct?sub=100&goal=Second%20purchase&v=5.00&was=10.00&orig=' . $announced . '&k=correction',
+            'https://ts.example/correct?sub=100&v=5.00&was=10.00&orig=' . $announced . '&k=correction',
             $corrections[0]['url']
         );
         self::assertNull($corrections[0]['last_error']);
@@ -81,6 +81,23 @@ final class CorrectionUrlIntegrationTest extends TestCase
         self::assertNull($urls->forPixel(2, 90));
         $urls->set(1, 90, '', 3);
         self::assertNull($urls->forPixel(1, 90), 'an empty URL turns corrections off');
+    }
+
+    /**
+     * The outbox's resolver answers by pixel and destination, and a row
+     * counts only while its user owns the pixel through the pixel's
+     * traffic-source account.
+     */
+    public function testTheResolverIsPositionalAndOwnerBound(): void
+    {
+        $conn = new Connection(self::$db);
+        $resolve = CorrectionUrls::resolver($conn);
+        (new CorrectionUrls($conn))->set(2, 90, 'https://stranger.example/c', 1);
+        self::assertNull($resolve(90, 0), 'a row by a user who does not own the pixel carries nothing');
+        self::fixture('DELETE FROM 202_notification_correction_urls');
+        (new CorrectionUrls($conn))->set(1, 90, 'https://a.example/c https://b.example/c', 1);
+        self::assertSame(['https://a.example/c', 'https://b.example/c', null], [$resolve(90, 0), $resolve(90, 1), $resolve(90, 2)]);
+        self::assertNull($resolve(91, 0), 'a pixel with none has none');
     }
 
     /** @return iterable<string, array{0: string, 1: bool}> */
@@ -144,6 +161,6 @@ final class CorrectionUrlIntegrationTest extends TestCase
             'the first URL is corrected at the first correction URL');
         self::assertSame(['suppressed', ''], [$corrections[1]['status'], $corrections[1]['url']],
             'the second has no correction URL at its position, so nothing is sent for it');
-        self::assertStringContainsString('name no destination 2', (string) $corrections[1]['last_error']);
+        self::assertStringContainsString('no correction URL is configured', (string) $corrections[1]['last_error']);
     }
 }

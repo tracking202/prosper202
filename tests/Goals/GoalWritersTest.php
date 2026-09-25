@@ -47,7 +47,10 @@ final class GoalWritersTest extends TestCase
 
     private const OUTCOME_READERS = [
         '202-config/Goals/MysqlGoalRepository.php' => 2, // liveOutcomes(), countLiveOutcomes()
-        '202-config/Goals/GoalEngine.php' => 1,          // the revive lookup
+        // The revive lookup, and the rows ever written for a new row's
+        // (subject, goal, n): retired ones on purpose, since what a network
+        // was told outlives the row that told it (plan §5.7 (2)).
+        '202-config/Goals/GoalEngine.php' => 2,
         '202-config/User/UserDataPurge.php' => 1,        // the purge's DELETE … FROM
         // The app report's aggregates (GROUP BY over outcomes joined to
         // their installs), which liveOutcomes()' paged rows cannot answer;
@@ -242,6 +245,36 @@ final class GoalWritersTest extends TestCase
         yield 'bump progress' => ['$db->query("update 202_goal_progress set `count` = `count` + 1");', 'update'];
         yield 'drop events' => ['$db->query("DELETE FROM 202_goal_events WHERE subject_id = 1");', 'delete'];
         yield 'aliased delete' => ['$db->query("DELETE s FROM 202_goal_subjects s WHERE s.user_id = 1");', 'delete'];
+    }
+
+    /**
+     * The engine retires a goal row with no replacement through
+     * retireGoalRowInTransaction(), which marks the deletion as the engine's.
+     * A plain softDelete() from the goals code leaves no mark, so a later
+     * revival reads it as an operator's deletion and leaves the revived
+     * outcome live and unpaid (RevivalRestoresTheLedgerTest). Nor may goals
+     * code write the ledger table itself.
+     */
+    public function testGoalsCodeRetiresLedgerRowsOnlyThroughTheMarkedWriter(): void
+    {
+        $offenders = [];
+        foreach (glob(dirname(__DIR__, 2) . '/202-config/Goals/*.php') ?: [] as $path) {
+            $tokens = token_get_all((string) file_get_contents($path));
+            foreach ($tokens as $i => $t) {
+                if (!is_array($t) || $t[0] !== T_STRING || !in_array(strtolower($t[1]), ['softdelete', 'softdeleteintransaction', 'clearclicks'], true)) {
+                    continue;
+                }
+                $offenders[] = basename($path) . ':' . $t[2] . ' ' . $t[1];
+            }
+            if (preg_match('/\bUPDATE\s+`?202_conversion_logs`?\b/i', SqlLiteralText::of((string) file_get_contents($path))) === 1) {
+                $offenders[] = basename($path) . ' UPDATE 202_conversion_logs';
+            }
+        }
+        self::assertSame([], $offenders, 'goal ledger rows are retired by MysqlConversionRepository::retireGoalRowInTransaction() '
+            . 'and revived by reviveGoalRowInTransaction(), never deleted unmarked');
+        $engine = (string) file_get_contents(dirname(__DIR__, 2) . '/202-config/Goals/GoalEngine.php');
+        self::assertStringContainsString('->retireGoalRowInTransaction(', $engine);
+        self::assertStringContainsString('->reviveGoalRowInTransaction(', $engine);
     }
 
     /** @dataProvider plantedOutcomeReads */

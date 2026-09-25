@@ -46,6 +46,7 @@
 - [Goals: definitions, versions, campaign payouts, evaluation](api/22-goals.md)
 - [Web events: `event=` on pixels and postbacks, `POST /events`, `p202.track()`, traffic-source notification](api/23-events.md)
 - [Android installs: the store link, the intake, match states, postbacks](api/24-android-installs.md)
+- [Android SDK: installs, events, customer id, Play Integrity](api/25-android-sdk.md)
 - [Forecast Events](api/18-forecast-events.md)
 - [Users](api/14-users.md)
 - [System](api/15-system.md)
