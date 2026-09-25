@@ -56,7 +56,7 @@ eq()   { if [ "$1" = "$2" ]; then ok "$3"; else bad "$3 (got '$1' want '$2')"; f
 
 api()  { curl -s -H "Authorization: Bearer $P202_API_KEY" -H 'Content-Type: application/json' "$@"; }
 js()   { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
-worker() { "$PHP" 202-cronjobs/attribution-worker.php "$@" > "$OUT/worker.out" 2>&1; echo $?; }
+worker() { "$PHP" 202-cronjobs/attribution-worker.php > "$OUT/worker.out" 2>&1; echo $?; }
 
 USER_ID=$(Q "SELECT user_id FROM 202_users ORDER BY user_id LIMIT 1")
 [ -n "$USER_ID" ] || { echo "no user in $DB" >&2; exit 2; }
