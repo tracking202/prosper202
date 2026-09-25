@@ -89,6 +89,7 @@ func TestGoalCreateRefusesBadInputBeforeAnyRequest(t *testing.T) {
 		{[]string{"goal", "create", "--account", "--name", "A", "--event", "a", "--payout", "3"}, "campaign goal", "goal campaign set"},
 		{[]string{"goal", "create", "--account", "--name", "A", "--event", "a", "--count", "2", "--sum-prop", "x", "--sum-gte", "1"}, "exclusive", ""},
 		{[]string{"goal", "create", "--account", "--name", "A", "--event", "a", "--within-days", "7"}, "go together", "--within-from install"},
+		{[]string{"goal", "create", "--account", "--name", "A", "--event", "a", "--sum-prop", "x", "--sum-gte", "1", "--repeat", "each"}, "--repeat-max", "--repeat-max 12"},
 		{[]string{"goal", "create", "--account", "--name", "A", "--install", "--event", "a"}, "takes no --event", ""},
 		{[]string{"goal", "create", "--account", "--name", "A", "--event", "a", "--after", "x"}, "--after", "p202 goal list"},
 		{[]string{"goal", "update", "5"}, "no fields specified", "--value 5"},
@@ -149,6 +150,39 @@ func TestGoalUpdateChangesOnlyThePartsTheFlagsName(t *testing.T) {
 		`"value":{"amount":"2.50","type":"fixed"},"within":null}`
 	if string(def) != want {
 		t.Errorf("definition =\n %s\nwant\n %s", def, want)
+	}
+}
+
+func TestGoalUpdateRefusesARepeatingSumWithoutMaxBeforeThePut(t *testing.T) {
+	// The current definition is a sum reached once; --repeat each alone
+	// would make it a sum that repeats without a bound, which the server
+	// refuses (definition.repeat.max). The CLI says so before writing.
+	_, seen := goalServer(t, 200, `{"data":{"goal_id":5,"definition":{"name":"Spend","trigger":{"event":"buy","where":[]},`+
+		`"threshold":{"sum":{"prop":"$revenue","gte":"10.00"}},"after":[],"within":null,"repeat":{"mode":"once"},"value":{"type":"none"}}}}`)
+
+	_, _, err := executeCommand("goal", "update", "5", "--repeat", "each")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if code := exitCodeForError(err); code != ExitValidation {
+		t.Errorf("exit code %d, want %d (validation): %v", code, ExitValidation, err)
+	}
+	if !strings.Contains(err.Error(), "--repeat-max") || !strings.Contains(hintFor(err), "--repeat-max 12") {
+		t.Errorf("error %q / hint %q should name --repeat-max", err, hintFor(err))
+	}
+	for _, r := range *seen {
+		if r.Method != "GET" {
+			t.Fatalf("requests = %+v: nothing may be written", *seen)
+		}
+	}
+
+	if _, _, err := executeCommand("goal", "update", "5", "--repeat", "each", "--repeat-max", "3"); err != nil {
+		t.Fatalf("with --repeat-max: %v", err)
+	}
+	last := (*seen)[len(*seen)-1]
+	repeat, _ := json.Marshal(last.Body["definition"].(map[string]interface{})["repeat"])
+	if last.Method != "PUT" || string(repeat) != `{"max":3,"mode":"each"}` {
+		t.Errorf("request = %s %s, want a PUT with repeat {\"max\":3,\"mode\":\"each\"}", last.Method, repeat)
 	}
 }
 
