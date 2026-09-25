@@ -49,6 +49,7 @@ This plan covers three things:
 | B (§3–5) | App measurement: the iOS reshape, then Android |
 | C (§6) | The MTA rewrite |
 | D (§7–9) | Non-functional requirements, phasing, decisions |
+| E (§10) | Moving the whole app onto the v2 UI shell |
 
 ---
 
@@ -1474,9 +1475,10 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 | 9 | **MTA engine:** schema rewrite and rungs, worker, models, credits, reports API; v2 and dead code deleted | 1, 2 |
 | 10 | **MTA UI and exports:** dashboard on the v2 shell, comparison, journey metrics, SSRF-safe webhooks | 9 |
 | 11 | **Mobile Apps UI:** Android pages, link builder, goal editor and funnel, cross-platform report | 3–5 |
-| 12 | **Release gate:** upgrade-equals-install from a real 1.9.55 database, full live passes, agent-eval cases, docs and OpenAPI | all |
+| 12 | **Release gate:** upgrade-equals-install from a real 1.9.55 database, full live passes, agent-eval cases, docs and OpenAPI, and the whole-app browser pass on v2 | all, including U8 |
 
 - PRs 1, 2 and 3 have no dependencies and can proceed in parallel.
+- The UI migration runs as its own series, **U1–U8** (§10.4), interleaved with these PRs so that each page is moved to v2 before a measurement PR adds to it. U8, which removes the classic shell, comes after both series.
 - The later extensions (Meta decryption, other stores, deep links) come after
   the release.
 
@@ -1500,6 +1502,7 @@ in the first release by construction.
 | 9 | Seeing what a click's value is made of | `202_conversion_logs` becomes a ledger with provenance (`source`, `source_ref`, `event_name`, `payable`, `superseded_by`); every path writes rows; the click value is derived from them; a per-click breakdown in the API and UI; reports group by goal/source | §2.1 |
 | 9a | Transaction ids | Kept, with one meaning: the external id, for reconciliation and reversals. Deduplication moves to a namespaced `dedupe_key`. A blank-id payable row counts once per click in `accumulate` mode. The id is passed to traffic sources via `[[transactionid]]` | §2.1 |
 | 10 | Goals on web campaigns | Goals are core: the subject is the click (web) or the install (app), and events come from pixel/postback `event=`, `POST /events` and `p202.js` | §2.2 |
+| 11 | The app's two looks | Migrate the whole app to the v2 shell in this release (Part E, PRs U1–U8), then delete the classic shell and legacy assets | §10 |
 
 **One behaviour change to confirm.** Decision 9 has the legacy pixels
 (`px.php`, `pb.php`), ClickBank and the revenue CSV upload **start writing
@@ -1508,3 +1511,137 @@ upgrade those conversions appear in conversion lists, the API, MTA and the
 breakdown. Income per click in `replace` mode is unchanged. Without this, a
 click whose value came from one of those paths cannot be broken down, so the
 plan assumes yes.
+
+---
+
+# Part E: moving the whole app onto the v2 UI
+
+## 10. Whole-app UI migration
+
+### 10.1 Why this is in the plan
+
+`documentation/features/ui-standard.md` moves pages from Bootstrap 3 and Flat
+UI Pro to the v2 shell (Bootstrap 5.3 and the Prosper202 theme) one family at a
+time. One family has moved: Setup › Mobile Apps and Analyze › Mobile Apps
+(#153). A grep for `'ui' => 'v2'` finds those two pages and the admin-only UI
+kit, **out of about 60 pages that call `template_top()`**. Every page this plan
+adds would be built on v2: Android, goals, the conversion breakdown, the MTA
+dashboard. Without a full migration, the release would ship a *wider* mix of
+two looks than today.
+
+**Decision (2026-09-25): migrate the whole app in this release,** as its own
+PR series running beside the measurement PRs.
+
+### 10.2 Inventory
+
+Counted from the tree. Section counts are pages that call `template_top()`.
+Standalone pages render their own `<html>`.
+
+| Family | Pages | Notes |
+|---|---|---|
+| Analyze | 15 (1 already v2) | keywords, text ads, referers, IPs, countries, regions, cities, ISPs, landing pages, devices, browsers, platforms, variables, LTV. They share a report layout and `202-js/tracking-report.js` (489 lines), so most move together |
+| Overview | 6 | Home, group overview, breakdown, day- and week-parting, rotator breakdown. The Highcharts-heavy pages |
+| Visitors, Spy | 2 | The click-history views that get the §2.1 breakdown |
+| Setup | 13 (1 already v2) | Campaigns, networks, traffic sources, landing pages, text ads, rotators, trackers, postbacks, landing-page code, the smart component, and attribution models. Form-heavy; the campaign form gets payout mode and goals |
+| Update | 5 | subids, CPC, revenue upload, clear/delete subids |
+| Account | 15 | account, users, API keys and integrations, administration, help, docs, VIP perks, click servers, safe mode, attribution dashboard, and more. `202-js/attribution.js` (1,732 lines) belongs to the MTA dashboard, which §6 rebuilds on v2 rather than migrating |
+| Pre-login and standalone | about 10 | `202-login.php`, `202-lost-pass.php`, `202-pass-reset.php`, `202-config/install.php`, `202-config/upgrade.php`, `202-404.php`, `202-access-denied.php`, `202-license.php`, `api-key-required.php`, `index.php` |
+| Other sections | 3 + 1 | `202-tv`, `202-resources`, `202-appstore`, plus the separate `202-Mobile/` mini-site (login, mini-stats) |
+| AJAX fragments | 18 files | Files under `tracking202/ajax/` and `202-account/ajax/` that return markup with Bootstrap 3 or Flat UI classes. They must move with the page that loads them |
+| Shared JavaScript | `202-js/custom.php` (1,804 lines) and the page scripts | Built on the legacy asset set in `202-config/assets.php`: jQuery UI, Bootstrap 3 JS, select2, tablesorter and its widgets, tokenfield, typeahead, jquery-validate, fileinput, radiocheck, Flat UI Pro JS |
+
+### 10.3 How each page moves (the existing recipe, applied everywhere)
+
+- `template_top($title, ['ui' => 'v2'])`, with markup rebuilt from Bootstrap
+  components and the component layer. Each component's markup is copied from
+  `202-account/ui-kit.php`, parts included (error pattern #19).
+- **The chrome does not change.** It is already framework-neutral
+  (`202-css/p202-chrome.css`).
+- **The page follows the UI standard's principles** (§ "the app decides what
+  it can"):
+  - common-case forms, with the rest under **Advanced**;
+  - defaults explained in one line;
+  - one primary action;
+  - empty states that do the first step.
+
+  This is a redesign per page, not a class rename. That is why pages move in
+  families, with a review of each.
+- **Legacy libraries are replaced once, by one choice per job, recorded in
+  the UI standard.** Each replacement is a pinned asset in `assets.php`, with
+  its SHA-384:
+
+  | Job | Replacement |
+  |---|---|
+  | Date pickers | Native `<input type="date">` |
+  | Tag inputs and typeahead | `<datalist>`, or one small pinned library, chosen in U1 |
+  | Sortable tables | `tablesort.js`, already in the v2 manifest |
+  | Validation | Native constraint validation plus the server's error sentences |
+  | Select boxes | Native `<select>`, or one pinned searchable select where the list is long |
+
+  jQuery stays available on v2 (`jquery.js` is in the manifest), so scripts
+  are ported, not rewritten, where porting is enough.
+- **Pre-login pages keep their security invariants.**
+  `PreLoginPostRequiresTokenTest` and `tests/live/upgrade-csrf.sh` pin that
+  the form that posts carries the session token inside it (error pattern
+  #21). They must stay green through the rewrite of login, install and
+  upgrade. This is the family where a markup change can silently break a
+  security check, so it goes last, alone, with the live CSRF pass run before
+  merge.
+- **`202-Mobile/`** is retired if the v2 pages pass the phone-width browser
+  pass (§10.5): its login and mini-stats become redirects to the responsive
+  pages. If any view is missing at phone width, that view is built on v2
+  before the redirect.
+
+### 10.4 PR series (U1–U8), interleaved with the measurement PRs
+
+| # | PR | Before / with |
+|---|---|---|
+| **U1** | **Foundation:** the header and navigation screenshot check on both shells (the comparison started and not finished on 2026-09-25); the replacement-library choices in §10.3 added to the manifest and the UI standard; shared v2 partials for report filters, date ranges and tables | Before everything else in Part E |
+| **U2** | **Overview, Visitors, Spy** | Before PR 1b, which adds the per-click breakdown to the click history and a Goal/source level to Group Overview. Those land on v2 pages instead of being built twice |
+| **U3** | **Analyze** (the remaining 14 report pages, the shared report layout, `tracking-report.js`, their AJAX fragments) | With or after U2; they share filters |
+| **U4** | **Setup** (12 pages) | Before PR 4b and PR 11, which add payout mode, goals and the link builder to the campaign form |
+| **U5** | **Update** (5 pages) | Before PR 1, whose ledger rewrites the revenue CSV upload; the page and its behaviour change together |
+| **U6** | **Account** (14 pages; the attribution dashboard is replaced by PR 10, not migrated) | Any time after U1 |
+| **U7** | **Standalone and pre-login** (login, password reset, install, upgrade, error pages, `index.php`, `202-tv`, `202-resources`, `202-appstore`, `202-Mobile` retirement) | Last page family, on its own |
+| **U8** | **Removal:** the classic shell branch of `template_top()`, every `legacy.*` asset, Flat UI Pro, the old stylesheets and `202-js/flat-ui-pro.min.js`; `template_top()` stops taking a `ui` option | After U2–U7 and after every measurement PR that touches a page |
+
+### 10.5 What "migrated" means, checked
+
+- **`NoLegacyBootstrapClassesTest` stops being opt-in.** Today it checks the
+  pages that pass `'ui' => 'v2'`. U8 points it at **every page, AJAX fragment
+  and script in the tree**, so a Bootstrap 3 or Flat UI class anywhere fails
+  CI. Until U8, each U-PR's pages are covered from the moment they opt in.
+- **A structural test that the legacy assets are unreachable.** No
+  `legacy.*` id in `assets.php` is referenced by any page, and U8 deletes
+  them. An asset nobody loads is removed, not kept "just in case".
+- **`ComponentClassIsConsumedTest`** covers every new class, so no class that
+  styles nothing ships (error pattern #19).
+- **Browser passes per family** (`tests/browser/`, with a baseline entry per
+  page in `lib/checks.js`):
+  - light and dark themes;
+  - a 1280px desktop and a 390px phone width;
+  - no console errors;
+  - `flexContainersKeepTheirSpaces` and `currentSubMenuItemIsVisible`;
+  - each page's interactive behaviour: forms submit and show server errors,
+    filters apply, AJAX panels load, confirm dialogs confirm.
+- **Live pass per family:** the Setup and Update pages are driven end to end,
+  creating a campaign, uploading a revenue file and generating links, because
+  a form that looks right and posts the wrong field is the failure a
+  screenshot cannot see.
+- **Pre-login:** `PreLoginPostRequiresTokenTest` and
+  `tests/live/upgrade-csrf.sh` are green on the migrated pages.
+
+### 10.6 Non-functional notes
+
+- **Performance.** A v2 page loads Bootstrap 5.3 and the theme instead of
+  Bootstrap 3, Flat UI Pro, jQuery UI and a stack of plugins. The asset
+  weight per page goes down; U8 measures the before and after on three
+  representative pages rather than asserting it.
+- **Accessibility.** Bootstrap 5 components bring focus handling and ARIA
+  that the Bootstrap 3 and Flat UI widgets lack. Each family's browser pass
+  also checks keyboard reachability of the primary action and labelled form
+  fields.
+- **Risk.** The migration is wide but shallow per page: markup and scripts,
+  not data. The two places it touches behaviour are covered first by tests:
+  the pre-login security checks (U7) and the revenue upload (U5, together
+  with the ledger change).
