@@ -65,7 +65,7 @@ cast (a count of `"3"` or `3.0` is refused).
 | `threshold` | `{"count": 1–10000}` (the Nth matching event) or `{"sum": {"prop": "<prop>", "gte": <amount>}}` (a running sum) | `{"count": 1}` |
 | `after` | up to 5 goal ids that must be reached first | `[]` |
 | `within` | `{"days": 1–3650, "from": "install" \| "click"}` or `null` | `null` |
-| `repeat` | `{"mode": "once"}` or `{"mode": "each"}` / `{"mode": "each", "max": 1–10000}` | once |
+| `repeat` | `{"mode": "once"}` or `{"mode": "each"}` / `{"mode": "each", "max": 1–10000}`; with a `sum` threshold `each` requires `max` | once |
 | `value` | `{"type": "fixed", "amount": …}`, `{"type": "from_property", "prop": "<prop>"}` (default prop `$revenue`), `{"type": "none"}` | none |
 
 Predicates (at most 20, ANDed — a second goal expresses OR): `eq`, `neq`
@@ -75,6 +75,17 @@ event's own revenue field. Event names are 1–64 of letters, digits and
 `_ . : -`. Amounts are at most 999999.99999 with at most 5 decimal places.
 An install trigger takes no `where`, a count of 1, `repeat: once`, no
 `after`, no window, and no `from_property` value.
+
+A sum that repeats must say how many times (`repeat.max`, refused by that
+path without it): one $1,000 purchase against "every $0.01" would otherwise
+reach 100,000 outcomes in one event. One event reaches at most `max` of a
+goal, and the count is computed, not searched for. A summed value outside
+±999999.99999 (the most one conversion holds) does not count, and the
+running sum is held at `max × gte` (the largest threshold the goal can
+still use), so progress reports at most that. A count goal may repeat
+without a max: it grows by one per event. A definition stored before this
+rule is shown with `definition_valid: false` and evaluates nothing until it
+is edited.
 
 The stored form is canonical — every key, defaults written out, amounts as
 decimal strings — and a `PUT` whose canonical form equals the current one
@@ -94,7 +105,10 @@ never re-based.
 
 On the server, a subject's events are stored once (a retried event id is a
 duplicate; the same id with different content is a `409`-class refusal; a
-subject holds at most 10,000 events) and evaluated in the same transaction.
+subject holds at most 10,000 events; an event's `revenue` is at most
+±999999.99999) and evaluated in the same transaction.
+`POST /goals/evaluate` answers at most 10,000 outcomes; one that reaches
+more is refused with a `422` naming `events`.
 An event that sorts before a stored one replays the subject: outcomes whose
 reaching event moved are superseded (`replay`), outcome and conversion
 alike, and nothing is withdrawn.
@@ -130,6 +144,18 @@ row, or deleted where the new version no longer reaches the goal. `POST`
 applies it, one click per transaction, and rebases the click onto the
 version so later events and replays keep using it. The funnel count for a
 click stays one, never two.
+
+The goal is re-decided with its **dependents** — every goal whose `after`
+names it, directly or through another dependent. If the new version stops
+reaching a prerequisite, the goals reached behind it are retired too (their
+conversions deleted or superseded); if it starts reaching it, the goals
+that were waiting on it are written. `goals` in the answer (per click and
+in total) lists them, and every retired or written row names its
+`goal_id`. Their stored progress is replaced with the outcomes, so the next
+event continues from the same answer a replay would give. Dependents never
+add clicks — the selection and the 1,000-click cap are the goal's own — and
+a dependent's version that cannot be evaluated (an invalid definition, a
+missing prerequisite) is left exactly as it is.
 
 ## Examples
 

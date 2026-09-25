@@ -1371,7 +1371,16 @@ is `GoalsController`; the CLI is `p202 goal …`.
   with reason `reevaluation`, superseding their ledger rows where there is
   a replacement and soft-deleting them where there is none. It handles at
   most 1000 subjects per call (`GoalEngine::MAX_SUBJECTS_PER_CALL`), and
-  the preview says how many subjects it would touch.
+  the preview says how many subjects it would touch. It re-decides the
+  goal together with its dependents (every goal whose `after` chain leads
+  to it, any version's `after` counting): their outcomes were evaluated
+  against the goal's, so a prerequisite that stops matching retires the
+  outcomes reached behind it and one that starts matching writes the ones
+  waiting on it, and the progress of exactly those goals is replaced with
+  them (`ReevaluationReconcilesDependentsTest`). Dependents never add
+  subjects, so the cap is unchanged; a dependent version the evaluator
+  disables as `invalid_definition` or `prerequisite_missing` is left as
+  it is.
 - **Archive, not delete.** `DELETE /goals/{id}` archives: versions,
   outcomes and their conversions are kept, and archive time ends the goal's
   span (`ends_at`), so a replay sees what the incremental evaluation saw.
@@ -1391,6 +1400,19 @@ is `GoalsController`; the CLI is `p202 goal …`.
   makes the outcome ineligible (`no_click` / `no_install`), never payable.
   Sums are computed in integer units of 0.00001. The install pseudo-event's
   id is `@install`.
+- **Bounded cost per event.** A sum threshold with `repeat: each` requires
+  `max` (a sum can jump past many multiples in one event; a count cannot,
+  so a count's `each` may stay unbounded). A stored definition without it
+  is `invalid_definition`. The number of n an event reaches is computed
+  (`floor(sum / gte)`, capped), never searched for. A summand outside
+  ±999999.99999 does not count; event `revenue` outside it is refused at
+  intake by name; the running sum is held between −10^15 units and
+  `cap × gte`, so it never leaves a 64-bit integer. `POST /goals/evaluate`
+  answers at most 10,000 outcomes (`EvaluationTooLarge` → `422 events`).
+  `SumBoundsTest` pins what the vectors cannot hold. A reconciliation
+  reads at most 100,000 live outcomes of a subject
+  (`GoalEngine::MAX_LIVE_OUTCOMES_PER_SUBJECT`) and refuses the subject
+  past that rather than reconciling a truncated read.
 - **Payability** (`GoalEngine::payability`). A goal the campaign does not
   pay for is tracked at its own value, with note `not_payable_on_campaign`.
   A campaign payout overrides the goal's value. A `fixed` value pays, and

@@ -10,6 +10,7 @@ use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Prosper202\Database\Connection;
+use Prosper202\Goals\EvaluationTooLarge;
 use Prosper202\Goals\GoalDefinition;
 use Prosper202\Goals\GoalEngine;
 use Prosper202\Goals\GoalEngineException;
@@ -37,6 +38,8 @@ final class GoalsController
     private const MAX_EVALUATE_GOALS = 50;
     private const MAX_EVALUATE_VERSIONS = 20;
     private const MAX_EVALUATE_EVENTS = 1000;
+    /** The most outcomes one /goals/evaluate answer may hold. */
+    private const MAX_EVALUATE_OUTCOMES = 10000;
 
     private Connection $conn;
     private MysqlGoalRepository $goals;
@@ -475,7 +478,16 @@ final class GoalsController
             }
         }
 
-        return ['data' => GoalEvaluator::evaluateAll($specs, $subject, $events)->toArray()];
+        try {
+            $result = GoalEvaluator::evaluateAll($specs, $subject, $events, self::MAX_EVALUATE_OUTCOMES);
+        } catch (EvaluationTooLarge $e) {
+            throw new ValidationException('The evaluation is too large', [
+                'events' => 'these goals and events reach more than ' . $e->limit . ' outcomes, the most one evaluation answers; '
+                    . 'evaluate fewer events or goals at a time',
+            ]);
+        }
+
+        return ['data' => $result->toArray()];
     }
 
     /** @param array<string, mixed> $params */
