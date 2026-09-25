@@ -64,6 +64,7 @@ cleanup() {
   mysql_q "$DB" <<SQL
 DELETE FROM 202_attribution_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICKS));
 DELETE FROM 202_conversion_logs WHERE click_id IN ($CLICKS);
+DELETE FROM 202_dataengine WHERE click_id IN ($CLICKS);
 DELETE FROM 202_clicks WHERE click_id IN ($CLICKS);
 DELETE FROM 202_clicks_spy WHERE click_id IN ($CLICKS);
 DELETE FROM 202_clicks_tracking WHERE click_id IN ($CLICKS);
@@ -167,8 +168,10 @@ if [ -n "$P202_API_KEY" ]; then
   eq "$(api "{\"click_id\": $API, \"payout\": 12.5, \"transaction_id\": \"API-1\"}")" 201 "a conversion with a transaction id"
   eq "$(value $API)" "1/12.50000" "is the click's value"
   eq "$(col $API source)" "api" "and says the API produced it"
+  eq "$(Q "SELECT CONCAT(leads, '/', payout) FROM 202_dataengine WHERE click_id=$API")" "1/12.50" "and reaches the report row the reports read"
   eq "$(api "{\"click_id\": $API, \"transaction_id\": \"API-1\", \"status\": \"reversed\"}")" 201 "reversing it through the API"
   eq "$(value $API)" "1/0.00000" "nets the click to \$0"
+  eq "$(Q "SELECT payout FROM 202_dataengine WHERE click_id=$API")" "0.00" "and the report row follows"
   eq "$(api "{\"click_id\": $API, \"transaction_id\": \"API-1\", \"status\": \"reversed\", \"reversal_id\": \"X\"}")" 422 "a second, different reversal is a 422"
   eq "$(api "{\"click_id\": $API, \"transaction_id\": \"NOPE\", \"status\": \"reversed\"}")" 404 "a reversal of an unknown sale is a 404"
   eq "$(api "{\"click_id\": $API, \"status\": \"approved\"}")" 422 "an unknown status is a 422"

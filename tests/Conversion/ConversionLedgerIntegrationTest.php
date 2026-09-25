@@ -72,7 +72,7 @@ final class ConversionLedgerIntegrationTest extends TestCase
         if (!self::$db) {
             self::markTestSkipped('No test database configured (set P202_TEST_DB_HOST).');
         }
-        foreach (['202_conversion_logs', '202_clicks', '202_clicks_spy', '202_aff_campaigns', '202_attribution_pending', '202_conversion_uploads'] as $t) {
+        foreach (['202_conversion_logs', '202_clicks', '202_clicks_spy', '202_aff_campaigns', '202_attribution_pending', '202_conversion_uploads', '202_dataengine'] as $t) {
             self::$db->query('TRUNCATE TABLE ' . $t);
         }
         $this->repo = new MysqlConversionRepository(new Connection(self::$db));
@@ -336,6 +336,42 @@ final class ConversionLedgerIntegrationTest extends TestCase
         self::assertSame(['1'], array_values(array_unique(array_column($this->rows(100), 'deleted'))));
         self::assertSame('legacy_baseline', $this->rows(101)[0]['source'], 'the pre-ledger value is recorded, then cleared');
         self::assertSame('1', (string) $this->rows(101)[0]['deleted']);
+    }
+
+    /** @return array{leads: int, payout: string}|null The click's row in the table every report reads. */
+    private function reportRow(int $clickId): ?array
+    {
+        $row = self::$db->query("SELECT leads, payout FROM 202_dataengine WHERE click_id=$clickId")->fetch_assoc();
+
+        return $row === null ? null : ['leads' => (int) $row['leads'], 'payout' => (string) $row['payout']];
+    }
+
+    public function testEveryWriteRefreshesTheReportRowOfItsClick(): void
+    {
+        // The reports read 202_dataengine, not 202_clicks. A conversion that
+        // changed the click but not its report row never showed up in any
+        // report: the API, the upload and the subid pages all went through
+        // record() without re-rolling the click.
+        $this->campaign(7);
+        $this->click(100, 7);
+        self::assertNull($this->reportRow(100), 'no report row before anything happens');
+
+        $a = $this->record(100, ['payout' => '5', 'transaction_id' => 'A']);
+        self::assertSame(['leads' => 1, 'payout' => '5.00'], $this->reportRow(100), 'recorded: the report sees the lead');
+
+        $b = $this->record(100, ['payout' => '12', 'transaction_id' => 'B']);
+        self::assertSame('12.00', $this->reportRow(100)['payout'], 'replaced: the report sees the new value');
+
+        $this->repo->softDelete((int) $b['convId'], 1);
+        self::assertSame('5.00', $this->reportRow(100)['payout'], 'deleted: the report falls back');
+
+        $this->repo->softDelete((int) $a['convId'], 1);
+        self::assertSame(0, $this->reportRow(100)['leads'], 'the last one deleted: no longer a lead in the report');
+
+        $this->record(100, ['payout' => '7', 'transaction_id' => 'C']);
+        self::assertSame(1, $this->reportRow(100)['leads']);
+        $this->repo->clearClicks(1, [100]);
+        self::assertSame(0, $this->reportRow(100)['leads'], 'cleared: the report sees it');
     }
 
     public function testEveryCountedChangeIsQueuedForAttributionInTheSameTransaction(): void
