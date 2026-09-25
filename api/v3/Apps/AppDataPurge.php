@@ -41,6 +41,7 @@ final class AppDataPurge
         '202_app_skan_encodings' => 'delete',
         '202_app_skan_encoding_history' => 'delete',
         '202_app_installs' => 'delete',
+        '202_app_integrity_credentials' => 'delete',
         '202_app_registrations' => 'delete',
     ];
 
@@ -73,6 +74,9 @@ final class AppDataPurge
         // An install is the user's own record (their registration's SDK
         // reported it to them), not a platform's: deleted, not released.
         $this->run('DELETE FROM 202_app_installs WHERE user_id = ?', 'i', $userId);
+        // The user's Google service accounts go with them: a credential
+        // is the operator's secret, and nothing may decode with it after.
+        $this->run('DELETE FROM 202_app_integrity_credentials WHERE user_id = ?', 'i', $userId);
         $this->run('DELETE FROM 202_app_registrations WHERE user_id = ?', 'i', $userId);
     }
 

@@ -28,9 +28,10 @@ use Prosper202\Goals\MysqlGoalRepository;
  *    two directions cannot drift. The SDK evaluates the goals on the device
  *    (plan §5.5): Apple's postback carries only the value, so nothing else
  *    could decide which one to set;
- *  - Android gets its registration's identity, the integrity mode (off
- *    until PR 6) and the SDK settings: where installs and events go and how
- *    many events one request may carry.
+ *  - Android gets its registration's identity, its Play Integrity mode and
+ *    what the SDK needs to request a token bound to the install, and the SDK
+ *    settings: where installs and events go and how many events one request
+ *    may carry.
  *
  * Revenue is withheld from both: the document carries what a device needs
  * to act, never what the operator is paid.
@@ -120,12 +121,28 @@ final class AppSchemaController
     {
         // Android's goals are evaluated on the server, so the SDK reports
         // every event and needs no goal view; what it needs is how to talk
-        // to the intake. Play Integrity is PR 6: until then it is off for
-        // every registration, and the SDK requests no token.
+        // to the intake, and whether to request a Play Integrity token: under
+        // observe or require it requests a standard token for the cloud
+        // project named here, with requestHash = the install's fingerprint
+        // (IntegrityBinding), and sends it as integrity_token.
+        $mode = $registration->policy->integrityMode;
+        // A token cannot be requested without the project number, so the
+        // document never tells the SDK to try. The registry refuses
+        // observe/require without one; this covers a stored mode read as
+        // require because it was unreadable (IntegrityMode::fromStored()),
+        // where the install then arrives tokenless and is judged `missing`.
+        $project = $registration->integrityCloudProjectNumber;
+
         return [
             'platform' => AppIdentity::ANDROID,
             'app_key' => $registration->identity->appKey,
-            'integrity_mode' => 'off',
+            'integrity_mode' => $mode->value,
+            'integrity' => [
+                'request_token' => $mode->decodes() && $project !== null,
+                'token_type' => 'standard',
+                'cloud_project_number' => $project,
+                'request_hash' => 'sha256_hex_of_canonical_install_body',
+            ],
             'sdk' => [
                 'installs_path' => '/api/v3/apps/installs',
                 'events_path' => '/api/v3/apps/installs/{install_uuid}/events',

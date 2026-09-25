@@ -1,0 +1,538 @@
+{
+  "description": "Play Integrity binding (plan §5.6, §5.11). The SDK requests a STANDARD integrity token with requestHash = the lower-case hex SHA-256 of the install body's canonical form (integrity_token removed, keys sorted at every level, no whitespace, '/' and non-ASCII unescaped, UTF-8) — the same bytes and the same hash as install-requests.json's 'fingerprint' — and sends the token as integrity_token in that same body. 'cases' pin the hash for bodies the SDK builds. 'verdicts' are the server's policy over Google's decoded tokenPayloadExternal, for an install of com.example.summit received at 'received_at' whose request hash is cases[0]'s: the first failing check's code is 'expect.code'. Produced by a Python implementation independent of the server's.",
+  "token_type": "standard",
+  "request_hash": "sha256_hex_of_canonical_install_body",
+  "cases": [
+    {
+      "name": "the reference install, no token",
+      "body": {
+        "install_uuid": "8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293",
+        "app_key": "com.example.summit",
+        "store": "google_play",
+        "referrer": {
+          "status": "ok",
+          "install_referrer": "p202=42.3MVffxqa2WX3CV49&utm_source=newsletter",
+          "referrer_click_timestamp_seconds": 1727200000,
+          "install_begin_timestamp_seconds": 1727200042,
+          "referrer_click_timestamp_server_seconds": 1727200001,
+          "install_begin_timestamp_server_seconds": 1727200043,
+          "install_version": "3.2.0",
+          "google_play_instant": false
+        },
+        "first_open_at": 1727200100,
+        "app_version": "3.2.0",
+        "sdk_version": "1.0.0",
+        "os_version": "15",
+        "test": false,
+        "integrity_token": null
+      },
+      "canonical": "{\"app_key\":\"com.example.summit\",\"app_version\":\"3.2.0\",\"first_open_at\":1727200100,\"install_uuid\":\"8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293\",\"os_version\":\"15\",\"referrer\":{\"google_play_instant\":false,\"install_begin_timestamp_seconds\":1727200042,\"install_begin_timestamp_server_seconds\":1727200043,\"install_referrer\":\"p202=42.3MVffxqa2WX3CV49&utm_source=newsletter\",\"install_version\":\"3.2.0\",\"referrer_click_timestamp_seconds\":1727200000,\"referrer_click_timestamp_server_seconds\":1727200001,\"status\":\"ok\"},\"sdk_version\":\"1.0.0\",\"store\":\"google_play\",\"test\":false}",
+      "request_hash": "24e659a4f8d70b46db15a679b91d44d5cb6d19e42fd3208568a96d0552dbd106"
+    },
+    {
+      "name": "the same install with a token: the token is not hashed",
+      "body": {
+        "install_uuid": "8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293",
+        "app_key": "com.example.summit",
+        "store": "google_play",
+        "referrer": {
+          "status": "ok",
+          "install_referrer": "p202=42.3MVffxqa2WX3CV49&utm_source=newsletter",
+          "referrer_click_timestamp_seconds": 1727200000,
+          "install_begin_timestamp_seconds": 1727200042,
+          "referrer_click_timestamp_server_seconds": 1727200001,
+          "install_begin_timestamp_server_seconds": 1727200043,
+          "install_version": "3.2.0",
+          "google_play_instant": false
+        },
+        "first_open_at": 1727200100,
+        "app_version": "3.2.0",
+        "sdk_version": "1.0.0",
+        "os_version": "15",
+        "test": false,
+        "integrity_token": "eyJhbGciOiJBMjU2S1ciLCJlbmMiOiJBMjU2R0NNIn0.example"
+      },
+      "canonical": "{\"app_key\":\"com.example.summit\",\"app_version\":\"3.2.0\",\"first_open_at\":1727200100,\"install_uuid\":\"8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293\",\"os_version\":\"15\",\"referrer\":{\"google_play_instant\":false,\"install_begin_timestamp_seconds\":1727200042,\"install_begin_timestamp_server_seconds\":1727200043,\"install_referrer\":\"p202=42.3MVffxqa2WX3CV49&utm_source=newsletter\",\"install_version\":\"3.2.0\",\"referrer_click_timestamp_seconds\":1727200000,\"referrer_click_timestamp_server_seconds\":1727200001,\"status\":\"ok\"},\"sdk_version\":\"1.0.0\",\"store\":\"google_play\",\"test\":false}",
+      "request_hash": "24e659a4f8d70b46db15a679b91d44d5cb6d19e42fd3208568a96d0552dbd106"
+    },
+    {
+      "name": "another install_uuid: another hash, so the token cannot move",
+      "body": {
+        "install_uuid": "0b7e6f7a-1c2d-4e3f-8a9b-0c1d2e3f4a5b",
+        "app_key": "com.example.summit",
+        "store": "google_play",
+        "referrer": {
+          "status": "ok",
+          "install_referrer": "p202=42.3MVffxqa2WX3CV49&utm_source=newsletter",
+          "referrer_click_timestamp_seconds": 1727200000,
+          "install_begin_timestamp_seconds": 1727200042,
+          "referrer_click_timestamp_server_seconds": 1727200001,
+          "install_begin_timestamp_server_seconds": 1727200043,
+          "install_version": "3.2.0",
+          "google_play_instant": false
+        },
+        "first_open_at": 1727200100,
+        "app_version": "3.2.0",
+        "sdk_version": "1.0.0",
+        "os_version": "15",
+        "test": false,
+        "integrity_token": null
+      },
+      "canonical": "{\"app_key\":\"com.example.summit\",\"app_version\":\"3.2.0\",\"first_open_at\":1727200100,\"install_uuid\":\"0b7e6f7a-1c2d-4e3f-8a9b-0c1d2e3f4a5b\",\"os_version\":\"15\",\"referrer\":{\"google_play_instant\":false,\"install_begin_timestamp_seconds\":1727200042,\"install_begin_timestamp_server_seconds\":1727200043,\"install_referrer\":\"p202=42.3MVffxqa2WX3CV49&utm_source=newsletter\",\"install_version\":\"3.2.0\",\"referrer_click_timestamp_seconds\":1727200000,\"referrer_click_timestamp_server_seconds\":1727200001,\"status\":\"ok\"},\"sdk_version\":\"1.0.0\",\"store\":\"google_play\",\"test\":false}",
+      "request_hash": "70d2174a8adf2ebdc469a3611e5e05ac480b108d1456e8adc928aa578a48dcc6"
+    },
+    {
+      "name": "another click's referrer: another hash",
+      "body": {
+        "install_uuid": "8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293",
+        "app_key": "com.example.summit",
+        "store": "google_play",
+        "referrer": {
+          "status": "ok",
+          "install_referrer": "p202=43.Fh0zTvl3j9WQaQ8G&utm_source=newsletter",
+          "referrer_click_timestamp_seconds": 1727200000,
+          "install_begin_timestamp_seconds": 1727200042,
+          "referrer_click_timestamp_server_seconds": 1727200001,
+          "install_begin_timestamp_server_seconds": 1727200043,
+          "install_version": "3.2.0",
+          "google_play_instant": false
+        },
+        "first_open_at": 1727200100,
+        "app_version": "3.2.0",
+        "sdk_version": "1.0.0",
+        "os_version": "15",
+        "test": false,
+        "integrity_token": null
+      },
+      "canonical": "{\"app_key\":\"com.example.summit\",\"app_version\":\"3.2.0\",\"first_open_at\":1727200100,\"install_uuid\":\"8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293\",\"os_version\":\"15\",\"referrer\":{\"google_play_instant\":false,\"install_begin_timestamp_seconds\":1727200042,\"install_begin_timestamp_server_seconds\":1727200043,\"install_referrer\":\"p202=43.Fh0zTvl3j9WQaQ8G&utm_source=newsletter\",\"install_version\":\"3.2.0\",\"referrer_click_timestamp_seconds\":1727200000,\"referrer_click_timestamp_server_seconds\":1727200001,\"status\":\"ok\"},\"sdk_version\":\"1.0.0\",\"store\":\"google_play\",\"test\":false}",
+      "request_hash": "66ebd876000e5eb0ffc31530a878a93af5a43c9791a4796db3b8c11c05ae3b97"
+    },
+    {
+      "name": "non-ASCII and '/' are hashed unescaped, as UTF-8",
+      "body": {
+        "install_uuid": "8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293",
+        "app_key": "com.example.summit",
+        "store": "google_play",
+        "referrer": {
+          "status": "ok",
+          "install_referrer": "p202=42.3MVffxqa2WX3CV49&utm_source=newsletter",
+          "referrer_click_timestamp_seconds": 1727200000,
+          "install_begin_timestamp_seconds": 1727200042,
+          "referrer_click_timestamp_server_seconds": 1727200001,
+          "install_begin_timestamp_server_seconds": 1727200043,
+          "install_version": "3.2.0",
+          "google_play_instant": false
+        },
+        "first_open_at": 1727200100,
+        "app_version": "3.2.0-été/β",
+        "sdk_version": "1.0.0",
+        "os_version": "15",
+        "test": false,
+        "integrity_token": null
+      },
+      "canonical": "{\"app_key\":\"com.example.summit\",\"app_version\":\"3.2.0-été/β\",\"first_open_at\":1727200100,\"install_uuid\":\"8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293\",\"os_version\":\"15\",\"referrer\":{\"google_play_instant\":false,\"install_begin_timestamp_seconds\":1727200042,\"install_begin_timestamp_server_seconds\":1727200043,\"install_referrer\":\"p202=42.3MVffxqa2WX3CV49&utm_source=newsletter\",\"install_version\":\"3.2.0\",\"referrer_click_timestamp_seconds\":1727200000,\"referrer_click_timestamp_server_seconds\":1727200001,\"status\":\"ok\"},\"sdk_version\":\"1.0.0\",\"store\":\"google_play\",\"test\":false}",
+      "request_hash": "8236ecc9bfaa20a90f299bf60f0d8ed45ba80f9f2e5ab37d7978c17b35017842"
+    },
+    {
+      "name": "a device without the referrer API",
+      "body": {
+        "install_uuid": "8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293",
+        "app_key": "com.example.summit",
+        "store": "google_play",
+        "referrer": {
+          "status": "feature_not_supported"
+        },
+        "first_open_at": 1727200100,
+        "app_version": "3.2.0",
+        "sdk_version": "1.0.0",
+        "os_version": "15",
+        "test": false,
+        "integrity_token": null
+      },
+      "canonical": "{\"app_key\":\"com.example.summit\",\"app_version\":\"3.2.0\",\"first_open_at\":1727200100,\"install_uuid\":\"8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293\",\"os_version\":\"15\",\"referrer\":{\"status\":\"feature_not_supported\"},\"sdk_version\":\"1.0.0\",\"store\":\"google_play\",\"test\":false}",
+      "request_hash": "b2fe475a001c7ce22e9c8c882f1f8a3d7a168b95ba94964924dc0c3316499086"
+    },
+    {
+      "name": "a test install",
+      "body": {
+        "install_uuid": "8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293",
+        "app_key": "com.example.summit",
+        "store": "google_play",
+        "referrer": {
+          "status": "ok",
+          "install_referrer": "p202=42.3MVffxqa2WX3CV49&utm_source=newsletter",
+          "referrer_click_timestamp_seconds": 1727200000,
+          "install_begin_timestamp_seconds": 1727200042,
+          "referrer_click_timestamp_server_seconds": 1727200001,
+          "install_begin_timestamp_server_seconds": 1727200043,
+          "install_version": "3.2.0",
+          "google_play_instant": false
+        },
+        "first_open_at": 1727200100,
+        "app_version": "3.2.0",
+        "sdk_version": "1.0.0",
+        "os_version": "15",
+        "test": true,
+        "integrity_token": null
+      },
+      "canonical": "{\"app_key\":\"com.example.summit\",\"app_version\":\"3.2.0\",\"first_open_at\":1727200100,\"install_uuid\":\"8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293\",\"os_version\":\"15\",\"referrer\":{\"google_play_instant\":false,\"install_begin_timestamp_seconds\":1727200042,\"install_begin_timestamp_server_seconds\":1727200043,\"install_referrer\":\"p202=42.3MVffxqa2WX3CV49&utm_source=newsletter\",\"install_version\":\"3.2.0\",\"referrer_click_timestamp_seconds\":1727200000,\"referrer_click_timestamp_server_seconds\":1727200001,\"status\":\"ok\"},\"sdk_version\":\"1.0.0\",\"store\":\"google_play\",\"test\":true}",
+      "request_hash": "3727e06f141667c97305c1a37345dd3ae5d2b8274ed5b195abafb143e7fd3252"
+    }
+  ],
+  "received_at": 1727200200,
+  "package": "com.example.summit",
+  "verdicts": [
+    {
+      "name": "passes",
+      "payload": {
+        "requestDetails": {
+          "requestPackageName": "com.example.summit",
+          "requestHash": "24e659a4f8d70b46db15a679b91d44d5cb6d19e42fd3208568a96d0552dbd106",
+          "timestampMillis": "1727200170000"
+        },
+        "appIntegrity": {
+          "appRecognitionVerdict": "PLAY_RECOGNIZED",
+          "packageName": "com.example.summit",
+          "versionCode": "42"
+        },
+        "deviceIntegrity": {
+          "deviceRecognitionVerdict": [
+            "MEETS_DEVICE_INTEGRITY"
+          ]
+        },
+        "accountDetails": {
+          "appLicensingVerdict": "LICENSED"
+        }
+      },
+      "expect": {
+        "valid": true,
+        "code": "valid"
+      }
+    },
+    {
+      "name": "strong integrity passes",
+      "payload": {
+        "requestDetails": {
+          "requestPackageName": "com.example.summit",
+          "requestHash": "24e659a4f8d70b46db15a679b91d44d5cb6d19e42fd3208568a96d0552dbd106",
+          "timestampMillis": "1727200170000"
+        },
+        "appIntegrity": {
+          "appRecognitionVerdict": "PLAY_RECOGNIZED",
+          "packageName": "com.example.summit",
+          "versionCode": "42"
+        },
+        "deviceIntegrity": {
+          "deviceRecognitionVerdict": [
+            "MEETS_BASIC_INTEGRITY",
+            "MEETS_DEVICE_INTEGRITY",
+            "MEETS_STRONG_INTEGRITY"
+          ]
+        },
+        "accountDetails": {
+          "appLicensingVerdict": "LICENSED"
+        }
+      },
+      "expect": {
+        "valid": true,
+        "code": "valid"
+      }
+    },
+    {
+      "name": "licensing unevaluated passes",
+      "payload": {
+        "requestDetails": {
+          "requestPackageName": "com.example.summit",
+          "requestHash": "24e659a4f8d70b46db15a679b91d44d5cb6d19e42fd3208568a96d0552dbd106",
+          "timestampMillis": "1727200170000"
+        },
+        "appIntegrity": {
+          "appRecognitionVerdict": "PLAY_RECOGNIZED",
+          "packageName": "com.example.summit",
+          "versionCode": "42"
+        },
+        "deviceIntegrity": {
+          "deviceRecognitionVerdict": [
+            "MEETS_DEVICE_INTEGRITY"
+          ]
+        },
+        "accountDetails": {
+          "appLicensingVerdict": "UNEVALUATED"
+        }
+      },
+      "expect": {
+        "valid": true,
+        "code": "valid"
+      }
+    },
+    {
+      "name": "issued exactly 600 s before arrival passes",
+      "payload": {
+        "requestDetails": {
+          "requestPackageName": "com.example.summit",
+          "requestHash": "24e659a4f8d70b46db15a679b91d44d5cb6d19e42fd3208568a96d0552dbd106",
+          "timestampMillis": "1727199600000"
+        },
+        "appIntegrity": {
+          "appRecognitionVerdict": "PLAY_RECOGNIZED",
+          "packageName": "com.example.summit",
+          "versionCode": "42"
+        },
+        "deviceIntegrity": {
+          "deviceRecognitionVerdict": [
+            "MEETS_DEVICE_INTEGRITY"
+          ]
+        },
+        "accountDetails": {
+          "appLicensingVerdict": "LICENSED"
+        }
+      },
+      "expect": {
+        "valid": true,
+        "code": "valid"
+      }
+    },
+    {
+      "name": "requested by another app",
+      "payload": {
+        "requestDetails": {
+          "requestPackageName": "com.other.app",
+          "requestHash": "24e659a4f8d70b46db15a679b91d44d5cb6d19e42fd3208568a96d0552dbd106",
+          "timestampMillis": "1727200170000"
+        },
+        "appIntegrity": {
+          "appRecognitionVerdict": "PLAY_RECOGNIZED",
+          "packageName": "com.example.summit",
+          "versionCode": "42"
+        },
+        "deviceIntegrity": {
+          "deviceRecognitionVerdict": [
+            "MEETS_DEVICE_INTEGRITY"
+          ]
+        },
+        "accountDetails": {
+          "appLicensingVerdict": "LICENSED"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "code": "wrong_package"
+      }
+    },
+    {
+      "name": "bound to another install",
+      "payload": {
+        "requestDetails": {
+          "requestPackageName": "com.example.summit",
+          "requestHash": "70d2174a8adf2ebdc469a3611e5e05ac480b108d1456e8adc928aa578a48dcc6",
+          "timestampMillis": "1727200170000"
+        },
+        "appIntegrity": {
+          "appRecognitionVerdict": "PLAY_RECOGNIZED",
+          "packageName": "com.example.summit",
+          "versionCode": "42"
+        },
+        "deviceIntegrity": {
+          "deviceRecognitionVerdict": [
+            "MEETS_DEVICE_INTEGRITY"
+          ]
+        },
+        "accountDetails": {
+          "appLicensingVerdict": "LICENSED"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "code": "request_hash"
+      }
+    },
+    {
+      "name": "a classic nonce request",
+      "payload": {
+        "requestDetails": {
+          "requestPackageName": "com.example.summit",
+          "timestampMillis": "1727200170000"
+        },
+        "appIntegrity": {
+          "appRecognitionVerdict": "PLAY_RECOGNIZED",
+          "packageName": "com.example.summit",
+          "versionCode": "42"
+        },
+        "deviceIntegrity": {
+          "deviceRecognitionVerdict": [
+            "MEETS_DEVICE_INTEGRITY"
+          ]
+        },
+        "accountDetails": {
+          "appLicensingVerdict": "LICENSED"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "code": "request_hash"
+      }
+    },
+    {
+      "name": "issued 601 s before arrival",
+      "payload": {
+        "requestDetails": {
+          "requestPackageName": "com.example.summit",
+          "requestHash": "24e659a4f8d70b46db15a679b91d44d5cb6d19e42fd3208568a96d0552dbd106",
+          "timestampMillis": "1727199599000"
+        },
+        "appIntegrity": {
+          "appRecognitionVerdict": "PLAY_RECOGNIZED",
+          "packageName": "com.example.summit",
+          "versionCode": "42"
+        },
+        "deviceIntegrity": {
+          "deviceRecognitionVerdict": [
+            "MEETS_DEVICE_INTEGRITY"
+          ]
+        },
+        "accountDetails": {
+          "appLicensingVerdict": "LICENSED"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "code": "stale"
+      }
+    },
+    {
+      "name": "issued 121 s after arrival",
+      "payload": {
+        "requestDetails": {
+          "requestPackageName": "com.example.summit",
+          "requestHash": "24e659a4f8d70b46db15a679b91d44d5cb6d19e42fd3208568a96d0552dbd106",
+          "timestampMillis": "1727200321000"
+        },
+        "appIntegrity": {
+          "appRecognitionVerdict": "PLAY_RECOGNIZED",
+          "packageName": "com.example.summit",
+          "versionCode": "42"
+        },
+        "deviceIntegrity": {
+          "deviceRecognitionVerdict": [
+            "MEETS_DEVICE_INTEGRITY"
+          ]
+        },
+        "accountDetails": {
+          "appLicensingVerdict": "LICENSED"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "code": "future"
+      }
+    },
+    {
+      "name": "not recognized by Play",
+      "payload": {
+        "requestDetails": {
+          "requestPackageName": "com.example.summit",
+          "requestHash": "24e659a4f8d70b46db15a679b91d44d5cb6d19e42fd3208568a96d0552dbd106",
+          "timestampMillis": "1727200170000"
+        },
+        "appIntegrity": {
+          "appRecognitionVerdict": "UNRECOGNIZED_VERSION",
+          "packageName": "com.example.summit",
+          "versionCode": "42"
+        },
+        "deviceIntegrity": {
+          "deviceRecognitionVerdict": [
+            "MEETS_DEVICE_INTEGRITY"
+          ]
+        },
+        "accountDetails": {
+          "appLicensingVerdict": "LICENSED"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "code": "app_not_recognized"
+      }
+    },
+    {
+      "name": "basic integrity only",
+      "payload": {
+        "requestDetails": {
+          "requestPackageName": "com.example.summit",
+          "requestHash": "24e659a4f8d70b46db15a679b91d44d5cb6d19e42fd3208568a96d0552dbd106",
+          "timestampMillis": "1727200170000"
+        },
+        "appIntegrity": {
+          "appRecognitionVerdict": "PLAY_RECOGNIZED",
+          "packageName": "com.example.summit",
+          "versionCode": "42"
+        },
+        "deviceIntegrity": {
+          "deviceRecognitionVerdict": [
+            "MEETS_BASIC_INTEGRITY"
+          ]
+        },
+        "accountDetails": {
+          "appLicensingVerdict": "LICENSED"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "code": "device_integrity"
+      }
+    },
+    {
+      "name": "an emulator",
+      "payload": {
+        "requestDetails": {
+          "requestPackageName": "com.example.summit",
+          "requestHash": "24e659a4f8d70b46db15a679b91d44d5cb6d19e42fd3208568a96d0552dbd106",
+          "timestampMillis": "1727200170000"
+        },
+        "appIntegrity": {
+          "appRecognitionVerdict": "PLAY_RECOGNIZED",
+          "packageName": "com.example.summit",
+          "versionCode": "42"
+        },
+        "deviceIntegrity": {
+          "deviceRecognitionVerdict": [
+            "MEETS_VIRTUAL_INTEGRITY"
+          ]
+        },
+        "accountDetails": {
+          "appLicensingVerdict": "LICENSED"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "code": "device_integrity"
+      }
+    },
+    {
+      "name": "unlicensed",
+      "payload": {
+        "requestDetails": {
+          "requestPackageName": "com.example.summit",
+          "requestHash": "24e659a4f8d70b46db15a679b91d44d5cb6d19e42fd3208568a96d0552dbd106",
+          "timestampMillis": "1727200170000"
+        },
+        "appIntegrity": {
+          "appRecognitionVerdict": "PLAY_RECOGNIZED",
+          "packageName": "com.example.summit",
+          "versionCode": "42"
+        },
+        "deviceIntegrity": {
+          "deviceRecognitionVerdict": [
+            "MEETS_DEVICE_INTEGRITY"
+          ]
+        },
+        "accountDetails": {
+          "appLicensingVerdict": "UNLICENSED"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "code": "unlicensed"
+      }
+    }
+  ]
+}

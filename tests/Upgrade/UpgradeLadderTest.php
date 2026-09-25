@@ -2397,7 +2397,7 @@ final class UpgradeLadderTest extends TestCase
             static fn ($definition): string => $definition->tableName,
             AppTables::getDefinitions()
         );
-        $this->assertSame(['202_app_registrations', '202_app_postbacks', '202_app_skan_encodings', '202_app_skan_encoding_history', '202_app_installs'], $names);
+        $this->assertSame(['202_app_registrations', '202_app_postbacks', '202_app_skan_encodings', '202_app_skan_encoding_history', '202_app_installs', '202_app_integrity_credentials'], $names);
 
         $everything = $this->upgradeSource()
             . (string)file_get_contents(dirname(__DIR__, 2) . '/202-config/Database/Tables/AppTables.php');

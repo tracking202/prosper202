@@ -5,8 +5,19 @@ declare(strict_types=1);
 /**
  * Android intake worker. Run every minute.
  *
- * Two jobs the request path leaves to a worker (plan §5.2, §5.3, §7.3):
+ * Three jobs the request path leaves to a worker (plan §5.2, §5.3, §5.6,
+ * §7.3), in this order, so an install settled by the first two has its
+ * postback sent by the third in the same run:
  *
+ *  0. Decode Play Integrity tokens (Api\V3\Apps\Android\Integrity\
+ *     IntegrityVerifier): installs that arrived under `observe` or
+ *     `require` with a token. The verdict is judged against the documented
+ *     policy; an install waiting as `pending_integrity` is then attributed
+ *     (and paid) or not. Google's answer is retried with backoff (1 min
+ *     doubling, at most 1 h) for up to 24 hours, then recorded as `error`.
+ *     Set P202_PLAY_INTEGRITY_ENDPOINT only to point a test at a loopback
+ *     fake of Google (see GooglePlayIntegrityClient); in production it is
+ *     unset and the client talks to Google's pinned endpoints.
  *  1. Settle `pending_click` installs: the install token verified but the
  *     click it names had not been written yet. Each is re-classified from
  *     its stored body under the same locks and in the same transaction
@@ -31,6 +42,8 @@ declare(strict_types=1);
  *     >> /var/log/prosper202/app-installs.log 2>&1
  */
 
+use Api\V3\Apps\Android\Integrity\GooglePlayIntegrityClient;
+use Api\V3\Apps\Android\Integrity\IntegrityVerifier;
 use Api\V3\Apps\Android\PendingClickSettler;
 use Prosper202\Database\Connection;
 use Prosper202\Notifications\NotificationOutbox;
@@ -79,6 +92,19 @@ try {
         }
     }
 
+    $verified = (new IntegrityVerifier($db, GooglePlayIntegrityClient::fromEnvironment()))->run(200);
+    $verdicts = [];
+    foreach ($verified['verdicts'] as $state => $n) {
+        $verdicts[] = $state . '=' . $n;
+    }
+    printf(
+        "play integrity: %d examined, %s, %d retrying, %d failed\n",
+        $verified['examined'],
+        $verdicts === [] ? 'no verdicts' : implode(' ', $verdicts),
+        $verified['retrying'],
+        $verified['failed']
+    );
+
     $settled = (new PendingClickSettler($db))->run(500);
     $byState = [];
     foreach ($settled['settled'] as $state => $n) {
@@ -95,6 +121,9 @@ try {
     $sent = (new NotificationOutbox(new Connection($db)))->sendDue(500);
     printf("notifications: %d sent, %d retrying, %d failed\n", $sent['sent'], $sent['retrying'], $sent['failed']);
 
+    if ($verified['failed'] > 0) {
+        $fail($verified['failed'] . ' install(s) could not be verified; see the error log');
+    }
     if ($settled['failed'] > 0) {
         $fail($settled['failed'] . ' install(s) could not be settled; see the error log');
     }

@@ -53,8 +53,14 @@ final class PendingClickSettler
      */
     public function run(int $limit = 500): array
     {
+        // Joined to the registration, as settleOne() reads it: an install
+        // whose registration is gone cannot be settled (there is no policy
+        // to settle it under), and selected anyway it would hold a slot in
+        // this oldest-first batch on every run — enough of them would
+        // starve every other app's pending clicks.
         $stmt = $this->conn->prepareWrite(
-            "SELECT install_row_id FROM 202_app_installs WHERE match_state = 'pending_click' ORDER BY received_at, install_row_id LIMIT ?"
+            "SELECT i.install_row_id FROM 202_app_installs i JOIN 202_app_registrations r ON r.registration_id = i.registration_id
+             WHERE i.match_state = 'pending_click' ORDER BY i.received_at, i.install_row_id LIMIT ?"
         );
         $this->conn->bind($stmt, 'i', [max(1, $limit)]);
         $ids = array_map(static fn (array $r): int => (int) $r['install_row_id'], $this->conn->fetchAll($stmt));
@@ -87,7 +93,7 @@ final class PendingClickSettler
     {
         $work = function () use ($installRowId): array {
             $lock = $this->conn->prepareWrite(
-                'SELECT i.*, r.platform, r.app_key, r.accept_test_signals, r.attribution_window_days, r.trust_client_revenue
+                'SELECT i.*, r.platform, r.app_key, r.accept_test_signals, r.attribution_window_days, r.trust_client_revenue, r.integrity_mode AS registration_integrity_mode
                  FROM 202_app_installs i JOIN 202_app_registrations r ON r.registration_id = i.registration_id
                  WHERE i.install_row_id = ? LIMIT 1 FOR UPDATE'
             );
@@ -122,9 +128,11 @@ final class PendingClickSettler
             if ($classified['state'] === MatchState::PENDING_CLICK) {
                 return ['state' => MatchState::PENDING_CLICK, 'post' => ['ledger' => [], 'clicks' => []], 'user' => 0];
             }
-            $post = $this->intake->settle($registration, (int) $row['is_test'] === 1, $installRowId, $classified['state'], $classified['reason'], $classified['click_id'], $now);
+            $settled = $this->intake->settle($registration, (int) $row['is_test'] === 1, $installRowId, $classified['state'], $classified['reason'], $classified['click_id'], $now);
 
-            return ['state' => $classified['state'], 'post' => $post, 'user' => $registration->userId];
+            // The state written, not the one classified: under Play Integrity's
+            // require an attributable install may be held (pending_integrity).
+            return ['state' => $settled['state'], 'post' => $settled['post'], 'user' => $registration->userId];
         };
         try {
             $done = $this->conn->transaction($work);
