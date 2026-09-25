@@ -116,8 +116,18 @@ final class AppOpenApiCoverageTest extends TestCase
         foreach (['/apps/installs', '/apps/installs/{install_uuid}/events', '/apps/{id}/installs', '/apps/{id}/installs/{install_uuid}', '/apps/{id}/install-token'] as $path) {
             $this->assertStringContainsString("\n  $path:\n", $spec, "$path is served but not documented");
         }
-        foreach (['attribution_window_days', 'trust_client_revenue'] as $field) {
+        foreach (['attribution_window_days', 'trust_client_revenue', 'integrity_mode', 'integrity_cloud_project_number'] as $field) {
             $this->assertContains($field, $this->documentedProperties('AppRegistration'));
+        }
+
+        // Play Integrity (PR 6): the routes, and every documented
+        // integrity_state enum is the server's IntegrityState set.
+        foreach (['/apps/{id}/integrity', '/apps/{id}/integrity-credential'] as $path) {
+            $this->assertStringContainsString("\n  $path:\n", $spec, "$path is served but not documented");
+        }
+        $this->assertGreaterThanOrEqual(3, preg_match_all('/enum: \[(not_requested, received[^\]]*)\]/', $spec, $m));
+        foreach ($m[1] as $enum) {
+            $this->assertSame(\Api\V3\Apps\Android\Integrity\IntegrityState::values(), array_map('trim', explode(',', $enum)), 'a documented integrity_state enum');
         }
         $this->assertContains('app_registration_id', $this->documentedProperties('Campaign'));
     }

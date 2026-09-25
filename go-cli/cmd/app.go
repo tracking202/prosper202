@@ -97,7 +97,13 @@ var appRegistrationBodyFields = map[string]string{
 	// Android only.
 	"attribution-window-days": "attribution_window_days",
 	"trust-client-revenue":    "trust_client_revenue",
+	"integrity-mode":          "integrity_mode",
+	// Digits only: sent as the string it was typed as, read raw server-side.
+	"integrity-cloud-project-number": "integrity_cloud_project_number",
 }
+
+// integrityModes are the Play Integrity modes a registration takes.
+var integrityModes = map[string]bool{"off": true, "observe": true, "require": true}
 
 // validateAppRegistrationBody refuses the flag values the server would
 // reject, so the error names the flag rather than a JSON field.
@@ -115,6 +121,14 @@ func validateAppRegistrationBody(body map[string]string) error {
 	if v, ok := body["trust_client_revenue"]; ok && v != "0" && v != "1" {
 		return validationError("--trust-client-revenue must be 0 or 1, got %q", v).
 			WithHint("1 lets a revenue value the app reports be paid by a goal valued from the event's revenue; the app token is public, so 0 (store and report it, never credit it) is the default.")
+	}
+	if v, ok := body["integrity_mode"]; ok && !integrityModes[v] {
+		return validationError("--integrity-mode must be one of: off, observe, require, got %q", v).
+			WithHint("observe records each install's Play Integrity verdict; require attributes and pays only installs whose verdict passes. Both need `p202 app integrity credential set <id> --file key.json` first.")
+	}
+	if v, ok := body["integrity_cloud_project_number"]; ok && !positiveID.MatchString(v) {
+		return validationError("--integrity-cloud-project-number must be the Google Cloud project NUMBER (digits), got %q", v).
+			WithHint("It is on the Cloud project's dashboard (Project number), not the project id.")
 	}
 	if v, ok := body["platform"]; ok && v != "ios" && v != "android" {
 		return validationError("--platform must be one of: ios, android, got %q", v).
@@ -315,6 +329,10 @@ var appCreateCmd = &cobra.Command{
 		if err := validateAppRegistrationBody(body); err != nil {
 			return err
 		}
+		if mode, ok := body["integrity_mode"]; ok && mode != "off" {
+			return validationError("--integrity-mode %s needs the app's service account, which can only be set once the app is registered", mode).
+				WithHint("Create the app without it, then `p202 app integrity credential set <id> --file key.json` and `p202 app update <id> --integrity-mode " + mode + "`.")
+		}
 		c, err := api.NewFromConfig()
 		if err != nil {
 			return err
@@ -342,7 +360,7 @@ var appUpdateCmd = &cobra.Command{
 			// Same sentence the generated CRUD update commands use, so an
 			// agent scripting against one wording works on both surfaces.
 			return validationError("no fields specified; pass at least one flag to update").
-				WithHint("Pass at least one of --app-name, --notes, --accept-test-signals.")
+				WithHint("Pass at least one of --app-name, --notes, --accept-test-signals, --attribution-window-days, --trust-client-revenue, --integrity-mode, --integrity-cloud-project-number.")
 		}
 		if err := validateAppRegistrationBody(body); err != nil {
 			return err
@@ -353,6 +371,12 @@ var appUpdateCmd = &cobra.Command{
 		}
 		data, err := c.Put("apps/"+args[0], body)
 		if err != nil {
+			var apiErr *api.APIError
+			if errors.As(err, &apiErr) && apiErr.Status == 422 {
+				if _, ok := apiErr.FieldErrors["integrity_mode"]; ok {
+					return withHint(err, "Set the service account first: `p202 app integrity credential set "+args[0]+" --file key.json`; Play Integrity is Android-only.")
+				}
+			}
 			return err
 		}
 		render(data)
@@ -730,6 +754,8 @@ func init() {
 		cmd.Flags().String("accept-test-signals", "", "1 = trust test signals for this app (AdAttributionKit development-signed postbacks, Android test installs; integration testing), 0 = store them flagged (default)")
 		cmd.Flags().String("attribution-window-days", "", "Android: days after its click an install may begin and still be attributed (1-365, default 7)")
 		cmd.Flags().String("trust-client-revenue", "", "Android: 1 = revenue the app reports may be paid by a goal valued from it; 0 = stored, never credited (default)")
+		cmd.Flags().String("integrity-mode", "", "Android: Play Integrity off (default), observe (record verdicts) or require (attribute only a passing verdict); needs `app integrity credential set` first")
+		cmd.Flags().String("integrity-cloud-project-number", "", "Android: the Google Cloud project NUMBER the SDK requests integrity tokens for")
 	}
 	registerDeleteFlags(appDeleteCmd, "app registration")
 

@@ -21,6 +21,10 @@ use Tests\Support\SqlLiteralText;
  *    credited install whose install goal wrote no conversion; and settle()
  *    is called only from inside a transaction: the intake's record() (run
  *    by `$this->conn->transaction($work)`) and the settler's $work.
+ *    The Play Integrity worker settles through the same method, in its own
+ *    transaction, and its other writes touch only the integrity_* columns.
+ *    settle() applies the `require` gate before it writes anything, so no
+ *    caller can attribute an install whose verdict has not passed.
  * 3. Every redirect fallback that substitutes a placeholder for [[subid]]
  *    while MySQL is down also empties [[p202_install_token]] (plan §5.1):
  *    there is no click to sign, and a literal placeholder would reach Play.
@@ -30,6 +34,7 @@ final class AttributedInstallHasConversionTest extends TestCase
     private const WRITERS = [
         'api/v3/Apps/Android/InstallIntake.php' => ['insert', 'update'],
         'api/v3/Apps/Android/InstallEventsIntake.php' => ['update'],
+        'api/v3/Apps/Android/Integrity/IntegrityVerifier.php' => ['update'],
         'api/v3/Apps/AppDataPurge.php' => ['delete'],
     ];
 
@@ -86,6 +91,17 @@ final class AttributedInstallHasConversionTest extends TestCase
         preg_match_all('/UPDATE\s+202_app_installs\s+SET\s+([^;]*?)\s+WHERE/i', $tree['api/v3/Apps/Android/InstallEventsIntake.php'], $m);
         self::assertSame(['has_events = 1'], $m[1]);
 
+        // The integrity worker writes its own columns directly; the match
+        // state, trust, click and conversion move only through settle().
+        preg_match_all('/UPDATE\s+202_app_installs\s+SET\s+([^;]*?)\s+WHERE/i', $tree['api/v3/Apps/Android/Integrity/IntegrityVerifier.php'], $m);
+        self::assertCount(3, $m[1], 'the claim, the retry note and the verdict');
+        foreach ($m[1] as $set) {
+            preg_match_all('/(?:^|,)\s*([a-z_]+)\s*=/', $set, $columns);
+            foreach ($columns[1] as $column) {
+                self::assertStringStartsWith('integrity_', $column, 'the integrity worker sets ' . $column . ' directly: ' . $set);
+            }
+        }
+
         // Retention deletes through its classes, whose table is data: the
         // only runtime-table DELETE, in a file that never names the table.
         self::assertStringContainsString("'DELETE FROM ' . \$class->table", (string) file_get_contents(dirname(__DIR__, 3) . '/api/v3/Apps/AppRetention.php'));
@@ -111,6 +127,12 @@ final class AttributedInstallHasConversionTest extends TestCase
         self::assertIsInt($refuse);
         self::assertIsInt($link);
         self::assertTrue($update < $evaluate && $evaluate < $refuse && $refuse < $link, 'settle() writes the state, evaluates, refuses a missing conversion, links it');
+        // The require gate: the first statement of settle(), before the state is written.
+        self::assertMatchesRegularExpression(
+            '/^function settle\([^)]*\): array\s*\{\s*if \(\$state === MatchState::ATTRIBUTED\) \{\s*\[\$state, \$reason, \$clickId\] = \$this->integrityGate\(\$rowId, \$reason, \(int\) \$clickId\);\s*\}/',
+            $settle,
+            'settle() passes every attributed install through the Play Integrity gate before writing its state'
+        );
         self::assertMatchesRegularExpression('/install_conversion_id\'\] === null\) \{\s*throw new/', $settle);
 
         // Its callers, and the transaction each runs in.
@@ -125,6 +147,7 @@ final class AttributedInstallHasConversionTest extends TestCase
         ksort($callers);
         self::assertSame([
             'api/v3/Apps/Android/InstallIntake.php' => 1,
+            'api/v3/Apps/Android/Integrity/IntegrityVerifier.php' => 1,
             'api/v3/Apps/Android/PendingClickSettler.php' => 1,
         ], $callers);
         $record = substr($intake, (int) strpos($intake, 'private function record('));
@@ -134,6 +157,8 @@ final class AttributedInstallHasConversionTest extends TestCase
         self::assertStringContainsString('$this->conn->transaction($work)', $intake);
         $settler = (string) file_get_contents(dirname(__DIR__, 3) . '/api/v3/Apps/Android/PendingClickSettler.php');
         self::assertMatchesRegularExpression('/\$work = function \(\) use \(\$installRowId\): array \{.*->intake->settle\(.*\};\s*try \{\s*\$done = \$this->conn->transaction\(\$work\);/s', $settler);
+        $verifier = (string) file_get_contents(dirname(__DIR__, 3) . '/api/v3/Apps/Android/Integrity/IntegrityVerifier.php');
+        self::assertMatchesRegularExpression('/\$work = function \(\) use \(\$installRowId, \$attempt, \$outcome\): array \{.*FOR UPDATE.*->intake->settle\(.*\};\s*try \{\s*\$done = \$this->conn->transaction\(\$work\);/s', $verifier);
     }
 
     public function testEveryRedirectFallbackEmptiesTheInstallToken(): void

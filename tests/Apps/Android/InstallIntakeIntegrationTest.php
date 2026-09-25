@@ -30,7 +30,8 @@ final class InstallIntakeIntegrationTest extends TestCase
         $this->click(100);
         $r = $this->install(self::body(self::U1, 'p202=' . self::tokenFor(100) . '&utm_source=newsletter'));
         self::assertSame(200, $r['status'], json_encode($r));
-        self::assertSame(['install_uuid' => self::U1, 'match' => 'attributed', 'reason' => 'Attributed to click 100.', 'trusted' => 1, 'test' => false, 'duplicate' => false], $r['body']['data']);
+        self::assertSame(['install_uuid' => self::U1, 'match' => 'attributed', 'reason' => 'Attributed to click 100.', 'trusted' => 1, 'test' => false,
+            'integrity' => 'not_requested', 'duplicate' => false], $r['body']['data']);
         self::assertArrayNotHasKey('click_id', $r['body']['data'], 'the answer carries no click data the referrer did not hold');
 
         $row = self::installRow(self::U1);

@@ -120,6 +120,21 @@ jobs:
             --group integration \
             tests/Apps/Android/AppInstallAtomicityTest.php \
             --verbose --no-coverage
+          # Play Integrity: the three modes through the intake, the verdict
+          # worker (a Google double) and the pending-click settler — nothing
+          # paid or announced before a passing verdict, each failing verdict
+          # refuted, retries ending unverified, a settle failure rolled back —
+          # and the operator's settings, the credential encrypted and never
+          # shown. (The real client's TLS tests run in the unit job, against
+          # tests/fixtures/play-integrity/fake_google.py.)
+          vendor/bin/phpunit --configuration phpunit.ci.xml \
+            --group integration \
+            tests/Apps/Android/Integrity/IntegrityIntegrationTest.php \
+            --verbose --no-coverage
+          vendor/bin/phpunit --configuration phpunit.ci.xml \
+            --group integration \
+            tests/Apps/Android/Integrity/IntegritySettingsIntegrationTest.php \
+            --verbose --no-coverage
           # Checks the SQL the v3 API ships against the schema it ships, by
           # preparing every statically-known statement on a real server. It
           # needs its own database because it installs a fresh schema.

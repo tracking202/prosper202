@@ -557,6 +557,15 @@ try {
             $r->get('/{id}/installs/{uuid}', fn($ctx) => $crud($installs)->get((int)$ctx['id'], (string)$ctx['uuid']));
             $r->get('/{id}/install-token',   fn($ctx) => $crud($installs)->installToken((int)$ctx['id'], $queryParams));
 
+            // Play Integrity (plan §5.6, §5.11): the status read, and the
+            // service-account credential — set/rotate and clear. Neither
+            // write is stageable: its body is a private key, which a staged
+            // change would store and show to reviewers.
+            $integrity = \Api\V3\Controllers\AppIntegrityController::class;
+            $r->get('/{id}/integrity',               fn($ctx) => $crud($integrity)->status((int)$ctx['id']));
+            $r->put('/{id}/integrity-credential',    fn($ctx) => $crud($integrity)->setCredential((int)$ctx['id'], $payload));
+            $r->delete('/{id}/integrity-credential', fn($ctx) => $crud($integrity)->clearCredential((int)$ctx['id']));
+
             $r->get('',            fn() => $crud($apps)->list($queryParams));
             // Deliberately NOT wrapped in $idempotent, for the same reason
             // API-key creation is not: the response carries the app token,
@@ -708,7 +717,7 @@ try {
                 'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}',
                 'rotators'      => '/rotators',
                 'attribution'   => '/attribution/models',
-                'apps'          => '/apps/{id|skan-encodings|postbacks|report|verify|schema|installs}',
+                'apps'          => '/apps/{id|skan-encodings|postbacks|report|verify|schema|installs}[/installs|/install-token|/integrity|/integrity-credential]',
                 'goals'         => '/goals/{id|validate|evaluate}',
                 'users'         => '/users',
                 'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics}',

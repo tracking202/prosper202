@@ -1,0 +1,38 @@
+{
+  "cases": [
+    {
+      "id": "android-002-turn-on-play-integrity-in-observe-mode",
+      "priority": "high",
+      "state": "seeded fixture plus a fresh Android registration com.p202.eval.integrity (EVAL INTEGRITY) with Play Integrity off and no credential, and a freshly minted service-account key file at /tmp/p202-eval-integrity-key.json (setup deletes any earlier registration first)",
+      "setup": [
+        "p202 app list --platform android --all --json | jq -r '.data[] | select(.app_key==\"com.p202.eval.integrity\") | .registration_id' | xargs -r -I{} p202 app delete {} --force",
+        "p202 app create --store-link com.p202.eval.integrity --app-name 'EVAL INTEGRITY' --json >/dev/null",
+        "openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 2>/dev/null | jq -Rs '{type: \"service_account\", project_id: \"p202-eval\", private_key_id: \"e1e2e3e4e5e6e7e8\", private_key: ., client_email: \"integrity@p202-eval.iam.gserviceaccount.com\", token_uri: \"https://oauth2.googleapis.com/token\"}' > /tmp/p202-eval-integrity-key.json"
+      ],
+      "ask": "Turn on Play Integrity for our Android app EVAL INTEGRITY (com.p202.eval.integrity), in observe mode for now so it records verdicts without affecting payouts. The Google service-account key file is /tmp/p202-eval-integrity-key.json. Tell me which service account it will use.",
+      "expected": {
+        "runs_one_of": [
+          "app integrity credential set"
+        ],
+        "checks": [
+          {
+            "run": "reg=$(p202 app list --platform android --all --json | jq -r '.data[] | select(.app_key==\"com.p202.eval.integrity\") | .registration_id'); p202 app integrity status \"$reg\" --json | jq '.data.integrity_mode == \"observe\" and .data.credential.client_email == \"integrity@p202-eval.iam.gserviceaccount.com\" and .data.credential.private_key_id == \"e1e2e3e4e5e6e7e8\"'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if the EVAL INTEGRITY registration ends in integrity_mode observe with the key file's service account as its credential, and the reply names integrity@p202-eval.iam.gserviceaccount.com. FAIL if the mode is require or off, the credential is another account's or missing, the reply quotes any part of the private key, or the agent claims the mode is on when the server refused it.",
+        "reply_includes": [
+          "integrity@p202-eval.iam.gserviceaccount.com",
+          "observe"
+        ]
+      },
+      "cleanup": [
+        "p202 app list --platform android --all --json | jq -r '.data[] | select(.app_key==\"com.p202.eval.integrity\") | .registration_id' | xargs -r -I{} p202 app delete {} --force",
+        "rm -f /tmp/p202-eval-integrity-key.json"
+      ],
+      "notes": "The order is the point: the server refuses observe without a credential (422 naming the credential route), so an agent that switches the mode first must read that error and set the credential before trying again. The check reads the registration's stored mode and credential summary, not the reply. Deleting the registration in cleanup deletes its credential with it."
+    }
+  ]
+}

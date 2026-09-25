@@ -87,7 +87,7 @@ final class PendingClickSettler
     {
         $work = function () use ($installRowId): array {
             $lock = $this->conn->prepareWrite(
-                'SELECT i.*, r.platform, r.app_key, r.accept_test_signals, r.attribution_window_days, r.trust_client_revenue
+                'SELECT i.*, r.platform, r.app_key, r.accept_test_signals, r.attribution_window_days, r.trust_client_revenue, r.integrity_mode AS registration_integrity_mode
                  FROM 202_app_installs i JOIN 202_app_registrations r ON r.registration_id = i.registration_id
                  WHERE i.install_row_id = ? LIMIT 1 FOR UPDATE'
             );
@@ -122,9 +122,11 @@ final class PendingClickSettler
             if ($classified['state'] === MatchState::PENDING_CLICK) {
                 return ['state' => MatchState::PENDING_CLICK, 'post' => ['ledger' => [], 'clicks' => []], 'user' => 0];
             }
-            $post = $this->intake->settle($registration, (int) $row['is_test'] === 1, $installRowId, $classified['state'], $classified['reason'], $classified['click_id'], $now);
+            $settled = $this->intake->settle($registration, (int) $row['is_test'] === 1, $installRowId, $classified['state'], $classified['reason'], $classified['click_id'], $now);
 
-            return ['state' => $classified['state'], 'post' => $post, 'user' => $registration->userId];
+            // The state written, not the one classified: under Play Integrity's
+            // require an attributable install may be held (pending_integrity).
+            return ['state' => $settled['state'], 'post' => $settled['post'], 'user' => $registration->userId];
         };
         try {
             $done = $this->conn->transaction($work);
