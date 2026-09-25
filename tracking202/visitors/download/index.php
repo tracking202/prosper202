@@ -1,9 +1,14 @@
 <?php
 declare(strict_types=1);
 include_once(substr(__DIR__, 0,-30) . '/202-config/connect.php');
+require_once(substr(__DIR__, 0,-30) . '/202-config/functions-report-prefs.php');
 	
 //make sure user is logged in or die
 	AUTH::require_user();
+
+// Draw the view the page rendered, not whatever the stored filters say by
+// now (ReportView); a request that carries none reads the stored ones.
+$reportView = p202_report_view_begin();
 	
 //start displaying the data     
 	header("Content-type: application/octet-stream");

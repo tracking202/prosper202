@@ -429,126 +429,99 @@ if (!$success) {
 		exit;
 	}
 
-	info_top(); ?>
-	<style>
-		.error {
-			color: #a94442;
-			background-color: #f2dede;
-			border: 1px solid #ebccd1;
-			padding: 5px 10px;
-			border-radius: 4px;
-			margin-top: 5px;
-			font-size: 12px;
-		}
-	</style>
-	<div class="main col-xs-7 install">
-		<center><img src="<?php echo get_absolute_url(); ?>202-img/prosper202.png"></center>
-		<h6>Welcome</h6>
-		<small>Welcome to the five minute Prosper202 installation process! Just fill in the information below, and you'll be on your way to using the most powerful internet marketing applications in the world.</small>
-		<br><br>
-		<small>Need Extra Help? Check out our <a href="http://support.tracking202.com/" target="_blank" rel="noopener noreferrer">ReadMe documentation</a>.</small>
-
-		<h6>Create your account</h6>
-		<small>Please provide the following information. Don't worry, you can always change these settings later.</small>
-		<br><br>
-		<div id="install-general-error"><?php echo $error['general'] ?? ''; ?></div>
-		<form method="post" action="" class="form-horizontal" role="form" id="install-prosper202">
+	info_top(['title' => 'Install - Prosper202 ClickServer', 'wide' => true]); ?>
+	<div id="install-panel">
+	<?php echo p202_standalone_card('Create your account', 'The last step of the five-minute install. You can change all of this later.'); ?>
+		<div id="install-general-error"><?php if (($error['general'] ?? '') !== '') { ?><div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><?php echo $error['general']; ?></div></div><?php } ?></div>
+		<form method="post" action="" id="install-prosper202">
 
 			<input type="hidden" name="token" value="<?php echo htmlentities((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
-			<input type="hidden" class="form-control input-sm" id="user_api" name="user_api" value="<?php echo $html['user_api']; ?>">
+			<input type="hidden" id="user_api" name="user_api" value="<?php echo $html['user_api']; ?>">
 
-			<div class="form-group <?php if ($error['user_email']) echo "has-error"; ?>">
-				<label for="user_email" class="col-xs-4 control-label"><strong>Your Email:</strong></label>
-				<div class="col-xs-8">
-					<input type="text" class="form-control input-sm" id="user_email" name="user_email" value="<?php echo $html['user_email']; ?>">
-					<div class="js-field-error" id="error-user_email"><?php echo $error['user_email']; ?></div>
-				</div>
+			<div class="mb-3">
+				<label for="user_email" class="form-label">Your email</label>
+				<input type="email" class="form-control<?php echo $error['user_email'] ? ' is-invalid' : ''; ?>" id="user_email" name="user_email" value="<?php echo $html['user_email']; ?>" autocomplete="email" required>
+				<div class="form-text">Where password resets and the daily report go.</div>
+				<div class="invalid-feedback d-block js-field-error" id="error-user_email"><?php echo $error['user_email']; ?></div>
 			</div>
 
-			<div class="form-group">
-				<label for="user_timezone" class="col-xs-4 control-label"><strong>Time Zone:</strong></label>
-				<div class="col-xs-8">
-					<?php
+			<div class="mb-3">
+				<label for="user_timezone" class="form-label">Time zone</label>
+				<?php
+				// The browser's own zone is chosen below when the list has it;
+				// until then, what was posted, the server's, or Los Angeles.
+				$user_timezone = '';
+				if (isset($_POST['user_timezone'])) {
+				    $user_timezone = $_POST['user_timezone'];
+				} elseif (isset($_SERVER['TZ'])) {
+				    $user_timezone = $_SERVER['TZ'];
+				} else {
+				    $user_timezone = 'America/Los_Angeles';
+				}
 
+				$utc = new DateTimeZone('UTC');
+				$dt = new DateTime('now', $utc);
 
+				echo '<select class="form-select" name="user_timezone" id="user_timezone">';
+				foreach (DateTimeZone::listIdentifiers() as $tz) {
+					$current_tz = new DateTimeZone($tz);
+					$offset =  $current_tz->getOffset($dt);
+					$transition =  $current_tz->getTransitions($dt->getTimestamp(), $dt->getTimestamp());
+					$abbr = $transition[0]['abbr'];
 
-					// Try to detect user's timezone
-					$user_timezone = '';
-					if (isset($_POST['user_timezone'])) {
-					    $user_timezone = $_POST['user_timezone'];
-					} elseif (isset($_SERVER['TZ'])) {
-					    $user_timezone = $_SERVER['TZ'];
-					} else {
-					    // Default to a common timezone if detection fails
-					    $user_timezone = 'America/Los_Angeles';
-					}
-
-					$utc = new DateTimeZone('UTC');
-					$dt = new DateTime('now', $utc);
-
-					echo '<select class="form-control input-sm" name="user_timezone" id="user_timezone">';
-					foreach (DateTimeZone::listIdentifiers() as $tz) {
-						$current_tz = new DateTimeZone($tz);
-						$offset =  $current_tz->getOffset($dt);
-						$transition =  $current_tz->getTransitions($dt->getTimestamp(), $dt->getTimestamp());
-						$abbr = $transition[0]['abbr'];
-
-						$selected = ($tz === $user_timezone) ? ' selected' : '';
-						echo '<option value="' . $tz . '"' . $selected . '>' . $tz . ' [' . $abbr . ' ' . formatOffset($offset) . ']</option>';
-					}
-					echo '</select>';
-					?>
-					<script type="text/javascript">
-						// Function to detect user's timezone and select it in dropdown
-						(function() {
-							try {
-								// Get user's timezone using Intl API
-								const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-								console.log("Detected timezone: " + userTimezone);
-
-								// Find and select the user's timezone in the dropdown
-								const timezoneSelector = document.getElementById('user_timezone');
-								if (timezoneSelector) {
-									for (let i = 0; i < timezoneSelector.options.length; i++) {
-										if (timezoneSelector.options[i].value === userTimezone) {
-											timezoneSelector.selectedIndex = i;
-											break;
-										}
+					$selected = ($tz === $user_timezone) ? ' selected' : '';
+					echo '<option value="' . htmlspecialchars($tz, ENT_QUOTES, 'UTF-8') . '"' . $selected . '>' . htmlspecialchars($tz . ' [' . $abbr . ' ' . formatOffset($offset) . ']', ENT_QUOTES, 'UTF-8') . '</option>';
+				}
+				echo '</select>';
+				?>
+				<div class="form-text" id="user_timezone_hint">Reports count days in this zone.</div>
+				<script>
+					// Choose the browser's own time zone when the list has it, and say so.
+					(function() {
+						try {
+							var userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+							var timezoneSelector = document.getElementById('user_timezone');
+							if (timezoneSelector && userTimezone) {
+								for (var i = 0; i < timezoneSelector.options.length; i++) {
+									if (timezoneSelector.options[i].value === userTimezone) {
+										timezoneSelector.selectedIndex = i;
+										document.getElementById('user_timezone_hint').textContent = 'Reports count days in this zone. Chosen from your browser; change it if this server reports for somewhere else.';
+										break;
 									}
 								}
-							} catch (e) {
-								console.error("Error detecting timezone: " + e.message);
 							}
-						})();
-					</script>
+						} catch (e) {
+							// No Intl support: the server's choice stands.
+						}
+					})();
+				</script>
+			</div>
+
+			<div class="mb-3">
+				<label for="user_name" class="form-label">Username</label>
+				<input type="text" class="form-control<?php echo $error['user_name'] ? ' is-invalid' : ''; ?>" id="user_name" name="user_name" value="<?php echo $html['user_name']; ?>" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+				<div class="form-text">Letters and numbers, <?php echo (int) $rules['username_min']; ?> to <?php echo (int) $rules['username_max']; ?> characters.</div>
+				<div class="invalid-feedback d-block js-field-error" id="error-user_name"><?php echo $error['user_name']; ?></div>
+			</div>
+
+			<div class="row g-3 mb-3">
+				<div class="col-sm-6">
+					<label for="user_pass" class="form-label">Password</label>
+					<input type="password" class="form-control<?php echo $error['user_pass'] ? ' is-invalid' : ''; ?>" id="user_pass" name="user_pass" autocomplete="new-password" required>
+				</div>
+				<div class="col-sm-6">
+					<label for="verify_user_pass" class="form-label">Type it again</label>
+					<input type="password" class="form-control<?php echo $error['user_pass'] ? ' is-invalid' : ''; ?>" id="verify_user_pass" name="verify_user_pass" autocomplete="new-password" required>
+				</div>
+				<?php // Password errors render once, under both password fields ?>
+				<div class="col-12 mt-1">
+					<div class="form-text mt-0">At least <?php echo (int) $rules['password_min']; ?> characters.</div>
+					<div class="invalid-feedback d-block js-field-error" id="error-user_pass"><?php echo $error['user_pass']; ?></div>
 				</div>
 			</div>
 
-			<div class="form-group <?php if ($error['user_name']) echo "has-error"; ?>">
-				<label for="user_name" class="col-xs-4 control-label"><strong>Username:</strong></label>
-				<div class="col-xs-8">
-					<input type="text" class="form-control input-sm" id="user_name" name="user_name" value="<?php echo $html['user_name']; ?>">
-					<div class="js-field-error" id="error-user_name"><?php echo $error['user_name']; ?></div>
-				</div>
-			</div>
-
-			<div class="form-group <?php if ($error['user_pass']) echo "has-error"; ?>">
-				<label for="user_pass" class="col-xs-4 control-label"><strong>Password:</strong></label>
-				<div class="col-xs-8">
-					<input type="password" class="form-control input-sm" id="user_pass" name="user_pass">
-					<?php // Password errors render once, here at the top password field ?>
-					<div class="js-field-error" id="error-user_pass"><?php echo $error['user_pass']; ?></div>
-				</div>
-			</div>
-
-			<div class="form-group <?php if ($error['user_pass']) echo "has-error"; ?>">
-				<label for="verify_user_pass" class="col-xs-4 control-label"><strong>Verify Password:</strong></label>
-				<div class="col-xs-8">
-					<input type="password" class="form-control input-sm" id="verify_user_pass" name="verify_user_pass">
-				</div>
-			</div>
-
-			<button class="btn btn-lg btn-p202 btn-block" type="submit">Install Prosper202 ClickServer<span class="fui-check-inverted pull-right"></span></button>
+			<button class="btn btn-primary btn-lg w-100" type="submit">Install Prosper202 ClickServer</button>
+			<p class="small text-secondary mt-3 mb-0">Need help? Read the <a href="http://support.tracking202.com/" target="_blank" rel="noopener noreferrer">install guide</a>.</p>
 			<script type="text/javascript">
 			(function () {
 				var BASE = <?php echo json_encode(get_absolute_url()) ?: '""'; ?>;
@@ -563,30 +536,33 @@ if (!$success) {
 					var el = document.getElementById(id);
 					if (el) { el.innerHTML = html || ''; }
 				}
+				// A flash in the kit's shape; html is the server's own markup or text this script wrote.
+				function flash(kind, icon, html) {
+					return '<div class="alert alert-' + kind + ' p202-flash" role="' + (kind === 'danger' ? 'alert' : 'status') + '"><i class="bi ' + icon + '"></i><div class="p202-flash__body">' + html + '</div></div>';
+				}
 				// Neutral (non-error) status shown in the general-error slot while a retry is pending.
 				function showRetrying(nextAttempt) {
-					setHtml('install-general-error', '<div style="margin-top:5px;padding:5px 10px;border-radius:4px;'
-						+ 'font-size:12px;color:#31708f;background-color:#d9edf7;border:1px solid #bce8f1;">'
-						+ 'Connection issue — retrying… (attempt ' + nextAttempt + ' of ' + MAX_ATTEMPTS + ')</div>');
+					setHtml('install-general-error', flash('info', 'bi-arrow-repeat', 'Connection issue — retrying… (attempt ' + nextAttempt + ' of ' + MAX_ATTEMPTS + ')'));
 				}
-				function markGroup(name, on) {
-					var input = form.querySelector('[name="' + name + '"]');
-					if (!input) { return; }
-					var group = input.closest('.form-group');
-					if (group) { group.classList.toggle('has-error', !!on); }
+				// The fields a message belongs to: a password message marks both password fields.
+				var FIELDS = { user_email: ['user_email'], user_name: ['user_name'], user_pass: ['user_pass', 'verify_user_pass'] };
+				function markField(name, on) {
+					(FIELDS[name] || []).forEach(function (f) {
+						var input = form.querySelector('[name="' + f + '"]');
+						if (input) { input.classList.toggle('is-invalid', !!on); }
+					});
 				}
 				function clearErrors() {
 					setHtml('install-general-error', '');
-					['user_email', 'user_name', 'user_pass'].forEach(function (f) { setHtml('error-' + f, ''); });
-					['user_email', 'user_name', 'user_pass', 'verify_user_pass'].forEach(function (f) { markGroup(f, false); });
+					['user_email', 'user_name', 'user_pass'].forEach(function (f) { setHtml('error-' + f, ''); markField(f, false); });
 				}
 				// Server messages already carry <div class="error"> markup; wrap plain client text to match.
 				function wrap(msg) { return msg.indexOf('<div') !== -1 ? msg : '<div class="error">' + msg + '</div>'; }
 
 				function showErrors(errors) {
-					if (errors.general) { setHtml('install-general-error', wrap(errors.general)); }
+					if (errors.general) { setHtml('install-general-error', flash('danger', 'bi-x-circle', wrap(errors.general))); }
 					['user_email', 'user_name', 'user_pass'].forEach(function (f) {
-						if (errors[f]) { setHtml('error-' + f, wrap(errors[f])); markGroup(f, true); }
+						if (errors[f]) { setHtml('error-' + f, wrap(errors[f])); markField(f, true); }
 					});
 				}
 
@@ -643,9 +619,9 @@ if (!$success) {
 				function attempt(n) {
 					postOnce().then(function (res) {
 						if (res.success) {
-							var main = document.querySelector('.main.install') || document.querySelector('.main');
-							if (main && res.html) {
-								main.outerHTML = res.html;
+							var panel = document.getElementById('install-panel');
+							if (panel && res.html) {
+								panel.outerHTML = res.html;
 								window.scrollTo(0, 0);
 							} else {
 								window.location.reload();
@@ -668,10 +644,10 @@ if (!$success) {
 							return;
 						}
 						busy(false);
-						setHtml('install-general-error', '<div class="error">We\'re having trouble reaching the server. '
+						setHtml('install-general-error', flash('danger', 'bi-x-circle', 'We\'re having trouble reaching the server. '
 							+ 'Check your connection and try again. If it keeps happening you can '
 							+ '<a href="' + BASE + '202-config/setup-config.php">re-check your database settings</a> '
-							+ 'or follow the <a href="http://support.tracking202.com/" target="_blank" rel="noopener noreferrer">manual install guide</a>.</div>');
+							+ 'or follow the <a href="http://support.tracking202.com/" target="_blank" rel="noopener noreferrer">manual install guide</a>.'));
 					});
 				}
 
@@ -687,6 +663,7 @@ if (!$success) {
 			})();
 			</script>
 		</form>
+	<?php echo p202_standalone_card_end(); ?>
 	</div>
 <?php info_bottom();
 }
@@ -694,7 +671,7 @@ if (!$success) {
 
 //if success is equal to true, and this campaign did complete
 if ($success) {
-	info_top();
+	info_top(['title' => 'Installed - Prosper202 ClickServer', 'wide' => true]);
 	$base_url = install_request_base_url($_SERVER, get_absolute_url());
 	render_install_success($html, $install_warnings, get_absolute_url(), (string) ($_SERVER['SERVER_NAME'] ?? ''), $base_url);
 	info_bottom();

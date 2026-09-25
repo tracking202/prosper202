@@ -108,727 +108,331 @@ if (isset($_GET['delete_rotator_id'])) {
 }
 
 
-template_top('Smart Redirector'); ?>
+// Post-redirect-get: a new redirector opens straight in the rules editor,
+// since rules are the next thing it needs; a removal answers with a redirect.
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && $add_success == true) {
+	$newId = $editing ? (int) ($_POST['rotator_id'] ?? 0) : (int) ($rotator_id ?? 0);
+	header('location: ' . get_absolute_url() . 'tracking202/setup/rotator.php?' . ($newId > 0 ? 'rotator_id=' . $newId . '&' : '') . ($editing ? 'saved=1' : 'added=1'));
+	exit;
+}
+if ($delete_success == true) {
+	header('location: ' . get_absolute_url() . 'tracking202/setup/rotator.php?deleted=1');
+	exit;
+}
 
-<!-- Page Header - Design System -->
-<div class="row" style="margin-bottom: 28px;">
-	<div class="col-xs-12">
-		<div class="setup-page-header">
-			<div class="setup-page-header__icon">
-				<span class="glyphicon glyphicon-refresh"></span>
+require_once __DIR__ . '/_includes/setup_ui.php';
+
+$base = get_absolute_url();
+$self = $base . 'tracking202/setup/rotator.php';
+$token = (string) ($_SESSION['token'] ?? '');
+$uid = (int) $_SESSION['user_id'];
+$ispEnabled = isset($user_row['maxmind_isp']) && $user_row['maxmind_isp'] == '1';
+
+$rotators = p202_setup_rows($db, "SELECT * FROM `202_rotators` WHERE `user_id`='" . $uid . "' ORDER BY `name` ASC");
+$rulesByRotator = [];
+foreach (p202_setup_rows($db, "SELECT r.* FROM 202_rotator_rules AS r INNER JOIN 202_rotators AS ro ON (ro.id = r.rotator_id) WHERE ro.user_id = '" . $uid . "' ORDER BY r.id ASC") as $rule) {
+	$rulesByRotator[(int) $rule['rotator_id']][] = $rule;
+}
+$criteriaByRule = [];
+foreach (p202_setup_rows($db, "SELECT c.* FROM 202_rotator_rules_criteria AS c INNER JOIN 202_rotators AS ro ON (ro.id = c.rotator_id) WHERE ro.user_id = '" . $uid . "' ORDER BY c.id ASC") as $criterion) {
+	$criteriaByRule[(int) $criterion['rule_id']][] = $criterion;
+}
+$redirectsByRule = [];
+foreach (p202_setup_rows($db, "SELECT rr.* FROM 202_rotator_rules_redirects AS rr INNER JOIN 202_rotator_rules AS r ON (r.id = rr.rule_id) INNER JOIN 202_rotators AS ro ON (ro.id = r.rotator_id) WHERE ro.user_id = '" . $uid . "' ORDER BY rr.id ASC") as $redirect) {
+	$redirectsByRule[(int) $redirect['rule_id']][] = $redirect;
+}
+
+// Destinations: the campaigns and landing pages the classic editor offered
+// (its landing-page list joins live campaigns, so it is the simple pages).
+$campaignOptions = p202_setup_campaign_options($db, $uid);
+$campaignNames = [];
+foreach ($campaignOptions as $group) {
+	foreach ($group['options'] as $id => $option) {
+		$campaignNames[(string) $id] = $option['label'];
+	}
+}
+$pageOptions = [];
+foreach (p202_setup_rows($db, "SELECT landing_page_id, landing_page_nickname, landing_page_type FROM 202_landing_pages JOIN 202_aff_campaigns USING (aff_campaign_id) WHERE 202_landing_pages.user_id = '" . $uid . "' AND COALESCE(aff_campaign_deleted,0) = 0 AND COALESCE(landing_page_deleted,0) = 0 ORDER BY landing_page_type, landing_page_nickname") as $page) {
+	$pageOptions[(string) $page['landing_page_id']] = (string) $page['landing_page_nickname'] . ((string) $page['landing_page_type'] === '1' ? ' (advanced)' : ' (simple)');
+}
+
+$criterionTypes = ['country' => 'Country', 'region' => 'State/Region', 'city' => 'City', 'isp' => 'ISP/Carrier', 'ip' => 'IP address', 'browser' => 'Browser', 'platform' => 'OS', 'device' => 'Device type'];
+$suggestUrl = $base . 'tracking202/ajax/rotator.php?autocomplete=true&type=%TYPE%&query=%QUERY';
+
+/** Where a redirect or default goes, in words, for the list. */
+$destination = static function (array $row, string $prefix) use ($campaignNames, $pageOptions): string {
+	if (!empty($row[$prefix . 'campaign'])) {
+		return 'campaign ' . ($campaignNames[(string) $row[$prefix . 'campaign']] ?? '#' . $row[$prefix . 'campaign']);
+	}
+	if (!empty($row[$prefix . 'lp'])) {
+		return 'landing page ' . ($pageOptions[(string) $row[$prefix . 'lp']] ?? '#' . $row[$prefix . 'lp']);
+	}
+	if (!empty($row[$prefix . 'url'])) {
+		return (string) $row[$prefix . 'url'];
+	}
+	return 'nowhere yet';
+};
+
+$selectedId = (int) ($_GET['rotator_id'] ?? 0);
+$selected = null;
+foreach ($rotators as $rotator) {
+	if ((int) $rotator['id'] === $selectedId) {
+		$selected = $rotator;
+	}
+}
+
+// ── The editor's parts, rendered for saved rules and as <template>s ──────
+$criterionRow = static function (array $criterion) use ($criterionTypes, $ispEnabled, $suggestUrl): string {
+	$type = (string) ($criterion['type'] ?? 'country');
+	$typeOptions = '';
+	foreach ($criterionTypes as $value => $label) {
+		$disabled = $value === 'isp' && !$ispEnabled ? ' disabled' : '';
+		$typeOptions .= '<option value="' . $value . '"' . ($type === $value ? ' selected' : '') . $disabled . '>' . p202_setup_e($label) . ($disabled !== '' ? ' (needs MaxMind ISP)' : '') . '</option>';
+	}
+	return '<div class="row g-2 align-items-end mb-2" data-p202-row data-criteria data-criteria-id="' . p202_setup_e($criterion['id'] ?? 'none') . '">'
+		. '<div class="col-6 col-md-3"><label class="form-label small w-100">If<select class="form-select form-select-sm" data-rule-field="type">' . $typeOptions . '</select></label></div>'
+		. '<div class="col-6 col-md-2"><label class="form-label small w-100">is or is not<select class="form-select form-select-sm" data-rule-field="statement">'
+		. p202_setup_options(['is' => 'is', 'is_not' => 'is not'], (string) ($criterion['statement'] ?? 'is')) . '</select></label></div>'
+		. '<div class="col-10 col-md-6"><label class="form-label small w-100">Values, comma separated'
+		. '<input type="text" class="form-control form-control-sm" data-rule-field="value" required value="' . p202_setup_e($criterion['value'] ?? '') . '" data-p202-suggest-url="' . p202_setup_e($suggestUrl) . '" autocomplete="off"></label></div>'
+		. '<div class="col-2 col-md-1"><button type="button" class="btn btn-link btn-sm text-danger" data-p202-remove-row aria-label="Remove this criterion"><i class="bi bi-x-lg"></i></button></div>'
+		. '</div>';
+};
+
+$redirectRow = static function (array $redirect) use ($campaignOptions, $pageOptions): string {
+	$type = !empty($redirect['redirect_lp']) ? 'lp' : (!empty($redirect['redirect_url']) ? 'url' : 'campaign');
+	return '<div class="row g-2 align-items-end mb-2" data-p202-row data-redirect data-redirect-id="' . p202_setup_e($redirect['id'] ?? 'none') . '">'
+		. '<div class="col-12 col-md-3"><label class="form-label small w-100">Send to<select class="form-select form-select-sm" data-rule-field="redirect_type">'
+		. p202_setup_options(['campaign' => 'Campaign', 'lp' => 'Landing page', 'url' => 'URL'], $type) . '</select></label></div>'
+		. '<div class="col-12 col-md-6">'
+		. '<label class="form-label small w-100" data-destination="campaign"' . ($type === 'campaign' ? '' : ' hidden') . '>Campaign<select class="form-select form-select-sm" data-rule-field="redirect_campaign" required>'
+		. p202_setup_options($campaignOptions, (string) ($redirect['redirect_campaign'] ?? ''), 'Choose a campaign') . '</select></label>'
+		. '<label class="form-label small w-100" data-destination="lp"' . ($type === 'lp' ? '' : ' hidden') . '>Landing page<select class="form-select form-select-sm" data-rule-field="redirect_lp" required>'
+		. p202_setup_options($pageOptions, (string) ($redirect['redirect_lp'] ?? ''), 'Choose a landing page') . '</select></label>'
+		. '<label class="form-label small w-100" data-destination="url"' . ($type === 'url' ? '' : ' hidden') . '>URL<input type="url" class="form-control form-control-sm" data-rule-field="redirect_url" required placeholder="https://" value="' . p202_setup_e($redirect['redirect_url'] ?? '') . '"></label>'
+		. '</div>'
+		. '<div class="col-8 col-md-2" data-split-only><label class="form-label small w-100">Weight<input type="number" min="1" class="form-control form-control-sm" data-rule-field="weight" required value="' . p202_setup_e($redirect['weight'] ?? '') . '" placeholder="50"></label></div>'
+		. '<div class="col-4 col-md-1" data-split-only><button type="button" class="btn btn-link btn-sm text-danger" data-p202-remove-row aria-label="Remove this destination"><i class="bi bi-x-lg"></i></button></div>'
+		. '</div>';
+};
+
+$ruleCard = static function (array $rule, array $criteria, array $redirects, bool $removable) use ($criterionRow, $redirectRow): string {
+	$ruleKey = isset($rule['id']) ? (string) $rule['id'] : 'new';
+	$split = !empty($rule['splittest']);
+	$inactive = isset($rule['status']) && (string) $rule['status'] === '0';
+	if ($criteria === []) {
+		$criteria = [[]];
+	}
+	if ($redirects === []) {
+		$redirects = [[]];
+	}
+	$criteriaHtml = '';
+	foreach ($criteria as $criterion) {
+		$criteriaHtml .= $criterionRow($criterion);
+	}
+	$redirectsHtml = '';
+	foreach ($redirects as $redirect) {
+		$redirectsHtml .= $redirectRow($redirect);
+	}
+	return '<section class="p202-panel mb-3" data-p202-row data-rule data-rule-id="' . p202_setup_e($rule['id'] ?? 'none') . '">'
+		. '<div class="p202-panel__head">'
+		. '<h3 class="p202-panel__title">Rule</h3>'
+		. '<div class="p202-panel__aside p202-toolbar">'
+		. '<div class="form-check form-switch mb-0"><input class="form-check-input" type="checkbox" role="switch" id="split-' . $ruleKey . '" data-rule-field="split"' . ($split ? ' checked' : '') . '><label class="form-check-label" for="split-' . $ruleKey . '">Split test</label></div>'
+		. '<div class="form-check form-switch mb-0"><input class="form-check-input" type="checkbox" role="switch" id="inactive-' . $ruleKey . '" data-rule-field="inactive"' . ($inactive ? ' checked' : '') . '><label class="form-check-label" for="inactive-' . $ruleKey . '">Inactive</label></div>'
+		. ($removable ? '<button type="button" class="btn btn-outline-danger btn-sm" data-p202-remove-row>Remove rule</button>' : '')
+		. '</div></div>'
+		. '<div class="p202-panel__body">'
+		. '<div class="mb-3"><label class="form-label" for="rule-name-' . $ruleKey . '">Rule name</label>'
+		. '<input type="text" class="form-control" id="rule-name-' . $ruleKey . '" data-rule-field="rule_name" required value="' . p202_setup_e($rule['rule_name'] ?? '') . '" placeholder="US mobile visitors"></div>'
+		. '<div class="form-label">When a visitor matches every criterion</div>'
+		. '<div data-criteria-list>' . $criteriaHtml . '</div>'
+		. '<button type="button" class="btn btn-secondary btn-sm mb-3" data-add-criterion><i class="bi bi-plus"></i> Add a criterion</button>'
+		. '<div class="form-label">send them to</div>'
+		. '<div data-redirect-list data-split="' . ($split ? '1' : '0') . '">' . $redirectsHtml . '</div>'
+		. '<button type="button" class="btn btn-secondary btn-sm" data-add-redirect data-split-only><i class="bi bi-plus"></i> Add a destination</button>'
+		. '</div></section>';
+};
+
+template_top('Smart Redirector', ['ui' => 'v2']); ?>
+
+<div class="p202-page-header p202-page-header--accent">
+	<div class="p202-page-header__icon"><i class="bi bi-arrow-repeat"></i></div>
+	<div class="p202-page-header__text">
+		<h1 class="p202-page-header__title">Redirector</h1>
+		<p class="p202-page-header__desc">Send each visitor where they convert best: by country, device, browser and more, or split-test several destinations.</p>
+	</div>
+</div>
+
+<?php
+echo p202_setup_query_flashes([
+	'added' => 'Redirector added. Give it a default destination and its first rule below.',
+	'saved' => 'Redirector renamed.',
+	'deleted' => 'Redirector removed, with its rules.',
+	'rules_added' => 'Rules saved.',
+], $_GET);
+if ($error) {
+	echo p202_setup_error_flashes($error, ['rotator_name']);
+}
+?>
+
+<div class="row g-4 mb-4">
+	<div class="col-12 col-lg-5">
+		<section class="p202-panel" id="rotator-form">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">Add a redirector</h2>
+				<p class="p202-panel__sub">One tracking link that decides where each visitor goes.</p>
 			</div>
-			<div class="setup-page-header__text">
-				<h1 class="setup-page-header__title">Redirector</h1>
-				<p class="setup-page-header__subtitle">Create intelligent routing rules based on country, device, browser, or custom criteria</p>
+			<div class="p202-panel__body">
+				<form method="post" action="<?php echo p202_setup_e($self); ?>">
+					<?php echo p202_setup_token_field($token); ?>
+					<div class="mb-3">
+						<label class="form-label" for="rotator_name">Redirector name</label>
+						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'rotator_name'); ?>" id="rotator_name" name="rotator_name" value="<?php echo p202_setup_e($_SERVER['REQUEST_METHOD'] == 'POST' ? (string) ($_POST['rotator_name'] ?? '') : ''); ?>" maxlength="255" required>
+						<?php echo p202_setup_feedback($error, 'rotator_name'); ?>
+					</div>
+					<div class="p202-form-actions">
+						<button type="submit" class="btn <?php echo $selected === null ? 'btn-primary' : 'btn-secondary'; ?>" id="addRotator">Add redirector</button>
+					</div>
+				</form>
 			</div>
-		</div>
+		</section>
 	</div>
-</div>
 
-<div class="row" style="margin-bottom: 15px; display: none;" id="form_erors">
-	<div class="col-xs-12">
-		<div class="alert alert-danger">
-			<i class="fa fa-exclamation-circle"></i> Hey! Make sure all fields are filled.
-		</div>
-	</div>
-</div>
-
-<?php if ($error) { ?>
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<div class="alert alert-danger">
-			<i class="fa fa-exclamation-circle"></i> There were errors with your submission. <?php echo $error['token'] ?? ''; ?>
-		</div>
-	</div>
-</div>
-<?php } ?>
-
-<?php if ($add_success == true) { ?>
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<div class="alert alert-success">
-			<i class="fa fa-check-circle"></i> Your submission was successful. Your changes have been saved.
-		</div>
-	</div>
-</div>
-<?php } ?>
-
-<?php if ($delete_success == true) { ?>
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<div class="alert alert-success">
-			<i class="fa fa-check-circle"></i> Your deletion was successful. You have successfully removed a redirector.
-		</div>
-	</div>
-</div>
-<?php } ?>
-
-<div class="row form_seperator" style="margin-bottom:15px;">
-	<div class="col-xs-12"></div>
-</div>
-
-<div class="row">
-	<div class="col-md-6">
-		<small><strong>Add New Smart Redirector</strong></small><br />
-		<span class="infotext">Give a name for your redirector.</span>
-
-		<form method="post" action="" class="form-inline" role="form" style="margin:15px 0px;">
-			<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES); ?>" />
-			<div class="form-group">
-				<label class="sr-only" for="rotator_name">Smart Redirector</label>
-				<input type="text" class="form-control input-sm" id="rotator_name" name="rotator_name" placeholder="Redirector name">
+	<div class="col-12 col-lg-7">
+		<section class="p202-panel">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">Your redirectors</h2>
+				<span class="p202-pill p202-pill--accent"><?php echo count($rotators); ?></span>
+				<?php if (count($rotators) > 5) { ?>
+					<div class="p202-panel__aside"><?php echo p202_setup_list_filter('rotator-list', 'Filter redirectors…'); ?></div>
+				<?php } ?>
 			</div>
-			<button type="submit" class="btn btn-xs btn-p202" id="addRotator">Add</button>
-		</form>
-	</div>
-
-		<div class="col-md-6">
-			<div class="panel panel-default setup-side-panel">
-			<div class="panel-heading">My Smart Redirectors</div>
-
-			<div class="panel-body">
-
-				<div id="filterRotators">
-					<input class="form-control input-sm search" style="margin-bottom: 10px; height: 30px;" placeholder="Filter">
-					<ul class="list">
-						<?php
-						$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-						$sql = "SELECT * FROM `202_rotators` WHERE `user_id`='" . $mysql['user_id'] . "' ORDER BY `name` ASC";
-						$result = $db->query($sql) or record_mysql_error($sql);
-						if ($result->num_rows == 0) {
-						?><li class="empty-state">No redirectors added yet</li><?php
-																	}
-
-																	while ($row = $result->fetch_array(MYSQLI_ASSOC)) {
-																		$html['name'] = htmlentities((string) $row['name'], ENT_QUOTES, 'UTF-8');
-																		$html['id'] = htmlentities((string) $row['id'], ENT_QUOTES, 'UTF-8');
-
-																		if ($userObj->hasPermission("remove_rotator")) {
-																			printf('<li><span class="filter_rotator_name">%s</span> <a href="?delete_rotator_id=%s&delete_rotator_name=%s&token=' . urlencode((string) ($_SESSION['token'] ?? '')) . '" class="list-action list-action-danger" onclick="return confirmAlert(\'Are you sure?\');">remove</a></li>', $html['name'], $html['id'], $html['name']);
-																		} else {
-																			printf('<li><span class="filter_rotator_name">%s</span></li>', $html['name']);
-																		}
-
-																		$rule_sql = "SELECT * FROM `202_rotator_rules` WHERE `rotator_id`='" . $row['id'] . "' ORDER BY `id` ASC";
-																		$rule_result = $db->query($rule_sql) or record_mysql_error($rule_sql);
-																		if ($rule_result->num_rows == 0) {
-																		?><ul>
-									<li>You have not added any rules.</li>
-								</ul><?php
-																		} else {
-																			echo "<ul>";
-																			while ($rule_row = $rule_result->fetch_array()) {
-																				$criteria_sql = "SELECT * FROM `202_rotator_rules_criteria` WHERE `rule_id`='" . $rule_row['id'] . "' ORDER BY `id` ASC";
-																				$criteria_result = $db->query($criteria_sql) or record_mysql_error($criteria_sql);
-																				if ($criteria_result->num_rows > 0) {
-																					$criteria = "You have " . $criteria_result->num_rows . " criteria added";
-																				} else {
-																					$criteria = "No criteria added";
-																				}
-
-										?>
-									<li><span class="filter_rule_name"><?php echo $rule_row['rule_name']; ?></span><span class="rule-criteria"><?php echo $criteria; ?></span> <a href="" id="rule_details" data-id="<?php echo $rule_row['id']; ?>" data-toggle="modal" data-target="#rule_values_modal" class="list-action">Details</a></li>
-								<?php }
-																			echo "</ul>";
-								?>
-
-						<?php }
-																	}
-						?>
+			<div class="p202-panel__body">
+				<?php if ($rotators === []) { ?>
+					<div class="p202-empty">
+						<i class="bi bi-arrow-repeat p202-empty__icon"></i>
+						<strong class="p202-empty__title">No redirectors yet</strong>
+						<div>Name one, and its rules editor opens here.</div>
+						<div class="p202-empty__action"><a class="btn btn-secondary btn-sm" href="#rotator_name">Name your first redirector</a></div>
+					</div>
+				<?php } else { ?>
+					<ul class="p202-list" id="rotator-list">
+						<?php foreach ($rotators as $rotator) {
+							$rid = (int) $rotator['id'];
+							$rules = $rulesByRotator[$rid] ?? []; ?>
+							<li class="p202-list__item<?php echo $rid === $selectedId ? ' is-active' : ''; ?>" data-p202-filter-text="<?php echo p202_setup_e($rotator['name']); ?>">
+								<span class="p202-list__name"><?php echo p202_setup_e($rotator['name']); ?></span>
+								<span class="p202-pill"><?php echo count($rules) . ' ' . (count($rules) === 1 ? 'rule' : 'rules'); ?></span>
+								<span class="p202-list__actions">
+									<a class="p202-list__action" href="<?php echo p202_setup_e($self . '?rotator_id=' . $rid . '#rules'); ?>">edit rules</a>
+									<?php if ($userObj->hasPermission("remove_rotator")) {
+										echo p202_setup_remove_form($self, ['delete_rotator_id' => $rid, 'delete_rotator_name' => (string) $rotator['name'], 'token' => $token],
+											'Remove the redirector "' . $rotator['name'] . '" and its rules? Tracking links that use it stop redirecting.');
+									} ?>
+								</span>
+								<span class="p202-list__meta">Default: <?php echo p202_setup_e($destination($rotator, 'default_')); ?></span>
+								<?php if ($rules !== []) { ?>
+									<ul class="p202-list__children">
+										<?php foreach ($rules as $rule) {
+											$ruleId = (int) $rule['id'];
+											$conditions = array_map(
+												static fn (array $c): string => ($criterionTypes[$c['type']] ?? $c['type']) . ' ' . ($c['statement'] === 'is_not' ? 'is not' : 'is') . ' ' . $c['value'],
+												$criteriaByRule[$ruleId] ?? []
+											);
+											$targets = array_map(
+												static fn (array $r): string => $destination($r, 'redirect_') . ((int) $rule['splittest'] === 1 && $r['weight'] !== null ? ' (weight ' . $r['weight'] . ')' : ''),
+												$redirectsByRule[$ruleId] ?? []
+											); ?>
+											<li class="p202-list__item">
+												<span class="p202-list__name"><?php echo p202_setup_e($rule['rule_name']); ?></span>
+												<?php if ((string) $rule['status'] === '0') { ?><span class="p202-pill p202-pill--warn">inactive</span><?php } ?>
+												<?php if ((int) $rule['splittest'] === 1) { ?><span class="p202-pill">split test</span><?php } ?>
+												<span class="p202-list__meta">If <?php echo p202_setup_e($conditions === [] ? 'no criteria' : implode(' and ', $conditions)); ?> · to <?php echo p202_setup_e($targets === [] ? 'nowhere yet' : implode(', ', $targets)); ?></span>
+											</li>
+										<?php } ?>
+									</ul>
+								<?php } ?>
+							</li>
+						<?php } ?>
 					</ul>
-				</div>
+				<?php } ?>
 			</div>
-		</div>
+		</section>
 	</div>
 </div>
 
-<div class="row form_seperator" style="margin-bottom:15px;">
-	<div class="col-xs-12"></div>
-</div>
+<?php if ($rotators !== []) { ?>
+<section class="p202-section" id="rules">
+	<h2 class="p202-section__title">Rules</h2>
+	<form class="p202-toolbar mb-3" method="get" action="<?php echo p202_setup_e($self); ?>" data-rotator-picker>
+		<label class="form-label mb-0" for="rotator_id">Redirector</label>
+		<select class="form-select" id="rotator_id" name="rotator_id" style="max-width: 20rem;">
+			<?php
+			$rotatorOptions = [];
+			foreach ($rotators as $rotator) {
+				$rotatorOptions[(string) $rotator['id']] = (string) $rotator['name'];
+			}
+			echo p202_setup_options($rotatorOptions, $selectedId > 0 ? (string) $selectedId : null, 'Choose a redirector', '0');
+			?>
+		</select>
+		<button type="submit" class="btn btn-secondary">Open</button>
+	</form>
 
-<div class="row">
-	<div class="col-xs-12">
-		<small><strong>Add Rule to Your Smart Redirector</strong></small><br />
-		<span class="infotext">Select redirector, to add new rule. You can add as many rules as you want, for each redirector.</span>
-	</div>
-</div>
-
-<form class="form-inline" onsubmit="return false;" role="form" id="rule_form" method="post" action="">
-	<div class="row" style="margin-top:15px;">
-		<div class="col-xs-4">
-			<div class="form-group">
-				<img id="rules_loading" class="loading" src="/202-img/loader-small.gif" style="display:none;right: -20px;top: 10px;" />
-				<label for="rotator_id" style="margin-right:5px;">Select redirector: </label>
-				<select class="form-control input-sm" name="rotator_id" style="min-width: 130px;">
-					<option value="0">--</option>
-					<?php $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-					$rotator_sql = "SELECT * FROM `202_rotators` WHERE `user_id`='" . $mysql['user_id'] . "' ORDER BY `name` ASC";
-					$rotator_result = _mysqli_query($rotator_sql);
-					while ($rotator_row = $rotator_result->fetch_array(MYSQLI_ASSOC)) {
-
-						$html['rotator_name'] = htmlentities((string)($rotator_row['name'] ?? ''), ENT_QUOTES, 'UTF-8');
-						$html['rotator_id'] = htmlentities((string)($rotator_row['id'] ?? ''), ENT_QUOTES, 'UTF-8');
-
-						printf('<option value="%s">%s</option>', $html['rotator_id'], $html['rotator_name']);
-					} ?>
-				</select>
-			</div>
-		</div>
-
-		<div id="defaults_container" style="opacity:0.5">
-			<div class="col-xs-4">
-				<label for="default_type" class="col-xs-5 control-label">Defaults to: </label>
-				<select class="form-control input-sm" name="default_type" id="default_type_select" disabled>
-					<option value="">Campaign</option>
-					<option value="">Landing Page</option>
-					<option value="">Url</option>
-					<!--<option value="">Auto Monetizer</option>-->
-				</select>
-			</div>
-
-			<div class="col-xs-4" id="default_campaign_select">
-				<select class="form-control input-sm" name="default_campaign" style="width: 100%;" disabled>
-					<option value="">--</option>
-				</select>
-			</div>
-			<div class="col-xs-8" id="default_url_input" style="display:none">
-				<div class="input-group input-group-sm">
-					<span class="input-group-addon"><i class="fa fa-globe"></i></span>
-					<input name="default_url" class="form-control" type="text" placeholder="http://" disabled>
+	<?php if ($selected === null) { ?>
+		<p class="text-body-secondary">Choose a redirector to edit its default destination and rules.</p>
+	<?php } else {
+		$rules = $rulesByRotator[(int) $selected['id']] ?? [];
+		$defaultType = !empty($selected['default_lp']) ? 'lp' : (!empty($selected['default_url']) ? 'url' : 'campaign'); ?>
+		<form id="rules-form" data-rules-url="<?php echo p202_setup_e($base . 'tracking202/ajax/rotator.php'); ?>" data-rotator-id="<?php echo (int) $selected['id']; ?>" data-done-url="<?php echo p202_setup_e($self . '?rotator_id=' . (int) $selected['id'] . '&rules_added=1#rules'); ?>">
+			<?php echo p202_setup_token_field($token); ?>
+			<div data-rules-error></div>
+			<section class="p202-panel mb-3">
+				<div class="p202-panel__head">
+					<h3 class="p202-panel__title">Default destination</h3>
+					<p class="p202-panel__sub">Where a visitor goes when no rule matches.</p>
 				</div>
-			</div>
-		</div>
-
-	</div>
-
-	<div class="row" id="rotator_rules_container" style="opacity:0.5">
-		<div class="col-xs-12" style="margin-top:15px;">
-			<div class="col-xs-12 rules">
-				<div class="row">
-					<div class="col-xs-12">
-						<div class="form-group">
-							<label for="rule_name">Rule name: </label>
-							<input class="form-control input-sm" name="rule_name" placeholder="Type in rule name" disabled />
-						</div>
-						<div class="form-group" style="float:right; margin-right: 25px;">
-							<label class="checkbox" for="inactive" style="margin-bottom: 12px;padding-left: 32px;">
-								<input type="checkbox" id="inactive" name="inactive" data-toggle="checkbox">
-								Inactive
-							</label>
-						</div>
-						<div class="form-group" style="float:right; margin-right: 25px;">
-							<label class="checkbox" for="splittest" style="margin-bottom: 12px;padding-left: 32px;">
-								<input type="checkbox" id="splittest" name="splittest" data-toggle="checkbox">Split test</label>
+				<div class="p202-panel__body">
+					<div class="row g-2 align-items-end" data-defaults>
+						<div class="col-12 col-md-3"><label class="form-label w-100" for="default_type_select">Send to
+							<select class="form-select" id="default_type_select" name="default_type">
+								<?php echo p202_setup_options(['campaign' => 'Campaign', 'lp' => 'Landing page', 'url' => 'URL'], $defaultType); ?>
+							</select></label></div>
+						<div class="col-12 col-md-9">
+							<label class="form-label w-100" data-destination="campaign"<?php echo $defaultType === 'campaign' ? '' : ' hidden'; ?>>Campaign
+								<select class="form-select" name="default_campaign" required><?php echo p202_setup_options($campaignOptions, (string) ($selected['default_campaign'] ?? ''), 'Choose a campaign'); ?></select></label>
+							<label class="form-label w-100" data-destination="lp"<?php echo $defaultType === 'lp' ? '' : ' hidden'; ?>>Landing page
+								<select class="form-select" name="default_lp" required><?php echo p202_setup_options($pageOptions, (string) ($selected['default_lp'] ?? ''), 'Choose a landing page'); ?></select></label>
+							<label class="form-label w-100" data-destination="url"<?php echo $defaultType === 'url' ? '' : ' hidden'; ?>>URL
+								<input type="url" class="form-control" name="default_url" required placeholder="https://" value="<?php echo p202_setup_e($selected['default_url'] ?? ''); ?>"></label>
 						</div>
 					</div>
 				</div>
+			</section>
 
-				<div class="row form_seperator" style="margin-top:10px; margin-bottom:10px;">
-					<div class="col-xs-12" style="width: 97.5%;"></div>
-				</div>
-
-				<div class="row">
-					<div class="col-xs-10" id="criteria_container">
-						<div class="criteria" id="criteria">
-							<div class="form-group">
-								<label for="rule_type">If</label>
-								<select class="form-control input-sm" name="rule_type" style="margin: 0px 5px;" disabled>
-									<option value="country">Country</option>
-									<option value="region">State/Region</option>
-									<option value="city">Cities</option>
-									<option value="isp" <?php if (!isset($user_row['maxmind_isp']) || $user_row['maxmind_isp'] != '1') echo "disabled"; ?>>ISP/Carrier</option>
-									<option value="ip">IP Address</option>
-									<option value="browser">Browser Name</option>
-									<option value="platform">OS</option>
-									<option value="device">Device Type</option>
-								</select>
-							</div>
-
-							<div class="form-group">
-								<label for="rule_statement"><i class="fa fa-angle-double-right"></i></label>
-								<select class="form-control input-sm" name="rule_statement" style="margin: 0px 5px;" disabled>
-									<option value="is">IS</option>
-									<option value="is_not">IS NOT</option>
-								</select>
-							</div>
-
-							<div class="form-group">
-								<label for="rule_value">equal to:</label>
-								<input id="tag" class="value_select" name="value" placeholder="Type in country and hit Enter" disabled />
-							</div>
-						</div>
-					</div>
-
-					<div class="col-xs-2" style="margin-left: -18px; margin-top: 10px;">
-						<div class="form-group">
-							<img id="addmore_criteria_loading" class="loading" src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" style="display:none; position: absolute; top: 4px; left: -20px;">
-							<button id="add_more_criteria" class="btn btn-xs btn-default" disabled><span class="fui-plus"></span> Add more criteria</button>
-						</div>
-					</div>
-				</div>
-
-				<div class="row form_seperator" style="margin-top:10px; margin-bottom:10px;">
-					<div class="col-xs-12" style="width: 97.5%;"></div>
-				</div>
-
-				<div class="row">
-					<div class="col-xs-4">
-						<label for="redirect_type" style="margin-left: -15px;" class="col-xs-5 control-label">Redirects to: </label>
-						<select class="form-control input-sm" name="redirect_type" id="redirect_type_select" disabled>
-							<option value="">Campaign</option>
-							<option value="">Landing Page</option>
-							<option value="">Url</option>
-							<!--<option value="">Auto Monetizer</option>-->
-						</select>
-					</div>
-
-					<div class="col-xs-4" id="redirect_campaign_select" style="margin-left: -3%">
-						<select class="form-control input-sm" name="redirect_campaign" style="width: 100%;" disabled>
-							<option value="">--</option>
-						</select>
-					</div>
-					<div class="col-xs-8" id="redirect_url_input" style="display:none; width: 64.5%;">
-						<div class="input-group input-group-sm">
-							<span class="input-group-addon"><i class="fa fa-globe"></i></span>
-							<input name="redirect_url" class="form-control" type="text" placeholder="http://" disabled>
-						</div>
-					</div>
-				</div>
+			<div id="rule-list">
+				<?php if ($rules === []) {
+					echo $ruleCard([], [], [], false);
+				} else {
+					foreach ($rules as $index => $rule) {
+						echo $ruleCard($rule, $criteriaByRule[(int) $rule['id']] ?? [], $redirectsByRule[(int) $rule['id']] ?? [], $index > 0 && $userObj->hasPermission("remove_rotator_rule"));
+					}
+				} ?>
 			</div>
-		</div>
-	</div>
-	<div class="row">
-		<div class="col-xs-7" style="margin-top:15px;">
-			<span class="infotext">*If you want to split-test all visitors, select at least one criteria and type: <i><b>ALL</b></i> as value and hit <i><b>Enter</b></i>.</span>
-		</div>
-		<div class="col-xs-5 text-right" style="margin-top:15px;">
-			<img id="addmore_loading" class="loading" src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" style="display: none; position: static;">
-			<button id="add_more_rules" class="btn btn-xs btn-default" disabled><span class="fui-plus"></span> Add more rules</button>
-			<button class="btn btn-xs btn-p202" id="post_rules" disabled>Save rules</button>
-		</div>
-	</div>
-</form>
+			<template id="rule-template"><?php echo $ruleCard([], [], [], true); ?></template>
+			<template id="criterion-template"><?php echo $criterionRow([]); ?></template>
+			<template id="redirect-template"><?php echo $redirectRow([]); ?></template>
+			<datalist id="rotator-devices"><option value="bot">Bot</option><option value="mobile">Mobile</option><option value="tablet">Tablet</option><option value="desktop">Desktop</option></datalist>
 
-
-<script type="text/javascript">
-	$(document).ready(function() {
-		rotator_tags_autocomplete('tag', 'country');
-		var rotatorOptions = {
-			valueNames: ['filter_adv_lp_name'],
-			plugins: [
-				ListFuzzySearch()
-			]
-		};
-
-		var filterRotators = new List('filterRotators', rotatorOptions);
-	});
-</script>
-
-<div id="rule_values_modal" class="modal fade" role="dialog" aria-hidden="true">
-	<div class="modal-dialog">
-		<div class="modal-content">
-			<div class="modal-header">
-				<button type="button" class="close" data-dismiss="modal" aria-hidden="true">&times;</button>
-				<h4 class="modal-title">Rule details</h4>
+			<p class="form-text">To split-test every visitor, give a rule one criterion with the value <code>ALL</code>.</p>
+			<div class="p202-form-actions">
+				<button type="button" class="btn btn-secondary" data-add-rule><i class="bi bi-plus"></i> Add a rule</button>
+				<button type="submit" class="btn btn-primary" id="post_rules">Save rules</button>
 			</div>
-			<div class="modal-body">
-			</div>
-			<div class="modal-footer">
-				<button class="btn btn-wide btn-default" data-dismiss="modal">Close</button>
-			</div>
-		</div>
-	</div>
-</div>
-<style>
-/* ===========================================
-   SMART REDIRECTOR - Modern Design System
-   =========================================== */
+		</form>
+	<?php } ?>
+</section>
+<?php } ?>
 
-/* Page Header - Blue Gradient */
-.setup-page-header {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 24px;
-    background: #2f6fdd;
-    border-radius: 12px;
-    color: #fff;
-    box-shadow: 0 4px 15px rgba(47, 111, 221, 0.2);
-}
-
-.setup-page-header__icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 56px;
-    height: 56px;
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 12px;
-    flex-shrink: 0;
-    font-size: 24px;
-    color: #fff;
-}
-
-.setup-page-header__icon .glyphicon {
-    font-size: 24px;
-    color: #fff;
-}
-
-.setup-page-header__text {
-    flex: 1;
-}
-
-.setup-page-header__title {
-    margin: 0 0 4px 0;
-    font-size: 24px;
-    font-weight: 600;
-    color: #fff;
-}
-
-.setup-page-header__subtitle {
-    margin: 0;
-    font-size: 14px;
-    color: rgba(255, 255, 255, 0.9);
-    font-weight: 400;
-    line-height: 1.4;
-}
-
-/* Panel Styles - Modern Design */
-.panel-default {
-    border: 1px solid #e7e8ea;
-    border-radius: 12px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-    overflow: hidden;
-    background: #fff;
-    transition: box-shadow 0.2s ease;
-}
-
-.panel-default:hover {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
-
-.panel-heading {
-    background: #fafbfc;
-    border-bottom: 1px solid #e7e8ea;
-    padding: 16px 20px;
-    font-weight: 600;
-    color: #1f2328;
-    font-size: 15px;
-}
-
-.panel-body {
-    padding: 20px;
-}
-
-/* Form Elements - Modern Style */
-.form-control {
-    border: 1px solid #c9cdd3;
-    border-radius: 8px;
-    padding: 8px 12px;
-    font-size: 14px;
-    transition: all 0.2s ease;
-}
-
-.form-control:focus {
-    border-color: #2f6fdd;
-    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1);
-    outline: none;
-}
-
-.input-sm {
-    padding: 6px 10px;
-    font-size: 13px;
-    height: 32px;
-}
-
-/* Button Styles */
-.btn {
-    border-radius: 8px;
-    font-weight: 500;
-    transition: all 0.2s ease;
-    border: none;
-    padding: 8px 16px;
-    font-size: 14px;
-}
-
-.btn-p202 {
-    background: #2f6fdd;
-    color: #fff;
-    box-shadow: 0 2px 8px rgba(47, 111, 221, 0.3);
-}
-
-.btn-p202:hover {
-    background: #2861c4;
-    box-shadow: 0 4px 12px rgba(47, 111, 221, 0.4);
-    color: #fff;
-    text-decoration: none;
-}
-
-.btn-default {
-    background: #f0f1f2;
-    color: #32383f;
-    border: 1px solid #c9cdd3;
-}
-
-.btn-default:hover {
-    background: #e7e8ea;
-    color: #1f2328;
-}
-
-.btn-xs {
-    padding: 6px 12px;
-    font-size: 12px;
-    height: auto;
-}
-
-/* Alert Styles - Success & Danger */
-.alert {
-    border-radius: 8px;
-    padding: 12px 16px;
-    border: 1px solid;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 14px;
-    margin-bottom: 0;
-}
-
-.alert-success {
-    background: #e7f5ec;
-    border-color: #e7f5ec;
-    color: #1d6c3a;
-}
-
-.alert-success .fa {
-    color: #217a41;
-    font-size: 16px;
-}
-
-.alert-danger {
-    background: #fdecec;
-    border-color: #c9372c;
-    color: #b02a20;
-}
-
-.alert-danger .fa {
-    color: #c9372c;
-    font-size: 16px;
-}
-
-/* Section Separator */
-.form_seperator {
-    border-bottom: 1px solid #e7e8ea;
-}
-
-/* List Styling */
-.list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-}
-
-.list > li {
-    padding: 8px 12px;
-    border-bottom: 1px solid #f0f1f2;
-    font-size: 13px;
-    color: #374151;
-}
-
-.list > li:last-child {
-    border-bottom: none;
-}
-
-.list > li:hover {
-    background: #fafbfc;
-}
-
-.list > li a {
-    color: #2f6fdd;
-    text-decoration: none;
-    font-weight: 500;
-}
-
-.list > li a:hover {
-    text-decoration: underline;
-}
-
-/* Info Text */
-.infotext {
-    font-size: 13px;
-    color: #6b7280;
-    display: block;
-    margin-bottom: 12px;
-}
-
-/* Checkbox Styling */
-.checkbox {
-    display: flex;
-    align-items: center;
-    font-size: 14px;
-    cursor: pointer;
-}
-
-.checkbox input[type="checkbox"] {
-    width: 18px;
-    height: 18px;
-    cursor: pointer;
-    margin-right: 6px;
-    accent-color: #2f6fdd;
-}
-
-/* Modal Styles */
-.modal-header {
-    background: #fafbfc;
-    border-bottom: 1px solid #e7e8ea;
-    padding: 16px 20px;
-}
-
-.modal-title {
-    font-size: 16px;
-    font-weight: 600;
-    color: #1f2328;
-    margin: 0;
-}
-
-.modal-body {
-    padding: 20px;
-}
-
-.modal-footer {
-    background: #fafbfc;
-    border-top: 1px solid #e7e8ea;
-    padding: 12px 16px;
-}
-
-/* Form Group Styling */
-.form-group {
-    margin-bottom: 16px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.form-group label {
-    font-size: 14px;
-    color: #32383f;
-    font-weight: 500;
-    margin: 0;
-    white-space: nowrap;
-}
-
-.form-group select,
-.form-group input {
-    flex: 1;
-    max-width: 200px;
-}
-
-/* List Item Name Styling */
-.filter_rotator_name,
-.filter_rule_name {
-    font-weight: 500;
-    color: #1f2328;
-    flex: 1;
-    min-width: 100px;
-}
-
-.rule-criteria {
-    font-size: 12px;
-    color: #6b7280;
-    font-weight: 400;
-}
-
-/* List Action Links */
-.list-action {
-    color: #2f6fdd;
-    text-decoration: none;
-    font-size: 13px;
-    font-weight: 500;
-    padding: 4px 8px;
-    border-radius: 4px;
-    transition: all 0.2s ease;
-    white-space: nowrap;
-}
-
-.list-action:hover {
-    background: #eaf2fc;
-    color: #2861c4;
-    text-decoration: none;
-}
-
-.list-action-danger {
-    color: #c9372c;
-}
-
-.list-action-danger:hover {
-    background: #fdecec;
-    color: #b02a20;
-}
-
-.empty-state {
-    text-align: center;
-    padding: 24px 16px;
-    color: #9ca3af;
-    border: 1px dashed #e7e8ea;
-    border-radius: 8px;
-    font-size: 14px;
-}
-
-.list > li {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-}
-
-/* Responsive Design */
-@media (max-width: 768px) {
-    .setup-page-header {
-        flex-direction: column;
-        text-align: center;
-        padding: 20px 16px;
-    }
-
-    .setup-page-header__icon {
-        width: 48px;
-        height: 48px;
-        font-size: 20px;
-    }
-
-    .setup-page-header__title {
-        font-size: 20px;
-    }
-
-    .setup-page-header__subtitle {
-        font-size: 13px;
-    }
-
-    .alert {
-        flex-direction: column;
-        align-items: flex-start;
-        padding: 16px;
-    }
-
-    .form-group {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-
-    .form-group select,
-    .form-group input {
-        width: 100%;
-        max-width: none;
-    }
-
-    .list > li {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 8px;
-    }
-
-    .list-action {
-        align-self: flex-start;
-    }
-}
-</style>
-
+<?php echo p202_setup_script_tag($base); ?>
 <?php template_bottom();

@@ -128,7 +128,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$ppc_network_sql = "SELECT * FROM `202_ppc_networks` WHERE `user_id`='" . $mysql['user_id'] . "' AND `ppc_network_id`='" . $mysql['ppc_network_id'] . "'";
 			$ppc_network_result = _mysqli_query($ppc_network_sql); //($ppc_network_sql);
 			if ($ppc_network_result->num_rows == 0) {
-				$error['wrong_user'] = 'You are not authorized to add an account to another user\'s traffic source' . $ppc_network_sql;
+				$error['wrong_user'] = 'You are not authorized to add an account to another user\'s traffic source';
 			}
 		}
 		if (empty($error)) {
@@ -139,7 +139,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$ppc_account_sql = "SELECT * FROM `202_ppc_accounts` LEFT JOIN 202_ppc_account_pixels USING (ppc_account_id) LEFT JOIN 202_pixel_types USING (pixel_type_id) WHERE `user_id`='" . $mysql['user_id'] . "' AND `ppc_account_id`='" . $mysql['ppc_account_id'] . "'";
 				$ppc_account_result = _mysqli_query($ppc_account_sql); //($ppc_account_sql);
 				if ($ppc_account_result->num_rows == 0) {
-					$error['wrong_user'] .= 'You are not authorized to modify another user\'s traffic source account';
+					$error['wrong_user'] = ($error['wrong_user'] ?? '') . 'You are not authorized to modify another user\'s traffic source account';
 				}
 
 				$ppc_old_account_row = $ppc_account_result->fetch_assoc();
@@ -324,7 +324,7 @@ if (!empty($_GET['edit_ppc_network_id'])) {
 						 WHERE  `ppc_network_id`='" . $mysql['ppc_network_id'] . "'
 						 AND    `user_id`='" . $mysql['user_id'] . "'";
 	$ppc_network_result = _mysqli_query($ppc_network_sql);
-	$ppc_network_row = $ppc_network_result->fetch_assoc();
+	$ppc_network_row = $ppc_network_result->fetch_assoc() ?? [];
 
 	$html['ppc_network_name'] = htmlentities((string)($ppc_network_row['ppc_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 	$autocomplete_ppc_network_name =  $html['ppc_network_name'];
@@ -340,16 +340,16 @@ if (!empty($_GET['edit_ppc_account_id'])) {
 						 WHERE  `ppc_account_id`='" . $mysql['ppc_account_id'] . "'
 						 AND    `user_id`='" . $mysql['user_id'] . "'";
 	$ppc_account_result = _mysqli_query($ppc_account_sql); //($ppc_account_sql);
-	$ppc_account_row = $ppc_account_result->fetch_assoc();
+	$ppc_account_row = $ppc_account_result->fetch_assoc() ?? [];
 
-	$selected['ppc_network_id'] = $ppc_account_row['ppc_network_id'];
+	$selected['ppc_network_id'] = $ppc_account_row['ppc_network_id'] ?? '';
 	$html['ppc_account_name'] = htmlentities((string)($ppc_account_row['ppc_account_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 
 
-	$selected['ppc_network_id'] = $ppc_account_row['ppc_network_id'];
+	$selected['ppc_network_id'] = $ppc_account_row['ppc_network_id'] ?? '';
 	$ppc_account_pixel_sql = "SELECT  *
 						 FROM   `202_ppc_account_pixels`
-						 WHERE  `ppc_account_id`=" . $mysql['ppc_account_id'] . "";
+						 WHERE  `ppc_account_id`=" . (int) ($ppc_account_row['ppc_account_id'] ?? 0) . "";
 	//echo $ppc_account_pixel_sql;
 	$ppc_account_pixel_result = _mysqli_query($ppc_account_pixel_sql); //($ppc_account_sql);
 
@@ -357,9 +357,10 @@ if (!empty($_GET['edit_ppc_account_id'])) {
 
 	if ($ppc_account_pixel_result->num_rows > 0) {
 		while ($ppc_account_pixel_row = $ppc_account_pixel_result->fetch_assoc()) {
+			// Raw values: the v2 form escapes on output, once. (The classic
+			// form escaped Raw pixels here and printed the others unescaped.)
 			if ($ppc_account_pixel_row['pixel_type_id'] == 5) {
 				$selected['pixel_code'] = stripslashes((string) $ppc_account_pixel_row['pixel_code']);
-				$selected['pixel_code'] = htmlentities($selected['pixel_code']);
 			} else {
 				$selected['pixel_code'] = $ppc_account_pixel_row['pixel_code'];
 			}
@@ -376,993 +377,297 @@ if (!empty($error)) {
 }
 
 
-template_top('Traffic Sources'); ?>
+// Post-redirect-get: a saved source or account, and a removal, answer with a
+// redirect, so a reload cannot submit the form a second time.
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && $add_success == true) {
+	$flash = isset($_POST['ppc_network_name']) ? ($network_editing ? 'source_saved' : 'source_added') : ($editing ? 'account_saved' : 'account_added');
+	header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php?' . $flash . '=1');
+	exit;
+}
+if ($delete_success == true) {
+	header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php?deleted=1');
+	exit;
+}
 
+require_once __DIR__ . '/_includes/setup_ui.php';
 
+$base = get_absolute_url();
+$self = $base . 'tracking202/setup/ppc_accounts.php';
+$token = (string) ($_SESSION['token'] ?? '');
+$uid = $db->real_escape_string((string) $_SESSION['user_id']);
+$posted = $_SERVER['REQUEST_METHOD'] == 'POST';
+$sources = p202_setup_rows($db, "SELECT * FROM `202_ppc_networks` WHERE `user_id`='" . $uid . "' AND `ppc_network_deleted`='0' ORDER BY `ppc_network_name` ASC");
+$accountsBySource = [];
+foreach (p202_setup_rows($db, "SELECT ppc_account_id, ppc_account_name, ppc_network_id FROM `202_ppc_accounts` WHERE `user_id`='" . $uid . "' AND `ppc_account_deleted`='0' ORDER BY `ppc_account_name` ASC") as $account) {
+	$accountsBySource[(int) $account['ppc_network_id']][] = $account;
+}
+$variablesBySource = [];
+foreach (p202_setup_rows($db, "SELECT pv.ppc_variable_id, pv.ppc_network_id, pv.name, pv.parameter, pv.placeholder FROM 202_ppc_network_variables AS pv INNER JOIN 202_ppc_networks AS pn ON (pn.ppc_network_id = pv.ppc_network_id) WHERE pn.user_id='" . $uid . "' AND pv.deleted = 0 ORDER BY pv.ppc_variable_id ASC") as $variable) {
+	$variablesBySource[(int) $variable['ppc_network_id']][] = [
+		'id' => (string) $variable['ppc_variable_id'],
+		'name' => (string) $variable['name'],
+		'parameter' => (string) $variable['parameter'],
+		'placeholder' => (string) $variable['placeholder'],
+	];
+}
+$pixelTypes = [];
+foreach (p202_setup_rows($db, "SELECT pixel_type_id, pixel_type FROM `202_pixel_types` ORDER BY pixel_type_id ASC") as $type) {
+	$pixelTypes[(string) $type['pixel_type_id']] = (string) $type['pixel_type'];
+}
 
-<!-- Page Header - Design System -->
-<div class="row" style="margin-bottom: 28px;">
-	<div class="col-xs-12">
-		<div class="setup-page-header">
-			<div class="setup-page-header__icon">
-				<span class="glyphicon glyphicon-globe"></span>
+// The two forms' values: what was just refused, or the row being edited.
+$sourceFormName = isset($_POST['ppc_network_name']) ? (string) $_POST['ppc_network_name'] : (string) ($ppc_network_row['ppc_network_name'] ?? '');
+$accountPosted = $posted && !isset($_POST['ppc_network_name']);
+$accountSource = $accountPosted ? (string) ($_POST['ppc_network_id'] ?? '') : (string) ($selected['ppc_network_id'] ?? '');
+$accountName = $accountPosted ? (string) ($_POST['ppc_account_name'] ?? '') : (string) ($ppc_account_row['ppc_account_name'] ?? '');
+if ($accountPosted) {
+	// A refused save keeps the pixels that were typed; the classic form lost them.
+	$pixel_array = [];
+	foreach ((array) ($_POST['pixel_type_id'] ?? []) as $key => $typeId) {
+		$pixel_array[] = [
+			'pixel_type_id' => (string) $typeId,
+			'pixel_code' => (string) ($_POST['pixel_code'][$key] ?? ''),
+			'pixel_id' => (string) ($_POST['pixel_id'][$key] ?? ''),
+		];
+	}
+}
+if ($pixel_array === []) {
+	// The handler loops over pixel_type_id[], so the form always posts one row.
+	$pixel_array[] = ['pixel_type_id' => '', 'pixel_code' => '', 'pixel_id' => ''];
+}
+$hasPixels = false;
+foreach ($pixel_array as $pixel) {
+	if (trim((string) $pixel['pixel_code']) !== '' || (string) $pixel['pixel_type_id'] !== '') {
+		$hasPixels = true;
+	}
+}
+$sourceOptions = [];
+foreach ($sources as $source) {
+	$sourceOptions[(string) $source['ppc_network_id']] = (string) $source['ppc_network_name'];
+}
+$editSourceId = $network_editing ? (int) ($_GET['edit_ppc_network_id'] ?? 0) : 0;
+$editAccountId = $editing ? (int) ($_GET['edit_ppc_account_id'] ?? 0) : 0;
+// With no source yet, adding one IS the page; after that, adding accounts is.
+$sourceIsPrimary = $sources === [] || $network_editing;
+if ($accountSource === '' && count($sourceOptions) === 1) {
+	// One source: the account can only belong to it, so it is chosen.
+	$accountSource = (string) array_key_first($sourceOptions);
+}
+
+$pixelRow = static function (array $pixel, string $index, array $pixelTypes): string {
+	$typeId = 'pixel-type-' . $index;
+	$codeId = 'pixel-code-' . $index;
+	return '<div class="p202-panel mb-3" data-p202-row>'
+		. '<div class="p202-panel__body">'
+		. '<div class="mb-2"><label class="form-label" for="' . $typeId . '">Pixel type</label>'
+		. '<select class="form-select" id="' . $typeId . '" name="pixel_type_id[]">' . p202_setup_options($pixelTypes, $pixel['pixel_type_id'], 'None') . '</select></div>'
+		. '<div class="mb-2"><label class="form-label" for="' . $codeId . '">Pixel code</label>'
+		. '<textarea class="form-control font-monospace" id="' . $codeId . '" name="pixel_code[]" rows="3">' . p202_setup_e($pixel['pixel_code']) . '</textarea>'
+		. '<div class="form-text">For every type except Raw, paste only the URL from the pixel\'s src.</div></div>'
+		. '<input type="hidden" name="pixel_id[]" value="' . p202_setup_e($pixel['pixel_id']) . '">'
+		. ($index !== '0' ? '<button type="button" class="btn btn-link btn-sm text-danger p-0" data-p202-remove-row>Remove this pixel</button>' : '')
+		. '</div></div>';
+};
+
+template_top('Traffic Sources', ['ui' => 'v2']); ?>
+
+<div class="p202-page-header p202-page-header--accent">
+	<div class="p202-page-header__icon"><i class="bi bi-globe"></i></div>
+	<div class="p202-page-header__text">
+		<h1 class="p202-page-header__title">Traffic Sources</h1>
+		<p class="p202-page-header__desc">Where your clicks come from, and the accounts you buy them with, so each account reports on its own.</p>
+	</div>
+</div>
+
+<?php
+echo p202_setup_query_flashes([
+	'source_added' => 'Traffic source added. Add the account you buy it with next.',
+	'source_saved' => 'Traffic source renamed.',
+	'account_added' => 'Account added.',
+	'account_saved' => 'Account saved.',
+	'deleted' => 'Removed. Clicks already tracked keep their history.',
+	'variables_saved' => 'Custom variables saved. New tracking links for this source carry them.',
+], $_GET);
+if ($error) {
+	echo p202_setup_error_flashes($error, ['ppc_network_name', 'ppc_network_id', 'ppc_account_name']);
+}
+?>
+
+<div class="row g-4">
+	<div class="col-12 col-lg-6">
+		<section class="p202-panel mb-4" id="source-form">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title"><?php echo $network_editing ? 'Rename traffic source' : 'Add a traffic source'; ?></h2>
+				<p class="p202-panel__sub">Facebook Ads, Google Ads, a newsletter: anywhere you send clicks from.</p>
 			</div>
-			<div class="setup-page-header__text">
-				<h1 class="setup-page-header__title">Traffic Sources</h1>
-				<p class="setup-page-header__subtitle">Add traffic sources (PPC, Display, Social, Email) and configure tracking accounts</p>
-			</div>
-		</div>
-	</div>
-</div>
-
-<?php if (!empty($error)) { ?>
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<div class="alert alert-danger">
-			<i class="fa fa-exclamation-circle"></i> There were errors with your submission. <?php echo $error['token'] ?? ''; ?>
-		</div>
-	</div>
-</div>
-<?php } ?>
-
-<?php if ($add_success == true) { ?>
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<div class="alert alert-success">
-			<i class="fa fa-check-circle"></i> Your submission was successful. Your changes have been saved.
-		</div>
-	</div>
-</div>
-<?php } ?>
-
-<?php if ($delete_success == true) { ?>
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<div class="alert alert-success">
-			<i class="fa fa-check-circle"></i> Your deletion was successful. You have successfully removed an account.
-		</div>
-	</div>
-</div>
-<?php } ?>
-
-<div class="row form_seperator" style="margin-bottom:15px;">
-	<div class="col-xs-12"></div>
-</div>
-
-<div class="row">
-	<div class="col-md-6">
-		<div class="row">
-			<div class="col-xs-12">
-				<small><strong>Add Traffic Source</strong></small><br />
-				<span class="infotext">What Traffic Sources do you use? Some examples include, Facebook Ads, Twitter Ads, BingAds, & Google Adwords.</span>
-
-				<form method="post" action="<?php echo $_SERVER['REDIRECT_URL'] ?? ''; ?>" class="form-inline" role="form" style="margin:15px 0px;">
-					<div class="form-group <?php if (isset($error['ppc_network_name'])) echo "has-error"; ?>">
-						<label class="sr-only" for="ppc_network_name">Traffic source</label>
-						<input type="text" class="form-control input-sm" id="ppc_network_name" name="ppc_network_name" placeholder="Traffic source" value="<?php echo $html['ppc_network_name'] ?? ''; ?>">
-					</div>
-					<button type="submit" class="btn btn-xs btn-p202"><?php if ($network_editing == true) {
-																			echo 'Edit';
-																		} else {
-																			echo 'Add';
-																		} ?></button>
-					<?php if ($network_editing == true) { ?>
-						<input type="hidden" name="ppc_network_id" value="<?php echo filter_input(INPUT_GET, 'edit_ppc_network_id', FILTER_SANITIZE_NUMBER_INT); ?>">
-						<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES); ?>" />
-						<button type="submit" class="btn btn-xs btn-danger" onclick="window.location='<?php echo get_absolute_url(); ?>tracking202/setup/ppc_accounts.php'; return false;">Cancel</button>
+			<div class="p202-panel__body">
+				<form method="post" action="<?php echo p202_setup_e($network_editing ? $self . '?edit_ppc_network_id=' . $editSourceId . '&edit_ppc_network_name=' . rawurlencode((string) ($_GET['edit_ppc_network_name'] ?? '')) : $self); ?>">
+					<?php echo p202_setup_token_field($token); ?>
+					<?php if ($network_editing) { ?>
+						<input type="hidden" name="ppc_network_id" value="<?php echo $editSourceId; ?>">
 					<?php } ?>
+					<div class="mb-3">
+						<label class="form-label" for="ppc_network_name">Traffic source name</label>
+						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'ppc_network_name'); ?>" id="ppc_network_name" name="ppc_network_name" value="<?php echo p202_setup_e($sourceFormName); ?>" maxlength="255" required<?php echo $sourceIsPrimary ? ' autofocus' : ''; ?>>
+						<?php echo p202_setup_feedback($error, 'ppc_network_name'); ?>
+					</div>
+					<div class="p202-form-actions">
+						<?php if ($network_editing) { ?>
+							<a class="btn btn-link" href="<?php echo p202_setup_e($self); ?>">Cancel</a>
+						<?php } ?>
+						<button type="submit" class="btn <?php echo $sourceIsPrimary ? 'btn-primary' : 'btn-secondary'; ?>"><?php echo $network_editing ? 'Save changes' : 'Add traffic source'; ?></button>
+					</div>
 				</form>
-
 			</div>
+		</section>
 
-			<div class="col-xs-12" style="margin-top: 15px;">
-				<small><strong>Add Traffic Source Accounts and Pixels</strong></small><br />
-				<span class="infotext">What accounts to do you have with each Traffic Source? For instance, if you have two Facebook accounts, you can add them both here. This way you can track how individual accounts on each source are doing.</span>
-
-				<form style="margin:15px 0px;" method="post" action="<?php if (isset($delete_success) && $delete_success == true) {
-																			echo $_SERVER['REDIRECT_URL'] ?? '';
-																		} ?>" class="form-horizontal" role="form">
-					<div class="form-group <?php if (isset($error['ppc_network_id'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
-						<label for="ppc_network_id" class="col-xs-4 control-label" style="text-align: left;">Traffic Source:</label>
-						<div class="col-xs-5">
-							<select class="form-control input-sm" name="ppc_network_id" id="ppc_network_id">
-								<option value="">---</option>
-								<?php $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-								$ppc_network_sql = "SELECT * FROM `202_ppc_networks` WHERE `user_id`='" . $mysql['user_id'] . "' AND `ppc_network_deleted`='0' ORDER BY `ppc_network_name` ASC";
-								$ppc_network_result = _mysqli_query($ppc_network_sql); //($ppc_network_sql);
-								while ($ppc_network_row = $ppc_network_result->fetch_array(MYSQLI_ASSOC)) {
-
-									$html['ppc_network_name'] = htmlentities((string)($ppc_network_row['ppc_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-									$html['ppc_network_id'] = htmlentities((string)($ppc_network_row['ppc_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-
-
-									if (isset($selected['ppc_network_id']) && $selected['ppc_network_id'] == $ppc_network_row['ppc_network_id']) {
-										printf('<option selected="selected" value="%s">%s</option>', $html['ppc_network_id'], $html['ppc_network_name']);
-									} else {
-										printf('<option value="%s">%s</option>', $html['ppc_network_id'], $html['ppc_network_name']);
-									}
+		<?php if ($sources !== [] && !$network_editing) { ?>
+		<section class="p202-panel" id="account-form">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title"><?php echo $editing ? 'Edit account' : 'Add an account'; ?></h2>
+				<p class="p202-panel__sub">Two Facebook ad accounts? Add both, and each reports on its own.</p>
+			</div>
+			<div class="p202-panel__body">
+				<form method="post" action="<?php echo p202_setup_e($editing ? $self . '?edit_ppc_account_id=' . $editAccountId : $self); ?>">
+					<?php echo p202_setup_token_field($token); ?>
+					<input type="hidden" name="do_edit_ppc_account" value="1">
+					<div class="mb-3">
+						<label class="form-label" for="ppc_network_id">Traffic source</label>
+						<select class="form-select<?php echo p202_setup_invalid($error, 'ppc_network_id'); ?>" id="ppc_network_id" name="ppc_network_id" required>
+							<?php echo p202_setup_options($sourceOptions, $accountSource, 'Choose a traffic source'); ?>
+						</select>
+						<?php echo p202_setup_feedback($error, 'ppc_network_id'); ?>
+					</div>
+					<div class="mb-3">
+						<label class="form-label" for="ppc_account_name">Account username</label>
+						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'ppc_account_name'); ?>" id="ppc_account_name" name="ppc_account_name" value="<?php echo p202_setup_e($accountName); ?>" maxlength="255" required<?php echo $editing ? ' autofocus' : ''; ?>>
+						<div class="form-text">The name you know the account by at the traffic source.</div>
+						<?php echo p202_setup_feedback($error, 'ppc_account_name'); ?>
+					</div>
+					<details class="p202-disclosure mb-3" data-p202-remember="setup-traffic-sources-pixels"<?php echo $hasPixels ? ' open' : ''; ?>>
+						<summary>Advanced <span class="p202-disclosure__hint">pixels this account fires on a conversion</span></summary>
+						<div class="p202-disclosure__body">
+							<p class="form-text mt-0">Optional; none by default. A conversion is tracked either way, and a pixel also reports it back to the traffic source.</p>
+							<div id="pixel-rows">
+								<?php foreach ($pixel_array as $index => $pixel) {
+									echo $pixelRow($pixel, (string) $index, $pixelTypes);
 								} ?>
-							</select>
-							<input type="hidden" name="do_edit_ppc_account" value="1">
-							<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES); ?>" />
-						</div>
-					</div>
-
-					<div class="form-group <?php if (isset($error['ppc_account_name'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
-						<label for="ppc_account_name" class="col-xs-4 control-label" style="text-align: left;">Account Username:</label>
-						<div class="col-xs-5">
-							<input type="ppc_account_name" class="form-control input-sm" id="ppc_account_name" name="ppc_account_name" value="<?php echo $html['ppc_account_name'] ?? ''; ?>">
-						</div>
-					</div>
-
-					<div class="pixel-container">
-						<?php for ($i = 0; $i < count($pixel_array); $i++) { ?>
-							<div class="pixel">
-								<div class="form-group" style="margin-bottom: 0px;">
-									<label for="pixel_type_id[]" class="col-xs-4 control-label" style="text-align: left;">Pixel Type:</label> <span class="fui-info-circle" style="font-size: 12px;" data-toggle="tooltip" title="" data-original-title="Optional: Select the type of pixel this traffic source uses"></span>
-									<div class="col-xs-5">
-										<select class="form-control input-sm" name="pixel_type_id[]" id="pixel_type_id[]">
-											<option value="">---</option>
-											<?php
-											foreach ($pixel_types as $pixel_type) {
-												if ($pixel_array[$i]['pixel_type_id'] == $pixel_type['pixel_type_id']) {
-													printf('<option selected="selected" value="%s">%s</option>', $pixel_type['pixel_type_id'], $pixel_type['pixel_type']);
-												} else {
-													printf('<option value="%s">%s</option>', $pixel_type['pixel_type_id'], $pixel_type['pixel_type']);
-												}
-											}
-											?>
-										</select>
-										<input type="hidden" name="do_edit_ppc_account" value="1">
-										<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES); ?>" />
-										<?php if ($i > 0) { ?>
-											<span class="fui-cross" id="remove_pixel" style="position:absolute; font-size:12px; cursor:pointer; margin:0px; top: 11px; left: -5px;"></span>
-										<?php } ?>
-									</div>
-								</div>
-
-								<div class="form-group">
-									<label for="pixel_code" class="col-xs-4 control-label" style="text-align: left;">Pixel Code:</label> <span class="fui-info-circle" style="font-size: 12px;" data-toggle="tooltip" title="" data-original-title="Optional: If you selected a Pixel Type above then enter the code for the pixel here. For all pixel types, except for Raw, simply type in the url value of the src"></span>
-									<div class="col-xs-5">
-										<textarea class="form-control" name="pixel_code[]" id="pixel_code[]" rows="3"><?php echo $pixel_array[$i]['pixel_code']; ?></textarea>
-										<input type="hidden" name="pixel_id[]" value="<?php echo $pixel_array[$i]['pixel_id']; ?>">
-									</div>
-								</div>
 							</div>
-						<?php } ?>
-					</div>
-
-					<div class="form-group" style="margin-top:7px;">
-						<div class="col-xs-5 col-xs-offset-4">
-							<button class="btn btn-xs btn-default btn-block" id="add_more_pixels" type="button" data-loading-text="Loading...">Add More Pixels</button>
-
-							<?php if ($editing == true) { ?>
-								<div class="row" style="margin-top: 10px;">
-									<div class="col-xs-6">
-										<button class="btn btn-sm btn-p202 btn-block" type="submit">Edit</button>
-									</div>
-									<div class="col-xs-6">
-										<button type="submit" class="btn btn-sm btn-danger btn-block" onclick="window.location='<?php echo get_absolute_url(); ?>tracking202/setup/ppc_accounts.php'; return false;">Cancel</button>
-									</div>
-								</div>
-							<?php } else { ?>
-								<button class="btn btn-sm btn-p202 btn-block" type="submit">Add</button>
-							<?php } ?>
+							<template id="pixel-row-template"><?php echo $pixelRow(['pixel_type_id' => '', 'pixel_code' => '', 'pixel_id' => ''], 'new', $pixelTypes); ?></template>
+							<button type="button" class="btn btn-secondary btn-sm" data-p202-add-row="#pixel-row-template" data-p202-add-into="#pixel-rows"><i class="bi bi-plus"></i> Add a pixel</button>
 						</div>
+					</details>
+					<div class="p202-form-actions">
+						<?php if ($editing) { ?>
+							<a class="btn btn-link" href="<?php echo p202_setup_e($self); ?>">Cancel</a>
+						<?php } ?>
+						<button type="submit" class="btn btn-primary"><?php echo $editing ? 'Save changes' : 'Add account'; ?></button>
 					</div>
-
 				</form>
-
 			</div>
-		</div>
+		</section>
+		<?php } ?>
 	</div>
-		<div class="col-md-6">
-			<div class="panel panel-default setup-side-panel">
-			<?php
-			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-			$ppc_network_sql = "SELECT * FROM `202_ppc_networks` WHERE `user_id`='" . $mysql['user_id'] . "' AND `ppc_network_deleted`='0' ORDER BY `ppc_network_name` ASC";
-			$ppc_network_result = _mysqli_query($ppc_network_sql);
-			$traffic_source_total = (int)$ppc_network_result->num_rows;
-			?>
-			<div class="panel-heading traffic-sources-heading">
-				<span>My Traffic Sources</span>
-				<span class="traffic-sources-heading__meta"><?php echo $traffic_source_total; ?> source<?php echo ($traffic_source_total === 1) ? '' : 's'; ?></span>
+
+	<div class="col-12 col-lg-6">
+		<section class="p202-panel">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">Your traffic sources</h2>
+				<span class="p202-pill p202-pill--accent"><?php echo count($sources) . ' ' . (count($sources) === 1 ? 'source' : 'sources'); ?></span>
+				<?php if (count($sources) > 5) { ?>
+					<div class="p202-panel__aside"><?php echo p202_setup_list_filter('source-list', 'Filter sources or accounts…'); ?></div>
+				<?php } ?>
 			</div>
-			<div class="panel-body">
-				<div id="trafficSourceList" class="traffic-source-list">
-					<div class="traffic-source-toolbar">
-						<div class="traffic-source-search-wrap">
-							<span class="fa fa-search traffic-source-search-icon" aria-hidden="true"></span>
-							<input class="form-control input-sm search fuzzy-search traffic-source-search" placeholder="Filter sources or accounts">
-						</div>
+			<div class="p202-panel__body">
+				<?php if ($sources === []) { ?>
+					<div class="p202-empty">
+						<i class="bi bi-globe p202-empty__icon"></i>
+						<strong class="p202-empty__title">No traffic sources yet</strong>
+						<div>Name the first place you buy clicks from; its accounts come next.</div>
+						<div class="p202-empty__action"><a class="btn btn-secondary btn-sm" href="#ppc_network_name">Name your first traffic source</a></div>
 					</div>
-					<ul class="list source-list">
-						<?php if ($traffic_source_total === 0) { ?>
-							<li class="empty-state">No traffic sources added yet. Add your first source on the left.</li>
-						<?php } ?>
-						<?php
-						while ($ppc_network_row = $ppc_network_result->fetch_array(MYSQLI_ASSOC)) {
-							$html['ppc_network_name'] = htmlentities((string)($ppc_network_row['ppc_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-							$url['ppc_network_id'] = urlencode((string)$ppc_network_row['ppc_network_id']);
-							$url['ppc_network_name'] = urlencode((string)($ppc_network_row['ppc_network_name'] ?? ''));
-
-							$mysql['ppc_network_id'] = $db->real_escape_string((string)$ppc_network_row['ppc_network_id']);
-							$ppc_account_sql = "SELECT * FROM `202_ppc_accounts` WHERE `ppc_network_id`='" . $mysql['ppc_network_id'] . "' AND `ppc_account_deleted`='0' ORDER BY `ppc_account_name` ASC";
-							$ppc_account_result = _mysqli_query($ppc_account_sql);
-							$account_count = (int)$ppc_account_result->num_rows;
-							$account_label = ($account_count === 1) ? 'account' : 'accounts';
-						?>
-							<li class="source-item">
-								<div class="source-header">
-									<div class="source-meta">
-										<span class="filter_source_name source-name"><?php echo $html['ppc_network_name']; ?></span>
-										<span class="source-account-count"><?php echo $account_count . ' ' . $account_label; ?></span>
-									</div>
-									<div class="source-actions">
-										<a href="?edit_ppc_network_id=<?php echo $url['ppc_network_id']; ?>&edit_ppc_network_name=<?php echo $url['ppc_network_name']; ?>" class="list-action">edit</a>
-										<?php if ($userObj->hasPermission("remove_traffic_source")) { ?>
-											<a href="#" class="custom variables list-action" data-id="<?php echo $url['ppc_network_id']; ?>">variables</a>
-											<a href="?delete_ppc_network_id=<?php echo $url['ppc_network_id']; ?>&delete_ppc_network_name=<?php echo $url['ppc_network_name']; ?>&token=<?php echo urlencode((string) ($_SESSION['token'] ?? '')); ?>" class="list-action list-action-danger" onclick="return confirmAlert('Are You Sure You Want To Delete This Traffic Source?');">remove</a>
+				<?php } else { ?>
+					<ul class="p202-list" id="source-list">
+						<?php foreach ($sources as $source) {
+							$sid = (int) $source['ppc_network_id'];
+							$sname = (string) $source['ppc_network_name'];
+							$accounts = $accountsBySource[$sid] ?? []; ?>
+							<li class="p202-list__item<?php echo $editSourceId === $sid ? ' is-active' : ''; ?>" data-p202-filter-text="<?php echo p202_setup_e($sname); ?>">
+								<span class="p202-list__name"><?php echo p202_setup_e($sname); ?></span>
+								<span class="p202-pill"><?php echo count($accounts) . ' ' . (count($accounts) === 1 ? 'account' : 'accounts'); ?></span>
+								<span class="p202-list__actions">
+									<a class="p202-list__action" href="<?php echo p202_setup_e($self . '?edit_ppc_network_id=' . $sid . '&edit_ppc_network_name=' . rawurlencode($sname)); ?>">edit</a>
+									<?php if ($userObj->hasPermission("remove_traffic_source")) { ?>
+										<button type="button" class="p202-list__action" data-bs-toggle="modal" data-bs-target="#variables-modal" data-ppc-network-id="<?php echo $sid; ?>" data-ppc-network-name="<?php echo p202_setup_e($sname); ?>" data-variables="<?php echo p202_setup_e(json_encode($variablesBySource[$sid] ?? [], JSON_THROW_ON_ERROR)); ?>">variables</button>
+										<?php echo p202_setup_remove_form($self, [
+											'delete_ppc_network_id' => $sid,
+											'delete_ppc_network_name' => $sname,
+											'token' => $token,
+										], 'Remove the traffic source "' . $sname . '"? Clicks already tracked keep their history.'); ?>
+									<?php } ?>
+								</span>
+								<?php if ($accounts !== []) { ?>
+									<ul class="p202-list__children">
+										<?php foreach ($accounts as $account) {
+											$aid = (int) $account['ppc_account_id'];
+											$aname = (string) $account['ppc_account_name']; ?>
+											<li class="p202-list__item<?php echo $editAccountId === $aid ? ' is-active' : ''; ?>" data-p202-filter-text="<?php echo p202_setup_e($aname); ?>">
+												<span class="p202-list__name"><?php echo p202_setup_e($aname); ?></span>
+												<span class="p202-list__actions">
+													<a class="p202-list__action" href="<?php echo p202_setup_e($self . '?edit_ppc_account_id=' . $aid); ?>">edit</a>
+													<?php if ($userObj->hasPermission("remove_traffic_source_account")) {
+														echo p202_setup_remove_form($self, [
+															'delete_ppc_account_id' => $aid,
+															'delete_ppc_account_name' => $aname,
+															'token' => $token,
+														], 'Remove the account "' . $aname . '"? Clicks already tracked keep their history.');
+													} ?>
+												</span>
+											</li>
 										<?php } ?>
-									</div>
-								</div>
-
-								<ul class="account-list">
-									<?php if ($account_count === 0) { ?>
-										<li class="account-item-empty">No accounts added yet</li>
-									<?php } ?>
-									<?php while ($ppc_account_row = $ppc_account_result->fetch_array(MYSQLI_ASSOC)) {
-										$html['ppc_account_name'] = htmlentities((string)($ppc_account_row['ppc_account_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-										$url['ppc_account_id'] = urlencode((string)$ppc_account_row['ppc_account_id']);
-										$url['ppc_account_name'] = urlencode((string)($ppc_account_row['ppc_account_name'] ?? ''));
-									?>
-										<li class="account-item">
-											<span class="filter_account_name account-name"><?php echo $html['ppc_account_name']; ?></span>
-											<div class="account-actions">
-												<a href="?edit_ppc_account_id=<?php echo $url['ppc_account_id']; ?>" class="list-action">edit</a>
-												<?php if ($userObj->hasPermission("remove_traffic_source_account")) { ?>
-													<a href="?delete_ppc_account_id=<?php echo $url['ppc_account_id']; ?>&delete_ppc_account_name=<?php echo $url['ppc_account_name']; ?>&token=<?php echo urlencode((string) ($_SESSION['token'] ?? '')); ?>" class="list-action list-action-danger" onclick="return confirmAlert('Are You Sure You Want To Delete This Account?');">remove</a>
-												<?php } ?>
-											</div>
-										</li>
-									<?php } ?>
-								</ul>
+									</ul>
+								<?php } else { ?>
+									<span class="p202-list__meta">No accounts yet</span>
+								<?php } ?>
 							</li>
 						<?php } ?>
 					</ul>
-				</div>
+				<?php } ?>
 			</div>
-		</div>
+		</section>
 	</div>
 </div>
 
-<div class="modal fade" id="variablesModel" tabindex="-1" role="dialog" aria-labelledby="variablesModelLabel" aria-hidden="true">
-	<div class="modal-dialog">
+<div class="modal fade" id="variables-modal" tabindex="-1" aria-labelledby="variables-modal-title" aria-hidden="true">
+	<div class="modal-dialog modal-lg">
 		<div class="modal-content">
 			<div class="modal-header">
-				<button type="button" class="close fui-cross" data-dismiss="modal" aria-hidden="true"></button>
-				<h4 class="modal-title" id="myModalLabel">Add Custom Variables</h4>
-				<div class="alert alert-danger small variables_validate_alert" role="alert">ERROR! Make Sure all field are filled out!</div>
+				<h5 class="modal-title" id="variables-modal-title">Custom variables</h5>
+				<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
 			</div>
-			<div class="modal-body">
-				<div class="row">
-					<div class="col-xs-12"></div>
-					<div class="row">
-						<div class="col-xs-4"><small>Name <i class="fa fa-question-circle variables-info-pop" data-content="Variable name in report" data-placement="top" data-toggle="popover" data-container="body"></i></small></div>
-						<div class="col-xs-4"><small>Parameter <i class="fa fa-question-circle variables-info-pop" data-content="Parameter in url. Example: p202.com?parameter=[[placeholder]]" data-placement="top" data-toggle="popover" data-container="body"></i></small></div>
-						<div class="col-xs-4"><small>Placeholder <i class="fa fa-question-circle variables-info-pop" data-content="Placeholder in url. Example: p202.com?parameter=[[placeholder]]" data-placement="top" data-toggle="popover" data-container="body"></i></small></div>
-					</div>
-					<div class="row form_seperator" style="margin-bottom: 5px;margin-top: 5px;margin-right: 0px;">
-						<div class="col-xs-12"></div>
-					</div>
-					<div class="row">
-						<form method="post" id="custom-variables-form" class="form-inline" role="form">
-							<input type="hidden" id="ppc_network_id" name="ppc_network_id" value="">
-							<div class="col-xs-12" id="variable-group">
-								<div class="row var-field-group" style="margin-bottom: 10px;" data-var-id="">
-									<div class="col-xs-4">
-										<div class="form-group">
-											<label for="name" class="sr-only">Name</label>
-											<input type="text" class="form-control input-sm" name="name">
-										</div>
-									</div>
-									<div class="col-xs-4">
-										<div class="form-group">
-											<label for="parameter" class="sr-only">Parameter</label>
-											<input type="text" class="form-control input-sm" name="parameter">
-										</div>
-									</div>
-									<div class="col-xs-4">
-										<div class="form-group">
-											<label for="placeholder" class="sr-only">Placeholder</label>
-											<input type="text" class="form-control input-sm" name="placeholder">
-										</div>
-									</div>
-								</div>
-							</div>
-							<div class="col-xs-12 text-right"><small style="margin-right: 13px;"><a href="#" id="add_more_variables"><i class="fa fa-plus"></i> add more</a></small></div>
-						</form>
-					</div>
+			<form id="variables-form" data-variables-url="<?php echo p202_setup_e($base . 'tracking202/ajax/custom_variables.php'); ?>">
+				<div class="modal-body">
+					<p class="text-body-secondary">Extra parameters this source's tracking links carry, each with the placeholder the traffic source fills in, as in <code>p202.com?parameter=[[placeholder]]</code>.</p>
+					<div data-variables-error></div>
+					<div id="variable-rows"></div>
+					<template id="variable-row-template">
+						<div class="row g-2 mb-2 align-items-end" data-p202-row data-var-id="false">
+							<div class="col-12 col-sm-4"><label class="form-label small w-100">Name in reports<input type="text" class="form-control form-control-sm" data-var="name" required></label></div>
+							<div class="col-6 col-sm-3"><label class="form-label small w-100">Parameter<input type="text" class="form-control form-control-sm" data-var="parameter" required></label></div>
+							<div class="col-6 col-sm-4"><label class="form-label small w-100">Placeholder<input type="text" class="form-control form-control-sm" data-var="placeholder" required></label></div>
+							<div class="col-12 col-sm-1"><button type="button" class="btn btn-link btn-sm text-danger" data-p202-remove-row aria-label="Remove this variable"><i class="bi bi-x-lg"></i></button></div>
+						</div>
+					</template>
+					<button type="button" class="btn btn-secondary btn-sm" data-p202-add-row="#variable-row-template" data-p202-add-into="#variable-rows"><i class="bi bi-plus"></i> Add a variable</button>
 				</div>
-			</div>
-			<div class="modal-footer">
-				<button type="button" class="btn btn-default" data-dismiss="modal">Close</button>
-				<button type="button" id="add_variables_form_submit" data-loading-text="Loading..." autocomplete="off" class="btn btn-primary">Add variables</button>
-			</div>
+				<div class="modal-footer">
+					<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+					<button type="submit" class="btn btn-primary" data-variables-save>Save variables</button>
+				</div>
+			</form>
 		</div>
 	</div>
 </div>
-</div>
-<script type="text/javascript">
-	$(document).ready(function() {
-		// Simple input - no tokenfield needed for single value
-		$(".variables-info-pop").popover({
-			trigger: "hover"
-		});
 
-		var trafficSourceOptions = {
-			valueNames: ['filter_source_name', 'filter_account_name'],
-			plugins: [
-				ListFuzzySearch()
-			]
-		};
-
-		var trafficSourceList = new List('trafficSourceList', trafficSourceOptions);
-	});
-</script>
-
-
-<style>
-/* ===========================================
-   TRAFFIC SOURCES - Enhanced Design System
-   =========================================== */
-
-/* Page Header Styles */
-.setup-page-header {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 24px;
-    background: #2f6fdd;
-    border-radius: 12px;
-    color: #fff;
-    box-shadow: 0 4px 15px rgba(47, 111, 221, 0.2);
-}
-
-.setup-page-header__icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 56px;
-    height: 56px;
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 12px;
-    flex-shrink: 0;
-}
-
-.setup-page-header__icon .glyphicon {
-    font-size: 24px;
-    color: #fff;
-}
-
-.setup-page-header__text {
-    flex: 1;
-}
-
-.setup-page-header__title {
-    margin: 0 0 4px 0;
-    font-size: 24px;
-    font-weight: 600;
-    color: #fff;
-}
-
-.setup-page-header__subtitle {
-    margin: 0;
-    font-size: 14px;
-    color: rgba(255, 255, 255, 0.9);
-    font-weight: 400;
-}
-
-/* Panel Styles - Design System */
-.setup-panel,
-.panel-default {
-    border: 1px solid #e7e8ea;
-    border-radius: 12px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-    overflow: hidden;
-    background: #fff;
-}
-
-.panel-heading {
-    background: #fafbfc;
-    border-bottom: 1px solid #e7e8ea;
-    padding: 16px 20px;
-    font-weight: 600;
-    color: #1f2328;
-}
-
-.panel-body {
-    padding: 20px;
-}
-
-/* Form Group Styles */
-.setup-form-group {
-    margin-bottom: 16px;
-}
-
-.setup-form-group:last-child {
-    margin-bottom: 0;
-}
-
-.form-group label {
-    display: block;
-    margin-bottom: 6px;
-    font-weight: 500;
-    color: #374151;
-    font-size: 14px;
-}
-
-.form-group input[type="text"],
-.form-group input[type="email"],
-.form-group input[type="number"],
-.form-group textarea,
-.form-group select {
-    width: 100%;
-    padding: 8px 12px;
-    border: 1px solid #c9cdd3;
-    border-radius: 6px;
-    font-size: 14px;
-    transition: all 0.2s ease;
-}
-
-.form-group input:focus,
-.form-group textarea:focus,
-.form-group select:focus {
-    outline: none;
-    border-color: #2f6fdd;
-    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1);
-}
-
-/* Button Styles */
-.setup-btn,
-.btn {
-    display: inline-block;
-    padding: 8px 16px;
-    border-radius: 6px;
-    font-size: 14px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    border: none;
-}
-
-.setup-btn-primary,
-.btn-p202 {
-    background: #2f6fdd;
-    color: #fff;
-    border: 1px solid #2861c4;
-}
-
-.setup-btn-primary:hover,
-.btn-p202:hover {
-    transform: none;
-    box-shadow: 0 4px 12px rgba(47, 111, 221, 0.3);
-}
-
-.setup-btn-secondary {
-    background: #f0f1f2;
-    color: #374151;
-    border: 1px solid #c9cdd3;
-}
-
-.setup-btn-secondary:hover {
-    background: #e7e8ea;
-    border-color: #9ca3af;
-}
-
-.setup-btn-danger,
-.btn-danger {
-    background: #c9372c;
-    color: #fff;
-    border: 1px solid #c9372c;
-}
-
-.setup-btn-danger:hover,
-.btn-danger:hover {
-    background: #c9372c;
-    transform: none;
-    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
-}
-
-/* Alert Styles */
-.setup-alert,
-.alert {
-    padding: 12px 16px;
-    border-radius: 8px;
-    border: 1px solid;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 16px;
-}
-
-.setup-alert-success,
-.alert-success {
-    background: #e7f5ec;
-    border-color: #e7f5ec;
-    color: #1d6c3a;
-}
-
-.setup-alert-danger,
-.alert-danger {
-    background: #fdecec;
-    border-color: #c9372c;
-    color: #b02a20;
-}
-
-.setup-alert-warning {
-    background: #fdf3e2;
-    border-color: #b54708;
-    color: #9a3c07;
-}
-
-.setup-alert-info {
-    background: #eaf2fc;
-    border-color: #bcd4f6;
-    color: #2861c4;
-}
-
-.setup-alert i,
-.alert i {
-    flex-shrink: 0;
-}
-
-/* Info Text */
-.infotext {
-    display: block;
-    font-size: 13px;
-    color: #6b7280;
-    margin: 8px 0 12px 0;
-    line-height: 1.4;
-}
-
-/* Pixel Container */
-.pixel-container {
-    margin: 16px 0;
-    padding: 16px;
-    background: #fafbfc;
-    border-radius: 8px;
-    border: 1px solid #e7e8ea;
-}
-
-.pixel {
-    margin-bottom: 16px;
-    padding-bottom: 16px;
-    border-bottom: 1px solid #e7e8ea;
-}
-
-.pixel:last-child {
-    margin-bottom: 0;
-    padding-bottom: 0;
-    border-bottom: none;
-}
-
-#remove_pixel {
-    cursor: pointer;
-    color: #c9372c;
-    transition: color 0.2s ease;
-}
-
-#remove_pixel:hover {
-    color: #c9372c;
-}
-
-/* Form Separator */
-.form_seperator {
-    border-bottom: 1px solid #e7e8ea;
-}
-
-/* Setup List */
-.setup-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-}
-
-.traffic-sources-heading {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-}
-
-.traffic-sources-heading__meta {
-    font-size: 12px;
-    font-weight: 500;
-    color: #374151;
-    background: #fff;
-    border: 1px solid #c9cdd3;
-    border-radius: 999px;
-    padding: 2px 10px;
-}
-
-.traffic-source-toolbar {
-    margin-bottom: 14px;
-}
-
-.traffic-source-search-wrap {
-    position: relative;
-}
-
-.traffic-source-search-icon {
-    position: absolute;
-    top: 50%;
-    left: 12px;
-    transform: translateY(-50%);
-    color: #8a919b;
-    pointer-events: none;
-}
-
-.traffic-source-search {
-    background: #fafbfc;
-    border-color: #c9cdd3;
-    padding-left: 34px !important;
-    min-height: 36px;
-}
-
-.traffic-source-search:focus {
-    background: #fff;
-}
-
-#trafficSourceList .source-list {
-    list-style: none;
-    padding: 0 4px 0 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    max-height: 560px;
-    overflow-y: auto;
-}
-
-#trafficSourceList .source-item {
-    /* Override the shared `.setup-side-panel ul > li` flex rule (custom.css, setup pages):
-       this is a structured card (header + nested account list), not a flat
-       flex row, so it must stack its children vertically. Without display:block
-       an empty account list wraps beside the header instead of below it. */
-    display: block;
-    margin-bottom: 0;
-    border: 1px solid #e7e8ea;
-    border-radius: 10px;
-    background: #ffffff;
-    padding: 12px;
-    transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
-}
-
-#trafficSourceList .source-item:hover {
-    border-color: #bcd4f6;
-    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
-    transform: none;
-}
-
-#trafficSourceList .source-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 10px;
-}
-
-#trafficSourceList .source-meta {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-    flex-wrap: wrap;
-}
-
-#trafficSourceList .source-name {
-    font-size: 14px;
-    font-weight: 600;
-    color: #1f2328;
-}
-
-#trafficSourceList .source-account-count {
-    font-size: 11px;
-    font-weight: 600;
-    color: #2861c4;
-    background: #eaf2fc;
-    border: 1px solid #bcd4f6;
-    border-radius: 999px;
-    padding: 2px 8px;
-}
-
-#trafficSourceList .source-actions,
-#trafficSourceList .account-actions {
-    display: inline-flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 6px;
-    flex-wrap: wrap;
-}
-
-#trafficSourceList .account-list {
-    list-style: none;
-    margin: 10px 0 0 0;
-    padding: 10px 0 0 12px;
-    border-top: 1px dashed #e7e8ea;
-}
-
-#trafficSourceList .account-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 7px 10px;
-    margin-bottom: 6px;
-    border-left: 2px solid #e7e8ea;
-    border-radius: 0 8px 8px 0;
-    background: #fafbfc;
-    transition: background 0.2s ease, border-color 0.2s ease;
-}
-
-#trafficSourceList .account-item:last-child {
-    margin-bottom: 0;
-}
-
-#trafficSourceList .account-item:hover {
-    background: #eaf2fc;
-    border-left-color: #2f6fdd;
-}
-
-#trafficSourceList .account-name {
-    font-size: 13px;
-    font-weight: 500;
-    color: #32383f;
-}
-
-#trafficSourceList .account-item-empty {
-    font-size: 12px;
-    color: #6b7280;
-    padding: 6px 0 2px;
-    font-style: italic;
-}
-
-/* List Action Links */
-.list-action {
-    color: #2f6fdd;
-    text-decoration: none;
-    font-weight: 600;
-    font-size: 12px;
-    padding: 4px 9px;
-    border-radius: 6px;
-    border: 1px solid transparent;
-    transition: all 0.2s ease;
-    white-space: nowrap;
-}
-
-.list-action:hover {
-    background-color: #eaf2fc;
-    border-color: #bcd4f6;
-    color: #2861c4;
-    text-decoration: none;
-}
-
-.list-action-danger {
-    color: #c9372c;
-}
-
-.list-action-danger:hover {
-    background-color: #fdecec;
-    color: #b02a20;
-}
-
-.setup-list-empty,
-#trafficSourceList .empty-state {
-    text-align: center;
-    padding: 24px 16px;
-    color: #6b7280;
-    border: 1px dashed #c9cdd3;
-    border-radius: 10px;
-    background: #fafbfc;
-}
-
-/* Input and Select Improvements */
-.form-control {
-    border: 1px solid #c9cdd3;
-    border-radius: 8px;
-    padding: 10px 14px;
-    font-size: 14px;
-    transition: all 0.2s ease;
-    box-shadow: none !important;
-    -webkit-box-shadow: none !important;
-    -webkit-appearance: none;
-    background-color: #fff;
-}
-
-.form-control:focus {
-    outline: none;
-    border-color: #2f6fdd;
-    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1) !important;
-}
-
-.form-control.input-sm {
-    padding: 8px 12px;
-    font-size: 13px;
-}
-
-/* Tokenfield override - clean minimal styling */
-.tokenfield,
-.tokenfield.form-control {
-    padding: 6px 12px !important;
-    height: auto !important;
-    min-height: 38px !important;
-    box-shadow: none !important;
-    -webkit-box-shadow: none !important;
-    border: 1px solid #c9cdd3 !important;
-    border-radius: 8px !important;
-    background-color: #fff !important;
-    display: flex !important;
-    align-items: center !important;
-    flex-wrap: wrap !important;
-    gap: 4px !important;
-}
-.tokenfield .token {
-    background: transparent !important;
-    border: none !important;
-    border-radius: 0 !important;
-    padding: 0 !important;
-    margin: 0 4px 0 0 !important;
-    height: auto !important;
-    color: #374151 !important;
-    font-size: 14px !important;
-}
-.tokenfield .token .token-label {
-    padding: 0 !important;
-}
-.tokenfield .token .close {
-    display: none !important;
-}
-.tokenfield .token-input,
-.tokenfield.form-control .token-input {
-    box-shadow: none !important;
-    -webkit-box-shadow: none !important;
-    border: none !important;
-    outline: none !important;
-    background: transparent !important;
-    height: 24px !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    flex: 1 !important;
-    min-width: 60px !important;
-}
-.tokenfield.focus,
-.tokenfield.form-control.focus {
-    border-color: #2f6fdd !important;
-    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1) !important;
-    -webkit-box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1) !important;
-}
-
-/* Search Input */
-.search {
-    border: 1px solid #c9cdd3;
-    box-shadow: none !important;
-}
-
-.search:focus {
-    border-color: #2f6fdd;
-    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1) !important;
-}
-
-/* Modal Improvements */
-.modal-header {
-    background: #fafbfc;
-    border-bottom: 1px solid #e7e8ea;
-}
-
-.modal-title {
-    color: #1f2328;
-    font-weight: 600;
-}
-
-.variables_validate_alert {
-    margin-top: 12px;
-}
-
-/* Responsive Design */
-@media (max-width: 768px) {
-    .setup-page-header {
-        flex-direction: column;
-        text-align: center;
-        padding: 20px 16px;
-    }
-
-    .setup-page-header__icon {
-        width: 48px;
-        height: 48px;
-    }
-
-    .setup-page-header__icon .glyphicon {
-        font-size: 20px;
-    }
-
-    .setup-page-header__title {
-        font-size: 20px;
-    }
-
-    .setup-page-header__subtitle {
-        font-size: 13px;
-    }
-
-    .form-group label {
-        margin-bottom: 4px;
-    }
-
-    .setup-btn,
-    .btn {
-        width: 100%;
-        margin-bottom: 8px;
-    }
-
-    .pixel-container {
-        padding: 12px;
-    }
-
-    .pixel {
-        margin-bottom: 12px;
-        padding-bottom: 12px;
-    }
-
-    .traffic-sources-heading {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-
-    #trafficSourceList .source-header {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-
-    #trafficSourceList .source-actions,
-    #trafficSourceList .account-actions {
-        justify-content: flex-start;
-    }
-
-    #trafficSourceList .account-item {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-}
-
-@media (max-width: 480px) {
-    .setup-page-header {
-        padding: 16px 12px;
-    }
-
-    .setup-page-header__icon {
-        width: 40px;
-        height: 40px;
-    }
-
-    .setup-page-header__icon .glyphicon {
-        font-size: 18px;
-    }
-
-    .setup-page-header__title {
-        font-size: 18px;
-    }
-
-    .setup-page-header__subtitle {
-        font-size: 12px;
-    }
-
-    #trafficSourceList .source-item {
-        padding: 10px;
-    }
-
-    #trafficSourceList .account-list {
-        padding-left: 8px;
-    }
-}
-</style>
-
+<?php echo p202_setup_script_tag($base); ?>
 <?php template_bottom(); ?>

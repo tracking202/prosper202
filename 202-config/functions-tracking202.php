@@ -131,6 +131,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
     $user_sql = "SELECT * FROM 202_users_pref WHERE user_id=" . $userId;
     $user_result = _mysqli_query($user_sql);
     $user_row = ($user_result instanceof mysqli_result) ? ($user_result->fetch_assoc() ?? []) : [];
+    $user_row = \Prosper202\DataEngine\ReportView::apply($user_row, $userId);
 
     $html['user_pref_aff_network_id'] = htmlentities((string) ($user_row['user_pref_aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
     $html['user_pref_aff_campaign_id'] = htmlentities((string) ($user_row['user_pref_aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8');
@@ -1060,93 +1061,6 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
 
 function display_calendar2(...$args) { return display_calendar(...$args); }
 
-/**
- * Build the client-side config for the JSON report transport.
- *
- * $reportType must be one of ReportDispatchRequest::SUPPORTED_REPORT_TYPES. When the
- * JSON architecture flag is off, 'enabled' is false and 202-js/tracking-report.js hands
- * control straight back to the legacy loadContent() path.
- *
- * @return array<string, mixed>
- */
-function tracking202_report_canary_config(string $reportType, string $legacyPageUrl): array
-{
-    $database = DB::getInstance();
-    $db = $database->getConnection();
-
-    $enabled = tracking202JsonArchitectureEnabled();
-
-    $dispatchUrl = get_absolute_url() . 'tracking202/ajax/report_dispatch.php';
-    $override = tracking202NormalizeBooleanFlag($_GET['tracking_json_mode'] ?? null);
-    if ($override !== null) {
-        $dispatchUrl .= '?tracking_json_mode=' . ($override ? '1' : '0');
-    }
-
-    $userId = $db->real_escape_string((string) ($_SESSION['user_id'] ?? 0));
-    $sql = "SELECT
-                user_pref_aff_network_id,
-                user_pref_aff_campaign_id,
-                user_pref_text_ad_id,
-                user_pref_method_of_promotion,
-                user_pref_landing_page_id
-            FROM 202_users_pref
-            WHERE user_id='" . $userId . "'";
-    $result = _mysqli_query($sql);
-    if (!$result instanceof mysqli_result) {
-        // Fail loudly: a swallowed prefs read would hand the client an empty dependent-filter
-        // bootstrap, silently dropping the user's saved campaign/text-ad/landing-page filters.
-        record_mysql_error($sql);
-    }
-    $prefs = $result->fetch_assoc() ?? [];
-
-    return [
-        'enabled' => $enabled,
-        'reportType' => $reportType,
-        'legacyPageUrl' => $legacyPageUrl,
-        'dispatchUrl' => $dispatchUrl,
-        'loaderUrl' => get_absolute_url() . '202-img/loader-small.gif',
-        'excelIconUrl' => get_absolute_url() . '202-img/icons/16x16/page_white_excel.png',
-        'dependentFilters' => [
-            'jsonBootstrap' => $enabled && empty($_SESSION['publisher']),
-            'publisherHidden' => !empty($_SESSION['publisher']),
-            'affNetworkId' => (string) ($prefs['user_pref_aff_network_id'] ?? ''),
-            'affCampaignId' => (string) ($prefs['user_pref_aff_campaign_id'] ?? ''),
-            'textAdId' => (string) ($prefs['user_pref_text_ad_id'] ?? ''),
-            'landingPageId' => (string) ($prefs['user_pref_landing_page_id'] ?? ''),
-            'methodOfPromotion' => (string) ($prefs['user_pref_method_of_promotion'] ?? ''),
-        ],
-    ];
-}
-
-/**
- * Emit the JSON transport bootstrap for a report page.
- *
- * @param array<string, mixed> $config
- */
-function tracking202_render_report_canary(array $config): void
-{
-    // JSON_HEX_* stops a stray "</script>" in any value from escaping the inline script
-    // context. JSON_THROW_ON_ERROR because an unchecked encode failure would emit
-    // "window.… = ;" — a syntax error that would kill the whole inline block.
-    try {
-        $json = json_encode(
-            $config,
-            JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
-                | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
-        );
-    } catch (JsonException $e) {
-        // Emit nothing: the page keeps the legacy transport, which renders the same data.
-        error_log('tracking202 report canary config encoding failed: ' . $e->getMessage());
-        return;
-    }
-    ?>
-    <script type="text/javascript">
-        window.tracking202ReportCanaryConfig = <?php echo $json; ?>;
-    </script>
-    <script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/tracking-report.js"></script>
-    <?php
-}
-
 function grab_timeframe($unused = null): array
 {
     $auth = new AUTH();
@@ -1159,6 +1073,7 @@ function grab_timeframe($unused = null): array
     $user_sql = "SELECT user_pref_time_predefined, user_pref_time_from, user_pref_time_to FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
     $user_result = _mysqli_query($user_sql);; // ($user_sql);
     $user_row = ($user_result instanceof mysqli_result) ? ($user_result->fetch_assoc() ?? []) : [];
+    $user_row = \Prosper202\DataEngine\ReportView::apply($user_row, $_SESSION['user_id'] ?? null);
     $pref_time = $user_row['user_pref_time_predefined'] ?? '';
 
     $time = [
@@ -1323,6 +1238,7 @@ function query(
     $user_sql = "SELECT * FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
     $user_result = _mysqli_query($user_sql); // ($user_sql);
     $user_row = ($user_result instanceof mysqli_result) ? ($user_result->fetch_assoc() ?? []) : [];
+    $user_row = \Prosper202\DataEngine\ReportView::apply($user_row, $_SESSION['user_id'] ?? null);
 
     // Apply sane defaults when optional arguments are omitted
     if ($db_table === null) {
@@ -3143,6 +3059,11 @@ function rotator_data($query, $type)
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    // Bounded: Setup › Redirector asks this as the user types, and an
+    // upstream that hangs must cost a missing suggestion, not a worker held
+    // for the default connect timeout.
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
     // Execute
     $result = curl_exec($ch);
 
@@ -3712,7 +3633,13 @@ function getData($url, int $timeout = 60, int $connectTimeout = 5)
     }
 }
 
-function showHelp($page)
+/**
+ * The help article for a page, or '' when there is none.
+ *
+ * showHelp() prints it as the classic shell's help button; a v2 page renders
+ * its own link from this URL rather than that Bootstrap 3 markup.
+ */
+function showHelpUrl(string $page): string
 {
     $url = '';
     switch ($page) {
@@ -3783,8 +3710,14 @@ function showHelp($page)
             break;
     }
 
+    return $url === '' ? '' : $url . 'helpdocs';
+}
+
+function showHelp($page)
+{
+    $url = showHelpUrl((string) $page);
     if ($url !== '') {
-        echo '<a href="' . $url . 'helpdocs" class="btn btn-info btn-xs" target="_blank"><span class="glyphicon glyphicon-question-sign" aria-hidden="true" title="Get Help"></span></a>';
+        echo '<a href="' . $url . '" class="btn btn-info btn-xs" target="_blank"><span class="glyphicon glyphicon-question-sign" aria-hidden="true" title="Get Help"></span></a>';
     }
 }
 

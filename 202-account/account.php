@@ -2,21 +2,37 @@
 
 declare(strict_types=1);
 include_once(str_repeat("../", 1) . '202-config/connect.php');
+require_once __DIR__ . '/../202-config/functions-account-ui.php';
 
 AUTH::require_user();
 
+/*
+ * Account › Personal settings, on the v2 shell.
+ *
+ * Every form keeps the field names it had on the classic page, and every
+ * handler checks the session token (`token`) before it writes: a refusal
+ * redirects back with P202_ACCOUNT_TOKEN_REFUSED and writes nothing. A
+ * successful write redirects back to the page (post-redirect-get) with a
+ * flash; a refused one renders in place with the server's sentence under the
+ * field it names. Passwords are never echoed back into a field.
+ */
+
+$canPersonal = $userObj->hasPermission('access_to_personal_settings');
+
 // Initialize variables to prevent undefined variable warnings
 $error = [];
+/** @var array<string, string> field name => sentence, for the profile form */
+$profileErrors = [];
+/** @var array<string, string> field name => sentence, for the password form */
+$passErrors = [];
+/** @var array<string, string> field name => sentence, for the key and currency forms */
+$keyErrors = [];
+/** @var list<array{kind: string, text: string}> said on this render (a refused submit) */
+$pageFlashes = [];
+/** @var array<string, string> what the person typed, shown again after a refused profile submit */
+$profileForm = [];
 $html = [];
 $mysql = [];
-$selected = [];
-$add_success = false;
-$delete_success = false;
-$update_profile = false;
-$change_user_pass = false;
-$update_clickserver_api_key_done = false;
-$change_api_key = false;
-$removed_user_api_key = false;
 $change_p202_customer_api_key = false;
 
 $utc = new DateTimeZone('UTC');
@@ -52,51 +68,96 @@ if (!$wantsPersonalSettingsAction) {
 		}
 	}
 }
-if ($wantsPersonalSettingsAction && !$userObj->hasPermission('access_to_personal_settings')) {
+if ($wantsPersonalSettingsAction && !$canPersonal) {
 	http_response_code(403);
 	die('You do not have permission to change these settings.');
 }
 
+// ─── REST API keys ───────────────────────────────────────────────────
+
 if (isset($_POST['add_rest_api_key'])) {
-	// validate token
-	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
-		die();
+	if (!AUTH::check_csrf_token()) {
+		p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
+		p202_account_redirect('202-account/account.php#api-keys');
 	}
-	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-	$mysql['rest_api_key'] = $db->real_escape_string((string)$_POST['rest_api_key']);
-	$key_sql = "INSERT INTO 202_api_keys SET user_id='" . $mysql['user_id'] . "', api_key = '" . $mysql['rest_api_key'] . "', created_at='" . time() . "'";
-	$key_result = $db->query($key_sql);
+
+	// The key is minted here. The classic page generated it in the browser
+	// with Math.random() and posted it as rest_api_key; a posted key is still
+	// accepted (same field, same meaning) but only in the shape the API can
+	// authenticate, and an empty one means "make me one".
+	$postedKey = trim((string)($_POST['rest_api_key'] ?? ''));
+	if ($postedKey !== '' && !preg_match('/^[A-Za-z0-9]{32,128}$/', $postedKey)) {
+		p202_account_flash('bad', 'An API key is 32 to 128 letters and digits. Leave it out and one is generated for you.');
+		p202_account_redirect('202-account/account.php#api-keys');
+	}
+	$newKey = $postedKey !== '' ? $postedKey : bin2hex(random_bytes(32));
+	$keyUserId = (int)$_SESSION['user_id'];
+	$keyCreated = time();
+	$key_stmt = $db->prepare('INSERT INTO 202_api_keys (user_id, api_key, created_at) VALUES (?, ?, ?)');
+	if ($key_stmt === false) {
+		p202_account_flash('bad', 'The API key could not be saved. Nothing was created; try again.');
+		p202_account_redirect('202-account/account.php#api-keys');
+	}
+	$key_stmt->bind_param('isi', $keyUserId, $newKey, $keyCreated);
+	if (!$key_stmt->execute()) {
+		$key_stmt->close();
+		p202_account_flash('bad', 'The API key could not be saved. Nothing was created; try again.');
+		p202_account_redirect('202-account/account.php#api-keys');
+	}
+	$key_stmt->close();
 
 	if ($slack)
 		$slack->push('user_added_app_api_key', ['user' => $username]);
-	die();
+
+	p202_account_flash('ok', 'API key created. It has full access; reveal or copy it below.');
+	p202_account_redirect('202-account/account.php#api-keys');
 }
 
 if (isset($_POST['remove_rest_api_key'])) {
-	// validate token
-	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
-		die();
+	if (!AUTH::check_csrf_token()) {
+		p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
+		p202_account_redirect('202-account/account.php#api-keys');
 	}
-	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-	$mysql['rest_api_key'] = $db->real_escape_string((string)$_POST['rest_api_key']);
+	$keyUserId = (int)$_SESSION['user_id'];
+	$removeKey = (string)($_POST['rest_api_key'] ?? '');
 	// scope to owner
-	$key_sql = "DELETE FROM 202_api_keys WHERE api_key='" . $mysql['rest_api_key'] . "' AND user_id='" . $mysql['user_id'] . "'";
-	$key_result = $db->query($key_sql);
+	$key_stmt = $db->prepare('DELETE FROM 202_api_keys WHERE api_key = ? AND user_id = ?');
+	if ($key_stmt === false) {
+		p202_account_flash('bad', 'The API key could not be revoked. It still works; try again.');
+		p202_account_redirect('202-account/account.php#api-keys');
+	}
+	$key_stmt->bind_param('si', $removeKey, $keyUserId);
+	if (!$key_stmt->execute()) {
+		$key_stmt->close();
+		p202_account_flash('bad', 'The API key could not be revoked. It still works; try again.');
+		p202_account_redirect('202-account/account.php#api-keys');
+	}
+	$removed = $key_stmt->affected_rows;
+	$key_stmt->close();
+
+	if ($removed < 1) {
+		p202_account_flash('warn', 'That API key was not found on this account; nothing was revoked.');
+		p202_account_redirect('202-account/account.php#api-keys');
+	}
 
 	if ($slack)
 		$slack->push('user_removed_app_api_key', ['user' => $username]);
 
-	die();
+	p202_account_flash('ok', 'API key revoked. Anything still using it is refused from now on.');
+	p202_account_redirect('202-account/account.php#api-keys');
 }
 
+// The customer-dashboard hand-back: my.tracking202.com returns the person
+// here with their key in the query string. It is validated against the
+// dashboard before it is stored.
 if (!empty($_GET['customers_api_key'])) {
 	$mysql['p202_customer_api_key'] = $db->real_escape_string(base64_decode((string) $_GET['customers_api_key']));
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 	$validate = validateCustomersApiKey($mysql['p202_customer_api_key']);
 	if ($validate['code'] != 200) {
-		$error['p202_customer_api_key_invalid'] = "API key is not valid. Check your key and try again!";
+		$keyErrors['p202_customer_api_key'] = 'API key is not valid. Check your key and try again!';
 	}
-	if (!$error) {
+	if (!$keyErrors) {
 		$db->query("UPDATE 202_users SET p202_customer_api_key = '" . $mysql['p202_customer_api_key'] . "' WHERE user_id = '" . $mysql['user_id'] . "'");
 		$change_p202_customer_api_key = true;
 	}
@@ -131,18 +192,16 @@ if (!empty($_GET['remove_user_api_key'])) {
 	die();
 }
 
-
-
 //get all of the user data
-if (!$userObj->hasPermission("access_to_personal_settings")) {
+if (!$canPersonal) {
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 	$user_sql = "SELECT 	user_email
-				 FROM   	`202_users` 
+				 FROM   	`202_users`
 				 WHERE  	`user_id`='" . $mysql['user_id'] . "'";
 } else {
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$user_sql = "SELECT 	*
-				 FROM   	`202_users` 
+				 FROM   	`202_users`
 				 LEFT JOIN	`202_users_pref` USING (user_id)
 				 WHERE  	`202_users`.`user_id`='" . $mysql['user_id'] . "'";
 }
@@ -150,20 +209,18 @@ if (!$userObj->hasPermission("access_to_personal_settings")) {
 $user_result = $db->query($user_sql);
 $user_row = $user_result->fetch_assoc();
 $currentUserEmail = isset($user_row['user_email']) ? (string)$user_row['user_email'] : '';
-$html = array_map('htmlentities', $user_row);
 
-//make it hide most of the api keys
-$hideChars = 22;
-$hiddenPart = '';
-
-if ($userObj->hasPermission("access_to_personal_settings")) {
-	for ($x = 0; $x < $hideChars; $x++) $hiddenPart .= '*';
-	if ($html['user_api_key']) $html['user_api_key'] = $hiddenPart . substr($html['user_api_key'], $hideChars, 99);
-	if ($html['user_stats202_app_key']) $html['user_stats202_app_key'] = $hiddenPart . substr($html['user_stats202_app_key'], $hideChars, 99);
-	if ($html['clickserver_api_key']) $html['clickserver_api_key'] = $hiddenPart . substr($html['clickserver_api_key'], $hideChars, 99);
+/** The choices each preference offers, value => label; the form renders these and the handler admits only these. */
+$dailyEmailChoices = ['' => 'Never'];
+for ($hour = 0; $hour < 24; $hour++) {
+	$dailyEmailChoices[sprintf('%02d', $hour)] = date('g A', mktime($hour, 0, 0, 1, 1, 2000));
 }
-
-
+$keywordChoices = ['searched' => 'Pickup Searched Keyword', 'bidded' => 'Pickup Bidded Keyword'];
+$bidChoices = ['0' => 'Pickup Bid from setup data', '1' => 'Pickup Bid dynamically from t202b variable'];
+$refererChoices = ['browser' => 'Pickup Referer from browser', 't202ref' => 'Pickup Referer from t202ref variable'];
+$privacyChoices = ['disabled' => 'Disabled', 'eu' => 'Enabled for European Traffic', 'all' => 'Enabled for All Traffic'];
+$cloakChoices = ['origin' => 'Show Prosper202 Domain', 'never' => 'Show Blank Referer'];
+$adChoices = ['show_all' => 'Show All Ads', 'hide_login' => 'Hide Ads On Login Screen', 'hide_all' => 'Hide All Ads'];
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
@@ -173,202 +230,224 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$originalUserEmail = $currentUserEmail;
 		$emailUpdated = false;
 
-		if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
-			$error['token'] = 'You must use our forms to submit data.';
+		if (!AUTH::check_csrf_token()) {
+			p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
+			p202_account_redirect('202-account/account.php');
 		}
 		if (check_email_address($submittedEmail) == false) {
-			$error['user_email'] = 'Please enter a valid email address';
+			$error['user_email'] = 'Please enter a valid email address.';
 		}
 
-		if ($userObj->hasPermission("access_to_personal_settings")) {
+		if ($canPersonal) {
 			//check user_email
-			if (!isset($error['user_email_invalid']) || !$error['user_email_invalid']) {
+			if (!isset($error['user_email'])) {
 				$mysql['user_email'] = $db->real_escape_string($submittedEmail);
 				$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 				$count_sql = "	SELECT 	*
-							  	FROM  		`202_users` 
-							  	WHERE 	`user_email` = '" . $mysql['user_email'] . "' 
+							  	FROM  		`202_users`
+							  	WHERE 	`user_email` = '" . $mysql['user_email'] . "'
 								AND   		`user_id`!='" . $mysql['user_id'] . "'
 								AND user_deleted != 1";
 				$count_result = $db->query($count_sql);
 				if ($count_result->num_rows > 0) {
-					$error['user_email'] .= 'That email address is already being used.';
+					$error['user_email'] = 'That email address is already being used.';
 				}
 			}
 
-			switch ($_POST['user_keyword_searched_or_bidded']) {
-
-				case "searched":
-				case "bidded":
-					break;
-				default:
-					$error['user_keyword_searched_or_bidded'] = 'You must select your keyword preference.';
-					break;
+			// Each preference must be one of the choices the form offers. The
+			// classic page stored whatever arrived; a value outside the list
+			// is refused by name rather than written.
+			$postedTimezone = (string)($_POST['user_timezone'] ?? '');
+			if (!in_array($postedTimezone, DateTimeZone::listIdentifiers(), true)) {
+				$error['user_timezone'] = 'Choose a time zone from the list.';
 			}
-
-			switch ($_POST['user_referer']) {
-
-				case "browser":
-				case "t202ref":
-					break;
-				default:
-					$error['user_referer'] = 'You must select your referer preference.';
-					break;
+			if (!array_key_exists((string)($_POST['user_daily_email'] ?? ''), $dailyEmailChoices)) {
+				$error['user_daily_email'] = 'Choose when the daily email is sent, or Never.';
+			}
+			if (!array_key_exists((string)($_POST['user_keyword_searched_or_bidded'] ?? ''), $keywordChoices)) {
+				$error['user_keyword_searched_or_bidded'] = 'You must select your keyword preference.';
+			}
+			if (!array_key_exists((string)($_POST['user_referer'] ?? ''), $refererChoices)) {
+				$error['user_referer'] = 'You must select your referer preference.';
+			}
+			if (!array_key_exists((string)($_POST['user_bid'] ?? ''), $bidChoices)) {
+				$error['user_bid'] = 'You must select your cost data preference.';
+			}
+			if (!array_key_exists((string)($_POST['user_pref_privacy'] ?? ''), $privacyChoices)) {
+				$error['user_pref_privacy'] = 'You must select your privacy setting.';
+			}
+			if (!array_key_exists((string)($_POST['cloak_referer'] ?? ''), $cloakChoices)) {
+				$error['cloak_referer'] = 'You must select how cloaked links show the referer.';
+			}
+			if (!array_key_exists((string)($_POST['user_pref_ad_settings'] ?? ''), $adChoices)) {
+				$error['user_pref_ad_settings'] = 'You must select where ads are shown.';
 			}
 
 			if (!$error) {
 
 				$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-				$mysql['user_timezone'] = $db->real_escape_string((string)$_POST['user_timezone']);
+				$mysql['user_timezone'] = $db->real_escape_string($postedTimezone);
 				$mysql['user_daily_email'] = $db->real_escape_string((string)$_POST['user_daily_email']);
-				$mysql['cache_time'] = $db->real_escape_string((string)($_POST['user_cached_reports'] ?? ''));
 				$mysql['user_keyword_searched_or_bidded'] = $db->real_escape_string((string)$_POST['user_keyword_searched_or_bidded']);
 				$mysql['user_referer'] = $db->real_escape_string((string)$_POST['user_referer']);
 				$mysql['cloak_referer'] = $db->real_escape_string((string)$_POST['cloak_referer']);
 				$mysql['user_pref_ad_settings'] = $db->real_escape_string((string)$_POST['user_pref_ad_settings']);
 				$mysql['user_pref_dynamic_bid'] = $db->real_escape_string((string)$_POST['user_bid']);
-				$mysql['user_tracking_domain'] = $db->real_escape_string((string)$_POST['user_tracking_domain']);
+				$mysql['user_tracking_domain'] = $db->real_escape_string(trim((string)($_POST['user_tracking_domain'] ?? '')));
 				$mysql['user_pref_privacy'] = $db->real_escape_string((string)$_POST['user_pref_privacy']);
 
-				$user_sql = "
-					UPDATE
-						`202_users` 
-					SET
-						`user_email`='" . $mysql['user_email'] . "',
-						`user_timezone`='" . $mysql['user_timezone'] . "'
-					WHERE
-						`user_id`='" . $mysql['user_id'] . "'
-				";
-				$user_result = $db->query($user_sql);
-
-				$user_sql = "
-					UPDATE
-						`202_users_pref`
-					SET
-						`user_keyword_searched_or_bidded`='" . $mysql['user_keyword_searched_or_bidded'] . "',
-						`user_pref_referer_data`='" . $mysql['user_referer'] . "',
-						`user_tracking_domain`='" . $mysql['user_tracking_domain'] . "',
-						`cache_time`='" . $mysql['cache_time'] . "',
-						`user_pref_cloak_referer`='" . $mysql['cloak_referer'] . "',
-						`user_pref_dynamic_bid`='" . $mysql['user_pref_dynamic_bid'] . "', 
-						`user_pref_ad_settings`='" . $mysql['user_pref_ad_settings'] . "',
-						`user_pref_privacy`='" . $mysql['user_pref_privacy'] . "',    
-						`user_daily_email`='" . $mysql['user_daily_email'] . "'
-					WHERE
-						`user_id`='" . $mysql['user_id'] . "'
-				";
-
-				$user_result = $db->query($user_sql);
-				$update_profile = true;
-				$_SESSION['user_pref_ad_settings'] = $mysql['user_pref_ad_settings'];
-				registerDailyEmail($mysql['user_daily_email'], $mysql['user_timezone'], $html['install_hash']);
-
-				//try to set non expiring cache for values that are used in redirects
-				if (!empty($memcacheWorking)) {
-					$tid = $mysql['user_id'];
-					setCache(md5('user_id_' . $tid . systemHash()), $mysql['user_id'], 0);
-					setCache(md5('user_timezone_' . $tid . systemHash()), $mysql['user_timezone'], 0);
-					setCache(md5('user_keyword_searched_or_bidded_' . $tid . systemHash()), $mysql['user_keyword_searched_or_bidded'], 0);
-					setCache(md5('user_referer_' . $tid . systemHash()), $mysql['user_referer'], 0);
-					setCache(md5('cloak_referer_' . $tid . systemHash()), $mysql['cloak_referer'], 0);
-					setCache(md5('user_pref_dynamic_bid_' . $tid . systemHash()), $mysql['user_pref_dynamic_bid'], 0);
-					setCache(md5('user_pref_privacy_' . $tid . systemHash()), $mysql['user_pref_privacy'], 0);
+				// cache_time is written only when the form sends it. No form
+				// on this page has sent user_cached_reports for several
+				// releases, and writing '' into the integer column failed the
+				// whole preference update under strict SQL mode.
+				$prefSet = [
+					'user_keyword_searched_or_bidded' => (string)$_POST['user_keyword_searched_or_bidded'],
+					'user_pref_referer_data' => (string)$_POST['user_referer'],
+					'user_tracking_domain' => trim((string)($_POST['user_tracking_domain'] ?? '')),
+				];
+				if (isset($_POST['user_cached_reports'])) {
+					$prefSet['cache_time'] = (string)(int)$_POST['user_cached_reports'];
 				}
+				$prefSet += [
+					'user_pref_cloak_referer' => (string)$_POST['cloak_referer'],
+					'user_pref_dynamic_bid' => (int)$_POST['user_bid'],
+					'user_pref_ad_settings' => (string)$_POST['user_pref_ad_settings'],
+					'user_pref_privacy' => (string)$_POST['user_pref_privacy'],
+					'user_daily_email' => (string)$_POST['user_daily_email'],
+				];
 
-				$currentUserEmail = $submittedEmail;
-				$html['user_email'] = htmlentities($submittedEmail, ENT_QUOTES, 'UTF-8');
-				$emailUpdated = ($originalUserEmail !== $submittedEmail);
+				// The account row and the preferences row are one save: both
+				// land or neither does, so "nothing has changed" is true when
+				// the page says it; the session is only told after the commit.
+				try {
+					p202_account_save_profile(new \Prosper202\Database\Connection($db), (int)$_SESSION['user_id'], $submittedEmail, $postedTimezone, $prefSet);
+					$profileSaved = true;
+				} catch (Throwable $saveFailed) {
+					error_log('Account profile save failed, nothing written: ' . $saveFailed->getMessage());
+					$profileSaved = false;
+				}
+				if (!$profileSaved) {
+					$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your settings could not be saved. Nothing you see below has changed; try again.'];
+				} else {
+					$_SESSION['user_pref_ad_settings'] = $mysql['user_pref_ad_settings'];
+					//set the  session's user_timezone
+					$_SESSION['user_timezone'] = $postedTimezone;
+					registerDailyEmail($mysql['user_daily_email'], $mysql['user_timezone'], $user_row['install_hash'] ?? '');
+
+					//try to set non expiring cache for values that are used in redirects
+					if (!empty($memcacheWorking)) {
+						$tid = $mysql['user_id'];
+						setCache(md5('user_id_' . $tid . systemHash()), $mysql['user_id'], 0);
+						setCache(md5('user_timezone_' . $tid . systemHash()), $mysql['user_timezone'], 0);
+						setCache(md5('user_keyword_searched_or_bidded_' . $tid . systemHash()), $mysql['user_keyword_searched_or_bidded'], 0);
+						setCache(md5('user_referer_' . $tid . systemHash()), $mysql['user_referer'], 0);
+						setCache(md5('cloak_referer_' . $tid . systemHash()), $mysql['cloak_referer'], 0);
+						setCache(md5('user_pref_dynamic_bid_' . $tid . systemHash()), $mysql['user_pref_dynamic_bid'], 0);
+						setCache(md5('user_pref_privacy_' . $tid . systemHash()), $mysql['user_pref_privacy'], 0);
+					}
+
+					$emailUpdated = ($originalUserEmail !== $submittedEmail);
+
+					if ($slack) {
+						if ($_POST['user_timezone'] != $user_row['user_timezone']) {
+							$slack->push('user_time_zone_changed', ['user' => $username, 'old_zone' => $user_row['user_timezone'], 'new_zone' => $_POST['user_timezone']]);
+						}
+
+						if ($_POST['user_keyword_searched_or_bidded'] != $user_row['user_keyword_searched_or_bidded']) {
+
+							if ($user_row['user_keyword_searched_or_bidded'] == 'bidded') {
+								$from_type = 'Pickup Bidded Keyword';
+							} else {
+								$from_type = 'Pickup Searched Keyword';
+							}
+
+							if ($_POST['user_keyword_searched_or_bidded'] == 'bidded') {
+								$to_type = 'Pickup Bidded Keyword';
+							} else {
+								$to_type = 'Pickup Searched Keyword';
+							}
+
+							$slack->push('user_keyword_preference_changed', ['user' => $username, 'old_pref' => $from_type, 'new_pref' => $to_type]);
+						}
+
+						if ($_POST['user_referer'] != $user_row['user_pref_referer_data']) {
+
+							if ($user_row['user_pref_referer_data'] == 't202ref') {
+								$from_type = 'Pickup Referer from t202ref variable';
+							} else {
+								$from_type = 'Pickup Referer from browser';
+							}
+
+							if ($_POST['user_referer'] == 't202ref') {
+								$to_type = 'Pickup Referer from t202ref variable';
+							} else {
+								$to_type = 'Pickup Referer from browser';
+							}
+
+							$slack->push('user_referer_changed', ['user' => $username, 'old_pref' => $from_type, 'new_pref' => $to_type]);
+						}
+
+						if ($_POST['cloak_referer'] != $user_row['user_pref_cloak_referer']) {
+
+							if ($user_row['user_pref_cloak_referer'] == 'origin') {
+								$from_type = 'Show Prosper202 Domain';
+							} else {
+								$from_type = 'Show Blank Referer';
+							}
+
+							if ($_POST['cloak_referer'] == 'origin') {
+								$to_type = 'Show Prosper202 Domain';
+							} else {
+								$to_type = 'Show Blank Referer';
+							}
+
+							$slack->push('user_pref_cloak_referer_changed', ['user' => $username, 'old_pref' => $from_type, 'new_pref' => $to_type]);
+						}
+
+						if ($emailUpdated) {
+							$slack->push('user_email_changed', ['user' => $username, 'old_email' => $originalUserEmail, 'new_email' => $submittedEmail]);
+						}
+					}
+
+					p202_account_flash('ok', 'Your settings are saved.');
+					p202_account_redirect('202-account/account.php');
+				}
 			}
-
-			//set the  session's user_timezone
-			$_SESSION['user_timezone'] = $_POST['user_timezone'];
-
-			if ($slack) {
-				if ($_POST['user_timezone'] != $user_row['user_timezone']) {
-					$slack->push('user_time_zone_changed', ['user' => $username, 'old_zone' => $user_row['user_timezone'], 'new_zone' => $_POST['user_timezone']]);
+		} else {
+			if (!isset($error['user_email'])) {
+				$mysql['user_email'] = $db->real_escape_string($submittedEmail);
+				$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
+				$count_sql = "	SELECT 	*
+								  	FROM  		`202_users`
+								  	WHERE 	`user_email` = '" . $mysql['user_email'] . "'
+								  	AND   		`user_id`!='" . $mysql['user_id'] . "'";
+				$count_result = $db->query($count_sql);
+				if ($count_result->num_rows > 0) {
+					$error['user_email'] = 'That email address is already being used.';
 				}
 
-				if ($_POST['user_keyword_searched_or_bidded'] != $user_row['user_keyword_searched_or_bidded']) {
-
-					if ($user_row['user_keyword_searched_or_bidded'] == 'bidded') {
-						$from_type = 'Pickup Bidded Keyword';
+				if (!$error) {
+					$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
+					$mysql['user_email'] = $db->real_escape_string($submittedEmail);
+					$sql = "UPDATE 202_users SET user_email = '" . $mysql['user_email'] . "' WHERE user_id = '" . $mysql['user_id'] . "'";
+					if (!$db->query($sql)) {
+						$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your email could not be saved; try again.'];
 					} else {
-						$from_type = 'Pickup Searched Keyword';
+						if ($slack && $submittedEmail !== $currentUserEmail) {
+							$slack->push('user_email_changed', ['user' => $username, 'old_email' => $currentUserEmail, 'new_email' => $submittedEmail]);
+						}
+						p202_account_flash('ok', 'Your settings are saved.');
+						p202_account_redirect('202-account/account.php');
 					}
-
-					if ($_POST['user_referer'] == 't202ref') {
-						$to_type = 'Pickup Bidded Keyword';
-					} else {
-						$to_type = 'Pickup Searched Keyword';
-					}
-
-					$slack->push('user_keyword_preference_changed', ['user' => $username, 'old_pref' => $from_type, 'new_pref' => $to_type]);
-				}
-
-				if ($_POST['user_referer'] != $user_row['user_pref_referer_data']) {
-
-					if ($user_row['user_pref_referer_data'] == 't202ref') {
-						$from_type = 'Pickup Referer from t202ref variable';
-					} else {
-						$from_type = 'Pickup Referer from browser';
-					}
-
-					if ($_POST['user_referer'] == 't202ref') {
-						$to_type = 'Pickup Referer from t202ref variable';
-					} else {
-						$to_type = 'Pickup Referer from browser';
-					}
-
-					$slack->push('user_referer_changed', ['user' => $username, 'old_pref' => $from_type, 'new_pref' => $to_type]);
-				}
-
-				if ($_POST['cloak_referer'] != $user_row['user_pref_cloak_referer']) {
-
-					if ($user_row['user_pref_cloak_referer'] == 'origin') {
-						$from_type = 'Show Prosper202 Domain';
-					} else {
-						$from_type = 'Show Blank Referer';
-					}
-
-					if ($_POST['cloak_referer'] == 'origin') {
-						$to_type = 'Show Prosper202 Domain';
-					} else {
-						$to_type = 'Show Blank Referer';
-					}
-
-					$slack->push('user_pref_cloak_referer_changed', ['user' => $username, 'old_pref' => $from_type, 'new_pref' => $to_type]);
-				}
-
-				if ($emailUpdated) {
-					$slack->push('user_email_changed', ['user' => $username, 'old_email' => $originalUserEmail, 'new_email' => $submittedEmail]);
 				}
 			}
 		}
-	} else {
-		if (!isset($error['user_email_invalid']) || !$error['user_email_invalid']) {
-			$mysql['user_email'] = $db->real_escape_string($submittedEmail);
-			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-			$count_sql = "	SELECT 	*
-							  	FROM  		`202_users` 
-							  	WHERE 	`user_email` = '" . $mysql['user_email'] . "' 
-							  	AND   		`user_id`!='" . $mysql['user_id'] . "'";
-			$count_result = $db->query($count_sql);
-			if ($count_result->num_rows > 0) {
-				$error['user_email'] .= 'That email address is already being used.';
-			}
 
-			if (!$error) {
-				$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-				$mysql['user_email'] = $db->real_escape_string($submittedEmail);
-				$sql = "UPDATE 202_users SET user_email = '" . $mysql['user_email'] . "' WHERE user_id = '" . $mysql['user_id'] . "'";
-				$result = $db->query($sql);
-				$update_profile = true;
-
-				if ($slack && $submittedEmail !== $currentUserEmail) {
-					$slack->push('user_email_changed', ['user' => $username, 'old_email' => $currentUserEmail, 'new_email' => $submittedEmail]);
-				}
-				$currentUserEmail = $submittedEmail;
-				$html['user_email'] = htmlentities($submittedEmail, ENT_QUOTES, 'UTF-8');
+		// Refused: say it under the field, and keep what was typed.
+		$profileErrors = $error;
+		foreach (['user_email', 'user_timezone', 'user_daily_email', 'user_keyword_searched_or_bidded', 'user_bid', 'user_referer', 'user_pref_privacy', 'cloak_referer', 'user_pref_ad_settings', 'user_tracking_domain'] as $profileField) {
+			if (isset($_POST[$profileField])) {
+				$profileForm[$profileField] = (string)$_POST[$profileField];
 			}
 		}
 	}
@@ -376,12 +455,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 if (!empty($_POST['update_account_currency']) && $_POST['update_account_currency'] == '1') {
 
-	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
-		$error['token'] = 'You must use our forms to submit data.';
+	if (!AUTH::check_csrf_token()) {
+		p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
+		p202_account_redirect('202-account/account.php#currency');
 	}
-	$mysql['account_currency'] = $db->real_escape_string((string)$_POST['account_currency']);
-
-	if (!$error) {
+	$postedCurrency = (string)($_POST['account_currency'] ?? '');
+	// The list this page offers is the list the API admits
+	// (tests/User/AccountCurrencyTest pins the two together); a value outside
+	// it would render as an unknown code on every page that shows money.
+	if (!in_array($postedCurrency, \Api\V3\Controllers\UsersController::SUPPORTED_CURRENCIES, true)) {
+		$keyErrors['account_currency'] = 'Choose a currency from the list.';
+	} else {
+		$mysql['account_currency'] = $db->real_escape_string($postedCurrency);
+		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 		$user_sql = "
 					UPDATE
 						`202_users_pref`
@@ -390,54 +476,61 @@ if (!empty($_POST['update_account_currency']) && $_POST['update_account_currency
 					WHERE
 						`user_id`='" . $mysql['user_id'] . "'
 				";
-		$user_result = $db->query($user_sql);
-	}
+		$currencySaved = (bool)$db->query($user_sql);
 
-	// Only recompute campaign payouts when the currency change was accepted and saved
-	// above (no token/validation error); otherwise an invalid/forged request would still
-	// rewrite every campaign's payout.
-	if (!$error && $user_row['user_account_currency'] != $_POST['account_currency']) {
-		// scope to the acting user's own campaigns
-		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-		$sql = "SELECT aff_campaign_id, aff_campaign_payout, aff_campaign_currency, aff_campaign_foreign_payout FROM 202_aff_campaigns WHERE aff_campaign_deleted = 0 AND user_id = '" . $mysql['user_id'] . "'";
-		$result = $db->query($sql);
-		if ($result->num_rows > 0) {
-			while ($row = $result->fetch_assoc()) {
+		// Only recompute campaign payouts when the currency change was accepted and saved
+		// above; otherwise an invalid/forged request would still rewrite every
+		// campaign's payout.
+		if ($currencySaved && ($user_row['user_account_currency'] ?? '') != $postedCurrency) {
+			// scope to the acting user's own campaigns
+			$sql = "SELECT aff_campaign_id, aff_campaign_payout, aff_campaign_currency, aff_campaign_foreign_payout FROM 202_aff_campaigns WHERE aff_campaign_deleted = 0 AND user_id = '" . $mysql['user_id'] . "'";
+			$result = $db->query($sql);
+			if ($result && $result->num_rows > 0) {
+				while ($row = $result->fetch_assoc()) {
 
-				$mysql['aff_campaign_id'] = $db->real_escape_string((string)$row['aff_campaign_id']);
+					$mysql['aff_campaign_id'] = $db->real_escape_string((string)$row['aff_campaign_id']);
 
-				if ($row['aff_campaign_foreign_payout'] == '0.00') {
-					$payout = getForeignPayout($_POST['account_currency'], $row['aff_campaign_currency'], $row['aff_campaign_payout']);
-					$db->query("UPDATE 202_aff_campaigns SET aff_campaign_foreign_payout = '" . $row['aff_campaign_payout'] . "', aff_campaign_payout = '" . $payout['exchange_payout'] . "' WHERE aff_campaign_id = '" . $mysql['aff_campaign_id'] . "' AND user_id = '" . $mysql['user_id'] . "'");
-				} else {
-					if ($_POST['account_currency'] == $row['aff_campaign_currency']) {
-						$db->query("UPDATE 202_aff_campaigns SET aff_campaign_payout = '" . $row['aff_campaign_foreign_payout'] . "', aff_campaign_foreign_payout = '0.00' WHERE aff_campaign_id = '" . $mysql['aff_campaign_id'] . "' AND user_id = '" . $mysql['user_id'] . "'");
+					if ($row['aff_campaign_foreign_payout'] == '0.00') {
+						$payout = getForeignPayout($postedCurrency, $row['aff_campaign_currency'], $row['aff_campaign_payout']);
+						$db->query("UPDATE 202_aff_campaigns SET aff_campaign_foreign_payout = '" . $row['aff_campaign_payout'] . "', aff_campaign_payout = '" . $payout['exchange_payout'] . "' WHERE aff_campaign_id = '" . $mysql['aff_campaign_id'] . "' AND user_id = '" . $mysql['user_id'] . "'");
 					} else {
-						$payout = getForeignPayout($_POST['account_currency'], $row['aff_campaign_currency'], $row['aff_campaign_foreign_payout']);
-						$db->query("UPDATE 202_aff_campaigns SET aff_campaign_payout = '" . $payout['exchange_payout'] . "' WHERE aff_campaign_id = '" . $mysql['aff_campaign_id'] . "' AND user_id = '" . $mysql['user_id'] . "'");
+						if ($postedCurrency == $row['aff_campaign_currency']) {
+							$db->query("UPDATE 202_aff_campaigns SET aff_campaign_payout = '" . $row['aff_campaign_foreign_payout'] . "', aff_campaign_foreign_payout = '0.00' WHERE aff_campaign_id = '" . $mysql['aff_campaign_id'] . "' AND user_id = '" . $mysql['user_id'] . "'");
+						} else {
+							$payout = getForeignPayout($postedCurrency, $row['aff_campaign_currency'], $row['aff_campaign_foreign_payout']);
+							$db->query("UPDATE 202_aff_campaigns SET aff_campaign_payout = '" . $payout['exchange_payout'] . "' WHERE aff_campaign_id = '" . $mysql['aff_campaign_id'] . "' AND user_id = '" . $mysql['user_id'] . "'");
+						}
 					}
 				}
 			}
 		}
-	}
 
-	$update_profile = true;
+		if ($currencySaved) {
+			p202_account_flash('ok', 'Account currency saved.');
+			p202_account_redirect('202-account/account.php#currency');
+		}
+		$pageFlashes[] = ['kind' => 'bad', 'text' => 'The account currency could not be saved; try again.'];
+	}
 }
 
 if (!empty($_POST['update_clickserver_api_key']) && $_POST['update_clickserver_api_key'] == '1') {
 
-	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
-		$error['token'] = 'You must use our forms to submit data.';
+	// The ClickServers page's empty state posts here and asks to go back
+	// there; only that one page is accepted as a destination.
+	$clickserverReturn = ($_POST['return_to'] ?? '') === 'clickservers' ? '202-account/clickservers.php' : '202-account/account.php';
+	if (!AUTH::check_csrf_token()) {
+		p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
+		p202_account_redirect($clickserverReturn);
 	}
 
 	$mysql['clickserver_api_key'] = $db->real_escape_string((string)$_POST['clickserver_api_key']);
 
 	if (!preg_match('/\*/', (string) $_POST['clickserver_api_key'])) {
 		if (!clickserver_api_key_validate($mysql['clickserver_api_key']) && $mysql['clickserver_api_key'] != '') {
-			$error['clickserver_api_key'] = 'This API Key appears invalid.';
+			$keyErrors['clickserver_api_key'] = 'This API Key appears invalid.';
 		}
 
-		if (!$error || $mysql['clickserver_api_key'] == '') {
+		if (!$keyErrors || $mysql['clickserver_api_key'] == '') {
 
 			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 			$mysql['clickserver_api_key'] = $db->real_escape_string((string)$_POST['clickserver_api_key']);
@@ -446,29 +539,37 @@ if (!empty($_POST['update_clickserver_api_key']) && $_POST['update_clickserver_a
 								WHERE  	`user_id`='" . $mysql['user_id'] . "'";
 			$user_result = $db->query($user_sql);
 
-			$update_clickserver_api_key_done = true;
-
 			if ($slack) {
-				if ($_POST['clickserver_api_key'] != $user_row['clickserver_api_key']) {
+				if ($_POST['clickserver_api_key'] != ($user_row['clickserver_api_key'] ?? '')) {
 					$slack->push('user_updated_clickserver_api_key', ['user' => $username]);
 				}
 			}
+
+			if ($user_result) {
+				p202_account_flash('ok', 'You have updated your Prosper202 ClickServer API Key.');
+				p202_account_redirect($clickserverReturn);
+			}
+			$pageFlashes[] = ['kind' => 'bad', 'text' => 'The ClickServer API key could not be saved; try again.'];
+		} elseif ($clickserverReturn !== '202-account/account.php') {
+			p202_account_flash('bad', $keyErrors['clickserver_api_key']);
+			p202_account_redirect($clickserverReturn);
 		}
 	}
 }
 
 if (!empty($_POST['change_user_api_key']) && $_POST['change_user_api_key'] == '1') {
 
-	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
-		$error['token'] = 'You must use our forms to submit data.';
+	if (!AUTH::check_csrf_token()) {
+		p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
+		p202_account_redirect('202-account/account.php');
 	}
 
 	if (!preg_match('/\*/', (string) $_POST['user_api_key'])) {
 		if (!AUTH::is_valid_api_key($_POST['user_api_key'])) {
-			$error['user_api_key'] = 'This API Key appears invalid.';
+			$keyErrors['user_api_key'] = 'This API Key appears invalid.';
 		}
 
-		if (!$error) {
+		if (!$keyErrors) {
 
 			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 			$mysql['user_api_key'] = $db->real_escape_string((string)$_POST['user_api_key']);
@@ -477,27 +578,34 @@ if (!empty($_POST['change_user_api_key']) && $_POST['change_user_api_key'] == '1
 								WHERE  	`user_id`='" . $mysql['user_id'] . "'";
 			$user_result = $db->query($user_sql);
 
-			$change_api_key = true;
-
 			//set the  session's user_api_key
 			$_SESSION['user_api_key'] = $_POST['user_api_key'];
 			$_SESSION['user_cirrus_link'] = $_POST['user_api_key'];
+
+			p202_account_flash('ok', 'You have updated your Tracking202 API Key.');
+			p202_account_redirect('202-account/account.php');
 		}
 	}
 }
 
 if (!empty($_POST['change_user_stats202_app_key']) && $_POST['change_user_stats202_app_key'] == '1') {
+	// The classic handler wrote this key with no token check at all, unlike
+	// every sibling on this page (error pattern #5).
+	if (!AUTH::check_csrf_token()) {
+		p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
+		p202_account_redirect('202-account/account.php');
+	}
 	if (!preg_match('/\*/', (string) $_POST['user_stats202_app_key'])) {
 		// Replace the undefined method with a more direct validation approach
 		$app_key = $_POST['user_stats202_app_key'];
-		$api_key = $_SESSION['user_api_key'];
+		$api_key = $_SESSION['user_api_key'] ?? '';
 
 		// Basic validation - you may need to adjust this based on actual requirements
 		if (empty($app_key) || strlen((string) $app_key) < 10 || empty($api_key)) {
-			$error['user_stats202_app_key'] = '<div class="error">This Tracking202 API Key &amp; Stats202 App Key combination appears invalid.</div>';
+			$keyErrors['user_stats202_app_key'] = 'This Tracking202 API Key & Stats202 App Key combination appears invalid.';
 		}
 
-		if (!$error) {
+		if (!$keyErrors) {
 
 			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 			$mysql['user_stats202_app_key'] = $db->real_escape_string((string)$_POST['user_stats202_app_key']);
@@ -506,129 +614,132 @@ if (!empty($_POST['change_user_stats202_app_key']) && $_POST['change_user_stats2
 								WHERE  	`user_id`='" . $mysql['user_id'] . "'";
 			$user_result = $db->query($user_sql);
 
-			$change_stats202_app_key = true;
-
 			//set the  session's user_api_key
 			$_SESSION['user_stats202_app_key'] = $_POST['user_stats202_app_key'];
+
+			p202_account_flash('ok', 'You have updated your Stats202 App Key.');
+			p202_account_redirect('202-account/account.php');
 		}
 	}
 }
 
 if (!empty($_POST['update_p202_customer_api_key']) && $_POST['update_p202_customer_api_key'] == '1') {
-	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
-		$error['token'] = 'You must use our forms to submit data.';
+	if (!AUTH::check_csrf_token()) {
+		p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
+		p202_account_redirect('202-account/account.php#customer-key');
 	}
-	$mysql['p202_customer_api_key'] = $db->real_escape_string((string)$_POST['p202_customer_api_key']);
+	$postedCustomerKey = trim((string)($_POST['p202_customer_api_key'] ?? ''));
+	$mysql['p202_customer_api_key'] = $db->real_escape_string($postedCustomerKey);
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-	$validate = validateCustomersApiKey($_POST['p202_customer_api_key']);
-	if ($validate['code'] != 200 && $mysql['p202_customer_api_key'] != '') {
-		$error['p202_customer_api_key_invalid'] = "API key is not valid. Check your key and try again!";
+	if ($postedCustomerKey !== '') {
+		$validate = validateCustomersApiKey($postedCustomerKey);
+		if ($validate['code'] != 200) {
+			$keyErrors['p202_customer_api_key'] = 'API key is not valid. Check your key and try again!';
+		}
 	}
-	if (!$error) {
-		$db->query("UPDATE 202_users SET p202_customer_api_key = '" . $mysql['p202_customer_api_key'] . "' WHERE user_id = '" . $mysql['user_id'] . "'");
-		$change_p202_customer_api_key = true;
+	if (!isset($keyErrors['p202_customer_api_key'])) {
+		if ($db->query("UPDATE 202_users SET p202_customer_api_key = '" . $mysql['p202_customer_api_key'] . "' WHERE user_id = '" . $mysql['user_id'] . "'")) {
+			p202_account_flash('ok', $postedCustomerKey === '' ? 'Your Prosper202 customer API key was removed.' : 'Your Prosper202 customer API key is saved.');
+			p202_account_redirect('202-account/account.php#customer-key');
+		}
+		$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your Prosper202 customer API key could not be saved; try again.'];
 	}
 }
 
 if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 
 	//check token, and new user_pass
-	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
-		$error['token'] = 'You must use our forms to submit data.';
+	if (!AUTH::check_csrf_token()) {
+		// The failure counter below only runs for a request with a valid
+		// token, so a forged cross-site POST can never force-logout anyone.
+		p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
+		p202_account_redirect('202-account/account.php#password');
 	}
-	if ($_POST['new_user_pass'] == '') {
-		$error['user_pass'] = ' You must type in your desired password.';
+	$newPass = (string)($_POST['new_user_pass'] ?? '');
+	$retypePass = (string)($_POST['retype_new_user_pass'] ?? '');
+	if ($newPass == '') {
+		$passErrors['new_user_pass'] = 'You must type in your desired password.';
+	} elseif ((strlen($newPass) < 8) or (strlen($newPass) > 72)) {
+		// Cap at 72 bytes: PASSWORD_DEFAULT is bcrypt, which only hashes the first 72
+		// bytes. Allowing more would silently ignore the tail (any suffix past byte 72
+		// would also authenticate).
+		$passErrors['new_user_pass'] = 'Your password must be between 8 and 72 characters long.';
 	}
-	if ($_POST['retype_new_user_pass'] == '') {
-		$error['user_pass'] .= ' You must type verify your password.';
-	}
-	// Cap at 72 bytes: PASSWORD_DEFAULT is bcrypt, which only hashes the first 72
-	// bytes. Allowing more would silently ignore the tail (any suffix past byte 72
-	// would also authenticate).
-	if ((strlen((string) $_POST['new_user_pass']) < 8) or (strlen((string) $_POST['new_user_pass']) > 72)) {
-		$error['user_pass'] .= ' Your password must be between 8 and 72 characters long.';
-	}
-	if ($_POST['new_user_pass'] != $_POST['retype_new_user_pass']) {
-		$error['user_pass'] .= ' Your password did not match, please try again.';
+	if ($retypePass == '') {
+		$passErrors['retype_new_user_pass'] = 'You must type your new password again to verify it.';
+	} elseif ($newPass !== $retypePass) {
+		$passErrors['retype_new_user_pass'] = 'Your password did not match, please try again.';
 	}
 
 	//check to to see if old user_pass is correct
 	if (!isset($_POST['user_pass']) || empty($_POST['user_pass'])) {
-		$error['user_pass'] .= 'You must enter your current password.';
+		$passErrors['user_pass'] = 'You must enter your current password.';
 	} else {
 		$verify_stmt = $db->prepare('SELECT user_pass FROM 202_users WHERE user_id = ? LIMIT 1');
+		$stored = null;
+		$verified = false;
 		if ($verify_stmt) {
 			$current_user_id = (int) ($_SESSION['user_own_id'] ?? 0);
 			$verify_stmt->bind_param('i', $current_user_id);
-			$verify_stmt->execute();
-			$result = $verify_stmt->get_result();
-			$stored = $result ? $result->fetch_assoc() : null;
-			$verify_stmt->close();
-			if (!$stored || !verify_user_pass((string) $_POST['user_pass'], (string) ($stored['user_pass'] ?? ''))['valid']) {
-				$error['user_pass'] .= 'Your old password was typed incorrectly.';
-
-				// Count wrong current-password attempts within this session (only
-				// when the request is genuine — a valid CSRF token — so a forged
-				// cross-site POST can't force-logout the victim). Too many almost
-				// always means someone is poking at a session they shouldn't have,
-				// so tear it down and force a fresh login rather than letting them
-				// keep guessing toward an account takeover.
-				if (empty($error['token'])) {
-					$_SESSION['pw_change_fails'] = (int) ($_SESSION['pw_change_fails'] ?? 0) + 1;
-					if ($_SESSION['pw_change_fails'] >= AUTH::MAX_PASSWORD_REAUTH_FAILS) {
-						session_destroy();
-						$secure = function_exists('getSecureStatus')
-							? getSecureStatus()
-							: (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off');
-						setcookie('remember_me', '', ['expires' => 1, 'path' => '/', 'domain' => AUTH::cookie_domain(), 'secure' => $secure, 'httponly' => true, 'samesite' => 'Lax']);
-						unset($_COOKIE['remember_me']);
-						header('location: ' . get_absolute_url() . '202-login.php');
-						exit;
-					}
+			if ($verify_stmt->execute()) {
+				$result = $verify_stmt->get_result();
+				if ($result !== false) {
+					$stored = $result->fetch_assoc();
+					$verified = true;
 				}
-			} else {
-				// Correct current password — this is the legitimate owner, so
-				// clear the failure counter.
-				unset($_SESSION['pw_change_fails']);
+			}
+			$verify_stmt->close();
+		}
+		if (!$verified) {
+			// Could not read the stored hash: say so, and do not count it as
+			// a wrong password (it is not one).
+			$passErrors['user_pass'] = 'Unable to verify your current password at this time.';
+		} elseif (!$stored || !verify_user_pass((string) $_POST['user_pass'], (string) ($stored['user_pass'] ?? ''))['valid']) {
+			$passErrors['user_pass'] = 'Your old password was typed incorrectly.';
+
+			// Count wrong current-password attempts within this session (the
+			// token was checked above, so a forged cross-site POST can't
+			// force-logout the victim). Too many almost always means someone
+			// is poking at a session they shouldn't have, so tear it down and
+			// force a fresh login rather than letting them keep guessing
+			// toward an account takeover.
+			$_SESSION['pw_change_fails'] = (int) ($_SESSION['pw_change_fails'] ?? 0) + 1;
+			if ($_SESSION['pw_change_fails'] >= AUTH::MAX_PASSWORD_REAUTH_FAILS) {
+				session_destroy();
+				$secure = function_exists('getSecureStatus')
+					? getSecureStatus()
+					: (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off');
+				setcookie('remember_me', '', ['expires' => 1, 'path' => '/', 'domain' => AUTH::cookie_domain(), 'secure' => $secure, 'httponly' => true, 'samesite' => 'Lax']);
+				unset($_COOKIE['remember_me']);
+				header('location: ' . get_absolute_url() . '202-login.php');
+				exit;
 			}
 		} else {
-			$error['user_pass'] .= 'Unable to verify your current password at this time.';
+			// Correct current password — this is the legitimate owner, so
+			// clear the failure counter.
+			unset($_SESSION['pw_change_fails']);
 		}
 	}
 
 	//if no user_pass errors
-	if (!$error) {
-
-	$new_hash = hash_user_pass((string) $_POST['new_user_pass']);
-	$update_stmt = $db->prepare('UPDATE 202_users SET user_pass = ? WHERE user_id = ?');
-	if ($update_stmt) {
-		$current_user_id = (int) ($_SESSION['user_own_id'] ?? 0);
-		$update_stmt->bind_param('si', $new_hash, $current_user_id);
-		$update_stmt->execute();
-		$update_stmt->close();
-	} else {
-		prosper_log('account', 'Failed to prepare password update statement: ' . $db->error);
+	if (!$passErrors) {
+		$new_hash = hash_user_pass($newPass);
+		$update_stmt = $db->prepare('UPDATE 202_users SET user_pass = ? WHERE user_id = ?');
+		$passSaved = false;
+		if ($update_stmt) {
+			$current_user_id = (int) ($_SESSION['user_own_id'] ?? 0);
+			$update_stmt->bind_param('si', $new_hash, $current_user_id);
+			$passSaved = $update_stmt->execute();
+			$update_stmt->close();
+		}
+		if (!$passSaved) {
+			prosper_log('account', 'Failed to update password: ' . $db->error);
+			$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your password could not be changed. Your old password still works; try again.'];
+		} else {
+			p202_account_flash('ok', 'Your password is changed.');
+			p202_account_redirect('202-account/account.php#password');
+		}
 	}
-
-	$change_user_pass = true;
-	}
-}
-
-$html = array_merge($html, array_map('htmlentities', $_POST));
-
-
-
-
-$html['user_id'] = htmlentities((string)$_SESSION['user_id'], ENT_QUOTES, 'UTF-8');
-$html['user_username'] = htmlentities((string)($_SESSION['user_username'] ?? ''), ENT_QUOTES, 'UTF-8');
-
-
-template_top('Personal Settings');
-
-if (isset($_SERVER["HTTPS"]) && strtolower((string) $_SERVER["HTTPS"]) == "on") {
-	$strProtocol = 'https://';
-} else {
-	$strProtocol = 'http://';
 }
 
 //update new values from the db
@@ -638,450 +749,369 @@ $user_sql = "	SELECT 	*
 				 WHERE  	`202_users`.`user_id`='" . $mysql['user_id'] . "'";
 $user_result = $db->query($user_sql);
 $user_row = $user_result->fetch_assoc();
-$html = array_map('htmlentities', $user_row);
+
+$e = static fn (mixed $v): string => htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
+/** The stored value, or what the person typed on a refused submit. */
+$profileValue = static function (string $field, string $column) use ($profileForm, $user_row): string {
+	return array_key_exists($field, $profileForm) ? $profileForm[$field] : (string)($user_row[$column] ?? '');
+};
+$selected = static fn (string $a, string $b): string => $a === $b ? ' selected' : '';
+$renderOptions = static function (array $choices, string $current) use ($e, $selected): string {
+	$out = '';
+	foreach ($choices as $value => $label) {
+		$out .= '<option value="' . $e($value) . '"' . $selected((string)$value, $current) . '>' . $e($label) . '</option>';
+	}
+	return $out;
+};
+
+$apiKeys = [];
+if ($canPersonal) {
+	try {
+		// Works with or without the scope column: see p202_account_api_keys in functions-account-ui.php.
+		$apiKeys = p202_account_api_keys($db, (int)$_SESSION['user_id']);
+	} catch (Throwable $keysUnreadable) {
+		// An unreadable list must not render as "no keys yet".
+		error_log('Account page: API keys could not be read: ' . $keysUnreadable->getMessage());
+		$apiKeys = [];
+		$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your API keys could not be read just now. Reload the page to see them.'];
+	}
+}
+
+/** A key shown as its first and last four characters around a mask. */
+$maskKey = static fn (string $key): string => strlen($key) > 12
+	? substr($key, 0, 4) . str_repeat("\u{2022}", 20) . substr($key, -4)
+	: str_repeat("\u{2022}", 20);
+/** What a key may do, in words: the same reading api/v3/Auth.php applies. */
+$keyScope = static function (mixed $raw): array {
+	$scopes = \Api\V3\Auth::parseScopes((string)($raw ?? ''));
+	if (in_array('*', $scopes, true)) {
+		return ['full access', ''];
+	}
+	if (in_array(\Api\V3\Auth::MALFORMED_SCOPE, $scopes, true)) {
+		return ['scope unreadable · refused everywhere', ' p202-pill--bad'];
+	}
+	return [implode(', ', $scopes), ' p202-pill--accent'];
+};
+
+$currencyValue = (string)($_POST['account_currency'] ?? ($user_row['user_account_currency'] ?? 'USD'));
+$sel = static fn (string $code): string => $currencyValue === $code ? ' selected' : '';
+$currentTimezone = $profileValue('user_timezone', 'user_timezone');
+
+$profileAdvancedErrors = array_intersect_key($profileErrors, array_flip(['user_keyword_searched_or_bidded', 'user_bid', 'user_referer', 'user_pref_privacy', 'cloak_referer', 'user_pref_ad_settings', 'user_tracking_domain']));
+
+template_top('Personal Settings', ['ui' => 'v2']);
 ?>
 
-<div class="row account">
-	<div class="col-xs-12">
-		<div class="row">
-			<div class="col-xs-4">
-				<h6>My Account</h6>
-			</div>
-			<div class="col-xs-8">
-				<?php if ($update_profile == true || $change_user_pass == true) { ?>
-					<div class="success" style="text-align:right"><small><span class="fui-check-inverted"></span> Your submission was successful. Your changes have been saved.</small></div>
-				<?php } ?>
-
-				<?php if ($update_clickserver_api_key_done) { ?>
-					<div class="success" style="text-align:right"><small><span class="fui-check-inverted"></span> You have updated your Prosper202 ClickServer API Key</small></div>
-				<?php } ?>
-
-				<?php if ($change_api_key) { ?>
-					<div class="success" style="text-align:right"><small><span class="fui-check-inverted"></span> You have updated your Tracking202 API Key</small></div>
-				<?php } ?>
-
-				<?php if ($removed_user_api_key) { ?>
-					<div class="success" style="text-align:right"><small><span class="fui-check-inverted"></span> You have removed your Tracking202 API Key</small></div>
-				<?php } ?>
-
-				<?php if ($error) { ?>
-					<div class="error" style="text-align:right"><small><span class="fui-alert"></span> <?php
-																										echo ($error['token'] ?? '') .
-																											($error['user_email'] ?? '') .
-																											($error['clickserver_api_key'] ?? '') .
-																											($error['user_api_key'] ?? '') .
-																											($error['user_pass'] ?? '') .
-																											($error['p202_customer_api_key_invalid'] ?? '');
-																										?></small></div>
-				<?php } ?>
-				<?php if ($change_p202_customer_api_key) { ?>
-					<div class="success" style="text-align:right"><small><span class="fui-check-inverted"></span> Your submission was successful. Your Prosper202 customer API key have been saved.</small></div>
-				<?php } ?>
-			</div>
-		</div>
-	</div>
-	<div class="col-xs-4">
-		<div class="panel panel-default account_left">
-			<div class="panel-body">
-				Modify your account settings. Required fields marked with *
-			</div>
-		</div>
-	</div>
-
-	<div class="col-xs-8">
-		<form class="form-horizontal" style="padding-top:0px;" role="form" method="post" action="">
-			<input type="hidden" name="update_profile" value="1" />
-			<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-			<?php if ($userObj->hasPermission("access_to_personal_settings")) { ?>
-				<div class="form-group">
-					<label for="user_timezone" class="col-xs-4 control-label">* Time zone (GMT):</label>
-					<div class="col-xs-8">
-						<?php
-						echo '<select class="form-control input-sm" name="user_timezone" id="user_timezone">';
-						foreach (DateTimeZone::listIdentifiers() as $tz) {
-							$current_tz = new DateTimeZone($tz);
-							$offset =  $current_tz->getOffset($dt);
-							$transition =  $current_tz->getTransitions($dt->getTimestamp(), $dt->getTimestamp());
-							$abbr = $transition[0]['abbr'];
-
-							if ($html['user_timezone'] == $tz) {
-								echo '<option selected="selected" value="' . $tz . '">' . $tz . ' [' . $abbr . ' ' . formatOffset($offset) . ']</option>';
-							}
-
-							echo '<option value="' . $tz . '">' . $tz . ' [' . $abbr . ' ' . formatOffset($offset) . ']</option>';
-						}
-						echo '</select>';
-						?>
-					</div>
-				</div>
-
-				<div class="form-group">
-					<label for="user_daily_email" class="col-xs-4 control-label">Daily Email Report: </label>
-					<div class="col-xs-8">
-						<select class="form-control input-sm" id="user_daily_email" name="user_daily_email">
-							<option value="" <?php if ($html['user_daily_email'] == '') echo 'selected'; ?>>Never</option>
-							<option value="00" <?php if ($html['user_daily_email'] == '00') echo 'selected'; ?>>12 AM</option>
-							<option value="01" <?php if ($html['user_daily_email'] == '01') echo 'selected'; ?>>1 AM</option>
-							<option value="02" <?php if ($html['user_daily_email'] == '02') echo 'selected'; ?>>2 AM</option>
-							<option value="03" <?php if ($html['user_daily_email'] == '03') echo 'selected'; ?>>3 AM</option>
-							<option value="04" <?php if ($html['user_daily_email'] == '04') echo 'selected'; ?>>4 AM</option>
-							<option value="05" <?php if ($html['user_daily_email'] == '05') echo 'selected'; ?>>5 AM</option>
-							<option value="06" <?php if ($html['user_daily_email'] == '06') echo 'selected'; ?>>6 AM</option>
-							<option value="07" <?php if ($html['user_daily_email'] == '07') echo 'selected'; ?>>7 AM</option>
-							<option value="08" <?php if ($html['user_daily_email'] == '08') echo 'selected'; ?>>8 AM</option>
-							<option value="09" <?php if ($html['user_daily_email'] == '09') echo 'selected'; ?>>9 AM</option>
-							<option value="10" <?php if ($html['user_daily_email'] == '10') echo 'selected'; ?>>10 AM</option>
-							<option value="11" <?php if ($html['user_daily_email'] == '11') echo 'selected'; ?>>11 AM</option>
-							<option value="12" <?php if ($html['user_daily_email'] == '12') echo 'selected'; ?>>12 PM</option>
-							<option value="13" <?php if ($html['user_daily_email'] == '13') echo 'selected'; ?>>1 PM</option>
-							<option value="14" <?php if ($html['user_daily_email'] == '14') echo 'selected'; ?>>2 PM</option>
-							<option value="15" <?php if ($html['user_daily_email'] == '15') echo 'selected'; ?>>3 PM</option>
-							<option value="16" <?php if ($html['user_daily_email'] == '16') echo 'selected'; ?>>4 PM</option>
-							<option value="17" <?php if ($html['user_daily_email'] == '17') echo 'selected'; ?>>5 PM</option>
-							<option value="18" <?php if ($html['user_daily_email'] == '18') echo 'selected'; ?>>6 PM</option>
-							<option value="19" <?php if ($html['user_daily_email'] == '19') echo 'selected'; ?>>7 PM</option>
-							<option value="20" <?php if ($html['user_daily_email'] == '20') echo 'selected'; ?>>8 PM</option>
-							<option value="21" <?php if ($html['user_daily_email'] == '21') echo 'selected'; ?>>9 PM</option>
-							<option value="22" <?php if ($html['user_daily_email'] == '22') echo 'selected'; ?>>10 PM</option>
-							<option value="23" <?php if ($html['user_daily_email'] == '23') echo 'selected'; ?>>11 PM</option>
-						</select>
-					</div>
-				</div>
-
-				<div class="form-group">
-					<label for="user_keyword_searched_or_bidded" class="col-xs-4 control-label">* Keyword Preference:</label>
-					<div class="col-xs-8">
-						<select class="form-control input-sm" name="user_keyword_searched_or_bidded" id="user_keyword_searched_or_bidded">
-							<option
-								<?php if ($html['user_keyword_searched_or_bidded'] == 'searched') {
-									echo 'selected=""';
-								} ?>
-								value="searched">Pickup Searched Keyword</option>
-							<option
-								<?php if ($html['user_keyword_searched_or_bidded'] == 'bidded') {
-									echo 'selected=""';
-								} ?>
-								value="bidded">Pickup Bidded Keyword</option>
-						</select>
-					</div>
-				</div>
-				<div class="form-group">
-					<label for="user_referer" class="col-xs-4 control-label">* Cost Data Preference:</label>
-					<div class="col-xs-8">
-						<select class="form-control input-sm" name="user_bid" id="user_bid">
-							<option
-								<?php if ($html['user_pref_dynamic_bid'] == '0') {
-									echo 'selected=""';
-								} ?>
-								value="0">Pickup Bid from setup data</option>
-							<option
-								<?php if ($html['user_pref_dynamic_bid'] == '1') {
-									echo 'selected=""';
-								} ?>
-								value="1">Pickup Bid dynamically from t202b variable</option>
-						</select>
-					</div>
-				</div>
-				<div class="form-group">
-					<label for="user_referer" class="col-xs-4 control-label">* Referer Preference:</label>
-					<div class="col-xs-8">
-						<select class="form-control input-sm" name="user_referer" id="user_referer">
-							<option
-								<?php if ($html['user_pref_referer_data'] == 'browser') {
-									echo 'selected=""';
-								} ?>
-								value="browser">Pickup Referer from browser</option>
-							<option
-								<?php if ($html['user_pref_referer_data'] == 't202ref') {
-									echo 'selected=""';
-								} ?>
-								value="t202ref">Pickup Referer from t202ref variable</option>
-						</select>
-					</div>
-				</div>
-				<div class="form-group">
-					<label for="user_referer" class="col-xs-4 control-label">* GDPR & Privacy:</label>
-					<div class="col-xs-8">
-						<select class="form-control input-sm" name="user_pref_privacy" id="user_pref_privacy">
-							<option
-								<?php if ($html['user_pref_privacy'] == 'disabled') {
-									echo 'selected=""';
-								} ?>
-								value="disabled">Disabled</option>
-							<option
-								<?php if ($html['user_pref_privacy'] == 'eu') {
-									echo 'selected=""';
-								} ?>
-								value="eu">Enabled for European Traffic</option>
-							<option
-								<?php if ($html['user_pref_privacy'] == 'all') {
-									echo 'selected=""';
-								} ?>
-								value="all">Enabled for All Traffic</option>
-						</select>
-					</div>
-				</div>
-				<div class="form-group">
-					<label for="cloak_referer" class="col-xs-4 control-label">* Cloaked Referer:</label>
-					<div class="col-xs-8">
-						<select class="form-control input-sm" name="cloak_referer" id="cloak_referer">
-							<option
-								<?php if ($html['user_pref_cloak_referer'] == 'origin') {
-									echo 'selected=""';
-								} ?>
-								value="origin">Show Prosper202 Domain</option>
-							<option
-								<?php if ($html['user_pref_cloak_referer'] == 'never') {
-									echo 'selected=""';
-								} ?>
-								value="never">Show Blank Referer</option>
-						</select>
-					</div>
-				</div>
-				<div class="form-group">
-					<label for="cloak_referer" class="col-xs-4 control-label">* Ad Settings:</label>
-					<div class="col-xs-8">
-						<select class="form-control input-sm" name="user_pref_ad_settings" id="user_pref_ad_settings">
-							<option
-								<?php if ($html['user_pref_ad_settings'] == 'show_all') {
-									echo 'selected=""';
-								} ?>
-								value="show_all">Show All Ads</option>
-							<option
-								<?php if ($html['user_pref_ad_settings'] == 'hide_login') {
-									echo 'selected=""';
-								} ?>
-								value="hide_login">Hide Ads On Login Screen</option>
-							<option
-								<?php if ($html['user_pref_ad_settings'] == 'hide_all') {
-									echo 'selected=""';
-								} ?>
-								value="hide_all">Hide All Ads</option>
-						</select>
-					</div>
-				</div>
-			<?php } //closing brace for permissions check 
-			?>
-			<div class="form-group <?php if (isset($error['user_email']) && $error['user_email']) echo "has-error"; ?>">
-				<label for="user_email" class="col-xs-4 control-label">* Email:
-					<?php if (isset($error['user_email']) && $error['user_email']) { ?> <span class="fui-alert" style="font-size: 12px;" data-toggle="tooltip" title="<?php echo $error['user_email']; ?>"></span> <?php } ?>
-				</label>
-				<div class="col-xs-8">
-					<input type="text" class="form-control input-sm" id="user_email" name="user_email" value="<?php echo $html['user_email'] ?? ''; ?>">
-				</div>
-			</div>
-
-			<?php if ($userObj->hasPermission("access_to_personal_settings")) { ?>
-				<div class="form-group">
-					<label for="user_tracking_domain" class="col-xs-4 control-label">Tracking Domain:</label>
-					<div class="col-xs-8">
-						<input type="text" class="form-control input-sm" id="user_tracking_domain" name="user_tracking_domain" value="<?php echo $html['user_tracking_domain']; ?>">
-					</div>
-				</div>
-			<?php } ?>
-			<div class="form-group">
-				<div class="col-xs-8 col-xs-offset-4">
-					<button class="btn btn-md btn-p202 btn-block" type="submit">Update profile</button>
-				</div>
-			</div>
-
-		</form>
+<div class="p202-page-header">
+	<div class="p202-page-header__icon"><i class="bi bi-person-gear"></i></div>
+	<div class="p202-page-header__text">
+		<h1 class="p202-page-header__title">Personal settings</h1>
+		<p class="p202-page-header__desc">Your email, time zone and tracking preferences<?php echo $canPersonal ? ', the account currency, API keys' : ''; ?> and your password.</p>
 	</div>
 </div>
 
-<div class="row form_seperator">
-	<div class="col-xs-12"></div>
-</div>
-
-<?php if ($userObj->hasPermission("access_to_personal_settings")) { ?>
-	<div class="row account">
-		<div class="col-xs-12">
-			<h6>Account currency</h6>
-		</div>
-		<div class="col-xs-4">
-			<div class="panel panel-default account_left">
-				<div class="panel-body">
-					Here you can change your account currency and have your data converted to new currency (paid feature).
-				</div>
-			</div>
-		</div>
-		<div class="col-xs-8">
-			<form class="form-horizontal" style="padding-top:0px;" role="form" method="post" action="">
-				<input type="hidden" name="update_account_currency" value="1" />
-				<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-				<div class="form-group">
-					<label for="account_currency" class="col-xs-4 control-label">Account currency:</label>
-					<div class="col-xs-8">
-						<select class="form-control input-sm" name="account_currency" id="account_currency">
-							<option value="USD" <?php if ($html['user_account_currency'] == 'USD') echo 'selected=""'; ?>>U.S. Dollar</option>
-							<option value="AUD" <?php if ($html['user_account_currency'] == 'AUD') echo 'selected=""'; ?>>Australian Dollar</option>
-							<option value="BRL" <?php if ($html['user_account_currency'] == 'BRL') echo 'selected=""'; ?>>Brazilian Real</option>
-							<option value="CAD" <?php if ($html['user_account_currency'] == 'CAD') echo 'selected=""'; ?>>Canadian Dollar</option>
-							<option value="CZK" <?php if ($html['user_account_currency'] == 'CZK') echo 'selected=""'; ?>>Czech Koruna</option>
-							<option value="DKK" <?php if ($html['user_account_currency'] == 'DKK') echo 'selected=""'; ?>>Danish Krone</option>
-							<option value="EUR" <?php if ($html['user_account_currency'] == 'EUR') echo 'selected=""'; ?>>Euro</option>
-							<option value="HKD" <?php if ($html['user_account_currency'] == 'HKD') echo 'selected=""'; ?>>Hong Kong Dollar</option>
-							<option value="HUF" <?php if ($html['user_account_currency'] == 'HUF') echo 'selected=""'; ?>>Hungarian Forint</option>
-							<option value="ILS" <?php if ($html['user_account_currency'] == 'ILS') echo 'selected=""'; ?>>Israeli New Sheqel</option>
-							<option value="JPY" <?php if ($html['user_account_currency'] == 'JPY') echo 'selected=""'; ?>>Japanese Yen</option>
-							<option value="MYR" <?php if ($html['user_account_currency'] == 'MYR') echo 'selected=""'; ?>>Malaysian Ringgit</option>
-							<option value="MXN" <?php if ($html['user_account_currency'] == 'MXN') echo 'selected=""'; ?>>Mexican Peso</option>
-							<option value="NOK" <?php if ($html['user_account_currency'] == 'NOK') echo 'selected=""'; ?>>Norwegian Krone</option>
-							<option value="NZD" <?php if ($html['user_account_currency'] == 'NZD') echo 'selected=""'; ?>>New Zealand Dollar</option>
-							<option value="PHP" <?php if ($html['user_account_currency'] == 'PHP') echo 'selected=""'; ?>>Philippine Peso</option>
-							<option value="PLN" <?php if ($html['user_account_currency'] == 'PLN') echo 'selected=""'; ?>>Polish Zloty</option>
-							<option value="GBP" <?php if ($html['user_account_currency'] == 'GBP') echo 'selected=""'; ?>>Pound Sterling</option>
-							<option value="SGD" <?php if ($html['user_account_currency'] == 'SGD') echo 'selected=""'; ?>>Singapore Dollar</option>
-							<option value="SEK" <?php if ($html['user_account_currency'] == 'SEK') echo 'selected=""'; ?>>Swedish Krona</option>
-							<option value="CHF" <?php if ($html['user_account_currency'] == 'CHF') echo 'selected=""'; ?>>Swiss Franc</option>
-							<option value="TWD" <?php if ($html['user_account_currency'] == 'TWD') echo 'selected=""'; ?>>Taiwan New Dollar</option>
-							<option value="THB" <?php if ($html['user_account_currency'] == 'THB') echo 'selected=""'; ?>>Thai Baht</option>
-							<option value="TRY" <?php if ($html['user_account_currency'] == 'TRY') echo 'selected=""'; ?>>Turkish Lira</option>
-							<option value="CNY" <?php if ($html['user_account_currency'] == 'CNY') echo 'selected=""'; ?>>Chinese Yuan</option>
-							<option value="INR" <?php if ($html['user_account_currency'] == 'INR') echo 'selected=""'; ?>>Indian Rupee</option>
-							<option value="RUB" <?php if ($html['user_account_currency'] == 'RUB') echo 'selected=""'; ?>>Russian ruble</option>
-						</select>
-					</div>
-				</div>
-				<div class="form-group">
-					<div class="col-xs-8 col-xs-offset-4">
-						<button class="btn btn-md btn-p202 btn-block" type="submit">Update account currency</button>
-					</div>
-				</div>
-			</form>
-		</div>
-	</div>
-
-	<div class="row form_seperator">
-		<div class="col-xs-12"></div>
-	</div>
-
-	<div class="row account">
-		<div class="col-xs-12">
-			<h6>Prosper202 App API keys</h6>
-		</div>
-		<div class="col-xs-4">
-			<div class="panel panel-default account_left">
-				<div class="panel-body">
-					If you want to use the new Prosper202 API to get raw stats data, you need a valid API key. Tip: make a new API key for each integration
-				</div>
-			</div>
-		</div>
-		<div class="col-xs-8">
-			<div class="row">
-				<div class="col-xs-4">
-					<a id="generate-new-api-key" class="btn btn-xs btn-info btn-block">Generate new key</a>
-				</div>
-				<div class="col-xs-8">
-					<ul class="list-unstyled" id="rest-api-keys">
-						<?php
-						$key_sql = "	SELECT 	*
-								 FROM   	`202_api_keys` 
-								 WHERE  	`user_id`='" . $mysql['user_id'] . "'";
-						$key_result = $db->query($key_sql);
-						$rows = $key_result->num_rows;
-
-						if ($rows > 0) {
-							while ($key_row = $key_result->fetch_assoc()) {
-								echo '<li id="' . $key_row['api_key'] . '"><span class="infotext">Date created: ' . date("m/d/Y", (int)$key_row['created_at']) . '</span> - <code>' . $key_row['api_key'] . '</code> <a id="delete-rest-key" class="close fui-cross"></a></li>';
-							}
-						} else {
-							echo '<li id="no-api-keys">No API keys generated</li>';
-						}
-						?>
-					</ul>
-				</div>
-			</div>
-		</div>
-	</div>
-
-	<div class="row form_seperator">
-		<div class="col-xs-12"></div>
-	</div>
-
-	<div class="row account">
-		<div class="col-xs-12">
-			<h6>Prosper202 Customer API Key</h6>
-		</div>
-		<div class="col-xs-4">
-			<div class="panel panel-default account_left">
-				<div class="panel-body">
-					If you want to use special mods and paid features built into Prosper202, sign up <a href="https://my.tracking202.com/api/customers/register">here</a>, fill out yout billing information, receive and insert your API key here.
-				</div>
-			</div>
-		</div>
-		<div class="col-xs-8">
-			<form class="form-horizontal" style="padding-top:0px;" role="form" method="post" action="">
-				<input type="hidden" name="update_p202_customer_api_key" value="1" />
-				<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-				<div class="form-group">
-					<label for="p202_customer_api_key" class="col-xs-4 control-label">API key:</label>
-					<div class="col-xs-8">
-						<input type="text" class="form-control input-sm" id="p202_customer_api_key" name="p202_customer_api_key" value="<?php echo $html['p202_customer_api_key']; ?>">
-					</div>
-				</div>
-				<div class="form-group">
-					<div class="col-xs-8 col-xs-offset-4">
-						<button class="btn btn-md btn-p202 btn-block" type="submit">Update API key</button>
-					</div>
-				</div>
-			</form>
-		</div>
-	</div>
-
-	<div class="row form_seperator">
-		<div class="col-xs-12"></div>
-	</div>
+<?php if ($canPersonal) { ?>
+	<nav class="nav p202-tabs p202-tabs--compact" aria-label="Personal settings sections">
+		<a class="nav-link" href="#profile">Profile</a>
+		<a class="nav-link" href="#currency">Currency</a>
+		<a class="nav-link" href="#api-keys">API keys</a>
+		<a class="nav-link" href="#customer-key">Customer key</a>
+		<a class="nav-link" href="#password">Password</a>
+	</nav>
 <?php } ?>
 
-<div class="row account">
-	<div class="col-xs-12">
-		<h6>Change Password</h6>
-	</div>
-	<div class="col-xs-4">
-		<div class="panel panel-default account_left">
-			<div class="panel-body">
-				If you wish to change your password, use the forms below.
-			</div>
-		</div>
-	</div>
-	<div class="col-xs-8">
-		<form class="form-horizontal" style="padding-top:0px;" role="form" method="post" action="">
-			<input type="hidden" name="change_user_pass" value="1" />
-			<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-			<div class="form-group <?php if (isset($error['user_pass']) && $error['user_pass']) echo "has-error"; ?>">
-				<label for="user_pass" class="col-xs-4 control-label">Old Password:
-					<?php if (isset($error['user_pass']) && $error['user_pass']) { ?> <span class="fui-alert" style="font-size: 12px;" data-toggle="tooltip" title="<?php echo $error['user_pass']; ?>"></span> <?php } ?>
-				</label>
-				<div class="col-xs-8">
-					<input type="password" class="form-control input-sm" id="user_pass" name="user_pass">
-				</div>
-			</div>
+<?php
+$extraFlashes = $pageFlashes;
+if ($change_p202_customer_api_key) {
+	$extraFlashes[] = ['kind' => 'ok', 'text' => 'Your Prosper202 customer API key is saved.'];
+}
+foreach (['clickserver_api_key', 'user_api_key', 'user_stats202_app_key'] as $keyField) {
+	if (isset($keyErrors[$keyField])) {
+		$extraFlashes[] = ['kind' => 'bad', 'text' => $keyErrors[$keyField]];
+	}
+}
+if ($profileErrors) {
+	$extraFlashes[] = ['kind' => 'bad', 'text' => 'Your settings were not saved. The fields below say why.'];
+}
+echo p202_account_render_flashes($extraFlashes);
+?>
 
-			<div class="form-group <?php if (isset($error['user_pass']) && $error['user_pass']) echo "has-error"; ?>">
-				<label for="new_user_pass" class="col-xs-4 control-label">New Password:
-					<?php if (isset($error['user_pass']) && $error['user_pass']) { ?> <span class="fui-alert" style="font-size: 12px;" data-toggle="tooltip" title="<?php echo $error['user_pass']; ?>"></span> <?php } ?>
-				</label>
-				<div class="col-xs-8">
-					<input type="password" class="form-control input-sm" id="new_user_pass" name="new_user_pass">
-				</div>
-			</div>
+<div class="row g-4">
+	<div class="col-12 col-xl-8">
 
-			<div class="form-group <?php if (isset($error['user_pass']) && $error['user_pass']) echo "has-error"; ?>">
-				<label for="retype_new_user_pass" class="col-xs-4 control-label">Retype New Password:
-					<?php if (isset($error['user_pass']) && $error['user_pass']) { ?> <span class="fui-alert" style="font-size: 12px;" data-toggle="tooltip" title="<?php echo $error['user_pass']; ?>"></span> <?php } ?>
-				</label>
-				<div class="col-xs-8">
-					<input type="password" class="form-control input-sm" id="retype_new_user_pass" name="retype_new_user_pass">
-				</div>
+		<section class="p202-panel" id="profile">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">Profile</h2>
+				<span class="p202-panel__sub">how Prosper202 reaches you, and the clock your reports use</span>
 			</div>
+			<div class="p202-panel__body">
+				<form method="post" action="<?php echo $e(get_absolute_url() . '202-account/account.php'); ?>">
+					<input type="hidden" name="update_profile" value="1">
+					<?php echo p202_account_token_field(); ?>
 
-			<div class="form-group">
-				<div class="col-xs-8 col-xs-offset-4">
-					<button class="btn btn-md btn-p202 btn-block" type="submit">Change Password</button>
-				</div>
+					<div class="mb-3">
+						<label class="form-label" for="user_email">Email <span class="text-danger">*</span></label>
+						<input type="email" class="form-control<?php echo p202_account_invalid($profileErrors, 'user_email'); ?>" id="user_email" name="user_email" required autocomplete="email" value="<?php echo $e($profileValue('user_email', 'user_email')); ?>">
+						<div class="form-text">Password resets and the daily report go here.</div>
+						<?php echo p202_account_field_error($profileErrors, 'user_email'); ?>
+					</div>
+
+					<?php if ($canPersonal) { ?>
+						<div class="row g-3 mb-3">
+							<div class="col-md-7">
+								<label class="form-label" for="user_timezone">Time zone <span class="text-danger">*</span></label>
+								<select class="form-select<?php echo p202_account_invalid($profileErrors, 'user_timezone'); ?>" name="user_timezone" id="user_timezone">
+									<?php
+									foreach (DateTimeZone::listIdentifiers() as $tz) {
+										$current_tz = new DateTimeZone($tz);
+										$offset = $current_tz->getOffset($dt);
+										$transition = $current_tz->getTransitions($dt->getTimestamp(), $dt->getTimestamp());
+										$abbr = $transition[0]['abbr'] ?? '';
+										echo '<option value="' . $e($tz) . '"' . $selected($tz, $currentTimezone) . '>' . $e($tz . ' [' . $abbr . ' ' . formatOffset($offset) . ']') . '</option>';
+									}
+									?>
+								</select>
+								<div class="form-text">Every report's days start and end in this zone.</div>
+								<?php echo p202_account_field_error($profileErrors, 'user_timezone'); ?>
+							</div>
+							<div class="col-md-5">
+								<label class="form-label" for="user_daily_email">Daily email report</label>
+								<select class="form-select<?php echo p202_account_invalid($profileErrors, 'user_daily_email'); ?>" id="user_daily_email" name="user_daily_email">
+									<?php echo $renderOptions($dailyEmailChoices, $profileValue('user_daily_email', 'user_daily_email')); ?>
+								</select>
+								<div class="form-text">Yesterday's numbers, sent at this hour in your time zone.</div>
+								<?php echo p202_account_field_error($profileErrors, 'user_daily_email'); ?>
+							</div>
+						</div>
+
+						<details class="p202-disclosure mb-3" data-p202-remember="account-profile-advanced"<?php echo $profileAdvancedErrors ? ' open' : ''; ?>>
+							<summary>Advanced <span class="p202-disclosure__hint">keyword, cost, referer, privacy, ads, tracking domain</span></summary>
+							<div class="p202-disclosure__body">
+								<div class="row g-3">
+									<div class="col-md-6">
+										<label class="form-label" for="user_keyword_searched_or_bidded">Keyword preference</label>
+										<select class="form-select<?php echo p202_account_invalid($profileErrors, 'user_keyword_searched_or_bidded'); ?>" name="user_keyword_searched_or_bidded" id="user_keyword_searched_or_bidded">
+											<?php echo $renderOptions($keywordChoices, $profileValue('user_keyword_searched_or_bidded', 'user_keyword_searched_or_bidded')); ?>
+										</select>
+										<div class="form-text">Which keyword a click is recorded under.</div>
+										<?php echo p202_account_field_error($profileErrors, 'user_keyword_searched_or_bidded'); ?>
+									</div>
+									<div class="col-md-6">
+										<label class="form-label" for="user_bid">Cost data preference</label>
+										<select class="form-select<?php echo p202_account_invalid($profileErrors, 'user_bid'); ?>" name="user_bid" id="user_bid">
+											<?php echo $renderOptions($bidChoices, $profileValue('user_bid', 'user_pref_dynamic_bid')); ?>
+										</select>
+										<div class="form-text">Where a click's cost comes from.</div>
+										<?php echo p202_account_field_error($profileErrors, 'user_bid'); ?>
+									</div>
+									<div class="col-md-6">
+										<label class="form-label" for="user_referer">Referer preference</label>
+										<select class="form-select<?php echo p202_account_invalid($profileErrors, 'user_referer'); ?>" name="user_referer" id="user_referer">
+											<?php echo $renderOptions($refererChoices, $profileValue('user_referer', 'user_pref_referer_data')); ?>
+										</select>
+										<div class="form-text">Where a click's referring page is read from.</div>
+										<?php echo p202_account_field_error($profileErrors, 'user_referer'); ?>
+									</div>
+									<div class="col-md-6">
+										<label class="form-label" for="user_pref_privacy">GDPR &amp; privacy</label>
+										<select class="form-select<?php echo p202_account_invalid($profileErrors, 'user_pref_privacy'); ?>" name="user_pref_privacy" id="user_pref_privacy">
+											<?php echo $renderOptions($privacyChoices, $profileValue('user_pref_privacy', 'user_pref_privacy')); ?>
+										</select>
+										<div class="form-text">Which visitors get privacy handling of their data.</div>
+										<?php echo p202_account_field_error($profileErrors, 'user_pref_privacy'); ?>
+									</div>
+									<div class="col-md-6">
+										<label class="form-label" for="cloak_referer">Cloaked referer</label>
+										<select class="form-select<?php echo p202_account_invalid($profileErrors, 'cloak_referer'); ?>" name="cloak_referer" id="cloak_referer">
+											<?php echo $renderOptions($cloakChoices, $profileValue('cloak_referer', 'user_pref_cloak_referer')); ?>
+										</select>
+										<div class="form-text">What an offer sees as the referer on a cloaked link.</div>
+										<?php echo p202_account_field_error($profileErrors, 'cloak_referer'); ?>
+									</div>
+									<div class="col-md-6">
+										<label class="form-label" for="user_pref_ad_settings">Ad settings</label>
+										<select class="form-select<?php echo p202_account_invalid($profileErrors, 'user_pref_ad_settings'); ?>" name="user_pref_ad_settings" id="user_pref_ad_settings">
+											<?php echo $renderOptions($adChoices, $profileValue('user_pref_ad_settings', 'user_pref_ad_settings')); ?>
+										</select>
+										<div class="form-text">Where Prosper202 shows its offers panel.</div>
+										<?php echo p202_account_field_error($profileErrors, 'user_pref_ad_settings'); ?>
+									</div>
+									<div class="col-12">
+										<label class="form-label" for="user_tracking_domain">Tracking domain</label>
+										<input type="text" class="form-control<?php echo p202_account_invalid($profileErrors, 'user_tracking_domain'); ?>" id="user_tracking_domain" name="user_tracking_domain" placeholder="<?php echo $e((string)($_SERVER['HTTP_HOST'] ?? '')); ?>" value="<?php echo $e($profileValue('user_tracking_domain', 'user_tracking_domain')); ?>">
+										<div class="form-text">Leave empty to build tracking links on this install's own domain.</div>
+										<?php echo p202_account_field_error($profileErrors, 'user_tracking_domain'); ?>
+									</div>
+								</div>
+							</div>
+						</details>
+					<?php } ?>
+
+					<div class="p202-form-actions">
+						<button class="btn btn-primary" type="submit">Save settings</button>
+					</div>
+				</form>
 			</div>
-		</form>
+		</section>
+
+		<?php if ($canPersonal) { ?>
+			<section class="p202-panel mt-4" id="currency">
+				<div class="p202-panel__head">
+					<h2 class="p202-panel__title">Account currency</h2>
+					<span class="p202-panel__sub">the currency every amount is shown in</span>
+				</div>
+				<div class="p202-panel__body">
+					<form method="post" action="<?php echo $e(get_absolute_url() . '202-account/account.php#currency'); ?>">
+						<input type="hidden" name="update_account_currency" value="1">
+						<?php echo p202_account_token_field(); ?>
+						<label class="form-label" for="account_currency">Currency</label>
+						<div class="input-group">
+							<select class="form-select<?php echo p202_account_invalid($keyErrors, 'account_currency'); ?>" name="account_currency" id="account_currency">
+								<option value="USD"<?php echo $sel('USD'); ?>>U.S. Dollar</option>
+								<option value="AUD"<?php echo $sel('AUD'); ?>>Australian Dollar</option>
+								<option value="BRL"<?php echo $sel('BRL'); ?>>Brazilian Real</option>
+								<option value="CAD"<?php echo $sel('CAD'); ?>>Canadian Dollar</option>
+								<option value="CZK"<?php echo $sel('CZK'); ?>>Czech Koruna</option>
+								<option value="DKK"<?php echo $sel('DKK'); ?>>Danish Krone</option>
+								<option value="EUR"<?php echo $sel('EUR'); ?>>Euro</option>
+								<option value="HKD"<?php echo $sel('HKD'); ?>>Hong Kong Dollar</option>
+								<option value="HUF"<?php echo $sel('HUF'); ?>>Hungarian Forint</option>
+								<option value="ILS"<?php echo $sel('ILS'); ?>>Israeli New Sheqel</option>
+								<option value="JPY"<?php echo $sel('JPY'); ?>>Japanese Yen</option>
+								<option value="MYR"<?php echo $sel('MYR'); ?>>Malaysian Ringgit</option>
+								<option value="MXN"<?php echo $sel('MXN'); ?>>Mexican Peso</option>
+								<option value="NOK"<?php echo $sel('NOK'); ?>>Norwegian Krone</option>
+								<option value="NZD"<?php echo $sel('NZD'); ?>>New Zealand Dollar</option>
+								<option value="PHP"<?php echo $sel('PHP'); ?>>Philippine Peso</option>
+								<option value="PLN"<?php echo $sel('PLN'); ?>>Polish Zloty</option>
+								<option value="GBP"<?php echo $sel('GBP'); ?>>Pound Sterling</option>
+								<option value="SGD"<?php echo $sel('SGD'); ?>>Singapore Dollar</option>
+								<option value="SEK"<?php echo $sel('SEK'); ?>>Swedish Krona</option>
+								<option value="CHF"<?php echo $sel('CHF'); ?>>Swiss Franc</option>
+								<option value="TWD"<?php echo $sel('TWD'); ?>>Taiwan New Dollar</option>
+								<option value="THB"<?php echo $sel('THB'); ?>>Thai Baht</option>
+								<option value="TRY"<?php echo $sel('TRY'); ?>>Turkish Lira</option>
+								<option value="CNY"<?php echo $sel('CNY'); ?>>Chinese Yuan</option>
+								<option value="INR"<?php echo $sel('INR'); ?>>Indian Rupee</option>
+								<option value="RUB"<?php echo $sel('RUB'); ?>>Russian ruble</option>
+							</select>
+							<button class="btn btn-secondary" type="submit">Save currency</button>
+						</div>
+						<div class="form-text">Changing it converts your campaign payouts to the new currency (a paid feature).</div>
+						<?php echo p202_account_field_error($keyErrors, 'account_currency'); ?>
+					</form>
+				</div>
+			</section>
+
+			<section class="p202-panel mt-4" id="api-keys">
+				<div class="p202-panel__head">
+					<h2 class="p202-panel__title">API keys</h2>
+					<span class="p202-pill"><?php echo count($apiKeys) === 1 ? '1 key' : count($apiKeys) . ' keys'; ?></span>
+					<?php if ($apiKeys) { ?>
+						<div class="p202-panel__aside">
+							<form method="post" action="<?php echo $e(get_absolute_url() . '202-account/account.php#api-keys'); ?>">
+								<input type="hidden" name="add_rest_api_key" value="1">
+								<?php echo p202_account_token_field(); ?>
+								<button class="btn btn-secondary btn-sm" type="submit"><i class="bi bi-plus-lg"></i> Generate key</button>
+							</form>
+						</div>
+					<?php } ?>
+				</div>
+				<div class="p202-panel__body">
+					<p class="form-text mt-0">For the REST API, the p202 command line and agents. Make one key per integration, so revoking one stops only that one.</p>
+					<?php if (!$apiKeys) { ?>
+						<div class="p202-empty">
+							<i class="bi bi-key p202-empty__icon"></i>
+							<strong class="p202-empty__title">No API keys yet</strong>
+							<div>Generate one to connect the command line, an agent or your own scripts.</div>
+							<div class="p202-empty__action">
+								<form method="post" action="<?php echo $e(get_absolute_url() . '202-account/account.php#api-keys'); ?>">
+									<input type="hidden" name="add_rest_api_key" value="1">
+									<?php echo p202_account_token_field(); ?>
+									<button class="btn btn-secondary btn-sm" type="submit">Generate an API key</button>
+								</form>
+							</div>
+						</div>
+					<?php } else { ?>
+						<?php foreach ($apiKeys as $index => $apiKey) {
+							$keyValue = (string)$apiKey['api_key'];
+							[$scopeLabel, $scopeTone] = $keyScope($apiKey['scope'] ?? null);
+							$keyId = 'api-key-' . $index;
+							?>
+							<div class="mb-3" data-api-key-row>
+								<div class="form-text mt-0 mb-1">Created <?php echo $e(date('M j, Y', (int)$apiKey['created_at'])); ?> · <span class="p202-pill<?php echo $scopeTone; ?>"><?php echo $e($scopeLabel); ?></span></div>
+								<div class="p202-code">
+									<pre class="p202-code__value p202-code__value--masked" id="<?php echo $keyId; ?>" data-p202-value="<?php echo $e($keyValue); ?>"><?php echo $e($maskKey($keyValue)); ?></pre>
+									<button type="button" class="btn btn-secondary btn-sm" data-p202-reveal="#<?php echo $keyId; ?>">Reveal</button>
+									<button type="button" class="btn btn-secondary btn-sm p202-copy" data-p202-copy="<?php echo $e($keyValue); ?>">Copy</button>
+									<form method="post" action="<?php echo $e(get_absolute_url() . '202-account/account.php#api-keys'); ?>" class="d-inline" data-p202-confirm="Revoke this API key? Anything still using it is refused from the next request. Your other keys keep working.">
+										<input type="hidden" name="remove_rest_api_key" value="1">
+										<input type="hidden" name="rest_api_key" value="<?php echo $e($keyValue); ?>">
+										<?php echo p202_account_token_field(); ?>
+										<button class="btn btn-outline-danger btn-sm" type="submit">Revoke…</button>
+									</form>
+								</div>
+							</div>
+						<?php } ?>
+					<?php } ?>
+				</div>
+			</section>
+
+			<section class="p202-panel mt-4" id="customer-key">
+				<div class="p202-panel__head">
+					<h2 class="p202-panel__title">Prosper202 customer API key</h2>
+					<span class="p202-panel__sub">for paid features, upgrades and the Landing Page Optimizer</span>
+				</div>
+				<div class="p202-panel__body">
+					<form method="post" action="<?php echo $e(get_absolute_url() . '202-account/account.php#customer-key'); ?>">
+						<input type="hidden" name="update_p202_customer_api_key" value="1">
+						<?php echo p202_account_token_field(); ?>
+						<label class="form-label" for="p202_customer_api_key">Customer API key</label>
+						<div class="input-group">
+							<input type="text" class="form-control<?php echo p202_account_invalid($keyErrors, 'p202_customer_api_key'); ?>" id="p202_customer_api_key" name="p202_customer_api_key" autocomplete="off" spellcheck="false" value="<?php echo $e($_POST['p202_customer_api_key'] ?? ($user_row['p202_customer_api_key'] ?? '')); ?>">
+							<button class="btn btn-secondary" type="submit">Save key</button>
+						</div>
+						<div class="form-text">From your <a href="https://my.tracking202.com/api/customers/register" target="_blank" rel="noopener">Prosper202 customer dashboard</a>. It is checked with the dashboard before it is saved; save it empty to remove it.</div>
+						<?php echo p202_account_field_error($keyErrors, 'p202_customer_api_key'); ?>
+					</form>
+				</div>
+			</section>
+		<?php } ?>
+
+		<section class="p202-panel mt-4" id="password">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">Change password</h2>
+				<span class="p202-panel__sub">you stay signed in here</span>
+			</div>
+			<div class="p202-panel__body">
+				<form method="post" action="<?php echo $e(get_absolute_url() . '202-account/account.php#password'); ?>">
+					<input type="hidden" name="change_user_pass" value="1">
+					<?php echo p202_account_token_field(); ?>
+					<div class="mb-3">
+						<label class="form-label" for="user_pass">Current password</label>
+						<input type="password" class="form-control<?php echo p202_account_invalid($passErrors, 'user_pass'); ?>" id="user_pass" name="user_pass" required autocomplete="current-password">
+						<?php echo p202_account_field_error($passErrors, 'user_pass'); ?>
+					</div>
+					<div class="row g-3">
+						<div class="col-md-6">
+							<label class="form-label" for="new_user_pass">New password</label>
+							<input type="password" class="form-control<?php echo p202_account_invalid($passErrors, 'new_user_pass'); ?>" id="new_user_pass" name="new_user_pass" required minlength="8" autocomplete="new-password">
+							<div class="form-text">8 to 72 characters.</div>
+							<?php echo p202_account_field_error($passErrors, 'new_user_pass'); ?>
+						</div>
+						<div class="col-md-6">
+							<label class="form-label" for="retype_new_user_pass">Retype new password</label>
+							<input type="password" class="form-control<?php echo p202_account_invalid($passErrors, 'retype_new_user_pass'); ?>" id="retype_new_user_pass" name="retype_new_user_pass" required minlength="8" autocomplete="new-password">
+							<?php echo p202_account_field_error($passErrors, 'retype_new_user_pass'); ?>
+						</div>
+					</div>
+					<div class="p202-form-actions">
+						<button class="btn btn-secondary" type="submit">Change password</button>
+					</div>
+				</form>
+			</div>
+		</section>
+
 	</div>
 </div>
 <?php template_bottom();

@@ -1,193 +1,147 @@
 <?php
 declare(strict_types=1);
 include_once(str_repeat("../", 1).'202-config/connect.php');
+require_once dirname(__DIR__) . '/202-config/functions-account-ui.php';
+require_once dirname(__DIR__) . '/202-config/functions-feeds-ui.php';
 
-AUTH::require_user(); 
+AUTH::require_user();
 
-template_top('Prosper202 ClickServer App Store');  
+/*
+ * The App Store on the v2 shell (U7): the apps the feed lists, and the
+ * ClickServer API key that activates them.
+ *
+ * Decided in U7, because the classic page read two ways: it showed the key
+ * form only when a key was already saved, and the apps only when none was —
+ * so a new user saw apps and no way to add the key. Both are shown now: the
+ * apps, and the key form beside them (masked when a key is saved). The key
+ * handler ran after the page had started printing and wrote whatever it was
+ * sent once the token matched; it runs first now, refuses a bad token in
+ * words, and answers a save with a redirect (post-redirect-get).
+ */
 
-	if ($_POST['update_clickserver_api_key'] == '1') {
+$userId = (int) $_SESSION['user_id'];
+$errors = [];
+$notice = '';
 
-		// validate token
-		if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) { $error['token'] = 'You must use our forms to submit data.';  }
-
-		$mysql['clickserver_api_key'] = $db->real_escape_string((string)$_POST['clickserver_api_key']);
-
-		if (!preg_match('/\*/', (string) $_POST['clickserver_api_key'])) {
-			if (!clickserver_api_key_validate($mysql['clickserver_api_key']) && $mysql['clickserver_api_key'] !='') { $error['clickserver_api_key'] = 'This API Key appears invalid.'; }
-
-			if (empty($error)) {
-					
-				$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-				$mysql['clickserver_api_key'] = $db->real_escape_string((string)$_POST['clickserver_api_key']);
-				$user_sql = "	UPDATE 	`202_users`
-								SET     		`clickserver_api_key`='".$mysql['clickserver_api_key']."'
-								WHERE  	`user_id`='".$mysql['user_id']."'";
-				$user_result = $db->query($user_sql);
-
-				$update_clickserver_api_key_done = true;
-					
-			}
+if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+	if (!AUTH::check_csrf_token()) {
+		$notice = P202_ACCOUNT_TOKEN_REFUSED;
+	} else {
+		$key = is_string($_POST['clickserver_api_key'] ?? null) ? trim($_POST['clickserver_api_key']) : '';
+		if (str_contains($key, '*')) {
+			// The masked key the form shows came back unchanged.
+			p202_account_flash('info', 'Nothing was changed: the key shown is masked. Paste a new key to replace it.');
+			p202_account_redirect('202-appstore/');
+		}
+		if ($key !== '' && !clickserver_api_key_validate($key)) {
+			$errors['clickserver_api_key'] = 'This API Key appears invalid.';
+		} else {
+			$conn = new \Prosper202\Database\Connection($db);
+			$stmt = $conn->prepareWrite('UPDATE 202_users SET clickserver_api_key = ? WHERE user_id = ?');
+			$conn->bind($stmt, 'si', [$key, $userId]);
+			$conn->executeUpdate($stmt);
+			p202_account_flash('ok', $key === '' ? 'ClickServer API key removed.' : 'ClickServer API key saved.');
+			p202_account_redirect('202-appstore/');
 		}
 	}
-	
-	//get all of the user data
-	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-	$user_sql = "	SELECT 	*
-				 FROM   	`202_users`
-				 LEFT JOIN	`202_users_pref` USING (user_id)
-				 WHERE  	`202_users`.`user_id`='".$mysql['user_id']."'";
-	$user_result = $db->query($user_sql);
-	$user_row = $user_result->fetch_assoc();
-	$html = array_map('htmlentities', $user_row);
-	
-	//make it hide most of the api keys
-	$hideChars = 22;
-	for ($x = 0; $x < $hideChars; $x++) $hiddenPart .= '*';
-	if ($html['clickserver_api_key']) $html['clickserver_api_key'] = $hiddenPart . substr($html['clickserver_api_key'], $hideChars, 99);
-	
+}
+
+$conn = new \Prosper202\Database\Connection($db);
+$stmt = $conn->prepareRead('SELECT clickserver_api_key FROM 202_users WHERE user_id = ?');
+$conn->bind($stmt, 'i', [$userId]);
+$user_row = $conn->fetchOne($stmt) ?? [];
+$savedKey = (string) ($user_row['clickserver_api_key'] ?? '');
+// Most of a saved key stays hidden: the last characters are enough to tell two apart.
+$maskedKey = $savedKey === '' ? '' : str_repeat('*', 22) . substr($savedKey, 22);
+
+$ch = curl_init();
+curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/feed/appstore/');
+$result = curl_exec($ch);
+curl_close($ch);
+$apps = p202_appstore_apps(is_string($result) ? json_decode($result, true) : null, get_absolute_url());
+$e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
+$typedKey = is_string($_POST['clickserver_api_key'] ?? null) ? $_POST['clickserver_api_key'] : $maskedKey;
+
+template_top('Prosper202 ClickServer App Store', ['ui' => 'v2']);
 ?>
 
-<!-- Modal -->
-<div class="modal fade" id="myModal" tabindex="-1" role="dialog" aria-labelledby="myModalLabel" aria-hidden="true">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
-        <h4 class="modal-title" id="myModalLabel">Your Prosper202 ClickServer API Key Is Needed To Activate The App Store</h4>
-      </div>
-      <div class="modal-body">
-       <!--  If you've ever registered on the Tracking202.com site, you can quickly login below get your ClickServer API Key. If not, register below to automatically get an API Key. --> 
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-default" data-dismiss="modal">Close</button>
-        <!-- <button type="button" class="btn btn-primary">Click Here To Get Your ClickServer API Key</button> -->
-      </div>
-    </div>
-  </div>
+<div class="p202-page-header">
+	<div class="p202-page-header__icon"><i class="bi bi-grid-3x3-gap"></i></div>
+	<div class="p202-page-header__text">
+		<h1 class="p202-page-header__title">App Store</h1>
+		<p class="p202-page-header__desc">Apps and services that install into Prosper202 in one click.</p>
+	</div>
 </div>
 
-<div class="row home">
-  <div class="col-xs-12">
-  	<h4><img src="<?php echo get_absolute_url();?>202-img/new/icons/building.svg" alt="ribbon" class="tile-hot-ribbon"> Prosper202 App Store - 1-Click Install Apps & Services</h4>
-	
-  </div>
-</div>
-  <br/>
-<?php 
-if ($html['clickserver_api_key']!=''){?>
- <div class="row account">
-	<div class="col-xs-12">
-		<h6>Your Prosper202 ClickServer API Key Is Needed To Activate The App Store</h6>
-	</div>
-	<div class="col-xs-4">
-		<div class="panel panel-default account_left">
-			<div class="panel-body">
-			    Update your Prosper202 ClickServer API Key. Warning: NEVER share your Prosper202 ClickServer API key with anyone!
-			</div>
-		</div>
-	</div>
-	<div class="col-xs-8">
-		<form class="form-horizontal" style="padding-top:0px;" role="form" method="post" action="">
-		<input type="hidden" name="update_clickserver_api_key" value="1" />
-		<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-			<div class="form-group <?php if($error['clickserver_api_key']) echo "has-error";?>">
-				<label for="clickserver_api_key" class="col-xs-4 control-label">My ClickServer API Key:
-					<?php if($error['clickserver_api_key']) { ?> <span class="fui-alert" style="font-size: 12px;" data-toggle="tooltip" title="<?php echo $error['clickserver_api_key']; ?>"></span> <?php } ?>
-				</label>
-				<div class="col-xs-8">
-					<input type="text" class="form-control input-sm" id="clickserver_api_key" name="clickserver_api_key" value="<?php echo $html['clickserver_api_key']; ?>">
-				</div>
-			</div>
-
-			<div class="form-group">
-				<div class="col-xs-8 col-xs-offset-4">
-					<button class="btn btn-md btn-p202 btn-block" type="submit">Update API Key</button>					
-				</div>
-			</div>
-		</form>
-		<br>
-		
-	</div>
-</div>
-<div class="row demo-tiles">
-<span id="app-placeholder">
-    <img src="https://tracking202-static.s3.amazonaws.com/img-appstore.png">
-</span>
-</div>
- <?php     
+<?php
+echo p202_account_render_flashes($notice !== '' ? [['kind' => 'bad', 'text' => $notice]] : []);
+if ($errors !== []) {
+	echo p202_flash('bad', 'Nothing was saved. The sentence under the field says why.');
 }
-    
-else{
-  
+?>
 
-			//Initiate curl
-			$ch = curl_init();
-			// Will return the response, if false it print the response
-			curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-			// Set the url
-			curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/feed/appstore/');
-			// Execute
-			$result=curl_exec($ch);
-			curl_close($ch);
-
-			$data = json_decode($result, true);
-			$count=1;
-		
-if($data){
-		foreach ($data['deals'] as $deal) {
-		    if($count%4==1) 
-		        echo '<div class="row demo-tiles">';?>
-		
-		  
-				
-        <div class="col-xs-3">
-          <div class="tile">
-          <?php if($deal['app-status']=="popular"){ ?>
-          <img src="<?php echo get_absolute_url();?>202-img/new/icons/ribbon.svg" alt="ribbon" class="tile-hot-ribbon">
-          <?php }?>
-            <img src="<?php echo htmlspecialchars((string)($deal['app-img'] ?? ''), ENT_QUOTES);?>" class="tile-image big-illustration">
-            <h3 class="tile-title"><?php echo htmlspecialchars((string)($deal['title'] ?? ''), ENT_QUOTES);?></h3>
-            <p><?php echo htmlspecialchars((string)($deal['app-description'] ?? ''), ENT_QUOTES);?></p>
-            <?php 
-            if($deal['app-install']=='installed'){
-            ?>
-            <a class="btn btn-primary btn-large btn-block" href="">Installed <span class="fui-check"></span><br>
-            <?php echo htmlspecialchars((string)($deal['app-price'] ?? ''), ENT_QUOTES);?>
-            </a>
-            <?php 
-            }
-            else if($deal['app-install']=='un-installed'){
-                ?>
-                <a class="btn btn-inverse btn-large btn-block" href="">Install Now <span class="fui-upload"></span><br>
-                <?php echo htmlspecialchars((string)($deal['app-price'] ?? ''), ENT_QUOTES);?>
-                </a>
-                <?php 
-            }
-            else if($deal['app-install']=='coming-soon'){
-                ?>
-                            <a class="btn btn-warning btn-large btn-block" href="">Coming Soon... <span class="fui-time"></span><br>
-                            <?php echo htmlspecialchars((string)($deal['app-price'] ?? ''), ENT_QUOTES);?>
-                            </a>
-                            <?php 
-                        }
-            ?>
-          </div>
-        </div>
-		<?php  
-      if($count%4==0)
-          echo '</div>';
-      $count++;
-       }
-        }
-		else{
-		    echo "Sorry Resources Feed Not Found: Please try again later";
-		}
-
-		
-}
-//end of else		?>
-		
+<div class="row g-4">
+	<div class="col-12 col-lg-8">
+		<?php if ($apps === []) { ?>
+			<div class="p202-empty">
+				<i class="bi bi-grid-3x3-gap p202-empty__icon"></i>
+				<strong class="p202-empty__title">The App Store is not available right now</strong>
+				<div>The app feed did not answer. Please try again in a few minutes.</div>
+				<div class="p202-empty__action"><a class="btn btn-secondary btn-sm" href="<?php echo $e(get_absolute_url() . '202-appstore/'); ?>">Try again</a></div>
+			</div>
+		<?php } else { ?>
+			<div class="row g-3" id="appstore-apps">
+				<?php foreach ($apps as $app) {
+					[$pill, $label] = match ($app['status']) {
+						'installed' => ['p202-pill p202-pill--good', 'Installed'],
+						'coming-soon' => ['p202-pill', 'Coming soon'],
+						'un-installed' => ['p202-pill p202-pill--accent', 'Install now'],
+						default => ['p202-pill p202-pill--accent', $app['status'] !== '' ? $app['status'] : 'Learn more'],
+					}; ?>
+					<div class="col-12 col-md-6">
+						<section class="p202-panel h-100">
+							<div class="p202-panel__body d-flex gap-3">
+								<?php if ($app['image'] !== null) { ?><img src="<?php echo $e($app['image']); ?>" alt="" width="48" height="48" class="flex-shrink-0"><?php } ?>
+								<div class="flex-grow-1">
+									<h2 class="h6 mb-1"><?php echo $e($app['title']); ?></h2>
+									<div class="p202-toolbar mb-2">
+										<span class="<?php echo $pill; ?>"><?php echo $e($label); ?></span>
+										<?php if ($app['popular']) { ?><span class="p202-pill p202-pill--warn">Popular</span><?php } ?>
+										<?php if ($app['price'] !== '') { ?><span class="small text-secondary"><?php echo $e($app['price']); ?></span><?php } ?>
+									</div>
+									<?php if ($app['description'] !== '') { ?><p class="small text-secondary mb-2"><?php echo $e($app['description']); ?></p><?php } ?>
+									<?php if ($app['url'] !== null && $app['status'] !== 'coming-soon') { ?>
+										<a class="btn btn-secondary btn-sm" href="<?php echo $e($app['url']); ?>" target="_blank" rel="noopener">Find out more</a>
+									<?php } ?>
+								</div>
+							</div>
+						</section>
+					</div>
+				<?php } ?>
+			</div>
+		<?php } ?>
+	</div>
+	<div class="col-12 col-lg-4">
+		<section class="p202-panel">
+			<div class="p202-panel__head"><h2 class="p202-panel__title">ClickServer API key</h2><span class="p202-panel__sub"><?php echo $savedKey === '' ? 'not set' : 'saved'; ?></span></div>
+			<div class="p202-panel__body">
+				<form method="post" action="" id="appstore-key">
+					<?php echo p202_account_token_field(); ?>
+					<div class="mb-3">
+						<label class="form-label" for="clickserver_api_key">Your ClickServer API key</label>
+						<input type="text" class="form-control font-monospace<?php echo isset($errors['clickserver_api_key']) ? ' is-invalid' : ''; ?>" id="clickserver_api_key" name="clickserver_api_key" value="<?php echo $e($typedKey); ?>" autocomplete="off" spellcheck="false">
+						<div class="form-text">It activates the App Store. Never share it with anyone. Leave it empty to remove it.</div>
+						<?php if (isset($errors['clickserver_api_key'])) { ?><div class="invalid-feedback d-block"><?php echo $e($errors['clickserver_api_key']); ?></div><?php } ?>
+					</div>
+					<div class="p202-form-actions">
+						<button class="btn btn-primary" type="submit">Save API key</button>
+					</div>
+				</form>
+			</div>
+		</section>
+	</div>
+</div>
 <?php template_bottom(); ?>
-
-   

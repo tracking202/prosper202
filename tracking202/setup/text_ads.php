@@ -106,7 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 							FROM 202_text_ads LEFT JOIN 202_aff_campaigns USING (aff_campaign_id) LEFT JOIN 202_landing_pages USING (landing_page_id) WHERE 202_text_ads.user_id='".$mysql['user_id']."' AND text_ad_id='".$mysql['text_ad_id']."'";
 		$text_ad_result = $db->query($ad_varation_sql) or record_mysql_error($ad_varation_sql);
 		if ($text_ad_result->num_rows == 0 ) {
-			$error['wrong_user'] .= '<div class="error">You are not authorized to modify another users campaign</div>';    
+			$error['wrong_user'] = ($error['wrong_user'] ?? '') . '<div class="error">You are not authorized to modify another users campaign</div>';    
 		} else {
 			$text_ad_row = $text_ad_result->fetch_assoc();
 		}
@@ -223,10 +223,10 @@ if (!empty($_GET['edit_text_ad_id'])) {
 						 WHERE  `text_ad_id`='".$mysql['text_ad_id']."'
 						 AND    `user_id`='".$mysql['user_id']."'";
 	$text_ad_result = $db->query($text_ad_sql) or record_mysql_error($text_ad_sql);
-	$text_ad_row = $text_ad_result->fetch_assoc();
+	$text_ad_row = $text_ad_result->fetch_assoc() ?? [];
 	
 
-	$mysql['aff_campaign_id'] = $db->real_escape_string($text_ad_row['aff_campaign_id']);
+	$mysql['aff_campaign_id'] = $db->real_escape_string((string) ($text_ad_row['aff_campaign_id'] ?? ''));
 	$html['landing_page_id'] = htmlentities((string)($text_ad_row['landing_page_id'] ?? ''), ENT_QUOTES, 'UTF-8');    
 	$html['text_ad_type'] = htmlentities((string)($text_ad_row['text_ad_type'] ?? ''), ENT_QUOTES, 'UTF-8');    
 	$html['aff_campaign_id'] = htmlentities((string)($text_ad_row['aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8');    
@@ -247,7 +247,7 @@ if (!empty($_GET['edit_text_ad_id'])) {
 						 WHERE  `text_ad_id`='".$mysql['text_ad_id']."'
 						 AND    `user_id`='".$mysql['user_id']."'";
 	$text_ad_result = $db->query($text_ad_sql) or record_mysql_error($text_ad_sql);
-	$text_ad_row = $text_ad_result->fetch_assoc();
+	$text_ad_row = $text_ad_result->fetch_assoc() ?? [];
 	
 	$html['text_ad_type'] = htmlentities((string)($text_ad_row['text_ad_type'] ?? ''), ENT_QUOTES, 'UTF-8');
 	$html['landing_page_id'] = htmlentities((string)($text_ad_row['landing_page_id'] ?? ''), ENT_QUOTES, 'UTF-8');
@@ -279,7 +279,7 @@ if ((($editing === true) || ($add_success !== true)) && !empty($mysql['aff_campa
     $aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
     $aff_campaign_row = $aff_campaign_result->fetch_assoc();
 
-    $mysql['aff_network_id'] = $db->real_escape_string($aff_campaign_row['aff_network_id']);
+    $mysql['aff_network_id'] = $db->real_escape_string((string) ($aff_campaign_row['aff_network_id'] ?? ''));
     $aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `aff_network_id`='".$mysql['aff_network_id']."'";
     $aff_network_result = $db->query($aff_network_sql) or record_mysql_error($aff_network_sql);
     $aff_network_row = $aff_network_result->fetch_assoc();
@@ -287,793 +287,264 @@ if ((($editing === true) || ($add_success !== true)) && !empty($mysql['aff_campa
     $html['aff_network_id'] = htmlentities((string)($aff_network_row['aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 }
 
-template_top('Text Ads Setup');  ?>
+// Post-redirect-get: a saved or removed ad answers with a redirect, so a
+// reload cannot submit the form (or the remove link) a second time.
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && $add_success == true) {
+	header('location: ' . get_absolute_url() . 'tracking202/setup/text_ads.php?' . (!empty($_GET['edit_text_ad_id']) ? 'saved=1' : 'added=1'));
+	exit;
+}
+if ($delete_success == true) {
+	header('location: ' . get_absolute_url() . 'tracking202/setup/text_ads.php?deleted=1');
+	exit;
+}
 
-<!-- Page Header - Design System -->
-<div class="row" style="margin-bottom: 28px;">
-	<div class="col-xs-12">
-		<div class="setup-page-header">
-			<div class="setup-page-header__icon">
-				<span class="glyphicon glyphicon-font"></span>
+require_once __DIR__ . '/_includes/setup_ui.php';
+
+$base = get_absolute_url();
+$self = $base . 'tracking202/setup/text_ads.php';
+$token = (string) ($_SESSION['token'] ?? '');
+$uid = $db->real_escape_string((string) $_SESSION['user_id']);
+$canRemove = $userObj->hasPermission("remove_text_ad");
+$campaignOptions = p202_setup_campaign_options($db, (int) $_SESSION['user_id']);
+$advancedPages = p202_setup_rows($db, "SELECT landing_page_id, landing_page_nickname FROM `202_landing_pages` WHERE `user_id`='" . $uid . "' AND landing_page_type='1' AND landing_page_deleted='0' ORDER BY landing_page_nickname ASC");
+$advancedOptions = [];
+foreach ($advancedPages as $page) {
+	$advancedOptions[(string) $page['landing_page_id']] = (string) $page['landing_page_nickname'];
+}
+$adsByCampaign = [];
+$adsByPage = [];
+foreach (p202_setup_rows($db, "SELECT text_ad_id, text_ad_name, text_ad_headline, aff_campaign_id, landing_page_id, text_ad_type FROM `202_text_ads` WHERE `user_id`='" . $uid . "' AND `text_ad_deleted`='0' ORDER BY `text_ad_name` ASC") as $ad) {
+	if ((string) $ad['text_ad_type'] === '1') {
+		$adsByPage[(int) $ad['landing_page_id']][] = $ad;
+	} else {
+		$adsByCampaign[(int) $ad['aff_campaign_id']][] = $ad;
+	}
+}
+
+// What the form shows: what was just refused, the ad being edited or copied,
+// or a new ad. Editing is read from the URL: the handler resets $editing
+// after a save, and a refused edit must still post back to the edit URL.
+$posted = $_SERVER['REQUEST_METHOD'] == 'POST';
+$isEdit = !empty($_GET['edit_text_ad_id']);
+$isCopy = !$isEdit && !empty($_GET['copy_text_ad_id']);
+$row = !$posted && ($isEdit || $isCopy) && is_array($text_ad_row ?? null) ? $text_ad_row : [];
+$source = $posted ? $_POST : $row;
+$value = static fn (string $name): string => (string) ($source[$name] ?? '');
+$form = [
+	'text_ad_id' => $posted ? $value('text_ad_id') : ($isEdit ? (string) ($row['text_ad_id'] ?? '') : ''),
+	'text_ad_type' => $value('text_ad_type') === '1' ? '1' : '0',
+	'aff_campaign_id' => $value('aff_campaign_id'),
+	'landing_page_id' => $value('landing_page_id'),
+	'text_ad_name' => $value('text_ad_name'),
+	'text_ad_headline' => $value('text_ad_headline'),
+	'text_ad_description' => $value('text_ad_description'),
+	'text_ad_display_url' => $value('text_ad_display_url'),
+];
+$editId = $isEdit ? (int) $_GET['edit_text_ad_id'] : 0;
+$action = $self . ($isEdit ? '?edit_text_ad_id=' . $editId : ($isCopy ? '?copy_text_ad_id=' . (int) $_GET['copy_text_ad_id'] : ''));
+$isAdvanced = $form['text_ad_type'] === '1';
+
+$adItem = static function (array $ad) use ($self, $token, $canRemove, $editId): string {
+	$id = (int) $ad['text_ad_id'];
+	$name = (string) $ad['text_ad_name'];
+	$out = '<li class="p202-list__item' . ($editId === $id ? ' is-active' : '') . '" data-p202-filter-text="' . p202_setup_e($name) . '">'
+		. '<span class="p202-list__name">' . p202_setup_e($name) . '</span>'
+		. '<span class="p202-list__actions">'
+		. '<a class="p202-list__action" href="' . p202_setup_e($self . '?edit_text_ad_id=' . $id) . '">edit</a>'
+		. '<a class="p202-list__action" href="' . p202_setup_e($self . '?copy_text_ad_id=' . $id) . '">copy</a>';
+	if ($canRemove) {
+		$out .= p202_setup_remove_form($self, ['delete_text_ad_id' => $id, 'delete_text_ad_name' => $name, 'token' => $token],
+			'Remove the ad "' . $name . '"? Clicks already tracked keep their history.');
+	}
+	return $out . '</span><span class="p202-list__meta">' . p202_setup_e($ad['text_ad_headline'] ?? '') . '</span></li>';
+};
+
+template_top('Text Ads Setup', ['ui' => 'v2']); ?>
+
+<div class="p202-page-header p202-page-header--accent">
+	<div class="p202-page-header__icon"><i class="bi bi-fonts"></i></div>
+	<div class="p202-page-header__text">
+		<h1 class="p202-page-header__title">Text Ads</h1>
+		<p class="p202-page-header__desc">Your ad copy variations, so reports can tell which headline, description and display URL performed.</p>
+	</div>
+</div>
+
+<?php
+echo p202_setup_query_flashes([
+	'added' => 'Ad added. Choose it when you get a tracking link.',
+	'saved' => 'Ad saved.',
+	'deleted' => 'Ad removed. Clicks already tracked keep their history.',
+], $_GET);
+if ($error) {
+	echo p202_setup_error_flashes($error, ['aff_campaign_id', 'landing_page_id', 'text_ad_name', 'text_ad_headline', 'text_ad_description', 'text_ad_display_url']);
+}
+?>
+
+<div class="row g-4">
+	<div class="col-12 col-lg-6">
+		<?php if ($campaignOptions === [] && $advancedOptions === []) { ?>
+			<div class="p202-empty">
+				<i class="bi bi-fonts p202-empty__icon"></i>
+				<strong class="p202-empty__title">Add a campaign first</strong>
+				<div>A text ad sends clicks to a campaign or an advanced landing page, and you have neither yet.</div>
+				<div class="p202-empty__action"><a class="btn btn-primary btn-sm" href="<?php echo p202_setup_e($base . 'tracking202/setup/aff_campaigns.php'); ?>">Add a campaign</a></div>
 			</div>
-			<div class="setup-page-header__text">
-				<h1 class="setup-page-header__title">Text Ads</h1>
-				<p class="setup-page-header__subtitle">Store your ad copy variations for tracking headline, description, and display URL performance</p>
+		<?php } else { ?>
+		<section class="p202-panel" id="text-ad-form">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title"><?php echo $isEdit ? 'Edit ad' : ($isCopy ? 'Copy ad' : 'Add an ad'); ?></h2>
+				<p class="p202-panel__sub">Optional: only for traffic you buy with text ads.</p>
 			</div>
-		</div>
-	</div>
-</div>
+			<div class="p202-panel__body">
+				<form method="post" action="<?php echo p202_setup_e($action); ?>">
+					<?php echo p202_setup_token_field($token); ?>
+					<input type="hidden" name="text_ad_id" value="<?php echo p202_setup_e($form['text_ad_id']); ?>">
+					<fieldset class="mb-3">
+						<legend class="form-label">The ad sends clicks to</legend>
+						<div class="form-check">
+							<input class="form-check-input" type="radio" name="text_ad_type" id="text_ad_type1" value="0"<?php echo $isAdvanced ? '' : ' checked'; ?>>
+							<label class="form-check-label" for="text_ad_type1">A campaign, directly or through a simple landing page</label>
+						</div>
+						<div class="form-check">
+							<input class="form-check-input" type="radio" name="text_ad_type" id="text_ad_type2" value="1"<?php echo $isAdvanced ? ' checked' : ''; ?>>
+							<label class="form-check-label" for="text_ad_type2">An advanced landing page</label>
+						</div>
+					</fieldset>
 
-<?php if ($error) { ?>
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<div class="alert alert-danger">
-			<i class="fa fa-exclamation-circle"></i> There were errors with your submission. <?php echo $error['token'] ?? ''; ?>
-		</div>
-	</div>
-</div>
-<?php } ?>
+					<div class="mb-3" data-p202-show-when="text_ad_type=0" data-p202-disable-hidden<?php echo $isAdvanced ? ' hidden' : ''; ?>>
+						<label class="form-label" for="aff_campaign_id">Campaign</label>
+						<select class="form-select<?php echo p202_setup_invalid($error, 'aff_campaign_id'); ?>" id="aff_campaign_id" name="aff_campaign_id" required<?php echo $isAdvanced ? ' disabled' : ''; ?>>
+							<?php echo p202_setup_options($campaignOptions, $form['aff_campaign_id'] !== '' ? $form['aff_campaign_id'] : p202_setup_only_option($campaignOptions), $campaignOptions === [] ? 'No campaigns yet' : 'Choose a campaign'); ?>
+						</select>
+						<input type="hidden" name="landing_page_id" value="0"<?php echo $isAdvanced ? ' disabled' : ''; ?>>
+						<?php echo p202_setup_feedback($error, 'aff_campaign_id'); ?>
+					</div>
+					<div class="mb-3" data-p202-show-when="text_ad_type=1" data-p202-disable-hidden<?php echo $isAdvanced ? '' : ' hidden'; ?>>
+						<label class="form-label" for="landing_page_id">Advanced landing page</label>
+						<select class="form-select<?php echo p202_setup_invalid($error, 'landing_page_id'); ?>" id="landing_page_id" name="landing_page_id" required<?php echo $isAdvanced ? '' : ' disabled'; ?>>
+							<?php echo p202_setup_options($advancedOptions, $form['landing_page_id'] !== '' && $form['landing_page_id'] !== '0' ? $form['landing_page_id'] : p202_setup_only_option($advancedOptions), $advancedOptions === [] ? 'No advanced landing pages yet' : 'Choose a landing page'); ?>
+						</select>
+						<input type="hidden" name="aff_campaign_id" value="0"<?php echo $isAdvanced ? '' : ' disabled'; ?>>
+						<?php echo p202_setup_feedback($error, 'landing_page_id'); ?>
+					</div>
 
-<?php if ($add_success == true) { ?>
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<div class="alert alert-success">
-			<i class="fa fa-check-circle"></i> Your submission was successful. Your changes have been saved.
-		</div>
-	</div>
-</div>
-<?php } ?>
+					<div class="mb-3">
+						<label class="form-label" for="text_ad_name">Ad nickname</label>
+						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'text_ad_name'); ?>" id="text_ad_name" name="text_ad_name" value="<?php echo p202_setup_e($form['text_ad_name']); ?>" maxlength="255" required>
+						<div class="form-text">How you find this ad among the others in reports.</div>
+						<?php echo p202_setup_feedback($error, 'text_ad_name'); ?>
+					</div>
+					<div class="mb-3">
+						<label class="form-label" for="text_ad_headline">Headline</label>
+						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'text_ad_headline'); ?>" id="text_ad_headline" name="text_ad_headline" value="<?php echo p202_setup_e($form['text_ad_headline']); ?>" required>
+						<?php echo p202_setup_feedback($error, 'text_ad_headline'); ?>
+					</div>
+					<div class="mb-3">
+						<label class="form-label" for="text_ad_description">Description</label>
+						<textarea class="form-control<?php echo p202_setup_invalid($error, 'text_ad_description'); ?>" id="text_ad_description" name="text_ad_description" rows="2" required><?php echo p202_setup_e($form['text_ad_description']); ?></textarea>
+						<?php echo p202_setup_feedback($error, 'text_ad_description'); ?>
+					</div>
+					<div class="mb-3">
+						<label class="form-label" for="text_ad_display_url">Display URL</label>
+						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'text_ad_display_url'); ?>" id="text_ad_display_url" name="text_ad_display_url" value="<?php echo p202_setup_e($form['text_ad_display_url']); ?>" required>
+						<?php echo p202_setup_feedback($error, 'text_ad_display_url'); ?>
+					</div>
 
-<?php if ($delete_success == true) { ?>
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<div class="alert alert-success">
-			<i class="fa fa-check-circle"></i> Your deletion was successful. You have successfully removed a text ad.
-		</div>
-	</div>
-</div>
-<?php } ?>
-
-<div class="row form_seperator" style="margin-bottom:15px;">
-	<div class="col-xs-12"></div>
-</div>
-
-<div class="row">
-	<div class="col-md-6">
-		<small><strong>Add Your Text Ads</strong></small><br/>
-		<span class="infotext">Here you can add different text ads you might use with your PPC marketing.</span>
-		
-		<form method="post" action="<?php if ($delete_success == true) { echo $_SERVER['REDIRECT_URL'] ?? ''; }?>" class="form-horizontal" role="form" style="margin:15px 0px;">
-			<input name="text_ad_id" type="hidden" value="<?php echo $html['text_ad_id'] ?? ''; ?>"/>
-			<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES); ?>" />
-
-			<div class="form-group" style="margin-bottom: 0px;" id="radio-select">
-				<label class="col-xs-4 control-label" style="text-align: left;" id="width-tooltip">Text Ad For: </label>
-
-				<div class="col-xs-8" style="margin-top: 10px;">
-					<label class="radio">
-	            		<input type="radio" name="text_ad_type" id="text_ad_type1" value="0" data-toggle="radio" <?php if (!isset($html['text_ad_type']) || $html['text_ad_type'] == '0' || !$html['text_ad_type']) { echo 'checked'; }?>>
-	            			Direct Link Setup, or Simple Landing Page Setup
-	          		</label>
-	          		<label class="radio">
-	            		<input type="radio" name="text_ad_type" id="text_ad_type2" value="1" data-toggle="radio" <?php if (isset($html['text_ad_type']) && $html['text_ad_type'] == '1') { echo 'checked'; } ?>>
-	            			Advanced Landing Page Setup
-	          		</label>
-	          	</div>
-	        </div>
-
-                <div id="aff-campaign-div" <?php if (isset($html['text_ad_type']) && $html['text_ad_type'] == '1') { echo 'style="display:none;"'; } ?>>
-                        <div class="form-group <?php if (!empty($error['aff_campaign_id'])) echo 'has-error'; ?>" style="margin-bottom: 0px;">
-		        	<label for="aff_network_id" class="col-xs-4 control-label" style="text-align: left;">Category:</label>
-		        	<div class="col-xs-6" style="margin-top: 10px;">
-		        		<img id="aff_network_id_div_loading" class="loading" src="<?php echo get_absolute_url();?>202-img/loader-small.gif"/>
-	                	<div id="aff_network_id_div"></div>
-		        	</div>
-		        </div>
-
-                        <div id="aff-campaign-group" class="form-group <?php if (!empty($error['aff_campaign_id'])) echo 'has-error'; ?>" style="margin-bottom: 0px;">
-		        	<label for="aff_campaign_id" class="col-xs-4 control-label" style="text-align: left;">Campaign:</label>
-		        	<div class="col-xs-6" style="margin-top: 10px;">
-		        		<img id="aff_campaign_id_div_loading" class="loading" src="<?php echo get_absolute_url();?>202-img/loader-small.gif" style="display: none;"/>
-	                    <div id="aff_campaign_id_div">
-	                    	<select class="form-control input-sm" id="aff_campaign_id" disabled="">
-	                    		<option>--</option>
-	                    	</select>
-	                    </div>
-		        	</div>
-		        </div>
-	        </div>
-
-                <div id="lp_landing_page" <?php if (isset($html['text_ad_type']) && (($html['text_ad_type'] == '0') || (!$html['text_ad_type']))) { echo ' style="display:none;"'; } ?>>
-                        <div class="form-group <?php if (!empty($error['landing_page_id'])) echo 'has-error'; ?>" style="margin-bottom: 0px;">
-		        	<label for="landing_page_id" class="col-xs-4 control-label" style="text-align: left;">Landing Page:</label>
-		        	<div class="col-xs-6" style="margin-top: 10px;">
-		        		<img id="landing_page_div_loading" class="loading" src="<?php echo get_absolute_url();?>202-img/loader-small.gif"/>
-						<div id="landing_page_div"></div>
-		        	</div>
-		        </div>
-	        </div>
-
-                <div class="form-group <?php if (!empty($error['text_ad_name'])) echo 'has-error'; ?>" style="margin-bottom: 0px;">
-		        <label for="text_ad_name" class="col-xs-4 control-label" style="text-align: left;">Ad Nickname <span class="fui-info-circle" data-toggle="tooltip" title="The ad nickname is the nickname we store for you, this is used for when you have several ads, you can quickly find the ones you are looking for by assigning each ad a unique nickname."></span></label>
-		        <div class="col-xs-6" style="margin-top: 10px;">
-	                <input type="text" class="form-control input-sm" id="text_ad_name" name="text_ad_name" value="<?php echo $html['text_ad_name'] ?? ''; ?>">
-		        </div>
-		    </div>
-
-		    <div class="form-group" style="margin-bottom: 0px;">
-		        <label class="col-xs-4 control-label" style="text-align: left;">Ad Preview </label>
-		        <div class="col-xs-6" style="margin-top: 10px;">
-		        	<div class="panel panel-default" style="border-color: #3498db; margin-bottom:0px">
-						<div class="panel-body">
-							<span id="ad-preview-headline"><?php if (isset($html['text_ad_headline']) && $html['text_ad_headline']) { echo $html['text_ad_headline']; } else { echo 'Luxury Cruise to Mars'; } ?></span><br/>
-							<span id="ad-preview-body"><?php if (isset($html['text_ad_description']) && $html['text_ad_description']) { echo $html['text_ad_description']; } else { echo 'Visit the Red Planet in style. Low-gravity fun for everyone!'; } ?></span><br/>
-							<span id="ad-preview-url"><?php if (isset($html['text_ad_display_url']) && $html['text_ad_display_url']) { echo $html['text_ad_display_url']; } else { echo 'www.example.com'; } ?></span>
+					<div class="mb-3">
+						<span class="form-label d-block">Preview</span>
+						<div class="card">
+							<div class="card-body py-2">
+								<div class="fw-bold text-primary" data-p202-mirror="#text_ad_headline" data-p202-mirror-empty="Luxury Cruise to Mars"><?php echo p202_setup_e($form['text_ad_headline'] !== '' ? $form['text_ad_headline'] : 'Luxury Cruise to Mars'); ?></div>
+								<div class="small" data-p202-mirror="#text_ad_description" data-p202-mirror-empty="Visit the Red Planet in style. Low-gravity fun for everyone!"><?php echo p202_setup_e($form['text_ad_description'] !== '' ? $form['text_ad_description'] : 'Visit the Red Planet in style. Low-gravity fun for everyone!'); ?></div>
+								<div class="small text-success" data-p202-mirror="#text_ad_display_url" data-p202-mirror-empty="www.example.com"><?php echo p202_setup_e($form['text_ad_display_url'] !== '' ? $form['text_ad_display_url'] : 'www.example.com'); ?></div>
+							</div>
 						</div>
 					</div>
-		        </div>
-		    </div>
 
-		    <div class="form-group <?php if(isset($error['text_ad_headline'])) echo "has-error";?>" style="margin-bottom: 0px;">
-		        <label for="text_ad_headline" class="col-xs-4 control-label" style="text-align: left;">Ad Headline: </label>
-		        <div class="col-xs-6" style="margin-top: 10px;">
-	                <input type="text" class="form-control input-sm" id="text_ad_headline" name="text_ad_headline" value="<?php echo $html['text_ad_headline'] ?? ''; ?>">
-		        </div>
-		    </div>
-
-		    <div class="form-group <?php if(isset($error['text_ad_description'])) echo "has-error";?>" style="margin-bottom: 0px;">
-		        <label for="text_ad_description" class="col-xs-4 control-label" style="text-align: left;">Ad Description: </label>
-		        <div class="col-xs-6" style="margin-top: 10px;">
-					<textarea class="form-control" name="text_ad_description" id="text_ad_description" rows="2"><?php echo $html['text_ad_description'] ?? ''; ?></textarea>
-				</div>
-		    </div>
-
-		    <div class="form-group <?php if(isset($error['text_ad_display_url'])) echo "has-error";?>" style="margin-bottom: 10px;">
-		        <label for="text_ad_display_url" class="col-xs-4 control-label" style="text-align: left;">Display URL: </label>
-		        <div class="col-xs-6" style="margin-top: 10px;">
-	                <input type="text" class="form-control input-sm" id="text_ad_display_url" name="text_ad_display_url" value="<?php echo $html['text_ad_display_url'] ?? ''; ?>">
-		        </div>
-		    </div>
-
-		    <div class="form-group">
-				<div class="col-xs-6 col-xs-offset-4">
-				    <?php if ($editing == true) { ?>
-					    <div class="row">
-					    	<div class="col-xs-6">
-					    		<button class="btn btn-sm btn-p202 btn-block" type="submit">Edit</button>					
-					    	</div>
-					    	<div class="col-xs-6">
-								<input type="hidden" name="pixel_id" value="<?php echo $selected['pixel_id'] ?? '';?>">
-								<button type="submit" class="btn btn-sm btn-danger btn-block" onclick="window.location='<?php echo get_absolute_url();?>tracking202/setup/text_ads.php'; return false;">Cancel</button>					    		</div>
-					    	</div>
-				    <?php } else { ?>
-				    		<button class="btn btn-sm btn-p202 btn-block" type="submit" id="addedTextAd">Add</button>					
-					<?php } ?>
-				</div>
+					<div class="p202-form-actions">
+						<?php if ($isEdit || $isCopy) { ?>
+							<a class="btn btn-link" href="<?php echo p202_setup_e($self); ?>">Cancel</a>
+						<?php } ?>
+						<button type="submit" class="btn btn-primary" id="addedTextAd"><?php echo $isEdit ? 'Save changes' : 'Add ad'; ?></button>
+					</div>
+				</form>
 			</div>
-
-		</form>
+		</section>
+		<?php } ?>
 	</div>
 
-		<div class="col-md-6">
-			<div class="panel panel-default setup-side-panel">
-			<div class="panel-heading">Advanced Landing Page Text Ads</div>
-			<div class="panel-body">
-				<ul>        
-					<?php $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-					$landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `user_id`='".$mysql['user_id']."' AND landing_page_type='1' AND landing_page_deleted='0'";
-					$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
-					
-					while ($landing_page_row = $landing_page_result->fetch_array(MYSQLI_ASSOC)) {
-						$html['landing_page_nickname'] = htmlentities((string)($landing_page_row['landing_page_nickname'] ?? ''), ENT_QUOTES, 'UTF-8');
-							
-						printf('<li>%s</li>', $html['landing_page_nickname']);
-							
-						?><ul style="margin-top: 0px;"><?php 
-								
-							$mysql['landing_page_id'] = $db->real_escape_string($landing_page_row['landing_page_id']);
-							$text_ad_sql = "SELECT * FROM `202_text_ads` WHERE `landing_page_id`='".$mysql['landing_page_id']."' AND `text_ad_deleted`='0' ORDER BY `text_ad_name` ASC";
-							$text_ad_result = $db->query($text_ad_sql) or record_mysql_error($text_ad_sql);
-								
-							while ($text_ad_row = $text_ad_result->fetch_array(MYSQLI_ASSOC)) {
-										
-								$html['text_ad_name'] = htmlentities((string)($text_ad_row['text_ad_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-								$html['text_ad_id'] = htmlentities((string)($text_ad_row['text_ad_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-
-								if ($userObj->hasPermission("remove_text_ad")) {
-								printf('<li><span class="filter_text_ad_name">%s</span> <a href="?edit_text_ad_id=%s" class="list-action">edit</a> <a href="?copy_text_ad_id=%s" class="list-action">copy</a> <a href="?delete_text_ad_id=%s&delete_text_ad_name=%s&token=' . urlencode((string) ($_SESSION['token'] ?? '')) . '" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Ad?\');">remove</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_name']);
-							} else {
-								printf('<li><span class="filter_text_ad_name">%s</span> <a href="?edit_text_ad_id=%s" class="list-action">edit</a> <a href="?copy_text_ad_id=%s" class="list-action">copy</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id']);
-							}		
-							
-										
-							}
-
-						?></ul>
-					<?php	} ?>
-				</ul>
+	<div class="col-12 col-lg-6">
+		<section class="p202-panel mb-4">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">Ads for campaigns</h2>
+				<span class="p202-pill p202-pill--accent"><?php echo array_sum(array_map('count', $adsByCampaign)); ?></span>
 			</div>
-		</div>
-
-			<div class="panel panel-default setup-side-panel">
-			<div class="panel-heading">Direct Link/Simple Landing Page Text Ads</div>
-			<div class="panel-body">
-				<ul>        
-				<?php  $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-					$aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `user_id`='".$mysql['user_id']."' AND `aff_network_deleted`='0' ORDER BY `aff_network_name` ASC";
-					$aff_network_result = $db->query($aff_network_sql) or record_mysql_error($aff_network_sql);
-					if ($aff_network_result->num_rows == 0 ) { 
-						?><li class="empty-state">No categories added yet. Add a category first to organize your text ads.</li><?php
-					}
-					
-					while ($aff_network_row = $aff_network_result->fetch_array(MYSQLI_ASSOC)) {
-						$html['aff_network_name'] = htmlentities((string)($aff_network_row['aff_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-						$url['aff_network_id'] = urlencode((string) $aff_network_row['aff_network_id']);
-						
-						printf('<li>%s</li>', $html['aff_network_name']);
-						
-						?><ul style="margin-top: 0px;"><?php
-											
-							//print out the individual accounts per each PPC network
-							$mysql['aff_network_id'] = $db->real_escape_string($aff_network_row['aff_network_id']);
-							$aff_campaign_sql = "SELECT * FROM `202_aff_campaigns` WHERE `aff_network_id`='".$mysql['aff_network_id']."' AND `aff_campaign_deleted`='0' ORDER BY `aff_campaign_name` ASC";
-							$aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
-							 
-							while ($aff_campaign_row = $aff_campaign_result->fetch_array(MYSQLI_ASSOC)) {
-								
-								$html['aff_campaign_name'] = htmlentities((string)($aff_campaign_row['aff_campaign_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-								$html['aff_campaign_payout'] = htmlentities((string)($aff_campaign_row['aff_campaign_payout'] ?? ''), ENT_QUOTES, 'UTF-8');
-							
-								printf('<li>%s &middot; &#36;%s</li>', $html['aff_campaign_name'], $html['aff_campaign_payout']);
-							
-								?><ul style="margin-top: 0px;"><?php 
-								
-									$mysql['aff_campaign_id'] = $db->real_escape_string($aff_campaign_row['aff_campaign_id']);
-									$text_ad_sql = "SELECT * FROM `202_text_ads` WHERE `aff_campaign_id`='".$mysql['aff_campaign_id']."' AND `text_ad_deleted`='0' ORDER BY `text_ad_name` ASC";
-									$text_ad_result = $db->query($text_ad_sql) or record_mysql_error($text_ad_sql);
-									
-									while ($text_ad_row = $text_ad_result->fetch_array(MYSQLI_ASSOC)) {
-										
-										$html['text_ad_name'] = htmlentities((string)($text_ad_row['text_ad_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-										$html['text_ad_id'] = htmlentities((string)($text_ad_row['text_ad_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-										
-										if ($userObj->hasPermission("remove_text_ad")) {
-											printf('<li><span class="filter_text_ad_name">%s</span> <a href="?edit_text_ad_id=%s" class="list-action">edit</a> <a href="?copy_text_ad_id=%s" class="list-action">copy</a> <a href="?delete_text_ad_id=%s&delete_text_ad_name=%s&token=' . urlencode((string) ($_SESSION['token'] ?? '')) . '" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Ad?\');">remove</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_id'], $html['text_ad_name']);
-										} else {
-											printf('<li><span class="filter_text_ad_name">%s</span> <a href="?edit_text_ad_id=%s" class="list-action">edit</a> <a href="?copy_text_ad_id=%s" class="list-action">copy</a></li>', $html['text_ad_name'], $html['text_ad_id'], $html['text_ad_id']);
-										}
-							
-										
-									}
-
-								?></ul><?php						
-							} 
-						
-						?></ul><?php
-						
-					} ?>
-				</ul>
+			<div class="p202-panel__body">
+				<?php if ($adsByCampaign === []) { ?>
+					<div class="p202-empty">
+						<i class="bi bi-fonts p202-empty__icon"></i>
+						<strong class="p202-empty__title">No text ads yet</strong>
+						<div>Store each variation of your ad copy here, then pick it when you get a tracking link.</div>
+						<?php if ($campaignOptions !== [] || $advancedOptions !== []) { ?><div class="p202-empty__action"><a class="btn btn-secondary btn-sm" href="#text_ad_name">Add your first ad</a></div><?php } ?>
+					</div>
+				<?php } else { ?>
+					<ul class="p202-list">
+						<?php foreach ($campaignOptions as $group) {
+							$groupCampaigns = array_filter($group['options'], static fn ($campaignId): bool => isset($adsByCampaign[(int) $campaignId]), ARRAY_FILTER_USE_KEY);
+							if ($groupCampaigns === []) {
+								continue;
+							} ?>
+							<li class="p202-list__item">
+								<span class="p202-list__name"><?php echo p202_setup_e($group['label']); ?></span>
+								<ul class="p202-list__children">
+									<?php foreach ($groupCampaigns as $campaignId => $campaign) { ?>
+										<li class="p202-list__item">
+											<span class="p202-list__name"><?php echo p202_setup_e($campaign['label']); ?></span>
+											<ul class="p202-list__children">
+												<?php foreach ($adsByCampaign[(int) $campaignId] as $ad) {
+													echo $adItem($ad);
+												} ?>
+											</ul>
+										</li>
+									<?php } ?>
+								</ul>
+							</li>
+						<?php } ?>
+					</ul>
+				<?php } ?>
 			</div>
-		</div>
+		</section>
+
+		<section class="p202-panel">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">Ads for advanced landing pages</h2>
+				<span class="p202-pill p202-pill--accent"><?php echo array_sum(array_map('count', $adsByPage)); ?></span>
+			</div>
+			<div class="p202-panel__body">
+				<?php if ($adsByPage === []) { ?>
+					<p class="text-body-secondary mb-0">None yet.</p>
+				<?php } else { ?>
+					<ul class="p202-list">
+						<?php foreach ($advancedPages as $page) {
+							$pageAds = $adsByPage[(int) $page['landing_page_id']] ?? [];
+							if ($pageAds === []) {
+								continue;
+							} ?>
+							<li class="p202-list__item">
+								<span class="p202-list__name"><?php echo p202_setup_e($page['landing_page_nickname']); ?></span>
+								<ul class="p202-list__children">
+									<?php foreach ($pageAds as $ad) {
+										echo $adItem($ad);
+									} ?>
+								</ul>
+							</li>
+						<?php } ?>
+					</ul>
+				<?php } ?>
+			</div>
+		</section>
 	</div>
-
 </div>
 
-<!-- open up the ajax aff network -->
-<script type="text/javascript">
-$(document).ready(function() {
-
-    load_landing_page(0, <?php echo $html['landing_page_id'] ?? 0; if (isset($html['landing_page_id']) && !$html['landing_page_id']) { echo 0; } ?>, 'advlandingpage');
-
-   	load_aff_network_id('<?php echo $html['aff_network_id'] ?? ''; ?>');
-    <?php if (isset($html['aff_network_id']) && $html['aff_network_id'] != '') { ?>
-        load_aff_campaign_id('<?php echo $html['aff_network_id']; ?>','<?php echo $html['aff_campaign_id'] ?? ''; ?>');
-    <?php } ?>
-});
-</script>
-
-<style>
-/* ===========================================
-   TEXT ADS - Enhanced Design System Styles
-   =========================================== */
-
-/* ---- Page Header ---- */
-.setup-page-header {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 24px;
-    background: #2f6fdd;
-    border-radius: 12px;
-    color: #fff;
-    box-shadow: 0 4px 15px rgba(47, 111, 221, 0.2);
-}
-
-.setup-page-header__icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 56px;
-    height: 56px;
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 12px;
-    flex-shrink: 0;
-    border: 2px solid rgba(255, 255, 255, 0.3);
-}
-
-.setup-page-header__icon .glyphicon {
-    font-size: 24px;
-    color: #fff;
-    font-weight: 600;
-}
-
-.setup-page-header__text { flex: 1; }
-
-.setup-page-header__title {
-    margin: 0 0 4px 0;
-    font-size: 24px;
-    font-weight: 700;
-    color: #fff;
-    letter-spacing: -0.5px;
-}
-
-.setup-page-header__subtitle {
-    margin: 0;
-    font-size: 14px;
-    color: rgba(255, 255, 255, 0.9);
-    font-weight: 400;
-    line-height: 1.5;
-}
-
-/* ---- Panels & Cards ---- */
-.panel-default {
-    border: 1px solid #e7e8ea;
-    border-radius: 12px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-    overflow: hidden;
-    transition: box-shadow 0.3s ease, border-color 0.3s ease;
-}
-
-.panel-default:hover {
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
-    border-color: #c9cdd3;
-}
-
-.panel-heading {
-    background: #fafbfc;
-    border-bottom: 1px solid #e7e8ea;
-    padding: 16px 20px;
-    font-weight: 600;
-    color: #1f2328;
-    font-size: 14px;
-    letter-spacing: 0.2px;
-}
-
-.panel-body {
-    padding: 20px;
-    background: #fff;
-}
-
-/* ---- Alerts ---- */
-.alert {
-    border-radius: 8px;
-    padding: 12px 16px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    font-size: 14px;
-    font-weight: 500;
-    border: 1px solid transparent;
-}
-
-.alert i {
-    font-size: 16px;
-    flex-shrink: 0;
-}
-
-.alert-success {
-    background: #e7f5ec;
-    border-color: #e7f5ec;
-    color: #1d6c3a;
-}
-
-.alert-danger {
-    background: #fdecec;
-    border-color: #c9372c;
-    color: #b02a20;
-}
-
-.alert-warning {
-    background: #fdf3e2;
-    border-color: #b54708;
-    color: #9a3c07;
-}
-
-.alert-info {
-    background: #eaf2fc;
-    border-color: #bcd4f6;
-    color: #2861c4;
-}
-
-/* ---- Form Elements ---- */
-.form-group {
-    margin-bottom: 20px;
-    transition: all 0.3s ease;
-}
-
-.form-group.has-error .form-control {
-    border-color: #c9372c;
-    background: #fdecec;
-}
-
-.form-group.has-error .form-control:focus {
-    border-color: #c9372c;
-    box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1);
-}
-
-.form-control {
-    border: 1px solid #c9cdd3;
-    border-radius: 8px;
-    padding: 10px 12px;
-    font-size: 14px;
-    transition: all 0.3s ease;
-    background: #fff;
-}
-
-.form-control:focus {
-    border-color: #2f6fdd;
-    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1);
-    outline: none;
-}
-
-.form-control:disabled,
-.form-control[disabled] {
-    background-color: #fafbfc;
-    color: #8a919b;
-    cursor: not-allowed;
-    opacity: 0.7;
-}
-
-.input-sm {
-    padding: 8px 12px;
-    font-size: 13px;
-    height: auto;
-}
-
-/* ---- Buttons ---- */
-.btn {
-    border-radius: 8px;
-    padding: 10px 16px;
-    font-size: 14px;
-    font-weight: 600;
-    border: 1px solid transparent;
-    transition: all 0.3s ease;
-    cursor: pointer;
-    display: inline-block;
-    text-align: center;
-    white-space: nowrap;
-    vertical-align: middle;
-    user-select: none;
-}
-
-.btn:hover {
-    transform: none;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-
-.btn:active {
-    transform: translateY(0);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
-
-.btn-sm {
-    padding: 8px 12px;
-    font-size: 13px;
-}
-
-.btn-p202 {
-    background: #2f6fdd;
-    color: #fff;
-    border: 1px solid transparent;
-}
-
-.btn-p202:hover {
-    background: #2861c4;
-    color: #fff;
-    box-shadow: 0 4px 12px rgba(47, 111, 221, 0.3);
-}
-
-.btn-p202:disabled {
-    background: #c9cdd3;
-    color: #6b7280;
-    cursor: not-allowed;
-    transform: none;
-    box-shadow: none;
-}
-
-.btn-danger {
-    background: #c9372c;
-    color: #fff;
-    border: 1px solid transparent;
-}
-
-.btn-danger:hover {
-    background: #c9372c;
-    color: #fff;
-    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
-}
-
-.btn-danger:disabled {
-    background: #c9cdd3;
-    cursor: not-allowed;
-    transform: none;
-}
-
-.btn-block {
-    width: 100%;
-}
-
-/* ---- Lists ---- */
-ul {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-}
-
-li {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-    padding: 8px 0;
-    color: #1f2328;
-    font-size: 14px;
-    transition: all 0.2s ease;
-}
-
-li:hover {
-    color: #2f6fdd;
-    padding-left: 4px;
-}
-
-.filter_text_ad_name {
-    font-weight: 500;
-    flex: 1;
-    min-width: 100px;
-}
-
-li a {
-    color: #2f6fdd;
-    text-decoration: none;
-    font-weight: 500;
-    transition: all 0.2s ease;
-    border-bottom: 1px solid transparent;
-}
-
-li a:hover {
-    color: #2861c4;
-    border-bottom-color: #2f6fdd;
-}
-
-/* ---- Setup List Items (New Pattern) ---- */
-.list-action {
-    display: inline-block;
-    margin-left: 12px;
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 13px;
-    transition: all 0.2s ease;
-    background: transparent;
-    color: #2f6fdd;
-    text-decoration: none;
-    border: 1px solid transparent;
-}
-
-.list-action:first-of-type {
-    margin-left: 12px;
-}
-
-.list-action:hover {
-    background: #eaf2fc;
-    border-color: #2f6fdd;
-    color: #2861c4;
-}
-
-.list-action-danger {
-    color: #c9372c;
-}
-
-.list-action-danger:hover {
-    background: #fdecec;
-    border-color: #c9372c;
-    color: #b02a20;
-}
-
-.empty-state {
-    text-align: center;
-    padding: 24px 16px;
-    color: #9ca3af;
-    border: 1px dashed #e7e8ea;
-    border-radius: 8px;
-    font-size: 14px;
-}
-
-/* Deprecated - keeping for backwards compatibility */
-.setup-list-name,
-.setup-list-actions {
-    display: inline-block;
-    vertical-align: middle;
-}
-
-.setup-list-name {
-    flex: 1;
-    max-width: 70%;
-    word-break: break-word;
-}
-
-.setup-list-actions {
-    white-space: nowrap;
-    margin-left: 12px;
-}
-
-.action-copy,
-.action-edit,
-.action-remove {
-    color: #2f6fdd;
-    text-decoration: none;
-    border: 1px solid transparent;
-}
-
-/* ---- Radio & Checkbox Styles ---- */
-.radio label,
-.checkbox label {
-    padding-left: 24px;
-    margin-bottom: 8px;
-    font-weight: 500;
-    color: #1f2328;
-    cursor: pointer;
-    user-select: none;
-}
-
-.radio input[type="radio"],
-.checkbox input[type="checkbox"] {
-    width: 18px;
-    height: 18px;
-    margin-left: -24px;
-    margin-right: 8px;
-    cursor: pointer;
-    accent-color: #2f6fdd;
-}
-
-/* ---- Ad Preview Panel ---- */
-.panel .panel-body {
-    background: #fff;
-}
-
-.panel-body span {
-    display: block;
-    margin-bottom: 12px;
-    color: #1f2328;
-    line-height: 1.6;
-}
-
-.panel-body span:last-child {
-    margin-bottom: 0;
-}
-
-#ad-preview-headline {
-    font-weight: 700;
-    font-size: 16px;
-    color: #2f6fdd;
-    margin-bottom: 8px;
-}
-
-#ad-preview-body {
-    font-size: 14px;
-    color: #374151;
-    line-height: 1.5;
-}
-
-#ad-preview-url {
-    font-size: 13px;
-    color: #2f6fdd;
-    font-weight: 500;
-}
-
-/* ---- Form Separator ---- */
-.form_seperator {
-    border-top: 2px solid #e7e8ea;
-    margin: 24px 0 !important;
-}
-
-/* ---- Info Text ---- */
-.infotext {
-    display: block;
-    margin-bottom: 12px;
-    font-size: 13px;
-    color: #6b7280;
-    font-weight: 400;
-    line-height: 1.6;
-}
-
-/* ---- Loader ---- */
-.loading {
-    display: inline-block;
-    width: 20px;
-    height: 20px;
-    opacity: 0.7;
-}
-
-/* ---- Control Label ---- */
-.control-label {
-    font-weight: 600;
-    color: #1f2328;
-    font-size: 14px;
-    margin-bottom: 8px;
-}
-
-/* ---- Responsive Design ---- */
-@media (max-width: 768px) {
-    .setup-page-header {
-        flex-direction: column;
-        text-align: center;
-        padding: 20px 16px;
-    }
-
-    .setup-page-header__icon {
-        width: 48px;
-        height: 48px;
-    }
-
-    .setup-page-header__icon .glyphicon {
-        font-size: 20px;
-    }
-
-    .setup-page-header__title {
-        font-size: 20px;
-    }
-
-    .setup-page-header__subtitle {
-        font-size: 13px;
-    }
-
-    .panel-heading {
-        padding: 14px 16px;
-        font-size: 13px;
-    }
-
-    .panel-body {
-        padding: 16px;
-    }
-
-    .btn {
-        padding: 8px 12px;
-        font-size: 13px;
-    }
-
-    .form-control {
-        padding: 8px 10px;
-        font-size: 14px;
-    }
-
-    .control-label {
-        font-size: 13px;
-    }
-}
-
-@media (max-width: 480px) {
-    .setup-page-header {
-        padding: 16px 12px;
-    }
-
-    .setup-page-header__title {
-        font-size: 18px;
-    }
-
-    .setup-page-header__subtitle {
-        font-size: 12px;
-    }
-}
-</style>
-
+<?php echo p202_setup_script_tag($base); ?>
 <?php template_bottom();

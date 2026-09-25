@@ -3,6 +3,7 @@
 declare(strict_types=1);
 include_once(substr(__DIR__, 0, -19) . '/202-config/connect.php');
 include_once(substr(__DIR__, 0, -19) . '/202-config/class-dataengine-slim.php');
+require_once __DIR__ . '/_includes/update_ui.php';
 
 use Prosper202\Attribution\AttributionServiceFactory;
 use Prosper202\Click\ClickId;
@@ -19,13 +20,18 @@ if (!$userObj->hasPermission("access_to_update_section")) {
 // Initialize variables to prevent undefined variable warnings
 $success = false;
 $subidError = '';
+$fieldError = '';
 $marked = 0;
 $ignored = [];
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	if (!AUTH::check_csrf_token()) {
-		$subidError = 'Your session expired before the form was sent. Nothing was changed; please send it again.';
+		$subidError = P202_UPDATE_TOKEN_REFUSED;
+	} elseif (p202_update_lines(is_string($_POST['subids'] ?? null) ? $_POST['subids'] : '') === []) {
+		// An empty list used to answer "0 subid(s) marked", which reads as
+		// "none of them matched"; the person sent nothing, so say that.
+		$fieldError = 'Paste at least one subid, one per line.';
 	} else {
 		$userId = (int) $_SESSION['user_id'];
 
@@ -95,47 +101,65 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 }
 
+// What the form shows: a refused list is kept for another try; after a
+// success the box is empty for the next report.
+$typed = $success ? '' : (is_string($_POST['subids'] ?? null) ? $_POST['subids'] : '');
+$base = get_absolute_url();
+
 //show the template
-template_top('Update Subids'); ?>
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<div class="row">
-			<div class="col-xs-4">
-				<h6>Update Your Subids</h6>
+template_top('Update Subids', ['ui' => 'v2']);
+
+echo p202_update_header('bi-check2-square', 'Update subids', 'Mark clicks as converted by pasting the subids from your affiliate network\'s report.');
+
+if ($success) {
+	echo p202_flash('ok', $marked . ' subid(s) marked as converted. Your account income now reflects them.');
+	if ($ignored !== []) {
+		echo p202_flash('warn', 'Not found in your account, so not marked: ' . p202_update_list_sentence($ignored) . '.');
+	}
+} elseif ($subidError !== '') {
+	echo p202_flash('bad', $subidError);
+}
+?>
+
+<div class="row g-4">
+	<div class="col-12 col-lg-7">
+		<section class="p202-panel">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">Converted subids</h2>
+				<span class="p202-panel__sub">one per line</span>
 			</div>
-			<div class="col-xs-8">
-				<div class="success pull-right" style="margin-top: 20px;">
-					<small>
-						<?php if ($success == true) { ?>
-							<span class="fui-check-inverted"></span> <?php echo (int) $marked; ?> subid(s) marked as converted. Your account income now reflects them.
-							<?php if ($ignored !== []) { ?><br/>Not found in your account, so not marked: <?php echo htmlspecialchars(implode(', ', array_slice($ignored, 0, 20)), ENT_QUOTES); ?><?php if (count($ignored) > 20) { echo ' and ' . (count($ignored) - 20) . ' more'; } ?><?php } ?>
-						<?php } elseif ($subidError !== '') { ?>
-							<span class="fui-alert"></span> <?php echo htmlspecialchars($subidError, ENT_QUOTES); ?>
-						<?php } ?>
-					</small>
+			<div class="p202-panel__body">
+				<form method="post" action="<?php echo p202_setup_e($base . 'tracking202/update/subids.php'); ?>" id="update-subids">
+					<?php echo p202_setup_token_field((string) ($_SESSION['token'] ?? '')); ?>
+					<div class="mb-3">
+						<label class="form-label" for="subids">Subids</label>
+						<textarea class="form-control font-monospace<?php echo $fieldError !== '' ? ' is-invalid' : ''; ?>" rows="8" name="subids" id="subids" placeholder="Paste your subids, one per line" required><?php echo p202_setup_e($typed); ?></textarea>
+						<div class="form-text">Each click is recorded as a conversion at its campaign's payout. A click that already converted is left as it is, so sending the same list twice changes nothing.</div>
+						<?php if ($fieldError !== '') { ?><div class="invalid-feedback d-block"><?php echo p202_setup_e($fieldError); ?></div><?php } ?>
+					</div>
+					<div class="p202-form-actions">
+						<button class="btn btn-primary" type="submit">Mark as converted</button>
+					</div>
+				</form>
+			</div>
+		</section>
+	</div>
+	<div class="col-12 col-lg-5">
+		<section class="p202-panel">
+			<div class="p202-panel__head"><h2 class="p202-panel__title">Other ways to record income</h2></div>
+			<div class="p202-panel__body">
+				<div class="list-group">
+					<a class="list-group-item list-group-item-action" href="<?php echo p202_setup_e($base . 'tracking202/update/upload.php'); ?>">
+						<strong class="d-block">Upload a revenue report</strong>
+						<span class="small text-secondary">When your network reports an amount per subid, record the exact amounts from its CSV.</span>
+					</a>
+					<a class="list-group-item list-group-item-action" href="<?php echo p202_setup_e($base . 'tracking202/setup/get_postback.php'); ?>">
+						<strong class="d-block">Set up a postback</strong>
+						<span class="small text-secondary">Let the network tell Prosper202 about each conversion as it happens.</span>
+					</a>
 				</div>
 			</div>
-		</div>
-	</div>
-	<div class="col-xs-12">
-		<small>Here is where you can update your income for Prosper202, by importing your subids from your affiliate marketing reports.</small>
-	</div>
-</div>
-
-<div class="row form_seperator">
-	<div class="col-xs-12"></div>
-</div>
-
-<div class="row">
-	<div class="col-xs-12">
-		<form method="post" action="" class="form-horizontal" role="form">
-			<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES); ?>" />
-			<div class="form-group" style="margin:0px 0px 15px 0px;">
-				<label for="subids">Subids</label>
-				<textarea rows="5" name="subids" id="subids" placeholder="Add your subids..." class="form-control"></textarea>
-			</div>
-			<button class="btn btn-sm btn-p202 btn-block" type="submit">Update Subids</button>
-		</form>
+		</section>
 	</div>
 </div>
 

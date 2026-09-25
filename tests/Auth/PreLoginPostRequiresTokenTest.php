@@ -10,8 +10,9 @@ use PHPUnit\Framework\TestCase;
  * Every page that takes a POST before there is a login checks the session
  * token, and the check decides whether the work runs.
  *
- * Three pages answer a POST with nobody logged in: the installer, the
- * upgrader and the login form. For them the token connect.php mints on every
+ * Four pages answer a POST with nobody logged in: the installer, the
+ * upgrader, the login form and (since U7, which added its check) the
+ * license-key page AUTH sends a failed license check to. For them the token connect.php mints on every
  * request is the only thing between a cross-site form and the work the page
  * does, because there is no user session to require yet. install.php and
  * 202-login.php made the check; upgrade.php did not, and the repair
@@ -100,6 +101,16 @@ final class PreLoginPostRequiresTokenTest extends TestCase
                 'negated' => false,
                 'gate' => '$error',
                 'seed' => 'if (!$csrf_ok) {',
+            ]],
+            // U7: the license-key page answers with nobody signed in and
+            // writes the install's license key; it asked for no token before.
+            'license key' => [[
+                'file' => 'api-key-required.php',
+                'work' => 'api_key_validate(',
+                'result' => '$csrf_ok',
+                'negated' => false,
+                'gate' => '$csrf_ok',
+                'seed' => null,
             ]],
         ];
     }

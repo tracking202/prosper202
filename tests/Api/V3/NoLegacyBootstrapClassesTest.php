@@ -76,6 +76,76 @@ final class NoLegacyBootstrapClassesTest extends TestCase
         '202-js/p202-ui.js',
     ];
 
+    /**
+     * Markup that only v2 pages render but that does not itself pass
+     * 'ui' => 'v2', so the page scan below would never select it: the shared
+     * partials every migrated report family calls.
+     */
+    private const V2_SHARED = [
+        '202-config/functions-ui-partials.php',
+        // U4: Setup — the pieces its v2 pages include, the AJAX fragments
+        // only those pages load, and their page script.
+        'tracking202/setup/_includes/setup_ui.php',
+        'tracking202/setup/_includes/campaign_form/offer.php',
+        'tracking202/setup/_includes/campaign_form/advanced.php',
+        'tracking202/setup/_includes/attribution_model_field.php',
+        'tracking202/ajax/generate_tracking_link.php',
+        'tracking202/ajax/get_landing_code.php',
+        'tracking202/ajax/get_adv_landing_code.php',
+        '202-js/p202-setup.js',
+        // U5: Update — the helpers its v2 pages render through. The pages
+        // themselves pass 'ui' => 'v2' and are found by the page scan; the
+        // AJAX fragments they used to load are retired.
+        'tracking202/update/_includes/update_ui.php',
+        // U7: Standalone and pre-login. The shell every page before a login
+        // renders through (info_top(), and _die() in functions.php), the
+        // pages that call it — they build their own document rather than
+        // passing 'ui' => 'v2' — the installer's success panel, and the
+        // feed readers behind TV202, Hot Deals and the App Store.
+        '202-config/functions-standalone-ui.php',
+        '202-config/functions-feeds-ui.php',
+        '202-config/functions-install-helpers.php',
+        '202-login.php',
+        '202-lost-pass.php',
+        '202-pass-reset.php',
+        '202-404.php',
+        'api-key-required.php',
+        'index.php',
+        '202-config/install.php',
+        '202-config/upgrade.php',
+        '202-config/setup-config.php',
+        '202-config/requirements.php',
+        '202-config/get_apikey.php',
+        '202-Mobile/index.php',
+        '202-Mobile/202-login.php',
+        '202-Mobile/mini-stats/index.php',
+        // U3: the Customer LTV partials, which render only inside the v2
+        // Analyze › Customer LTV page (tracking202/analyze/ltv.php).
+        'tracking202/ajax/sort_ltv.php',
+        'tracking202/ajax/ltv_ui.php',
+        'tracking202/ajax/ltv_customer.php',
+        'tracking202/ajax/ltv_company.php',
+        'tracking202/ajax/ltv_companies.php',
+        'tracking202/ajax/ltv_products.php',
+        'tracking202/ajax/ltv_subscriptions.php',
+        'tracking202/ajax/ltv_settings.php',
+        'tracking202/ajax/ltv_merge_modal.php',
+        '202-js/ltv.js',
+        // U2: Overview, Visitors, Spy. The fragments these pages draw their
+        // reports from, and the script that draws them. OverviewPagesTest
+        // fails when a page of the family names a fragment not listed here.
+        '202-js/p202-overview.js',
+        'tracking202/ajax/account_overview.php',
+        'tracking202/ajax/ltv_snapshot.php',
+        'tracking202/ajax/sort_breakdown.php',
+        'tracking202/ajax/sort_hourly.php',
+        'tracking202/ajax/sort_weekly.php',
+        'tracking202/ajax/group_overview.php',
+        'tracking202/ajax/sort_rotator.php',
+        'tracking202/ajax/click_history.php',
+        'tracking202/ajax/click_history_row.php',
+    ];
+
     private const CHROME_STYLESHEET = '202-css/p202-chrome.css';
 
     private const SKIP_DIRS = ['vendor', 'node_modules', 'tests', '.git', '202-config/temp', '202-config/data', '202-config/geo'];
@@ -96,7 +166,7 @@ final class NoLegacyBootstrapClassesTest extends TestCase
     {
         $root = dirname(__DIR__, 3);
         $banned = array_fill_keys($this->bannedClasses($root), true);
-        $files = self::CHROME;
+        $files = array_merge(self::CHROME, self::V2_SHARED);
         foreach ($this->v2Pages($root) as $page) {
             $files[] = $page;
         }

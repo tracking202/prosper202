@@ -269,9 +269,9 @@ if ((isset($_GET['edit_landing_page_id']) || isset($_GET['copy_landing_page_id']
                          WHERE  `landing_page_id`='" . $mysql['landing_page_id'] . "'
 						 AND    `user_id`='" . $mysql['user_id'] . "'";
 	$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
-	$landing_page_row = $landing_page_result->fetch_assoc();
+	$landing_page_row = $landing_page_result->fetch_assoc() ?? [];
 
-	$mysql['aff_campaign_id'] = $db->real_escape_string($landing_page_row['aff_campaign_id']);
+	$mysql['aff_campaign_id'] = $db->real_escape_string((string) ($landing_page_row['aff_campaign_id'] ?? ''));
 	$html['aff_campaign_id'] = htmlentities((string)($landing_page_row['aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 	$html['landing_page_id'] = htmlentities((string)($_GET['edit_landing_page_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 	$selected['pixel_id'] = htmlentities((string)($landing_page_row['landing_page_id'] ?? ''), ENT_QUOTES, 'UTF-8');
@@ -305,679 +305,252 @@ if ((($editing == true) or ($add_success != true)) and (isset($mysql['aff_campai
 	$html['aff_network_id'] = htmlentities((string)($aff_network_row['aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 }
 
-template_top('Landing Page Setup');  ?>
+// Post-redirect-get: a saved or removed landing page answers with a redirect,
+// so a reload cannot submit the form (or the remove link) a second time.
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && $add_success == true) {
+	header('location: ' . get_absolute_url() . 'tracking202/setup/landing_pages.php?' . ($editing ? 'saved=1' : 'added=1'));
+	exit;
+}
+if ($delete_success == true) {
+	header('location: ' . get_absolute_url() . 'tracking202/setup/landing_pages.php?deleted=1');
+	exit;
+}
 
-<!-- Page Header - Design System -->
-<div class="row" style="margin-bottom: 28px;">
-	<div class="col-xs-12">
-		<div class="setup-page-header">
-			<div class="setup-page-header__icon">
-				<span class="glyphicon glyphicon-file"></span>
+require_once __DIR__ . '/_includes/setup_ui.php';
+
+$base = get_absolute_url();
+$self = $base . 'tracking202/setup/landing_pages.php';
+$token = (string) ($_SESSION['token'] ?? '');
+$uid = $db->real_escape_string((string) $_SESSION['user_id']);
+$canRemove = $userObj->hasPermission("remove_landing_page");
+$leaveBehind = isset($_SESSION['user_mods_lb']) && $_SESSION['user_mods_lb'] == '1';
+$campaignOptions = p202_setup_campaign_options($db, (int) $_SESSION['user_id']);
+
+// What the form shows: what was just refused, the page being edited or
+// copied, or a new page (for a campaign named in the link, when it is one).
+$posted = $_SERVER['REQUEST_METHOD'] == 'POST';
+$row = !$posted && ($editing || $copying) && is_array($landing_page_row) ? $landing_page_row : [];
+$source = $posted ? $_POST : $row;
+$value = static fn (string $name): string => (string) ($source[$name] ?? '');
+$form = [
+	'landing_page_id' => $posted ? $value('landing_page_id') : ($editing ? (string) ($row['landing_page_id'] ?? '') : ''),
+	'landing_page_type' => $value('landing_page_type') === '1' ? '1' : '0',
+	'aff_campaign_id' => $source !== [] ? $value('aff_campaign_id') : html_entity_decode((string) ($html['aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8'),
+	'landing_page_nickname' => $value('landing_page_nickname') . (!$posted && $copying && $row !== [] ? ' (Copy)' : ''),
+	'landing_page_url' => $value('landing_page_url'),
+	'leave_behind_page_url' => $value('leave_behind_page_url'),
+];
+$editId = $editing ? (int) ($_GET['edit_landing_page_id'] ?? 0) : 0;
+$action = $self . ($editing ? '?edit_landing_page_id=' . $editId : ($copying ? '?copy_landing_page_id=' . (int) ($_GET['copy_landing_page_id'] ?? 0) : ''));
+
+// Landing Page Optimizer deeplink: paired installs jump to the hosted create
+// page with context params; unpaired ones land on the pairing panel. Degrades
+// to unpaired before the upgrade adds the lpo_status pref column.
+$lpo_paired = false;
+$lpo_install_hash = '';
+try {
+	$lpo_result = $db->query("SELECT u.install_hash, up.lpo_status FROM 202_users AS u INNER JOIN 202_users_pref AS up ON (up.user_id = u.user_id) WHERE u.user_id = '" . $uid . "'");
+	$lpo_row = ($lpo_result instanceof mysqli_result) ? $lpo_result->fetch_assoc() : null;
+	$lpo_install_hash = trim((string) ($lpo_row['install_hash'] ?? ''));
+	// a pairing is only deeplinkable with a real install hash — a blank one
+	// would emit install= and break the hosted page, so treat it as unpaired
+	$lpo_paired = (string) ($lpo_row['lpo_status'] ?? '') === 'active' && $lpo_install_hash !== '';
+} catch (Throwable $lpo_lookup_error) {
+	// pre-upgrade schema; keep the panel link
+}
+$lpo_create_base = \Prosper202\Lpo\PairingClient::saasBaseUrl() . '/api/customers/experiments/create';
+$optimizeLink = static function (array $page) use ($lpo_paired, $lpo_create_base, $lpo_install_hash, $base): string {
+	if ($lpo_paired) {
+		return '<a class="p202-list__action" href="' . p202_setup_e($lpo_create_base . '?lp=' . urlencode((string) ($page['landing_page_url'] ?? '')) . '&install=' . urlencode($lpo_install_hash)) . '" target="_blank" rel="noopener">optimize</a>';
+	}
+	return '<a class="p202-list__action" href="' . p202_setup_e($base . '202-account/api-integrations.php#lpo') . '">optimize</a>';
+};
+
+$advancedPages = p202_setup_rows($db, "SELECT * FROM `202_landing_pages` WHERE `user_id`='" . $uid . "' AND landing_page_type='1' AND landing_page_deleted='0' ORDER BY landing_page_nickname ASC");
+$simplePagesByCampaign = [];
+foreach (p202_setup_rows($db, "SELECT landing_page_id, landing_page_nickname, landing_page_url, aff_campaign_id FROM `202_landing_pages` WHERE `user_id`='" . $uid . "' AND `landing_page_deleted`='0' AND landing_page_type='0' ORDER BY landing_page_nickname ASC") as $page) {
+	$simplePagesByCampaign[(int) $page['aff_campaign_id']][] = $page;
+}
+
+$pageItem = static function (array $page, bool $advanced) use ($self, $token, $canRemove, $editId, $optimizeLink): string {
+	$id = (int) $page['landing_page_id'];
+	$name = (string) $page['landing_page_nickname'];
+	$out = '<li class="p202-list__item' . ($editId === $id ? ' is-active' : '') . '" data-p202-filter-text="' . p202_setup_e($name) . '">'
+		. '<span class="p202-list__name">' . p202_setup_e($name) . '</span>'
+		. '<span class="p202-list__actions">'
+		. '<a class="p202-list__action" href="' . p202_setup_e($self . '?edit_landing_page_id=' . $id) . '">edit</a>'
+		. '<a class="p202-list__action" href="' . p202_setup_e($self . '?copy_landing_page_id=' . $id) . '">copy</a>'
+		. ($advanced ? $optimizeLink($page) : '');
+	if ($canRemove) {
+		$out .= p202_setup_remove_form($self, [
+			'delete_landing_page_id' => $id,
+			'delete_landing_page_name' => $name,
+			'delete_landing_page_type' => $advanced ? '1' : '0',
+			'token' => $token,
+		], 'Remove the landing page "' . $name . '"? Clicks already tracked keep their history.');
+	}
+	return $out . '</span><span class="p202-list__meta">' . p202_setup_e($page['landing_page_url'] ?? '') . '</span></li>';
+};
+
+template_top('Landing Page Setup', ['ui' => 'v2']); ?>
+
+<div class="p202-page-header p202-page-header--accent">
+	<div class="p202-page-header__icon"><i class="bi bi-file-earmark"></i></div>
+	<div class="p202-page-header__text">
+		<h1 class="p202-page-header__title">Landing Pages</h1>
+		<p class="p202-page-header__desc">The pages you send clicks to before an offer: a simple page promotes one campaign, an advanced page several.</p>
+	</div>
+</div>
+
+<?php
+echo p202_setup_query_flashes([
+	'added' => 'Landing page added. Install its code from Get LP Code.',
+	'saved' => 'Landing page saved.',
+	'deleted' => 'Landing page removed. Clicks already tracked keep their history.',
+], $_GET);
+if ($error) {
+	echo p202_setup_error_flashes($error, ['landing_page_type', 'aff_campaign_id', 'landing_page_nickname', 'landing_page_url']);
+}
+?>
+
+<div class="row g-4">
+	<div class="col-12 col-lg-6">
+		<section class="p202-panel" id="landing-page-form">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title"><?php echo $editing ? 'Edit landing page' : ($copying ? 'Copy landing page' : 'Add a landing page'); ?></h2>
+				<p class="p202-panel__sub">Optional: direct links need no landing page.</p>
 			</div>
-			<div class="setup-page-header__text">
-				<h1 class="setup-page-header__title">Landing Pages</h1>
-				<p class="setup-page-header__subtitle">Configure your landing pages for simple (single offer) or advanced (multiple offers) setups</p>
-			</div>
-		</div>
-	</div>
-</div>
-
-<?php if ($error) { ?>
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<div class="alert alert-danger">
-			<i class="fa fa-exclamation-circle"></i> There were errors with your submission. <?php echo $error['token'] ?? ''; ?>
-		</div>
-	</div>
-</div>
-<?php } ?>
-
-<?php if ($add_success == true) { ?>
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<div class="alert alert-success">
-			<i class="fa fa-check-circle"></i> Your submission was successful. Your changes have been saved.
-		</div>
-	</div>
-</div>
-<?php } ?>
-
-<?php if ($delete_success == true) { ?>
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<div class="alert alert-success">
-			<i class="fa fa-check-circle"></i> Your deletion was successful. You have successfully removed a landing page.
-		</div>
-	</div>
-</div>
-<?php } ?>
-
-<div class="row form_seperator" style="margin-bottom:15px;">
-	<div class="col-xs-12"></div>
-</div>
-
-<div class="row">
-	<div class="col-md-6">
-		<small><strong>Add A Landing Page (optional)</strong></small><br />
-		<span class="infotext">Here you can add different landing pages you might use with your marketing.</span>
-
-		<form method="post" action="<?php if ($delete_success == true) {
-										echo htmlspecialchars($_SERVER['REDIRECT_URL'] ?? '', ENT_QUOTES, 'UTF-8');
-									} ?>" class="form-horizontal" role="form" style="margin:15px 0px;">
-			<input name="landing_page_id" type="hidden" value="<?php echo $html['landing_page_id'] ?? ''; ?>" />
-			<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES); ?>" />
-			<div class="form-group" style="margin-bottom: 0px;" id="radio-select">
-				<label class="col-xs-4 control-label" style="text-align: left;" id="width-tooltip">Landing Page Type <span class="fui-info-circle" data-toggle="tooltip" title="A Simple Landing Page is a landing page that only has one offer associated with it. Where as an Advanced Landing Page is a landing page that can run several offers on it. An example would be a retail landing page where you have outgoing links to several different products."></span></label>
-
-				<div class="col-xs-8" style="margin-top: 10px;">
-					<label class="radio">
-						<input type="radio" name="landing_page_type" id="landing_page_type1" value="0" data-toggle="radio" <?php if ((isset($html['landing_page_type']) && $html['landing_page_type'] == '0') || !isset($html['landing_page_type']) || (isset($html['landing_page_type']) && !$html['landing_page_type'])) {
-																																echo 'checked';
-																															} ?>>
-						Simple (One Offer on the page)
-					</label>
-					<label class="radio">
-						<input type="radio" name="landing_page_type" id="landing_page_type2" value="1" data-toggle="radio" <?php if (isset($html['landing_page_type']) && $html['landing_page_type'] == '1') {
-																																echo 'checked';
-																															} ?>>
-						Advanced (Mutiple Offers on the page)
-					</label>
-				</div>
-			</div>
-
-			<div id="aff-campaign-div" <?php if (isset($html['landing_page_type']) && $html['landing_page_type'] == '1') {
-											echo 'style="display:none;"';
-										} ?>>
-				<div class="form-group <?php if (isset($error['aff_campaign_id'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
-					<label for="aff_network_id" class="col-xs-4 control-label" style="text-align: left;">Category:</label>
-					<div class="col-xs-6" style="margin-top: 10px;">
-						<img id="aff_network_id_div_loading" class="loading" src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" />
-						<div id="aff_network_id_div"></div>
-					</div>
-				</div>
-
-				<div id="aff-campaign-group" class="form-group <?php if (isset($error['aff_campaign_id'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
-					<label for="aff_campaign_id" class="col-xs-4 control-label" style="text-align: left;">Campaign:</label>
-					<div class="col-xs-6" style="margin-top: 10px;">
-						<img id="aff_campaign_id_div_loading" class="loading" src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" style="display: none;" />
-						<div id="aff_campaign_id_div">
-							<select class="form-control input-sm" id="aff_campaign_id" disabled="">
-								<option>--</option>
-							</select>
+			<div class="p202-panel__body">
+				<form method="post" action="<?php echo p202_setup_e($action); ?>">
+					<?php echo p202_setup_token_field($token); ?>
+					<input type="hidden" name="landing_page_id" value="<?php echo p202_setup_e($form['landing_page_id']); ?>">
+					<fieldset class="mb-3">
+						<legend class="form-label">Type</legend>
+						<div class="form-check">
+							<input class="form-check-input" type="radio" name="landing_page_type" id="landing_page_type1" value="0"<?php echo $form['landing_page_type'] === '0' ? ' checked' : ''; ?>>
+							<label class="form-check-label" for="landing_page_type1">Simple: one offer on the page</label>
 						</div>
-					</div>
-				</div>
-			</div>
-
-			<div class="form-group <?php if (isset($error['landing_page_nickname'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
-				<label for="landing_page_nickname" class="col-xs-4 control-label" style="text-align: left;">LP Nickname:</label>
-				<div class="col-xs-6" style="margin-top: 10px;">
-					<input type="text" class="form-control input-sm" id="landing_page_nickname" name="landing_page_nickname" value="<?php echo $html['landing_page_nickname'] ?? ''; ?>">
-				</div>
-			</div>
-
-			<div class="form-group <?php if (isset($error['landing_page_url'])) echo "has-error"; ?>" style="margin-bottom: 10px;">
-				<label for="landing_page_url" class="col-xs-4 control-label" style="text-align: left;">Landing Page URL:</label>
-				<div class="col-xs-6" style="margin-top: 10px;">
-					<textarea class="form-control input-sm" rows="3" id="landing_page_url" name="landing_page_url" placeholder="http://"><?php echo $html['landing_page_url'] ?? ''; ?></textarea>
-				</div>
-			</div>
-			<div class="form-group" style="margin-bottom: 10px;">
-				<div class="col-xs-6 col-xs-offset-4" id="placeholderslp">
-					<span class="help-block" style="font-size: 12px;">The following tracking placeholders can be used:<br /></span>
-					<input style="margin-left: 1px;" type="button" class="btn btn-xs btn-primary" value="[[subid]]" />
-					<input type="button" class="btn btn-xs btn-primary" value="[[c1]]" />
-					<input type="button" class="btn btn-xs btn-primary" value="[[c2]]" />
-					<input type="button" class="btn btn-xs btn-primary" value="[[c3]]" />
-					<input type="button" class="btn btn-xs btn-primary" value="[[c4]]" /><br /><br />
-					<input type="button" class="btn btn-xs btn-primary" value="[[random]]" />
-					<input type="button" class="btn btn-xs btn-primary" value="[[referer]]" />
-					<input type="button" class="btn btn-xs btn-primary" value="[[gclid]]" /><br /><br />
-					<input type="button" class="btn btn-xs btn-primary" value="[[utm_source]]" />
-					<input type="button" class="btn btn-xs btn-primary" value="[[utm_medium]]" /><br /><br />
-					<input type="button" class="btn btn-xs btn-primary" value="[[utm_campaign]]" />
-					<input type="button" class="btn btn-xs btn-primary" value="[[utm_term]]" /><br /><br />
-					<input type="button" class="btn btn-xs btn-primary" value="[[utm_content]]" />
-					<input type="button" class="btn btn-xs btn-primary" value="[[payout]]" />
-					<input type="button" class="btn btn-xs btn-primary" value="[[cpc]]" /><br /><br />
-					<input type="button" class="btn btn-xs btn-primary" value="[[cpc2]]" />
-					<input type="button" class="btn btn-xs btn-primary" value="[[timestamp]]" />
-
-				</div>
-			</div>
-			<?php if (isset($_SESSION['user_mods_lb']) && $_SESSION['user_mods_lb'] == 1) { ?> <div id="leave_behind_div" class="form-group <?php if ($error['landing_page_url']) echo "has-error"; ?>" style="margin-bottom: 10px;">
-					<label for="leave_behind_page_url" class="col-xs-4 control-label" style="text-align: left;">Leave Behind URL (Optional): <span class="fui-info-circle" data-toggle="tooltip" title="A Leave Behind is a page that is loaded in the background only after someone clicks one of your links on your landing pages. Use this to generate extra revenue from your campaigns"></span></label>
-					<div class="col-xs-6" style="margin-top: 10px;">
-						<textarea class="form-control input-sm" rows="3" id="leave_behind_page_url" name="leave_behind_page_url" placeholder="http://"><?php echo $html['leave_behind_page_url']; ?></textarea>
-					</div>
-				</div>
-			<?php } ?>
-			<div class="form-group">
-				<div class="col-xs-6 col-xs-offset-4">
-					<?php if ($editing == true) { ?>
-						<div class="row">
-							<div class="col-xs-6">
-								<button class="btn btn-sm btn-p202 btn-block" type="submit">Edit</button>
-							</div>
-							<div class="col-xs-6">
-								<input type="hidden" name="pixel_id" value="<?php echo $selected['pixel_id'] ?? ''; ?>">
-								<button type="submit" class="btn btn-sm btn-danger btn-block" onclick="window.location='<?php echo get_absolute_url(); ?>tracking202/setup/landing_pages.php'; return false;">Cancel</button>
-							</div>
+						<div class="form-check">
+							<input class="form-check-input" type="radio" name="landing_page_type" id="landing_page_type2" value="1"<?php echo $form['landing_page_type'] === '1' ? ' checked' : ''; ?>>
+							<label class="form-check-label" for="landing_page_type2">Advanced: several offers on the page</label>
 						</div>
-					<?php } else { ?>
-						<button class="btn btn-sm btn-p202 btn-block" type="submit" id="addedLp">Add</button>
+						<?php echo p202_setup_feedback($error, 'landing_page_type'); ?>
+					</fieldset>
+
+					<div class="mb-3" data-p202-show-when="landing_page_type=0" data-p202-disable-hidden<?php echo $form['landing_page_type'] === '1' ? ' hidden' : ''; ?>>
+						<label class="form-label" for="aff_campaign_id">Campaign</label>
+						<select class="form-select<?php echo p202_setup_invalid($error, 'aff_campaign_id'); ?>" id="aff_campaign_id" name="aff_campaign_id" required<?php echo $form['landing_page_type'] === '1' ? ' disabled' : ''; ?>>
+							<?php echo p202_setup_options($campaignOptions, $form['aff_campaign_id'] !== '' ? $form['aff_campaign_id'] : p202_setup_only_option($campaignOptions), $campaignOptions === [] ? 'No campaigns yet' : 'Choose the campaign this page promotes'); ?>
+						</select>
+						<?php if ($campaignOptions === []) { ?>
+							<div class="form-text">A simple landing page promotes one campaign. <a href="<?php echo p202_setup_e($base . 'tracking202/setup/aff_campaigns.php'); ?>">Add a campaign</a> first.</div>
+						<?php } ?>
+						<?php echo p202_setup_feedback($error, 'aff_campaign_id'); ?>
+					</div>
+					<div data-p202-show-when="landing_page_type=1" data-p202-disable-hidden<?php echo $form['landing_page_type'] === '1' ? '' : ' hidden'; ?>>
+						<?php // An advanced page belongs to no one campaign. ?>
+						<input type="hidden" name="aff_campaign_id" value="0"<?php echo $form['landing_page_type'] === '1' ? '' : ' disabled'; ?>>
+					</div>
+
+					<div class="mb-3">
+						<label class="form-label" for="landing_page_nickname">Nickname</label>
+						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'landing_page_nickname'); ?>" id="landing_page_nickname" name="landing_page_nickname" value="<?php echo p202_setup_e($form['landing_page_nickname']); ?>" maxlength="255" required>
+						<?php echo p202_setup_feedback($error, 'landing_page_nickname'); ?>
+					</div>
+
+					<div class="mb-3">
+						<label class="form-label" for="landing_page_url">Landing page URL</label>
+						<textarea class="form-control font-monospace<?php echo p202_setup_invalid($error, 'landing_page_url'); ?>" id="landing_page_url" name="landing_page_url" rows="3" placeholder="https://" required><?php echo p202_setup_e($form['landing_page_url']); ?></textarea>
+						<?php echo p202_setup_feedback($error, 'landing_page_url'); ?>
+						<?php echo p202_setup_placeholders('landing_page_url', 'setup-landing-pages-placeholders'); ?>
+					</div>
+
+					<?php if ($leaveBehind) { ?>
+						<details class="p202-disclosure mb-3" data-p202-remember="setup-landing-pages-advanced"<?php echo $form['leave_behind_page_url'] !== '' ? ' open' : ''; ?>>
+							<summary>Advanced <span class="p202-disclosure__hint">leave-behind page</span></summary>
+							<div class="p202-disclosure__body">
+								<label class="form-label" for="leave_behind_page_url">Leave-behind URL</label>
+								<textarea class="form-control font-monospace" id="leave_behind_page_url" name="leave_behind_page_url" rows="2" placeholder="https://"><?php echo p202_setup_e($form['leave_behind_page_url']); ?></textarea>
+								<div class="form-text">None by default. A page loaded behind the offer once a visitor clicks out of your landing page.</div>
+							</div>
+						</details>
 					<?php } ?>
-				</div>
-			</div>
 
-		</form>
+					<div class="p202-form-actions">
+						<?php if ($editing || $copying) { ?>
+							<a class="btn btn-link" href="<?php echo p202_setup_e($self); ?>">Cancel</a>
+						<?php } ?>
+						<button type="submit" class="btn btn-primary" id="addedLp"><?php echo $editing ? 'Save changes' : 'Add landing page'; ?></button>
+					</div>
+				</form>
+			</div>
+		</section>
 	</div>
 
-		<div class="col-md-6">
-			<div class="panel panel-default setup-side-panel">
-			<div class="panel-heading">My Advanced Landing Pages</div>
-			<div class="panel-body">
-				<div id="advLps">
-					<input class="form-control input-sm search" style="margin-bottom: 10px; height: 30px;" placeholder="Filter">
-					<ul class="setup-list">
-						<?php $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-
-						// Landing Page Optimizer deeplink: paired installs jump to the
-						// hosted create page with context params; unpaired ones land on
-						// the pairing panel. Degrades to unpaired before the upgrade
-						// adds the lpo_status pref column.
-						$lpo_paired = false;
-						$lpo_install_hash = '';
-						try {
-							$lpo_result = $db->query("SELECT 2u.install_hash, 2up.lpo_status FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 2u.user_id) WHERE 2u.user_id = '" . $mysql['user_id'] . "'");
-							$lpo_row = ($lpo_result instanceof mysqli_result) ? $lpo_result->fetch_assoc() : null;
-							$lpo_install_hash = trim((string) ($lpo_row['install_hash'] ?? ''));
-							// a pairing is only deeplinkable with a real install hash —
-							// a blank one would emit install= and break the hosted page,
-							// so treat it as unpaired (the link then routes to the panel)
-							$lpo_paired = (string) ($lpo_row['lpo_status'] ?? '') === 'active' && $lpo_install_hash !== '';
-						} catch (Throwable $lpo_lookup_error) {
-							// pre-upgrade schema; keep the panel link
-						}
-						$lpo_create_base = \Prosper202\Lpo\PairingClient::saasBaseUrl() . '/api/customers/experiments/create';
-
-						$landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `user_id`='" . $mysql['user_id'] . "' AND landing_page_type='1' AND landing_page_deleted='0'";
-
-						$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
-
-						if ($landing_page_result->num_rows == 0) {
-						?><li>You have no advanced landing page.</li><?php
-																	}
-
-																	while ($landing_page_row = $landing_page_result->fetch_array(MYSQLI_ASSOC)) {
-																		$html['landing_page_nickname'] = htmlentities((string)($landing_page_row['landing_page_nickname'] ?? ''), ENT_QUOTES, 'UTF-8');
-																		$html['landing_page_id'] = htmlentities((string)($landing_page_row['landing_page_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-
-																		if ($lpo_paired) {
-																			$lpo_optimize_link = ' <a href="' . htmlentities($lpo_create_base . '?lp=' . urlencode((string) ($landing_page_row['landing_page_url'] ?? '')) . '&install=' . urlencode($lpo_install_hash), ENT_QUOTES, 'UTF-8') . '" target="_blank" rel="noopener" class="list-action">optimize</a>';
-																		} else {
-																			$lpo_optimize_link = ' <a href="' . htmlentities(get_absolute_url() . '202-account/api-integrations.php#lpo', ENT_QUOTES, 'UTF-8') . '" class="list-action">optimize</a>';
-																		}
-
-																		if ($userObj->hasPermission("remove_landing_page")) {
-																			printf('<li><span class="filter_adv_lp_name">%s</span> <a href="?edit_landing_page_id=%s" class="list-action">edit</a> <a href="?copy_landing_page_id=%s" class="list-action">copy</a>%s <a href="?delete_landing_page_id=%s&delete_landing_page_name=%s&delete_landing_page_type=1&token=' . urlencode((string) ($_SESSION['token'] ?? '')) . '" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Landing Page?\');">remove</a></li>', $html['landing_page_nickname'], $html['landing_page_id'], $html['landing_page_id'], $lpo_optimize_link, $html['landing_page_id'], $html['landing_page_nickname']);
-																		} else {
-																			printf('<li><span class="filter_adv_lp_name">%s</span> <a href="?edit_landing_page_id=%s" class="list-action">edit</a>%s</li>', $html['landing_page_nickname'], $html['landing_page_id'], $lpo_optimize_link);
-																		}
-																	} ?>
+	<div class="col-12 col-lg-6">
+		<section class="p202-panel mb-4">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">Advanced landing pages</h2>
+				<span class="p202-pill p202-pill--accent"><?php echo count($advancedPages); ?></span>
+				<?php if (count($advancedPages) > 5) { ?>
+					<div class="p202-panel__aside"><?php echo p202_setup_list_filter('advanced-page-list', 'Filter…'); ?></div>
+				<?php } ?>
+			</div>
+			<div class="p202-panel__body">
+				<?php if ($advancedPages === []) { ?>
+					<p class="text-body-secondary mb-0">None yet. Choose Advanced when one page promotes several offers.</p>
+				<?php } else { ?>
+					<ul class="p202-list" id="advanced-page-list">
+						<?php foreach ($advancedPages as $page) {
+							echo $pageItem($page, true);
+						} ?>
 					</ul>
-				</div>
+				<?php } ?>
 			</div>
-		</div>
-			<div class="panel panel-default setup-side-panel">
-			<div class="panel-heading">My Simple Landing Pages</div>
-			<div class="panel-body">
-				<ul class="setup-list">
-					<?php $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-					$aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `user_id`='" . $mysql['user_id'] . "' AND `aff_network_deleted`='0' ORDER BY `aff_network_name` ASC";
-					$aff_network_result = $db->query($aff_network_sql) or record_mysql_error($aff_network_sql);
-					if ($aff_network_result->num_rows == 0) {
-					?><li>You have no simple landing page.</li><?php
-																	}
+		</section>
 
-																	while ($aff_network_row = $aff_network_result->fetch_array(MYSQLI_ASSOC)) {
-																		$html['aff_network_name'] = htmlentities((string)($aff_network_row['aff_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-																		$url['aff_network_id'] = urlencode((string) $aff_network_row['aff_network_id']);
-
-																		printf('<li>%s</li>', $html['aff_network_name']);
-
-																		?><ul class="setup-list"><?php
-
-																		//print out the individual accounts per each PPC network
-																		$mysql['aff_network_id'] = $db->real_escape_string($aff_network_row['aff_network_id']);
-																		$aff_campaign_sql = "SELECT * FROM `202_aff_campaigns` WHERE `aff_network_id`='" . $mysql['aff_network_id'] . "' AND `aff_campaign_deleted`='0' ORDER BY `aff_campaign_name` ASC";
-																		$aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
-
-																		while ($aff_campaign_row = $aff_campaign_result->fetch_array(MYSQLI_ASSOC)) {
-
-																			$html['aff_campaign_name'] = htmlentities((string)($aff_campaign_row['aff_campaign_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-																			$html['aff_campaign_payout'] = htmlentities((string)($aff_campaign_row['aff_campaign_payout'] ?? ''), ENT_QUOTES, 'UTF-8');
-
-																			printf('<li>%s &middot; &#36;%s</li>', $html['aff_campaign_name'], $html['aff_campaign_payout']);
-
-									?><ul class="setup-list" style="margin-top: 0px;"><?php
-
-																			$mysql['aff_campaign_id'] = $db->real_escape_string($aff_campaign_row['aff_campaign_id']);
-																			$landing_page_sql = "SELECT * FROM `202_landing_pages` WHERE `aff_campaign_id`='" . $mysql['aff_campaign_id'] . "' AND `landing_page_deleted`='0' AND landing_page_type='0'";
-																			$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
-
-																			while ($landing_page_row = $landing_page_result->fetch_array(MYSQLI_ASSOC)) {
-
-																				$html['landing_page_nickname'] = htmlentities((string)($landing_page_row['landing_page_nickname'] ?? ''), ENT_QUOTES, 'UTF-8');
-																				$html['landing_page_id'] = htmlentities((string)($landing_page_row['landing_page_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-
-																				if ($userObj->hasPermission("remove_landing_page")) {
-																					printf('<li><span class="filter_simple_lp_name">%s</span> <a href="?edit_landing_page_id=%s" class="list-action">edit</a> <a href="?copy_landing_page_id=%s" class="list-action">copy</a> <a href="?delete_landing_page_id=%s&delete_landing_page_name=%s&delete_landing_page_type=0&token=' . urlencode((string) ($_SESSION['token'] ?? '')) . '" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Landing Page?\');">remove</a></li>', $html['landing_page_nickname'], $html['landing_page_id'], $html['landing_page_id'], $html['landing_page_id'], $html['landing_page_nickname']);
-																				} else {
-																					printf('<li><span class="filter_simple_lp_name">%s</span> <a href="?edit_landing_page_id=%s" class="list-action">edit</a></li>', $html['landing_page_nickname'], $html['landing_page_id']);
-																				}
-																			}
-
-																	?></ul><?php
-																		}
-
-											?></ul><?php
-
-																	}
-									?>
-				</ul>
+		<section class="p202-panel">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">Simple landing pages</h2>
+				<span class="p202-pill p202-pill--accent"><?php echo array_sum(array_map('count', $simplePagesByCampaign)); ?></span>
 			</div>
-		</div>
+			<div class="p202-panel__body">
+				<?php if ($simplePagesByCampaign === []) { ?>
+					<div class="p202-empty">
+						<i class="bi bi-file-earmark p202-empty__icon"></i>
+						<strong class="p202-empty__title">No simple landing pages yet</strong>
+						<div>Add the page a campaign's clicks land on, and it is listed here under its campaign.</div>
+						<div class="p202-empty__action"><a class="btn btn-secondary btn-sm" href="#landing_page_nickname">Add a landing page</a></div>
+					</div>
+				<?php } else { ?>
+					<ul class="p202-list">
+						<?php foreach ($campaignOptions as $group) {
+							$groupCampaigns = array_filter($group['options'], static fn ($campaignId): bool => isset($simplePagesByCampaign[(int) $campaignId]), ARRAY_FILTER_USE_KEY);
+							if ($groupCampaigns === []) {
+								continue;
+							} ?>
+							<li class="p202-list__item">
+								<span class="p202-list__name"><?php echo p202_setup_e($group['label']); ?></span>
+								<ul class="p202-list__children">
+									<?php foreach ($groupCampaigns as $campaignId => $campaign) { ?>
+										<li class="p202-list__item">
+											<span class="p202-list__name"><?php echo p202_setup_e($campaign['label']); ?></span>
+											<ul class="p202-list__children">
+												<?php foreach ($simplePagesByCampaign[(int) $campaignId] as $page) {
+													echo $pageItem($page, false);
+												} ?>
+											</ul>
+										</li>
+									<?php } ?>
+								</ul>
+							</li>
+						<?php } ?>
+					</ul>
+				<?php } ?>
+			</div>
+		</section>
 	</div>
-
 </div>
-<!-- open up the ajax aff network -->
-<script type="text/javascript">
-	$(document).ready(function() {
 
-		load_aff_network_id('<?php echo $html['aff_network_id'] ?? ''; ?>');
-		<?php if (isset($html['aff_network_id']) && $html['aff_network_id'] != '') { ?>
-			load_aff_campaign_id('<?php echo $html['aff_network_id']; ?>', '<?php echo $html['aff_campaign_id'] ?? ''; ?>');
-		<?php } ?>
-
-		var advLpOptions = {
-			valueNames: ['filter_adv_lp_name'],
-			plugins: [
-				ListFuzzySearch()
-			]
-		};
-
-		var advLps = new List('advLps', advLpOptions);
-	});
-</script>
-<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/jquery.caret.js"></script>
-
-<style>
-/* ===========================================
-   LANDING PAGES - Modern Design System Styles
-   =========================================== */
-
-/* Header Section */
-.setup-page-header {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 24px;
-    background: #2f6fdd;
-    border-radius: 12px;
-    color: #fff;
-    box-shadow: 0 4px 15px rgba(47, 111, 221, 0.2);
-    margin-bottom: 28px;
-}
-
-.setup-page-header__icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 56px;
-    height: 56px;
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 12px;
-    flex-shrink: 0;
-    transition: background 0.3s ease;
-}
-
-.setup-page-header__icon .glyphicon {
-    font-size: 24px;
-    color: #fff;
-}
-
-.setup-page-header__text {
-    flex: 1;
-}
-
-.setup-page-header__title {
-    margin: 0 0 4px 0;
-    font-size: 24px;
-    font-weight: 600;
-    color: #fff;
-}
-
-.setup-page-header__subtitle {
-    margin: 0;
-    font-size: 14px;
-    color: rgba(255, 255, 255, 0.9);
-    font-weight: 400;
-}
-
-/* Setup Panel Styles */
-.setup-panel {
-    background: #fff;
-    border: 1px solid #e7e8ea;
-    border-radius: 12px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-    overflow: hidden;
-    transition: box-shadow 0.3s ease, border-color 0.3s ease;
-}
-
-.setup-panel:hover {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-    border-color: #c9cdd3;
-}
-
-/* Panel Defaults */
-.panel-default {
-    border: 1px solid #e7e8ea;
-    border-radius: 12px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-    overflow: hidden;
-    transition: box-shadow 0.3s ease;
-}
-
-.panel-default:hover {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
-
-.panel-heading {
-    background: #fafbfc;
-    border-bottom: 1px solid #e7e8ea;
-    padding: 16px 20px;
-    font-weight: 600;
-    color: #1f2328;
-    font-size: 14px;
-    letter-spacing: 0.5px;
-}
-
-.panel-body {
-    padding: 20px;
-    background: #fff;
-}
-
-/* Form Group Styles */
-.setup-form-group {
-    margin-bottom: 18px;
-    padding-bottom: 18px;
-    border-bottom: 1px solid #f0f1f2;
-}
-
-.setup-form-group:last-child {
-    margin-bottom: 0;
-    padding-bottom: 0;
-    border-bottom: none;
-}
-
-.setup-form-group label {
-    font-weight: 500;
-    color: #32383f;
-    margin-bottom: 8px;
-    display: block;
-    font-size: 13px;
-    letter-spacing: 0.3px;
-}
-
-.setup-form-group input,
-.setup-form-group textarea,
-.setup-form-group select {
-    border: 1px solid #c9cdd3;
-    border-radius: 6px;
-    padding: 8px 12px;
-    font-size: 13px;
-    transition: border-color 0.3s ease, box-shadow 0.3s ease;
-}
-
-.setup-form-group input:focus,
-.setup-form-group textarea:focus,
-.setup-form-group select:focus {
-    border-color: #2f6fdd;
-    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1);
-    outline: none;
-}
-
-/* Button Styles */
-.setup-btn {
-    display: inline-block;
-    padding: 10px 20px;
-    background: #2f6fdd;
-    color: #fff;
-    border: none;
-    border-radius: 8px;
-    font-weight: 500;
-    font-size: 13px;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    box-shadow: 0 2px 8px rgba(47, 111, 221, 0.15);
-}
-
-.setup-btn:hover {
-    box-shadow: 0 4px 12px rgba(47, 111, 221, 0.25);
-    transform: none;
-}
-
-.setup-btn:active {
-    transform: translateY(0);
-}
-
-.setup-btn-secondary {
-    background: #6b7280;
-    box-shadow: 0 2px 8px rgba(107, 114, 128, 0.15);
-}
-
-.setup-btn-secondary:hover {
-    box-shadow: 0 4px 12px rgba(107, 114, 128, 0.25);
-}
-
-.setup-btn-danger {
-    background: #c9372c;
-    box-shadow: 0 2px 8px rgba(239, 68, 68, 0.15);
-}
-
-.setup-btn-danger:hover {
-    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.25);
-}
-
-/* Alert Styles */
-.setup-alert {
-    padding: 14px 16px;
-    border-radius: 8px;
-    border-left: 4px solid;
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    margin-bottom: 16px;
-}
-
-.setup-alert-success {
-    background: #e7f5ec;
-    border-color: #e7f5ec;
-    color: #1d6c3a;
-}
-
-.setup-alert-error {
-    background: #fdecec;
-    border-color: #c9372c;
-    color: #b02a20;
-}
-
-.setup-alert-info {
-    background: #eaf2fc;
-    border-color: #bcd4f6;
-    color: #2861c4;
-}
-
-.setup-alert i {
-    flex-shrink: 0;
-    margin-top: 1px;
-}
-
-/* List Styles */
-.setup-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-}
-
-.setup-list li {
-    padding: 12px 0;
-    border-bottom: 1px solid #f0f1f2;
-    font-size: 13px;
-    color: #32383f;
-    transition: color 0.3s ease;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-}
-
-.setup-list li:last-child {
-    border-bottom: none;
-}
-
-.setup-list li:hover {
-    color: #2f6fdd;
-}
-
-.setup-list li > span {
-    word-break: break-word;
-}
-
-/* Name spans - take up available space */
-.filter_adv_lp_name,
-.filter_simple_lp_name {
-    font-weight: 500;
-    flex: 1;
-    min-width: 100px;
-}
-
-.setup-list .list-action {
-    color: #2f6fdd;
-    text-decoration: none;
-    font-weight: 500;
-    transition: color 0.3s ease;
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 12px;
-    display: inline-block;
-    flex-shrink: 0;
-}
-
-.setup-list .list-action:hover {
-    color: #2861c4;
-    text-decoration: none;
-    background: rgba(47, 111, 221, 0.1);
-}
-
-.setup-list .list-action-danger {
-    color: #c9372c;
-}
-
-.setup-list .list-action-danger:hover {
-    color: #c9372c;
-    background: rgba(239, 68, 68, 0.1);
-}
-
-.empty-state {
-    text-align: center;
-    padding: 24px 16px;
-    color: #9ca3af;
-    border: 1px dashed #e7e8ea;
-    border-radius: 8px;
-    font-size: 14px;
-}
-
-/* Form Separator */
-.form_seperator {
-    border-bottom: 2px solid #e7e8ea;
-    margin-bottom: 24px;
-}
-
-/* Radio and Checkbox Styles */
-.radio,
-.checkbox {
-    margin-top: 8px;
-    margin-bottom: 8px;
-}
-
-.radio label,
-.checkbox label {
-    padding-left: 24px;
-    cursor: pointer;
-    font-weight: 400;
-    color: #32383f;
-}
-
-.radio input,
-.checkbox input {
-    margin-left: -24px;
-    margin-right: 8px;
-    cursor: pointer;
-}
-
-/* Info Text */
-.infotext {
-    font-size: 12px;
-    color: #6b7280;
-    font-weight: 400;
-    line-height: 1.5;
-}
-
-/* Help Block */
-.help-block {
-    font-size: 12px;
-    color: #6b7280;
-    margin-top: 6px;
-    display: block;
-}
-
-/* Responsive Design */
-@media (max-width: 768px) {
-    .setup-page-header {
-        flex-direction: column;
-        text-align: center;
-        padding: 20px 16px;
-        margin-bottom: 20px;
-    }
-
-    .setup-page-header__icon {
-        width: 48px;
-        height: 48px;
-    }
-
-    .setup-page-header__icon .glyphicon {
-        font-size: 20px;
-    }
-
-    .setup-page-header__title {
-        font-size: 20px;
-    }
-
-    .setup-page-header__subtitle {
-        font-size: 13px;
-    }
-
-    .setup-form-group {
-        margin-bottom: 16px;
-    }
-
-    .setup-btn {
-        width: 100%;
-        margin-bottom: 8px;
-    }
-}
-</style>
-
+<?php echo p202_setup_script_tag($base); ?>
 <?php template_bottom();
