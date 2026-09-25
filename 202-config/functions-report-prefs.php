@@ -519,6 +519,8 @@ function p202_report_view_begin(array $groups = []): string
     try {
         return p202_report_view_from_request($_GET, (int) ($_SESSION['user_id'] ?? 0), $groups);
     } catch (InvalidArgumentException $refused) {
+        // A download has already said "attachment"; the refusal is a page.
+        header_remove('Content-Disposition');
         http_response_code(400);
         header('Content-Type: text/html; charset=utf-8');
         echo '<div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body">'

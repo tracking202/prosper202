@@ -69,6 +69,9 @@ final class ReportViewReadersTest extends TestCase
                 $files[] = substr($file->getPathname(), strlen($this->root) + 1);
             }
         }
+        foreach ($this->phpFiles(['tracking202/Report']) as $file) {
+            $files[] = $file;
+        }
         foreach ($this->filesInstallingAView() as $file) {
             $files[] = $file;
         }
@@ -90,7 +93,7 @@ final class ReportViewReadersTest extends TestCase
             self::assertGreaterThanOrEqual($reads, $applies, "$file reads the report filters from 202_users_pref $reads time(s) but passes a row through ReportView::apply() $applies time(s); a read around the view draws another tab's filters");
         }
         // The scan must find the readers it exists for, or it proves nothing.
-        foreach (['202-config/functions-tracking202.php', '202-config/class-dataengine.php', '202-config/functions-report-prefs.php', 'tracking202/ajax/account_overview.php', 'tracking202/overview/group_overview_download.php'] as $reader) {
+        foreach (['202-config/functions-tracking202.php', '202-config/class-dataengine.php', '202-config/functions-report-prefs.php', 'tracking202/ajax/account_overview.php', 'tracking202/overview/group_overview_download.php', 'tracking202/Report/ReportPrefsStore.php', 'tracking202/analyze/keywords_download.php'] as $reader) {
             self::assertContains($reader, $checked, "the scan sees $reader's read of the report filters");
         }
     }
@@ -113,6 +116,19 @@ final class ReportViewReadersTest extends TestCase
             self::assertFileExists($this->root . '/' . $file, "$from hands a view to $url");
             self::assertMatchesRegularExpression('/\bp202_report_view_begin\(/', (string) file_get_contents($this->root . '/' . $file),
                 "$file is handed a view by $from but never installs it, so it draws whatever the stored filters say by then");
+        }
+    }
+
+    public function testEveryAnalyzeDownloadInstallsTheViewItsPageHandsIt(): void
+    {
+        require_once $this->root . '/tracking202/analyze/AnalyzeReportController.php';
+        $controller = (string) file_get_contents($this->root . '/tracking202/analyze/AnalyzeReportController.php');
+        self::assertMatchesRegularExpression("/'downloadUrl' => p202_report_view_url\\(/", $controller, 'the report page hands its download the view it drew');
+        foreach (\Tracking202\Analyze\AnalyzeReportController::REPORTS as $type => $report) {
+            $file = 'tracking202/analyze/' . $report['download'];
+            self::assertFileExists($this->root . '/' . $file);
+            self::assertMatchesRegularExpression('/\bp202_report_view_begin\(/', (string) file_get_contents($this->root . '/' . $file),
+                "$file ($type) is handed a view but never installs it, so it exports whatever the stored filters say by then");
         }
     }
 
