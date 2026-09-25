@@ -226,6 +226,90 @@ module.exports = {
     },
 
     {
+      // The stored filters are one row per user, and a second tab writes it.
+      // What the first tab asks for afterwards — its next page, its download
+      // — must still be the report its own URL and form describe.
+      name: 'A second tab with other filters does not change what the first tab draws or downloads',
+      async run(ctx) {
+        const { app, ui, db, expect, config } = ctx;
+        db.write(PREF_RESET);
+        await app.goto('/tracking202/visitors/?user_pref_show=all&user_pref_limit=10');
+        await checks.overviewReportDrawn(ui, '#visitors-report');
+        const summary = await ui.text('#visitors-report p');
+        const total = Number(((summary.match(/of ([\d,]+)/) || [])[1] || '0').replace(/,/g, ''));
+        const leads = Number(db.value('SELECT COUNT(*) FROM 202_dataengine WHERE user_id=1 AND click_lead=1'
+          + ' AND click_time BETWEEN UNIX_TIMESTAMP(CURDATE()) AND UNIX_TIMESTAMP(CURDATE() + INTERVAL 1 DAY)'));
+        expect.ok(total > 10 && leads < total, 'tab A has more than one page of clicks, not all of them converted', summary + ' / leads ' + leads);
+        const download = await ui.page.$eval('.p202-table-toolbar__aside a', (a) => a.href);
+
+        const tabB = await ui.page.context().newPage();
+        try {
+          await tabB.goto(config.base + '/tracking202/visitors/?user_pref_show=leads&user_pref_limit=50');
+          await tabB.waitForSelector('#visitors-report[aria-busy="false"]');
+        } finally {
+          await tabB.close();
+        }
+        expect.eq(pref(db, 'user_pref_show'), 'leads', 'tab B stored its filters: the row tab A would otherwise read has changed');
+        expect.eq(pref(db, 'user_pref_limit'), '50', 'rows as well');
+
+        await ui.click('#visitors-report [data-p202-offset="1"]:not([aria-label])');
+        await ui.untilInPage(() => /Clicks 11.[0-9]/.test((document.querySelector('#visitors-report p') || {}).textContent || ''), undefined, { describe: 'tab A\'s page two to load' });
+        expect.match(await ui.text('#visitors-report p'), new RegExp('of ' + total.toLocaleString('en-US') + ','),
+          'tab A\'s next page is still every click, ten a page, as its URL says');
+        expect.eq(await ui.value('#visitors-filters-user_pref_show'), 'all', 'and its form still says so');
+
+        const response = await ui.page.request.get(download);
+        expect.eq(response.status(), 200, 'tab A\'s download answers');
+        const rows = (await response.text()).split('\n').filter((line) => /^\d+\t/.test(line)).length;
+        // The classic download exports the first page at the page size; tab
+        // A's is ten of every click, tab B's would be its converted ones.
+        expect.ok(leads < 10, 'the fixture has fewer than ten converted clicks, so the two views export different rows', String(leads));
+        expect.eq(rows, Math.min(total, 10), 'and exports tab A\'s clicks at tab A\'s page size, not tab B\'s converted ones');
+        db.write(PREF_RESET);
+      },
+    },
+
+    {
+      // Every ISP any account's clicks have named is a row of
+      // 202_locations_isp; the menu is this account's, from its clicks.
+      name: 'The ISP menu lists this account\'s ISPs, not the install\'s, and keeps the one in force',
+      async run(ctx) {
+        const { app, ui, db, expect } = ctx;
+        db.write(PREF_RESET);
+        const name = 'Probe ISP ' + Date.now();
+        // The stored ISP filter is a TINYINT, so a filterable ISP has an id
+        // of 255 or less: take the highest free one.
+        const used = new Set(db.rows('SELECT isp_id FROM 202_locations_isp WHERE isp_id <= 255').map((r) => String(r[0])));
+        let id = '';
+        for (let n = 255; n >= 1 && id === ''; n--) {
+          if (!used.has(String(n))) { id = String(n); }
+        }
+        if (id === '') {
+          expect.skip('the ISP menu', 'every ISP id a filter can store is taken');
+          return;
+        }
+        db.write('INSERT INTO 202_locations_isp (isp_id, isp_name) VALUES (' + Number(id) + ", '" + name + "')");
+        try {
+          await app.goto('/tracking202/visitors/');
+          await checks.overviewReportDrawn(ui, '#visitors-report');
+          const options = await ui.page.$$eval('#visitors-filters-isp_id option', (os) => os.map((o) => o.textContent.trim()));
+          const seen = Number(db.value('SELECT COUNT(DISTINCT isp_id) FROM 202_dataengine WHERE user_id=1 AND isp_id IS NOT NULL'
+            + ' AND click_time BETWEEN UNIX_TIMESTAMP(CURDATE()) AND UNIX_TIMESTAMP(CURDATE() + INTERVAL 1 DAY)'));
+          expect.eq(options.length, seen + 1, 'the menu is "All" and the ISPs this account\'s clicks came through today', JSON.stringify(options));
+          expect.notOk(options.includes(name), 'an ISP no click of this account came through is not offered');
+
+          await app.goto('/tracking202/visitors/?isp_id=' + id);
+          await checks.overviewReportDrawn(ui, '#visitors-report');
+          expect.eq(await ui.value('#visitors-filters-isp_id'), id, 'a filter in force stays selected');
+          expect.eq(await ui.page.$eval('#visitors-filters-isp_id option:checked', (o) => o.textContent.trim()), name, 'under its name, not as a bare number');
+        } finally {
+          db.write('DELETE FROM 202_locations_isp WHERE isp_id=' + Number(id));
+          db.write(PREF_RESET);
+        }
+      },
+    },
+
+    {
       name: 'Both downloads answer with a file of the report',
       async run(ctx) {
         const { app, ui, expect } = ctx;
