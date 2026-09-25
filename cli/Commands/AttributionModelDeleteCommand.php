@@ -19,7 +19,7 @@ class AttributionModelDeleteCommand extends BaseCommand
     protected function configure(): void
     {
         parent::configure();
-        $this->setDescription('Delete an attribution model and all related data')
+        $this->setDescription('Delete an attribution model and its credits (the default model cannot be deleted)')
             ->addArgument('id', InputArgument::REQUIRED, 'Model ID')
             ->addOption('force', 'f', InputOption::VALUE_NONE, 'Skip confirmation prompt');
     }

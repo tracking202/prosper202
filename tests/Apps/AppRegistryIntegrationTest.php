@@ -35,8 +35,9 @@ final class AppRegistryIntegrationTest extends TestCase
         '202_app_registrations', '202_app_postbacks', '202_app_skan_encodings',
         '202_clicks', '202_clicks_visitor', '202_identity_keys', '202_identity_visitors',
         '202_identity_signals', '202_identity_observations', '202_identity_merges',
-        '202_attribution_models', '202_attribution_settings', '202_attribution_audit',
-        '202_attribution_snapshots', '202_attribution_touchpoints',
+        '202_attribution_models', '202_attribution_audit', '202_attribution_credits',
+        '202_attribution_journeys', '202_attribution_journey_meta', '202_attribution_exports',
+        '202_attribution_pending', '202_conversion_logs',
         '202_goals', '202_goal_versions',
     ];
 

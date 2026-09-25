@@ -110,6 +110,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost) {
 		$error['aff_network_id'] = '<div class="error">Select a category.</div>';
 	}
 
+	// The per-campaign attribution model override (plan §6.3): one of this
+	// account's own models, or blank for the account default. Anything else
+	// is refused rather than cast and stored.
+	$postedModelId = trim((string) ($_POST['attribution_model_id'] ?? ''));
+	if ($postedModelId !== '') {
+		$ownModel = preg_match('/^[1-9][0-9]{0,18}$/D', $postedModelId) === 1
+			? (new \Prosper202\Attribution\ModelRepository(new \Prosper202\Database\Connection($db)))->row((int) $_SESSION['user_id'], (int) $postedModelId)
+			: null;
+		if ($ownModel === null) {
+			$error['attribution_model_id'] = '<div class="error">Choose one of your attribution models, or leave it on the account default.</div>';
+		}
+	}
+
 	$aff_campaign_name = trim((string) $_POST['aff_campaign_name']);
 	if (empty($aff_campaign_name)) {
 		$error['aff_campaign_name'] = '<div class="error">What is the name of this campaign.</div>';

@@ -1,16 +1,12 @@
 <?php
 declare(strict_types=1);
 
-use Prosper202\Attribution\AttributionServiceFactory;
-use Prosper202\Attribution\Repository\Mysql\ConversionJourneyRepository;
 header('P3P: CP="Prosper202 does not have a P3P policy"');
 include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/static-endpoint-helpers.php');
 // getUrl() for server-side postback pixels (not pulled in by connect2.php)
 include_once(substr(__DIR__, 0,-19) . '/202-config/functions-tracking202api.php');
-
-$settingsService = AttributionServiceFactory::createSettingsService();
 
 //get the aff_camapaign_id
 $mysql['user_id'] = 1;
@@ -235,30 +231,3 @@ if ($newlyRecorded && $conversionResult['reverses_conv_id'] === 0 && $mysql['ppc
 	}
 }
 
-$advertiserId = p202ResolveAdvertiserId($db, (int) $mysql['campaign_id']);
-
-if ($newlyRecorded) {
-	$scope = [
-		'user_id' => (int) $mysql['click_user_id'],
-		'campaign_id' => (int) $mysql['campaign_id'],
-	];
-	if ($advertiserId !== null) {
-		$scope['advertiser_id'] = $advertiserId;
-	}
-
-	if ($settingsService->isMultiTouchEnabled($scope)) {
-		try {
-			$journeyRepository = new ConversionJourneyRepository($db);
-			$journeyRepository->persistJourney(
-				conversionId: $conversionId,
-				userId: (int) $mysql['click_user_id'],
-				campaignId: (int) $mysql['campaign_id'],
-				conversionTime: (int) $mysql['conv_time'],
-				primaryClickId: (int) $mysql['click_id'],
-				primaryClickTime: (int) $mysql['click_time']
-			);
-		} catch (Throwable $journeyError) {
-			error_log('Failed to persist conversion journey for conv_id ' . $conversionId . ': ' . $journeyError->getMessage());
-		}
-	}
-}

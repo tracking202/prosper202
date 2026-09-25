@@ -482,19 +482,66 @@ try {
             $r->delete('/{id}/rules/{ruleId}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteRule((int)$ctx['id'], (int)$ctx['ruleId'])));
         });
 
-        // ── Attribution ──────────────────────────────────────────────────
-        $router->group('/attribution/models', function (Router $r) use ($crud, $idempotent, $queryParams, $payload) {
+        // ── Multi-touch attribution ──────────────────────────────────────
+        // Gated by the same role permissions as the session pages (plan
+        // §6.3: one permission check per operation on every surface):
+        // view_attribution_reports to read, manage_attribution_models to
+        // change a model. Scope enforcement (attribution:read/write) runs as
+        // well, centrally below.
+        $router->group('/attribution/models', function (Router $r) use ($crud, $idempotent, $queryParams, $payload, $auth, $db) {
             $cls = \Api\V3\Controllers\AttributionController::class;
+            $manage = static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'manage_attribution_models');
+            };
             $r->get('',        fn() => $crud($cls)->listModels($queryParams));
-            $r->post('',       fn() => ['_status' => 201] + $idempotent('attribution/models', $payload, fn() => $crud($cls)->createModel($payload)));
             $r->get('/{id}',   fn($ctx) => $crud($cls)->getModel((int)$ctx['id']));
-            $r->put('/{id}',   fn($ctx) => $crud($cls)->updateModel((int)$ctx['id'], $payload));
-            $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteModel((int)$ctx['id'])));
-
-            $r->get('/{id}/snapshots', fn($ctx) => $crud($cls)->listSnapshots((int)$ctx['id'], $queryParams));
-            $r->get('/{id}/exports',   fn($ctx) => $crud($cls)->listExports((int)$ctx['id']));
-            $r->post('/{id}/exports',  fn($ctx) => ['_status' => 201] + $idempotent('attribution/models/' . (int)$ctx['id'] . '/exports', $payload, fn() => $crud($cls)->scheduleExport((int)$ctx['id'], $payload)));
-        });
+            $r->post('',       function () use ($manage, $crud, $cls, $idempotent, $payload) {
+                $manage();
+                return ['_status' => 201] + $idempotent('attribution/models', $payload, fn() => $crud($cls)->createModel($payload));
+            });
+            $r->put('/{id}',   function ($ctx) use ($manage, $crud, $cls, $payload) {
+                $manage();
+                return $crud($cls)->updateModel((int)$ctx['id'], $payload);
+            });
+            $r->delete('/{id}', function ($ctx) use ($manage, $crud, $cls) {
+                $manage();
+                $crud($cls)->deleteModel((int)$ctx['id']);
+                return null; // 204
+            });
+        }, [
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'view_attribution_reports');
+            },
+        ]);
+        $router->group('/attribution', function (Router $r) use ($crud, $queryParams) {
+            $cls = \Api\V3\Controllers\AttributionController::class;
+            $r->get('/reports/breakdown',          fn() => $crud($cls)->breakdown($queryParams));
+            $r->get('/reports/journeys',           fn() => $crud($cls)->journeyMetrics($queryParams));
+            $r->get('/conversions/{id}/journey',   fn($ctx) => $crud($cls)->journey((int)$ctx['id']));
+            $r->get('/queue',                      fn() => $crud($cls)->queue($queryParams));
+        }, [
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'view_attribution_reports');
+            },
+        ]);
+        // Exports (plan §6.3): a breakdown written to CSV by the export
+        // runner, downloadable and optionally sent to an SSRF-checked
+        // webhook. Reading the account's reports is what an export does, so
+        // view_attribution_reports gates every route, the same permission
+        // the dashboard's Exports tab asks for.
+        $router->group('/attribution/exports', function (Router $r) use ($crud, $idempotent, $queryParams, $payload) {
+            $cls = \Api\V3\Controllers\AttributionController::class;
+            $r->get('',                fn() => $crud($cls)->listExports($queryParams));
+            $r->get('/{id}',           fn($ctx) => $crud($cls)->getExport((int)$ctx['id']));
+            $r->get('/{id}/download',  fn($ctx) => $crud($cls)->downloadExport((int)$ctx['id']));
+            $r->post('',               fn() => ['_status' => 201] + $idempotent('attribution/exports', $payload, fn() => $crud($cls)->createExport($payload)));
+            $r->post('/{id}/retry',    fn($ctx) => $crud($cls)->retryExport((int)$ctx['id']));
+            $r->delete('/{id}',        fn($ctx) => tap($crud($cls), fn($c) => $c->deleteExport((int)$ctx['id'])));
+        }, [
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'view_attribution_reports');
+            },
+        ]);
 
         // ── App measurement ──────────────────────────────────────────────
         // The registry (both platforms), the Apple source's SKAN encodings,
@@ -676,7 +723,7 @@ try {
                 'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart}',
                 'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}',
                 'rotators'      => '/rotators',
-                'attribution'   => '/attribution/models',
+                'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|exports}',
                 'apps'          => '/apps/{id|skan-encodings|postbacks|report|verify|schema}',
                 'goals'         => '/goals/{id|validate|evaluate}',
                 'events'        => '/events',
@@ -706,6 +753,7 @@ try {
         $previewRouter->delete('/rotators/{id}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->delete('/rotators/{id}/rules/{ruleId}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deleteRulePreview((int)$ctx['id'], (int)$ctx['ruleId']));
         $previewRouter->delete('/attribution/models/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionController::class)->deleteModelPreview((int)$ctx['id']));
+        $previewRouter->delete('/attribution/exports/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionController::class)->deleteExportPreview((int)$ctx['id']));
         $previewRouter->delete('/apps/skan-encodings/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AppSkanEncodingsController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->delete('/apps/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AppRegistrationsController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->delete('/goals/{id}', fn($ctx) => $crud(\Api\V3\Controllers\GoalsController::class)->deletePreview(\Api\V3\Controllers\GoalsController::pathId($ctx['id'])));
@@ -769,7 +817,11 @@ try {
         $r->post('', $stageable);
         $r->put('/{id}', $stageable);
         $r->delete('/{id}', $stageable);
-        $r->post('/{id}/exports', $stageable);
+    });
+    $stageableRouter->group('/attribution/exports', function (Router $r) use ($stageable) {
+        $r->post('', $stageable);
+        $r->post('/{id}/retry', $stageable);
+        $r->delete('/{id}', $stageable);
     });
     $stageableRouter->group('/apps', function (Router $r) use ($stageable) {
         $r->post('/skan-encodings', $stageable);
@@ -986,6 +1038,18 @@ try {
     if ($response === null) {
         // DELETE — 204 No Content
         http_response_code(204);
+    } elseif (isset($response['_file']) && is_array($response['_file'])) {
+        // A file download (an attribution export): the bytes, not JSON.
+        // The filename is built by the controller from fixed parts; it is
+        // still reduced to a safe set here because it reaches a header.
+        $file = $response['_file'];
+        $filename = preg_replace('/[^A-Za-z0-9._-]+/', '-', (string) ($file['filename'] ?? 'download')) ?? 'download';
+        http_response_code(200);
+        header('Content-Type: ' . (string) ($file['content_type'] ?? 'application/octet-stream'));
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Content-Length: ' . strlen((string) $file['body']));
+        header('Cache-Control: no-store');
+        echo (string) $file['body'];
     } else {
         $status = $response['_status'] ?? 200;
         unset($response['_status']);

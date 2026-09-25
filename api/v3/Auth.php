@@ -327,6 +327,48 @@ final readonly class Auth
         }
     }
 
+    /**
+     * Require one of the legacy role permissions (202_permissions) — the
+     * same check the session pages make through User::hasPermission, so an
+     * operation is gated identically on every surface (error pattern #5).
+     * The attribution routes use view_attribution_reports for reads and
+     * manage_attribution_models for writes.
+     *
+     * A failed lookup is not "no permission" (error pattern #11): it is a
+     * 500, never a 403 that reads as the user's fault, and never a pass.
+     */
+    public function requirePermission(\mysqli $db, string $permission): void
+    {
+        $stmt = $db->prepare(
+            'SELECT 1 FROM 202_user_role ur
+             JOIN 202_role_permission rp ON rp.role_id = ur.role_id
+             JOIN 202_permissions p ON p.permission_id = rp.permission_id
+             WHERE ur.user_id = ? AND p.permission_description = ? LIMIT 1'
+        );
+        if (!$stmt) {
+            throw new AuthException('Authorization unavailable', 500);
+        }
+        self::bind($stmt, 'is', $this->userId, $permission);
+        if (!self::execute($stmt)) {
+            $stmt->close();
+            throw new AuthException('Authorization unavailable', 500);
+        }
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            throw new AuthException('Authorization unavailable', 500);
+        }
+        $granted = $result->fetch_row() !== null;
+        $stmt->close();
+
+        if (!$granted) {
+            throw new AuthException(
+                "This account's role does not have the '" . $permission . "' permission.",
+                403
+            );
+        }
+    }
+
     public function requireSelfOrAdmin(int $targetUserId): void
     {
         if ($this->userId !== $targetUserId && !$this->isAdmin()) {

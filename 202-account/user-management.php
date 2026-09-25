@@ -308,6 +308,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$role_sql = "INSERT INTO 202_user_role SET user_id = '" . $user_id . "', role_id = '" . $mysql['user_role'] . "'";
 				$pref_sql = "INSERT INTO 202_users_pref SET user_id = '" . $user_id . "'";
 				$saved = (bool)_mysqli_query($role_sql) && (bool)_mysqli_query($pref_sql);
+
+				// Every account starts with its default attribution model (plan
+				// §6.4). This page writes the account without a transaction, so a
+				// failure here cannot undo it; the attribution worker creates the
+				// model the first time it meets an account that has none.
+				if ($saved) {
+					try {
+						\Prosper202\Attribution\DefaultModel::ensureFor(new \Prosper202\Database\Connection($db), (int) $user_id);
+					} catch (\Throwable $modelError) {
+						error_log('user-management: default attribution model for user ' . (int) $user_id . ' not created: ' . $modelError->getMessage());
+					}
+				}
 			}
 		}
 

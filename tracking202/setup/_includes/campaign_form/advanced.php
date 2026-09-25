@@ -20,7 +20,7 @@ $advancedSet = (string) $values['aff_campaign_cloaking'] === '1'
 	|| p202_setup_invalid($errors, 'payout_mode') !== ''
 	|| $rotating
 	|| (string) ($values['attribution_model_id'] ?? '') !== ''
-	|| p202_setup_invalid($errors, 'aff_campaign_url_2', 'aff_campaign_url_3', 'aff_campaign_url_4', 'aff_campaign_url_5') !== '';
+	|| p202_setup_invalid($errors, 'attribution_model_id', 'aff_campaign_url_2', 'aff_campaign_url_3', 'aff_campaign_url_4', 'aff_campaign_url_5') !== '';
 ?>
 <details class="p202-disclosure mb-3" data-p202-remember="setup-campaigns-advanced"<?php echo $advancedSet ? ' open' : ''; ?>>
 	<summary>Advanced <span class="p202-disclosure__hint">cloaking, several conversions per click, attribution model<?php echo $rotationOffered ? ', URL rotation' : ''; ?></span></summary>

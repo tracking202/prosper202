@@ -231,6 +231,62 @@ final class AccountPostRequiresTokenTest extends TestCase
             . "\nCheck it with AUTH::check_csrf_token() before the write, and put p202_account_token_field() in the form.");
     }
 
+    /**
+     * The attribution dashboard (PR 10) takes eight kinds of POST — models
+     * and exports — through one handler, so this pins the shape that handler
+     * relies on, beyond the family floor above: the POST block's first
+     * statement is the token check, no $_POST value is read anywhere in the
+     * file before it, and a refusal says the guard's sentence and leaves
+     * (p202_account_redirect() is `never`). tests/live/mta-ui.sh posts a
+     * forged token to a model form and an export form and reads that nothing
+     * was written.
+     */
+    public function testTheAttributionDashboardChecksTheTokenBeforeItReadsAPost(): void
+    {
+        $relative = '202-account/attribution.php';
+        $tokens = self::tokens((string) file_get_contents(self::root() . '/' . $relative));
+        $texts = array_map(static fn (array $t): string => $t[1], $tokens);
+        $count = count($texts);
+
+        // if ( $_SERVER [ 'REQUEST_METHOD' ] === 'POST' ) {
+        $block = null;
+        for ($i = 0; $i < $count - 9; $i++) {
+            if (array_slice($texts, $i, 10) === ['if', '(', '$_SERVER', '[', "'REQUEST_METHOD'", ']', '===', "'POST'", ')', '{']) {
+                $block = $i + 10;
+                break;
+            }
+        }
+        $this->assertNotNull($block, "$relative has no `if (\$_SERVER['REQUEST_METHOD'] === 'POST') {` block");
+        $this->assertSame(['if', '(', '!', 'AUTH', '::', 'check_csrf_token', '(', ')', ')', '{'], array_slice($texts, $block, 10),
+            'the first statement in the POST block is the token check');
+
+        $firstPost = null;
+        foreach ($tokens as $i => [$id, $text]) {
+            if ($id === T_VARIABLE && ($text === '$_POST' || $text === '$_REQUEST')) {
+                $firstPost = $i;
+                break;
+            }
+        }
+        $this->assertNotNull($firstPost, "$relative reads no POST at all; the scan is broken");
+        $this->assertGreaterThan($block, $firstPost, 'no POST value is read before the token check');
+
+        // The refusal branch: the guard's sentence, then the redirect, and nothing else.
+        $depth = 0;
+        $branch = [];
+        for ($j = $block + 9; $j < $count; $j++) {
+            $branch[] = $texts[$j];
+            if ($texts[$j] === '{') {
+                $depth++;
+            } elseif ($texts[$j] === '}' && --$depth === 0) {
+                break;
+            }
+        }
+        $this->assertSame('p202_account_flash', $branch[1] ?? null, 'the refusal says so first');
+        $this->assertContains('P202_ACCOUNT_TOKEN_REFUSED', $branch, 'in the guard\'s own sentence');
+        $this->assertContains('p202_account_redirect', $branch, 'and leaves');
+        $this->assertNotContains('$_POST', $branch, 'reading nothing that was posted');
+    }
+
     public function testTheKnownListHasNoStaleEntries(): void
     {
         foreach (self::KNOWN_UNGUARDED as $relative) {

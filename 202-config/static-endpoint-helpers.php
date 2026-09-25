@@ -2,45 +2,6 @@
 
 declare(strict_types=1);
 
-if (!function_exists('p202ResolveAdvertiserId')) {
-    /**
-     * @return int|null
-     */
-    function p202ResolveAdvertiserId(mysqli $db, int $campaignId)
-    {
-        if ($campaignId <= 0) {
-            return null;
-        }
-
-        $stmt = $db->prepare('SELECT aff_network_id FROM 202_aff_campaigns WHERE aff_campaign_id = ? LIMIT 1');
-        if ($stmt === false) {
-            return null;
-        }
-
-        // @phpstan-ignore-next-line static endpoint uses raw mysqli; no Connection instance available
-        $stmt->bind_param('i', $campaignId);
-        // @phpstan-ignore-next-line static endpoint uses raw mysqli; no Connection instance available
-        if (!$stmt->execute()) {
-            $stmt->close();
-            return null;
-        }
-        $result = $stmt->get_result();
-        $row = $result ? $result->fetch_assoc() : null;
-        if ($result) {
-            $result->free();
-        }
-        $stmt->close();
-
-        if (!is_array($row)) {
-            return null;
-        }
-
-        $advertiserId = (int) ($row['aff_network_id'] ?? 0);
-
-        return $advertiserId > 0 ? $advertiserId : null;
-    }
-}
-
 if (!function_exists('p202RespondJsonError')) {
     function p202RespondJsonError(int $code, string $message): void
     {
@@ -675,54 +636,6 @@ if (!function_exists('p202TimeDifference')) {
     }
 }
 
-if (!function_exists('p202PersistLegacyJourney')) {
-    /**
-     * Persist the multi-touch journey for a newly recorded conversion, as
-     * gpx.php, gpb.php and upx.php do after their own recording. Without it
-     * the attribution engine sees these conversions as single-touch.
-     *
-     * Everything here is best effort and inside one try: the conversion is
-     * already committed, so nothing about attribution may turn the response
-     * into an error. That includes the settings lookup, which the three
-     * older endpoints call outside their try — a missing settings table
-     * there is a 500 after the commit. The journey source itself (the
-     * account's clicks on the campaign) is what the measurement-rewrite plan
-     * replaces; until then this keeps the legacy endpoints on par with the
-     * global ones.
-     */
-    function p202PersistLegacyJourney(
-        mysqli $db,
-        int $conversionId,
-        int $userId,
-        int $campaignId,
-        int $conversionTime,
-        int $clickId,
-        int $clickTime
-    ): void {
-        try {
-            $scope = ['user_id' => $userId, 'campaign_id' => $campaignId];
-            $advertiserId = p202ResolveAdvertiserId($db, $campaignId);
-            if ($advertiserId !== null) {
-                $scope['advertiser_id'] = $advertiserId;
-            }
-            $settings = \Prosper202\Attribution\AttributionServiceFactory::createSettingsService();
-            if (!$settings->isMultiTouchEnabled($scope)) {
-                return;
-            }
-            (new \Prosper202\Attribution\Repository\Mysql\ConversionJourneyRepository($db))->persistJourney(
-                conversionId: $conversionId,
-                userId: $userId,
-                campaignId: $campaignId,
-                conversionTime: $conversionTime,
-                primaryClickId: $clickId,
-                primaryClickTime: $clickTime
-            );
-        } catch (\Throwable $journeyError) {
-            error_log('Failed to persist conversion journey for conv_id ' . $conversionId . ': ' . $journeyError->getMessage());
-        }
-    }
-}
-
 if (!function_exists('p202RecordLegacyConversion')) {
     /**
      * Record a conversion for one of the legacy endpoints — the per-campaign
@@ -831,17 +744,6 @@ if (!function_exists('p202RecordLegacyConversion')) {
         // the click vanished between the lookup and the lock.
         $recorded = $result['conv_id'] > 0 && !$result['duplicate'];
 
-        if ($recorded) {
-            p202PersistLegacyJourney(
-                $db,
-                (int) $result['conv_id'],
-                (int) $click['user_id'],
-                (int) $click['aff_campaign_id'],
-                $convTime,
-                $clickId,
-                $clickTime
-            );
-        }
         if ($recorded) {
             $reason = '';
         } elseif ($result['duplicate']) {

@@ -88,13 +88,12 @@ final class TableRegistry
 
     // Attribution tables
     public const string ATTRIBUTION_MODELS = '202_attribution_models';
-    public const string ATTRIBUTION_SNAPSHOTS = '202_attribution_snapshots';
-    public const string ATTRIBUTION_TOUCHPOINTS = '202_attribution_touchpoints';
-    public const string ATTRIBUTION_SETTINGS = '202_attribution_settings';
+    public const string ATTRIBUTION_JOURNEYS = '202_attribution_journeys';
+    public const string ATTRIBUTION_JOURNEY_META = '202_attribution_journey_meta';
+    public const string ATTRIBUTION_CREDITS = '202_attribution_credits';
     public const string ATTRIBUTION_AUDIT = '202_attribution_audit';
     public const string ATTRIBUTION_EXPORTS = '202_attribution_exports';
     public const string CONVERSION_LOGS = '202_conversion_logs';
-    public const string CONVERSION_TOUCHPOINTS = '202_conversion_touchpoints';
 
     // Conversion ledger (ConversionTables)
     public const string ATTRIBUTION_PENDING = '202_attribution_pending';

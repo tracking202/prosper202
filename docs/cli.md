@@ -673,59 +673,82 @@ p202 rotator rule-update 5 12 \
 
 ## Attribution
 
+Multi-touch attribution spreads each conversion's value over the visitor's
+journey — their clicks, linked by first-party identity signals (the
+tracking-domain cookie, the landing-page id, a signed customer id), across
+campaigns — under every active model. A worker (`202-cronjobs/attribution-worker.php`,
+also run by the minutely cron) computes credits from the conversion outbox.
+
 ### Models
 
 ```bash
 p202 attribution model list
-p202 attribution model list --type time_decay
-p202 attribution model get 3
-p202 attribution model create \
-  --model_name "30-Day Decay" \
-  --model_type time_decay \
-  --weighting_config '{"half_life_days": 7}'
-p202 attribution model update 3 --is_default 1
+p202 attribution model create --model-name "Decay 24h" --model-type time_decay \
+  --weighting-config '{"half_life_hours": 24}' --lookback-days 60
+p202 attribution model update 3 --default
+p202 attribution model update 3 --status inactive
 p202 attribution model delete 3
 ```
 
-| Flag                | Required (create) | Description                     |
-|---------------------|-------------------|---------------------------------|
-| `--model_name`      | Yes               | Model name                      |
-| `--model_type`      | Yes               | first_touch, last_touch, linear, time_decay, position_based, algorithmic |
-| `--weighting_config` | No               | Weighting config as JSON string |
-| `--is_active`       | No                | 1 = active, 0 = inactive        |
-| `--is_default`      | No                | 1 = default model                |
+| Flag                 | Required (create) | Description |
+|----------------------|-------------------|-------------|
+| `--model-name`       | Yes | Model name (unique per account) |
+| `--model-type`       | Yes | last_touch, first_touch, linear, time_decay, position_based |
+| `--weighting-config` | No  | JSON object: time_decay `{"half_life_hours":48}`; position_based `{"first_weight":0.4,"last_weight":0.4}`; the others take none |
+| `--lookback-days`    | No  | 1–365, default 30: how far before a conversion a click can earn credit |
+| `--status`           | No  | active or inactive |
+| `--default`          | No  | Make it the account default (every account has exactly one; the default cannot be deleted or deactivated) |
 
-### Snapshots
+### Reports
 
 ```bash
-p202 attribution snapshot list 3
-p202 attribution snapshot list 3 --scope_type campaign --limit 500
+p202 attribution breakdown --group-by campaign
+p202 attribution breakdown --group-by traffic_source --model 3 --compare-model 4 --period last7
+p202 attribution journeys --period last30
+p202 attribution journey 1234
+p202 attribution queue
 ```
 
-| Flag            | Default | Description                       |
-|-----------------|---------|-----------------------------------|
-| `--scope_type`  |         | Filter: global, campaign, landing_page |
-| `-l, --limit`   | 100     | Maximum results                   |
-| `-o, --offset`  | 0       | Pagination offset                 |
+| Flag              | Default  | Description |
+|-------------------|----------|-------------|
+| `--group-by`      | campaign | campaign, traffic_source, landing_page, keyword, c1–c4, country, device, day |
+| `--model`         | effective | A model id; without it each conversion uses its campaign's override, else the account default |
+| `--compare-model` |          | A second model, side by side |
+| `--period`        | last 30 days | today, yesterday, last7, last30, last90 |
+| `--time-from/--time-to` |    | Unix seconds (exclusive with `--period`) |
+| `--limit`         | 100      | Rows, 1–1000 |
+
+Each row has attributed conversions (Σ credit), attributed revenue, the
+dimension's own clicks and cost, ROI, and assisted conversions.
 
 ### Exports
 
 ```bash
-p202 attribution export list 3
-p202 attribution export schedule 3 \
-  --scope_type campaign \
-  --format json \
-  --webhook_url "https://hooks.example.com/receive"
+p202 attribution export create --group-by campaign --model 3 --period last30
+p202 attribution export create --group-by day --run-at 1790000000 \
+  --webhook-url https://hooks.example.com/p202
+p202 attribution export list --status failed
+p202 attribution export download 7 --output export.csv
+p202 attribution export retry 7
+p202 attribution export delete 7
 ```
 
-| Flag            | Default | Description                   |
-|-----------------|---------|-------------------------------|
-| `--scope_type`  | global  | Scope: global, campaign, landing_page |
-| `--scope_id`    | 0       | Scope entity ID               |
-| `--start_hour`  |         | Start timestamp               |
-| `--end_hour`    |         | End timestamp                 |
-| `--format`      | csv     | Export format: csv or json    |
-| `--webhook_url` |         | Webhook URL for delivery      |
+An export writes every group of a breakdown to a CSV (the minutely cron runs
+it), downloadable, and optionally POSTs it to an https webhook signed with
+HMAC-SHA256 (`X-P202-Signature: sha256=<hex>` over `<X-P202-Timestamp>.<body>`).
+The create response carries `webhook_secret` once. Webhooks go only to public
+addresses (every resolved address is checked, the connection is pinned to it,
+redirects are not followed); a refused URL is a validation error naming the
+address.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--group-by` | campaign | A breakdown dimension |
+| `--model`, `--compare-model` | the default model | Model ids |
+| `--period`, `--time-from/--time-to` | last 30 days | As for `breakdown` |
+| `--run-at` | now | Unix seconds |
+| `--webhook-url`, `--webhook-secret` | none, generated | https only |
+| `--output` / `-O` (download) | stdout | Write the CSV to a file |
 
 ## Users
 

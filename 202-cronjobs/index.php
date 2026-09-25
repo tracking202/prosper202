@@ -422,6 +422,37 @@ function RunSecondsCronjob()
                 error_log("DataEngine processing failed: " . $e->getMessage());
             }
 
+            // Multi-touch attribution: drain the conversion outbox into
+            // journeys and credits (202-cronjobs/attribution-worker.php is
+            // the same run for deployments that schedule it on its own; the
+            // named lock keeps the two from overlapping). A failure here
+            // loses nothing — every pending row stays for the next run — so
+            // it is logged and the rest of the cron carries on.
+            try {
+                $attribution = \Prosper202\Attribution\AttributionWorker::runExclusive(
+                    new \Prosper202\Database\Connection($db),
+                    20
+                );
+                if ($attribution !== null && $attribution->processed() > 0) {
+                    echo 'Attribution: ' . htmlspecialchars($attribution->summary(), ENT_QUOTES) . '<br>';
+                }
+            } catch (\Throwable $e) {
+                error_log('Attribution worker failed: ' . $e->getMessage());
+            }
+
+            // Attribution exports whose time has come (202-cronjobs/
+            // attribution-exports.php is the same run on its own). A job's
+            // failure is recorded on its row; only a database error lands
+            // here, and every job it did not reach is still pending.
+            try {
+                $exports = (new \Prosper202\Attribution\ExportRunner(new \Prosper202\Database\Connection($db)))->run(15);
+                if ($exports['completed'] + $exports['failed'] + $exports['retrying'] > 0) {
+                    echo 'Attribution exports: ' . (int) $exports['completed'] . ' completed, ' . (int) $exports['failed'] . ' failed<br>';
+                }
+            } catch (\Throwable $e) {
+                error_log('Attribution export runner failed: ' . $e->getMessage());
+            }
+
             echo 'Done<br>';
             ob_flush();
             flush();
