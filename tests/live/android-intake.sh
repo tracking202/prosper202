@@ -29,14 +29,19 @@
 #   - a pending click (the token verified, the click row not yet written) is
 #     settled by 202-cronjobs/app-installs.php once the row appears, which
 #     also sends the queued notifications: each arrives at the pixel's URL
-#     with the goal tokens filled;
+#     with the goal tokens filled; the pixel holds a second URL that
+#     refuses, which is its own row, retried alone — the endpoint that
+#     accepted hears each conversion once however often the other fails;
 #   - the operator's reads (GET /apps/{id}/installs, the CLI's `app install
-#     list/get/simulate`, simulate refused under --staged), the retention
+#     list/get/simulate`, simulate refused under --staged); deleting a
+#     registration unlinks its campaigns, so registering the app again can
+#     mint tokens for their clicks; the retention
 #     classes, and the per-peer rate limit (last, since it trips the bucket).
 #
 # The traffic-source pixel points back at this instance's unauthenticated
-# /api/v3/versions, so a sent notification is a 2xx the worker can see; set
-# P202_SERVER_LOG to the php -S log to also match each request line.
+# /api/v3/versions, so a sent notification is a 2xx the worker can see, and
+# at /api/v3/pr5-refuses, a 404 it retries; set P202_SERVER_LOG to the php -S
+# log to also match each request line.
 #
 # Runs 202-cronjobs/*.php from this checkout, so the checkout's 202-config.php
 # must name the instance's database. Truncates the app, goal and outbox
@@ -197,7 +202,7 @@ PNET=$(field "d['data']['ppc_network_id']")
 eq "$(api POST /ppc-accounts "{\"ppc_account_name\":\"android-pass\",\"ppc_network_id\":$PNET}")" 201 "and its account"
 PACC=$(field "d['data']['ppc_account_id']")
 Q "INSERT INTO 202_ppc_account_pixels (pixel_code, pixel_type_id, ppc_account_id) VALUES
-   ('$BASE/api/v3/versions?pr5=android&sub=[[subid]]&goal=[[p202_goal]]&v=[[p202_goal_value]]&tx=[[transactionid]]', 4, $PACC),
+   ('$BASE/api/v3/versions?pr5=android&sub=[[subid]]&goal=[[p202_goal]]&v=[[p202_goal_value]]&tx=[[transactionid]] $BASE/api/v3/pr5-refuses?sub=[[subid]]&goal=[[p202_goal]]', 4, $PACC),
    ('<img src=\"https://browser.example/px?sub=[[subid]]\">', 5, $PACC)"
 eq "$(api POST /trackers "{\"aff_campaign_id\":$CAMP,\"ppc_account_id\":$PACC}")" 201 "a tracker for campaign A"
 TRK=$(field "d['data']['tracker_id_public']")
@@ -240,9 +245,9 @@ eq "$(Q "SELECT CONCAT_WS('/', source, dedupe_key, pixel_type, payable, click_pa
    "app_install/install/4/1/2.50000/40/1" "its conversion: key install, pixel_type 4, at Google's install time, the campaign's default"
 eq "$(Q "SELECT CONCAT(click_lead, '/', click_payout) FROM 202_clicks WHERE click_id=$C1")" "1/2.50000" "the click is a lead worth \$2.50"
 eq "$(Q "SELECT COUNT(*) FROM 202_attribution_pending WHERE conv_id='$CONV1'")" 1 "queued for MTA"
-eq "$(Q "SELECT CONCAT_WS('/', kind, status) FROM 202_notification_pending WHERE conv_id='$CONV1'")" "reached/pending" \
-   "one server postback queued (the browser pixel has no page to render on)"
-eq "$(Q "SELECT url FROM 202_notification_pending WHERE conv_id='$CONV1'")" \
+eq "$(Q "SELECT GROUP_CONCAT(CONCAT_WS('/', destination, kind, status) ORDER BY destination) FROM 202_notification_pending WHERE conv_id='$CONV1'")" "0/reached/pending,1/reached/pending" \
+   "one server postback queued per URL of the server pixel (the browser pixel has no page to render on)"
+eq "$(Q "SELECT url FROM 202_notification_pending WHERE conv_id='$CONV1' AND destination=0")" \
    "$BASE/api/v3/versions?pr5=android&sub=$C1&goal=install&v=2.50000&tx=install" "with the goal tokens filled"
 eq "$(Q "SELECT CONCAT_WS('/', o.event_id, o.app_registration_id, o.conversion_id) FROM 202_goal_outcomes o WHERE o.goal_id=$G_INSTALL")" "@install/$R/$CONV1" \
    "the install goal's outcome links the conversion and the app"
@@ -305,6 +310,12 @@ eq "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/v3/apps/instal
 # ─────────────────────────────────────────────────────────────────────
 say "events reach the campaign's goals, once, whatever the order"
 T=$(( $(ctime "$C1") + 100 ))
+# The server clamps an event dated in its future to the time it received
+# it, which would erase the order the purchases below depend on (p0 must
+# stay earlier than p1 and p2). The latest one is T + 20, so wait until
+# that is in the past; a pass that reaches here fast pays up to ~2 minutes.
+wait_s=$(( T + 21 - $(date +%s) ))
+if [ "$wait_s" -gt 0 ]; then sleep "$wait_s"; fi
 for level in 1 2 3; do
     events_body "$OUT/e.json" "[{\"event_id\":\"l$level\",\"name\":\"level_reached\",\"occurred_at\":$((T + level)),\"properties\":{\"level\":$level}}]"
     device POST "/apps/installs/$U1/events" "$TOKEN" "$OUT/e.json" > /dev/null
@@ -336,7 +347,7 @@ device POST "/apps/installs/$U1/events" "$TOKEN" "$OUT/e.json" > /dev/null
 eq "$(Q "SELECT GROUP_CONCAT(CONCAT(click_payout, ':', COALESCE(superseded_reason, 'counted')) ORDER BY conv_id) FROM 202_conversion_logs WHERE click_id=$C1 AND source_ref='goal:$G_SECOND:1'")" \
    "10.00000:replay,5.00000:counted" "a late, earlier purchase re-decides it: \$10 superseded, \$5 counted"
 eq "$(Q "SELECT click_payout FROM 202_clicks WHERE click_id=$C1")" "11.50000" "the click is \$2.50 + \$4 + \$5"
-eq "$(Q "SELECT GROUP_CONCAT(status ORDER BY notification_id) FROM 202_notification_pending WHERE url LIKE '%goal=Second%'")" "cancelled,pending" \
+eq "$(Q "SELECT GROUP_CONCAT(status ORDER BY notification_id) FROM 202_notification_pending WHERE url LIKE '%goal=Second%' AND destination=0")" "cancelled,pending" \
    "the network, told nothing yet, hears only the corrected value"
 
 # ─────────────────────────────────────────────────────────────────────
@@ -379,13 +390,26 @@ has "$OUT/cron.txt" "settled attributed=1" "and settles the install"
 eq "$(Q "SELECT CONCAT_WS('/', match_state, trusted, conversion_id IS NOT NULL, settled_at IS NOT NULL) FROM 202_app_installs WHERE install_uuid='$U8'")" "attributed/1/1/1" \
    "attributed, with its conversion"
 eq "$(device POST "/apps/installs/$U8/events" "$TOKEN" "$OUT/e8.json")" 200 "its events are accepted now"
-eq "$(Q "SELECT GROUP_CONCAT(DISTINCT status) FROM 202_notification_pending WHERE kind='reached' AND status <> 'cancelled' AND conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id=$C1)")" sent \
-   "every queued postback was sent"
-eq "$(Q "SELECT COUNT(*) FROM 202_notification_pending WHERE status='pending' AND notification_id <= $QUEUED_BEFORE")" 0 "and nothing queued before the run was left behind"
+eq "$(Q "SELECT GROUP_CONCAT(DISTINCT status) FROM 202_notification_pending WHERE kind='reached' AND destination=0 AND status <> 'cancelled' AND conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id=$C1)")" sent \
+   "every queued postback to the accepting URL was sent"
+eq "$(Q "SELECT GROUP_CONCAT(DISTINCT CONCAT_WS('/', status, attempts, last_error LIKE '%/api/v3/pr5-refuses?%')) FROM 202_notification_pending WHERE kind='reached' AND destination=1 AND status <> 'cancelled' AND conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id=$C1)")" "pending/1/1" \
+   "the refusing URL's rows were tried once and wait to retry, naming it"
+eq "$(Q "SELECT COUNT(*) FROM 202_notification_pending WHERE status='pending' AND attempts=0 AND notification_id <= $QUEUED_BEFORE")" 0 "and nothing queued before the run was left untried"
+# Every waiting row's backoff, spent (not just the refusing URL's: a row that
+# still carried the accepting URL would be resent too, and the log count
+# below must see that): the next run retries them.
+Q "UPDATE 202_notification_pending SET next_attempt_at = 0 WHERE status='pending' AND attempts > 0"
+(cd "$ROOT" && "$PHP" 202-cronjobs/app-installs.php) > "$OUT/cron2.txt" 2>&1
+eq "$?" 0 "the job runs again"
+eq "$(Q "SELECT GROUP_CONCAT(DISTINCT CONCAT_WS('/', status, attempts)) FROM 202_notification_pending WHERE kind='reached' AND destination=1 AND status <> 'cancelled' AND conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id=$C1)")" "pending/2" \
+   "the refusing URL was retried"
+eq "$(Q "SELECT GROUP_CONCAT(DISTINCT CONCAT_WS('/', status, attempts)) FROM 202_notification_pending WHERE kind='reached' AND destination=0 AND status <> 'cancelled' AND conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id=$C1)")" "sent/1" \
+   "and the accepting URL was not"
 if [ -n "$SERVER_LOG" ]; then
     has "$SERVER_LOG" "GET /api/v3/versions?pr5=android&sub=$C1&goal=install&v=2.50000&tx=install" "the network received the install postback"
     has "$SERVER_LOG" "GET /api/v3/versions?pr5=android&sub=$C1&goal=Level%203&v=4.00000" "and level 3's, each once"
-    eq "$(grep -c "pr5=android&sub=$C1&goal=install&" "$SERVER_LOG")" 1 "the install postback arrived exactly once"
+    eq "$(grep -c "pr5=android&sub=$C1&goal=install&" "$SERVER_LOG")" 1 "the install postback arrived exactly once, though its sibling URL failed twice"
+    eq "$(grep -c "GET /api/v3/pr5-refuses?sub=$C1&goal=install" "$SERVER_LOG")" 2 "the refusing URL was asked twice"
 fi
 (cd "$ROOT" && "$PHP" 202-cronjobs/app-installs.php extra) > "$OUT/cron-bad.txt" 2>&1
 eq "$?" 1 "the job refuses an argument"
@@ -425,6 +449,18 @@ if (cd "$ROOT/go-cli" && go build -o "$CLI" .) 2> "$OUT/build.err"; then
 else
   bad "the CLI builds ($(head -3 "$OUT/build.err"))"
 fi
+
+say "deleting a registration unlinks its campaigns; registering the app again attributes them"
+eq "$(api DELETE "/apps/$R_OTHER?dry_run=1")" 200 "a delete preview"
+eq "$(field "[c['action'] for c in d['data']['cascade'] if c['resource'] == 'campaigns']")" '["unlink (app_registration_id set to NULL)"]' "names the campaigns it unlinks"
+eq "$(api DELETE "/apps/$R_OTHER")" 204 "the other app's registration is deleted"
+eq "$(api GET "/campaigns/$CAMP_B")" 200 "its campaign is kept"
+eq "$(field "d['data']['app_registration_id']")" "" "unlinked in the delete"
+eq "$(api POST /apps '{"store_link":"com.p202.pass.other","app_name":"Other again"}')" 201 "the app is registered again"
+R_AGAIN=$(field "d['data']['registration_id']")
+C10=$(click "$TRK_B" "$OUT/h10")
+eq "$(api GET "/apps/$R_AGAIN/install-token?click_id=$C10")" 200 "a token for the campaign's click is no longer refused as another app's"
+eq "$(api PUT "/campaigns/$CAMP_B" "{\"app_registration_id\":$R_AGAIN}")" 200 "and the campaign links to the new registration"
 
 say "retention and the rate limit"
 (cd "$ROOT" && "$PHP" 202-cronjobs/app-retention.php --dry-run) > "$OUT/ret.txt" 2>&1

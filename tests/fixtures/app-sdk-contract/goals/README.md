@@ -35,6 +35,7 @@ threshold  {"count": 1–10000}  or  {"sum": {"prop": <prop>, "gte": <amount > 0
 after      [<goal id>…] — at most 5, distinct, not the goal itself            default []
 within     {"days": 1–3650, "from": "install" | "click"}  or null              default null
 repeat     {"mode": "once"}  or  {"mode": "each"}  or  {"mode": "each", "max": 1–10000}   default once
+           — with a sum threshold, "each" requires max (error path repeat.max)
 value      {"type": "fixed", "amount": <amount>}  or  {"type": "from_property", "prop": <prop>}
            or  {"type": "none"}; from_property's prop defaults to "$revenue"        default none
 
@@ -50,6 +51,12 @@ amount     a number or a decimal string, 0–999999.99999, at most 5 decimal pla
 
 An install trigger is the install itself: no `where`, a count of 1,
 `repeat: once`, no `after`, no `within`, and no `from_property` value.
+
+A sum threshold that repeats (`"each"`) must have a `max`: one event can
+cross many multiples of a sum, so without a bound one event could reach an
+unbounded number of outcomes. A count threshold grows by one per event, so
+its `"each"` may omit `max`. A stored definition that breaks this rule is
+invalid like any other (rule 4: `invalid_definition`).
 
 ## `evaluator.json` — what a set of goals makes of a subject's events
 
@@ -131,8 +138,10 @@ reason; `progress` by goal id, version.
      its outcomes are recorded with `ineligible_reason` `no_click` /
      `no_install` (never re-based on the other anchor), and an ineligible
      outcome does not satisfy another goal's `after`.
-   - for a `sum` threshold: the summed property is a number (else the event
-     does not count at all).
+   - for a `sum` threshold: the summed property is a number whose value in
+     units (see amounts) is within ±99999999999, i.e. ±999999.99999 — the
+     most one conversion holds (else the event does not count at all, as if
+     the property were missing). A negative value in range counts.
 7. **Predicates.** A property is read from `properties`; `$revenue` reads
    the event's `revenue` field instead. Every operator but `exists` is false
    when the property is absent. Equality is typed: two numbers are equal
@@ -143,13 +152,25 @@ reason; `progress` by goal id, version.
    `lt`, `lte` hold only when the property is a number, compared as IEEE
    doubles. `exists` holds when the property is present, whatever its value.
 8. **Counting.** A counted event adds 1 to `count`; for a `sum` threshold it
-   also adds its value, in integer units of 0.00001 (see amounts), to `sum`.
-9. **Reaching.** After counting, while `times_reached` is below the cap (1
-   for `once`, `max` or unbounded for `each`): the next n is `times_reached
-   + 1`; it is reached when `count >= n × N` (or `sum >= n × gte`). Each
-   reached n is an outcome with this event's id and `reached_at = t`; one
-   event can reach several n when a sum jumps. `reached_at` in progress is
-   the first outcome's time.
+   also adds its value, in integer units of 0.00001 (see amounts), to `sum`,
+   and the result is held between −10^15 units and `cap × gte`:
+   `sum = min(cap × gte, max(−1000000000000000, sum + value))`, where `cap`
+   is 1 for `once` and `max` for `each`. Every term fits a signed 64-bit
+   integer, which is how every evaluator must hold the sum. The ceiling
+   never changes an outcome (a sum that reaches it has reached every n it
+   can), only the `sum` progress reports; the floor is reached only after
+   more than 10,000 of the most negative summands, which no server subject
+   holds.
+9. **Reaching.** The cap is 1 for `once`, `max` for `each` (unbounded only
+   for a count's `each` without `max`). After counting, the total reached is
+   `min(cap, floor(count / N))` for a count, `min(cap, floor(sum / gte))`
+   for a sum (0 while the sum is not positive). Every n from `times_reached
+   + 1` to that total is reached by this event, in order, each an outcome
+   with this event's id and `reached_at = t`; one event can reach several n
+   when a sum jumps, never more than `max`. Compute the total — never test
+   n one at a time — so an event costs the outcomes it reaches and nothing
+   more. `times_reached` never decreases. `reached_at` in progress is the
+   first outcome's time.
 10. **Value.** `fixed`: the amount. `none`: null. `from_property`: the
     property's value when it is a number, not negative and at most
     999999.99999; otherwise null with `value_note` `missing`,

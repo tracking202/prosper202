@@ -341,7 +341,7 @@ final class AppControllersTest extends TestCase
             static fn(array $s): bool => preg_match('/^(UPDATE|DELETE)/', ltrim($s['sql'])) === 1
         ));
         $sql = array_map(static fn(array $s): string => $s['sql'], $writes);
-        $this->assertCount(8, $writes, implode("\n", $sql));
+        $this->assertCount(9, $writes, implode("\n", $sql));
         $this->assertStringContainsString('UPDATE 202_app_postbacks SET trusted = NULL', $sql[0]);
         $this->assertStringContainsString('signature_state = ?', $sql[0]);
         $this->assertSame([7, 1, 'development'], $writes[0]['values'], 'this registration, this owner, test signals only');
@@ -358,10 +358,14 @@ final class AppControllersTest extends TestCase
         $this->assertStringContainsString('DELETE FROM 202_app_integrity_credentials', $sql[4]);
         $this->assertSame([7, 1], $writes[4]['values'], 'this registration\'s credential, this owner');
         $this->assertStringContainsString('DELETE FROM 202_app_skan_encodings', $sql[5]);
+        // Its campaigns are unlinked, or re-registering the app (a new id)
+        // would find them linked to a registration that no longer exists.
+        $this->assertStringContainsString('UPDATE 202_aff_campaigns SET app_registration_id = NULL WHERE app_registration_id = ? AND user_id = ?', $sql[6]);
+        $this->assertSame([7, 1], $writes[6]['values'], 'this registration\'s campaigns, this owner');
         // The app's goals are archived with it, their history kept.
-        $this->assertStringContainsString('UPDATE 202_goals SET archived_at = ?', $sql[6]);
-        $this->assertSame([7, 1], array_slice($writes[6]['values'], 2), 'this registration\'s goals, this owner');
-        $this->assertStringContainsString('DELETE FROM 202_app_registrations', $sql[7]);
+        $this->assertStringContainsString('UPDATE 202_goals SET archived_at = ?', $sql[7]);
+        $this->assertSame([7, 1], array_slice($writes[7]['values'], 2), 'this registration\'s goals, this owner');
+        $this->assertStringContainsString('DELETE FROM 202_app_registrations', $sql[8]);
     }
 
     public function testTheStoredPlatformIsCanonicalWhateverCaseWasSent(): void
