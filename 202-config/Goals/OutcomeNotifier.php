@@ -22,7 +22,10 @@ namespace Prosper202\Goals;
  *                 of an outcome the traffic source may already have heard
  *                 about, and a delivered postback cannot be recalled; or
  *                 its event already reached the goal in an outcome the same
- *                 replay retires, when a late event shifted n),
+ *                 replay retires, when a late event shifted n; or it was
+ *                 revived, and its first write was the announcement; or an
+ *                 earlier row for the same goal and n, of any version and
+ *                 retired or not, was payable — plan §5.7),
  *                 `no_click` (an install with no click has no traffic
  *                 source);
  *     off         payable, but the campaign does not notify for this goal;

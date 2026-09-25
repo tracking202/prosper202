@@ -223,6 +223,48 @@ final class WebEventsIntegrationTest extends TestCase
         self::assertCount(2, $this->fetched);
     }
 
+    /**
+     * Plan §5.7, for web subjects: A → B announced; a version that stops
+     * matching retires both (no retraction on this path); a version that
+     * matches again revives B — its first write was the announcement, so
+     * decision 1 sends nothing — and writes A anew under its third version
+     * for the n its first version announced, so decision 2 sends nothing
+     * either. The network heard each outcome exactly once.
+     */
+    public function testAnOutcomeRetiredAndReachedAgainIsNotAnnouncedAgain(): void
+    {
+        $this->campaign(7, 'accumulate');
+        $this->click(100, 7);
+        $this->pixels();
+        $big = ['name' => 'Buy', 'trigger' => ['event' => 'buy', 'where' => [['prop' => 'amount', 'op' => 'gte', 'value' => 100]]],
+            'value' => ['type' => 'fixed', 'amount' => 5]];
+        $any = ['name' => 'Buy', 'trigger' => ['event' => 'buy'], 'value' => ['type' => 'fixed', 'amount' => 5]];
+        $a = $this->goal(7, $any);
+        $b = $this->goal(7, ['name' => 'Upsell', 'trigger' => ['event' => 'upsell'], 'after' => [$a], 'value' => ['type' => 'fixed', 'amount' => 3]]);
+        $engine = $this->engineWith($this->notifier());
+        $first = $this->send($engine, 100, [$this->event('p1', 'buy', self::T, ['amount' => 10]), $this->event('u1', 'upsell', self::T + 1)]);
+        self::assertSame(['reached', 'reached'], array_column($first['outcomes'], 'kind'));
+        self::assertCount(2, $this->fetched);
+
+        $this->clock += 100;
+        $this->goals->addVersion(1, $a, GoalDefinition::parse($big, $a), $this->clock);
+        self::assertSame(2, $engine->reevaluate(1, $a, null, true)['totals']['retire']);
+
+        $this->clock += 100;
+        $this->goals->addVersion(1, $a, GoalDefinition::parse($any, $a), $this->clock);
+        $back = $engine->reevaluate(1, $a, null, true);
+        self::assertSame(2, $back['totals']['write']);
+        self::assertSame(['lead' => 1, 'payout' => '8.00000'], $this->clickState(100), 'both count again');
+        $kinds = [];
+        foreach ($back['subjects'][0]['notifications'] as $n) {
+            $kinds[$n['goal_id'] === $a ? 'A' : 'B'] = $n['kind'] . ':' . $n['status'];
+        }
+        ksort($kinds);
+        self::assertSame(['A' => 'suppressed:not_sent', 'B' => 'suppressed:not_sent'], $kinds,
+            'B was revived (decision 1); A v3 is a new row for an n A v1 announced (decision 2)');
+        self::assertCount(2, $this->fetched, 'nothing was announced a second time');
+    }
+
     public function testANotifierThatThrowsDoesNotUndoTheCommittedWrite(): void
     {
         $this->campaign(7, 'accumulate');

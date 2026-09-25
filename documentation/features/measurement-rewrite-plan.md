@@ -1569,7 +1569,17 @@ the API is `EventsController`; the CLIs are `p202 event send` and
   `4.00`), `[[payout]]` and `[[transactionid]]` (the event's transaction id,
   else the row's dedupe key). A notifier that throws is logged and reported
   as `failed`; the write stands (#13). Re-evaluation apply notifies the
-  outcomes the old version never reached. Browser pixels render only where a
+  outcomes the old version never reached — in §5.7's sense: no row for that
+  `(subject, goal, n)` was ever announced, retired rows and every version
+  included. A revived outcome is never announced again (its first write
+  was the announcement, and this path sends no retraction, so the network
+  still holds it); a new row for an `n` an earlier row may have announced
+  is `suppressed` (`replacement`). With no record of what was sent, "may
+  have announced" is "an earlier row for that n was payable on the ledger",
+  the direction that never tells a network twice (`announcedBefore()`;
+  `WebEventsIntegrationTest` runs the retire-and-reach-again funnel). The
+  outbox, when the two meet, answers it from what was actually queued.
+  Browser pixels render only where a
   browser asked (upx's answer); elsewhere they are counted `browser_only`.
 - **The sender became a class.** `replaceTokens()` (connect2.php) and
   `p202FireTrafficSourcePixels()` delegate to `TrafficSourcePixels`, so the

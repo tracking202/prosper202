@@ -654,6 +654,17 @@ final class GoalEngine
      * $5, $10), and announcing the "new" third outcome would tell the
      * network about the $10 a second time.
      *
+     * Plan §5.7: what a network knows is per (subject, goal, n), not per
+     * row. A revived outcome keeps its conversion, whose `reached` went out
+     * when it was first written, and this path sends no retraction, so the
+     * network still holds it: never announced again (decision 1). And a
+     * new row for an n that any earlier row of the goal — retired rows and
+     * every version included, not only the one this plan retires — may have
+     * been announced for is a replacement too (decision 2,
+     * announcedBefore()): at the third step of a funnel whose prerequisite
+     * matched, stopped matching and matched again, the prerequisite's new
+     * version would otherwise be sent a second time.
+     *
      * @param list<GoalEvent> $events
      * @param array{ledger: list<array<string, mixed>>, clicks: array<int, true>, notices: list<array<string, mixed>>} $post
      * @return array{written: int, retired: int}
@@ -690,7 +701,8 @@ final class GoalEngine
             $term = $terms[$o->goalId] ?? null;
             $written = $this->writeOutcome($userId, $subject, $o, $term, $event, $now, $post);
             $ids[$key] = ['outcome_id' => $written['outcome_id'], 'conversion_id' => $written['conversion_id']];
-            $announced = isset($replacing[$key]) || isset($retiredEvents[$o->goalId . "\0" . $o->eventId]) || $written['revived'];
+            $announced = isset($replacing[$key]) || isset($retiredEvents[$o->goalId . "\0" . $o->eventId]) || $written['revived']
+                || $this->announcedBefore($userId, $subject, $o, $written['outcome_id']);
             $post['notices'][] = self::notice($o, $written, $term, $subject, $announced);
         }
 
@@ -865,6 +877,27 @@ final class GoalEngine
             'outcome_id' => $outcomeId, 'conversion_id' => $convId, 'revived' => false, 'conversion_new' => $conversionNew,
             'payable' => $payable, 'amount_units' => $amountUnits, 'transaction_id' => $event?->transactionId, 'dedupe_key' => $dedupeKey,
         ];
+    }
+
+    /**
+     * Whether an earlier row for this outcome's (subject, goal, n) — any
+     * version, retired or not — may have been announced: a payable row on
+     * the ledger. This path keeps no record of what it sent (PR 5's outbox
+     * does), so "may have been" is the test, in the direction that never
+     * tells a network the same outcome twice; a row that was never payable
+     * was never sent (OutcomeNotifier: `none`).
+     */
+    private function announcedBefore(int $userId, GoalSubject $subject, Outcome $o, int $outcomeId): bool
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT outcome_id FROM 202_goal_outcomes
+             WHERE user_id = ? AND subject_type = ? AND subject_id = ? AND goal_id = ? AND n = ? AND outcome_id <> ?
+               AND payable = 1 AND conversion_id IS NOT NULL
+             LIMIT 1'
+        );
+        $this->conn->bind($stmt, 'isiiii', [$userId, $subject->type, $subject->id, $o->goalId, $o->n, $outcomeId]);
+
+        return $this->conn->fetchOne($stmt) !== null;
     }
 
     /**
