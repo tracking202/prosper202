@@ -146,6 +146,10 @@ module.exports = {
   name: 'analyze-reports',
   title: 'Analyze › the click reports',
 
+  // The reset below truncates the report and setup tables and seeds its
+  // own dataset, so it runs after the specs that read the shared fixture.
+  replacesFixture: true,
+
   async reset(db) {
     const q = (v) => (v === null ? 'NULL' : "'" + String(v).replace(/'/g, "''") + "'");
     const values = (rows) => rows.map((r) => '(' + r.map(q).join(', ') + ')').join(', ');
