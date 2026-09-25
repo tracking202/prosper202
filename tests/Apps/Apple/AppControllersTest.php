@@ -752,24 +752,30 @@ final class AppControllersTest extends TestCase
             // has none; the last row was claimed by nobody (a registration
             // since deleted), which decodes through the account-wide set.
             'cv_registration_id' => [
-                ['grp_day' => $day, 'cv_registration_id' => 7, 'conversion_value' => 63, 'coarse_conversion_value' => null, 'cnt' => 2],
-                ['grp_day' => $day, 'cv_registration_id' => 8, 'conversion_value' => 63, 'coarse_conversion_value' => null, 'cnt' => 1],
-                ['grp_day' => $day, 'cv_registration_id' => 8, 'conversion_value' => 7, 'coarse_conversion_value' => null, 'cnt' => 1],
-                ['grp_day' => $day, 'cv_registration_id' => null, 'conversion_value' => null, 'coarse_conversion_value' => 'high', 'cnt' => 1],
-                ['grp_day' => $day, 'cv_registration_id' => 8, 'conversion_value' => null, 'coarse_conversion_value' => null, 'cnt' => 1],
+                // cv_segment 2: after both breakpoints of encodings effective
+                // at 1 (1 and 1 + the horizon), where each meaning is the
+                // only one there has been.
+                ['grp_day' => $day, 'cv_registration_id' => 7, 'conversion_value' => 63, 'coarse_conversion_value' => null, 'cv_segment' => 2, 'cnt' => 2],
+                ['grp_day' => $day, 'cv_registration_id' => 8, 'conversion_value' => 63, 'coarse_conversion_value' => null, 'cv_segment' => 2, 'cnt' => 1],
+                ['grp_day' => $day, 'cv_registration_id' => 8, 'conversion_value' => 7, 'coarse_conversion_value' => null, 'cv_segment' => 2, 'cnt' => 1],
+                ['grp_day' => $day, 'cv_registration_id' => null, 'conversion_value' => null, 'coarse_conversion_value' => 'high', 'cv_segment' => 2, 'cnt' => 1],
+                ['grp_day' => $day, 'cv_registration_id' => 8, 'conversion_value' => null, 'coarse_conversion_value' => null, 'cv_segment' => 2, 'cnt' => 1],
             ],
-            // The user's encodings, each joined to the goal it names: a
-            // registration-specific fine encoding overriding the account-wide
-            // one for value 63 (worth its goal's fixed value, no override),
-            // plus an account-wide coarse encoding. The others are worth
-            // their override, whatever their goal says.
-            'FROM 202_app_skan_encodings e' => [
-                ['encoding_id' => 1, 'registration_id' => 0, 'fine_value' => 63, 'coarse_value' => null, 'goal_id' => 1, 'revenue_override' => '49.99000',
-                    'name' => 'purchase', 'definition' => '{"name":"purchase","trigger":{"event":"purchase","where":[]},"threshold":{"count":1},"after":[],"within":null,"repeat":{"mode":"once"},"value":{"type":"none"}}'],
-                ['encoding_id' => 2, 'registration_id' => 7, 'fine_value' => 63, 'coarse_value' => null, 'goal_id' => 2, 'revenue_override' => null,
-                    'name' => 'premium_purchase', 'definition' => '{"name":"premium_purchase","trigger":{"event":"premium","where":[]},"threshold":{"count":1},"after":[],"within":null,"repeat":{"mode":"once"},"value":{"type":"fixed","amount":"99.99"}}'],
-                ['encoding_id' => 3, 'registration_id' => 0, 'fine_value' => null, 'coarse_value' => 'high', 'goal_id' => 3, 'revenue_override' => '10.00000',
-                    'name' => 'high_value', 'definition' => '{"name":"high_value","trigger":{"event":"whale","where":[]},"threshold":{"count":1},"after":[],"within":null,"repeat":{"mode":"once"},"value":{"type":"fixed","amount":"1.00"}}'],
+            // The user's encodings: a registration-specific fine encoding
+            // overriding the account-wide one for value 63 (worth its goal's
+            // fixed value, no override), plus an account-wide coarse
+            // encoding. The others are worth their override, whatever their
+            // goal says. No history: nothing was ever edited.
+            'FROM 202_app_skan_encodings WHERE user_id' => [
+                ['registration_id' => 0, 'fine_value' => 63, 'coarse_value' => null, 'goal_id' => 1, 'revenue_override' => '49.99000', 'effective_at' => 1, 'retired_at' => null],
+                ['registration_id' => 7, 'fine_value' => 63, 'coarse_value' => null, 'goal_id' => 2, 'revenue_override' => null, 'effective_at' => 1, 'retired_at' => null],
+                ['registration_id' => 0, 'fine_value' => null, 'coarse_value' => 'high', 'goal_id' => 3, 'revenue_override' => '10.00000', 'effective_at' => 1, 'retired_at' => null],
+            ],
+            'FROM 202_app_skan_encoding_history' => [],
+            'SELECT g.goal_id, g.name, v.definition' => [
+                ['goal_id' => 1, 'name' => 'purchase', 'definition' => '{"name":"purchase","trigger":{"event":"purchase","where":[]},"threshold":{"count":1},"after":[],"within":null,"repeat":{"mode":"once"},"value":{"type":"none"}}'],
+                ['goal_id' => 2, 'name' => 'premium_purchase', 'definition' => '{"name":"premium_purchase","trigger":{"event":"premium","where":[]},"threshold":{"count":1},"after":[],"within":null,"repeat":{"mode":"once"},"value":{"type":"fixed","amount":"99.99"}}'],
+                ['goal_id' => 3, 'name' => 'high_value', 'definition' => '{"name":"high_value","trigger":{"event":"whale","where":[]},"threshold":{"count":1},"after":[],"within":null,"repeat":{"mode":"once"},"value":{"type":"fixed","amount":"1.00"}}'],
             ],
         ]);
 
@@ -794,6 +800,7 @@ final class AppControllersTest extends TestCase
         $this->assertSame(5, $group['measurable']);
         $this->assertSame(4, $group['decoded']);
         $this->assertSame(1, $group['undecoded']);
+        $this->assertSame(0, $group['ambiguous_encoding']);
         $this->assertSame(1, $group['null_conversion_values']);
 
         // 2 × 99.99 (the registration's own beats account-wide) + 1 × 49.99 + 1 × 10.00
@@ -805,6 +812,49 @@ final class AppControllersTest extends TestCase
         $this->assertSame(['count' => 2, 'revenue' => 199.98], $events['premium_purchase']);
         $this->assertSame(['count' => 1, 'revenue' => 49.99], $events['purchase']);
         $this->assertSame(['count' => 1, 'revenue' => 10.0], $events['high_value']);
+    }
+
+    public function testAValueWhoseMeaningChangedInsideTheHorizonIsAmbiguous(): void
+    {
+        // Fine 10 meant goal 1 until $edit, and goal 2 since. Rows are
+        // grouped by INTERVAL(received_at, breakpoints…), so each row here
+        // names the segment it fell in: before the edit (only goal 1 ever),
+        // inside the 35 days after it (both), after them (only goal 2).
+        $edit = 1_700_000_000;
+        $horizon = \Api\V3\Apps\Apple\SkanEncodingTimeline::HORIZON_SECONDS;
+        $segment = static function (int $at) use ($edit, $horizon): int {
+            // Breakpoints: 1, 1 + H, $edit, $edit + H.
+            return count(array_filter([1, 1 + $horizon, $edit, $edit + $horizon], static fn (int $b): bool => $b <= $at));
+        };
+        $db = $this->createMysqliMock([
+            'AS postbacks' => [['grp_day' => 0, 'postbacks' => 6, 'losses' => 0, 'installs' => 6, 'redownloads' => 0, 'reengagements' => 0,
+                'trusted_count' => 6, 'refuted_count' => 0, 'unvouched_count' => 0, 'test_count' => 0]],
+            'cv_registration_id' => [
+                ['grp_day' => 0, 'cv_registration_id' => 7, 'conversion_value' => 10, 'coarse_conversion_value' => null, 'cv_segment' => $segment($edit - 5), 'cnt' => 1],
+                ['grp_day' => 0, 'cv_registration_id' => 7, 'conversion_value' => 10, 'coarse_conversion_value' => null, 'cv_segment' => $segment($edit + 10 * 86400), 'cnt' => 3],
+                ['grp_day' => 0, 'cv_registration_id' => 7, 'conversion_value' => 10, 'coarse_conversion_value' => null, 'cv_segment' => $segment($edit + $horizon), 'cnt' => 2],
+            ],
+            'FROM 202_app_skan_encodings WHERE user_id' => [
+                ['registration_id' => 7, 'fine_value' => 10, 'coarse_value' => null, 'goal_id' => 2, 'revenue_override' => null, 'effective_at' => $edit, 'retired_at' => null],
+            ],
+            'FROM 202_app_skan_encoding_history' => [
+                ['registration_id' => 7, 'fine_value' => 10, 'coarse_value' => null, 'goal_id' => 1, 'revenue_override' => null, 'effective_at' => 1, 'retired_at' => $edit],
+            ],
+            'SELECT g.goal_id, g.name, v.definition' => [
+                ['goal_id' => 1, 'name' => 'trial', 'definition' => '{"name":"trial","trigger":{"event":"trial","where":[]},"threshold":{"count":1},"after":[],"within":null,"repeat":{"mode":"once"},"value":{"type":"fixed","amount":"1.00"}}'],
+                ['goal_id' => 2, 'name' => 'purchase', 'definition' => '{"name":"purchase","trigger":{"event":"purchase","where":[]},"threshold":{"count":1},"after":[],"within":null,"repeat":{"mode":"once"},"value":{"type":"fixed","amount":"5.00"}}'],
+            ],
+        ]);
+
+        $group = (new AppPostbacksController($db, 1))->report(['group_by' => 'day', 'time_from' => 0])['data']['groups'][0];
+        $this->assertSame(6, $group['measurable']);
+        $this->assertSame(3, $group['decoded'], 'before the edit and after the horizon');
+        $this->assertSame(3, $group['ambiguous_encoding'], 'inside the horizon: credited to neither goal');
+        $this->assertSame(0, $group['undecoded']);
+        $events = (array)$group['events'];
+        $this->assertSame(['count' => 1, 'revenue' => 1.0], $events['trial']);
+        $this->assertSame(['count' => 2, 'revenue' => 10.0], $events['purchase']);
+        $this->assertSame(11.0, $group['decoded_revenue'], '1 × 1.00 + 2 × 5.00');
     }
 
     // ─── Postbacks: verify ───────────────────────────────────────────

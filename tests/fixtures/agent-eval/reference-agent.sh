@@ -36,6 +36,23 @@ case "$ask" in
         printf 'Reported purchase event EVAL-ORD-77 (revenue 20) on click %s; it reached %s goal(s).\n' \
             "$click" "$(printf '%s' "$sent" | jq '.data.outcomes | length')"
         ;;
+    *"SKAN fine conversion value"*)
+        # A funnel encoded for SKAN: the device evaluates the goal, so the
+        # prerequisite, the condition and a window from the install all
+        # survive. Find the registration by App Store id in real list output,
+        # build the two goals on it, then point the fine value at the second.
+        # (Ordered before *level_reached*, which this ask also contains.)
+        app=$(printf '%s' "$ask" | grep -oE 'App Store id [0-9]+' | awk '{print $4}')
+        fine=$(printf '%s' "$ask" | grep -oE 'fine conversion value [0-9]+' | awk '{print $4}')
+        rid=$(p202 app list --json | jq -r --arg app "$app" '.data[] | select(.app_key==$app) | .registration_id' | head -1)
+        tutorial=$(p202 goal create --registration-id "$rid" --name "Tutorial complete" --event tutorial_complete \
+            --no-value --json | jq -r '.data.goal_id')
+        level=$(p202 goal create --registration-id "$rid" --name "Level 3 after tutorial" --event level_reached \
+            --where "level gte 3" --after "$tutorial" --within-days 7 --within-from install --no-value --json | jq -r '.data.goal_id')
+        p202 app encoding create --registration-id "$rid" --fine-value "$fine" --goal-id "$level" --json >/dev/null
+        printf 'SKAN fine value %s of registration %s (App Store id %s) now names goal %s: level_reached with level >= 3, within 7 days of the install, after goal %s (tutorial_complete). The iOS SDK evaluates it on the device.\n' \
+            "$fine" "$rid" "$app" "$level" "$tutorial"
+        ;;
     *level_reached*)
         # A goal from plain words: find the campaign by name in real list
         # output, then create the goal on it with the condition and the

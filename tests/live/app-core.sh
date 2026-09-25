@@ -13,12 +13,12 @@
 #     `store_link` with `app_key`, and a platform that contradicts the link,
 #     are refused by field; the app's identity cannot be changed on update;
 #   - GET /apps/schema is selected by the X-P202-App-Token header only: the
-#     iOS document carries the encode map and never the revenue, the Android
+#     iOS document carries the goals and encodings and never the revenue, the Android
 #     one carries its identity; 304 on a matching ETag, 400 for a malformed or
 #     missing header (a token in the query string is not read), 404 for a
 #     well-formed token nobody holds, 405 for anything but GET/HEAD;
 #   - an encoding names one of the caller's own iOS registrations, or 0, and
-#     a goal (PR 4: the schema encodes by the goal's event);
+#     a goal (PR 4; PR 8: the device evaluates the goal, see ios-sdk.sh);
 #   - `apps` is its own scope area: an `apps:read` key reads and cannot
 #     write, an `attribution:write` key cannot reach /apps at all, and the old
 #     /attribution app routes answer 404;
@@ -98,7 +98,7 @@ OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE api_key='$P202_API_KEY'" 2>/de
 IOS=990088001; SHARED=990088002
 RUN=$(date +%s)
 
-mysql_q "$DB" -e "TRUNCATE 202_app_registrations; TRUNCATE 202_app_postbacks; TRUNCATE 202_app_skan_encodings; TRUNCATE 202_goals; TRUNCATE 202_goal_versions;"
+mysql_q "$DB" -e "TRUNCATE 202_app_registrations; TRUNCATE 202_app_postbacks; TRUNCATE 202_app_skan_encodings; TRUNCATE 202_app_skan_encoding_history; TRUNCATE 202_goals; TRUNCATE 202_goal_versions;"
 
 say "a postback that arrives before its app is registered waits unclaimed"
 eq "$(skan $IOS "core-a-$RUN")" 200 "the receiver accepts it"
@@ -144,8 +144,8 @@ eq "$(Q "SELECT CONCAT(app_key, '/', app_name) FROM 202_app_registrations WHERE 
    "and only the name changed"
 
 say "SKAN encodings name one of your own iOS registrations, and a goal"
-# An encoding names the goal a value means (PR 4); these are plain event
-# goals, which is what an encoding may name until the on-device evaluator.
+# An encoding names the goal a value means (PR 4); the device evaluates it
+# (PR 8, tests/live/ios-sdk.sh covers the goal shapes).
 api POST /goals "{\"scope\":\"registration\",\"scope_id\":$RID,\"definition\":{\"name\":\"purchase\",\"trigger\":{\"event\":\"purchase\"}}}" > /dev/null
 G_BUY=$(field "d['data']['goal_id']")
 api POST /goals '{"scope":"account","definition":{"name":"whale","trigger":{"event":"whale"},"value":{"type":"fixed","amount":20}}}' > /dev/null
@@ -165,8 +165,12 @@ eq "$(api POST /apps/skan-encodings "{\"registration_id\":0,\"coarse_value\":\"h
 say "GET /apps/schema: selected by the header, shaped by the platform"
 eq "$(schema -H "X-P202-App-Token: $TOKEN")" 200 "the iOS token gets its document"
 eq "$(field "d['data']['platform']")/$(field "d['data']['app_key']")/$(field "d['data']['app_id']")" "ios/$IOS/$IOS" "naming the app"
-eq "$(field "d['data']['events']['purchase']['fine_value']")" 3 "the encode map carries the registration's encoding"
-eq "$(field "d['data']['events']['whale']['coarse_value']")" high "and the account-wide one"
+enc() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(next((e[sys.argv[3]] for e in d['data']['encodings'] if e['goal_id']==int(sys.argv[2])), 'none'))" "$OUT/body" "$1" "$2"; }
+eq "$(enc "$G_BUY" fine_value)" 3 "the encodings carry the registration's encoding"
+eq "$(enc "$G_WHALE" coarse_value)" high "and the account-wide one"
+eq "$(field "sorted(g['goal_id'] for g in d['data']['goals'])")" "$(python3 -c "print(sorted([$G_BUY, $G_WHALE]))")" "with the goals they name"
+hasnt "$OUT/body" '"value": {' "and no goal's value"
+hasnt "$OUT/body" '"value":{' "in any spelling"
 hasnt "$OUT/body" "4.99" "revenue is never served to a device"
 hasnt "$OUT/body" "revenue" "not even the key"
 ETAG=$(header ETag)
@@ -175,7 +179,7 @@ eq "$(header Vary)" "X-P202-App-Token" "Vary names the token header"
 eq "$(schema -H "X-P202-App-Token: $TOKEN" -H "If-None-Match: $ETAG")" 304 "the same ETag back is a 304"
 eq "$(schema -H "X-P202-App-Token: $ATOKEN")" 200 "the Android token gets its document"
 eq "$(field "d['data']['platform']")/$(field "d['data']['app_key']")" "android/com.Example.Game" "naming the Android app"
-eq "$(field "'events' in d['data'] or 'app_id' in d['data']")" false "with no SKAN map and no App Store id"
+eq "$(field "'goals' in d['data'] or 'encodings' in d['data'] or 'app_id' in d['data']")" false "with no goals, no SKAN map and no App Store id"
 eq "$(schema)" 400 "no header is a 400"
 eq "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/v3/apps/schema?token=$TOKEN")" 400 "a token in the query string is not read"
 eq "$(schema -H 'X-P202-App-Token: not-a-token')" 400 "a malformed token is a 400"
@@ -240,7 +244,7 @@ eq "$(Q "SELECT CONCAT(user_id, '/', registration_id) FROM 202_app_postbacks WHE
    "$OTHER/$ORID" "their registration claimed the postback"
 eq "$(api DELETE "/users/$OTHER?dry_run=1")" 200 "the delete preview answers"
 eq "$(field "[c['resource'] + ':' + c['action'].split(' ')[0] for c in d['data']['cascade'] if c['resource'].startswith(('202_app_', '202_api_'))]")" \
-   '["202_api_keys:delete", "202_app_postbacks:release", "202_app_skan_encodings:delete", "202_app_registrations:delete"]' \
+   '["202_api_keys:delete", "202_app_postbacks:release", "202_app_skan_encodings:delete", "202_app_skan_encoding_history:delete", "202_app_registrations:delete"]' \
    "and names the keys and app tables with what happens to each"
 eq "$(Q "SELECT COUNT(*) FROM 202_app_registrations WHERE user_id=$OTHER")" 1 "the preview deleted nothing"
 eq "$(api DELETE "/users/$OTHER")" 204 "DELETE /users/{id} answers 204"

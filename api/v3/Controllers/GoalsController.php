@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
+use Api\V3\Apps\Apple\SkanEncodingRules;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
@@ -240,14 +241,7 @@ final class GoalsController
                 $scopeId = (int) $goal['scope_id'];
                 $this->assertNameFree($scope, $scopeId, $definition->name, $id);
                 $this->assertPrerequisites($scope, $scopeId, $definition, $id);
-                $encodings = $this->encodingsNaming($id);
-                if ($encodings !== [] && !$definition->isPlainEvent()) {
-                    throw new ValidationException('An SKAN encoding names this goal', [
-                        'definition' => 'SKAN encodings ' . implode(', ', $encodings) . ' name this goal, and until the on-device evaluator '
-                            . 'ships an encoded goal must stay a plain event goal (one event, no where, count 1, no after, no within, '
-                            . 'repeat once). Point the encodings at another goal first (PUT /apps/skan-encodings/{id}).',
-                    ]);
-                }
+                $this->assertEncodedGoalsStayReachable($id, $definition);
 
                 return $this->goals->addVersion($this->userId, $id, $definition, time());
             });
@@ -599,6 +593,31 @@ final class GoalsController
             $current = $this->goals->version($goalId, (int) $goal['current_version']);
             foreach ($current !== null ? MysqlGoalRepository::afterOf($current['definition']) : [] as $next) {
                 $stack[] = $next;
+            }
+        }
+    }
+
+    /**
+     * An SKAN encoding names a goal the iOS SDK evaluates on the device, so
+     * an edit must leave every encoded goal reachable there: the goal
+     * itself, and every goal waiting for it through `after`
+     * (SkanEncodingRules — the same question the encoding writer asks).
+     */
+    private function assertEncodedGoalsStayReachable(int $id, GoalDefinition $definition): void
+    {
+        $rules = new SkanEncodingRules($this->conn->writeConnection(), $this->userId);
+        foreach ([$id, ...$rules->dependentsOf($id)] as $goalId) {
+            $encodings = $this->encodingsNaming($goalId);
+            if ($encodings === []) {
+                continue;
+            }
+            $why = $rules->deviceUnreachable($goalId, [$id => $definition]);
+            if ($why !== null) {
+                throw new ValidationException('An SKAN encoding depends on this goal', [
+                    'definition' => 'SKAN encodings ' . implode(', ', $encodings) . ' name goal ' . $goalId
+                        . ($goalId === $id ? '' : ', which waits for this one') . ', and the edit would leave it unreachable on a device: '
+                        . $why . ' Point the encodings at another goal first (PUT /apps/skan-encodings/{id}).',
+                ]);
             }
         }
     }

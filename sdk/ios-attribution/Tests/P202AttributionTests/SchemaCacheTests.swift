@@ -22,20 +22,30 @@ final class InMemoryStore: P202KeyValueStore {
 }
 
 final class SchemaCacheTests: XCTestCase {
-    func testRoundTripsThroughTheStore() {
+    func testRoundTripsThroughTheStore() throws {
         let store = InMemoryStore()
         var cache = SchemaCache()
-        cache.schema = P202AttributionSchema(
-            appId: 42,
-            schemaVersion: "abc",
-            events: ["purchase": .init(fineValue: 63, coarseValue: .high)]
-        )
-        cache.etag = "\"abc\""
+        cache.store(body: TestSchema.body, schema: try P202AttributionSchema.decode(responseBody: TestSchema.body))
         cache.fetchedAt = Date(timeIntervalSince1970: 1_725_690_000)
-        cache.save(to: store, schemaToken: "token-a")
+        cache.save(to: store, appToken: "token-a")
 
-        let loaded = SchemaCache.load(from: store, schemaToken: "token-a")
+        let loaded = SchemaCache.load(from: store, appToken: "token-a")
         XCTAssertEqual(loaded, cache)
+        XCTAssertEqual(loaded.etag, "\"abc\"")
+        XCTAssertEqual(loaded.schema?.encodings[1]?.fineValue, 63, "the schema is decoded again from the stored body")
+    }
+
+    func testTheStoredBodyKeepsIntegersApartFromFractions() throws {
+        // A goal definition's count of 3 is valid and 3.0 is not; a cache
+        // that re-encoded the decoded document could turn one into the
+        // other. The server's own bytes are what is kept.
+        let body = TestSchema.document(goals: [TestSchema.goal(1, #"{"name":"A","trigger":{"event":"a"},"threshold":{"count":3.0}}"#)], encodings: [])
+        let store = InMemoryStore()
+        var cache = SchemaCache()
+        cache.store(body: body, schema: try P202AttributionSchema.decode(responseBody: body))
+        cache.save(to: store, appToken: "t")
+        let definition = try XCTUnwrap(SchemaCache.load(from: store, appToken: "t").schema?.goals.first?.versions.first?.definition)
+        XCTAssertThrowsError(try GoalDefinition.parse(definition), "3.0 must still read as 3.0")
     }
 
     func testLastFineValueLivesOutsideTheTokenKeyedCache() {
@@ -46,7 +56,7 @@ final class SchemaCacheTests: XCTestCase {
         LastFineValueStore.save(41, to: store)
 
         XCTAssertEqual(LastFineValueStore.load(from: store), 41)
-        XCTAssertFalse(store.keys.contains(SchemaCache.storageKey(schemaToken: "token-a")))
+        XCTAssertFalse(store.keys.contains(SchemaCache.storageKey(appToken: "token-a")))
         XCTAssertTrue(store.keys.contains(LastFineValueStore.key))
 
         store.set(Data("junk".utf8), forKey: LastFineValueStore.key)
@@ -73,18 +83,18 @@ final class SchemaCacheTests: XCTestCase {
         let store = InMemoryStore()
         var cache = SchemaCache()
         cache.etag = "\"abc\""
-        cache.save(to: store, schemaToken: "token-a")
+        cache.save(to: store, appToken: "token-a")
 
-        XCTAssertEqual(SchemaCache.load(from: store, schemaToken: "token-b"), SchemaCache())
+        XCTAssertEqual(SchemaCache.load(from: store, appToken: "token-b"), SchemaCache())
         XCTAssertNotEqual(
-            SchemaCache.storageKey(schemaToken: "token-a"),
-            SchemaCache.storageKey(schemaToken: "token-b")
+            SchemaCache.storageKey(appToken: "token-a"),
+            SchemaCache.storageKey(appToken: "token-b")
         )
     }
 
     func testCorruptStoredDataLoadsAsEmptyNotACrash() {
         let store = InMemoryStore()
-        store.set(Data("not json".utf8), forKey: SchemaCache.storageKey(schemaToken: "token-a"))
-        XCTAssertEqual(SchemaCache.load(from: store, schemaToken: "token-a"), SchemaCache())
+        store.set(Data("not json".utf8), forKey: SchemaCache.storageKey(appToken: "token-a"))
+        XCTAssertEqual(SchemaCache.load(from: store, appToken: "token-a"), SchemaCache())
     }
 }

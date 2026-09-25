@@ -42,7 +42,12 @@ platform-shaped:
 ```json
 {"data": {"platform": "ios", "app_key": "525463029", "app_id": 525463029,
   "schema_version": "d6eefc…",
-  "events": {"purchase": {"fine_value": 63, "coarse_value": "high"}},
+  "goals": [{"goal_id": 7, "starts_at": 0, "ends_at": null,
+             "versions": [{"version": 1, "effective_at": 1725600000,
+                           "definition": {"name": "Purchase", "trigger": {"event": "purchase", "where": []},
+                                          "threshold": {"count": 1}, "after": [], "within": null,
+                                          "repeat": {"mode": "each"}}}]}],
+  "encodings": [{"goal_id": 7, "fine_value": 63, "coarse_value": "high"}],
   "generated_at": 1725690000}}
 ```
 
@@ -51,10 +56,22 @@ platform-shaped:
   "schema_version": "5b1a…", "generated_at": 1725690000}}
 ```
 
-- **iOS** gets the SKAN encode map: event name → the fine and coarse values
-  to set when the app reports that event (`events` is always a JSON object,
-  even when empty). With the goals engine (plan §4.5, §5.5) it becomes an
-  evaluation-only view of the goals.
+- **iOS** gets an **evaluation-only view of the goals** its SKAN encodings
+  name — each with every prerequisite it waits for, every version with the
+  unix time it took effect, its span (`starts_at`, `ends_at`), and its
+  definition without `value` — and `encodings`: per goal, the fine and/or
+  coarse value to set when the device reaches it. Both are always JSON
+  lists, even when empty. The SDK evaluates the goals **on the device**
+  (plan §5.5): Apple's postback carries only the value, so the device is
+  the only place that can decide which one to set. The device is an
+  `install` subject whose install time is the first launch the SDK saw and
+  which has no click (SKAdNetwork never says which ad it came from), which
+  is why the server refuses to encode a goal that counts from the click.
+  An SDK refuses a document whose `platform` is not `ios`, whose `app_key`
+  is not a canonical App Store id, or whose `app_id` disagrees with it (a
+  token lifted into the wrong build), and one whose encodings or goal ids
+  it cannot read; a definition it cannot parse disables that goal version
+  (`invalid_definition`), as the server's evaluator does.
 - **Android** gets its identity; the Android intake adds the SDK settings
   (the integrity mode among them). Its goals are evaluated on the server,
   so the SDK reports every event.
@@ -65,6 +82,40 @@ platform-shaped:
   unchanged document answers `304` (weak comparison: `W/"…"`, a list and `*`
   all work). Responses are `Cache-Control: private, max-age=300` and
   `Vary: X-P202-App-Token`.
+
+## The customer
+
+Both SDKs expose `setCustomerId(id, signature)` (iOS:
+`setCustomerId(_:signature:type:)`). The signature is the operator's own
+server's `cust_sig` for the id —
+`hex(HMAC-SHA256(linking_key, "<type>:<id>"))`, exactly as a tracking link's
+(see [Visitor identity](../features/visitor-identity.md)) — and the app
+fetches it from that server; the linking key never ships in a binary.
+There is no unsigned form: the app token is public, so an id an SDK merely
+says is exactly the request-controlled `cust` a public pixel carries.
+
+On the wire the customer is one object in the install and event bodies:
+
+```json
+"customer": {"id": "u-829", "type": "custom", "signature": "9f86d0…"}
+```
+
+- `type` is one of `custom` (the default), `email_md5`, `email_sha256`,
+  `esp_id`, `merchant_id`, `subid`; an email is sent as its digest.
+- `id` is sent as the server canonicalises it (trimmed of ASCII space, tab,
+  newline, return, NUL and vertical tab; email digests in lower case), and
+  `signature` in lower-case hex. An SDK refuses an id the server would
+  refuse (empty, an unknown type, a digest that is not one) and a signature
+  that is not 64 hexadecimal characters, at the call, and stores nothing.
+- The server verifies the signature before the id becomes an identity
+  signal; an id without a valid one is stored for lifetime value only and
+  links nothing.
+
+The iOS SDK keeps the customer across launches (until `clearCustomerId()`)
+and exposes the object as `customerId?.wireObject`. No route an iOS build
+calls carries a body today — SKAN is the iOS signal, and the schema fetch
+is a `GET` that must not carry a person's id — so it rides the first iOS
+body route when one exists; the Android intake carries it from PR 5.
 
 ## Retry semantics
 
@@ -91,11 +142,13 @@ Off by default, and off whenever the policy cannot be read.
 ## Vectors
 
 `tests/fixtures/app-sdk-contract/` holds the cross-language vectors every
-implementation runs. Today: `app-identity.json`, what each store link, App
-Store id and package name names (and which are refused), which the server's
-`AppIdentity` runs in `tests/Apps/AppIdentityTest.php`. `goals/` is the goal
-evaluator's specification as data — `definitions.json` (what a valid goal
-is) and `evaluator.json` (what a goal set makes of a subject's events), with
-the format and every rule in `goals/README.md` — run by
-`tests/Goals/GoalVectorsTest.php` and, from PRs 7 and 8, by the Kotlin and
-Swift evaluators. The Android intake adds its vectors beside them.
+implementation runs:
+
+| File | What | PHP | Swift (`sdk/ios-attribution`) |
+|---|---|---|---|
+| `app-identity.json` | What each store link, App Store id and package name names, and which are refused | `tests/Apps/AppIdentityTest.php` | `ContractVectorsTests` (the `keys`: checking the document's identity) |
+| `goals/definitions.json`, `goals/evaluator.json` | The goal evaluator's specification as data; format and rules in `goals/README.md` | `tests/Goals/GoalVectorsTest.php` | `GoalVectorsTests`, whole and one event at a time from stored state |
+| `customer-id.json` | A customer id's canonical form, and `cust_sig` values computed independently of either implementation | `tests/Identity/CustomerIdVectorsTest.php` | `ContractVectorsTests` |
+
+The Kotlin SDK (PR 7) runs the same files, and the Android intake adds its
+vectors beside them.

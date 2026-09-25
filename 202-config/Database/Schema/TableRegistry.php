@@ -180,6 +180,7 @@ final class TableRegistry
     public const string APP_REGISTRATIONS = '202_app_registrations';
     public const string APP_POSTBACKS = '202_app_postbacks';
     public const string APP_SKAN_ENCODINGS = '202_app_skan_encodings';
+    public const string APP_SKAN_ENCODING_HISTORY = '202_app_skan_encoding_history';
 
     // Goals engine (GoalTables): definitions and their versions, campaign
     // payouts, and per-subject events, progress and outcomes

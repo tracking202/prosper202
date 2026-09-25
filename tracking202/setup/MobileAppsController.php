@@ -6,6 +6,7 @@ namespace Tracking202\Setup;
 
 use Api\V3\Apps\AppIdentity;
 use Api\V3\Controllers\AppRegistrationsController;
+use Api\V3\Apps\Apple\SkanEncodingTimeline;
 use Api\V3\Controllers\AppSkanEncodingsController;
 use Api\V3\Controllers\AppPostbacksController;
 use Api\V3\Controllers\UsersController;
@@ -385,7 +386,7 @@ class MobileAppsController extends SetupController
                 throw new ValidationException($e->getMessage(), $errors, $e);
             }
         });
-        $this->redirect('tracking202/setup/mobile_apps.php?app=' . $appRowId . '&rule=1');
+        $this->redirect('tracking202/setup/mobile_apps.php?app=' . $appRowId . '&rule=' . ($ruleId > 0 ? 'changed' : '1'));
     }
 
     /** The app's plain goal for an event, as a field error on the form's Event field when it cannot be. */
@@ -645,10 +646,19 @@ class MobileAppsController extends SetupController
                 : 'Development-signed postbacks are untrusted again for this app, including the ones already received.'];
         }
         if (isset($_GET['rule'])) {
-            $out[] = ['kind' => 'ok', 'text' => 'Conversion value saved.'];
+            // An edit changes what a value means while devices still hold the
+            // schema from before it, and a postback can arrive up to 35 days
+            // after the value was set (SkanEncodingTimeline): say so where the
+            // edit is made (plan §5.5).
+            $out[] = (string)$_GET['rule'] === 'changed'
+                ? ['kind' => 'warn', 'text' => 'Conversion value changed. Devices keep the schema they already fetched for a while, and a postback can arrive up to '
+                    . SkanEncodingTimeline::HORIZON_DAYS . ' days after the value was set, so until '
+                    . gmdate('j M Y', time() + SkanEncodingTimeline::HORIZON_SECONDS) . ' a postback carrying this value is reported as ambiguous_encoding, and credited to neither meaning, wherever the old and new meanings disagree. The report is exact again after that.']
+                : ['kind' => 'ok', 'text' => 'Conversion value saved.'];
         }
         if (isset($_GET['rule_removed'])) {
-            $out[] = ['kind' => 'ok', 'text' => 'Conversion value removed.'];
+            $out[] = ['kind' => 'ok', 'text' => 'Conversion value removed. Postbacks that carry it keep decoding under its old meaning for '
+                . SkanEncodingTimeline::HORIZON_DAYS . ' days, because devices set it before the change.'];
         }
         if (isset($_GET['starter'])) {
             $added = (int)$_GET['starter'];
