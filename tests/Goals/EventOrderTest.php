@@ -157,7 +157,7 @@ final class EventOrderTest extends TestCase
         $this->click(100, 7);
         $this->click(101, 7);
         $this->goal(7, ['name' => 'Spend', 'trigger' => ['event' => 'buy'], 'threshold' => ['sum' => ['prop' => 'amount', 'gte' => 10]],
-            'repeat' => ['mode' => 'each'], 'value' => ['type' => 'fixed', 'amount' => 1]]);
+            'repeat' => ['mode' => 'each', 'max' => 10], 'value' => ['type' => 'fixed', 'amount' => 1]]);
 
         $events = [
             $this->event('a', 'buy', self::T + 1, ['amount' => 4]),
