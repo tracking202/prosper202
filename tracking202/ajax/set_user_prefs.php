@@ -64,29 +64,32 @@ if (isset($_POST['user_pref_time_predefined']) && $_POST['user_pref_time_predefi
     
 } else { 
 	
-	$from = isset($_POST['from']) ? explode('/', (string) $_POST['from']) : ['', '', '']; 
-    $from_month = isset($from[0]) ? trim($from[0]) : '';
-	$from_day = isset($from[1]) ? trim($from[1]) : '';
-	$from_year = isset($from[2]) ? trim($from[2]) : '';
+	// Either shape a report submits: the classic calendar's mm/dd/yyyy (or
+	// the mm/dd/yy its preset buttons wrote) and the ISO YYYY-MM-DD of the v2
+	// pages' <input type="date">. One parser, shared with those pages
+	// (tests/Report/ReportFilterInputTest pins both shapes), so the two cannot
+	// disagree about what a date is. An empty field is left unset, as before;
+	// one that is not a date is refused rather than guessed at.
+	$dateError = '<div class="error">That is not a date. Use mm/dd/yyyy or yyyy-mm-dd.</div>';
+	$fromRaw = trim((string) ($_POST['from'] ?? ''));
+	if ($fromRaw !== '') {
+		$fromDate = \Tracking202\Report\ReportFilterInput::parseDate($fromRaw);
+		if ($fromDate === null) {
+			$error['date'] = $dateError;
+		} else {
+			$clean['user_pref_time_from'] = mktime(0, 0, 0, $fromDate[1], $fromDate[2], $fromDate[0]);
+		}
+	}
 
-    $to = isset($_POST['to']) ? explode('/', (string) $_POST['to']) : ['', '', '']; 
-    $to_month = isset($to[0]) ? trim($to[0]) : '';
-    $to_day = isset($to[1]) ? trim($to[1]) : '';
-    $to_year = isset($to[2]) ? trim($to[2]) : '';
-    
-    
-    //if from or to, validate, and if validated, set it accordingly
-	if (($from_month != '' && $from_day != '' && $from_year != '') and (checkdate((int)$from_month, (int)$from_day, (int)$from_year) == false)) {
-		$error['date'] = '<div class="error">Wrong date format, you must use the following military time format:   <strong>mm/dd/yyyy - hh:mms</strong></div>';     
-	} else if ($from_month != '' && $from_day != '' && $from_year != '') {
-		$clean['user_pref_time_from'] = mktime(0,00,0,(int)$from_month,(int)$from_day,(int)$from_year);
-	}                                                                                                                    
-	
-	if (($to_month != '' && $to_day != '' && $to_year != '') and (checkdate((int)$to_month, (int)$to_day, (int)$to_year) == false)) {
-		$error['date'] = '<div class="error">Wrong date format, you must use the following military time format:   <strong>mm/dd/yyyy - hh:mm</strong></div>';      
-	} else if ($to_month != '' && $to_day != '' && $to_year != '') {
-		$clean['user_pref_time_to'] = mktime(23,59,59,(int)$to_month,(int)$to_day,(int)$to_year);  
-    }     
+	$toRaw = trim((string) ($_POST['to'] ?? ''));
+	if ($toRaw !== '') {
+		$toDate = \Tracking202\Report\ReportFilterInput::parseDate($toRaw);
+		if ($toDate === null) {
+			$error['date'] = $dateError;
+		} else {
+			$clean['user_pref_time_to'] = mktime(23, 59, 59, $toDate[1], $toDate[2], $toDate[0]);
+		}
+	}
 }
 
 echo ($error['date'] ?? '') . ($error['user_pref_time_predefined'] ?? '') .  ($error['user_pref_limit'] ?? '') . ($error['user_pref_show'] ?? '');    

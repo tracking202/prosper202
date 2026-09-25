@@ -9,11 +9,11 @@ $dbhostro = 'localhostreplica'; // Only change this to use a read replica for re
 $mchost = 'localhostmemcache'; // this is the memcache server host, if you don't know what this is, don't touch it.
 
 // ** Optional: JSON report transport ** //
-// Off by default. When enabled, the Analyze reports fetch their data as JSON from
-// tracking202/ajax/report_dispatch.php and render client-side, and the bounded filter
-// dropdowns (country/region/isp/device/browser/platform) are rendered server-side
-// instead of via six AJAX round-trips. Any transport error falls back to the legacy
-// HTML path automatically, so this is safe to toggle. Uncomment to enable:
+// Off by default. When enabled, tracking202/ajax/report_dispatch.php answers flat
+// report requests as JSON, and the classic report pages that still use the old
+// calendar render its bounded filter dropdowns (country/region/isp/device/browser/
+// platform) server-side instead of via six AJAX round-trips. The Analyze reports
+// themselves render server-side on the v2 shell whatever this says. Uncomment to enable:
 //
 // NOTE: these define() calls must come *after* the declare(strict_types=1) above —
 // declare must be the first statement in the file or PHP fatals on load.
