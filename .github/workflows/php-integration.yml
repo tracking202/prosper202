@@ -4,9 +4,13 @@ on:
   push:
     paths:
       - '**.php'
+      - 'tests/run-integration-suites.sh'
+      - '.github/workflows/php-integration.yml'
   pull_request:
     paths:
       - '**.php'
+      - 'tests/run-integration-suites.sh'
+      - '.github/workflows/php-integration.yml'
 
 jobs:
   integration:
@@ -70,76 +74,28 @@ jobs:
           echo "MySQL did not become ready in time" >&2
           exit 1
 
-      # DB-backed integration tests self-install the schema (SchemaInstaller) and
-      # skip cleanly when P202_TEST_DB_HOST is unset, so this job is the only place
-      # they actually exercise a database.
-      - name: Run conversion integrity integration tests
+      # Every `@group integration` suite, one file per PHPUnit run, each on a
+      # freshly created database: tests/run-integration-suites.sh takes the
+      # list from tests/integration-suites.php, so a new suite runs here the
+      # day it is written. This job used to name nine files by hand and the other 30 —
+      # the Goals suites among them — ran nowhere. A suite that skips, or
+      # that exits before PHPUnit reports, fails: skipped is not run.
+      # (`@group instance` suites need a running instance and run in the
+      # Agent Evals job; IntegrationSuiteSelectionTest holds both lists.)
+      - name: Run every integration suite
         env:
           P202_TEST_DB_HOST: 127.0.0.1
           P202_TEST_DB_PORT: 3306
           P202_TEST_DB_USER: root
           P202_TEST_DB_PASS: root
-          P202_TEST_DB_NAME: prosper202
-        run: |
-          vendor/bin/phpunit --configuration phpunit.ci.xml \
-            --group integration \
-            tests/Conversion/ConversionIdempotencyIntegrationTest.php \
-            --verbose --no-coverage
-          # The postback receiver's dedupe is a UNIQUE index over a hash of the
-          # whole body: only a real server shows it collapsing a byte-identical
-          # retry while a forgery and the genuine postback both land.
-          vendor/bin/phpunit --configuration phpunit.ci.xml \
-            --group integration \
-            tests/Apps/Apple/PostbackReceiverIntegrationTest.php \
-            --verbose --no-coverage
-          # The report's unique-postback counting (COUNT DISTINCT over the
-          # postback identity), the protocol dimension and the live
-          # development opt-in are SQL semantics only a real server shows.
-          vendor/bin/phpunit --configuration phpunit.ci.xml \
-            --group integration \
-            tests/Apps/Apple/AppReportIntegrationTest.php \
-            --verbose --no-coverage
-          # The app registry: the claim on registration, uniqueness under a
-          # case-sensitive collation, the delete cascade, encoding ownership,
-          # the user-deletion purge in one transaction (and its rollback), and
-          # retention — each a statement only a real server runs.
-          vendor/bin/phpunit --configuration phpunit.ci.xml \
-            --group integration \
-            tests/Apps/AppRegistryIntegrationTest.php \
-            --verbose --no-coverage
-          # The Android intake: the install, its classification, the install
-          # conversion, the MTA and notification outbox rows commit together
-          # (failures planted by triggers roll all of it back), replays and
-          # forgeries, the pending-click settler, and events through the goal
-          # engine with the traffic-source notification once per outcome.
-          vendor/bin/phpunit --configuration phpunit.ci.xml \
-            --group integration \
-            tests/Apps/Android/InstallIntakeIntegrationTest.php \
-            --verbose --no-coverage
-          vendor/bin/phpunit --configuration phpunit.ci.xml \
-            --group integration \
-            tests/Apps/Android/AppInstallAtomicityTest.php \
-            --verbose --no-coverage
-          # Play Integrity: the three modes through the intake, the verdict
-          # worker (a Google double) and the pending-click settler — nothing
-          # paid or announced before a passing verdict, each failing verdict
-          # refuted, retries ending unverified, a settle failure rolled back —
-          # and the operator's settings, the credential encrypted and never
-          # shown. (The real client's TLS tests run in the unit job, against
-          # tests/fixtures/play-integrity/fake_google.py.)
-          vendor/bin/phpunit --configuration phpunit.ci.xml \
-            --group integration \
-            tests/Apps/Android/Integrity/IntegrityIntegrationTest.php \
-            --verbose --no-coverage
-          vendor/bin/phpunit --configuration phpunit.ci.xml \
-            --group integration \
-            tests/Apps/Android/Integrity/IntegritySettingsIntegrationTest.php \
-            --verbose --no-coverage
-          # Checks the SQL the v3 API ships against the schema it ships, by
-          # preparing every statically-known statement on a real server. It
-          # needs its own database because it installs a fresh schema.
-          mysql -h 127.0.0.1 -uroot -proot -e 'DROP DATABASE IF EXISTS p202_sqlcheck; CREATE DATABASE p202_sqlcheck;'
-          P202_TEST_DB_NAME=p202_sqlcheck vendor/bin/phpunit --configuration phpunit.ci.xml \
-            --group integration \
-            tests/Schema/StaticSqlSchemaTest.php \
-            --verbose --no-coverage
+          P202_TEST_DB_NAME: p202_integration_test
+          P202_IT_LOG_DIR: ${{ runner.temp }}/integration-logs
+        run: bash tests/run-integration-suites.sh
+
+      - name: Upload the suites' output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-logs
+          path: ${{ runner.temp }}/integration-logs/
+          if-no-files-found: ignore

@@ -14,9 +14,9 @@ use PHPUnit\Framework\TestCase;
  * this is the only test that proves each report's generated SQL actually
  * executes and sums correctly.
  *
- * Tagged @group integration so it is excluded from the default/CI run
- * (phpunit.xml excludes that group). It self-skips unless a DB with the
- * 202_dataengine schema is reachable. Run locally with:
+ * Tagged @group integration, so the unit job excludes it and
+ * tests/run-integration-suites.sh (CI's integration job) runs it against a
+ * fresh database, installing the schema itself. Run locally with:
  *   vendor/bin/phpunit --group integration tests/DataEngine/ReportIntegrationTest.php
  *
  * @group integration
@@ -59,6 +59,13 @@ final class ReportIntegrationTest extends TestCase
         // function libraries (dollar_format, systemHash, _mysqli_query, ...)
         // the engine depends on. (connect2.php is a separate static-endpoint
         // bootstrap with its own copies and must not be mixed in.)
+        // connect.php answers a missing 202-config.php with a redirect and
+        // die(), which ends PHPUnit with exit 0 and no report at all — a
+        // green run that ran nothing. Say so before that can happen.
+        if (!is_file($root . '/202-config.php')) {
+            self::markTestSkipped('No 202-config.php: connect.php would exit before any test ran. tests/run-integration-suites.sh writes one.');
+        }
+
         $prev = error_reporting(0);
         ob_start();
         require_once $root . '/202-config/connect.php';
@@ -89,9 +96,17 @@ final class ReportIntegrationTest extends TestCase
             self::markTestSkipped('No database connection available.');
         }
 
-        $check = @self::$db->query("SHOW TABLES LIKE '202_dataengine'");
-        if (!$check || $check->num_rows === 0) {
-            self::markTestSkipped('202_dataengine schema not installed in ' . $dbName . '.');
+        // A fresh database gets the installer's schema, as every other
+        // integration suite does, rather than a skip that runs nothing.
+        $check = self::$db->query("SHOW TABLES LIKE '202_dataengine'");
+        if (!$check instanceof \mysqli_result) {
+            self::fail('Could not probe for 202_dataengine: ' . self::$db->error);
+        }
+        if ($check->num_rows === 0) {
+            $installed = (new \Prosper202\Database\SchemaInstaller(self::$db))->install();
+            if ($installed->hasErrors()) {
+                self::fail('Could not install the schema: ' . $installed->getSummary());
+            }
         }
 
         self::$to = time() + 3600;
