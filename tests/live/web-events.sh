@@ -296,6 +296,7 @@ eq "$(field "[d['data']['goals_evaluated'], 'reevaluation' in d['data']['note']]
 eq "$(events $C_APIN)$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id=$C_APIN")" 10 "one event, no conversion"
 
 say "a replay's replacement rows are never announced again"
+deliver # what earlier steps queued goes out first, so the count below is this step's
 before=$(notified Purchase)
 api POST /events "{\"click_id\":$C_REPLAY,\"events\":[{\"event_id\":\"r2\",\"name\":\"purchase\",\"revenue\":10,\"occurred_at\":$((NOW - 60))}]}" > /dev/null
 deliver

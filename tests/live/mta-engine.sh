@@ -67,7 +67,11 @@ CAMPS="$CAMP1,$CAMP2,$CAMP3"
 
 cleanup() {
   mysql_q "$DB" <<SQL
-DELETE FROM 202_attribution_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE campaign_id IN ($CAMPS));
+-- The pass owns the MTA state (credits and journeys are truncated below),
+-- so it drains the whole outbox too: on a shared instance other passes'
+-- conversions sit in it, and the worker runs here would credit them into
+-- the totals this pass checks.
+TRUNCATE 202_attribution_pending;
 DELETE FROM 202_conversion_logs WHERE campaign_id IN ($CAMPS);
 DELETE FROM 202_clicks_spy WHERE aff_campaign_id IN ($CAMPS);
 DELETE FROM 202_clicks WHERE aff_campaign_id IN ($CAMPS);

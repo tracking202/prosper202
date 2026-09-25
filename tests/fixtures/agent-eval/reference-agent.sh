@@ -79,6 +79,7 @@ case "$ask" in
             printf 'The sale %s is on click %s, which is worth %s. Its conversions, from `p202 click conversions %s`:\n%s\n' \
                 "$tx" "$click" "$value" "$click" "$rows"
         fi
+        ;;
     *"EVAL ANDROID"*)
         # Simulate an install: find the registration by its package and the
         # newest click on the campaign by name in real list output, post the

@@ -38,9 +38,12 @@ const PAIRS = [
   // strip is what is left to hold across shells: Update is still classic and
   // Overview is v2, and both draw the one strip (tracking202/_config/
   // sub-menu.php) under the same section tabs.
-  // The two strips name different pages, so their entries' widths follow
-  // their words; everything else about them is held equal.
-  { name: 'strip', classic: '/tracking202/update/subids.php', v2: '/tracking202/overview/', labelsDiffer: ['.p202c-strip__list > li > a'] },
+  // U5 then moved Update to v2 (the MTA branch, built without U5, had
+  // chosen it as the classic half), and U7 the pre-login and feed pages, so
+  // with every family combined no page renders the classic shell: there is
+  // nothing left to hold the chrome against. The scenarios say so rather
+  // than pass on nothing; a pair goes back here if a classic page returns,
+  // and U8 deletes the classic shell and this spec with it.
 ];
 
 const WIDTHS = [1280, 390];
@@ -59,6 +62,10 @@ function scenariosFor(scheme) {
     name: 'The chrome matches across shells at ' + width + 'px, ' + scheme,
     async run(ctx) {
       const { withSession, config, expect } = ctx;
+      if (PAIRS.length === 0) {
+        expect.skip('chrome across shells', 'no page is left on the classic shell (U5, U7, PR 10); nothing to compare');
+        return;
+      }
       await withSession({ viewport: { width, height: 900 }, colorScheme: scheme }, async ({ app, ui, page, session }) => {
         for (const pair of PAIRS) {
           expect.section(pair.name + ' at ' + width + 'px, ' + scheme);
