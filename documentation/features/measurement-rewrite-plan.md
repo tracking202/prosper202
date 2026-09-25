@@ -242,6 +242,85 @@ becomes a cache of it.**
   Before, they changed the click and left no trace. Historical clicks are not
   backfilled, because their individual amounts were never stored.
 
+#### Transaction ids in the ledger
+
+Transaction ids stay, and matter more than before. They do three jobs today,
+mixed into one column. The ledger separates them.
+
+| Job | Today | After |
+|---|---|---|
+| **Stopping duplicates** | `UNIQUE (click_id, transaction_id)`. A blank id is stored as `NULL` and never deduplicated (`MysqlConversionRepository.php:127-130`), so every retry of a blank-id postback adds a row | Its own column, **`dedupe_key`**, which is never empty. `UNIQUE (click_id, dedupe_key)` |
+| **Linking to the network's records** (disputes, reversals, reconciliation) | The same column | **`transaction_id`** keeps exactly this job: the id the network or merchant sent, shown and searchable, `NULL` when none was sent |
+| **Telling funnel steps apart** (the Transactions ID recipe) | One campaign copy and one id per step | Goals and events (§2.2). The id is no longer the thing that says *which step* this was |
+
+**Why a separate `dedupe_key`.**
+
+- **Goal and install rows need ids the network never sent.** The earlier
+  draft of this plan put synthetic values such as `p202-goal:12:1` into
+  `transaction_id`. That shares a namespace with network ids: a network
+  that happens to send `p202-install` would collide with ours (error pattern
+  #17), and the column would stop meaning "the network's id".
+- **Every source gets a namespaced key** instead, built by one function so the
+  prefixes cannot drift:
+
+  | Source | `dedupe_key` |
+  |---|---|
+  | Network or merchant id | `tx:<id>` |
+  | Goal | `goal:<goal_id>:<n>` |
+  | Install | `install` |
+  | App or web event | `evt:<event_id>` |
+  | ClickBank | `cb:<receipt>` |
+  | CSV upload | `up:<batch>:<line>` |
+
+  A prefix before the colon cannot occur inside another source's key, so two
+  sources can never produce the same key.
+
+**The blank-id rule, which the ledger forces.** In `replace` mode a
+duplicated blank-id postback adds a row but does not change the click's
+value, so today it is mostly harmless. In `accumulate` mode it **doubles the
+money**. So:
+
+- **A payable row with no id of its own** (no transaction id, goal, event id,
+  receipt or upload line) is treated as the campaign's single plain
+  "conversion". Its key is `conversion`, so it can happen **once per click**.
+  That is the rule `gpx.php:94` already applies to image pixels today, made
+  uniform.
+- **To record several amounts on one click, send something that tells them
+  apart:** a transaction id, an `event=`, or an event id. The breakdown then
+  names each one.
+- `replace` campaigns keep today's behaviour exactly: blank-id rows still
+  record, with a per-row key (`row:<conv_id>`), and the latest wins.
+- **Existing rows** are keyed on upgrade by the same function:
+  `tx:<transaction_id>` where one was sent, `row:<conv_id>` where it was
+  blank. Nothing merges and nothing is lost.
+
+**Reversals by transaction id** (new, and only possible because the id keeps
+its meaning).
+
+- A postback carrying `status=reversed` or a negative `amount`, together with
+  the transaction id of an earlier row, records a **reversal row** linked to
+  the original through `source_ref`. The breakdown then shows
+  "$3.00 sale, reversed −$3.00".
+- The click's value recomputes from the rows.
+- Today such a postback is either answered as a duplicate and ignored, or
+  recorded as an unrelated row.
+- The LTV ledger already records negative payouts as adjustments
+  (`MysqlConversionRepository.php:222-227`), so this makes the click side
+  agree with it.
+
+**Passing the id on to traffic sources.** The `[[transactionid]]` /
+`[[t202txid]]` token exists in `replaceTokens()`, but nothing fills it.
+
+- `gpb.php`'s traffic-source postback does not include it
+  (`gpb.php:146-163`).
+- The helper that would, `getTokens()` (`connect2.php:2918`), has no callers.
+
+With several conversions per click, a network needs the id to tell them apart
+and to dedupe on its side. The shared pixel-firing function (PR 1) therefore
+fills `[[transactionid]]` / `[[t202txid]]` with the row's `transaction_id`,
+falling back to its `dedupe_key`, next to `[[p202_goal]]` and
+`[[p202_goal_value]]`.
+
 ### 2.2 Goals are a core feature, for web campaigns as well as apps
 
 Goals (§5.5 has the full definition) evaluate **events** into **outcomes**.
@@ -566,9 +645,9 @@ The steps:
 4. **Classify** into `MatchState`.
 5. **Record the conversion** for `attributed` rows, via `ConversionRecorder`
    (§2):
-   - `transaction_id = 'p202-install'`. The existing
-     `UNIQUE KEY uniq_click_transaction (click_id, transaction_id)` makes one
-     install conversion per click a database fact.
+   - `dedupe_key = 'install'`, with `transaction_id` left `NULL` because no
+     network sent one. `UNIQUE (click_id, dedupe_key)` makes one install
+     conversion per click a database fact (§2.1, transaction ids).
    - `pixel_type = 4`, which is unused; 0–3 are taken.
    - `conv_time` is Google's server install-begin time.
    - The conversion is skipped when `count_install_as_conversion = 0`.
@@ -706,8 +785,10 @@ because the same app is often sold under different deals.
 - A campaign linked to the registration lists its **payable goals** and a
   payout for each. It can override the goal's `value`.
 - **Payable** goals record a conversion on the install's click, with
-  `transaction_id = 'p202-goal:' . goal_id . ':' . n`, where `n` is the
-  repeat index. It is deduped by the existing unique key, and it enters MTA.
+  `dedupe_key = 'goal:' . goal_id . ':' . n`, where `n` is the repeat index.
+  It is deduped by `UNIQUE (click_id, dedupe_key)`, and it enters MTA. When
+  the triggering event carried a network transaction id, that id is kept in
+  `transaction_id`.
 - Each payable goal also has a **"notify traffic source"** option (default
   on). It fires the campaign's traffic-source postback with new tokens
   `[[p202_goal]]` and `[[p202_goal_value]]`, so a network can be told
@@ -1418,6 +1499,7 @@ in the first release by construction.
 | 8 | Several payouts on one click | A per-campaign `payout_mode`. `replace` keeps today's behaviour and is the default for every existing and web campaign. `accumulate` consolidates payouts into one value per click, like the revenue CSV upload already does within a file, and is the default for app campaigns | §5.5 |
 
 | 9 | Seeing what a click's value is made of | `202_conversion_logs` becomes a ledger with provenance (`source`, `source_ref`, `event_name`, `payable`, `superseded_by`); every path writes rows; the click value is derived from them; a per-click breakdown in the API and UI; reports group by goal/source | §2.1 |
+| 9a | Transaction ids | Kept, with one meaning: the external id, for reconciliation and reversals. Deduplication moves to a namespaced `dedupe_key`. A blank-id payable row counts once per click in `accumulate` mode. The id is passed to traffic sources via `[[transactionid]]` | §2.1 |
 | 10 | Goals on web campaigns | Goals are core: the subject is the click (web) or the install (app), and events come from pixel/postback `event=`, `POST /events` and `p202.js` | §2.2 |
 
 **One behaviour change to confirm.** Decision 9 has the legacy pixels
