@@ -58,8 +58,11 @@ final class GoalVectorsTests: XCTestCase {
     func testTheVectorFilesHoldEnoughCasesToMeanSomething() throws {
         // A file that decoded to no cases would pass every test below by
         // running none of them.
-        XCTAssertGreaterThanOrEqual(try cases("evaluator.json").count, 40)
-        XCTAssertGreaterThanOrEqual(try cases("definitions.json").count, 40)
+        // At least what the files held when the rules were last changed
+        // (the sum bounds, PR 4's fix), so a suite reading an older copy
+        // fails here rather than passing on the cases it has.
+        XCTAssertGreaterThanOrEqual(try cases("evaluator.json").count, 45)
+        XCTAssertGreaterThanOrEqual(try cases("definitions.json").count, 44)
     }
 
     func testEveryDefinitionVector() throws {
@@ -156,6 +159,40 @@ final class GoalVectorsTests: XCTestCase {
         let event = GoalEvent(eventId: "e1", name: "a", occurredAt: 1, receivedAt: 1)
         XCTAssertThrowsError(try GoalEvaluator.evaluateAll([spec], subject: subject, events: [event, event]))
         XCTAssertThrowsError(try GoalEvaluator.evaluateAll([spec, spec], subject: subject, events: [event]))
+    }
+
+    /// A sum below zero is carried, not floored at zero (rule 8's floor is
+    /// −10^15 units): −5 then 20 is 15, short of 20, and the next 5 reaches
+    /// it; then the largest summand jumps to max and the sum is held at
+    /// max × gte. The shared vectors do not pin the negative carry, so this
+    /// case pins it here; the expectation is the server's answer, executed
+    /// (`GoalEvaluator::evaluateAll()` on the same input), not derived.
+    func testANegativeSumIsCarriedAndTheCeilingHolds() throws {
+        let definition = try JSONValue.parse(#"{"name":"Spent 20","trigger":{"event":"purchase"},"threshold":{"sum":{"prop":"amount","gte":20}},"repeat":{"mode":"each","max":3}}"#)
+        let spec = GoalSpec(goalId: 1, versions: [.init(version: 1, effectiveAt: 0, definition: definition)])
+        let subject = GoalSubject(kind: .install, clickAt: nil, installAt: 1000)
+        let amounts: [(String, Int, EventValue)] = [("e1", 1100, .int(-5)), ("e2", 1200, .int(20)), ("e3", 1300, .int(5)), ("e4", 1400, .double(999_999.99999))]
+        let events = amounts.map { GoalEvent(eventId: $0.0, name: "purchase", occurredAt: $0.1, receivedAt: $0.1, properties: ["amount": $0.2]) }
+        let result = try GoalEvaluator.evaluateAll([spec], subject: subject, events: events)
+        XCTAssertEqual(result.outcomes.map { "\($0.n)@\($0.eventId)" }, ["1@e3", "2@e4", "3@e4"])
+        XCTAssertEqual(result.state.progress["1:1"]?.sum, 6_000_000)
+        XCTAssertEqual(result.state.progress["1:1"]?.reachedAt, 1300)
+    }
+
+    /// The device reads its state back from storage, and a damaged one must
+    /// not trap the host app: a sum or count at the top of its type
+    /// saturates, and the clamp brings the sum back to the ceiling.
+    func testADamagedStoredStateDoesNotTrap() throws {
+        let definition = try JSONValue.parse(#"{"name":"Spent 20","trigger":{"event":"purchase"},"threshold":{"sum":{"prop":"amount","gte":20}},"repeat":{"mode":"each","max":3}}"#)
+        let spec = GoalSpec(goalId: 1, versions: [.init(version: 1, effectiveAt: 0, definition: definition)])
+        let subject = GoalSubject(kind: .install, clickAt: nil, installAt: 1000)
+        var state = EvaluationState()
+        state.progress["1:1"] = .init(goalId: 1, version: 1, count: Int.max, sum: Int64.max, times: 0, reachedAt: nil)
+        let event = GoalEvent(eventId: "e1", name: "purchase", occurredAt: 1100, receivedAt: 1100, properties: ["amount": .int(10)])
+        let result = try GoalEvaluator.continueFrom([spec], subject: subject, state: state, events: [event])
+        XCTAssertEqual(result.outcomes.map(\.n), [1, 2, 3])
+        XCTAssertEqual(result.state.progress["1:1"]?.sum, 6_000_000)
+        XCTAssertEqual(result.state.progress["1:1"]?.count, Int.max)
     }
 
     private func inputs(_ c: JSONValue, _ name: String) throws -> ([GoalSpec], GoalSubject, [GoalEvent]) {

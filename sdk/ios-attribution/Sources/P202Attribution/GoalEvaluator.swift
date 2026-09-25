@@ -186,7 +186,9 @@ public struct EvaluationState: Equatable, Sendable, Codable {
         public var goalId: Int
         public var version: Int
         public var count: Int
-        public var sum: Int
+        /// Units of 0.00001, held in an Int64 and clamped after every add
+        /// (README rule 8).
+        public var sum: Int64
         public var times: Int
         public var reachedAt: Int?
     }
@@ -205,7 +207,7 @@ public struct EvaluationState: Equatable, Sendable, Codable {
                 ("goal_id", .int($0.goalId)),
                 ("version", .int($0.version)),
                 ("count", .int($0.count)),
-                ("sum", .string(Amount.format($0.sum))),
+                ("sum", .string(Amount.format(Int($0.sum)))),
                 ("times_reached", .int($0.times)),
                 ("reached_at", $0.reachedAt.map { .int($0) } ?? .null),
             ])
@@ -239,8 +241,10 @@ public struct EvaluationResult: Equatable, Sendable {
 /// newest effective when the event arrived, inside the goal's span, raised
 /// by a rebase); goals visited prerequisites first; a goal counts the event
 /// when its trigger and predicates match, its `after` goals were reached
-/// eligibly, and the event is inside its window; reaching is `count >= n·N`
-/// (or `sum >= n·S`) up to the repeat cap.
+/// eligibly, and the event is inside its window (and, for a sum, its
+/// summand is an amount the ledger can hold); the total reached is then
+/// `min(cap, floor(count / N))` (or `floor(sum / S)`), computed rather than
+/// searched for, and every n above `times` up to it is an outcome.
 public enum GoalEvaluator {
     public enum InputError: Error, Equatable {
         case duplicateEvent(String)
@@ -420,42 +424,59 @@ public enum GoalEvaluator {
 
         let key = "\(goalId):\(version)"
         var p = state.progress[key] ?? .init(goalId: goalId, version: version, count: 0, sum: 0, times: 0, reachedAt: nil)
-        p.count += 1
-        if let sumUnits {
-            p.sum += sumUnits
+        let cap = def.cap
+        // Saturating: a count grows by one per event and never nears the
+        // top, but a state read back from the device's storage is not
+        // trusted to be one this fold wrote, and a trap here takes the
+        // host app down with it.
+        p.count = p.count == Int.max ? Int.max : p.count + 1
+
+        // Rule 9: how many times the goal is reached in total now, computed
+        // rather than searched for, so the loop below runs once per
+        // outcome and never once per candidate n.
+        let total: Int
+        switch def.threshold {
+        case let .count(n):
+            total = min(cap, p.count / n)
+        case let .sum(_, gte):
+            // Rule 8: every term fits an Int64 — cap ≤ 10,000 for a sum
+            // (parse() refuses a repeating sum without max) and gte ≤
+            // 99,999,999,999, so the ceiling is < 10^15; a summand is
+            // within ±99,999,999,999 (units()). A stored sum outside that
+            // range can only be a damaged state, and saturates rather than
+            // trapping; the clamp brings it back.
+            let summand = Int64(sumUnits ?? 0)
+            let (ceiling, ceilingOverflow) = Int64(cap).multipliedReportingOverflow(by: Int64(gte))
+            let (added, addOverflow) = p.sum.addingReportingOverflow(summand)
+            let raw = addOverflow ? (summand > 0 ? Int64.max : Int64.min) : added
+            p.sum = min(ceilingOverflow ? Int64.max : ceiling, max(sumFloorUnits, raw))
+            total = p.sum > 0 ? Int(min(Int64(cap), p.sum / Int64(gte))) : 0
         }
 
         var out: [GoalOutcome] = []
-        while p.times < def.cap {
-            let next = p.times + 1
-            let crossed: Bool
-            switch def.threshold {
-            case let .count(n):
-                let (need, overflow) = next.multipliedReportingOverflow(by: n)
-                crossed = !overflow && p.count >= need
-            case let .sum(_, gte):
-                let (need, overflow) = next.multipliedReportingOverflow(by: gte)
-                crossed = !overflow && p.sum >= need
+        // A stored `times` below zero is a damaged state too; it must not
+        // produce an outcome numbered zero or below.
+        p.times = max(p.times, 0)
+        if p.times < total {
+            let (valueUnits, source, note) = value(def, event)
+            out.reserveCapacity(total - p.times)
+            for n in (p.times + 1)...total {
+                out.append(GoalOutcome(
+                    goalId: goalId,
+                    version: version,
+                    n: n,
+                    eventId: event.eventId,
+                    reachedAt: t,
+                    valueUnits: valueUnits,
+                    valueSource: source,
+                    valueNote: note,
+                    ineligibleReason: ineligible
+                ))
             }
-            if !crossed {
-                break
-            }
-            p.times = next
+            p.times = total
             if p.reachedAt == nil {
                 p.reachedAt = t
             }
-            let (valueUnits, source, note) = value(def, event)
-            out.append(GoalOutcome(
-                goalId: goalId,
-                version: version,
-                n: next,
-                eventId: event.eventId,
-                reachedAt: t,
-                valueUnits: valueUnits,
-                valueSource: source,
-                valueNote: note,
-                ineligibleReason: ineligible
-            ))
             if ineligible == nil {
                 state.reached.insert(goalId)
             }
@@ -463,6 +484,14 @@ public enum GoalEvaluator {
         state.progress[key] = p
         return out
     }
+
+    /// The lowest a running sum goes, in units (−10,000,000,000.00000).
+    /// Upward a sum is held at cap × gte, the largest threshold the goal can
+    /// still use: a sum there has reached every n it ever can, so holding
+    /// it changes no outcome. Downward nothing is reached, so the floor
+    /// only keeps the arithmetic inside an Int64 (README rule 8; the
+    /// server's `GoalEvaluator::SUM_FLOOR_UNITS`).
+    static let sumFloorUnits: Int64 = -1_000_000_000_000_000
 
     private static func holds(_ predicate: GoalDefinition.Predicate, _ event: GoalEvent) -> Bool {
         let actual = event.property(predicate.prop)?.json
@@ -507,12 +536,15 @@ public enum GoalEvaluator {
     }
 
     /// A property value in units, or nil when it is not a number the ledger
-    /// can hold.
+    /// can hold: within ±999999.99999 (±`Amount.maxUnits`) once rounded to
+    /// units (README rule 6). That bounds every summand, so a running sum is
+    /// a sum of small integers.
     private static func units(_ v: EventValue?) -> Int? {
-        guard let json = v?.json, json.isNumber, let d = json.doubleValue, abs(d) <= 99_999_999_999_999.0 else {
+        guard let json = v?.json, json.isNumber, let d = json.doubleValue, abs(d) <= 1_000_000.0,
+              let units = Amount.units(number: json), abs(units) <= Amount.maxUnits else {
             return nil
         }
-        return Amount.units(number: json)
+        return units
     }
 
     private static func value(_ def: GoalDefinition, _ event: GoalEvent) -> (Int?, String, String?) {

@@ -18,12 +18,20 @@
 #     toolchain is given): it fetches, decodes, evaluates every served goal,
 #     and sets the value each step of a funnel should — the real fetch path,
 #     not a fixture;
-#   - encoding versions with the 35-day horizon: an edit and a delete keep the
-#     meaning they replace; the report decodes a postback from before an edit
-#     under the old meaning, one inside the horizon as ambiguous_encoding
-#     (credited to neither goal), one after it under the new meaning, and a
-#     deleted encoding keeps decoding inside the horizon;
-#   - Setup › Mobile Apps says so when a rule is edited.
+#   - encoding versions with the 48-day horizon (the 35-day windows, Apple's
+#     144-hour delivery delay, the SDK's 7-day schema age): an edit and a
+#     delete keep the meaning they replace; the report decodes a postback
+#     from before an edit under the old meaning, one inside the horizon as
+#     ambiguous_encoding (credited to neither goal), one after it under the
+#     new meaning, and a deleted encoding keeps decoding inside the horizon;
+#   - Setup › Mobile Apps says so when a rule is edited;
+#   - deleting the registration and registering the app again: its
+#     postbacks keep decoding under what its own encodings meant (by App
+#     Store id), not under the account-wide set;
+#   - PR 4's bound on repeating sums, from the encoding side: a sum with
+#     repeat "each" and no max cannot be created, a bounded one is encoded,
+#     and a row stored without max (which the device disables) cannot be
+#     named by an encoding.
 #
 # Needs a scratch database (it truncates the goal and app tables).
 #
@@ -115,7 +123,7 @@ print('definitions', len(defs), 'evaluator', len(cases), 'failures', bad)
 PY
 cat "$OUT/vectors.txt" | tail -5 | sed 's/^/    | /'
 eq "$(tail -1 "$OUT/vectors.txt" | awk '{print $6}')" 0 "every definition and evaluator vector, over HTTP"
-eq "$(tail -1 "$OUT/vectors.txt" | awk '{print ($2 >= 40 && $4 >= 40) ? "enough" : "too few"}')" enough "and there were enough of them to mean something"
+eq "$(tail -1 "$OUT/vectors.txt" | awk '{print ($2 >= 44 && $4 >= 45) ? "enough" : "too few"}')" enough "and there were enough of them to mean something (at least PR 4's sum-bound cases)"
 
 say "SKAN encodings name full goals: the device evaluates them"
 eq "$(api POST /apps '{"app_key":"990088801","app_name":"Summit Run"}')" 201 "an iOS app"
@@ -209,7 +217,11 @@ eq "$(api PUT "/apps/skan-encodings/$ENC_L3" '{"effective_at":1}')" 422 "effecti
 EDIT=$(( $(date +%s) - 10 * 86400 ))
 Q "UPDATE 202_app_skan_encoding_history SET effective_at = $EDIT - 400 * 86400, retired_at = $EDIT WHERE encoding_id = $ENC_L3"
 Q "UPDATE 202_app_skan_encodings SET effective_at = $EDIT WHERE encoding_id = $ENC_L3"
-H=$((35 * 86400))
+# 35 days of windows + 144 hours of delivery delay + 7 days of schema age
+# (SkanEncodingTimeline::HORIZON_DAYS). A third-window postback set on a
+# document fetched just before the edit arrives up to 41 days after it;
+# pb 3 below, at H - 1, is inside the horizon beyond that.
+H=$((48 * 86400))
 pb() { # n received_at fine
   Q "INSERT INTO 202_app_postbacks (user_id, registration_id, received_at, protocol, version, ad_network_id, transaction_id, app_id,
        conversion_value, postback_sequence_index, conversion_type, redownload, did_win, attribution_signature, signature_state, trusted,
@@ -283,6 +295,52 @@ PY
 else
   notrun "P202_PASS is not set: the Setup page step did not run"
 fi
+
+say "deleting the registration and registering the app again keeps what its encodings meant"
+# fine 1 means the app's Install goal; give it an account-wide meaning too,
+# so a postback that lost its app's meanings would visibly decode as the
+# account-wide goal instead.
+eq "$(api POST /goals '{"scope":"account","scope_id":0,"definition":{"name":"Account install","trigger":{"install":true}}}')" 201 "an account-wide goal"
+G_ACCOUNT=$(field "d['data']['goal_id']")
+eq "$(api POST /apps/skan-encodings "{\"registration_id\":0,\"fine_value\":1,\"goal_id\":$G_ACCOUNT}")" 201 "the account-wide set gives fine 1 its own meaning"
+NOW=$(date +%s)
+Q "UPDATE 202_app_skan_encodings SET effective_at = $((NOW - 400 * 86400)) WHERE registration_id = $RID AND fine_value = 1"
+pb 8 $((NOW - 2 * 86400)) 1        # set while the app's own encoding applied
+report_install() {
+  eq "$(api GET "/apps/report?group_by=registration&time_from=$((NOW - 3 * 86400))&time_to=$NOW")" 200 "the report ($1)"
+  eq "$(field "[sum(g[k] for g in d['data']['groups']) for k in ('measurable', 'decoded', 'ambiguous_encoding')]")" "[1, 1, 0]" "one postback, decoded ($1)"
+  eq "$(field "sorted(k for g in d['data']['groups'] for k in g['events'])")" '["Install"]' "under the app's own meaning, not the account-wide one ($1)"
+}
+report_install "registered"
+eq "$(api DELETE "/apps/$RID")" 204 "deleting the registration"
+eq "$(Q "SELECT COUNT(*) FROM 202_app_postbacks WHERE registration_id IS NOT NULL")" 0 "unlinks its postbacks"
+eq "$(Q "SELECT DISTINCT app_id FROM 202_app_skan_encoding_history WHERE registration_id = $RID")" 990088801 "its encodings' meanings are kept under the app"
+report_install "deleted"
+eq "$(api POST /apps '{"app_key":"990088801","app_name":"Summit Run again"}')" 201 "registering the app again"
+RID2=$(field "d['data']['registration_id']")
+eq "$([ "$RID2" != "$RID" ] && echo new)" new "under a new registration id"
+eq "$(Q "SELECT COUNT(*) FROM 202_app_postbacks WHERE registration_id = $RID2")" 8 "which claims every postback"
+report_install "registered again"
+
+say "a repeating sum is encoded only with a bound, and a stored one without is refused"
+# PR 4's rule (a sum threshold with repeat "each" needs max) seen from the
+# encoding side: the goal cannot be created, a bounded one encodes, and a
+# row stored before the rule existed — which the device would disable as
+# invalid_definition — cannot be named by an encoding. A second app, so
+# nothing above changes.
+eq "$(api POST /apps '{"app_key":"990088802","app_name":"Summit Run Sums"}')" 201 "a second iOS app"
+RID=$(field "d['data']['registration_id']")
+SUM_EACH='{"name":"Every $5","trigger":{"event":"purchase"},"threshold":{"sum":{"prop":"$revenue","gte":5}},"repeat":{"mode":"each"}}'
+eq "$(api POST /goals "{\"scope\":\"registration\",\"scope_id\":$RID,\"definition\":$SUM_EACH}")" 422 "a sum repeating each time without max is refused"
+eq "$(field "sorted(d['field_errors'])")" '["definition.repeat.max"]' "naming repeat.max"
+goal "every \$5, up to 5 times" '{"name":"Every $5","trigger":{"event":"purchase"},"threshold":{"sum":{"prop":"$revenue","gte":5}},"repeat":{"mode":"each","max":5}}'; G_SUMMAX=$GID
+eq "$(enc "\"fine_value\":5,\"goal_id\":$G_SUMMAX")" 201 "a bounded repeating sum is encoded"
+goal "a second bounded sum" '{"name":"Every $10","trigger":{"event":"purchase"},"threshold":{"sum":{"prop":"$revenue","gte":10}},"repeat":{"mode":"each","max":5}}'; G_LEGACY=$GID
+Q "UPDATE 202_goal_versions SET definition = '{\"name\":\"Every \$10\",\"trigger\":{\"event\":\"purchase\"},\"threshold\":{\"sum\":{\"prop\":\"\$revenue\",\"gte\":\"10.00\"}},\"repeat\":{\"mode\":\"each\"}}' WHERE goal_id = $G_LEGACY"
+eq "$(Q "SELECT definition LIKE '%\"max\"%' FROM 202_goal_versions WHERE goal_id = $G_LEGACY")" 0 "(its stored row rewritten as one from before the rule)"
+eq "$(enc "\"fine_value\":6,\"goal_id\":$G_LEGACY")" 422 "an encoding cannot name a stored repeating sum without max"
+has "$OUT/body" "current definition is invalid" "saying the goal must be fixed first"
+eq "$(Q "SELECT COUNT(*) FROM 202_app_skan_encodings WHERE registration_id = $RID")" 1 "and only the bounded goal is encoded"
 
 printf '\n\033[1m%d passed, %d failed, %d not run\033[0m\n' "$PASS" "$FAIL" "$NOTRUN"
 echo "artifacts: $OUT"
