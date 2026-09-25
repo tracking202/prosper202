@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\User;
 
 use Api\V3\Apps\AppDataPurge;
+use Prosper202\Attribution\ExportFiles;
 
 /**
  * Deleting a user: the soft delete of the 202_users row and the purge of the
@@ -17,8 +18,11 @@ use Api\V3\Apps\AppDataPurge;
  * it, is written down in documentation/features/measurement-rewrite-plan.md
  * §7.2. In short:
  *
- *  - the MTA engine's per-user state (models, snapshots and their
- *    touchpoints, settings, audit) is deleted, as it always was;
+ *  - the MTA engine's per-user state (PR 9: models, journeys and their
+ *    meta, credits, export jobs, audit, and the outbox rows of the user's
+ *    conversions) is deleted; the export jobs' CSV files are removed from
+ *    disk once the delete has committed (the rows are the only record of
+ *    their names, so the names are read inside the transaction first);
  *  - the identity graph (PR 2) is deleted: the account's hashing and linking
  *    keys, its visitors, signals and merges, and the per-click observations
  *    and visitor keys of the user's clicks — the links that say which
@@ -41,11 +45,22 @@ use Api\V3\Apps\AppDataPurge;
  */
 final class UserDataPurge
 {
-    /** The MTA engine's per-user state, children before parents. */
-    private const MTA_STATEMENTS = [
-        'DELETE FROM 202_attribution_touchpoints WHERE snapshot_id IN (SELECT snapshot_id FROM 202_attribution_snapshots WHERE user_id = ?)',
-        'DELETE FROM 202_attribution_snapshots WHERE user_id = ?',
-        'DELETE FROM 202_attribution_settings WHERE user_id = ?',
+    /**
+     * The MTA engine's per-user state (AttributionTables, plan §6.3–6.4),
+     * children before parents: credits and journeys are keyed by conversion
+     * and model, not user, so they are reached through the models and the
+     * journey meta that name the user, before those go. The outbox rows of
+     * the user's conversions go too, and the worker refuses a deleted user's
+     * conversion, or it would rebuild the journeys (and a default model) the
+     * purge just removed. Every AttributionTables table has a statement
+     * here; UserDeletionPurgeTest holds the two lists equal.
+     */
+    public const MTA_STATEMENTS = [
+        'DELETE cr FROM 202_attribution_credits cr JOIN 202_attribution_models m ON m.model_id = cr.model_id WHERE m.user_id = ?',
+        'DELETE j FROM 202_attribution_journeys j JOIN 202_attribution_journey_meta jm ON jm.conv_id = j.conv_id WHERE jm.user_id = ?',
+        'DELETE FROM 202_attribution_journey_meta WHERE user_id = ?',
+        'DELETE p FROM 202_attribution_pending p JOIN 202_conversion_logs c ON c.conv_id = p.conv_id WHERE c.user_id = ?',
+        'DELETE FROM 202_attribution_exports WHERE user_id = ?',
         'DELETE FROM 202_attribution_models WHERE user_id = ?',
         'DELETE FROM 202_attribution_audit WHERE user_id = ?',
     ];
@@ -80,8 +95,10 @@ final class UserDataPurge
         'DELETE FROM 202_api_keys WHERE user_id = ?',
     ];
 
-    public function __construct(private readonly \mysqli $db)
-    {
+    public function __construct(
+        private readonly \mysqli $db,
+        private readonly ?ExportFiles $exportFiles = null
+    ) {
     }
 
     /**
@@ -101,6 +118,11 @@ final class UserDataPurge
             }
             $cascade[] = ['resource' => $m[1], 'action' => 'delete', 'where' => 'belongs to user ' . $userId];
         }
+        $cascade[] = [
+            'resource' => 'attribution export files',
+            'action' => 'removed from disk once the delete commits',
+            'where' => 'named by an export row of user ' . $userId,
+        ];
         foreach (AppDataPurge::TABLE_ACTIONS as $table => $action) {
             $cascade[] = [
                 'resource' => $table,
@@ -130,6 +152,8 @@ final class UserDataPurge
             throw new \RuntimeException('Could not start the user deletion transaction');
         }
         try {
+            // Read inside the transaction, before the rows that hold them go.
+            $exportFileNames = $this->exportFileNames($userId);
             foreach (array_merge(self::ACCESS_STATEMENTS, self::MTA_STATEMENTS, self::IDENTITY_STATEMENTS, self::GOAL_STATEMENTS) as $sql) {
                 $this->run($sql, $userId);
             }
@@ -142,6 +166,58 @@ final class UserDataPurge
             $this->db->rollback();
             throw new \RuntimeException('User ' . $userId . ' was not deleted: ' . $e->getMessage(), 0, $e);
         }
+
+        // The files go only once the rows that named them are gone for good:
+        // removed first, a rolled-back delete would leave export rows whose
+        // downloads find nothing. A file that cannot be removed does not undo
+        // a committed delete; it is logged by name so it can be found.
+        $files = $this->exportFiles ?? new ExportFiles();
+        foreach ($exportFileNames as $name) {
+            try {
+                if (!$files->remove($name)) {
+                    error_log('UserDataPurge: attribution export file ' . $name . ' of deleted user ' . $userId . ' could not be removed');
+                }
+            } catch (\Throwable $e) {
+                error_log('UserDataPurge: an attribution export file of deleted user ' . $userId . ' was not removed: ' . $e->getMessage());
+            }
+        }
+    }
+
+    /**
+     * The stored names of the user's export files.
+     *
+     * @return list<string>
+     */
+    private function exportFileNames(int $userId): array
+    {
+        $stmt = $this->db->prepare('SELECT file_path FROM 202_attribution_exports WHERE user_id = ? AND file_path IS NOT NULL');
+        if ($stmt === false) {
+            throw new \RuntimeException('Prepare failed: export file names: ' . $this->db->error);
+        }
+        // @phpstan-ignore-next-line prosper202.directStmtCall — a checked one-shot bind; no Connection in scope
+        if (!$stmt->bind_param('i', $userId)) {
+            $stmt->close();
+            throw new \RuntimeException('Bind failed: export file names');
+        }
+        // @phpstan-ignore-next-line prosper202.directStmtCall — checked, as in run()
+        if (!$stmt->execute()) {
+            $error = $stmt->error;
+            $stmt->close();
+            throw new \RuntimeException('Reading the export file names failed: ' . $error);
+        }
+        // @phpstan-ignore-next-line prosper202.directStmtCall — false is checked: it is not "no files"
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            throw new \RuntimeException('Reading the export file names failed: no result set');
+        }
+        $names = [];
+        while (is_array($row = $result->fetch_assoc())) {
+            $names[] = (string) $row['file_path'];
+        }
+        $stmt->close();
+
+        return $names;
     }
 
     private function run(string $sql, int $userId): void

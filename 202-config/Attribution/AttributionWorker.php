@@ -362,14 +362,15 @@ final class AttributionWorker
      * Rewrite one conversion's journey and credits from the current ledger
      * and identity graph. Runs inside the caller's transaction.
      *
-     * @return string credited | cleared | missing | reversal
+     * @return string credited | cleared | missing | reversal | user_deleted
      */
     public function processConversion(int $convId, string $reason): string
     {
         $stmt = $this->conn->prepareWrite(
-            'SELECT conv_id, click_id, user_id, click_payout, payable, deleted, superseded_reason,
-                    reverses_conv_id, conv_time, click_time
-             FROM 202_conversion_logs WHERE conv_id = ? LIMIT 1'
+            'SELECT c.conv_id, c.click_id, c.user_id, c.click_payout, c.payable, c.deleted, c.superseded_reason,
+                    c.reverses_conv_id, c.conv_time, c.click_time, u.user_deleted
+             FROM 202_conversion_logs c LEFT JOIN 202_users u ON u.user_id = c.user_id
+             WHERE c.conv_id = ? LIMIT 1'
         );
         $this->conn->bind($stmt, 'i', [$convId]);
         $row = $this->conn->fetchOne($stmt);
@@ -377,6 +378,13 @@ final class AttributionWorker
         if ($row === null) {
             $this->store->clear($convId);
             return 'missing';
+        }
+        if ((int) ($row['user_deleted'] ?? 0) === 1) {
+            // UserDataPurge removed this account's MTA state; a conversion
+            // that arrives (or was queued) after that must not rebuild it —
+            // journeys, credits, and a default model the account no longer has.
+            $this->store->clear($convId);
+            return 'user_deleted';
         }
         if ($row['reverses_conv_id'] !== null) {
             // A reversal has no journey of its own: it nets against the row it

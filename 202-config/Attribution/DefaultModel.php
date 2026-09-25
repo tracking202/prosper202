@@ -28,9 +28,13 @@ final class DefaultModel
     /** Seeds every account that has no default. What the upgrade rung runs. */
     public const SEED_ALL_SQL = self::SEED_SELECT;
 
-    /** Accounts still without a default after seeding: must be 0. */
+    /**
+     * Live accounts still without a default after seeding: must be 0. A
+     * deleted account has none by design (UserDataPurge removed its models,
+     * and the worker refuses its conversions), so neither query counts it.
+     */
     public const MISSING_SQL = "SELECT COUNT(*) AS missing FROM 202_users u
-        WHERE NOT EXISTS (SELECT 1 FROM 202_attribution_models m WHERE m.user_id = u.user_id AND m.is_default = 1)";
+        WHERE u.user_deleted = 0 AND NOT EXISTS (SELECT 1 FROM 202_attribution_models m WHERE m.user_id = u.user_id AND m.is_default = 1)";
 
     private const SEED_SELECT = "INSERT INTO 202_attribution_models
             (user_id, model_name, model_slug, model_type, weighting_config, lookback_days,
@@ -38,7 +42,8 @@ final class DefaultModel
         SELECT u.user_id, '" . self::NAME . "', '" . self::SLUG . "', 'last_touch', '{}', 30,
              'active', NULL, 1, NULL, 0, UNIX_TIMESTAMP(), UNIX_TIMESTAMP()
         FROM 202_users u
-        WHERE NOT EXISTS (SELECT 1 FROM 202_attribution_models d WHERE d.user_id = u.user_id AND d.is_default = 1)
+        WHERE u.user_deleted = 0
+          AND NOT EXISTS (SELECT 1 FROM 202_attribution_models d WHERE d.user_id = u.user_id AND d.is_default = 1)
           AND NOT EXISTS (SELECT 1 FROM 202_attribution_models s WHERE s.user_id = u.user_id AND s.model_slug = '" . self::SLUG . "')";
 
     private function __construct()

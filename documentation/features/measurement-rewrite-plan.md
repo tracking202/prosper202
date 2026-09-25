@@ -2466,7 +2466,7 @@ performance target at 1M conversions (measured in PR 12).
   statements to `UserDataPurge` (or, for app tables, an action to
   `AppDataPurge::TABLE_ACTIONS`); `UserDeletionPurgeTest` requires the
   purge to name every table in `AppTables`, `GoalTables` and
-  `AttributionTables`, and `UserDataPurgeIntegrationTest` deletes a seeded
+  `AttributionTables`, and `UserDeletionPurgesAttributionTest` deletes a seeded
   user and checks every MTA table and export file is empty of them while
   another account's rows stay.
 

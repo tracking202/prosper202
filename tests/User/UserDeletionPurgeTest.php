@@ -128,6 +128,40 @@ final class UserDeletionPurgeTest extends TestCase
         }
     }
 
+    public function testThePurgeDeletesEveryAttributionTable(): void
+    {
+        $tables = array_map(static fn ($definition): string => $definition->tableName, \Prosper202\Database\Tables\AttributionTables::getDefinitions());
+        // The outbox is conversion schema (ConversionTables), but its rows
+        // for the user's conversions are MTA state: left, the worker would
+        // rebuild the journeys the purge removed.
+        $tables[] = '202_attribution_pending';
+        sort($tables);
+        $purged = [];
+        foreach (\Prosper202\User\UserDataPurge::MTA_STATEMENTS as $sql) {
+            $this->assertSame(1, preg_match('/^DELETE (?:\w+ )?FROM (\w+)/', $sql, $m), $sql);
+            $purged[] = $m[1];
+        }
+        sort($purged);
+        $this->assertSame($tables, $purged, 'an MTA table with no purge statement outlives the user who owned its rows');
+
+        // Children before parents: credits are found through the models,
+        // journeys through the journey meta, so each goes first.
+        $order = array_flip(array_map(static function (string $sql): string {
+            preg_match('/^DELETE (?:\w+ )?FROM (\w+)/', $sql, $m);
+            return $m[1];
+        }, \Prosper202\User\UserDataPurge::MTA_STATEMENTS));
+        $this->assertLessThan($order['202_attribution_models'], $order['202_attribution_credits']);
+        $this->assertLessThan($order['202_attribution_journey_meta'], $order['202_attribution_journeys']);
+
+        $byTable = [];
+        foreach (\Prosper202\User\UserDataPurge::cascade(42) as $entry) {
+            $byTable[$entry['resource']] = $entry['action'];
+        }
+        foreach ($tables as $table) {
+            $this->assertSame('delete', $byTable[$table] ?? null, $table . ': the preview names it');
+        }
+    }
+
     public function testThePurgeHasADecisionForEveryAppTable(): void
     {
         $tables = array_map(static fn ($definition): string => $definition->tableName, AppTables::getDefinitions());
