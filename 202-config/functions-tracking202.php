@@ -3904,19 +3904,10 @@ function  upgrade_config()
 
 function getSecureStatus(): bool
 {
-    $secure = false;
-    if (
-        (! empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-        || (! empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] == 'https')
-        || (! empty($_SERVER['HTTP_X_FORWARDED_SSL']) && $_SERVER['HTTP_X_FORWARDED_SSL'] == 'on')
-        || (isset($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443)
-        || (isset($_SERVER['HTTP_X_FORWARDED_PORT']) && $_SERVER['HTTP_X_FORWARDED_PORT'] == 443)
-        || (isset($_SERVER['REQUEST_SCHEME']) && $_SERVER['REQUEST_SCHEME'] == 'https')
-    ) {
-        $secure = true;
-    }
-
-    return $secure;
+    // One answer for the whole install, the one the session cookie's Secure
+    // flag is set from (202-config/request-https.php).
+    require_once __DIR__ . '/request-https.php';
+    return p202_request_is_https($_SERVER);
 }
 
 /**

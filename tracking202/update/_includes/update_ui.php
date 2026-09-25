@@ -209,10 +209,15 @@ function p202_update_cpc_parse(array $in): array
  * whose 202_clicks_site row names a landing page URL. Pure. $values is
  * p202_update_cpc_parse()'s, with no errors.
  *
+ * $throughClickId bounds the set to the clicks that existed when the person
+ * checked it (the preview's highest click id): the confirm step updates the
+ * clicks the person counted, never ones recorded since (see
+ * p202_update_cpc_snapshot()). Null only for the preview itself.
+ *
  * @param array<string, mixed> $values
  * @return array{joins: string, where: string, types: string, params: list<int>}
  */
-function p202_update_cpc_scope(array $values, int $userId): array
+function p202_update_cpc_scope(array $values, int $userId, ?int $throughClickId = null): array
 {
     $joins = ' LEFT JOIN 202_clicks_advance ON (202_clicks_advance.click_id = 202_clicks.click_id)'
         . ' LEFT JOIN 202_clicks_site ON (202_clicks_site.click_id = 202_clicks.click_id)'
@@ -236,12 +241,47 @@ function p202_update_cpc_scope(array $values, int $userId): array
             $params[] = (int) $values[$field];
         }
     }
+    if ($throughClickId !== null) {
+        $where .= ' AND 202_clicks.click_id <= ?';
+        $types .= 'i';
+        $params[] = $throughClickId;
+    }
     if (($values['method_of_promotion'] ?? '') === 'landingpage') {
         $where .= ' AND 202_clicks_site.click_landing_site_url_id != 0';
     } elseif (($values['method_of_promotion'] ?? '') === 'directlink') {
         $where .= ' AND 202_clicks_site.click_landing_site_url_id = 0';
     }
     return ['joins' => $joins, 'where' => $where, 'types' => $types, 'params' => $params];
+}
+
+/**
+ * What the person confirmed on the Update CPC check: how many clicks it
+ * counted, and the highest click id among them. The confirm form carries
+ * both, and the update runs only if the same bounded selection still counts
+ * the same — a window that includes today gains clicks between the check and
+ * the confirm, and "Update 4 clicks" must never change a fifth.
+ *
+ * Null when either is missing or is not a whole number: a confirm that
+ * cannot say what it confirmed is refused and checked again, never read as
+ * "no limit" (error pattern #11).
+ *
+ * @param array<string, mixed> $in normally $_POST
+ * @return array{count: int, through: int}|null
+ */
+function p202_update_cpc_snapshot(array $in): ?array
+{
+    $read = static function (mixed $raw): ?int {
+        if (!is_string($raw) || $raw === '' || strlen($raw) > 18 || !ctype_digit($raw)) {
+            return null;
+        }
+        return (int) $raw;
+    };
+    $count = $read($in['expect_clicks'] ?? null);
+    $through = $read($in['through_click_id'] ?? null);
+    if ($count === null || $through === null) {
+        return null;
+    }
+    return ['count' => $count, 'through' => $through];
 }
 
 // ─── Data ──────────────────────────────────────────────────────────────

@@ -90,18 +90,20 @@ M10=$(php -r 'date_default_timezone_set($argv[1]); echo mktime(0, 0, 0, 3, 10, 2
 NOW=$(date +%s)
 C1=940001; C2=940002; C3=940003; C4=940004; C5=940005; C6=940006
 CLICKS="$C1,$C2,$C3,$C4,$C5,$C6"
+# Recorded after an Update CPC check, inside its window.
+C7=940007
 FOREIGN_USER=999940
 
 cleanup() {
   mysql_q "$DB" <<SQL
-DELETE FROM 202_attribution_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICKS));
-DELETE FROM 202_conversion_logs WHERE click_id IN ($CLICKS);
-DELETE FROM 202_dataengine WHERE click_id IN ($CLICKS);
-DELETE FROM 202_clicks WHERE click_id IN ($CLICKS);
-DELETE FROM 202_clicks_spy WHERE click_id IN ($CLICKS);
-DELETE FROM 202_clicks_tracking WHERE click_id IN ($CLICKS);
-DELETE FROM 202_clicks_site WHERE click_id IN ($CLICKS);
-DELETE FROM 202_clicks_advance WHERE click_id IN ($CLICKS);
+DELETE FROM 202_attribution_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICKS,$C7));
+DELETE FROM 202_conversion_logs WHERE click_id IN ($CLICKS,$C7);
+DELETE FROM 202_dataengine WHERE click_id IN ($CLICKS,$C7);
+DELETE FROM 202_clicks WHERE click_id IN ($CLICKS,$C7);
+DELETE FROM 202_clicks_spy WHERE click_id IN ($CLICKS,$C7);
+DELETE FROM 202_clicks_tracking WHERE click_id IN ($CLICKS,$C7);
+DELETE FROM 202_clicks_site WHERE click_id IN ($CLICKS,$C7);
+DELETE FROM 202_clicks_advance WHERE click_id IN ($CLICKS,$C7);
 DELETE FROM 202_dirty_hours WHERE user_id=$USER_ID AND click_time_from IN ($D10, $M10);
 DELETE FROM 202_aff_campaigns WHERE aff_campaign_name LIKE 'u5-pass-%';
 DELETE FROM 202_aff_networks WHERE aff_network_name LIKE 'u5-pass-%';
@@ -234,6 +236,39 @@ eq "$(cpc)" "0.12345,0.12345,0.12345,0.10000,0.10000,0.12345" "exactly C1-C3 and
 eq "$(Q "SELECT COUNT(*) FROM 202_dirty_hours WHERE user_id=$USER_ID AND aff_campaign_id=$CA")" "$((DIRTY_BEFORE+1))" "the data engine is told to rebuild those hours"
 submit "$OUT/cpc-preview.html" token "tracking202/update/cpc.php" "$OUT/cpc-again.html"
 flash "$OUT/cpc-again.html" '0 clicks updated.' "sending it again changes nothing, and says so"
+
+say "Update CPC: the confirm changes the clicks the check counted, never others"
+# A window that includes today keeps gaining clicks between the check and the
+# confirm. The confirm carries the count and the highest click id the check
+# saw: a click recorded later is left alone, and a selection that no longer
+# counts the same is refused and checked again, never updated as it stands.
+get "${PREVIEW/cpc=0.12345/cpc=0.2}" "$OUT/cpc-p2.html"
+has "$OUT/cpc-p2.html" '>Update 4 clicks</button>' "a check at \$0.20 counts the same four clicks"
+seed_click $C7 "$CA" "$PPC" "$D10" 0
+submit "$OUT/cpc-p2.html" token "tracking202/update/cpc.php" "$OUT/cpc-late.html"
+flash "$OUT/cpc-late.html" '4 clicks updated.' "a click recorded after the check: confirming 4 updates 4"
+eq "$(cpc)" "0.20000,0.20000,0.20000,0.10000,0.10000,0.20000" "exactly the four that were counted"
+eq "$(Q "SELECT click_cpc FROM 202_clicks WHERE click_id=$C7")" "0.10000" "and the click recorded since keeps its own cost"
+
+get "${PREVIEW/cpc=0.12345/cpc=0.3}" "$OUT/cpc-p3.html"
+has "$OUT/cpc-p3.html" '>Update 5 clicks</button>' "checking again counts it: five"
+submit "$OUT/cpc-p3.html" token "tracking202/update/cpc.php" "$OUT/cpc-nosnap.html" expect_clicks=
+flash "$OUT/cpc-nosnap.html" 'This confirmation did not say which clicks you checked, so nothing was changed.' "a confirm that does not carry the count is refused, not read as no limit"
+submit "$OUT/cpc-p3.html" token "tracking202/update/cpc.php" "$OUT/cpc-nosnap2.html" through_click_id=abc
+flash "$OUT/cpc-nosnap2.html" 'This confirmation did not say which clicks you checked, so nothing was changed.' "nor one whose boundary is not a click id"
+eq "$(cpc),$(Q "SELECT click_cpc FROM 202_clicks WHERE click_id=$C7")" "0.20000,0.20000,0.20000,0.10000,0.10000,0.20000,0.10000" "and neither writes anything"
+# C4 (campaign B, day 10) is edited into campaign A: an older click id, below
+# the boundary the check saw, so only the count can tell.
+Q "UPDATE 202_clicks SET aff_campaign_id=$CA WHERE click_id=$C4"
+submit "$OUT/cpc-p3.html" token "tracking202/update/cpc.php" "$OUT/cpc-moved.html"
+flash "$OUT/cpc-moved.html" 'The clicks in this selection changed after you checked them: you confirmed 5 and 6 match now. Nothing was changed.' "a selection that changed after the check is refused, with both counts"
+eq "$(cpc),$(Q "SELECT click_cpc FROM 202_clicks WHERE click_id=$C7")" "0.20000,0.20000,0.20000,0.10000,0.10000,0.20000,0.10000" "and nothing is written"
+has "$OUT/cpc-moved.html" '<span class="p202-pill p202-pill--accent">6 clicks</span>' "the page checks again"
+has "$OUT/cpc-moved.html" '>Update 6 clicks</button>' "and offers the new count to confirm"
+submit "$OUT/cpc-moved.html" token "tracking202/update/cpc.php" "$OUT/cpc-moved-ok.html"
+flash "$OUT/cpc-moved-ok.html" '6 clicks updated.' "confirming the new count updates the six"
+eq "$(cpc),$(Q "SELECT click_cpc FROM 202_clicks WHERE click_id=$C7")" "0.30000,0.30000,0.30000,0.30000,0.10000,0.30000,0.30000" "C1-C4, C6 and C7; the next day is untouched"
+Q "UPDATE 202_clicks SET aff_campaign_id=$CB WHERE click_id=$C4"
 
 # ─────────────────────────────────────────────────────────────────────
 say "Reset Campaign Subids: one category, or one campaign of it, through the ledger"
