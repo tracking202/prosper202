@@ -136,6 +136,8 @@ public final class P202Attribution {
     private var lastReengagementFineValue: Int?
     private var goals = DeviceGoalState()
     private var refreshInFlight = false
+    /// Set by a body-less 304; the fetch that answered it starts one more.
+    private var refetchUnconditionally = false
     /// When the last refresh ATTEMPT resolved, successfully or not. Distinct
     /// from `cache.fetchedAt`, which records only successes — see
     /// refreshIfStale() for why a failure has to be remembered too.
@@ -164,6 +166,9 @@ public final class P202Attribution {
     /// Every update handed to the frameworks, for tests (off-iOS the
     /// framework calls compile to nothing).
     var onSubmit: ((ConversionUpdate) -> Void)?
+
+    /// Every schema request as it is sent, for tests.
+    var onFetch: ((URLRequest) -> Void)?
 
     /// The store and session are injectable for tests; production uses
     /// UserDefaults and the shared URLSession.
@@ -267,7 +272,7 @@ public final class P202Attribution {
     ) throws -> ConversionUpdate? {
         try Self.validate(name: name, properties: properties, revenue: revenue)
 
-        let update: ConversionUpdate? = try queue.sync {
+        let updates: [ConversionUpdate] = try queue.sync {
             guard configuration != nil else {
                 throw SDKError.notConfigured
             }
@@ -290,20 +295,20 @@ public final class P202Attribution {
                 goals.pending.append(DeviceGoalState.Pending(event: event, conversionTypes: conversionTypes))
                 goals.lastReceivedAt = now
                 goals.save(to: store)
-                return nil
+                return []
             }
             goals.lastReceivedAt = now
-            let update = evaluate(event, conversionTypes: conversionTypes, schema: schema)
+            let updates = evaluate(event, conversionTypes: conversionTypes, schema: schema)
             goals.save(to: store)
-            return update
+            return updates
         }
 
         refreshIfStale()
 
-        if let update {
-            submitAll([update])
-        }
-        return update
+        submitAll(updates)
+        // One update, or — for an event scoped to both postbacks whose
+        // progress differs — the install postback's (both are submitted).
+        return updates.first(where: { $0.includesInstall }) ?? updates.first
     }
 
     /// Signal install attribution before any conversion event has happened
@@ -355,6 +360,7 @@ public final class P202Attribution {
             completion?(.failure(SDKError.notConfigured))
             return
         }
+        onFetch?(prepared.request)
 
         session.dataTask(with: prepared.request) { [weak self] data, response, error in
             // The completion contract is exactly-once even when the instance
@@ -400,6 +406,16 @@ public final class P202Attribution {
                 cache.save(to: store, appToken: config.appToken)
                 return (.success(cached), flushPending())
             }
+            if status == 304 {
+                // "Not modified" for a document this device does not hold:
+                // the ETag it sent vouches for nothing. It is dropped, so the
+                // next fetch — started below, and every one after — is
+                // unconditional and brings the document itself.
+                cache.etag = nil
+                cache.save(to: store, appToken: config.appToken)
+                refetchUnconditionally = true
+                return (.failure(SDKError.unexpectedStatus(304)), [])
+            }
             guard status == 200 else {
                 return (.failure(SDKError.unexpectedStatus(status)), [])
             }
@@ -417,6 +433,13 @@ public final class P202Attribution {
             }
         }
         submitAll(flushed)
+        let refetch: Bool = queue.sync {
+            defer { refetchUnconditionally = false }
+            return refetchUnconditionally
+        }
+        if refetch {
+            refreshSchema()
+        }
         return result
     }
 
@@ -430,58 +453,91 @@ public final class P202Attribution {
         }
         var updates: [ConversionUpdate] = []
         if !goals.installEvaluated {
-            if let update = evaluate(.install(at: installAt), conversionTypes: nil, schema: schema) {
-                updates.append(update)
-            }
+            updates += evaluate(.install(at: installAt), conversionTypes: nil, schema: schema)
             goals.installEvaluated = true
         }
         let waiting = goals.pending
         goals.pending = []
         for item in waiting {
-            if let update = evaluate(item.event, conversionTypes: item.conversionTypes, schema: schema) {
-                updates.append(update)
-            }
+            updates += evaluate(item.event, conversionTypes: item.conversionTypes, schema: schema)
         }
         goals.save(to: store)
         return updates
     }
 
-    /// One event through the evaluator, from the stored progress; the
-    /// update its eligible outcomes encode to, if any.
+    /// One event through the evaluator of each postback it is scoped to;
+    /// the updates their eligible outcomes encode to.
+    ///
+    /// Each postback keeps its own goal progress (DeviceGoalState): the
+    /// install postback's from the install on, the re-engagement postback's
+    /// from the start of its conversion lifecycle (`beginReengagement()`).
+    /// Shared, a goal reached for one postback — a `once` goal, a count, a
+    /// sum — would already be spent when the other's events arrive, and a
+    /// re-engagement event would advance the install postback's funnel. When
+    /// both postbacks reach the same value it is one update scoped to both;
+    /// when they differ, one update per postback.
     private func evaluate(
         _ event: GoalEvent,
         conversionTypes: [ConversionUpdate.ConversionType]?,
         schema: P202AttributionSchema
-    ) -> ConversionUpdate? {
+    ) -> [ConversionUpdate] {
         let subject = GoalSubject(kind: .install, clickAt: nil, installAt: goals.installAt)
-        guard let result = try? GoalEvaluator.continueFrom(schema.goals, subject: subject, state: goals.state, events: [event]) else {
-            // Only a document with a goal twice can get here, and decode()
-            // refuses that; the state is left as it was.
-            return nil
+        let types = conversionTypes ?? [.install]
+        var decisions: [(type: ConversionUpdate.ConversionType, update: ConversionUpdate)] = []
+        for type in ConversionUpdate.ConversionType.allCases where types.contains(type) {
+            guard let result = try? GoalEvaluator.continueFrom(schema.goals, subject: subject, state: goals.progress(for: type), events: [event]) else {
+                // Only a document with a goal twice can get here, and decode()
+                // refuses that; the state is left as it was.
+                continue
+            }
+            goals.setProgress(result.state, for: type)
+            // A coarse-only mapping falls back to the last fine value of the
+            // postback being updated — never the other postback's.
+            let history = type == .install ? lastFineValue : lastReengagementFineValue
+            if let decision = ConversionUpdate.resolve(outcomes: result.outcomes, in: schema, lastFineValue: history) {
+                decisions.append((type, decision))
+            }
         }
-        goals.state = result.state
+        guard !decisions.isEmpty else {
+            return []
+        }
+        var updates: [ConversionUpdate]
+        if decisions.count == 2, decisions[0].update == decisions[1].update {
+            updates = [decisions[0].update.scoped(to: conversionTypes)]
+        } else if decisions.count == 1, decisions[0].type == .install, conversionTypes == nil {
+            updates = [decisions[0].update]
+        } else {
+            updates = decisions.map { $0.update.scoped(to: [$0.type]) }
+        }
+        for update in updates {
+            // Persist only on change: repeated events with the same fine
+            // value must not write the store on every call.
+            if !update.usedFineFallback {
+                if update.includesInstall && lastFineValue != update.fineValue {
+                    lastFineValue = update.fineValue
+                    LastFineValueStore.save(update.fineValue, to: store, for: .install)
+                }
+                if update.includesReengagement && lastReengagementFineValue != update.fineValue {
+                    lastReengagementFineValue = update.fineValue
+                    LastFineValueStore.save(update.fineValue, to: store, for: .reengagement)
+                }
+            }
+        }
+        return updates
+    }
 
-        // A coarse-only mapping falls back to the last fine value of the
-        // postback being updated — never the other postback's.
-        let updatesInstall = conversionTypes?.contains(.install) ?? true
-        let history = updatesInstall ? lastFineValue : lastReengagementFineValue
-        guard let decision = ConversionUpdate.resolve(outcomes: result.outcomes, in: schema, lastFineValue: history) else {
-            return nil
+    /// Start a new re-engagement conversion lifecycle: call when the app is
+    /// opened from a re-engagement ad (AdAttributionKit, iOS 18+). The
+    /// re-engagement postback's goal progress and its last fine value start
+    /// over, as the postback itself does; the install postback's are not
+    /// touched.
+    public func beginReengagement() {
+        queue.sync {
+            goals.setProgress(EvaluationState(), for: .reengagement)
+            goals.save(to: store)
+            lastReengagementFineValue = nil
+            store.removeValue(forKey: LastFineValueStore.key(for: .reengagement))
         }
-        let update = decision.scoped(to: conversionTypes)
-        // Persist only on change: repeated events with the same fine value
-        // must not write the store on every call.
-        if !update.usedFineFallback {
-            if update.includesInstall && lastFineValue != update.fineValue {
-                lastFineValue = update.fineValue
-                LastFineValueStore.save(update.fineValue, to: store, for: .install)
-            }
-            if update.includesReengagement && lastReengagementFineValue != update.fineValue {
-                lastReengagementFineValue = update.fineValue
-                LastFineValueStore.save(update.fineValue, to: store, for: .reengagement)
-            }
-        }
-        return update
     }
 
     static func validate(name: String, properties: [String: EventValue], revenue: Double?) throws {
