@@ -166,6 +166,7 @@ try {
     $auth = Auth::fromRequest($headers, $db);
     $userId = $auth->userId();
     RequestContext::setActorUserId($userId);
+    RequestContext::setApiKeyRef($auth->apiKeyRef());
 
     // Lightweight fixed-window rate limits for high-impact operations.
     $stateStore = new ServerStateStore();
@@ -315,6 +316,13 @@ try {
         // ── Clicks (read-only) ───────────────────────────────────────────
         $router->get('/clicks', fn() => $crud(\Api\V3\Controllers\ClicksController::class)->list($queryParams));
         $router->get('/clicks/{id}', fn($ctx) => $crud(\Api\V3\Controllers\ClicksController::class)->get((int)$ctx['id']));
+        // A click's conversions, each with whether it counts toward the
+        // click's value. It is the clicks area by path and shows conversion
+        // rows, so a key needs read scope on both.
+        $router->get('/clicks/{id}/conversions', function ($ctx) use ($crud, $auth) {
+            $auth->requireScope('conversions:read');
+            return $crud(\Api\V3\Controllers\ClicksController::class)->conversions((int)$ctx['id']);
+        });
 
         // ── Conversions ──────────────────────────────────────────────────
         $router->group('/conversions', function (Router $r) use ($crud, $idempotent, $queryParams, $payload) {

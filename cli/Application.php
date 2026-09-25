@@ -28,6 +28,7 @@ class Application extends ConsoleApplication
         // --- Clicks ---
         $this->add(new Commands\ClickListCommand());
         $this->add(new Commands\ClickGetCommand());
+        $this->add(new Commands\ClickConversionsCommand());
 
         // --- Conversions ---
         $this->add(new Commands\ConversionListCommand());

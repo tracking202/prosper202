@@ -104,6 +104,17 @@ class CapabilitiesController
                         'max_properties' => \Prosper202\Goals\GoalEvent::MAX_PROPERTIES,
                         'goal_tokens' => ['[[p202_goal]]', '[[p202_goal_id]]', '[[p202_goal_value]]'],
                     ],
+                    // The conversion ledger's reads: GET
+                    // /clicks/{id}/conversions explains a click's value row
+                    // by row, and GET /conversions filters by click, source
+                    // and goal and returns every row's provenance. `sources`
+                    // is what the source filter accepts; `not_counted` the
+                    // reasons a row can be left out of its click's value.
+                    'conversion_ledger' => [
+                        'sources' => array_map(static fn (\Prosper202\Conversion\Ledger\ConversionSource $s): string => $s->value, \Prosper202\Conversion\Ledger\ConversionSource::cases()),
+                        'not_counted' => array_map(static fn (\Prosper202\Conversion\Ledger\NotCountedReason $r): string => $r->value, \Prosper202\Conversion\Ledger\NotCountedReason::cases()),
+                        'click_breakdown' => true,
+                    ],
                 ],
                 'limits' => [
                     'max_bulk_rows' => $this->maxBulkRows(),

@@ -7,7 +7,8 @@ declare(strict_types=1);
  * and Spy (?spy=1: the last 24 hours; with since/since_id, only the clicks
  * newer than the newest one shown, as bare rows). Drawn on the v2 shell by
  * 202-js/p202-overview.js; the filters are the user's report preferences,
- * which the page applied from its URL. The query is unchanged.
+ * which the page applied from its URL. A row with conversions opens their
+ * breakdown (click_conversions.php) in the modal drawn below the table.
  */
 include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
 require_once(substr(__DIR__, 0, -17) . '/202-config/functions-ui-overview.php');
@@ -27,7 +28,8 @@ $command = "SELECT 2c.click_id, 2c.click_time, 2c.click_alp, text_ad_name, aff_c
 2cl.site_url_address AS landing,2cld.site_domain_host AS landing_host,
 2co.site_url_address AS outbound,2cod.site_domain_host AS outbound_host,
 2cc.site_url_address AS cloaking,2ccd.site_domain_host AS cloaking_host,
-2credir.site_url_address AS redirect,2credird.site_domain_host AS redirect_host
+2credir.site_url_address AS redirect,2credird.site_domain_host AS redirect_host,
+(SELECT COUNT(*) FROM 202_conversion_logs AS cvl WHERE cvl.click_id = 2c.click_id) AS conversion_rows
 FROM 202_dataengine AS 2c
 LEFT JOIN 202_clicks_record USING (click_id)
 LEFT JOIN 202_clicks_site AS 2cs ON (2c.click_id = 2cs.click_id)
@@ -200,6 +202,17 @@ if (!$isSpy) {
 			?>
 		</tbody>
 	</table>
+</div>
+<div class="modal fade" id="p202-click-conversions" tabindex="-1" aria-labelledby="p202-click-conversions-title" aria-hidden="true">
+	<div class="modal-dialog modal-xl modal-dialog-scrollable">
+		<div class="modal-content">
+			<div class="modal-header">
+				<h5 class="modal-title" id="p202-click-conversions-title">Conversions on this click</h5>
+				<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+			</div>
+			<div class="modal-body" data-p202-breakdown-body aria-live="polite"></div>
+		</div>
+	</div>
 </div>
 <?php if ($isSpy && $spyLatestTime > 0) { ?>
 	<div hidden data-p202-spy-latest data-time="<?php echo $spyLatestTime; ?>" data-id="<?php echo $spyLatestId; ?>"></div>

@@ -47,6 +47,22 @@ case "$ask" in
         printf 'Created goal %s, "Reached level 3", on campaign %s: it is reached once, by the first level_reached event with level >= 3, and the campaign pays $4.00 for it.\n' \
             "$goal" "$campaign"
         ;;
+    *"EVAL-BD-"*)
+        # A click's value explained: find the click by the sale's transaction
+        # id in real conversion output, then read the ledger's own verdict
+        # for every row rather than adding the sales up by hand.
+        tx=$(printf '%s' "$ask" | grep -oE 'EVAL-BD-[0-9]+' | head -1)
+        click=$(p202 conversion list --all --json | jq -r --arg tx "$tx" '[.data[] | select(.transaction_id==$tx)][0].click_id // empty')
+        if [ -z "$click" ]; then
+            printf 'No conversion with transaction id %s was found in `p202 conversion list`, so there is no click to explain. Nothing was changed.\n' "$tx"
+        else
+            breakdown=$(p202 click conversions "$click" --json)
+            value=$(printf '%s' "$breakdown" | jq -r '.click | if .lead then .click_payout else "not converted" end')
+            rows=$(printf '%s' "$breakdown" | jq -r '.data[] | "- \(.transaction_id // "no transaction id") \(.amount): " + (if .counted then "counts" else "does not count (\(.not_counted_reason)\(if .superseded_reason then ", " + .superseded_reason else "" end)): \(.explanation)" end)')
+            printf 'The sale %s is on click %s, which is worth %s. Its conversions, from `p202 click conversions %s`:\n%s\n' \
+                "$tx" "$click" "$value" "$click" "$rows"
+        fi
+        ;;
     *stage*apply*)
         # Propose the write, then apply the proposal. What gets written must
         # be the payload that was reviewed — never one substituted at apply.
