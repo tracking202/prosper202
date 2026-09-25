@@ -120,6 +120,10 @@ p202 event send --click-id 123 --file events.json            # a list of events,
 bin/p202 event:send --click_id=123 --name=purchase --id=ORD-1001 --revenue=49
 ```
 
+A file (or `--props`) holds exactly one JSON value: anything after it but
+whitespace — a second list, a second object, stray text — is refused and
+nothing is sent, rather than the first value being sent and the rest dropped.
+
 ## `p202.track()` on landing pages
 
 The landing page snippet (`tracking202/static/landing.php`) defines
@@ -210,8 +214,15 @@ the event's amount, or nothing), with the Nth event, repeats, a window from
 the click, one condition on a property, a prerequisite goal, a payout
 override and the traffic-source setting under **Advanced**. The form writes
 through the same code as `POST /goals`, so it refuses what the API refuses,
-in the same words. A goal the form cannot show faithfully (a running sum,
-several conditions, a window from the install) is listed with a note to
-edit it with `p202 goal update`. The campaign's own **When a click converts
+in the same words. The condition's value is read in the type its last box
+names (text, a number, or true/false; a new condition reads a number as a
+number), because a goal's conditions compare typed values: the text `"123"`
+never equals the number `123`, nor `true` the text `"true"`. An edited goal
+opens with its stored type, and saving it unchanged stores the same
+definition, `3.0` included. A goal the form cannot show faithfully (a
+running sum, several conditions, `in` or `exists`, a window from the
+install) is listed with a note to edit it with `p202 goal update`, and a
+form posted for it anyway is refused; "faithfully" is checked by filling
+the form from the stored definition and building it back. The campaign's own **When a click converts
 more than once** setting (under its Advanced) is what adds a funnel's goals
 up.

@@ -19,7 +19,14 @@
 #     content is refused; every goal conversion is queued for MTA;
 #   - re-evaluation: an edit leaves history alone, the preview changes
 #     nothing, applying replaces the outcome one for one (funnel count 1) and
-#     re-values the click; staged, it is a proposal until applied;
+#     re-values the click; staged, it is a proposal until applied; a
+#     prerequisite that stops matching takes the goal waiting on it along
+#     (previewed by goal, conversions deleted), and the next events reach
+#     each once again;
+#   - what one request can cost: a sum that repeats without max is refused
+#     by field (API and CLI), revenue beyond what a conversion holds is
+#     refused by field, and /goals/evaluate refuses an answer of more than
+#     10,000 outcomes;
 #   - SKAN encodings point at goals: the old shape is refused by name, an
 #     encoding names a goal of its app or the account that a device can
 #     reach (PR 8: the device evaluates it; a click window is refused), the
@@ -88,8 +95,8 @@ ev()    { # id name occurred-offset [extra json fields]
 OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE api_key='$P202_API_KEY'")
 [ -n "$OWNER" ] || { echo "the API key is not in $DB" >&2; exit 2; }
 T=$(( $(date +%s) - 86400 ))
-ACC=940001; REP=940002; MISS=940003; LATE=940004; TRUST=940005; REEV=940006
-CLICKS="$ACC,$REP,$MISS,$LATE,$TRUST,$REEV"
+ACC=940001; REP=940002; MISS=940003; LATE=940004; TRUST=940005; REEV=940006; DEP=940007
+CLICKS="$ACC,$REP,$MISS,$LATE,$TRUST,$REEV,$DEP"
 ACIP_A=940100; ACIP_R=940101
 
 cleanup() {
@@ -126,9 +133,9 @@ seed_click() { # id campaign
       VALUES ($1, $OWNER, $2, 0, 0, 0.10, 0, 0, 0, 0, 0, $((T - 3600)));
     INSERT INTO 202_clicks_tracking (click_id, c1_id, c2_id, c3_id, c4_id) VALUES ($1, 0, 0, 0, 0);"
 }
-for c in $ACC $MISS $LATE $TRUST $REEV; do seed_click "$c" "$CAMP_A"; done
+for c in $ACC $MISS $LATE $TRUST $REEV $DEP; do seed_click "$c" "$CAMP_A"; done
 seed_click $REP "$CAMP_R"
-[ "$(Q "SELECT COUNT(*) FROM 202_clicks WHERE click_id IN ($CLICKS)")" = 6 ] || { echo "seeding clicks failed" >&2; exit 2; }
+[ "$(Q "SELECT COUNT(*) FROM 202_clicks WHERE click_id IN ($CLICKS)")" = 7 ] || { echo "seeding clicks failed" >&2; exit 2; }
 
 # ─────────────────────────────────────────────────────────────────────
 say "goals are validated strictly, and by field"
@@ -321,9 +328,54 @@ if (cd "$ROOT/go-cli" && go build -o "$CLI" .) 2> "$OUT/build.err"; then
   eq "$(wc -c < "$OUT/cli.out" | tr -d ' ')" 0 "and nothing on stdout"
   p202 goal create --campaign-id 99999 --name X --event x --json > /dev/null 2> "$OUT/cli.err"
   has "$OUT/cli.err" "p202 campaign list" "a refused campaign id names the command that lists campaigns"
+  p202 goal create --account --name Spend --event buy --sum-prop amount --sum-gte 10 --repeat each --json > "$OUT/cli.out" 2> "$OUT/cli.err"
+  eq "$?" 1 "a sum that repeats without --repeat-max exits 1"
+  eq "$(python3 -c "import json,sys; e=json.load(open(sys.argv[1]))['error']; print(e['category'], '--repeat-max' in e['hint'])" "$OUT/cli.err" 2>/dev/null)" "validation True" \
+     "as a validation envelope whose hint names --repeat-max"
+  eq "$(Q "SELECT COUNT(*) FROM 202_goals WHERE name='Spend'")" 0 "and nothing is created"
 else
   bad "the CLI builds ($(head -3 "$OUT/build.err"))"
 fi
+
+say "re-evaluation re-decides the goals waiting on the goal"
+eq "$(api POST /goals "{\"scope\":\"campaign\",\"scope_id\":$CAMP_A,\"definition\":{\"name\":\"Checkout\",\"trigger\":{\"event\":\"checkout\"},\"value\":{\"type\":\"fixed\",\"amount\":2}}}")" 201 \
+   "a checkout goal"
+G_CO=$(field "d['data']['goal_id']")
+eq "$(api POST /goals "{\"scope\":\"campaign\",\"scope_id\":$CAMP_A,\"definition\":{\"name\":\"Checkout upsell\",\"trigger\":{\"event\":\"upsell2\"},\"after\":[$G_CO],\"value\":{\"type\":\"fixed\",\"amount\":3}}}")" 201 \
+   "and an upsell that waits for it"
+G_CU=$(field "d['data']['goal_id']")
+ingest $DEP "[$(ev d1 checkout 1 '"properties":{"cart":10}'), $(ev d2 upsell2 2)]"
+eq "$(value $DEP)" "1/5.00000" "both reached: \$2 + \$3"
+eq "$(api PUT "/goals/$G_CO" '{"definition":{"name":"Checkout","trigger":{"event":"checkout","where":[{"prop":"cart","op":"gte","value":100}]},"value":{"type":"fixed","amount":2}}}')" 200 \
+   "the checkout goal now needs a cart of 100"
+eq "$(api GET "/goals/$G_CO/reevaluation")" 200 "the preview"
+eq "$(field "d['data']['goals']")" "[$G_CO, $G_CU]" "names the goal and the one waiting on it"
+eq "$(field "[sorted([r['goal_id'], r['ledger']] for r in s['retire']) for s in d['data']['subjects'] if s['subject_id'] == $DEP]")" \
+   "[[[$G_CO, \"delete\"], [$G_CU, \"delete\"]]]" "and retires both on the click, deleting both conversions"
+eq "$(api POST "/goals/$G_CO/reevaluation" '{}')" 200 "applying it"
+eq "$(Q "SELECT click_lead FROM 202_clicks WHERE click_id=$DEP")" 0 "leaves the click no longer a lead"
+eq "$(col $DEP deleted)" "1,1" "both conversions deleted"
+eq "$(Q "SELECT COUNT(*) FROM 202_goal_outcomes WHERE subject_id=$DEP AND superseded_at IS NULL")" 0 "and no live outcome on the click"
+ingest $DEP "[$(ev d3 checkout 3 '"properties":{"cart":200}')]"
+ingest $DEP "[$(ev d4 upsell2 4)]"
+eq "$(value $DEP)" "1/5.00000" "a cart of 200 and another upsell reach both again"
+eq "$(Q "SELECT GROUP_CONCAT(CONCAT(goal_id, ':', goal_version, ':', n, '@', event_id) ORDER BY goal_id) FROM 202_goal_outcomes WHERE subject_id=$DEP AND superseded_at IS NULL")" \
+   "$G_CO:2:1@d3,$G_CU:1:1@d4" "once each, never a second live outcome beside a retired one"
+
+say "what one request can cost is bounded"
+eq "$(api POST /goals "{\"scope\":\"campaign\",\"scope_id\":$CAMP_A,\"definition\":{\"name\":\"Every cent\",\"trigger\":{\"event\":\"buy\"},\"threshold\":{\"sum\":{\"prop\":\"\$revenue\",\"gte\":\"0.00001\"}},\"repeat\":{\"mode\":\"each\"}}}")" 422 \
+   "a sum that repeats without max is refused"
+eq "$(field "list(d['field_errors'])")" '["definition.repeat.max"]' "naming definition.repeat.max"
+eq "$(api POST /goals/evaluate '{"goals":[{"goal_id":1,"definition":{"name":"B","trigger":{"event":"buy"}}}],"subject":{"type":"click"},"events":[{"event_id":"e","name":"buy","occurred_at":1,"received_at":1,"revenue":1000000}]}')" 422 \
+   "revenue beyond what a conversion holds is refused"
+eq "$(field "list(d['field_errors'])")" '["events[0].revenue"]' "naming events[0].revenue"
+BIG='{"name":"G","trigger":{"event":"buy"},"threshold":{"sum":{"prop":"$revenue","gte":"0.00001"}},"repeat":{"mode":"each","max":6000}}'
+eq "$(api POST /goals/evaluate "{\"goals\":[{\"goal_id\":1,\"definition\":$BIG},{\"goal_id\":2,\"definition\":$BIG}],\"subject\":{\"type\":\"click\"},\"events\":[{\"event_id\":\"e\",\"name\":\"buy\",\"occurred_at\":1,\"received_at\":1,\"revenue\":1}]}")" 422 \
+   "an evaluation of 12,000 outcomes is refused"
+has "$OUT/body" "more than 10000 outcomes" "saying why"
+eq "$(api POST /goals/evaluate "{\"goals\":[{\"goal_id\":1,\"definition\":$BIG}],\"subject\":{\"type\":\"click\"},\"events\":[{\"event_id\":\"e\",\"name\":\"buy\",\"occurred_at\":1,\"received_at\":1,\"revenue\":999999.99999}]}")" 200 \
+   "one of 6,000 is answered"
+eq "$(field "[len(d['data']['outcomes']), d['data']['progress'][0]['sum']]")" '[6000, "0.06000"]' "reaching max once, the sum held at max x gte"
 
 say "SKAN encodings point at goals"
 eq "$(api POST /apps '{"app_key":"990099001","app_name":"Goal App"}')" 201 "an iOS app"

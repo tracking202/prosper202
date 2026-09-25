@@ -21,6 +21,7 @@ declare(strict_types=1);
  */
 
 require_once __DIR__ . '/functions-ui.php';
+require_once __DIR__ . '/request-https.php';
 
 /**
  * Open a standalone page.
@@ -223,10 +224,13 @@ function p202_standalone_wizard_token(): string
 		if (headers_sent()) {
 			return '';
 		}
-		$https = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off');
+		// The Secure flag from the same answer connect.php uses, proxy
+		// headers included: behind a TLS-terminating proxy $_SERVER['HTTPS']
+		// is empty, and a wizard cookie without Secure would be the one
+		// session cookie of the install sent over plain HTTP.
 		ini_set('session.cookie_httponly', '1');
 		ini_set('session.cookie_samesite', 'Lax');
-		ini_set('session.cookie_secure', $https ? '1' : '0');
+		ini_set('session.cookie_secure', p202_request_is_https($_SERVER) ? '1' : '0');
 		ini_set('session.use_strict_mode', '1');
 		session_start();
 	}

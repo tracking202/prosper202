@@ -136,11 +136,9 @@ func eventFromFlags(cmd *cobra.Command) (map[string]interface{}, error) {
 	}
 	if cmd.Flags().Changed("props") {
 		v, _ := cmd.Flags().GetString("props")
-		dec := json.NewDecoder(strings.NewReader(v))
-		dec.UseNumber()
 		var props map[string]interface{}
-		if err := dec.Decode(&props); err != nil || props == nil {
-			return nil, validationError("--props must be a JSON object: %s", v).
+		if err := decodeOneJSON([]byte(v), &props); err != nil || props == nil {
+			return nil, validationError("--props must be one JSON object: %s", v).
 				WithHint(`For example --props '{"plan":"pro","seats":3}'.`)
 		}
 		event["properties"] = props
@@ -161,10 +159,11 @@ func readEventsFile(file string) ([]interface{}, error) {
 	if err != nil {
 		return nil, validationError("reading %s: %v", file, err)
 	}
-	dec := json.NewDecoder(strings.NewReader(string(data)))
-	dec.UseNumber()
 	var raw interface{}
-	if err := dec.Decode(&raw); err != nil {
+	if err := decodeOneJSON(data, &raw); errors.Is(err, errTrailingJSON) {
+		return nil, validationError("%s holds more than one JSON value: %v; nothing was sent", file, err).
+			WithHint(`Put every event in one list, [{"event_id": "a", …}, {"event_id": "b", …}], or one {"events": [...]}.`)
+	} else if err != nil {
 		return nil, validationError("%s is not JSON: %v", file, err).
 			WithHint(`The file is a list of events, [{"event_id": "…", "name": "…"}], or {"events": [...]}.`)
 	}

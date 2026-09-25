@@ -23,7 +23,7 @@ use Prosper202\Conversion\Ledger\Amount;
  *   after      [<goal id>…], at most 5, distinct, never the goal itself (absent: [])
  *   within     {"days": 1–3650, "from": "install" | "click"}  (absent or null: no window)
  *   repeat     {"mode": "once"}  or  {"mode": "each"} / {"mode": "each", "max": 1–10000}
- *              (absent: once)
+ *              (absent: once); a sum threshold with "each" requires max
  *   value      {"type": "fixed", "amount": <amount ≥ 0>}
  *              {"type": "from_property"} / {"type": "from_property", "prop": <prop>}
  *              {"type": "none"}   (absent: none)
@@ -54,6 +54,12 @@ final class GoalDefinition
     public const MAX_REPEAT = 10000;
     /** The ledger stores amounts as decimal(11,5). */
     public const MAX_AMOUNT_UNITS = 99999999999;
+    /**
+     * The largest summand a sum threshold adds, either sign: an amount the
+     * ledger can hold. A summed property outside ±999999.99999 does not
+     * count, exactly like one that is not a number.
+     */
+    public const MAX_SUMMAND_UNITS = self::MAX_AMOUNT_UNITS;
     /** A stored definition longer than this is refused on load. */
     public const MAX_JSON_BYTES = 16384;
 
@@ -298,6 +304,16 @@ final class GoalDefinition
                     $e['value.type'] = 'must be "fixed", "from_property" or "none"';
                 }
             }
+        }
+
+        // A sum can jump past many multiples of its threshold in one event
+        // (a $1,000 purchase against "every $0.01"), so a sum that repeats
+        // must say how many times it can be reached: without a bound, one
+        // event could reach billions of outcomes. A count cannot jump — it
+        // grows by one per event — so a count's `each` may stay unbounded.
+        if ($thresholdKind === 'sum' && $repeatMode === 'each' && $repeatMax === null && !isset($e['repeat.max'])) {
+            $e['repeat.max'] = 'is required for a sum threshold with mode "each" (1-' . self::MAX_REPEAT
+                . '): one event can cross many multiples of a sum, so a sum goal that repeats needs a bound';
         }
 
         if ($triggerInstall) {

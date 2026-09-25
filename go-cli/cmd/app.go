@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -563,11 +562,15 @@ var appVerifyCmd = &cobra.Command{
 		// Decode with UseNumber so integers round-trip as integers: the
 		// server's verifier refuses coerced types (an app-id serialized as
 		// 5.25463029e8 would be judged, wrongly, unverifiable).
-		decoder := json.NewDecoder(bytes.NewReader(raw))
-		decoder.UseNumber()
 		var payload map[string]interface{}
-		if err := decoder.Decode(&payload); err != nil {
+		if err := decodeOneJSON(raw, &payload); errors.Is(err, errTrailingJSON) {
+			return validationError("the input holds more than one JSON value: %v", err).
+				WithHint("Verify one postback per call: pass exactly the one JSON object you received.")
+		} else if err != nil {
 			return validationError("the input is not a JSON object: %v", err).
+				WithHint("Provide the postback exactly as received — a single JSON object with its attribution-signature.")
+		} else if payload == nil {
+			return validationError("the input is JSON null, not a postback object").
 				WithHint("Provide the postback exactly as received — a single JSON object with its attribution-signature.")
 		}
 
