@@ -207,7 +207,10 @@ eq "$(field "sorted(r['conv_id'] for r in d['data'])")" "$(Q "SELECT CONCAT('[',
 eq "$(api GET "/conversions?click_id=$A&source=goal")" 200 "?source=goal"
 eq "$(field "sorted((r['goal_id'], r['goal_version'], r['payable']) for r in d['data'])")" "[[$G_INSTALL, 1, true], [$G_LEVEL, 1, true], [$G_TUT, 1, false]]" "the goal rows, with their goal, version and whether paid"
 eq "$(api GET "/conversions?goal=$G_LEVEL")" 200 "?goal"
-eq "$(field "[(r['click_id'], r['source_ref'], r['event_name']) for r in d['data']]")" "[[$A, \"goal:$G_LEVEL:1\", \"level_reached\"]]" "only that goal's outcomes"
+# Read on this pass's clicks, whose rows name other goals too: the pass
+# truncates the goal tables, so on an instance other suites share, the goal
+# id it is given can be one an older ledger row elsewhere still names.
+eq "$(field "[(r['click_id'], r['source_ref'], r['event_name']) for r in d['data'] if r['click_id'] in ($A, $R, $N)]")" "[[$A, \"goal:$G_LEVEL:1\", \"level_reached\"]]" "only that goal's outcomes"
 eq "$(api GET "/conversions?click_id=$R&source=api")" 200 "?source=api on the replace click"
 eq "$(field "d['pagination']['total']")" 0 "the deleted API row is not listed"
 eq "$(api GET "/conversions?click_id=abc")" 422 "a click id that is not one is refused"

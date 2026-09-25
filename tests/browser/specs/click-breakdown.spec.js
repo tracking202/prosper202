@@ -97,12 +97,24 @@ module.exports = {
   name: 'click-breakdown',
   title: 'Click breakdown and Group Overview ledger levels',
 
+  // The Visitors history lists 202_dataengine rows, newest first. Report rows
+  // whose click is gone (a live pass that deleted its clicks and not their
+  // report rows, on an instance other suites share) would push this spec's
+  // clicks off the first page; a report row without its click is garbage.
+  async reset(db) {
+    db.write('DELETE d FROM 202_dataengine d LEFT JOIN 202_clicks c ON c.click_id = d.click_id WHERE c.click_id IS NULL');
+  },
+
   async setup(ctx) {
     const { db, ui, config, app, state } = ctx;
     db.write(PREF_RESET);
     await app.login();
     const clicks = db.rows('SELECT c.click_id FROM 202_clicks c JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id'
-      + " WHERE c.user_id=1 AND ac.payout_mode='replace' AND c.click_time >= UNIX_TIMESTAMP(CURDATE()) ORDER BY c.click_id DESC LIMIT 2").map((r) => String(r[0]));
+      + " WHERE c.user_id=1 AND ac.payout_mode='replace' AND c.click_time >= UNIX_TIMESTAMP(CURDATE())"
+      // Clicks nothing else has converted: another suite on the same
+      // instance (the agent-eval events case) may have given the newest
+      // click a conversion of its own, which this spec's figures do not know.
+      + " AND NOT EXISTS (SELECT 1 FROM 202_conversion_logs l WHERE l.click_id = c.click_id AND (l.transaction_id IS NULL OR l.transaction_id NOT LIKE 'breakdown-spec-%'))"      + ' ORDER BY c.click_id DESC LIMIT 2').map((r) => String(r[0]));
     if (clicks.length < 2) {
       throw new Error('the fixture has ' + clicks.length + ' clicks today in a replace campaign; seed it (tests/fixtures/agent-eval/seed.sh) first');
     }
