@@ -12,8 +12,10 @@
  *       Refuses, before deleting anything, when a path is unclassified.
  *   php build/scripts/release-tree.php verify <stage>
  *       Check a pruned tree is what a no-terminal host needs: nothing
- *       excluded, vendor/ exactly the locked runtime set, every class the
- *       shipped PHP names declared in it or found by the shipped autoloader,
+ *       excluded, vendor/ exactly the locked runtime set, every namespaced
+ *       class the shipped PHP imports or names qualified declared in it or
+ *       found by the shipped autoloader (unqualified names and class names
+ *       in strings are not seen),
  *       every shipped tracked file at its exact path, the Go binaries
  *       present, and no group- or world-writable file.
  *

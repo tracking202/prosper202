@@ -48,10 +48,11 @@ and the messaging mock server.
 - **`verify`** checks the pruned tree before it is zipped:
   - nothing excluded remains;
   - `vendor/` is exactly the locked runtime set, with no dev packages;
-  - every namespaced class the shipped PHP imports or fully qualifies is
-    declared in the shipped code or found by the shipped autoloader
-    (case-exactly, as on Linux), so a missing vendor package or a dev-only
-    class fails the build;
+  - every namespaced class the shipped PHP imports or names qualified
+    (`Commands\Foo`, `\Full\Name`) is declared in the shipped code or found by
+    the shipped autoloader (case-exactly, as on Linux), so a missing vendor
+    package or a dev-only class fails the build. Unqualified names and class
+    names in strings are not seen;
   - every tracked file that ships is in the tree at exactly its tracked path
     (see "Building locally" for why case matters);
   - all six Go binaries are present;
@@ -150,9 +151,11 @@ checks every shipped file's exact path afterwards. On macOS, build in a Linux
 container:
 
 ```bash
+mkdir -p dist   # or the daemon creates it root-owned
 docker run --rm -v "$PWD":/src:ro -v "$PWD/dist":/out ubuntu:24.04 bash -c '
   apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     php8.3-cli php8.3-curl php8.3-xml php8.3-mbstring composer git zip unzip golang-go make ca-certificates
+  git config --global --add safe.directory /src   # the mount is owned by another uid
   git clone -q /src /work && cd /work && bash build/scripts/package-release.sh && cp dist/*.zip /out/'
 ```
 

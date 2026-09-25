@@ -168,6 +168,55 @@ final class ReleaseTreeTest extends TestCase
             array_values($paths),
             implode("\n", $problems)
         );
+
+        // A second verification in the same process reads the tree as it is
+        // now, not the directory listings the first one cached: a file added
+        // since is at its exact path.
+        self::assertNotFalse(file_put_contents("{$stage}/app/added.php", ''));
+        $problems = $tree->verify($stage, ['app/added.php']);
+        self::assertSame([], array_values(preg_grep('/^tracked file/', $problems)), implode("\n", $problems));
+    }
+
+    public function testVerifyVendorAcceptsAMetapackageAndReportsAMissingPackage(): void
+    {
+        $classLoader = realpath(self::REPO . '/vendor/composer/ClassLoader.php');
+        if ($classLoader === false) {
+            self::markTestSkipped('vendor/composer/ClassLoader.php is not installed');
+        }
+        $lock = static fn (array $packages): string => json_encode(['packages' => $packages], JSON_THROW_ON_ERROR);
+        // The shape `composer install` writes: a metapackage is installed with
+        // no install_path, a provided name has no version of its own.
+        $installed = "<?php return " . var_export([
+            'root' => ['name' => 'acme/root', 'dev' => false],
+            'versions' => [
+                'acme/root' => ['pretty_version' => 'dev-main', 'install_path' => '/stage'],
+                'acme/meta' => ['pretty_version' => '1.0.0', 'type' => 'metapackage', 'install_path' => null],
+                'acme/lib' => [
+                    'pretty_version' => '2.0.0', 'type' => 'library', 'install_path' => '/stage/vendor/acme/lib',
+                ],
+                'psr/log-implementation' => ['dev_requirement' => false, 'provided' => ['1.0']],
+            ],
+        ], true) . ";\n";
+        $stage = $this->tree([
+            'vendor/autoload.php' => "<?php\nrequire " . var_export($classLoader, true) . ";\n"
+                . "return new \\Composer\\Autoload\\ClassLoader();\n",
+            'vendor/composer/installed.php' => $installed,
+            'vendor/acme/lib/.keep' => '',
+            'composer.lock' => $lock([
+                ['name' => 'acme/meta', 'version' => '1.0.0'],
+                ['name' => 'acme/lib', 'version' => '2.0.0'],
+                ['name' => 'acme/absent', 'version' => '3.0.0'],
+            ]),
+        ]);
+        $tree = new ReleaseTree($this->manifest(ship: ['vendor', 'composer.lock']));
+
+        $problems = preg_grep('/acme\//', $tree->verify($stage));
+
+        self::assertSame(
+            ['locked runtime package acme/absent 3.0.0 is not installed in vendor/'],
+            array_values($problems),
+            implode("\n", $tree->verify($stage))
+        );
     }
 
     public function testShipsFollowsTheSameRulesAsPrune(): void
@@ -188,7 +237,7 @@ final class ReleaseTreeTest extends TestCase
         self::assertFalse($tree->ships('unlisted.md'));
     }
 
-    public function testReferencesInFindsImportsAndFullyQualifiedNames(): void
+    public function testReferencesInFindsImportsAndQualifiedNames(): void
     {
         $code = <<<'PHP'
             <?php
@@ -201,15 +250,23 @@ final class ReleaseTreeTest extends TestCase
             use const Const\Space\MAX;
 
             #[\Attr\Marker(1)]
+            #[Local\Attr]
             final class C
             {
                 use SomeTrait;
 
-                public function f(\Hint\Type $t): void
+                public function f(\Hint\Type $t, Thing\Sub $s): void
                 {
                     $x = new \Made\Here(1);
                     \Static\Call::go();
                     \Ns\fn_call();
+                    // Qualified names resolve through the imports (first
+                    // segment) or under the namespace, as PHP resolves them.
+                    Alias\Deep::y();
+                    new BAlias\Made();
+                    Local\Made::z();
+                    Local\fn_call();
+                    namespace\Rel\Name::q();
                     $cb = function () use ($x) { return $x; };
                 }
             }
@@ -219,19 +276,54 @@ final class ReleaseTreeTest extends TestCase
         sort($refs);
 
         self::assertSame([
+            'class App\Local\Attr',
+            'class App\Local\Made',
+            'class App\Rel\Name',
             'class Attr\Marker',
-            'class Group\Pre\A',
-            'class Group\Pre\B',
+            'class Group\Pre\B\Made',
             'class Hint\Type',
             'class Made\Here',
             'class Static\Call',
-            'class Vendor\Pkg\Other',
-            'class Vendor\Pkg\Thing',
+            'class Vendor\Pkg\Other\Deep',
+            'class Vendor\Pkg\Thing\Sub',
             'const Const\Space\MAX',
             'const Group\Pre\LIMIT',
+            'function App\Local\fn_call',
             'function Fn\Space\call',
             'function Group\Pre\helper',
             'function Ns\fn_call',
+            'import Group\Pre\A',
+            'import Group\Pre\B',
+            'import Vendor\Pkg\Other',
+            'import Vendor\Pkg\Thing',
+        ], $refs);
+    }
+
+    public function testQualifiedNamesResolveInTheNamespaceThatWritesThem(): void
+    {
+        $code = <<<'PHP'
+            <?php
+            namespace {
+                use A\B;
+                B\C::x();
+                Foo\Bar::y();
+            }
+            namespace Q {
+                B\C::x();
+                Foo\Bar::y();
+            }
+            PHP;
+
+        $refs = array_map(static fn (array $r): string => "{$r[1]} {$r[0]}", ReleaseTree::referencesIn($code));
+        sort($refs);
+
+        // The global block's import does not reach Q, where B\C is Q\B\C.
+        self::assertSame([
+            'class A\B\C',
+            'class Foo\Bar',
+            'class Q\B\C',
+            'class Q\Foo\Bar',
+            'import A\B',
         ], $refs);
     }
 
@@ -269,9 +361,11 @@ final class ReleaseTreeTest extends TestCase
             }
             PHP;
 
-        $names = array_column(ReleaseTree::referencesIn($code), 0);
+        $refs = array_map(static fn (array $r): string => "{$r[1]} {$r[0]}", ReleaseTree::referencesIn($code));
 
-        self::assertSame(['Real\Import'], $names);
+        // The trait is a class the file needs, named relative to App; it is
+        // not an import, so it does not become an alias for later names.
+        self::assertSame(['import Real\Import', 'class App\Trait\NotImport'], $refs);
     }
 
     /**
@@ -293,6 +387,7 @@ final class ReleaseTreeTest extends TestCase
                 . "\$loader = new \\Composer\\Autoload\\ClassLoader();\n"
                 . "\$loader->addPsr4('App\\\\', dirname(__DIR__) . '/src/');\n"
                 . "\$loader->addPsr4('Acme\\\\', __DIR__ . '/acme/src/');\n"
+                . "\$loader->addPsr4('Lib\\\\', __DIR__ . '/lib/src/');\n"
                 . "\$loader->register();\n"
                 . "return \$loader;\n",
             'src/Present.php' => "<?php\nnamespace App;\nfinal class Present {}\n",
@@ -303,6 +398,19 @@ final class ReleaseTreeTest extends TestCase
                 . "use App\\Missing;\n"
                 . "use Gone\\Package\\Thing;\n"
                 . "new \\Tolerated\\Legacy();\n",
+            // A namespace import is not a missing class; the class it prefixes
+            // is checked where it is written, resolved through the import.
+            // (Lib\Sub is a directory under a PSR-4 root that the fixture's
+            // classmap does not list; the real build's optimized classmap
+            // would, so both routes to "this is a namespace" are exercised.)
+            'prefixed.php' => "<?php\n"
+                . "namespace Site;\n"
+                . "use Lib\\Sub;\n"
+                . "use App as Application;\n"
+                . "new Sub\\Gadget();\n"
+                . "Application\\Present::class;\n"
+                . "Local\\Nowhere::run();\n",
+            'vendor/lib/src/Sub/Gadget.php' => "<?php\nnamespace Lib\\Sub;\nfinal class Gadget {}\n",
             'bin/tool' => "#!/usr/bin/env php\n<?php\n\\Cli\\Absent::run();\n",
             // A vendor class only the autoloader can answer for. PSR-4 maps
             // Acme\\ to vendor/acme/src/ but the file is in Src/: on a
@@ -316,7 +424,7 @@ final class ReleaseTreeTest extends TestCase
             'page.php' => "<?php\nrequire_once __DIR__ . '/pages/controller.php';\nnew \\App\\Pages\\Controller();\n",
         ]);
         $tree = new ReleaseTree($this->manifest(
-            ship: ['index.php', 'src', 'vendor', 'bin', 'case.php', 'pages', 'page.php'],
+            ship: ['index.php', 'src', 'vendor', 'bin', 'case.php', 'pages', 'page.php', 'prefixed.php'],
             knownUnresolved: ['Tolerated\Legacy' => 'test', 'Long\Fixed' => 'test'],
         ));
 
@@ -336,6 +444,7 @@ final class ReleaseTreeTest extends TestCase
             'App\Missing' => 'index.php:4',
             'Cli\Absent' => 'bin/tool:3',
             'Gone\Package\Thing' => 'index.php:5',
+            'Site\Local\Nowhere' => 'prefixed.php:7',
         ], $unresolved);
         self::assertNotEmpty(
             preg_grep("/'known_unresolved' lists 'Long\\\\Fixed', which no longer fails to resolve/", $problems),

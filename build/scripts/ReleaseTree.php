@@ -14,6 +14,15 @@ final class ReleaseTree
     private const KEYS = ['ship', 'exclude', 'keep_only', 'exclude_nested', 'go_binaries', 'known_unresolved'];
 
     /**
+     * Directory listings read by existsWithExactCase(), per verification.
+     * Cleared by verify() and unresolvedReferences(): a listing kept across
+     * two verifications answers the second for a tree that has changed.
+     *
+     * @var array<string, array<string, int>>
+     */
+    private static array $listings = [];
+
+    /**
      * @param array{
      *     ship: list<string>,
      *     exclude: list<string>,
@@ -161,6 +170,7 @@ final class ReleaseTree
      */
     public function verify(string $stage, ?array $tracked = null): array
     {
+        self::$listings = [];
         $entries = self::children($stage);
         $problems = $this->classify($entries);
         foreach ($entries as $entry) {
@@ -324,14 +334,18 @@ final class ReleaseTree
             $locked[(string) $package['name']] = (string) $package['version'];
         }
         $present = [];
+        $onDisk = [];
         foreach ($installed['versions'] as $name => $info) {
             // The root package, and names that are only provided or replaced
-            // by another package, have no install_path of their own.
+            // by another package, have no version of their own. A metapackage
+            // has a version but no install_path: it is installed and owns no
+            // files.
             $isRoot = $name === ($installed['root']['name'] ?? null);
-            if ($isRoot || !isset($info['install_path'], $info['pretty_version'])) {
+            if ($isRoot || !isset($info['pretty_version'])) {
                 continue;
             }
             $present[$name] = (string) $info['pretty_version'];
+            $onDisk[$name] = isset($info['install_path']);
         }
 
         foreach ($locked as $name => $version) {
@@ -339,7 +353,7 @@ final class ReleaseTree
                 $problems[] = "locked runtime package {$name} {$version} is not installed in vendor/";
             } elseif ($present[$name] !== $version) {
                 $problems[] = "vendor/ has {$name} {$present[$name]} but composer.lock pins {$version}";
-            } elseif (!is_dir("{$stage}/vendor/{$name}")) {
+            } elseif ($onDisk[$name] && !is_dir("{$stage}/vendor/{$name}")) {
                 $problems[] = "vendor/{$name} is missing although installed.php lists it";
             }
         }
@@ -434,9 +448,10 @@ final class ReleaseTree
 
     /**
      * Runs in the child. Every namespaced name the shipped PHP imports or
-     * fully qualifies must be declared in the shipped code or found by the
-     * shipped autoloader. Unqualified
-     * and global names are left alone: every Composer package here is
+     * writes qualified (Commands\Foo, resolved through the file's namespace
+     * and imports, or \Full\Name) must be declared in the shipped code or
+     * found by the shipped autoloader. Unqualified names, global names and
+     * class names in strings are not seen: every Composer package here is
      * namespaced, and global symbols come from the app's own includes.
      *
      * Classes are resolved with findFile(), never loaded: some shipped class
@@ -448,6 +463,7 @@ final class ReleaseTree
      */
     public static function unresolvedReferences(string $root): array
     {
+        self::$listings = [];
         $loader = require $root . '/vendor/autoload.php';
         if (!$loader instanceof \Composer\Autoload\ClassLoader) {
             throw new \RuntimeException('vendor/autoload.php did not return a Composer ClassLoader');
@@ -485,6 +501,38 @@ final class ReleaseTree
             return is_string($file) && self::existsWithExactCase($file);
         };
 
+        // `use A\B;` may import a namespace rather than a class (B\C::run()
+        // then names A\B\C, which is checked where it is written). Such an
+        // import is a prefix of something the tree declares or the autoloader
+        // maps, or a directory under a PSR-4 root.
+        $known = array_merge(
+            array_keys($declared),
+            array_map('strtolower', array_keys($loader->getClassMap())),
+            array_map('strtolower', array_keys($loader->getPrefixesPsr4())),
+            array_map('strtolower', array_keys($loader->getPrefixes())),
+        );
+        $psr4 = $loader->getPrefixesPsr4();
+        $isNamespace = static function (string $name) use ($known, $psr4): bool {
+            $prefix = strtolower($name) . '\\';
+            foreach ($known as $candidate) {
+                if (str_starts_with($candidate, $prefix)) {
+                    return true;
+                }
+            }
+            foreach ($psr4 as $root => $dirs) {
+                if (!str_starts_with($name . '\\', $root)) {
+                    continue;
+                }
+                $relative = str_replace('\\', '/', substr($name, strlen($root)));
+                foreach ($dirs as $dir) {
+                    if (self::existsWithExactCase(rtrim($dir, '/') . '/' . $relative)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        };
+
         $unresolved = [];
         foreach ($references as $relative => $refs) {
             foreach ($refs as [$name, $kind, $line]) {
@@ -494,6 +542,7 @@ final class ReleaseTree
                 $resolved = match ($kind) {
                     'function' => function_exists($name),
                     'const' => defined($name),
+                    'import' => $classResolves($name) || $isNamespace($name),
                     default => $classResolves($name),
                 };
                 if (!$resolved) {
@@ -514,8 +563,7 @@ final class ReleaseTree
      */
     private static function existsWithExactCase(string $file): bool
     {
-        static $listings = [];
-        if (!is_file($file)) {
+        if (!file_exists($file)) {
             return false;
         }
         // Composer's paths contain '..' segments (vendor/composer/../../api),
@@ -532,11 +580,11 @@ final class ReleaseTree
                 continue;
             }
             $parent = $dir === '' ? '/' : $dir;
-            if (!isset($listings[$parent])) {
+            if (!isset(self::$listings[$parent])) {
                 $entries = scandir($parent);
-                $listings[$parent] = $entries === false ? [] : array_flip($entries);
+                self::$listings[$parent] = $entries === false ? [] : array_flip($entries);
             }
-            if (!isset($listings[$parent][$part])) {
+            if (!isset(self::$listings[$parent][$part])) {
                 return false;
             }
             $dir = rtrim($parent, '/') . '/' . $part;
@@ -560,8 +608,12 @@ final class ReleaseTree
             $path = $file->getPathname();
             $isPhp = str_ends_with($path, '.php');
             if (!$isPhp && $file->getExtension() === '' && $file->isFile()) {
-                // Extensionless scripts such as bin/p202.
-                $head = (string) @file_get_contents($path, false, null, 0, 64);
+                // Extensionless scripts such as bin/p202. An unreadable file
+                // is a problem, not a non-PHP file.
+                $head = file_get_contents($path, false, null, 0, 64);
+                if ($head === false) {
+                    throw new \RuntimeException("cannot read {$path}");
+                }
                 $isPhp = str_starts_with($head, '#!') && str_contains(strtok($head, "\n") ?: '', 'php');
             }
             if ($isPhp) {
@@ -574,10 +626,13 @@ final class ReleaseTree
     }
 
     /**
-     * Names a file imports (use statements at namespace level) or writes
-     * fully qualified, with the kind of symbol each must be.
+     * Names a file imports (use statements at namespace level, kind 'import'
+     * for a class or namespace) or writes qualified, with the kind of symbol
+     * each must be. A qualified name (Commands\Foo, namespace\Foo) is resolved
+     * the way PHP resolves it: its first segment through the current
+     * namespace's class imports, otherwise under the current namespace.
      *
-     * @return list<array{0: string, 1: 'class'|'function'|'const', 2: int}>
+     * @return list<array{0: string, 1: 'class'|'function'|'const'|'import', 2: int}>
      */
     public static function referencesIn(string $code): array
     {
@@ -589,6 +644,8 @@ final class ReleaseTree
         // every 'other' block; inside one it is a trait use.
         $stack = [];
         $namespaceOpen = false;
+        $namespace = '';
+        $aliases = []; // lowercased alias => imported class or namespace
 
         $significant = static function (int $from, int $step) use ($tokens, $count): ?int {
             for ($k = $from; $k >= 0 && $k < $count; $k += $step) {
@@ -599,6 +656,16 @@ final class ReleaseTree
                 return $k;
             }
             return null;
+        };
+        // A name followed by '(' is a function call, except after `new` or
+        // in an attribute: new \A\B(...) and #[\A\B(...)] are classes.
+        $kindAt = static function (int $i) use ($tokens, $significant): string {
+            $prev = $significant($i - 1, -1);
+            $next = $significant($i + 1, 1);
+            $classCall = $prev !== null && is_array($tokens[$prev])
+                && in_array($tokens[$prev][0], [T_NEW, T_ATTRIBUTE], true);
+
+            return ($next !== null && $tokens[$next] === '(' && !$classCall) ? 'function' : 'class';
         };
 
         for ($i = 0; $i < $count; $i++) {
@@ -618,6 +685,18 @@ final class ReleaseTree
 
             switch ($token[0]) {
                 case T_NAMESPACE:
+                    // namespace A\B; or namespace A\B { }; a bare namespace { }
+                    // is the global one. Imports belong to the namespace that
+                    // made them.
+                    $namespace = '';
+                    $aliases = [];
+                    for ($j = $i + 1; $j < $count && $tokens[$j] !== ';' && $tokens[$j] !== '{'; $j++) {
+                        $t = $tokens[$j];
+                        if (is_array($t) && in_array($t[0], [T_STRING, T_NAME_QUALIFIED], true)) {
+                            $namespace = $t[1];
+                        }
+                    }
+                    $i = $j - 1; // resume at the ';' or '{'
                     $namespaceOpen = true;
                     break;
 
@@ -640,21 +719,32 @@ final class ReleaseTree
                             $text .= $t;
                         }
                     }
-                    foreach (self::parseImport($text) as [$name, $kind]) {
+                    foreach (self::parseImport($text) as [$name, $kind, $alias]) {
+                        if ($kind === 'class') {
+                            $aliases[strtolower($alias)] = $name;
+                            $kind = 'import';
+                        }
                         $refs[] = [$name, $kind, $token[2]];
                     }
                     $i = $j - 1; // resume at the ';'
                     break;
 
                 case T_NAME_FULLY_QUALIFIED:
-                    $name = ltrim($token[1], '\\');
-                    $prev = $significant($i - 1, -1);
-                    $next = $significant($i + 1, 1);
-                    // new \A\B(...) and #[\A\B(...)] are classes despite the '('.
-                    $classCall = $prev !== null && is_array($tokens[$prev])
-                        && in_array($tokens[$prev][0], [T_NEW, T_ATTRIBUTE], true);
-                    $kind = ($next !== null && $tokens[$next] === '(' && !$classCall) ? 'function' : 'class';
-                    $refs[] = [$name, $kind, $token[2]];
+                    $refs[] = [ltrim($token[1], '\\'), $kindAt($i), $token[2]];
+                    break;
+
+                case T_NAME_RELATIVE:
+                    // namespace\A\B is A\B under the current namespace.
+                    $name = substr($token[1], strlen('namespace\\'));
+                    $refs[] = [ltrim($namespace . '\\' . $name, '\\'), $kindAt($i), $token[2]];
+                    break;
+
+                case T_NAME_QUALIFIED:
+                    [$first, $rest] = explode('\\', $token[1], 2);
+                    $name = isset($aliases[strtolower($first)])
+                        ? $aliases[strtolower($first)] . '\\' . $rest
+                        : ltrim($namespace . '\\' . $token[1], '\\');
+                    $refs[] = [$name, $kindAt($i), $token[2]];
                     break;
             }
         }
@@ -716,11 +806,15 @@ final class ReleaseTree
     }
 
     /**
-     * @return list<array{0: string, 1: 'class'|'function'|'const'}>
+     * @return list<array{0: string, 1: 'class'|'function'|'const', 2: string}> name, kind, alias
      */
     private static function parseImport(string $text): array
     {
-        $text = trim(preg_replace('/\s+/', ' ', $text) ?? '');
+        $collapsed = preg_replace('/\s+/', ' ', $text);
+        if ($collapsed === null) {
+            throw new \RuntimeException('cannot parse import: ' . preg_last_error_msg() . ": use {$text}");
+        }
+        $text = trim($collapsed);
         $kind = 'class';
         if (preg_match('/^(function|const) (.*)$/s', $text, $m) === 1) {
             $kind = $m[1];
@@ -745,11 +839,18 @@ final class ReleaseTree
                 $itemKind = $m[1];
                 $item = $m[2];
             }
-            $name = trim(preg_split('/ as /i', $item)[0] ?? '');
+            $parts = preg_split('/ as /i', $item);
+            if ($parts === false) {
+                throw new \RuntimeException('cannot parse import: ' . preg_last_error_msg() . ": use {$text}");
+            }
+            $name = trim($parts[0]);
             $name = ltrim($prefix === '' ? $name : $prefix . '\\' . $name, '\\');
             if ($name !== '') {
+                // The alias is the `as` name, otherwise the last segment.
+                $slash = strrpos($name, '\\');
+                $alias = isset($parts[1]) ? trim($parts[1]) : ($slash === false ? $name : substr($name, $slash + 1));
                 /** @var 'class'|'function'|'const' $itemKind */
-                $names[] = [$name, $itemKind];
+                $names[] = [$name, $itemKind, $alias];
             }
         }
 
