@@ -55,6 +55,7 @@ final class CampaignTables
                 `attribution_model_id` int(11) DEFAULT NULL,
                 `payout_mode` enum('replace','accumulate') NOT NULL DEFAULT 'replace',
                 `identity_signals` tinyint(1) NOT NULL DEFAULT '1',
+                `app_registration_id` int(10) unsigned DEFAULT NULL,
                 PRIMARY KEY (`aff_campaign_id`),
                 KEY `aff_network_id` (`aff_network_id`),
                 KEY `aff_campaign_deleted` (`aff_campaign_deleted`),

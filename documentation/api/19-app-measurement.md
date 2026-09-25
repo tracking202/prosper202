@@ -9,10 +9,9 @@
 - **Apple's signal source** — SKAdNetwork and AdAttributionKit postbacks,
   the rest of this guide.
 
-Android install tracking arrives on the same registry (its intake is
-`POST /apps/installs`); until then an Android registration is a
-registration with nothing to receive. The SDK wire contract is
-[21-app-sdk-contract.md](21-app-sdk-contract.md).
+Android installs arrive on the same registry, through the SDK's
+`POST /apps/installs` — see [23-android-installs.md](23-android-installs.md).
+The SDK wire contract is [21-app-sdk-contract.md](21-app-sdk-contract.md).
 
 Prosper202 can act as the measurement endpoint for Apple's two
 privacy-preserving attribution frameworks for iOS app campaigns:
@@ -179,6 +178,9 @@ dropped with a line saying so, and the rest of the report is still shown.
 | `POST` | `/apps/{id}/app-token/rotate` | Mint a new app token; the old one stops working |
 | `GET/POST` | `/apps/skan-encodings`, `/apps/skan-encodings/{id}` | SKAN encodings (CRUD; `PUT`/`DELETE` on `/{id}`) |
 | `GET` | `/apps/schema` | Public, selected by the `X-P202-App-Token` header: the document an app build fetches at runtime |
+| `POST` | `/apps/installs`, `/apps/installs/{install_uuid}/events` | Public, by app token: the Android SDK's intake ([23-android-installs.md](23-android-installs.md)) |
+| `GET` | `/apps/{id}/installs`, `/apps/{id}/installs/{install_uuid}` | An Android registration's installs, with their match state |
+| `GET` | `/apps/{id}/install-token?click_id=N` | The install token and store link for one click (a read) |
 
 All `/apps` API routes require the `apps` scope area (`apps:read` for reads,
 `apps:write` for writes; `POST /apps/verify` counts as a read — it computes
@@ -443,7 +445,9 @@ therefore excludes).
 | `platform` | `ios`/`android` | No | Read from the key or the link; a value contradicting the link is `422` |
 | `app_name` | string | Yes | Display name for reports (max 255) |
 | `notes` | string | No | Free-form notes (max 500) |
-| `accept_test_signals` | `0`/`1` | No | `1` = test signals count as trusted for this app: postbacks signed with Apple's AdAttributionKit **development** keys (and, with the Android intake, installs the SDK marks `test`). Default `0` stores them flagged and counts them nowhere. Turn it on while integration-testing your own build, and off again before trusting the numbers: any phone in Developer Mode can mint a development-signed postback naming any App Store id. SKAdNetwork has no development key, so this never affects SKAdNetwork rows. |
+| `attribution_window_days` | integer | No | Android: days after its click an install may begin and still be attributed (1–365, default 7) |
+| `trust_client_revenue` | `0`/`1` | No | Android: `1` lets a revenue the app reports be paid by a goal valued from it; default `0` stores it, never credits it |
+| `accept_test_signals` | `0`/`1` | No | `1` = test signals count as trusted for this app: postbacks signed with Apple's AdAttributionKit **development** keys, and installs the Android SDK marks `test`. Default `0` stores them flagged and counts them nowhere. Turn it on while integration-testing your own build, and off again before trusting the numbers: any phone in Developer Mode can mint a development-signed postback naming any App Store id. SKAdNetwork has no development key, so this never affects SKAdNetwork rows. |
 
 The response carries `registration_id`, `platform`, `app_key` and the
 `app_token`. `(platform, app_key)` can be registered by exactly one user
@@ -469,7 +473,8 @@ rows.
 
 **Deleting a user** purges their app data in the same transaction as the
 delete itself, whether it is done from Account › User Management or with
-`DELETE /api/v3/users/{id}`: their registrations and encodings are deleted —
+`DELETE /api/v3/users/{id}`: their registrations, encodings, Android installs
+and queued traffic-source postbacks are deleted —
 freeing each `(platform, app_key)` for someone else to register — and their
 postbacks are **released** (`user_id` 0, `registration_id` `NULL`, and a
 development row's trust withdrawn) rather than deleted, because a postback

@@ -89,6 +89,11 @@ class Application extends ConsoleApplication
         $this->add(new Commands\UserPreferencesGetCommand());
         $this->add(new Commands\UserPreferencesUpdateCommand());
 
+        // --- App measurement (Android installs; registrations are managed with the Go CLI's `p202 app`) ---
+        $this->add(new Commands\AppInstallListCommand());
+        $this->add(new Commands\AppInstallGetCommand());
+        $this->add(new Commands\AppInstallTokenCommand());
+
         // --- System ---
         $this->add(new Commands\SystemHealthCommand());
         $this->add(new Commands\SystemVersionCommand());

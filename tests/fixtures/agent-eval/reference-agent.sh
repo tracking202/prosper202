@@ -38,6 +38,20 @@ case "$ask" in
         printf 'Created goal %s, "Reached level 3", on campaign %s: it is reached once, by the first level_reached event with level >= 3, and the campaign pays $4.00 for it.\n' \
             "$goal" "$campaign"
         ;;
+    *"EVAL ANDROID"*)
+        # Simulate an install: find the registration by its package and the
+        # newest click on the campaign by name in real list output, post the
+        # install the SDK would send for that click, and report the server's
+        # own classification — never a guess.
+        reg=$(p202 app list --platform android --all --json | jq -r '.data[] | select(.app_key=="com.p202.eval.summit") | .registration_id' | head -1)
+        campaign=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name=="EVAL ANDROID CAMPAIGN") | .aff_campaign_id' | head -1)
+        click=$(p202 click list --aff_campaign_id "$campaign" --json | jq -r '[.data[].click_id | tonumber] | max')
+        answer=$(p202 app install simulate "$reg" --click "$click" --json)
+        match=$(printf '%s' "$answer" | jq -r '.data.match')
+        reason=$(printf '%s' "$answer" | jq -r '.data.reason')
+        printf 'Simulated the SDK'"'"'s install for click %s on registration %s: the server classified it %s (%s).\n' \
+            "$click" "$reg" "$match" "$reason"
+        ;;
     *stage*apply*)
         # Propose the write, then apply the proposal. What gets written must
         # be the payload that was reviewed — never one substituted at apply.

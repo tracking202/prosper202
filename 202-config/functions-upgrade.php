@@ -258,10 +258,12 @@ if (!function_exists('_upgrade_conversion_ledger')) {
         }
         // The campaign settings the measurement rewrite adds, in the order
         // CampaignTables declares them: how a click's conversions roll up,
-        // and whether the campaign's clicks carry identity signals.
+        // whether the campaign's clicks carry identity signals, and the
+        // Android app its store links install.
         $campaignAdds = [
             ['payout_mode', "ALTER TABLE `202_aff_campaigns` ADD COLUMN `payout_mode` enum('replace','accumulate') NOT NULL DEFAULT 'replace'"],
             ['identity_signals', "ALTER TABLE `202_aff_campaigns` ADD COLUMN `identity_signals` tinyint(1) NOT NULL DEFAULT '1'"],
+            ['app_registration_id', "ALTER TABLE `202_aff_campaigns` ADD COLUMN `app_registration_id` int(10) unsigned DEFAULT NULL"],
         ];
         foreach ($campaignAdds as [$column, $ddl]) {
             if (!array_key_exists($column, $campaignColumns) && _upgrade_query($ddl) === false) {
@@ -352,6 +354,22 @@ if (!function_exists('_upgrade_measurement_tables')) {
             }
             if (!$reconciler->reconcile($definition)) {
                 $ok = false;
+            }
+        }
+
+        // The Android install-token key (plan §5.1), minted by the same
+        // idempotent statement the installer runs, once its table exists.
+        // An existing key is never replaced: links already in circulation
+        // keep verifying.
+        if ($ok) {
+            foreach ($definitions as $definition) {
+                if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::DEPLOYMENT_SECRETS) {
+                    if (_upgrade_query(\Api\V3\Apps\Android\InstallTokenKey::mintStatement()) === false) {
+                        $ok = false;
+                        error_log('Prosper202 upgrade: failed to mint the Android install-token key');
+                    }
+                    break;
+                }
             }
         }
 
@@ -4184,7 +4202,8 @@ class UPGRADE
             // 202_conversion_logs, its MTA outbox and upload batches, and the
             // campaigns' payout mode; the identity graph; and the goals
             // engine (definitions, campaign payouts, events, progress and
-            // outcomes). The DDL is the
+            // outcomes); the Android installs, the notification outbox, and
+            // the install-token key with the table that holds it. The DDL is the
             // installer's own definitions, so this block cannot drift from
             // them.
             //
@@ -4195,7 +4214,8 @@ class UPGRADE
                 \Prosper202\Database\Tables\AppTables::getDefinitions(),
                 \Prosper202\Database\Tables\ConversionTables::getDefinitions(),
                 \Prosper202\Database\Tables\IdentityTables::getDefinitions(),
-                \Prosper202\Database\Tables\GoalTables::getDefinitions()
+                \Prosper202\Database\Tables\GoalTables::getDefinitions(),
+                \Prosper202\Database\Tables\SecretTables::getDefinitions()
             ));
 
             if ($measurement_ok) {

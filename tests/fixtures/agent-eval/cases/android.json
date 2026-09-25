@@ -1,0 +1,39 @@
+{
+  "cases": [
+    {
+      "id": "android-001-simulate-an-install-from-a-click",
+      "priority": "high",
+      "state": "seeded fixture plus a fresh Android registration com.p202.eval.summit (EVAL ANDROID), a campaign EVAL ANDROID CAMPAIGN linked to it whose offer URL is the Play store link with [[p202_install_token]], a tracker for it, and one fresh click through the redirect (setup deletes any earlier registration and campaign first)",
+      "setup": [
+        "p202 app list --platform android --all --json | jq -r '.data[] | select(.app_key==\"com.p202.eval.summit\") | .registration_id' | xargs -r -I{} p202 app delete {} --force",
+        "p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL ANDROID CAMPAIGN\") | .aff_campaign_id' | xargs -r -I{} p202 campaign delete {} --force",
+        "p202 app create --store-link com.p202.eval.summit --app-name 'EVAL ANDROID' --json >/dev/null",
+        "reg=$(p202 app list --platform android --all --json | jq -r '.data[] | select(.app_key==\"com.p202.eval.summit\") | .registration_id'); net=$(p202 aff-network list --json | jq -r '.data[0].aff_network_id'); p202 campaign create --aff-campaign-name='EVAL ANDROID CAMPAIGN' --aff-campaign-url='https://play.google.com/store/apps/details?id=com.p202.eval.summit&referrer=p202%3D[[p202_install_token]]' --aff-network-id=\"$net\" --aff-campaign-payout=1.50 --app-registration-id=\"$reg\" --json >/dev/null",
+        "c=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL ANDROID CAMPAIGN\") | .aff_campaign_id' | head -1); pub=$(p202 tracker create --aff-campaign-id=\"$c\" --json | jq -r '.data.tracker_id_public'); url=$(p202 config show --json | jq -r '.url'); curl -s -o /dev/null -A 'Mozilla/5.0 (Linux; Android 14) eval' \"$url/tracking202/redirect/dl.php?t202id=$pub\""
+      ],
+      "ask": "Someone installed our Android app EVAL ANDROID (com.p202.eval.summit) from the newest click on the campaign EVAL ANDROID CAMPAIGN. Simulate that install the way the SDK would report it, and tell me how the server classified it.",
+      "expected": {
+        "runs_one_of": [
+          "app install simulate"
+        ],
+        "checks": [
+          {
+            "run": "reg=$(p202 app list --platform android --all --json | jq -r '.data[] | select(.app_key==\"com.p202.eval.summit\") | .registration_id'); c=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL ANDROID CAMPAIGN\") | .aff_campaign_id' | head -1); click=$(p202 click list --aff_campaign_id \"$c\" --json | jq -r '[.data[].click_id | tonumber] | max'); p202 app install list \"$reg\" --click-id \"$click\" --json | jq '[.data[] | select(.match_state==\"attributed\" and .trusted==1 and .conversion_id != null)] | length == 1'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if exactly one attributed, trusted install with a conversion exists for the campaign's newest click under the EVAL ANDROID registration, and the reply says it was attributed. FAIL if the install was posted for another click or app, or the reply claims a classification the server did not return.",
+        "reply_includes": [
+          "attributed"
+        ]
+      },
+      "cleanup": [
+        "p202 app list --platform android --all --json | jq -r '.data[] | select(.app_key==\"com.p202.eval.summit\") | .registration_id' | xargs -r -I{} p202 app delete {} --force",
+        "p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL ANDROID CAMPAIGN\") | .aff_campaign_id' | xargs -r -I{} p202 campaign delete {} --force"
+      ],
+      "notes": "The check reads the install the server stored for the campaign's newest click, not the reply: an install simulated for an older click, for another app, or never posted fails. The click is made fresh by the setup through the real redirect, so a click that already holds an install from an earlier run (duplicate_click) cannot make the case pass or fail."
+    }
+  ]
+}

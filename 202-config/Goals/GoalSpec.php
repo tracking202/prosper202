@@ -26,6 +26,8 @@ final class GoalSpec
         public readonly array $versions,
         public readonly int $startsAt = 0,
         public readonly ?int $endsAt = null,
+        /** What the system made this goal for ('install', the built-in install goal), or null for an operator's goal. */
+        public readonly ?string $builtin = null,
     ) {
     }
 }

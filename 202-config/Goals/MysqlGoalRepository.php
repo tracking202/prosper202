@@ -370,6 +370,119 @@ final class MysqlGoalRepository
     }
 
     /**
+     * The goals an install evaluates (plan §2.2): its registration's default
+     * set (the built-in install goal among them) and the account's goals,
+     * from the start; and, when the install is attributed, its click's
+     * campaign's goal set as a click on that campaign sees it. A goal that is
+     * in both keeps the earlier start.
+     *
+     * @return list<GoalSpec>
+     */
+    public function specsForInstall(int $userId, int $registrationId, ?int $campaignId): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            "SELECT goal_id, archived_at FROM 202_goals
+             WHERE user_id = ? AND ((scope = 'registration' AND scope_id = ?) OR scope = 'account')"
+        );
+        $this->conn->bind($stmt, 'ii', [$userId, $registrationId]);
+        $starts = [];
+        $ends = [];
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $starts[(int) $row['goal_id']] = 0;
+            $ends[(int) $row['goal_id']] = $row['archived_at'] !== null ? (int) $row['archived_at'] : null;
+        }
+        if ($campaignId !== null) {
+            $stmt = $this->conn->prepareWrite(
+                "SELECT g.goal_id, g.scope, g.scope_id, g.archived_at, cg.created_at AS attached_at
+                 FROM 202_goals g
+                 LEFT JOIN 202_campaign_goals cg ON cg.goal_id = g.goal_id AND cg.campaign_id = ?
+                 WHERE g.user_id = ? AND ((g.scope = 'campaign' AND g.scope_id = ?) OR cg.campaign_id IS NOT NULL)"
+            );
+            $this->conn->bind($stmt, 'iii', [$campaignId, $userId, $campaignId]);
+            foreach ($this->conn->fetchAll($stmt) as $row) {
+                $goalId = (int) $row['goal_id'];
+                $own = (string) $row['scope'] === GoalScope::CAMPAIGN->value && (int) $row['scope_id'] === $campaignId;
+                $start = $own ? 0 : (int) $row['attached_at'];
+                $starts[$goalId] = isset($starts[$goalId]) ? min($starts[$goalId], $start) : $start;
+                $ends[$goalId] = $row['archived_at'] !== null ? (int) $row['archived_at'] : null;
+            }
+        }
+
+        return $this->specsWithPrerequisites($userId, $starts, $ends);
+    }
+
+    /**
+     * The registration's built-in install goal (plan §5.5: `install` is a
+     * built-in goal every registration has), created on first use. Its
+     * definition is fixed — triggered by the install, reached once, with no
+     * value of its own: what an install pays is the campaign's decision
+     * (GoalEngine::installPayability()).
+     *
+     * Idempotent under concurrency: UNIQUE (user_id, scope, scope_id,
+     * builtin) lets exactly one INSERT land (ON DUPLICATE KEY, never IGNORE,
+     * which would also swallow a value the column refuses), and every caller
+     * reads back the one that did.
+     */
+    public function ensureBuiltinInstallGoal(int $userId, int $registrationId, int $now): int
+    {
+        $find = function () use ($userId, $registrationId): ?int {
+            $stmt = $this->conn->prepareWrite(
+                // A locking read: it sees a row another transaction committed
+                // after this one's snapshot, which is exactly the row a
+                // concurrent first use inserted.
+                "SELECT goal_id FROM 202_goals WHERE user_id = ? AND scope = 'registration' AND scope_id = ? AND builtin = 'install' LIMIT 1 FOR UPDATE"
+            );
+            $this->conn->bind($stmt, 'ii', [$userId, $registrationId]);
+            $row = $this->conn->fetchOne($stmt);
+
+            return $row !== null ? (int) $row['goal_id'] : null;
+        };
+        $existing = $find();
+        if ($existing !== null) {
+            return $existing;
+        }
+        $definition = GoalDefinition::parse(self::BUILTIN_INSTALL_DEFINITION);
+        $stmt = $this->conn->prepareWrite(
+            "INSERT INTO 202_goals (user_id, scope, scope_id, name, current_version, builtin, archived_at, created_at, updated_at)
+             VALUES (?, 'registration', ?, ?, 1, 'install', NULL, ?, ?)
+             ON DUPLICATE KEY UPDATE goal_id = goal_id"
+        );
+        $this->conn->bind($stmt, 'iisii', [$userId, $registrationId, $definition->name, $now, $now]);
+        // Affected rows, not the insert id: an INSERT that hit the key
+        // reports no id of its own, and the connection-level fallback would
+        // hand back whatever this connection inserted last.
+        $inserted = $this->conn->executeUpdate($stmt) === 1;
+        $goalId = $find();
+        if ($goalId === null) {
+            throw new GoalEngineException('the built-in install goal of registration ' . $registrationId . ' could not be created', GoalEngineException::INTEGRITY);
+        }
+        if ($inserted) {
+            // Effective from the epoch: the install goal applies to every
+            // install of the registration, including one received in the
+            // same second the goal was made.
+            $version = $this->conn->prepareWrite(
+                'INSERT INTO 202_goal_versions (goal_id, version, definition, effective_at, created_at) VALUES (?, 1, ?, 0, ?)'
+            );
+            $this->conn->bind($version, 'isi', [$goalId, $definition->toJson(), $now]);
+            $this->conn->executeUpdate($version);
+        }
+
+        return $goalId;
+    }
+
+    /** 202_goals.builtin of the built-in install goal. */
+    public const BUILTIN_INSTALL = 'install';
+
+    /** The built-in install goal's one definition. */
+    public const BUILTIN_INSTALL_DEFINITION = [
+        'name' => 'install',
+        'trigger' => ['install' => true],
+        'threshold' => ['count' => 1],
+        'repeat' => ['mode' => 'once'],
+        'value' => ['type' => 'none'],
+    ];
+
+    /**
      * Build specs for a set of goals, pulling in every prerequisite the
      * versions name (same user, same scope by construction), each starting
      * when the earliest goal that needs it starts.
@@ -436,6 +549,7 @@ final class MysqlGoalRepository
                 ], $rows),
                 $starts[$goalId] ?? 0,
                 $ends[$goalId] ?? $rows[0]['archived_at'],
+                $rows[0]['builtin'],
             );
         }
 
@@ -444,7 +558,7 @@ final class MysqlGoalRepository
 
     /**
      * @param list<int> $goalIds
-     * @return array<int, list<array{version: int, effective_at: int, json: string, decoded: mixed, archived_at: int|null}>>
+     * @return array<int, list<array{version: int, effective_at: int, json: string, decoded: mixed, archived_at: int|null, builtin: string|null}>>
      */
     private function versionsOf(int $userId, array $goalIds): array
     {
@@ -453,7 +567,7 @@ final class MysqlGoalRepository
         }
         $marks = implode(',', array_fill(0, count($goalIds), '?'));
         $stmt = $this->conn->prepareWrite(
-            'SELECT v.goal_id, v.version, v.definition, v.effective_at, g.archived_at
+            'SELECT v.goal_id, v.version, v.definition, v.effective_at, g.archived_at, g.builtin
              FROM 202_goal_versions v JOIN 202_goals g ON g.goal_id = v.goal_id
              WHERE g.user_id = ? AND v.goal_id IN (' . $marks . ') ORDER BY v.goal_id, v.version'
         );
@@ -471,6 +585,7 @@ final class MysqlGoalRepository
                 'json' => $json,
                 'decoded' => $decoded === null && json_last_error() !== JSON_ERROR_NONE ? $json : $decoded,
                 'archived_at' => $row['archived_at'] !== null ? (int) $row['archived_at'] : null,
+                'builtin' => $row['builtin'] !== null ? (string) $row['builtin'] : null,
             ];
         }
 

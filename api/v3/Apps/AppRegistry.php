@@ -20,7 +20,7 @@ final class AppRegistry
 {
     use MysqliStatements;
 
-    private const COLUMNS = 'registration_id, user_id, platform, app_key, accept_test_signals';
+    private const COLUMNS = 'registration_id, user_id, platform, app_key, accept_test_signals, attribution_window_days, trust_client_revenue';
 
     public function __construct(private readonly \mysqli $db)
     {

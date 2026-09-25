@@ -83,6 +83,17 @@ class CapabilitiesController
                     // header, so changes need no store resubmission.
                     'app_platforms' => \Api\V3\Apps\AppIdentity::PLATFORMS,
                     'app_postbacks' => \Api\V3\Apps\Apple\Protocols::NAMES,
+                    // The Android intake: the SDK's POST /apps/installs and
+                    // /apps/installs/{install_uuid}/events (pre-auth, by app
+                    // token), the states an install is classified into, and
+                    // the operator's reads under /apps/{id}/installs and
+                    // /apps/{id}/install-token. Store links carry the click
+                    // as [[p202_install_token]].
+                    'app_installs' => [
+                        'stores' => \Api\V3\Apps\Android\InstallPayload::STORES,
+                        'match_states' => \Api\V3\Apps\Android\MatchState::values(),
+                        'max_events_per_request' => \Api\V3\Apps\Android\InstallEventsIntake::MAX_EVENTS,
+                    ],
                     // Goals: versioned, data-only definitions owned by a
                     // campaign, an app registration or the account, and
                     // evaluated per subject by one specification whose
@@ -149,6 +160,8 @@ class CapabilitiesController
             'apps' => ['bulk_upsert' => false] + $base,
             'app-skan-encodings' => ['bulk_upsert' => false] + $base,
             'app-postbacks' => ['list' => true, 'get' => true, 'create' => false, 'update' => false, 'delete' => false, 'bulk_upsert' => false],
+            // Written only by the SDK through the public intake.
+            'app-installs' => ['list' => true, 'get' => true, 'create' => false, 'update' => false, 'delete' => false, 'bulk_upsert' => false],
             // DELETE archives: the goal keeps its versions and outcomes.
             'goals' => ['bulk_upsert' => false] + $base,
         ];

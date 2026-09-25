@@ -1,6 +1,6 @@
 # Measurement rewrite: app measurement (iOS + Android) and multi-touch attribution
 
-Status: **in progress.** PR 0 (legacy endpoints), PR 1 (the conversion ledger), PR 2 (identity capture), PR 3 (the app core reshape) and PR 4 (the goals engine) are built; the rest is proposal.
+Status: **in progress.** PR 0 (legacy endpoints), PR 1 (the conversion ledger), PR 2 (identity capture), PR 3 (the app core reshape), PR 4 (the goals engine) and PR 5 (the Android intake) are built; the rest is proposal.
 
 ## Scope
 
@@ -1437,6 +1437,192 @@ is `GoalsController`; the CLI is `p202 goal …`.
   replacement) is known to lead back to the same key, but that has not
   been proven.
 
+### 5.10 As built: decisions (PR 5)
+
+(Numbered 5.10 because PR 4b and PR 8 each added a §5.8 on their own
+branches; whichever lands second renumbers.)
+
+What PR 5 settled, where it departs from §5.1–§5.6, and which PR picks up
+the rest. The Android source is `Api\V3\Apps\Android` (`InstallToken`,
+`InstallTokenKey`, `ReferrerParser`, `InstallPayload`, `InstallClassifier`,
+`MatchState`, `InstallVerdict`, `InstallIntake`, `InstallEventsIntake`,
+`PendingClickSettler`, `InstallRetention`); the outbox is
+`Prosper202\Notifications` (`OutcomeNotificationSink`, `NotificationOutbox`,
+`PostbackSender`); the
+operator's reads are `AppInstallsController`; the guide is
+`documentation/api/23-android-installs.md`.
+
+- **The key.** `K_install` lives in `202_deployment_secrets`
+  (`SecretTables`: installation-wide secrets, owned by no user, so the user
+  purge never touches it). One statement mints it —
+  `InstallTokenKey::mintStatement()`, `INSERT … ON DUPLICATE KEY UPDATE`,
+  never replacing an existing key — run by `INSTALL::install_databases()`
+  and by the 1.9.75 rung (`_upgrade_measurement_tables()` mints it once the
+  secrets table exists); `ConversionLedgerUpgradeIntegrationTest` pins both
+  paths and that a second run keeps the key.
+- **The hot path makes one query, not none.** §5.1 asked for no query;
+  `p202InstallToken()` reads the key with one primary-key lookup, only for
+  a URL that carries `[[p202_install_token]]`, once per process, and keeps
+  it only when it was read (a missing or unreadable key is re-read next
+  time, never cached as "none"). A key column on a row the redirect already
+  reads would have meant per-user keys or touching every redirect's tracker
+  query; one indexed read on the app campaigns that need it was judged the
+  smaller cost.
+- **The token expands empty** for a click id that is not canonical (the
+  fallback redirect's `p202`), and for a missing or unreadable key. All
+  five cached-redirect fallbacks (`dl.php`, `lp.php`, `off.php` twice,
+  `processCacheRedirect()`) empty it; `AttributedInstallHasConversionTest`
+  finds every `[[subid]]` → `p202` substitution and requires the emptying
+  beside it.
+- **The routes.** `POST /apps/installs` (and its `GET` probe) and
+  `POST /apps/installs/{install_uuid}/events` are routed before the
+  general body read and before authentication, through `PublicIntake`
+  (method, declared-length cap, per-`REMOTE_ADDR` limit — 120 installs and
+  600 event requests a minute, the probe counted too — bounded read).
+  `PublicIntakeCoverageTest` now finds pattern routes as well as literal
+  ones. Caps: 16 KB for an install, 64 KB for events.
+- **Replays and reuse.** The row is keyed on `(registration_id,
+  install_uuid)` with `install_uuid` canonical lower case in `ascii_bin`
+  (no two spellings of one id). A replay answers `duplicate: true` with the
+  stored state, as §5.2 says — but only when its **body fingerprint**
+  matches: the same id with other content is `409` (CLAUDE.md #15, #16),
+  where §5.2 would have answered it as the stored install. The fingerprint
+  is the SHA-256 of the canonical body without `integrity_token`, the same
+  bytes PR 6's `requestHash` needs; the vectors pin them. A concurrent
+  second request for one install waits on the unique key and answers as the
+  replay.
+- **Missing key with a token is `503`, not `bad_token`.** A token the
+  server cannot verify is not a forged one; refuting it would prune a
+  genuine install after 90 days. Organic installs never need the key.
+- **Timing.** On Google's server clock against ours: the install may not
+  begin before the store click; the store click must fall within 2 minutes
+  before and 30 minutes after our click (`CLOCK_SKEW`, `MAX_STORE_DELAY`);
+  install-begin must be less than `attribution_window_days` after our
+  click. Play Store 8.3.73+ (the documented floor) always sends server
+  timestamps, so a verified token without them is `implausible`. An
+  unreadable window is 0 days, inside which nothing falls.
+- **One install per click** is checked under the click's `FOR UPDATE` lock:
+  an attributed install or an `install` ledger row already on the click is
+  `duplicate_click`. `UNIQUE (click_id, dedupe_key)` stays the backstop.
+- **Test installs** are classified like any other; `InstallVerdict` pairs
+  the state with the flag, and a test install that would be trusted is
+  unvouched unless `accept_test_signals` is on. Only a trusted install lends
+  its click to the goal engine, so the invariant is **an attributed,
+  trusted install row always names its conversion** (an untrusted test
+  install is attributed with no conversion). `InstallIntake::settle()`
+  throws before commit when it would not hold.
+- **The built-in install goal is a real goal row**, `202_goals.builtin =
+  'install'`, one per Android registration (`UNIQUE (user_id, scope,
+  scope_id, builtin)`), created with the registration and on first use by
+  the intake. Its definition is fixed (install trigger, once, value
+  `none`); it cannot be edited, archived or re-evaluated. Its outcome's
+  ledger row is the install conversion — key `install`, source
+  `app_install`, `pixel_type` 4, `source_ref install:<row>`, at Google's
+  install-begin time — so the engine never writes a `goal:` row for the
+  install. What it pays is the campaign's: no listed goals → the default
+  payout; listed → its payout or the default; other goals listed without it
+  → tracked on the click, unpaid (`installPayability()`).
+- **Install subjects** carry `registrationId`; they evaluate the
+  registration's goals, the account's, and — when attributed and trusted —
+  the click's campaign's (`specsForInstall()`, the earlier start winning
+  when a goal is in two sets). The `install` anchor is Google's
+  install-begin time, else the receipt. Outcomes store
+  `app_registration_id`.
+- **Pending installs are evaluated when they settle**, not before: their
+  events answer `503` with `Retry-After: 60`, so no outcome written without
+  a click ever needs a ledger row back-filled. Refuted installs get no goal
+  subject at all, and their events are `409` (terminal).
+- **Events.** The body is `{"events": [...]}`, 1–100 — one shape for an
+  offline queue's flush rather than the single-event form §5.5 sketched.
+  `currency` is not accepted (a `400` naming it): revenue is in the
+  account's currency until a currency column exists. The server stamps
+  `received_at` and revenue trust (`trust_client_revenue`); a device that
+  sends either is refused by name. Per-install limits are the engine's
+  10,000 events and the per-peer rate limit; no separate per-install rate.
+- **Notifications.** `202_notification_pending` is conversion schema
+  (`ConversionTables`), written in the conversion's transaction, one row per
+  **server postback pixel** (type 4) of the click's traffic-source account;
+  browser pixels have no page on an install and are not queued. The URL is
+  resolved at queue time. A pixel holding several URLs is one row (the
+  table's key is `(conv_id, pixel_id, kind)`); a partial failure resends
+  all of them, which the `[[transactionid]]` they carry lets a network
+  dedupe. **Nothing is sent on the request path** — §7.3's "no external
+  calls" won over §5.2's "may attempt the send" — so the worker
+  (`202-cronjobs/app-installs.php`, every minute) sends, claiming each row by
+  compare-and-set on its attempt count, backing off 1 minute doubling to 6
+  hours, `failed` after 8. Queuing is gated to install subjects; web clicks
+  join with PR 4b.
+- **One way to tell a network, to be reconciled with PR 4b.** The engine
+  reaches the outbox only through `OutcomeNotificationSink`
+  (`queueReached()`, `onReplaced()`, both called inside the ledger row's
+  transaction); `NotificationOutbox` is its implementation. PR 4b (web
+  events), built in parallel on PR 4 without this outbox, ships its own
+  best-effort notifier (`Conversion/TrafficSourcePixels`,
+  `Goals/OutcomeNotifier`, `TrafficSourceNotifier`): sent right after
+  commit, no retry, never re-announced. **When the two meet, 4b's notifier
+  must be merged onto this outbox** — web outcomes queued through the sink
+  in the ledger transaction, sent by the worker — not kept as a second
+  path: two paths would tell a network about one outcome twice, and only
+  this one survives a crash between commit and send. Its type-4 pixel
+  filter, token resolution and send-once rule are the ones to keep; its
+  immediate send is what the worker replaces.
+- **Once per outcome.** A replaced outcome's pending, unattempted `reached`
+  is cancelled and the replacement's goes out; one that was sent or
+  attempted is never repeated, and a `correction` (or, with no
+  replacement, a `retraction`) is stored `suppressed` — no pixel has a
+  correction URL yet (configuration of one is deferred to the UI, PR 11).
+- **One sender.** `PostbackSender::fetch()` is the curl call gpb and upx
+  used inline; `p202FireTrafficSourcePixels()` and the worker share it. It
+  now refuses a URL that is not `http(s)://` (a `file://` pixel used to be
+  fetched), which is a behaviour change for gpb/upx's server pixels.
+- **The settler** re-reads the stored body, re-classifies under the install
+  row's `FOR UPDATE` and the click's, and writes the final state with its
+  conversion and notifications in one transaction per install; a click still
+  missing 24 hours after receipt is `bad_token` ("never recorded").
+  `AppInstallAtomicityTest` plants a failure (a trigger) in the
+  classification write, the ledger insert, the notification insert and the
+  MTA outbox insert, and in the settler: nothing survives, and the retry
+  records everything once.
+- **Retention.** `installs/refuted` 90 days; `installs/unvouched` 180 days
+  but only for settled installs **without events** (`has_events`), because
+  an install that reported events carries a funnel the operator reads.
+  Pruning an install keeps the outcomes it reached. The environment
+  variables are `P202_APP_RETENTION_DAYS_INSTALLS_<CLASS>`.
+- **Deletion.** A user's installs and queued postbacks are deleted with the
+  user. Deleting a registration keeps its installs (their conversions stay
+  on the ledger) and archives its goals, the install goal among them.
+- **Operator reads** live under the registration — `GET /apps/{id}/installs`,
+  `/apps/{id}/installs/{install_uuid}` — because `GET /apps/installs` is the
+  public probe. `GET /apps/{id}/install-token?click_id=` is a read (no
+  staging), refuses a click whose campaign is linked to another app, and
+  returns the click time so `p202 app install simulate` can place Google's
+  timestamps plausibly. `simulate` refuses `--staged` (the public intake
+  records at once — CLAUDE.md #14). The PHP CLI has `app:install:list`,
+  `app:install:get` and `app:install:token`; `simulate` is the Go CLI's
+  only, since it posts to the SDK route with the app token, which the PHP
+  API client cannot send.
+- **Registrations and campaigns.** `attribution_window_days` (1–365,
+  default 7) and `trust_client_revenue` are added now; the Play Integrity
+  mode is PR 6's. Both are Android-only and read from the raw payload
+  (`7.0`, `"07"` are `422`). `202_aff_campaigns.app_registration_id` is
+  read raw, must name one of the caller's Android registrations, and `null`
+  or `0` unlinks; it is written after the base update without a
+  transaction of its own, because bulk-upsert already holds one
+  (CLAUDE.md #13).
+- **Play Integrity seam (PR 6).** `MatchState::PENDING_INTEGRITY` exists and
+  nothing produces it; `integrity_state` is `not_requested`, or `received`
+  when the SDK sent a token, which is kept in `raw_payload`; the schema
+  document says `integrity_mode: off`.
+- **Surfaces.** The schema document gives Android `integrity_mode` and
+  `sdk` (paths, events per request); `/capabilities` has
+  `features.app_installs`; `GET /goals/{id}/reevaluation` takes
+  `subject_type` (default `install` for registration and account goals);
+  `p202 goal reevaluate --subject-type`; OpenAPI and
+  `AppOpenApiCoverageTest` cover the install columns, states and routes.
+- **Deferred.** Android in `GET /apps/report` and the Mobile Apps pages
+  (PR 11); the correction URL (PR 11); web clicks' notifications (PR 4b);
+  Play Integrity (PR 6); the Kotlin SDK reading `android/` vectors (PR 7).
+
 ---
 
 # Part C: the MTA rewrite
@@ -1865,13 +2051,19 @@ The worker computes credits for every active model, the default included.
   | `202_identity_observations` (for the user's clicks), `202_clicks_visitor`, `202_identity_merges`, `_signals`, `_visitors`, `_keys` | deleted | PR 3 (the tables are PR 2's) |
   | `202_app_registrations`, `202_app_skan_encodings` | deleted | PR 3 |
   | `202_app_postbacks` | released: `user_id = 0`, `registration_id = NULL`, test-signal trust withdrawn; pruned by the unclaimed window | PR 3 |
+  | `202_goals`, `_goal_versions`, `202_campaign_goals`, `202_goal_subjects`, `_events`, `_progress`, `_outcomes` | deleted | PR 4 |
+  | `202_app_installs`, `202_notification_pending` | deleted | PR 5 |
   | `202_users` | `user_deleted = 1`, last | — |
   | `202_clicks*`, `202_conversion_logs` and the ledger rows | kept, as the clicks always were | — |
 
+  PR 4 added the goal tables (`UserDataPurge::GOAL_STATEMENTS`), and PR 5
+  `202_app_installs` (deleted: an install is the owner's record, not a
+  platform's) and the user's `202_notification_pending` rows (deleted, so a
+  deleted account's queued postbacks never go out).
+
   Still to join the cascade, each with the PR that creates it: the
   attribution outbox rows, `202_attribution_credits` and `_journeys` (PR 9),
-  goals, campaign goals, goal events and progress (PR 4 and 4b),
-  `202_app_installs` (PR 5), and export files on disk (PR 10). Each PR adds
+  and export files on disk (PR 10). Each PR adds
   its statements to `UserDataPurge` (or, for app tables, an action to
   `AppDataPurge::TABLE_ACTIONS`, which `UserDeletionPurgeTest` requires to
   cover every table in `AppTables`).
@@ -2114,7 +2306,7 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 | 3 | **App core reshape** (§4): registry, `AppIdentity`, token rename, verdicts, `PublicIntake`, retention, user-deletion purge, `/apps` and `p202 app` renames, legacy guard deleted. **Built; `tests/live/app-core.sh` (with `setup-mobile-apps.sh`, `analyze-mobile-apps.sh` and both mobile-apps browser specs ported). Decisions in §4.7.** | — |
 | 4 | **Goals engine** (core): definitions, validation, versioning, server evaluator keyed by subject (click or install), cross-language vectors, campaign goal payouts, SKAN encodings pointing at goals, `/goals` API and `p202 goal …`. **Built; `tests/live/goals.sh` (with `app-core.sh`, `conversion-ledger.sh`, `setup-mobile-apps.sh`, `analyze-mobile-apps.sh` re-run and both mobile-apps browser specs), vectors in `tests/fixtures/app-sdk-contract/goals/`. Decisions in §5.7.** | 1, 3 |
 | 4b | **Web events:** `event=` on pixels and postbacks, `POST /events`, `p202.js` `track()`, the web campaign goal editor, the Transactions ID docs pointing to goals | 2, 4 |
-| 5 | **Android intake:** install token, `MatchState`, installs and events endpoints, conversions through goals, traffic-source notify, pending-click cron | 1, 3, 4 |
+| 5 | **Android intake:** install token, `MatchState`, installs and events endpoints, conversions through goals, traffic-source notify, pending-click cron. **Built; `tests/live/android-intake.sh` (with `goals.sh`, `app-core.sh`, `conversion-ledger.sh`, `legacy-pixels.sh` re-run), vectors in `tests/fixtures/app-sdk-contract/android/`, agent-eval case android-001. Decisions in §5.10.** | 1, 3, 4 |
 | 6 | **Play Integrity** (opt-in modes) | 5 |
 | 7 | **Android SDK** (installs, events, customer id, integrity) | 5, 6 |
 | 8 | **iOS SDK:** header rename, `setCustomerId`, on-device goal evaluator on the shared vectors | 3, 4 |

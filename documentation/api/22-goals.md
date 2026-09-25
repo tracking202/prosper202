@@ -119,10 +119,38 @@ The click's value is the ledger's: `accumulate` campaigns add their payable
 goal rows, `replace` campaigns show the latest. Attaching goals does not
 change a campaign's payout mode; `GET /goals/{id}/campaigns` shows it.
 
+## Installs
+
+An Android install is a subject too ([23-android-installs.md](23-android-installs.md)).
+It evaluates its registration's goals, the account's and — when it is
+attributed and trusted — its click's campaign's; its outcomes carry
+`app_registration_id`. Only an attributed, trusted install has a click, so
+only its outcomes write conversions; the others count in the funnel.
+
+- **The built-in install goal.** Every Android registration has one goal
+  with `builtin: install` (created with the registration): triggered by the
+  install, reached once, no value of its own. It cannot be edited, archived
+  or re-evaluated. Its conversion *is* the install conversion — key
+  `install`, source `app_install`, one per click — never a second `goal:`
+  row. A campaign that lists no goals pays for installs at its default
+  payout; one that lists goals pays only if it lists this one too, at the
+  listed payout or its default.
+- **Revenue from the app** pays a `from_property` goal only under the
+  registration's `trust_client_revenue`.
+- **Traffic-source postbacks.** A paid outcome of an install with
+  `notify_traffic_source` on queues the click's traffic-source server
+  postback, with `[[p202_goal]]` and `[[p202_goal_value]]`; the source hears
+  about an outcome once (a pending postback of a replaced outcome is
+  cancelled; a sent one is never repeated). Web clicks' postbacks join with
+  the web events work.
+
 ## Re-evaluation
 
 An edit leaves history alone. `GET /goals/{id}/reevaluation` previews, per
-click with events on the campaigns the goal applies to, which outcomes
+subject — a click with events on the campaigns the goal applies to, or with
+`subject_type=install` (the default for a registration or account goal) an
+Android install of the goal's registration, the account or those
+campaigns — which outcomes
 would be retired and written under a version (default the current one) and
 what happens to each retired outcome's conversion — superseded by the new
 row, or deleted where the new version no longer reaches the goal. `POST`

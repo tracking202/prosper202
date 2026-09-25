@@ -60,6 +60,13 @@ class AppRegistrationsController extends Controller
             // Android test installs) count as trusted; 0 = they store flagged
             // and are pruned like any other unvouched row.
             'accept_test_signals' => ['type' => 'i', 'allowed' => [0, 1]],
+            // Android: how many days after its click an install may begin
+            // and still be attributed to it (1-365, default 7).
+            'attribution_window_days' => ['type' => 'i'],
+            // Android: 1 = an event's reported revenue may be paid by a goal
+            // valued from_property; 0 (default) = stored and reported, not
+            // credited, because the app token is public.
+            'trust_client_revenue' => ['type' => 'i', 'allowed' => [0, 1]],
             // What an app build presents in X-P202-App-Token to the pre-auth
             // routes. Served to the owner, never client-writable; rotate with
             // rotateAppToken().
@@ -85,6 +92,7 @@ class AppRegistrationsController extends Controller
         // read it (CLAUDE.md #18). store_link is not a column; it is read
         // for the app it names and replaced by that app's platform and key.
         $identity = AppIdentity::fromPayload($payload);
+        self::assertAndroidPolicy($payload, $identity->platform);
         unset($payload['store_link']);
         $payload['platform'] = $identity->platform;
         $payload['app_key'] = $identity->appKey;
@@ -103,9 +111,52 @@ class AppRegistrationsController extends Controller
         ];
     }
 
+    /**
+     * The Android policy fields, read from the RAW payload before the base
+     * controller casts them (CLAUDE.md #18): a whole number of days 1-365
+     * (a JSON integer or its canonical digits — the CLI sends strings) and a
+     * 0/1 flag. `1.5`, `"7.0"`, `1e2` or `0` are refused, never rounded.
+     * Both belong to Android registrations only: an iOS app's attribution
+     * comes from Apple's postbacks, which neither setting governs.
+     *
+     * @param array<string, mixed> $payload
+     */
+    private static function assertAndroidPolicy(array $payload, string $platform): void
+    {
+        $errors = [];
+        foreach (['attribution_window_days' => [1, AppPolicy::MAX_WINDOW_DAYS], 'trust_client_revenue' => [0, 1]] as $field => [$min, $max]) {
+            if (!array_key_exists($field, $payload) || $payload[$field] === null) {
+                continue;
+            }
+            if ($platform !== AppIdentity::ANDROID) {
+                $errors[$field] = 'applies to Android registrations only';
+                continue;
+            }
+            $raw = $payload[$field];
+            $text = is_int($raw) ? (string)$raw : (is_string($raw) ? $raw : null);
+            if ($text === null || preg_match('/^(0|[1-9][0-9]{0,2})$/D', $text) !== 1 || (int)$text < $min || (int)$text > $max) {
+                $errors[$field] = 'must be a whole number from ' . $min . ' to ' . $max;
+            }
+        }
+        if ($errors !== []) {
+            throw new ValidationException('Invalid app policy', $errors);
+        }
+    }
+
     #[\Override]
     protected function afterCreate(int $insertId, array $payload): void
     {
+        if ((string)$payload['platform'] === AppIdentity::ANDROID) {
+            // The built-in install goal exists from the start, so a campaign
+            // can attach it (with a payout) before the first install. Best
+            // effort: the intake creates it on first use as well.
+            try {
+                (new \Prosper202\Goals\MysqlGoalRepository(new \Prosper202\Database\Connection($this->db)))
+                    ->ensureBuiltinInstallGoal($this->userId, $insertId, time());
+            } catch (\Throwable $e) {
+                error_log('p202 apps: creating the install goal of registration ' . $insertId . ' failed: ' . $e->getMessage());
+            }
+        }
         // Best effort: a failed claim must not fail the registration (the
         // row exists either way). Updating the registration re-runs the
         // claim, so a logged failure here is recoverable without surgery.
@@ -187,6 +238,9 @@ class AppRegistrationsController extends Controller
             unset($payload['platform'], $payload['app_key'], $payload['store_link']);
         }
 
+        if (array_key_exists('attribution_window_days', $payload) || array_key_exists('trust_client_revenue', $payload)) {
+            self::assertAndroidPolicy($payload, (string)((array)$this->get($id)['data'])['platform']);
+        }
         $updated = parent::update($id, $payload);
         // Re-run the claim on every update so unclaimed history (or a claim
         // that failed at create time) is picked up by touching the
@@ -278,6 +332,7 @@ class AppRegistrationsController extends Controller
             ['resource' => 'app-skan-encodings', 'action' => 'delete', 'where' => 'registration_id = ' . (int)$id],
             ['resource' => 'app-postbacks', 'action' => 'unlink (registration_id set to NULL; owner kept; test-signal trust withdrawn)', 'where' => 'registration_id = ' . (int)$id],
             ['resource' => 'goals', 'action' => 'archive (versions, outcomes and conversions kept)', 'where' => 'scope = registration, scope_id = ' . (int)$id],
+            ['resource' => 'app-installs', 'action' => 'kept (history; their conversions stay on the ledger), no longer reachable by any app token', 'where' => 'registration_id = ' . (int)$id],
         ];
         return $preview;
     }
