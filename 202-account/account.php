@@ -300,40 +300,32 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				// on this page has sent user_cached_reports for several
 				// releases, and writing '' into the integer column failed the
 				// whole preference update under strict SQL mode.
-				$cacheTimeSql = '';
+				$prefSet = [
+					'user_keyword_searched_or_bidded' => (string)$_POST['user_keyword_searched_or_bidded'],
+					'user_pref_referer_data' => (string)$_POST['user_referer'],
+					'user_tracking_domain' => trim((string)($_POST['user_tracking_domain'] ?? '')),
+				];
 				if (isset($_POST['user_cached_reports'])) {
-					$cacheTimeSql = "`cache_time`='" . $db->real_escape_string((string)(int)$_POST['user_cached_reports']) . "',";
+					$prefSet['cache_time'] = (string)(int)$_POST['user_cached_reports'];
 				}
+				$prefSet += [
+					'user_pref_cloak_referer' => (string)$_POST['cloak_referer'],
+					'user_pref_dynamic_bid' => (int)$_POST['user_bid'],
+					'user_pref_ad_settings' => (string)$_POST['user_pref_ad_settings'],
+					'user_pref_privacy' => (string)$_POST['user_pref_privacy'],
+					'user_daily_email' => (string)$_POST['user_daily_email'],
+				];
 
-				$user_sql = "
-					UPDATE
-						`202_users`
-					SET
-						`user_email`='" . $mysql['user_email'] . "',
-						`user_timezone`='" . $mysql['user_timezone'] . "'
-					WHERE
-						`user_id`='" . $mysql['user_id'] . "'
-				";
-				$profileSaved = (bool)$db->query($user_sql);
-
-				$user_sql = "
-					UPDATE
-						`202_users_pref`
-					SET
-						`user_keyword_searched_or_bidded`='" . $mysql['user_keyword_searched_or_bidded'] . "',
-						`user_pref_referer_data`='" . $mysql['user_referer'] . "',
-						`user_tracking_domain`='" . $mysql['user_tracking_domain'] . "',
-						" . $cacheTimeSql . "
-						`user_pref_cloak_referer`='" . $mysql['cloak_referer'] . "',
-						`user_pref_dynamic_bid`='" . $mysql['user_pref_dynamic_bid'] . "',
-						`user_pref_ad_settings`='" . $mysql['user_pref_ad_settings'] . "',
-						`user_pref_privacy`='" . $mysql['user_pref_privacy'] . "',
-						`user_daily_email`='" . $mysql['user_daily_email'] . "'
-					WHERE
-						`user_id`='" . $mysql['user_id'] . "'
-				";
-
-				$profileSaved = $profileSaved && (bool)$db->query($user_sql);
+				// The account row and the preferences row are one save: both
+				// land or neither does, so "nothing has changed" is true when
+				// the page says it; the session is only told after the commit.
+				try {
+					p202_account_save_profile(new \Prosper202\Database\Connection($db), (int)$_SESSION['user_id'], $submittedEmail, $postedTimezone, $prefSet);
+					$profileSaved = true;
+				} catch (Throwable $saveFailed) {
+					error_log('Account profile save failed, nothing written: ' . $saveFailed->getMessage());
+					$profileSaved = false;
+				}
 				if (!$profileSaved) {
 					$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your settings could not be saved. Nothing you see below has changed; try again.'];
 				} else {

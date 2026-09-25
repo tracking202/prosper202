@@ -122,3 +122,43 @@ function p202_account_invalid(array $errors, string $field): string
 {
     return isset($errors[$field]) && trim($errors[$field]) !== '' ? ' is-invalid' : '';
 }
+
+/**
+ * Save the profile form: the account row and the preferences row, in one
+ * transaction.
+ *
+ * They used to be two autocommitted UPDATEs, so a failed second one left the
+ * email and timezone changed while the page said nothing had. Both land or
+ * neither does: Connection throws on a failed prepare, bind or execute, and
+ * transaction() rolls back on any throw, which this rethrows. The caller
+ * tells the session only after this returns.
+ *
+ * @param array<string, string|int> $prefSet  202_users_pref column => value;
+ *   the column names are the caller's own literals, never the request's
+ * @throws Throwable when nothing was saved
+ */
+function p202_account_save_profile(\Prosper202\Database\Connection $conn, int $userId, string $email, string $timezone, array $prefSet): void
+{
+    if ($prefSet === []) {
+        throw new InvalidArgumentException('p202_account_save_profile(): no preferences to save');
+    }
+    $assignments = [];
+    $types = '';
+    foreach ($prefSet as $column => $value) {
+        if (preg_match('/^[a-z_0-9]+$/', (string) $column) !== 1) {
+            throw new InvalidArgumentException("p202_account_save_profile(): '$column' is not a column name");
+        }
+        $assignments[] = '`' . $column . '` = ?';
+        $types .= is_int($value) ? 'i' : 's';
+    }
+
+    $conn->transaction(static function () use ($conn, $userId, $email, $timezone, $prefSet, $assignments, $types): void {
+        $stmt = $conn->prepareWrite('UPDATE `202_users` SET `user_email` = ?, `user_timezone` = ? WHERE `user_id` = ?');
+        $conn->bind($stmt, 'ssi', [$email, $timezone, $userId]);
+        $conn->executeUpdate($stmt);
+
+        $stmt = $conn->prepareWrite('UPDATE `202_users_pref` SET ' . implode(', ', $assignments) . ' WHERE `user_id` = ?');
+        $conn->bind($stmt, $types . 'i', [...array_values($prefSet), $userId]);
+        $conn->executeUpdate($stmt);
+    });
+}
