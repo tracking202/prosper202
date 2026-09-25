@@ -44,6 +44,7 @@ CLICK_A=910000001; CLICK_B=910000002; CLICK_C=910000003; CLICK_D=910000004; CLIC
 ACIP=987654321
 
 mysql_q "$DB" <<SQL
+DELETE FROM 202_conversion_touchpoints WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E));
 DELETE FROM 202_conversion_logs WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E);
 DELETE FROM 202_clicks      WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E);
 DELETE FROM 202_clicks_spy  WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E);
@@ -53,6 +54,7 @@ INSERT INTO 202_aff_campaigns (aff_campaign_id_public, user_id, aff_network_id, 
          ($((ACIP+1)), $USER_ID, 0, 'legacy-pixels other', 'http://example.test/', 1.00, $NOW, 1.00);
 SQL
 CAMP=$(Q "SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public=$ACIP")
+[ -n "$CAMP" ] || { echo "seeding the campaign failed" >&2; exit 2; }
 OTHER=$(Q "SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public=$((ACIP+1))")
 mysql_q "$DB" <<SQL
 INSERT INTO 202_clicks (click_id, user_id, aff_campaign_id, landing_page_id, ppc_account_id, click_cpc, click_payout, click_lead, click_filtered, click_bot, click_alp, click_time, rotator_id, rule_id)
@@ -65,6 +67,8 @@ INSERT INTO 202_clicks_spy (click_id, user_id, aff_campaign_id, landing_page_id,
   SELECT click_id, user_id, aff_campaign_id, landing_page_id, ppc_account_id, click_cpc, click_payout, click_lead, click_filtered, click_bot, click_alp, click_time
   FROM 202_clicks WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E);
 SQL
+
+[ "$(Q "SELECT COUNT(*) FROM 202_clicks WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E)")" = 5 ] || { echo "seeding the clicks failed (a previous run left rows behind?)" >&2; exit 2; }
 
 rows()   { Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id=$1 AND deleted=0"; }
 lead()   { Q "SELECT click_lead FROM 202_clicks WHERE click_id=$1"; }
@@ -81,6 +85,10 @@ eq "$(ptype $CLICK_A)" 1 "row carries pixel_type 1 (image pixel)"
 eq "$(payout $CLICK_A)" 7.50000 "click payout kept at the campaign payout (pixel carries no amount)"
 curl -sS -o /dev/null -b "tracking202subid=$CLICK_A" "$BASE/tracking202/static/px.php?acip=$ACIP"
 eq "$(rows $CLICK_A)" 1 "a second fire of the same pixel adds no row (one conversion per click without an id)"
+# The journey is the account's clicks on the campaign in the last 30 days: A, B
+# and D here (C is another campaign, E another account). Asserting the exact
+# count proves the legacy endpoint persists a journey the way gpx/gpb/upx do.
+eq "$(Q "SELECT COUNT(*) FROM 202_conversion_touchpoints WHERE conv_id=(SELECT MIN(conv_id) FROM 202_conversion_logs WHERE click_id=$CLICK_A)")" 3 "a multi-touch journey is persisted for the conversion"
 
 say "px.php: a cookie naming another account's click does not convert for this campaign"
 # CLICK_E is a real click owned by a different user_id. A cookie can name any
@@ -89,8 +97,10 @@ curl -sS -o /dev/null -w '%{http_code}\n' -b "tracking202subid=$CLICK_E" "$BASE/
 eq "$(cat "$OUT/pxE")" 200 "the pixel still answers 200 (it is an image tag)"
 eq "$(rows $CLICK_E)" 0 "no row for the other account's click"
 eq "$(lead $CLICK_E)" 0 "and it is not flagged"
+BEFORE=$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE user_id=$USER_ID")
 curl -sS -o /dev/null -b "tracking202subid=not-a-number" "$BASE/tracking202/static/px.php?acip=$ACIP"
-eq "$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id NOT IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E) AND conv_time>=$NOW")" 0 "a garbage cookie records nothing for a made-up click"
+curl -sS -o /dev/null -b "tracking202subid=$CLICK_A.9" "$BASE/tracking202/static/px.php?acip=$ACIP"
+eq "$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE user_id=$USER_ID")" "$BEFORE" "a present-but-malformed cookie records nothing at all (it does not fall back to the IP lookup)"
 
 say "pb.php: the per-campaign postback records rows and de-duplicates by transaction id"
 curl -sS -o /dev/null -w '%{http_code}\n' "$BASE/tracking202/static/pb.php?acip=$ACIP&subid=$CLICK_B&txid=ORDER-1" > "$OUT/pb1"
@@ -172,9 +182,10 @@ else
 fi
 
 mysql_q "$DB" <<SQL
-DELETE FROM 202_conversion_logs WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D);
-DELETE FROM 202_clicks      WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D);
-DELETE FROM 202_clicks_spy  WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D);
+DELETE FROM 202_conversion_touchpoints WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E));
+DELETE FROM 202_conversion_logs WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E);
+DELETE FROM 202_clicks      WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E);
+DELETE FROM 202_clicks_spy  WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E);
 DELETE FROM 202_aff_campaigns WHERE aff_campaign_id_public IN ($ACIP, $((ACIP+1)));
 SQL
 

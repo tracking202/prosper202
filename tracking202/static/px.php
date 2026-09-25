@@ -25,9 +25,20 @@ $mysql['user_id'] = $db->real_escape_string((string)$aff_campaign_row['user_id']
 
 //see if it has the cookie, do whatever we can to grab to grab SOMETHING to tie this lead to
 // A cookie is untrusted input: only an exact positive integer names a click
-// ("123.9" or "1e3" must not become click 123 or 1000).
-$click_id = p202ParseClickId($_COOKIE['tracking202subid'] ?? null) ?? 0;
-if ($click_id === 0) {
+// ("123.9" or "1e3" must not become click 123 or 1000). A cookie that is
+// PRESENT but not a click id is refused outright, never treated as absent:
+// the IP fallback below is for a browser with no cookie, and behind a NAT it
+// would otherwise credit whichever of the owner's clicks last came from that
+// address to a request whose own identity was garbage.
+$cookie = isset($_COOKIE['tracking202subid']) ? (string) $_COOKIE['tracking202subid'] : '';
+$click_id = 0;
+if ($cookie !== '') {
+	$click_id = p202ParseClickId($cookie) ?? 0;
+	if ($click_id === 0) {
+		error_log('px: refusing malformed tracking202subid cookie for acip ' . $mysql['aff_campaign_id_public']);
+		exit;
+	}
+} else {
 
 	//ok grab the last click from this ip_id
 	$mysql['ip_address'] = $db->real_escape_string((string)($_SERVER['REMOTE_ADDR'] ?? ''));
