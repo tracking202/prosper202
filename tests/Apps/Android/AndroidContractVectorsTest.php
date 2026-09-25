@@ -76,6 +76,8 @@ final class AndroidContractVectorsTest extends TestCase
                 $payload = InstallPayload::fromDecoded($body);
                 self::assertSame($case['expect']['canonical'], $payload->canonical(), $case['name']);
                 self::assertSame($case['expect']['fingerprint'], $payload->fingerprint(), $case['name']);
+                $claim = $payload->customer?->canonical();
+                self::assertSame($case['expect']['customer'] ?? null, $claim, $case['name'] . ': the customer claim');
                 continue;
             }
             try {
@@ -94,11 +96,15 @@ final class AndroidContractVectorsTest extends TestCase
     {
         $v = self::vectors('events-requests.json');
         self::assertSame(InstallEventsIntake::MAX_EVENTS, $v['max_events']);
+        self::assertGreaterThanOrEqual(20, count($v['cases']));
         foreach ($v['cases'] as $case) {
             $body = json_decode(json_encode($case['body'], JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR), true, 16, JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING);
             if ($case['expect']['valid']) {
-                $events = InstallEventsIntake::parseEvents($body, false, 1_727_300_000);
-                self::assertCount(count($body['events']), $events, $case['name']);
+                $parsed = InstallEventsIntake::parseBody($body, false, 1_727_300_000);
+                $events = $parsed['events'];
+                self::assertCount($case['expect']['events'], $events, $case['name']);
+                $claim = $parsed['customer']?->canonical();
+                self::assertSame($case['expect']['customer'], $claim, $case['name'] . ': the customer claim');
                 foreach ($events as $event) {
                     self::assertSame(1_727_300_000, $event->receivedAt, 'the server stamps received_at');
                     self::assertFalse($event->revenueTrusted, 'the registration decides revenue trust');
@@ -106,7 +112,7 @@ final class AndroidContractVectorsTest extends TestCase
                 continue;
             }
             try {
-                InstallEventsIntake::parseEvents($body, false, 1_727_300_000);
+                InstallEventsIntake::parseBody($body, false, 1_727_300_000);
                 self::fail($case['name'] . ': accepted');
             } catch (ValidationException $e) {
                 $fields = array_keys($e->getFieldErrors());

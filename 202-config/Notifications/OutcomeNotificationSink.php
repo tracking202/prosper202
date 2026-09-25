@@ -38,14 +38,23 @@ interface OutcomeNotificationSink
     public function onReplaced(int $userId, int $oldConvId, ?int $newConvId): void;
 
     /**
-     * The event that reached $newConvId's outcome had reached the same goal
-     * in the retired outcomes whose rows are $priorConvIds. Returns whether
-     * $newConvId's announcement was withheld because one of those was
-     * already announced.
+     * Ledger row $convId, which the engine had retired, counts again: its
+     * outcome was revived (plan §5.7 (1)). Never a second `reached`.
+     */
+    public function onRevived(int $userId, int $convId): void;
+
+    /**
+     * Ledger row $newConvId is new, and $priorConvIds are the rows a
+     * network may already have heard about for it: every other row ever
+     * written for its (subject, goal, n), retired ones and every version
+     * included (plan §5.7 (2)), and the retired rows its reaching event had
+     * reached the same goal in (a replay that shifted n). Returns whether
+     * it was withheld anywhere because one of them had been announced
+     * there.
      *
      * @param list<int> $priorConvIds
      */
-    public function onEventMoved(int $userId, int $newConvId, array $priorConvIds): bool;
+    public function onAnnouncedBefore(int $userId, int $newConvId, array $priorConvIds): bool;
 
     /**
      * @return array{total: int, live: int, pending: int} the `reached` rows

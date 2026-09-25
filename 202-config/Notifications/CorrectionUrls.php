@@ -78,6 +78,37 @@ final class CorrectionUrls
     }
 
     /**
+     * The outbox's resolver (NotificationOutbox's default): a destination's
+     * correction URL — the pixel's correction URLs split as its code is and
+     * taken at the destination's position — or null where it has none.
+     *
+     * The row counts only while its user owns the pixel (through the
+     * pixel's traffic-source account), so a row left by anyone else can
+     * never carry another account's corrections. The outbox asks by pixel
+     * alone; the owner is read here, not trusted from the row.
+     *
+     * @return callable(int, int): ?string
+     */
+    public static function resolver(Connection $conn): callable
+    {
+        return static function (int $pixelId, int $destination) use ($conn): ?string {
+            $stmt = $conn->prepareWrite(
+                'SELECT c.correction_url FROM 202_notification_correction_urls c
+                 JOIN 202_ppc_account_pixels p ON p.pixel_id = c.pixel_id
+                 JOIN 202_ppc_accounts a ON a.ppc_account_id = p.ppc_account_id AND a.user_id = c.user_id
+                 WHERE c.pixel_id = ? LIMIT 1'
+            );
+            $conn->bind($stmt, 'i', [$pixelId]);
+            $row = $conn->fetchOne($stmt);
+            if ($row === null) {
+                return null;
+            }
+
+            return NotificationOutbox::destinations((string) $row['correction_url'])[$destination] ?? null;
+        };
+    }
+
+    /**
      * Each of these pixels' correction URL, for a form.
      *
      * @param list<int> $pixelIds

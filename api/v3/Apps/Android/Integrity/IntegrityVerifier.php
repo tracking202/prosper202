@@ -7,6 +7,7 @@ namespace Api\V3\Apps\Android\Integrity;
 use Api\V3\Apps\AppIdentity;
 use Api\V3\Apps\AppPolicy;
 use Api\V3\Apps\AppRegistration;
+use Api\V3\Apps\Android\CustomerClaim;
 use Api\V3\Apps\Android\InstallClassifier;
 use Api\V3\Apps\Android\InstallIntake;
 use Api\V3\Apps\Android\InstallPayload;
@@ -287,7 +288,13 @@ final class IntegrityVerifier
             $classified = $this->intake->classifyWithClick($registration, $payload, (int) $first['click_id'], $installRowId, (int) $row['received_at'], $now);
             $settled = $this->intake->settle($registration, (int) $row['is_test'] === 1, $installRowId, $classified['state'], $classified['reason'], $classified['click_id'], $now);
 
-            return ['state' => $outcome['state'], 'post' => $settled['post'], 'user' => $registration->userId];
+            return [
+                'state' => $outcome['state'],
+                'post' => $settled['post'],
+                'user' => $registration->userId,
+                'match' => $settled['state'],
+                'customer' => $payload->customer,
+            ];
         };
         try {
             $done = $this->conn->transaction($work);
@@ -302,6 +309,17 @@ final class IntegrityVerifier
                 $this->engine->finishCommitted($done['user'], $done['post']);
             } catch (Throwable $e) {
                 error_log('p202 play integrity: install ' . $installRowId . ' settled; its report refresh failed: ' . $e->getMessage());
+            }
+        }
+        // A customer id the install body carried links once the install is
+        // attributed — for one that waited on its verdict, now (PR 7).
+        $customer = $done['customer'] ?? null;
+        if ($customer instanceof CustomerClaim && ($done['match'] ?? null) === MatchState::ATTRIBUTED) {
+            try {
+                $this->intake->customer($this->intake->installRow($installRowId), $customer);
+            } catch (Throwable $e) {
+                error_log('p202 play integrity: install ' . $installRowId . ' settled; linking its customer failed: '
+                    . $e->getMessage());
             }
         }
 

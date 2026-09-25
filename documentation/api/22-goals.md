@@ -103,9 +103,10 @@ is not a new version (`version_created: false`).
 ## Evaluation
 
 The rules, and the cross-language vectors that pin them, are in
-`tests/fixtures/app-sdk-contract/goals/README.md`; the server's evaluator,
-the iOS SDK (which evaluates the goals an SKAN encoding names on the device)
-and the Android SDK (PR 7) are all held to them. In
+`tests/fixtures/app-sdk-contract/goals/README.md`; the server's evaluator
+and the iOS SDK (which evaluates the goals an SKAN encoding names on the
+device) are held to them; Android's goals are evaluated on the server, so
+the Android SDK reports every event and evaluates none. In
 short: events are evaluated in event-time order (`min(occurred_at,
 received_at)`, then arrival, then event id), never arrival order; each event
 under the goal version current when it was received; a window whose anchor
@@ -199,6 +200,17 @@ event continues from the same answer a replay would give. Dependents never
 add clicks — the selection and the 1,000-click cap are the goal's own — and
 a dependent's version that cannot be evaluated (an invalid definition, a
 missing prerequisite) is left exactly as it is.
+
+A re-evaluation can return to an outcome an earlier one retired — the same
+goal, version, repeat and event, for example a dependent whose prerequisite
+stopped matching and then matched again. That outcome is revived rather than
+written twice, and so is its conversion, whichever way it was retired: a
+superseded conversion counts again, and one the re-evaluation deleted is
+restored (with its revenue posted to the customer again when its deletion
+voided it). A conversion someone deleted by hand stays deleted. The revived
+conversion counts toward the click again under the campaign's payout mode
+(on a `replace` campaign the latest conversion still sets the value, and a
+revived one keeps its original place in that order).
 
 ## Examples
 

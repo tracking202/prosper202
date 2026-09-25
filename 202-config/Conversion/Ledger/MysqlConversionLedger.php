@@ -189,6 +189,10 @@ final class MysqlConversionLedger
      * it, or null when the outcome was retired with no replacement. These are
      * fixed reasons (SupersededReason): the recompute never clears them, and
      * a superseded row never counts toward the click in either payout mode.
+     * MysqlConversionRepository::reviveGoalRowInTransaction() lifts the mark
+     * when the engine returns to exactly this outcome, and undoes the
+     * engine's other retirement (retireGoalRowInTransaction(), a deletion)
+     * the same way.
      *
      * Locks the click, writes the mark, recomputes the click and queues the
      * row for MTA — inside the caller's transaction, like every method here.
@@ -204,27 +208,6 @@ final class MysqlConversionLedger
             'UPDATE 202_conversion_logs SET superseded_by = ?, superseded_reason = ? WHERE conv_id = ?'
         );
         $this->conn->bind($stmt, 'isi', [$byConvId, $reason->value, $convId]);
-        $this->conn->executeUpdate($stmt);
-
-        $this->recompute($click['click_id'], $click['campaign_id']);
-        $this->enqueue([$convId], 'counted_state');
-    }
-
-    /**
-     * Undo supersedeGoalRow(): the engine re-derived exactly the outcome this
-     * row recorded (a re-evaluation that returned to it), so it counts again.
-     * Only a replay or re-evaluation mark is lifted; any other reason is the
-     * recompute's or the upgrade's, and is refused.
-     */
-    public function reviveGoalRow(int $convId): void
-    {
-        $click = $this->lockGoalRowsClick($convId);
-
-        $stmt = $this->conn->prepareWrite(
-            "UPDATE 202_conversion_logs SET superseded_by = NULL, superseded_reason = NULL
-             WHERE conv_id = ? AND superseded_reason IN ('replay', 'reevaluation')"
-        );
-        $this->conn->bind($stmt, 'i', [$convId]);
         $this->conn->executeUpdate($stmt);
 
         $this->recompute($click['click_id'], $click['campaign_id']);
