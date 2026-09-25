@@ -22,6 +22,48 @@ ask="${P202_EVAL_ASK:-$(cat)}"
 run_id="$$-$(date +%s)"
 
 case "$ask" in
+    *"first-touch"*"last-touch"*)
+        # Which campaign a model credits is the attribution report's answer,
+        # per model — the click report cannot tell models apart. Find the
+        # two models in real list output, read the report under each, and
+        # name the campaign (of the two the ask names) holding the credit.
+        first=$(p202 attribution model list --type first_touch --json | jq -r '[.data[] | select(.status=="active")][0].model_id')
+        last=$(p202 attribution model list --type last_touch --json | jq -r '[.data[] | select(.status=="active")][0].model_id')
+        top() {
+            p202 attribution breakdown --group-by campaign --model "$1" --json |
+                jq -r '[.data[] | select(.name | startswith("EVAL MTA")) | select((.attributed_conversions | tonumber) > 0)] | max_by(.attributed_conversions | tonumber) | .name // "no campaign"'
+        }
+        printf 'Per `p202 attribution breakdown --group-by campaign`, first touch: %s (model %s); last touch: %s (model %s). The same conversions, credited to the click that opened the journey under one model and to the one that closed it under the other.\n' \
+            "$(top "$first")" "$first" "$(top "$last")" "$last"
+        ;;
+    *"time-decay attribution model"*)
+        # Half-life in hours, lookback in days: two fields in two units,
+        # both taken from the ask, and the default left where it is.
+        name=$(printf '%s' "$ask" | sed -n 's/.*model named \(.*\) whose credit.*/\1/p')
+        hours=$(printf '%s' "$ask" | grep -oE 'halves every [0-9]+ hours' | grep -oE '[0-9]+')
+        days=$(printf '%s' "$ask" | grep -oE 'looking back [0-9]+ days' | grep -oE '[0-9]+')
+        id=$(p202 attribution model create --model-name "$name" --model-type time_decay \
+            --weighting-config "{\"half_life_hours\":$hours}" --lookback-days "$days" --json | jq -r '.data.model_id')
+        printf 'Created %s (model %s): time decay, credit halving every %s hours, a %s-day lookback, not the default. The next worker run computes its credits for existing conversions.\n' \
+            "$name" "$id" "$hours" "$days"
+        ;;
+    *[Dd]elete*"attribution model"*)
+        # Preview first: a default model is refused, and the answer is the
+        # server's reason, handed back rather than worked around.
+        name=$(printf '%s' "$ask" | sed -n 's/.*[Dd]elete our \(.*\) attribution model.*/\1/p')
+        model=$(p202 attribution model list --json | jq -c --arg n "$name" '[.data[] | select(.model_name==$n)][0] // empty')
+        if [ -z "$model" ]; then
+            printf 'I could not find an attribution model named %s in `p202 attribution model list`. Nothing was changed.\n' "$name"
+        elif [ "$(printf '%s' "$model" | jq -r '.is_default')" = "true" ]; then
+            id=$(printf '%s' "$model" | jq -r '.model_id')
+            refused=$(p202 attribution model delete "$id" --dry-run --json | jq -r '.data.refused // "no reason given"')
+            printf 'I did not delete %s (model %s): it is the account'"'"'s default model, and the --dry-run preview refuses it: "%s" If you want it gone, tell me which model should become the default first.\n' \
+                "$name" "$id" "$refused"
+        else
+            printf 'I found %s but will not delete it without approval; preview it with `p202 attribution model delete %s --dry-run`.\n' \
+                "$name" "$(printf '%s' "$model" | jq -r '.model_id')"
+        fi
+        ;;
     *"EVAL LINKS"*)
         # Register the app from its package (the platform follows from it),
         # let the server point the campaign at the store link and link it to
