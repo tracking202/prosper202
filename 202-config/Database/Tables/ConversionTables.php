@@ -26,6 +26,13 @@ use Prosper202\Database\Schema\TableRegistry;
  * answered as a replay of the first (CLAUDE.md #17: the key must be
  * injective), and a reversal naming one transaction id could net the other.
  * The upgrade converges an existing table to the same collations.
+ *
+ * `reverses_conv_id` is indexed because every conversion's counted amount
+ * (Attribution\CountedAmount — the worker, the journey drill-down, the
+ * recent conversions) looks up the reversals naming it. Without the index
+ * that lookup read the whole table: measured at 1M conversions (plan §8.1),
+ * about 300 ms a conversion, which held the attribution worker to about 330
+ * conversions a minute against its 1,000 target.
  */
 final class ConversionTables
 {
@@ -75,7 +82,8 @@ final class ConversionTables
                 KEY `click_transaction` (`click_id`,`transaction_id`),
                 KEY `user_id` (`user_id`),
                 KEY `campaign_id` (`campaign_id`),
-                KEY `customer_id` (`customer_id`)
+                KEY `customer_id` (`customer_id`),
+                KEY `reverses_conv_id` (`reverses_conv_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }
