@@ -149,6 +149,25 @@ final class InstallIntakeIntegrationTest extends TestCase
         self::assertSame(0, self::rows('202_conversion_logs'));
     }
 
+    public function testDeletingARegistrationUnlinksItsCampaignsSoRegisteringTheAppAgainAttributesTheirClicks(): void
+    {
+        // Another account's campaign linked to its own app: not the delete's to touch.
+        $this->campaign(31, 6, 'accumulate', '1.00', 2);
+        $this->click(100);
+        $apps = new \Api\V3\Controllers\AppRegistrationsController(self::$db, 1);
+        $apps->delete(5);
+        self::assertSame([['30', null], ['31', '6']], self::$db->query('SELECT aff_campaign_id, app_registration_id FROM 202_aff_campaigns ORDER BY aff_campaign_id')->fetch_all(),
+            'the deleted registration\'s campaign is unlinked in the delete; nobody else\'s moves');
+
+        $again = $apps->create(['app_key' => 'com.example.summit', 'app_name' => 'Summit again'])['data'];
+        $registration = (int) $again['registration_id'];
+        self::assertNotSame(5, $registration);
+        $token = (new \Api\V3\Controllers\AppInstallsController(self::$db, 1))->installToken($registration, ['click_id' => '100']);
+        self::assertSame(100, $token['data']['click_id'], 'the operator can mint a token for the campaign\'s click again');
+        $r = $this->install(self::body(self::U1, 'p202=' . self::tokenFor(100)), (string) $again['app_token']);
+        self::assertSame(['attributed', 1], [$r['body']['data']['match'], $r['body']['data']['trusted']], json_encode($r));
+    }
+
     public function testTimingAndTheWindow(): void
     {
         $this->click(100);
@@ -346,5 +365,16 @@ final class InstallIntakeIntegrationTest extends TestCase
         )));
         self::assertSame(['reached:cancelled', 'reached:sent', 'reached:cancelled', 'correction:suppressed'], $kinds);
         self::assertSame('goal:' . $second . ':1', (string) self::$db->query("SELECT source_ref FROM 202_conversion_logs WHERE superseded_reason IS NULL AND source_ref LIKE 'goal:%' ORDER BY conv_id DESC LIMIT 1")->fetch_assoc()['source_ref']);
+
+        // Moved once more: the row being replaced never sent its own reached
+        // (its predecessor had), and its correction says so — so the network,
+        // which heard the outcome two rows ago, still hears nothing new.
+        $this->events(self::U1, [['event_id' => 'pz', 'name' => 'purchase', 'occurred_at' => $t, 'revenue' => 3]]);
+        $kinds = array_map(static fn (array $r): string => $r['kind'] . ':' . $r['status'], array_values(array_filter(
+            self::outbox(),
+            static fn (array $r): bool => str_contains($r['url'], 'Second') || $r['kind'] !== 'reached'
+        )));
+        self::assertSame(['reached:cancelled', 'reached:sent', 'reached:cancelled', 'correction:suppressed', 'reached:cancelled', 'correction:suppressed'], $kinds);
+        self::assertSame(['sent' => 0, 'failed' => 0, 'retrying' => 0], (new NotificationOutbox(new Connection(self::$db), fn (): int => $this->clock, fn (string $u): bool => true))->sendDue(10));
     }
 }

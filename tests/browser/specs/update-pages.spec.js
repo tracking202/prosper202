@@ -192,6 +192,37 @@ module.exports = {
     },
 
     {
+      name: 'Update CPC: a selection that changed after the check is checked again, not written',
+      async run(ctx) {
+        const { app, ui, db, expect, state, shot } = ctx;
+        await app.goto(UPDATE + 'cpc.php');
+        await ui.select('#aff_network_id', String(state.net2));
+        await ui.select('#aff_campaign_id', String(state.cb));
+        await ui.fill({ '#from': '2021-04-14', '#to': '2021-04-14', '#cpc': '0.4' });
+        await app.submit('#cpc_form button[type="submit"]');
+        expect.eq(await ui.text('#update-cpc-confirm'), 'Update 1 click', 'the check counts the one click of campaign B that day (C2)');
+        // C1, an older click than the one counted, is edited into campaign B
+        // between the check and the confirm: below the boundary the check
+        // saw, so only the count can tell.
+        db.write('UPDATE 202_clicks SET aff_campaign_id=' + state.cb + ' WHERE click_id=' + C1);
+        try {
+          await app.submit('#update-cpc-confirm');
+          expect.match((await app.flashes()).join(' '), /you confirmed 1 and 2 match now\. Nothing was changed\./, 'the confirm is refused with both counts');
+          expect.eq(db.value('SELECT GROUP_CONCAT(click_cpc ORDER BY click_id) FROM 202_clicks WHERE click_id IN (' + CLICKS + ')'), '0.30000,0.10000,0.10000',
+            'and nothing is written');
+          expect.eq(await ui.text('#update-cpc-confirm'), 'Update 2 clicks', 'the page checks again and offers the new count');
+          await shot('update-cpc-changed');
+          await app.submit('#update-cpc-confirm');
+          expect.match((await app.flashes()).join(' '), /^2 clicks updated\./, 'confirming the new count updates both');
+          expect.eq(db.value('SELECT GROUP_CONCAT(click_cpc ORDER BY click_id) FROM 202_clicks WHERE click_id IN (' + CLICKS + ')'), '0.40000,0.40000,0.10000',
+            'C1 and C2 cost $0.40; the other day is untouched');
+        } finally {
+          db.write('UPDATE 202_clicks SET aff_campaign_id=' + state.ca + ' WHERE click_id=' + C1);
+        }
+      },
+    },
+
+    {
       name: 'Reset Campaign Subids: saying no clears nothing, saying yes clears the category',
       async run(ctx) {
         const { app, ui, db, expect, state, config } = ctx;

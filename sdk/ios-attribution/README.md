@@ -147,7 +147,11 @@ customer rides the first iOS body route when one exists.
 - **Early events wait for the first schema.** Events logged before any
   schema has arrived (first launch, offline) are kept — up to 100 — and
   evaluated with their own times once it does, along with the install
-  itself; the 101st throws `SDKError.pendingEventsFull`.
+  itself; the 101st throws `SDKError.pendingEventsFull`. The same happens
+  when the only schema the device holds is older than
+  `P202Attribution.maxSchemaAge` (7 days since its last successful fetch or
+  304): the events wait for a fresh one rather than set a value under a
+  meaning the report no longer looks back to.
 - **A clock set back cannot reorder events.** Event times never go below
   the last one evaluated, so the incremental evaluation stays equal to
   evaluating everything again.
@@ -158,10 +162,11 @@ customer rides the first iOS body route when one exists.
   faster pickup). A document that is not an iOS app's (a token lifted into
   the wrong build) is refused whole.
 - **Edits reach devices gradually, and reports know it.** A device applies
-  the schema it last fetched, and a postback can arrive up to 35 days after
-  the value was set, so after you change an encoding the report counts a
-  value whose old and new meanings disagree as `ambiguous_encoding` for 35
-  days.
+  the schema it holds (at most 7 days old), and a postback can arrive up to
+  41 days after the value was set (the 35-day windows and Apple's delivery
+  delay of up to 144 hours), so after you change an encoding the report
+  counts a value whose old and new meanings disagree as
+  `ambiguous_encoding` for 48 days.
 - **Coarse-only mappings keep the last fine value.** SKAdNetwork's
   coarse-bearing call always takes a fine value; the helper re-sends the
   last fine value it reported (or 0) rather than downgrading it.

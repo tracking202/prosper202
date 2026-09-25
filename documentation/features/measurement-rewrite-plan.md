@@ -524,6 +524,15 @@ Overview's Goal / source level and the repaired Transaction ID level.
   is the API's answer unchanged. Both check `--source` against their own copy
   of the source list before any request; `ConversionSourceListsTest` pins
   both copies to the enum.
+- **Every depth offers both ledger levels, and the download names them.**
+  The level list has two copies (`ReportBasicForm`'s and
+  `ReportSummaryForm`'s), and the classic builder drew its fourth selector
+  from the one Goal / source had not been added to; both copies now match
+  and all four selectors read `ReportSummaryForm`'s, the class that runs the
+  query (`GroupingLevelOffersTest`). The download
+  (`group_overview_download.php`) printed its Transaction ID column from
+  `transaction_id`, which the ledger levels no longer select, and had no
+  Goal / source column; both now print the level's own label.
 - **Dedupe keys no longer fold case.** Found here and fixed when the PRs
   were combined: `dedupe_key` was utf8mb4_general_ci, so on one click
   `tx:A-1` and `tx:a-1` were one key (a UNIQUE violation, executed) and a
@@ -542,7 +551,8 @@ Overview's Goal / source level and the repaired Transaction ID level.
 
 Checked by `tests/Conversion/Ledger/` (`LedgerExplainerTest`,
 `LedgerReadsIntegrationTest`, `LedgerReadsOpenApiTest`,
-`ConversionSourceListsTest`), `tests/Cli/Commands/ClickConversionsCommandTest`,
+`ConversionSourceListsTest`), `tests/Report/GroupingLevelOffersTest`,
+`tests/Cli/Commands/ClickConversionsCommandTest`,
 `go-cli/cmd/click_test.go`, the live pass `tests/live/breakdown-reads.sh`, and
 `tests/browser/specs/click-breakdown.spec.js`.
 
@@ -1356,7 +1366,9 @@ Android.
   the row is decoded under both versions; where they agree it counts, and
   where they disagree it is reported as `ambiguous_encoding` and credited to
   neither. The UI says so when an encoding is edited: the report is exact
-  again 35 days later.
+  again 35 days later. **As built the horizon is 48 days** — the windows,
+  Apple's delivery delay and the SDK's bound on the age of its document
+  (§5.9).
 - One evaluator specification, with cross-language vectors in
   `tests/fixtures/app-sdk-contract/goals/`, is run by the PHP and Swift test
   suites, so the two evaluators cannot drift.
@@ -1482,7 +1494,16 @@ is `GoalsController`; the CLI is `p202 goal …`.
   with reason `reevaluation`, superseding their ledger rows where there is
   a replacement and soft-deleting them where there is none. It handles at
   most 1000 subjects per call (`GoalEngine::MAX_SUBJECTS_PER_CALL`), and
-  the preview says how many subjects it would touch.
+  the preview says how many subjects it would touch. It re-decides the
+  goal together with its dependents (every goal whose `after` chain leads
+  to it, any version's `after` counting): their outcomes were evaluated
+  against the goal's, so a prerequisite that stops matching retires the
+  outcomes reached behind it and one that starts matching writes the ones
+  waiting on it, and the progress of exactly those goals is replaced with
+  them (`ReevaluationReconcilesDependentsTest`). Dependents never add
+  subjects, so the cap is unchanged; a dependent version the evaluator
+  disables as `invalid_definition` or `prerequisite_missing` is left as
+  it is.
 - **Archive, not delete.** `DELETE /goals/{id}` archives: versions,
   outcomes and their conversions are kept, and archive time ends the goal's
   span (`ends_at`), so a replay sees what the incremental evaluation saw.
@@ -1502,6 +1523,19 @@ is `GoalsController`; the CLI is `p202 goal …`.
   makes the outcome ineligible (`no_click` / `no_install`), never payable.
   Sums are computed in integer units of 0.00001. The install pseudo-event's
   id is `@install`.
+- **Bounded cost per event.** A sum threshold with `repeat: each` requires
+  `max` (a sum can jump past many multiples in one event; a count cannot,
+  so a count's `each` may stay unbounded). A stored definition without it
+  is `invalid_definition`. The number of n an event reaches is computed
+  (`floor(sum / gte)`, capped), never searched for. A summand outside
+  ±999999.99999 does not count; event `revenue` outside it is refused at
+  intake by name; the running sum is held between −10^15 units and
+  `cap × gte`, so it never leaves a 64-bit integer. `POST /goals/evaluate`
+  answers at most 10,000 outcomes (`EvaluationTooLarge` → `422 events`).
+  `SumBoundsTest` pins what the vectors cannot hold. A reconciliation
+  reads at most 100,000 live outcomes of a subject
+  (`GoalEngine::MAX_LIVE_OUTCOMES_PER_SUBJECT`) and refuses the subject
+  past that rather than reconciling a truncated read.
 - **Payability** (`GoalEngine::payability`). A goal the campaign does not
   pay for is tracked at its own value, with note `not_payable_on_campaign`.
   A campaign payout overrides the goal's value. A `fixed` value pays, and
@@ -1531,7 +1565,7 @@ is `GoalsController`; the CLI is `p202 goal …`.
   format's specification. PHP runs them through `GoalVectorsTest`; the
   Swift evaluator (PR 8) runs the same files.
 - **Deferred.**
-  - The encoding versioning with the 35-day horizon (§5.5) goes to PR 8 (built, §5.9),
+  - The encoding versioning with the postback horizon (§5.5) goes to PR 8 (built, §5.9; 48 days as built),
     with the evaluator that needs it.
   - `notify_traffic_source` is stored on campaign goals but nothing fires
     yet. The notification outbox goes to PR 5 (installs) and 4b (web
@@ -1637,7 +1671,12 @@ the API is `EventsController`; the CLIs are `p202 event send` and
   the common shape open, the rest under Advanced, writing through
   `GoalsController` so page and API refuse alike. A goal the form cannot
   show faithfully is listed with a pointer to `p202 goal update`, never
-  rewritten by the form. The campaign form gains **When a click converts
+  rewritten by the form. "Faithfully" is a round trip, not a list: the form
+  is filled from the stored definition, built back, and must give the same
+  canonical definition compared strictly, so a condition value keeps its
+  JSON type (the form carries it in a "compare as" field; `"123"`, `123`,
+  `true`, `"true"`, `3` and `3.0` all survive an unchanged save), and a
+  save for a goal that no longer fits is refused. The campaign form gains **When a click converts
   more than once** (`payout_mode`) under Advanced; a post without the field
   keeps the stored mode.
 - **Order within a second.** Events are ordered by time, then arrival,
@@ -1656,8 +1695,8 @@ the API is `EventsController`; the CLIs are `p202 event send` and
 
 What PR 8 settled for the iOS SDK (`sdk/ios-attribution/`), the server
 side it needed, and the PR 4 deferrals it picked up (§5.7: encoding
-versions with the 35-day horizon; relaxing "an encoding names a plain
-goal").
+versions with the postback horizon — 48 days as built, below; relaxing "an
+encoding names a plain goal").
 
 - **The Swift API.** `configure(endpoint:appToken:)` (the `schemaToken`
   parameter is gone; the header was renamed in PR 3). `logEvent(_:properties:revenue:conversionTypes:)`
@@ -1680,7 +1719,17 @@ goal").
   end, clock choice, typed equality, `in`, ineligible prerequisites, tie
   order, version by event clock, repeat cap, a cast count, rounding, rebase,
   the parser's int/float, a blank name, a numeric-string comparator) each
-  fail the Swift vector suite.
+  fail the Swift vector suite. PR 4's later bounds on sums (rules 6, 8 and
+  9 of the vectors README: a repeating sum needs `max`, a summand counts
+  only within ±999999.99999, the sum is held in an `Int64` between −10^15
+  units and cap × gte, and the total reached is computed) were ported
+  when PR 8 took that fix in; fourteen planted defects in them each fail
+  the Swift suite — two of them (a floor at zero, and an unsaturated add
+  on a damaged stored state that traps the host app) only through
+  Swift-side tests added with the port, since the shared vectors never
+  take a sum below zero and back. Searching n one at a time instead of computing the total
+  gives the same answers by construction and is the one plant no vector
+  can see, so the code computes it and says why.
 - **The device is an install subject with no click.** Its install time is
   the first `configure` on the device (persisted, token-independent like
   the last fine value); SKAdNetwork never says which ad the app came from,
@@ -1743,17 +1792,81 @@ goal").
   twice, which decodes as once. **Known limitation:** two concurrent
   updates of one encoding can lose the intermediate meaning's (sub-second)
   span.
-- **The 35-day horizon.** A postback received at R decodes under every
-  meaning its value had at any instant of [R − 35 days, R], resolved as
-  before (the registration's own over the account-wide; fine never falls
-  back to coarse). One meaning (goal and revenue override) decodes it; two
-  that disagree count as `ambiguous_encoding`, credited to no goal; none
-  — the value had no meaning inside the horizon — takes the first meaning
-  given after R, so encodings added once postbacks arrive still read them
-  (the report's behaviour before versions; without it every new app's
-  first postbacks would be undecoded) and a value never given one is
-  undecoded. 35 days is the plan's figure (the third conversion window
-  closes on day 35); it is `SkanEncodingTimeline::HORIZON_DAYS`.
+- **Meanings are kept by app, not by registration id.** Each history row
+  also records the App Store id of its registration (`app_id`, 0 for the
+  account-wide set), read by the same `INSERT … SELECT` from the
+  registration; the report keys current encodings by their registration's
+  app and every postback by its own `app_id`. Keyed by registration id (as
+  first built), deleting a registration broke both halves: its postbacks
+  lose their `registration_id` while the history was saved under that id,
+  so they decoded through the account-wide set; registering the app again
+  claims them under a new id, which still could not reach the history — a
+  trial the app had encoded was credited as whatever the account-wide set
+  said (Codex, PR 8 review). An app is also what a device's document
+  belongs to, so this is the key the question was always about. A
+  registration-scoped meaning whose app cannot be read (no iOS
+  registration behind a current encoding, a NULL `app_id` in the history)
+  is logged and matches no postback rather than counting as account-wide
+  (CLAUDE.md #11). The sweep for other paths: the user purge deletes the
+  history with the user's encodings and hands the postbacks to user 0, so
+  nothing of the old owner's should decode them for anyone; the claim is
+  the only other writer of `registration_id`, and nothing else reads the
+  history.
+- **The horizon: 48 days.** A postback received at R decodes under every
+  meaning its value had at any instant of [R − 48 days, R], resolved as
+  before (the app's own over the account-wide; fine never falls back to
+  coarse). One meaning (goal and revenue override) decodes it; two that
+  disagree count as `ambiguous_encoding`, credited to no goal; none — the
+  value had no meaning inside the horizon — takes the first meaning given
+  after R, so encodings added once postbacks arrive still read them (the
+  report's behaviour before versions; without it every new app's first
+  postbacks would be undecoded) and a value never given one is undecoded.
+  The horizon is the longest a document the device used can predate the
+  postback's arrival, three terms (`SkanEncodingTimeline::HORIZON_DAYS`):
+  - **35 days** of conversion windows (`CONVERSION_WINDOW_DAYS`): the third
+    closes on day 35 after the install or re-engagement.
+  - **6 days** of delivery delay (`DELIVERY_DELAY_DAYS`). SKAdNetwork 4
+    and AdAttributionKit send the first postback 24–48 hours after the
+    first window ends and the second and third 24–144 hours after theirs
+    end (Apple developer documentation, *Receiving postbacks in multiple
+    conversion windows*; AdAttributionKit keeps the same windows and
+    delays). The plan's first figure, 35 days, left this out: a device on
+    the pre-edit document that set the value on day 35 had its postback
+    delivered up to day 41, past the old horizon, and it was credited to
+    the new meaning instead of being counted ambiguous (Codex, PR 8
+    review).
+  - **7 days** of schema age (`SCHEMA_MAX_AGE_DAYS`), enforced in the SDK
+    rather than assumed. The SDK used its cached document for as long as
+    it had one — a device offline since before an edit kept setting the
+    old meaning's values, with no bound at all. For an install postback
+    the document cannot predate the install (the cache lives in the app's
+    container, which an uninstall removes), but a re-engagement's windows
+    start whenever the user comes back. So `P202Attribution.maxSchemaAge`
+    (7 days since the last successful fetch or 304, not configurable
+    because the server's horizon is built from it) is the oldest document
+    the SDK encodes with: an event logged while it holds only an older one
+    waits in the pending queue (as before the first schema, up to 100) and
+    is encoded with the next document that arrives; a relaunch does not
+    flush with the stale one either. A fetch time in the device's future
+    (the clock set back since) counts as unknown age, so not usable. The
+    opportunistic refresh interval is capped at half the age, so an online
+    device never ages out between two attempts. The cost, deliberate: a
+    build whose app token was rotated can no longer fetch, so its events
+    stop setting values 7 days after its last fetch (the SDK contract doc
+    says so), and every edit is ambiguous for 48 days rather than 35.
+    `SkanEncodingTimelineTest` reads the Swift constant, so the two cannot
+    drift apart. Why 7: long enough that a device offline for a weekend or
+    a trip still encodes, short enough that the ambiguity after an edit
+    grows by a week rather than a month.
+  - **Known limitations.** A postback Apple delivers later than its
+    documented delay (if a device offline at delivery time sends it later)
+    can decode under a later meaning; the horizon is the documented bound,
+    not a guarantee against a device that breaks it. And a coarse-only
+    update re-sends the postback's last fine value (so the fine value is
+    not downgraded): for the install postback that value was chosen after
+    the install, inside the bound, but for AdAttributionKit's re-engagement
+    postback it may have been chosen during an earlier re-engagement, under
+    a document older than the horizon.
 - **The report groups by decode segment, not by postback.** Rows are
   grouped by `INTERVAL(received_at, breakpoints…)` — the effective and
   retired times and each plus the horizon, where some decode can change —
@@ -1764,8 +1877,10 @@ goal").
   as before. Analyze › Mobile Apps does not show the new count yet (its app
   view is PR 11); the API, the CLI (which renders it) and the notes do.
 - **Saying so.** Setup › Mobile Apps warns on a rule edit, with the date
-  the report is exact again; a delete says the value keeps decoding for 35
-  days. The API returns `effective_at` on every encoding.
+  the report is exact again (48 days on), naming the 7 days a device keeps
+  its document and the 41 a postback can take; a delete says the value
+  keeps decoding for 48 days. The API returns `effective_at` on every
+  encoding.
 - **`setCustomerId(_:signature:type:)`.** Validates and canonicalises the id
   exactly as `CustomerId::canonical()` does and the signature's shape (64
   hex, either case), throws `P202CustomerId.Invalid` otherwise, persists it
@@ -1786,7 +1901,8 @@ goal").
   `/goals/evaluate`, the encoding rules, the document, `p202 app schema`,
   the Swift SDK's live suite against the instance (a funnel reaching the
   encoded value), the versioned report (before / inside / after the horizon
-  and after a delete) and the Setup page's warning.
+  and after a delete), the Setup page's warning, and a registration deleted
+  and made again whose postbacks keep decoding under its own encodings.
 
 ### 5.10 As built: decisions (PR 5)
 
@@ -1889,12 +2005,18 @@ operator's reads are `AppInstallsController`; the guide is
   10,000 events and the per-peer rate limit; no separate per-install rate.
 - **Notifications.** `202_notification_pending` is conversion schema
   (`ConversionTables`), written in the conversion's transaction, one row per
-  **server postback pixel** (type 4) of the click's traffic-source account;
+  URL of each **server postback pixel** (type 4) of the click's
+  traffic-source account;
   browser pixels have no page on an install and are not queued. The URL is
-  resolved at queue time. A pixel holding several URLs is one row (the
-  table's key is `(conv_id, pixel_id, kind)`); a partial failure resends
-  all of them, which the `[[transactionid]]` they carry lets a network
-  dedupe. **Nothing is sent on the request path** — §7.3's "no external
+  resolved at queue time. **The unit is the destination, not the pixel**: a
+  pixel's code may hold several space-separated URLs, and each is its own
+  row (`destination`, its position in the code; the key is `(conv_id,
+  pixel_id, destination, kind)`) with its own attempts, backoff and status.
+  An earlier draft stored a pixel's URLs in one row, so a failure at the
+  second URL left the row pending and every retry started again at the
+  first — an endpoint that had accepted the conversion was sent it up to 8
+  times. The column is created by the 1.9.75 rung with the rest of the
+  table (see Constraints: no database holds it). **Nothing is sent on the request path** — §7.3's "no external
   calls" won over §5.2's "may attempt the send" — so the worker
   (`202-cronjobs/app-installs.php`, every minute) sends, claiming each row by
   compare-and-set on its attempt count, backing off 1 minute doubling to 6
@@ -1914,11 +2036,32 @@ operator's reads are `AppInstallsController`; the guide is
   this one survives a crash between commit and send. Its type-4 pixel
   filter, token resolution and send-once rule are the ones to keep; its
   immediate send is what the worker replaces.
-- **Once per outcome.** A replaced outcome's pending, unattempted `reached`
-  is cancelled and the replacement's goes out; one that was sent or
-  attempted is never repeated, and a `correction` (or, with no
-  replacement, a `retraction`) is stored `suppressed` — no pixel has a
-  correction URL yet (configuration of one is deferred to the UI, PR 11).
+- **Once per outcome, per destination.** A replaced outcome's pending,
+  unattempted `reached` is cancelled and the replacement's goes out; one
+  that was sent or attempted is never repeated, and a `correction` (or,
+  with no replacement, a `retraction`) is stored `suppressed` — no pixel has
+  a correction URL yet (configuration of one is deferred to the UI, PR 11).
+  Each destination is decided on its own: the replacement's `reached` is
+  cancelled only at the destinations the replaced row announced (an earlier
+  draft cancelled all of them, so a pixel the replaced row never reached
+  heard nothing at all). A destination is *announced* when the replaced
+  row's `reached` there was attempted, or when the replaced row carries a
+  `correction` there — it is itself a replacement whose predecessor went out
+  (an earlier draft missed this and re-announced on the second move). The
+  table (`NotificationOutboxIntegrationTest` has a case per row):
+
+  | Replaced row's `reached` at a destination | Announced | Replaced row | Replacement's `reached` there | Recorded |
+  |---|---|---|---|---|
+  | pending, unattempted | no | cancelled | goes out (if present) | — |
+  | pending, attempted (retrying) | yes | left retrying | cancelled | `correction` / `retraction`, suppressed |
+  | sent | yes | left sent | cancelled | `correction` / `retraction`, suppressed |
+  | failed (attempts exhausted; may have landed) | yes | left failed | cancelled | `correction` / `retraction`, suppressed |
+  | cancelled, with a `correction` on the replaced row | yes | left cancelled | cancelled | `correction` / `retraction`, suppressed |
+  | cancelled, no `correction` | no | left cancelled | goes out | — (not produced: a row whose reached was cancelled unannounced has been replaced and is not replaced again) |
+  | none (pixel added since) | no | — | goes out | — |
+
+  "If present": the replacement has no row at a destination whose pixel was
+  removed in between, and nothing is recorded for an unannounced one.
 - **One sender.** `PostbackSender::fetch()` is the curl call gpb and upx
   used inline; `p202FireTrafficSourcePixels()` and the worker share it. It
   now refuses a URL that is not `http(s)://` (a `file://` pixel used to be
@@ -1939,6 +2082,19 @@ operator's reads are `AppInstallsController`; the guide is
 - **Deletion.** A user's installs and queued postbacks are deleted with the
   user. Deleting a registration keeps its installs (their conversions stay
   on the ledger) and archives its goals, the install goal among them.
+  Both delete paths — the registration delete and the user purge
+  (`AppDataPurge`) — **unlink the campaigns** that name a registration they
+  remove (`app_registration_id = NULL`), in the same transaction. Left
+  dangling, a link reads as "linked to another app" once the same app is
+  registered again under a new id: token generation refuses the campaign's
+  clicks and the intake classifies their installs `foreign_click`. A stale
+  link is **not** tolerated at read time: both delete paths now clear it,
+  no installation holds one from before (Constraints), and reading a
+  dangling id as "unlinked" would mean a join to the registration under the
+  click's `FOR UPDATE` in the intake — locking the registration row for
+  every install — to cover a state nothing produces. A link that somehow
+  dangles fails closed (`foreign_click`, unpaid) and names the missing
+  registration in its reason.
 - **Operator reads** live under the registration — `GET /apps/{id}/installs`,
   `/apps/{id}/installs/{install_uuid}` — because `GET /apps/installs` is the
   public probe. `GET /apps/{id}/install-token?click_id=` is a read (no
@@ -1994,7 +2150,12 @@ operator's reads are `AppInstallsController`; the guide is
     third". `onEventMoved()` cancels a written outcome's postback when its
     reaching event had reached the goal in a retired outcome that was
     announced; if that one was cancelled unsent, the new one stands. This
-    now also covers installs.
+    now also covers installs. Both rules are decided **per destination**
+    (PR 5's review moved the outbox to one row per URL): a replacement or
+    a moved event is withheld only at the (pixel, URL) pairs the retired
+    outcome announced — its `reached` sent or attempted, or a `correction`
+    of it recording that the URL had already heard the event — and a URL
+    that heard nothing hears the outcome that stands, once.
   - **4b's kinds, decided from the outbox.** `reached` / `suppressed` are
     read back from what the outbox holds after the retirements (a
     replacement of an unsent outcome is `reached`, where 4b said
@@ -2010,7 +2171,10 @@ operator's reads are `AppInstallsController`; the guide is
     `TrafficSourcePixels`' default and the source of its user agent, so
     gpb/upx pixels and the outbox send the same way.
   Checked by `WebEventsIntegrationTest` (4b's cases, the worker run
-  between requests, plus a replacement of an unsent outcome) and
+  between requests, plus a replacement of an unsent outcome, and a
+  two-URL pixel: one URL refusing is retried alone, a replacement is
+  withheld only at the URL that heard the first value, and a replay that
+  shifts n reaches each URL with each event once) and
   `InstallIntakeIntegrationTest`, and live by `web-events.sh` (which now
   runs the worker) and `android-intake.sh`.
 
@@ -2718,6 +2882,14 @@ pass is `tests/live/mta-ui.sh`, the browser pass
 - **The API grew two reads for it:** the breakdown's `meta.groups` (how many
   groups there are, so a page of the top `limit` says what it left out) and
   the journey metrics' `recent_conversions` (the drill-down's entry points).
+- **A conversion's amount is what it counts for.** Wherever a conversion's
+  amount is shown beside its credits (the drill-down, the recent
+  conversions, their API reads) `amount` is the worker's own number — the
+  recorded amount net of the reversals naming it, from the one function the
+  worker splits (`CountedAmount`) — so a $10 sale reversed by $4 reads $6
+  over model columns that each sum to $6. `recorded_amount` and `counted`
+  sit beside it, and the page names a partial reversal. The breakdown, its
+  CSV and the exports sum credits, which were net already.
 
 **Exports.**
 
@@ -3126,7 +3298,7 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 | 5 | **Android intake:** install token, `MatchState`, installs and events endpoints, conversions through goals, traffic-source notify, pending-click cron. **Built; `tests/live/android-intake.sh` (with `goals.sh`, `app-core.sh`, `conversion-ledger.sh`, `legacy-pixels.sh` re-run), vectors in `tests/fixtures/app-sdk-contract/android/`, agent-eval case android-001. Decisions in §5.10.** | 1, 3, 4 |
 | 6 | **Play Integrity** (opt-in modes). **Built; `tests/live/play-integrity.sh` against a local TLS fake of Google (with `android-intake.sh`, `goals.sh`, `app-core.sh`, `conversion-ledger.sh` re-run), vectors in `tests/fixtures/app-sdk-contract/android/integrity.json`. Decisions in §5.11. No request has been made to Google itself.** | 5 |
 | 7 | **Android SDK** (installs, events, customer id, integrity) | 5, 6 |
-| 8 | **iOS SDK:** header rename, `setCustomerId`, on-device goal evaluator on the shared vectors. **Built; `tests/live/ios-sdk.sh` (the Swift SDK's live suite against the instance included; `app-core.sh`, `goals.sh`, `setup-mobile-apps.sh`, `analyze-mobile-apps.sh` re-run), Swift vectors in `GoalVectorsTests`, encoding versions with the 35-day horizon. Decisions in §5.9.** | 3, 4 |
+| 8 | **iOS SDK:** header rename, `setCustomerId`, on-device goal evaluator on the shared vectors. **Built; `tests/live/ios-sdk.sh` (the Swift SDK's live suite against the instance included; `app-core.sh`, `goals.sh`, `setup-mobile-apps.sh`, `analyze-mobile-apps.sh` re-run), Swift vectors in `GoalVectorsTests`, encoding versions with the 48-day horizon, kept by app. Decisions in §5.9.** | 3, 4 |
 | 9 | **MTA engine:** schema rewrite and rungs, worker, models, credits, reports API; v2 and dead code deleted. **Built; `tests/live/mta-engine.sh`; decisions in §6.5.** | 1, 2 |
 | 10 | **MTA UI and exports:** dashboard on the v2 shell, comparison, journey metrics, SSRF-safe webhooks. **Built; `tests/live/mta-ui.sh` (and `mta-engine.sh` re-run), `tests/browser/specs/mta-dashboard.spec.js`; decisions in §6.6.** | 9 |
 | 11 | **Mobile Apps UI:** Android pages, link builder, goal editor and funnel, cross-platform report | 3–5 |
@@ -3264,7 +3436,7 @@ Standalone pages render their own `<html>`.
 | **U4** | **Setup** (12 pages) | Before PR 4b and PR 11, which add payout mode, goals and the link builder to the campaign form |
 | **U5** | **Update** (5 pages) | With PR 1 (the same PR or the one next to it): PR 1 rewrites the revenue CSV upload's behaviour and U5 its page, and they are reviewed together. **Done:** Update Subids, Update CPC, Reset Campaign Subids, Delete Subids and Upload Revenue Reports on v2; the CPC update and the campaign reset moved off their AJAX fragments onto their pages (the CPC write had asked for no token). Checked by `tests/live/update-pages.sh` and `tests/live/conversion-ledger.sh`, `tests/browser/specs/update-pages.spec.js` (`UPDATE_PAGES` in `lib/checks.js`), `tests/Update/UpdatePostsRequireTokenTest` and `UpdateUiHelpersTest` |
 | **U6** | **Account** (14 pages; the attribution dashboard is replaced by PR 10, not migrated) | Any time after U1 |
-| **U7** | **Standalone and pre-login** (login, password reset, install, upgrade, error pages, `index.php`, `202-tv`, `202-resources`, `202-appstore`, `202-Mobile` retirement) | Last page family, on its own. **Done:** `info_top()` is the standalone v2 shell (`202-config/functions-standalone-ui.php`, `.p202-standalone`), so sign-in, the password reset pair, the license-key page, the 404, every `_die()` message and the whole install path (wizard, requirements, license key, installer and its success panel, upgrader) render on it; the POST handling of sign-in, install and upgrade is byte-identical, only markup moved. TV202, Hot Deals and the App Store are v2 pages that read their feeds into rows (no remote markup reaches a page). `202-Mobile/` redirects to the responsive pages (its mini stats are Campaign Overview's totals, which pass the 390px browser pass). Token checks added to the license-key page and the setup wizard, which also refuses to touch an installed instance's `202-config.php`; the password reset pages, which died on every request, work again. Checked by `tests/live/prelogin-pages.sh`, `tests/live/upgrade-csrf.sh`, `install-instance.sh` (and a wizard-to-installer run on a fresh database), `tests/browser/specs/prelogin-pages.spec.js` (`STANDALONE_PAGES` and `FEED_SECTION_PAGES` in `lib/checks.js`), `PreLoginPostRequiresTokenTest` (the license-key page added), `tests/Standalone/`, and `MysqliQueryArgumentOrderTest` |
+| **U7** | **Standalone and pre-login** (login, password reset, install, upgrade, error pages, `index.php`, `202-tv`, `202-resources`, `202-appstore`, `202-Mobile` retirement) | Last page family, on its own. **Done:** `info_top()` is the standalone v2 shell (`202-config/functions-standalone-ui.php`, `.p202-standalone`), so sign-in, the password reset pair, the license-key page, the 404, every `_die()` message and the whole install path (wizard, requirements, license key, installer and its success panel, upgrader) render on it; the POST handling of sign-in, install and upgrade is byte-identical, only markup moved. TV202, Hot Deals and the App Store are v2 pages that read their feeds into rows (no remote markup reaches a page). `202-Mobile/` redirects to the responsive pages (its mini stats are Campaign Overview's totals, which pass the 390px browser pass). Token checks added to the license-key page and the setup wizard, which also refuses to touch an installed instance's `202-config.php` except to bring a legacy-format one to the current format with every setting carried over (`setup-config.php?step=1.1`, `tests/Install/SetupConfigHelpersTest`), and whose session cookie takes Secure from the proxy-aware `p202_request_is_https()` every session start shares (`tests/Standalone/SessionCookieSecureTest`); the password reset pages, which died on every request, work again. Checked by `tests/live/prelogin-pages.sh`, `tests/live/upgrade-csrf.sh`, `install-instance.sh` (and a wizard-to-installer run on a fresh database), `tests/browser/specs/prelogin-pages.spec.js` (`STANDALONE_PAGES` and `FEED_SECTION_PAGES` in `lib/checks.js`), `PreLoginPostRequiresTokenTest` (the license-key page added), `tests/Standalone/`, and `MysqliQueryArgumentOrderTest` |
 | **U8** | **Removal:** the classic shell branch of `template_top()`, every `legacy.*` asset, Flat UI Pro, the old stylesheets and `202-js/flat-ui-pro.min.js`; `template_top()` stops taking a `ui` option | After U2–U7 and after every measurement PR that touches a page |
 
 ### 10.5 What "migrated" means, checked

@@ -112,7 +112,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 
 		// A correction URL (plan §5.5, PR 11) is read before anything is
-		// written: a server-to-server pixel's only, one http(s) address.
+		// written: a server-to-server pixel's only, http(s) addresses matched
+		// to the pixel code's URLs by position (at most one per URL).
 		// Refused here, it is refused with the rest of the form, which keeps
 		// what was typed; the pixels below are never half-saved around it.
 		foreach ((array) ($_POST['pixel_correction_url'] ?? []) as $key => $correctionUrl) {
@@ -124,7 +125,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$error['pixel_correction_url'] = 'A correction URL goes on a server-to-server (Postback URL) pixel only: the other pixel types are fired by a browser, which is not there when a correction is sent.';
 				break;
 			}
-			$problem = \Prosper202\Notifications\CorrectionUrls::problem($correctionUrl);
+			$problem = \Prosper202\Notifications\CorrectionUrls::problem($correctionUrl, trim((string) ($_POST['pixel_code'][$key] ?? '')));
 			if ($problem !== null) {
 				$error['pixel_correction_url'] = $problem;
 				break;
@@ -509,8 +510,8 @@ $pixelRow = static function (array $pixel, string $index, array $pixelTypes): st
 		. '<textarea class="form-control font-monospace" id="' . $codeId . '" name="pixel_code[]" rows="3">' . p202_setup_e($pixel['pixel_code']) . '</textarea>'
 		. '<div class="form-text">For every type except Raw, paste only the URL from the pixel\'s src.</div></div>'
 		. '<div class="mb-2"><label class="form-label" for="' . $correctionId . '">Correction URL <span class="text-body-secondary">Postback URL pixels only, optional</span></label>'
-		. '<input type="url" class="form-control font-monospace" id="' . $correctionId . '" name="pixel_correction_url[]" value="' . p202_setup_e($pixel['correction_url'] ?? '') . '" placeholder="https://network.example/correct?tx=[[transactionid]]&amp;value=[[p202_goal_value]]">'
-		. '<div class="form-text">Empty by default: most networks cannot take a correction. When a goal this pixel already announced is replaced, the correction goes here with <code>[[p202_goal_value]]</code>, <code>[[p202_previous_value]]</code>, <code>[[p202_original_conv_id]]</code> and <code>[[p202_notification_kind]]</code> filled in.</div></div>'
+		. '<input type="text" inputmode="url" spellcheck="false" class="form-control font-monospace" id="' . $correctionId . '" name="pixel_correction_url[]" value="' . p202_setup_e($pixel['correction_url'] ?? '') . '" placeholder="https://network.example/correct?tx=[[transactionid]]&amp;value=[[p202_goal_value]]">'
+		. '<div class="form-text">Empty by default: most networks cannot take a correction. For a pixel with several URLs, one per URL in the same order. When a goal this pixel already announced is replaced, the correction goes here with <code>[[p202_goal_value]]</code>, <code>[[p202_previous_value]]</code>, <code>[[p202_original_conv_id]]</code> and <code>[[p202_notification_kind]]</code> filled in.</div></div>'
 		. '<input type="hidden" name="pixel_id[]" value="' . p202_setup_e($pixel['pixel_id']) . '">'
 		. ($index !== '0' ? '<button type="button" class="btn btn-link btn-sm text-danger p-0" data-p202-remove-row>Remove this pixel</button>' : '')
 		. '</div></div>';

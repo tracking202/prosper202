@@ -428,6 +428,17 @@ class AppRegistrationsController extends Controller
         $this->execute($stmt, 'Encoding delete failed');
         $stmt->close();
 
+        // Campaigns linked to the app are unlinked. Left naming a
+        // registration that no longer exists, a campaign would read as
+        // linked to *another* app once the same app is registered again (a
+        // new id): its clicks' install tokens refused, their installs
+        // foreign_click. Unlinked, the campaign is what it was before it was
+        // linked, and the operator links it to the new registration.
+        $stmt = $this->prepare('UPDATE 202_aff_campaigns SET app_registration_id = NULL WHERE app_registration_id = ? AND user_id = ?');
+        $this->bind($stmt, 'ii', $registrationId, $this->userId);
+        $this->execute($stmt, 'Campaign unlink failed');
+        $stmt->close();
+
         // The app's goals are archived, not deleted: their versions and the
         // outcomes and conversions they produced are history. Archived, they
         // evaluate nothing received from now on, and a registration id is
@@ -456,6 +467,7 @@ class AppRegistrationsController extends Controller
             ['resource' => 'app-skan-encodings', 'action' => 'delete', 'where' => 'registration_id = ' . (int)$id],
             ['resource' => 'app-integrity-credential', 'action' => 'delete (the Play Integrity service account)', 'where' => 'registration_id = ' . (int)$id],
             ['resource' => 'app-postbacks', 'action' => 'unlink (registration_id set to NULL; owner kept; test-signal trust withdrawn)', 'where' => 'registration_id = ' . (int)$id],
+            ['resource' => 'campaigns', 'action' => 'unlink (app_registration_id set to NULL)', 'where' => 'app_registration_id = ' . (int)$id],
             ['resource' => 'goals', 'action' => 'archive (versions, outcomes and conversions kept)', 'where' => 'scope = registration, scope_id = ' . (int)$id],
             ['resource' => 'app-installs', 'action' => 'kept (history; their conversions stay on the ledger), no longer reachable by any app token', 'where' => 'registration_id = ' . (int)$id],
             ['resource' => 'app-installs', 'action' => 'settle the Play Integrity queue: integrity_state pending → error, match_state pending_integrity → integrity_unverified (never paid)', 'where' => 'registration_id = ' . (int)$id . ', still waiting for a verdict'],

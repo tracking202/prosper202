@@ -82,8 +82,11 @@ final class SetupPostsRequireTokenTest extends TestCase
         $forms = [];
         // An echo block inside the tag (action="…") ends in a question mark
         // and a bracket that do not end the tag; read past it, or a
-        // method="post" after it goes unread and the form is skipped.
-        if (!preg_match_all('~<form\b(?:<\?php.*?\?>|[^>])*?\bmethod="post"(?:<\?php.*?\?>|[^>])*>~is', $source, $matches, PREG_OFFSET_CAPTURE)) {
+        // method="post" after it goes unread and the form is skipped. The
+        // block ends at its own closing tag: a lazy dot-star would stretch across it when
+        // the tag has no method="post", past the tag's > and into the next
+        // form's, reading a GET form above a POST form as the post form.
+        if (!preg_match_all('~<form\b(?:<\?php(?:(?!\?>).)*\?>|[^>])*?\bmethod="post"(?:<\?php(?:(?!\?>).)*\?>|[^>])*>~is', $source, $matches, PREG_OFFSET_CAPTURE)) {
             return [];
         }
         foreach ($matches[0] as [$tag, $offset]) {

@@ -341,7 +341,7 @@ final class AppControllersTest extends TestCase
             static fn(array $s): bool => preg_match('/^(UPDATE|DELETE)/', ltrim($s['sql'])) === 1
         ));
         $sql = array_map(static fn(array $s): string => $s['sql'], $writes);
-        $this->assertCount(8, $writes, implode("\n", $sql));
+        $this->assertCount(9, $writes, implode("\n", $sql));
         $this->assertStringContainsString('UPDATE 202_app_postbacks SET trusted = NULL', $sql[0]);
         $this->assertStringContainsString('signature_state = ?', $sql[0]);
         $this->assertSame([7, 1, 'development'], $writes[0]['values'], 'this registration, this owner, test signals only');
@@ -358,10 +358,14 @@ final class AppControllersTest extends TestCase
         $this->assertStringContainsString('DELETE FROM 202_app_integrity_credentials', $sql[4]);
         $this->assertSame([7, 1], $writes[4]['values'], 'this registration\'s credential, this owner');
         $this->assertStringContainsString('DELETE FROM 202_app_skan_encodings', $sql[5]);
+        // Its campaigns are unlinked, or re-registering the app (a new id)
+        // would find them linked to a registration that no longer exists.
+        $this->assertStringContainsString('UPDATE 202_aff_campaigns SET app_registration_id = NULL WHERE app_registration_id = ? AND user_id = ?', $sql[6]);
+        $this->assertSame([7, 1], $writes[6]['values'], 'this registration\'s campaigns, this owner');
         // The app's goals are archived with it, their history kept.
-        $this->assertStringContainsString('UPDATE 202_goals SET archived_at = ?', $sql[6]);
-        $this->assertSame([7, 1], array_slice($writes[6]['values'], 2), 'this registration\'s goals, this owner');
-        $this->assertStringContainsString('DELETE FROM 202_app_registrations', $sql[7]);
+        $this->assertStringContainsString('UPDATE 202_goals SET archived_at = ?', $sql[7]);
+        $this->assertSame([7, 1], array_slice($writes[7]['values'], 2), 'this registration\'s goals, this owner');
+        $this->assertStringContainsString('DELETE FROM 202_app_registrations', $sql[8]);
     }
 
     public function testTheStoredPlatformIsCanonicalWhateverCaseWasSent(): void
@@ -758,29 +762,29 @@ final class AppControllersTest extends TestCase
                 'refuted_count' => 0, 'unvouched_count' => 1,
                 'test_count' => 0,
             ]],
-            // Conversion-value distribution for the same group.
-            // Registration 7 has its own encoding for 63; registration 8
-            // has none; the last row was claimed by nobody (a registration
-            // since deleted), which decodes through the account-wide set.
-            'cv_registration_id' => [
+            // Conversion-value distribution for the same group, by the app
+            // each postback names. App 997 (registration 7) has its own
+            // encoding for 63; app 998 has none, so it decodes through the
+            // account-wide set.
+            'cv_app_id' => [
                 // cv_segment 2: after both breakpoints of encodings effective
                 // at 1 (1 and 1 + the horizon), where each meaning is the
                 // only one there has been.
-                ['grp_day' => $day, 'cv_registration_id' => 7, 'conversion_value' => 63, 'coarse_conversion_value' => null, 'cv_segment' => 2, 'cnt' => 2],
-                ['grp_day' => $day, 'cv_registration_id' => 8, 'conversion_value' => 63, 'coarse_conversion_value' => null, 'cv_segment' => 2, 'cnt' => 1],
-                ['grp_day' => $day, 'cv_registration_id' => 8, 'conversion_value' => 7, 'coarse_conversion_value' => null, 'cv_segment' => 2, 'cnt' => 1],
-                ['grp_day' => $day, 'cv_registration_id' => null, 'conversion_value' => null, 'coarse_conversion_value' => 'high', 'cv_segment' => 2, 'cnt' => 1],
-                ['grp_day' => $day, 'cv_registration_id' => 8, 'conversion_value' => null, 'coarse_conversion_value' => null, 'cv_segment' => 2, 'cnt' => 1],
+                ['grp_day' => $day, 'cv_app_id' => 997, 'conversion_value' => 63, 'coarse_conversion_value' => null, 'cv_segment' => 2, 'cnt' => 2],
+                ['grp_day' => $day, 'cv_app_id' => 998, 'conversion_value' => 63, 'coarse_conversion_value' => null, 'cv_segment' => 2, 'cnt' => 1],
+                ['grp_day' => $day, 'cv_app_id' => 998, 'conversion_value' => 7, 'coarse_conversion_value' => null, 'cv_segment' => 2, 'cnt' => 1],
+                ['grp_day' => $day, 'cv_app_id' => 999, 'conversion_value' => null, 'coarse_conversion_value' => 'high', 'cv_segment' => 2, 'cnt' => 1],
+                ['grp_day' => $day, 'cv_app_id' => 998, 'conversion_value' => null, 'coarse_conversion_value' => null, 'cv_segment' => 2, 'cnt' => 1],
             ],
             // The user's encodings: a registration-specific fine encoding
             // overriding the account-wide one for value 63 (worth its goal's
             // fixed value, no override), plus an account-wide coarse
             // encoding. The others are worth their override, whatever their
             // goal says. No history: nothing was ever edited.
-            'FROM 202_app_skan_encodings WHERE user_id' => [
-                ['registration_id' => 0, 'fine_value' => 63, 'coarse_value' => null, 'goal_id' => 1, 'revenue_override' => '49.99000', 'effective_at' => 1, 'retired_at' => null],
-                ['registration_id' => 7, 'fine_value' => 63, 'coarse_value' => null, 'goal_id' => 2, 'revenue_override' => null, 'effective_at' => 1, 'retired_at' => null],
-                ['registration_id' => 0, 'fine_value' => null, 'coarse_value' => 'high', 'goal_id' => 3, 'revenue_override' => '10.00000', 'effective_at' => 1, 'retired_at' => null],
+            'FROM 202_app_skan_encodings e' => [
+                ['registration_id' => 0, 'app_platform' => null, 'app_key' => null, 'app_id' => null, 'fine_value' => 63, 'coarse_value' => null, 'goal_id' => 1, 'revenue_override' => '49.99000', 'effective_at' => 1, 'retired_at' => null],
+                ['registration_id' => 7, 'app_platform' => 'ios', 'app_key' => '997', 'app_id' => null, 'fine_value' => 63, 'coarse_value' => null, 'goal_id' => 2, 'revenue_override' => null, 'effective_at' => 1, 'retired_at' => null],
+                ['registration_id' => 0, 'app_platform' => null, 'app_key' => null, 'app_id' => null, 'fine_value' => null, 'coarse_value' => 'high', 'goal_id' => 3, 'revenue_override' => '10.00000', 'effective_at' => 1, 'retired_at' => null],
             ],
             'FROM 202_app_skan_encoding_history' => [],
             'SELECT g.goal_id, g.name, v.definition' => [
@@ -830,7 +834,7 @@ final class AppControllersTest extends TestCase
         // Fine 10 meant goal 1 until $edit, and goal 2 since. Rows are
         // grouped by INTERVAL(received_at, breakpoints…), so each row here
         // names the segment it fell in: before the edit (only goal 1 ever),
-        // inside the 35 days after it (both), after them (only goal 2).
+        // inside the horizon after it (both), after it (only goal 2).
         $edit = 1_700_000_000;
         $horizon = \Api\V3\Apps\Apple\SkanEncodingTimeline::HORIZON_SECONDS;
         $segment = static function (int $at) use ($edit, $horizon): int {
@@ -840,16 +844,18 @@ final class AppControllersTest extends TestCase
         $db = $this->createMysqliMock([
             'AS postbacks' => [['grp_day' => 0, 'postbacks' => 6, 'losses' => 0, 'installs' => 6, 'redownloads' => 0, 'reengagements' => 0,
                 'trusted_count' => 6, 'refuted_count' => 0, 'unvouched_count' => 0, 'test_count' => 0]],
-            'cv_registration_id' => [
-                ['grp_day' => 0, 'cv_registration_id' => 7, 'conversion_value' => 10, 'coarse_conversion_value' => null, 'cv_segment' => $segment($edit - 5), 'cnt' => 1],
-                ['grp_day' => 0, 'cv_registration_id' => 7, 'conversion_value' => 10, 'coarse_conversion_value' => null, 'cv_segment' => $segment($edit + 10 * 86400), 'cnt' => 3],
-                ['grp_day' => 0, 'cv_registration_id' => 7, 'conversion_value' => 10, 'coarse_conversion_value' => null, 'cv_segment' => $segment($edit + $horizon), 'cnt' => 2],
+            'cv_app_id' => [
+                ['grp_day' => 0, 'cv_app_id' => 997, 'conversion_value' => 10, 'coarse_conversion_value' => null, 'cv_segment' => $segment($edit - 5), 'cnt' => 1],
+                ['grp_day' => 0, 'cv_app_id' => 997, 'conversion_value' => 10, 'coarse_conversion_value' => null, 'cv_segment' => $segment($edit + 10 * 86400), 'cnt' => 3],
+                ['grp_day' => 0, 'cv_app_id' => 997, 'conversion_value' => 10, 'coarse_conversion_value' => null, 'cv_segment' => $segment($edit + $horizon), 'cnt' => 2],
             ],
-            'FROM 202_app_skan_encodings WHERE user_id' => [
-                ['registration_id' => 7, 'fine_value' => 10, 'coarse_value' => null, 'goal_id' => 2, 'revenue_override' => null, 'effective_at' => $edit, 'retired_at' => null],
+            'FROM 202_app_skan_encodings e' => [
+                ['registration_id' => 7, 'app_platform' => 'ios', 'app_key' => '997', 'app_id' => null, 'fine_value' => 10, 'coarse_value' => null, 'goal_id' => 2, 'revenue_override' => null, 'effective_at' => $edit, 'retired_at' => null],
             ],
+            // The history row belongs to registration 5, since deleted: it
+            // is found by the app it recorded, not by a registration id.
             'FROM 202_app_skan_encoding_history' => [
-                ['registration_id' => 7, 'fine_value' => 10, 'coarse_value' => null, 'goal_id' => 1, 'revenue_override' => null, 'effective_at' => 1, 'retired_at' => $edit],
+                ['registration_id' => 5, 'app_platform' => null, 'app_key' => null, 'app_id' => '997', 'fine_value' => 10, 'coarse_value' => null, 'goal_id' => 1, 'revenue_override' => null, 'effective_at' => 1, 'retired_at' => $edit],
             ],
             'SELECT g.goal_id, g.name, v.definition' => [
                 ['goal_id' => 1, 'name' => 'trial', 'definition' => '{"name":"trial","trigger":{"event":"trial","where":[]},"threshold":{"count":1},"after":[],"within":null,"repeat":{"mode":"once"},"value":{"type":"fixed","amount":"1.00"}}'],
@@ -866,6 +872,52 @@ final class AppControllersTest extends TestCase
         $this->assertSame(['count' => 1, 'revenue' => 1.0], $events['trial']);
         $this->assertSame(['count' => 2, 'revenue' => 10.0], $events['purchase']);
         $this->assertSame(11.0, $group['decoded_revenue'], '1 × 1.00 + 2 × 5.00');
+    }
+
+    public function testAMeaningWhoseAppCannotBeReadDecodesNothingRatherThanCountAsAccountWide(): void
+    {
+        // A history row with no app (a NULL app_id) and a current encoding
+        // whose registration is not an iOS app are damage. Read as
+        // account-wide (app 0), each would decode every app's postbacks
+        // carrying its value as its goal; they must match nothing, and be
+        // logged.
+        $edit = 1_700_000_000;
+        $db = $this->createMysqliMock([
+            'AS postbacks' => [['grp_day' => 0, 'postbacks' => 2, 'losses' => 0, 'installs' => 2, 'redownloads' => 0, 'reengagements' => 0,
+                'trusted_count' => 2, 'refuted_count' => 0, 'unvouched_count' => 0, 'test_count' => 0]],
+            'cv_app_id' => [
+                // Segment 2 of the breakpoints (1, 1 + H, $edit, $edit + H):
+                // from 1 + H, while both damaged meanings applied.
+                ['grp_day' => 0, 'cv_app_id' => 997, 'conversion_value' => 10, 'coarse_conversion_value' => null, 'cv_segment' => 2, 'cnt' => 1],
+                ['grp_day' => 0, 'cv_app_id' => 997, 'conversion_value' => 11, 'coarse_conversion_value' => null, 'cv_segment' => 2, 'cnt' => 1],
+            ],
+            'FROM 202_app_skan_encodings e' => [
+                ['registration_id' => 9, 'app_platform' => 'android', 'app_key' => 'com.example.app', 'app_id' => null, 'fine_value' => 11, 'coarse_value' => null, 'goal_id' => 2, 'revenue_override' => null, 'effective_at' => 1, 'retired_at' => null],
+            ],
+            'FROM 202_app_skan_encoding_history' => [
+                ['registration_id' => 5, 'app_platform' => null, 'app_key' => null, 'app_id' => null, 'fine_value' => 10, 'coarse_value' => null, 'goal_id' => 2, 'revenue_override' => null, 'effective_at' => 1, 'retired_at' => $edit],
+            ],
+            'SELECT g.goal_id, g.name, v.definition' => [
+                ['goal_id' => 1, 'name' => 'trial', 'definition' => '{"name":"trial","trigger":{"event":"trial","where":[]},"threshold":{"count":1},"after":[],"within":null,"repeat":{"mode":"once"},"value":{"type":"fixed","amount":"1.00"}}'],
+                ['goal_id' => 2, 'name' => 'purchase', 'definition' => '{"name":"purchase","trigger":{"event":"purchase","where":[]},"threshold":{"count":1},"after":[],"within":null,"repeat":{"mode":"once"},"value":{"type":"fixed","amount":"5.00"}}'],
+            ],
+        ]);
+
+        $logged = tempnam(sys_get_temp_dir(), 'p202log');
+        $previous = ini_set('error_log', (string)$logged);
+        try {
+            $group = (new AppPostbacksController($db, 1))->report(['group_by' => 'day', 'time_from' => 0])['data']['groups'][0];
+        } finally {
+            ini_set('error_log', (string)$previous);
+        }
+        $log = (string)file_get_contents((string)$logged);
+        @unlink((string)$logged);
+        $this->assertSame(2, $group['measurable']);
+        $this->assertSame(0, $group['decoded']);
+        $this->assertSame(2, $group['undecoded']);
+        $this->assertSame([], (array)$group['events']);
+        $this->assertStringContainsString('registration 5 names no readable iOS app', $log);
+        $this->assertStringContainsString('registration 9 names no readable iOS app', $log);
     }
 
     // ─── Postbacks: verify ───────────────────────────────────────────

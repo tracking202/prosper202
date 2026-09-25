@@ -57,7 +57,7 @@ foreach ($own as $g) {
 $top = $funnel === null ? 0 : max([1, ...array_map(static fn (array $c): int => $c['installs'], $funnel)]);
 $gAdvancedSet = ($gv['goal_count'] !== '' && $gv['goal_count'] !== '1') || $gv['goal_repeat'] === 'each' || $gv['goal_within_days'] !== ''
     || $gv['goal_after'] !== '' || $gv['goal_where_prop'] !== ''
-    || array_intersect(array_keys($ge), ['goal_count', 'goal_repeat_max', 'goal_within_days', 'goal_after', 'goal_where_value', 'goal_where_op']) !== [];
+    || array_intersect(array_keys($ge), ['goal_count', 'goal_repeat_max', 'goal_within_days', 'goal_after', 'goal_where_value', 'goal_where_op', 'goal_where_type']) !== [];
 $liveOwn = count(array_filter($own, static fn (array $g): bool => $g['archived_at'] === null));
 ?>
 <section class="p202-panel" id="goals">
@@ -241,23 +241,30 @@ $liveOwn = count(array_filter($own, static fn (array $g): bool => $g['archived_a
                             <fieldset class="mb-1">
                                 <legend class="form-label">Only when a property</legend>
                                 <div class="row g-2">
-                                    <div class="col-12 col-sm-4">
+                                    <div class="col-12 col-sm-3">
                                         <label class="visually-hidden" for="goal_where_prop">Property</label>
                                         <input type="text" class="form-control font-monospace" id="goal_where_prop" name="goal_where_prop" value="<?php echo $e($gv['goal_where_prop']); ?>" placeholder="level">
                                     </div>
-                                    <div class="col-12 col-sm-4">
+                                    <div class="col-12 col-sm-3">
                                         <label class="visually-hidden" for="goal_where_op">Comparison</label>
                                         <select class="form-select<?php echo isset($ge['goal_where_op']) ? ' is-invalid' : ''; ?>" id="goal_where_op" name="goal_where_op">
                                             <?php echo p202_setup_options(P202_GOAL_OPS, $gv['goal_where_op'] !== '' ? $gv['goal_where_op'] : 'eq'); ?>
                                         </select>
                                     </div>
-                                    <div class="col-12 col-sm-4">
+                                    <div class="col-12 col-sm-3">
                                         <label class="visually-hidden" for="goal_where_value">Value</label>
                                         <input type="text" class="form-control<?php echo isset($ge['goal_where_value']) ? ' is-invalid' : ''; ?>" id="goal_where_value" name="goal_where_value" value="<?php echo $e($gv['goal_where_value']); ?>" placeholder="3">
                                         <?php echo isset($ge['goal_where_value']) ? '<div class="invalid-feedback d-block">' . $e($ge['goal_where_value']) . '</div>' : ''; ?>
                                     </div>
+                                    <div class="col-12 col-sm-3">
+                                        <label class="visually-hidden" for="goal_where_type">Compare as</label>
+                                        <select class="form-select<?php echo isset($ge['goal_where_type']) ? ' is-invalid' : ''; ?>" id="goal_where_type" name="goal_where_type" title="Compare as">
+                                            <?php echo p202_setup_options(P202_GOAL_VALUE_TYPES, $gv['goal_where_type'] !== '' ? $gv['goal_where_type'] : 'auto'); ?>
+                                        </select>
+                                        <?php echo isset($ge['goal_where_type']) ? '<div class="invalid-feedback d-block">' . $e($ge['goal_where_type']) . '</div>' : ''; ?>
+                                    </div>
                                 </div>
-                                <div class="form-text">Empty by default: every event of that name counts. A number is compared as a number.</div>
+                                <div class="form-text">Empty by default: every event of that name counts. The last box says how the value is read (Automatic: a number as a number, anything else as text); the text <code>123</code> and the number <code>123</code> are different values, as are <code>true</code> and the text "true".</div>
                             </fieldset>
                         </div>
                     </details>

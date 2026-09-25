@@ -640,7 +640,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                                         <option
                                             value="<?php echo ReportBasicForm::DETAIL_LEVEL_NONE; ?>"
                                             <?php echo $html['user_pref_group_1'] == ReportBasicForm::DETAIL_LEVEL_NONE ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById(ReportBasicForm::DETAIL_LEVEL_NONE); ?></option>
-                                        <?php foreach (ReportBasicForm::getDetailArray() as $detail_item) { ?>
+                                        <?php foreach (ReportSummaryForm::getDetailArray() as $detail_item) { ?>
                                             <option value="<?php echo $detail_item ?>"
                                                 <?php echo $html['user_pref_group_4'] == $detail_item ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById($detail_item); ?></option>
                                         <?php } ?>
@@ -3904,19 +3904,10 @@ function  upgrade_config()
 
 function getSecureStatus(): bool
 {
-    $secure = false;
-    if (
-        (! empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-        || (! empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] == 'https')
-        || (! empty($_SERVER['HTTP_X_FORWARDED_SSL']) && $_SERVER['HTTP_X_FORWARDED_SSL'] == 'on')
-        || (isset($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443)
-        || (isset($_SERVER['HTTP_X_FORWARDED_PORT']) && $_SERVER['HTTP_X_FORWARDED_PORT'] == 443)
-        || (isset($_SERVER['REQUEST_SCHEME']) && $_SERVER['REQUEST_SCHEME'] == 'https')
-    ) {
-        $secure = true;
-    }
-
-    return $secure;
+    // One answer for the whole install, the one the session cookie's Secure
+    // flag is set from (202-config/request-https.php).
+    require_once __DIR__ . '/request-https.php';
+    return p202_request_is_https($_SERVER);
 }
 
 /**

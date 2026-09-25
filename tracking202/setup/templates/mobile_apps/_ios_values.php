@@ -146,8 +146,9 @@ foreach ([['own', 'This app\'s goals'], ['account', 'Account-wide goals']] as [$
                 <input type="hidden" name="registration_id" value="<?php echo $rowId; ?>">
                 <?php if ($editRule !== null) { ?><input type="hidden" name="rule_id" value="<?php echo (int)$editRule['encoding_id']; ?>"><?php } ?>
                 <?php if ($editRule !== null) {
-                    echo p202_flash('warn', 'Changing what this value means: devices keep the schema they already fetched, and a postback can arrive up to '
-                        . SkanEncodingTimeline::HORIZON_DAYS . ' days after the value was set, so until '
+                    echo p202_flash('warn', 'Changing what this value means: devices keep using the schema they already fetched for up to '
+                        . SkanEncodingTimeline::SCHEMA_MAX_AGE_DAYS . ' days, and a postback can arrive up to '
+                        . (SkanEncodingTimeline::CONVERSION_WINDOW_DAYS + SkanEncodingTimeline::DELIVERY_DELAY_DAYS) . ' days after the value was set, so until '
                         . gmdate('j M Y', time() + SkanEncodingTimeline::HORIZON_SECONDS)
                         . ' a postback carrying it is reported as ambiguous_encoding, and credited to neither meaning, wherever the old and new meanings disagree.');
                 } ?>

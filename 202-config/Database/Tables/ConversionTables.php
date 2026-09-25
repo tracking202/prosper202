@@ -143,8 +143,13 @@ final class ConversionTables
      * A row is written in the same transaction as the ledger row it
      * announces, so a process killed between the commit and the send leaves
      * the row for the worker (202-cronjobs/app-installs.php) instead of
-     * nothing. UNIQUE (conv_id, pixel_id, kind) makes a retried request
-     * unable to queue the same notification twice.
+     * nothing. UNIQUE (conv_id, pixel_id, destination, kind) makes a
+     * retried request unable to queue the same notification twice.
+     *
+     * - destination: the URL's 0-based position in its pixel's code. A
+     *   pixel may hold several space-separated URLs; each is its own row,
+     *   with its own attempts, backoff and status, so a failure at one
+     *   endpoint never resends to another that already accepted it;
      *
      * - kind: reached (the first row for an outcome), correction (a
      *   replacement whose predecessor was already sent), retraction (an
@@ -166,6 +171,7 @@ final class ConversionTables
                 `user_id` mediumint(8) unsigned NOT NULL,
                 `conv_id` int(11) unsigned NOT NULL,
                 `pixel_id` mediumint(8) unsigned NOT NULL,
+                `destination` smallint(5) unsigned NOT NULL DEFAULT '0',
                 `kind` varchar(16) NOT NULL,
                 `status` varchar(16) NOT NULL,
                 `url` text NOT NULL,
@@ -175,7 +181,7 @@ final class ConversionTables
                 `created_at` int(10) unsigned NOT NULL,
                 `sent_at` int(10) unsigned DEFAULT NULL,
                 PRIMARY KEY (`notification_id`),
-                UNIQUE KEY `conv_pixel_kind` (`conv_id`,`pixel_id`,`kind`),
+                UNIQUE KEY `conv_destination_kind` (`conv_id`,`pixel_id`,`destination`,`kind`),
                 KEY `status_next` (`status`,`next_attempt_at`),
                 KEY `user_id` (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Traffic-source notifications queued with the conversions they announce'"

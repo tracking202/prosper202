@@ -1319,12 +1319,13 @@
             "goal_id": 1,
             "version": 1,
             "count": 3,
-            "sum": "22.00000",
+            "sum": "20.00000",
             "times_reached": 1,
             "reached_at": 1300
           }
         ]
-      }
+      },
+      "why": "the running sum is held at the largest threshold the goal can still use (cap x gte: 20 for a once goal of 20), so progress shows 20.00000, not 22.00000"
     },
     {
       "name": "one event can reach several n when a sum jumps",
@@ -1347,7 +1348,8 @@
                   }
                 },
                 "repeat": {
-                  "mode": "each"
+                  "mode": "each",
+                  "max": 5
                 }
               }
             }
@@ -1503,7 +1505,7 @@
             "goal_id": 1,
             "version": 1,
             "count": 1,
-            "sum": "25.00000",
+            "sum": "20.00000",
             "times_reached": 1,
             "reached_at": 1300
           }
@@ -3494,6 +3496,446 @@
           }
         ],
         "disabled": []
+      }
+    },
+    {
+      "name": "a sum jump reaches no more than max",
+      "why": "one event crossing many multiples of a sum reaches n up to max and no further; later events reach nothing, and the sum is held at max x gte",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Every 10",
+                "trigger": {
+                  "event": "purchase"
+                },
+                "threshold": {
+                  "sum": {
+                    "prop": "$revenue",
+                    "gte": "10"
+                  }
+                },
+                "repeat": {
+                  "mode": "each",
+                  "max": 2
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "purchase",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {},
+          "revenue": 5
+        },
+        {
+          "event_id": "b",
+          "name": "purchase",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {},
+          "revenue": 30
+        },
+        {
+          "event_id": "c",
+          "name": "purchase",
+          "occurred_at": 1300,
+          "received_at": 1300,
+          "properties": {},
+          "revenue": 50
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "b",
+            "reached_at": 1200,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 2,
+            "event_id": "b",
+            "reached_at": 1200,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": [],
+        "progress": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "count": 3,
+            "sum": "20.00000",
+            "times_reached": 2,
+            "reached_at": 1200
+          }
+        ]
+      }
+    },
+    {
+      "name": "a repeating sum without max is disabled",
+      "why": "{\"mode\": \"each\"} with no max on a sum threshold is an invalid definition (one event could reach without bound); a stored one is disabled like any other invalid version, and a count goal's each needs no max",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Every cent",
+                "trigger": {
+                  "event": "purchase"
+                },
+                "threshold": {
+                  "sum": {
+                    "prop": "amount",
+                    "gte": "0.00001"
+                  }
+                },
+                "repeat": {
+                  "mode": "each"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "goal_id": 2,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Every purchase",
+                "trigger": {
+                  "event": "purchase"
+                },
+                "repeat": {
+                  "mode": "each"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "purchase",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {
+            "amount": 1
+          }
+        },
+        {
+          "event_id": "b",
+          "name": "purchase",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {
+            "amount": 1
+          }
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 2,
+            "version": 1,
+            "n": 1,
+            "event_id": "a",
+            "reached_at": 1100,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 2,
+            "version": 1,
+            "n": 2,
+            "event_id": "b",
+            "reached_at": 1200,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "reason": "invalid_definition"
+          }
+        ],
+        "progress": [
+          {
+            "goal_id": 2,
+            "version": 1,
+            "count": 2,
+            "sum": "0.00000",
+            "times_reached": 2,
+            "reached_at": 1100
+          }
+        ]
+      }
+    },
+    {
+      "name": "a summand outside plus or minus 999999.99999 is not counted, and a negative one lowers the sum",
+      "why": "a summed value is counted only when, in units, it is within +-99999999999 (the most a conversion holds); outside that the event does not count at all, like a value that is not a number. A negative value in range counts and lowers the sum.",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Spent 20",
+                "trigger": {
+                  "event": "purchase"
+                },
+                "threshold": {
+                  "sum": {
+                    "prop": "amount",
+                    "gte": 20
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "purchase",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {
+            "amount": 1000000
+          }
+        },
+        {
+          "event_id": "b",
+          "name": "purchase",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {
+            "amount": -1000000
+          }
+        },
+        {
+          "event_id": "c",
+          "name": "purchase",
+          "occurred_at": 1300,
+          "received_at": 1300,
+          "properties": {
+            "amount": 15
+          }
+        },
+        {
+          "event_id": "d",
+          "name": "purchase",
+          "occurred_at": 1400,
+          "received_at": 1400,
+          "properties": {
+            "amount": -10
+          }
+        },
+        {
+          "event_id": "e",
+          "name": "purchase",
+          "occurred_at": 1500,
+          "received_at": 1500,
+          "properties": {
+            "amount": 10
+          }
+        },
+        {
+          "event_id": "f",
+          "name": "purchase",
+          "occurred_at": 1600,
+          "received_at": 1600,
+          "properties": {
+            "amount": 5
+          }
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "f",
+            "reached_at": 1600,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": [],
+        "progress": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "count": 4,
+            "sum": "20.00000",
+            "times_reached": 1,
+            "reached_at": 1600
+          }
+        ]
+      }
+    },
+    {
+      "name": "the largest summand counts",
+      "why": "999999.99999 is inside the bound (either sign), so it is counted",
+      "goals": [
+        {
+          "goal_id": 1,
+          "versions": [
+            {
+              "version": 1,
+              "effective_at": 0,
+              "definition": {
+                "name": "Big spender",
+                "trigger": {
+                  "event": "purchase"
+                },
+                "threshold": {
+                  "sum": {
+                    "prop": "amount",
+                    "gte": "999999.99999"
+                  }
+                },
+                "repeat": {
+                  "mode": "each",
+                  "max": 3
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "subject": {
+        "type": "click",
+        "click_at": 1000,
+        "install_at": null
+      },
+      "events": [
+        {
+          "event_id": "a",
+          "name": "purchase",
+          "occurred_at": 1100,
+          "received_at": 1100,
+          "properties": {
+            "amount": 999999.99999
+          }
+        },
+        {
+          "event_id": "b",
+          "name": "purchase",
+          "occurred_at": 1200,
+          "received_at": 1200,
+          "properties": {
+            "amount": -999999.99999
+          }
+        },
+        {
+          "event_id": "c",
+          "name": "purchase",
+          "occurred_at": 1300,
+          "received_at": 1300,
+          "properties": {
+            "amount": 999999.99999
+          }
+        },
+        {
+          "event_id": "d",
+          "name": "purchase",
+          "occurred_at": 1400,
+          "received_at": 1400,
+          "properties": {
+            "amount": 999999.99999
+          }
+        }
+      ],
+      "expect": {
+        "outcomes": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 1,
+            "event_id": "a",
+            "reached_at": 1100,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          },
+          {
+            "goal_id": 1,
+            "version": 1,
+            "n": 2,
+            "event_id": "d",
+            "reached_at": 1400,
+            "value": null,
+            "value_source": "none",
+            "value_note": null,
+            "ineligible_reason": null
+          }
+        ],
+        "disabled": [],
+        "progress": [
+          {
+            "goal_id": 1,
+            "version": 1,
+            "count": 4,
+            "sum": "1999999.99998",
+            "times_reached": 2,
+            "reached_at": 1100
+          }
+        ]
       }
     }
   ]

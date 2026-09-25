@@ -29,7 +29,7 @@ use Prosper202\Attribution\ExportFiles;
  *    clicks were one person;
  *  - app measurement is purged by AppDataPurge: registrations, SKAN
  *    encodings and Android installs deleted, postbacks released to
- *    unclaimed;
+ *    unclaimed, the campaigns linked to the registrations unlinked;
  *  - the traffic-source notification outbox rows of the user's conversions
  *    are deleted (PR 5): a deleted account's queued postbacks never go out;
  *  - the goals engine (PR 4) is deleted: goals and their versions, campaign
@@ -139,6 +139,9 @@ final class UserDataPurge
                     : $action,
                 'where' => 'user_id = ' . $userId,
             ];
+        }
+        foreach (AppDataPurge::LINK_ACTIONS as $table => $action) {
+            $cascade[] = ['resource' => $table, 'action' => $action, 'where' => 'names a registration of user ' . $userId];
         }
         $cascade[] = ['resource' => '202_users', 'action' => 'soft delete (user_deleted = 1)', 'where' => 'user_id = ' . $userId];
 

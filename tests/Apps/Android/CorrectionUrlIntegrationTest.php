@@ -91,7 +91,8 @@ final class CorrectionUrlIntegrationTest extends TestCase
         yield 'empty turns it off' => ['', true];
         yield 'no scheme' => ['network.example/c', false];
         yield 'another scheme' => ['file:///etc/passwd', false];
-        yield 'two URLs' => ['https://a.example/c https://b.example/c', false];
+        yield 'two URLs, one per pixel URL' => ['https://a.example/c https://b.example/c', true];
+        yield 'a tab inside one' => ["https://a.example/c\thttps://b.example/c", false];
         yield 'a host-less URL' => ['https:///c', false];
         yield 'too long' => ['https://a.example/' . str_repeat('x', 2100), false];
     }
@@ -100,5 +101,49 @@ final class CorrectionUrlIntegrationTest extends TestCase
     public function testWhatACorrectionUrlMayBe(string $url, bool $usable): void
     {
         self::assertSame($usable, CorrectionUrls::problem($url) === null, (string) CorrectionUrls::problem($url));
+    }
+
+    public function testCorrectionUrlsBeyondThePixelsUrlsAreRefusedByCount(): void
+    {
+        self::assertNull(CorrectionUrls::problem('https://a.example/c', 'https://a.example/pb https://b.example/pb'), 'fewer is allowed: the later endpoints go uncorrected');
+        self::assertNull(CorrectionUrls::problem('https://a.example/c  https://b.example/c', 'https://a.example/pb https://b.example/pb'), 'a doubled space is not a URL');
+        self::assertStringContainsString('matched by position', (string) CorrectionUrls::problem('https://a.example/c https://b.example/c', 'https://a.example/pb'));
+    }
+
+    /**
+     * A pixel whose code holds two URLs has two destinations, each told of
+     * an outcome on its own row; a correction goes to the correction URL at
+     * the same position, and a destination with none is suppressed, saying
+     * why — never sent to the other endpoint's correction URL.
+     */
+    public function testEachDestinationIsCorrectedAtItsOwnPositionOnly(): void
+    {
+        self::fixture("UPDATE 202_ppc_account_pixels SET pixel_code = CONCAT(pixel_code, ' https://second.example/pb?v=[[p202_goal_value]]') WHERE pixel_id = 90");
+        (new CorrectionUrls(new Connection(self::$db)))->set(1, 90, 'https://ts.example/correct?v=[[p202_goal_value]]&was=[[p202_previous_value]]', 1);
+        self::fixture('UPDATE 202_app_registrations SET trust_client_revenue = 1 WHERE registration_id = 5');
+        $this->click(100);
+        $this->campaignGoal(30, ['name' => 'Second purchase', 'trigger' => ['event' => 'purchase'], 'threshold' => ['count' => 2],
+            'value' => ['type' => 'from_property', 'prop' => '$revenue']]);
+        $this->install(self::body(self::U1, 'p202=' . self::tokenFor(100)));
+        $t = self::CLICK_TIME + 100;
+        $this->events(self::U1, [['event_id' => 'p1', 'name' => 'purchase', 'occurred_at' => $t + 10, 'revenue' => 5]]);
+        $this->events(self::U1, [['event_id' => 'p2', 'name' => 'purchase', 'occurred_at' => $t + 20, 'revenue' => 10]]);
+        $outbox = new NotificationOutbox(new Connection(self::$db), fn (): int => $this->clock, fn (string $url): bool => true);
+        self::assertSame(2, $outbox->sendDue(10)['sent'], 'the second purchase went to both URLs');
+
+        $this->events(self::U1, [['event_id' => 'p0', 'name' => 'purchase', 'occurred_at' => $t + 5, 'revenue' => 1]]);
+        $corrections = [];
+        foreach (self::outbox() as $row) {
+            if ($row['kind'] === 'correction') {
+                $corrections[(int) $row['destination']] = $row;
+            }
+        }
+        ksort($corrections);
+        self::assertSame([0, 1], array_keys($corrections), 'one correction per destination that heard it');
+        self::assertSame(['pending', 'https://ts.example/correct?v=5.00&was=10.00'], [$corrections[0]['status'], $corrections[0]['url']],
+            'the first URL is corrected at the first correction URL');
+        self::assertSame(['suppressed', ''], [$corrections[1]['status'], $corrections[1]['url']],
+            'the second has no correction URL at its position, so nothing is sent for it');
+        self::assertStringContainsString('name no destination 2', (string) $corrections[1]['last_error']);
     }
 }

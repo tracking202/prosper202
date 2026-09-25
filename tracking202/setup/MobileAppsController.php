@@ -832,12 +832,13 @@ class MobileAppsController extends SetupController
         }
         if (isset($_GET['rule'])) {
             // An edit changes what a value means while devices still hold the
-            // schema from before it, and a postback can arrive up to
-            // HORIZON_DAYS after the value was set (SkanEncodingTimeline):
-            // say so where the edit is made (plan §5.5).
+            // schema from before it, and a postback arrives weeks after the
+            // value was set (SkanEncodingTimeline's horizon): say so where the
+            // edit is made (plan §5.5, §5.8).
             $out[] = (string)$_GET['rule'] === 'changed'
-                ? ['kind' => 'warn', 'text' => 'Conversion value changed. Devices keep the schema they already fetched for a while, and a postback can arrive up to '
-                    . SkanEncodingTimeline::HORIZON_DAYS . ' days after the value was set, so until '
+                ? ['kind' => 'warn', 'text' => 'Conversion value changed. Devices keep using the schema they already fetched for up to '
+                    . SkanEncodingTimeline::SCHEMA_MAX_AGE_DAYS . ' days, and a postback can arrive up to '
+                    . (SkanEncodingTimeline::CONVERSION_WINDOW_DAYS + SkanEncodingTimeline::DELIVERY_DELAY_DAYS) . ' days after the value was set, so until '
                     . gmdate('j M Y', time() + SkanEncodingTimeline::HORIZON_SECONDS) . ' a postback carrying this value is reported as ambiguous_encoding, and credited to neither meaning, wherever the old and new meanings disagree. The report is exact again after that.']
                 : ['kind' => 'ok', 'text' => 'Conversion value saved.'];
         }

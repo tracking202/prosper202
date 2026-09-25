@@ -16,7 +16,9 @@ use Api\V3\Support\ResponseSanitizer;
  * A row belongs to an app when the conversion it announces is an install's
  * goal outcome (202_goal_outcomes, subject `install`); its registration is
  * that outcome's. Web clicks' postbacks go through the same outbox and are
- * not listed here. `meta.summary` counts every matching row by status —
+ * not listed here. A row is one destination — one URL of a server pixel's
+ * code, `destination` its position from 0 — so a pixel with two URLs has two
+ * rows per announcement, each sent, retried and failed on its own. `meta.summary` counts every matching row by status —
  * pending (waiting, or backing off after a failed attempt), sent, failed
  * (attempts ran out), cancelled (replaced before it went out) and
  * suppressed (a correction no correction URL could carry) — under the same
@@ -63,7 +65,7 @@ final class AppNotificationsController
         $total = (int)($this->fetchAll('SELECT COUNT(*) AS n' . $from . ' WHERE ' . implode(' AND ', $where), 'i' . $types, [$this->userId, ...$binds])[0]['n'] ?? 0);
         $rows = [];
         foreach ($this->fetchAll(
-            'SELECT n.notification_id, n.conv_id, n.pixel_id, n.kind, n.status, n.url, n.attempts, n.next_attempt_at, n.last_error,
+            'SELECT n.notification_id, n.conv_id, n.pixel_id, n.destination, n.kind, n.status, n.url, n.attempts, n.next_attempt_at, n.last_error,
                     n.created_at, n.sent_at, o.app_registration_id AS registration_id, r.app_name, o.goal_id, g.name AS goal_name,
                     o.subject_id AS install_row_id, o.campaign_id'
             . $from . ' WHERE ' . implode(' AND ', $where)
@@ -71,7 +73,7 @@ final class AppNotificationsController
             'i' . $types . 'ii',
             [$this->userId, ...$binds, $limit, $offset]
         ) as $row) {
-            foreach (['notification_id', 'conv_id', 'pixel_id', 'attempts', 'next_attempt_at', 'created_at', 'registration_id', 'goal_id', 'install_row_id', 'campaign_id', 'sent_at'] as $int) {
+            foreach (['notification_id', 'conv_id', 'pixel_id', 'destination', 'attempts', 'next_attempt_at', 'created_at', 'registration_id', 'goal_id', 'install_row_id', 'campaign_id', 'sent_at'] as $int) {
                 $row[$int] = $row[$int] === null ? null : (int)$row[$int];
             }
             // The URL was filled with click tokens a visitor chose (keyword,

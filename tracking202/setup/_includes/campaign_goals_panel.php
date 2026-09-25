@@ -198,23 +198,30 @@ $gAdvancedSet = ($gv['goal_count'] !== '' && $gv['goal_count'] !== '1') || $gv['
 					<fieldset class="mb-3">
 						<legend class="form-label">Only when a property</legend>
 						<div class="row g-2">
-							<div class="col-12 col-sm-4">
+							<div class="col-12 col-sm-3">
 								<label class="visually-hidden" for="goal_where_prop">Property</label>
 								<input type="text" class="form-control font-monospace" id="goal_where_prop" name="goal_where_prop" value="<?php echo p202_setup_e($gv['goal_where_prop']); ?>" placeholder="plan">
 							</div>
-							<div class="col-12 col-sm-4">
+							<div class="col-12 col-sm-3">
 								<label class="visually-hidden" for="goal_where_op">Comparison</label>
 								<select class="form-select<?php echo p202_setup_invalid($ge, 'goal_where_op'); ?>" id="goal_where_op" name="goal_where_op">
 									<?php echo p202_setup_options(P202_GOAL_OPS, $gv['goal_where_op'] !== '' ? $gv['goal_where_op'] : 'eq'); ?>
 								</select>
 							</div>
-							<div class="col-12 col-sm-4">
+							<div class="col-12 col-sm-3">
 								<label class="visually-hidden" for="goal_where_value">Value</label>
 								<input type="text" class="form-control<?php echo p202_setup_invalid($ge, 'goal_where_value'); ?>" id="goal_where_value" name="goal_where_value" value="<?php echo p202_setup_e($gv['goal_where_value']); ?>" placeholder="pro">
 								<?php echo p202_setup_feedback($ge, 'goal_where_value'); ?>
 							</div>
+							<div class="col-12 col-sm-3">
+								<label class="visually-hidden" for="goal_where_type">Compare as</label>
+								<select class="form-select<?php echo p202_setup_invalid($ge, 'goal_where_type'); ?>" id="goal_where_type" name="goal_where_type" title="Compare as">
+									<?php echo p202_setup_options(P202_GOAL_VALUE_TYPES, $gv['goal_where_type'] !== '' ? $gv['goal_where_type'] : 'auto'); ?>
+								</select>
+								<?php echo p202_setup_feedback($ge, 'goal_where_type'); ?>
+							</div>
 						</div>
-						<div class="form-text">Empty by default: every event of that name counts. A property is one the event carries (<code>event_props</code> on a postback); a number is compared as a number.</div>
+						<div class="form-text">Empty by default: every event of that name counts. A property is one the event carries (<code>event_props</code> on a postback). The last box says how the value is read (Automatic: a number as a number, anything else as text); the text <code>123</code> and the number <code>123</code> are different values, as are <code>true</code> and the text "true".</div>
 					</fieldset>
 
 					<div class="mb-3">

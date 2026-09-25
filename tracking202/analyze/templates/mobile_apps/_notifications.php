@@ -56,12 +56,12 @@ $statusSub = [
             <div class="p202-table-wrap">
                 <table class="table table-hover p202-table">
                     <thead>
-                        <tr><th>Queued</th><th>App</th><th>Goal</th><th>Kind</th><th>Status</th><th class="num">Attempts</th><th>Last error</th><th>URL</th></tr>
+                        <tr><th>Queued</th><th>App</th><th>Goal</th><th>Kind</th><th>Status</th><th class="num">Attempts</th><th>Last error</th><th>Destination</th><th>URL</th></tr>
                     </thead>
                     <tbody>
                     <?php foreach ($rows as $row) {
                         $status = (string)$row['status']; ?>
-                        <tr>
+                        <tr data-outbox-destination="<?php echo (int)$row['pixel_id'] . ':' . (int)$row['destination']; ?>">
                             <td><?php echo $e(gmdate('Y-m-d H:i', (int)$row['created_at'])); ?></td>
                             <td><?php echo $e($row['app_name'] ?? ($appNames[(string)($row['registration_id'] ?? '')]['name'] ?? '')); ?></td>
                             <td><?php echo $e($row['goal_name'] ?? ''); ?></td>
@@ -69,6 +69,7 @@ $statusSub = [
                             <td><span class="<?php echo $e($statusTone($status)); ?>"><?php echo $e($status); ?></span><?php if ($status === 'sent' && $row['sent_at'] !== null) { ?> <span class="text-secondary small"><?php echo $e(gmdate('H:i', (int)$row['sent_at'])); ?></span><?php } ?></td>
                             <td class="num"><?php echo (int)$row['attempts']; ?></td>
                             <td class="small"><?php echo $e((string)($row['last_error'] ?? '')); ?></td>
+                            <td class="text-nowrap small">Pixel <?php echo (int)$row['pixel_id']; ?>, URL <?php echo (int)$row['destination'] + 1; ?></td>
                             <td class="font-monospace small text-break"><?php echo $e((string)$row['url']); ?></td>
                         </tr>
                     <?php } ?>
@@ -77,6 +78,7 @@ $statusSub = [
             </div>
             <p class="text-secondary small">
                 <?php echo $num($pagination['rows']); ?> <?php echo $pagination['rows'] === 1 ? 'postback' : 'postbacks'; ?><?php echo $filters['status'] !== '' ? ' ' . $e($filters['status']) : ''; ?> in this range.
+                One row per URL: a pixel whose code holds several URLs is sent, retried and failed at each on its own, so one endpoint that accepted is never sent the conversion again because another failed.
                 A failed postback is retried with backoff before it is marked failed; the worker in 202-cronjobs sends them.
             </p>
             <?php if ($pagination['pages'] > 1) {

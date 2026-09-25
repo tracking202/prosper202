@@ -45,8 +45,9 @@ use Prosper202\Goals\GoalScope;
  * to arrive, so every update and delete first copies the meaning it
  * replaces into 202_app_skan_encoding_history, and the row's `effective_at`
  * says since when its current meaning applies. The report decodes a
- * postback under every meaning inside the 35-day horizon and reports a
- * disagreement as ambiguous_encoding.
+ * postback under every meaning inside the horizon (48 days:
+ * SkanEncodingTimeline::HORIZON_DAYS) and reports a disagreement as
+ * ambiguous_encoding.
  */
 class AppSkanEncodingsController extends Controller
 {

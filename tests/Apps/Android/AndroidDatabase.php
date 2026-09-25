@@ -252,7 +252,7 @@ trait AndroidDatabase
     /** @return list<array<string, mixed>> */
     private static function outbox(): array
     {
-        return self::$db->query('SELECT conv_id, pixel_id, kind, status, url, attempts, last_error FROM 202_notification_pending ORDER BY notification_id')->fetch_all(MYSQLI_ASSOC);
+        return self::$db->query('SELECT conv_id, pixel_id, destination, kind, status, url, attempts, last_error FROM 202_notification_pending ORDER BY notification_id')->fetch_all(MYSQLI_ASSOC);
     }
 
     private static function rows(string $table, string $where = '1=1'): int

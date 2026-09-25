@@ -57,7 +57,7 @@ func registerGoalDefinitionFlags(cmd *cobra.Command) {
 	cmd.Flags().String("within-from", "", "Window anchor: install or click")
 	cmd.Flags().Bool("no-window", false, "Remove the window (update)")
 	cmd.Flags().String("repeat", "", "once (default) or each")
-	cmd.Flags().String("repeat-max", "", "With --repeat each: the most times it can be reached")
+	cmd.Flags().String("repeat-max", "", "With --repeat each: the most times it can be reached (1-10000; required for a --sum-prop goal)")
 	cmd.Flags().String("value", "", "Fixed value of reaching the goal, e.g. 4.00")
 	cmd.Flags().String("value-from-property", "", "Value from an event property (default the event's revenue)")
 	cmd.Flags().Lookup("value-from-property").NoOptDefVal = "$revenue"
@@ -102,9 +102,10 @@ func readGoalDefinitionJSON(cmd *cobra.Command) (map[string]interface{}, error) 
 		return nil, nil
 	}
 	var def map[string]interface{}
-	dec := json.NewDecoder(strings.NewReader(raw))
-	dec.UseNumber()
-	if err := dec.Decode(&def); err != nil || def == nil {
+	if err := decodeOneJSON([]byte(raw), &def); errors.Is(err, errTrailingJSON) {
+		return nil, validationError("%s holds more than one JSON value: %v", source, err).
+			WithHint("A definition is one object: pass one definition per command (run `p202 goal create` once per goal).")
+	} else if err != nil || def == nil {
 		return nil, validationError("%s is not a JSON object", source).
 			WithHint("A definition is an object, e.g. {\"name\":\"Sale\",\"trigger\":{\"event\":\"sale\"},\"value\":{\"type\":\"fixed\",\"amount\":\"20.00\"}} — see documentation/api/22-goals.md.")
 	}
@@ -318,7 +319,28 @@ func applyGoalQuickFlags(cmd *cobra.Command, def map[string]interface{}) error {
 	case changed("no-value"):
 		def["value"] = map[string]interface{}{"type": "none"}
 	}
-	return nil
+	return requireSumRepeatMax(def)
+}
+
+// requireSumRepeatMax refuses a sum threshold that repeats with no max, the
+// way the server does (definition.repeat.max): one event can cross many
+// multiples of a sum, so the number of times it is reached must be bounded.
+// Checked on the definition the flags produced, so an update that makes a
+// repeating goal a sum (or a sum goal repeat) is caught too.
+func requireSumRepeatMax(def map[string]interface{}) error {
+	threshold, _ := def["threshold"].(map[string]interface{})
+	if _, isSum := threshold["sum"]; !isSum {
+		return nil
+	}
+	repeat, _ := def["repeat"].(map[string]interface{})
+	if repeat["mode"] != "each" {
+		return nil
+	}
+	if limit, ok := repeat["max"]; ok && limit != nil {
+		return nil
+	}
+	return validationError("a sum goal that repeats needs --repeat-max (1-10000): one event can cross many multiples of --sum-gte, so the times it is reached must be bounded").
+		WithHint("Add --repeat-max, e.g. --repeat each --repeat-max 12, or reach it once with --repeat once.")
 }
 
 // goalDefinitionFromFlags builds a new definition from --definition/--file
@@ -669,9 +691,10 @@ var goalEvaluateCmd = &cobra.Command{
 			return validationError("reading %s: %v", file, err)
 		}
 		var body map[string]interface{}
-		dec := json.NewDecoder(strings.NewReader(string(data)))
-		dec.UseNumber()
-		if err := dec.Decode(&body); err != nil || body == nil {
+		if err := decodeOneJSON(data, &body); errors.Is(err, errTrailingJSON) {
+			return validationError("%s holds more than one JSON value: %v", file, err).
+				WithHint("The body is one object, {\"goals\": […], \"subject\": {…}, \"events\": […]}; evaluate each case with its own call.")
+		} else if err != nil || body == nil {
 			return validationError("%s is not a JSON object", file).
 				WithHint("The body is {\"goals\": […], \"subject\": {…}, \"events\": […]}.")
 		}
@@ -694,8 +717,10 @@ var goalReevaluateCmd = &cobra.Command{
 	Long: "Without --apply, shows per subject (a click, or an Android install with --subject-type\n" +
 		"install) the outcomes that would be retired and written, and what happens to their\n" +
 		"conversions (superseded by the new row, or deleted when the version no longer reaches\n" +
-		"the goal). With --apply, does it, one subject per transaction. At most --limit\n" +
-		"subjects per call; pass the answer's next_after as --after to continue.",
+		"the goal). Goals that wait on this one (their definition's after, directly or through\n" +
+		"another) are re-decided with it: listed in goals, each row names its goal_id.\n" +
+		"With --apply, does it, one subject per transaction. At most --limit subjects per call;\n" +
+		"pass the answer's next_after as --after to continue.",
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		params := map[string]string{}

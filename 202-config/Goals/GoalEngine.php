@@ -43,7 +43,10 @@ use Throwable;
  * same reconciliation: the subject is rebased onto the version, and outcomes
  * the new result does not contain are retired (`reevaluation`), their
  * ledger rows superseded by the replacement or, where there is none,
- * soft-deleted.
+ * soft-deleted. It re-decides the goal AND every goal whose `after` chain
+ * leads to it (its dependents), because a prerequisite's outcomes are
+ * what its dependents were evaluated against: outcomes, ledger rows and
+ * progress are reconciled for exactly that set, together.
  *
  * What an outcome pays is decided here, per the click's campaign
  * (202_campaign_goals), never by the evaluator. A row that is not paid
@@ -84,6 +87,15 @@ final class GoalEngine
     public const MAX_EVENTS_PER_SUBJECT = 10000;
     /** Re-evaluation handles at most this many subjects per call. */
     public const MAX_SUBJECTS_PER_CALL = 1000;
+    /**
+     * The most live outcomes one subject's reconciliation reads. A goal
+     * version reaches at most 10,000 per subject (a count's `each` one per
+     * event, a sum's `each` at most its max), so only a subject with many
+     * repeating goals gets near it; past it the engine refuses loudly
+     * rather than reconciling against a truncated read, which would take
+     * the unread outcomes for missing and write them again.
+     */
+    public const MAX_LIVE_OUTCOMES_PER_SUBJECT = 100000;
 
     private MysqlGoalRepository $goals;
     private MysqlConversionRepository $conversions;
@@ -227,7 +239,7 @@ final class GoalEngine
         $events = $this->loadEvents($subject);
         $specs = $this->specsFor($userId, $subject);
         $evaluation = GoalEvaluator::evaluateAll($specs, $subject, $events);
-        $plan = $this->plan($userId, $subject, $evaluation->outcomes, null, SupersededReason::REPLAY, false);
+        $plan = $this->plan($userId, $subject, $evaluation->outcomes, null, false);
         $counts = $this->execute($userId, $subject, $plan, $events, SupersededReason::REPLAY, $now, $post);
         $this->replaceProgress($userId, $subject, $evaluation->state);
 
@@ -360,7 +372,7 @@ final class GoalEngine
         if ($count === 0 || $replay) {
             $all = $count === 0 ? $new : $this->loadEvents($subject);
             $evaluation = GoalEvaluator::evaluateAll($specs, $subject, $all);
-            $plan = $this->plan($userId, $subject, $evaluation->outcomes, null, SupersededReason::REPLAY, false);
+            $plan = $this->plan($userId, $subject, $evaluation->outcomes, null, false);
             $counts = $this->execute($userId, $subject, $plan, $all, SupersededReason::REPLAY, $now, $post);
             $this->replaceProgress($userId, $subject, $evaluation->state);
             $result['replayed'] = $replay;
@@ -409,6 +421,19 @@ final class GoalEngine
      * The default is install for a registration or account goal and click
      * for a campaign goal. The built-in install goal has one version and is
      * never re-evaluated.
+     *
+     * Per subject, the goal is re-decided together with its dependents: the
+     * goals of the subject's set whose `after` names it, directly or through
+     * another dependent (any version's `after` counts). They are listed per
+     * subject (`goals`) and in total (`goals` at the top), and their retired
+     * and written outcomes are in the same `retire` / `write` lists and
+     * totals, each naming its goal. Dependents never add subjects — a
+     * dependent can only be affected where the goal itself is in the set, so
+     * the subject selection and its cap ($limit, at most
+     * MAX_SUBJECTS_PER_CALL) are the goal's own. A dependent's version the
+     * evaluation cannot use at all (invalid_definition,
+     * prerequisite_missing) is left exactly as it is: its outcomes and
+     * progress are not re-decided by another goal's re-evaluation.
      *
      * @return array<string, mixed>
      */
@@ -519,11 +544,20 @@ final class GoalEngine
             }
         }
 
+        $reDecided = [];
+        foreach ($subjects as $s) {
+            foreach ($s['goals'] as $g) {
+                $reDecided[$g] = $g;
+            }
+        }
+        sort($reDecided);
+
         return [
             'goal_id' => $goalId,
             'version' => $version,
             'subject_type' => $subjectType,
             'applied' => $apply,
+            'goals' => array_values($reDecided),
             'subjects' => $subjects,
             'totals' => [
                 'subjects' => count($subjects),
@@ -547,7 +581,9 @@ final class GoalEngine
 
         $planned = $this->reevaluationPlanFor($userId, $subject->withRebases($rebases), $goalId, $version, $row);
         $this->execute($userId, $planned['subject'], $planned['plan'], $planned['events'], SupersededReason::REEVALUATION, $now, $post);
-        $this->replaceProgress($userId, $planned['subject'], $planned['state']);
+        // Progress for exactly the goals whose outcomes were reconciled, so
+        // the next in-order event continues from the outcomes left live.
+        $this->replaceProgressOf($userId, $planned['subject'], $planned['state'], $planned['goals'], $planned['frozen']);
 
         $stmt = $this->conn->prepareWrite('UPDATE 202_goal_subjects SET rebases = ?, updated_at = ? WHERE subject_type = ? AND subject_id = ?');
         ksort($rebases);
@@ -559,7 +595,7 @@ final class GoalEngine
 
     /**
      * @param array<string, mixed>|null $lockedRow the subject row when the caller holds its lock
-     * @return array{summary: array<string, mixed>, plan: array{keep: array<string, array<string, mixed>>, write: list<Outcome>, retire: list<array{0: array<string, mixed>, 1: string|null}>}, events: list<GoalEvent>, state: EvaluationState, subject: GoalSubject}
+     * @return array{summary: array<string, mixed>, plan: array{keep: array<string, array<string, mixed>>, write: list<Outcome>, retire: list<array{0: array<string, mixed>, 1: string|null}>}, events: list<GoalEvent>, state: EvaluationState, subject: GoalSubject, goals: list<int>, frozen: array<string, true>}
      */
     private function reevaluationPlanFor(int $userId, GoalSubject $subject, int $goalId, int $version, ?array $lockedRow): array
     {
@@ -575,8 +611,22 @@ final class GoalEngine
         $events = $this->loadEvents($subject);
         $specs = $this->specsFor($userId, $subject);
         $evaluation = GoalEvaluator::evaluateAll($specs, $subject, $events);
-        $mine = array_values(array_filter($evaluation->outcomes, static fn (Outcome $o): bool => $o->goalId === $goalId));
-        $plan = $this->plan($userId, $subject, $mine, $goalId, SupersededReason::REEVALUATION, true, $version, $lockedRow !== null);
+
+        // The goal and every goal whose `after` chain leads to it: their
+        // outcomes are all functions of the goal's, so they are re-decided
+        // together or the dependents keep answers the goal no longer gives.
+        $goals = self::withDependents($specs, $goalId);
+        // A dependent's version the evaluation could not use at all is left
+        // as it is (its outcomes and progress): it did not recompute them.
+        $frozen = [];
+        foreach ($evaluation->disabled as $d) {
+            if ($d['goal_id'] !== $goalId && in_array($d['goal_id'], $goals, true)
+                && in_array($d['reason'], ['invalid_definition', 'prerequisite_missing'], true)) {
+                $frozen[$d['goal_id'] . ':' . $d['version']] = true;
+            }
+        }
+        $recomputed = array_values(array_filter($evaluation->outcomes, static fn (Outcome $o): bool => in_array($o->goalId, $goals, true)));
+        $plan = $this->plan($userId, $subject, $recomputed, $goals, true, [$goalId => $version], $lockedRow !== null, $frozen);
 
         $retire = [];
         foreach ($plan['retire'] as [$stored, $replacementKey]) {
@@ -588,6 +638,7 @@ final class GoalEngine
             }
             $retire[] = [
                 'outcome_id' => (int) $stored['outcome_id'],
+                'goal_id' => (int) $stored['goal_id'],
                 'version' => (int) $stored['goal_version'],
                 'n' => (int) $stored['n'],
                 'event_id' => (string) $stored['event_id'],
@@ -601,6 +652,7 @@ final class GoalEngine
             'summary' => [
                 'subject_type' => $subject->type,
                 'subject_id' => $subject->id,
+                'goals' => $goals,
                 'retire' => $retire,
                 'write' => array_map(static fn (Outcome $o): array => $o->toArray(), $plan['write']),
                 'unchanged' => count($plan['keep']),
@@ -609,7 +661,50 @@ final class GoalEngine
             'events' => $events,
             'state' => $evaluation->state,
             'subject' => $subject,
+            'goals' => $goals,
+            'frozen' => $frozen,
         ];
+    }
+
+    /**
+     * A goal and its dependents in a goal set: every goal whose `after`, in
+     * any of its versions, names the goal or another dependent. Ascending
+     * goal ids. A version that does not parse names nothing (the evaluator
+     * disables it); a cycle terminates because each goal is visited once.
+     *
+     * @param list<GoalSpec> $specs
+     * @return list<int>
+     */
+    public static function withDependents(array $specs, int $goalId): array
+    {
+        $dependents = [];
+        foreach ($specs as $spec) {
+            foreach ($spec->versions as $v) {
+                try {
+                    $def = GoalDefinition::parse($v['definition'], $spec->goalId);
+                } catch (InvalidGoalDefinition) {
+                    continue;
+                }
+                foreach ($def->after as $prereq) {
+                    $dependents[$prereq][$spec->goalId] = true;
+                }
+            }
+        }
+        $found = [$goalId => true];
+        $queue = [$goalId];
+        while ($queue !== []) {
+            $next = array_shift($queue);
+            foreach (array_keys($dependents[$next] ?? []) as $dependent) {
+                if (!isset($found[$dependent])) {
+                    $found[$dependent] = true;
+                    $queue[] = $dependent;
+                }
+            }
+        }
+        $out = array_keys($found);
+        sort($out);
+
+        return $out;
     }
 
     // ─── Reconciliation ─────────────────────────────────────────────
@@ -622,28 +717,39 @@ final class GoalEngine
      * - One stored with a different event is written anew, and the stored
      *   row is retired with the new one as its replacement.
      * - With $retireUnmatched (re-evaluation), every other stored row of the
-     *   goal is retired too, replaced by the recomputed outcome with the same
-     *   n at the target version where there is one.
+     *   goals is retired too, replaced by the recomputed outcome with the
+     *   same goal and n — at the goal's target version where it has one.
+     * - Stored rows of a $frozen goal version are neither kept nor retired:
+     *   the evaluation could not recompute them.
      *
      * @param list<Outcome> $recomputed
+     * @param list<int>|null $onlyGoals the goals reconciled (null: all)
+     * @param array<int, int> $targetVersions goal id => the version it was rebased onto
+     * @param array<string, true> $frozen "goal:version" => true
      * @return array{keep: array<string, array<string, mixed>>, write: list<Outcome>, retire: list<array{0: array<string, mixed>, 1: string|null}>}
      */
     private function plan(
         int $userId,
         GoalSubject $subject,
         array $recomputed,
-        ?int $onlyGoal,
-        SupersededReason $reason,
+        ?array $onlyGoals,
         bool $retireUnmatched,
-        ?int $targetVersion = null,
+        array $targetVersions = [],
         bool $lock = true,
+        array $frozen = [],
     ): array {
         $filters = ['subject_type' => $subject->type, 'subject_id' => $subject->id];
-        if ($onlyGoal !== null) {
-            $filters['goal_id'] = $onlyGoal;
+        if ($onlyGoals !== null) {
+            if ($onlyGoals === []) {
+                throw new \LogicException('a reconciliation of no goals');
+            }
+            $filters['goal_ids'] = $onlyGoals;
         }
         $stored = [];
-        foreach ($this->goals->liveOutcomes($userId, $filters, self::MAX_EVENTS_PER_SUBJECT * 10, 0, $lock) as $row) {
+        foreach ($this->allLiveOutcomes($userId, $subject, $filters, $lock) as $row) {
+            if (isset($frozen[$row['goal_id'] . ':' . $row['goal_version']])) {
+                continue;
+            }
             $key = $row['goal_id'] . ':' . $row['goal_version'] . ':' . $row['n'];
             if (isset($stored[$key])) {
                 throw new GoalEngineException(
@@ -685,6 +791,7 @@ final class GoalEngine
                 $replacement = null;
                 $n = (int) $s['n'];
                 $goal = (int) $s['goal_id'];
+                $targetVersion = $targetVersions[$goal] ?? null;
                 if ($targetVersion !== null && isset($recomputedKeys[$goal . ':' . $targetVersion . ':' . $n])) {
                     $replacement = $goal . ':' . $targetVersion . ':' . $n;
                 } else {
@@ -1340,7 +1447,7 @@ final class GoalEngine
             $p['reached_at'] = $row['reached_at'] !== null ? (int) $row['reached_at'] : null;
             unset($p);
         }
-        foreach ($this->goals->liveOutcomes($userId, ['subject_type' => $subject->type, 'subject_id' => $subject->id], self::MAX_EVENTS_PER_SUBJECT * 10) as $row) {
+        foreach ($this->allLiveOutcomes($userId, $subject, ['subject_type' => $subject->type, 'subject_id' => $subject->id], false) as $row) {
             if ($row['ineligible_reason'] === null) {
                 $state->reached[(int) $row['goal_id']] = true;
             }
@@ -1349,12 +1456,67 @@ final class GoalEngine
         return $state;
     }
 
+    /**
+     * Every live outcome a filter matches for one subject, or a refusal: a
+     * read that stopped at its limit is not "all" (CLAUDE.md #1 — a short
+     * read must not look like a complete one).
+     *
+     * @param array{goal_id?: int, subject_type?: string, subject_id?: int, goal_ids?: list<int>} $filters
+     * @return list<array<string, mixed>>
+     */
+    private function allLiveOutcomes(int $userId, GoalSubject $subject, array $filters, bool $lock): array
+    {
+        $rows = $this->goals->liveOutcomes($userId, $filters, self::MAX_LIVE_OUTCOMES_PER_SUBJECT + 1, 0, $lock);
+        if (count($rows) > self::MAX_LIVE_OUTCOMES_PER_SUBJECT) {
+            throw new GoalEngineException(
+                $subject->type . ' ' . $subject->id . ' has more than ' . self::MAX_LIVE_OUTCOMES_PER_SUBJECT
+                . ' live goal outcomes; it cannot be reconciled',
+                GoalEngineException::INTEGRITY
+            );
+        }
+
+        return $rows;
+    }
+
     private function replaceProgress(int $userId, GoalSubject $subject, EvaluationState $state): void
     {
         $stmt = $this->conn->prepareWrite('DELETE FROM 202_goal_progress WHERE subject_type = ? AND subject_id = ?');
         $this->conn->bind($stmt, 'si', [$subject->type, $subject->id]);
         $this->conn->executeUpdate($stmt);
         $this->upsertProgress($userId, $subject, $state);
+    }
+
+    /**
+     * Replace the progress of some goals only — the ones a re-evaluation
+     * reconciled — leaving every other goal's progress, and a frozen goal
+     * version's, as stored.
+     *
+     * @param list<int> $goals
+     * @param array<string, true> $frozen "goal:version" => true
+     */
+    private function replaceProgressOf(int $userId, GoalSubject $subject, EvaluationState $state, array $goals, array $frozen): void
+    {
+        foreach ($goals as $goalId) {
+            $keep = [];
+            foreach (array_keys($frozen) as $key) {
+                [$g, $v] = array_map('intval', explode(':', $key));
+                if ($g === $goalId) {
+                    $keep[] = $v;
+                }
+            }
+            $sql = 'DELETE FROM 202_goal_progress WHERE subject_type = ? AND subject_id = ? AND goal_id = ?'
+                . ($keep === [] ? '' : ' AND goal_version NOT IN (' . implode(',', array_fill(0, count($keep), '?')) . ')');
+            $stmt = $this->conn->prepareWrite($sql);
+            $this->conn->bind($stmt, 'sii' . str_repeat('i', count($keep)), [$subject->type, $subject->id, $goalId, ...$keep]);
+            $this->conn->executeUpdate($stmt);
+        }
+        $only = new EvaluationState();
+        foreach ($state->progress as $key => $p) {
+            if (in_array($p['goal_id'], $goals, true) && !isset($frozen[$p['goal_id'] . ':' . $p['version']])) {
+                $only->progress[$key] = $p;
+            }
+        }
+        $this->upsertProgress($userId, $subject, $only);
     }
 
     private function upsertProgress(int $userId, GoalSubject $subject, EvaluationState $state): void

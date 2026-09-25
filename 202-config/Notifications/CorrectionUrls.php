@@ -14,9 +14,14 @@ use Prosper202\Database\Connection;
  * endpoint for one.
  *
  * Only a server-to-server postback (pixel type 4) carries one: the outbox
- * queues nothing else. The URL is http(s), one URL (the pixel code may
- * list several; a correction goes to one place), at most 2048 characters
- * — the same shape the sender (PostbackSender) will fetch.
+ * queues nothing else. Like the pixel code it is space-separated URLs, each
+ * http(s), at most 2048 characters in all — the same shape the sender
+ * (PostbackSender) will fetch — and they are matched to the code's URLs by
+ * position: the outbox tracks a postback per URL of the code (its
+ * `destination`), and destination N's correction goes to the Nth
+ * correction URL, never to another endpoint's. A code with one URL has one
+ * correction URL; one with fewer correction URLs than code URLs leaves the
+ * later endpoints uncorrected, which the outbox records as suppressed.
  */
 final class CorrectionUrls
 {
@@ -30,19 +35,32 @@ final class CorrectionUrls
     }
 
     /**
-     * Why a typed correction URL cannot be used, or null when it can (the
-     * empty string is usable: it turns corrections off).
+     * Why typed correction URLs cannot be used, or null when they can (the
+     * empty string is usable: it turns corrections off). $pixelCode, when
+     * given, is the pixel's code: a correction URL beyond its URLs would
+     * match no endpoint, so it is refused by count.
      */
-    public static function problem(string $url): ?string
+    public static function problem(string $url, ?string $pixelCode = null): ?string
     {
         if ($url === '') {
             return null;
         }
         if (strlen($url) > self::MAX_LENGTH) {
-            return 'A correction URL is at most ' . self::MAX_LENGTH . ' characters.';
+            return 'Correction URLs are at most ' . self::MAX_LENGTH . ' characters in all.';
         }
-        if (preg_match('~^https?://[^\s/?#]+[^\s]*$~iD', $url) !== 1) {
-            return 'A correction URL is one http:// or https:// address with no spaces, such as https://network.example/correct?tx=[[transactionid]]&value=[[p202_goal_value]].';
+        $urls = NotificationOutbox::destinations($url);
+        foreach ($urls as $one) {
+            if (preg_match('~^https?://[^\s/?#]+[^\s]*$~iD', $one) !== 1) {
+                return 'A correction URL is an http:// or https:// address, such as https://network.example/correct?tx=[[transactionid]]&value=[[p202_goal_value]]; '
+                    . 'for a pixel with several URLs, give one per URL in the same order, separated by spaces.';
+            }
+        }
+        if ($pixelCode !== null) {
+            $endpoints = count(NotificationOutbox::destinations($pixelCode));
+            if (count($urls) > $endpoints) {
+                return 'The pixel sends to ' . $endpoints . ' URL' . ($endpoints === 1 ? '' : 's') . ' and ' . count($urls)
+                    . ' correction URLs were given: they are matched by position, one per pixel URL, so the extra ones would correct nothing.';
+            }
         }
 
         return null;

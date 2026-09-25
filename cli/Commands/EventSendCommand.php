@@ -74,7 +74,15 @@ class EventSendCommand extends BaseCommand
             if ($raw === false) {
                 throw new \InvalidArgumentException('--file ' . $file . ' cannot be read');
             }
-            $decoded = json_decode($raw, true);
+            // json_decode() refuses anything after the first value (two
+            // lists concatenated are a syntax error, never the first list
+            // alone); say why, so a malformed file is not reported as a
+            // file of the wrong shape.
+            try {
+                $decoded = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+            } catch (\JsonException $e) {
+                throw new \InvalidArgumentException('--file ' . $file . ' is not one JSON value (' . $e->getMessage() . '): put every event in one list, or one {"events": [...]}');
+            }
             if (is_array($decoded) && !array_is_list($decoded)) {
                 if (array_keys($decoded) !== ['events']) {
                     throw new \InvalidArgumentException('--file holds only events: a list, or {"events": [...]}; pass the click with --click_id');

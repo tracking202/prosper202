@@ -104,14 +104,15 @@ OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE api_key='$P202_API_KEY'")
 RUN=$(date +%s)$RANDOM
 NOW=$(date +%s)
 T=$((NOW - 3600))
-PPC=960900
+PPC=960900; PPC2=960901
 ACIP_G=960100; ACIP_N=960101; ACIP_R=960102; LP_PUBLIC=960200
 C_GPB=960001; C_GPX=960002; C_UPX=960003; C_PB=960004; C_PX=960005; C_BAD=960006; C_PLAIN=960007
-C_LEG=960008; C_LEG2=960009; C_API=960010; C_APIN=960011; C_STAGE=960012; C_REPLAY=960013; C_OTHER=960014; C_CLI=960015
-CLICKS="$C_GPB,$C_GPX,$C_UPX,$C_PB,$C_PX,$C_BAD,$C_PLAIN,$C_LEG,$C_LEG2,$C_API,$C_APIN,$C_STAGE,$C_REPLAY,$C_OTHER,$C_CLI"
+C_LEG=960008; C_LEG2=960009; C_API=960010; C_APIN=960011; C_STAGE=960012; C_REPLAY=960013; C_OTHER=960014; C_CLI=960015; C_TWO=960016
+CLICKS="$C_GPB,$C_GPX,$C_UPX,$C_PB,$C_PX,$C_BAD,$C_PLAIN,$C_LEG,$C_LEG2,$C_API,$C_APIN,$C_STAGE,$C_REPLAY,$C_OTHER,$C_CLI,$C_TWO"
 
 cleanup() {
   mysql_q "$DB" <<SQL
+DELETE FROM 202_notification_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICKS));
 DELETE FROM 202_attribution_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICKS) OR campaign_id IN (SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public IN ($ACIP_G, $ACIP_N, $ACIP_R)));
 DELETE FROM 202_conversion_logs WHERE click_id IN ($CLICKS) OR campaign_id IN (SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public IN ($ACIP_G, $ACIP_N, $ACIP_R));
 DELETE FROM 202_dataengine WHERE click_id IN ($CLICKS);
@@ -121,7 +122,7 @@ DELETE FROM 202_clicks WHERE click_id IN ($CLICKS);
 DELETE FROM 202_clicks_spy WHERE click_id IN ($CLICKS);
 DELETE FROM 202_clicks_tracking WHERE click_id IN ($CLICKS);
 DELETE FROM 202_landing_pages WHERE landing_page_id_public = $LP_PUBLIC;
-DELETE FROM 202_ppc_account_pixels WHERE ppc_account_id = $PPC;
+DELETE FROM 202_ppc_account_pixels WHERE ppc_account_id IN ($PPC, $PPC2);
 DELETE FROM 202_aff_campaigns WHERE aff_campaign_id_public IN ($ACIP_G, $ACIP_N, $ACIP_R);
 DELETE FROM 202_aff_networks WHERE aff_network_name = 'web events pass';
 TRUNCATE 202_goals; TRUNCATE 202_goal_versions; TRUNCATE 202_campaign_goals; TRUNCATE 202_goal_subjects;
@@ -152,10 +153,10 @@ seed_click() { # id campaign
       VALUES ($1, $OWNER, $2, 0, $PPC, 0.10, 0, 0, 0, 0, 0, $T);
     INSERT INTO 202_clicks_tracking (click_id, c1_id, c2_id, c3_id, c4_id) VALUES ($1, 0, 0, 0, 0);"
 }
-for c in $C_GPB $C_GPX $C_UPX $C_PB $C_PX $C_BAD $C_PLAIN $C_API $C_STAGE $C_REPLAY $C_CLI; do seed_click "$c" "$CAMP_G"; done
+for c in $C_GPB $C_GPX $C_UPX $C_PB $C_PX $C_BAD $C_PLAIN $C_API $C_STAGE $C_REPLAY $C_CLI $C_TWO; do seed_click "$c" "$CAMP_G"; done
 for c in $C_LEG $C_LEG2 $C_APIN; do seed_click "$c" "$CAMP_N"; done
 seed_click $C_OTHER "$CAMP_R"
-[ "$(Q "SELECT COUNT(*) FROM 202_clicks WHERE click_id IN ($CLICKS)")" = 15 ] || { echo "seeding clicks failed" >&2; exit 2; }
+[ "$(Q "SELECT COUNT(*) FROM 202_clicks WHERE click_id IN ($CLICKS)")" = 16 ] || { echo "seeding clicks failed" >&2; exit 2; }
 
 # The traffic source: a server-to-server postback addressed to this instance
 # (read back from its request log) and an image pixel (read back from the
@@ -311,6 +312,24 @@ eq "$(Q "SELECT GROUP_CONCAT(CONCAT(n.kind, ':', n.status) ORDER BY n.notificati
    "reached:sent,reached:cancelled,correction:suppressed" "its postback is cancelled, and the correction no pixel can carry is recorded"
 eq "$(rows $C_REPLAY)" "goal:purchase:10.00000:1:sup goal:purchase:1.00000:1:live" "the ledger supersedes the moved row"
 
+say "a server pixel with two URLs: one row per URL, a refusing one retried alone"
+# PR 5's per-destination outbox on a web goal: the second URL answers 404,
+# which the worker retries; the first accepted and must never hear it again.
+mysql_q "$DB" -e "UPDATE 202_clicks SET ppc_account_id = $PPC2 WHERE click_id = $C_TWO; UPDATE 202_clicks_spy SET ppc_account_id = $PPC2 WHERE click_id = $C_TWO;
+  INSERT INTO 202_ppc_account_pixels (ppc_account_id, pixel_code, pixel_type_id) VALUES
+  ($PPC2, '$BASE/tracking202/static/index.html?p202two=$RUN&v=[[p202_goal_value]]&s=[[subid]] $BASE/api/v3/p202-refuses-$RUN?v=[[p202_goal_value]]&s=[[subid]]', 4);"
+two_rows() { Q "SELECT GROUP_CONCAT(CONCAT_WS('/', destination, kind, status, attempts) ORDER BY destination) FROM 202_notification_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id=$C_TWO)"; }
+eq "$(hit "/tracking202/static/gpb.php?subid=$C_TWO&event=signup")" 200 "a signup on a click whose traffic source's pixel holds two URLs"
+eq "$(field "[d['notifications'][0]['status'], d['notifications'][0]['queued']]")" '["queued", 2]' "queues one postback per URL"
+deliver
+eq "$(two_rows)" "0/reached/sent/1,1/reached/pending/1" "the worker sends the first; the refusing second waits to retry"
+Q "UPDATE 202_notification_pending SET next_attempt_at = 0 WHERE status = 'pending' AND attempts > 0 AND conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id=$C_TWO)"
+deliver
+eq "$(two_rows)" "0/reached/sent/1,1/reached/pending/2" "the next run retries the refusing URL, and only it"
+eq "$(grep -c "GET /tracking202/static/index.html?p202two=$RUN&v=1.00&s=$C_TWO" "$SERVER_LOG")" 1 "the accepting URL heard the signup exactly once"
+eq "$(grep -c "GET /api/v3/p202-refuses-$RUN?v=1.00&s=$C_TWO" "$SERVER_LOG")" 2 "the refusing URL was asked twice"
+Q "UPDATE 202_notification_pending SET status = 'cancelled' WHERE status = 'pending' AND conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id=$C_TWO)"
+
 say "events is its own scope area; POST /events is stageable"
 mint() {
     local code
@@ -435,7 +454,7 @@ code=$(post --data-urlencode goal_action=save --data-urlencode goal_id= --data-u
   --data-urlencode goal_event=renewal --data-urlencode goal_value=property --data-urlencode goal_count=1 --data-urlencode goal_repeat=each \
   --data-urlencode goal_repeat_max=12 --data-urlencode goal_within_days=30 --data-urlencode "goal_after=$G_BUY" \
   --data-urlencode goal_where_prop=plan --data-urlencode goal_where_op=eq --data-urlencode goal_where_value=pro \
-  --data-urlencode goal_payout=3 --data-urlencode goal_notify=0)
+  --data-urlencode goal_where_type=auto --data-urlencode goal_payout=3 --data-urlencode goal_notify=0)
 case "$code" in *goal_saved=1*) ok "a goal with every advanced setting is saved (redirected)";; *) bad "a goal with every advanced setting is saved (got '$code')";; esac
 G_REN=$(Q "SELECT goal_id FROM 202_goals WHERE scope_id=$CAMP_G AND name='Renewal'")
 eq "$(Q "SELECT definition FROM 202_goal_versions WHERE goal_id='$G_REN'")" \
@@ -458,6 +477,60 @@ curl -sS -b "$JAR" -c "$JAR" -o "$OUT/post.html" "$OTHER_PAGE" --data-urlencode 
   --data-urlencode goal_action=archive --data-urlencode "goal_id=$G_UP"
 has "$OUT/post.html" "not one of this campaign" "another campaign's page cannot archive this campaign's goal"
 eq "$(Q "SELECT archived_at IS NULL FROM 202_goals WHERE goal_id=$G_UP")" 1 "which stays live"
+
+# Open-and-save keeps a condition's JSON type: goal equality is typed, so
+# the text "123" turned into the number 123 (or true into "true") would stop
+# matching the events it matched. Each goal is made through the API, opened
+# in the editor, and the editor's own form posted back as a browser would
+# send it; nothing may change, so no version is added.
+form_body() { # page.html — the goal form's fields, urlencoded, as a browser submits them
+  python3 - "$1" <<'PY'
+import html, re, sys, urllib.parse
+s = open(sys.argv[1]).read()
+f = re.search(r'<form[^>]*id="goal-form".*?</form>', s, re.S).group(0)
+pairs = []
+# In document order, so a later field of the same name wins as in PHP.
+for m in re.finditer(r'<select\b([^>]*)>(.*?)</select>|<input\b([^>]*)>', f, re.S):
+    tag = 'select' if m.group(1) is not None else 'input'
+    attrs, body = (m.group(1), m.group(2)) if tag == 'select' else (m.group(3), '')
+    a = dict((k, html.unescape(v)) for k, v in re.findall(r'([\w-]+)="([^"]*)"', attrs))
+    if 'name' not in a or re.search(r'\bdisabled\b', attrs):
+        continue
+    if tag == 'select':
+        opts = re.findall(r'<option value="([^"]*)"([^>]*)>', body)
+        chosen = [v for v, rest in opts if 'selected' in rest] or [opts[0][0]]
+        pairs.append((a['name'], html.unescape(chosen[0])))
+    elif a.get('type') in ('radio', 'checkbox'):
+        if re.search(r'\bchecked\b', attrs):
+            pairs.append((a['name'], a.get('value', 'on')))
+    else:
+        pairs.append((a['name'], a.get('value', '')))
+print(urllib.parse.urlencode(pairs))
+PY
+}
+n=0
+for v in '"123"' 123 true false '"true"' 3.0 3 '1.0e+20' '-0.5' '""'; do
+  n=$((n + 1))
+  G_T=$(goal "Typed $n" "{\"name\":\"Typed $n\",\"trigger\":{\"event\":\"typed\",\"where\":[{\"prop\":\"k\",\"op\":\"eq\",\"value\":$v}]},\"value\":{\"type\":\"fixed\",\"amount\":\"1.00\"}}")
+  stored=$(Q "SELECT definition FROM 202_goal_versions WHERE goal_id='$G_T'")
+  curl -sS -b "$JAR" -c "$JAR" "$PAGE&edit_goal_id=$G_T" -o "$OUT/edit.html"
+  if grep -q "name=\"goal_id\" value=\"$G_T\"" "$OUT/edit.html"; then
+    code=$(curl -sS -b "$JAR" -c "$JAR" -o "$OUT/post.html" -w '%{http_code} %{redirect_url}' "$PAGE&edit_goal_id=$G_T" --data "$(form_body "$OUT/edit.html")")
+    case "$code" in *goal_saved=1*) ok "the value $v: the editor opens it and saves it";; *) bad "the value $v: the editor saves it (got '$code')";; esac
+  else
+    bad "the value $v: the editor opens the goal"
+  fi
+  eq "$(Q "SELECT CONCAT(current_version, ' ', (SELECT definition FROM 202_goal_versions WHERE goal_id='$G_T' ORDER BY version DESC LIMIT 1)) FROM 202_goals WHERE goal_id='$G_T'")" \
+     "1 $stored" "the value $v: an unchanged save stores nothing new (the value's type is kept)"
+done
+G_IN=$(goal "Typed in" '{"name":"Typed in","trigger":{"event":"typed","where":[{"prop":"k","op":"in","value":["123",123]}]}}')
+curl -sS -b "$JAR" -c "$JAR" "$PAGE" -o "$OUT/campaign.html"
+has "$OUT/campaign.html" "edit with p202 goal update $G_IN" "a condition the form cannot show is listed with the CLI pointer"
+if grep -q "edit_goal_id=$G_IN" "$OUT/campaign.html"; then bad "and has no edit link"; else ok "and has no edit link"; fi
+post --data-urlencode goal_action=save --data-urlencode "goal_id=$G_IN" --data-urlencode "goal_name=Typed in" \
+  --data-urlencode goal_event=typed --data-urlencode goal_value=none --data-urlencode goal_count=1 --data-urlencode goal_repeat=once > /dev/null
+has "$OUT/post.html" "Edit it with p202 goal update $G_IN" "a form posted for it anyway is refused with the same pointer"
+eq "$(Q "SELECT current_version FROM 202_goals WHERE goal_id='$G_IN'")" 1 "and the goal is not rewritten"
 
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 echo "artifacts: $OUT"

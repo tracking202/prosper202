@@ -6,6 +6,7 @@ namespace Api\V3\Controllers;
 
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Apps\AppIdentity;
 use Api\V3\Apps\Apple\AdAttributionKitProtocol;
 use Api\V3\Apps\Apple\JwsVerifier;
 use Api\V3\Apps\Apple\PostbackVerifier;
@@ -442,18 +443,22 @@ class AppPostbacksController
 
         //
         // What a value means depends on when the postback arrived: an
-        // encoding edited inside the 35-day postback horizon has two
-        // meanings a device could have used (SkanEncodingTimeline). Rows are
-        // therefore also grouped by the segment of time between two points
-        // where some decode can change — a handful per encoding edit, not
-        // one per postback — and each segment is decoded once.
+        // encoding edited inside the postback horizon has two meanings a
+        // device could have used (SkanEncodingTimeline). Rows are therefore
+        // also grouped by the segment of time between two points where some
+        // decode can change — a handful per encoding edit, not one per
+        // postback — and each segment is decoded once. They decode by the
+        // app they name (app_id), not by the registration that claimed them:
+        // a deleted registration leaves its postbacks unclaimed, and a new
+        // registration of the same app claims them under another id, while
+        // the meanings that applied to them are kept by app.
         [$timeline, $goals] = $this->encodingTimeline();
         $breakpoints = $timeline->breakpoints();
         $segmentExpr = $breakpoints === []
             ? '0'
             : 'INTERVAL(received_at, ' . implode(', ', array_fill(0, count($breakpoints), '?')) . ')';
         $cvSql = 'SELECT ' . implode(', ', $selectGroup) . ",
-                registration_id AS cv_registration_id, conversion_value, coarse_conversion_value,
+                app_id AS cv_app_id, conversion_value, coarse_conversion_value,
                 $segmentExpr AS cv_segment, COUNT(*) AS cnt
             FROM 202_app_postbacks
             $cvWhereClause AND $trusted AND $winCondition
@@ -462,7 +467,7 @@ class AppPostbacksController
                 $cvWhereClause AND $trusted AND $winCondition
                 GROUP BY $identity
             )
-            GROUP BY $groupByExpr, registration_id, conversion_value, coarse_conversion_value, cv_segment";
+            GROUP BY $groupByExpr, app_id, conversion_value, coarse_conversion_value, cv_segment";
         $stmt = $this->prepare($cvSql);
         // The breakpoints bind first (they sit in the SELECT list); the where
         // clause appears twice (outer query and the first-copy subquery), so
@@ -491,7 +496,7 @@ class AppPostbacksController
             }
             $groupsOut[$key]['measurable'] += $count;
             $decode = $timeline->decode(
-                (int)($row['cv_registration_id'] ?? 0),
+                (int)$row['cv_app_id'],
                 $fine,
                 $coarse,
                 $timeline->representativeTime((int)$row['cv_segment'])
@@ -557,7 +562,7 @@ class AppPostbacksController
                     . '; the trusted/refuted/unvouched/test _count columns count unique postbacks per class, so a postback stored in two classes counts in each'
                     . '; installs = winning first-window downloads; redownloads and re-engagements (AdAttributionKit) are reported separately'
                     . '; conversion values decode across all three windows, so measurable/decoded can exceed installs'
-                    . '; conversion values decode through the /apps/skan-encodings of the registration that claimed the postback, then the account-wide ones'
+                    . '; conversion values decode through the /apps/skan-encodings of the postback\'s app (by App Store id, so a deleted and re-registered app keeps the meanings its earlier encodings had), then the account-wide ones'
                     . ', under every meaning the value had in the ' . SkanEncodingTimeline::HORIZON_DAYS . ' days before the postback arrived'
                     . ' (a device may still hold the document from before an edit): a value whose meanings there disagree counts as ambiguous_encoding and is credited to no goal'
                     . '; data.totals holds the same metrics ungrouped and over the whole window — summing the groups'
@@ -1138,15 +1143,26 @@ class AppPostbacksController
      * decoding). A goal is named by its CURRENT version: the report is a
      * reading of what the operator calls the outcome today.
      *
+     * Meanings are keyed by app (App Store id; 0 for the account-wide set):
+     * a current encoding by its registration's app, a history row by the
+     * app it recorded when it was retired — its registration may be gone.
+     * A registration-scoped meaning whose app cannot be read is damage: it
+     * is logged and given a key no postback has, never read as account-wide
+     * (CLAUDE.md #11).
+     *
      * @return array{0: SkanEncodingTimeline, 1: array<int, array{event_name: string, revenue: string}>}
      */
     private function encodingTimeline(): array
     {
         $meanings = [];
         foreach ([
-            'SELECT registration_id, fine_value, coarse_value, goal_id, revenue_override, effective_at, NULL AS retired_at
-             FROM 202_app_skan_encodings WHERE user_id = ?',
-            'SELECT registration_id, fine_value, coarse_value, goal_id, revenue_override, effective_at, retired_at
+            "SELECT e.registration_id, r.platform AS app_platform, r.app_key AS app_key, NULL AS app_id,
+                e.fine_value, e.coarse_value, e.goal_id, e.revenue_override, e.effective_at, NULL AS retired_at
+             FROM 202_app_skan_encodings e
+             LEFT JOIN 202_app_registrations r ON r.registration_id = e.registration_id AND r.user_id = e.user_id
+             WHERE e.user_id = ?",
+            'SELECT registration_id, NULL AS app_platform, NULL AS app_key, app_id,
+                fine_value, coarse_value, goal_id, revenue_override, effective_at, retired_at
              FROM 202_app_skan_encoding_history WHERE user_id = ?',
         ] as $sql) {
             $stmt = $this->prepare($sql);
@@ -1155,7 +1171,7 @@ class AppPostbacksController
             $result = $this->result($stmt);
             while ($row = $result->fetch_assoc()) {
                 $meanings[] = [
-                    'registration_id' => (int)$row['registration_id'],
+                    'app_id' => self::meaningApp($row),
                     'fine_value' => $row['fine_value'] === null ? null : (int)$row['fine_value'],
                     'coarse_value' => $row['coarse_value'] === null ? null : (string)$row['coarse_value'],
                     'goal_id' => (int)$row['goal_id'],
@@ -1197,6 +1213,39 @@ class AppPostbacksController
         }
 
         return [new SkanEncodingTimeline($meanings), $goals];
+    }
+
+    /**
+     * The app a meaning applies to, for SkanEncodingTimeline: 0 for the
+     * account-wide set; the App Store id for a registration's (from the
+     * registration for a current encoding, from the row for a history one);
+     * and, when that cannot be read, -registration_id — logged, and matched
+     * by no postback, because the alternative is decoding it as some other
+     * app's or as account-wide.
+     *
+     * @param array<string, mixed> $row
+     */
+    private static function meaningApp(array $row): int
+    {
+        $registrationId = (int)$row['registration_id'];
+        if ($registrationId === 0) {
+            return 0;
+        }
+        if ($row['app_id'] !== null) {
+            $appId = AppIdentity::appleKey((string)$row['app_id']);
+            if ($appId !== null) {
+                return (int)$appId;
+            }
+        } elseif ($row['app_platform'] === AppIdentity::IOS) {
+            $appId = AppIdentity::appleKey((string)$row['app_key']);
+            if ($appId !== null) {
+                return (int)$appId;
+            }
+        }
+        error_log('p202 app report: a SKAN encoding meaning of registration ' . $registrationId
+            . ' names no readable iOS app; it decodes no postback');
+
+        return -$registrationId;
     }
 
     /** A goal's fixed value as a decimal string, or '0' when it has none. */

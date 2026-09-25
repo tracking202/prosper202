@@ -8,7 +8,9 @@
  * form (a fixed value, then one from the event's amount, the amount field
  * showing and hiding with the choice), a refusal shown under the field it
  * names, the Advanced disclosure closed until it is needed, an edit that
- * fills the form, an archive behind its confirm. Then the goals those forms
+ * fills the form, an archive behind its confirm, and an open-and-save that
+ * keeps each condition value's JSON type (the text "123" is not the number
+ * 123, true is not "true", 3.0 is stored as 3.0). Then the goals those forms
  * made are reached by p202.track() on a real landing page served on
  * loopback (as `localhost`, another site than the tracker, as in
  * production): calls made before the pageview's click exists wait for it,
@@ -173,6 +175,57 @@ module.exports = {
         expect.eq(db.value('SELECT archived_at IS NOT NULL FROM 202_goals WHERE goal_id=' + doomed), '1', 'accepting archives it');
         expect.match((await app.flashes()).join(' '), /Goal archived/, 'and says so');
         expect.eq(await ui.text('#goal-list [data-goal-id="' + doomed + '"] .p202-pill'), 'archived', 'it stays listed, as archived');
+      },
+    },
+
+    {
+      name: 'An open-and-save keeps every condition value\'s type',
+      async run(ctx) {
+        const { app, ui, db, expect } = ctx;
+        // Stored as the API stores them: the canonical JSON text. Goal
+        // equality is typed, so each of these matches different events.
+        const cases = [
+          ['"123"', '123', 'text'], ['123', '123', 'number'], ['true', 'true', 'bool'], ['false', 'false', 'bool'],
+          ['"true"', 'true', 'text'], ['3.0', '3.0', 'number'], ['3', '3', 'number'], ['"3.0"', '3.0', 'text'],
+        ];
+        const defOf = (name, value, op) => '{"name":"' + name + '","trigger":{"event":"typed","where":[{"prop":"k","op":"' + (op || 'eq') + '","value":' + value
+          + '}]},"threshold":{"count":1},"after":[],"within":null,"repeat":{"mode":"once"},"value":{"type":"none"}}';
+        const make = (name, definition) => {
+          db.write("SET SESSION sql_mode=''; INSERT INTO 202_goals SET user_id=1, scope='campaign', scope_id=" + CAMP + ", name='" + name + "', current_version=1, created_at=1, updated_at=1");
+          const id = goalId(db, name);
+          db.write('INSERT INTO 202_goal_versions SET goal_id=' + id + ", version=1, definition='" + definition + "', effective_at=1, created_at=1");
+          return id;
+        };
+        for (let i = 0; i < cases.length; i++) {
+          const [json, shown, type] = cases[i];
+          const name = 'Typed ' + (i + 1);
+          const id = make(name, defOf(name, json));
+          await app.goto(PAGE);
+          await app.submit('#goal-list [data-goal-id="' + id + '"] a.p202-list__action');
+          expect.eq(await ui.value('#goal_where_value'), shown, json + ': the value is shown as written');
+          expect.eq(await ui.value('#goal_where_type'), type, json + ': with its type chosen');
+          await app.submit('#saveGoal');
+          expect.match((await app.flashes()).join(' '), /Goal saved/, json + ': saved');
+          expect.eq(db.value('SELECT CONCAT(g.current_version, " ", v.definition) FROM 202_goals g JOIN 202_goal_versions v ON v.goal_id = g.goal_id AND v.version = g.current_version WHERE g.goal_id=' + id),
+            '1 ' + defOf(name, json), json + ': saving it unchanged stores nothing new');
+        }
+
+        const listed = make('Typed in', defOf('Typed in', '["123",123]', 'in'));
+        await app.goto(PAGE);
+        expect.eq(await ui.exists('#goal-list [data-goal-id="' + listed + '"] a.p202-list__action'), false, 'a condition the form cannot show has no edit link');
+        expect.match(await ui.text('#goal-list [data-goal-id="' + listed + '"] .p202-list__meta'), new RegExp('edit with p202 goal update ' + listed), 'and points at the CLI');
+
+        // A new condition still reads a number as a number, and "Compare as"
+        // can say otherwise. (Advanced may be open already: the page
+        // remembers it from the edits above.)
+        if (!(await app.disclosureOpen('#goal-form details'))) {
+          await app.openDisclosure('#goal-form details');
+        }
+        await ui.fill({ '#goal_name': 'Typed new', '#goal_event': 'typed', '#goal_where_prop': 'k', '#goal_where_value': '42' });
+        await ui.check('#goal_value_none');
+        await ui.page.selectOption('#goal_where_type', 'text');
+        await app.submit('#saveGoal');
+        expect.match(db.value('SELECT v.definition FROM 202_goal_versions v JOIN 202_goals g ON g.goal_id = v.goal_id WHERE g.name = "Typed new"'), /"value":"42"/, 'a new condition read as text stores the text');
       },
     },
 
