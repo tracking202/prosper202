@@ -197,6 +197,76 @@ final class IntegritySettingsIntegrationTest extends TestCase
         $installs->list(5, ['integrity_state' => 'bogus']);
     }
 
+    public function testTheCredentialCannotBeClearedWhileAnInstallStillNeedsIt(): void
+    {
+        $integrity = new AppIntegrityController(self::$db, 1);
+        $integrity->setCredential(5, ['credential' => self::keyFile(FakeGoogle::rsaKey()[0])]);
+        $this->registrations()->update(5, ['integrity_mode' => 'require', 'integrity_cloud_project_number' => '123456789012']);
+        // Two installs received under require still wait for their verdict,
+        // one of them held from attribution; a third was settled already.
+        foreach ([['c1', 'pending_integrity', 'pending'], ['c2', 'organic', 'pending'], ['c3', 'attributed', 'valid']] as [$n, $match, $state]) {
+            self::fixture("INSERT INTO 202_app_installs SET user_id=1, registration_id=5, install_uuid='00000000-0000-4000-8000-0000000000$n', body_hash='$n',
+                store='google_play', match_state='$match', match_reason='r', referrer_status='ok', integrity_mode='require',
+                integrity_state='$state', integrity_next_at=" . ($state === 'pending' ? '1' : 'NULL') . ", received_at=1, raw_payload='{}'");
+        }
+        $this->registrations()->update(5, ['integrity_mode' => 'off']);
+        try {
+            $integrity->clearCredential(5);
+            self::fail('cleared while installs still wait for a verdict');
+        } catch (ConflictException $e) {
+            self::assertStringContainsString('2 installs of this app are still waiting for a Play Integrity verdict', $e->getMessage());
+            self::assertStringContainsString('(1 held from attribution under require)', $e->getMessage());
+            self::assertStringContainsString('GET /apps/5/integrity', $e->getMessage());
+        }
+        self::assertSame(1, self::rows('202_app_integrity_credentials'), 'the credential is still there');
+
+        // Once the worker has settled them, it can go.
+        self::fixture("UPDATE 202_app_installs SET integrity_state = 'valid', integrity_next_at = NULL, match_state = 'attributed' WHERE registration_id = 5");
+        self::assertTrue($integrity->clearCredential(5)['data']['cleared']);
+    }
+
+    public function testNoModeButOffWithoutAProjectNumberAndTheNumberIsNeverCleared(): void
+    {
+        (new IntegrityCredentialStore(new Connection(self::$db)))->set(1, 5, \Api\V3\Apps\Android\Integrity\ServiceAccountCredential::fromKeyFile(self::keyFile(FakeGoogle::rsaKey()[0])), 1);
+        $schema = fn (): array => (new AppSchemaController(self::$db))->publicSchema(self::TOKEN, null)['body']['data'];
+        foreach (['observe', 'require'] as $mode) {
+            try {
+                $this->registrations()->update(5, ['integrity_mode' => $mode]);
+                self::fail($mode . ' without a Cloud project number was accepted');
+            } catch (ValidationException $e) {
+                self::assertStringContainsString('Cloud project number', $e->getFieldErrors()['integrity_cloud_project_number']);
+            }
+        }
+        self::assertSame(['off', false, null], [$schema()['integrity_mode'], $schema()['integrity']['request_token'], $schema()['integrity']['cloud_project_number']]);
+        // Should a stored row reach that state anyway (an unreadable mode
+        // reads as require), the SDK is still never told to request a
+        // token it has no project to request for.
+        self::fixture("UPDATE 202_app_registrations SET integrity_mode = 'bogus' WHERE registration_id = 5");
+        self::assertSame(['require', false, null], [$schema()['integrity_mode'], $schema()['integrity']['request_token'], $schema()['integrity']['cloud_project_number']]);
+        self::fixture("UPDATE 202_app_registrations SET integrity_mode = 'off' WHERE registration_id = 5");
+
+        // With the number in the same request, or already stored, it is accepted.
+        $this->registrations()->update(5, ['integrity_mode' => 'observe', 'integrity_cloud_project_number' => '123456789012']);
+        $this->registrations()->update(5, ['integrity_mode' => 'off']);
+        $this->registrations()->update(5, ['integrity_mode' => 'require']);
+        self::assertSame(['require', true, '123456789012'], [$schema()['integrity_mode'], $schema()['integrity']['request_token'], $schema()['integrity']['cloud_project_number']]);
+
+        // An explicit null is refused by name rather than ignored, in any mode.
+        foreach (['require', 'off'] as $mode) {
+            $this->registrations()->update(5, ['integrity_mode' => $mode]);
+            try {
+                $this->registrations()->update(5, ['integrity_cloud_project_number' => null]);
+                self::fail('the project number was cleared under ' . $mode);
+            } catch (ValidationException $e) {
+                self::assertStringContainsString('cannot be cleared', $e->getFieldErrors()['integrity_cloud_project_number']);
+            }
+        }
+        self::assertSame('123456789012', (string) self::$db->query('SELECT integrity_cloud_project_number FROM 202_app_registrations WHERE registration_id = 5')->fetch_row()[0]);
+        // Replacing it is fine.
+        $this->registrations()->update(5, ['integrity_cloud_project_number' => '555']);
+        self::assertSame('555', $schema()['integrity']['cloud_project_number']);
+    }
+
     public function testDeletingTheRegistrationOrTheUserDeletesTheCredential(): void
     {
         $store = new IntegrityCredentialStore(new Connection(self::$db));
@@ -205,11 +275,17 @@ final class IntegritySettingsIntegrationTest extends TestCase
         self::fixture("INSERT INTO 202_app_registrations SET registration_id=9, user_id=1, platform='android', app_key='com.example.nine',
             app_name='N', accept_test_signals=0, app_token='" . str_repeat('f', 64) . "', created_at=1, updated_at=1");
         $store->set(1, 9, $cred, 1);
+        // Registration 9 has an install still queued for a verdict: the user
+        // purge takes its credential, so it must take the queue as well.
+        self::fixture("INSERT INTO 202_app_installs SET user_id=1, registration_id=9, install_uuid='00000000-0000-4000-8000-0000000000d1', body_hash='d',
+            store='google_play', match_state='pending_integrity', match_reason='r', referrer_status='ok', integrity_mode='require',
+            integrity_state='pending', integrity_next_at=1, received_at=1, raw_payload='{}'");
         $this->registrations()->delete(5);
         self::assertSame(['9'], array_column(self::$db->query('SELECT registration_id FROM 202_app_integrity_credentials')->fetch_all(MYSQLI_ASSOC), 'registration_id'));
         self::$db->begin_transaction();
         (new \Api\V3\Apps\AppDataPurge(self::$db))->purgeUser(1);
         self::$db->commit();
         self::assertSame(0, self::rows('202_app_integrity_credentials'));
+        self::assertSame(0, self::rows('202_app_installs', "integrity_state = 'pending' OR match_state = 'pending_integrity'"), 'nothing queued outlives its credential');
     }
 }

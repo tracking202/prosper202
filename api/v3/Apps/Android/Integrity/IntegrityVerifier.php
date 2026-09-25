@@ -97,9 +97,18 @@ final class IntegrityVerifier
      */
     public function run(int $limit = 200): array
     {
+        // Installs whose registration is gone can never be decoded (the
+        // credential went with it) or settled (every read below joins the
+        // registration): they are finalized, never left due. And the
+        // selection joins the registration too, so a row processOne() would
+        // decline can never hold a slot in this oldest-first batch — enough
+        // of them would otherwise starve every other app's verdicts.
+        (new UnverifiableInstalls($this->conn))->settleOrphans($this->now());
+
         $stmt = $this->conn->prepareWrite(
-            "SELECT install_row_id FROM 202_app_installs WHERE integrity_state = 'pending' AND integrity_next_at <= ?
-             ORDER BY integrity_next_at, install_row_id LIMIT ?"
+            "SELECT i.install_row_id FROM 202_app_installs i JOIN 202_app_registrations r ON r.registration_id = i.registration_id
+             WHERE i.integrity_state = 'pending' AND i.integrity_next_at <= ?
+             ORDER BY i.integrity_next_at, i.install_row_id LIMIT ?"
         );
         $this->conn->bind($stmt, 'ii', [$this->now(), max(1, $limit)]);
         $ids = array_map(static fn (array $r): int => (int) $r['install_row_id'], $this->conn->fetchAll($stmt));

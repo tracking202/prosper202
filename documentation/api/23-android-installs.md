@@ -187,7 +187,13 @@ pending ones and installs with events are kept. Deleting a user deletes
 their installs, their queued postbacks and their Play Integrity
 credentials; deleting a registration keeps its installs (their conversions
 stay on the ledger) but no token reaches them any more, and deletes its
-credential.
+credential. Installs of that registration still waiting for a Play
+Integrity verdict can then never get one, so the delete settles them in the
+same transaction: `integrity_state` becomes `error` and a held
+`pending_integrity` install `integrity_unverified` — recorded, never paid,
+with a reason naming the deletion. (A `pending_click` install of a deleted
+registration stays `pending_click`: there is no policy left to settle it
+under.)
 
 ## 9. Play Integrity
 
@@ -221,8 +227,22 @@ file>}`, then `PUT /apps/{id}` with `integrity_mode`; `bin/p202` has
 `app:integrity:status` and `app:integrity:credential:clear`.)
 
 - The credential must come first: `observe` and `require` are refused
-  without one, so an app is created `off`, and the credential cannot be
-  cleared while the mode is `observe` or `require`.
+  without one, so an app is created `off`.
+- `observe` and `require` also need the Cloud project **number** — the SDK
+  requests its tokens for that project, and without it no install could
+  carry one. Send it with the mode, as above, or set it earlier; a mode is
+  refused (`422` on `integrity_cloud_project_number`) while none is stored.
+  The number can be replaced but not cleared: `null` is refused, in every
+  mode. To stop Play Integrity, set the mode to `off`.
+- The credential cannot be cleared (`409`) while the mode is `observe` or
+  `require`, **nor while any install is still waiting for a verdict**:
+  each install keeps the mode it arrived under, so switching `require` off
+  does not release the ones already waiting, and without the credential
+  they would end `integrity_unverified` — valid installs never paid. The
+  refusal says how many are waiting; each is settled within 24 hours of
+  arriving (`p202 app integrity status 3` shows
+  `installs.by_integrity_state.pending`). Rotating it (setting it again) is
+  always allowed.
 - The key is stored **encrypted** (AES-256-GCM under an installation key in
   `202_deployment_secrets`, bound to the registration), and no response,
   CLI output or error message ever contains it — the status shows the

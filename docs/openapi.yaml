@@ -2799,8 +2799,12 @@ paths:
         with the rest: postbacks it had claimed keep their owner but are
         unlinked (`registration_id` becomes `null`), and the test-signal
         trust it granted is withdrawn. Registering the app again re-links
-        the owner's unlinked rows. The dry-run preview lists the cascade and
-        omits the app token.
+        the owner's unlinked rows. Android installs are kept, and those still
+        waiting for a Play Integrity verdict are settled in the same
+        transaction — `integrity_state` `error`, and a held
+        `pending_integrity` install `integrity_unverified` (never paid) —
+        since the credential is deleted with the registration. The dry-run
+        preview lists the cascade and omits the app token.
       operationId: deleteApp
       responses:
         "200":
@@ -2993,9 +2997,14 @@ paths:
       summary: Clear the Play Integrity service account
       description: |
         Deletes the credential. Refused (`409`) while `integrity_mode` is
-        `observe` or `require`: switch the mode to `off` first, or PUT a new
-        credential to rotate. Answers a body saying whether there was one to
-        delete. Not stageable.
+        `observe` or `require` (switch the mode to `off` first), and while
+        any install of the registration is still waiting for a verdict
+        (`installs.by_integrity_state.pending` in `GET /apps/{id}/integrity`):
+        each install keeps the mode it arrived under, so installs held under
+        `require` would otherwise end `integrity_unverified`. The message
+        says how many are waiting; each is settled within 24 hours of
+        arriving. PUT a new credential to rotate at any time. Answers a body
+        saying whether there was one to delete. Not stageable.
       operationId: clearAppIntegrityCredential
       responses:
         "200":
@@ -3015,7 +3024,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: The mode is observe or require; switch it to off first
+          description: The mode is observe or require (switch it to off first), or installs are still waiting for a verdict (wait for the worker to settle them)
           content:
             application/json:
               schema:
@@ -5472,9 +5481,9 @@ components:
             verdict, changing nothing; `require` holds an install that would
             be attributed (`pending_integrity`) until its verdict passes, and
             attributes, pays and notifies only then. `observe` and `require`
-            need the credential first (`PUT /apps/{id}/integrity-credential`),
-            so a registration is created `off`. Each install keeps the mode
-            it arrived under.
+            need the credential first (`PUT /apps/{id}/integrity-credential`)
+            and a Cloud project number, so a registration is created `off`.
+            Each install keeps the mode it arrived under.
         integrity_cloud_project_number:
           type: integer
           format: int64
@@ -5482,6 +5491,8 @@ components:
           description: >-
             Android: the Google Cloud project NUMBER standard integrity tokens
             are requested for; published in the schema document for the SDK.
+            Required for `observe` and `require`. Replaced, never cleared: an
+            update sending `null` is `422`.
         app_token:
           type: string
           pattern: "^[0-9a-f]{64}$"
@@ -5583,11 +5594,17 @@ components:
         integrity_mode:
           type: string
           enum: ["off", observe, require]
-          description: Android only (see `AppRegistration`); `observe`/`require` without a credential is `422`
+          description: >-
+            Android only (see `AppRegistration`); `observe`/`require` is `422`
+            without a stored credential, or without a Cloud project number
+            sent in the same request or already stored
         integrity_cloud_project_number:
           type: integer
           format: int64
-          description: Android only (see `AppRegistration`)
+          description: >-
+            Android only (see `AppRegistration`); digits, as a JSON integer or
+            string. `null` is `422`: the number can be replaced, not cleared
+            (set `integrity_mode` to `off` to stop Play Integrity)
 
     AppRegistrationResponse:
       type: object
@@ -6602,7 +6619,7 @@ components:
               type: object
               description: Android only — what the SDK requests
               properties:
-                request_token: {type: boolean, description: "true under observe and require: request a token and send it as integrity_token"}
+                request_token: {type: boolean, description: "true under observe and require (never without cloud_project_number): request a token and send it as integrity_token"}
                 token_type: {type: string, enum: [standard]}
                 cloud_project_number: {type: string, nullable: true, description: "The Google Cloud project number to request for (a string: it can exceed 2^53)"}
                 request_hash: {type: string, enum: [sha256_hex_of_canonical_install_body]}

@@ -124,7 +124,7 @@ func validateAppRegistrationBody(body map[string]string) error {
 	}
 	if v, ok := body["integrity_mode"]; ok && !integrityModes[v] {
 		return validationError("--integrity-mode must be one of: off, observe, require, got %q", v).
-			WithHint("observe records each install's Play Integrity verdict; require attributes and pays only installs whose verdict passes. Both need `p202 app integrity credential set <id> --file key.json` first.")
+			WithHint("observe records each install's Play Integrity verdict; require attributes and pays only installs whose verdict passes. Both need `p202 app integrity credential set <id> --file key.json` first, and --integrity-cloud-project-number (in the same command, or already set).")
 	}
 	if v, ok := body["integrity_cloud_project_number"]; ok && !positiveID.MatchString(v) {
 		return validationError("--integrity-cloud-project-number must be the Google Cloud project NUMBER (digits), got %q", v).
@@ -374,7 +374,10 @@ var appUpdateCmd = &cobra.Command{
 			var apiErr *api.APIError
 			if errors.As(err, &apiErr) && apiErr.Status == 422 {
 				if _, ok := apiErr.FieldErrors["integrity_mode"]; ok {
-					return withHint(err, "Set the service account first: `p202 app integrity credential set "+args[0]+" --file key.json`; Play Integrity is Android-only.")
+					return withHint(err, "Set the service account first: `p202 app integrity credential set "+args[0]+" --file key.json`, then pass --integrity-cloud-project-number with the mode; Play Integrity is Android-only.")
+				}
+				if _, ok := apiErr.FieldErrors["integrity_cloud_project_number"]; ok {
+					return withHint(err, "observe and require need the Google Cloud project NUMBER (digits, on the Cloud project's dashboard): `p202 app update "+args[0]+" --integrity-mode <mode> --integrity-cloud-project-number <number>`. It can be replaced but not cleared; `--integrity-mode off` stops Play Integrity.")
 				}
 			}
 			return err
@@ -754,8 +757,8 @@ func init() {
 		cmd.Flags().String("accept-test-signals", "", "1 = trust test signals for this app (AdAttributionKit development-signed postbacks, Android test installs; integration testing), 0 = store them flagged (default)")
 		cmd.Flags().String("attribution-window-days", "", "Android: days after its click an install may begin and still be attributed (1-365, default 7)")
 		cmd.Flags().String("trust-client-revenue", "", "Android: 1 = revenue the app reports may be paid by a goal valued from it; 0 = stored, never credited (default)")
-		cmd.Flags().String("integrity-mode", "", "Android: Play Integrity off (default), observe (record verdicts) or require (attribute only a passing verdict); needs `app integrity credential set` first")
-		cmd.Flags().String("integrity-cloud-project-number", "", "Android: the Google Cloud project NUMBER the SDK requests integrity tokens for")
+		cmd.Flags().String("integrity-mode", "", "Android: Play Integrity off (default), observe (record verdicts) or require (attribute only a passing verdict); needs `app integrity credential set` first and --integrity-cloud-project-number")
+		cmd.Flags().String("integrity-cloud-project-number", "", "Android: the Google Cloud project NUMBER the SDK requests integrity tokens for (required for observe/require; can be replaced, not cleared)")
 	}
 	registerDeleteFlags(appDeleteCmd, "app registration")
 

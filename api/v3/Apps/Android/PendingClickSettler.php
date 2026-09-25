@@ -53,8 +53,14 @@ final class PendingClickSettler
      */
     public function run(int $limit = 500): array
     {
+        // Joined to the registration, as settleOne() reads it: an install
+        // whose registration is gone cannot be settled (there is no policy
+        // to settle it under), and selected anyway it would hold a slot in
+        // this oldest-first batch on every run — enough of them would
+        // starve every other app's pending clicks.
         $stmt = $this->conn->prepareWrite(
-            "SELECT install_row_id FROM 202_app_installs WHERE match_state = 'pending_click' ORDER BY received_at, install_row_id LIMIT ?"
+            "SELECT i.install_row_id FROM 202_app_installs i JOIN 202_app_registrations r ON r.registration_id = i.registration_id
+             WHERE i.match_state = 'pending_click' ORDER BY i.received_at, i.install_row_id LIMIT ?"
         );
         $this->conn->bind($stmt, 'i', [max(1, $limit)]);
         $ids = array_map(static fn (array $r): int => (int) $r['install_row_id'], $this->conn->fetchAll($stmt));

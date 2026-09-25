@@ -14,7 +14,9 @@ use Symfony\Component\Console\Output\OutputInterface;
  * PUT /apps/{id} with integrity_mode (and optionally the Cloud project
  * number): switch Play Integrity off, observe or require. The Go CLI's
  * `p202 app update <id> --integrity-mode … --integrity-cloud-project-number …`.
- * observe and require need the credential first (app:integrity:credential:set).
+ * observe and require need the credential first (app:integrity:credential:set)
+ * and a Cloud project number (this option, or one already set); the number
+ * can be replaced, not cleared.
  */
 class AppIntegrityModeCommand extends BaseCommand
 {
@@ -27,7 +29,7 @@ class AppIntegrityModeCommand extends BaseCommand
         $this->setDescription('Set an Android app\'s Play Integrity mode: off, observe or require')
             ->addArgument('registration_id', InputArgument::REQUIRED, 'The Android registration')
             ->addArgument('mode', InputArgument::REQUIRED, 'off, observe (record verdicts) or require (attribute only a passing verdict)')
-            ->addOption('cloud-project-number', null, InputOption::VALUE_REQUIRED, 'The Google Cloud project NUMBER the SDK requests tokens for');
+            ->addOption('cloud-project-number', null, InputOption::VALUE_REQUIRED, 'The Google Cloud project NUMBER the SDK requests tokens for (required for observe/require unless already set)');
     }
 
     protected function handle(InputInterface $input, OutputInterface $output): int

@@ -11,6 +11,7 @@ use Api\V3\Apps\Android\Integrity\IntegrityVerifier;
 use Api\V3\Apps\Android\Integrity\PlayIntegrityClient;
 use Api\V3\Apps\Android\Integrity\ServiceAccountCredential;
 use Api\V3\Apps\Android\PendingClickSettler;
+use Api\V3\Controllers\AppRegistrationsController;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\Connection;
 use Tests\Apps\Android\AndroidDatabase;
@@ -436,5 +437,69 @@ final class IntegrityIntegrationTest extends TestCase
         self::assertSame(['valid' => 1], $this->run1()['verdicts']);
         self::assertCount(1, self::ledger(100));
         self::assertCount(1, self::outbox());
+    }
+
+    public function testDeletingARegistrationSettlesWhatItsInstallsWereWaitingFor(): void
+    {
+        $this->mode('require');
+        $this->click(100);
+        $this->install($this->tokenBody(self::U1, 100, 'tok-held'));
+        $this->install(self::body(self::U2, 'utm_source=google-play&utm_medium=organic', ['integrity_token' => 'tok-organic']));
+        self::assertSame(['pending_integrity', 'pending'], [self::installRow(self::U1)['match_state'], self::installRow(self::U1)['integrity_state']]);
+        self::assertSame(['organic', 'pending'], [self::installRow(self::U2)['match_state'], self::installRow(self::U2)['integrity_state']]);
+
+        (new AppRegistrationsController(self::$db, 1))->delete(5);
+
+        // Settled in the delete's own transaction, to states that never pay:
+        // the verdict is `error` (none will ever be had) and the held install
+        // integrity_unverified, as the deadline would have left it.
+        $held = self::installRow(self::U1);
+        self::assertSame(['integrity_unverified', null, 'error', null, null, null], [
+            $held['match_state'], $held['trusted'], $held['integrity_state'], $held['integrity_next_at'], $held['click_id'], $held['conversion_id'],
+        ]);
+        self::assertStringContainsString('registration was deleted', $held['integrity_reason']);
+        self::assertStringContainsString('registration was deleted', $held['match_reason']);
+        self::assertNotNull($held['settled_at']);
+        $organic = self::installRow(self::U2);
+        self::assertSame(['organic', 'error', null], [$organic['match_state'], $organic['integrity_state'], $organic['integrity_next_at']]);
+        self::assertSame([], self::ledger(100));
+        self::assertSame([], self::outbox());
+        self::assertSame(0, self::rows('202_app_installs', "integrity_state = 'pending' OR match_state = 'pending_integrity'"));
+
+        $this->clock += IntegrityVerifier::DEADLINE;
+        self::assertSame(['examined' => 0, 'verdicts' => [], 'retrying' => 0, 'failed' => 0], $this->run1(), 'nothing left for the worker');
+        self::assertSame([], $this->decoded);
+    }
+
+    public function testRowsTheWorkerCannotProcessNeverStarveAnotherApp(): void
+    {
+        // Registration 5's queue is orphaned the way a registration deleted
+        // outside the API (or before its delete settled the queue) leaves
+        // it: installs still pending, their registration gone.
+        $this->mode('require');
+        $this->click(100);
+        $this->install($this->tokenBody(self::U1, 100, 'tok-orphan-held'));
+        $this->install(self::body(self::U2, 'utm_source=google-play&utm_medium=organic', ['integrity_token' => 'tok-orphan']));
+        // Another owner's app queues one after them.
+        self::fixture("UPDATE 202_app_registrations SET integrity_mode = 'observe' WHERE registration_id = 6");
+        (new IntegrityCredentialStore(new Connection(self::$db)))->set(2, 6, self::$credential, 1);
+        $this->install(self::body(self::U3, 'utm_source=google-play&utm_medium=organic', ['app_key' => 'com.other.app', 'integrity_token' => 'tok-other']), self::OTHER_TOKEN);
+        self::fixture('DELETE FROM 202_app_registrations WHERE registration_id = 5');
+        self::assertSame(0, self::rows('202_app_registrations', 'registration_id = 5'), 'the orphaning landed');
+        self::assertSame(3, self::rows('202_app_installs', "integrity_state = 'pending'"));
+
+        $this->answers['tok-other'] = [DecodeResult::retry('Play Integrity answered 503: unavailable.', 503)];
+        $this->clock += 1;
+        $run = $this->verifier()->run(1);
+        self::assertSame(['com.other.app tok-other'], $this->decoded, 'the one slot went to the install that can be verified, not the older orphans');
+        self::assertSame(['examined' => 1, 'verdicts' => [], 'retrying' => 1, 'failed' => 0], $run);
+
+        // And the orphans are finalized rather than left due forever.
+        $held = self::installRow(self::U1);
+        self::assertSame(['integrity_unverified', null, 'error', null], [$held['match_state'], $held['trusted'], $held['integrity_state'], $held['integrity_next_at']]);
+        self::assertStringContainsString('registration no longer exists', $held['integrity_reason']);
+        self::assertSame(['organic', 'error'], [self::installRow(self::U2)['match_state'], self::installRow(self::U2)['integrity_state']]);
+        self::assertSame('pending', self::installRow(self::U3)['integrity_state']);
+        self::assertSame([], self::ledger(100));
     }
 }

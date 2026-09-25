@@ -23,7 +23,11 @@
 #     with backoff, a timeout then recovers, and a 5xx past the 24-hour
 #     deadline ends integrity_unverified, never paid;
 #   - the reads (GET /apps/{id}/integrity, installs by integrity_state, the
-#     CLIs), and clearing the credential (refused while the mode needs it).
+#     CLIs), and clearing the credential (refused while the mode needs it,
+#     and while an install still waits for a verdict); observe refused
+#     without a Cloud project number, which is never cleared;
+#   - deleting the registration settles an install still waiting for its
+#     verdict (integrity_unverified / error, never paid, never decoded).
 #
 # The worker is 202-cronjobs/app-installs.php from this checkout, run with
 # P202_PLAY_INTEGRITY_ENDPOINT=https://127.0.0.1:<port> and the fake's CA;
@@ -236,11 +240,18 @@ hasnt "$OUT/body" "PRIVATE KEY" "never the key"
 eq "$(Q "SELECT LEFT(ciphertext, 3) FROM 202_app_integrity_credentials WHERE registration_id=$R")" "v1." "stored as a v1 ciphertext"
 eq "$(Q "SELECT COUNT(*) FROM 202_app_integrity_credentials WHERE ciphertext LIKE '%PRIVATE%' OR ciphertext LIKE '%BEGIN%'")" 0 "the key is not in the row in the clear"
 eq "$(api PUT "/apps/$R" '{"integrity_mode":"Observe"}')" 422 "a mode is read exactly"
+eq "$(api PUT "/apps/$R" '{"integrity_mode":"observe"}')" 422 "observe without a Cloud project number is refused, credential or not"
+eq "$(field "list(d['field_errors'].keys())")" '["integrity_cloud_project_number"]' "by field"
+has "$OUT/body" "Cloud project number" "saying what is missing"
+eq "$(Q "SELECT integrity_mode FROM 202_app_registrations WHERE registration_id=$R")" off "and the mode stays off"
 eq "$(api PUT "/apps/$R" '{"integrity_mode":"observe","integrity_cloud_project_number":"123456789012"}')" 200 "observe, with the Cloud project number"
 eq "$(curl -s -o "$OUT/body" -w '%{http_code}' -H "X-P202-App-Token: $TOKEN" "$BASE/api/v3/apps/schema")" 200 "the schema document"
 eq "$(field "[d['data']['integrity_mode'], d['data']['integrity']['request_token'], d['data']['integrity']['token_type'], d['data']['integrity']['cloud_project_number']]")" \
    '["observe", true, "standard", "123456789012"]' "tells the SDK to request a standard token for the project"
 hasnt "$OUT/body" "integrity@" "and never names the service account"
+eq "$(api PUT "/apps/$R" '{"integrity_cloud_project_number":null}')" 422 "the project number cannot be cleared"
+has "$OUT/body" "cannot be cleared" "saying so, rather than dropping the null"
+eq "$(Q "SELECT integrity_cloud_project_number FROM 202_app_registrations WHERE registration_id=$R")" 123456789012 "and it is kept"
 
 # ─────────────────────────────────────────────────────────────────────
 say "observe: verdicts are recorded and move nothing"
@@ -392,6 +403,18 @@ eq "$(api GET "/apps/$R/installs/$U2")" 200 "one install"
 eq "$(field "d['data']['integrity_verdict']['code']")" device_integrity "shows the verdict's summary"
 hasnt "$OUT/body" "tok-observe-fail" "never the token"
 eq "$(api DELETE "/apps/$R/integrity-credential")" 409 "the credential cannot be cleared while require needs it"
+WAITING=$(Q "SELECT COUNT(*) FROM 202_app_installs WHERE registration_id=$R AND integrity_state='pending'")
+eq "$([ "$WAITING" -gt 0 ] && echo yes)" yes "an install is still waiting for its verdict (the one whose account Google refused)"
+eq "$(api PUT "/apps/$R" '{"integrity_mode":"off"}')" 200 "require switched off"
+eq "$(api DELETE "/apps/$R/integrity-credential")" 409 "clearing is still refused: the waiting install keeps the mode it arrived under"
+has "$OUT/body" "still waiting for a Play Integrity verdict" "saying why"
+has "$OUT/body" "GET /apps/$R/integrity" "and where to watch them"
+eq "$(Q "SELECT COUNT(*) FROM 202_app_integrity_credentials WHERE registration_id=$R")" 1 "the credential is still there"
+Q "UPDATE 202_app_installs SET integrity_next_at = 0, received_at = received_at - 90000 WHERE registration_id=$R AND integrity_state='pending'"
+cron
+eq "$(Q "SELECT COUNT(*) FROM 202_app_installs WHERE registration_id=$R AND integrity_state='pending'")" 0 "the worker settles it at its deadline"
+eq "$(row "$U7")" "integrity_unverified/null/error" "as the deadline decides, with the credential still there to try"
+eq "$(api PUT "/apps/$R" '{"integrity_mode":"require"}')" 200 "back to require for the CLIs"
 CLI="$OUT/p202"
 if (cd "$ROOT/go-cli" && go build -o "$CLI" .) 2> "$OUT/build.err"; then
   mkdir -p "$OUT/home/.p202"
@@ -441,6 +464,27 @@ if [ -f "$ROOT/vendor/symfony/console/Application.php" ]; then
 else
   echo "  (PHP CLI not exercised: vendor/symfony/console is missing)"
 fi
+
+# ─────────────────────────────────────────────────────────────────────
+say "deleting the registration settles what its installs were waiting for"
+eq "$(api_file PUT "/apps/$R/integrity-credential" "$OUT/key.json")" 200 "the service account again"
+eq "$(api PUT "/apps/$R" '{"integrity_mode":"require"}')" 200 "require (the project number is still set)"
+C8=$(click "$TRK" "$OUT/h8"); REF8=$(referrer_of "$OUT/h8")
+U8=$(uuid); body "$OUT/i8.json" "$U8" "$REF8" "$(ctime "$C8")" tok-orphan > /dev/null
+device POST /apps/installs "$TOKEN" "$OUT/i8.json" > /dev/null
+eq "$(field "[d['data']['match'], d['data']['integrity']]")" '["pending_integrity", "pending"]' "an install waits for its verdict"
+eq "$(api DELETE "/apps/$R?dry_run=1")" 200 "the delete's preview"
+has "$OUT/body" "settle the Play Integrity queue" "names the settlement in its cascade"
+eq "$(row "$U8")" "pending_integrity/null/pending" "(the preview changed nothing)"
+eq "$(api DELETE "/apps/$R")" 204 "the registration is deleted"
+eq "$(row "$U8")" "integrity_unverified/null/error" "the waiting install is settled unverified, in the same delete"
+eq "$(Q "SELECT integrity_reason FROM 202_app_installs WHERE install_uuid='$U8'" | grep -c 'registration was deleted')" 1 "saying why"
+eq "$(Q "SELECT integrity_next_at IS NULL AND settled_at IS NOT NULL FROM 202_app_installs WHERE install_uuid='$U8'")" 1 "no longer due, and settled"
+eq "$(paid "$C8")" 0 "never paid"
+eq "$(Q "SELECT COUNT(*) FROM 202_app_integrity_credentials")" 0 "the credential went with the registration"
+cron
+has "$OUT/cron.txt" "play integrity: 0 examined" "nothing is left for the worker"
+eq "$(fake_requests "len([x for x in r if x.get('integrity_token') == 'tok-orphan'])")" 0 "and its token was never sent to Google"
 
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 echo "artifacts: $OUT"

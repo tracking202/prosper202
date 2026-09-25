@@ -1644,11 +1644,45 @@ operator surface is `AppIntegrityController`; the guide is
   the schema document for the SDK. Both are Android-only and read raw
   (CLAUDE.md #18). An unreadable stored mode is `require`, the one that
   trusts least (CLAUDE.md #11) — `off` would switch the control off in
-  silence. `observe`/`require` are refused without a credential, so an app
-  is created `off`; the credential cannot be cleared while the mode needs
-  it (`409`). A mode set while the credential disappears concurrently is not
-  guarded beyond that: the worker then retries with "no credential" and
-  ends `error`.
+  silence. `observe`/`require` need both halves — a credential to decode
+  with and a Cloud project number for the SDK to request tokens with — so
+  an app is created `off`, and `PUT /apps/{id}` refuses a non-`off` mode
+  unless the credential is stored and the number is sent with it or already
+  stored (read raw against the stored row, whichever field the write
+  names). Without the number the schema document used to publish
+  `request_token: true` beside a null project, and every install arrived
+  tokenless; `request_token` is now also false whenever the number is null.
+  The number is **replaced, never cleared**: an explicit `null` is refused
+  by name in every mode (the base controller used to drop it in silence),
+  because under `observe`/`require` clearing it is the broken state above
+  and under `off` it is unused. The credential cannot be cleared while the
+  mode needs it, **nor while any install of the registration is still
+  queued for a verdict** (`409` naming how many, how many are held from
+  attribution, and that each settles within 24 h): switching `require` off
+  does not release installs already waiting, so clearing the credential
+  under them would have retried them to `error` / `integrity_unverified` —
+  valid attribution lost to a setting. A mode set while the credential
+  disappears concurrently is not guarded beyond that: the worker then
+  retries with "no credential" and ends `error`.
+- **Deleting a registration settles its queue.** The delete removes the
+  credential, and every worker read joins the registration, so a queue left
+  behind could never be decoded or settled — and, selected oldest-first by
+  `integrity_next_at`, 200 such rows would have filled every batch and
+  starved every other app's verdicts. The delete now settles, in its own
+  transaction, `integrity_state` `pending` → `error` and `match_state`
+  `pending_integrity` → `integrity_unverified` (trust, click and conversion
+  stay NULL: never paid; goals are not evaluated — the registration's are
+  archived with it), with a reason naming the deletion
+  (`UnverifiableInstalls`). The worker settles any install whose
+  registration disappeared some other way the same way before it selects,
+  and its selection joins the registration, so a row it cannot process can
+  never hold a slot. The user purge deletes installs before credentials, so
+  it leaves nothing queued. `CredentialDeletionSettlesTheQueueTest` pins
+  every path that removes a credential and what each does first. The
+  pending-click settler had the same starvation shape (PR 5) and its
+  selection now joins the registration too; a `pending_click` install of a
+  deleted registration stays `pending_click`, inert — there is no policy
+  left to settle it under, and no token reaches it.
 - **The mode is a snapshot.** Each install stores the mode it arrived under
   (`202_app_installs.integrity_mode`) and that copy governs it for good:
   switching `require` off releases nothing already waiting, switching it on
@@ -1738,7 +1772,9 @@ operator surface is `AppIntegrityController`; the guide is
   a row that will not decrypt is a named error, never "no credential". The
   routes (`PUT`/`DELETE /apps/{id}/integrity-credential`) are not stageable;
   the body key is `credential`, which the staging guard also refuses by
-  name. Deleting the registration or the user deletes the credential.
+  name. Deleting the registration or the user deletes the credential
+  (the registration's queue is settled first; the user's installs are
+  deleted with it).
 - **Surfaces.** `GET /apps/{id}/integrity` (mode, credential summary,
   counts by integrity state and by the three integrity match states, tokens
   Google decoded since UTC midnight against the 10,000 default quota — per

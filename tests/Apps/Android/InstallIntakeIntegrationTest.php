@@ -205,6 +205,25 @@ final class InstallIntakeIntegrationTest extends TestCase
         self::assertSame(200, $this->events(self::U1, [['event_id' => 'e1', 'name' => 'level_reached', 'occurred_at' => self::CLICK_TIME + 500]])['status']);
     }
 
+    public function testAPendingClickWhoseRegistrationIsGoneNeverStarvesAnotherApp(): void
+    {
+        // An older pending click on registration 5, which then disappears.
+        $this->install(self::body(self::U1, 'p202=' . self::tokenFor(500)));
+        // Another owner's app waits on its own click after it.
+        $this->campaign(31, 6, 'accumulate', '1.00', 2);
+        $this->install(self::body(self::U2, 'p202=' . self::tokenFor(600), ['app_key' => 'com.other.app']), self::OTHER_TOKEN);
+        self::assertSame(['pending_click', 'pending_click'], [self::installRow(self::U1)['match_state'], self::installRow(self::U2)['match_state']]);
+        self::fixture('DELETE FROM 202_app_registrations WHERE registration_id = 5');
+        self::assertSame(0, self::rows('202_app_registrations', 'registration_id = 5'), 'the orphaning landed');
+
+        $this->click(600, 31, 2);
+        $settler = new PendingClickSettler(self::$db, fn (): int => $this->clock);
+        self::assertSame(['examined' => 1, 'settled' => ['attributed' => 1], 'still_pending' => 0, 'failed' => 0], $settler->run(1),
+            'the one slot went to the install that can be settled, not the older orphan');
+        self::assertSame('attributed', self::installRow(self::U2)['match_state']);
+        self::assertSame('pending_click', self::installRow(self::U1)['match_state'], 'the orphan is left inert: no registration, no policy to settle it under');
+    }
+
     public function testAClickNeverRecordedSettlesAsABadTokenAfterADay(): void
     {
         $this->install(self::body(self::U1, 'p202=' . self::tokenFor(501)));

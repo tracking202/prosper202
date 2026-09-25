@@ -148,7 +148,9 @@ are `503` with `Retry-After` until then, like a pending click's.
 
 When the schema document says `integrity.request_token: true`, the SDK
 requests a **standard** integrity token
-(`StandardIntegrityManager`, prepared once for `cloud_project_number`) with
+(`StandardIntegrityManager`, prepared once for `cloud_project_number` —
+`request_token` is never true without it, and the server refuses `observe`
+and `require` without one) with
 
 ```
 requestHash = lower-case hex SHA-256 of the install body's canonical form
