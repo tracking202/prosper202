@@ -133,7 +133,15 @@ final class AppIntegrityController
             ));
         }
         $credential = ServiceAccountCredential::fromKeyFile($payload['credential']);
-        $this->credentials->set($this->userId, $registrationId, $credential, time());
+        // Written under the registration's row lock, which a registration
+        // delete takes before it deletes the credential: unserialized, a set
+        // landing between the delete's credential DELETE and its commit
+        // would leave the operator's key stored for an app that no longer
+        // exists, where nothing could ever clear it.
+        (new Connection($this->db))->transaction(function () use ($registrationId, $credential): void {
+            self::lockRegistration($this->db, $this->userId, $registrationId);
+            $this->credentials->set($this->userId, $registrationId, $credential, time());
+        });
 
         // Stored: a failure reading it back must not read as "not set", or a
         // retry would look like the first write (CLAUDE.md #13).
@@ -146,26 +154,35 @@ final class AppIntegrityController
 
     public function clearCredential(int $registrationId): array
     {
-        $registration = $this->androidRegistration($registrationId);
-        $mode = IntegrityMode::fromStored($registration['integrity_mode']);
-        if ($mode !== IntegrityMode::OFF) {
-            throw new ConflictException('Play Integrity is ' . $mode->value . ' for this app; set integrity_mode to off (PUT /apps/'
-                . $registrationId . ') before clearing its credential, or PUT a new credential to rotate it.');
-        }
-        // Off stops new installs from queueing, not the ones already queued:
-        // each keeps the mode it arrived under, and a `require` install
-        // cleared out from under would retry to its deadline and end
-        // integrity_unverified — a valid attribution lost to a setting.
-        [$waiting, $held] = $this->installsAwaitingAVerdict($registrationId);
-        if ($waiting > 0) {
-            throw new ConflictException(($waiting === 1 ? '1 install of this app is' : $waiting . ' installs of this app are')
-                . ' still waiting for a Play Integrity verdict' . ($held > 0 ? ' (' . $held . ' held from attribution under require)' : '') . ', and decoding '
-                . ($waiting === 1 ? 'it needs' : 'them needs') . ' this credential. Leave it until the worker (202-cronjobs/app-installs.php) has settled '
-                . ($waiting === 1 ? 'it' : 'them') . ' — each is decided within ' . intdiv(IntegrityVerifier::DEADLINE, 3600)
-                . ' hours of arriving; GET /apps/' . $registrationId . '/integrity shows installs.by_integrity_state.pending — '
-                . 'or PUT a new credential to rotate it.');
-        }
-        $removed = $this->credentials->clear($this->userId, $registrationId);
+        $this->androidRegistration($registrationId); // 404 / not Android, before any lock
+        // The checks and the delete run under the registration's row lock,
+        // the lock PUT /apps/{id} takes to check the credential and write a
+        // mode (AppRegistrationsController::update()). Without it the two
+        // interleave: the mode write sees the credential, this delete sees
+        // mode off, both commit, and the app is left in observe or require
+        // with nothing to decode its tokens.
+        $removed = (new Connection($this->db))->transaction(function () use ($registrationId): bool {
+            $mode = IntegrityMode::fromStored(self::lockRegistration($this->db, $this->userId, $registrationId)['integrity_mode']);
+            if ($mode !== IntegrityMode::OFF) {
+                throw new ConflictException('Play Integrity is ' . $mode->value . ' for this app; set integrity_mode to off (PUT /apps/'
+                    . $registrationId . ') before clearing its credential, or PUT a new credential to rotate it.');
+            }
+            // Off stops new installs from queueing, not the ones already queued:
+            // each keeps the mode it arrived under, and a `require` install
+            // cleared out from under would retry to its deadline and end
+            // integrity_unverified — a valid attribution lost to a setting.
+            [$waiting, $held] = $this->installsAwaitingAVerdict($registrationId);
+            if ($waiting > 0) {
+                throw new ConflictException(($waiting === 1 ? '1 install of this app is' : $waiting . ' installs of this app are')
+                    . ' still waiting for a Play Integrity verdict' . ($held > 0 ? ' (' . $held . ' held from attribution under require)' : '') . ', and decoding '
+                    . ($waiting === 1 ? 'it needs' : 'them needs') . ' this credential. Leave it until the worker (202-cronjobs/app-installs.php) has settled '
+                    . ($waiting === 1 ? 'it' : 'them') . ' — each is decided within ' . intdiv(IntegrityVerifier::DEADLINE, 3600)
+                    . ' hours of arriving; GET /apps/' . $registrationId . '/integrity shows installs.by_integrity_state.pending — '
+                    . 'or PUT a new credential to rotate it.');
+            }
+
+            return $this->credentials->clear($this->userId, $registrationId);
+        });
 
         return ['data' => [
             'registration_id' => $registrationId,
@@ -173,6 +190,27 @@ final class AppIntegrityController
             'cleared' => $removed,
             'message' => $removed ? 'The Play Integrity credential was deleted.' : 'This app had no Play Integrity credential.',
         ]];
+    }
+
+    /**
+     * The registration row, locked FOR UPDATE in the caller's transaction:
+     * the one lock that serializes a Play Integrity mode write with the
+     * credential it depends on (clearCredential(), and
+     * AppRegistrationsController::update() for a write naming the mode).
+     *
+     * @return array<string, mixed>
+     */
+    public static function lockRegistration(\mysqli $db, int $userId, int $registrationId): array
+    {
+        $conn = new Connection($db);
+        $stmt = $conn->prepareWrite('SELECT * FROM 202_app_registrations WHERE registration_id = ? AND user_id = ? LIMIT 1 FOR UPDATE');
+        $conn->bind($stmt, 'ii', [$registrationId, $userId]);
+        $row = $conn->fetchOne($stmt);
+        if ($row === null) {
+            throw new NotFoundException('App registration ' . $registrationId . ' not found');
+        }
+
+        return $row;
     }
 
     /**

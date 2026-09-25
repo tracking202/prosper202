@@ -69,6 +69,22 @@ final class IntegrityCredentialStore
     }
 
     /**
+     * Whether a credential is stored, read on the primary with a locking
+     * read: the check a mode write makes under the registration's lock, so
+     * it sees the credential as a concurrent clear committed it — never a
+     * replica's lag, never an earlier snapshot.
+     */
+    public function existsLocked(int $userId, int $registrationId): bool
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT registration_id FROM `' . TableRegistry::APP_INTEGRITY_CREDENTIALS . '` WHERE registration_id = ? AND user_id = ? LIMIT 1 FOR UPDATE'
+        );
+        $this->conn->bind($stmt, 'ii', [$registrationId, $userId]);
+
+        return $this->conn->fetchOne($stmt) !== null;
+    }
+
+    /**
      * What may be shown about the credential: never the key.
      *
      * @return array{client_email: string, private_key_id: string, project_id: string|null, created_at: int, updated_at: int}|null

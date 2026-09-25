@@ -1834,9 +1834,13 @@ operator surface is `AppIntegrityController`; the guide is
   it leaves nothing queued. `CredentialDeletionSettlesTheQueueTest` pins
   every path that removes a credential and what each does first. The
   pending-click settler had the same starvation shape (PR 5) and its
-  selection now joins the registration too; a `pending_click` install of a
-  deleted registration stays `pending_click`, inert — there is no policy
-  left to settle it under, and no token reaches it.
+  selection now joins the registration too. A `pending_click` install of a
+  deleted registration can never settle (no policy is left to settle it
+  under, and no token reaches it), so the delete settles it as the 24-hour
+  deadline would — `bad_token`, never paid — and the settler does the same,
+  before it selects, for one whose registration disappeared another way
+  (`OrphanedPendingClicks`, the pending-click twin of
+  `UnverifiableInstalls`).
 - **The mode is a snapshot.** Each install stores the mode it arrived under
   (`202_app_installs.integrity_mode`) and that copy governs it for good:
   switching `require` off releases nothing already waiting, switching it on
