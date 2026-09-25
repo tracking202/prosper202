@@ -40,7 +40,11 @@ https://play.google.com/store/apps/details?id=com.example.app&referrer=p202%3D[[
   cached fallback also expands it empty.
 - Link the campaign to the app: `app_registration_id` on the campaign
   (`PUT /campaigns/{id}` or `p202 campaign update <id>
-  --app_registration_id <registration>`). An install of another app on one
+  --app_registration_id <registration>`). `p202 app link <id> --campaign-id
+  N --apply` (or the link builder on Setup › Mobile Apps) does both steps at
+  once — the store link as the offer URL, and the link — and `GET
+  /apps/{id}/store-link?campaign_id=N` says whether a campaign is ready and,
+  when it is not, what is missing and the update that would fix it. An install of another app on one
   of its clicks is then `foreign_click`. An unlinked campaign accepts any
   of your apps.
 - Passthrough parameters are appended at the top level of the Play URL,
@@ -158,8 +162,29 @@ outcome **once**, decided per URL: if a late event moves an outcome to
 another event and its postback to a URL has not been attempted, it is
 cancelled and the replacement's goes to that URL instead; if it has been
 attempted (sent, retrying or failed), nothing more is sent there and a
-`correction` is recorded as `suppressed` (no pixel has a correction URL
-yet). Other URLs are unaffected by that decision.
+`correction` — or, when the outcome was retired with no replacement, a
+`retraction` — is recorded. Other URLs are unaffected by that decision.
+
+A correction goes out only where the network can take one: **Setup ›
+Traffic Sources** gives each server postback pixel an optional **Correction
+URL**, off by default. Like the pixel code it is space-separated URLs,
+matched to the code's URLs by position — the correction for the pixel's
+second URL goes to the second correction URL, never to another endpoint's —
+and more correction URLs than the code has are refused. A URL with no
+correction URL at its position records the correction `suppressed`, with
+the reason. The correction URL takes the click's tokens and the row's own,
+plus `[[p202_goal_value]]` (the new value; `0.00` for a retraction),
+`[[p202_previous_value]]` (what was announced), `[[p202_original_conv_id]]`
+(the conversion that announced it) and `[[p202_notification_kind]]`
+(`correction` or `retraction`), and is queued, retried and sent like any
+postback.
+
+`GET /apps/notifications` (`p202 app notifications`, `bin/p202
+app:notifications`; filters `registration_id`, `status`, `kind`,
+`time_from`, `time_to`) lists what app installs' goals queued, one row per
+URL with its `destination`, and `meta.summary` counts every status under the
+same filters except `status`. Analyze › Mobile Apps › Postbacks sent is the
+same read.
 
 Schedule the job every minute:
 
