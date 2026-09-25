@@ -867,6 +867,127 @@
         "threshold.count",
         "trigger.event"
       ]
+    },
+    {
+      "name": "a sum that repeats each time needs a max",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "threshold": {
+          "sum": {
+            "prop": "x",
+            "gte": 1
+          }
+        },
+        "repeat": {
+          "mode": "each"
+        }
+      },
+      "valid": false,
+      "errors": [
+        "repeat.max"
+      ]
+    },
+    {
+      "name": "a sum that repeats each time with a max",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "threshold": {
+          "sum": {
+            "prop": "x",
+            "gte": "0.01"
+          }
+        },
+        "repeat": {
+          "mode": "each",
+          "max": 10000
+        }
+      },
+      "valid": true,
+      "canonical": {
+        "name": "A",
+        "trigger": {
+          "event": "a",
+          "where": []
+        },
+        "threshold": {
+          "sum": {
+            "prop": "x",
+            "gte": "0.01"
+          }
+        },
+        "after": [],
+        "within": null,
+        "repeat": {
+          "mode": "each",
+          "max": 10000
+        },
+        "value": {
+          "type": "none"
+        }
+      }
+    },
+    {
+      "name": "a count that repeats each time needs no max",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "threshold": {
+          "count": 2
+        },
+        "repeat": {
+          "mode": "each"
+        }
+      },
+      "valid": true,
+      "canonical": {
+        "name": "A",
+        "trigger": {
+          "event": "a",
+          "where": []
+        },
+        "threshold": {
+          "count": 2
+        },
+        "after": [],
+        "within": null,
+        "repeat": {
+          "mode": "each"
+        },
+        "value": {
+          "type": "none"
+        }
+      }
+    },
+    {
+      "name": "a repeating sum's max is bounded like any other",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "threshold": {
+          "sum": {
+            "prop": "x",
+            "gte": 1
+          }
+        },
+        "repeat": {
+          "mode": "each",
+          "max": 10001
+        }
+      },
+      "valid": false,
+      "errors": [
+        "repeat.max"
+      ]
     }
   ]
 }

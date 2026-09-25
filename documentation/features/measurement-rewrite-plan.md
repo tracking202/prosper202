@@ -1370,7 +1370,16 @@ is `GoalsController`; the CLI is `p202 goal …`.
   with reason `reevaluation`, superseding their ledger rows where there is
   a replacement and soft-deleting them where there is none. It handles at
   most 1000 subjects per call (`GoalEngine::MAX_SUBJECTS_PER_CALL`), and
-  the preview says how many subjects it would touch.
+  the preview says how many subjects it would touch. It re-decides the
+  goal together with its dependents (every goal whose `after` chain leads
+  to it, any version's `after` counting): their outcomes were evaluated
+  against the goal's, so a prerequisite that stops matching retires the
+  outcomes reached behind it and one that starts matching writes the ones
+  waiting on it, and the progress of exactly those goals is replaced with
+  them (`ReevaluationReconcilesDependentsTest`). Dependents never add
+  subjects, so the cap is unchanged; a dependent version the evaluator
+  disables as `invalid_definition` or `prerequisite_missing` is left as
+  it is.
 - **Archive, not delete.** `DELETE /goals/{id}` archives: versions,
   outcomes and their conversions are kept, and archive time ends the goal's
   span (`ends_at`), so a replay sees what the incremental evaluation saw.
@@ -1390,6 +1399,19 @@ is `GoalsController`; the CLI is `p202 goal …`.
   makes the outcome ineligible (`no_click` / `no_install`), never payable.
   Sums are computed in integer units of 0.00001. The install pseudo-event's
   id is `@install`.
+- **Bounded cost per event.** A sum threshold with `repeat: each` requires
+  `max` (a sum can jump past many multiples in one event; a count cannot,
+  so a count's `each` may stay unbounded). A stored definition without it
+  is `invalid_definition`. The number of n an event reaches is computed
+  (`floor(sum / gte)`, capped), never searched for. A summand outside
+  ±999999.99999 does not count; event `revenue` outside it is refused at
+  intake by name; the running sum is held between −10^15 units and
+  `cap × gte`, so it never leaves a 64-bit integer. `POST /goals/evaluate`
+  answers at most 10,000 outcomes (`EvaluationTooLarge` → `422 events`).
+  `SumBoundsTest` pins what the vectors cannot hold. A reconciliation
+  reads at most 100,000 live outcomes of a subject
+  (`GoalEngine::MAX_LIVE_OUTCOMES_PER_SUBJECT`) and refuses the subject
+  past that rather than reconciling a truncated read.
 - **Payability** (`GoalEngine::payability`). A goal the campaign does not
   pay for is tracked at its own value, with note `not_payable_on_campaign`.
   A campaign payout overrides the goal's value. A `fixed` value pays, and
@@ -1543,12 +1565,18 @@ operator's reads are `AppInstallsController`; the guide is
   10,000 events and the per-peer rate limit; no separate per-install rate.
 - **Notifications.** `202_notification_pending` is conversion schema
   (`ConversionTables`), written in the conversion's transaction, one row per
-  **server postback pixel** (type 4) of the click's traffic-source account;
+  URL of each **server postback pixel** (type 4) of the click's
+  traffic-source account;
   browser pixels have no page on an install and are not queued. The URL is
-  resolved at queue time. A pixel holding several URLs is one row (the
-  table's key is `(conv_id, pixel_id, kind)`); a partial failure resends
-  all of them, which the `[[transactionid]]` they carry lets a network
-  dedupe. **Nothing is sent on the request path** — §7.3's "no external
+  resolved at queue time. **The unit is the destination, not the pixel**: a
+  pixel's code may hold several space-separated URLs, and each is its own
+  row (`destination`, its position in the code; the key is `(conv_id,
+  pixel_id, destination, kind)`) with its own attempts, backoff and status.
+  An earlier draft stored a pixel's URLs in one row, so a failure at the
+  second URL left the row pending and every retry started again at the
+  first — an endpoint that had accepted the conversion was sent it up to 8
+  times. The column is created by the 1.9.75 rung with the rest of the
+  table (see Constraints: no database holds it). **Nothing is sent on the request path** — §7.3's "no external
   calls" won over §5.2's "may attempt the send" — so the worker
   (`202-cronjobs/app-installs.php`, every minute) sends, claiming each row by
   compare-and-set on its attempt count, backing off 1 minute doubling to 6
@@ -1568,11 +1596,32 @@ operator's reads are `AppInstallsController`; the guide is
   this one survives a crash between commit and send. Its type-4 pixel
   filter, token resolution and send-once rule are the ones to keep; its
   immediate send is what the worker replaces.
-- **Once per outcome.** A replaced outcome's pending, unattempted `reached`
-  is cancelled and the replacement's goes out; one that was sent or
-  attempted is never repeated, and a `correction` (or, with no
-  replacement, a `retraction`) is stored `suppressed` — no pixel has a
-  correction URL yet (configuration of one is deferred to the UI, PR 11).
+- **Once per outcome, per destination.** A replaced outcome's pending,
+  unattempted `reached` is cancelled and the replacement's goes out; one
+  that was sent or attempted is never repeated, and a `correction` (or,
+  with no replacement, a `retraction`) is stored `suppressed` — no pixel has
+  a correction URL yet (configuration of one is deferred to the UI, PR 11).
+  Each destination is decided on its own: the replacement's `reached` is
+  cancelled only at the destinations the replaced row announced (an earlier
+  draft cancelled all of them, so a pixel the replaced row never reached
+  heard nothing at all). A destination is *announced* when the replaced
+  row's `reached` there was attempted, or when the replaced row carries a
+  `correction` there — it is itself a replacement whose predecessor went out
+  (an earlier draft missed this and re-announced on the second move). The
+  table (`NotificationOutboxIntegrationTest` has a case per row):
+
+  | Replaced row's `reached` at a destination | Announced | Replaced row | Replacement's `reached` there | Recorded |
+  |---|---|---|---|---|
+  | pending, unattempted | no | cancelled | goes out (if present) | — |
+  | pending, attempted (retrying) | yes | left retrying | cancelled | `correction` / `retraction`, suppressed |
+  | sent | yes | left sent | cancelled | `correction` / `retraction`, suppressed |
+  | failed (attempts exhausted; may have landed) | yes | left failed | cancelled | `correction` / `retraction`, suppressed |
+  | cancelled, with a `correction` on the replaced row | yes | left cancelled | cancelled | `correction` / `retraction`, suppressed |
+  | cancelled, no `correction` | no | left cancelled | goes out | — (not produced: a row whose reached was cancelled unannounced has been replaced and is not replaced again) |
+  | none (pixel added since) | no | — | goes out | — |
+
+  "If present": the replacement has no row at a destination whose pixel was
+  removed in between, and nothing is recorded for an unannounced one.
 - **One sender.** `PostbackSender::fetch()` is the curl call gpb and upx
   used inline; `p202FireTrafficSourcePixels()` and the worker share it. It
   now refuses a URL that is not `http(s)://` (a `file://` pixel used to be
@@ -1593,6 +1642,19 @@ operator's reads are `AppInstallsController`; the guide is
 - **Deletion.** A user's installs and queued postbacks are deleted with the
   user. Deleting a registration keeps its installs (their conversions stay
   on the ledger) and archives its goals, the install goal among them.
+  Both delete paths — the registration delete and the user purge
+  (`AppDataPurge`) — **unlink the campaigns** that name a registration they
+  remove (`app_registration_id = NULL`), in the same transaction. Left
+  dangling, a link reads as "linked to another app" once the same app is
+  registered again under a new id: token generation refuses the campaign's
+  clicks and the intake classifies their installs `foreign_click`. A stale
+  link is **not** tolerated at read time: both delete paths now clear it,
+  no installation holds one from before (Constraints), and reading a
+  dangling id as "unlinked" would mean a join to the registration under the
+  click's `FOR UPDATE` in the intake — locking the registration row for
+  every install — to cover a state nothing produces. A link that somehow
+  dangles fails closed (`foreign_click`, unpaid) and names the missing
+  registration in its reason.
 - **Operator reads** live under the registration — `GET /apps/{id}/installs`,
   `/apps/{id}/installs/{install_uuid}` — because `GET /apps/installs` is the
   public probe. `GET /apps/{id}/install-token?click_id=` is a read (no

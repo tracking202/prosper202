@@ -17,6 +17,8 @@ object EventPayload {
     const val MAX_BODY_BYTES = 65536
     const val MAX_PROPERTIES = 32
     const val MAX_STRING_BYTES = 255
+    /** The largest revenue an event may carry, either sign (the server's `GoalEvent::MAX_REVENUE`). */
+    const val MAX_REVENUE = 999999.99999
     private val DEVICE_FIELDS = listOf("event_id", "name", "occurred_at", "properties", "revenue", "transaction_id")
     private val ALLOWED = listOf("event_id", "name", "occurred_at", "received_at", "properties", "revenue", "revenue_trusted", "transaction_id")
     private val EVENT_ID = Regex("^[\\x21-\\x3F\\x41-\\x7E][\\x21-\\x7E]{0,127}$")
@@ -151,7 +153,12 @@ object EventPayload {
             }
         }
         val revenue = o["revenue"]
-        if (revenue != null && revenue !is JsonValue.Null && !isNumber(revenue)) e["$path.revenue"] = "must be a finite number or null"
+        if (revenue != null && revenue !is JsonValue.Null && !isNumber(revenue)) {
+            e["$path.revenue"] = "must be a finite number or null"
+        } else if (revenue != null && revenue !is JsonValue.Null && kotlin.math.abs(numberValue(revenue)) > MAX_REVENUE) {
+            // What one conversion can hold; the server refuses it by field.
+            e["$path.revenue"] = "must be from -999999.99999 to 999999.99999 (the most one conversion can hold), or null"
+        }
         val trusted = o["revenue_trusted"]
         if (trusted != null && trusted !is JsonValue.Null && trusted !is JsonValue.Bool) e["$path.revenue_trusted"] = "must be true or false"
         val tx = o["transaction_id"]
@@ -161,6 +168,13 @@ object EventPayload {
     }
 
     private fun isNumber(v: JsonValue) = v is JsonValue.Int || (v is JsonValue.Num && !v.value.isNaN() && !v.value.isInfinite())
+
+    /** A number as PHP's `(float)` reads it: an integer converted, a float as it is. */
+    private fun numberValue(v: JsonValue): Double = when (v) {
+        is JsonValue.Int -> v.value.toDouble()
+        is JsonValue.Num -> v.value
+        else -> Double.NaN
+    }
 
     private fun isPropertyValue(v: JsonValue) = v is JsonValue.Bool || isNumber(v) || (v is JsonValue.Str && utf8Length(v.value) <= MAX_STRING_BYTES)
 }

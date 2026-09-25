@@ -258,6 +258,70 @@
       }
     },
     {
+      "name": "the largest revenue, either sign",
+      "body": {
+        "events": [
+          {
+            "event_id": "r-1",
+            "name": "purchase",
+            "occurred_at": 1727200600,
+            "revenue": 999999.99999
+          },
+          {
+            "event_id": "r-2",
+            "name": "refund",
+            "occurred_at": 1727200601,
+            "revenue": -999999.99999
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "events": 2,
+        "customer": null
+      }
+    },
+    {
+      "name": "revenue past what one conversion holds",
+      "body": {
+        "events": [
+          {
+            "event_id": "r-3",
+            "name": "purchase",
+            "occurred_at": 1727200600,
+            "revenue": 1000000
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "events[0].revenue"
+        ]
+      }
+    },
+    {
+      "name": "a negative revenue past what one conversion holds",
+      "body": {
+        "events": [
+          {
+            "event_id": "r-4",
+            "name": "purchase",
+            "occurred_at": 1727200600,
+            "revenue": -1000000.5
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "events[0].revenue"
+        ]
+      }
+    },
+    {
       "name": "the second event is bad",
       "body": {
         "events": [

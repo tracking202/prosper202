@@ -105,7 +105,9 @@ final class IntegrityPolicyTest extends TestCase
             'basic integrity only (rooted)' => [$set('deviceIntegrity.deviceRecognitionVerdict', ['MEETS_BASIC_INTEGRITY']), 'device_integrity', 'MEETS_BASIC_INTEGRITY'],
             'an emulator' => [$set('deviceIntegrity.deviceRecognitionVerdict', ['MEETS_VIRTUAL_INTEGRITY']), 'device_integrity', 'MEETS_VIRTUAL_INTEGRITY'],
             'no device labels' => [$set('deviceIntegrity.deviceRecognitionVerdict', []), 'device_integrity', 'no labels'],
-            'a label as a string, not a list' => [$set('deviceIntegrity.deviceRecognitionVerdict', 'MEETS_DEVICE_INTEGRITY_NOT'), 'device_integrity', 'MEETS_DEVICE_INTEGRITY_NOT'],
+            'a label as a string, not a list' => [$set('deviceIntegrity.deviceRecognitionVerdict', 'MEETS_DEVICE_INTEGRITY_NOT'), 'device_integrity', 'no labels'],
+            'a passing label as a bare string' => [$set('deviceIntegrity.deviceRecognitionVerdict', 'MEETS_DEVICE_INTEGRITY'), 'device_integrity', 'no labels'],
+            'a passing label inside an object' => [$set('deviceIntegrity.deviceRecognitionVerdict', ['verdict' => 'MEETS_STRONG_INTEGRITY']), 'device_integrity', 'no labels'],
             'unlicensed' => [$set('accountDetails.appLicensingVerdict', 'UNLICENSED'), 'unlicensed', 'UNLICENSED'],
         ];
     }

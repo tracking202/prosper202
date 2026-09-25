@@ -30,6 +30,8 @@ final class GoalEvent
 {
     public const INSTALL_EVENT_ID = '@install';
     public const MAX_PROPERTIES = 32;
+    /** The largest revenue an event may carry, either sign: what one conversion can hold. */
+    public const MAX_REVENUE = 999999.99999;
     private const EVENT_ID = '/^[\x21-\x3F\x41-\x7E][\x21-\x7E]{0,127}$/D';
     private const EVENT_NAME = '/^[A-Za-z0-9_][A-Za-z0-9_.:\-]{0,63}$/D';
     private const PROP_NAME = '/^[A-Za-z_][A-Za-z0-9_]{0,63}$/D';
@@ -121,6 +123,10 @@ final class GoalEvent
         $revenue = $raw['revenue'] ?? null;
         if ($revenue !== null && !GoalDefinition::isNumber($revenue)) {
             $e[$path . '.revenue'] = 'must be a number or null';
+        } elseif ($revenue !== null && abs((float) $revenue) > self::MAX_REVENUE) {
+            // Revenue is money: the ledger holds at most 999999.99999, and a
+            // sum threshold adds nothing larger (GoalEvaluator::units()).
+            $e[$path . '.revenue'] = 'must be from -999999.99999 to 999999.99999 (the most one conversion can hold), or null';
         }
         $trusted = $raw['revenue_trusted'] ?? false;
         if (!is_bool($trusted)) {
