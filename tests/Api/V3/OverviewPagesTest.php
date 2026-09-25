@@ -81,6 +81,49 @@ final class OverviewPagesTest extends TestCase
         self::assertArrayNotHasKey(P202_OVERVIEW_GROUP_NONE, p202_overview_groupings(), '"none" is not a first grouping');
     }
 
+    /**
+     * Regions, ISPs, browsers and platforms are install-wide lookups that grow
+     * with every account's clicks; the classic calendar's GROUP BY over them
+     * put all of them in a <select>. The lists come from this account's
+     * clicks in the window instead, bounded, and the filter in force keeps
+     * its name. What runs against a real server is driven in
+     * overview-visitors-spy.spec.js; this pins the shape of every query.
+     */
+    public function testTheUnboundedListsAreThisAccountsClicksInTheWindowAndBounded(): void
+    {
+        $fake = new \Tests\Support\FakeMysqliConnection();
+        $fake->whenQueryContainsReturnRows('FROM 202_dataengine', [['id' => 9, 'label' => 'Zeta Telecom'], ['id' => 4, 'label' => 'alpha net']]);
+        $fake->whenQueryContainsReturnRows('FROM 202_locations_isp AS l WHERE', [['label' => 'Chosen ISP']]);
+        $conn = new \Prosper202\Database\Connection($fake);
+
+        $lists = p202_overview_filter_lists($conn, 7, ['isp_id', 'region_id', 'browser_id', 'platform_id'], [
+            'data_user_id' => 7, 'from' => 1000, 'to' => 2000, 'values' => ['isp_id' => '55'],
+        ]);
+
+        foreach ($fake->statements as $stmt) {
+            self::assertDoesNotMatchRegularExpression('/GROUP BY\s+\w*_name/i', $stmt->sql, 'no list is every name in an install-wide lookup: ' . $stmt->sql);
+            if (str_contains($stmt->sql, 'FROM 202_dataengine')) {
+                self::assertMatchesRegularExpression('/\bLIMIT ' . P202_OVERVIEW_SEEN_LIMIT . '$/', $stmt->sql, 'bounded');
+                self::assertStringContainsString('d.user_id = ? AND d.click_time >= ? AND d.click_time <= ?', $stmt->sql, 'this account\'s clicks, in the window');
+                self::assertSame([7, 1000, 2000], $stmt->boundValues);
+            }
+        }
+        self::assertCount(4, $fake->statementsContaining('FROM 202_dataengine'), 'one bounded query per list');
+        self::assertSame(['4' => 'alpha net', '55' => 'Chosen ISP', '9' => 'Zeta Telecom'], $lists['isp_id'],
+            'the clicks\' values in name order, and the filter in force with its own name though no click in the window carried it');
+        $lookup = $fake->statementsContaining('FROM 202_locations_isp AS l WHERE');
+        self::assertCount(1, $lookup, 'the one value not seen is looked up by id, once');
+        self::assertSame([55], $lookup[0]->boundValues);
+
+        $all = new \Tests\Support\FakeMysqliConnection();
+        p202_overview_seen_list(new \Prosper202\Database\Connection($all), 'browser_id', null, 1, 2);
+        self::assertStringContainsString('d.user_id != 0', $all->statements[0]->sql, 'a user who sees every campaign sees every account\'s values, as DataEngine reports them');
+        self::assertSame([1, 2], $all->statements[0]->boundValues);
+
+        $this->expectException(\InvalidArgumentException::class);
+        p202_overview_seen_list($conn, 'country_id', 7, 1, 2);
+    }
+
     public function testResetNamesAValueEveryFilterAccepts(): void
     {
         // Reset is a URL like any other set of filters, so every default it
