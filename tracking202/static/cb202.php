@@ -99,6 +99,7 @@ if (function_exists('openssl_decrypt')) {
                 'payout'           => (string) $amount,
                 'ip'               => p202ClientIp($_SERVER),
                 'user_agent'       => (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''),
+                'source'           => \Prosper202\Conversion\Ledger\ConversionSource::CLICKBANK->value,
             ]);
         } catch (\Throwable $conversionError) {
             error_log('cb202: conversion recording failed for click ' . $click_id . ': ' . $conversionError->getMessage());

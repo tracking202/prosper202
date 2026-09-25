@@ -27,6 +27,14 @@ class CampaignsController extends Controller
             'aff_network_id'               => ['type' => 'i', 'required' => true],
             'aff_campaign_cloaking'        => ['type' => 'i'],
             'aff_campaign_rotate'          => ['type' => 'i'],
+            // How a click's conversions roll up into its value: the latest
+            // one's payout (replace) or their sum (accumulate).
+            'payout_mode'                  => ['type' => 's', 'allowed' => ['replace', 'accumulate']],
+            // Whether this campaign's clicks carry identity signals (the
+            // p202vid cookie, p202lpid, signed customer ids). Compared as the
+            // exact string before any cast, so 1.5 or "1e0" is refused rather
+            // than read as 1 (CLAUDE.md #18).
+            'identity_signals'             => ['type' => 's', 'allowed' => ['0', '1']],
         ];
     }
 

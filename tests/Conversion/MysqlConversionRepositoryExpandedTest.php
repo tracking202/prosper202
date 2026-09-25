@@ -9,6 +9,7 @@ use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
 use RuntimeException;
 use Tests\Support\FakeMysqliConnection;
+use Tests\Support\InsertReportingFakeMysqliConnection;
 
 /**
  * Expanded tests for MysqlConversionRepository.
@@ -90,7 +91,7 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         $write = new InsertReportingFakeMysqliConnection(7);
         $write->whenQueryContainsReturnRows(
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000]]
+            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
 
         // buildRepo() type-hints FakeMysqliConnection, so wire this bespoke
@@ -105,16 +106,18 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         $insertStmts = $write->statementsContaining('INSERT INTO 202_conversion_logs');
         self::assertCount(1, $insertStmts);
         // The NOT-NULL legacy columns (time_difference, ip, pixel_type, user_agent)
-        // are always bound now — even when the caller (e.g. the V3 API) omits them —
+        // are always bound — even when the caller (e.g. the V3 API) omits them —
         // so the INSERT can't fail under STRICT sql_mode with "Field doesn't have a
-        // default value". Base 'isidiii' + s,s,i,s for the four appended columns.
-        self::assertSame('isidiiissis', $insertStmts[0]->boundTypes);
-        // The four defaults land at the tail of the bound values: time_difference is
-        // a (non-negative) seconds string, then ip='', pixel_type=0, user_agent=''.
+        // default value"; then the six ledger columns. The amount is bound as the
+        // exact decimal string (Amount), never a float.
+        self::assertSame('isisiii' . 'ssis' . 'sssiis', $insertStmts[0]->boundTypes);
         $bound = $insertStmts[0]->boundValues;
+        self::assertSame('2.75000', $bound[3], 'the click payout, exactly, when no amount is given (replace mode)');
         self::assertSame('', $bound[8], 'ip defaults to empty string');
         self::assertSame(0, $bound[9], 'pixel_type defaults to 0');
         self::assertSame('', $bound[10], 'user_agent defaults to empty string');
+        self::assertSame(['api', null, null, 1, null, 'tx:TX-1'], array_slice($bound, 11),
+            'source, source_ref, event_name, payable, reverses_conv_id, dedupe_key');
     }
 
     /**
@@ -129,7 +132,7 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         $write = new InsertReportingFakeMysqliConnection(7);
         $write->whenQueryContainsReturnRows(
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000]]
+            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
         $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
 
@@ -155,61 +158,79 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
 
     public function testCreateUpdatesClickLeadFlag(): void
     {
-        $write = new FakeMysqliConnection();
+        // An insert has to report its id (the writer refuses one that does
+        // not), which only the insert-reporting double can do on PHP 8.4.
+        $write = new InsertReportingFakeMysqliConnection(7);
         $write->whenQueryContainsReturnRows(
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000]]
+            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
+        );
+        $write->whenQueryContainsReturnRows(
+            'FROM 202_conversion_logs WHERE click_id = ? ORDER BY conv_id',
+            [['conv_id' => 7, 'click_payout' => '2.75000', 'payable' => 1, 'deleted' => 0, 'reverses_conv_id' => null,
+                'source' => 'api', 'source_ref' => null, 'superseded_reason' => null, 'superseded_by' => null]]
         );
 
-        [$repo] = $this->buildRepo($write);
+        $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
         $repo->create(1, ['click_id' => 10]);
 
-        $updateStmts = $write->statementsContaining('UPDATE 202_clicks SET click_lead = 1');
-        self::assertCount(1, $updateStmts);
+        // The click's value is not written by the conversion: the ledger
+        // recomputes it from the click's rows. With the inserted row visible
+        // to the recompute, the click becomes a lead worth that row.
+        $clickUpdates = $write->statementsContaining('UPDATE 202_clicks SET click_lead');
+        self::assertCount(1, $clickUpdates);
+        self::assertStringContainsString('click_lead = 1, click_payout = ?', $clickUpdates[0]->sql);
+        self::assertSame(['2.75000', 10], $clickUpdates[0]->boundValues);
     }
 
     public function testCreateUsesPayoutOverrideWhenProvided(): void
     {
-        $write = new FakeMysqliConnection();
+        // An insert has to report its id (the writer refuses one that does
+        // not), which only the insert-reporting double can do on PHP 8.4.
+        $write = new InsertReportingFakeMysqliConnection(7);
         $write->whenQueryContainsReturnRows(
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000]]
+            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
 
-        [$repo] = $this->buildRepo($write);
+        $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
         $repo->create(1, ['click_id' => 10, 'payout' => 50.00]);
 
-        // The UPDATE should use 50.00 not 2.75
-        $updateStmts = $write->statementsContaining('UPDATE 202_clicks SET click_lead = 1');
-        self::assertCount(1, $updateStmts);
-        self::assertEqualsWithDelta(50.00, $updateStmts[0]->boundValues[0], 0.01);
+        // The row records 50.00, not the click's 2.75.
+        $insert = $write->statementsContaining('INSERT INTO 202_conversion_logs');
+        self::assertCount(1, $insert);
+        self::assertSame('50.00000', $insert[0]->boundValues[3]);
     }
 
     public function testCreateUsesClickPayoutWhenNoOverride(): void
     {
-        $write = new FakeMysqliConnection();
+        // An insert has to report its id (the writer refuses one that does
+        // not), which only the insert-reporting double can do on PHP 8.4.
+        $write = new InsertReportingFakeMysqliConnection(7);
         $write->whenQueryContainsReturnRows(
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000]]
+            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
 
-        [$repo] = $this->buildRepo($write);
+        $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
         $repo->create(1, ['click_id' => 10]);
 
-        $updateStmts = $write->statementsContaining('UPDATE 202_clicks SET click_lead = 1');
-        self::assertCount(1, $updateStmts);
-        self::assertEqualsWithDelta(2.75, $updateStmts[0]->boundValues[0], 0.01);
+        $insert = $write->statementsContaining('INSERT INTO 202_conversion_logs');
+        self::assertCount(1, $insert);
+        self::assertSame('2.75000', $insert[0]->boundValues[3]);
     }
 
     public function testCreateUsesForUpdateLock(): void
     {
-        $write = new FakeMysqliConnection();
+        // An insert has to report its id (the writer refuses one that does
+        // not), which only the insert-reporting double can do on PHP 8.4.
+        $write = new InsertReportingFakeMysqliConnection(7);
         $write->whenQueryContainsReturnRows(
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000]]
+            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
 
-        [$repo] = $this->buildRepo($write);
+        $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
         $repo->create(1, ['click_id' => 10]);
 
         $lockStmts = $write->statementsContaining('FOR UPDATE');
@@ -221,7 +242,7 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         $write = new FakeMysqliConnection();
         $write->whenQueryContainsReturnRows(
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000]]
+            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
         // A conversion with this (click_id, transaction_id) already exists.
         // (The dedup lookup also returns the LTV customer link since the
@@ -236,7 +257,10 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
 
         self::assertSame(99, $id, 'A duplicate transaction id must return the existing conversion');
         self::assertCount(0, $write->statementsContaining('INSERT INTO 202_conversion_logs'), 'No second row may be inserted');
-        self::assertCount(0, $write->statementsContaining('UPDATE 202_clicks SET click_lead = 1'), 'The click must not be re-flagged on a duplicate');
+        self::assertCount(0, $write->statementsContaining('UPDATE 202_clicks SET click_lead'), 'The click must not be recomputed on a duplicate');
+        $dup = $write->statementsContaining('AND dedupe_key = ?');
+        self::assertNotEmpty($dup);
+        self::assertSame([10, 'tx:DUP'], $dup[0]->boundValues, 'the replay is found by its ledger key');
     }
 
     // --- record() (shared writer used by the legacy static endpoints) ---
@@ -246,7 +270,7 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         $write = new InsertReportingFakeMysqliConnection(5);
         $write->whenQueryContainsReturnRows(
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000]]
+            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
         $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
 
@@ -273,11 +297,16 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
 
         $insert = $write->statementsContaining('INSERT INTO 202_conversion_logs');
         self::assertCount(1, $insert);
-        // Base 7 columns (isidiii) + the 4 legacy columns (time_difference, ip,
-        // pixel_type, user_agent) = 11 bound params.
-        self::assertSame(11, strlen($insert[0]->boundTypes));
-        self::assertStringStartsWith('isidiii', $insert[0]->boundTypes);
+        // Base 7 columns + the 4 legacy columns (time_difference, ip,
+        // pixel_type, user_agent) + the 6 ledger columns = 17 bound params.
+        self::assertSame(17, strlen($insert[0]->boundTypes));
+        self::assertStringStartsWith('isisiii', $insert[0]->boundTypes);
         self::assertStringContainsString('pixel_type', $insert[0]->sql);
+        // No transaction id, replace mode: the row's key is its own id,
+        // written right after the insert.
+        $keyed = $write->statementsContaining('UPDATE 202_conversion_logs SET dedupe_key = ?');
+        self::assertCount(1, $keyed);
+        self::assertSame(['row:5', 5], $keyed[0]->boundValues);
     }
 
     public function testRecordReturnsClickNotFoundWithoutThrowing(): void
@@ -297,11 +326,15 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
     public function testSoftDeleteSetsDeletedFlag(): void
     {
         [$repo, $write] = $this->buildRepo();
-        // softDelete locks the conversion first (and voids its LTV ledger
-        // event when one exists — none here, so only the flag is set).
+        // softDelete finds the click, locks it, then locks the conversion
+        // (and voids its LTV ledger event when one exists — none here).
         $write->whenQueryContainsReturnRows(
-            'SELECT conv_id, customer_id, deleted FROM 202_conversion_logs',
-            [['conv_id' => 5, 'customer_id' => null, 'deleted' => 0]]
+            'SELECT click_id FROM 202_conversion_logs WHERE conv_id = ?',
+            [['click_id' => 10]]
+        );
+        $write->whenQueryContainsReturnRows(
+            'SELECT conv_id, customer_id, deleted, reverses_conv_id FROM 202_conversion_logs',
+            [['conv_id' => 5, 'customer_id' => null, 'deleted' => 0, 'reverses_conv_id' => null]]
         );
 
         $repo->softDelete(5, 1);
@@ -412,202 +445,4 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         self::assertSame(8, $result['convId']);
     }
 
-}
-
-/**
- * Write-connection fake whose INSERT statement reports a real insert_id.
- *
- * The shared {@see FakeMysqliConnection} cannot do this on PHP 8.4+: it (and its
- * FakeMysqliStatement) subclass the native mysqli classes, whose insert_id is a
- * read-only virtual property that cannot be assigned from anywhere (verified:
- * direct, internal, and reflection writes all throw). FakeMysqliConnection is
- * also `final`, so it cannot be subclassed. This standalone double returns a
- * plain statement object (not a mysqli_stmt) for the conversion-log INSERT, whose
- * public insert_id is freely writable; Connection accepts it because every
- * statement parameter is relaxed to `object`.
- */
-final class InsertReportingFakeMysqliConnection extends \mysqli
-{
-    /**
-     * @var list<InsertReportingFakeStatement>
-     */
-    public array $statements = [];
-
-    public bool $beginTransactionCalled = false;
-    public bool $commitCalled = false;
-    public bool $rollbackCalled = false;
-    public string $error = '';
-
-    /**
-     * @var array<string, list<array<string, mixed>>>
-     */
-    private array $rowsByNeedle = [];
-
-    public function __construct(private int $insertIdToReport)
-    {
-        // Skip parent constructor to avoid a real DB connection.
-    }
-
-    /**
-     * @param list<array<string, mixed>> $rows
-     */
-    public function whenQueryContainsReturnRows(string $needle, array $rows): void
-    {
-        $this->rowsByNeedle[$needle] = $rows;
-    }
-
-    #[\ReturnTypeWillChange]
-    public function prepare(string $query): InsertReportingFakeStatement
-    {
-        $stmt = new InsertReportingFakeStatement(
-            $query,
-            $this->insertIdToReport,
-            $this->resolveRows($query),
-        );
-        $this->statements[] = $stmt;
-
-        return $stmt;
-    }
-
-    public function begin_transaction(int $flags = 0, ?string $name = null): bool
-    {
-        $this->beginTransactionCalled = true;
-
-        return true;
-    }
-
-    public function commit(int $flags = 0, ?string $name = null): bool
-    {
-        $this->commitCalled = true;
-
-        return true;
-    }
-
-    public function rollback(int $flags = 0, ?string $name = null): bool
-    {
-        $this->rollbackCalled = true;
-
-        return true;
-    }
-
-    /**
-     * @return list<InsertReportingFakeStatement>
-     */
-    public function statementsContaining(string $needle): array
-    {
-        return array_values(array_filter(
-            $this->statements,
-            static fn (InsertReportingFakeStatement $stmt): bool => str_contains($stmt->sql, $needle),
-        ));
-    }
-
-    /**
-     * @return list<array<string, mixed>>|null
-     */
-    private function resolveRows(string $query): ?array
-    {
-        foreach ($this->rowsByNeedle as $needle => $rows) {
-            if (str_contains($query, $needle)) {
-                return $rows;
-            }
-        }
-
-        return null;
-    }
-}
-
-/**
- * Minimal statement double that is NOT a mysqli_stmt subclass, so its public
- * insert_id property is freely writable.
- */
-final class InsertReportingFakeStatement
-{
-    public string $boundTypes = '';
-
-    /**
-     * @var list<mixed>
-     */
-    public array $boundValues = [];
-
-    public int $insert_id = 0;
-    public int $affected_rows = 0;
-    public string $error = '';
-
-    /**
-     * @param list<array<string, mixed>>|null $rows
-     */
-    public function __construct(
-        public string $sql,
-        private int $insertIdToReport,
-        private ?array $rows,
-    ) {
-    }
-
-    public function bind_param(string $types, mixed &...$vars): bool
-    {
-        $this->boundTypes = $types;
-        $this->boundValues = [];
-        foreach ($vars as &$var) {
-            $this->boundValues[] = $var;
-        }
-
-        return true;
-    }
-
-    public function execute(?array $params = null): bool
-    {
-        if (str_contains($this->sql, 'INSERT INTO 202_conversion_logs')) {
-            $this->insert_id = $this->insertIdToReport;
-        }
-        $this->affected_rows = 1;
-
-        return true;
-    }
-
-    #[\ReturnTypeWillChange]
-    public function get_result(): \mysqli_result|false
-    {
-        // An unconfigured SELECT is an empty result set, as on a real server;
-        // false would now be read by Connection as a fetch failure.
-        return new InsertReportingFakeResult($this->rows ?? []);
-    }
-
-    public function close(): bool
-    {
-        return true;
-    }
-}
-
-/**
- * Result double extending mysqli_result so Connection's `instanceof mysqli_result`
- * guard in fetchOne()/fetchAll() reads the rows.
- */
-final class InsertReportingFakeResult extends \mysqli_result
-{
-    /**
-     * @var list<array<string, mixed>>
-     */
-    private array $rows;
-    private int $position = 0;
-
-    /**
-     * @param list<array<string, mixed>> $rows
-     */
-    public function __construct(array $rows)
-    {
-        // Skip parent constructor — no real result set backs this fake.
-        $this->rows = array_values($rows);
-    }
-
-    #[\ReturnTypeWillChange]
-    public function fetch_assoc(): ?array
-    {
-        return $this->rows[$this->position++] ?? null;
-    }
-
-    #[\ReturnTypeWillChange]
-    public function free(): void
-    {
-        $this->rows = [];
-    }
 }
