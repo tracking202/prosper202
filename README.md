@@ -9,7 +9,7 @@ Since 2007, Prosper202 has helped marketers take control of their tracking with 
 - **Self-Hosted & Full Source Code** — Run Prosper202 100% on your own servers for ultimate control of your proprietary data and marketing methods. Customize the full source code to meet your needs.
 - **Click & Conversion Tracking** — Real-time click capture with sub-ID parameters, referrer tracking, and automatic IP/UA logging. Server-to-server postback and pixel tracking with revenue, payout, and status fields.
 - **12+ Report Types** — Keywords, geo, device, browser, OS, referrer, ISP, landing page, and custom dimension reports. Track profit and loss, conversion metrics, EPC per keyword, per text ad, per referrer, and more.
-- **Multi-Touch Attribution** — Six attribution models: first-touch, last-touch, linear, time-decay, position-based, and algorithmic.
+- **Multi-Touch Attribution** — Each conversion's value spread over the visitor's own clicks across campaigns (joined by first-party identity signals, never IP), under last-touch, first-touch, linear, time-decay and position-based models, with reports by campaign, source, keyword, landing page, country, device or day ([guide](documentation/tutorials-and-guides/14-advanced-attribution-engine.md)).
 - **iOS SKAdNetwork (SKAN) Measurement** — Act as your iOS app's SKAN attribution endpoint: receive Apple's signed install postbacks, verify their signatures, decode conversion values into events and revenue, and report installs by ad network, campaign, and country. The bundled P202Attribution Swift helper fetches the conversion-value mapping from your server at runtime, so changing it never requires an App Store resubmission ([guide](documentation/api/19-attribution-postbacks.md)).
 - **Split Testing** — Run unlimited weighted split tests to discover your best marketing message and offer. Pause non-converting tests and automatically send all traffic to the winner.
 - **Smart Redirector & Traffic Rules** — Rule-based traffic distribution with weighted rotation, geo-targeting, and device filtering.
@@ -166,10 +166,6 @@ This stack is a development configuration (PHP `display_errors` is on). For prod
            try_files $uri $uri/ /api/v3/index.php?$query_string;
        }
 
-       location /api/v2/ {
-           try_files $uri $uri/ /api/v2/index.php?$query_string;
-       }
-
        location ~ \.php$ {
            fastcgi_pass php_fpm;
            fastcgi_keep_conn on;
@@ -196,7 +192,7 @@ This stack is a development configuration (PHP `display_errors` is on). For prod
 
 #### Apache Alternative
 
-If you prefer Apache over Nginx, point your document root at the project directory and ensure `mod_rewrite` is enabled so the `.htaccess` files shipped in `api/v2/`, `api/v3/`, and `tracking202/update/reports/` can handle routing. Those files only need `AllowOverride FileInfo Options=FollowSymLinks` (`FileInfo` for the rewrite rules, `Options=FollowSymLinks` for the `Options +FollowSymLinks` line in the reports rules) — avoid `AllowOverride All`, which is broader than required. Example virtual host:
+If you prefer Apache over Nginx, point your document root at the project directory and ensure `mod_rewrite` is enabled so the `.htaccess` files shipped in `api/v3/` and `tracking202/update/reports/` can handle routing. Those files only need `AllowOverride FileInfo Options=FollowSymLinks` (`FileInfo` for the rewrite rules, `Options=FollowSymLinks` for the `Options +FollowSymLinks` line in the reports rules) — avoid `AllowOverride All`, which is broader than required. Example virtual host:
 
 ```apache
 <VirtualHost *:80>
@@ -242,13 +238,6 @@ This variant sets `AllowOverride None` and inlines the shipped `.htaccess` rules
         Options -Indexes +FollowSymLinks
         AllowOverride None
         Require all granted
-    </Directory>
-
-    # Inlined from api/v2/.htaccess
-    <Directory /path/to/prosper202/api/v2>
-        RewriteEngine On
-        RewriteCond %{REQUEST_FILENAME} !-f
-        RewriteRule ^ index.php [QSA,L]
     </Directory>
 
     # Inlined from api/v3/.htaccess
