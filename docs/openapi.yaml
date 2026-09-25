@@ -3320,7 +3320,11 @@ paths:
         its offer URL names this app (and, for Android, carries the token
         in the referrer) and, for Android, it is linked to this
         registration; `apply` is the PUT /campaigns/{id} body that makes it
-        so. Nothing is written.
+        so. With URL rotation on (`aff_campaign_rotate`), every offer URL in
+        rotation (`aff_campaign_url_2` … `_5`, the non-empty ones) must be
+        this app's link too, since a click can land on any of them; when one
+        is not, `apply` turns rotation off (`aff_campaign_rotate: 0`) and
+        leaves the alternates stored. Nothing is written.
       operationId: getAppStoreLink
       parameters:
         - {name: campaign_id, in: query, schema: {type: integer}}
@@ -7892,15 +7896,33 @@ components:
             app_registration_id:
               type: integer
               nullable: true
+            aff_campaign_rotate:
+              type: integer
+              enum: [0, 1]
+              description: Whether URL rotation is on (clicks go to each offer URL in turn)
+            rotation:
+              type: array
+              description: With rotation on, the alternate offer URLs in rotation and whether each is this app's link; `[]` with rotation off
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                    enum: [aff_campaign_url_2, aff_campaign_url_3, aff_campaign_url_4, aff_campaign_url_5]
+                  url:
+                    type: string
+                  ready:
+                    type: boolean
             ready:
               type: boolean
+              description: The offer URL — and with rotation on, every URL in rotation — is this app's link (Android — carrying the token), and for Android the campaign is linked to the registration
             needs:
               type: array
               items:
                 type: string
             apply:
               type: object
-              description: What PUT /campaigns/{id} needs to make it ready (`aff_campaign_url`, and for Android `app_registration_id`); `{}` when ready
+              description: What PUT /campaigns/{id} needs to make it ready (`aff_campaign_url`; for Android `app_registration_id`; `aff_campaign_rotate` 0 when an alternate in rotation is not this app's link); `{}` when ready
               additionalProperties: true
 
     AppReportResponse:

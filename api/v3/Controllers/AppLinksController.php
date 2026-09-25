@@ -31,6 +31,20 @@ use Api\V3\Support\MysqliStatements;
  * `aff_campaign_url` (and, for Android, `app_registration_id`) this
  * returns under `apply` — `p202 app link <id> --campaign-id N --apply`
  * does exactly that, and so does the link builder on Setup › Mobile Apps.
+ *
+ * URL rotation: a campaign with `aff_campaign_rotate` on sends each click
+ * to the next of its offer URLs in turn — `aff_campaign_url` and every
+ * non-empty `aff_campaign_url_2` … `_5` (rotateTrackerUrl() in
+ * connect2.php). Every one of them is a URL a click can land on, so the
+ * campaign is ready only when every URL in rotation names this app (and,
+ * for Android, carries the token): one alternate elsewhere sends that share
+ * of clicks away, and an Android install from it arrives without its click.
+ * `apply` then turns rotation off (`aff_campaign_rotate: 0`) rather than
+ * rewriting the alternates: rotating among copies of one store link does
+ * nothing, and the alternates stay stored for an operator who turns
+ * rotation back on — which re-reads here as not ready until they are fixed.
+ * Alternates stored with rotation off are never served, so they are not
+ * read.
  */
 final class AppLinksController
 {
@@ -99,7 +113,9 @@ final class AppLinksController
     private function campaignState(int $campaignId, string $platform, string $appKey, int $registrationId, string $link): array
     {
         $campaign = $this->one(
-            'SELECT aff_campaign_id, aff_campaign_name, aff_campaign_url, app_registration_id FROM 202_aff_campaigns
+            'SELECT aff_campaign_id, aff_campaign_name, aff_campaign_url, app_registration_id,
+                    aff_campaign_rotate, aff_campaign_url_2, aff_campaign_url_3, aff_campaign_url_4, aff_campaign_url_5
+             FROM 202_aff_campaigns
              WHERE aff_campaign_id = ? AND user_id = ? AND aff_campaign_deleted = 0 LIMIT 1',
             'ii',
             [$campaignId, $this->userId]
@@ -135,11 +151,35 @@ final class AppLinksController
             $apply['aff_campaign_url'] = $link;
         }
 
+        // The alternates a click can be rotated to (see the class docblock).
+        $rotating = (int)($campaign['aff_campaign_rotate'] ?? 0) !== 0;
+        $rotation = [];
+        if ($rotating) {
+            foreach (['aff_campaign_url_2', 'aff_campaign_url_3', 'aff_campaign_url_4', 'aff_campaign_url_5'] as $field) {
+                $alternate = (string)($campaign[$field] ?? '');
+                if ($alternate === '') {
+                    continue; // skipped by the rotation too
+                }
+                $fits = StoreLink::namesApp($alternate, $platform, $appKey)
+                    && ($platform !== AppIdentity::ANDROID || StoreLink::carriesInstallToken($alternate));
+                $rotation[] = ['field' => $field, 'url' => $alternate, 'ready' => $fits];
+                if (!$fits) {
+                    $needs[] = $field . ': URL rotation is on and also sends clicks here, which is not this app\'s store link'
+                        . ($platform === AppIdentity::ANDROID ? ' carrying [[p202_install_token]]' : '');
+                    $apply['aff_campaign_rotate'] = 0;
+                }
+            }
+        }
+
         return [
             'aff_campaign_id' => (int)$campaign['aff_campaign_id'],
             'aff_campaign_name' => (string)$campaign['aff_campaign_name'],
             'aff_campaign_url' => $url,
             'app_registration_id' => $linkedTo,
+            'aff_campaign_rotate' => $rotating ? 1 : 0,
+            // With rotation on: the alternates in rotation and whether each
+            // is this app's link; [] with rotation off (none is served).
+            'rotation' => $rotation,
             'ready' => $needs === [],
             'needs' => $needs,
             // What PUT /campaigns/{id} needs to make it ready; empty when it is.

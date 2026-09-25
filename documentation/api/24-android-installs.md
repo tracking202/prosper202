@@ -48,6 +48,12 @@ https://play.google.com/store/apps/details?id=com.example.app&referrer=p202%3D[[
   when it is not, what is missing and the update that would fix it. An install of another app on one
   of its clicks is then `foreign_click`. An unlinked campaign accepts any
   of your apps.
+- URL rotation counts: with `aff_campaign_rotate` on, a click can land on
+  any offer URL in rotation (`aff_campaign_url_2` … `_5`, the non-empty
+  ones), so the campaign is ready only when each of them is the app's link
+  carrying the token. When one is not, the fix the builder applies turns
+  rotation off (`aff_campaign_rotate: 0`) and keeps the alternates stored;
+  turning rotation back on reads as not ready again until they are fixed.
 - Passthrough parameters are appended at the top level of the Play URL,
   where Play ignores them: they never reach the app.
 - `GET /apps/{id}/install-token?click_id=N` (`p202 app install token <id>

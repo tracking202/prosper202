@@ -90,12 +90,17 @@ $states = static function (mixed $counts): array {
                 iOS figures are Apple's postbacks: they arrive a day or more after the install, only for installs a campaign won, and Apple withholds values below its privacy thresholds. Android figures are every install the SDK reported, as it happened. Choose one platform above for its own dimensions.
             </div>
         </div>
-    <?php } elseif ($totals !== null && $platform === 'android') { ?>
+    <?php } elseif ($totals !== null && $platform === 'android') {
+        // `installs` is always the trusted (attributed) count. Under an
+        // explicit trust filter the rows are that class — refuted or
+        // unvouched ones hold no trusted install — so the tile counts every
+        // install the filter selected (`received`), and says which class.
+        $asFiltered = $report['trusted'] !== 'trusted-only'; ?>
         <div class="p202-tiles">
             <div class="p202-tile is-good">
                 <div class="p202-tile__label">Installs</div>
-                <div class="p202-tile__value"><?php echo $num($totals['installs']); ?></div>
-                <div class="p202-tile__sub"><?php echo $report['trusted'] === 'trusted-only' ? 'attributed to a click' : 'as filtered'; ?></div>
+                <div class="p202-tile__value"><?php echo $num($asFiltered ? $totals['received'] : $totals['installs']); ?></div>
+                <div class="p202-tile__sub"><?php echo $asFiltered ? $e((string)$filters['trusted']) . ' installs, as filtered' : 'attributed to a click'; ?></div>
             </div>
             <div class="p202-tile">
                 <div class="p202-tile__label">Organic</div>
