@@ -938,6 +938,18 @@ where a check quietly fails to check what it appears to.
   scratch shim its own directory rather than a shared `bin/`, and give every
   tier a floor — a PHPStan run with no result line is now a `could not run`,
   which the stub interpreter itself was used to prove.
+- **A macOS end-to-end pass cannot see a case bug.** Git tracks
+  `tracking202/Redirect/` beside `tracking202/redirect/`; macOS's default
+  filesystem merges them, so a release zip built on a Mac put every click
+  endpoint under `Redirect/`. That zip installed, seeded and tracked clicks
+  perfectly — on the Mac — and would have served `dl.php` as a 404 on every
+  Linux host. It surfaced only when the same build ran in an Ubuntu container
+  and its file list was diffed against the Mac's. `package-release.sh` now
+  refuses a case-insensitive staging directory and `release-tree.php verify`
+  checks every shipped file's exact path, but the general rule stands: when a
+  result will run on Linux, produce it on Linux (a container is enough) before
+  calling it verified, and compare artifacts across platforms rather than
+  trusting that "it built" means "it built the same thing".
 - **Local green is not CI green when the environment carries ambient state.**
   A `--scope` check placed after `api.NewFromConfig()` passed here only
   because this sandbox has a URL configured; CI has none, so the config error

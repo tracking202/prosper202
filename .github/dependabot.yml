@@ -1,0 +1,15 @@
+version: 2
+
+updates:
+  # Workflows pin every action to a full commit SHA with the version in a
+  # trailing comment (a tag like @v2 can be moved to other code). Dependabot
+  # rewrites both the SHA and the comment, so pins stay current without going
+  # back to mutable tags. Review each bump: the diff is the action's new code.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
