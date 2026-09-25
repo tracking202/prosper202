@@ -37,7 +37,20 @@ final class AppRegistryIntegrationTest extends TestCase
         '202_identity_signals', '202_identity_observations', '202_identity_merges',
         '202_attribution_models', '202_attribution_settings', '202_attribution_audit',
         '202_attribution_snapshots', '202_attribution_touchpoints',
+        '202_goals', '202_goal_versions',
     ];
+
+    /** A live plain event goal (what an SKAN encoding names, plan §4.5). */
+    private static function plainGoal(int $userId, string $event, string $scope = 'account', int $scopeId = 0): int
+    {
+        return (new \Prosper202\Goals\MysqlGoalRepository(new \Prosper202\Database\Connection(self::$db)))->create(
+            $userId,
+            \Prosper202\Goals\GoalScope::from($scope),
+            $scopeId,
+            \Prosper202\Goals\GoalDefinition::parse(['name' => $event, 'trigger' => ['event' => $event]]),
+            1
+        );
+    }
 
     public static function setUpBeforeClass(): void
     {
@@ -192,9 +205,12 @@ final class AppRegistryIntegrationTest extends TestCase
         $dev = $this->postback(525463029, 0, null, 'development', null);
         $this->apps()->update($id, ['app_name' => 'A again']); // re-runs the claim
         $this->assertSame(1, $this->postbackRow($dev)['trusted']);
-        (new AppSkanEncodingsController(self::$db, self::OWNER))->create(['registration_id' => $id, 'fine_value' => 1, 'event_name' => 'install']);
+        $appGoal = self::plainGoal(self::OWNER, 'install', 'registration', $id);
+        (new AppSkanEncodingsController(self::$db, self::OWNER))->create(['registration_id' => $id, 'fine_value' => 1, 'goal_id' => $appGoal]);
 
         $this->apps()->delete($id);
+        $this->assertNotNull(self::$db->query('SELECT archived_at FROM 202_goals WHERE goal_id = ' . $appGoal)->fetch_assoc()['archived_at'],
+            'the app\'s goals are archived with it, their history kept');
         $this->assertSame(['user_id' => self::OWNER, 'registration_id' => null, 'trusted' => null], $this->postbackRow($dev),
             'owner kept, registration unlinked, test-signal trust withdrawn');
         $this->assertSame(0, (int) self::$db->query('SELECT COUNT(*) AS c FROM 202_app_skan_encodings')->fetch_assoc()['c'],
@@ -211,12 +227,13 @@ final class AppRegistryIntegrationTest extends TestCase
         $android = (int) $this->apps()->create(['app_key' => 'com.example.app', 'app_name' => 'Android'])['data']['registration_id'];
         $theirs = (int) $this->apps(self::OTHER)->create(['app_key' => '990077001', 'app_name' => 'Theirs'])['data']['registration_id'];
         $encodings = new AppSkanEncodingsController(self::$db, self::OWNER);
+        $install = self::plainGoal(self::OWNER, 'install');
 
-        $encodings->create(['registration_id' => $mine, 'fine_value' => 1, 'event_name' => 'install']);
-        $encodings->create(['registration_id' => 0, 'fine_value' => 1, 'event_name' => 'install']);
+        $encodings->create(['registration_id' => $mine, 'fine_value' => 1, 'goal_id' => $install]);
+        $encodings->create(['registration_id' => 0, 'fine_value' => 1, 'goal_id' => $install]);
         foreach ([$android => 'iOS apps only', $theirs => 'No registration', 999 => 'No registration'] as $id => $because) {
             try {
-                $encodings->create(['registration_id' => $id, 'fine_value' => 2, 'event_name' => 'x']);
+                $encodings->create(['registration_id' => $id, 'fine_value' => 2, 'goal_id' => $install]);
                 $this->fail("registration $id was accepted");
             } catch (ValidationException $e) {
                 $this->assertStringContainsString($because, $e->getFieldErrors()['registration_id'] ?? '');
@@ -228,8 +245,9 @@ final class AppRegistryIntegrationTest extends TestCase
     public function testDeletingAUserPurgesTheirAppDataAndReleasesTheirPostbacks(): void
     {
         $id = (int) $this->apps()->create(['app_key' => '525463029', 'app_name' => 'A', 'accept_test_signals' => 1])['data']['registration_id'];
-        (new AppSkanEncodingsController(self::$db, self::OWNER))->create(['registration_id' => $id, 'fine_value' => 1, 'event_name' => 'install']);
-        (new AppSkanEncodingsController(self::$db, self::OWNER))->create(['registration_id' => 0, 'fine_value' => 2, 'event_name' => 'x']);
+        $install = self::plainGoal(self::OWNER, 'install');
+        (new AppSkanEncodingsController(self::$db, self::OWNER))->create(['registration_id' => $id, 'fine_value' => 1, 'goal_id' => $install]);
+        (new AppSkanEncodingsController(self::$db, self::OWNER))->create(['registration_id' => 0, 'fine_value' => 2, 'goal_id' => $install]);
         $valid = $this->postback(525463029, self::OWNER, $id, 'valid', 1);
         $dev = $this->postback(525463029, self::OWNER, $id, 'development', 1);
         $theirs = (int) $this->apps(self::OTHER)->create(['app_key' => '990077001', 'app_name' => 'Theirs'])['data']['registration_id'];
@@ -238,8 +256,13 @@ final class AppRegistryIntegrationTest extends TestCase
         self::$db->query("INSERT INTO 202_identity_keys (user_id, hash_key, link_key, created_at) VALUES (" . self::OTHER . ", REPEAT('c', 64), REPEAT('d', 64), 1)");
         self::$db->query('INSERT INTO 202_clicks_visitor (click_id, user_id, visitor_key, click_time) VALUES (1, ' . self::OWNER . ', 1, 1), (2, ' . self::OTHER . ', 2, 1)');
         self::$db->query("INSERT INTO 202_api_keys (user_id, api_key, created_at) VALUES (" . self::OWNER . ", 'owner-key', 1), (" . self::OTHER . ", 'other-key', 1)");
+        $theirGoal = self::plainGoal(self::OTHER, 'install');
 
         (new UserDataPurge(self::$db))->deleteUser(self::OWNER);
+
+        $this->assertSame([[(string) $theirGoal]], self::$db->query('SELECT goal_id FROM 202_goals')->fetch_all(),
+            'the deleted user\'s goals go (UserDataPurge::GOAL_STATEMENTS); nobody else\'s do');
+        $this->assertSame('1', self::$db->query('SELECT COUNT(*) AS c FROM 202_goal_versions')->fetch_assoc()['c']);
 
         $this->assertSame([['other-key']], self::$db->query('SELECT api_key FROM 202_api_keys WHERE user_id IN (' . self::OWNER . ', ' . self::OTHER . ')')->fetch_all(),
             'the deleted user\'s API key is revoked with the rest (the API authenticates by key alone); nobody else\'s is');

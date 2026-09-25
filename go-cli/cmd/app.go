@@ -31,7 +31,8 @@ var appCmd = &cobra.Command{
 	Long: "Register the apps you advertise (from a store link or an app key), decode their\n" +
 		"SKAdNetwork and AdAttributionKit postbacks, and read the report.\n\n" +
 		"  p202 app create --store-link https://apps.apple.com/us/app/summit-run/id990077001\n" +
-		"  p202 app encoding create --registration-id 1 --fine-value 40 --event-name purchase --revenue 4.99\n" +
+		"  p202 goal create --registration-id 1 --name purchase --event purchase\n" +
+		"  p202 app encoding create --registration-id 1 --fine-value 40 --goal-id 12 --revenue-override 4.99\n" +
 		"  p202 app report --group-by registration",
 }
 
@@ -110,11 +111,11 @@ func validateAppRegistrationBody(body map[string]string) error {
 }
 
 var appEncodingBodyFields = map[string]string{
-	"registration-id": "registration_id",
-	"fine-value":      "fine_value",
-	"coarse-value":    "coarse_value",
-	"event-name":      "event_name",
-	"revenue":         "revenue",
+	"registration-id":  "registration_id",
+	"fine-value":       "fine_value",
+	"coarse-value":     "coarse_value",
+	"goal-id":          "goal_id",
+	"revenue-override": "revenue_override",
 }
 
 // collectAppBody gathers flag values into an API body. changedOnly sends
@@ -573,13 +574,16 @@ var appVerifyCmd = &cobra.Command{
 // ── SKAN encodings ──────────────────────────────────────────────────
 
 // hintRegistrationID names the command that produces a valid
-// --registration-id when the server refused the one given; every other
-// failure keeps the hint its class already carries.
+// --registration-id or --goal-id when the server refused the one given;
+// every other failure keeps the hint its class already carries.
 func hintRegistrationID(err error) error {
 	var apiErr *api.APIError
 	if errors.As(err, &apiErr) && apiErr.Status == 422 {
 		if _, ok := apiErr.FieldErrors["registration_id"]; ok {
 			return withHint(err, "--registration-id takes an iOS registration's id from `p202 app list --platform ios`, or 0 for the account-wide encodings.")
+		}
+		if _, ok := apiErr.FieldErrors["goal_id"]; ok {
+			return withHint(err, "--goal-id takes a plain event goal of that app (`p202 goal list --registration-id <id>`) or of the account (`p202 goal list --account`); create one with `p202 goal create --registration-id <id> --name <event> --event <event>`.")
 		}
 	}
 	return err
@@ -588,7 +592,7 @@ func hintRegistrationID(err error) error {
 var appEncodingCmd = &cobra.Command{
 	Use:     "encoding",
 	Aliases: []string{"encodings", "skan-encoding", "skan-encodings"},
-	Short:   "SKAN encodings: which conversion value means which event (mirror of the in-app schema)",
+	Short:   "SKAN encodings: which conversion value means which goal was reached (mirror of the in-app schema)",
 }
 
 var appEncodingListCmd = &cobra.Command{
@@ -611,8 +615,9 @@ var appEncodingCreateCmd = &cobra.Command{
 	Short: "Create an encoding (one fine value 0-63 OR one coarse value) for a registration or account-wide",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		body := collectAppBody(cmd, appEncodingBodyFields, false)
-		if body["event_name"] == "" {
-			return validationError("required flag --event-name is missing")
+		if body["goal_id"] == "" {
+			return validationError("required flag --goal-id is missing").
+				WithHint("An encoding names the goal a value means: `p202 goal list --registration-id <id>` (or --account) shows them, `p202 goal create` makes one.")
 		}
 		_, hasFine := body["fine_value"]
 		_, hasCoarse := body["coarse_value"]
@@ -645,6 +650,10 @@ var appEncodingUpdateCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		clearFine, _ := cmd.Flags().GetBool("clear-fine-value")
 		clearCoarse, _ := cmd.Flags().GetBool("clear-coarse-value")
+		clearOverride, _ := cmd.Flags().GetBool("clear-revenue-override")
+		if clearOverride && cmd.Flags().Changed("revenue-override") {
+			return validationError("--clear-revenue-override and --revenue-override are mutually exclusive")
+		}
 		if clearFine && cmd.Flags().Changed("fine-value") {
 			return validationError("--clear-fine-value and --fine-value are mutually exclusive")
 		}
@@ -665,9 +674,12 @@ var appEncodingUpdateCmd = &cobra.Command{
 		if clearCoarse {
 			body["coarse_value"] = nil
 		}
+		if clearOverride {
+			body["revenue_override"] = nil
+		}
 		if len(body) == 0 {
 			return validationError("no fields specified; pass at least one flag to update").
-				WithHint("Pass at least one of --registration-id, --fine-value, --coarse-value, --event-name, --revenue, or a --clear-* flag with its replacement value.")
+				WithHint("Pass at least one of --registration-id, --fine-value, --coarse-value, --goal-id, --revenue-override, or a --clear-* flag (with its replacement value, for the kinds).")
 		}
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -722,9 +734,10 @@ func init() {
 		cmd.Flags().String("registration-id", "", "iOS registration the encoding applies to (from `p202 app list`; 0 = account-wide)")
 		cmd.Flags().String("fine-value", "", "Fine conversion value 0-63")
 		cmd.Flags().String("coarse-value", "", "Coarse conversion value: low, medium, high")
-		cmd.Flags().String("event-name", "", "Event the value decodes to")
-		cmd.Flags().String("revenue", "", "Revenue attributed per decoded postback")
+		cmd.Flags().String("goal-id", "", "The goal the value means (`p202 goal list --registration-id <id>`; a plain event goal)")
+		cmd.Flags().String("revenue-override", "", "Revenue per decoded postback, instead of the goal's own value (tiered decoding)")
 	}
+	appEncodingUpdateCmd.Flags().Bool("clear-revenue-override", false, "Go back to the goal's own value")
 	appEncodingUpdateCmd.Flags().Bool("clear-fine-value", false, "Set fine_value to null (pair with --coarse-value to switch kinds)")
 	appEncodingUpdateCmd.Flags().Bool("clear-coarse-value", false, "Set coarse_value to null (pair with --fine-value to switch kinds)")
 	registerIdempotencyKeyFlag(appEncodingCreateCmd)

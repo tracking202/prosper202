@@ -1,6 +1,6 @@
 # Measurement rewrite: app measurement (iOS + Android) and multi-touch attribution
 
-Status: **in progress.** PR 0 (legacy endpoints), PR 1 (the conversion ledger), PR 2 (identity capture) and PR 3 (the app core reshape) are built; the rest is proposal.
+Status: **in progress.** PR 0 (legacy endpoints), PR 1 (the conversion ledger), PR 2 (identity capture), PR 3 (the app core reshape) and PR 4 (the goals engine) are built; the rest is proposal.
 
 ## Scope
 
@@ -1345,6 +1345,98 @@ without changing anything here.
 - Huawei, Samsung and Xiaomi stores. Huawei reports milliseconds.
 - Deferred deep links, and `assetlinks.json`.
 
+### 5.7 As built: decisions (PR 4)
+
+What PR 4 settled, where it stops short of §2.2, §4.5 and §5.5, and which PR
+picks up the rest. The engine is `Prosper202\Goals` (`GoalDefinition`,
+`GoalEvaluator`, `GoalEngine`, `MysqlGoalRepository`, `PlainGoals`); the API
+is `GoalsController`; the CLI is `p202 goal …`.
+
+- **Owners (scopes).** A goal belongs to a campaign, an app registration or
+  the account. `after` may only name goals of the same scope, and names are
+  unique per owner. A campaign evaluates its own goals from the start, and
+  the goals it attaches from another scope from the moment they were
+  attached (`starts_at`); a prerequisite starts when the goal that needs it
+  does.
+- **Versions.** `202_goal_versions` keeps every definition; a version is
+  immutable and an edit adds one. An event is evaluated under the version
+  whose `effective_at` is at or before its `received_at`, so an edit starts
+  the goal afresh for later arrivals and never re-decides the past on its
+  own. `POST /goals/{id}/reevaluation` is the explicit way to apply the
+  current version to past events. It rebases each subject (the `rebases`
+  column on `202_goal_subjects`) and retires the older versions' outcomes
+  with reason `reevaluation`, superseding their ledger rows where there is
+  a replacement and soft-deleting them where there is none. It handles at
+  most 1000 subjects per call (`GoalEngine::MAX_SUBJECTS_PER_CALL`), and
+  the preview says how many subjects it would touch.
+- **Archive, not delete.** `DELETE /goals/{id}` archives: versions,
+  outcomes and their conversions are kept, and archive time ends the goal's
+  span (`ends_at`), so a replay sees what the incremental evaluation saw.
+  It is refused while an SKAN encoding names the goal or another goal waits
+  for it in `after`. Deleting a registration archives its goals.
+- **Order and replay.** Events are ordered by (`min(occurred_at,
+  received_at)`, `received_at`, `event_id` byte order). An in-order event is
+  evaluated incrementally from stored progress. An event that sorts earlier
+  than the newest stored one replays the subject from its stored events
+  under the per-subject lock row. Outcomes that moved are superseded with
+  reason `replay`, never duplicated. A replay does not retire outcomes it
+  does not recompute, which is why detaching a goal keeps the conversions
+  it already recorded.
+- **Evaluator.** Goals run in topological order (Kahn's algorithm, lowest
+  id first); a goal on an `after` cycle is disabled with its reason, as is
+  one whose stored version cannot be parsed (§7.1). A window with no anchor
+  makes the outcome ineligible (`no_click` / `no_install`), never payable.
+  Sums are computed in integer units of 0.00001. The install pseudo-event's
+  id is `@install`.
+- **Payability** (`GoalEngine::payability`). A goal the campaign does not
+  pay for is tracked at its own value, with note `not_payable_on_campaign`.
+  A campaign payout overrides the goal's value. A `fixed` value pays, and
+  `none` is tracked with no value. `from_property` pays only when the
+  event's revenue is trusted. An untrusted value is kept and not paid
+  (`untrusted_value`). Under `payout_mode = replace`, the click takes its
+  newest counted row, so a replayed outcome's replacement row becomes the
+  click's value, which is the intended reading.
+- **One writer.** Goal outcomes reach the ledger only through
+  `MysqlConversionRepository` (its in-transaction variants), with
+  `DedupeKey::goal()` keys and `ConversionSource::GOAL`. Every read of
+  outcomes goes through `MysqlGoalRepository::liveOutcomes()`.
+  `GoalWritersTest` pins both.
+- **SKAN encodings name goals.** `202_app_skan_encodings` has `goal_id` and
+  an optional `revenue_override` in place of `event_name` and `revenue`.
+  Until the on-device evaluator ships (PR 8), an encoding can only name a
+  *plain event* goal (one event, no `where`, count 1, no `after`, no
+  `within`, repeat once) of its registration or of the account. A goal an
+  encoding names cannot be edited out of that shape. Setup › Mobile Apps
+  still asks for an event name and turns it into a plain goal through
+  `PlainGoals`, in the same transaction as the encoding.
+- **Reads that are POSTs.** `/goals/validate` and `/goals/evaluate` compute
+  and write nothing, so they take read scope, are exempt from staging, and
+  the Go CLI never stamps them as staged (`readOnlyPost`).
+- **Vectors.** `tests/fixtures/app-sdk-contract/goals/` holds
+  `evaluator.json` and `definitions.json`, plus a `README.md` that is the
+  format's specification. PHP runs them through `GoalVectorsTest`; the
+  Swift evaluator (PR 8) runs the same files.
+- **Deferred.**
+  - The encoding versioning with the 35-day horizon (§5.5) goes to PR 8,
+    with the evaluator that needs it.
+  - `notify_traffic_source` is stored on campaign goals but nothing fires
+    yet. The notification outbox goes to PR 5 (installs) and 4b (web
+    events).
+  - Install subjects, `app_registration_id` on outcomes, the install
+    goal's ledger rows and `trust_client_revenue` go to PR 5.
+    `GoalSubject` and the evaluator already model an install subject, but
+    no intake produces one.
+  - There is no HTTP event intake yet (PRs 4b and 5). The live pass
+    drives the engine through `tests/live/goals-ingest.php`.
+  - There are no PHP CLI (`bin/p202`) goal commands, matching PR 3; the
+    Go CLI is the CLI.
+- **Known limitation.** When a retired outcome is revived (a re-evaluation
+  returns to exactly that goal, version, n and event), its superseded
+  ledger row is revived too. A row that was soft-deleted instead is not
+  undeleted. No path that soft-deletes (a re-evaluation retire with no
+  replacement) is known to lead back to the same key, but that has not
+  been proven.
+
 ---
 
 # Part C: the MTA rewrite
@@ -2020,7 +2112,7 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 | 1b | **Breakdown reads:** `GET /clicks/{id}/conversions` and `p202 click conversions <id>`, `/conversions` filters, the click-history breakdown view, Group Overview's Goal/source level, and the Transaction ID level fixed to sum rows | 1, 4 (for goal names); U2 |
 | 2 | **Identity capture:** `p202vid`, LP first-party id (in `landing.php`, with `p202.consent()`), signed `cust` on clicks and conversions, `202_identity_*`, `202_clicks_visitor`, consent switch and per-campaign `identity_signals`. **Built; `tests/live/identity-graph.sh`, `tests/browser/specs/identity-landing.spec.js`.** | — |
 | 3 | **App core reshape** (§4): registry, `AppIdentity`, token rename, verdicts, `PublicIntake`, retention, user-deletion purge, `/apps` and `p202 app` renames, legacy guard deleted. **Built; `tests/live/app-core.sh` (with `setup-mobile-apps.sh`, `analyze-mobile-apps.sh` and both mobile-apps browser specs ported). Decisions in §4.7.** | — |
-| 4 | **Goals engine** (core): definitions, validation, versioning, server evaluator keyed by subject (click or install), cross-language vectors, campaign goal payouts, SKAN encodings pointing at goals, `/goals` API and `p202 goal …` | 1, 3 |
+| 4 | **Goals engine** (core): definitions, validation, versioning, server evaluator keyed by subject (click or install), cross-language vectors, campaign goal payouts, SKAN encodings pointing at goals, `/goals` API and `p202 goal …`. **Built; `tests/live/goals.sh` (with `app-core.sh`, `conversion-ledger.sh`, `setup-mobile-apps.sh`, `analyze-mobile-apps.sh` re-run and both mobile-apps browser specs), vectors in `tests/fixtures/app-sdk-contract/goals/`. Decisions in §5.7.** | 1, 3 |
 | 4b | **Web events:** `event=` on pixels and postbacks, `POST /events`, `p202.js` `track()`, the web campaign goal editor, the Transactions ID docs pointing to goals | 2, 4 |
 | 5 | **Android intake:** install token, `MatchState`, installs and events endpoints, conversions through goals, traffic-source notify, pending-click cron | 1, 3, 4 |
 | 6 | **Play Integrity** (opt-in modes) | 5 |

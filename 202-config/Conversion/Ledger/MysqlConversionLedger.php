@@ -183,6 +183,82 @@ final class MysqlConversionLedger
     }
 
     /**
+     * Mark a goal's ledger row superseded by the goals engine: a replay moved
+     * its outcome to another event (REPLAY), or a re-evaluation under a newer
+     * version replaced it (REEVALUATION). `$byConvId` is the row that replaced
+     * it, or null when the outcome was retired with no replacement. These are
+     * fixed reasons (SupersededReason): the recompute never clears them, and
+     * a superseded row never counts toward the click in either payout mode.
+     *
+     * Locks the click, writes the mark, recomputes the click and queues the
+     * row for MTA — inside the caller's transaction, like every method here.
+     */
+    public function supersedeGoalRow(int $convId, ?int $byConvId, SupersededReason $reason): void
+    {
+        if ($reason !== SupersededReason::REPLAY && $reason !== SupersededReason::REEVALUATION) {
+            throw new LedgerIntegrityException('a goal row is superseded by a replay or a re-evaluation, not by "' . $reason->value . '"');
+        }
+        $click = $this->lockGoalRowsClick($convId);
+
+        $stmt = $this->conn->prepareWrite(
+            'UPDATE 202_conversion_logs SET superseded_by = ?, superseded_reason = ? WHERE conv_id = ?'
+        );
+        $this->conn->bind($stmt, 'isi', [$byConvId, $reason->value, $convId]);
+        $this->conn->executeUpdate($stmt);
+
+        $this->recompute($click['click_id'], $click['campaign_id']);
+        $this->enqueue([$convId], 'counted_state');
+    }
+
+    /**
+     * Undo supersedeGoalRow(): the engine re-derived exactly the outcome this
+     * row recorded (a re-evaluation that returned to it), so it counts again.
+     * Only a replay or re-evaluation mark is lifted; any other reason is the
+     * recompute's or the upgrade's, and is refused.
+     */
+    public function reviveGoalRow(int $convId): void
+    {
+        $click = $this->lockGoalRowsClick($convId);
+
+        $stmt = $this->conn->prepareWrite(
+            "UPDATE 202_conversion_logs SET superseded_by = NULL, superseded_reason = NULL
+             WHERE conv_id = ? AND superseded_reason IN ('replay', 'reevaluation')"
+        );
+        $this->conn->bind($stmt, 'i', [$convId]);
+        $this->conn->executeUpdate($stmt);
+
+        $this->recompute($click['click_id'], $click['campaign_id']);
+        $this->enqueue([$convId], 'counted_state');
+    }
+
+    /**
+     * The click of a goal row, locked (click before conversion, as on every
+     * path that writes both).
+     *
+     * @return array{click_id: int, campaign_id: int}
+     */
+    private function lockGoalRowsClick(int $convId): array
+    {
+        $find = $this->conn->prepareWrite('SELECT click_id, source FROM 202_conversion_logs WHERE conv_id = ? LIMIT 1');
+        $this->conn->bind($find, 'i', [$convId]);
+        $row = $this->conn->fetchOne($find);
+        if ($row === null) {
+            throw new LedgerIntegrityException('conversion ' . $convId . ' does not exist');
+        }
+        if ((string) $row['source'] !== ConversionSource::GOAL->value) {
+            throw new LedgerIntegrityException('conversion ' . $convId . ' is a ' . (string) $row['source'] . ' row, not a goal row');
+        }
+        $lock = $this->conn->prepareWrite('SELECT click_id, aff_campaign_id FROM 202_clicks WHERE click_id = ? LIMIT 1 FOR UPDATE');
+        $this->conn->bind($lock, 'i', [(int) $row['click_id']]);
+        $click = $this->conn->fetchOne($lock);
+        if ($click === null) {
+            throw new LedgerIntegrityException('conversion ' . $convId . ' names click ' . (int) $row['click_id'] . ', which does not exist');
+        }
+
+        return ['click_id' => (int) $click['click_id'], 'campaign_id' => (int) $click['aff_campaign_id']];
+    }
+
+    /**
      * Queue conversions for the MTA worker. The outbox row is written in the
      * caller's transaction, so a conversion and its pending row commit or
      * roll back together. Re-queuing a row that is already pending bumps its

@@ -93,6 +93,9 @@ Off by default, and off whenever the policy cannot be read.
 `tests/fixtures/app-sdk-contract/` holds the cross-language vectors every
 implementation runs. Today: `app-identity.json`, what each store link, App
 Store id and package name names (and which are refused), which the server's
-`AppIdentity` runs in `tests/Apps/AppIdentityTest.php`. The goals evaluator
-and the Android intake add their vectors beside it, read by the PHP, Swift
-and Kotlin suites alike.
+`AppIdentity` runs in `tests/Apps/AppIdentityTest.php`. `goals/` is the goal
+evaluator's specification as data — `definitions.json` (what a valid goal
+is) and `evaluator.json` (what a goal set makes of a subject's events), with
+the format and every rule in `goals/README.md` — run by
+`tests/Goals/GoalVectorsTest.php` and, from PRs 7 and 8, by the Kotlin and
+Swift evaluators. The Android intake adds its vectors beside them.

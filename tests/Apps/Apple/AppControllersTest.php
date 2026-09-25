@@ -29,18 +29,22 @@ final class AppControllersTest extends TestCase
 
     // ─── Conversion-value rules ──────────────────────────────────────
 
+    /** Goal 9: a live account goal that is a plain event goal, which any encoding scope may name. */
+    private const PLAIN_ACCOUNT_GOAL = ['FROM 202_goals g' => [['scope' => 'account', 'scope_id' => 0, 'archived_at' => null,
+        'definition' => '{"name":"purchase","trigger":{"event":"purchase","where":[]},"threshold":{"count":1},"after":[],"within":null,"repeat":{"mode":"once"},"value":{"type":"none"}}']]];
+
     public function testRuleWithBothFineAndCoarseIsRejected(): void
     {
         $ctrl = new AppSkanEncodingsController($this->createMysqliMock(), 1);
         $this->expectException(ValidationException::class);
-        $ctrl->create(['fine_value' => 10, 'coarse_value' => 'high', 'event_name' => 'purchase']);
+        $ctrl->create(['fine_value' => 10, 'coarse_value' => 'high', 'goal_id' => 9]);
     }
 
     public function testRuleWithNeitherValueIsRejected(): void
     {
         $ctrl = new AppSkanEncodingsController($this->createMysqliMock(), 1);
         $this->expectException(ValidationException::class);
-        $ctrl->create(['event_name' => 'purchase']);
+        $ctrl->create(['goal_id' => 9]);
     }
 
     public function testFineValueAbove63IsRejected(): void
@@ -49,14 +53,14 @@ final class AppControllersTest extends TestCase
         // match a postback and would sit there silently decoding nothing.
         $ctrl = new AppSkanEncodingsController($this->createMysqliMock(), 1);
         $this->expectException(ValidationException::class);
-        $ctrl->create(['fine_value' => 64, 'event_name' => 'purchase']);
+        $ctrl->create(['fine_value' => 64, 'goal_id' => 9]);
     }
 
     public function testUnknownCoarseValueIsRejected(): void
     {
         $ctrl = new AppSkanEncodingsController($this->createMysqliMock(), 1);
         $this->expectException(ValidationException::class);
-        $ctrl->create(['coarse_value' => 'huge', 'event_name' => 'purchase']);
+        $ctrl->create(['coarse_value' => 'huge', 'goal_id' => 9]);
     }
 
     public function testDuplicateRuleIsRejectedWithAReadableConflict(): void
@@ -65,17 +69,17 @@ final class AppControllersTest extends TestCase
             'FROM 202_app_skan_encodings WHERE user_id = ? AND registration_id = ? AND fine_value = ?' => [
                 ['encoding_id' => 3],
             ],
-        ]);
+        ] + self::PLAIN_ACCOUNT_GOAL);
         $ctrl = new AppSkanEncodingsController($db, 1);
         $this->expectException(ConflictException::class);
-        $ctrl->create(['fine_value' => 10, 'event_name' => 'purchase']);
+        $ctrl->create(['fine_value' => 10, 'goal_id' => 9]);
     }
 
     public function testValidRuleClearsValidationBeforeTheInsert(): void
     {
-        $ctrl = new AppSkanEncodingsController($this->createMysqliMock(), 1);
+        $ctrl = new AppSkanEncodingsController($this->createMysqliMock(self::PLAIN_ACCOUNT_GOAL), 1);
         try {
-            $ctrl->create(['fine_value' => 10, 'event_name' => 'purchase', 'revenue' => 49.99]);
+            $ctrl->create(['fine_value' => 10, 'goal_id' => 9, 'revenue_override' => 49.99]);
             $this->addToAssertionCount(1); // full mock round-trip succeeded
         } catch (ValidationException | ConflictException $e) {
             $this->fail('A valid rule must clear validation, got: ' . $e->getMessage());
@@ -89,12 +93,12 @@ final class AppControllersTest extends TestCase
 
     public function testRevenueAboveWhatTheColumnHoldsIsRejectedAsInputNotAs500(): void
     {
-        // revenue is decimal(11,5); without an upper bound the value reached
+        // revenue_override is decimal(11,5); without an upper bound the value reached
         // the INSERT and came back as a 500 under strict mode (or was
         // silently clamped, and then decoded as revenue in the report).
         $ctrl = new AppSkanEncodingsController($this->createMysqliMock(), 1);
         $this->expectException(ValidationException::class);
-        $ctrl->create(['fine_value' => 10, 'event_name' => 'purchase', 'revenue' => 1000000]);
+        $ctrl->create(['fine_value' => 10, 'goal_id' => 9, 'revenue_override' => 1000000]);
     }
 
     public function testAMistypedPagingValueIsA422NotOneSilentlyClampedRow(): void
@@ -124,7 +128,7 @@ final class AppControllersTest extends TestCase
     {
         $ctrl = new AppSkanEncodingsController($this->createMysqliMock(), 1);
         $this->expectException(ValidationException::class);
-        $ctrl->create(['fine_value' => 10, 'event_name' => 'purchase', 'revenue' => -1]);
+        $ctrl->create(['fine_value' => 10, 'goal_id' => 9, 'revenue_override' => -1]);
     }
 
     public function testClearingAKindWithoutItsReplacementNamesTheSwitchSyntax(): void
@@ -136,12 +140,12 @@ final class AppControllersTest extends TestCase
         $db = $this->createMysqliMock([
             'FROM 202_app_skan_encodings WHERE encoding_id = ?' => [[
                 'encoding_id' => 5, 'registration_id' => 0, 'fine_value' => 10, 'coarse_value' => null,
-                'event_name' => 'purchase', 'revenue' => '1.00000', 'user_id' => 1,
+                'goal_id' => 9, 'revenue_override' => '1.00000', 'user_id' => 1,
             ]],
         ]);
         $ctrl = new AppSkanEncodingsController($db, 1);
         try {
-            $ctrl->update(5, ['fine_value' => null, 'revenue' => 5]);
+            $ctrl->update(5, ['fine_value' => null, 'revenue_override' => 5]);
             $this->fail('Expected a ValidationException');
         } catch (ValidationException $e) {
             $this->assertStringContainsString('switch kinds', $e->getFieldErrors()['fine_value'] ?? '');
@@ -155,12 +159,12 @@ final class AppControllersTest extends TestCase
         $db = $this->createMysqliMock([
             'FROM 202_app_skan_encodings WHERE encoding_id = ?' => [[
                 'encoding_id' => 5, 'registration_id' => 0, 'fine_value' => null, 'coarse_value' => 'high',
-                'event_name' => 'purchase', 'revenue' => '1.00000', 'user_id' => 1,
+                'goal_id' => 9, 'revenue_override' => '1.00000', 'user_id' => 1,
             ]],
-        ]);
+        ] + self::PLAIN_ACCOUNT_GOAL);
         $ctrl = new AppSkanEncodingsController($db, 1);
         try {
-            $ctrl->update(5, ['fine_value' => null, 'event_name' => 'renamed']);
+            $ctrl->update(5, ['fine_value' => null, 'goal_id' => 9]);
             $this->addToAssertionCount(1);
         } catch (ValidationException $e) {
             $this->fail('A no-op clear beside a rename must not be refused: ' . $e->getMessage());
@@ -337,13 +341,16 @@ final class AppControllersTest extends TestCase
             static fn(array $s): bool => preg_match('/^(UPDATE|DELETE)/', ltrim($s['sql'])) === 1
         ));
         $sql = array_map(static fn(array $s): string => $s['sql'], $writes);
-        $this->assertCount(4, $writes, implode("\n", $sql));
+        $this->assertCount(5, $writes, implode("\n", $sql));
         $this->assertStringContainsString('UPDATE 202_app_postbacks SET trusted = NULL', $sql[0]);
         $this->assertStringContainsString('signature_state = ?', $sql[0]);
         $this->assertSame([7, 1, 'development'], $writes[0]['values'], 'this registration, this owner, test signals only');
         $this->assertStringContainsString('UPDATE 202_app_postbacks SET registration_id = NULL', $sql[1]);
         $this->assertStringContainsString('DELETE FROM 202_app_skan_encodings', $sql[2]);
-        $this->assertStringContainsString('DELETE FROM 202_app_registrations', $sql[3]);
+        // The app's goals are archived with it, their history kept.
+        $this->assertStringContainsString('UPDATE 202_goals SET archived_at = ?', $sql[3]);
+        $this->assertSame([7, 1], array_slice($writes[3]['values'], 2), 'this registration\'s goals, this owner');
+        $this->assertStringContainsString('DELETE FROM 202_app_registrations', $sql[4]);
     }
 
     public function testTheStoredPlatformIsCanonicalWhateverCaseWasSent(): void
@@ -751,13 +758,18 @@ final class AppControllersTest extends TestCase
                 ['grp_day' => $day, 'cv_registration_id' => null, 'conversion_value' => null, 'coarse_conversion_value' => 'high', 'cnt' => 1],
                 ['grp_day' => $day, 'cv_registration_id' => 8, 'conversion_value' => null, 'coarse_conversion_value' => null, 'cnt' => 1],
             ],
-            // The user's encodings: a registration-specific fine encoding
-            // overriding the account-wide one for value 63, plus an
-            // account-wide coarse encoding.
-            'FROM 202_app_skan_encodings WHERE user_id = ?' => [
-                ['registration_id' => 0, 'fine_value' => 63, 'coarse_value' => null, 'event_name' => 'purchase', 'revenue' => '49.99000'],
-                ['registration_id' => 7, 'fine_value' => 63, 'coarse_value' => null, 'event_name' => 'premium_purchase', 'revenue' => '99.99000'],
-                ['registration_id' => 0, 'fine_value' => null, 'coarse_value' => 'high', 'event_name' => 'high_value', 'revenue' => '10.00000'],
+            // The user's encodings, each joined to the goal it names: a
+            // registration-specific fine encoding overriding the account-wide
+            // one for value 63 (worth its goal's fixed value, no override),
+            // plus an account-wide coarse encoding. The others are worth
+            // their override, whatever their goal says.
+            'FROM 202_app_skan_encodings e' => [
+                ['encoding_id' => 1, 'registration_id' => 0, 'fine_value' => 63, 'coarse_value' => null, 'goal_id' => 1, 'revenue_override' => '49.99000',
+                    'name' => 'purchase', 'definition' => '{"name":"purchase","trigger":{"event":"purchase","where":[]},"threshold":{"count":1},"after":[],"within":null,"repeat":{"mode":"once"},"value":{"type":"none"}}'],
+                ['encoding_id' => 2, 'registration_id' => 7, 'fine_value' => 63, 'coarse_value' => null, 'goal_id' => 2, 'revenue_override' => null,
+                    'name' => 'premium_purchase', 'definition' => '{"name":"premium_purchase","trigger":{"event":"premium","where":[]},"threshold":{"count":1},"after":[],"within":null,"repeat":{"mode":"once"},"value":{"type":"fixed","amount":"99.99"}}'],
+                ['encoding_id' => 3, 'registration_id' => 0, 'fine_value' => null, 'coarse_value' => 'high', 'goal_id' => 3, 'revenue_override' => '10.00000',
+                    'name' => 'high_value', 'definition' => '{"name":"high_value","trigger":{"event":"whale","where":[]},"threshold":{"count":1},"after":[],"within":null,"repeat":{"mode":"once"},"value":{"type":"fixed","amount":"1.00"}}'],
             ],
         ]);
 

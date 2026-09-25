@@ -171,7 +171,13 @@ final class AppSchemaController
     /**
      * The encode map: event name -> {fine_value, coarse_value}, from the
      * owner's encodings for this registration plus the registration_id = 0
-     * account-wide ones.
+     * account-wide ones. An encoding names a goal (plan §4.5); until the
+     * on-device evaluator ships the goal is a plain event goal
+     * (AppSkanEncodingsController refuses anything else), so the document
+     * keeps its shape and keys each value by the goal's trigger event — the
+     * name the SDK's logEvent() is called with. An encoding whose goal is
+     * archived or no longer plain is left out and logged: the SDK could not
+     * act on it, and serving it would set a value for the wrong event.
      *
      * Resolution, per event and per kind (fine and coarse independently):
      * app-specific rules beat defaults; when several values in the winning
@@ -184,7 +190,11 @@ final class AppSchemaController
     private function buildEvents(int $userId, int $registrationId): array
     {
         $stmt = $this->prepare(
-            'SELECT registration_id, fine_value, coarse_value, event_name FROM 202_app_skan_encodings WHERE user_id = ? AND (registration_id = ? OR registration_id = 0)'
+            'SELECT e.encoding_id, e.registration_id, e.fine_value, e.coarse_value, e.goal_id, g.archived_at, v.definition
+             FROM 202_app_skan_encodings e
+             LEFT JOIN 202_goals g ON g.goal_id = e.goal_id AND g.user_id = e.user_id
+             LEFT JOIN 202_goal_versions v ON v.goal_id = g.goal_id AND v.version = g.current_version
+             WHERE e.user_id = ? AND (e.registration_id = ? OR e.registration_id = 0)'
         );
         $this->bind($stmt, 'ii', $userId, $registrationId);
         $this->execute($stmt, 'Encodings query failed');
@@ -194,7 +204,10 @@ final class AppSchemaController
         // where scope is 'app' or 'default'.
         $candidates = [];
         while ($row = $result->fetch_assoc()) {
-            $eventName = (string)$row['event_name'];
+            $eventName = self::plainEventOf($row);
+            if ($eventName === null) {
+                continue;
+            }
             $scope = ((int)$row['registration_id'] === 0) ? 'default' : 'app';
             if ($row['fine_value'] !== null) {
                 $fine = (int)$row['fine_value'];
@@ -224,6 +237,39 @@ final class AppSchemaController
         }
         ksort($events);
         return $events;
+    }
+
+    /**
+     * The trigger event of an encoding's goal, or null (logged) when the
+     * goal is gone, archived, or not a plain event goal.
+     *
+     * @param array<string, mixed> $row
+     */
+    private static function plainEventOf(array $row): ?string
+    {
+        $why = null;
+        $event = null;
+        if ($row['definition'] === null) {
+            $why = 'its goal ' . (int)$row['goal_id'] . ' does not exist';
+        } elseif ($row['archived_at'] !== null) {
+            $why = 'its goal ' . (int)$row['goal_id'] . ' is archived';
+        } else {
+            try {
+                $definition = \Prosper202\Goals\GoalDefinition::fromJson((string)$row['definition'], (int)$row['goal_id']);
+                if ($definition->isPlainEvent()) {
+                    $event = $definition->triggerEvent;
+                } else {
+                    $why = 'its goal ' . (int)$row['goal_id'] . ' is not a plain event goal';
+                }
+            } catch (\Prosper202\Goals\InvalidGoalDefinition $e) {
+                $why = 'its goal ' . (int)$row['goal_id'] . ' has an invalid definition: ' . $e->getMessage();
+            }
+        }
+        if ($why !== null) {
+            error_log('p202 app schema: SKAN encoding ' . (int)$row['encoding_id'] . ' is not served: ' . $why);
+        }
+
+        return $event;
     }
 
     /** @return array{status: int, body: array<string, mixed>, etag: null} */

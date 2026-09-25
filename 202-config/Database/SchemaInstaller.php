@@ -19,6 +19,7 @@ use Prosper202\Database\Tables\RotatorTables;
 use Prosper202\Database\Tables\AdNetworkTables;
 use Prosper202\Database\Tables\MiscTables;
 use Prosper202\Database\Tables\AppTables;
+use Prosper202\Database\Tables\GoalTables;
 use Prosper202\Database\Tables\SyncTables;
 use Prosper202\Database\Exceptions\SchemaInstallException;
 
@@ -63,6 +64,7 @@ final class SchemaInstaller
             $this->createRotatorTables();
             $this->createAdNetworkTables();
             $this->createAppTables();
+            $this->createGoalTables();
             $this->createMiscTables();
             $this->setCollations();
         } catch (SchemaInstallException $e) {
@@ -180,6 +182,14 @@ final class SchemaInstaller
     public function createAppTables(): void
     {
         $this->createTablesFromDefinitions(AppTables::getDefinitions());
+    }
+
+    /**
+     * Create the goals engine's tables.
+     */
+    public function createGoalTables(): void
+    {
+        $this->createTablesFromDefinitions(GoalTables::getDefinitions());
     }
 
     /**

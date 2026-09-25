@@ -119,6 +119,8 @@ module.exports = {
       '202_app_registrations',
       '202_app_skan_encodings',
       '202_app_postbacks',
+      '202_goals',
+      '202_goal_versions',
     ]);
     db.write("UPDATE 202_users_pref SET user_account_currency='USD' WHERE user_id=1");
 
@@ -127,10 +129,18 @@ module.exports = {
       + '(user_id, platform, app_key, app_name, accept_test_signals, app_token, created_at, updated_at) VALUES '
       + "(1, 'ios', '" + APP_ID + "', 'Summit Run', 0, REPEAT('ab', 32), " + now + ', ' + now + '), '
       + "(1, 'ios', '" + OTHER_APP_ID + "', 'Summit Racer', 0, REPEAT('cd', 32), " + now + ', ' + now + ')');
-    db.write('INSERT INTO 202_app_skan_encodings '
-      + '(user_id, registration_id, fine_value, coarse_value, event_name, revenue, created_at, updated_at) '
-      + "SELECT 1, registration_id, 3, NULL, 'purchase', 4.99000, " + now + ', ' + now
+    // An encoding names a goal (plan §4.5): the app's plain "purchase" goal,
+    // worth the encoding's revenue_override.
+    db.write('INSERT INTO 202_goals (user_id, scope, scope_id, name, current_version, created_at, updated_at) '
+      + "SELECT 1, 'registration', registration_id, 'purchase', 1, " + now + ', ' + now
       + " FROM 202_app_registrations WHERE platform = 'ios' AND app_key = '" + APP_ID + "'");
+    db.write('INSERT INTO 202_goal_versions (goal_id, version, definition, effective_at, created_at) '
+      + 'SELECT goal_id, 1, \'{"name":"purchase","trigger":{"event":"purchase","where":[]},"threshold":{"count":1},'
+      + '"after":[],"within":null,"repeat":{"mode":"once"},"value":{"type":"none"}}\', ' + now + ', ' + now + ' FROM 202_goals');
+    db.write('INSERT INTO 202_app_skan_encodings '
+      + '(user_id, registration_id, fine_value, coarse_value, goal_id, revenue_override, created_at, updated_at) '
+      + 'SELECT 1, g.scope_id, 3, NULL, g.goal_id, 4.99000, ' + now + ', ' + now
+      + " FROM 202_goals g WHERE g.name = 'purchase'");
 
     // Today, so every preset from Today upwards has something; and eight days
     // back, which only the longer presets and a custom window reach.

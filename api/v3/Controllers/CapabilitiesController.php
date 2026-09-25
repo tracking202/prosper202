@@ -83,6 +83,18 @@ class CapabilitiesController
                     // header, so changes need no store resubmission.
                     'app_platforms' => \Api\V3\Apps\AppIdentity::PLATFORMS,
                     'app_postbacks' => \Api\V3\Apps\Apple\Protocols::NAMES,
+                    // Goals: versioned, data-only definitions owned by a
+                    // campaign, an app registration or the account, and
+                    // evaluated per subject by one specification whose
+                    // vectors every evaluator shares
+                    // (tests/fixtures/app-sdk-contract/goals/,
+                    // format_version below). /goals/evaluate runs it
+                    // without writing anything.
+                    'goals' => [
+                        'scopes' => array_map(static fn (\Prosper202\Goals\GoalScope $s): string => $s->value, \Prosper202\Goals\GoalScope::cases()),
+                        'subjects' => [\Prosper202\Goals\GoalSubject::CLICK, \Prosper202\Goals\GoalSubject::INSTALL],
+                        'evaluator_format' => 1,
+                    ],
                 ],
                 'limits' => [
                     'max_bulk_rows' => $this->maxBulkRows(),
@@ -137,6 +149,8 @@ class CapabilitiesController
             'apps' => ['bulk_upsert' => false] + $base,
             'app-skan-encodings' => ['bulk_upsert' => false] + $base,
             'app-postbacks' => ['list' => true, 'get' => true, 'create' => false, 'update' => false, 'delete' => false, 'bulk_upsert' => false],
+            // DELETE archives: the goal keeps its versions and outcomes.
+            'goals' => ['bulk_upsert' => false] + $base,
         ];
     }
 

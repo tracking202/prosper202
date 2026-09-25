@@ -17,7 +17,8 @@
 #     one carries its identity; 304 on a matching ETag, 400 for a malformed or
 #     missing header (a token in the query string is not read), 404 for a
 #     well-formed token nobody holds, 405 for anything but GET/HEAD;
-#   - an encoding names one of the caller's own iOS registrations, or 0;
+#   - an encoding names one of the caller's own iOS registrations, or 0, and
+#     a goal (PR 4: the schema encodes by the goal's event);
 #   - `apps` is its own scope area: an `apps:read` key reads and cannot
 #     write, an `attribution:write` key cannot reach /apps at all, and the old
 #     /attribution app routes answer 404;
@@ -97,7 +98,7 @@ OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE api_key='$P202_API_KEY'" 2>/de
 IOS=990088001; SHARED=990088002
 RUN=$(date +%s)
 
-mysql_q "$DB" -e "TRUNCATE 202_app_registrations; TRUNCATE 202_app_postbacks; TRUNCATE 202_app_skan_encodings;"
+mysql_q "$DB" -e "TRUNCATE 202_app_registrations; TRUNCATE 202_app_postbacks; TRUNCATE 202_app_skan_encodings; TRUNCATE 202_goals; TRUNCATE 202_goal_versions;"
 
 say "a postback that arrives before its app is registered waits unclaimed"
 eq "$(skan $IOS "core-a-$RUN")" 200 "the receiver accepts it"
@@ -142,16 +143,23 @@ eq "$(api PUT "/apps/$RID" "{\"app_key\":\"$IOS\",\"app_name\":\"Summit Run Pro\
 eq "$(Q "SELECT CONCAT(app_key, '/', app_name) FROM 202_app_registrations WHERE registration_id=$RID")" "$IOS/Summit Run Pro" \
    "and only the name changed"
 
-say "SKAN encodings name one of your own iOS registrations"
-eq "$(api POST /apps/skan-encodings "{\"registration_id\":$RID,\"fine_value\":3,\"event_name\":\"purchase\",\"revenue\":4.99}")" 201 \
+say "SKAN encodings name one of your own iOS registrations, and a goal"
+# An encoding names the goal a value means (PR 4); these are plain event
+# goals, which is what an encoding may name until the on-device evaluator.
+api POST /goals "{\"scope\":\"registration\",\"scope_id\":$RID,\"definition\":{\"name\":\"purchase\",\"trigger\":{\"event\":\"purchase\"}}}" > /dev/null
+G_BUY=$(field "d['data']['goal_id']")
+api POST /goals '{"scope":"account","definition":{"name":"whale","trigger":{"event":"whale"},"value":{"type":"fixed","amount":20}}}' > /dev/null
+G_WHALE=$(field "d['data']['goal_id']")
+[ -n "$G_BUY" ] && [ -n "$G_WHALE" ] && ok "the goals the encodings name exist" || bad "the goals the encodings name exist"
+eq "$(api POST /apps/skan-encodings "{\"registration_id\":$RID,\"fine_value\":3,\"goal_id\":$G_BUY,\"revenue_override\":4.99}")" 201 \
    "an encoding for the iOS registration"
 ENC=$(field "d['data']['encoding_id']")
-eq "$(api POST /apps/skan-encodings "{\"registration_id\":$AID,\"fine_value\":4,\"event_name\":\"x\"}")" 422 "not for an Android registration"
+eq "$(api POST /apps/skan-encodings "{\"registration_id\":$AID,\"fine_value\":4,\"goal_id\":$G_WHALE}")" 422 "not for an Android registration"
 has "$OUT/body" "is an Android app; SKAN encodings apply to iOS apps only" "which the error says, in a sentence"
-eq "$(api POST /apps/skan-encodings '{"registration_id":987654,"fine_value":4,"event_name":"x"}')" 422 "not for a registration that does not exist"
-eq "$(api POST /apps/skan-encodings '{"registration_id":"1e3","fine_value":4,"event_name":"x"}')" 422 \
+eq "$(api POST /apps/skan-encodings "{\"registration_id\":987654,\"fine_value\":4,\"goal_id\":$G_WHALE}")" 422 "not for a registration that does not exist"
+eq "$(api POST /apps/skan-encodings "{\"registration_id\":\"1e3\",\"fine_value\":4,\"goal_id\":$G_WHALE}")" 422 \
    "a registration id an integer cast would change is refused, not rounded"
-eq "$(api POST /apps/skan-encodings '{"registration_id":0,"coarse_value":"high","event_name":"whale","revenue":20}')" 201 \
+eq "$(api POST /apps/skan-encodings "{\"registration_id\":0,\"coarse_value\":\"high\",\"goal_id\":$G_WHALE}")" 201 \
    "registration 0 is the account-wide set"
 
 say "GET /apps/schema: selected by the header, shaped by the platform"
@@ -222,8 +230,10 @@ OKEY=$(field "d['data'].get('api_key') or d['data'].get('key')")
 eq "$(skan $SHARED "core-b-$RUN")" 200 "a postback for their app arrives"
 eq "$(api POST /apps "{\"app_key\":\"$SHARED\",\"app_name\":\"Their app\",\"accept_test_signals\":1}" "$OKEY")" 201 "they register the app"
 ORID=$(field "d['data']['registration_id']")
-eq "$(api POST /apps/skan-encodings "{\"registration_id\":$ORID,\"fine_value\":1,\"event_name\":\"theirs\"}" "$OKEY")" 201 "and give it an encoding"
-eq "$(api POST /apps/skan-encodings "{\"registration_id\":$ORID,\"fine_value\":1,\"event_name\":\"mine\"}")" 422 \
+api POST /goals "{\"scope\":\"registration\",\"scope_id\":$ORID,\"definition\":{\"name\":\"theirs\",\"trigger\":{\"event\":\"theirs\"}}}" "$OKEY" > /dev/null
+OGOAL=$(field "d['data']['goal_id']")
+eq "$(api POST /apps/skan-encodings "{\"registration_id\":$ORID,\"fine_value\":1,\"goal_id\":$OGOAL}" "$OKEY")" 201 "and give it an encoding"
+eq "$(api POST /apps/skan-encodings "{\"registration_id\":$ORID,\"fine_value\":1,\"goal_id\":$G_WHALE}")" 422 \
    "the admin cannot hang an encoding on another user's registration"
 has "$OUT/body" "No registration $ORID in this account" "and is told it is not theirs, not that it exists"
 eq "$(Q "SELECT CONCAT(user_id, '/', registration_id) FROM 202_app_postbacks WHERE transaction_id='core-b-$RUN'")" \
@@ -237,6 +247,7 @@ eq "$(api DELETE "/users/$OTHER")" 204 "DELETE /users/{id} answers 204"
 eq "$(Q "SELECT user_deleted FROM 202_users WHERE user_id=$OTHER")" 1 "the user is marked deleted"
 eq "$(Q "SELECT COUNT(*) FROM 202_app_registrations WHERE user_id=$OTHER")" 0 "their registrations are gone"
 eq "$(Q "SELECT COUNT(*) FROM 202_app_skan_encodings WHERE user_id=$OTHER")" 0 "their encodings are gone"
+eq "$(Q "SELECT COUNT(*) FROM 202_goals WHERE user_id=$OTHER")" 0 "and their goals"
 eq "$(Q "SELECT CONCAT(user_id, '/', IFNULL(registration_id, 'NULL')) FROM 202_app_postbacks WHERE transaction_id='core-b-$RUN'")" \
    "0/NULL" "their postback is released, not deleted"
 eq "$(api GET /apps '' "$OKEY")" 401 "and their key no longer works"

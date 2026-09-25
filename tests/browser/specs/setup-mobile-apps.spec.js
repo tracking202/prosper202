@@ -41,6 +41,8 @@ module.exports = {
       '202_app_registrations',
       '202_app_skan_encodings',
       '202_app_postbacks',
+      '202_goals',
+      '202_goal_versions',
     ]);
     db.write("UPDATE 202_users_pref SET user_account_currency='USD' WHERE user_id=1");
   },
@@ -230,9 +232,9 @@ module.exports = {
         await app.submit('button:has-text("Add rule")');
 
         const where = 'registration_id=' + state.rowId + ' AND fine_value=7';
-        expect.eq(db.value('SELECT event_name FROM 202_app_skan_encodings WHERE ' + where),
-          'subscribed', 'the rule is stored');
-        expect.eq(db.value('SELECT revenue FROM 202_app_skan_encodings WHERE ' + where),
+        expect.eq(db.value('SELECT g.name FROM 202_app_skan_encodings e JOIN 202_goals g ON g.goal_id = e.goal_id WHERE e.'
+          + where.replace(' AND ', ' AND e.')), 'subscribed', 'the rule is stored, naming the app\'s goal for the event');
+        expect.eq(db.value('SELECT revenue_override FROM 202_app_skan_encodings WHERE ' + where),
           '9.99000', 'with its revenue');
       },
     },
@@ -260,7 +262,7 @@ module.exports = {
 
         await ui.fill({ 'input[name="revenue"]': '14.50' });
         await app.submit('button:has-text("Save rule"), button:has-text("Add rule")');
-        expect.eq(db.value('SELECT revenue FROM 202_app_skan_encodings WHERE ' + where),
+        expect.eq(db.value('SELECT revenue_override FROM 202_app_skan_encodings WHERE ' + where),
           '14.50000', 'saving updates it');
         expect.eq(db.count('202_app_skan_encodings', 'registration_id=' + state.rowId), 7,
           'and does not add a second rule');
@@ -281,16 +283,18 @@ module.exports = {
 
         const cameBack = await ui.exists('input[name="event_name"]');
         expect.ok(cameBack, 'it stays on the app, not the apps list');
-        expect.match((await app.fieldErrors()).join(' | '), /Must be between 0 and/,
-          'the API sentence is under the field');
+        expect.match((await app.fieldErrors()).join(' | '), /amount of 0 or more/,
+          'the sentence is under the field');
         if (cameBack) {
           expect.eq(await ui.value('input[name="event_name"]'), 'refused_probe',
             'and what was typed is still there');
         } else {
           expect.fail('and what was typed is still there', 'the rules form is not on the page that came back');
         }
-        expect.eq(db.count('202_app_skan_encodings', "event_name='refused_probe'"), 0,
+        expect.eq(db.count('202_app_skan_encodings', 'fine_value=12'), 0,
           'no rule was created');
+        expect.eq(db.count('202_goals', "name='refused_probe'"), 0,
+          'nor a goal for it');
       },
     },
 

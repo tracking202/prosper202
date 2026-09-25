@@ -9,23 +9,31 @@ use Api\V3\Controller;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ValidationException;
+use Prosper202\Goals\GoalDefinition;
+use Prosper202\Goals\GoalScope;
+use Prosper202\Goals\InvalidGoalDefinition;
 
 /**
- * SKAN encodings: which conversion value means which event, and what it is
- * worth (plan §4.5).
+ * SKAN encodings: which conversion value means which goal was reached
+ * (plan §4.5). What an outcome is worth is the goal's; how iOS carries it in
+ * six bits is the encoding's.
  *
  * An encoding maps either one fine conversion value (0–63) or one coarse
- * value (low/medium/high) — never both — to an event name and revenue.
- * `registration_id` names the iOS registration it applies to, or is 0 for
- * the account-wide set; an app's own encodings override the account-wide
- * ones for that app. The report decodes through them
+ * value (low/medium/high) — never both — to a goal, with an optional
+ * `revenue_override` for tiered decoding (two values meaning one goal at two
+ * prices). `registration_id` names the iOS registration it applies to, or is
+ * 0 for the account-wide set; an app's own encodings override the
+ * account-wide ones for that app. The report decodes through them
  * (AppPostbacksController::resolveEncoding()) and GET /apps/schema encodes
  * through them, so the two directions cannot drift.
  *
  * An encoding must name a registration that exists, belongs to the caller
  * and is an iOS app, or be account-wide: SKAdNetwork values mean nothing on
  * Android, and an encoding for an app nobody registered would decode
- * nothing until someone did.
+ * nothing until someone did. Its goal must be the caller's, live, and owned
+ * by that registration or by the account (an account-wide encoding names an
+ * account goal); and until the on-device evaluator ships (PR 8) the goal
+ * must be a plain event goal, because the iOS SDK encodes by event name.
  */
 class AppSkanEncodingsController extends Controller
 {
@@ -39,29 +47,64 @@ class AppSkanEncodingsController extends Controller
         return 'encoding_id';
     }
 
-    /** Largest value the revenue decimal(11,5) column can hold. */
-    private const MAX_REVENUE = 999999.99999;
-
     protected function fields(): array
     {
         return [
-            'registration_id' => ['type' => 'i', 'default' => 0],
-            'fine_value'      => ['type' => 'i'],
-            'coarse_value'    => ['type' => 's', 'max_length' => 6, 'allowed' => ['low', 'medium', 'high']],
-            'event_name'      => ['type' => 's', 'required' => true, 'max_length' => 255],
-            'revenue'         => ['type' => 'd', 'default' => 0],
+            'registration_id'  => ['type' => 'i', 'default' => 0],
+            'fine_value'       => ['type' => 'i'],
+            'coarse_value'     => ['type' => 's', 'max_length' => 6, 'allowed' => ['low', 'medium', 'high']],
+            'goal_id'          => ['type' => 'i', 'required' => true],
+            'revenue_override' => ['type' => 'd'],
         ];
     }
 
     /**
-     * Which of fine_value/coarse_value the in-flight update() explicitly set
-     * to null. validatePayload() drops nulls, so without this capture a
-     * kind-switch ({"fine_value": null, "coarse_value": "high"}) would
-     * validate a row state the UPDATE never writes.
+     * Which of fine_value/coarse_value/revenue_override the in-flight
+     * update() explicitly set to null. validatePayload() drops nulls, so
+     * without this capture a kind-switch ({"fine_value": null,
+     * "coarse_value": "high"}) would validate a row state the UPDATE never
+     * writes, and a cleared override would silently stay.
      *
      * @var array<string, true>
      */
     private array $pendingClears = [];
+
+    /**
+     * The raw body's shape, checked before validatePayload() casts anything
+     * (CLAUDE.md #18) and before it drops fields it does not know (#4): an
+     * encoding written the old way (event_name, revenue) is refused by name,
+     * not stored without its event.
+     *
+     * @param array<string, mixed> $payload
+     */
+    private static function assertRawBody(array $payload): void
+    {
+        $allowed = ['registration_id', 'fine_value', 'coarse_value', 'goal_id', 'revenue_override'];
+        $errors = [];
+        foreach (array_keys($payload) as $key) {
+            if (in_array((string) $key, ['event_name', 'revenue'], true)) {
+                $errors[(string) $key] = 'An encoding names a goal now: send goal_id (a goal from GET /goals) and, for tiered '
+                    . 'decoding, revenue_override. The goal says what reaching it is worth.';
+            } elseif (!in_array((string) $key, $allowed, true)) {
+                $errors[(string) $key] = 'is not accepted here (accepted: ' . implode(', ', $allowed) . ')';
+            }
+        }
+        if ($errors !== []) {
+            throw new ValidationException('Unknown field', $errors);
+        }
+        if (array_key_exists('registration_id', $payload)) {
+            self::assertRegistrationScope($payload['registration_id']);
+        }
+        if (array_key_exists('goal_id', $payload) && $payload['goal_id'] !== null && !self::isPositiveId($payload['goal_id'])) {
+            throw new ValidationException('Invalid goal_id', ['goal_id' => 'Must be a goal id from GET /goals']);
+        }
+        if (array_key_exists('revenue_override', $payload) && $payload['revenue_override'] !== null
+            && GoalDefinition::amountUnits($payload['revenue_override']) === null) {
+            throw new ValidationException('Invalid revenue_override', [
+                'revenue_override' => 'Must be an amount from 0 to 999999.99999 with at most 5 decimal places, or null for the goal\'s own value',
+            ]);
+        }
+    }
 
     #[\Override]
     protected function duplicateKeyConflictMessage(): ?string
@@ -74,17 +117,15 @@ class AppSkanEncodingsController extends Controller
     #[\Override]
     public function create(array $payload): array
     {
-        // The RAW value, before Controller::create() hands the payload to
-        // validatePayload() and the 'i' field definition casts it: by then
+        // The RAW values, before Controller::create() hands the payload to
+        // validatePayload() and the 'i' field definition casts them: by then
         // 1.5 is 1, '1e2' is 100 and a 20-digit string is PHP_INT_MAX. A
         // guard placed after that scopes the encoding to a DIFFERENT
-        // registration and still answers 201 — and GET /apps/schema then
-        // serves it to that app's builds (CLAUDE.md #18). An absent
+        // registration (or goal) and still answers 201 — and GET /apps/schema
+        // then serves it to that app's builds (CLAUDE.md #18). An absent
         // registration_id is left to the field's declared default, the
         // account-wide set.
-        if (array_key_exists('registration_id', $payload)) {
-            self::assertRegistrationScope($payload['registration_id']);
-        }
+        self::assertRawBody($payload);
         return parent::create($payload);
     }
 
@@ -93,6 +134,7 @@ class AppSkanEncodingsController extends Controller
     {
         $this->assertEncodingShape($payload);
         $this->assertRegistrationIsMineAndIos((int)($payload['registration_id'] ?? 0));
+        $this->assertGoalFits((int)$payload['goal_id'], (int)($payload['registration_id'] ?? 0));
         $this->assertNoDuplicateEncoding($payload);
         $now = time();
         return [
@@ -104,20 +146,28 @@ class AppSkanEncodingsController extends Controller
     #[\Override]
     public function update(int|string $id, array $payload): array
     {
-        // Raw, for the same reason create() checks it raw. registration_id is
-        // NOT NULL with a declared default, so it has no "clear" spelling: an
+        // Raw, for the same reason create() checks it raw. registration_id
+        // and goal_id are NOT NULL, so they have no "clear" spelling: an
         // explicit null is bad input here, not a sentinel.
-        if (array_key_exists('registration_id', $payload)) {
-            self::assertRegistrationScope($payload['registration_id']);
+        self::assertRawBody($payload);
+        if (array_key_exists('goal_id', $payload) && $payload['goal_id'] === null) {
+            throw new ValidationException('Invalid goal_id', ['goal_id' => 'An encoding always names a goal; send another goal id, or delete the encoding.']);
         }
 
         // An encoding holds exactly one kind of value, so switching kinds
         // needs the old kind cleared and the new one set in ONE request.
         $this->pendingClears = [];
-        foreach (['fine_value', 'coarse_value'] as $col) {
+        foreach (['fine_value', 'coarse_value', 'revenue_override'] as $col) {
             if (array_key_exists($col, $payload) && $payload[$col] === null) {
                 $this->pendingClears[$col] = true;
             }
+        }
+
+        // Clearing only the override leaves the base class no column to SET,
+        // and it refuses an update with none; re-sending the current goal is
+        // the no-op that lets the clear through.
+        if (isset($this->pendingClears['revenue_override']) && array_filter($payload, static fn ($v) => $v !== null) === []) {
+            $payload['goal_id'] = (int)((array)$this->get($id)['data'])['goal_id'];
         }
 
         try {
@@ -138,7 +188,7 @@ class AppSkanEncodingsController extends Controller
             'registration_id' => $current['registration_id'],
             'fine_value' => $current['fine_value'],
             'coarse_value' => $current['coarse_value'],
-            'revenue' => $current['revenue'],
+            'goal_id' => $current['goal_id'],
         ];
         foreach ($effective as $col => $unused) {
             if (isset($this->pendingClears[$col])) {
@@ -157,6 +207,9 @@ class AppSkanEncodingsController extends Controller
         if (array_key_exists('registration_id', $payload)) {
             $this->assertRegistrationIsMineAndIos((int)$effective['registration_id']);
         }
+        if (array_key_exists('registration_id', $payload) || array_key_exists('goal_id', $payload)) {
+            $this->assertGoalFits((int)$effective['goal_id'], (int)$effective['registration_id']);
+        }
         $this->assertNoDuplicateEncoding($effective, excludeId: (int)$id);
 
         $extras = [
@@ -167,6 +220,9 @@ class AppSkanEncodingsController extends Controller
         }
         if (isset($this->pendingClears['coarse_value'])) {
             $extras['coarse_value'] = ['type' => 's', 'value' => null];
+        }
+        if (isset($this->pendingClears['revenue_override'])) {
+            $extras['revenue_override'] = ['type' => 'd', 'value' => null];
         }
         return $extras;
     }
@@ -190,18 +246,69 @@ class AppSkanEncodingsController extends Controller
                 'fine_value' => 'Must be an integer from 0 to 63 (SKAN fine values are 6 bits)',
             ]);
         }
-        if (array_key_exists('revenue', $encoding) && $encoding['revenue'] !== null) {
-            // Bounded on both sides against the decimal(11,5) column: an
-            // out-of-range value would otherwise come back as a 500 (strict
-            // mode) or be silently clamped (non-strict).
-            $revenue = (float)$encoding['revenue'];
-            if ($revenue < 0 || $revenue > self::MAX_REVENUE) {
-                throw new ValidationException('Invalid revenue', [
-                    'revenue' => 'Must be between 0 and ' . self::MAX_REVENUE,
-                ]);
-            }
-        }
         self::assertRegistrationScope($encoding['registration_id'] ?? 0);
+    }
+
+    private static function isPositiveId(mixed $value): bool
+    {
+        if (is_int($value)) {
+            return $value > 0;
+        }
+
+        return is_string($value) && preg_match('/^[1-9]\d{0,9}$/D', $value) === 1 && (string)(int)$value === $value;
+    }
+
+    /**
+     * The goal is the caller's, live, owned by the encoding's registration
+     * or by the account (and by the account when the encoding is
+     * account-wide), and a plain event goal. Answered as a 422 on goal_id:
+     * it is the value that is wrong.
+     */
+    private function assertGoalFits(int $goalId, int $registrationId): void
+    {
+        $stmt = $this->prepare(
+            'SELECT g.scope, g.scope_id, g.archived_at, v.definition FROM 202_goals g
+             JOIN 202_goal_versions v ON v.goal_id = g.goal_id AND v.version = g.current_version
+             WHERE g.goal_id = ? AND g.user_id = ? LIMIT 1'
+        );
+        $this->bind($stmt, 'ii', $goalId, $this->userId);
+        $this->execute($stmt, 'Goal lookup failed');
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            throw new DatabaseException('Goal lookup failed');
+        }
+        $goal = $result->fetch_assoc();
+        $stmt->close();
+
+        if (!is_array($goal) || $goal['archived_at'] !== null) {
+            throw new ValidationException('Invalid goal_id', [
+                'goal_id' => 'No live goal ' . $goalId . ' in this account. Use an id from GET /goals'
+                    . ($registrationId > 0 ? '?registration_id=' . $registrationId : '?scope=account') . '.',
+            ]);
+        }
+        $scope = (string)$goal['scope'];
+        $fits = $scope === GoalScope::ACCOUNT->value
+            || ($registrationId > 0 && $scope === GoalScope::REGISTRATION->value && (int)$goal['scope_id'] === $registrationId);
+        if (!$fits) {
+            throw new ValidationException('Invalid goal_id', [
+                'goal_id' => $registrationId > 0
+                    ? 'Goal ' . $goalId . ' belongs to another ' . $scope . '; an encoding for registration ' . $registrationId
+                        . ' names one of that app\'s goals or an account goal.'
+                    : 'An account-wide encoding (registration_id 0) names an account goal; goal ' . $goalId . ' belongs to a ' . $scope . '.',
+            ]);
+        }
+        try {
+            $definition = GoalDefinition::fromJson((string)$goal['definition'], $goalId);
+        } catch (InvalidGoalDefinition) {
+            throw new ValidationException('Invalid goal_id', ['goal_id' => 'Goal ' . $goalId . '\'s current definition is invalid; fix the goal first.']);
+        }
+        if (!$definition->isPlainEvent()) {
+            throw new ValidationException('Invalid goal_id', [
+                'goal_id' => 'Goal ' . $goalId . ' is not a plain event goal (one event, no where, count 1, no after, no within, repeat once). '
+                    . 'Until the on-device evaluator ships, the iOS SDK sets a conversion value by event name, so an encoding can name only such a goal.',
+            ]);
+        }
     }
 
     private static function assertRegistrationScope(mixed $registrationId): void

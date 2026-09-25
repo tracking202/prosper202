@@ -184,7 +184,8 @@ final class ConversionLedgerUpgradeIntegrationTest extends TestCase
         $this->assertTrue(_upgrade_measurement_tables(array_merge(
             \Prosper202\Database\Tables\AppTables::getDefinitions(),
             \Prosper202\Database\Tables\ConversionTables::getDefinitions(),
-            \Prosper202\Database\Tables\IdentityTables::getDefinitions()
+            \Prosper202\Database\Tables\IdentityTables::getDefinitions(),
+            \Prosper202\Database\Tables\GoalTables::getDefinitions()
         )));
         $reconciler = new SchemaReconciler(static fn (string $sql) => _upgrade_query($sql));
         foreach (\Prosper202\Database\Tables\IdentityTables::getDefinitions() as $def) {
@@ -216,7 +217,8 @@ final class ConversionLedgerUpgradeIntegrationTest extends TestCase
         $this->assertTrue(_upgrade_measurement_tables(array_merge(
             \Prosper202\Database\Tables\AppTables::getDefinitions(),
             \Prosper202\Database\Tables\ConversionTables::getDefinitions(),
-            \Prosper202\Database\Tables\IdentityTables::getDefinitions()
+            \Prosper202\Database\Tables\IdentityTables::getDefinitions(),
+            \Prosper202\Database\Tables\GoalTables::getDefinitions()
         )));
 
         foreach ($old as $table) {
@@ -241,6 +243,44 @@ final class ConversionLedgerUpgradeIntegrationTest extends TestCase
         $this->assertSame('YES', $columns['registration_id'] ?? null, 'an unclaimed postback has no registration');
         $this->assertSame('YES', $columns['trusted'] ?? null, 'unvouched is NULL');
         $this->assertArrayNotHasKey('signature_valid', $columns);
+    }
+
+    /**
+     * The goals engine's tables (PR 4) arrive with the rest of the
+     * measurement schema, from the installer's own definitions — and the
+     * 1.9.75 rung names them, so an upgraded database is not missing them.
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testTheRungCreatesTheGoalTablesAsTheInstallerDeclaresThem(): void
+    {
+        $db = $this->preLedgerDatabase();
+        foreach (\Prosper202\Database\Tables\GoalTables::getDefinitions() as $def) {
+            $db->query('DROP TABLE IF EXISTS `' . $def->tableName . '`');
+        }
+        $this->assertTrue(_upgrade_measurement_tables(array_merge(
+            \Prosper202\Database\Tables\AppTables::getDefinitions(),
+            \Prosper202\Database\Tables\ConversionTables::getDefinitions(),
+            \Prosper202\Database\Tables\IdentityTables::getDefinitions(),
+            \Prosper202\Database\Tables\GoalTables::getDefinitions()
+        )));
+        $reconciler = new SchemaReconciler(static fn (string $sql) => _upgrade_query($sql));
+        foreach (\Prosper202\Database\Tables\GoalTables::getDefinitions() as $def) {
+            $this->assertNotNull($db->query("SHOW TABLES LIKE '" . $def->tableName . "'")->fetch_row(), $def->tableName);
+            $this->assertTrue($reconciler->reconcile($def));
+        }
+        $this->assertSame([], $reconciler->getApplied(), 'created with every column and key the installer declares');
+        $create = (string)$db->query('SHOW CREATE TABLE 202_app_skan_encodings')->fetch_row()[1];
+        $this->assertStringContainsString('`goal_id` int(10) unsigned NOT NULL', $create, 'an encoding names a goal');
+        $this->assertStringNotContainsString('`event_name`', $create);
+
+        $rung = (string)file_get_contents(dirname(__DIR__, 2) . '/202-config/functions-upgrade.php');
+        $this->assertMatchesRegularExpression(
+            '/_upgrade_measurement_tables\(array_merge\([^;]*GoalTables::getDefinitions\(\)[^;]*\)\);/s',
+            $rung,
+            'the 1.9.75 rung creates the goal tables'
+        );
     }
 
     /**

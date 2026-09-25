@@ -25,6 +25,9 @@ use Api\V3\Apps\AppDataPurge;
  *    clicks were one person;
  *  - app measurement is purged by AppDataPurge: registrations and SKAN
  *    encodings deleted, postbacks released to unclaimed;
+ *  - the goals engine (PR 4) is deleted: goals and their versions, campaign
+ *    payouts, and every subject's events, progress and outcomes — the
+ *    ledger rows the outcomes wrote stay, with the clicks;
  *  - the user's REST API keys are revoked. Sessions already refuse a deleted
  *    user (functions-auth.php reads user_deleted); the API authenticates by
  *    key alone, so before this a deleted user's key kept working — and could
@@ -57,6 +60,21 @@ final class UserDataPurge
         'DELETE FROM 202_identity_keys WHERE user_id = ?',
     ];
 
+    /**
+     * The goals engine's per-user rows (GoalTables): per-subject state before
+     * the definitions it was evaluated against. Every GoalTables table has a
+     * statement here; UserDeletionPurgeTest holds the two lists equal.
+     */
+    public const GOAL_STATEMENTS = [
+        'DELETE FROM 202_goal_outcomes WHERE user_id = ?',
+        'DELETE FROM 202_goal_progress WHERE user_id = ?',
+        'DELETE FROM 202_goal_events WHERE user_id = ?',
+        'DELETE FROM 202_goal_subjects WHERE user_id = ?',
+        'DELETE FROM 202_campaign_goals WHERE user_id = ?',
+        'DELETE v FROM 202_goal_versions v JOIN 202_goals g ON g.goal_id = v.goal_id WHERE g.user_id = ?',
+        'DELETE FROM 202_goals WHERE user_id = ?',
+    ];
+
     /** What lets the user act at all through the API; revoked with the rest. */
     private const ACCESS_STATEMENTS = [
         'DELETE FROM 202_api_keys WHERE user_id = ?',
@@ -77,7 +95,7 @@ final class UserDataPurge
     public static function cascade(int $userId): array
     {
         $cascade = [];
-        foreach (array_merge(self::ACCESS_STATEMENTS, self::MTA_STATEMENTS, self::IDENTITY_STATEMENTS) as $sql) {
+        foreach (array_merge(self::ACCESS_STATEMENTS, self::MTA_STATEMENTS, self::IDENTITY_STATEMENTS, self::GOAL_STATEMENTS) as $sql) {
             if (preg_match('/^DELETE (?:\w+ )?FROM (\w+)/', $sql, $m) !== 1) {
                 throw new \LogicException('Unreadable purge statement: ' . $sql);
             }
@@ -112,7 +130,7 @@ final class UserDataPurge
             throw new \RuntimeException('Could not start the user deletion transaction');
         }
         try {
-            foreach (array_merge(self::ACCESS_STATEMENTS, self::MTA_STATEMENTS, self::IDENTITY_STATEMENTS) as $sql) {
+            foreach (array_merge(self::ACCESS_STATEMENTS, self::MTA_STATEMENTS, self::IDENTITY_STATEMENTS, self::GOAL_STATEMENTS) as $sql) {
                 $this->run($sql, $userId);
             }
             (new AppDataPurge($this->db))->purgeUser($userId);

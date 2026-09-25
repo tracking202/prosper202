@@ -47,7 +47,7 @@ eq()   { if [ "$1" = "$2" ]; then ok "$3"; else bad "$3 (got '$1' want '$2')"; f
 msgs() { grep -oE '<div class="p202-flash__body">[^<]*|<div class="invalid-feedback[^"]*">[^<]*' "$1" \
            | sed -E 's/<[^>]*>//' | sed 's/^/    | /'; }
 
-mysql_q "$DB" -e "TRUNCATE 202_app_registrations; TRUNCATE 202_app_skan_encodings; TRUNCATE 202_app_postbacks;"
+mysql_q "$DB" -e "TRUNCATE 202_app_registrations; TRUNCATE 202_app_skan_encodings; TRUNCATE 202_app_postbacks; TRUNCATE 202_goals; TRUNCATE 202_goal_versions;"
 
 say "login"
 curl -sS -c "$JAR" -b "$JAR" "$BASE/202-login.php" -o "$OUT/login.html"
@@ -144,6 +144,8 @@ say "starter schema"
 post x "$OUT/schema.html" --data-urlencode action=starter_schema \
   --data-urlencode "registration_id=$ROWID"
 eq "$(Q "SELECT COUNT(*) FROM 202_app_skan_encodings WHERE registration_id=$ROWID")" "6" "starter schema added 6 rules"
+eq "$(Q "SELECT GROUP_CONCAT(name ORDER BY name) FROM 202_goals WHERE scope='registration' AND scope_id=$ROWID")" "install,purchase,trial_started" \
+   "naming three plain goals of the app, one per event, each shared by its fine and coarse rule"
 say "starter schema is idempotent (never overwrites a decision)"
 get "?app=$ROWID" "$OUT/page.html"
 post x "$OUT/schema2.html" --data-urlencode action=starter_schema \
@@ -169,8 +171,9 @@ post x "$OUT/rule.html" --data-urlencode action=rule_save \
   --data-urlencode "registration_id=$ROWID" \
   --data-urlencode "kind=fine" --data-urlencode "fine_value=7" \
   --data-urlencode "event_name=subscribed" --data-urlencode "revenue=9.99"
-eq "$(Q "SELECT event_name FROM 202_app_skan_encodings WHERE registration_id=$ROWID AND fine_value=7")" "subscribed" "rule stored"
-eq "$(Q "SELECT revenue FROM 202_app_skan_encodings WHERE registration_id=$ROWID AND fine_value=7")" "9.99000" "revenue stored"
+eq "$(Q "SELECT g.name FROM 202_app_skan_encodings e JOIN 202_goals g ON g.goal_id = e.goal_id WHERE e.registration_id=$ROWID AND e.fine_value=7")" "subscribed" \
+   "rule stored, naming the app's plain goal for the event"
+eq "$(Q "SELECT revenue_override FROM 202_app_skan_encodings WHERE registration_id=$ROWID AND fine_value=7")" "9.99000" "revenue stored as the rule's override"
 
 say "a refused rule save says why, on the page it was submitted from"
 # handleGet() reads the app id from the query string and a POST has none, so
@@ -185,7 +188,8 @@ msgs "$OUT/badrule.html"
 has "$OUT/badrule.html" "Conversion values" "lands back on the app, not the apps list"
 has "$OUT/badrule.html" "invalid-feedback" "the API's sentence is shown under the field"
 has "$OUT/badrule.html" 'value="refused_probe"' "what was typed is still in the form"
-eq "$(Q "SELECT COUNT(*) FROM 202_app_skan_encodings WHERE event_name='refused_probe'")" "0" "and no rule was created"
+eq "$(Q "SELECT COUNT(*) FROM 202_app_skan_encodings WHERE fine_value=33")" "0" "and no rule was created"
+eq "$(Q "SELECT COUNT(*) FROM 202_goals WHERE name='refused_probe'")" "0" "nor a goal for it"
 
 say "revenue renders as money in the account's currency"
 get "?app=$ROWID" "$OUT/page.html"

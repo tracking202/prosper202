@@ -484,8 +484,21 @@ registers the app within it claims them.
 | `registration_id` | integer | No | The iOS registration this encoding applies to; `0` (default) = account-wide |
 | `fine_value` | integer | One of | Fine conversion value 0–63 |
 | `coarse_value` | string | One of | `low`, `medium`, or `high` |
-| `event_name` | string | Yes | Event the value decodes to (max 255) |
-| `revenue` | number | No | Revenue attributed per decoded postback (default 0; must not be negative) |
+| `goal_id` | integer | Yes | The [goal](22-goals.md) the value means: a live plain event goal of that registration, or an account goal |
+| `revenue_override` | number | No | Revenue per decoded postback instead of the goal's own fixed value (tiered decoding; `null` = the goal's value) |
+
+An encoding says which value means which **goal** was reached; what reaching
+it is worth is the goal's (plan §4.5), unless the encoding overrides it. An
+account-wide encoding (`registration_id` 0) names an account goal. Until the
+on-device evaluator ships, the goal must be a *plain event goal* — one event,
+no conditions, count 1, no `after`, no window, repeat once — because the iOS
+SDK sets a conversion value by event name; the goal cannot be edited out of
+that shape, or archived, while an encoding names it. The old fields
+`event_name` and `revenue` are refused by name. The schema document encodes
+by each goal's trigger event, and the report decodes to each goal's name.
+Setup › Mobile Apps still asks for an event and a revenue: it finds (or
+creates) the app's plain goal for the event and stores the revenue as the
+override.
 
 Each encoding maps exactly one fine **or** one coarse value (`422`
 otherwise; duplicate mappings return `409`). A non-zero `registration_id`
@@ -693,7 +706,7 @@ curl -X POST https://your-domain.com/api/v3/apps \
 
 curl -X POST https://your-domain.com/api/v3/apps/skan-encodings \
   -H "Authorization: Bearer YOUR_API_KEY" -H "Content-Type: application/json" \
-  -d '{"registration_id": 1, "fine_value": 63, "event_name": "purchase", "revenue": 49.99}'
+  -d '{"registration_id": 1, "fine_value": 63, "goal_id": 12, "revenue_override": 49.99}'
 
 curl "https://your-domain.com/api/v3/apps/report?group_by=registration" \
   -H "Authorization: Bearer YOUR_API_KEY"

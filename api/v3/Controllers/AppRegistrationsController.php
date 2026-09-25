@@ -249,6 +249,18 @@ class AppRegistrationsController extends Controller
         $this->bind($stmt, 'ii', $registrationId, $this->userId);
         $this->execute($stmt, 'Encoding delete failed');
         $stmt->close();
+
+        // The app's goals are archived, not deleted: their versions and the
+        // outcomes and conversions they produced are history. Archived, they
+        // evaluate nothing received from now on, and a registration id is
+        // never reused, so registering the app again starts a new set.
+        $now = time();
+        $stmt = $this->prepare(
+            "UPDATE 202_goals SET archived_at = ?, updated_at = ? WHERE scope = 'registration' AND scope_id = ? AND user_id = ? AND archived_at IS NULL"
+        );
+        $this->bind($stmt, 'iiii', $now, $now, $registrationId, $this->userId);
+        $this->execute($stmt, 'Goal archive failed');
+        $stmt->close();
     }
 
     #[\Override]
@@ -265,6 +277,7 @@ class AppRegistrationsController extends Controller
         $preview['data']['cascade'] = [
             ['resource' => 'app-skan-encodings', 'action' => 'delete', 'where' => 'registration_id = ' . (int)$id],
             ['resource' => 'app-postbacks', 'action' => 'unlink (registration_id set to NULL; owner kept; test-signal trust withdrawn)', 'where' => 'registration_id = ' . (int)$id],
+            ['resource' => 'goals', 'action' => 'archive (versions, outcomes and conversions kept)', 'where' => 'scope = registration, scope_id = ' . (int)$id],
         ];
         return $preview;
     }
