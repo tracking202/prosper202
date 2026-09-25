@@ -131,8 +131,8 @@ write_config() { # $1 = tree, $2 = database
 }
 
 wait_for() { # $1 = url, $2 = server log
-    local i
-    for i in $(seq 1 30); do
+    local _
+    for _ in $(seq 1 30); do
         curl -s -o /dev/null "$1" && return 0
         sleep 1
     done
