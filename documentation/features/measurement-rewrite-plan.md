@@ -524,6 +524,15 @@ Overview's Goal / source level and the repaired Transaction ID level.
   is the API's answer unchanged. Both check `--source` against their own copy
   of the source list before any request; `ConversionSourceListsTest` pins
   both copies to the enum.
+- **Every depth offers both ledger levels, and the download names them.**
+  The level list has two copies (`ReportBasicForm`'s and
+  `ReportSummaryForm`'s), and the classic builder drew its fourth selector
+  from the one Goal / source had not been added to; both copies now match
+  and all four selectors read `ReportSummaryForm`'s, the class that runs the
+  query (`GroupingLevelOffersTest`). The download
+  (`group_overview_download.php`) printed its Transaction ID column from
+  `transaction_id`, which the ledger levels no longer select, and had no
+  Goal / source column; both now print the level's own label.
 - **Dedupe keys no longer fold case.** Found here and fixed when the PRs
   were combined: `dedupe_key` was utf8mb4_general_ci, so on one click
   `tx:A-1` and `tx:a-1` were one key (a UNIQUE violation, executed) and a
@@ -542,7 +551,8 @@ Overview's Goal / source level and the repaired Transaction ID level.
 
 Checked by `tests/Conversion/Ledger/` (`LedgerExplainerTest`,
 `LedgerReadsIntegrationTest`, `LedgerReadsOpenApiTest`,
-`ConversionSourceListsTest`), `tests/Cli/Commands/ClickConversionsCommandTest`,
+`ConversionSourceListsTest`), `tests/Report/GroupingLevelOffersTest`,
+`tests/Cli/Commands/ClickConversionsCommandTest`,
 `go-cli/cmd/click_test.go`, the live pass `tests/live/breakdown-reads.sh`, and
 `tests/browser/specs/click-breakdown.spec.js`.
 

@@ -260,7 +260,7 @@ final class LedgerReadsIntegrationTest extends TestCase
      * ReportSummaryForm builds, run against the fixture, drawn into its
      * tree the way the page and the download draw it.
      *
-     * @return array{tree: object, rows: list<array<string, mixed>>}
+     * @return array{tree: object, rows: list<array<string, mixed>>, form: \ReportSummaryForm}
      */
     private function groupOverview(array $details): array
     {
@@ -289,7 +289,7 @@ final class LedgerReadsIntegrationTest extends TestCase
             $form->addReportData($row);
         }
 
-        return ['tree' => $form->getReportData(), 'rows' => $rows];
+        return ['tree' => $form->getReportData(), 'rows' => $rows, 'form' => $form];
     }
 
     /** @return array<string, array{clicks: int, leads: int, income: string, cost: string}> */
@@ -376,6 +376,121 @@ final class LedgerReadsIntegrationTest extends TestCase
             'Goal: Reached level 3' => ['clicks' => 2, 'leads' => 2, 'income' => '4.00', 'cost' => '0.50'],
             'Postback' => ['clicks' => 0, 'leads' => 0, 'income' => '0.00', 'cost' => '0.00'],
         ], $acc, 'goal rows group by goal; the sale and its reversal net under their source; both clicks\' latest counted rows are goal rows');
+    }
+
+    /**
+     * Goal / source as the fourth level, under Transaction ID at the third:
+     * the deepest place the report nests it (every group_N offers it,
+     * GroupingLevelOffersTest). Every group adds up to its parent at every
+     * depth, the campaigns' figures are the ones the plain report shows, and
+     * the download labels each leaf row by both ledger levels.
+     */
+    public function testGoalSourceWorksAsTheFourthLevel(): void
+    {
+        require_once dirname(__DIR__, 3) . '/202-config/ReportSummaryForm.class.php';
+        $this->buildEveryShape();
+        $this->syncReportRows();
+
+        $plain = $this->groupOverview([\ReportBasicForm::DETAIL_LEVEL_CAMPAIGN]);
+        $four = $this->groupOverview([\ReportBasicForm::DETAIL_LEVEL_CAMPAIGN, \ReportBasicForm::DETAIL_LEVEL_LANDING_PAGE,
+            \ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS, \ReportBasicForm::DETAIL_LEVEL_GOAL_SOURCE]);
+
+        self::assertSame(self::children($plain['tree']), self::children($four['tree']), 'four levels leave every campaign\'s figures as they were');
+        self::assertSame(self::figures($plain['tree']), self::figures($four['tree']), 'and the report\'s totals');
+        $leaves = self::assertAddsUp($four['tree'], 0);
+        self::assertSame(count($four['rows']), $leaves, 'every query row is one leaf at the fourth level');
+
+        $byLevel = [];
+        foreach ($four['tree']->getChildArrayBySort() as $campaign) {
+            foreach ($campaign->getChildArrayBySort() as $lp) {
+                foreach ($lp->getChildArrayBySort() as $tx) {
+                    foreach (self::children($tx) as $source => $f) {
+                        $byLevel[(int) $campaign->getAffiliateCampaignId()][(string) $tx->getTitle()][$source] = $f;
+                    }
+                }
+            }
+        }
+        self::assertSame([
+            '[No transaction ID]' => ['Goal: Reached level 3' => ['clicks' => 2, 'leads' => 2, 'income' => '4.00', 'cost' => '0.50']],
+            'S-1' => ['Postback' => ['clicks' => 0, 'leads' => 0, 'income' => '0.00', 'cost' => '0.00']],
+        ], $byLevel[2], 'campaign 2 splits by transaction, then each transaction by what produced it');
+        self::assertSame(['clicks' => 1, 'leads' => 1, 'income' => '10.00', 'cost' => '0.25'], $byLevel[1]['B-1']['Postback'] ?? null,
+            'a postback sale is its own transaction and its own source');
+
+        // The download (group_overview_download.php) prints every leaf with
+        // its levels' labels, not the columns the ledger levels no longer select.
+        $form = $four['form'];
+        ob_start();
+        $form->getExportRowHeaderHtml();
+        foreach (self::leaves($four['tree']) as $leaf) {
+            $form->getExportRowHtml($leaf);
+        }
+        $lines = explode("\n", rtrim((string) ob_get_clean(), "\n"));
+        $header = explode("\t", (string) array_shift($lines));
+        $tx = array_search('Transaction ID', $header, true);
+        $gs = array_search('Goal / source', $header, true);
+        self::assertIsInt($tx, 'the download has a Transaction ID column');
+        self::assertIsInt($gs, 'and a Goal / source column');
+        $pairs = [];
+        foreach ($lines as $line) {
+            $cells = explode("\t", $line);
+            $pairs[] = $cells[$tx] . ' | ' . $cells[$gs];
+        }
+        self::assertContains('S-1 | Postback', $pairs);
+        self::assertContains('[No transaction ID] | Goal: Reached level 3', $pairs);
+        self::assertContains('B-1 | Postback', $pairs);
+        self::assertContains('[Not converted] | [Not converted]', $pairs);
+        self::assertSame($leaves, count($pairs), 'one download row per leaf');
+    }
+
+    /** @return array{clicks: int, leads: int, income: string, cost: string} */
+    private static function figures(object $group): array
+    {
+        return [
+            'clicks' => (int) $group->getClicks(),
+            'leads' => (int) $group->getLeads(),
+            'income' => number_format((float) $group->getIncome(), 2, '.', ''),
+            'cost' => number_format((float) $group->getCost(), 2, '.', ''),
+        ];
+    }
+
+    /** Asserts every group's children add up to it; returns the number of leaves under $group. */
+    private static function assertAddsUp(object $group, int $depth): int
+    {
+        $children = $group->getChildArrayBySort();
+        if ($children === []) {
+            return 1;
+        }
+        $sum = ['clicks' => 0, 'leads' => 0, 'income' => 0.0, 'cost' => 0.0];
+        $leaves = 0;
+        foreach ($children as $child) {
+            $f = self::figures($child);
+            $sum['clicks'] += $f['clicks'];
+            $sum['leads'] += $f['leads'];
+            $sum['income'] += (float) $f['income'];
+            $sum['cost'] += (float) $f['cost'];
+            $leaves += self::assertAddsUp($child, $depth + 1);
+        }
+        $sum['income'] = number_format($sum['income'], 2, '.', '');
+        $sum['cost'] = number_format($sum['cost'], 2, '.', '');
+        self::assertSame(self::figures($group), $sum, 'a depth ' . $depth . ' group is the sum of its children');
+
+        return $leaves;
+    }
+
+    /** @return list<object> */
+    private static function leaves(object $group): array
+    {
+        $children = $group->getChildArrayBySort();
+        if ($children === []) {
+            return [$group];
+        }
+        $out = [];
+        foreach ($children as $child) {
+            array_push($out, ...self::leaves($child));
+        }
+
+        return $out;
     }
 
     public function testTheReportSqlOnlyReadsTheClicksItIsScopedTo(): void

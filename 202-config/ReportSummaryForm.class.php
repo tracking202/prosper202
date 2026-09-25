@@ -1299,6 +1299,10 @@ class ReportSummaryForm extends ReportBasicForm
 			ReportBasicForm::echoCell("Transaction ID");
 		}
 
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_GOAL_SOURCE)) {
+			ReportBasicForm::echoCell("Goal / source");
+		}
+
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PUBLISHERS)) {
 			ReportBasicForm::echoCell("Publisher/User");
 		}
@@ -1671,8 +1675,14 @@ class ReportSummaryForm extends ReportBasicForm
 			ReportBasicForm::echoCell($row->getRuleRedirectName());
 		}
 
+		// The ledger levels select their group keys, not transaction_id or
+		// a goal's name column (ReportSummaryForm::ledgerLevelKeys()).
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS)) {
-			ReportBasicForm::echoCell($row->getTransactionIDName());
+			ReportBasicForm::echoCell($row->getTransactionKeyLabel());
+		}
+
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_GOAL_SOURCE)) {
+			ReportBasicForm::echoCell($row->getGoalSourceKeyLabel());
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PUBLISHERS)) {
@@ -3459,15 +3469,7 @@ class ReportSummaryTransactionsForm extends ReportSummaryTotalForm
 	#[\Override]
     function getName()
 	{
-		$key = (string) $this->getTransactionKey();
-		if (str_starts_with($key, 't:')) {
-			$id = hex2bin(substr($key, 2));
-			return $id === false ? '[Unreadable transaction ID]' : $id;
-		}
-		if ($key === 'n') {
-			return '[Not converted]';
-		}
-		return '[No transaction ID]';
+		return $this->getTransactionKeyLabel();
 	}
 
 	#[\Override]
@@ -3499,16 +3501,7 @@ class ReportSummaryGoalSourceForm extends ReportSummaryTotalForm
 	#[\Override]
     function getName()
 	{
-		$key = (string) $this->getGoalSourceKey();
-		if (str_starts_with($key, 'g:')) {
-			$name = (string) $this->getGoalName();
-			return 'Goal: ' . ($name !== '' ? $name : '#' . substr($key, 2) . ' (not found)');
-		}
-		if (str_starts_with($key, 's:')) {
-			$source = \Prosper202\Conversion\Ledger\ConversionSource::tryFrom(substr($key, 2));
-			return $source !== null ? $source->label() : substr($key, 2);
-		}
-		return '[Not converted]';
+		return $this->getGoalSourceKeyLabel();
 	}
 
 	#[\Override]
@@ -5030,6 +5023,44 @@ class ReportSummaryTotalForm
 	function getGoalName()
 	{
 		return $this->goal_name;
+	}
+
+	/**
+	 * The Transaction ID level's label for this row's key
+	 * (ReportSummaryForm::ledgerLevelKeys()): the transaction id it carries,
+	 * or a bracketed label for the two groups that have none. Read by the
+	 * level's own form and by the download, which labels every leaf row.
+	 * Plain text: every renderer escapes it.
+	 */
+	function getTransactionKeyLabel(): string
+	{
+		$key = (string) $this->getTransactionKey();
+		if (str_starts_with($key, 't:')) {
+			$id = hex2bin(substr($key, 2));
+			return $id === false ? '[Unreadable transaction ID]' : $id;
+		}
+		if ($key === 'n') {
+			return '[Not converted]';
+		}
+		return '[No transaction ID]';
+	}
+
+	/**
+	 * The Goal / source level's label for this row's key: the goal's name,
+	 * or the conversion source's. Read as getTransactionKeyLabel() is.
+	 */
+	function getGoalSourceKeyLabel(): string
+	{
+		$key = (string) $this->getGoalSourceKey();
+		if (str_starts_with($key, 'g:')) {
+			$name = (string) $this->getGoalName();
+			return 'Goal: ' . ($name !== '' ? $name : '#' . substr($key, 2) . ' (not found)');
+		}
+		if (str_starts_with($key, 's:')) {
+			$source = \Prosper202\Conversion\Ledger\ConversionSource::tryFrom(substr($key, 2));
+			return $source !== null ? $source->label() : substr($key, 2);
+		}
+		return '[Not converted]';
 	}
 
 	function setGoalName($arg0)

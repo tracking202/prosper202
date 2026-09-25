@@ -19,7 +19,9 @@
 #     source: each ledger group sums its rows, a campaign's groups add up to
 #     the campaign, and the campaign's figures are what they are without the
 #     ledger level — drawn under the page's own view even after another tab
-#     has changed the stored filters.
+#     has changed the stored filters; and four levels deep, Goal / source
+#     under Transaction ID, where every group at every depth adds up and the
+#     page's download labels each row by both levels.
 #
 # Seeds its own campaigns (ids 950100-950101, fixed so that no report row a
 # truncated campaigns table left behind can share one), goals and clicks
@@ -326,11 +328,15 @@ group_rows() {
     $1 == "0" { inside = ($2 == c) }
     inside { print $2 "|" $(h["Clicks"]) "|" $(h["Leads"]) "|" $(h["Income"]) "|" $(h["Cost"]) }' "$2"
 }
-CAMPAIGN=4; TRANSACTION=35; GOALSOURCE=37
+CAMPAIGN=4; LANDINGPAGE=5; TRANSACTION=35; GOALSOURCE=37
+# The accumulate click four levels deep: campaign, landing page, transaction,
+# then what produced each transaction's rows.
+FOUR_ACCUMULATE='breakdown accumulate|1|1|$7.00|$0.25 [No Landing Page]|1|1|$7.00|$0.25 [No transaction ID]|0|0|$5.00|$0.00 Goal: Install|0|0|$1.00|$0.00 Goal: Level 3|0|0|$4.00|$0.00 A-1|0|0|$0.00|$0.00 API|0|0|($-5.00)|$0.00 Postback|0|0|$5.00|$0.00 A-2|1|1|$2.00|$0.25 Postback|1|1|$2.00|$0.25 '
+FOUR_DOWNLOAD='A-1|API A-1|Postback A-2|Postback [No transaction ID]|Goal: Install [No transaction ID]|Goal: Level 3'
 
 say "Group Overview's Transaction ID level sums the rows"
-overview "group_1=$CAMPAIGN&group_2=0&range=last7&user_pref_show=all" "$OUT/go-plain"
-overview "group_1=$CAMPAIGN&group_2=$TRANSACTION&range=last7&user_pref_show=all" "$OUT/go-tx"
+overview "group_1=$CAMPAIGN&group_2=0&group_3=0&group_4=0&range=last7&user_pref_show=all" "$OUT/go-plain"
+overview "group_1=$CAMPAIGN&group_2=$TRANSACTION&group_3=0&group_4=0&range=last7&user_pref_show=all" "$OUT/go-tx"
 has "$OUT/go-tx.page.html" "group_2%3D$TRANSACTION" "the page hands its fragment the grouping in its view"
 eq "$(group_rows 'breakdown accumulate' "$OUT/go-tx.tsv" | tr '\n' ' ')" \
    'breakdown accumulate|1|1|$7.00|$0.25 [No transaction ID]|0|0|$5.00|$0.00 A-1|0|0|$0.00|$0.00 A-2|1|1|$2.00|$0.25 ' \
@@ -348,13 +354,38 @@ has "$OUT/go-tx.html" "data-p202-ledger-note" "the page says how a ledger level 
 hasnt "$OUT/go-plain.html" "data-p202-ledger-note" "and says nothing when none is chosen"
 
 say "Group Overview's Goal / source level"
-overview "group_1=$CAMPAIGN&group_2=$GOALSOURCE&range=last7&user_pref_show=all" "$OUT/go-src"
+overview "group_1=$CAMPAIGN&group_2=$GOALSOURCE&group_3=0&group_4=0&range=last7&user_pref_show=all" "$OUT/go-src"
 eq "$(group_rows 'breakdown accumulate' "$OUT/go-src.tsv" | tr '\n' ' ')" \
    'breakdown accumulate|1|1|$7.00|$0.25 API|0|0|($-5.00)|$0.00 Goal: Install|0|0|$1.00|$0.00 Goal: Level 3|0|0|$4.00|$0.00 Postback|1|1|$7.00|$0.25 ' \
    "each paid goal on its own row, the unpaid Tutorial nowhere, the postbacks \$7 and the API reversal -\$5"
 eq "$(group_rows 'breakdown replace' "$OUT/go-src.tsv" | tr '\n' ' ')" \
    'breakdown replace|2|1|$6.00|$0.50 [Not converted]|1|0|$0.00|$0.25 Postback|1|1|$6.00|$0.25 ' \
    "the replace click's value is its postback's"
+
+# Every group_N offers every level (tests/Report/GroupingLevelOffersTest),
+# so Goal / source can be the fourth, under Transaction ID at the third.
+say "Goal / source as the fourth level"
+overview "group_1=$CAMPAIGN&group_2=$LANDINGPAGE&group_3=$TRANSACTION&group_4=$GOALSOURCE&range=last7&user_pref_show=all" "$OUT/go-four"
+has "$OUT/go-four.page.html" "group_4%3D$GOALSOURCE" "the page hands its fragment the fourth level in its view"
+eq "$(group_rows 'breakdown accumulate' "$OUT/go-four.tsv" | tr '\n' ' ')" \
+   "$FOUR_ACCUMULATE" \
+   "the accumulate click by transaction, then by what produced it: the goals under no id, A-1's postback and its API reversal, A-2's postback"
+eq "$(group_rows 'breakdown accumulate' "$OUT/go-four.tsv" | head -1)" "$(group_rows 'breakdown accumulate' "$OUT/go-plain.tsv" | head -1)" \
+   "the campaign's figures are the ones it has with no ledger level"
+eq "$(awk -F'\t' '$2 == "Totals for report"' "$OUT/go-four.tsv" | cut -f3-)" "$(awk -F'\t' '$2 == "Totals for report"' "$OUT/go-plain.tsv" | cut -f3-)" \
+   "and so are the report's totals"
+eq "$(python3 "$HERE/group-sums.py" "$OUT/go-four.tsv")" "ok" "every group at every depth is the sum of the groups under it"
+# The download is the page's own link, under the page's view.
+DL=$(python3 -c "import html,re,sys; m=re.search(r'href=\"([^\"]*group_overview_download\.php[^\"]*)\"', open(sys.argv[1]).read()); print(html.unescape(m.group(1)) if m else '')" "$OUT/go-four.page.html")
+eq "$(curl -sS -c "$JAR" -b "$JAR" -o "$OUT/go-four.xls" -w '%{http_code}' "$(python3 -c "import sys,urllib.parse; print(urllib.parse.urljoin(sys.argv[1], sys.argv[2]))" "$BASE/" "$DL")")" 200 "the page's download answers"
+eq "$(python3 - "$OUT/go-four.xls" "breakdown accumulate" <<'PY'
+import sys
+lines = [l.rstrip('\n').split('\t') for l in open(sys.argv[1], encoding='utf-8')]
+head = next(l for l in lines if 'Transaction ID' in l)
+tx, gs, camp = head.index('Transaction ID'), head.index('Goal / source'), head.index('Campaign Name')
+print(' '.join(sorted(l[tx] + '|' + l[gs] for l in lines[lines.index(head) + 1:] if len(l) > gs and l[camp] == sys.argv[2])))
+PY
+)" "$FOUR_DOWNLOAD" "the download labels each leaf by its transaction and by what produced it"
 
 printf '\n%d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIPPED"
 [ "$FAIL" -eq 0 ]
