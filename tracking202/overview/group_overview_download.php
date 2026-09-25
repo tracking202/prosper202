@@ -10,8 +10,10 @@ AUTH::require_user();
 
 //grab the users date range preferences
 	$time = grab_timeframe();
-	$mysql['to'] = $db->real_escape_string($time['to']);
-	$mysql['from'] = $db->real_escape_string($time['from']);
+	// grab_timeframe() answers integers; under strict_types the escaper
+	// refuses them, which made this download a fatal error on every request.
+	$mysql['to'] = $db->real_escape_string((string)$time['to']);
+	$mysql['from'] = $db->real_escape_string((string)$time['from']);
 
 
 //show real or filtered clicks

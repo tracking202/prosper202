@@ -83,7 +83,7 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
 <?php } ?>
 
 <!-- Summary KPIs -->
-<div class="ltv-stats" id="ltv-summary">
+<div class="p202-tiles" id="ltv-summary">
     <?php echo p202_ltv_stat('Customers', number_format($totalCustomers),
         number_format((int) ($summary['purchasing_customers'] ?? 0)) . ' purchasing'); ?>
     <?php echo p202_ltv_stat('Revenue', '$' . $money($summary['total_revenue'] ?? 0),
@@ -103,15 +103,15 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
 
 <!-- Predictive LTV (deterministic projection; inputs + caps shown) -->
 <?php echo p202_ltv_card_open('Predicted LTV', 'deterministic projection from this range\'s realized data'); ?>
-    <div class="ltv-card-body">
-        <div class="ltv-stats" style="margin-bottom: 8px;">
+    <div class="p202-panel__body">
+        <div class="p202-tiles" style="margin-bottom: 8px;">
             <?php echo p202_ltv_stat('Predicted LTV / Customer', '$' . $money($predict['predicted_ltv_per_customer'] ?? 0)); ?>
             <?php echo p202_ltv_stat('Subscriber Pool Value', '$' . $money($predict['predicted_subscriber_pool_value'] ?? 0)); ?>
             <?php echo p202_ltv_stat('AOV Input', '$' . $money($predict['inputs']['aov'] ?? 0)); ?>
             <?php echo p202_ltv_stat('Repeat Rate Input', number_format(((float) ($predict['inputs']['repeat_rate'] ?? 0)) * 100, 1) . '%'); ?>
             <?php echo p202_ltv_stat('Monthly Churn Input', number_format(((float) ($predict['inputs']['monthly_churn_rate'] ?? 0)) * 100, 2) . '%'); ?>
         </div>
-        <div class="ltv-note">Guards applied:
+        <div class="form-text">Guards applied:
             <?php echo ($predict['caps_applied'] ?? []) !== []
                 ? $esc(implode(', ', array_map(strval(...), (array) $predict['caps_applied'])))
                 : 'none'; ?></div>
@@ -120,63 +120,63 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
 
 <!-- LTV by acquisition dimension / product / company -->
 <?php echo p202_ltv_card_open('LTV by', '', '<a href="' . $esc(get_absolute_url()) . 'tracking202/analyze/ltv_download.php" target="_blank">'
-    . '<i class="fa fa-download"></i> Export customers</a>'); ?>
-    <div class="ltv-toolbar" style="padding-top: 4px;">
+    . '<i class="bi bi-download"></i> Export customers</a>'); ?>
+    <div class="p202-toolbar p202-panel__filter" style="padding-top: 4px;">
         <?php echo p202_ltv_chips('ltv-by-select', $allowedDimensions, $by, 'ltvLoad(0);'); ?>
     </div>
-    <div class="ltv-table-wrap">
-        <table class="ltv-table ltv-table-hover" id="ltv-breakdown-table">
+    <div class="p202-table-wrap">
+        <table class="table p202-table table-hover" id="ltv-breakdown-table" data-p202-sort>
             <thead>
                 <tr>
                     <?php if ($by === 'abm') { ?>
-                        <th>Company</th>
-                        <th class="num">Score</th>
-                        <th class="num">Contacts</th>
-                        <th class="num">Engagements (90d)</th>
-                        <th class="num">Avg Time</th>
-                        <th class="num">Avg Scroll</th>
-                        <th>Top Interest</th>
-                        <th>Top Event</th>
-                        <th class="num">Revenue</th>
-                        <th class="num">MRR</th>
-                        <th>Last Activity</th>
+                        <th><button type="button" class="p202-sort">Company</button></th>
+                        <th class="num" data-sort-method="number"><button type="button" class="p202-sort">Score</button></th>
+                        <th class="num" data-sort-method="number"><button type="button" class="p202-sort">Contacts</button></th>
+                        <th class="num" data-sort-method="number"><button type="button" class="p202-sort">Engagements (90d)</button></th>
+                        <th class="num" data-sort-method="number"><button type="button" class="p202-sort">Avg Time</button></th>
+                        <th class="num" data-sort-method="number"><button type="button" class="p202-sort">Avg Scroll</button></th>
+                        <th><button type="button" class="p202-sort">Top Interest</button></th>
+                        <th><button type="button" class="p202-sort">Top Event</button></th>
+                        <th class="num" data-sort-method="number"><button type="button" class="p202-sort">Revenue</button></th>
+                        <th class="num" data-sort-method="number"><button type="button" class="p202-sort">MRR</button></th>
+                        <th><button type="button" class="p202-sort">Last Activity</button></th>
                     <?php } elseif ($by === 'product') { ?>
-                        <th><?php echo $esc($allowedDimensions[$by]); ?></th>
-                        <th class="num">Customers</th>
-                        <th class="num">Orders</th>
-                        <th class="num">Units</th>
-                        <th class="num">Revenue</th>
-                        <th class="num">Revenue / Customer</th>
+                        <th><button type="button" class="p202-sort"><?php echo $esc($allowedDimensions[$by]); ?></button></th>
+                        <th class="num" data-sort-method="number"><button type="button" class="p202-sort">Customers</button></th>
+                        <th class="num" data-sort-method="number"><button type="button" class="p202-sort">Orders</button></th>
+                        <th class="num" data-sort-method="number"><button type="button" class="p202-sort">Units</button></th>
+                        <th class="num" data-sort-method="number"><button type="button" class="p202-sort">Revenue</button></th>
+                        <th class="num" data-sort-method="number"><button type="button" class="p202-sort">Revenue / Customer</button></th>
                     <?php } else { ?>
-                        <th><?php echo $esc($allowedDimensions[$by]); ?></th>
-                        <th class="num">Customers</th>
-                        <th class="num">Orders</th>
-                        <th class="num">Revenue</th>
-                        <th class="num">Avg LTV</th>
-                        <th class="num">AOV</th>
-                        <th class="num">Repeat Rate</th>
-                        <th class="num">MRR</th>
-                        <th class="num">Spend</th>
-                        <th class="num">CAC</th>
-                        <th class="num" title="Lifetime revenue returned per ad dollar spent in this range">LTV:CAC</th>
+                        <th><button type="button" class="p202-sort"><?php echo $esc($allowedDimensions[$by]); ?></button></th>
+                        <th class="num" data-sort-method="number"><button type="button" class="p202-sort">Customers</button></th>
+                        <th class="num" data-sort-method="number"><button type="button" class="p202-sort">Orders</button></th>
+                        <th class="num" data-sort-method="number"><button type="button" class="p202-sort">Revenue</button></th>
+                        <th class="num" data-sort-method="number"><button type="button" class="p202-sort">Avg LTV</button></th>
+                        <th class="num" data-sort-method="number"><button type="button" class="p202-sort">AOV</button></th>
+                        <th class="num" data-sort-method="number"><button type="button" class="p202-sort">Repeat Rate</button></th>
+                        <th class="num" data-sort-method="number"><button type="button" class="p202-sort">MRR</button></th>
+                        <th class="num" data-sort-method="number"><button type="button" class="p202-sort">Spend</button></th>
+                        <th class="num" data-sort-method="number"><button type="button" class="p202-sort">CAC</button></th>
+                        <th class="num" title="Lifetime revenue returned per ad dollar spent in this range" data-sort-method="number"><button type="button" class="p202-sort">LTV:CAC</button></th>
                     <?php } ?>
                 </tr>
             </thead>
             <tbody>
                 <?php if ($breakdown === []) { ?>
                     <tr><td colspan="<?php echo $by === 'abm' ? 11 : ($by === 'product' ? 6 : 11); ?>">
-                        <?php echo p202_ltv_empty('fa-bar-chart', 'No data for this range',
+                        <?php echo p202_ltv_empty('bi-bar-chart', 'No data for this range',
                             'Try a wider date range, or a different dimension.'); ?>
                     </td></tr>
                 <?php } ?>
                 <?php foreach ($breakdown as $row) { ?>
                     <tr>
                         <?php if ($by === 'abm') { ?>
-                            <td class="ltv-row-link" onclick="ltvCompany(this.getAttribute('data-company'));"
+                            <td class="p202-table__link-row" onclick="ltvCompany(this.getAttribute('data-company'));"
                                 data-company="<?php echo $esc($row['company'] ?? ''); ?>" title="View account detail">
                                 <a href="#" onclick="return false;"><?php echo $esc($row['company'] ?? ''); ?></a>
                             </td>
-                            <td class="num"><span class="ltv-strong"><?php echo (int) ($row['engagement_score'] ?? 0); ?></span><span class="ltv-dim">/100</span></td>
+                            <td class="num"><span class="fw-bold"><?php echo (int) ($row['engagement_score'] ?? 0); ?></span><span class="text-secondary">/100</span></td>
                             <td class="num"><?php echo number_format((int) ($row['contacts'] ?? 0)); ?></td>
                             <td class="num"><?php echo number_format((int) ($row['engagements'] ?? 0)); ?></td>
                             <td class="num"><?php echo ((float) ($row['avg_time_on_page'] ?? 0)) > 0 ? number_format((float) $row['avg_time_on_page']) . 's' : '—'; ?></td>
@@ -205,7 +205,7 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
                             <td class="num">$<?php echo $money($row['spend'] ?? 0); ?></td>
                             <td class="num"><?php echo ((float) ($row['spend'] ?? 0)) > 0 ? '$' . $money($row['cac'] ?? 0) : '—'; ?></td>
                             <?php $ltvCac = (float) ($row['ltv_cac'] ?? 0); ?>
-                            <td class="num <?php echo ((float) ($row['spend'] ?? 0)) > 0 ? ($ltvCac >= 3 ? 'ltv-pos ltv-strong' : ($ltvCac < 1 ? 'ltv-neg' : '')) : ''; ?>">
+                            <td class="num <?php echo ((float) ($row['spend'] ?? 0)) > 0 ? ($ltvCac >= 3 ? 'text-success-emphasis fw-bold' : ($ltvCac < 1 ? 'text-danger-emphasis' : '')) : ''; ?>">
                                 <?php echo ((float) ($row['spend'] ?? 0)) > 0 ? number_format($ltvCac, 2) . 'x' : '—'; ?>
                             </td>
                         <?php } ?>
@@ -219,8 +219,8 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
 <!-- LTV maturation by acquisition cohort -->
 <?php echo p202_ltv_card_open('LTV Maturation by Acquisition Cohort',
     'revenue by months since first seen (last 6 months, all time ranges)'); ?>
-    <div class="ltv-table-wrap">
-        <table class="ltv-table">
+    <div class="p202-table-wrap">
+        <table class="table p202-table">
             <thead>
                 <tr>
                     <th>Cohort</th><th class="num">Customers</th>
@@ -232,18 +232,18 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
             <tbody>
                 <?php if ($cohorts === []) { ?>
                     <tr><td colspan="10">
-                        <?php echo p202_ltv_empty('fa-calendar-o', 'No customers acquired in the last 6 months'); ?>
+                        <?php echo p202_ltv_empty('bi-calendar', 'No customers acquired in the last 6 months'); ?>
                     </td></tr>
                 <?php } ?>
                 <?php foreach ($cohorts as $cohort) { ?>
                     <tr>
-                        <td class="ltv-strong"><?php echo $esc($cohort['cohort_month'] ?? ''); ?></td>
+                        <td class="fw-bold"><?php echo $esc($cohort['cohort_month'] ?? ''); ?></td>
                         <td class="num"><?php echo number_format((int) ($cohort['customers'] ?? 0)); ?></td>
                         <?php foreach (['m0', 'm1', 'm2', 'm3', 'm4', 'm5_plus'] as $bucket) { ?>
-                            <td class="num"><?php echo ((float) ($cohort[$bucket] ?? 0)) != 0.0 ? '$' . $money($cohort[$bucket]) : '<span class="ltv-dim">—</span>'; ?></td>
+                            <td class="num"><?php echo ((float) ($cohort[$bucket] ?? 0)) != 0.0 ? '$' . $money($cohort[$bucket]) : '<span class="text-secondary">—</span>'; ?></td>
                         <?php } ?>
                         <td class="num">$<?php echo $money($cohort['total_revenue'] ?? 0); ?></td>
-                        <td class="num ltv-strong">$<?php echo $money($cohort['ltv_per_customer'] ?? 0); ?></td>
+                        <td class="num fw-bold">$<?php echo $money($cohort['ltv_per_customer'] ?? 0); ?></td>
                     </tr>
                 <?php } ?>
             </tbody>
@@ -254,35 +254,41 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
 <!-- Top customers -->
 <?php echo p202_ltv_card_open('Customers by Lifetime Value',
     number_format((int) $customers['total']) . ' total'); ?>
-    <div class="ltv-toolbar">
-        <input type="text" class="ltv-input ltv-grow" id="ltv-customer-search" maxlength="255"
+    <div class="p202-toolbar p202-panel__filter">
+        <input type="text" class="form-control form-control-sm flex-grow-1" id="ltv-customer-search" maxlength="255"
                placeholder="Search ref, name, email or company&hellip;" value="<?php echo $esc($search); ?>"
                onkeydown="if (event.key === 'Enter') { ltvLoad(0); return false; }">
         <?php echo p202_ltv_chips('ltv-segment-select', $segments, $segment, 'ltvLoad(0);'); ?>
-        <button type="button" class="ltv-btn" onclick="ltvLoad(0);"><i class="fa fa-search"></i> Search</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="ltvLoad(0);"><i class="bi bi-search"></i> Search</button>
         <?php if ($search !== '' || $segment !== '') { ?>
             <a href="#" style="font-size: 12px;" onclick="$('#ltv-customer-search').val(''); $('#ltv-segment-select').val(''); ltvLoad(0); return false;">clear</a>
         <?php } ?>
     </div>
-    <div class="ltv-table-wrap">
-        <table class="ltv-table ltv-table-hover" id="ltv-customers-table">
+    <div class="p202-table-wrap">
+        <?php
+        // Sorting in place is honest only when every customer is on this
+        // page; a longer list is ordered by lifetime revenue on the server
+        // and paged, so its headings are plain labels.
+        $customersSortable = $offset === 0 && (int) $customers['total'] <= $limit;
+        $customerColumns = [
+            ['Customer', false], ['Name / Company', false], ['First Seen', false], ['Last Activity', false],
+            ['Orders', true], ['Revenue', true], ['Refunded', true], ['Active Subs', true], ['MRR', true],
+        ];
+        ?>
+        <table class="table p202-table table-hover" id="ltv-customers-table"<?php echo $customersSortable ? ' data-p202-sort' : ''; ?>>
             <thead>
                 <tr>
-                    <th>Customer</th>
-                    <th>Name / Company</th>
-                    <th>First Seen</th>
-                    <th>Last Activity</th>
-                    <th class="num">Orders</th>
-                    <th class="num">Revenue</th>
-                    <th class="num">Refunded</th>
-                    <th class="num">Active Subs</th>
-                    <th class="num">MRR</th>
+                    <?php foreach ($customerColumns as [$label, $numeric]) { ?>
+                        <th<?php echo $numeric ? ' class="num"' . ($customersSortable ? ' data-sort-method="number"' : '') : ''; ?>><?php
+                            echo $customersSortable ? '<button type="button" class="p202-sort">' . $esc($label) . '</button>' : $esc($label);
+                        ?></th>
+                    <?php } ?>
                 </tr>
             </thead>
             <tbody>
                 <?php if ($customers['rows'] === []) { ?>
                     <tr><td colspan="9">
-                        <?php echo p202_ltv_empty('fa-users', 'No customers in this range',
+                        <?php echo p202_ltv_empty('bi-people', 'No customers in this range',
                             $search !== '' || $segment !== '' ? 'Try clearing the search or segment filter.' : ''); ?>
                     </td></tr>
                 <?php } ?>
@@ -292,17 +298,17 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
                         $displayName = (string) $c['company'];
                     }
                 ?>
-                    <tr class="ltv-row-link" onclick="ltvCustomer(<?php echo (int) $c['customer_id']; ?>);"
+                    <tr class="p202-table__link-row" onclick="ltvCustomer(<?php echo (int) $c['customer_id']; ?>);"
                         title="View customer detail">
                         <td title="<?php echo $esc($c['primary_ref'] ?? ''); ?>">
                             <?php echo $esc(mb_strimwidth((string) ($c['primary_ref'] ?? ('#' . $c['customer_id'])), 0, 40, '…')); ?>
                         </td>
-                        <td><?php echo $displayName !== '' ? $esc($displayName) : '<span class="ltv-dim">—</span>'; ?></td>
+                        <td><?php echo $displayName !== '' ? $esc($displayName) : '<span class="text-secondary">—</span>'; ?></td>
                         <td data-sort="<?php echo (int) ($c['first_seen_time'] ?? 0); ?>"><?php echo date('M j, Y', (int) ($c['first_seen_time'] ?? 0)); ?></td>
                         <td data-sort="<?php echo (int) ($c['last_activity_time'] ?? 0); ?>"><?php echo date('M j, Y', (int) ($c['last_activity_time'] ?? 0)); ?></td>
                         <td class="num"><?php echo number_format((int) ($c['order_count'] ?? 0)); ?></td>
-                        <td class="num ltv-strong">$<?php echo $money($c['total_revenue'] ?? 0); ?></td>
-                        <td class="num"><?php echo ((float) ($c['refunded_amount'] ?? 0)) > 0 ? '$' . $money($c['refunded_amount']) : '<span class="ltv-dim">—</span>'; ?></td>
+                        <td class="num fw-bold">$<?php echo $money($c['total_revenue'] ?? 0); ?></td>
+                        <td class="num"><?php echo ((float) ($c['refunded_amount'] ?? 0)) > 0 ? '$' . $money($c['refunded_amount']) : '<span class="text-secondary">—</span>'; ?></td>
                         <td class="num"><?php echo number_format((int) ($c['active_subscription_count'] ?? 0)); ?></td>
                         <td class="num">$<?php echo $money($c['mrr'] ?? 0); ?></td>
                     </tr>
@@ -329,6 +335,6 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
         ltvNav('company', { company: company });
     }
 
-    new Tablesort(document.getElementById('ltv-breakdown-table'), { descending: true });
-    new Tablesort(document.getElementById('ltv-customers-table'), { descending: true });
+    // Both tables sort in place (data-p202-sort): ltvRender() hands the
+    // new markup to p202ui.init(), which wires them.
 </script>

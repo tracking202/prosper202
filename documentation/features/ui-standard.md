@@ -86,7 +86,11 @@ user can still reach every setting. Concretely:
    `202_users_pref` (`user_pref_time_predefined`, and a column per
    dimension), and a page that reads it must still yield to the URL wherever
    the URL speaks. Analyze › Mobile Apps is URL-only so far — it defaults to
-   Last 30 Days rather than to anything stored. An open "Advanced" disclosure
+   Last 30 Days rather than to anything stored. The other Analyze reports
+   (U3) take their filters from the URL and write them to that row before
+   they run, because their downloads and the classic pages read them there:
+   a URL that names any filter speaks for all of them, and one that names
+   none shows the stored default. An open "Advanced" disclosure
    persists per browser, in `localStorage`, because it is a convenience
    rather than a setting. Never put anything in browser storage that another
    account sharing the browser must not see.
@@ -167,7 +171,7 @@ one answer each, decided in U1 of the migration and not re-decided per page.
 | Job | On v2 | Why |
 |---|---|---|
 | Date pickers (jQuery UI datepicker) | Native `<input type="date">`, through `p202_date_range()` | Every supported browser has one, it is keyboard- and screen-reader-accessible, and it follows the theme. It submits ISO `YYYY-MM-DD` whatever the reader's locale displays; the classic calendar posted `mm/dd/yyyy`, so a page moving to it reads the new shape. |
-| Tag inputs and typeahead (tokenfield, typeahead.js, Bloodhound) | `<datalist>` on a plain text input (the filter bar's `suggest` type). No library. | Every tag input in the inventory stores a comma-separated string or one value: the rotator's rule values (`getTokensList(',')`), the device list, the subid tokens, the network-name lookup. Nothing needs chips to work, only suggestions. The rotator's suggestions come from `tracking202/ajax/rotator.php?autocomplete=…`; when Setup moves (U4) that fills the datalist, as a small first-party hook in `p202-ui.js`, not a plugin. A page that turns out to need real chips makes the case then, against this table. |
+| Tag inputs and typeahead (tokenfield, typeahead.js, Bloodhound) | `<datalist>` on a plain text input (the filter bar's `suggest` type). No library. | Every tag input in the inventory stores a comma-separated string or one value: the rotator's rule values (`getTokensList(',')`), the device list, the subid tokens, the network-name lookup. Nothing needs chips to work, only suggestions. The rotator's suggestions come from `tracking202/ajax/rotator.php?autocomplete=…`, and since U4 they fill a datalist through a small first-party hook in `p202-ui.js`, not a plugin: `input[data-p202-suggest-url="…%QUERY…"]` looks up the part after the last comma and offers each answer with the values already typed kept in front. A page that turns out to need real chips makes the case then, against this table. |
 | Sortable tables (tablesorter and its widgets) | `tablesort.js` (already pinned in `assets.php`, loaded by the v2 shell), through `p202_data_table(..., ['sortable' => true])` | 3 KB, no jQuery, already the classic report fragments' sorter. Client-side sorting is honest only when every row is on the page, so it is opt-in; a paginated or truncated table sorts on the server, by link. |
 | Validation (jquery-validate) | Native constraint validation (`required`, `type`, `min`/`max`, `pattern`) plus the server's own sentence under the field (`.is-invalid` + `.invalid-feedback`) | The server validates anyway and its sentence is the one that must be shown (principle: errors in the API's own words). Forms do not set `novalidate` and do not use `.was-validated`, which paints every valid field green. |
 | Select boxes (select2) | Native `<select>`, with `<optgroup>`s for a two-level list. No searchable-select library. | The long lists are campaigns (grouped by category, which one `<optgroup>`ed select replaces two dependent ones with), countries (a native select finds by typing) and ISP/region/city, which are unbounded and install-wide — too long for any select, searchable or not. Those become a `suggest` field over the values the account's data has. One pinned library would bring its own dark theme and focus handling to keep in step; nothing in the inventory needs it. |
@@ -203,7 +207,9 @@ option lists and calls them. The kit renders each in every state.
   — the `.p202-table` with right-aligned numbers, a totals row that stays
   last, the empty state in place of an empty table, `aria-sort` for the order
   the server delivered, and opt-in client-side sorting whose header buttons
-  are keyboard-reachable.
+  are keyboard-reachable. A table that is not sortable in place may give a
+  column an `href`: its heading becomes a link that reloads the report sorted
+  by that column on the server, the way a paginated report sorts (U3).
 
 ## The chrome is framework-neutral
 
@@ -283,3 +289,22 @@ page that builds its own head, with `p202_asset_tag('<id>', $base)`.
 5. Account pages and login.
 6. The classic shell, Bootstrap 3, Flat UI Pro, jQuery 1.11 and the old CSS
    layers are deleted, and the structural tests apply to the whole tree.
+
+<!-- U2: Overview, Visitors, Spy -->
+## Classic reports on v2: the URL applied to the stored filters
+
+The classic reports' fragments, downloads and data engine read their filters
+from `202_users_pref`, not from the request. A report page moved to v2 keeps
+them there rather than rewriting every reader: its filter bar is one GET form,
+and the page applies the query string to that row as it loads
+(`p202_overview_page_state()` in `202-config/functions-ui-overview.php`, over
+`202-config/functions-report-prefs.php`), then draws its fragment into the
+report panel (`202-js/p202-overview.js`). So the URL wins (rule 8), the stored
+row is the first-visit default, and a download agrees with the page. Two rules
+hold it together: a request writes only the columns it names, and a value that
+does not parse is refused under its field with nothing written — the report is
+not drawn under filters it does not match. Dates are read by one function,
+`p202_report_parse_date()`, which `set_user_prefs.php` uses too, so the classic
+calendar's `mm/dd/yyyy` and the picker's `YYYY-MM-DD` mean the same day.
+Overview, Visitors and Spy are built this way; the fragments they load are
+listed in `NoLegacyBootstrapClassesTest::V2_SHARED`.

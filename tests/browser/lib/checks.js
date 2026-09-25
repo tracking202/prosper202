@@ -456,7 +456,52 @@ function chromeMatches(ctx, a, b, options = {}) {
   expect.ok(compared > 0, label + 'there was chrome to compare');
 }
 
+/* U4: Setup ---------------------------------------------------------------
+ * The Setup pages on the v2 shell, one entry each: the page, the sub-menu
+ * entry that marks it current, and the classes it uses only as script hooks
+ * (legitimately unstyled). `pageBaseline` runs every check the standard asks
+ * of a v2 page against one entry, so a spec walks the list rather than
+ * repeating the checks per page.
+ */
+const LEGACY_SAMPLE = ['col-xs-12', 'col-xs-6', 'col-md-offset-4', 'panel', 'panel-body', 'panel-heading', 'well',
+  'form-horizontal', 'form-group', 'control-label', 'input-sm', 'btn-default', 'btn-xs', 'btn-block', 'help-block',
+  'glyphicon', 'label', 'pull-right', 'sr-only', 'input-group-addon', 'radio', 'checkbox'];
+
+const SETUP_PAGES = [
+  { path: '/tracking202/setup/ppc_accounts.php', menu: 'Traffic Sources' },
+  { path: '/tracking202/setup/aff_networks.php', menu: 'Categories' },
+  { path: '/tracking202/setup/aff_campaigns.php', menu: 'Campaigns' },
+  { path: '/tracking202/setup/landing_pages.php', menu: 'Landing Pages' },
+  { path: '/tracking202/setup/text_ads.php', menu: 'Text Ads' },
+  { path: '/tracking202/setup/rotator.php', menu: 'Redirector' },
+  { path: '/tracking202/setup/get_simple_landing_code.php', menu: 'Get LP Code' },
+  { path: '/tracking202/setup/get_adv_landing_code.php', menu: 'Get LP Code' },
+  { path: '/tracking202/setup/get_dynamic_smart_component_code.php', menu: null },
+  { path: '/tracking202/setup/get_trackers.php', menu: 'Get Links' },
+  { path: '/tracking202/setup/get_postback.php', menu: 'Postback/Pixel' },
+];
+
+/**
+ * Everything the standard asks of a v2 page, for one SETUP_PAGES entry:
+ * the baseline, no legacy class in the live DOM, every component class
+ * styled, no flex container eating its spaces, and the page's own sub-menu
+ * entry current and on screen. The caller has navigated to the page.
+ */
+async function pageBaseline(ctx, entry) {
+  const { app, expect } = ctx;
+  await baseline(ctx);
+  await noLegacyClasses(ctx, LEGACY_SAMPLE);
+  await componentClassesAreStyled(ctx, entry.scriptOnly || []);
+  await flexContainersKeepTheirSpaces(ctx);
+  if (entry.menu) {
+    expect.eq(await app.currentSubMenuItem(), entry.menu, 'the sub-menu marks ' + entry.menu + ' as current');
+    await currentSubMenuItemIsVisible(ctx);
+  }
+}
+
 module.exports = {
+  SETUP_PAGES,
+  pageBaseline,
   chromeGeometry,
   chromeMatches,
   baseline,
@@ -517,3 +562,111 @@ async function accountPageBaseline(ctx, page) {
 
 module.exports.ACCOUNT_PAGES = ACCOUNT_PAGES;
 module.exports.accountPageBaseline = accountPageBaseline;
+
+/* U3: Analyze */
+
+/**
+ * The Analyze report pages on the v2 shell, one entry each: where it is, the
+ * sub-menu label that reaches it, and the heading it opens with. A page added
+ * to the family is a line here, and every pass that walks the list covers it.
+ */
+const ANALYZE_REPORT_PAGES = [
+  { path: '/tracking202/analyze/keywords.php', menu: 'Keywords', heading: 'Keywords' },
+  { path: '/tracking202/analyze/text_ads.php', menu: 'Text Ads', heading: 'Text Ads' },
+  { path: '/tracking202/analyze/referers.php', menu: 'Referers', heading: 'Referers' },
+  { path: '/tracking202/analyze/ips.php', menu: 'IPs', heading: 'IP Addresses' },
+  { path: '/tracking202/analyze/countries.php', menu: 'Countries', heading: 'Countries' },
+  { path: '/tracking202/analyze/regions.php', menu: 'Regions', heading: 'Regions' },
+  { path: '/tracking202/analyze/cities.php', menu: 'Cities', heading: 'Cities' },
+  { path: '/tracking202/analyze/isp.php', menu: 'ISP/Carrier', heading: 'ISPs and Carriers' },
+  { path: '/tracking202/analyze/landing_pages.php', menu: 'Landing Pages', heading: 'Landing Pages' },
+  { path: '/tracking202/analyze/devices.php', menu: 'Devices', heading: 'Devices' },
+  { path: '/tracking202/analyze/browsers.php', menu: 'Browsers', heading: 'Browsers' },
+  { path: '/tracking202/analyze/platforms.php', menu: 'Platforms', heading: 'Platforms' },
+  { path: '/tracking202/analyze/variables.php', menu: 'Custom Variables', heading: 'Custom Variables' },
+];
+
+/** Bootstrap 3 classes a migrated page most often keeps by accident. */
+const LIKELY_LEFTOVERS = ['col-xs-12', 'col-xs-6', 'panel', 'panel-body', 'well', 'form-horizontal', 'input-sm', 'label', 'pull-right'];
+
+/**
+ * Everything the standard asks of any v2 page, for the page on screen: the
+ * shell and no errors, every component class styled, no flex container
+ * eating its spaces, the current sub-menu entry in view, no Bootstrap 3
+ * class in the live DOM, and wide tables scrolling in their own box. One
+ * call per page, at whatever width and theme the caller is at.
+ *
+ * @param {{scriptOnly?: string[]}} [options] classes this page uses only as
+ *   script hooks
+ */
+async function v2PageBaseline(ctx, options = {}) {
+  await baseline(ctx);
+  await componentClassesAreStyled(ctx, options.scriptOnly || []);
+  await flexContainersKeepTheirSpaces(ctx);
+  await currentSubMenuItemIsVisible(ctx);
+  await noLegacyClasses(ctx, LIKELY_LEFTOVERS);
+  await tablesScrollThemselves(ctx);
+}
+
+module.exports.ANALYZE_REPORT_PAGES = ANALYZE_REPORT_PAGES;
+module.exports.v2PageBaseline = v2PageBaseline;
+/* U2: Overview, Visitors, Spy */
+
+/**
+ * The pages of the Overview, Visitors and Spy family on the v2 shell, one
+ * baseline entry each: where the page is, what its sub-menu entry is called
+ * (null where the section has no sub-menu), and the element that says its
+ * report panel has drawn. specs/overview-visitors-spy.spec.js runs
+ * overviewPageBaseline() over every entry, light and dark, at 1280px and
+ * 390px; adding a page to the family is a line here.
+ */
+const OVERVIEW_FAMILY_PAGES = [
+  { path: '/tracking202/overview/', subMenu: 'Campaign Overview', report: '#overview-report' },
+  { path: '/tracking202/overview/breakdown.php', subMenu: 'Breakdown Analysis', report: '#breakdown-report' },
+  { path: '/tracking202/overview/day-parting.php', subMenu: 'Day Parting', report: '#day-parting-report' },
+  { path: '/tracking202/overview/week-parting.php', subMenu: 'Week Parting', report: '#week-parting-report' },
+  { path: '/tracking202/overview/group-overview.php', subMenu: 'Group Overview', report: '#group-overview-report' },
+  { path: '/tracking202/overview/rotator-breakdown.php', subMenu: null, report: '#rotator-breakdown-report' },
+  { path: '/tracking202/visitors/', subMenu: null, report: '#visitors-report' },
+  { path: '/tracking202/spy/', subMenu: null, report: '#spy-report' },
+];
+
+/**
+ * Wait for a report panel drawn by 202-js/p202-overview.js: its fragment has
+ * answered (aria-busy is false) and the skeleton is gone. A panel that
+ * failed says so in a flash, which the caller's assertions then see.
+ */
+async function overviewReportDrawn(ui, selector) {
+  await ui.untilInPage((sel) => {
+    const panel = document.querySelector(sel);
+    return panel !== null && panel.getAttribute('aria-busy') === 'false' && !panel.querySelector('.p202-skeleton');
+  }, selector, { describe: 'the report in ' + selector + ' to be drawn' });
+}
+
+/**
+ * Everything the standard asks of one page of the family, on the page the
+ * session is already on: shell, no errors, no legacy class, every class
+ * styled, no flex container eating spaces, the current sub-menu entry on
+ * screen, wide tables scrolling themselves — and, in dark mode, the page
+ * actually dark.
+ */
+async function overviewPageBaseline(ctx, entry, options = {}) {
+  await overviewReportDrawn(ctx.ui, entry.report);
+  const failed = await ctx.ui.exists(entry.report + ' > .alert-danger');
+  ctx.expect.notOk(failed, 'the report panel drew its fragment', failed ? await ctx.ui.text(entry.report) : '');
+  await baseline(ctx);
+  await componentClassesAreStyled(ctx);
+  await flexContainersKeepTheirSpaces(ctx);
+  await noLegacyClasses(ctx, ['col-xs-6', 'col-xs-12', 'panel', 'panel-body', 'label', 'label-info', 'label-primary', 'input-sm', 'btn-xs', 'btn-default', 'form-group', 'pull-right']);
+  await tablesScrollThemselves(ctx);
+  if (entry.subMenu !== null) {
+    await currentSubMenuItemIsVisible(ctx);
+  }
+  if (options.dark) {
+    await darkThemeApplies(ctx);
+  }
+}
+
+module.exports.OVERVIEW_FAMILY_PAGES = OVERVIEW_FAMILY_PAGES;
+module.exports.overviewReportDrawn = overviewReportDrawn;
+module.exports.overviewPageBaseline = overviewPageBaseline;

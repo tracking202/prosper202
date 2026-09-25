@@ -308,3 +308,94 @@
 
     window.p202ui = { init: init, initHints: initBootstrapHints, copyText: copyText };
 })();
+
+/* U4: Setup — remote suggestions for a text field, the <datalist> answer to
+   the classic typeahead (UI standard, "one replacement per legacy job").
+
+     input[data-p202-suggest-url="…%QUERY…"]
+
+   The URL is same-origin and carries %QUERY; a page may rewrite it while
+   the page is open (the redirector rewrites the type in it when a
+   criterion's type changes). The field holds a comma-separated list, the
+   shape the redirector's rule values have always been stored in, so only the
+   part after the last comma is looked up, and each suggestion is offered as
+   the whole field with that part replaced: choosing one keeps the values
+   already typed. The answer is JSON — a list of strings or of
+   {value, label} — and anything else (a network failure, an upstream that
+   answered with nothing) offers no suggestions rather than an error: the
+   field works without them. A URL still holding an unfilled %…% placeholder
+   is not fetched. */
+(function () {
+    'use strict';
+
+    var timers = typeof WeakMap === 'function' ? new WeakMap() : null;
+    var sequence = 0;
+
+    function listFor(input) {
+        var id = input.getAttribute('list');
+        var list = id ? document.getElementById(id) : null;
+        if (list && list.hasAttribute('data-p202-suggest-list')) {
+            return list;
+        }
+        list = document.createElement('datalist');
+        list.id = (input.id || 'p202-suggest') + '-list-' + (++sequence);
+        list.setAttribute('data-p202-suggest-list', '');
+        input.parentNode.insertBefore(list, input.nextSibling);
+        input.setAttribute('list', list.id);
+        return list;
+    }
+
+    function suggest(input) {
+        var template = input.getAttribute('data-p202-suggest-url') || '';
+        var value = input.value;
+        var cut = value.lastIndexOf(',');
+        var prefix = cut === -1 ? '' : value.slice(0, cut + 1);
+        var term = value.slice(cut + 1).trim();
+        if (term.length < 2 || template.indexOf('%QUERY') === -1 || /%(?!QUERY)[A-Z]+%/.test(template)) {
+            return;
+        }
+        var ticket = ++sequence;
+        input.setAttribute('data-p202-suggest-ticket', String(ticket));
+        fetch(template.replace('%QUERY', encodeURIComponent(term)), { credentials: 'same-origin' })
+            .then(function (response) { return response.ok ? response.text() : ''; })
+            .then(function (text) {
+                if (input.getAttribute('data-p202-suggest-ticket') !== String(ticket)) {
+                    return;
+                }
+                var items = [];
+                try {
+                    items = JSON.parse(text);
+                } catch (error) {
+                    items = [];
+                }
+                var list = listFor(input);
+                list.innerHTML = '';
+                (Array.isArray(items) ? items : []).slice(0, 20).forEach(function (item) {
+                    var suggestion = typeof item === 'string' ? item : (item && item.value !== undefined ? String(item.value) : '');
+                    if (suggestion === '') {
+                        return;
+                    }
+                    var option = document.createElement('option');
+                    option.value = prefix + suggestion;
+                    if (item && typeof item === 'object' && item.label) {
+                        option.label = String(item.label);
+                    }
+                    list.appendChild(option);
+                });
+            })
+            .catch(function () {});
+    }
+
+    document.addEventListener('input', function (event) {
+        var input = event.target;
+        if (!input || !input.hasAttribute || !input.hasAttribute('data-p202-suggest-url')) {
+            return;
+        }
+        if (timers) {
+            window.clearTimeout(timers.get(input));
+            timers.set(input, window.setTimeout(function () { suggest(input); }, 250));
+        } else {
+            suggest(input);
+        }
+    });
+})();

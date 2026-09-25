@@ -914,3 +914,43 @@ a.p202-pill:focus-visible {
     background: var(--bs-secondary-bg);
     font-weight: 700;
 }
+
+/* U4: Setup ---------------------------------------------------------------
+   A many-line snippet (a landing page's redirect script, the universal
+   pixel) scrolls inside its own box rather than pushing the next snippet
+   off the screen. The kit shows it under "Code & strip". */
+
+.p202-code__value--long {
+    max-height: 18rem;
+    overflow-y: auto;
+}
+
+/* A radio group's <legend> is its label: Bootstrap's reboot sizes a legend
+   like a heading, so one styled as a label came out twice the size of the
+   labels around it ("Send visitors to", "Cost" on Get Links). */
+legend.form-label {
+    font-size: inherit;
+    line-height: inherit;
+}
+
+/* U3: Analyze */
+
+/* A server-sorted column's heading (p202_data_table(), `href`): a link that
+   looks like the sort button it stands in for. */
+a.p202-sort {
+    text-decoration: none;
+}
+
+a.p202-sort:hover {
+    color: var(--bs-body-color);
+}
+
+/* A group heading inside a report table: the custom-variable report's
+   "traffic source · variable" rows, each over the values under it. */
+.p202-table > tbody > tr.p202-table__group > th {
+    padding: 0.5rem 0.7rem;
+    border-top: 1px solid var(--p202-line-strong);
+    background: var(--bs-tertiary-bg);
+    font-size: 0.8125rem;
+    font-weight: 700;
+}

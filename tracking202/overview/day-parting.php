@@ -1,22 +1,35 @@
-<?php include_once(substr(__DIR__, 0,-21) . '/202-config/connect.php'); 
-include_once(substr(__DIR__, 0, -21) . '/202-config/functions-ui-calendar.php');
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Overview › Day Parting: which hours of the day perform, added up over the window.
+ *
+ * On the v2 shell: the filters are one GET form whose values are applied to
+ * the user's report preferences as the page loads, and the report is drawn
+ * into the panel from tracking202/ajax/sort_hourly.php, which reads them.
+ * 202-config/functions-ui-overview.php holds the recipe every page in this
+ * family follows.
+ */
+
+include_once dirname(__DIR__, 2) . '/202-config/connect.php';
 
 AUTH::require_user();
+AUTH::set_timezone($_SESSION['user_timezone']);
 
-//show the template
-template_top('Hourly Overview');  ?>
+require_once dirname(__DIR__, 2) . '/202-config/functions-ui-overview.php';
 
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<h6>Hourly Overview</h6>
-		<small>The breakdown overview allows you to see your stats per hour average.</small>
-	</div>
-</div>
+$base = get_absolute_url();
 
-<?php display_calendar(get_absolute_url().'tracking202/ajax/sort_hourly.php', true, true, true, false, true, true); ?>    
-
-<script type="text/javascript">
-   loadContent('<?php echo get_absolute_url();?>tracking202/ajax/sort_hourly.php',null);
-</script>
-
-<?php template_bottom(); ?>
+p202_overview_run([
+    'shell' => ['ui' => 'v2'],
+    'id' => 'day-parting',
+    'page_title' => 'Hourly Overview',
+    'title' => 'Day parting',
+    'desc' => 'Which hours of the day perform best, added up across the window you choose.',
+    'icon' => 'bi-clock',
+    'action' => $base . 'tracking202/overview/day-parting.php',
+    'fragment' => $base . 'tracking202/ajax/sort_hourly.php',
+    'panel' => 'By hour of the day',
+    'names' => [...P202_OVERVIEW_CLICK_FILTERS, 'user_cpc_or_cpv'],
+]);
