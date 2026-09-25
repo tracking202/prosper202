@@ -129,15 +129,21 @@ final class AppSchemaController
         // project named here, with requestHash = the install's fingerprint
         // (IntegrityBinding), and sends it as integrity_token.
         $mode = $registration->policy->integrityMode;
+        // A token cannot be requested without the project number, so the
+        // document never tells the SDK to try. The registry refuses
+        // observe/require without one; this covers a stored mode read as
+        // require because it was unreadable (IntegrityMode::fromStored()),
+        // where the install then arrives tokenless and is judged `missing`.
+        $project = $registration->integrityCloudProjectNumber;
 
         return [
             'platform' => AppIdentity::ANDROID,
             'app_key' => $registration->identity->appKey,
             'integrity_mode' => $mode->value,
             'integrity' => [
-                'request_token' => $mode->decodes(),
+                'request_token' => $mode->decodes() && $project !== null,
                 'token_type' => 'standard',
-                'cloud_project_number' => $registration->integrityCloudProjectNumber,
+                'cloud_project_number' => $project,
                 'request_hash' => 'sha256_hex_of_canonical_install_body',
             ],
             'sdk' => [

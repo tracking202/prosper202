@@ -136,7 +136,7 @@ var appIntegrityCredentialSetCmd = &cobra.Command{
 
 var appIntegrityCredentialClearCmd = &cobra.Command{
 	Use:   "clear <registration-id>",
-	Short: "Delete the service account (refused while the mode is observe or require)",
+	Short: "Delete the service account (refused while the mode is observe or require, or installs still wait for a verdict)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := registrationArg(args[0]); err != nil {
@@ -159,7 +159,11 @@ var appIntegrityCredentialClearCmd = &cobra.Command{
 		if err != nil {
 			var apiErr *api.APIError
 			if errors.As(err, &apiErr) && apiErr.Status == 409 {
-				return withHint(err, "Switch Play Integrity off first (`p202 app update "+args[0]+" --integrity-mode off`), or rotate with `p202 app integrity credential set "+args[0]+" --file <key.json>`.")
+				// Two refusals share the status; the message says which. The
+				// hint covers both so an agent never has to parse it.
+				return withHint(err, "If the mode is observe or require, switch Play Integrity off first (`p202 app update "+args[0]+" --integrity-mode off`). "+
+					"If installs are still waiting for a verdict, leave the credential until the worker has settled them (each within 24 hours of arriving; "+
+					"`p202 app integrity status "+args[0]+"` shows installs.by_integrity_state.pending). Or rotate it with `p202 app integrity credential set "+args[0]+" --file <key.json>`.")
 			}
 			return err
 		}

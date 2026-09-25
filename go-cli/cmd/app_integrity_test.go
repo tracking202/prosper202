@@ -166,3 +166,35 @@ func TestAppUpdateSendsTheIntegrityFieldsAsTyped(t *testing.T) {
 		t.Errorf("body = %v", got)
 	}
 }
+
+func TestIntegrityRefusalsNameTheNextStep(t *testing.T) {
+	status, body := 0, ""
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+		w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	// A clear refused because installs still wait for a verdict (the mode is already off).
+	status, body = 409, `{"error":true,"status":409,"message":"2 installs of this app are still waiting for a Play Integrity verdict (1 held from attribution under require)"}`
+	_, _, err := executeCommand("app", "integrity", "credential", "clear", "3", "--force")
+	if err == nil || !strings.Contains(hintFor(err), "p202 app integrity status 3") || !strings.Contains(hintFor(err), "24 hours") {
+		t.Errorf("pending-installs 409 hint = %q", hintFor(err))
+	}
+	if code := exitCodeForError(err); code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+
+	// A mode refused for want of the Cloud project number.
+	status, body = 422, `{"error":true,"status":422,"message":"Play Integrity needs the Cloud project number","field_errors":{"integrity_cloud_project_number":"is required for integrity_mode observe"}}`
+	_, _, err = executeCommand("app", "update", "3", "--integrity-mode", "observe")
+	if err == nil || !strings.Contains(hintFor(err), "--integrity-cloud-project-number <number>") {
+		t.Errorf("project-number 422 hint = %q", hintFor(err))
+	}
+	if code := exitCodeForError(err); code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+}

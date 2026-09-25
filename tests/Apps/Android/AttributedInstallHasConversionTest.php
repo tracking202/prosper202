@@ -24,7 +24,10 @@ use Tests\Support\SqlLiteralText;
  *    The Play Integrity worker settles through the same method, in its own
  *    transaction, and its other writes touch only the integrity_* columns.
  *    settle() applies the `require` gate before it writes anything, so no
- *    caller can attribute an install whose verdict has not passed.
+ *    caller can attribute an install whose verdict has not passed. The one
+ *    other match_state write is UnverifiableInstalls' retirement of an
+ *    install whose registration is gone: pending_integrity to the constant
+ *    integrity_unverified, never touching trust, click or conversion.
  * 3. Every redirect fallback that substitutes a placeholder for [[subid]]
  *    while MySQL is down also empties [[p202_install_token]] (plan §5.1):
  *    there is no click to sign, and a literal placeholder would reach Play.
@@ -35,6 +38,7 @@ final class AttributedInstallHasConversionTest extends TestCase
         'api/v3/Apps/Android/InstallIntake.php' => ['insert', 'update'],
         'api/v3/Apps/Android/InstallEventsIntake.php' => ['update'],
         'api/v3/Apps/Android/Integrity/IntegrityVerifier.php' => ['update'],
+        'api/v3/Apps/Android/Integrity/UnverifiableInstalls.php' => ['update'],
         'api/v3/Apps/AppDataPurge.php' => ['delete'],
     ];
 
@@ -101,6 +105,18 @@ final class AttributedInstallHasConversionTest extends TestCase
                 self::assertStringStartsWith('integrity_', $column, 'the integrity worker sets ' . $column . ' directly: ' . $set);
             }
         }
+
+        // Installs whose registration is gone are retired by two constant
+        // transitions, each from the pending state it ends: the held install
+        // becomes integrity_unverified (never attributed, so nothing to
+        // convert), the queued verdict `error`. Trust, click and conversion
+        // are never written, so this writer cannot make anything payable.
+        self::assertSame(2, preg_match_all('/\bUPDATE\b/i', $tree['api/v3/Apps/Android/Integrity/UnverifiableInstalls.php']), 'the retirement writes two statements');
+        preg_match_all('/UPDATE\s+202_app_installs\s+SET\s+([^;]*?)\s+WHERE\s+([^;]*?)\s+AND\s+\?/i', $tree['api/v3/Apps/Android/Integrity/UnverifiableInstalls.php'], $m, PREG_SET_ORDER);
+        self::assertSame([
+            ["match_state = 'integrity_unverified', match_reason = ?, settled_at = ?", "match_state = 'pending_integrity'"],
+            ["integrity_state = 'error', integrity_reason = ?, integrity_next_at = NULL", "integrity_state = 'pending'"],
+        ], array_map(static fn (array $s): array => [preg_replace('/\s+/', ' ', $s[1]), preg_replace('/\s+/', ' ', $s[2])], $m));
 
         // Retention deletes through its classes, whose table is data: the
         // only runtime-table DELETE, in a file that never names the table.

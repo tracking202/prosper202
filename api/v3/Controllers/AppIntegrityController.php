@@ -28,9 +28,11 @@ use Prosper202\Database\Connection;
  *    answered today against its default quota, and the policy's constants;
  *  - PUT    /apps/{id}/integrity-credential  set or rotate the service
  *    account, `{"credential": <the key file's JSON object>}`;
- *  - DELETE /apps/{id}/integrity-credential  clear it — refused while the
- *    mode is not `off`, so a registration can never be left requiring a
- *    verdict nothing can decode.
+ *  - DELETE /apps/{id}/integrity-credential  clear it — refused (409) while
+ *    the mode is not `off`, and while any install of the registration is
+ *    still queued for a verdict (each keeps the mode it arrived under), so
+ *    neither the registration nor an install already received can be left
+ *    requiring a verdict nothing can decode.
  *
  * The mode itself is a registration field (`integrity_mode`, PUT /apps/{id}).
  *
@@ -150,6 +152,19 @@ final class AppIntegrityController
             throw new ConflictException('Play Integrity is ' . $mode->value . ' for this app; set integrity_mode to off (PUT /apps/'
                 . $registrationId . ') before clearing its credential, or PUT a new credential to rotate it.');
         }
+        // Off stops new installs from queueing, not the ones already queued:
+        // each keeps the mode it arrived under, and a `require` install
+        // cleared out from under would retry to its deadline and end
+        // integrity_unverified — a valid attribution lost to a setting.
+        [$waiting, $held] = $this->installsAwaitingAVerdict($registrationId);
+        if ($waiting > 0) {
+            throw new ConflictException(($waiting === 1 ? '1 install of this app is' : $waiting . ' installs of this app are')
+                . ' still waiting for a Play Integrity verdict' . ($held > 0 ? ' (' . $held . ' held from attribution under require)' : '') . ', and decoding '
+                . ($waiting === 1 ? 'it needs' : 'them needs') . ' this credential. Leave it until the worker (202-cronjobs/app-installs.php) has settled '
+                . ($waiting === 1 ? 'it' : 'them') . ' — each is decided within ' . intdiv(IntegrityVerifier::DEADLINE, 3600)
+                . ' hours of arriving; GET /apps/' . $registrationId . '/integrity shows installs.by_integrity_state.pending — '
+                . 'or PUT a new credential to rotate it.');
+        }
         $removed = $this->credentials->clear($this->userId, $registrationId);
 
         return ['data' => [
@@ -158,6 +173,31 @@ final class AppIntegrityController
             'cleared' => $removed,
             'message' => $removed ? 'The Play Integrity credential was deleted.' : 'This app had no Play Integrity credential.',
         ]];
+    }
+
+    /**
+     * How many of the registration's installs are still queued for a verdict
+     * (integrity_state pending, whatever mode they arrived under), and how
+     * many of those are held from attribution (pending_integrity).
+     *
+     * @return array{0: int, 1: int}
+     */
+    private function installsAwaitingAVerdict(int $registrationId): array
+    {
+        $stmt = $this->prepare(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(match_state = 'pending_integrity'), 0) AS held FROM 202_app_installs
+             WHERE user_id = ? AND registration_id = ? AND integrity_state = 'pending'"
+        );
+        $this->bind($stmt, 'ii', $this->userId, $registrationId);
+        $this->execute($stmt, 'Integrity queue lookup failed');
+        $row = $this->result($stmt)->fetch_assoc();
+        $stmt->close();
+        if (!is_array($row) || !isset($row['n'])) {
+            // COUNT always answers one row: no row is a failure, never "none waiting" (CLAUDE.md #11).
+            throw new HttpException('Integrity queue lookup returned no row', 500);
+        }
+
+        return [(int) $row['n'], (int) $row['held']];
     }
 
     /** @return array{app_key: string, integrity_mode: mixed, integrity_cloud_project_number: mixed} */

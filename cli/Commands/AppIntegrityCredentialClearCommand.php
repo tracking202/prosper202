@@ -13,7 +13,8 @@ use Symfony\Component\Console\Question\ConfirmationQuestion;
 
 /**
  * DELETE /apps/{id}/integrity-credential: delete the service account. The
- * server refuses it (409) while the mode is observe or require. Confirms
+ * server refuses it (409) while the mode is observe or require, or while any
+ * install of the app is still waiting for a verdict. Confirms
  * unless --force, like every delete here. The Go CLI's
  * `p202 app integrity credential clear`.
  */
@@ -25,7 +26,7 @@ class AppIntegrityCredentialClearCommand extends BaseCommand
     protected function configure(): void
     {
         parent::configure();
-        $this->setDescription('Delete an Android app\'s Play Integrity service account (refused unless the mode is off)')
+        $this->setDescription('Delete an Android app\'s Play Integrity service account (refused unless the mode is off and no install awaits a verdict)')
             ->addArgument('registration_id', InputArgument::REQUIRED, 'The Android registration')
             ->addOption('force', 'f', InputOption::VALUE_NONE, 'Skip confirmation prompt');
     }
