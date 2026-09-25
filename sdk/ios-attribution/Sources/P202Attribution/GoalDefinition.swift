@@ -238,6 +238,15 @@ public struct GoalDefinition: Equatable, Sendable {
             }
         }
 
+        // A sum can jump past many multiples of its threshold in one event
+        // (a $1,000 purchase against "every $0.01"), so a sum that repeats
+        // must say how many times it can be reached; a count grows by one
+        // per event, so its `each` may stay unbounded. The server's rule
+        // (GoalDefinition::parse()), path and all.
+        if case .sum = threshold, repeatEach, repeatMax == nil, e["repeat.max"] == nil {
+            e["repeat.max"] = "is required for a sum threshold with mode \"each\" (1-\(maxRepeat)): one event can cross many multiples of a sum, so a sum goal that repeats needs a bound"
+        }
+
         // value
         var value = Value.none
         if let v = raw["value"] {
@@ -348,7 +357,9 @@ public struct GoalDefinition: Equatable, Sendable {
         ])
     }
 
-    /// How many times the goal can be reached: 1 for `once`.
+    /// How many times the goal can be reached: 1 for `once`. Unbounded
+    /// (`Int.max`) only for a count's `each` without `max`; parse() refuses
+    /// a repeating sum without one.
     var cap: Int {
         return repeatEach ? (repeatMax ?? Int.max) : 1
     }

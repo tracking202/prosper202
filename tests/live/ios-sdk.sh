@@ -27,7 +27,11 @@
 #   - Setup › Mobile Apps says so when a rule is edited;
 #   - deleting the registration and registering the app again: its
 #     postbacks keep decoding under what its own encodings meant (by App
-#     Store id), not under the account-wide set.
+#     Store id), not under the account-wide set;
+#   - PR 4's bound on repeating sums, from the encoding side: a sum with
+#     repeat "each" and no max cannot be created, a bounded one is encoded,
+#     and a row stored without max (which the device disables) cannot be
+#     named by an encoding.
 #
 # Needs a scratch database (it truncates the goal and app tables).
 #
@@ -119,7 +123,7 @@ print('definitions', len(defs), 'evaluator', len(cases), 'failures', bad)
 PY
 cat "$OUT/vectors.txt" | tail -5 | sed 's/^/    | /'
 eq "$(tail -1 "$OUT/vectors.txt" | awk '{print $6}')" 0 "every definition and evaluator vector, over HTTP"
-eq "$(tail -1 "$OUT/vectors.txt" | awk '{print ($2 >= 40 && $4 >= 40) ? "enough" : "too few"}')" enough "and there were enough of them to mean something"
+eq "$(tail -1 "$OUT/vectors.txt" | awk '{print ($2 >= 44 && $4 >= 45) ? "enough" : "too few"}')" enough "and there were enough of them to mean something (at least PR 4's sum-bound cases)"
 
 say "SKAN encodings name full goals: the device evaluates them"
 eq "$(api POST /apps '{"app_key":"990088801","app_name":"Summit Run"}')" 201 "an iOS app"
@@ -317,6 +321,26 @@ RID2=$(field "d['data']['registration_id']")
 eq "$([ "$RID2" != "$RID" ] && echo new)" new "under a new registration id"
 eq "$(Q "SELECT COUNT(*) FROM 202_app_postbacks WHERE registration_id = $RID2")" 8 "which claims every postback"
 report_install "registered again"
+
+say "a repeating sum is encoded only with a bound, and a stored one without is refused"
+# PR 4's rule (a sum threshold with repeat "each" needs max) seen from the
+# encoding side: the goal cannot be created, a bounded one encodes, and a
+# row stored before the rule existed — which the device would disable as
+# invalid_definition — cannot be named by an encoding. A second app, so
+# nothing above changes.
+eq "$(api POST /apps '{"app_key":"990088802","app_name":"Summit Run Sums"}')" 201 "a second iOS app"
+RID=$(field "d['data']['registration_id']")
+SUM_EACH='{"name":"Every $5","trigger":{"event":"purchase"},"threshold":{"sum":{"prop":"$revenue","gte":5}},"repeat":{"mode":"each"}}'
+eq "$(api POST /goals "{\"scope\":\"registration\",\"scope_id\":$RID,\"definition\":$SUM_EACH}")" 422 "a sum repeating each time without max is refused"
+eq "$(field "sorted(d['field_errors'])")" '["definition.repeat.max"]' "naming repeat.max"
+goal "every \$5, up to 5 times" '{"name":"Every $5","trigger":{"event":"purchase"},"threshold":{"sum":{"prop":"$revenue","gte":5}},"repeat":{"mode":"each","max":5}}'; G_SUMMAX=$GID
+eq "$(enc "\"fine_value\":5,\"goal_id\":$G_SUMMAX")" 201 "a bounded repeating sum is encoded"
+goal "a second bounded sum" '{"name":"Every $10","trigger":{"event":"purchase"},"threshold":{"sum":{"prop":"$revenue","gte":10}},"repeat":{"mode":"each","max":5}}'; G_LEGACY=$GID
+Q "UPDATE 202_goal_versions SET definition = '{\"name\":\"Every \$10\",\"trigger\":{\"event\":\"purchase\"},\"threshold\":{\"sum\":{\"prop\":\"\$revenue\",\"gte\":\"10.00\"}},\"repeat\":{\"mode\":\"each\"}}' WHERE goal_id = $G_LEGACY"
+eq "$(Q "SELECT definition LIKE '%\"max\"%' FROM 202_goal_versions WHERE goal_id = $G_LEGACY")" 0 "(its stored row rewritten as one from before the rule)"
+eq "$(enc "\"fine_value\":6,\"goal_id\":$G_LEGACY")" 422 "an encoding cannot name a stored repeating sum without max"
+has "$OUT/body" "current definition is invalid" "saying the goal must be fixed first"
+eq "$(Q "SELECT COUNT(*) FROM 202_app_skan_encodings WHERE registration_id = $RID")" 1 "and only the bounded goal is encoded"
 
 printf '\n\033[1m%d passed, %d failed, %d not run\033[0m\n' "$PASS" "$FAIL" "$NOTRUN"
 echo "artifacts: $OUT"

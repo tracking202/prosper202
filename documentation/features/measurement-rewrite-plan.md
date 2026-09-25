@@ -1490,7 +1490,17 @@ encoding names a plain goal").
   end, clock choice, typed equality, `in`, ineligible prerequisites, tie
   order, version by event clock, repeat cap, a cast count, rounding, rebase,
   the parser's int/float, a blank name, a numeric-string comparator) each
-  fail the Swift vector suite.
+  fail the Swift vector suite. PR 4's later bounds on sums (rules 6, 8 and
+  9 of the vectors README: a repeating sum needs `max`, a summand counts
+  only within ±999999.99999, the sum is held in an `Int64` between −10^15
+  units and cap × gte, and the total reached is computed) were ported
+  when PR 8 took that fix in; fourteen planted defects in them each fail
+  the Swift suite — two of them (a floor at zero, and an unsaturated add
+  on a damaged stored state that traps the host app) only through
+  Swift-side tests added with the port, since the shared vectors never
+  take a sum below zero and back. Searching n one at a time instead of computing the total
+  gives the same answers by construction and is the one plant no vector
+  can see, so the code computes it and says why.
 - **The device is an install subject with no click.** Its install time is
   the first `configure` on the device (persisted, token-independent like
   the last fine value); SKAdNetwork never says which ad the app came from,
