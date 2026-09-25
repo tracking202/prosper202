@@ -153,14 +153,8 @@ final class UserPrefFilters
      * method:
      *
      *   202-Mobile/mini-stats/202-ministats.php,
-     *   tracking202/ajax/sort_browsers.php,
-     *   tracking202/ajax/sort_cities.php,
-     *   tracking202/ajax/sort_isp.php,
-     *   tracking202/ajax/sort_ips.php,
-     *   tracking202/ajax/sort_referers.php,
      *   tracking202/ajax/sort_rotator.php,
      *   tracking202/ajax/account_overview.php,
-     *   tracking202/ajax/sort_landing_pages.php,
      *   202-config/ReportSummaryForm.class.php (uses $columnPrefix = '2c.').
      *
      *   EXCEPTION — 202-config/functions-tracking202.php (visitor-log context)

@@ -862,3 +862,25 @@ legend.form-label {
     font-size: inherit;
     line-height: inherit;
 }
+
+/* U3: Analyze */
+
+/* A server-sorted column's heading (p202_data_table(), `href`): a link that
+   looks like the sort button it stands in for. */
+a.p202-sort {
+    text-decoration: none;
+}
+
+a.p202-sort:hover {
+    color: var(--bs-body-color);
+}
+
+/* A group heading inside a report table: the custom-variable report's
+   "traffic source · variable" rows, each over the values under it. */
+.p202-table > tbody > tr.p202-table__group > th {
+    padding: 0.5rem 0.7rem;
+    border-top: 1px solid var(--p202-line-strong);
+    background: var(--bs-tertiary-bg);
+    font-size: 0.8125rem;
+    font-weight: 700;
+}

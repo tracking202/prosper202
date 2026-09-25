@@ -12,8 +12,9 @@
  * what each shell's <body> hands the chrome to inherit, which is where the
  * two actually drifted (see chromeGeometry() in lib/checks.js).
  *
- * Three pairs, one per chrome shape — the Analyze strip, the Setup button
- * grid, and an account page with neither — each at a desktop and a phone
+ * One pair per chrome shape that still has a page on each shell — the Setup
+ * button grid, and an account page with neither (the Analyze strip's pair
+ * retired when that family finished moving) — each at a desktop and a phone
  * width, in the light and the dark colour scheme. The comparison is the
  * assertion; the screenshots are for a reader, and land in the shots
  * directory as <pair>-<width>-<scheme>-<shell>.png.
@@ -30,7 +31,10 @@ const path = require('path');
 const checks = require('../lib/checks');
 
 const PAIRS = [
-  { name: 'analyze', classic: '/tracking202/analyze/keywords.php', v2: '/tracking202/analyze/mobile_apps.php' },
+  // The Analyze pair went with U3: every Analyze page is on v2 now, so the
+  // family has no classic page to hold the strip against. The strip shape
+  // comes back when a family that uses it (Overview, Update) has a page on
+  // each shell; until then the Setup grid and the account pair are measured.
   // Attribution Models is the one Setup page U4 left classic (the MTA rewrite
   // replaces it); every other Setup page is on v2 now.
   { name: 'setup', classic: '/tracking202/setup/attribution_models.php', v2: '/tracking202/setup/mobile_apps.php' },
