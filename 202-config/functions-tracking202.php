@@ -131,6 +131,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
     $user_sql = "SELECT * FROM 202_users_pref WHERE user_id=" . $userId;
     $user_result = _mysqli_query($user_sql);
     $user_row = ($user_result instanceof mysqli_result) ? ($user_result->fetch_assoc() ?? []) : [];
+    $user_row = \Prosper202\DataEngine\ReportView::apply($user_row, $userId);
 
     $html['user_pref_aff_network_id'] = htmlentities((string) ($user_row['user_pref_aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
     $html['user_pref_aff_campaign_id'] = htmlentities((string) ($user_row['user_pref_aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8');
@@ -1072,6 +1073,7 @@ function grab_timeframe($unused = null): array
     $user_sql = "SELECT user_pref_time_predefined, user_pref_time_from, user_pref_time_to FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
     $user_result = _mysqli_query($user_sql);; // ($user_sql);
     $user_row = ($user_result instanceof mysqli_result) ? ($user_result->fetch_assoc() ?? []) : [];
+    $user_row = \Prosper202\DataEngine\ReportView::apply($user_row, $_SESSION['user_id'] ?? null);
     $pref_time = $user_row['user_pref_time_predefined'] ?? '';
 
     $time = [
@@ -1236,6 +1238,7 @@ function query(
     $user_sql = "SELECT * FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
     $user_result = _mysqli_query($user_sql); // ($user_sql);
     $user_row = ($user_result instanceof mysqli_result) ? ($user_result->fetch_assoc() ?? []) : [];
+    $user_row = \Prosper202\DataEngine\ReportView::apply($user_row, $_SESSION['user_id'] ?? null);
 
     // Apply sane defaults when optional arguments are omitted
     if ($db_table === null) {

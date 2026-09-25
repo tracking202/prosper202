@@ -10,7 +10,10 @@ declare(strict_types=1);
  * tracking202/ajax/ draws the report into. The fragments read the filters
  * from 202_users_pref, as every classic report does, so the page applies the
  * query string to that row before the fragment is asked for anything
- * (functions-report-prefs.php says why and how). What is here:
+ * (functions-report-prefs.php says why and how), and hands the fragment,
+ * its polls and the download the view it rendered, so a second tab writing
+ * the row meanwhile does not change what this one draws (ReportView). What
+ * is here:
  *
  *   p202_overview_page_state()     read the stored filters, apply the URL's,
  *                                  and say what the form shows
@@ -52,7 +55,7 @@ const P202_OVERVIEW_PUBLISHER_HIDDEN = [
  * (whose file also lifts the request's time limit as it loads);
  * tests/Api/V3/OverviewPagesTest pins them to the class's constants.
  */
-const P202_OVERVIEW_GROUP_NONE = '0';
+const P202_OVERVIEW_GROUP_NONE = P202_REPORT_GROUP_NONE;
 const P202_OVERVIEW_GROUP_TRAFFIC_SOURCE = '1';
 
 /**
@@ -120,7 +123,11 @@ function p202_overview_groupings(): array
  *     range: string,
  *     from: string,
  *     to: string,
+ *     view: string,
  * }
+ *   view  the page's filters and window as a query string, for its
+ *         fragment, poll and download to draw under (ReportView); '' when
+ *         the filters were refused
  */
 function p202_overview_page_state(\Prosper202\Database\Connection $conn, int $userId, array $spec, array $query): array
 {
@@ -155,6 +162,9 @@ function p202_overview_page_state(\Prosper202\Database\Connection $conn, int $us
 
     if ($read['errors'] === [] && $read['columns'] !== []) {
         p202_report_prefs_save($conn, $userId, $read['columns']);
+        // The rest of this request draws what it just wrote, whatever
+        // another tab writes meanwhile (ReportView).
+        \Prosper202\DataEngine\ReportView::install($userId, $read['columns']);
         $prefs = p202_report_prefs_load($conn, $userId);
     }
 
@@ -189,6 +199,16 @@ function p202_overview_page_state(\Prosper202\Database\Connection $conn, int $us
         $to = preg_match('/^\d{4}-\d{2}-\d{2}$/', $sentTo) === 1 ? $sentTo : '';
     }
 
+    // What this page shows, for the requests it makes later: the report
+    // fragment, the poll, the download. Each draws this view rather than
+    // whatever the stored row says by then (ReportView).
+    $view = '';
+    if ($read['errors'] === []) {
+        $filterNames = array_values(array_filter($names, static fn (string $n): bool => $n !== 'range'));
+        $window = in_array('range', $names, true) ? ['range' => $range, 'from' => $from, 'to' => $to] : null;
+        $view = p202_report_view_query($filterNames, $values, $window, $groups);
+    }
+
     return [
         'prefs' => $prefs,
         'values' => $values,
@@ -198,6 +218,7 @@ function p202_overview_page_state(\Prosper202\Database\Connection $conn, int $us
         'range' => $range,
         'from' => $from,
         'to' => $to,
+        'view' => $view,
     ];
 }
 
@@ -211,10 +232,24 @@ function p202_overview_page_state(\Prosper202\Database\Connection $conn, int $us
  * what is not deleted. A failed query throws (Connection's QueryException);
  * an empty menu would read as "you have none".
  *
+ * Regions, ISPs, browsers and platforms are install-wide lookups that grow
+ * with every click any account on the install receives — the classic
+ * calendar's GROUP BY over them put every ISP on earth into one <select>.
+ * Those four list what `$seen` says this account's clicks carried in the
+ * report's window instead, busiest first and at most `limit` of them
+ * (p202_overview_seen_list()), which is where Analyze's suggestions for the
+ * same filters come from. Countries (a few hundred) and device types (four)
+ * stay whole.
+ *
  * @param list<string> $names
+ * @param array{data_user_id: ?int, from: int, to: int, values?: array<string, string>, limit?: int}|null $seen
+ *   whose clicks, in which window; `values` are the filters' current values,
+ *   each kept in its list with its name even when the window has no click
+ *   carrying it. Null lists nothing for the four (a test, or a page that
+ *   offers none of them).
  * @return array<string, array<string|int, string|array<string|int, string>>>
  */
-function p202_overview_filter_lists(\Prosper202\Database\Connection $conn, int $userId, array $names): array
+function p202_overview_filter_lists(\Prosper202\Database\Connection $conn, int $userId, array $names, ?array $seen = null): array
 {
     $rows = static function (string $sql, bool $scoped = true) use ($conn, $userId): array {
         $stmt = $conn->prepareRead($sql);
@@ -263,15 +298,23 @@ function p202_overview_filter_lists(\Prosper202\Database\Connection $conn, int $
         'text_ad_id' => static fn () => $flat($rows(
             'SELECT text_ad_id, text_ad_name FROM 202_text_ads WHERE user_id = ? AND text_ad_deleted = 0 ORDER BY text_ad_name'
         )),
-        // Install-wide lookups, as the classic menus read them: one entry
-        // per name.
+        // Install-wide and bounded, as the classic menus read them: one
+        // entry per name.
         'country_id' => static fn () => $flat($rows('SELECT MIN(country_id), country_name FROM 202_locations_country GROUP BY country_name ORDER BY country_name', false)),
-        'region_id' => static fn () => $flat($rows('SELECT MIN(region_id), region_name FROM 202_locations_region GROUP BY region_name ORDER BY region_name', false)),
-        'isp_id' => static fn () => $flat($rows('SELECT MIN(isp_id), isp_name FROM 202_locations_isp GROUP BY isp_name ORDER BY isp_name', false)),
         'device_id' => static fn () => $flat($rows('SELECT type_id, type_name FROM 202_device_types ORDER BY type_name', false)),
-        'browser_id' => static fn () => $flat($rows('SELECT MIN(browser_id), browser_name FROM 202_browsers GROUP BY browser_name ORDER BY browser_name', false)),
-        'platform_id' => static fn () => $flat($rows('SELECT MIN(platform_id), platform_name FROM 202_platforms GROUP BY platform_name ORDER BY platform_name', false)),
     ];
+    // Install-wide and unbounded: what this account's clicks carried.
+    foreach (array_keys(P202_OVERVIEW_SEEN_LISTS) as $name) {
+        $queries[$name] = static fn () => $seen === null ? [] : p202_overview_seen_list(
+            $conn,
+            $name,
+            $seen['data_user_id'],
+            $seen['from'],
+            $seen['to'],
+            (string) ($seen['values'][$name] ?? ''),
+            $seen['limit'] ?? P202_OVERVIEW_SEEN_LIMIT
+        );
+    }
 
     $lists = [];
     foreach ($names as $name) {
@@ -280,6 +323,78 @@ function p202_overview_filter_lists(\Prosper202\Database\Connection $conn, int $
         }
     }
     return $lists;
+}
+
+/**
+ * The filters whose lists are the values this account's clicks carried:
+ * name => [the 202_dataengine column, the lookup it names (a parenthesised
+ * join where it is two tables, so it nests under another JOIN on MySQL as
+ * well as MariaDB), its id column, how an entry is labelled]. A region
+ * carries its country code, because region names repeat across countries.
+ */
+const P202_OVERVIEW_SEEN_LISTS = [
+    'region_id' => ['region_id', '(202_locations_region AS l LEFT JOIN 202_locations_country AS c ON (c.country_id = l.main_country_id))', 'l.region_id', "CONCAT(l.region_name, IF(c.country_code IS NULL OR c.country_code = '', '', CONCAT(' (', UPPER(c.country_code), ')')))"],
+    'isp_id' => ['isp_id', '202_locations_isp AS l', 'l.isp_id', 'l.isp_name'],
+    'browser_id' => ['browser_id', '202_browsers AS l', 'l.browser_id', 'l.browser_name'],
+    'platform_id' => ['platform_id', '202_platforms AS l', 'l.platform_id', 'l.platform_name'],
+];
+
+/** How many entries a seen list holds at most: Analyze's suggestion cap. */
+const P202_OVERVIEW_SEEN_LIMIT = 300;
+
+/**
+ * Whose clicks a report's lists are drawn from: every account's for a user
+ * who sees every campaign, this account's otherwise — the rule DataEngine
+ * scopes the report itself by (AnalyzeReportController::dataUserId()).
+ */
+function p202_overview_data_user_id(): ?int
+{
+    if (isset($_SESSION['publisher']) && $_SESSION['publisher'] == false) {
+        return null;
+    }
+    return (int) ($_SESSION['user_own_id'] ?? 0);
+}
+
+/**
+ * One filter's list, id => label: the ids of `$name` that the clicks in the
+ * window carried, the busiest `$limit` of them, in label order. The id is the
+ * one the clicks carry, which is the one the report's filter matches; the
+ * classic menu listed the lowest id per name, which a click need not have.
+ *
+ * `$current`, when set and not among them, is added with its own label: the
+ * filter in force is never shown as a bare number, and a window with no
+ * clicks still shows what the report is filtered by.
+ */
+function p202_overview_seen_list(\Prosper202\Database\Connection $conn, string $name, ?int $dataUserId, int $from, int $to, string $current = '', int $limit = P202_OVERVIEW_SEEN_LIMIT): array
+{
+    if (!isset(P202_OVERVIEW_SEEN_LISTS[$name])) {
+        throw new InvalidArgumentException("p202_overview_seen_list(): '$name' is not a filter listed from the clicks");
+    }
+    [$column, $lookup, $idColumn, $label] = P202_OVERVIEW_SEEN_LISTS[$name];
+    $scope = $dataUserId === null ? 'd.user_id != 0' : 'd.user_id = ?';
+    $sql = "SELECT d.$column AS id, MIN($label) AS label FROM 202_dataengine AS d"
+        . " JOIN $lookup ON ($idColumn = d.$column)"
+        . " WHERE $scope AND d.click_time >= ? AND d.click_time <= ?"
+        . " GROUP BY d.$column ORDER BY SUM(d.clicks) DESC, d.$column LIMIT " . max(1, $limit);
+    $params = $dataUserId === null ? [$from, $to] : [$dataUserId, $from, $to];
+    $stmt = $conn->prepareRead($sql);
+    $conn->bind($stmt, str_repeat('i', count($params)), $params);
+    $list = [];
+    foreach ($conn->fetchAll($stmt) as $row) {
+        $list[(string) $row['id']] = (string) $row['label'];
+    }
+
+    if ($current !== '' && !isset($list[$current]) && preg_match('/^[1-9]\d{0,18}$/', $current) === 1) {
+        $stmt = $conn->prepareRead("SELECT $label AS label FROM $lookup WHERE $idColumn = ?");
+        $conn->bind($stmt, 'i', [(int) $current]);
+        $row = $conn->fetchOne($stmt);
+        if ($row !== null) {
+            $list[$current] = (string) $row['label'];
+        }
+    }
+
+    uasort($list, static fn (string $a, string $b): int => strnatcasecmp($a, $b));
+    return $list;
 }
 
 /**
@@ -302,6 +417,7 @@ function p202_overview_filter_lists(\Prosper202\Database\Connection $conn, int $
  *     range?: bool,
  *     note?: string,
  *     aside?: string,
+ *     download?: string,
  *     header_action?: string,
  *     spy?: bool,
  *     before_panel?: string,
@@ -315,6 +431,8 @@ function p202_overview_filter_lists(\Prosper202\Database\Connection $conn, int $
  *                window and is not listed here
  *   common       names shown in the first row though the catalog files them
  *                under Advanced (the grouping on a grouped page)
+ *   download     the page's download URL: a "Download to Excel" button that
+ *                exports the page's view (ReportView)
  *   header_action TRUSTED HTML for the page header's action slot
  *   before_panel TRUSTED HTML between the filters and the report panel
  */
@@ -372,13 +490,21 @@ function p202_overview_page(array $page): string
         $reset[$name] = $defaults[$name] ?? '';
     }
 
+    // A download exports this page's view, not whatever the stored filters
+    // say by the time it is clicked.
+    $aside = $page['aside'] ?? '';
+    if (($page['download'] ?? '') !== '' && $errors === []) {
+        $aside .= '<a class="btn btn-secondary btn-sm" href="' . $e(p202_report_view_url((string) $page['download'], (string) ($state['view'] ?? ''))) . '">'
+            . '<i class="bi bi-file-earmark-spreadsheet"></i> Download to Excel</a>';
+    }
+
     $bar = [
         'action' => $page['action'],
         'id' => $page['id'] . '-filters',
         'filters' => $filters,
         'reset' => $page['action'] . '?' . http_build_query($reset),
         'note' => $page['note'] ?? 'The filters you apply open by default here and on the other reports.',
-        'aside' => $page['aside'] ?? '',
+        'aside' => $aside,
         'remember' => 'overview-filters',
     ];
     if ($withRange) {
@@ -423,7 +549,7 @@ function p202_overview_page(array $page): string
             . '<div>Correct the field marked above and apply again. The report is not drawn under filters it does not match.</div>'
             . '</div>';
     } else {
-        $html .= '<div id="' . $e($page['id']) . '-report" data-p202-report="' . $e($page['fragment']) . '"'
+        $html .= '<div id="' . $e($page['id']) . '-report" data-p202-report="' . $e(p202_report_view_url($page['fragment'], (string) ($state['view'] ?? ''))) . '"'
             . (!empty($page['spy']) ? ' data-p202-spy' : '')
             . ' data-p202-offset="' . (int) ($page['offset'] ?? 0) . '" aria-live="polite" aria-busy="true">'
             . '<span class="p202-skeleton mb-2" style="width: 40%;" aria-hidden="true"></span>'
@@ -623,7 +749,16 @@ function p202_overview_run(array $page): void
 
     try {
         $page['state'] = p202_overview_page_state($conn, $userId, ['names' => $stateNames, 'defaults' => $page['defaults'] ?? []], $_GET);
-        $page['lists'] = p202_overview_filter_lists($conn, $userId, $page['names']);
+        // The lists of what the clicks carried are drawn from the report's
+        // own window (the page's view is installed, so this is it), or from
+        // the last day for Spy, whose window that is.
+        $time = ($page['range'] ?? true) ? grab_timeframe() : ['from' => time() - 86400, 'to' => time()];
+        $page['lists'] = p202_overview_filter_lists($conn, $userId, $page['names'], [
+            'data_user_id' => p202_overview_data_user_id(),
+            'from' => (int) $time['from'],
+            'to' => (int) $time['to'],
+            'values' => $page['state']['values'],
+        ]);
     } catch (RuntimeException $error) {
         error_log('Report page ' . (string) ($page['id'] ?? '?') . ': ' . $error->getMessage());
         template_top((string) ($page['page_title'] ?? $page['title']), $page['shell']);

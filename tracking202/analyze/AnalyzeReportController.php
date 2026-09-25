@@ -130,6 +130,7 @@ final class AnalyzeReportController
         }
         \AUTH::require_user();
         \AUTH::set_timezone($_SESSION['user_timezone']);
+        require_once dirname(__DIR__, 2) . '/202-config/functions-report-prefs.php';
         global $db;
 
         $this->type = $type;
@@ -174,6 +175,13 @@ final class AnalyzeReportController
         $prefs = $this->store->load($this->userId);
         $values = ReportPrefsStore::valuesFromRow($prefs, $offered);
         $time = grab_timeframe();
+
+        // What this page shows is its view: the rest of this request draws
+        // it, and the download carries it, so a second tab writing the
+        // stored filters meanwhile changes neither (ReportView).
+        $view = p202_report_view_query($offered, $values, self::windowOf($time));
+        p202_report_view_from_request([\Prosper202\DataEngine\ReportView::PARAM => $view], $this->userId);
+
         $page = isset($errors['page']) ? 1 : $input->page;
         $order = isset($errors['order']) ? '' : $input->order;
 
@@ -181,7 +189,7 @@ final class AnalyzeReportController
             'type' => $this->type,
             'report' => self::REPORTS[$this->type],
             'self' => rtrim(get_absolute_url(), '/') . '/tracking202/analyze/' . self::REPORTS[$this->type]['page'],
-            'downloadUrl' => rtrim(get_absolute_url(), '/') . '/tracking202/analyze/' . self::REPORTS[$this->type]['download'],
+            'downloadUrl' => p202_report_view_url(rtrim(get_absolute_url(), '/') . '/tracking202/analyze/' . self::REPORTS[$this->type]['download'], $view),
             'offered' => $offered,
             'values' => $values,
             'time' => $time,

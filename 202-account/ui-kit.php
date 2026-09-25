@@ -431,6 +431,21 @@ $sections = [
 			); ?>
 			<div class="mt-3">
 				<?php echo p202_data_table(
+					[
+						['key' => 'country', 'label' => 'Country'],
+						['key' => 'clicks', 'label' => 'Clicks', 'num' => true],
+					],
+					[
+						['country' => 'Canada', 'clicks' => ['text' => '41', 'sort' => 41]],
+						['country' => 'Germany', 'clicks' => ['text' => '7', 'sort' => 7]],
+						['country' => 'United States', 'clicks' => ['text' => '260', 'sort' => 260]],
+					],
+					['id' => 'kit-presorted', 'caption' => 'Clicks per country, A to Z, sortable', 'sortable' => true, 'sorted' => ['key' => 'country', 'dir' => 'ascending']]
+				); ?>
+				<p class="form-text">Sortable and delivered in order: the first click on Country reverses it.</p>
+			</div>
+			<div class="mt-3">
+				<?php echo p202_data_table(
 					[['key' => 'day', 'label' => 'Day'], ['key' => 'clicks', 'label' => 'Clicks', 'num' => true]],
 					[],
 					['empty' => ['icon' => 'bi-inbox', 'title' => 'No clicks in this range', 'body' => 'Widen the range, or check that the tracking link is live.', 'action' => 'Get a tracking link', 'href' => '#reports']]

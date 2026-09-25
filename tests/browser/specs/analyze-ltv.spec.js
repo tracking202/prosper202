@@ -212,6 +212,20 @@ module.exports = {
           shown + ' of ' + recent + ' seen in the last eight days');
         await clickAndLoad(ui, '#m-content .p202-tabs .nav-link:has-text("Products")');
         expect.eq(new URL(ui.page.url()).searchParams.get('range'), 'last7', 'changing view keeps the window in the URL');
+        // The tabs are real links: a middle-click or a copied link must open
+        // the same window, not whatever window is stored by then.
+        const hrefs = await ui.page.$$eval('#m-content .p202-tabs .nav-link', (links) => links.map((a) => {
+          const url = new URL(a.href);
+          return (a.textContent || '').trim() + ':' + url.searchParams.get('range') + ':' + (url.searchParams.get('view') || 'report');
+        }));
+        expect.eq(hrefs, ['Report:last7:report', 'Subscriptions:last7:subscriptions', 'Products:last7:products', 'Companies:last7:companies', 'Settings:last7:settings'],
+          'every tab\'s href carries the window on screen');
+        await ui.page.goto(new URL('?range=custom&from=2026-08-01&to=2026-08-31&view=products', ui.page.url()).toString());
+        await viewLoaded(ui);
+        const custom = await ui.page.$eval('#m-content .p202-tabs .nav-link:first-child', (a) => a.href);
+        expect.match(custom, /[?&]range=custom&from=2026-08-01&to=2026-08-31$/, 'a custom window travels with its two days');
+        await ui.page.goto(new URL('?range=last7&view=products', ui.page.url()).toString());
+        await viewLoaded(ui);
 
         await clickAndLoad(ui, '#m-content tr:has-text("E-book") button:has-text("Edit")');
         await ui.fill({ '#m-content input[name="product_name"]': 'E-book, second edition' });
