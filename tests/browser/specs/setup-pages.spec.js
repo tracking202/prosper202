@@ -41,6 +41,10 @@ module.exports = {
   name: 'setup-pages',
   title: 'Setup (U4): every page on v2',
 
+  // The reset truncates the setup tables (trackers among them) that the
+  // shared fixture's readers use, so this runs after them.
+  replacesFixture: true,
+
   async reset(db) {
     db.truncate(SETUP_TABLES);
   },

@@ -25,9 +25,18 @@ const browserLib = require('./browser');
 
 const SPEC_DIR = path.join(__dirname, '..', 'specs');
 
+/**
+ * Every spec, in the order they run: the ones that read the shared fixture
+ * (the agent-eval seed, which several specs assert against) first, and the
+ * ones whose reset() replaces it with a dataset of their own
+ * (`replacesFixture: true`) after them, each group by file name. Run in
+ * plain file order, a replacing spec that sorts early wiped the tables a
+ * later reader relied on, and that reader failed only when the whole suite
+ * ran, never alone.
+ */
 function discover(dir = SPEC_DIR) {
   if (!fs.existsSync(dir)) { return []; }
-  return fs.readdirSync(dir)
+  const specs = fs.readdirSync(dir)
     .filter((name) => name.endsWith('.spec.js'))
     .sort()
     .map((name) => {
@@ -36,6 +45,7 @@ function discover(dir = SPEC_DIR) {
       spec.name = spec.name || name.replace(/\.spec\.js$/, '');
       return spec;
     });
+  return specs.filter((s) => !s.replacesFixture).concat(specs.filter((s) => s.replacesFixture));
 }
 
 /**
