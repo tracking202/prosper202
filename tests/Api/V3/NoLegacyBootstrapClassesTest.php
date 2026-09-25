@@ -93,6 +93,10 @@ final class NoLegacyBootstrapClassesTest extends TestCase
         'tracking202/ajax/get_landing_code.php',
         'tracking202/ajax/get_adv_landing_code.php',
         '202-js/p202-setup.js',
+        // U5: Update — the helpers its v2 pages render through. The pages
+        // themselves pass 'ui' => 'v2' and are found by the page scan; the
+        // AJAX fragments they used to load are retired.
+        'tracking202/update/_includes/update_ui.php',
         // U3: the Customer LTV partials, which render only inside the v2
         // Analyze › Customer LTV page (tracking202/analyze/ltv.php).
         'tracking202/ajax/sort_ltv.php',

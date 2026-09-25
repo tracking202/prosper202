@@ -308,3 +308,24 @@ not drawn under filters it does not match. Dates are read by one function,
 calendar's `mm/dd/yyyy` and the picker's `YYYY-MM-DD` mean the same day.
 Overview, Visitors and Spy are built this way; the fragments they load are
 listed in `NoLegacyBootstrapClassesTest::V2_SHARED`.
+
+<!-- U5: Update -->
+## A wide write is checked before it is made
+
+Some writes change many rows at once and cannot be undone: Update CPC sets
+the cost of every click a selection names. Such a page is two steps on one
+page, never an AJAX fragment. The selection is a GET form (so what is about
+to change is a link that can be sent, rule 8) whose answer is a panel saying
+what will change and how many rows that is, counted with the same clause the
+write runs; the write is a POST from that panel that carries the session
+token and repeats the selection in hidden fields, which the server reads and
+checks again, ownership included, rather than trusting. Once the panel offers
+the write, it is the page's one primary button and the check becomes a
+secondary one. A value the server cannot read is refused under its field; it
+never falls back to "every campaign" (error pattern #11).
+
+The Update pages answer a write in place with what it did (what was marked,
+what was skipped and why) rather than redirecting, because the answer is a
+report and each write is safe to send twice. Their destructive forms confirm
+through `form[data-p202-confirm]`, saying what is kept.
+

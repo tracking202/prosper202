@@ -1,7 +1,8 @@
 <?php
 declare(strict_types=1);
-include_once(substr(__DIR__, 0,-19) . '/202-config/connect.php'); 
+include_once(substr(__DIR__, 0,-19) . '/202-config/connect.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
+require_once __DIR__ . '/_includes/update_ui.php';
 
 AUTH::require_user();
 
@@ -10,23 +11,34 @@ if (!$userObj->hasPermission("access_to_update_section")) {
 	die();
 }
 
-function about_revenue_upload() { 
-
-	echo '<div class="row">
-			<div class="col-xs-12">
-				<h6>Upload Revenue Report</h6>
-				<small>This area allows you to upload the revenue reports from your affiliate networks.  You can now upload the exact sale amount that each subid generated, unlike before were T202 asummed the flat-payout on each item, you can now upload the exact revenue that was generated per subid.  This is specifcally helpfull if you are receiving a commission of a percentage based or if you constantly get more than one lead for each subid.</small>
-			</div>
-		</div>
-
-		<div class="row form_seperator" style="margin-bottom:15px; margin-top:15px;">
-			<div class="col-xs-12"></div>
-		</div>
-	';
-}
-
+/*
+ * Upload Revenue Reports, in three steps: upload a CSV (a token-carrying
+ * POST that keeps the file under a random name), choose its subid and
+ * commission columns (case=1), and apply it (case=2, a token-carrying POST;
+ * RevenueUploadImporter records every line as a ledger row of this upload's
+ * batch and lists the lines it skipped). The request handling is PR 1's; U5
+ * moved the page to the v2 shell and made each refusal say why.
+ */
 
 $upload_dir = __DIR__ . '/reports/';
+$self = get_absolute_url() . 'tracking202/update/upload.php';
+
+/** The page, up to its content. */
+function p202_upload_top(): void
+{
+	template_top('Upload Revenue Reports', ['ui' => 'v2']);
+	echo p202_update_header('bi-file-earmark-arrow-up', 'Upload revenue reports', 'Record the exact amount each subid earned, from your affiliate network\'s CSV report. Useful when you are paid a percentage, or earn more than once per click.');
+}
+
+/** A refusal with its sentence and the one step that recovers. */
+function p202_upload_stop(string $sentence, string $actionLabel, string $actionHref): never
+{
+	p202_upload_top();
+	echo p202_flash('bad', $sentence);
+	echo '<p><a class="btn btn-secondary" href="' . p202_setup_e($actionHref) . '">' . p202_setup_e($actionLabel) . '</a></p>';
+	template_bottom();
+	die();
+}
 
 $case = isset($_GET['case']) ? (int)$_GET['case'] : 0;
 
@@ -38,113 +50,101 @@ switch ($case) {
 		// scope filename to a basename inside the reports dir
 		$name = basename((string)($_GET['file'] ?? ''));
 		if ($name === '' || $name !== ($_GET['file'] ?? '')) {
-			template_top('Upload Revenue Reports');
-			about_revenue_upload();
-			echo '<div class="error"><small><span class="fui-alert"></span>This file does not exist that you are trying to import<br/>or you have already successfully uploaded it.</small></div>';
-			template_bottom();
-			die();
+			p202_upload_stop('This file does not exist that you are trying to import, or you have already successfully uploaded it.', 'Upload a report', $self);
 		}
 		$file = $upload_dir . $name;
 		$real_file = realpath($file);
 		$real_dir  = realpath($upload_dir);
 		if (!file_exists($file) || $real_file === false || $real_dir === false || !str_starts_with($real_file, $real_dir . DIRECTORY_SEPARATOR)) {
-			template_top('Upload Revenue Reports'); 
-			about_revenue_upload();
-			echo '<div class="error"><small><span class="fui-alert"></span>This file does not exist that you are trying to import<br/>or you have already successfully uploaded it.</small></div>';
-			template_bottom();
-			die();
+			p202_upload_stop('This file does not exist that you are trying to import, or you have already successfully uploaded it.', 'Upload a report', $self);
 		}
-		
-		
-		template_top('Upload Revenue Reports'); 
-		about_revenue_upload();
-			echo '<div class="row">
-					<div class="col-xs-12">
-						<form enctype="application/x-www-form-urlencoded" action="'.get_absolute_url().'tracking202/update/upload.php?case=2" method="post">';
-					echo '<input type="hidden" name="token" value="'.htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES).'"/>';
-					echo '<input type="hidden" name="file" value="'.htmlspecialchars($name, ENT_QUOTES).'"/>';
-				echo '<table class="table table-bordered" id="stats-table">';
-				echo '<tr>';
-					echo '<th>Column Name</th>';
-					echo '<th>Subid Column</th>';
-					echo '<th>Commission Column</th>';
-				echo '<tr/>';
-			 
-			
-		$handle = fopen($file, 'rb'); 	
-		$row = @fgetcsv($handle, 100000, ",", escape: '\\');
-		for ($x = 0; $x < count($row); $x++) { 
-			$html = array_map(htmlentities(...), $row);
-			echo '<tr>';	
-				echo '<td>'.$html[$x].'</td>';
-				echo '<td><label class="radio" style="display: inline;"><input type="radio" data-toggle="radio" name="click_id" value="'.$x.'"/></label</td>';
-				echo '<td><label class="radio" style="display: inline;"><input type="radio" data-toggle="radio" name="click_payout" value="'.$x.'"/></label></td>';
-			echo '</tr>';
+
+		$handle = fopen($real_file, 'rb');
+		if ($handle === false) {
+			p202_upload_stop('The uploaded report could not be read. Nothing was changed; please upload it again.', 'Upload a report', $self);
 		}
-		echo '</table>';
-		echo '</div></div>';
-		echo '<div class="row"><div class="col-xs-12">';
-		echo '<div class="col-xs-5 col-xs-offset-7">
-				<button class="btn btn-p202 btn-block" type="submit">Next <span class="fui-arrow-right pull-right"></span></button>
-			  </div>';
-		echo '</form>';
-		echo '</div></div>';
+		$row = fgetcsv($handle, 100000, ",", escape: '\\');
+		// The first data line, so each column shows what it holds.
+		$sample = $row === false ? false : fgetcsv($handle, 100000, ",", escape: '\\');
+		fclose($handle);
+		if (!is_array($row) || $row === [null]) {
+			p202_upload_stop('The report has no header line to choose the columns from. Nothing was changed.', 'Upload another report', $self);
+		}
+		$sample = is_array($sample) ? $sample : [];
+		$guess = p202_update_guess_columns(array_map('strval', $row));
+
+		p202_upload_top(); ?>
+		<section class="p202-panel">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">Which columns are which?</h2>
+				<span class="p202-panel__sub">step 2 of 3 · nothing is recorded until you apply</span>
+			</div>
+			<div class="p202-panel__body">
+				<form method="post" action="<?php echo p202_setup_e($self . '?case=2'); ?>" id="upload-columns">
+					<?php echo p202_setup_token_field((string) ($_SESSION['token'] ?? '')); ?>
+					<input type="hidden" name="file" value="<?php echo p202_setup_e($name); ?>">
+					<?php if ($guess['subid'] !== null || $guess['amount'] !== null) { ?>
+						<div class="p202-decided mb-3"><i class="bi bi-check2-circle"></i> Chosen from the column names; change them below if they are wrong.</div>
+					<?php } ?>
+					<div class="p202-table-wrap">
+						<table class="table table-hover p202-table" id="stats-table">
+							<thead><tr><th>Column</th><th>First line</th><th class="text-center">Subid</th><th class="text-center">Commission</th></tr></thead>
+							<tbody>
+							<?php foreach ($row as $x => $column) {
+								$x = (int) $x; ?>
+								<tr>
+									<td><strong><?php echo p202_setup_e((string) $column); ?></strong></td>
+									<td class="text-secondary"><?php echo p202_setup_e((string) ($sample[$x] ?? '')); ?></td>
+									<td class="text-center"><input class="form-check-input" type="radio" name="click_id" value="<?php echo $x; ?>" aria-label="<?php echo p202_setup_e((string) $column); ?> holds the subid"<?php echo $guess['subid'] === $x ? ' checked' : ''; ?> required></td>
+									<td class="text-center"><input class="form-check-input" type="radio" name="click_payout" value="<?php echo $x; ?>" aria-label="<?php echo p202_setup_e((string) $column); ?> holds the commission"<?php echo $guess['amount'] === $x ? ' checked' : ''; ?> required></td>
+								</tr>
+							<?php } ?>
+							</tbody>
+						</table>
+					</div>
+					<div class="form-text">Each line's commission is recorded on its subid's click. A subid on several lines gets their sum, and it replaces what earlier uploads set for that click.</div>
+					<div class="p202-form-actions">
+						<a class="btn btn-link" href="<?php echo p202_setup_e($self); ?>">Upload a different file</a>
+						<button class="btn btn-primary" type="submit">Apply the report</button>
+					</div>
+				</form>
+			</div>
+		</section>
+		<?php
 		template_bottom();
 		break;
-		 
+
 	case 2:
 
 		// Applying a report writes conversions, so it is a POST that carries
 		// the session token; it used to run from a GET link.
 		$name = basename((string)($_POST['file'] ?? ''));
 		if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !AUTH::check_csrf_token()) {
-			template_top('Upload Revenue Reports');
-			about_revenue_upload();
-			echo '<div class="error"><small><span class="fui-alert"></span>Your session expired before the report was applied. Nothing was changed; <a href="'.get_absolute_url().'tracking202/update/upload.php">upload it again</a>.</small></div>';
-			template_bottom();
-			die();
+			p202_upload_stop('Your session expired before the report was applied. Nothing was changed; upload it again.', 'Upload it again', $self);
 		}
 
 		// scope filename to a basename inside the reports dir
 		if ($name === '' || $name !== ($_POST['file'] ?? '')) {
-			template_top('Upload Revenue Reports');
-			about_revenue_upload();
-			echo '<div class="error"><small><span class="fui-alert"></span>This file does not exist that you are trying to import or you have already successfully uploaded it.</small></div>';
-			template_bottom();
-			die();
+			p202_upload_stop('This file does not exist that you are trying to import, or you have already successfully uploaded it.', 'Upload a report', $self);
 		}
 
 		// The two radio buttons carry column indexes (0, 1, ...).
 		$subidColumn = isset($_POST['click_id']) && is_string($_POST['click_id']) && ctype_digit($_POST['click_id']) ? (int) $_POST['click_id'] : null;
 		$amountColumn = isset($_POST['click_payout']) && is_string($_POST['click_payout']) && ctype_digit($_POST['click_payout']) ? (int) $_POST['click_payout'] : null;
 		if ($subidColumn === null || $amountColumn === null) {
-
-			template_top('Upload Revenue Reports');
-			about_revenue_upload();
-			echo '<div class="error"><small><span class="fui-alert"></span>You forgot to check the subid and the commission column, <a href="'.get_absolute_url().'tracking202/update/upload.php?case=1&file='.rawurlencode($name).'">please try again</a></small></div>';
-			template_bottom();
-			die();
-
+			p202_upload_stop('You forgot to check the subid and the commission column. Nothing was changed.', 'Choose the columns', $self . '?case=1&file=' . rawurlencode($name));
 		}
 
 		$file = $upload_dir . $name;
 		$real_file = realpath($file);
 		$real_dir  = realpath($upload_dir);
 		if (!file_exists($file) || $real_file === false || $real_dir === false || !str_starts_with($real_file, $real_dir . DIRECTORY_SEPARATOR)) {
-			template_top('Upload Revenue Reports');
-			about_revenue_upload();
-			echo '<div class="error"><small><span class="fui-alert"></span>This file does not exist that you are trying to import or you have already successfully uploaded it.</small></div>';
-			template_bottom();
-			die();
+			p202_upload_stop('This file does not exist that you are trying to import, or you have already successfully uploaded it.', 'Upload a report', $self);
 		}
 
 		$handle = fopen($real_file, 'rb');
 		if ($handle === false) {
-			template_top('Upload Revenue Reports');
-			about_revenue_upload();
-			echo '<div class="error"><small><span class="fui-alert"></span>The uploaded report could not be read. Nothing was changed; please upload it again.</small></div>';
-			template_bottom();
-			die();
+			p202_upload_stop('The uploaded report could not be read. Nothing was changed; please upload it again.', 'Upload a report', $self);
 		}
 
 		// Every line becomes a ledger row of this upload's batch; the newest
@@ -157,11 +157,7 @@ switch ($case) {
 		} catch (\Throwable $importError) {
 			fclose($handle);
 			error_log('upload: revenue import failed: ' . $importError->getMessage());
-			template_top('Upload Revenue Reports');
-			about_revenue_upload();
-			echo '<div class="error"><small><span class="fui-alert"></span>The report could not be applied: '.htmlspecialchars($importError->getMessage(), ENT_QUOTES).'. Lines before the failure were recorded; uploading the file again records the rest without repeating them.</small></div>';
-			template_bottom();
-			die();
+			p202_upload_stop('The report could not be applied: ' . $importError->getMessage() . '. Lines before the failure were recorded; uploading the file again records the rest without repeating them.', 'Upload it again', $self);
 		}
 		fclose($handle);
 
@@ -176,58 +172,89 @@ switch ($case) {
 			unlink($real_file);
 		}
 
-		template_top('Upload Revenue Reports');
-		about_revenue_upload();
-			echo '<div class="row">
-					<div class="col-xs-12">
-					<div class="success"><small><span class="fui-check-inverted"></span>Your report has been uploaded: '.(int) $import['recorded'].' line(s) recorded'.($import['skipped'] > 0 ? ', '.(int) $import['skipped'].' skipped (listed below)' : '').'.</small></div><br/>
-					<small>Each subid\'s income is now the sum of its lines in this report:</small>
+		$skippedLines = array_values(array_filter($import['lines'], static fn (array $l): bool => $l['status'] === 'skipped'));
+		$totalRows = [];
+		foreach ($import['totals'] as $key => $total) {
+			$totalRows[] = ['subid' => (string) (int) $key, 'total' => ['text' => p202_update_money((string) $total), 'sort' => (float) $total]];
+		}
+		$skippedRows = [];
+		foreach ($skippedLines as $l) {
+			$skippedRows[] = ['line' => ['text' => (string) (int) $l['line'], 'sort' => (int) $l['line']], 'subid' => (string) $l['subid'], 'amount' => (string) $l['amount'], 'reason' => (string) $l['reason']];
+		}
 
-					<table class="table table-bordered" id="stats-table">
-					<tr>
-						<th>SUBID</th>
-						<th>COMMISSION</th>
-					</tr>';
-			foreach ($import['totals'] as $key => $total) {
-				printf("<tr>
-							<td>%s</td>
-							<td>$%s</td>
-					     </tr>", (int) $key, htmlspecialchars((string) $total, ENT_QUOTES));
-			}
-			echo '</table>';
-			$skippedLines = array_filter($import['lines'], static fn (array $l): bool => $l['status'] === 'skipped');
-			if ($skippedLines !== []) {
-				echo '<small>Lines not recorded:</small><table class="table table-bordered"><tr><th>LINE</th><th>SUBID</th><th>COMMISSION</th><th>WHY</th></tr>';
-				foreach ($skippedLines as $l) {
-					printf('<tr><td>%d</td><td>%s</td><td>%s</td><td>%s</td></tr>', (int) $l['line'],
-						htmlspecialchars($l['subid'], ENT_QUOTES), htmlspecialchars($l['amount'], ENT_QUOTES), htmlspecialchars($l['reason'], ENT_QUOTES));
-				}
-				echo '</table>';
-			}
-			echo '</div></div>';
+		p202_upload_top();
+		echo p202_flash('ok', 'Your report has been uploaded: '.(int) $import['recorded'].' line(s) recorded'.($import['skipped'] > 0 ? ', '.(int) $import['skipped'].' skipped (listed below)' : '').'.');
+		?>
+		<div class="row g-4">
+			<div class="col-12<?php echo $skippedRows !== [] ? ' col-lg-6' : ''; ?>">
+				<section class="p202-panel">
+					<div class="p202-panel__head">
+						<h2 class="p202-panel__title">Income recorded</h2>
+						<span class="p202-pill p202-pill--good"><?php echo count($totalRows) . ' ' . (count($totalRows) === 1 ? 'subid' : 'subids'); ?></span>
+					</div>
+					<div class="p202-panel__body">
+						<p class="form-text mt-0">Each subid's income is now the sum of its lines in this report.</p>
+						<?php echo p202_data_table(
+							[['key' => 'subid', 'label' => 'Subid'], ['key' => 'total', 'label' => 'Commission', 'num' => true]],
+							$totalRows,
+							['id' => 'upload-totals', 'caption' => 'Income per subid from this report', 'sortable' => true,
+								'empty' => ['icon' => 'bi-inbox', 'title' => 'No line was recorded', 'body' => 'Every line was skipped; the reasons are listed.', 'action' => 'Upload another report', 'href' => $self]]
+						); ?>
+					</div>
+				</section>
+			</div>
+			<?php if ($skippedRows !== []) { ?>
+			<div class="col-12 col-lg-6">
+				<section class="p202-panel">
+					<div class="p202-panel__head">
+						<h2 class="p202-panel__title">Lines not recorded</h2>
+						<span class="p202-pill p202-pill--warn"><?php echo count($skippedRows) . ' skipped'; ?></span>
+					</div>
+					<div class="p202-panel__body">
+						<?php echo p202_data_table(
+							[['key' => 'line', 'label' => 'Line', 'num' => true], ['key' => 'subid', 'label' => 'Subid'], ['key' => 'amount', 'label' => 'Commission'], ['key' => 'reason', 'label' => 'Why']],
+							$skippedRows,
+							['id' => 'upload-skipped', 'caption' => 'Lines of the report that were not recorded, and why']
+						); ?>
+					</div>
+				</section>
+			</div>
+			<?php } ?>
+		</div>
+		<p class="mt-4"><a class="btn btn-secondary" href="<?php echo p202_setup_e($self); ?>">Upload another report</a></p>
+		<?php
 		template_bottom();
 
 		break;
 
 	default:
-		
-		if ($_SERVER['REQUEST_METHOD'] == 'POST') { 
-			
+
+		$uploadError = '';
+		$fieldError = '';
+		if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+
 			// Initialize error variable
 			$error = !AUTH::check_csrf_token();
-			
-			// Check if file was uploaded properly
-			if (!isset($_FILES['csv']) || !isset($_FILES['csv']['tmp_name']) || empty($_FILES['csv']['tmp_name'])) {
-				$error = true;
+			if ($error) {
+				$uploadError = P202_UPDATE_TOKEN_REFUSED;
 			}
-			
+
+			// Check if file was uploaded properly
+			if (!$error && (!isset($_FILES['csv']) || !isset($_FILES['csv']['tmp_name']) || empty($_FILES['csv']['tmp_name']))) {
+				$error = true;
+				$fieldError = 'Choose the CSV report to upload. If you did, it may be larger than this server accepts (upload_max_filesize).';
+			}
+
 			if (!$error) {
 				//get file extension, checks to see if the image file, if not, do not allow to upload the file
 				$pext = getFileExtension($_FILES['csv']['name']);
-				$pext = strtolower((string) $pext); 
-				if (($pext != "txt") and ($pext !="csv")) $error = true;
+				$pext = strtolower((string) $pext);
+				if (($pext != "txt") and ($pext !="csv")) {
+					$error = true;
+					$fieldError = 'Upload the report as a .csv or .txt file; export it from your network as CSV.';
+				}
 			}
-			
+
 			$handle = false;
 			if (!$error) {
 				//open the tmp file, that was uploaded, the csv
@@ -235,22 +262,26 @@ switch ($case) {
 				$handle = fopen($tmp_name, "rb");
 				if ($handle === false) {
 					$error = true;
+					$uploadError = 'The uploaded report could not be read. Nothing was changed; please upload it again.';
 				}
 			}
-			
+
 			if (!$error && $handle !== false) {
 				//this counter, will help us determine the first row of the array
 				$row = @fgetcsv($handle, 100000, ",", escape: '\\');
-				
+
 				#if there was no row detected, an error occured on this uploaded
-				if (!$row) $error = true;
-				
+				if (!$row) {
+					$error = true;
+					$uploadError = 'The file is empty. Nothing was changed.';
+				}
+
 				// Close the handle since we're done with the initial check
 				fclose($handle);
 			}
-			
-			if (!$error) { 
-			
+
+			if (!$error) {
+
 				#now write the csv to the reports folder — all of it. This
 				#used to copy the first 100,000 bytes, so a larger report
 				#lost its later lines without a word.
@@ -259,47 +290,57 @@ switch ($case) {
 					header('location: '.get_absolute_url().'tracking202/update/upload.php?case=1&file='.$file); die();
 				}
 				$error = true;
+				$uploadError = 'The report could not be kept on the server for the next step. Nothing was changed; please upload it again.';
 			}
 		}
-		
-		template_top('Upload Revenue Reports'); 
-		about_revenue_upload();
-			
+
+		p202_upload_top();
+
 		//check to see if the directory is writable
 		if ( !is_writable(  $upload_dir )) {
-			
-			echo '<table cellspacing="1" cellpadding="4" class="upload-table"><tr><td>'. "<div class='error'>Sorry, I can't write to the directory: ". $upload_dir  ." <br/>In order to upload Revenue reports we need to be able to write to this directory, you'll need to modify the permissions.</div></td></tr></table>";
+			echo p202_flash('bad', "Sorry, I can't write to the directory: " . $upload_dir . ". In order to upload revenue reports we need to be able to write to this directory; you'll need to modify its permissions.");
 			template_bottom(); die();
+		}
+		if ($uploadError !== '') {
+			echo p202_flash('bad', $uploadError);
+		} elseif ($fieldError !== '') {
+			echo p202_flash('bad', 'Nothing was uploaded. The sentence under the field says why.');
 		} ?>
-		 
-		<div class="row">
-			<div class="col-xs-12">
-				<form enctype="multipart/form-data" action="<?php echo get_absolute_url();?>tracking202/update/upload.php" method="post" class="form-horizontal" role="form">
-					<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" /> 
-					<div class="col-xs-3">
-						<label for="csv">Upload Commission Report:</label>
-					</div>
 
-					<div class="col-xs-8" style="margin-left: 20px;">
-						<div class="form-group">
-				          <div class="fileinput fileinput-new" data-provides="fileinput">
-								<span class="btn btn-default btn-embossed btn-file">					  	
-								<span class="fileinput-new"><span class="fui-upload"></span>&nbsp;&nbsp;Attach File</span>
-								<span class="fileinput-exists"><span class="fui-gear"></span>&nbsp;&nbsp;Change</span>
-								<input type="file" name="csv" id="csv">
-								</span>
-								<span class="fileinput-filename"></span>
-								<a href="#" class="close fileinput-exists" data-dismiss="fileinput" style="float: none">&times;</a>
-						  </div>
-			          </div>
+		<div class="row g-4">
+			<div class="col-12 col-lg-7">
+				<section class="p202-panel">
+					<div class="p202-panel__head">
+						<h2 class="p202-panel__title">Upload a report</h2>
+						<span class="p202-panel__sub">step 1 of 3</span>
 					</div>
-
-					
-			          <div class="col-xs-5">
-						<button class="btn btn-sm btn-p202 btn-block" type="submit">Upload Report</button>
+					<div class="p202-panel__body">
+						<form method="post" enctype="multipart/form-data" action="<?php echo p202_setup_e($self); ?>" id="upload-report">
+							<?php echo p202_setup_token_field((string) ($_SESSION['token'] ?? '')); ?>
+							<div class="mb-3">
+								<label class="form-label" for="csv">Commission report</label>
+								<input class="form-control<?php echo $fieldError !== '' ? ' is-invalid' : ''; ?>" type="file" name="csv" id="csv" accept=".csv,.txt,text/csv,text/plain" required>
+								<div class="form-text">A CSV with a header line, one line per sale. You choose the subid and commission columns next.</div>
+								<?php if ($fieldError !== '') { ?><div class="invalid-feedback d-block"><?php echo p202_setup_e($fieldError); ?></div><?php } ?>
+							</div>
+							<div class="p202-form-actions">
+								<button class="btn btn-primary" type="submit">Upload report</button>
+							</div>
+						</form>
 					</div>
-			          
-				</form>
+				</section>
+			</div>
+			<div class="col-12 col-lg-5">
+				<section class="p202-panel">
+					<div class="p202-panel__head"><h2 class="p202-panel__title">How a report is applied</h2></div>
+					<div class="p202-panel__body">
+						<ul class="small mb-0">
+							<li>Every line is recorded as a conversion on its subid's click, and the lines that cannot be are listed with the reason.</li>
+							<li>A subid on several lines earns their sum.</li>
+							<li>The newest report replaces what earlier reports set for the same click, so uploading a corrected report fixes the old one.</li>
+						</ul>
+					</div>
+				</section>
 			</div>
 		</div>
 		<?php template_bottom();
