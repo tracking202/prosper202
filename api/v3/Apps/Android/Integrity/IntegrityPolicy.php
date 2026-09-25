@@ -25,7 +25,7 @@ namespace Api\V3\Apps\Android\Integrity;
  *     harvested earlier cannot be spent later;
  *  5. `appIntegrity.appRecognitionVerdict` is `PLAY_RECOGNIZED`
  *     (`app_not_recognized`): the binary is the one Play distributes;
- *  6. `deviceIntegrity.deviceRecognitionVerdict` contains
+ *  6. `deviceIntegrity.deviceRecognitionVerdict` is a list that contains
  *     `MEETS_DEVICE_INTEGRITY` or `MEETS_STRONG_INTEGRITY`
  *     (`device_integrity`): a real, certified Android device;
  *  7. `accountDetails.appLicensingVerdict` is not `UNLICENSED`
@@ -58,10 +58,16 @@ final class IntegrityPolicy
         $device = is_array($payload['deviceIntegrity'] ?? null) ? $payload['deviceIntegrity'] : [];
         $account = is_array($payload['accountDetails'] ?? null) ? $payload['accountDetails'] : [];
 
+        // Google's contract makes this a JSON array of labels. A scalar, or an
+        // object holding a label, is a malformed verdict and yields no labels:
+        // required evidence is never read out of a shape it is not sent in.
         $labels = [];
-        foreach ((array) ($device['deviceRecognitionVerdict'] ?? []) as $label) {
-            if (is_string($label)) {
-                $labels[] = $label;
+        $verdict = $device['deviceRecognitionVerdict'] ?? [];
+        if (is_array($verdict) && array_is_list($verdict)) {
+            foreach ($verdict as $label) {
+                if (is_string($label)) {
+                    $labels[] = $label;
+                }
             }
         }
         $issuedAt = is_array($request) ? self::seconds($request['timestampMillis'] ?? null) : null;
