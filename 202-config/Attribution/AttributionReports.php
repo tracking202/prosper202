@@ -384,14 +384,17 @@ final class AttributionReports
 
     /**
      * The newest attributed conversions in range, each with the shape of its
-     * journey — the entry points of the journey drill-down.
+     * journey — the entry points of the journey drill-down. `amount` is what
+     * the conversion counts for (CountedAmount: net of its reversals), the
+     * amount its credits sum to; `recorded_amount` is the row's own.
      *
-     * @return list<array{conv_id: int, conv_time: int, touches: int, identified: bool, truncated: bool, amount: string, campaign_name: string|null}>
+     * @return list<array{conv_id: int, conv_time: int, touches: int, identified: bool, truncated: bool, amount: string, recorded_amount: string, counted: bool, campaign_name: string|null}>
      */
     public function recentJourneys(int $userId, int $from, int $to, int $limit): array
     {
         $stmt = $this->conn->prepareRead(
-            'SELECT jm.conv_id, jm.conv_time, jm.touches, jm.identified, jm.truncated, cl.click_payout, ac.aff_campaign_name
+            'SELECT jm.conv_id, jm.conv_time, jm.touches, jm.identified, jm.truncated, cl.click_payout,
+                    cl.payable, cl.deleted, cl.superseded_reason, cl.reverses_conv_id, ac.aff_campaign_name
              FROM 202_attribution_journey_meta jm
              JOIN 202_conversion_logs cl ON cl.conv_id = jm.conv_id AND cl.user_id = jm.user_id
              LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = cl.campaign_id
@@ -400,13 +403,13 @@ final class AttributionReports
         );
         $this->conn->bind($stmt, 'iiii', [$userId, $from, $to, max(1, min(500, $limit))]);
 
-        return array_map(static fn (array $r): array => [
+        return array_map(fn (array $r): array => [
             'conv_id' => (int) $r['conv_id'],
             'conv_time' => (int) $r['conv_time'],
             'touches' => (int) $r['touches'],
             'identified' => (int) $r['identified'] === 1,
             'truncated' => (int) $r['truncated'] === 1,
-            'amount' => (string) $r['click_payout'],
+            ...CountedAmount::fields($this->conn, $r),
             'campaign_name' => $r['aff_campaign_name'] !== null ? (string) $r['aff_campaign_name'] : null,
         ], $this->conn->fetchAll($stmt));
     }
@@ -487,7 +490,9 @@ final class AttributionReports
         return [
             'conv_id' => (int) $conv['conv_id'],
             'click_id' => (int) $conv['click_id'],
-            'amount' => (string) $conv['click_payout'],
+            // What the credits below sum to: the amount net of the
+            // reversals naming it, the worker's own rule (CountedAmount).
+            ...CountedAmount::fields($this->conn, $conv),
             'conv_time' => (int) $conv['conv_time'],
             'journey' => $meta === null ? null : [
                 'touches' => (int) $meta['touches'],

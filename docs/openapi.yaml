@@ -4829,6 +4829,12 @@ components:
                 type: boolean
               amount:
                 type: string
+                description: What the conversion counts for in attribution, the amount its credits sum to - its recorded amount net of the reversals naming it.
+              recorded_amount:
+                type: string
+                description: The conversion's own recorded amount, before reversals.
+              counted:
+                type: boolean
               campaign_name:
                 type: string
                 nullable: true
@@ -4842,6 +4848,17 @@ components:
           type: integer
         amount:
           type: string
+          description: |
+            What the conversion counts for in attribution, and so what each
+            model's revenue column sums to: the recorded amount net of the
+            reversals naming it (a $10 sale reversed by $4 is 6.00000), or
+            0.00000 when it does not count.
+        recorded_amount:
+          type: string
+          description: The conversion's own recorded amount, before reversals (negative for a reversal row).
+        counted:
+          type: boolean
+          description: false when the conversion counts for nothing - not payable, superseded, deleted, itself a reversal, or reversed in full.
         conv_time:
           type: integer
         journey:

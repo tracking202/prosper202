@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Prosper202\Attribution;
 
-use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Exceptions\QueryException;
 use Throwable;
@@ -385,7 +384,9 @@ final class AttributionWorker
             return 'reversal';
         }
 
-        $amount = $this->countedAmount($row);
+        // The one rule every read that shows this amount beside its credits
+        // also uses (CountedAmount): net of the reversals naming it, or null.
+        $amount = CountedAmount::of($this->conn, $row, true);
         if ($amount === null) {
             $this->store->clear($convId);
             return 'cleared';
@@ -424,36 +425,6 @@ final class AttributionWorker
         $this->store->saveCredits($convId, $convTime, $credits);
 
         return 'credited';
-    }
-
-    /**
-     * The amount a conversion contributes to MTA, in units, or null when it
-     * does not count: not payable, deleted, superseded, or reversed down to
-     * nothing. A partial reversal leaves the remainder.
-     *
-     * @param array<string, mixed> $row
-     */
-    private function countedAmount(array $row): ?int
-    {
-        if ((int) $row['payable'] !== 1 || (int) $row['deleted'] !== 0
-            || ($row['superseded_reason'] !== null && $row['superseded_reason'] !== '')) {
-            return null;
-        }
-        $amount = Amount::toUnits((string) $row['click_payout']);
-
-        $stmt = $this->conn->prepareWrite(
-            'SELECT click_payout FROM 202_conversion_logs WHERE reverses_conv_id = ? AND deleted = 0'
-        );
-        $this->conn->bind($stmt, 'i', [(int) $row['conv_id']]);
-        $reversals = $this->conn->fetchAll($stmt);
-        foreach ($reversals as $r) {
-            $amount += Amount::toUnits((string) $r['click_payout']);
-        }
-        if ($reversals !== [] && $amount <= 0) {
-            return null;
-        }
-
-        return $amount;
     }
 
     /**

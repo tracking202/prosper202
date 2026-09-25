@@ -8,7 +8,9 @@ use Api\V3\Controllers\AttributionController;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\ValidationException;
 use PHPUnit\Framework\TestCase;
+use Prosper202\Attribution\AttributionReports;
 use Prosper202\Attribution\ModelType;
+use Prosper202\Conversion\Ledger\Amount;
 use Tests\Attribution\Support\AttributionDatabase;
 
 /**
@@ -175,6 +177,67 @@ final class AttributionReportsIntegrationTest extends TestCase
 
         $this->expectException(\Api\V3\Exception\NotFoundException::class);
         (new AttributionController(self::$db, 2))->journey($a);
+    }
+
+    /**
+     * A $10 sale with a −$4 reversal counts $6 in MTA (the worker credits
+     * the remainder), so every read that shows the conversion's amount next
+     * to its credits has to show $6: the drill-down and the recent list —
+     * or a column "summing to the whole conversion" sums to something else.
+     * The breakdown and the rows an export writes (breakdownAll) sum the
+     * credits, so they read $6 too.
+     */
+    public function testAPartiallyReversedConversionShowsTheAmountItsCreditsSumTo(): void
+    {
+        $this->campaign(7, 'accumulate');
+        $this->click(70, 7, time() - 7200, '0.10');
+        $this->visit(70, time() - 7200, self::cookie('rev'));
+        $this->click(71, 7, time() - 3600, '0.10');
+        $this->visit(71, time() - 3600, self::cookie('rev'));
+        $sale = $this->convert(71, '10', 'R-1');
+        $postback = ['source' => 'postback'];
+        $this->ledger->record(1, $postback + ['click_id' => 71, 'transaction_id' => 'R-1', 'payout' => '-4']);
+        $reversal = (int) self::scalar("SELECT conv_id FROM 202_conversion_logs WHERE reverses_conv_id = $sale");
+        self::assertGreaterThan(0, $reversal, 'the reversal was recorded against the sale');
+        $this->click(72, 7, time() - 1800, '0.10');
+        $gone = $this->convert(72, '3', 'R-2');
+        $this->ledger->record(1, $postback + ['click_id' => 72, 'transaction_id' => 'R-2', 'reversal' => true]);
+        $this->addModel('Linear', ModelType::LINEAR);
+        $this->work();
+        $api = new AttributionController(self::$db, 1);
+
+        $j = $api->journey($sale)['data'];
+        self::assertSame('6.00000', $j['amount'], 'the drill-down shows what counts: $10 net of the $4 reversal');
+        self::assertSame('10.00000', $j['recorded_amount'], 'and what was recorded, beside it');
+        self::assertTrue($j['counted']);
+        self::assertCount(2, $j['credits'], 'both models credited it');
+        foreach ($j['credits'] as $c) {
+            $revenue = array_column($c['touches'], 'revenue');
+            $units = array_sum(array_map(static fn (string $v): int => Amount::toUnits($v), $revenue));
+            $why = 'model ' . $c['model_name'] . ': its revenue column sums to the amount shown';
+            self::assertSame($j['amount'], Amount::fromUnits($units), $why);
+        }
+
+        $recent = [];
+        foreach ($api->journeyMetrics([])['data']['recent_conversions'] as $r) {
+            $recent[$r['conv_id']] = [$r['amount'], $r['recorded_amount'], $r['counted']];
+        }
+        self::assertSame(['6.00000', '10.00000', true], $recent[$sale], 'the recent list shows the same amount');
+        self::assertArrayNotHasKey($gone, $recent, 'a sale reversed to nothing has no journey to list');
+
+        $default = $this->defaultModelId();
+        $breakdown = $api->breakdown(['group_by' => 'campaign', 'model_id' => (string) $default]);
+        self::assertSame('6.00000', $breakdown['totals']['attributed_revenue'], 'the breakdown totals the same');
+        $all = (new AttributionReports($this->conn))->breakdownAll(1, $default, null, $default, 'campaign', 0, time());
+        $exported = array_column($all['rows'], 'attributed_revenue');
+        self::assertSame(['6.00000'], $exported, 'and so do the rows an export writes');
+
+        $none = $api->journey($gone)['data'];
+        $noneFields = [$none['amount'], $none['recorded_amount'], $none['counted'], $none['credits']];
+        self::assertSame(['0.00000', '3.00000', false, []], $noneFields, 'a sale reversed to nothing counts nothing');
+        $rev = $api->journey($reversal)['data'];
+        $revFields = [$rev['amount'], $rev['recorded_amount'], $rev['counted']];
+        self::assertSame(['0.00000', '-4.00000', false], $revFields, 'a reversal row counts nothing of its own');
     }
 
     public function testBadParametersAreRefusedNotGuessed(): void
