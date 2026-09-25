@@ -169,7 +169,7 @@ final class InstallReportIntegrationTest extends TestCase
     public function testBothPlatformsTogether(): void
     {
         $this->seed();
-        $r = self::jsonRound($this->report(['group_by' => 'platform']));
+        $r = self::jsonRound($this->report(['platform' => 'all', 'group_by' => 'platform']));
         self::assertSame('all', $r['data']['platform']);
         self::assertSame(['ios', 'android'], array_column($r['data']['groups'], 'platform'));
         self::assertSame(0, $r['data']['groups'][0]['installs'], 'no postbacks: the iOS row is zeros, not missing');
@@ -182,16 +182,31 @@ final class InstallReportIntegrationTest extends TestCase
         }
     }
 
+    /**
+     * Left out, platform is iOS: the report's meaning before Android
+     * installs existed, so a client that never names one reads what it
+     * always read, and the answer says whose it is.
+     */
+    public function testNoPlatformIsIosAsBeforeAndroid(): void
+    {
+        $this->seed();
+        $r = self::jsonRound($this->report(['group_by' => 'ad-network', 'signature' => 'valid']));
+        self::assertSame(['ios', 'ios'], [$r['data']['platform'], $r['meta']['platform']]);
+        self::assertSame(['ios', 'ios'], [$r['data']['platform'], $r['data']['totals']['platform']], 'iOS totals, not {ios, android, combined}');
+    }
+
     /** @return iterable<string, array{0: array<string, string>, 1: string, 2: string}> */
     public static function oneSidedRequests(): iterable
     {
-        yield 'an iOS grouping with both platforms' => [['group_by' => 'ad-network'], 'group_by', 'platform=ios'];
+        yield 'an iOS grouping with both platforms' => [['group_by' => 'ad-network', 'platform' => 'all'], 'group_by', 'platform=ios'];
         yield 'an iOS grouping on Android' => [['group_by' => 'country', 'platform' => 'android'], 'group_by', 'platform=ios'];
-        yield 'an Android grouping with both platforms' => [['group_by' => 'goal'], 'group_by', 'platform=android'];
+        yield 'an Android grouping by default' => [['group_by' => 'goal'], 'group_by', 'platform=android'];
+        yield 'an Android grouping with both platforms' => [['group_by' => 'goal', 'platform' => 'all'], 'group_by', 'platform=android'];
         yield 'an Android grouping on iOS' => [['group_by' => 'match-state', 'platform' => 'ios'], 'group_by', 'platform=android'];
-        yield 'a postback filter with both platforms' => [['signature' => 'valid'], 'signature', 'platform=ios'];
+        yield 'a postback filter with both platforms' => [['signature' => 'valid', 'platform' => 'all'], 'signature', 'platform=ios'];
+        yield 'an install filter by default' => [['match_state' => 'organic'], 'match_state', 'platform=android'];
         yield 'an install filter on iOS' => [['match_state' => 'organic', 'platform' => 'ios'], 'match_state', 'platform=android'];
-        yield 'a platform nobody has' => [['platform' => 'windows'], 'platform', 'ios, android or all'];
+        yield 'a platform nobody has' => [['platform' => 'windows'], 'platform', 'ios (the default), android or all'];
         yield 'an unknown state' => [['platform' => 'android', 'match_state' => 'maybe'], 'match_state', 'attributed'];
         yield 'a cast trust class' => [['platform' => 'android', 'trusted' => 'yes'], 'trusted', 'unvouched'];
     }

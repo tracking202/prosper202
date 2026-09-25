@@ -3698,15 +3698,17 @@ paths:
       description: |
         **Platforms.** `platform=ios` reports Apple's SKAdNetwork and
         AdAttributionKit postbacks, `platform=android` the installs the
-        Android SDK reported, and no `platform` (or `all`) both. `day`,
-        `registration` and `platform` group either; `ad-network`, `source`,
+        Android SDK reported, and `platform=all` both. Left out, `platform`
+        is `ios`: the report was Apple's alone before Android installs
+        existed, and a request without it reads what it always read — the
+        answer's `data.platform` and `meta.platform` name the scope. `day`,
+        `registration` and `platform` group any; `ad-network`, `source`,
         `country`, `version`, `protocol` and `conversion-type` are Apple's
-        dimensions and need `platform=ios`; `campaign`, `match-state`,
+        dimensions and need `ios`; `campaign`, `match-state`,
         `integrity-state` and `goal` are Android's and need
-        `platform=android`. A one-platform grouping or filter without its
-        platform is a `422` naming the platform to add — never a report
-        that silently leaves the other platform out. `limit` applies per
-        platform.
+        `platform=android`. A one-platform grouping or filter asked of
+        another platform is a `422` naming the platform to ask for. `limit`
+        applies per platform.
 
         Every group carries `platform` and the metrics both platforms share
         — `installs`, the four trust-class counts, `goals_reached`,
@@ -3772,7 +3774,7 @@ paths:
       parameters:
         - name: platform
           in: query
-          description: ios, android, or both (omitted or `all`)
+          description: ios (the default, as before Android), android, or all for both
           schema:
             type: string
             enum: [ios, android, all]

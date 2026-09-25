@@ -413,12 +413,15 @@ eq "$(api GET "/apps/report?platform=android&group_by=registration&registration_
 eq "$(field "[d['data']['groups'][0][k] for k in ('received','installs','organic','refuted_count','goals_reached')]")" "[$DB_RECEIVED, $DB_INSTALLS, 1, $DB_REFUTED, $DB_REACHED]" \
    "received, installs, organic, refuted and goals reached match the rows"
 eq "$(field "'%.2f' % d['data']['groups'][0]['revenue']")" "$DB_REVENUE" "revenue is the payable outcomes' value ($DB_REVENUE)"
-eq "$(api GET "/apps/report?group_by=platform")" 200 "both platforms, by platform"
+eq "$(api GET "/apps/report?platform=all&group_by=platform")" 200 "both platforms (platform=all), by platform"
 eq "$(field "[g['platform'] for g in d['data']['groups']]")" '["ios", "android"]' "one row per platform, iOS's zeros included"
 DB_IOS_INSTALLS=$(Q "SELECT COUNT(*) FROM 202_app_postbacks WHERE trusted=1 AND did_win=1 AND redownload=0 AND conversion_type='download'")
 eq "$(field "[d['data']['totals']['ios']['installs'], d['data']['totals']['combined']['installs']]")" "[$DB_IOS_INSTALLS, $((DB_INSTALLS + DB_IOS_INSTALLS))]" "the combined figure adds the platforms' installs"
-eq "$(api GET "/apps/report?group_by=ad-network")" 422 "an iOS grouping without platform=ios"
-grep -q "add platform=ios" "$OUT/body" && ok "is refused, saying to add platform=ios" || bad "the 422 names the platform to add"
+eq "$(api GET "/apps/report?group_by=ad-network")" 200 "no platform is iOS, as the report meant before Android: an iOS grouping answers"
+eq "$(field "[d['data']['platform'], d['meta']['platform']]")" '["ios", "ios"]' "and says it is iOS's"
+eq "$(api GET "/apps/report?platform=all&group_by=ad-network")" 422 "an iOS grouping asked of both platforms"
+grep -q "ask for platform=ios" "$OUT/body" && ok "is refused, naming the platform to ask for" || bad "the 422 names the platform to ask for"
+eq "$(api GET "/apps/report?group_by=goal")" 422 "an Android grouping without platform=android"
 eq "$(api GET "/apps/report?platform=android&group_by=goal&registration_id=$RA")" 200 "the funnel's reading"
 eq "$(field "{g['goal_name']: [g['installs'], g['unvouched_count']] for g in d['data']['groups']}")" \
    '{"install": [1, 1], "Tutorial": [1, 1], "Purchase": [1, 1]}' "each goal reached by the attributed install, the organic one beside it"
@@ -466,8 +469,8 @@ if [ -n "$CLI" ]; then
     HOME="${CLI_HOME:-$HOME}" "$CLI" app report --platform android --group-by registration --registration-id "$RA" --json > "$OUT/cli.json" 2> "$OUT/cli.err"
     eq "$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['data'][0]['installs'], d['meta']['totals']['received'])" "$OUT/cli.json" 2>/dev/null)" "$DB_INSTALLS $DB_RECEIVED" \
        "p202 app report --platform android: the same groups, and the totals in meta"
-    HOME="${CLI_HOME:-$HOME}" "$CLI" app report --group-by ad-network --json > /dev/null 2> "$OUT/cli2.err"
-    has "$OUT/cli2.err" "--platform ios" "p202 app report refuses an iOS grouping without --platform ios, naming the flag"
+    HOME="${CLI_HOME:-$HOME}" "$CLI" app report --platform all --group-by ad-network --json > /dev/null 2> "$OUT/cli2.err"
+    has "$OUT/cli2.err" "--platform ios" "p202 app report refuses an iOS grouping asked of both platforms, naming the flag"
     HOME="${CLI_HOME:-$HOME}" "$CLI" app link "$RA" --campaign-id "$CA" --json > "$OUT/cli3.json" 2> "$OUT/cli3.err"
     eq "$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); d=d.get('data', d); print(d['campaign']['ready'], d['android']['referrer_carries_token'] if 'referrer_carries_token' in d.get('android', {}) else '-', d['store_link'])" "$OUT/cli3.json" 2>&1)" \
        "True - $STORE" "p202 app link: the store link with the install token, and the campaign ready"
@@ -481,9 +484,9 @@ if [ -n "${P202_PHP_CLI:-}" ]; then
     pcli app:report --platform=android --group_by=registration "--registration_id=$RA" --json > "$OUT/pcli1.json" 2>&1
     eq "$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['data']['groups'][0]['installs'], d['data']['totals']['received'])" "$OUT/pcli1.json" 2>&1)" "$DB_INSTALLS $DB_RECEIVED" \
        "bin/p202 app:report --platform=android: the rows' numbers"
-    pcli app:report --group_by=ad-network > "$OUT/pcli2.txt" 2>&1
-    eq "$?" 1 "bin/p202 app:report refuses an iOS grouping without a platform, before any request"
-    has "$OUT/pcli2.txt" "--platform=ios" "naming the option to add"
+    pcli app:report --group_by=goal > "$OUT/pcli2.txt" 2>&1
+    eq "$?" 1 "bin/p202 app:report refuses an Android grouping without --platform=android, before any request"
+    has "$OUT/pcli2.txt" "--platform=android" "naming the option"
     pcli app:link "$RA" "--campaign_id=$CA" --json > "$OUT/pcli3.json" 2>&1
     eq "$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['data']['campaign']['ready'])" "$OUT/pcli3.json" 2>&1)" True "bin/p202 app:link: the campaign is ready"
     pcli app:notifications "--registration_id=$RA" --json > "$OUT/pcli4.json" 2>&1

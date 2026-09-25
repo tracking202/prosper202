@@ -40,16 +40,17 @@ var appReportSharedFilters = map[string]bool{"time-from": true, "time-to": true,
 var appReportCmd = &cobra.Command{
 	Use:   "report",
 	Short: "Cross-platform app report: iOS postbacks and Android installs, with the goals they reached",
-	Long: "Groups the app signals by day (UTC), registration or platform for both platforms, or with\n" +
-		"--platform ios by ad-network, source, country, version, protocol or conversion-type (Apple's\n" +
-		"postbacks, decoded through `p202 app encoding`), or with --platform android by campaign,\n" +
-		"match-state, integrity-state or goal (the funnel: installs that reached each goal).\n\n" +
+	Long: "Reports Apple's postbacks by default (--platform ios, what this report meant before Android),\n" +
+		"Android installs with --platform android, and both with --platform all. Any platform groups by\n" +
+		"day (UTC), registration or platform; iOS also by ad-network, source, country, version, protocol\n" +
+		"or conversion-type (Apple's postbacks, decoded through `p202 app encoding`), Android also by\n" +
+		"campaign, match-state, integrity-state or goal (the funnel: installs that reached each goal).\n\n" +
 		"Every row carries platform, installs, the trust-class counts, goals_reached, revenue and\n" +
 		"events. Headline figures count trusted signals only: signature-verified postbacks, attributed\n" +
 		"installs. --signature (iOS) or --trusted (Android) recompute them over one class.\n" +
 		"Totals are in meta.totals: per platform, and with both platforms {ios, android, combined}.\n" +
 		"Android figures are by install: a goal counts in its install's group.",
-	Example: "  p202 app report --group-by registration\n" +
+	Example: "  p202 app report --platform all --group-by registration\n" +
 		"  p202 app report --platform android --group-by goal --registration-id 7\n" +
 		"  p202 app report --platform ios --group-by ad-network --signature valid",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -71,7 +72,7 @@ var appReportCmd = &cobra.Command{
 }
 
 func registerAppReportFlags(cmd *cobra.Command) {
-	cmd.Flags().String("platform", "", "ios, android, or both (default: both)")
+	cmd.Flags().String("platform", "", "ios (the default), android, or all for both")
 	cmd.Flags().String("group-by", "day", "Group by: day, registration, platform; with --platform ios also ad-network, source, country, version, protocol, conversion-type; with --platform android also campaign, match-state, integrity-state, goal")
 	cmd.Flags().StringP("limit", "l", "", "Max groups per platform (default 100)")
 	registerAppFilterFlags(cmd)
@@ -85,12 +86,15 @@ func registerAppReportFlags(cmd *cobra.Command) {
 func collectAppReportParams(cmd *cobra.Command) (map[string]string, error) {
 	platform, _ := cmd.Flags().GetString("platform")
 	platform = strings.ToLower(strings.TrimSpace(platform))
-	if platform == "all" {
-		platform = ""
+	sendPlatform := platform != ""
+	if platform == "" {
+		// The API's default, which is what the report meant before Android
+		// installs existed; the answer names its platform either way.
+		platform = "ios"
 	}
-	if platform != "" && platform != "ios" && platform != "android" {
+	if platform != "ios" && platform != "android" && platform != "all" {
 		return nil, validationError("--platform must be one of: ios, android, all, got %q", platform).
-			WithHint("Leave --platform out to report both platforms.")
+			WithHint("Use --platform all to report both platforms; leave it out for iOS.")
 	}
 	groupBy, _ := cmd.Flags().GetString("group-by")
 	all := append(append(append([]string{}, appReportSharedGroupings...), appReportIOSGroupings...), appReportAndroidGroupings...)
@@ -99,11 +103,11 @@ func collectAppReportParams(cmd *cobra.Command) (map[string]string, error) {
 	}
 	if containsString(appReportIOSGroupings, groupBy) && platform != "ios" {
 		return nil, validationError("--group-by %s is a dimension of Apple's postbacks only", groupBy).
-			WithHint("Add --platform ios, or group by %s to see both platforms.", strings.Join(appReportSharedGroupings, ", "))
+			WithHint("Use --platform ios (or leave --platform out), or group by %s to see both platforms.", strings.Join(appReportSharedGroupings, ", "))
 	}
 	if containsString(appReportAndroidGroupings, groupBy) && platform != "android" {
 		return nil, validationError("--group-by %s is a dimension of Android installs only", groupBy).
-			WithHint("Add --platform android, or group by %s to see both platforms.", strings.Join(appReportSharedGroupings, ", "))
+			WithHint("Use --platform android, or group by %s with --platform all to see both platforms.", strings.Join(appReportSharedGroupings, ", "))
 	}
 
 	params := map[string]string{}
@@ -114,7 +118,7 @@ func collectAppReportParams(cmd *cobra.Command) (map[string]string, error) {
 		}
 		if !appReportSharedFilters[def.flag] && platform != "ios" {
 			return nil, validationError("--%s filters Apple's postbacks only", def.flag).
-				WithHint("Add --platform ios to report iOS alone.")
+				WithHint("Use --platform ios (or leave --platform out) to report iOS alone.")
 		}
 		params[def.param] = v
 	}
@@ -125,7 +129,7 @@ func collectAppReportParams(cmd *cobra.Command) (map[string]string, error) {
 		}
 		if platform != "android" {
 			return nil, validationError("--%s filters Android installs only", def.flag).
-				WithHint("Add --platform android to report Android alone.")
+				WithHint("Use --platform android to report Android alone.")
 		}
 		params[def.param] = v
 	}
@@ -152,7 +156,7 @@ func collectAppReportParams(cmd *cobra.Command) (map[string]string, error) {
 			}
 		}
 	}
-	if platform != "" {
+	if sendPlatform {
 		params["platform"] = platform
 	}
 	if groupBy != "" {

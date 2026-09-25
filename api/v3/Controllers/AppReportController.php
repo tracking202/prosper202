@@ -18,14 +18,16 @@ use Api\V3\Exception\ValidationException;
  *  - Android: the installs the SDK reported and the goals they reached
  *    (InstallReport). These are per install and immediate.
  *
- * `platform` picks one (`ios`, `android`) or both (omitted, or `all`).
- * The shared groupings — day, registration, platform — work either way;
- * a grouping or a filter only one platform has (ad-network, source,
+ * `platform` picks `ios`, `android` or `all` (both). Left out it is `ios`:
+ * the report was Apple's alone before Android installs existed, and every
+ * client and saved query that asks without a platform keeps reading what
+ * it always read — each answer names its `platform`, so the scope is never
+ * silent. The shared groupings — day, registration, platform — work on
+ * any; a grouping or a filter only one platform has (ad-network, source,
  * country, version, protocol, conversion-type and every postback filter
  * for iOS; campaign, match-state, integrity-state, goal and the install
- * filters for Android) needs the matching `platform`, and without it the
- * request is a 422 that says which platform to add — never a report that
- * silently leaves the other platform out.
+ * filters for Android) needs that platform, and asked of another one the
+ * request is a 422 that says which platform to ask for.
  *
  * Every group row carries `platform` and the metrics both platforms share
  * — `installs`, the trust-class counts, `goals_reached`, `revenue`,
@@ -223,11 +225,15 @@ final class AppReportController
             throw new ValidationException('Invalid platform', ['platform' => 'Must be ios, android or all']);
         }
         $platform = strtolower(trim($raw));
-        if ($platform === '' || $platform === 'all') {
+        if ($platform === '') {
+            // The report's meaning before Android existed (class docblock).
+            return 'ios';
+        }
+        if ($platform === 'all') {
             return 'all';
         }
         if (!in_array($platform, self::PLATFORMS, true)) {
-            throw new ValidationException('Invalid platform', ['platform' => 'Must be ios, android or all (or omitted, for both)']);
+            throw new ValidationException('Invalid platform', ['platform' => 'Must be ios (the default), android or all']);
         }
 
         return $platform;
@@ -241,12 +247,12 @@ final class AppReportController
         }
         if (in_array($groupBy, self::IOS_GROUPINGS, true) && $platform !== 'ios') {
             throw new ValidationException('That grouping is iOS only', [
-                'group_by' => $groupBy . ' is a dimension of Apple\'s postbacks: add platform=ios (Android installs have no ' . $groupBy . '). Groupings for both platforms: ' . implode(', ', self::SHARED_GROUPINGS),
+                'group_by' => $groupBy . ' is a dimension of Apple\'s postbacks: ask for platform=ios, the default (Android installs have no ' . $groupBy . '). Groupings for both platforms: ' . implode(', ', self::SHARED_GROUPINGS),
             ]);
         }
         if (in_array($groupBy, self::ANDROID_GROUPINGS, true) && $platform !== 'android') {
             throw new ValidationException('That grouping is Android only', [
-                'group_by' => $groupBy . ' is a dimension of Android installs: add platform=android (Apple\'s postbacks carry no ' . $groupBy . '). Groupings for both platforms: ' . implode(', ', self::SHARED_GROUPINGS),
+                'group_by' => $groupBy . ' is a dimension of Android installs: ask for platform=android (Apple\'s postbacks carry no ' . $groupBy . '). Groupings for both platforms: ' . implode(', ', self::SHARED_GROUPINGS),
             ]);
         }
     }
@@ -257,12 +263,12 @@ final class AppReportController
         $errors = [];
         foreach (self::IOS_FILTERS as $filter) {
             if (self::given($params, $filter) && $platform !== 'ios') {
-                $errors[$filter] = 'filters Apple\'s postbacks only: add platform=ios';
+                $errors[$filter] = 'filters Apple\'s postbacks only: ask for platform=ios, the default';
             }
         }
         foreach (InstallReport::FILTERS as $filter) {
             if (self::given($params, $filter) && $platform !== 'android') {
-                $errors[$filter] = 'filters Android installs only: add platform=android';
+                $errors[$filter] = 'filters Android installs only: ask for platform=android';
             }
         }
         if ($errors !== []) {

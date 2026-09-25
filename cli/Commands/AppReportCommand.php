@@ -39,7 +39,7 @@ class AppReportCommand extends BaseCommand
     {
         parent::configure();
         $this->setDescription('Cross-platform app report: iOS postbacks and Android installs, with the goals they reached')
-            ->addOption('platform', null, InputOption::VALUE_REQUIRED, 'ios, android, or both (default: both)')
+            ->addOption('platform', null, InputOption::VALUE_REQUIRED, 'ios (the default), android, or all for both')
             ->addOption('group_by', null, InputOption::VALUE_REQUIRED, 'day, registration, platform; with --platform=ios also ' . implode(', ', self::IOS_GROUPINGS) . '; with --platform=android also ' . implode(', ', self::ANDROID_GROUPINGS), 'day')
             ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Max groups per platform (default 100)')
             ->addOption('time_from', null, InputOption::VALUE_REQUIRED, 'Range start (unix)')
@@ -77,11 +77,14 @@ class AppReportCommand extends BaseCommand
     public static function params(InputInterface $input): array
     {
         $platform = strtolower(trim((string) ($input->getOption('platform') ?? '')));
-        if ($platform === 'all') {
-            $platform = '';
+        $sendPlatform = $platform !== '';
+        if ($platform === '') {
+            // The API's default: the report meant Apple's postbacks before
+            // Android installs existed, and each answer names its platform.
+            $platform = 'ios';
         }
-        if ($platform !== '' && $platform !== 'ios' && $platform !== 'android') {
-            throw new \RuntimeException('--platform must be ios, android or all (leave it out for both), got "' . $platform . '".');
+        if (!in_array($platform, ['ios', 'android', 'all'], true)) {
+            throw new \RuntimeException('--platform must be ios (the default), android or all, got "' . $platform . '".');
         }
         $groupBy = (string) $input->getOption('group_by');
         $groupings = [...self::SHARED_GROUPINGS, ...self::IOS_GROUPINGS, ...self::ANDROID_GROUPINGS];
@@ -89,16 +92,16 @@ class AppReportCommand extends BaseCommand
             throw new \RuntimeException('--group_by must be one of: ' . implode(', ', $groupings) . '; got "' . $groupBy . '".');
         }
         if (in_array($groupBy, self::IOS_GROUPINGS, true) && $platform !== 'ios') {
-            throw new \RuntimeException('--group_by=' . $groupBy . ' is a dimension of Apple\'s postbacks only: add --platform=ios, or group by '
-                . implode(', ', self::SHARED_GROUPINGS) . ' for both platforms.');
+            throw new \RuntimeException('--group_by=' . $groupBy . ' is a dimension of Apple\'s postbacks only: use --platform=ios (or leave it out), or group by '
+                . implode(', ', self::SHARED_GROUPINGS) . ' with --platform=all for both platforms.');
         }
         if (in_array($groupBy, self::ANDROID_GROUPINGS, true) && $platform !== 'android') {
-            throw new \RuntimeException('--group_by=' . $groupBy . ' is a dimension of Android installs only: add --platform=android, or group by '
-                . implode(', ', self::SHARED_GROUPINGS) . ' for both platforms.');
+            throw new \RuntimeException('--group_by=' . $groupBy . ' is a dimension of Android installs only: use --platform=android, or group by '
+                . implode(', ', self::SHARED_GROUPINGS) . ' with --platform=all for both platforms.');
         }
 
         $params = ['group_by' => $groupBy];
-        if ($platform !== '') {
+        if ($sendPlatform) {
             $params['platform'] = $platform;
         }
         if ($input->getOption('limit') !== null) {
@@ -112,7 +115,7 @@ class AppReportCommand extends BaseCommand
                 }
                 if ($only !== null && $platform !== $only) {
                     throw new \RuntimeException('--' . $filter . ' filters ' . ($only === 'ios' ? 'Apple\'s postbacks' : 'Android installs')
-                        . ' only: add --platform=' . $only . '.');
+                        . ' only: use --platform=' . $only . ($only === 'ios' ? ' (or leave it out).' : '.'));
                 }
                 $params[self::PARAM_FOR_OPTION[$filter] ?? $filter] = $value;
             }

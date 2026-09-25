@@ -18,15 +18,15 @@ func TestAppReportRefusesAOneSidedFlagWithoutItsPlatform(t *testing.T) {
 		says string
 		hint string
 	}{
-		{[]string{"app", "report", "--group-by", "ad-network"}, "Apple's postbacks only", "--platform ios"},
+		{[]string{"app", "report", "--group-by", "ad-network", "--platform", "all"}, "Apple's postbacks only", "--platform ios"},
 		{[]string{"app", "report", "--group-by", "country", "--platform", "android"}, "Apple's postbacks only", "--platform ios"},
 		{[]string{"app", "report", "--group-by", "goal"}, "Android installs only", "--platform android"},
 		{[]string{"app", "report", "--group-by", "match-state", "--platform", "ios"}, "Android installs only", "--platform android"},
-		{[]string{"app", "report", "--signature", "valid"}, "--signature filters Apple's postbacks only", "--platform ios"},
+		{[]string{"app", "report", "--signature", "valid", "--platform", "all"}, "--signature filters Apple's postbacks only", "--platform ios"},
 		{[]string{"app", "report", "--platform", "android", "--protocol", "skan"}, "--protocol filters Apple's postbacks only", "--platform ios"},
 		{[]string{"app", "report", "--match-state", "organic"}, "--match-state filters Android installs only", "--platform android"},
 		{[]string{"app", "report", "--platform", "ios", "--trusted", "trusted"}, "--trusted filters Android installs only", "--platform android"},
-		{[]string{"app", "report", "--platform", "windows"}, "--platform must be one of", "both platforms"},
+		{[]string{"app", "report", "--platform", "windows"}, "--platform must be one of", "--platform all"},
 		{[]string{"app", "report", "--group-by", "planet"}, "--group-by must be one of", ""},
 		{[]string{"app", "report", "--platform", "android", "--match-state", "Organic"}, "--match-state must be one of", ""},
 		{[]string{"app", "report", "--platform", "android", "--trusted", "1"}, "--trusted must be one of", ""},
@@ -46,6 +46,32 @@ func TestAppReportRefusesAOneSidedFlagWithoutItsPlatform(t *testing.T) {
 		if tc.hint != "" && !strings.Contains(hintFor(err), tc.hint) {
 			t.Errorf("%v: hint %q does not name %q", tc.args, hintFor(err), tc.hint)
 		}
+	}
+}
+
+// Left out, --platform is the API's default, iOS, which is what the report
+// meant before Android existed: an iOS grouping and filter pass without it,
+// and no platform parameter is sent (the server applies the same default).
+func TestAppReportDefaultsToIOSAsTheAPIDoes(t *testing.T) {
+	var got url.Values
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query()
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":{"group_by":"ad-network","platform":"ios","groups":[],"totals":{"platform":"ios","postbacks":0}},"meta":{"timezone":"UTC"}}`))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	if _, _, err := executeCommand("app", "report", "--group-by", "ad-network", "--signature", "valid", "--json"); err != nil {
+		t.Fatalf("app report without --platform: %v", err)
+	}
+	if got.Has("platform") {
+		t.Errorf("platform = %q, want none sent (the server's default is iOS)", got.Get("platform"))
+	}
+	if got.Get("group_by") != "ad-network" || got.Get("signature") != "valid" {
+		t.Errorf("query = %v, want the iOS grouping and filter", got)
 	}
 }
 
