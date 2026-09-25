@@ -25,8 +25,10 @@
  * It runs against the seeded agent-eval fixture (tests/fixtures/agent-eval/
  * seed.sh) and asserts figures read from the database or from the page
  * itself before the change, never constants, so it holds on any data that
- * has clicks today. It writes only report preferences and the chart setup,
- * and puts both back.
+ * has clicks today. It writes report preferences and the chart setup, and
+ * puts both back; and its setup converts three of today's clicks through
+ * the global postback (seed.sh records no conversions), with a fixed
+ * transaction id per click, so a second run records nothing new.
  */
 
 const checks = require('../lib/checks');
@@ -58,6 +60,35 @@ async function totals(ui, tableSelector) {
   }, tableSelector);
 }
 
+/** How many of today's seeded clicks this spec converts. */
+const CONVERSIONS = 3;
+
+/**
+ * Convert a few of today's clicks, so the reports have some converted clicks
+ * and some not (seed.sh records no conversions). Through the real path — the
+ * global postback, which records into the ledger and rolls the click's report
+ * row — and idempotently: each transaction id is fixed per click, so a second
+ * run is a duplicate the ledger answers without recording again.
+ */
+async function recordConversions(ctx) {
+  const { db, ui, config } = ctx;
+  const clicks = db.rows('SELECT click_id FROM 202_clicks WHERE user_id=1 AND click_time >= UNIX_TIMESTAMP(CURDATE())'
+    + ' ORDER BY click_id LIMIT ' + CONVERSIONS).map((r) => String(r[0]));
+  if (clicks.length < CONVERSIONS) {
+    throw new Error('the fixture has ' + clicks.length + ' clicks today; seed it (tests/fixtures/agent-eval/seed.sh) before this spec');
+  }
+  for (const click of clicks) {
+    const response = await ui.page.request.get(config.base + '/tracking202/static/gpb.php?subid=' + click + '&amount=5&txid=overview-spec-' + click);
+    if (response.status() >= 400) {
+      throw new Error('the postback for click ' + click + ' answered ' + response.status() + ': ' + (await response.text()).slice(0, 200));
+    }
+  }
+  const converted = Number(db.value('SELECT COUNT(*) FROM 202_dataengine WHERE user_id=1 AND click_lead=1 AND click_id IN (' + clicks.join(',') + ')'));
+  if (converted !== CONVERSIONS) {
+    throw new Error('the postbacks were accepted but ' + converted + ' of ' + CONVERSIONS + ' clicks read as converted in 202_dataengine');
+  }
+}
+
 async function applyFilters(ui, formId) {
   await ui.clickThrough('#' + formId + ' button[type="submit"]');
 }
@@ -69,6 +100,7 @@ module.exports = {
   async setup(ctx) {
     ctx.db.write(PREF_RESET);
     await ctx.app.login();
+    await recordConversions(ctx);
   },
 
   scenarios: [
@@ -212,14 +244,17 @@ module.exports = {
         expect.match(summary, /Clicks 1.10 of/, 'the first ten are shown');
         expect.eq(await ui.count('#stats-table tbody tr'), 10, 'ten rows');
 
+        // Page two ends at the twentieth click or the last, whichever is
+        // first: three seeds of the fixture are eighteen clicks.
+        const pageTwo = new RegExp('Clicks 11.' + Math.min(20, total) + ' of');
         await ui.click('#visitors-report [data-p202-offset="1"]:not([aria-label])');
-        await ui.untilInPage(() => /Clicks 11.20/.test((document.querySelector('#visitors-report p') || {}).textContent || ''), undefined, { describe: 'page two to load' });
+        await ui.untilInPage((pattern) => new RegExp(pattern).test((document.querySelector('#visitors-report p') || {}).textContent || ''), pageTwo.source, { describe: 'page two to load' });
         expect.eq(new URL(ui.page.url()).searchParams.get('offset'), '1', 'the address bar names the page');
         expect.eq(await ui.text('#visitors-report .page-item.active'), '2', 'and the links mark it');
 
         await ui.page.reload();
         await checks.overviewReportDrawn(ui, '#visitors-report');
-        expect.match(await ui.text('#visitors-report p'), /Clicks 11.20/, 'a reload, or a link sent to someone, opens the same page');
+        expect.match(await ui.text('#visitors-report p'), pageTwo, 'a reload, or a link sent to someone, opens the same page');
         await checks.baseline(ctx);
         db.write(PREF_RESET);
       },
