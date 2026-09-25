@@ -1889,7 +1889,11 @@ paths:
         `{goals, subject, events}` in, `{outcomes, disabled, progress}` out. A
         goal may be `{goal_id, definition}` (one version effective from 0) or
         `{goal_id, versions, starts_at?, ends_at?}`. At most 50 goals and
-        1000 events. A read (`goals:read` suffices; never staged).
+        1000 events, and an answer of at most 10,000 outcomes: an evaluation
+        that reaches more is refused (`422`, field `events`) as soon as it
+        passes the budget. An event's `revenue` is at most ±999999.99999
+        (`422` naming `events[i].revenue`). A read (`goals:read` suffices;
+        never staged).
       operationId: evaluateGoals
       requestBody:
         required: true
@@ -2152,9 +2156,16 @@ paths:
         outcome rows that would be retired and written under `version`
         (default the current one), and what happens to each retired row's
         conversion (`supersede` by the new row, or `delete` where the new
-        version no longer reaches the goal). Changes nothing. At most
-        `limit` (default 100, max 1000) clicks after `after`; `next_after`
-        continues.
+        version no longer reaches the goal). The goal is re-decided with its
+        dependents — every goal of the click's set whose `after` names it,
+        directly or through another dependent — because their outcomes were
+        evaluated against the goal's: `goals` lists them, and their retired
+        and written rows are in the same lists and totals, each naming its
+        `goal_id`. Dependents never add clicks: the selection and its cap
+        are the goal's own. A dependent's version that cannot be evaluated
+        (invalid definition, missing prerequisite) is left as it is.
+        Changes nothing. At most `limit` (default 100, max 1000) clicks
+        after `after`; `next_after` continues.
       operationId: previewGoalReevaluation
       parameters:
         - {name: version, in: query, schema: {type: integer}}
@@ -2178,12 +2189,14 @@ paths:
         The same selection as the preview, applied one click per
         transaction: each click is rebased onto the version (later events
         and replays keep evaluating the goal under it), outcomes of older
-        versions are retired (`superseded_reason: reevaluation`), and their
-        conversions are superseded or deleted, recomputing the click's
-        value. An outcome the old version never reached is announced to the
-        campaign's traffic source like any newly reached one; one written in
-        place of a retired outcome is not (`notifications` per subject).
-        Stageable.
+        versions — and dependents' outcomes the new evaluation no longer
+        reaches — are retired (`superseded_reason: reevaluation`), their
+        conversions superseded or deleted (recomputing the click's value),
+        newly reached ones written, and the stored progress of exactly those
+        goals replaced. An outcome — the goal's or a dependent's — that the
+        subject had not reached before is announced to the campaign's
+        traffic source like any newly reached one; one written in place of
+        a retired outcome is not (`notifications` per subject). Stageable.
       operationId: applyGoalReevaluation
       requestBody:
         content:
@@ -5346,7 +5359,7 @@ components:
           description: '`{"event": "<name>", "where": [predicates]}` or `{"install": true}`'
         threshold:
           type: object
-          description: '`{"count": N}` or `{"sum": {"prop": "<prop>", "gte": <amount>}}`'
+          description: '`{"count": N}` or `{"sum": {"prop": "<prop>", "gte": <amount>}}`. A summed value outside ±999999.99999 does not count.'
         after:
           type: array
           items: {type: integer}
@@ -5357,7 +5370,7 @@ components:
           description: '`{"days": N, "from": "install" | "click"}`'
         repeat:
           type: object
-          description: '`{"mode": "once"}` or `{"mode": "each", "max": N}`'
+          description: '`{"mode": "once"}` or `{"mode": "each", "max": N}` (N 1-10000). `max` is required with a `sum` threshold (`definition.repeat.max`): one event can cross many multiples of a sum; a `count` may repeat without it.'
         value:
           type: object
           description: '`{"type": "fixed", "amount": "4.00"}`, `{"type": "from_property", "prop": "$revenue"}` or `{"type": "none"}`'
@@ -5464,6 +5477,10 @@ components:
             goal_id: {type: integer}
             version: {type: integer}
             applied: {type: boolean}
+            goals:
+              type: array
+              items: {type: integer}
+              description: Every goal re-decided on at least one of these clicks (the goal and its dependents)
             subjects:
               type: array
               items:
@@ -5471,7 +5488,25 @@ components:
                 properties:
                   subject_type: {type: string}
                   subject_id: {type: integer}
-                  retire: {type: array, items: {type: object}}
+                  goals:
+                    type: array
+                    items: {type: integer}
+                    description: The goal and its dependents in this click's goal set, ascending
+                  retire:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        outcome_id: {type: integer}
+                        goal_id: {type: integer}
+                        version: {type: integer}
+                        n: {type: integer}
+                        event_id: {type: string}
+                        conversion_id: {type: integer, nullable: true}
+                        replaced_by:
+                          nullable: true
+                          description: The replacing outcome's id, `"new"` when it is written by this re-evaluation, or null
+                        ledger: {type: string, nullable: true, enum: [supersede, delete, null]}
                   write: {type: array, items: {$ref: "#/components/schemas/GoalEvaluatedOutcome"}}
                   unchanged: {type: integer}
             totals: {type: object}

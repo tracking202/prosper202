@@ -126,6 +126,57 @@ final class UpdateUiHelpersTest extends TestCase
         self::assertStringContainsString('202_clicks_site.click_landing_site_url_id = 0', $direct['where']);
     }
 
+    public function testTheConfirmIsBoundedByTheHighestClickTheCheckSaw(): void
+    {
+        $values = p202_update_cpc_parse(self::form(['aff_campaign_id' => '4']))['values'];
+        $scope = p202_update_cpc_scope($values, 42, 940006);
+        self::assertStringContainsString('202_clicks.click_id <= ?', $scope['where']);
+        self::assertSame(substr_count($scope['where'], '?'), strlen($scope['types']), 'one type per placeholder');
+        self::assertSame([42, $values['from_time'], $values['to_time'], 4, 940006], $scope['params']);
+        $check = p202_update_cpc_scope($values, 42)['where'];
+        self::assertStringNotContainsString('click_id <=', $check, 'the check counts every click that matches now');
+    }
+
+    public function testTheConfirmCarriesWhatWasChecked(): void
+    {
+        $read = p202_update_cpc_snapshot(['expect_clicks' => '4', 'through_click_id' => '940006']);
+        self::assertSame(['count' => 4, 'through' => 940006], $read);
+        $none = p202_update_cpc_snapshot(['expect_clicks' => '0', 'through_click_id' => '0']);
+        self::assertSame(['count' => 0, 'through' => 0], $none);
+    }
+
+    /**
+     * A confirm that cannot say what it confirmed is refused and checked
+     * again; it never reads as "no limit" (error pattern #11) — a form from
+     * before the check carried these, a tampered one, or one cut short.
+     *
+     * @return array<string, array{array<string, mixed>}>
+     */
+    public static function unreadableSnapshots(): array
+    {
+        return [
+            'neither' => [[]],
+            'no count' => [['through_click_id' => '9']],
+            'no boundary' => [['expect_clicks' => '4']],
+            'empty count' => [['expect_clicks' => '', 'through_click_id' => '9']],
+            'negative' => [['expect_clicks' => '-1', 'through_click_id' => '9']],
+            'fraction' => [['expect_clicks' => '4', 'through_click_id' => '9.5']],
+            'exponent' => [['expect_clicks' => '4', 'through_click_id' => '1e20']],
+            'too long' => [['expect_clicks' => '4', 'through_click_id' => '99999999999999999999']],
+            'array' => [['expect_clicks' => ['4'], 'through_click_id' => '9']],
+            'padded' => [['expect_clicks' => ' 4', 'through_click_id' => '9']],
+        ];
+    }
+
+    /**
+     * @dataProvider unreadableSnapshots
+     * @param array<string, mixed> $in
+     */
+    public function testAConfirmThatCannotSayWhatItConfirmedIsRefused(array $in): void
+    {
+        self::assertNull(p202_update_cpc_snapshot($in));
+    }
+
     public function testTheColumnGuessReadsPlainHeaders(): void
     {
         self::assertSame(['subid' => 0, 'amount' => 2], p202_update_guess_columns(['Sub ID', 'Order', 'Commission']));

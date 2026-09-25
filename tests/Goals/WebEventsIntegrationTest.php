@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Goals;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Goals\GoalDefinition;
 use Prosper202\Goals\GoalEngine;
 use Prosper202\Goals\GoalEngineException;
 use Prosper202\Goals\GoalEvent;
@@ -175,6 +176,51 @@ final class WebEventsIntegrationTest extends TestCase
         self::assertSame(['suppressed', 'suppressed', 'suppressed'], array_column($replay['outcomes'], 'kind'));
         self::assertCount(2, $this->fetched, 'the $10 event, now the third purchase, is not announced again');
         self::assertSame(['lead' => 1, 'payout' => '16.00000'], $this->clickState(100));
+    }
+
+    /**
+     * Re-evaluation re-decides a goal with its dependents (fa328af), so the
+     * dependents' outcomes it writes go through the same notice rule: the B
+     * that waited on A is announced when A's new version reaches it, once;
+     * applying the same version again announces nothing; and a version that
+     * stops matching retires both without a word to the network.
+     */
+    public function testAReevaluationAnnouncesTheDependentsItReachesOnce(): void
+    {
+        $this->campaign(7, 'accumulate');
+        $this->click(100, 7);
+        $this->pixels();
+        $big = ['name' => 'Buy', 'trigger' => ['event' => 'buy', 'where' => [['prop' => 'amount', 'op' => 'gte', 'value' => 100]]],
+            'value' => ['type' => 'fixed', 'amount' => 5]];
+        $any = ['name' => 'Buy', 'trigger' => ['event' => 'buy'], 'value' => ['type' => 'fixed', 'amount' => 5]];
+        $a = $this->goal(7, $big);
+        $b = $this->goal(7, ['name' => 'Upsell', 'trigger' => ['event' => 'upsell'], 'after' => [$a], 'value' => ['type' => 'fixed', 'amount' => 3]]);
+        $engine = $this->engineWith($this->notifier());
+        $this->send($engine, 100, [$this->event('p1', 'buy', self::T, ['amount' => 10]), $this->event('u1', 'upsell', self::T + 1)]);
+        self::assertSame([], $this->fetched, 'a $10 purchase reaches neither goal yet');
+
+        $this->clock += 100;
+        $this->goals->addVersion(1, $a, GoalDefinition::parse($any, $a), $this->clock);
+        $applied = $engine->reevaluate(1, $a, null, true);
+        self::assertSame([$a, $b], $applied['goals']);
+        self::assertSame(['reached', 'reached'], array_column($applied['subjects'][0]['notifications'], 'kind'));
+        self::assertSame(['sent', 'sent'], array_column($applied['subjects'][0]['notifications'], 'status'));
+        $heard = array_map(static fn (string $u): string => (string) preg_replace('/^.*[?&]g=([^&]*).*$/', '$1', $u), $this->fetched);
+        sort($heard);
+        self::assertSame(['Buy', 'Upsell'], $heard, 'A and the dependent that waited on it are each announced once');
+        self::assertSame(['lead' => 1, 'payout' => '8.00000'], $this->clickState(100));
+
+        $same = $engine->reevaluate(1, $a, null, true);
+        self::assertSame(0, $same['totals']['write'] + $same['totals']['retire']);
+        self::assertSame([], $same['subjects'][0]['notifications']);
+
+        $this->clock += 100;
+        $this->goals->addVersion(1, $a, GoalDefinition::parse($big, $a), $this->clock);
+        $retired = $engine->reevaluate(1, $a, null, true);
+        self::assertSame(2, $retired['totals']['retire']);
+        self::assertSame([], $retired['subjects'][0]['notifications'], 'a retirement is not announced');
+        self::assertSame(0, $this->clickState(100)['lead']);
+        self::assertCount(2, $this->fetched);
     }
 
     public function testANotifierThatThrowsDoesNotUndoTheCommittedWrite(): void
