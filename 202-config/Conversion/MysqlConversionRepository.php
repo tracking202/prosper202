@@ -8,10 +8,12 @@ use Prosper202\Bridge\EventBridge;
 use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\Ledger\DedupeKey;
+use Prosper202\Conversion\Ledger\LedgerIntegrityException;
 use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\Ledger\PayoutMode;
 use Prosper202\Conversion\Ledger\ReversalException;
 use Prosper202\Conversion\Ledger\SourceRef;
+use Prosper202\Conversion\Ledger\SupersededReason;
 use Prosper202\Database\Connection;
 use Prosper202\DataEngine\ClickRollupSql;
 use Prosper202\Ltv\MysqlCustomerRepository;
@@ -657,6 +659,154 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
     }
 
     /**
+     * The goals engine retires a goal row with nothing in its place (a
+     * re-evaluation under which the outcome is no longer reached): the row
+     * is soft-deleted exactly as softDelete() does — click recomputed, MTA
+     * queued, its revenue event voided — and, in the same statement, marked
+     * with the engine's reason. The mark is the row's provenance: it is what
+     * lets reviveGoalRowInTransaction() tell a deletion the engine made (and
+     * may undo) from one an operator made (which it must not). A row that is
+     * already deleted is left exactly as it is, unmarked, and null returned.
+     *
+     * Inside a transaction the caller holds (see recordInTransaction()).
+     * Returns the click whose value changed, or null.
+     */
+    public function retireGoalRowInTransaction(int $convId, int $userId, SupersededReason $reason): ?int
+    {
+        if ($reason !== SupersededReason::REPLAY && $reason !== SupersededReason::REEVALUATION) {
+            throw new LedgerIntegrityException('a goal row is retired by a replay or a re-evaluation, not by "' . $reason->value . '"');
+        }
+        $this->assertGoalRow($convId, $userId);
+
+        return $this->softDeleteLocked($convId, $userId, $reason);
+    }
+
+    /**
+     * Undo the engine's retirement of a goal row: a reconciliation re-derived
+     * exactly the outcome this row records (same goal, version, n and event),
+     * so the row counts again as it did before the engine retired it.
+     *
+     * The row is restored from whichever retirement happened:
+     * - superseded by the engine (reason replay/reevaluation, not deleted):
+     *   the mark is lifted;
+     * - deleted by the engine (deleted, reason replay/reevaluation, no
+     *   superseding row — retireGoalRowInTransaction()): it is undeleted and
+     *   the mark lifted, and when its deletion voided a revenue event the
+     *   amount is posted to the customer again (see reinstateRevenueEvent());
+     * - deleted by anyone else (no engine mark): left deleted — the engine
+     *   restores what it retired, never what an operator removed;
+     * - already counting as the ledger decides (no fixed mark): unchanged.
+     * Any other state (a pre_ledger mark on a goal row) is refused.
+     *
+     * The caller names the click and dedupe key the outcome says its row
+     * has; a row that is not that goal row (a broken link) is refused
+     * rather than revived, so a revival can never pay a click for an
+     * outcome that row does not record. The UNIQUE (click_id, dedupe_key)
+     * key is what guarantees there is no second row for the outcome to
+     * conflict with; the key check is what ties this row to it.
+     *
+     * Inside a transaction the caller holds; lock order click, then
+     * conversion, as on every path here. Returns the click whose value may
+     * have changed (for refreshClickReport() after commit), or null when
+     * nothing was written.
+     *
+     * @throws LedgerIntegrityException
+     */
+    public function reviveGoalRowInTransaction(int $convId, int $userId, int $clickId, string $dedupeKey): ?int
+    {
+        $found = $this->assertGoalRow($convId, $userId);
+        if ((int) $found['click_id'] !== $clickId || (string) $found['dedupe_key'] !== $dedupeKey) {
+            throw new LedgerIntegrityException(
+                'conversion ' . $convId . ' is click ' . (int) $found['click_id'] . '\'s row "' . (string) $found['dedupe_key']
+                . '", not click ' . $clickId . '\'s "' . $dedupeKey . '"; the outcome that names it does not record it, so it is not revived'
+            );
+        }
+
+        $clickStmt = $this->conn->prepareWrite(
+            'SELECT click_id, aff_campaign_id FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE'
+        );
+        $this->conn->bind($clickStmt, 'ii', [$clickId, $userId]);
+        $click = $this->conn->fetchOne($clickStmt);
+        if ($click === null) {
+            throw new LedgerIntegrityException('conversion ' . $convId . ' names click ' . $clickId . ', which does not exist');
+        }
+
+        $convStmt = $this->conn->prepareWrite(
+            'SELECT conv_id, customer_id, deleted, superseded_reason, superseded_by FROM 202_conversion_logs
+             WHERE conv_id = ? AND user_id = ? LIMIT 1 FOR UPDATE'
+        );
+        $this->conn->bind($convStmt, 'ii', [$convId, $userId]);
+        $conv = $this->conn->fetchOne($convStmt);
+        if ($conv === null) {
+            throw new LedgerIntegrityException('conversion ' . $convId . ' disappeared under its click lock');
+        }
+
+        $reason = $conv['superseded_reason'] !== null && $conv['superseded_reason'] !== ''
+            ? SupersededReason::tryFrom((string) $conv['superseded_reason']) : null;
+        if ($conv['superseded_reason'] !== null && $conv['superseded_reason'] !== '' && $reason === null) {
+            throw new LedgerIntegrityException('conversion ' . $convId . ' has superseded_reason "' . (string) $conv['superseded_reason'] . '", which is not a known reason');
+        }
+        $engineMark = $reason === SupersededReason::REPLAY || $reason === SupersededReason::REEVALUATION;
+        $deleted = (int) $conv['deleted'] === 1;
+
+        if ($deleted) {
+            if (!$engineMark || $conv['superseded_by'] !== null) {
+                return null; // deleted by someone other than the engine: it stays deleted
+            }
+            $stmt = $this->conn->prepareWrite(
+                "UPDATE 202_conversion_logs SET deleted = 0, superseded_by = NULL, superseded_reason = NULL
+                 WHERE conv_id = ? AND deleted = 1 AND superseded_reason IN ('replay', 'reevaluation') AND superseded_by IS NULL"
+            );
+            $this->conn->bind($stmt, 'i', [$convId]);
+            if ($this->conn->executeUpdate($stmt) !== 1) {
+                throw new LedgerIntegrityException('conversion ' . $convId . ' was not undeleted');
+            }
+            $this->reinstateRevenueEvent($convId, $conv['customer_id'] !== null ? (int) $conv['customer_id'] : 0, $userId, $clickId);
+        } elseif ($engineMark) {
+            $stmt = $this->conn->prepareWrite(
+                "UPDATE 202_conversion_logs SET superseded_by = NULL, superseded_reason = NULL
+                 WHERE conv_id = ? AND deleted = 0 AND superseded_reason IN ('replay', 'reevaluation')"
+            );
+            $this->conn->bind($stmt, 'i', [$convId]);
+            if ($this->conn->executeUpdate($stmt) !== 1) {
+                throw new LedgerIntegrityException('conversion ' . $convId . '\'s supersession was not lifted');
+            }
+        } elseif ($reason !== null && !$reason->isDerived()) {
+            throw new LedgerIntegrityException('goal conversion ' . $convId . ' is superseded as "' . $reason->value . '", which no goal row can be; it is not revived');
+        } else {
+            return null; // counting as the ledger decides: nothing was retired
+        }
+
+        $ledger = new MysqlConversionLedger($this->conn);
+        $ledger->recompute($clickId, (int) $click['aff_campaign_id']);
+        $ledger->enqueue([$convId], 'counted_state');
+
+        return $clickId;
+    }
+
+    /**
+     * A goal row of this account, or a refusal naming what it is instead.
+     *
+     * @return array{click_id: int|string, dedupe_key: string}
+     */
+    private function assertGoalRow(int $convId, int $userId): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT click_id, source, dedupe_key FROM 202_conversion_logs WHERE conv_id = ? AND user_id = ? LIMIT 1'
+        );
+        $this->conn->bind($stmt, 'ii', [$convId, $userId]);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            throw new LedgerIntegrityException('conversion ' . $convId . ' does not exist');
+        }
+        if ((string) $row['source'] !== ConversionSource::GOAL->value) {
+            throw new LedgerIntegrityException('conversion ' . $convId . ' is a ' . (string) $row['source'] . ' row, not a goal row');
+        }
+
+        return ['click_id' => $row['click_id'], 'dedupe_key' => (string) $row['dedupe_key']];
+    }
+
+    /**
      * Post-commit: refresh the report row of a click whose value a caller's
      * committed transaction changed (softDeleteInTransaction(), or a goal
      * row superseded through MysqlConversionLedger).
@@ -666,7 +816,11 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         $this->refreshReportRollup($clickId);
     }
 
-    private function softDeleteLocked(int $id, int $userId): ?int
+    /**
+     * @param SupersededReason|null $engineMark the goals engine's reason, written with the deletion
+     *        (retireGoalRowInTransaction()); null for every other delete
+     */
+    private function softDeleteLocked(int $id, int $userId, ?SupersededReason $engineMark = null): ?int
     {
         $ledger = new MysqlConversionLedger($this->conn);
 
@@ -709,11 +863,23 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $ledger->ensureManaged($click, $userId);
         }
 
-        $stmt = $this->conn->prepareWrite(
-            'UPDATE 202_conversion_logs SET deleted = 1 WHERE conv_id = ? AND user_id = ?'
-        );
-        $this->conn->bind($stmt, 'ii', [$id, $userId]);
-        $this->conn->executeUpdate($stmt);
+        if ($engineMark === null) {
+            $stmt = $this->conn->prepareWrite(
+                'UPDATE 202_conversion_logs SET deleted = 1 WHERE conv_id = ? AND user_id = ?'
+            );
+            $this->conn->bind($stmt, 'ii', [$id, $userId]);
+            $this->conn->executeUpdate($stmt);
+        } else {
+            // The mark is the provenance a revival reads; a deletion that
+            // did not carry it would be one the engine can never undo.
+            $stmt = $this->conn->prepareWrite(
+                'UPDATE 202_conversion_logs SET deleted = 1, superseded_by = NULL, superseded_reason = ? WHERE conv_id = ? AND user_id = ? AND deleted = 0'
+            );
+            $this->conn->bind($stmt, 'sii', [$engineMark->value, $id, $userId]);
+            if ($this->conn->executeUpdate($stmt) !== 1) {
+                throw new LedgerIntegrityException('goal conversion ' . $id . ' was not retired');
+            }
+        }
 
         // What counts changes for this row, for the reversals that name
         // it (they stop netting), and for the row it reverses (it nets
@@ -794,16 +960,21 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         // never bumped order_count. The external_ref PREFIX encodes this
         // for the reconcile jobs ('void:' counts -1 order, 'void-nc:'
         // does not); the idempotency key stays identical either way so a
-        // repeated delete can never double-void.
+        // repeated delete can never double-void. A goal row the engine
+        // revived was posted again (reinstateRevenueEvent()), so its next
+        // deletion voids that posting: the key carries the generation
+        // (void:conv:<id> first, then void:conv:<id>:<n> after the n-th
+        // reinstatement), and within a generation a repeat is still one void.
         $voidedAnOrder = in_array((string) $event['event_type'], MysqlCustomerRepository::ORDER_EVENT_TYPES, true);
+        $suffix = self::revenueGenerationSuffix($this->revenueGeneration($id, $userId));
         $void = $this->customers->insertRevenueEvent($userId, $customerId, [
             'event_type' => 'adjustment',
             'amount' => -(float) $event['amount'],
             'currency' => (string) $event['currency'],
             'occurred_at' => $now,
             'source' => 'conversion',
-            'external_ref' => ($voidedAnOrder ? 'void:conv:' : 'void-nc:conv:') . $id,
-            'idempotency_key' => 'void:conv:' . $id,
+            'external_ref' => ($voidedAnOrder ? 'void:conv:' : 'void-nc:conv:') . $id . $suffix,
+            'idempotency_key' => 'void:conv:' . $id . $suffix,
         ], $now);
 
         if ($void['inserted']) {
@@ -822,6 +993,90 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $this->conn->execute($itemsStmt);
             $itemsStmt->close();
         }
+    }
+
+    /**
+     * The revived half of voidRevenueEvent(): a goal row the engine had
+     * deleted counts again, so the revenue its deletion voided is posted to
+     * the customer again — a new event of the original's type and amount
+     * (an order again when it was one, so the reconcile jobs' order count
+     * and the cache agree), keyed reinstate:conv:<id>:<n>. The ledger stays
+     * append-only: neither the purchase nor its void is touched. Nothing is
+     * posted when the deletion voided nothing (an unlinked row, or none on
+     * file for this generation). Runs inside the caller's transaction.
+     */
+    private function reinstateRevenueEvent(int $id, int $customerId, int $userId, int $clickId): void
+    {
+        if ($customerId <= 0) {
+            return;
+        }
+        $eventStmt = $this->conn->prepareWrite(
+            'SELECT event_id, amount, currency, event_type, transaction_id FROM 202_revenue_events WHERE conv_id = ? LIMIT 1'
+        );
+        $this->conn->bind($eventStmt, 'i', [$id]);
+        $event = $this->conn->fetchOne($eventStmt);
+        if ($event === null) {
+            return;
+        }
+        $generation = $this->revenueGeneration($id, $userId);
+        $voidStmt = $this->conn->prepareWrite(
+            'SELECT 1 FROM 202_revenue_events WHERE user_id = ? AND idempotency_key = ? LIMIT 1'
+        );
+        $this->conn->bind($voidStmt, 'is', [$userId, 'void:conv:' . $id . self::revenueGenerationSuffix($generation)]);
+        if ($this->conn->fetchOne($voidStmt) === null) {
+            return; // the deletion voided nothing, so there is nothing to post again
+        }
+
+        $now = time();
+        $key = 'reinstate:conv:' . $id . ':' . ($generation + 1);
+        $eventType = (string) $event['event_type'];
+        $amount = (float) $event['amount'];
+        $posted = $this->customers->insertRevenueEvent($userId, $customerId, [
+            'event_type' => $eventType,
+            'amount' => $amount,
+            'currency' => (string) $event['currency'],
+            'occurred_at' => $now,
+            'source' => 'conversion',
+            'click_id' => $clickId,
+            'external_ref' => $key,
+            'transaction_id' => $event['transaction_id'] !== null ? (string) $event['transaction_id'] : null,
+            'idempotency_key' => $key,
+        ], $now);
+        if (!$posted['inserted']) {
+            throw new LedgerIntegrityException('conversion ' . $id . ': its revenue was already reinstated as ' . $key . ' without a void since');
+        }
+        $this->customers->applyEventToRollups($userId, $customerId, $eventType, $amount, $now, $now);
+
+        // The sale's line items again, as the void mirrored them negated.
+        $itemsStmt = $this->conn->prepareWrite(
+            'INSERT INTO 202_revenue_line_items
+                (user_id, event_id, product_id, sku, product_name, quantity, unit_price, amount, created_at)
+             SELECT user_id, ?, product_id, sku, product_name, quantity, unit_price, amount, ?
+             FROM 202_revenue_line_items WHERE event_id = ?'
+        );
+        $this->conn->bind($itemsStmt, 'iii', [$posted['eventId'], $now, (int) $event['event_id']]);
+        $this->conn->execute($itemsStmt);
+        $itemsStmt->close();
+    }
+
+    /** How many times a conversion's revenue was reinstated (reinstateRevenueEvent()). */
+    private function revenueGeneration(int $id, int $userId): int
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT COUNT(*) AS n FROM 202_revenue_events WHERE user_id = ? AND idempotency_key LIKE ?'
+        );
+        $this->conn->bind($stmt, 'is', [$userId, 'reinstate:conv:' . $id . ':%']);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            throw new RuntimeException('conversion ' . $id . ': its revenue generation could not be read');
+        }
+
+        return (int) $row['n'];
+    }
+
+    private static function revenueGenerationSuffix(int $generation): string
+    {
+        return $generation === 0 ? '' : ':' . $generation;
     }
 
     /**
