@@ -1,9 +1,10 @@
 # App SDK wire contract
 
 What an app build and the Prosper202 server say to each other. The iOS
-helper (`sdk/ios-attribution/`) speaks it today; the Android SDK and the
-Android intake join it (plan §5), and the server is the one implementation
-either side is tested against.
+helper (`sdk/ios-attribution/`) and the Android SDK
+(`sdk/android-attribution/`, [24-android-sdk.md](24-android-sdk.md)) speak
+it, and the server is the one implementation either side is tested
+against.
 
 Everything below lives under `/api/v3` on the install's own origin, except
 Apple's postbacks, which devices send to the `/.well-known/` receivers
@@ -119,6 +120,9 @@ Sent once, on first launch, with what the Play Install Referrer API returned:
 - `app_key` must be the token's app (`422` naming both).
 - `integrity_token` is reserved for Play Integrity (a later release): sent
   or not, it is not judged yet.
+- `customer` is optional: the signed customer id (below), when the app
+  knew it before the body was built. It is part of the body, so it is part
+  of the fingerprint.
 - The body is capped at 16 KB (`413`).
 
 The answer never carries the click, a conversion or money:
@@ -128,6 +132,9 @@ The answer never carries the click, a conversion or money:
   "reason": "Attributed to click 1042.", "trusted": 1, "test": false,
   "duplicate": false}}
 ```
+
+With a `customer` in the body, the answer also carries `"customer"` — see
+below.
 
 ### `POST /apps/installs/{install_uuid}/events`
 
@@ -150,6 +157,33 @@ The answer never carries the click, a conversion or money:
 - `occurred_at` is the device's clock. An event is ordered by
   `min(occurred_at, received_at)`, so a clock can move an event earlier but
   never past its arrival.
+- `customer` may sit beside `events`, or alone (`{"customer": {…}}`, no
+  `events`), so an app that reports no events can still send it. With it
+  the answer carries `"customer"`.
+
+### The signed customer id
+
+Both bodies may carry `customer: {"id", "type", "signature"}` — the SDKs'
+`setCustomerId(id, signature, type)`:
+
+- `type` is one of `custom` (also what an absent or `null` type means),
+  `email_md5`, `email_sha256`, `esp_id`, `merchant_id`, `subid`; `id` is
+  up to 255 bytes, trimmed, an email digest hex of its length (folded to
+  lower case); `signature` is `cust_sig`, 64 hexadecimal characters of
+  `HMAC-SHA256(linking key, "<type>:<id>")`, computed by the operator's
+  server ([visitor identity](../features/visitor-identity.md)). A claim that
+  breaks a rule is `400` naming `customer.<field>`.
+- After the request commits, and only for an **attributed, trusted**
+  install, the server verifies the signature under the account's linking
+  key and links the install's click to the customer
+  (`ClickIdentity`, the same join a signed `cust` makes on a tracking
+  link). It answers one word in `data.customer`: `linked`, `unverified`
+  (the signature is not the linking key's), `no_click` (the install proved
+  no click — organic, pending, refuted or untrusted), or `not_linked` (the
+  campaign's identity capture is off, or linking failed and was logged).
+  A pending install whose body carried the claim links when it settles.
+- An id that does not verify links nothing; it stays only in the install's
+  stored body. A replay of an install links again, harmlessly.
 
 ## Retry semantics
 
@@ -179,17 +213,21 @@ the policy cannot be read.
 ## Vectors
 
 `tests/fixtures/app-sdk-contract/` holds the cross-language vectors every
-implementation runs. Today: `app-identity.json`, what each store link, App
+implementation runs. `customer-id.json` is the customer id's canonical form
+and signatures, run by `tests/Identity/CustomerIdVectorsTest.php` and both
+SDKs. Then: `app-identity.json`, what each store link, App
 Store id and package name names (and which are refused), which the server's
 `AppIdentity` runs in `tests/Apps/AppIdentityTest.php`. `goals/` is the goal
 evaluator's specification as data — `definitions.json` (what a valid goal
 is) and `evaluator.json` (what a goal set makes of a subject's events), with
 the format and every rule in `goals/README.md` — run by
-`tests/Goals/GoalVectorsTest.php` and, from PRs 7 and 8, by the Kotlin and
-Swift evaluators. `android/` holds the intake's: `install-token.json` (the
+`tests/Goals/GoalVectorsTest.php` and the Swift evaluator (Android goals are
+evaluated on the server, so the Kotlin SDK has no evaluator to run them
+against). `android/` holds the intake's: `install-token.json` (the
 token format under a test key), `install-requests.json` (install bodies, the
 field errors of each invalid one, and each valid one's canonical form and
 fingerprint), `events-requests.json` and `responses.json` (every answer and
 whether the SDK retries it), specified in `android/README.md` and run by
-`tests/Apps/Android/AndroidContractVectorsTest.php`; the vectors were
-written by an implementation independent of the server's.
+`tests/Apps/Android/AndroidContractVectorsTest.php` and the Android SDK's
+`ContractVectorsTest`; the vectors were written by an implementation
+independent of both.

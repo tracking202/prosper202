@@ -29,6 +29,9 @@ use Throwable;
  */
 final class PendingClickSettler
 {
+    /** A settle that wrote nothing for the report refresh to follow. */
+    private const NOTHING = ['ledger' => [], 'clicks' => []];
+
     private Connection $conn;
     private GoalEngine $engine;
     private InstallIntake $intake;
@@ -94,7 +97,7 @@ final class PendingClickSettler
             $this->conn->bind($lock, 'i', [$installRowId]);
             $row = $this->conn->fetchOne($lock);
             if ($row === null || (string) $row['match_state'] !== MatchState::PENDING_CLICK->value) {
-                return ['state' => null, 'post' => ['ledger' => [], 'clicks' => []], 'user' => 0];
+                return ['state' => null, 'post' => self::NOTHING, 'user' => 0, 'customer' => null];
             }
             $registration = new AppRegistration(
                 (int) $row['registration_id'],
@@ -120,11 +123,16 @@ final class PendingClickSettler
                 $now,
             );
             if ($classified['state'] === MatchState::PENDING_CLICK) {
-                return ['state' => MatchState::PENDING_CLICK, 'post' => ['ledger' => [], 'clicks' => []], 'user' => 0];
+                return ['state' => MatchState::PENDING_CLICK, 'post' => self::NOTHING, 'user' => 0, 'customer' => null];
             }
             $post = $this->intake->settle($registration, (int) $row['is_test'] === 1, $installRowId, $classified['state'], $classified['reason'], $classified['click_id'], $now);
 
-            return ['state' => $classified['state'], 'post' => $post, 'user' => $registration->userId];
+            return [
+                'state' => $classified['state'],
+                'post' => $post,
+                'user' => $registration->userId,
+                'customer' => $payload->customer,
+            ];
         };
         try {
             $done = $this->conn->transaction($work);
@@ -139,6 +147,16 @@ final class PendingClickSettler
                 $this->engine->finishCommitted($done['user'], $done['post']);
             } catch (Throwable $e) {
                 error_log('p202 android settle: install ' . $installRowId . ' settled; its report refresh failed: ' . $e->getMessage());
+            }
+        }
+        // The customer id the install body carried links once the install
+        // has a proved click — which, for a pending one, is now.
+        if ($done['customer'] instanceof CustomerClaim && $done['state'] === MatchState::ATTRIBUTED) {
+            try {
+                $this->intake->customer($this->intake->installRow($installRowId), $done['customer']);
+            } catch (Throwable $e) {
+                error_log('p202 android settle: install ' . $installRowId . ' settled; linking its customer failed: '
+                    . $e->getMessage());
             }
         }
 

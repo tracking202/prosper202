@@ -17,7 +17,9 @@
         ]
       },
       "expect": {
-        "valid": true
+        "valid": true,
+        "events": 1,
+        "customer": null
       }
     },
     {
@@ -34,7 +36,9 @@
         ]
       },
       "expect": {
-        "valid": true
+        "valid": true,
+        "events": 1,
+        "customer": null
       }
     },
     {
@@ -54,7 +58,9 @@
         ]
       },
       "expect": {
-        "valid": true
+        "valid": true,
+        "events": 1,
+        "customer": null
       }
     },
     {
@@ -278,6 +284,132 @@
         "status": 400,
         "field_errors": [
           "events[1].name"
+        ]
+      }
+    },
+    {
+      "name": "events with a customer",
+      "body": {
+        "events": [
+          {
+            "event_id": "e-1",
+            "name": "level_reached",
+            "occurred_at": 1727200500,
+            "properties": {
+              "level": 3
+            }
+          }
+        ],
+        "customer": {
+          "id": "u-829",
+          "type": "custom",
+          "signature": "c21cbbf0bddfc93538dd9329f809dbb663e3029dc51fb6c145dc2fbae3e670b4"
+        }
+      },
+      "expect": {
+        "valid": true,
+        "events": 1,
+        "customer": "custom:u-829"
+      }
+    },
+    {
+      "name": "a customer alone",
+      "body": {
+        "customer": {
+          "id": "u-829",
+          "type": "custom",
+          "signature": "c21cbbf0bddfc93538dd9329f809dbb663e3029dc51fb6c145dc2fbae3e670b4"
+        }
+      },
+      "expect": {
+        "valid": true,
+        "events": 0,
+        "customer": "custom:u-829"
+      }
+    },
+    {
+      "name": "a customer alone with a bad signature",
+      "body": {
+        "customer": {
+          "id": "u-829",
+          "type": "custom",
+          "signature": "not-hex"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "customer.signature"
+        ]
+      }
+    },
+    {
+      "name": "an empty body",
+      "body": {},
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "events"
+        ]
+      }
+    },
+    {
+      "name": "no events beside a customer",
+      "body": {
+        "events": [],
+        "customer": {
+          "id": "u-829",
+          "type": "custom",
+          "signature": "c21cbbf0bddfc93538dd9329f809dbb663e3029dc51fb6c145dc2fbae3e670b4"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "events"
+        ]
+      }
+    },
+    {
+      "name": "a null customer and no events",
+      "body": {
+        "customer": null
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "events"
+        ]
+      }
+    },
+    {
+      "name": "a customer inside an event",
+      "body": {
+        "events": [
+          {
+            "event_id": "e-1",
+            "name": "level_reached",
+            "occurred_at": 1727200500,
+            "properties": {
+              "level": 3
+            },
+            "customer": {
+              "id": "u-829",
+              "type": "custom",
+              "signature": "c21cbbf0bddfc93538dd9329f809dbb663e3029dc51fb6c145dc2fbae3e670b4"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "events[0].customer"
         ]
       }
     }

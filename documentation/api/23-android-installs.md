@@ -9,8 +9,9 @@ report and in multi-touch attribution.
 
 This guide covers the server side: the store link, the intake the SDK
 calls, how an install is classified, what it pays, events after the
-install, traffic-source postbacks, and the operator's reads. The wire
-contract the SDK is built against is
+install, the signed customer id, traffic-source postbacks, and the
+operator's reads. The SDK itself is [24-android-sdk.md](24-android-sdk.md);
+the wire contract it is built against is
 [21-app-sdk-contract.md](21-app-sdk-contract.md); goals are
 [22-goals.md](22-goals.md); the app registry is
 [19-app-measurement.md](19-app-measurement.md#apps).
@@ -133,6 +134,18 @@ given.
 - Events for a **pending** install are answered `503` with `Retry-After`
   and evaluated once it settles; for a **refuted** one they are refused
   (`409`); for an install the app never reported, `404`.
+
+### The signed customer id
+
+The SDK's `setCustomerId(id, signature)` sends a customer id your server
+signed with the account's linking key
+([visitor identity](../features/visitor-identity.md)) on the install body or
+an events request. Once the install is attributed and trusted, the server
+verifies the signature and links the install's click to that customer, so
+a user who clicked on the desktop and installed on the phone is one
+journey. The answer says `linked`, `unverified`, `no_click` or `not_linked`
+([contract](21-app-sdk-contract.md#the-signed-customer-id)). An id that does
+not verify links nothing and stays only in the install's stored body.
 
 ## 6. Traffic-source postbacks
 

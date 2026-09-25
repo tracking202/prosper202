@@ -38,7 +38,8 @@ Bodies of `POST /api/v3/apps/installs`.
 - `cases[]` — `{name, body, expect}`.
 - `expect.valid: true` — the server accepts the body. `canonical` is its
   canonical form and `fingerprint` the lower-case hex SHA-256 of that form's
-  UTF-8 bytes.
+  UTF-8 bytes; `customer` is the canonical `"<type>:<id>"` of the body's
+  customer claim, or `null` when it carries none.
 - `expect.valid: false` — the server answers `status` (400) with
   `field_errors` naming exactly the listed fields (sorted). Paths inside the
   referrer are `referrer.<field>`.
@@ -60,7 +61,17 @@ optional strings are strings or `null`.
 Bodies of `POST /api/v3/apps/installs/{install_uuid}/events`: `{"events":
 […]}` with 1 to `max_events` events. Each `case` is `{name, body, expect}`
 as above; paths are `events[<index>].<field>`. `received_at` and
-`revenue_trusted` belong to the server and are refused by name.
+`revenue_trusted` belong to the server and are refused by name. A body may
+carry `customer` beside its events or alone (then without `events`); a valid
+case's `expect.events` is how many events it holds and `expect.customer`
+its claim's canonical form (or `null`).
+
+The customer claim (`customer: {id, type, signature}`, on both bodies)
+follows `../customer-id.json`: the id canonicalises as `CustomerId::canonical()`
+does, the type is the vocabulary or absent, and the signature is 64
+hexadecimal characters. Its field errors are `customer.<field>`; the
+signatures in these cases were computed with Python's `hmac` under
+`customer-id.json`'s test linking key.
 
 ## `responses.json`
 

@@ -149,7 +149,31 @@ final class InstallIntake
             error_log('p202 android intake: install ' . $payload->installUuid . ' committed; its report refresh failed: ' . $e->getMessage());
         }
 
-        return ['status' => 200, 'body' => ['data' => self::present($done['row'], false)]];
+        $data = self::present($done['row'], false) + $this->customer($done['row'], $payload->customer);
+
+        return ['status' => 200, 'body' => ['data' => $data]];
+    }
+
+    /**
+     * Link the install's click to the signed customer id the body carried,
+     * after commit (InstallCustomerLink). Empty when the body carried none.
+     *
+     * @param array<string, mixed> $row the committed install row
+     * @return array{customer?: string}
+     */
+    public function customer(array $row, ?CustomerClaim $claim): array
+    {
+        if ($claim === null) {
+            return [];
+        }
+        try {
+            return ['customer' => (new InstallCustomerLink($this->conn))->link($row, $claim)];
+        } catch (Throwable $e) {
+            error_log('p202 android customer: install ' . (string) $row['install_uuid']
+                . ' is recorded; linking its customer failed: ' . $e->getMessage());
+
+            return ['customer' => InstallCustomerLink::NOT_LINKED];
+        }
     }
 
     /**
@@ -321,7 +345,11 @@ final class InstallIntake
                 . 'An install_uuid names one install; resend the stored body byte for byte, or mint a new id for a new install.');
         }
 
-        return ['status' => 200, 'body' => ['data' => self::present($stored, true)]];
+        // A replay links again: harmless when the first answer linked, and
+        // the repair when the process died between the commit and the link.
+        $data = self::present($stored, true) + $this->customer($stored, $payload->customer);
+
+        return ['status' => 200, 'body' => ['data' => $data]];
     }
 
     /**
@@ -356,6 +384,12 @@ final class InstallIntake
         $this->conn->bind($stmt, 'is', [$registrationId, $installUuid]);
 
         return $this->conn->fetchOne($stmt);
+    }
+
+    /** @return array<string, mixed> */
+    public function installRow(int $rowId): array
+    {
+        return $this->row($rowId);
     }
 
     /** @return array<string, mixed> */

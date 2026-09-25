@@ -781,6 +781,425 @@
           "integrity_token"
         ]
       }
+    },
+    {
+      "name": "a signed customer id",
+      "body": {
+        "install_uuid": "8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293",
+        "app_key": "com.example.summit",
+        "store": "google_play",
+        "referrer": {
+          "status": "ok",
+          "install_referrer": "p202=42.3MVffxqa2WX3CV49&utm_source=newsletter",
+          "referrer_click_timestamp_seconds": 1727200000,
+          "install_begin_timestamp_seconds": 1727200042,
+          "referrer_click_timestamp_server_seconds": 1727200001,
+          "install_begin_timestamp_server_seconds": 1727200043,
+          "install_version": "3.2.0",
+          "google_play_instant": false
+        },
+        "first_open_at": 1727200100,
+        "app_version": "3.2.0",
+        "sdk_version": "1.0.0",
+        "os_version": "15",
+        "test": false,
+        "integrity_token": null,
+        "customer": {
+          "id": "u-829",
+          "type": "custom",
+          "signature": "c21cbbf0bddfc93538dd9329f809dbb663e3029dc51fb6c145dc2fbae3e670b4"
+        }
+      },
+      "expect": {
+        "valid": true,
+        "canonical": "{\"app_key\":\"com.example.summit\",\"app_version\":\"3.2.0\",\"customer\":{\"id\":\"u-829\",\"signature\":\"c21cbbf0bddfc93538dd9329f809dbb663e3029dc51fb6c145dc2fbae3e670b4\",\"type\":\"custom\"},\"first_open_at\":1727200100,\"install_uuid\":\"8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293\",\"os_version\":\"15\",\"referrer\":{\"google_play_instant\":false,\"install_begin_timestamp_seconds\":1727200042,\"install_begin_timestamp_server_seconds\":1727200043,\"install_referrer\":\"p202=42.3MVffxqa2WX3CV49&utm_source=newsletter\",\"install_version\":\"3.2.0\",\"referrer_click_timestamp_seconds\":1727200000,\"referrer_click_timestamp_server_seconds\":1727200001,\"status\":\"ok\"},\"sdk_version\":\"1.0.0\",\"store\":\"google_play\",\"test\":false}",
+        "fingerprint": "d598279af8afd8a5918a3e3bb2c27a163a25b80caa4c292ce8af7325eba6f2c8",
+        "customer": "custom:u-829"
+      }
+    },
+    {
+      "name": "a customer id without a type is custom",
+      "body": {
+        "install_uuid": "8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293",
+        "app_key": "com.example.summit",
+        "store": "google_play",
+        "referrer": {
+          "status": "ok",
+          "install_referrer": "p202=42.3MVffxqa2WX3CV49&utm_source=newsletter",
+          "referrer_click_timestamp_seconds": 1727200000,
+          "install_begin_timestamp_seconds": 1727200042,
+          "referrer_click_timestamp_server_seconds": 1727200001,
+          "install_begin_timestamp_server_seconds": 1727200043,
+          "install_version": "3.2.0",
+          "google_play_instant": false
+        },
+        "first_open_at": 1727200100,
+        "app_version": "3.2.0",
+        "sdk_version": "1.0.0",
+        "os_version": "15",
+        "test": false,
+        "integrity_token": null,
+        "customer": {
+          "id": "u-829",
+          "signature": "C21CBBF0BDDFC93538DD9329F809DBB663E3029DC51FB6C145DC2FBAE3E670B4"
+        }
+      },
+      "expect": {
+        "valid": true,
+        "canonical": "{\"app_key\":\"com.example.summit\",\"app_version\":\"3.2.0\",\"customer\":{\"id\":\"u-829\",\"signature\":\"C21CBBF0BDDFC93538DD9329F809DBB663E3029DC51FB6C145DC2FBAE3E670B4\"},\"first_open_at\":1727200100,\"install_uuid\":\"8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293\",\"os_version\":\"15\",\"referrer\":{\"google_play_instant\":false,\"install_begin_timestamp_seconds\":1727200042,\"install_begin_timestamp_server_seconds\":1727200043,\"install_referrer\":\"p202=42.3MVffxqa2WX3CV49&utm_source=newsletter\",\"install_version\":\"3.2.0\",\"referrer_click_timestamp_seconds\":1727200000,\"referrer_click_timestamp_server_seconds\":1727200001,\"status\":\"ok\"},\"sdk_version\":\"1.0.0\",\"store\":\"google_play\",\"test\":false}",
+        "fingerprint": "a7faafc07ce775aef30698d3a4f36bf0975e29ce4e23f1f37c34065eab0f992b",
+        "customer": "custom:u-829"
+      }
+    },
+    {
+      "name": "an email digest customer id is folded to lower case",
+      "body": {
+        "install_uuid": "8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293",
+        "app_key": "com.example.summit",
+        "store": "google_play",
+        "referrer": {
+          "status": "ok",
+          "install_referrer": "p202=42.3MVffxqa2WX3CV49&utm_source=newsletter",
+          "referrer_click_timestamp_seconds": 1727200000,
+          "install_begin_timestamp_seconds": 1727200042,
+          "referrer_click_timestamp_server_seconds": 1727200001,
+          "install_begin_timestamp_server_seconds": 1727200043,
+          "install_version": "3.2.0",
+          "google_play_instant": false
+        },
+        "first_open_at": 1727200100,
+        "app_version": "3.2.0",
+        "sdk_version": "1.0.0",
+        "os_version": "15",
+        "test": false,
+        "integrity_token": null,
+        "customer": {
+          "id": "B5FC85E55755F9E0D030A10AB4429B6B2944855F9A0D60077FE832BECBC41D72",
+          "type": "email_sha256",
+          "signature": "ead63e114be2da1bf038936d7089b4c2bdc31be8cb5dacba3725a500c451a29e"
+        }
+      },
+      "expect": {
+        "valid": true,
+        "canonical": "{\"app_key\":\"com.example.summit\",\"app_version\":\"3.2.0\",\"customer\":{\"id\":\"B5FC85E55755F9E0D030A10AB4429B6B2944855F9A0D60077FE832BECBC41D72\",\"signature\":\"ead63e114be2da1bf038936d7089b4c2bdc31be8cb5dacba3725a500c451a29e\",\"type\":\"email_sha256\"},\"first_open_at\":1727200100,\"install_uuid\":\"8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293\",\"os_version\":\"15\",\"referrer\":{\"google_play_instant\":false,\"install_begin_timestamp_seconds\":1727200042,\"install_begin_timestamp_server_seconds\":1727200043,\"install_referrer\":\"p202=42.3MVffxqa2WX3CV49&utm_source=newsletter\",\"install_version\":\"3.2.0\",\"referrer_click_timestamp_seconds\":1727200000,\"referrer_click_timestamp_server_seconds\":1727200001,\"status\":\"ok\"},\"sdk_version\":\"1.0.0\",\"store\":\"google_play\",\"test\":false}",
+        "fingerprint": "f2bc5748dc456004bbba58366ff61234e53cc6a337dfe9f42eeb2f4ed2e40b1a",
+        "customer": "email_sha256:b5fc85e55755f9e0d030a10ab4429b6b2944855f9a0d60077fe832becbc41d72"
+      }
+    },
+    {
+      "name": "a null customer",
+      "body": {
+        "install_uuid": "8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293",
+        "app_key": "com.example.summit",
+        "store": "google_play",
+        "referrer": {
+          "status": "ok",
+          "install_referrer": "p202=42.3MVffxqa2WX3CV49&utm_source=newsletter",
+          "referrer_click_timestamp_seconds": 1727200000,
+          "install_begin_timestamp_seconds": 1727200042,
+          "referrer_click_timestamp_server_seconds": 1727200001,
+          "install_begin_timestamp_server_seconds": 1727200043,
+          "install_version": "3.2.0",
+          "google_play_instant": false
+        },
+        "first_open_at": 1727200100,
+        "app_version": "3.2.0",
+        "sdk_version": "1.0.0",
+        "os_version": "15",
+        "test": false,
+        "integrity_token": null,
+        "customer": null
+      },
+      "expect": {
+        "valid": true,
+        "canonical": "{\"app_key\":\"com.example.summit\",\"app_version\":\"3.2.0\",\"customer\":null,\"first_open_at\":1727200100,\"install_uuid\":\"8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293\",\"os_version\":\"15\",\"referrer\":{\"google_play_instant\":false,\"install_begin_timestamp_seconds\":1727200042,\"install_begin_timestamp_server_seconds\":1727200043,\"install_referrer\":\"p202=42.3MVffxqa2WX3CV49&utm_source=newsletter\",\"install_version\":\"3.2.0\",\"referrer_click_timestamp_seconds\":1727200000,\"referrer_click_timestamp_server_seconds\":1727200001,\"status\":\"ok\"},\"sdk_version\":\"1.0.0\",\"store\":\"google_play\",\"test\":false}",
+        "fingerprint": "e2cdf7f0a71d37060f347e1e7f5ed23c9ee914dd5faa50fef6d2297fe51ffab8",
+        "customer": null
+      }
+    },
+    {
+      "name": "a customer id without a signature",
+      "body": {
+        "install_uuid": "8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293",
+        "app_key": "com.example.summit",
+        "store": "google_play",
+        "referrer": {
+          "status": "ok",
+          "install_referrer": "p202=42.3MVffxqa2WX3CV49&utm_source=newsletter",
+          "referrer_click_timestamp_seconds": 1727200000,
+          "install_begin_timestamp_seconds": 1727200042,
+          "referrer_click_timestamp_server_seconds": 1727200001,
+          "install_begin_timestamp_server_seconds": 1727200043,
+          "install_version": "3.2.0",
+          "google_play_instant": false
+        },
+        "first_open_at": 1727200100,
+        "app_version": "3.2.0",
+        "sdk_version": "1.0.0",
+        "os_version": "15",
+        "test": false,
+        "integrity_token": null,
+        "customer": {
+          "id": "u-829",
+          "type": "custom"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "customer.signature"
+        ]
+      }
+    },
+    {
+      "name": "a truncated customer signature",
+      "body": {
+        "install_uuid": "8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293",
+        "app_key": "com.example.summit",
+        "store": "google_play",
+        "referrer": {
+          "status": "ok",
+          "install_referrer": "p202=42.3MVffxqa2WX3CV49&utm_source=newsletter",
+          "referrer_click_timestamp_seconds": 1727200000,
+          "install_begin_timestamp_seconds": 1727200042,
+          "referrer_click_timestamp_server_seconds": 1727200001,
+          "install_begin_timestamp_server_seconds": 1727200043,
+          "install_version": "3.2.0",
+          "google_play_instant": false
+        },
+        "first_open_at": 1727200100,
+        "app_version": "3.2.0",
+        "sdk_version": "1.0.0",
+        "os_version": "15",
+        "test": false,
+        "integrity_token": null,
+        "customer": {
+          "id": "u-829",
+          "type": "custom",
+          "signature": "c21cbbf0bddfc93538dd9329f809dbb663e3029dc51fb6c145dc2fbae3e670b"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "customer.signature"
+        ]
+      }
+    },
+    {
+      "name": "an email in the clear as a digest",
+      "body": {
+        "install_uuid": "8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293",
+        "app_key": "com.example.summit",
+        "store": "google_play",
+        "referrer": {
+          "status": "ok",
+          "install_referrer": "p202=42.3MVffxqa2WX3CV49&utm_source=newsletter",
+          "referrer_click_timestamp_seconds": 1727200000,
+          "install_begin_timestamp_seconds": 1727200042,
+          "referrer_click_timestamp_server_seconds": 1727200001,
+          "install_begin_timestamp_server_seconds": 1727200043,
+          "install_version": "3.2.0",
+          "google_play_instant": false
+        },
+        "first_open_at": 1727200100,
+        "app_version": "3.2.0",
+        "sdk_version": "1.0.0",
+        "os_version": "15",
+        "test": false,
+        "integrity_token": null,
+        "customer": {
+          "id": "ada@example.com",
+          "type": "email_sha256",
+          "signature": "c21cbbf0bddfc93538dd9329f809dbb663e3029dc51fb6c145dc2fbae3e670b4"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "customer.id"
+        ]
+      }
+    },
+    {
+      "name": "an empty customer id",
+      "body": {
+        "install_uuid": "8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293",
+        "app_key": "com.example.summit",
+        "store": "google_play",
+        "referrer": {
+          "status": "ok",
+          "install_referrer": "p202=42.3MVffxqa2WX3CV49&utm_source=newsletter",
+          "referrer_click_timestamp_seconds": 1727200000,
+          "install_begin_timestamp_seconds": 1727200042,
+          "referrer_click_timestamp_server_seconds": 1727200001,
+          "install_begin_timestamp_server_seconds": 1727200043,
+          "install_version": "3.2.0",
+          "google_play_instant": false
+        },
+        "first_open_at": 1727200100,
+        "app_version": "3.2.0",
+        "sdk_version": "1.0.0",
+        "os_version": "15",
+        "test": false,
+        "integrity_token": null,
+        "customer": {
+          "id": "  ",
+          "type": "custom",
+          "signature": "c21cbbf0bddfc93538dd9329f809dbb663e3029dc51fb6c145dc2fbae3e670b4"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "customer.id"
+        ]
+      }
+    },
+    {
+      "name": "an unknown customer type",
+      "body": {
+        "install_uuid": "8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293",
+        "app_key": "com.example.summit",
+        "store": "google_play",
+        "referrer": {
+          "status": "ok",
+          "install_referrer": "p202=42.3MVffxqa2WX3CV49&utm_source=newsletter",
+          "referrer_click_timestamp_seconds": 1727200000,
+          "install_begin_timestamp_seconds": 1727200042,
+          "referrer_click_timestamp_server_seconds": 1727200001,
+          "install_begin_timestamp_server_seconds": 1727200043,
+          "install_version": "3.2.0",
+          "google_play_instant": false
+        },
+        "first_open_at": 1727200100,
+        "app_version": "3.2.0",
+        "sdk_version": "1.0.0",
+        "os_version": "15",
+        "test": false,
+        "integrity_token": null,
+        "customer": {
+          "id": "u-829",
+          "type": "phone",
+          "signature": "c21cbbf0bddfc93538dd9329f809dbb663e3029dc51fb6c145dc2fbae3e670b4"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "customer.type"
+        ]
+      }
+    },
+    {
+      "name": "an unknown customer field",
+      "body": {
+        "install_uuid": "8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293",
+        "app_key": "com.example.summit",
+        "store": "google_play",
+        "referrer": {
+          "status": "ok",
+          "install_referrer": "p202=42.3MVffxqa2WX3CV49&utm_source=newsletter",
+          "referrer_click_timestamp_seconds": 1727200000,
+          "install_begin_timestamp_seconds": 1727200042,
+          "referrer_click_timestamp_server_seconds": 1727200001,
+          "install_begin_timestamp_server_seconds": 1727200043,
+          "install_version": "3.2.0",
+          "google_play_instant": false
+        },
+        "first_open_at": 1727200100,
+        "app_version": "3.2.0",
+        "sdk_version": "1.0.0",
+        "os_version": "15",
+        "test": false,
+        "integrity_token": null,
+        "customer": {
+          "id": "u-829",
+          "type": "custom",
+          "signature": "c21cbbf0bddfc93538dd9329f809dbb663e3029dc51fb6c145dc2fbae3e670b4",
+          "email": "ada@example.com"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "customer.email"
+        ]
+      }
+    },
+    {
+      "name": "a customer as a string",
+      "body": {
+        "install_uuid": "8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293",
+        "app_key": "com.example.summit",
+        "store": "google_play",
+        "referrer": {
+          "status": "ok",
+          "install_referrer": "p202=42.3MVffxqa2WX3CV49&utm_source=newsletter",
+          "referrer_click_timestamp_seconds": 1727200000,
+          "install_begin_timestamp_seconds": 1727200042,
+          "referrer_click_timestamp_server_seconds": 1727200001,
+          "install_begin_timestamp_server_seconds": 1727200043,
+          "install_version": "3.2.0",
+          "google_play_instant": false
+        },
+        "first_open_at": 1727200100,
+        "app_version": "3.2.0",
+        "sdk_version": "1.0.0",
+        "os_version": "15",
+        "test": false,
+        "integrity_token": null,
+        "customer": "u-829"
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "customer"
+        ]
+      }
+    },
+    {
+      "name": "a customer id over 255 bytes",
+      "body": {
+        "install_uuid": "8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293",
+        "app_key": "com.example.summit",
+        "store": "google_play",
+        "referrer": {
+          "status": "ok",
+          "install_referrer": "p202=42.3MVffxqa2WX3CV49&utm_source=newsletter",
+          "referrer_click_timestamp_seconds": 1727200000,
+          "install_begin_timestamp_seconds": 1727200042,
+          "referrer_click_timestamp_server_seconds": 1727200001,
+          "install_begin_timestamp_server_seconds": 1727200043,
+          "install_version": "3.2.0",
+          "google_play_instant": false
+        },
+        "first_open_at": 1727200100,
+        "app_version": "3.2.0",
+        "sdk_version": "1.0.0",
+        "os_version": "15",
+        "test": false,
+        "integrity_token": null,
+        "customer": {
+          "id": "uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
+          "type": "custom",
+          "signature": "c21cbbf0bddfc93538dd9329f809dbb663e3029dc51fb6c145dc2fbae3e670b4"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "customer.id"
+        ]
+      }
     }
   ]
 }
