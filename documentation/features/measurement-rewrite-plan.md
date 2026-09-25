@@ -1666,6 +1666,52 @@ operator's reads are `AppInstallsController`; the guide is
 
   "If present": the replacement has no row at a destination whose pixel was
   removed in between, and nothing is recorded for an unannounced one.
+- **Revived and re-written outcomes (§5.7's decisions, built here).**
+  Announced-ness is per `(subject, goal, n)` per destination, not per row.
+  `OutcomeNotificationSink` gains `onRevived()` and `onAnnouncedBefore()`:
+  - the engine calls `onRevived($convId)` when a revival restored the
+    row (`reviveGoalRowInTransaction()` changed it; an operator's
+    deletion that stays stays retracted). Its `reached` is never queued a
+    second time. Per destination, its open retraction (the latest, with no
+    correction after it) is cancelled when it never went out — pending and
+    unattempted, or `suppressed` — because the network still holds the
+    value; when it was delivered (sent, failed, or attempted) a retrying
+    one is stopped and a `correction` with previous value 0 is recorded. A
+    `reached` the retirement cancelled unsent, at a destination nothing
+    else announced the outcome to, is queued again: that network has heard
+    nothing.
+  - after the retirements, every outcome written with a new ledger row
+    asks `onAnnouncedBefore($convId, $priors)`, where the priors are every
+    other row for its `(subject, goal, n)` — retired rows and every version
+    included. Wherever one of them was announced (a `reached` sent,
+    failed or attempted, or a correction or retraction recorded there) the
+    new row's pending `reached` is cancelled and a `correction` recorded,
+    with previous value what the network last heard there (0 after a
+    delivered retraction); a destination where `onReplaced()` already
+    recorded the new row's correction is left alone. Keyed on the
+    immediate predecessor alone, the third step of §5.7's funnel
+    re-announced A.
+  - **The correction-URL rule** is one helper for every correction and
+    retraction: queued `pending` to the destination's correction URL when
+    it has one (tokens `[[subid]]`, `[[p202_goal_value]]`/`[[payout]]` —
+    the value the network should now hold, 0 for a retraction —
+    `[[p202_previous_value]]`, `[[p202_conv_id]]`,
+    `[[p202_original_conv_id]]`, `[[p202_notification]]`,
+    `[[transactionid]]`, `[[timestamp]]`, `[[random]]`), `suppressed`
+    otherwise. No destination has one until PR 11 configures them; the
+    outbox takes the resolver as a constructor argument.
+  - **`generation`.** The key is now `(conv_id, pixel_id, destination,
+    kind, generation)`: a `reached` is always generation 0 (a replayed
+    install still finds it queued), and each correction or retraction of
+    a conversion at a destination is the next generation, so a row
+    retired, revived and retired again records its second retraction
+    instead of losing it to the first one's key. Changed in place (see
+    Constraints).
+  `AnnouncedOncePerOutcomeTest` drives the funnel through the engine with
+  and without a correction URL and through two cycles;
+  `NotificationOutboxIntegrationTest` has a case per retraction state and
+  per announced-before destination. Ten planted defects each fail at
+  least one of them.
 - **One sender.** `PostbackSender::fetch()` is the curl call gpb and upx
   used inline; `p202FireTrafficSourcePixels()` and the worker share it. It
   now refuses a URL that is not `http(s)://` (a `file://` pixel used to be

@@ -78,7 +78,11 @@ use Throwable;
  * their traffic-source postback in the notification outbox, in the same
  * transaction as the ledger row (NotificationOutbox); a retired or replaced
  * row tells the outbox, which cancels what has not gone out and records
- * what cannot be recalled. Click subjects join with PR 4b.
+ * what cannot be recalled. A traffic source's knowledge is per (subject,
+ * goal, n) (plan §5.7): a revived row tells the outbox (onRevived()), which
+ * never announces it twice, and a new row for an n some earlier row was
+ * announced for — retired rows included — is a correction, not a fresh
+ * `reached` (onAnnouncedBefore()). Click subjects join with PR 4b.
  */
 final class GoalEngine
 {
@@ -816,13 +820,19 @@ final class GoalEngine
         foreach ($plan['keep'] as $key => $row) {
             $ids[$key] = ['outcome_id' => (int) $row['outcome_id'], 'conversion_id' => $row['conversion_id'] !== null ? (int) $row['conversion_id'] : null];
         }
+        /** @var list<array{0: Outcome, 1: int}> $newRows outcomes written with a new ledger row */
+        $newRows = [];
         foreach ($plan['write'] as $o) {
             $event = $eventsById[$o->eventId] ?? null;
             if ($event === null && $o->eventId !== GoalEvent::INSTALL_EVENT_ID) {
                 // The reaching event is stored but was not handed in: load it.
                 $event = $this->loadEvent($subject, $o->eventId);
             }
-            $ids[$o->goalId . ':' . $o->version . ':' . $o->n] = $this->writeOutcome($userId, $subject, $o, $terms[$o->goalId] ?? null, $event, $now, $post);
+            $written = $this->writeOutcome($userId, $subject, $o, $terms[$o->goalId] ?? null, $event, $now, $post);
+            $ids[$o->goalId . ':' . $o->version . ':' . $o->n] = ['outcome_id' => $written['outcome_id'], 'conversion_id' => $written['conversion_id']];
+            if ($written['conversion_new'] && $written['conversion_id'] !== null) {
+                $newRows[] = [$o, $written['conversion_id']];
+            }
         }
 
         $ledger = new MysqlConversionLedger($this->conn);
@@ -866,6 +876,25 @@ final class GoalEngine
             }
         }
 
+        // Plan §5.7 (2): a network's knowledge is per (subject, goal, n).
+        // A new row for an n that an earlier row — the one just retired, or
+        // one a previous reconciliation retired, of any version — was
+        // announced for is a correction there, not a second `reached`. Run
+        // after the retirements, so the outbox sees the corrections
+        // onReplaced() just recorded and does not record them twice.
+        foreach ($newRows as [$o, $convId]) {
+            $prior = $this->conn->prepareWrite(
+                'SELECT conversion_id FROM 202_goal_outcomes
+                 WHERE user_id = ? AND subject_type = ? AND subject_id = ? AND goal_id = ? AND n = ? AND conversion_id IS NOT NULL AND conversion_id <> ?
+                 ORDER BY outcome_id'
+            );
+            $this->conn->bind($prior, 'isiiii', [$userId, $subject->type, $subject->id, $o->goalId, $o->n, $convId]);
+            $priorConvIds = array_values(array_map(static fn (array $r): int => (int) $r['conversion_id'], $this->conn->fetchAll($prior)));
+            if ($priorConvIds !== []) {
+                $this->outbox->onAnnouncedBefore($userId, $convId, $priorConvIds);
+            }
+        }
+
         return ['written' => count($plan['write']), 'retired' => count($plan['retire'])];
     }
 
@@ -874,7 +903,7 @@ final class GoalEngine
      *
      * @param array<string, mixed>|null $term the campaign_goals row for this goal
      * @param array{ledger: list<array<string, mixed>>, clicks: array<int, true>} $post
-     * @return array{outcome_id: int, conversion_id: int|null}
+     * @return array{outcome_id: int, conversion_id: int|null, conversion_new: bool} conversion_new: a ledger row was written now
      */
     private function writeOutcome(int $userId, GoalSubject $subject, Outcome $o, ?array $term, ?GoalEvent $event, int $now, array &$post): array
     {
@@ -947,10 +976,15 @@ final class GoalEngine
                 }
                 if ($changed !== null) {
                     $post['clicks'][$changed] = true;
+                    // The row counts again under its own conv_id (plan §5.7
+                    // (1)): the outbox never re-announces it, and settles a
+                    // retraction its retirement queued. A row left deleted
+                    // (an operator's) stays retracted.
+                    $this->outbox->onRevived($userId, $convId);
                 }
             }
 
-            return ['outcome_id' => (int) $existing['outcome_id'], 'conversion_id' => $convId];
+            return ['outcome_id' => (int) $existing['outcome_id'], 'conversion_id' => $convId, 'conversion_new' => false];
         }
 
         $insert = $this->conn->prepareWrite(
@@ -970,6 +1004,7 @@ final class GoalEngine
         }
 
         $convId = null;
+        $conversionNew = false;
         if ($subject->clickId !== null) {
             $data = [
                 'click_id' => $subject->clickId,
@@ -1006,6 +1041,7 @@ final class GoalEngine
             }
             if (!$recorded['duplicate']) {
                 $post['ledger'][] = $recorded;
+                $conversionNew = true;
             } elseif ($isInstallGoal) {
                 // Another install already holds this click's install row: the
                 // intake classifies that as duplicate_click under the click
@@ -1029,7 +1065,7 @@ final class GoalEngine
             }
         }
 
-        return ['outcome_id' => $outcomeId, 'conversion_id' => $convId];
+        return ['outcome_id' => $outcomeId, 'conversion_id' => $convId, 'conversion_new' => $conversionNew];
     }
 
     /**

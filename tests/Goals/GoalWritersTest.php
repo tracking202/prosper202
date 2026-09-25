@@ -47,7 +47,10 @@ final class GoalWritersTest extends TestCase
 
     private const OUTCOME_READERS = [
         '202-config/Goals/MysqlGoalRepository.php' => 2, // liveOutcomes(), countLiveOutcomes()
-        '202-config/Goals/GoalEngine.php' => 1,          // the revive lookup
+        // The revive lookup, and the rows ever written for a new row's
+        // (subject, goal, n): retired ones on purpose, since what a network
+        // was told outlives the row that told it (plan §5.7 (2)).
+        '202-config/Goals/GoalEngine.php' => 2,
         '202-config/User/UserDataPurge.php' => 1,        // the purge's DELETE … FROM
     ];
 
