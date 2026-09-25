@@ -24,11 +24,13 @@ run_id="$$-$(date +%s)"
 case "$ask" in
     *"Play Integrity"*)
         # The credential first — the server refuses observe without one —
-        # then the mode; report the account the server says it stored,
+        # then the mode with the Cloud project number the ask gives (also
+        # required); report the account the server says it stored,
         # never anything from the key file itself.
         reg=$(p202 app list --platform android --all --json | jq -r '.data[] | select(.app_key=="com.p202.eval.integrity") | .registration_id' | head -1)
         p202 app integrity credential set "$reg" --file /tmp/p202-eval-integrity-key.json --json > /dev/null
-        p202 app update "$reg" --integrity-mode observe --json > /dev/null
+        project=$(printf '%s' "$ask" | grep -oE 'Cloud project number( is)? [0-9]+' | grep -oE '[0-9]+$')
+        p202 app update "$reg" --integrity-mode observe --integrity-cloud-project-number "$project" --json > /dev/null
         status=$(p202 app integrity status "$reg" --json)
         printf 'Play Integrity is now %s for registration %s, decoding with the service account %s (key id %s). Verdicts are recorded; attribution and payouts are unchanged until you switch to require.\n' \
             "$(printf '%s' "$status" | jq -r '.data.integrity_mode')" "$reg" \
