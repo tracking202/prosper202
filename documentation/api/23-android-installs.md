@@ -318,6 +318,14 @@ is `error`, and under `require` the install is `integrity_unverified` —
 recorded, unvouched, never paid. Nothing is ever waved through. The
 install's `integrity_reason` says what the last attempt met.
 
+The 24 hours are counted from when the install arrived, whatever the
+worker's timing: an install already past them when the worker reaches it
+(the cron was stopped, or a backlog) is not decoded at all, and a passing
+verdict that comes back after them is kept on the install for the record
+but not accepted. An attempt that fails inside the server (not at Google)
+counts as an attempt too, so at 24 hours or 24 attempts the install is
+retired like any other rather than tried for ever.
+
 Google's default quota is 10,000 decodes per app per day;
 `GET /apps/{id}/integrity` shows how many tokens Google decoded since UTC
 midnight beside it.

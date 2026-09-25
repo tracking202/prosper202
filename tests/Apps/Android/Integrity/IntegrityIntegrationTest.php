@@ -54,7 +54,8 @@ final class IntegrityIntegrationTest extends TestCase
         }
     }
 
-    private function verifier(): IntegrityVerifier
+    /** @param (callable(): ?string)|null $key the install-token key, when a test needs it to fail */
+    private function verifier(?callable $key = null): IntegrityVerifier
     {
         $client = new class ($this) implements PlayIntegrityClient {
             public function __construct(private readonly IntegrityIntegrationTest $test)
@@ -67,7 +68,7 @@ final class IntegrityIntegrationTest extends TestCase
             }
         };
 
-        return new IntegrityVerifier(self::$db, $client, fn (): int => $this->clock);
+        return new IntegrityVerifier(self::$db, $client, fn (): int => $this->clock, $key);
     }
 
     /** @internal the double's answer, in order per token; the last repeats */
@@ -272,12 +273,13 @@ final class IntegrityIntegrationTest extends TestCase
         $row = self::installRow(self::U1);
         self::assertSame(['2', (string) ($this->clock + 120)], [(string) $row['integrity_attempts'], (string) $row['integrity_next_at']], 'the backoff doubles');
 
-        // Past the deadline the next attempt is the last.
+        // Past the deadline the install is retired without another call.
         $this->clock = $received + IntegrityVerifier::DEADLINE;
         self::assertSame(['error' => 1], $this->run1()['verdicts']);
+        self::assertCount(2, $this->decoded, 'past the deadline nothing is decoded');
         $row = self::installRow(self::U1);
         self::assertSame(['integrity_unverified', null, 'error', null], [$row['match_state'], $row['trusted'], $row['integrity_state'], $row['integrity_next_at']]);
-        self::assertStringContainsString('No verdict after 3 attempts', $row['integrity_reason']);
+        self::assertStringContainsString('No verdict within 24 hours', $row['integrity_reason']);
         self::assertStringContainsString('no verdict could be obtained', $row['match_reason']);
         self::assertSame([], self::ledger(100), 'never waved through');
         self::assertSame([], self::outbox());
@@ -501,5 +503,111 @@ final class IntegrityIntegrationTest extends TestCase
         self::assertSame(['organic', 'error'], [self::installRow(self::U2)['match_state'], self::installRow(self::U2)['integrity_state']]);
         self::assertSame('pending', self::installRow(self::U3)['integrity_state']);
         self::assertSame([], self::ledger(100));
+    }
+
+    /**
+     * The 24-hour deadline holds whatever the worker's timing: an install
+     * already past it is never decoded, and a passing verdict that lands
+     * after it is recorded but never accepted.
+     */
+    public function testAVerdictPastTheDeadlineIsNeverAccepted(): void
+    {
+        $this->mode('require');
+        $this->click(100);
+        $this->click(101);
+        $late = $this->tokenBody(self::U1, 100, 'tok-backlog');
+        $this->install($late);
+        $received = (int) self::installRow(self::U1)['received_at'];
+        $this->answers['tok-backlog'] = [$this->verdict($late)];
+
+        // A worker stopped for a day: the backlog is retired, not decoded.
+        $this->clock = $received + IntegrityVerifier::DEADLINE;
+        self::assertSame(['error' => 1], $this->run1()['verdicts']);
+        self::assertSame([], $this->decoded, 'nothing is decoded past the deadline');
+        $row = self::installRow(self::U1);
+        self::assertSame(['integrity_unverified', null, 'error', null], [$row['match_state'], $row['trusted'], $row['integrity_state'], $row['click_id']]);
+        self::assertStringContainsString('within 24 hours', $row['integrity_reason']);
+        self::assertSame([], self::ledger(100));
+
+        // A decode that returns after the deadline: the verdict passes, and
+        // it is still too late.
+        $slow = $this->tokenBody(self::U2, 101, 'tok-slow');
+        $this->install($slow);
+        $received = (int) self::installRow(self::U2)['received_at'];
+        $this->clock = $received + IntegrityVerifier::DEADLINE - 10;
+        $this->answers['tok-slow'] = [function () use ($slow, $received): DecodeResult {
+            $verdict = $this->verdict($slow, [], $received - 5);
+            $this->clock += 60;
+
+            return $verdict;
+        }];
+        self::assertSame(['error' => 1], $this->run1()['verdicts']);
+        $row = self::installRow(self::U2);
+        self::assertSame(['integrity_unverified', null, 'error'], [$row['match_state'], $row['trusted'], $row['integrity_state']]);
+        self::assertStringContainsString('after the 24-hour deadline', $row['integrity_reason']);
+        self::assertNotNull($row['integrity_verdict'], 'the verdict is kept for the record');
+        self::assertSame([], self::ledger(101));
+        self::assertSame([], self::outbox());
+    }
+
+    /**
+     * An attempt that throws spends its attempt; at the limits the install
+     * is retired even when its normal settlement cannot run, so it never
+     * stays due (and the attempt count never overflows its column).
+     */
+    public function testAnInstallWhoseAttemptsKeepFailingIsRetiredAtItsLimits(): void
+    {
+        $this->mode('require');
+        $this->click(100);
+        $body = $this->tokenBody(self::U1, 100, 'tok-broken');
+        $this->install($body);
+        $this->answers['tok-broken'] = [$this->verdict($body)];
+        $noKey = static fn (): ?string => null;
+        $log = ini_set('error_log', sys_get_temp_dir() . '/p202-integrity-it.log');
+        try {
+            // The settle needs the install-token key; without it every
+            // attempt throws after the claim.
+            $this->clock += 1;
+            self::assertSame(1, $this->verifier($noKey)->run()['failed']);
+            $row = self::installRow(self::U1);
+            self::assertSame(['pending_integrity', 'pending', '1'], [$row['match_state'], $row['integrity_state'], (string) $row['integrity_attempts']]);
+
+            // The last attempt the limit allows: retired, without the key.
+            self::fixture('UPDATE 202_app_installs SET integrity_attempts = ' . (IntegrityVerifier::MAX_ATTEMPTS - 1) . ', integrity_next_at = 0');
+            $this->clock += 1;
+            self::assertSame(['examined' => 1, 'verdicts' => ['error' => 1], 'retrying' => 0, 'failed' => 0], $this->verifier($noKey)->run());
+
+            // An attempt that fails after the deadline passed during it is
+            // retired by that same attempt, not left for another run.
+            $this->click(102);
+            $crossing = $this->tokenBody(self::U3, 102, 'tok-crossing');
+            $this->install($crossing);
+            $received = (int) self::installRow(self::U3)['received_at'];
+            $this->clock = $received + IntegrityVerifier::DEADLINE - 10;
+            $this->answers['tok-crossing'] = [function () use ($crossing, $received): DecodeResult {
+                $this->clock += 60;
+
+                return $this->verdict($crossing, [], $received - 5);
+            }];
+            self::assertSame(['examined' => 1, 'verdicts' => ['error' => 1], 'retrying' => 0, 'failed' => 0], $this->verifier($noKey)->run());
+            self::assertSame(['integrity_unverified', 'error'], [self::installRow(self::U3)['match_state'], self::installRow(self::U3)['integrity_state']]);
+            self::assertStringContainsString('the last attempt failed', self::installRow(self::U3)['integrity_reason']);
+        } finally {
+            ini_set('error_log', $log === false ? '' : $log);
+        }
+        $row = self::installRow(self::U1);
+        self::assertSame(['integrity_unverified', null, 'error', null], [$row['match_state'], $row['trusted'], $row['integrity_state'], $row['integrity_next_at']]);
+        self::assertStringContainsString('No verdict after ' . IntegrityVerifier::MAX_ATTEMPTS . ' attempts', $row['integrity_reason']);
+        self::assertSame([], self::ledger(100));
+        $this->clock += IntegrityVerifier::DEADLINE;
+        self::assertSame(0, $this->run1()['examined'], 'nothing left due');
+
+        // A row already at the column's ceiling (left by an older build) is
+        // claimed without overflowing it, and retired.
+        $this->click(101);
+        $this->install($this->tokenBody(self::U2, 101, 'tok-ceiling'));
+        self::fixture("UPDATE 202_app_installs SET integrity_attempts = 255, integrity_next_at = 0 WHERE install_uuid = '" . self::U2 . "'");
+        self::assertSame(['error' => 1], $this->run1()['verdicts']);
+        self::assertSame(['integrity_unverified', 'error', '255'], [self::installRow(self::U2)['match_state'], self::installRow(self::U2)['integrity_state'], (string) self::installRow(self::U2)['integrity_attempts']]);
     }
 }
