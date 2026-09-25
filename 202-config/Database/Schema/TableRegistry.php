@@ -187,6 +187,8 @@ final class TableRegistry
     public const string APP_SKAN_ENCODING_HISTORY = '202_app_skan_encoding_history';
     // and the Android signal source's installs
     public const string APP_INSTALLS = '202_app_installs';
+    // and the Play Integrity service-account credentials (PR 6)
+    public const string APP_INTEGRITY_CREDENTIALS = '202_app_integrity_credentials';
 
     // Goals engine (GoalTables): definitions and their versions, campaign
     // payouts, and per-subject events, progress and outcomes

@@ -8,6 +8,9 @@ use Api\V3\Apps\Android\InstallEventsIntake;
 use Api\V3\Apps\Android\InstallIntake;
 use Api\V3\Apps\Android\InstallPayload;
 use Api\V3\Apps\Android\InstallToken;
+use Api\V3\Apps\Android\Integrity\IntegrityBinding;
+use Api\V3\Apps\Android\Integrity\IntegrityPolicy;
+use Api\V3\Apps\Android\Integrity\IntegrityState;
 use Api\V3\Apps\Android\MatchState;
 use Api\V3\Exception\ValidationException;
 use PHPUnit\Framework\TestCase;
@@ -73,6 +76,8 @@ final class AndroidContractVectorsTest extends TestCase
                 $payload = InstallPayload::fromDecoded($body);
                 self::assertSame($case['expect']['canonical'], $payload->canonical(), $case['name']);
                 self::assertSame($case['expect']['fingerprint'], $payload->fingerprint(), $case['name']);
+                $claim = $payload->customer?->canonical();
+                self::assertSame($case['expect']['customer'] ?? null, $claim, $case['name'] . ': the customer claim');
                 continue;
             }
             try {
@@ -91,11 +96,15 @@ final class AndroidContractVectorsTest extends TestCase
     {
         $v = self::vectors('events-requests.json');
         self::assertSame(InstallEventsIntake::MAX_EVENTS, $v['max_events']);
+        self::assertGreaterThanOrEqual(20, count($v['cases']));
         foreach ($v['cases'] as $case) {
             $body = json_decode(json_encode($case['body'], JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR), true, 16, JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING);
             if ($case['expect']['valid']) {
-                $events = InstallEventsIntake::parseEvents($body, false, 1_727_300_000);
-                self::assertCount(count($body['events']), $events, $case['name']);
+                $parsed = InstallEventsIntake::parseBody($body, false, 1_727_300_000);
+                $events = $parsed['events'];
+                self::assertCount($case['expect']['events'], $events, $case['name']);
+                $claim = $parsed['customer']?->canonical();
+                self::assertSame($case['expect']['customer'], $claim, $case['name'] . ': the customer claim');
                 foreach ($events as $event) {
                     self::assertSame(1_727_300_000, $event->receivedAt, 'the server stamps received_at');
                     self::assertFalse($event->revenueTrusted, 'the registration decides revenue trust');
@@ -103,7 +112,7 @@ final class AndroidContractVectorsTest extends TestCase
                 continue;
             }
             try {
-                InstallEventsIntake::parseEvents($body, false, 1_727_300_000);
+                InstallEventsIntake::parseBody($body, false, 1_727_300_000);
                 self::fail($case['name'] . ': accepted');
             } catch (ValidationException $e) {
                 $fields = array_keys($e->getFieldErrors());
@@ -117,6 +126,7 @@ final class AndroidContractVectorsTest extends TestCase
     {
         $v = self::vectors('responses.json');
         self::assertSame(MatchState::values(), $v['match_states']);
+        self::assertSame(IntegrityState::values(), $v['integrity_states']);
         $when = static fn (array $rows): array => array_column($rows, 'retry', 'status');
         foreach ([$when($v['installs']), $when($v['events'])] as $table) {
             foreach ($table as $status => $retry) {
@@ -126,5 +136,33 @@ final class AndroidContractVectorsTest extends TestCase
         $installs = implode(' ', array_column($v['installs'], 'when'));
         self::assertStringContainsString((string) InstallIntake::MAX_BODY_BYTES, $installs);
         self::assertStringContainsString((string) InstallEventsIntake::MAX_BODY_BYTES, implode(' ', array_column($v['events'], 'when')));
+    }
+
+    public function testTheIntegrityRequestHashIsTheInstallFingerprint(): void
+    {
+        $v = self::vectors('integrity.json');
+        self::assertSame('standard', $v['token_type']);
+        self::assertGreaterThanOrEqual(7, count($v['cases']));
+        $hashes = [];
+        foreach ($v['cases'] as $case) {
+            $body = json_decode(json_encode($case['body'], JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR), true, 16, JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING);
+            $payload = InstallPayload::fromDecoded($body);
+            self::assertSame($case['canonical'], $payload->canonical(), $case['name']);
+            self::assertSame($case['request_hash'], IntegrityBinding::requestHash($payload), $case['name']);
+            self::assertSame($payload->fingerprint(), IntegrityBinding::requestHash($payload), 'one hash of one set of bytes: the replay fingerprint');
+            $hashes[$case['name']] = $case['request_hash'];
+        }
+        self::assertSame(count($hashes) - 1, count(array_unique($hashes)), 'only the token-bearing twin of the reference shares its hash');
+    }
+
+    public function testTheVerdictPolicyReadsGooglesPayloadAsTheVectorsSay(): void
+    {
+        $v = self::vectors('integrity.json');
+        $hash = $v['cases'][0]['request_hash'];
+        self::assertGreaterThanOrEqual(13, count($v['verdicts']));
+        foreach ($v['verdicts'] as $case) {
+            $j = IntegrityPolicy::judge($case['payload'], $v['package'], $hash, $v['received_at']);
+            self::assertSame([$case['expect']['valid'], $case['expect']['code']], [$j->valid, $j->code], $case['name'] . ': ' . $j->reason);
+        }
     }
 }

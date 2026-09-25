@@ -19,8 +19,12 @@ use Prosper202\Goals\MysqlGoalRepository;
  * goal engine evaluates it against the install's goals, in event-time order,
  * idempotent on (install, event_id), and decides what is reached and paid.
  *
- * The body is {"events": [ … ]}, 1 to MAX_EVENTS per request (an offline
- * queue flushes in batches). Each event is {event_id, name, occurred_at,
+ * The body is {"events": [ … ], "customer": …}, 1 to MAX_EVENTS per
+ * request (an offline queue flushes in batches). `customer` is optional:
+ * the signed customer id the app's user signed in as (CustomerClaim),
+ * linked to the install's click after the events commit; a body may carry
+ * it alone, with no events, so an app that reports no events can still
+ * send it. Each event is {event_id, name, occurred_at,
  * properties?, revenue?, transaction_id?}: the server stamps received_at
  * and decides revenue trust from the registration's trust_client_revenue —
  * a device that sends either is refused by name, never believed.
@@ -99,9 +103,18 @@ final class InstallEventsIntake
             return InstallIntake::error(400, 'The events body is not valid JSON');
         }
         try {
-            $events = self::parseEvents($decoded, $registration->policy->trustClientRevenue, $this->now());
+            $parsed = self::parseBody($decoded, $registration->policy->trustClientRevenue, $this->now());
         } catch (ValidationException $e) {
             return InstallIntake::error(400, $e->getMessage(), ['field_errors' => $e->getFieldErrors()]);
+        }
+        $events = $parsed['events'];
+        if ($events === []) {
+            // A customer id alone: nothing for the goals, one link.
+            return ['status' => 200, 'body' => ['data' => [
+                'install_uuid' => $installUuid,
+                'accepted' => [],
+                'duplicates' => [],
+            ] + $this->installs->customer($install, $parsed['customer'])]];
         }
 
         $rowId = (int) $install['install_row_id'];
@@ -126,37 +139,50 @@ final class InstallEventsIntake
             'install_uuid' => $installUuid,
             'accepted' => $result['accepted'],
             'duplicates' => $result['duplicates'],
-        ]]];
+        ] + $this->installs->customer($install, $parsed['customer'])]];
     }
 
     /**
-     * The events of a request body, validated (plan §5.5, the vectors in
-     * tests/fixtures/app-sdk-contract/android/events-requests.json): the
-     * server stamps received_at and revenue trust on every event, and a
-     * device that sends either is refused by name.
+     * A request body, validated (plan §5.5, the vectors in
+     * tests/fixtures/app-sdk-contract/android/events-requests.json): its
+     * events — the server stamps received_at and revenue trust on every
+     * one, and a device that sends either is refused by name — and its
+     * customer claim. `events` may be left out only when `customer` is
+     * there; when present it holds 1 to MAX_EVENTS events.
      *
-     * @return list<GoalEvent>
+     * @return array{events: list<GoalEvent>, customer: CustomerClaim|null}
      * @throws ValidationException naming every bad field
      */
-    public static function parseEvents(mixed $decoded, bool $revenueTrusted, int $now): array
+    public static function parseBody(mixed $decoded, bool $revenueTrusted, int $now): array
     {
         if (!is_array($decoded) || ($decoded !== [] && array_is_list($decoded))) {
             throw new ValidationException('The events body must be a JSON object: {"events": [ … ]}', ['body' => 'must be a JSON object']);
         }
-        $unknown = array_diff(array_map('strval', array_keys($decoded)), ['events']);
+        $unknown = array_diff(array_map('strval', array_keys($decoded)), ['events', 'customer']);
         if ($unknown !== []) {
             throw new ValidationException('The events body is invalid', array_fill_keys(
                 array_values($unknown),
-                'is not a field here (the body is {"events": [ … ]})'
+                'is not a field here (the body is {"events": [ … ], "customer": …})'
             ));
         }
-        $list = $decoded['events'] ?? null;
-        if (!is_array($list) || !array_is_list($list) || $list === [] || count($list) > self::MAX_EVENTS) {
-            throw new ValidationException('The events body is invalid', [
-                'events' => 'is required: a list of 1-' . self::MAX_EVENTS . ' events',
-            ]);
-        }
         $errors = [];
+        $customer = CustomerClaim::fromWire($decoded['customer'] ?? null, 'customer', $errors);
+        $list = $decoded['events'] ?? null;
+        if ($list === null && ($decoded['customer'] ?? null) !== null) {
+            // A customer on its own: valid, or refused for its own fields.
+            if ($errors !== []) {
+                ksort($errors);
+                throw new ValidationException('The events body is invalid', $errors);
+            }
+
+            return ['events' => [], 'customer' => $customer];
+        }
+        if (!is_array($list) || !array_is_list($list) || $list === [] || count($list) > self::MAX_EVENTS) {
+            $errors['events'] = 'is required: a list of 1-' . self::MAX_EVENTS
+                . ' events (it may be left out only when the body carries a customer)';
+            ksort($errors);
+            throw new ValidationException('The events body is invalid', $errors);
+        }
         $events = [];
         foreach ($list as $i => $raw) {
             $path = 'events[' . $i . ']';
@@ -182,6 +208,6 @@ final class InstallEventsIntake
             throw new ValidationException('The events are invalid', $errors);
         }
 
-        return $events;
+        return ['events' => $events, 'customer' => $customer];
     }
 }

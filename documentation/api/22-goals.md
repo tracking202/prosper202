@@ -98,9 +98,10 @@ is not a new version (`version_created: false`).
 ## Evaluation
 
 The rules, and the cross-language vectors that pin them, are in
-`tests/fixtures/app-sdk-contract/goals/README.md`; the server's evaluator,
-the iOS SDK (which evaluates the goals an SKAN encoding names on the device)
-and the Android SDK (PR 7) are all held to them. In
+`tests/fixtures/app-sdk-contract/goals/README.md`; the server's evaluator
+and the iOS SDK (which evaluates the goals an SKAN encoding names on the
+device) are held to them; Android's goals are evaluated on the server, so
+the Android SDK reports every event and evaluates none. In
 short: events are evaluated in event-time order (`min(occurred_at,
 received_at)`, then arrival, then event id), never arrival order; each event
 under the goal version current when it was received; a window whose anchor

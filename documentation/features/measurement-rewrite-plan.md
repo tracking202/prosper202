@@ -1044,6 +1044,8 @@ referrer did not already have.
 | `outside_window` | null | Later than `attribution_window_days` |
 | `duplicate_click` | null | The click already has an install conversion |
 | `pending_integrity` | null | Registration requires Play Integrity; the verdict is being decoded |
+| `integrity_failed` | 0 | Would be attributed; its Play Integrity verdict failed (PR 6, §5.11) |
+| `integrity_unverified` | null | Would be attributed; `require` and no verdict (no token, or none within 24 h) (PR 6, §5.11) |
 
 Every row carries a `match_reason` sentence, shown as-is in the UI.
 
@@ -2280,6 +2282,349 @@ operator's reads are `AppInstallsController`; the guide is
   `InstallIntakeIntegrationTest`, and live by `web-events.sh` (which now
   runs the worker) and `android-intake.sh`.
 
+### 5.11 As built: decisions (PR 6)
+
+(Numbered 5.11 because §5.8 and §5.9 are taken on other branches and §5.10
+is PR 5's.)
+
+What PR 6 settled, where it departs from §5.6, and what is left. The code is
+`Api\V3\Apps\Android\Integrity` (`IntegrityMode`, `IntegrityState`,
+`IntegrityBinding`, `IntegrityPolicy`, `IntegrityJudgement`,
+`ServiceAccountCredential`, `IntegrityCredentialStore`, the
+`PlayIntegrityClient` interface with `DecodeResult`, its real
+`GooglePlayIntegrityClient`, and the worker `IntegrityVerifier`); the
+operator surface is `AppIntegrityController`; the guide is
+`documentation/api/24-android-installs.md` §9.
+
+- **Modes.** `202_app_registrations.integrity_mode` is `off` (default),
+  `observe` or `require`; `integrity_cloud_project_number` is published in
+  the schema document for the SDK. Both are Android-only and read raw
+  (CLAUDE.md #18). An unreadable stored mode is `require`, the one that
+  trusts least (CLAUDE.md #11) — `off` would switch the control off in
+  silence. `observe`/`require` need both halves — a credential to decode
+  with and a Cloud project number for the SDK to request tokens with — so
+  an app is created `off`, and `PUT /apps/{id}` refuses a non-`off` mode
+  unless the credential is stored and the number is sent with it or already
+  stored (read raw against the stored row, whichever field the write
+  names). Without the number the schema document used to publish
+  `request_token: true` beside a null project, and every install arrived
+  tokenless; `request_token` is now also false whenever the number is null.
+  The number is **replaced, never cleared**: an explicit `null` is refused
+  by name in every mode (the base controller used to drop it in silence),
+  because under `observe`/`require` clearing it is the broken state above
+  and under `off` it is unused. The credential cannot be cleared while the
+  mode needs it, **nor while any install of the registration is still
+  queued for a verdict** (`409` naming how many, how many are held from
+  attribution, and that each settles within 24 h): switching `require` off
+  does not release installs already waiting, so clearing the credential
+  under them would have retried them to `error` / `integrity_unverified` —
+  valid attribution lost to a setting. A mode set while the credential
+  disappears concurrently is not guarded beyond that: the worker then
+  retries with "no credential" and ends `error`.
+- **Deleting a registration settles its queue.** The delete removes the
+  credential, and every worker read joins the registration, so a queue left
+  behind could never be decoded or settled — and, selected oldest-first by
+  `integrity_next_at`, 200 such rows would have filled every batch and
+  starved every other app's verdicts. The delete now settles, in its own
+  transaction, `integrity_state` `pending` → `error` and `match_state`
+  `pending_integrity` → `integrity_unverified` (trust, click and conversion
+  stay NULL: never paid; goals are not evaluated — the registration's are
+  archived with it), with a reason naming the deletion
+  (`UnverifiableInstalls`). The worker settles any install whose
+  registration disappeared some other way the same way before it selects,
+  and its selection joins the registration, so a row it cannot process can
+  never hold a slot. The user purge deletes installs before credentials, so
+  it leaves nothing queued. `CredentialDeletionSettlesTheQueueTest` pins
+  every path that removes a credential and what each does first. The
+  pending-click settler had the same starvation shape (PR 5) and its
+  selection now joins the registration too; a `pending_click` install of a
+  deleted registration stays `pending_click`, inert — there is no policy
+  left to settle it under, and no token reaches it.
+- **The mode is a snapshot.** Each install stores the mode it arrived under
+  (`202_app_installs.integrity_mode`) and that copy governs it for good:
+  switching `require` off releases nothing already waiting, switching it on
+  re-judges nothing already attributed. This is what makes "never pay then
+  un-pay" a property of the write path rather than of operator discipline.
+- **What `require` gates, and where.** Only installs that would be
+  `attributed` wait. Organic, third-party and unavailable installs have no
+  click to pay and are settled at once (their verdict is still decoded and
+  recorded); refuted ones are never decoded (`skipped`) so forged traffic
+  cannot spend the quota. The gate is the first statement of
+  `InstallIntake::settle()`, the one writer of `match_state`, so the intake,
+  the pending-click settler and the integrity worker all pass through it:
+  `valid` → attributed; `pending` → `pending_integrity`; `invalid`/`skipped`
+  → `integrity_failed` (refuted); anything else (`missing`, `error`) →
+  `integrity_unverified` (unvouched). `AttributedInstallHasConversionTest`
+  pins the gate's position and that the worker writes only `integrity_*`
+  columns directly. Two new `MatchState`s were added rather than folding a
+  failed verdict into `attributed` with `trusted = 0`: every existing reader
+  that means "attributed" keeps meaning "paid".
+- **Money and notifications.** Under `require` nothing is written for a
+  waiting install — no ledger row, no MTA outbox row, no notification, no
+  goal subject — so there is nothing to un-pay and no postback that could
+  have gone out. The worker writes the verdict and, for a passing one, the
+  conversion, the outbox row and the notification in one transaction, after
+  re-classifying from the stored body under the click's lock (another
+  install may have taken the click: `duplicate_click`; "first verified
+  wins", not "first received"). Events for a waiting install are `503` like
+  a pending click's; for `integrity_failed` they are `409`. `observe`
+  changes nothing about money whatever the verdict.
+- **Binding.** `requestHash` is the install fingerprint PR 5 already stores
+  as `body_hash` (SHA-256 hex of the canonical body without
+  `integrity_token`): one hash of one set of bytes, pinned in
+  `android/integrity.json` by an independent Python implementation for the
+  Kotlin SDK (PR 7). Standard tokens only; a classic `nonce` verdict fails.
+  The SDK must request a fresh token per send attempt; a replay of a
+  committed install is its duplicate whatever token it carries.
+- **Policy.** Package (request and, when present, `appIntegrity`), request
+  hash, issued at most 600 s before arrival and at most 120 s after,
+  `PLAY_RECOGNIZED`, `MEETS_DEVICE_INTEGRITY` or `MEETS_STRONG_INTEGRITY`,
+  and a licensing verdict that is not `UNLICENSED`. §5.6 named only
+  recognition and device integrity; licensing was added as "an explicit
+  negative refutes, absence does not", because Google withholds it whenever
+  an earlier check fails and an app may not have licensing responses
+  enabled. Freshness is measured against the install's receipt, not the
+  decode time, so a retried decode hours later judges the same token the
+  same way. Test installs get no exemption: debug builds use Play Console's
+  integrity test responses.
+- **Replays.** `integrity_token_hash` (SHA-256; the token itself stays only
+  in `raw_payload`, where PR 5 kept it) lets the worker refuse a token
+  another install of the registration already verified, without a decode.
+  It is deliberately not a unique key: two installs presenting one token
+  are resolved by the request hash (only the body it was requested for can
+  pass), and a unique key would have let whichever arrived first — possibly
+  the lifted copy — block the genuine install.
+- **The worker.** `202-cronjobs/app-installs.php` runs it first each minute,
+  then the pending-click settler, then the notification sender, so an
+  install verified in a run has its postback sent in the same run. Claim by
+  compare-and-set on `integrity_attempts` *and* the due time (the lease is
+  the next backoff), decode outside any transaction, then lock the row and
+  settle. A `retry` answer (network, timeout, 5xx, 429, 401/403/404, a
+  refused credential, an unreadable credential) backs off 1 min doubling to
+  1 h; at 24 h from receipt or 24 attempts the state is `error`, terminal.
+  A `400` from Google (not a token it can decode) is `invalid` at once.
+  Nothing is ever waved through.
+- **The client.** `PlayIntegrityClient` is an interface; the tests hand the
+  worker a double. `GooglePlayIntegrityClient` signs the RFC 7523 assertion
+  with `openssl_sign` (RS256), caches the access token on the object until a
+  minute before expiry (dropped on 401; a failure is never cached), and
+  posts to pinned endpoints: HTTPS only, peer and host verified, redirects
+  not followed, 5 s connect, 10 s total, 64 KB read cap. A key file's
+  `token_uri` must be Google's. `P202_PLAY_INTEGRITY_ENDPOINT` replaces the
+  origin for tests only and is refused unless it is `https://` on loopback
+  (with `P202_PLAY_INTEGRITY_CA_FILE`, verification stays on).
+  `GooglePlayIntegrityClientTest` and the live pass drive it against
+  `tests/fixtures/play-integrity/fake_google.py`, a TLS fake that verifies
+  the assertion's signature with the openssl CLI and records every request.
+  **No request has been made to Google itself**: the request shapes follow
+  Google's documentation and have been checked only against that fake.
+- **The credential.** `202_app_integrity_credentials`, one row per
+  registration: the account's email, key id and project in the clear (to
+  be shown), the key AES-256-GCM encrypted under
+  `play_integrity_credential` in `202_deployment_secrets` (minted on first
+  use by an idempotent statement that never replaces a key), with
+  `registration|user` as associated data. The key is in the same database:
+  this keeps it out of anything that reads the credential table or an API
+  row, not out of a full dump — said so in the guide. Reading is tri-state:
+  a row that will not decrypt is a named error, never "no credential". The
+  routes (`PUT`/`DELETE /apps/{id}/integrity-credential`) are not stageable;
+  the body key is `credential`, which the staging guard also refuses by
+  name. Deleting the registration or the user deletes the credential
+  (the registration's queue is settled first; the user's installs are
+  deleted with it).
+- **Surfaces.** `GET /apps/{id}/integrity` (mode, credential summary,
+  counts by integrity state and by the three integrity match states, tokens
+  Google decoded since UTC midnight against the 10,000 default quota — per
+  UTC day, not Google's Pacific day); installs carry and filter on the
+  `integrity_*` columns, with `integrity_verdict` as a summary object, never
+  the token; the intake's answer gains `integrity`; the schema document an
+  `integrity` block; `/capabilities` `features.play_integrity`. Go CLI:
+  `app integrity status|credential set|credential clear`, `app create/update
+  --integrity-mode --integrity-cloud-project-number`, `app install list
+  --integrity-state`; the key is read from a file or stdin, never a flag.
+  PHP CLI: `app:integrity:status|mode|credential:set|credential:clear`.
+- **Deferred.** The Android report and the Mobile Apps pages showing
+  verdicts and quota (PR 11); the Kotlin SDK requesting and binding the
+  token (PR 7); expected signing-certificate digests (`certificateSha256Digest`)
+  as an optional per-registration check; rotating the credential encryption
+  key; a real decode against Google, which needs an operator's Cloud project
+  and a Play-distributed build.
+
+### 5.12 As built: decisions (PR 7)
+
+(Numbered 5.12: PR 6's decisions are §5.11. PR 7 was built on PR 5 while
+PR 6 was built in parallel, then PR 6 was merged in and the SDK wired to it;
+the Play Integrity bullet below is that wiring.)
+
+What PR 7 settled, where it departs from §4.3 and §5.6, and what it leaves.
+The SDK is `sdk/android-attribution/`: `core/` (package
+`com.prosper202.attribution.core`: `Json`, `InstallToken`, `InstallPayload`,
+`EventPayload`, `CustomerId`, `AttributionConfig`, `AttributionEngine`,
+`Answers`, and the platform seams in `Platform.kt`), `android/`
+(`P202Attribution`, `PlayInstallReferrerSource`) and the optional
+`integrity/` (`PlayIntegrityProvider`). The guide is
+`documentation/api/25-android-sdk.md`.
+
+- **Two modules, one of them platform-free.** Everything that decides
+  anything — the token, the bodies, the canonical form, the queue, the
+  retry rules, the transport (`HttpURLConnection`), the store format — is
+  plain Kotlin that runs on Android from API 21 and on the JVM; the Android
+  module is the facade, Play's referrer client, the storage directory and
+  device facts. The core's tests run in CI on a JDK
+  (`.github/workflows/android-sdk.yml`, `-Pp202.android=false`); the
+  Android module is built only where an Android SDK is found.
+- **No dependency but the referrer client** (§5.6). So no WorkManager, no
+  androidx lifecycle and no JSON library: the core has its own strict JSON
+  parser and two writers — the wire's, and the canonical one, which is
+  PHP's `json_encode` byte for byte (keys by UTF-8 bytes, control
+  characters as lower-case `\u00xx`, U+2028/2029 escaped; `JsonTest`
+  holds PHP's executed output) and refuses a fractional number rather than
+  guess PHP's float spelling. Work runs on one daemon thread; retries are
+  timers on it, and the next attempt's time is persisted, so a relaunch
+  resumes the schedule. Events flush 5 s after the first unsent one, at
+  once when a batch of 100 fills, and when the last activity stops.
+- **The install is built once and persisted** (§5.2's replay check), in one
+  JSON file in `noBackupFilesDir` — which is what "excluded from Auto
+  Backup" (§5.6) becomes without asking the app to edit its backup rules;
+  device-to-device transfer skips it too. An unreadable file is moved
+  aside, never read as empty. `install_uuid` survives a token change: a
+  rotated token is the same install.
+- **The referrer is read up to three times.** Play's transient answers
+  (`service_unavailable`, `service_disconnected`, and a client that never
+  calls back within 60 s) are read again after 10 s and 60 s; the third is
+  reported as it is (`unavailable`). Permanent errors are reported at once.
+- **Answers follow `responses.json`**, run as vectors: 429 and 5xx retried
+  (30 s doubling to 6 h, jitter in [½, 1], `Retry-After` honoured), every
+  other status terminal. Two additions the contract does not name: a 2xx
+  that is not `{"data": …}` (a captive portal) and a lost connection are
+  retried. A refused install is tied to the endpoint and token it was
+  refused under, and a build with another token or endpoint re-arms it with
+  the same body. For events: a `400` naming `events[i]` drops those events
+  and sends the rest; `413` halves the batch; `409` with a `match` (a
+  refuted install) and `422` (the 10,000-event cap) stop events for good;
+  `404` holds the queue until another endpoint or token. Every other
+  refusal must cost the queue something — the named events, else the whole
+  batch, and a customer claim that rode a request refused without naming
+  anything else — because a request resent unchanged at once is a tight
+  loop; `AttributionEngineTest` plants both loops.
+- **`logEvent` refuses what the server would.** The builder runs the
+  server's whole-body validation (`EventPayload.validateBody`, every
+  `events-requests.json` case) on a one-event body and throws
+  `InvalidEventException` naming each field. The queue holds at most 500;
+  past that the *newest* are dropped and reported, so a funnel's first
+  steps are never the ones lost. `occurred_at` never goes backwards (iOS's
+  rule). Event ids are random UUIDs.
+- **Device facts are not allowed to cost the install.** A version string
+  the server would refuse (a control character, over its column) is sent
+  as `null` and logged; everything else in the body comes from Play or the
+  SDK and is valid by construction (`InstallPayload.build` asserts it).
+- **The customer id reaches the server — which PR 5 did not accept.**
+  §4.3 put `customer` on the install and event bodies; PR 5's intake
+  refused any unknown field, so PR 7 adds it on the server
+  (`CustomerClaim`, `InstallCustomerLink`): `{id, type, signature}` — `type`
+  added, as PR 8 did, because the signature covers `"<type>:<id>"` —
+  validated strictly (`400` naming `customer.<field>`), and, after the
+  commit and only for an attributed, trusted install, verified under the
+  account's linking key and linked to the install's click through
+  `ClickIdentity::attachToStoredClick` (the campaign's `identity_signals`
+  still decides). The answer names the outcome (`linked`, `unverified`,
+  `no_click`, `not_linked`); a replay links again (idempotent), and the
+  pending-click settler links a body's claim when the install settles. An
+  events body may carry the customer **alone** (no `events`), so an app
+  that logs no events can still send it; `{"events": []}` is still `400`.
+  The SDK sends the claim on the install body when it was set before the
+  body was built, otherwise once on the events route, and again when it
+  changes; a server that predates the field (`400` naming only `customer`)
+  gets the install without it. `customer-id.json` is PR 8's file,
+  byte-identical, with its PHP test, so the two branches merge cleanly;
+  the new install and events cases were computed with Python's `hmac` and
+  `json`.
+  **Not done:** an unverified id is kept only in the install's
+  `raw_payload`; nothing writes an LTV alias from the app path.
+- **No agent-eval case.** Nothing here is operated through `p202` or the
+  REST API by an agent: the SDK runs inside an app, and the operator's side
+  (`p202 app install simulate`/`list`) is PR 5's, whose case android-001
+  stands. The customer claim's server side is covered by the live pass and
+  `InstallCustomerLinkIntegrationTest`.
+- **The schema document is read once per process**, before the first
+  attempt to send the install (not for events): it is where the
+  registration says whether to request a Play Integrity token. A document
+  that cannot be read now (network, `429`, `5xx`) holds the install back
+  like its own failure would; one refused for good (`4xx`) or silent about
+  integrity means no token, and the install's own answer says what is
+  wrong. Batch size stays the contract's 100.
+- **No goal evaluator.** Android goals are evaluated on the server (§4.3),
+  so the Kotlin SDK runs the `android/`, `customer-id.json` and
+  `app-identity.json` (Android keys) vectors, not `goals/`. The
+  "Kotlin (Android SDK)" row of `goals/README.md` (and the sentence in
+  `evaluator.json`'s description) is therefore stale; it is left for the
+  merge with PR 8, which edits the adjacent row, so the two branches do not
+  conflict — delete it then.
+- **Verification.** `ContractVectorsTest` (every vector above),
+  `AttributionEngineTest` (virtual time: one install, same bytes on every
+  retry, backoff across a relaunch, refusal and re-arm, batching under
+  both caps, the queue bound, refuted installs, both customer routes, the
+  schema-gated integrity request, holding back for Play and a waiting
+  install's events, the file store), `JsonTest`. `tests/live/android-sdk.sh`
+  runs the real engine (`LiveServerTest`) against an instance and reads
+  the database back: attributed install, events paying level 3, the phone's
+  click joining a web click's person through `setCustomerId`, a relaunch
+  that sends nothing, an organic and a forged install, the stored body
+  replayed (duplicate) and changed (409), and Play Integrity under
+  `require` against PR 6's fake Google (below). Server side:
+  `InstallCustomerLinkIntegrationTest` and the integrity worker's customer
+  test. The Android and integrity modules were type-checked against the
+  `android-34` platform stubs and installreferrer 2.2's, integrity 1.6.0's
+  and play-services-tasks/basement's classes as plain Kotlin (warnings as
+  errors); they were not assembled with AGP (the disk had no room for it),
+  not linted, and not run on a device or emulator.
+- **Play Integrity, as PR 6 built the server (§5.11).** When the schema
+  document's `integrity` block says `request_token: true` with
+  `token_type: standard`, `request_hash:
+  sha256_hex_of_canonical_install_body` and a `cloud_project_number` (a
+  decimal string on the wire, parsed to the `long` Play takes), every
+  attempt to send the install asks the `IntegrityProvider` for a **fresh**
+  token with `requestHash` = `InstallAttempt.requestHash`, the install's
+  fingerprint — the `android/integrity.json` vectors pin that hash for
+  every body, and the live pass proves the binding end to end: the fake
+  Google signs the hash the SDK bound, and the server's own policy accepts
+  it only because it equals the stored `body_hash` (planted: binding the
+  wire bytes instead ends `integrity_failed`). A block naming another
+  token type or binding, or no project, is not requested against: a token
+  bound some other way would be refuted as another install's, where no
+  token is only unvouched. The provider is asked only then (under `off` it
+  is never called).
+  - **The Android provider is an optional module**, `integrity/`
+    (`com.prosper202:integrity`, `PlayIntegrityProvider`, depending on
+    `com.google.android.play:integrity:1.6.0`), so an app that does not use
+    Play Integrity keeps the base SDK's single dependency (§5.6). It
+    prepares the standard token provider once per process and Cloud project,
+    requests with the body's hash, re-prepares once on
+    `INTEGRITY_TOKEN_PROVIDER_INVALID`, and sorts Play's error codes:
+    network, server, quota, transient and binding errors are retryable.
+  - **A retryable failure holds the install back** — no token under
+    `require` means `integrity_unverified`, never paid, which is worth a
+    wait — for at most `MAX_INTEGRITY_ATTEMPTS` (3) asks on the install's
+    backoff, then it goes without; any other failure sends it without a
+    token at once. A registration that asks for tokens from an app that
+    configured no provider gets the install without one and a Logcat
+    warning.
+  - **Waiting installs keep their events.** `pending_integrity` (like
+    `pending_click`) answers events `503` with `Retry-After`; they stay
+    queued and go when it settles. `integrity_failed` is refuted: its events
+    are `409`, and the SDK drops them and stops. `integrity_unverified` is
+    unvouched, and its events are evaluated as an organic install's.
+  - **The customer id links when the verdict passes.** PR 6's worker
+    settles a waiting install; it now links the claim its body carried,
+    after its commit, as the intake and the pending-click settler do
+    (`IntegrityIntegrationTest::testAWaitingInstallsCustomerLinksOnlyWhenItsVerdictPasses`).
+  - **Not done:** the provider has not requested a real token — that needs
+    a Play-distributed build of an app linked to a Cloud project, a device,
+    and Google; the JVM tests hand the engine a provider, and the Android
+    code was only type-checked against the `integrity` 1.6.0 and
+    play-services-tasks classes. Play Integrity's remediation dialogs
+    (`showDialog`) are not offered.
+
 ---
 
 # Part C: the MTA rewrite
@@ -3230,8 +3575,8 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 | 4 | **Goals engine** (core): definitions, validation, versioning, server evaluator keyed by subject (click or install), cross-language vectors, campaign goal payouts, SKAN encodings pointing at goals, `/goals` API and `p202 goal …`. **Built; `tests/live/goals.sh` (with `app-core.sh`, `conversion-ledger.sh`, `setup-mobile-apps.sh`, `analyze-mobile-apps.sh` re-run and both mobile-apps browser specs), vectors in `tests/fixtures/app-sdk-contract/goals/`. Decisions in §5.7.** | 1, 3 |
 | 4b | **Web events:** `event=` on pixels and postbacks, `POST /events`, `p202.js` `track()`, the web campaign goal editor, the Transactions ID docs pointing to goals. **Built; `tests/live/web-events.sh` (with `legacy-pixels.sh`, `goals.sh`, `identity-graph.sh`, `conversion-ledger.sh` re-run), `tests/browser/specs/web-events.spec.js`. Decisions in §5.8.** | 2, 4 |
 | 5 | **Android intake:** install token, `MatchState`, installs and events endpoints, conversions through goals, traffic-source notify, pending-click cron. **Built; `tests/live/android-intake.sh` (with `goals.sh`, `app-core.sh`, `conversion-ledger.sh`, `legacy-pixels.sh` re-run), vectors in `tests/fixtures/app-sdk-contract/android/`, agent-eval case android-001. Decisions in §5.10.** | 1, 3, 4 |
-| 6 | **Play Integrity** (opt-in modes) | 5 |
-| 7 | **Android SDK** (installs, events, customer id, integrity) | 5, 6 |
+| 6 | **Play Integrity** (opt-in modes). **Built; `tests/live/play-integrity.sh` against a local TLS fake of Google (with `android-intake.sh`, `goals.sh`, `app-core.sh`, `conversion-ledger.sh` re-run), vectors in `tests/fixtures/app-sdk-contract/android/integrity.json`. Decisions in §5.11. No request has been made to Google itself.** | 5 |
+| 7 | **Android SDK** (installs, events, customer id, integrity). **Built; `sdk/android-attribution/` (a JVM core with every `android/` — `integrity.json` included —, `customer-id.json` and Android `app-identity.json` vector; the Android module; the optional Play Integrity module), the server's `customer` claim on both intake bodies, `tests/live/android-sdk.sh` (the SDK's engine against an instance, Play Integrity under `require` against PR 6's fake Google). Decisions in §5.12.** | 5, 6 |
 | 8 | **iOS SDK:** header rename, `setCustomerId`, on-device goal evaluator on the shared vectors. **Built; `tests/live/ios-sdk.sh` (the Swift SDK's live suite against the instance included; `app-core.sh`, `goals.sh`, `setup-mobile-apps.sh`, `analyze-mobile-apps.sh` re-run), Swift vectors in `GoalVectorsTests`, encoding versions with the 48-day horizon, kept by app. Decisions in §5.9.** | 3, 4 |
 | 9 | **MTA engine:** schema rewrite and rungs, worker, models, credits, reports API; v2 and dead code deleted. **Built; `tests/live/mta-engine.sh`; decisions in §6.5.** | 1, 2 |
 | 10 | **MTA UI and exports:** dashboard on the v2 shell, comparison, journey metrics, SSRF-safe webhooks. **Built; `tests/live/mta-ui.sh` (and `mta-engine.sh` re-run), `tests/browser/specs/mta-dashboard.spec.js`; decisions in §6.6.** | 9 |

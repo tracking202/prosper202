@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Api\V3\Apps;
 
+use Api\V3\Apps\Android\Integrity\IntegrityMode;
+
 /**
  * What a registration says about the signals that arrive for its app: the
  * part of a verdict's worth that is the operator's decision rather than the
@@ -21,12 +23,16 @@ namespace Api\V3\Apps;
  *   The app token is public, so the default is no: the value is stored and
  *   reported, not credited.
  *
+ * - `integrity_mode` (Android): Play Integrity off, observe or require
+ *   (IntegrityMode). An unreadable mode is `require`, the one that trusts
+ *   least.
+ *
  * This class is the one place a stored policy is read (plan §4.4). A policy
  * that cannot be read — no registration, a column that came back NULL, a
  * value that is not exactly what a write stores — resolves to the
  * untrusting policy, never to the permissive one (CLAUDE.md #11): no test
- * signals, no client revenue, and a window of 0 days, inside which no
- * install falls.
+ * signals, no client revenue, a window of 0 days, inside which no install
+ * falls, and Play Integrity required.
  */
 final class AppPolicy
 {
@@ -36,6 +42,7 @@ final class AppPolicy
         public readonly bool $acceptTestSignals,
         public readonly int $attributionWindowDays = 0,
         public readonly bool $trustClientRevenue = false,
+        public readonly IntegrityMode $integrityMode = IntegrityMode::REQUIRE,
     ) {
     }
 
@@ -71,6 +78,8 @@ final class AppPolicy
             self::flag($row['accept_test_signals']),
             $window,
             self::flag($row['trust_client_revenue'] ?? null),
+            // A row read without the column is not a row whose mode is off.
+            IntegrityMode::fromStored($row['integrity_mode'] ?? null),
         );
     }
 

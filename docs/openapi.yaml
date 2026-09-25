@@ -3177,8 +3177,12 @@ paths:
         with the rest: postbacks it had claimed keep their owner but are
         unlinked (`registration_id` becomes `null`), and the test-signal
         trust it granted is withdrawn. Registering the app again re-links
-        the owner's unlinked rows. The dry-run preview lists the cascade and
-        omits the app token.
+        the owner's unlinked rows. Android installs are kept, and those still
+        waiting for a Play Integrity verdict are settled in the same
+        transaction — `integrity_state` `error`, and a held
+        `pending_integrity` install `integrity_unverified` (never paid) —
+        since the credential is deleted with the registration. The dry-run
+        preview lists the cascade and omits the app token.
       operationId: deleteApp
       responses:
         "200":
@@ -3229,6 +3233,7 @@ paths:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
         - $ref: "#/components/parameters/installMatchState"
+        - {name: integrity_state, in: query, description: "Only installs whose Play Integrity verdict stands here", schema: {type: string, enum: [not_requested, received, missing, pending, valid, invalid, error, skipped]}}
         - {name: trusted, in: query, schema: {type: string, enum: [trusted, refuted, unvouched, "1", "0"]}}
         - {name: test, in: query, schema: {type: string, enum: ["0", "1"]}}
         - {name: click_id, in: query, schema: {type: integer}}
@@ -3293,6 +3298,117 @@ paths:
           $ref: "#/components/responses/ValidationError"
         "503":
           description: No install-token key
+
+  /apps/{id}/integrity:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Apps]
+      summary: Play Integrity status for an Android registration
+      description: |
+        The registration's `integrity_mode` and cloud project number, its
+        service-account credential (the account's email, key id and project
+        only — never the key), where its installs' verdicts stand
+        (`by_integrity_state`, and the installs held or refused by `require`
+        in `by_match_state`), the tokens Google decoded since UTC midnight
+        against its default quota of 10,000 a day, and the verdict policy's
+        constants. An iOS registration is `422`.
+      operationId: getAppIntegrity
+      responses:
+        "200":
+          description: The status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppIntegrityStatusResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /apps/{id}/integrity-credential:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    put:
+      tags: [Apps]
+      summary: Set or rotate the Play Integrity service account
+      description: |
+        `{"credential": <the service-account key file's JSON object>}` —
+        the JSON Google Cloud downloads for a key of a service account that
+        can call the Play Integrity API for this app (the Cloud project
+        linked to the app in Play Console). Validated strictly: `type`
+        `service_account`, `client_email`, `private_key_id`, an RSA
+        `private_key` of at least 2048 bits, and a `token_uri`, when present,
+        of exactly `https://oauth2.googleapis.com/token` (the only endpoint
+        the server sends its signed assertion to). Only the email, key id,
+        project and the AES-256-GCM-encrypted key are stored; nothing in any
+        response carries the key. A second PUT replaces the first (rotation):
+        the next decode signs with the new key. Not stageable (`?staged=1`
+        is refused): a staged change would store the key and show it to
+        reviewers. Answers the `GET /apps/{id}/integrity` document.
+      operationId: setAppIntegrityCredential
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [credential]
+              additionalProperties: false
+              properties:
+                credential:
+                  type: object
+                  description: The service-account key file, as a JSON object (not a string)
+      responses:
+        "200":
+          description: Stored; the status document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppIntegrityStatusResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags: [Apps]
+      summary: Clear the Play Integrity service account
+      description: |
+        Deletes the credential. Refused (`409`) while `integrity_mode` is
+        `observe` or `require` (switch the mode to `off` first), and while
+        any install of the registration is still waiting for a verdict
+        (`installs.by_integrity_state.pending` in `GET /apps/{id}/integrity`):
+        each install keeps the mode it arrived under, so installs held under
+        `require` would otherwise end `integrity_unverified`. The message
+        says how many are waiting; each is settled within 24 hours of
+        arriving. PUT a new credential to rotate at any time. Answers a body
+        saying whether there was one to delete. Not stageable.
+      operationId: clearAppIntegrityCredential
+      responses:
+        "200":
+          description: Cleared (or there was none)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      registration_id: {type: integer}
+                      credential: {type: object, nullable: true, enum: [null]}
+                      cleared: {type: boolean}
+                      message: {type: string}
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The mode is observe or require (switch it to off first), or installs are still waiting for a verdict (wait for the worker to settle them)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /apps/skan-encodings:
     get:
@@ -3735,8 +3851,15 @@ paths:
         and inside `attribution_window_days`), `organic`, `third_party`,
         `unavailable`, `pending_click` (settled by
         `202-cronjobs/app-installs.php`), `bad_token`, `foreign_click`,
-        `implausible`, `outside_window`, `duplicate_click` or
-        `pending_integrity`.
+        `implausible`, `outside_window`, `duplicate_click`, or — when the
+        registration's `integrity_mode` is `require` and the install would be
+        attributed — `pending_integrity` until the verdict worker decodes its
+        Play Integrity token, then `attributed`, `integrity_failed` (refuted)
+        or `integrity_unverified` (no token, or no verdict within 24 hours;
+        unvouched, never paid). `integrity` says where the verdict stands
+        (`not_requested`/`received` under `off`; `missing`/`pending` under
+        `observe` and `require`). Under `observe` the verdict is recorded and
+        changes nothing.
 
         Everything durable commits in one transaction: the install row, its
         classification, the built-in install goal's outcome and — for an
@@ -3747,6 +3870,8 @@ paths:
         the same body answers `200` with `duplicate: true` and the stored
         state; the same `install_uuid` with other content is `409`. The
         answer never carries the click, the conversion or any money.
+        A `customer` (a signed customer id) is linked to the install's click
+        after the commit, and the answer's `customer` says whether it was.
         Rate-limited per peer address.
       operationId: reportAppInstall
       security: []
@@ -3810,7 +3935,9 @@ paths:
         are evaluated once it settles); for a refuted one (`bad_token`,
         `foreign_click`, `implausible`) `409`; for an unknown one `404`. A
         reused `event_id` with other content is `409`; the 10,001st event of
-        an install is `422`. Rate-limited per peer address.
+        an install is `422`. A body may carry a `customer` (a signed customer
+        id) beside its events, or alone; it is linked to the install's click
+        after the events commit. Rate-limited per peer address.
       operationId: reportAppInstallEvents
       security: []
       parameters:
@@ -4231,7 +4358,7 @@ components:
       description: Only installs in this state
       schema:
         type: string
-        enum: [attributed, organic, third_party, unavailable, pending_click, bad_token, foreign_click, implausible, outside_window, duplicate_click, pending_integrity]
+        enum: [attributed, organic, third_party, unavailable, pending_click, bad_token, foreign_click, implausible, outside_window, duplicate_click, pending_integrity, integrity_failed, integrity_unverified]
     postbackSignature:
       name: signature
       in: query
@@ -6234,6 +6361,28 @@ components:
             Android: 1 = a revenue value the app reports with an event may be
             paid by a goal valued `from_property`. 0 (default) = it is stored
             and reported but never credited — the app token is public.
+        integrity_mode:
+          type: string
+          enum: ["off", observe, require]
+          default: "off"
+          description: >-
+            Android: Play Integrity. `off` keeps a token the SDK sends and
+            decodes nothing; `observe` decodes every token and records the
+            verdict, changing nothing; `require` holds an install that would
+            be attributed (`pending_integrity`) until its verdict passes, and
+            attributes, pays and notifies only then. `observe` and `require`
+            need the credential first (`PUT /apps/{id}/integrity-credential`)
+            and a Cloud project number, so a registration is created `off`.
+            Each install keeps the mode it arrived under.
+        integrity_cloud_project_number:
+          type: integer
+          format: int64
+          nullable: true
+          description: >-
+            Android: the Google Cloud project NUMBER standard integrity tokens
+            are requested for; published in the schema document for the SDK.
+            Required for `observe` and `require`. Replaced, never cleared: an
+            update sending `null` is `422`.
         app_token:
           type: string
           pattern: "^[0-9a-f]{64}$"
@@ -6298,6 +6447,14 @@ components:
           type: integer
           enum: [0, 1]
           description: Android only (see `AppRegistration`)
+        integrity_mode:
+          type: string
+          enum: ["off"]
+          description: Android only; only `off` at create — set the credential, then switch the mode with an update (`422` otherwise)
+        integrity_cloud_project_number:
+          type: integer
+          format: int64
+          description: Android only (see `AppRegistration`)
 
     AppRegistrationUpdate:
       type: object
@@ -6324,6 +6481,20 @@ components:
           type: integer
           enum: [0, 1]
           description: Android only (see `AppRegistration`)
+        integrity_mode:
+          type: string
+          enum: ["off", observe, require]
+          description: >-
+            Android only (see `AppRegistration`); `observe`/`require` is `422`
+            without a stored credential, or without a Cloud project number
+            sent in the same request or already stored
+        integrity_cloud_project_number:
+          type: integer
+          format: int64
+          description: >-
+            Android only (see `AppRegistration`); digits, as a JSON integer or
+            string. `null` is `422`: the number can be replaced, not cleared
+            (set `integrity_mode` to `off` to stop Play Integrity)
 
     AppRegistrationResponse:
       type: object
@@ -6863,7 +7034,7 @@ components:
           description: The install conversion on the click — set for every attributed, trusted install
         match_state:
           type: string
-          enum: [attributed, organic, third_party, unavailable, pending_click, bad_token, foreign_click, implausible, outside_window, duplicate_click, pending_integrity]
+          enum: [attributed, organic, third_party, unavailable, pending_click, bad_token, foreign_click, implausible, outside_window, duplicate_click, pending_integrity, integrity_failed, integrity_unverified]
         match_reason:
           type: string
           description: Why, as one sentence
@@ -6932,9 +7103,44 @@ components:
         os_version:
           type: string
           nullable: true
+        integrity_mode:
+          type: string
+          enum: ["off", observe, require]
+          description: The registration's Play Integrity mode when the install arrived; it governs the install for good
         integrity_state:
           type: string
-          description: "`not_requested`, or `received` when the SDK sent a Play Integrity token (judged from PR 6 on)"
+          enum: [not_requested, received, missing, pending, valid, invalid, error, skipped]
+          description: >-
+            Where the Play Integrity verdict stands: `not_requested` /
+            `received` (mode off, no token / a token kept undecoded),
+            `missing` (observe/require, no token), `pending` (queued for the
+            worker), `valid`, `invalid` (fails the policy, undecodable, or a
+            token another install already verified), `error` (no verdict
+            within 24 hours), `skipped` (refuted on its referrer; not decoded)
+        integrity_reason:
+          type: string
+          nullable: true
+          description: Why, as a sentence; while pending, the last attempt's error
+        integrity_attempts:
+          type: integer
+        integrity_next_at:
+          type: integer
+          nullable: true
+          description: When the worker next tries, while pending
+        integrity_checked_at:
+          type: integer
+          nullable: true
+          description: When Google last answered with a verdict
+        integrity_verdict:
+          type: object
+          nullable: true
+          description: >-
+            What the policy read from Google's verdict — `code` (`valid` or
+            the first failed check: `wrong_package`, `request_hash`, `stale`,
+            `future`, `app_not_recognized`, `device_integrity`, `unlicensed`,
+            `malformed`, `undecodable`, `replayed_token`), `package`,
+            `app_recognition`, `device`, `licensing`, `issued_at`,
+            `version_code`. Never the token.
         first_open_at:
           type: integer
           nullable: true
@@ -6962,6 +7168,48 @@ components:
             $ref: "#/components/schemas/AppInstall"
         pagination:
           $ref: "#/components/schemas/Pagination"
+
+    AppIntegrityStatusResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            registration_id: {type: integer}
+            app_key: {type: string}
+            integrity_mode: {type: string, enum: ["off", observe, require]}
+            integrity_cloud_project_number: {type: string, nullable: true}
+            credential:
+              type: object
+              nullable: true
+              description: Never the key
+              properties:
+                client_email: {type: string}
+                private_key_id: {type: string}
+                project_id: {type: string, nullable: true}
+                created_at: {type: integer}
+                updated_at: {type: integer}
+            installs:
+              type: object
+              properties:
+                by_integrity_state:
+                  type: object
+                  additionalProperties: {type: integer}
+                  description: "Every integrity_state, with its count"
+                by_match_state:
+                  type: object
+                  properties:
+                    pending_integrity: {type: integer}
+                    integrity_failed: {type: integer}
+                    integrity_unverified: {type: integer}
+            usage:
+              type: object
+              properties:
+                decoded_since_utc_midnight: {type: integer}
+                default_daily_quota: {type: integer, example: 10000}
+            policy:
+              type: object
+              description: The verdict policy's constants (documentation/api/24-android-installs.md §9)
 
     AppInstallTokenResponse:
       type: object
@@ -7013,7 +7261,36 @@ components:
         sdk_version: {type: string, nullable: true, maxLength: 32}
         os_version: {type: string, nullable: true, maxLength: 32}
         test: {type: boolean, default: false}
-        integrity_token: {type: string, nullable: true, description: "A Play Integrity token; stored for PR 6's verdict worker and excluded from the fingerprint"}
+        integrity_token: {type: string, nullable: true, maxLength: 8192, description: "A STANDARD Play Integrity token requested with requestHash = the lower-case hex SHA-256 of this body's canonical form (integrity_token excluded); decoded off the request path when the registration's integrity_mode is observe or require"}
+        customer:
+          $ref: "#/components/schemas/AppCustomerClaim"
+
+    AppCustomerClaim:
+      type: object
+      nullable: true
+      additionalProperties: false
+      required: [id, signature]
+      description: >-
+        A customer id the operator's own server signed (the SDKs'
+        setCustomerId; documentation/features/visitor-identity.md). After the
+        request commits it links the install's click to the customer — only
+        for an attributed, trusted install, and only when the signature
+        verifies under the account's linking key. Vectors:
+        tests/fixtures/app-sdk-contract/customer-id.json.
+      properties:
+        id: {type: string, maxLength: 255, description: "Trimmed; an email digest folds to lower case and must be hex of its length"}
+        type: {type: string, nullable: true, enum: [custom, email_md5, email_sha256, esp_id, merchant_id, subid], description: "Absent or null means custom"}
+        signature: {type: string, pattern: "^[0-9a-fA-F]{64}$", description: "cust_sig: hex(HMAC-SHA256(linking key, \"<type>:<id>\"))"}
+
+    AppCustomerLinkStatus:
+      type: string
+      enum: [linked, unverified, no_click, not_linked]
+      description: >-
+        Present when the request carried a customer: linked; unverified (the
+        signature is not the operator's); no_click (the install proved no
+        click to link — organic, pending, refuted or untrusted); not_linked
+        (the campaign's identity capture is off, or linking failed and was
+        logged).
 
     AppInstallReceiptResponse:
       type: object
@@ -7022,18 +7299,25 @@ components:
           type: object
           properties:
             install_uuid: {type: string}
-            match: {type: string, enum: [attributed, organic, third_party, unavailable, pending_click, bad_token, foreign_click, implausible, outside_window, duplicate_click, pending_integrity]}
+            match: {type: string, enum: [attributed, organic, third_party, unavailable, pending_click, bad_token, foreign_click, implausible, outside_window, duplicate_click, pending_integrity, integrity_failed, integrity_unverified]}
             reason: {type: string}
             trusted: {type: integer, nullable: true, enum: [0, 1, null]}
             test: {type: boolean}
+            integrity: {type: string, enum: [not_requested, received, missing, pending, valid, invalid, error, skipped]}
             duplicate: {type: boolean}
+            customer:
+              $ref: "#/components/schemas/AppCustomerLinkStatus"
 
     AppInstallEventsRequest:
       type: object
-      required: [events]
       additionalProperties: false
-      description: "Vectors: tests/fixtures/app-sdk-contract/android/events-requests.json"
+      description: >-
+        Vectors: tests/fixtures/app-sdk-contract/android/events-requests.json.
+        `events` may be left out only when `customer` is present (a customer
+        id on its own); when present it holds 1-100 events.
       properties:
+        customer:
+          $ref: "#/components/schemas/AppCustomerClaim"
         events:
           type: array
           minItems: 1
@@ -7059,6 +7343,8 @@ components:
             install_uuid: {type: string}
             accepted: {type: array, items: {type: string}}
             duplicates: {type: array, items: {type: string}}
+            customer:
+              $ref: "#/components/schemas/AppCustomerLinkStatus"
 
     AppPostbackListResponse:
       type: object
@@ -7357,8 +7643,16 @@ components:
               description: iOS only — the App Store id as a number
             integrity_mode:
               type: string
-              enum: ["off"]
-              description: Android only — whether the SDK requests a Play Integrity token (`off` until Play Integrity ships)
+              enum: ["off", observe, require]
+              description: Android only — the registration's Play Integrity mode
+            integrity:
+              type: object
+              description: Android only — what the SDK requests
+              properties:
+                request_token: {type: boolean, description: "true under observe and require (never without cloud_project_number): request a token and send it as integrity_token"}
+                token_type: {type: string, enum: [standard]}
+                cloud_project_number: {type: string, nullable: true, description: "The Google Cloud project number to request for (a string: it can exceed 2^53)"}
+                request_hash: {type: string, enum: [sha256_hex_of_canonical_install_body]}
             sdk:
               type: object
               description: Android only — how the SDK talks to the intake

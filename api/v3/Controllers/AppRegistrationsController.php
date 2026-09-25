@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
+use Api\V3\Apps\Android\Integrity\IntegrityCredentialStore;
+use Api\V3\Apps\Android\Integrity\IntegrityMode;
+use Api\V3\Apps\Android\Integrity\UnverifiableInstalls;
 use Api\V3\Apps\AppIdentity;
 use Api\V3\Apps\AppPolicy;
 use Api\V3\Apps\AppToken;
@@ -67,6 +70,16 @@ class AppRegistrationsController extends Controller
             // valued from_property; 0 (default) = stored and reported, not
             // credited, because the app token is public.
             'trust_client_revenue' => ['type' => 'i', 'allowed' => [0, 1]],
+            // Android: Play Integrity off (default), observe or require
+            // (IntegrityMode). Anything but off needs the service-account
+            // credential first (PUT /apps/{id}/integrity-credential) and a
+            // Cloud project number (assertIntegrityUsable()).
+            'integrity_mode' => ['type' => 's', 'allowed' => IntegrityMode::values()],
+            // Android: the Google Cloud project number the SDK requests
+            // standard integrity tokens with; published in the schema
+            // document so the build need not hard-code it. Replaced, never
+            // cleared (an explicit null is refused).
+            'integrity_cloud_project_number' => ['type' => 'i'],
             // What an app build presents in X-P202-App-Token to the pre-auth
             // routes. Served to the owner, never client-writable; rotate with
             // rotateAppToken().
@@ -93,6 +106,12 @@ class AppRegistrationsController extends Controller
         // for the app it names and replaced by that app's platform and key.
         $identity = AppIdentity::fromPayload($payload);
         self::assertAndroidPolicy($payload, $identity->platform);
+        if (isset($payload['integrity_mode']) && $payload['integrity_mode'] !== IntegrityMode::OFF->value) {
+            throw new ValidationException('Play Integrity needs a credential first', [
+                'integrity_mode' => 'can only be off when the app is registered: set the service account with '
+                    . 'PUT /apps/{id}/integrity-credential, then switch the mode, with integrity_cloud_project_number, in PUT /apps/{id}',
+            ]);
+        }
         unset($payload['store_link']);
         $payload['platform'] = $identity->platform;
         $payload['app_key'] = $identity->appKey;
@@ -124,6 +143,23 @@ class AppRegistrationsController extends Controller
     private static function assertAndroidPolicy(array $payload, string $platform): void
     {
         $errors = [];
+        if (array_key_exists('integrity_mode', $payload) && $payload['integrity_mode'] !== null) {
+            $mode = $payload['integrity_mode'];
+            if ($platform !== AppIdentity::ANDROID) {
+                $errors['integrity_mode'] = 'applies to Android registrations only (Play Integrity)';
+            } elseif (!is_string($mode) || IntegrityMode::tryFrom($mode) === null) {
+                $errors['integrity_mode'] = 'must be one of: ' . implode(', ', IntegrityMode::values());
+            }
+        }
+        if (array_key_exists('integrity_cloud_project_number', $payload) && $payload['integrity_cloud_project_number'] !== null) {
+            $raw = $payload['integrity_cloud_project_number'];
+            $text = is_int($raw) ? (string)$raw : (is_string($raw) ? $raw : null);
+            if ($platform !== AppIdentity::ANDROID) {
+                $errors['integrity_cloud_project_number'] = 'applies to Android registrations only (Play Integrity)';
+            } elseif ($text === null || preg_match('/^[1-9][0-9]{0,17}$/D', $text) !== 1) {
+                $errors['integrity_cloud_project_number'] = 'must be the Google Cloud project NUMBER (digits, from the project\'s dashboard), not its id';
+            }
+        }
         foreach (['attribution_window_days' => [1, AppPolicy::MAX_WINDOW_DAYS], 'trust_client_revenue' => [0, 1]] as $field => [$min, $max]) {
             if (!array_key_exists($field, $payload) || $payload[$field] === null) {
                 continue;
@@ -238,8 +274,15 @@ class AppRegistrationsController extends Controller
             unset($payload['platform'], $payload['app_key'], $payload['store_link']);
         }
 
-        if (array_key_exists('attribution_window_days', $payload) || array_key_exists('trust_client_revenue', $payload)) {
-            self::assertAndroidPolicy($payload, (string)((array)$this->get($id)['data'])['platform']);
+        $policyFields = ['attribution_window_days', 'trust_client_revenue', 'integrity_mode', 'integrity_cloud_project_number'];
+        if (array_intersect(array_keys($payload), $policyFields) !== []) {
+            $current = (array)$this->get($id)['data'];
+            self::assertAndroidPolicy($payload, (string)$current['platform']);
+            if (array_key_exists('integrity_mode', $payload) || array_key_exists('integrity_cloud_project_number', $payload)) {
+                // Only a write that names Play Integrity is held to it: an
+                // unrelated field is never refused over the stored setting.
+                $this->assertIntegrityUsable((int)$id, $payload, $current);
+            }
         }
         $updated = parent::update($id, $payload);
         // Re-run the claim on every update so unclaimed history (or a claim
@@ -260,6 +303,69 @@ class AppRegistrationsController extends Controller
             error_log('p202 apps: claiming signals for registration ' . (int)$row['registration_id'] . ' failed: ' . $e->getMessage());
         }
         return $updated;
+    }
+
+    /**
+     * `observe` and `require` need both halves of Play Integrity: the service
+     * account the worker decodes with, and the Cloud project number the
+     * schema document gives the SDK to request tokens for. Without the first
+     * every verdict is an error; without the second the SDK is told to
+     * request a token and cannot, so every install arrives without one — and
+     * under require, every attributable install is integrity_unverified.
+     *
+     * Read from the RAW payload (CLAUDE.md #18: the base controller skips a
+     * null and casts the rest before any hook sees them) against the stored
+     * row, so the rule holds for the state the write leaves, whichever of the
+     * two fields it names:
+     *
+     *  - a mode other than off needs a stored credential and a project number,
+     *    sent in this request or already stored;
+     *  - the project number is replaced, never cleared: an explicit null is
+     *    refused by name in every mode rather than dropped in silence
+     *    (CLAUDE.md #4). While off the number is unused, so there is nothing
+     *    to clear it for; under observe/require clearing it would be the
+     *    broken state above.
+     *
+     * Create needs none of this: a registration can only be created `off`.
+     *
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed> $current the stored registration
+     */
+    private function assertIntegrityUsable(int $id, array $payload, array $current): void
+    {
+        if (array_key_exists('integrity_cloud_project_number', $payload) && $payload['integrity_cloud_project_number'] === null) {
+            throw new ValidationException('The Cloud project number cannot be cleared', [
+                'integrity_cloud_project_number' => 'cannot be cleared (null): send another project number to replace it. '
+                    . 'To stop Play Integrity, set integrity_mode to off; the SDK then requests no token and the number is unused.',
+            ]);
+        }
+        $mode = array_key_exists('integrity_mode', $payload) && $payload['integrity_mode'] !== null
+            ? IntegrityMode::tryFrom((string)$payload['integrity_mode'])
+            : IntegrityMode::fromStored($current['integrity_mode'] ?? null);
+        if ($mode === null || !$mode->decodes()) {
+            return; // off, or a mode assertAndroidPolicy() already refused
+        }
+        $errors = [];
+        if ((new IntegrityCredentialStore(new \Prosper202\Database\Connection($this->db)))->summary($this->userId, $id) === null) {
+            // Refused rather than accepted into a state where every install
+            // waits for a verdict nothing can decode (observe would record
+            // only errors; require would pay nothing).
+            $errors['integrity_mode'] = 'needs the app\'s Google service account: PUT /apps/' . $id . '/integrity-credential first';
+        }
+        $project = array_key_exists('integrity_cloud_project_number', $payload)
+            ? $payload['integrity_cloud_project_number']
+            : ($current['integrity_cloud_project_number'] ?? null);
+        if ($project === null || $project === '') {
+            $errors['integrity_cloud_project_number'] = 'is required for integrity_mode ' . $mode->value . ': the SDK requests tokens for this '
+                . 'Google Cloud project, so without its Cloud project number (digits, on the project\'s dashboard) no install can carry one. '
+                . 'Send it with the mode: {"integrity_mode": "' . $mode->value . '", "integrity_cloud_project_number": "123456789012"}';
+        }
+        if ($errors !== []) {
+            throw new ValidationException(
+                isset($errors['integrity_mode']) ? 'Play Integrity needs a credential first' : 'Play Integrity needs the Cloud project number',
+                $errors
+            );
+        }
     }
 
     #[\Override]
@@ -295,6 +401,21 @@ class AppRegistrationsController extends Controller
         $stmt = $this->prepare('UPDATE 202_app_postbacks SET registration_id = NULL WHERE registration_id = ? AND user_id = ?');
         $this->bind($stmt, 'ii', $registrationId, $this->userId);
         $this->execute($stmt, 'Postback unlink failed');
+        $stmt->close();
+
+        // The installs still waiting for a Play Integrity verdict can never
+        // get one once the credential below is gone, and the worker reads an
+        // install only through its registration: settled here, in the same
+        // transaction, to `error` / integrity_unverified — terminal, never
+        // paid — rather than left queued forever (UnverifiableInstalls).
+        (new UnverifiableInstalls(new \Prosper202\Database\Connection($this->db)))
+            ->settleForDeletedRegistration($this->userId, $registrationId, time());
+
+        // The Play Integrity credential is the operator's secret for this
+        // app; nothing may sign with it once the registration is gone.
+        $stmt = $this->prepare('DELETE FROM 202_app_integrity_credentials WHERE registration_id = ? AND user_id = ?');
+        $this->bind($stmt, 'ii', $registrationId, $this->userId);
+        $this->execute($stmt, 'Integrity credential delete failed');
         $stmt->close();
 
         // Encodings exist only for their registration; left behind they
@@ -344,10 +465,12 @@ class AppRegistrationsController extends Controller
         }
         $preview['data']['cascade'] = [
             ['resource' => 'app-skan-encodings', 'action' => 'delete', 'where' => 'registration_id = ' . (int)$id],
+            ['resource' => 'app-integrity-credential', 'action' => 'delete (the Play Integrity service account)', 'where' => 'registration_id = ' . (int)$id],
             ['resource' => 'app-postbacks', 'action' => 'unlink (registration_id set to NULL; owner kept; test-signal trust withdrawn)', 'where' => 'registration_id = ' . (int)$id],
             ['resource' => 'campaigns', 'action' => 'unlink (app_registration_id set to NULL)', 'where' => 'app_registration_id = ' . (int)$id],
             ['resource' => 'goals', 'action' => 'archive (versions, outcomes and conversions kept)', 'where' => 'scope = registration, scope_id = ' . (int)$id],
             ['resource' => 'app-installs', 'action' => 'kept (history; their conversions stay on the ledger), no longer reachable by any app token', 'where' => 'registration_id = ' . (int)$id],
+            ['resource' => 'app-installs', 'action' => 'settle the Play Integrity queue: integrity_state pending → error, match_state pending_integrity → integrity_unverified (never paid)', 'where' => 'registration_id = ' . (int)$id . ', still waiting for a verdict'],
         ];
         return $preview;
     }

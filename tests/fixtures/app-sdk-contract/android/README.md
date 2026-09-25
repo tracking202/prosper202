@@ -38,7 +38,8 @@ Bodies of `POST /api/v3/apps/installs`.
 - `cases[]` — `{name, body, expect}`.
 - `expect.valid: true` — the server accepts the body. `canonical` is its
   canonical form and `fingerprint` the lower-case hex SHA-256 of that form's
-  UTF-8 bytes.
+  UTF-8 bytes; `customer` is the canonical `"<type>:<id>"` of the body's
+  customer claim, or `null` when it carries none.
 - `expect.valid: false` — the server answers `status` (400) with
   `field_errors` naming exactly the listed fields (sorted). Paths inside the
   referrer are `referrer.<field>`.
@@ -60,11 +61,43 @@ optional strings are strings or `null`.
 Bodies of `POST /api/v3/apps/installs/{install_uuid}/events`: `{"events":
 […]}` with 1 to `max_events` events. Each `case` is `{name, body, expect}`
 as above; paths are `events[<index>].<field>`. `received_at` and
-`revenue_trusted` belong to the server and are refused by name.
+`revenue_trusted` belong to the server and are refused by name. A body may
+carry `customer` beside its events or alone (then without `events`); a valid
+case's `expect.events` is how many events it holds and `expect.customer`
+its claim's canonical form (or `null`).
+
+The customer claim (`customer: {id, type, signature}`, on both bodies)
+follows `../customer-id.json`: the id canonicalises as `CustomerId::canonical()`
+does, the type is the vocabulary or absent, and the signature is 64
+hexadecimal characters. Its field errors are `customer.<field>`; the
+signatures in these cases were computed with Python's `hmac` under
+`customer-id.json`'s test linking key.
+
+## `integrity.json`
+
+Play Integrity (PR 6). The SDK requests a **standard** token with
+`requestHash` = the lower-case hex SHA-256 of the install body's canonical
+form — the same form and the same hash as `install-requests.json`'s
+`fingerprint` — and sends the token as `integrity_token` in that body.
+
+- `cases[]` — `{name, body, canonical, request_hash}`: the hash for bodies
+  the SDK builds. The token is not hashed (it is derived from the hash), so
+  the reference body with and without a token share one; another
+  `install_uuid` or another click's referrer gives another hash, which is
+  what stops a token being moved onto another install.
+- `verdicts[]` — `{name, payload, expect: {valid, code}}`: the server's
+  policy over Google's decoded `tokenPayloadExternal`, for an install of
+  `package` received at `received_at` whose request hash is `cases[0]`'s.
+  `code` is `valid` or the first check that failed: `wrong_package`,
+  `request_hash`, `stale` (issued more than 600 s before arrival), `future`
+  (more than 120 s after), `app_not_recognized`, `device_integrity`,
+  `unlicensed`. The SDK does not judge verdicts; these pin the server for
+  anyone reimplementing it.
 
 ## `responses.json`
 
 Every answer the two routes give, the situation that produces it, and
 whether the SDK retries it (`retry`). Only `429` and `5xx` are retried; a
 `Retry-After` header, when present, is honoured. `match_states` is the list
-an install can be classified into, in the server's order.
+an install can be classified into, in the server's order, and
+`integrity_states` the values of an answer's `integrity`.

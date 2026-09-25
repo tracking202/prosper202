@@ -65,6 +65,22 @@ use Prosper202\Database\Schema\TableRegistry;
  * let two spellings of one id share a slot. `body_hash` is the fingerprint
  * of the body that created the row, so a replay of the same id with other
  * content is told from a retry (CLAUDE.md #15).
+ *
+ * Play Integrity (plan §5.6, §5.11): `integrity_mode` on an install is the
+ * registration's mode *when the install arrived* — a later change of mode
+ * never re-judges an install already received — and the `integrity_*`
+ * columns are the verdict worker's queue and its result: the state, why,
+ * the attempt count and next attempt, when Google last answered, a summary
+ * of the decoded verdict (never the token), and the SHA-256 of the token,
+ * so a token already owned by a verified install is refused as a replay
+ * without spending quota.
+ *
+ * 202_app_integrity_credentials holds the operator's Google service
+ * account for a registration, AES-256-GCM encrypted under an installation
+ * key (202_deployment_secrets) with the registration bound in as associated
+ * data, so a ciphertext copied onto another registration does not decrypt.
+ * Only the account's email, key id and project are stored in the clear, to
+ * be shown; the private key never leaves the ciphertext except to sign.
  */
 final class AppTables
 {
@@ -81,6 +97,7 @@ final class AppTables
             self::appSkanEncodings(),
             self::appSkanEncodingHistory(),
             self::appInstalls(),
+            self::appIntegrityCredentials(),
         ];
     }
 
@@ -98,6 +115,8 @@ final class AppTables
                 `accept_test_signals` tinyint(1) unsigned NOT NULL DEFAULT '0',
                 `attribution_window_days` smallint(5) unsigned NOT NULL DEFAULT '7',
                 `trust_client_revenue` tinyint(1) unsigned NOT NULL DEFAULT '0',
+                `integrity_mode` varchar(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'off',
+                `integrity_cloud_project_number` bigint(20) unsigned DEFAULT NULL,
                 `app_token` varchar(64) NOT NULL,
                 `created_at` int(10) unsigned NOT NULL,
                 `updated_at` int(10) unsigned NOT NULL,
@@ -242,7 +261,14 @@ final class AppTables
                 `app_version` varchar(64) DEFAULT NULL,
                 `sdk_version` varchar(32) DEFAULT NULL,
                 `os_version` varchar(32) DEFAULT NULL,
+                `integrity_mode` varchar(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'off',
                 `integrity_state` varchar(16) NOT NULL DEFAULT 'not_requested',
+                `integrity_reason` varchar(255) DEFAULT NULL,
+                `integrity_token_hash` char(64) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+                `integrity_attempts` tinyint(3) unsigned NOT NULL DEFAULT '0',
+                `integrity_next_at` int(10) unsigned DEFAULT NULL,
+                `integrity_checked_at` int(10) unsigned DEFAULT NULL,
+                `integrity_verdict` varchar(1024) DEFAULT NULL,
                 `first_open_at` int(10) unsigned DEFAULT NULL,
                 `received_at` int(10) unsigned NOT NULL,
                 `settled_at` int(10) unsigned DEFAULT NULL,
@@ -254,8 +280,29 @@ final class AppTables
                 KEY `user_received` (`user_id`,`received_at`),
                 KEY `registration_received` (`registration_id`,`received_at`),
                 KEY `state_received` (`match_state`,`received_at`),
-                KEY `trusted_received` (`trusted`,`received_at`)
+                KEY `trusted_received` (`trusted`,`received_at`),
+                KEY `integrity_due` (`integrity_state`,`integrity_next_at`),
+                KEY `registration_integrity_token` (`registration_id`,`integrity_token_hash`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Android installs reported by the SDK: the Play referrer, its MatchState and trust'"
+        );
+    }
+
+    public static function appIntegrityCredentials(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::APP_INTEGRITY_CREDENTIALS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::APP_INTEGRITY_CREDENTIALS . "` (
+                `registration_id` int(10) unsigned NOT NULL,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `client_email` varchar(255) NOT NULL,
+                `private_key_id` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `project_id` varchar(64) DEFAULT NULL,
+                `ciphertext` text CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `created_at` int(10) unsigned NOT NULL,
+                `updated_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`registration_id`),
+                KEY `user_id` (`user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Play Integrity service-account credentials, one per Android registration, encrypted at rest'"
         );
     }
 }
