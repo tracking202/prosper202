@@ -115,7 +115,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$aff_campaign_sql = "SELECT * FROM 202_aff_campaigns AS 2cp LEFT JOIN 202_aff_networks AS 2an USING (aff_network_id) WHERE 2cp.user_id='" . $mysql['user_id'] . "' AND 2cp.aff_campaign_id='" . $mysql['aff_campaign_id'] . "'";
 		$aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
 		if ($aff_campaign_result->num_rows == 0) {
-			$error['wrong_user'] .= '<div class="error">You are not authorized to modify another users campaign</div>';
+			$error['wrong_user'] = ($error['wrong_user'] ?? '') . '<div class="error">You are not authorized to modify another users campaign</div>';
 		} else {
 			$aff_campaign_row = $aff_campaign_result->fetch_assoc();
 		}
@@ -295,9 +295,9 @@ if (!empty($_GET['edit_aff_campaign_id'])) {
 						 AND    		`user_id`='" . $mysql['user_id'] . "'";
 
 	$aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
-	$aff_campaign_row = $aff_campaign_result->fetch_assoc();
+	$aff_campaign_row = $aff_campaign_result->fetch_assoc() ?? [];
 
-	$selected['aff_network_id'] = $aff_campaign_row['aff_network_id'];
+	$selected['aff_network_id'] = $aff_campaign_row['aff_network_id'] ?? '';
 	$html = array_map(fn($value) => htmlentities((string)($value ?? ''), ENT_QUOTES, 'UTF-8'), $aff_campaign_row);
 	$html['aff_campaign_id'] = htmlentities((string)($_GET['edit_aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8');
 }
@@ -313,12 +313,12 @@ if (!empty($_GET['copy_aff_campaign_id'])) {
 						 AND    		`user_id`='" . $mysql['user_id'] . "'";
 
 	$aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
-	$aff_campaign_row = $aff_campaign_result->fetch_assoc();
+	$aff_campaign_row = $aff_campaign_result->fetch_assoc() ?? [];
 
-	$selected['aff_network_id'] = $aff_campaign_row['aff_network_id'];
+	$selected['aff_network_id'] = $aff_campaign_row['aff_network_id'] ?? '';
 	$html = array_map(fn($value) => htmlentities((string)($value ?? ''), ENT_QUOTES, 'UTF-8'), $aff_campaign_row);
 	$html['aff_campaign_id'] = htmlentities((string)($_GET['copy_aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-	$html['aff_campaign_name'] .= " (Copy)"; //append (Copy) to the campaign name so the user knows its a copy
+	$html['aff_campaign_name'] = ($html['aff_campaign_name'] ?? '') . " (Copy)"; //append (Copy) to the campaign name so the user knows its a copy
 	// Clear attribution model ID so user can choose for the copied campaign
 	$html['attribution_model_id'] = ''; 
 
@@ -333,789 +333,240 @@ if (($_SERVER['REQUEST_METHOD'] == 'POST') and (!isset($add_success) || $add_suc
 	$html = array_map(htmlentities(...), $_POST);
 }
 
-template_top('Affiliate Campaigns Setup');
-?>
+// Post-redirect-get: a saved or removed campaign answers with a redirect, so
+// a reload cannot submit the form (or the remove link) a second time.
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && $add_success == true) {
+	header('location: ' . get_absolute_url() . 'tracking202/setup/aff_campaigns.php?' . ($editing ? 'saved=1' : 'added=1'));
+	exit;
+}
+if ($delete_success == true) {
+	header('location: ' . get_absolute_url() . 'tracking202/setup/aff_campaigns.php?deleted=1');
+	exit;
+}
 
-<!-- Page Header - Design System -->
-<div class="row" style="margin-bottom: 28px;">
-	<div class="col-xs-12">
-		<div class="setup-page-header">
-			<div class="setup-page-header__icon">
-				<span class="glyphicon glyphicon-link"></span>
-			</div>
-			<div class="setup-page-header__text">
-				<h1 class="setup-page-header__title">Campaigns</h1>
-				<p class="setup-page-header__subtitle">Add and manage your affiliate campaigns with tracking URLs, payouts, and attribution settings</p>
-			</div>
-		</div>
-	</div>
-</div>
+require_once __DIR__ . '/_includes/setup_ui.php';
 
-<?php if (isset($error) && !empty($error)) { ?>
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<div class="alert alert-danger">
-			<i class="fa fa-exclamation-circle"></i> There were errors with your submission. <?php echo $error['token'] ?? ''; ?>
-		</div>
-	</div>
-</div>
-<?php } ?>
+$base = get_absolute_url();
+$self = $base . 'tracking202/setup/aff_campaigns.php';
+$token = (string) ($_SESSION['token'] ?? '');
+$uid = $db->real_escape_string((string) $_SESSION['user_id']);
 
-<?php if (isset($add_success) && $add_success == true) { ?>
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<div class="alert alert-success">
-			<i class="fa fa-check-circle"></i> Your submission was successful. Your changes have been saved.
-		</div>
-	</div>
-</div>
-<?php } ?>
+// The categories, with their network integration when they have one.
+$categoryRows = p202_setup_rows($db, "SELECT af.aff_network_id, af.aff_network_name, af.dni_network_id, dni.favicon, dni.processed FROM 202_aff_networks AS af LEFT JOIN 202_dni_networks AS dni ON (af.dni_network_id = dni.id) WHERE af.user_id='" . $uid . "' AND af.aff_network_deleted='0' ORDER BY af.aff_network_name ASC");
+$campaignsByCategory = [];
+foreach (p202_setup_rows($db, "SELECT aff_campaign_id, aff_network_id, aff_campaign_name, aff_campaign_url, aff_campaign_payout, aff_campaign_rotate FROM `202_aff_campaigns` WHERE `user_id`='" . $uid . "' AND `aff_campaign_deleted`='0' ORDER BY `aff_campaign_name` ASC") as $campaign) {
+	$campaignsByCategory[(int) $campaign['aff_network_id']][] = $campaign;
+}
+$categories = [];
+foreach ($categoryRows as $category) {
+	$categories[(string) $category['aff_network_id']] = (string) $category['aff_network_name'];
+}
 
-<?php if (isset($delete_success) && $delete_success == true) { ?>
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<div class="alert alert-success">
-			<i class="fa fa-check-circle"></i> Your deletion was successful. You have successfully removed a campaign.
-		</div>
-	</div>
-</div>
-<?php } ?>
+// What the form shows: what was just refused, the campaign being edited or
+// copied, or a blank campaign.
+$posted = $_SERVER['REQUEST_METHOD'] == 'POST';
+$source = $posted ? $_POST : (is_array($aff_campaign_row) ? $aff_campaign_row : []);
+$field = static fn (string $name): string => (string) ($source[$name] ?? '');
+$values = [
+	'aff_campaign_id' => $posted ? $field('aff_campaign_id') : (string) ($editing || $copying ? ($_GET['edit_aff_campaign_id'] ?? $_GET['copy_aff_campaign_id'] ?? '') : ''),
+	'aff_network_id' => $field('aff_network_id'),
+	'aff_campaign_name' => $field('aff_campaign_name') . (!$posted && $copying && $source !== [] ? ' (Copy)' : ''),
+	'aff_campaign_url' => $field('aff_campaign_url'),
+	'aff_campaign_url_2' => $field('aff_campaign_url_2'),
+	'aff_campaign_url_3' => $field('aff_campaign_url_3'),
+	'aff_campaign_url_4' => $field('aff_campaign_url_4'),
+	'aff_campaign_url_5' => $field('aff_campaign_url_5'),
+	'aff_campaign_rotate' => $field('aff_campaign_rotate') === '1' ? '1' : '0',
+	'aff_campaign_payout' => $field('aff_campaign_payout'),
+	'aff_campaign_cloaking' => $field('aff_campaign_cloaking') === '1' ? '1' : '0',
+	// A copy chooses its own model, as the classic page did.
+	'attribution_model_id' => !$posted && $copying ? '' : $field('attribution_model_id'),
+];
+if ($values['aff_network_id'] === '' && count($categories) === 1) {
+	// One category: a campaign can only go in it, so it is chosen.
+	$values['aff_network_id'] = (string) array_key_first($categories);
+}
+$campaignForm = [
+	'values' => $values,
+	'errors' => $error,
+	'categories' => $categories,
+	'rotation_offered' => $rotateUrlCampaignsResults->num_rows > 0,
+];
+$editId = $editing ? (int) ($_GET['edit_aff_campaign_id'] ?? 0) : 0;
 
-<div class="row form_seperator" style="margin-bottom:15px;">
-	<div class="col-xs-12"></div>
-</div>
+/*
+ * The campaign form is a list of sections, rendered in order inside one
+ * <form>. A section is a file that reads $campaignForm and prints its fields;
+ * payout mode and goals (later PRs) are one file and one line here each,
+ * between the offer and Advanced.
+ */
+$campaignFormSections = [
+	__DIR__ . '/_includes/campaign_form/offer.php',
+	__DIR__ . '/_includes/campaign_form/advanced.php',
+];
 
-<div class="row">
-	<div class="col-md-6">
-		<small><strong>Add A Campaign</strong></small><br />
-		<span class="infotext">Here you add each of the campaigns you are running.</span>
-
-		<form method="post" class="form-horizontal" action="<?php if ($delete_success == true) {
-																echo $_SERVER['REDIRECT_URL'] ?? '';
-															} ?>" role="form" style="margin:15px 0px;">
-			<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-			<input name="aff_campaign_id" type="hidden" value="<?php echo $html['aff_campaign_id'] ?? ''; ?>" />
-			<input name="dni_id" type="hidden" value="" />
-			<input name="dni_offer_id" type="hidden" value="" />
-			<div class="form-group <?php if (isset($error['aff_network_id'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
-				<label for="aff_network_id" class="col-xs-4 control-label" style="text-align: left;">Category:</label>
-				<div class="col-xs-6">
-					<select class="form-control input-sm" name="aff_network_id" id="aff_network_id">
-						<option value="">--</option>
-						<?php
-						$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-						$aff_network_sql = "
-										SELECT *
-										FROM `202_aff_networks`
-										WHERE `user_id`='" . $mysql['user_id'] . "'
-										AND `aff_network_deleted`='0'
-										ORDER BY `aff_network_name` ASC
-									";
-						$aff_network_result = $db->query($aff_network_sql) or record_mysql_error($aff_network_sql);
-
-						while ($aff_network_row = $aff_network_result->fetch_array(MYSQLI_ASSOC)) {
-
-							$html['aff_network_name'] = htmlentities((string)($aff_network_row['aff_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-							$html['aff_network_id'] = htmlentities((string)($aff_network_row['aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-
-							if (($selected['aff_network_id'] ?? '') == $aff_network_row['aff_network_id']) {
-								printf('<option selected="selected" value="%s">%s</option>', $html['aff_network_id'], $html['aff_network_name']);
-							} else {
-								printf('<option value="%s">%s</option>', $html['aff_network_id'], $html['aff_network_name']);
-							}
-						}
-						?>
-					</select>
-				</div>
-			</div>
-
-			<div class="form-group <?php if (isset($error['aff_campaign_name'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
-				<label class="col-xs-4 control-label" for="aff_campaign_name" style="text-align: left;">Campaign Name:</label>
-				<div class="col-xs-6">
-					<input type="text" class="form-control input-sm" id="aff_campaign_name" name="aff_campaign_name" value="<?php echo $html['aff_campaign_name'] ?? ''; ?>">
-				</div>
-			</div>
-
-			<?php if ($rotateUrlCampaignsResults->num_rows > 0) { ?>
-				<div class="form-group" style="margin-bottom: 0px;">
-					<label class="col-xs-4 control-label" style="text-align: left;">Rotate Urls:</label>
-
-					<div class="col-xs-2" style="margin-top: 10px;">
-						<label class="radio">
-							<input type="radio" name="aff_campaign_rotate" id="aff_campaign_rotate1" value="0" data-toggle="radio" <?php if ($html['aff_campaign_rotate'] == 0) echo 'checked'; ?>>
-							No
-						</label>
-					</div>
-					<div class="col-xs-2" style="margin-top: 10px;">
-						<label class="radio">
-							<input type="radio" name="aff_campaign_rotate" id="aff_campaign_rotate2" value="1" data-toggle="radio" <?php if ($html['aff_campaign_rotate'] == 1) echo 'checked'; ?>>
-							Yes
-						</label>
-					</div>
-				</div>
-			<?php } ?>
-			<div class="form-group <?php if (isset($error['aff_campaign_url'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
-				<label class="col-xs-4 control-label" for="aff_campaign_url" style="text-align: left;">Campaign URL <span class="fui-info" data-toggle="tooltip" title="This is where people will be sent when yout tracking link is clicked. If you are running an affiliate campaign, this will be where to put your affiliate url."></span></label>
-				<div class="col-xs-6">
-					<textarea name="aff_campaign_url" id="aff_campaign_url" class="form-control input-sm" rows="3" placeholder="http://"><?php echo $html['aff_campaign_url'] ?? ''; ?></textarea>
-				</div>
-			</div>
-
-			<div class="form-group" style="margin-bottom: 10px;">
-				<div class="col-xs-6 col-xs-offset-4" id="placeholders">
-					<span class="help-block" style="font-size: 12px;">The following tracking placeholders can be used:<br /></span>
-					<input style="margin-left: 1px;" type="button" class="btn btn-xs btn-primary" value="[[subid]]" />
-					<input type="button" class="btn btn-xs btn-primary" value="[[c1]]" />
-					<input type="button" class="btn btn-xs btn-primary" value="[[c2]]" />
-					<input type="button" class="btn btn-xs btn-primary" value="[[c3]]" />
-					<input type="button" class="btn btn-xs btn-primary" value="[[c4]]" /><br /><br />
-					<input type="button" class="btn btn-xs btn-primary" value="[[random]]" />
-					<input type="button" class="btn btn-xs btn-primary" value="[[referer]]" />
-					<input type="button" class="btn btn-xs btn-primary" value="[[gclid]]" /><br /><br />
-					<input type="button" class="btn btn-xs btn-primary" value="[[utm_source]]" />
-					<input type="button" class="btn btn-xs btn-primary" value="[[utm_medium]]" /><br /><br />
-					<input type="button" class="btn btn-xs btn-primary" value="[[utm_campaign]]" />
-					<input type="button" class="btn btn-xs btn-primary" value="[[utm_term]]" /><br /><br />
-					<input type="button" class="btn btn-xs btn-primary" value="[[utm_content]]" />
-					<input type="button" class="btn btn-xs btn-primary" value="[[payout]]" />
-					<input type="button" class="btn btn-xs btn-primary" value="[[cpc]]" /><br /><br />
-					<input type="button" class="btn btn-xs btn-primary" value="[[cpc2]]" />
-					<input type="button" class="btn btn-xs btn-primary" value="[[timestamp]]" />
-
-				</div>
-			</div>
-
-			<?php if ($rotateUrlCampaignsResults->num_rows > 0) { ?>
-				<div id="rotateUrls" <?php if ($html['aff_campaign_rotate'] == 0) echo 'style="display:none;"'; ?>>
-					<div id="rotateUrl2" class="form-group <?php if (isset($error['aff_campaign_url_2'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
-						<label class="col-xs-4 control-label" for="aff_campaign_url_2" style="text-align: left;">Rotate Url #2:</label>
-						<div class="col-xs-6">
-							<input type="text" class="form-control input-sm" id="aff_campaign_url_2" name="aff_campaign_url_2" value="<?php echo $html['aff_campaign_url_2'] ?? ''; ?>">
-						</div>
-					</div>
-
-					<div id="rotateUrl3" class="form-group <?php if (isset($error['aff_campaign_url_3'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
-						<label class="col-xs-4 control-label" for="aff_campaign_url_3" style="text-align: left;">Rotate Url #3:</label>
-						<div class="col-xs-6">
-							<input type="text" class="form-control input-sm" id="aff_campaign_url_3" name="aff_campaign_url_3" value="<?php echo $html['aff_campaign_url_3'] ?? ''; ?>">
-						</div>
-					</div>
-
-					<div id="rotateUrl4" class="form-group <?php if (isset($error['aff_campaign_url_4'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
-						<label class="col-xs-4 control-label" for="aff_campaign_url_4" style="text-align: left;">Rotate Url #4:</label>
-						<div class="col-xs-6">
-							<input type="text" class="form-control input-sm" id="aff_campaign_url_4" name="aff_campaign_url_4" value="<?php echo $html['aff_campaign_url_4'] ?? ''; ?>">
-						</div>
-					</div>
-
-					<div id="rotateUrl5" class="form-group <?php if (isset($error['aff_campaign_url_5'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
-						<label class="col-xs-4 control-label" for="aff_campaign_url_2" style="text-align: left;">Rotate Url #5:</label>
-						<div class="col-xs-6">
-							<input type="text" class="form-control input-sm" id="aff_campaign_url_5" name="aff_campaign_url_5" value="<?php echo $html['aff_campaign_url_5'] ?? ''; ?>">
-						</div>
-					</div>
-				</div>
-			<?php } ?>
-			<div class="form-group <?php if (isset($error['aff_campaign_payout'])) echo "has-error"; ?>" style="margin-bottom: 0px;">
-				<label class="col-xs-4 control-label" for="aff_campaign_payout" style="text-align: left;">Payout $</label>
-				<div class="col-xs-2">
-					<input type="text" size="4" class="form-control input-sm" id="aff_campaign_payout" name="aff_campaign_payout" value="<?php echo $html['aff_campaign_payout'] ?? ''; ?>">
-				</div>
-			</div>
-
-			<!-- Attribution Model Selection -->
-			<?php include_once __DIR__ . '/_includes/attribution_model_field.php'; ?>
-
-			<div class="form-group" style="margin-bottom: 0px;">
-				<label for="aff_campaign_cloaking" class="col-xs-4 control-label" style="text-align: left;">Cloaking:</label>
-				<div class="col-xs-6">
-					<select class="form-control input-sm" name="aff_campaign_cloaking" id="aff_campaign_cloaking">
-						<option <?php if (!isset($html['aff_campaign_cloaking']) || $html['aff_campaign_cloaking'] == '0') {
-									echo 'selected=""';
-								} ?> value="0">Off by default</option>
-						<option <?php if (isset($html['aff_campaign_cloaking']) && $html['aff_campaign_cloaking'] == '1') {
-									echo 'selected=""';
-								} ?> value="1">On by default</option>
-					</select>
-				</div>
-			</div>
-
-			<div class="form-group">
-				<div class="col-xs-6 col-xs-offset-4">
-					<?php if ($editing == true) { ?>
-						<div class="row">
-							<div class="col-xs-6">
-								<button class="btn btn-sm btn-p202 btn-block" type="submit">Edit</button>
-							</div>
-							<div class="col-xs-6">
-								<input type="hidden" name="pixel_id" value="<?php echo $selected['pixel_id'] ?? ''; ?>">
-								<button type="submit" class="btn btn-sm btn-danger btn-block" onclick="window.location='<?php echo get_absolute_url(); ?>tracking202/setup/aff_campaigns.php'; return false;">Cancel</button>
-							</div>
-						</div>
-					<?php } else { ?>
-						<button class="btn btn-sm btn-p202 btn-block" type="submit" id="addCampaign">Add</button>
-					<?php } ?>
-				</div>
-			</div>
-
-		</form>
-	</div>
-		<div class="col-md-6">
-			<div class="panel panel-default setup-side-panel">
-			<div class="panel-heading">My Campaigns</div>
-			<div class="panel-body">
-				<div id="campaignList">
-					<input class="form-control input-sm search" style="margin-bottom: 10px; height: 30px;" placeholder="Filter">
-					<ul class="list">
-						<?php
-						$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-						$aff_network_sql = "SELECT 2af.user_id, 2af.aff_network_id, 2af.aff_network_name, 2af.dni_network_id, 2dni.favicon, 2dni.processed FROM 202_aff_networks AS 2af LEFT JOIN 202_dni_networks AS 2dni ON (2af.dni_network_id = 2dni.id) WHERE 2af.user_id='" . $mysql['user_id'] . "' AND 2af.aff_network_deleted='0' ORDER BY 2af.aff_network_name ASC";
-
-						$aff_network_result = $db->query($aff_network_sql) or record_mysql_error($aff_network_sql);
-						if ($aff_network_result->num_rows == 0) {
-						?><li class="empty-state">No categories added yet. Add a category first to organize your campaigns.</li><?php
-																}
-
-																while ($aff_network_row = $aff_network_result->fetch_array(MYSQLI_ASSOC)) {
-																	$html['aff_network_name'] = htmlentities((string)($aff_network_row['aff_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-																	$url['aff_network_id'] = urlencode((string) $aff_network_row['aff_network_id']);
-
-																	if ($aff_network_row['dni_network_id'] != null) {
-																		if ($aff_network_row['processed'] == false) {
-																			$dni_is_live = "<span style='font-size:10px'>processing... <img src='" . get_absolute_url() . "202-img/loader-small.gif'></span>";
-																		} else {
-																			$dni_is_live = '<a href="#" class="openDniSearchOffersModal" data-dni-id="' . $aff_network_row['dni_network_id'] . '">search offers</a>';
-																			$dni_logo = '<img src="' . $aff_network_row['favicon'] . '" width=16>&nbsp;&nbsp;'; //replace with actual logo from db
-																		}
-
-																		printf('<li>%s<strong>%s</strong> - %s</li>', $dni_logo, $html['aff_network_name'], $dni_is_live);
-																	} else {
-																		printf('<li><strong>%s</strong></li>', $html['aff_network_name']);
-																	}
-
-																	?><ul style="margin-top: 0px;"><?php
-
-																	//print out the individual accounts per each PPC network
-																	$mysql['aff_network_id'] = $db->real_escape_string($aff_network_row['aff_network_id']);
-																	$aff_campaign_sql = "SELECT * FROM `202_aff_campaigns` WHERE `user_id`='" . $mysql['user_id'] . "' AND `aff_network_id`='" . $mysql['aff_network_id'] . "' AND `aff_campaign_deleted`='0' ORDER BY `aff_campaign_name` ASC";
-																	$aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
-
-																	while ($aff_campaign_row = $aff_campaign_result->fetch_array(MYSQLI_ASSOC)) {
-
-																		$html['aff_campaign_name'] = htmlentities((string)($aff_campaign_row['aff_campaign_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-																		$html['aff_campaign_payout'] = htmlentities((string)($aff_campaign_row['aff_campaign_payout'] ?? ''), ENT_QUOTES, 'UTF-8');
-																		$html['aff_campaign_url'] = htmlentities((string)($aff_campaign_row['aff_campaign_url'] ?? ''), ENT_QUOTES, 'UTF-8');
-																		$html['aff_campaign_id'] = htmlentities((string)($aff_campaign_row['aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-																		$html['aff_campaign_rotate'] = htmlentities((string)($aff_campaign_row['aff_campaign_rotate'] ?? ''), ENT_QUOTES, 'UTF-8');
-																		$rotateIcon = $html['aff_campaign_rotate'] ? '<span class="glyphicon glyphicon-repeat" style="font-size: 11px; margin-right: 4px; color: #6b7280;"></span>' : '';
-																		$removeLink = $userObj->hasPermission("remove_campaign")
-																			? ' <a href="?delete_aff_campaign_id=' . $html['aff_campaign_id'] . '&token=' . urlencode((string) ($_SESSION['token'] ?? '')) . '" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Campaign?\');">remove</a>'
-																			: '';
-
-																		printf('<li>%s<span class="filter_campaign_name">%s</span> <span class="list-meta">$%s</span> <a href="%s" target="_new" class="list-action">link</a> <a href="?edit_aff_campaign_id=%s" class="list-action">edit</a> <a href="?copy_aff_campaign_id=%s" class="list-action">copy</a>%s</li>',
-																			$rotateIcon,
-																			$html['aff_campaign_name'],
-																			$html['aff_campaign_payout'],
-																			$html['aff_campaign_url'],
-																			$html['aff_campaign_id'],
-																			$html['aff_campaign_id'],
-																			$removeLink
-																		);
-																	}
-
-														?></ul><?php
-
-																}
-								?>
-					</ul>
-				</div>
-			</div>
-		</div>
-	</div>
-</div>
-<div class="modal" id="dniSearchOffersModal" tabindex="-1" role="dialog" aria-labelledby="dniSearchOffersModal">
-	<div class="modal-dialog modal-lg">
-		<div class="modal-content">
-			<div class="modal-header">
-				<h4 class="modal-title"><span id="inProgress" style="display:none"> Processing... <img src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif"></span></h4>
-			</div>
-			<div class="modal-body">
-				<table id="stats-table" class="tablesorter">
-					<thead>
-						<tr>
-							<th>ID</th>
-							<th>Name</th>
-							<th>Payout</th>
-							<th>Type</th>
-							<th data-sorter="false">Preview</th>
-							<th>Status</th>
-						</tr>
-					</thead>
-					<tbody>
-					</tbody>
-					<tfoot>
-						<tr>
-							<th colspan="6" class="ts-pager form-horizontal">
-								<button type="button" class="btn first btn-xs"><i class="icon-step-backward glyphicon glyphicon-step-backward"></i></button>
-								<button type="button" class="btn prev btn-xs"><i class="icon-arrow-left glyphicon glyphicon-backward"></i></button>
-								<span class="pagedisplay"></span> <!-- this can be any element, including an input -->
-								<button type="button" class="btn next btn-xs"><i class="icon-arrow-right glyphicon glyphicon-forward"></i></button>
-								<button type="button" class="btn last btn-xs"><i class="icon-step-forward glyphicon glyphicon-step-forward"></i></button>
-								<select class="pagesize input-mini" title="Select page size">
-									<option value="10">10</option>
-									<option selected="selected" value="25">25</option>
-									<option value="50">50</option>
-									<option value="100">100</option>
-									<option value="200">200</option>
-									<option value="300">300</option>
-									<option value="400">400</option>
-									<option value="500">500</option>
-								</select>
-								<select class="pagenum input-mini" title="Select page number"></select>
-							</th>
-						</tr>
-					</tfoot>
-				</table>
-			</div>
-			<div class="modal-footer">
-				<span id="inProgressFooter" style="display:none"> Processing... <img src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif"></span>
-			</div>
-		</div>
-	</div>
-</div>
-<?php if (isset($_GET['dl_dni']) && isset($_GET['dl_offer_id']) && !isset($_POST['aff_network_id'])) {
+if (isset($_GET['dl_dni']) && isset($_GET['dl_offer_id']) && !isset($_POST['aff_network_id'])) {
 	$mysql['dl_dni'] = $db->real_escape_string((string)$_GET['dl_dni']);
 	$getDlDniSql = "SELECT id FROM 202_dni_networks WHERE networkId = '" . $mysql['dl_dni'] . "' AND user_id = '" . $mysql['user_id'] . "'";
-	$getDlDniResult = $db->query($getDlDniSql);
-	if ($getDlDniResult->num_rows > 0) {
-		$getDlDniRow = $getDlDniResult->fetch_assoc();
-	} else {
-		$getDlDniRow = null;
-	}
-} ?>
-<script type="text/javascript">
-	$(document).ready(function() {
-		<?php if ($getDlDniRow && isset($getDlDniRow['id'])) {
-			// Offer ids are numeric; cast to constrain to an integer before output.
-			$dlOfferId = (int)($_GET['dl_offer_id'] ?? 0); ?>
-			$('#dniSearchOffersModal').modal('show');
-			dni = <?php echo $getDlDniRow['id']; ?>;
+	$getDlDniResult = $db->query($getDlDniSql) or record_mysql_error($getDlDniSql);
+	$getDlDniRow = $getDlDniResult->num_rows > 0 ? $getDlDniResult->fetch_assoc() : null;
+}
 
-			tablesorterPagerOptions.ajaxUrl = "<?php echo get_absolute_url(); ?>tracking202/ajax/dni_get_offers.php?all_offers&dni=" + dni + "&offset=0&limit=25&column&filter[0]=<?php echo $dlOfferId; ?>";
-			tablesorterOptions.triggerToggle = true;
-			tablesorterOptions.toggleId = <?php echo $dlOfferId; ?>;
-			var $table1 = $('table.tablesorter').tablesorter(tablesorterOptions).tablesorterPager(tablesorterPagerOptions);
+template_top('Affiliate Campaigns Setup', ['ui' => 'v2']);
+?>
+
+<div class="p202-page-header p202-page-header--accent">
+	<div class="p202-page-header__icon"><i class="bi bi-link-45deg"></i></div>
+	<div class="p202-page-header__text">
+		<h1 class="p202-page-header__title">Campaigns</h1>
+		<p class="p202-page-header__desc">The offers you promote: where a click goes, and what a conversion pays.</p>
+	</div>
+</div>
+
+<?php
+echo p202_setup_query_flashes([
+	'added' => 'Campaign added. Get its tracking link from Get Links.',
+	'saved' => 'Campaign saved.',
+	'deleted' => 'Campaign removed. Its clicks and conversions keep their history.',
+], $_GET);
+if ($error) {
+	echo p202_setup_error_flashes($error, ['aff_network_id', 'aff_campaign_name', 'aff_campaign_url', 'aff_campaign_payout', 'aff_campaign_url_2', 'aff_campaign_url_3', 'aff_campaign_url_4', 'aff_campaign_url_5']);
+}
+?>
+
+<div class="row g-4">
+	<div class="col-12 col-lg-6">
+		<?php if ($categories === []) { ?>
+			<div class="p202-empty">
+				<i class="bi bi-grid p202-empty__icon"></i>
+				<strong class="p202-empty__title">Add a category first</strong>
+				<div>Every campaign sits in a category, such as the network that pays for it.</div>
+				<div class="p202-empty__action"><a class="btn btn-primary btn-sm" href="<?php echo p202_setup_e($base . 'tracking202/setup/aff_networks.php'); ?>">Add a category</a></div>
+			</div>
+		<?php } else { ?>
+		<section class="p202-panel" id="campaign-form">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title"><?php echo $editing ? 'Edit campaign' : ($copying ? 'Copy campaign' : 'Add a campaign'); ?></h2>
+				<p class="p202-panel__sub"><?php echo $editing ? 'Changes apply to clicks from now on.' : 'The offer, where a click goes, and what it pays.'; ?></p>
+			</div>
+			<div class="p202-panel__body">
+				<form method="post" action="<?php echo p202_setup_e($self . ($editing ? '?edit_aff_campaign_id=' . $editId : ($copying ? '?copy_aff_campaign_id=' . (int) ($_GET['copy_aff_campaign_id'] ?? 0) : ''))); ?>">
+					<?php echo p202_setup_token_field($token); ?>
+					<input type="hidden" name="aff_campaign_id" value="<?php echo p202_setup_e($values['aff_campaign_id']); ?>">
+					<input type="hidden" name="dni_id" value="<?php echo p202_setup_e($posted ? (string) ($_POST['dni_id'] ?? '') : ''); ?>">
+					<input type="hidden" name="dni_offer_id" value="<?php echo p202_setup_e($posted ? (string) ($_POST['dni_offer_id'] ?? '') : ''); ?>">
+					<?php foreach ($campaignFormSections as $campaignFormSection) {
+						include $campaignFormSection;
+					} ?>
+					<div class="p202-form-actions">
+						<?php if ($editing || $copying) { ?>
+							<a class="btn btn-link" href="<?php echo p202_setup_e($self); ?>">Cancel</a>
+						<?php } ?>
+						<button type="submit" class="btn btn-primary" id="addCampaign"><?php echo $editing ? 'Save changes' : 'Add campaign'; ?></button>
+					</div>
+				</form>
+			</div>
+		</section>
 		<?php } ?>
-		var campaignOptions = {
-			valueNames: ['filter_campaign_name'],
-			plugins: [
-				ListFuzzySearch()
-			]
-		};
+	</div>
 
-		var campaignList = new List('campaignList', campaignOptions);
-	});
-</script>
-<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/jquery.caret.js"></script>
+	<div class="col-12 col-lg-6">
+		<section class="p202-panel">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">Your campaigns</h2>
+				<?php $campaignTotal = array_sum(array_map('count', $campaignsByCategory)); ?>
+				<span class="p202-pill p202-pill--accent"><?php echo $campaignTotal . ' ' . ($campaignTotal === 1 ? 'campaign' : 'campaigns'); ?></span>
+				<?php if ($campaignTotal > 5) { ?>
+					<div class="p202-panel__aside"><?php echo p202_setup_list_filter('campaign-list', 'Filter campaigns…'); ?></div>
+				<?php } ?>
+			</div>
+			<div class="p202-panel__body">
+				<?php if ($categoryRows === []) { ?>
+					<p class="text-body-secondary mb-0">No categories yet, so no campaigns.</p>
+				<?php } else { ?>
+					<ul class="p202-list" id="campaign-list">
+						<?php foreach ($categoryRows as $category) {
+							$cid = (int) $category['aff_network_id'];
+							$campaigns = $campaignsByCategory[$cid] ?? []; ?>
+							<li class="p202-list__item" data-p202-filter-text="<?php echo p202_setup_e($category['aff_network_name']); ?>">
+								<span class="p202-list__name"><?php echo p202_setup_e($category['aff_network_name']); ?></span>
+								<span class="p202-pill"><?php echo count($campaigns) . ' ' . (count($campaigns) === 1 ? 'campaign' : 'campaigns'); ?></span>
+								<?php if ($category['dni_network_id'] !== null) { ?>
+									<span class="p202-list__actions">
+										<?php if (!$category['processed']) { ?>
+											<span class="p202-pill p202-pill--warn">offers loading</span>
+										<?php } else { ?>
+											<button type="button" class="p202-list__action" data-bs-toggle="modal" data-bs-target="#dni-offers-modal" data-dni-id="<?php echo (int) $category['dni_network_id']; ?>">search offers</button>
+										<?php } ?>
+									</span>
+								<?php } ?>
+								<?php if ($campaigns !== []) { ?>
+									<ul class="p202-list__children">
+										<?php foreach ($campaigns as $campaign) {
+											$id = (int) $campaign['aff_campaign_id'];
+											$name = (string) $campaign['aff_campaign_name']; ?>
+											<li class="p202-list__item<?php echo $editId === $id ? ' is-active' : ''; ?>" data-p202-filter-text="<?php echo p202_setup_e($name); ?>">
+												<span class="p202-list__name"><?php echo p202_setup_e($name); ?></span>
+												<span class="p202-pill p202-pill--good">$<?php echo p202_setup_e($campaign['aff_campaign_payout']); ?></span>
+												<?php if ((string) $campaign['aff_campaign_rotate'] === '1') { ?>
+													<span class="p202-pill">rotates URLs</span>
+												<?php } ?>
+												<span class="p202-list__actions">
+													<a class="p202-list__action" href="<?php echo p202_setup_e($campaign['aff_campaign_url']); ?>" target="_blank" rel="noopener noreferrer">link</a>
+													<a class="p202-list__action" href="<?php echo p202_setup_e($self . '?edit_aff_campaign_id=' . $id); ?>">edit</a>
+													<a class="p202-list__action" href="<?php echo p202_setup_e($self . '?copy_aff_campaign_id=' . $id); ?>">copy</a>
+													<?php if ($userObj->hasPermission("remove_campaign")) {
+														echo p202_setup_remove_form($self, ['delete_aff_campaign_id' => $id, 'token' => $token],
+															'Remove the campaign "' . $name . '"? Its clicks and conversions keep their history.');
+													} ?>
+												</span>
+											</li>
+										<?php } ?>
+									</ul>
+								<?php } else { ?>
+									<span class="p202-list__meta">No campaigns yet</span>
+								<?php } ?>
+							</li>
+						<?php } ?>
+					</ul>
+				<?php } ?>
+			</div>
+		</section>
+	</div>
+</div>
 
-<style>
-/* ===========================================
-   CAMPAIGNS - Modern Setup Design System
-   =========================================== */
+<div class="modal fade" id="dni-offers-modal" tabindex="-1" aria-labelledby="dni-offers-title" aria-hidden="true"
+	data-offers-url="<?php echo p202_setup_e($base . 'tracking202/ajax/dni_get_offers.php'); ?>"
+	data-ddlci="<?php echo p202_setup_e(isset($_GET['ddlci']) && is_numeric($_GET['ddlci']) ? (string) $_GET['ddlci'] : ''); ?>"
+	<?php if ($getDlDniRow && isset($getDlDniRow['id'])) { ?>data-open-dni="<?php echo (int) $getDlDniRow['id']; ?>" data-open-offer="<?php echo (int) ($_GET['dl_offer_id'] ?? 0); ?>"<?php } ?>>
+	<div class="modal-dialog modal-xl">
+		<div class="modal-content">
+			<div class="modal-header">
+				<h5 class="modal-title" id="dni-offers-title">Network offers</h5>
+				<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+			</div>
+			<div class="modal-body">
+				<form class="p202-toolbar mb-3" data-dni-filter>
+					<label class="visually-hidden" for="dni-filter-name">Offer name</label>
+					<input type="search" class="form-control form-control-sm" id="dni-filter-name" placeholder="Filter by offer name" style="max-width: 18rem;">
+					<button type="submit" class="btn btn-secondary btn-sm">Filter</button>
+				</form>
+				<div data-dni-status></div>
+				<div class="p202-table-wrap">
+					<table class="table p202-table" data-dni-table>
+						<thead><tr><th>ID</th><th>Name</th><th class="num">Payout</th><th>Type</th><th>Preview</th><th>Status</th></tr></thead>
+						<tbody></tbody>
+					</table>
+				</div>
+			</div>
+			<div class="modal-footer">
+				<span class="text-body-secondary small me-auto" data-dni-count></span>
+				<button type="button" class="btn btn-secondary btn-sm" data-dni-page="-1">Previous</button>
+				<button type="button" class="btn btn-secondary btn-sm" data-dni-page="1">Next</button>
+			</div>
+		</div>
+	</div>
+</div>
 
-/* Page Header - Blue Gradient */
-.setup-page-header {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 24px;
-    background: #2f6fdd;
-    border-radius: 12px;
-    color: #fff;
-    box-shadow: 0 4px 15px rgba(47, 111, 221, 0.2);
-    margin-bottom: 28px;
-}
-
-.setup-page-header__icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 56px;
-    height: 56px;
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 12px;
-    flex-shrink: 0;
-}
-
-.setup-page-header__icon .glyphicon {
-    font-size: 24px;
-    color: #fff;
-}
-
-.setup-page-header__text {
-    flex: 1;
-}
-
-.setup-page-header__title {
-    margin: 0 0 4px 0;
-    font-size: 24px;
-    font-weight: 600;
-    color: #fff;
-}
-
-.setup-page-header__subtitle {
-    margin: 0;
-    font-size: 14px;
-    color: rgba(255, 255, 255, 0.9);
-    font-weight: 400;
-}
-
-/* Setup Panel Styling */
-.setup-panel {
-    border: 1px solid #e7e8ea;
-    border-radius: 12px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-    overflow: hidden;
-    background: #fff;
-}
-
-.setup-panel__heading {
-    background: #fafbfc;
-    border-bottom: 1px solid #e7e8ea;
-    padding: 16px 20px;
-    font-weight: 600;
-    font-size: 14px;
-    color: #1f2328;
-}
-
-.setup-panel__body {
-    padding: 20px;
-}
-
-/* Panel Default Override */
-.panel-default {
-    border: 1px solid #e7e8ea;
-    border-radius: 12px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-    overflow: hidden;
-    background: #fff;
-}
-
-.panel-heading {
-    background: #fafbfc;
-    border-bottom: 1px solid #e7e8ea;
-    padding: 16px 20px;
-    font-weight: 600;
-    font-size: 14px;
-    color: #1f2328;
-}
-
-.panel-body {
-    padding: 20px;
-    background: #fff;
-}
-
-/* Setup Form Styling */
-.setup-form {
-    margin: 15px 0;
-}
-
-.setup-form .form-group {
-    margin-bottom: 16px;
-}
-
-.setup-form .form-group:last-child {
-    margin-bottom: 0;
-}
-
-.setup-form .form-control {
-    border: 1px solid #c9cdd3;
-    border-radius: 8px;
-    padding: 8px 12px;
-    font-size: 13px;
-    transition: border-color 0.2s, box-shadow 0.2s;
-}
-
-.setup-form .form-control:focus {
-    border-color: #2f6fdd;
-    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1);
-}
-
-.setup-form .has-error .form-control {
-    border-color: #c9372c;
-}
-
-/* Setup List Item Styling */
-.setup-list-name {
-    display: flex;
-    flex: 1;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-    overflow: hidden;
-}
-
-.setup-list-meta {
-    font-size: 12px;
-    color: #6b7280;
-    white-space: nowrap;
-}
-
-/* List Action Links */
-.list-action {
-    color: #2f6fdd;
-    text-decoration: none;
-    font-weight: 500;
-    font-size: 12px;
-    padding: 3px 8px;
-    border-radius: 4px;
-    transition: all 0.2s ease;
-    margin-left: 4px;
-}
-
-.list-action:hover {
-    background-color: #eaf2fc;
-    color: #2861c4;
-    text-decoration: none;
-}
-
-.list-action-danger {
-    color: #c9372c;
-}
-
-.list-action-danger:hover {
-    background-color: #fdecec;
-    color: #b02a20;
-}
-
-.empty-state {
-    text-align: center;
-    padding: 24px 16px;
-    color: #9ca3af;
-    border: 1px dashed #e7e8ea;
-    border-radius: 8px;
-    font-size: 14px;
-}
-
-.list-meta {
-    color: #6b7280;
-    font-size: 13px;
-    margin-left: 4px;
-}
-
-#campaignList ul {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-}
-
-#campaignList > ul > li {
-    padding: 12px 14px;
-    border: 1px solid #e7e8ea;
-    border-radius: 8px;
-    margin-bottom: 8px;
-    font-size: 14px;
-    color: #374151;
-    background: #fff;
-    font-weight: 600;
-}
-
-#campaignList > ul > li:hover {
-    border-color: #bcd4f6;
-    background: #fafbfc;
-}
-
-/* Nested campaign items */
-#campaignList ul ul {
-    margin-top: 8px;
-    padding-left: 0;
-}
-
-#campaignList ul ul li {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px;
-    padding: 10px 12px;
-    border-left: 3px solid #e7e8ea;
-    margin-left: 8px;
-    margin-bottom: 4px;
-    font-weight: 400;
-    background: #fafbfc;
-    border-radius: 0 6px 6px 0;
-}
-
-#campaignList ul ul li:hover {
-    border-left-color: #2f6fdd;
-    background: #eaf2fc;
-}
-
-/* Setup Button Styling */
-.setup-btn {
-    padding: 10px 20px;
-    font-weight: 500;
-    font-size: 14px;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s;
-}
-
-.setup-btn--primary {
-    background: #2f6fdd;
-    color: #fff;
-}
-
-.setup-btn--primary:hover {
-    box-shadow: 0 4px 12px rgba(47, 111, 221, 0.3);
-    transform: none;
-}
-
-.setup-btn--danger {
-    background: #c9372c;
-    color: #fff;
-}
-
-.setup-btn--danger:hover {
-    box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
-    transform: none;
-}
-
-.setup-btn--secondary {
-    background: #6b7280;
-    color: #fff;
-}
-
-.setup-btn--secondary:hover {
-    box-shadow: 0 4px 12px rgba(107, 114, 128, 0.3);
-    transform: none;
-}
-
-/* Setup Alert Styling */
-.setup-alert {
-    border-radius: 8px;
-    padding: 12px 16px;
-    margin-bottom: 15px;
-    border: 1px solid transparent;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
-.setup-alert--success,
-.alert-success {
-    background: #e7f5ec;
-    border-color: #e7f5ec;
-    color: #1d6c3a;
-}
-
-.setup-alert--danger,
-.alert-danger {
-    background: #fdecec;
-    border-color: #c9372c;
-    color: #b02a20;
-}
-
-.setup-alert--info {
-    background: #eaf2fc;
-    border-color: #bcd4f6;
-    color: #2861c4;
-}
-
-.setup-alert i,
-.alert i {
-    font-size: 16px;
-    flex-shrink: 0;
-}
-
-/* Form Labels */
-.setup-form label {
-    font-weight: 500;
-    font-size: 13px;
-    color: #32383f;
-    margin-bottom: 6px;
-}
-
-/* Help Text */
-.help-block {
-    font-size: 12px;
-    color: #6b7280;
-    margin-top: 4px;
-}
-
-/* Placeholders and Info Text */
-.infotext {
-    font-size: 13px;
-    color: #6b7280;
-    display: block;
-    margin-bottom: 8px;
-}
-
-/* Radio and Checkbox Styling */
-.radio label,
-.checkbox label {
-    font-weight: 400;
-    padding-left: 24px;
-    cursor: pointer;
-}
-
-.radio input,
-.checkbox input {
-    margin-left: -24px;
-    margin-top: 2px;
-}
-
-/* Form Separator */
-.form_seperator {
-    border-bottom: 2px solid #e7e8ea;
-}
-
-/* Button Groups in Forms */
-.setup-form .button-group {
-    display: flex;
-    gap: 10px;
-    margin-top: 20px;
-}
-
-.setup-form .button-group .btn {
-    flex: 1;
-}
-
-/* Responsive Design */
-@media (max-width: 768px) {
-    .setup-page-header {
-        flex-direction: column;
-        text-align: center;
-        padding: 20px 16px;
-    }
-
-    .setup-page-header__icon {
-        width: 48px;
-        height: 48px;
-    }
-
-    .setup-page-header__icon .glyphicon {
-        font-size: 20px;
-    }
-
-    .setup-page-header__title {
-        font-size: 20px;
-    }
-
-    .setup-page-header__subtitle {
-        font-size: 13px;
-    }
-
-    .setup-form .col-xs-4,
-    .setup-form .col-xs-6 {
-        width: 100%;
-        margin-bottom: 10px;
-    }
-
-    .setup-form .col-xs-offset-4 {
-        margin-left: 0;
-    }
-}
-</style>
-
+<?php echo p202_setup_script_tag($base); ?>
 <?php template_bottom(); ?>

@@ -27,11 +27,20 @@ if (!empty($user_row['p202_customer_api_key'])) {
 
 $json = @getData('https://my.tracking202.com/api/v2/premium-p202/version');
 $array = json_decode((string) $json, true);
-$latest_version = $array['version'];
-if (version_compare($version, $latest_version) == '-1') {
-	$update_needed = true;
-} else {
-	$update_needed = false;
+// An unreadable answer is "no update known", never an update to nothing.
+$latest_version = is_array($array) ? (string) ($array['version'] ?? '') : '';
+$update_needed = $latest_version !== '' && version_compare($version, $latest_version) == '-1';
+
+$installlog = '';
+$upgrade_done = false;
+$FilesUpdated = null;
+$time_from = '';
+$token_refused = false;
+
+if (($_POST['start_upgrade'] ?? '') === '1' && !hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+	// The classic page ignored a bad token in silence and showed the form
+	// again, which reads as "nothing happened, try again".
+	$token_refused = true;
 }
 
 if (($_POST['start_upgrade'] ?? '') === '1' && hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
@@ -40,7 +49,7 @@ if (($_POST['start_upgrade'] ?? '') === '1' && hash_equals((string) ($_SESSION['
 	$installlog = "Downloading new update...\n";
 	$checkError = json_decode((string) $GetUpdate, true);
 	if (json_last_error() == JSON_ERROR_NONE) {
-		$installlog .= $checkError['msg'] . "...\n";
+		$installlog .= (is_array($checkError) ? (string) ($checkError['msg'] ?? 'The download was refused') : 'The download was refused') . "...\n";
 		$FilesUpdated = false;
 		$GetUpdate = false;
 	}
@@ -155,156 +164,111 @@ if (($_POST['start_upgrade'] ?? '') === '1' && hash_equals((string) ($_SESSION['
 	}
 }
 
-if ($missing_api_key == true) {
-	info_top(); ?>
-	<div class="main col-xs-7 install">
-		<center><img src="<?php echo get_absolute_url(); ?>202-img/prosper202.png"></center>
-		<h6>1-Click Prosper202 Upgrade</h6>
-		<h4><?php echo $_SESSION['premium_p202_details']['headline']; ?></h4>
-		<small><?php echo $_SESSION['premium_p202_details']['body']; ?></small><br></br>
-		<small>Release date: <?php echo $_SESSION['premium_p202_details']['release-date']; ?></small>
-		<small>
-			<p style="color:red">Your Prosper202 Customer API key is missing.</p>
-		</small>
-		<small>
-			<p>Sign up at Prosper202 Customer Dashboard and fill out your billing information!</p>
-		</small>
-		<small>
-			<p>Save P202 Customer API key at Personal Settings!</p>
-		</small>
-		<a style="margin-right:5px;" href="<?php echo $_SESSION['premium_p202_details']['register-link']; ?>" target="_blank" class="btn btn-sm btn-p202"><?php echo $_SESSION['premium_p202_details']['register-button-text']; ?></a>
-		<br><br />
-		<div class="row" style="margin-bottom: 10px;">
-			<div class="col-xs-3"><span class="label label-default">Current version:</span></div>
-			<div class="col-xs-9"><span class="label label-primary"><?php echo $version; ?></span></div>
-		</div>
-		<div class="row">
-			<div class="col-xs-3"><span class="label label-default">Latest Version:</span></div>
-			<div class="col-xs-9"><span class="label label-primary"><?php echo $latest_version; ?></span></div>
-		</div>
+$e = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
+/** The premium offer's words come from the Prosper202 service; they are shown as text. */
+$details = is_array($_SESSION['premium_p202_details'] ?? null) ? $_SESSION['premium_p202_details'] : [];
+$detail = static fn (string $key): string => trim(strip_tags((string) ($details[$key] ?? '')));
+$submitted = ($_POST['start_upgrade'] ?? '') === '1';
 
-		<div class="row">
-			<div class="col-xs-12">
-				<br />
-				<small>Changelogs:</small>
-				<div class="panel-group" id="changelog_accordion" style="margin-top:10px;">
-					<?php $change_logs = changelogPremium();
-					foreach ($change_logs as $key => $logs) { ?>
-						<div class="panel panel-default">
-							<div class="panel-heading" style="padding: 5px 5px;">
-								<a data-toggle="collapse" data-parent="#changelog_accordion" href="#release_<?php echo str_replace('.', '', $key); ?>">
-									<h4 class="panel-title" style="font-size: 14px;">
-										v<?php echo $key; ?>
-									</h4>
-								</a>
-							</div>
-							<div id="release_<?php echo str_replace('.', '', $key); ?>" class="panel-collapse collapse">
-								<div class="panel-body">
-									<ul id="list">
-										<?php foreach ($logs as $log) { ?>
-											<li>
-												<?php echo $log; ?>
-											</li>
-										<?php } ?>
-									</ul>
-								</div>
-							</div>
-						</div>
-					<?php } ?>
-				</div>
-			</div>
+template_top('1-Click Upgrade', ['ui' => 'v2']);
+?>
+
+<div class="p202-page-header">
+	<div class="p202-page-header__icon"><i class="bi bi-stars"></i></div>
+	<div class="p202-page-header__text">
+		<h1 class="p202-page-header__title"><?php echo $detail('headline') !== '' ? $e($detail('headline')) : '1-click upgrade'; ?></h1>
+		<p class="p202-page-header__desc"><?php echo $detail('body') !== '' ? $e($detail('body')) : 'Upgrade this install to the latest Prosper202 in place.'; ?></p>
+	</div>
+</div>
+
+<?php if ($token_refused) {
+	echo p202_flash('bad', 'This form expired or did not come from this page, so nothing was upgraded. Reload the page and try again.');
+} ?>
+
+<?php if ($missing_api_key == true) { ?>
+	<div class="p202-empty mb-4">
+		<i class="bi bi-key p202-empty__icon"></i>
+		<strong class="p202-empty__title">Your Prosper202 customer API key is missing</strong>
+		<div>Sign up at the Prosper202 customer dashboard, add your billing information, then save the key in Personal settings.</div>
+		<div class="p202-empty__action">
+			<?php if ($detail('register-link') !== '') { ?>
+				<a class="btn btn-secondary btn-sm" href="<?php echo $e($detail('register-link')); ?>" target="_blank" rel="noopener"><?php echo $e($detail('register-button-text') !== '' ? $detail('register-button-text') : 'Sign up'); ?></a>
+			<?php } ?>
+			<a class="btn btn-primary btn-sm" href="<?php echo $e(get_absolute_url() . '202-account/account.php#customer-key'); ?>">Save the key</a>
 		</div>
 	</div>
-<?php } else if ($update_needed == true) {
-	info_top();
+<?php } elseif ($update_needed != true) { ?>
+	<div class="p202-empty">
+		<i class="bi bi-check2-circle p202-empty__icon"></i>
+		<strong class="p202-empty__title">Already upgraded</strong>
+		<div>Your Prosper202 version <?php echo $e($version); ?> is the latest.</div>
+		<div class="p202-empty__action"><a class="btn btn-secondary btn-sm" href="<?php echo $e(get_absolute_url() . '202-account/'); ?>">Back to Home</a></div>
+	</div>
+<?php } elseif (!function_exists('zip_open')) { ?>
+	<?php echo p202_flash('bad', 'PHP zip module missing. The 1-click upgrade needs PHP compiled with zip support (the --enable-zip configure option); upgrade manually until it is.'); ?>
+<?php } ?>
 
-	if (!function_exists('zip_open')) {
-		_die("<h6>PHP Zip module missing</h6>
-			<small>In order to use 1-Click upgrade functions you must compile PHP with zip support by using the --enable-zip configure option. <a href=\"http://www.php.net/manual/en/book.zip.php\" target=\"_blank\">More info you can find here.</a></small>");
-	} ?>
+<?php if ($missing_api_key == true || ($update_needed == true && function_exists('zip_open'))) { ?>
+	<div class="row g-4">
+		<?php if ($missing_api_key != true) { ?>
+			<div class="col-12 col-lg-7">
+				<section class="p202-panel">
+					<div class="p202-panel__head">
+						<h2 class="p202-panel__title">Prosper202 <?php echo $e($latest_version); ?> is available</h2>
+						<span class="p202-pill">you have <?php echo $e($version); ?></span>
+					</div>
+					<div class="p202-panel__body">
+						<?php if ($detail('release-date') !== '') { ?>
+							<p class="form-text mt-0">Released <?php echo $e($detail('release-date')); ?>.</p>
+						<?php } ?>
+						<?php if ($submitted && !$token_refused) { ?>
+							<label class="form-label" for="upgrade-log">What happened</label>
+							<textarea id="upgrade-log" rows="8" class="form-control font-monospace mb-3" readonly><?php echo $e($installlog); ?></textarea>
+						<?php } ?>
 
-	<div class="main col-xs-7 install">
-		<center><img src="<?php echo get_absolute_url(); ?>202-img/prosper202.png"></center>
-		<h6>1-Click Prosper202 Upgrade</h6>
-		<h4><?php echo $_SESSION['premium_p202_details']['headline']; ?></h4>
-		<small><?php echo $_SESSION['premium_p202_details']['body']; ?></small><br></br>
-		<small>Release date: <?php echo $_SESSION['premium_p202_details']['release-date']; ?></small>
-		<br><br />
-		<div class="row" style="margin-bottom: 10px;">
-			<div class="col-xs-3"><span class="label label-default">Current version:</span></div>
-			<div class="col-xs-9"><span class="label label-primary"><?php echo $version; ?></span></div>
-		</div>
-		<div class="row">
-			<div class="col-xs-3"><span class="label label-default">Latest Version:</span></div>
-			<div class="col-xs-9"><span class="label label-primary"><?php echo $latest_version; ?></span></div>
-		</div>
-
-		<div class="row">
-			<div class="col-xs-12">
-				<br />
-				<small>Changelogs:</small>
-				<div class="panel-group" id="changelog_accordion" style="margin-top:10px;">
-					<?php $change_logs = changelogPremium();
-					foreach ($change_logs as $key => $logs) { ?>
-						<div class="panel panel-default">
-							<div class="panel-heading" style="padding: 5px 5px;">
-								<a data-toggle="collapse" data-parent="#changelog_accordion" href="#release_<?php echo str_replace('.', '', $key); ?>">
-									<h4 class="panel-title" style="font-size: 14px;">
-										v<?php echo $key; ?>
-									</h4>
-								</a>
-							</div>
-							<div id="release_<?php echo str_replace('.', '', $key); ?>" class="panel-collapse collapse">
-								<div class="panel-body">
-									<ul id="list">
-										<?php foreach ($logs as $log) { ?>
-											<li>
-												<?php echo $log; ?>
-											</li>
-										<?php } ?>
-									</ul>
+						<?php if ($upgrade_done !== true && !($submitted && !$token_refused && $FilesUpdated === false)) { ?>
+							<form method="post" action="">
+								<input type="hidden" name="start_upgrade" value="1">
+								<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
+								<?php echo p202_flash('warn', 'Back up your database before upgrading, and make sure PHP can write to the install directory.'); ?>
+								<div class="p202-form-actions">
+									<button class="btn btn-primary" type="submit"><?php echo $e($detail('order-button-text') !== '' ? $detail('order-button-text') : 'Upgrade Prosper202'); ?></button>
 								</div>
+							</form>
+						<?php } elseif ($upgrade_done === true) { ?>
+							<?php echo p202_flash('ok', 'Prosper202 has been upgraded. Sign in again to use the new version.'); ?>
+							<a class="btn btn-primary" href="<?php echo $e(get_absolute_url() . '202-account/signout.php'); ?>">Sign in again</a>
+						<?php } else { ?>
+							<?php echo p202_flash('bad', 'Prosper202 was unable to upgrade. Make sure PHP has permission to change files; your old version keeps working.'); ?>
+							<div class="p202-toolbar">
+								<a class="btn btn-secondary" href="http://support.tracking202.com" target="_blank" rel="noopener">Get help</a>
+								<a class="btn btn-secondary" href="<?php echo $e(get_absolute_url() . '202-account/signout.php'); ?>">Continue with the old version</a>
 							</div>
-						</div>
+						<?php } ?>
+					</div>
+				</section>
+			</div>
+		<?php } ?>
+		<div class="col-12 col-lg-5">
+			<section class="p202-panel">
+				<div class="p202-panel__head"><h2 class="p202-panel__title">What changed</h2></div>
+				<div class="p202-panel__body">
+					<?php foreach (changelogPremium() as $key => $logs) { ?>
+						<details class="p202-disclosure mb-2">
+							<summary>v<?php echo $e($key); ?></summary>
+							<div class="p202-disclosure__body">
+								<ul class="mb-0">
+									<?php foreach ($logs as $entry) { ?>
+										<li><?php echo $e($entry); ?></li>
+									<?php } ?>
+								</ul>
+							</div>
+						</details>
 					<?php } ?>
 				</div>
-			</div>
+			</section>
 		</div>
-
-		<?php if (($_POST['start_upgrade'] ?? '') === '1') { ?>
-			<br>
-			<textarea rows="8" class="form-control install_logs"><?php echo $installlog; ?></textarea>
-		<?php }
-
-		if ($upgrade_done !== true) { ?>
-			<br>
-			<form method="post" action="" class="form-inline">
-				<input type="hidden" name="start_upgrade" value="1" />
-				<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>" />
-				<button class="btn btn-lg btn-p202 btn-block" type="submit"><?php echo $_SESSION['premium_p202_details']['order-button-text']; ?></span></button>
-			</form>
-			<br>
-			<span class="infotext"><i>We highly recommended you make a backup of your database, before upgrading.<br>
-					Also make sure PHP has write permissions.</i></span>
-		<?php } else  
-if ($FilesUpdated == true) {
-		?>
-			<h6>Success!</h6>
-			<small>Prosper202 has been upgraded! You can now <a href="<?php echo get_absolute_url(); ?>202-account/signout.php">Log In</a>.</small>
-		<?php
-		} else {
-		?>
-			<h6>Upgrade Failed!</h6>
-			<small>Prosper202 was unable to upgrade. Please make sure PHP hase the correct permissions to modifiy files. For help <a href="http://support.tracking202.com">check our support site</a>. You can continue using <a href="<?php echo get_absolute_url(); ?>202-account/signout.php">your old version</a>.</small>
-		<?php
-
-		}
-		?>
 	</div>
-<?php  }
-if ($update_needed != true) {
-	_die("<h6>Already Upgraded</h6>
-			<small>Your Prosper202 version $version is already upgraded.</small> <a href='./'> Log In Again</a>");
-}
+<?php } ?>
 
-info_bottom(); ?>
+<?php template_bottom();

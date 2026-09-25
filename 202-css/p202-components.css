@@ -9,7 +9,8 @@
  *   .p202-panel         a titled card with a count and a filter slot
  *   .p202-tile          a KPI tile (label, number, sub-line, tone)
  *   .p202-pill          a status pill in five tones
- *   .p202-table         the report table (uppercase headers, totals row)
+ *   .p202-table         the report table (uppercase headers, totals row);
+ *                       .p202-sort is a sortable column's header button
  *   .p202-list          the side-panel list (name, pills, actions, children)
  *   .p202-empty         an empty state with one next action
  *   .p202-code          a read-only code box with a Copy button
@@ -360,6 +361,50 @@ a.p202-pill:focus-visible {
 
 .p202-table__link-row {
     cursor: pointer;
+}
+
+/* A sortable column's header (p202_data_table(), sortable). The label is a
+   button so the sort is reachable from the keyboard; tablesort.js listens on
+   the <th>, which the click reaches by bubbling. The arrow says the order
+   from aria-sort, which p202-ui.js keeps in step with the rows. Inline, not
+   flex: a flex label would drop the spaces in a multi-word heading. */
+.p202-sort {
+    display: inline;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    cursor: pointer;
+}
+
+.p202-sort::after {
+    content: "\2195";
+    display: inline-block;
+    margin-left: 0.3em;
+    opacity: 0.35;
+}
+
+.p202-table th[aria-sort="ascending"] > .p202-sort::after {
+    content: "\2191";
+    opacity: 1;
+}
+
+.p202-table th[aria-sort="descending"] > .p202-sort::after {
+    content: "\2193";
+    opacity: 1;
+}
+
+.p202-table th[aria-sort] {
+    color: var(--bs-body-color);
+}
+
+.p202-sort:focus-visible {
+    outline: none;
+    border-radius: 4px;
+    box-shadow: 0 0 0 0.2rem var(--bs-focus-ring-color);
 }
 
 .p202-table-toolbar {
@@ -798,4 +843,114 @@ a.p202-pill:focus-visible {
     .p202-form-actions .btn {
         flex: 1 1 auto;
     }
+}
+
+/* U6: Account ------------------------------------------------------------ */
+
+/* A document rendered from Markdown (202-account/docs.php): the renderer's
+   own elements, set in the theme's tokens so the page reads in both themes.
+   The classic page hard-coded #333 text on white. */
+.p202-doc {
+    max-width: 60rem;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
+}
+
+.p202-doc h1,
+.p202-doc h2,
+.p202-doc h3 {
+    margin: 1.75rem 0 0.75rem;
+    font-weight: 700;
+    color: var(--bs-body-color);
+}
+
+.p202-doc h1 {
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid var(--p202-accent);
+    font-size: 1.5rem;
+}
+
+.p202-doc h2 {
+    padding-left: 0.6rem;
+    border-left: 4px solid var(--p202-accent);
+    font-size: 1.25rem;
+}
+
+.p202-doc h3 {
+    font-size: 1.05rem;
+}
+
+.p202-doc > :first-child {
+    margin-top: 0;
+}
+
+.p202-doc pre {
+    padding: 0.85rem 1rem;
+    overflow-x: auto;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 8px;
+    background: var(--bs-secondary-bg);
+}
+
+/* A wide table scrolls inside its own box rather than taking the page. */
+.p202-doc .doc-table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    margin: 1rem 0 1.5rem;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+.p202-doc .doc-table th,
+.p202-doc .doc-table td {
+    padding: 0.5rem 0.65rem;
+    border: 1px solid var(--bs-border-color);
+    text-align: left;
+    vertical-align: top;
+}
+
+.p202-doc .doc-table th {
+    background: var(--bs-secondary-bg);
+    font-weight: 700;
+}
+
+/* U4: Setup ---------------------------------------------------------------
+   A many-line snippet (a landing page's redirect script, the universal
+   pixel) scrolls inside its own box rather than pushing the next snippet
+   off the screen. The kit shows it under "Code & strip". */
+
+.p202-code__value--long {
+    max-height: 18rem;
+    overflow-y: auto;
+}
+
+/* A radio group's <legend> is its label: Bootstrap's reboot sizes a legend
+   like a heading, so one styled as a label came out twice the size of the
+   labels around it ("Send visitors to", "Cost" on Get Links). */
+legend.form-label {
+    font-size: inherit;
+    line-height: inherit;
+}
+
+/* U3: Analyze */
+
+/* A server-sorted column's heading (p202_data_table(), `href`): a link that
+   looks like the sort button it stands in for. */
+a.p202-sort {
+    text-decoration: none;
+}
+
+a.p202-sort:hover {
+    color: var(--bs-body-color);
+}
+
+/* A group heading inside a report table: the custom-variable report's
+   "traffic source · variable" rows, each over the values under it. */
+.p202-table > tbody > tr.p202-table__group > th {
+    padding: 0.5rem 0.7rem;
+    border-top: 1px solid var(--p202-line-strong);
+    background: var(--bs-tertiary-bg);
+    font-size: 0.8125rem;
+    font-weight: 700;
 }

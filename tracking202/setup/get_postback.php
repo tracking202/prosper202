@@ -9,964 +9,146 @@ if (!$userObj->hasPermission("access_to_setup_section")) {
 	die();
 }
 
-template_top('Pixel And Postback URLs');
+require_once __DIR__ . '/_includes/setup_ui.php';
+
+/*
+ * Setup › Postback / Pixel: the conversion pixels and postback URLs, built
+ * in the browser from three choices (p202-setup.js, "postback builder").
+ * Nothing here posts. The page renders every snippet for the defaults, so it
+ * is complete without its script; the script only rewrites them as the
+ * amount, sub id, campaign or protocol change.
+ *
+ * The protocol is decided, not asked (UI standard, rule 3): HTTPS when this
+ * page was served over HTTPS, since the tracking domain is this install's.
+ * The choice stays under Advanced for an install whose tracking domain
+ * answers differently.
+ */
+
+$base = get_absolute_url();
+$domain = getTrackingDomain();
+$secure = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off')
+	|| strtolower((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https';
+$scheme = $secure ? 'https' : 'http';
+$campaignOptions = p202_setup_campaign_options($db, (int) $_SESSION['user_id']);
+
+/** The snippets for the defaults: no amount, no campaign, no sub id. */
+$root = $scheme . '://' . $domain . $base . 'tracking202/static/';
+$snippets = [
+	'simple_pixel' => '<img height="1" width="1" border="0" style="display: none;" src="' . $root . 'gpx.php?amount=&subid=" />',
+	'simple_postback' => $root . 'gpb.php?amount=&subid=',
+	'advanced_pixel' => '<img height="1" width="1" border="0" style="display: none;" src="' . $root . 'gpx.php?amount=&cid=&subid=" />',
+	'advanced_postback' => $root . 'gpb.php?amount=&cid=&subid=',
+	'universal_js' => "<script>\n var vars202={amount:\"\",cid:\"\",subid:\"\"};(function(d, s) {\n \tvar js, upxf = d.getElementsByTagName(s)[0], load = function(url, id) {\n \t\tif (d.getElementById(id)) {return;}\n \t\tif202 = d.createElement(\"iframe\");if202.src = url;if202.id = id;if202.height = 1;if202.width = 0;if202.frameBorder = 1;if202.scrolling = \"no\";if202.noResize = true;\n \t\tupxf.parentNode.insertBefore(if202, upxf);\n \t};\n \tload(\"" . $root . "upx.php?amount=\"+vars202['amount']+\"&cid=\"+vars202['cid']+\"&subid=\"+vars202['subid'], \"upxif\");\n }(document, \"script\"));</script>\n<noscript>\n \t<iframe height=\"1\" width=\"1\" border=\"0\" style=\"display: none;\" frameborder=\"0\" scrolling=\"no\" src=\"" . $root . "upx.php?amount=&cid=&subid=\" seamless></iframe>\n</noscript>",
+	'universal_iframe' => '<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="' . $root . 'upx.php?amount=&subid=" seamless></iframe>',
+];
+
+template_top('Pixel And Postback URLs', ['ui' => 'v2']);
 ?>
-<?php
 
-//the pixels
-$unSecuredPixel = '<img height="1" width="1" border="0" style="display: none;" src="http://'. getTrackingDomain() .get_absolute_url().'tracking202/static/gpx.php?amount=&subid=" />';
-$unSecuredPixel_2 = '<img height="1" width="1" border="0" style="display: none;" src="http://'. getTrackingDomain() .get_absolute_url().'tracking202/static/gpx.php?amount=&cid=&subid=" />';
-
-//post back urls
-$unSecuredPostBackUrl = 'http://'. getTrackingDomain() .get_absolute_url().'tracking202/static/gpb.php?amount=&subid=';
-$unSecuredPostBackUrl_2 = 'http://'. getTrackingDomain() .get_absolute_url().'tracking202/static/gpb.php?amount=&subid=';
-
-//universal pixel
-$unSecuredUniversalPixel = '<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="http://'. getTrackingDomain() .get_absolute_url().'tracking202/static/upx.php?amount=&subid=" seamless></iframe>';
-
-$unSecuredUniversalPixelJS = '
-<script>
- var vars202={amount:"",cid:"",subid:""};(function(d, s) {
- 	var js, upxf = d.getElementsByTagName(s)[0], load = function(url, id) {
- 		if (d.getElementById(id)) {return;}
- 		if202 = d.createElement("iframe");if202.src = url;if202.id = id;if202.height = 1;if202.width = 0;if202.frameBorder = 1;if202.scrolling = "no";if202.noResize = true;
- 		upxf.parentNode.insertBefore(if202, upxf);
- 	};
- 	load("http://'. getTrackingDomain() .get_absolute_url().'tracking202/static/upx.php?amount="+vars202[\'amount\']+"&cid="+vars202[\'cid\']+"&subid="+vars202[\'subid\'], "upxif");
- }(document, "script"));</script>
-<noscript>
- 	<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="http://'. getTrackingDomain() .get_absolute_url().'tracking202/static/upx.php?amount=&cid=&subid=" seamless></iframe>
-</noscript>';
-
-?>
-
-<!-- Page Header - Design System -->
-<div class="postback-page">
-<div class="row" style="margin-bottom: 28px;">
-	<div class="col-xs-12">
-		<div class="setup-page-header">
-			<div class="setup-page-header__icon">
-				<span class="glyphicon glyphicon-transfer"></span>
-			</div>
-			<div class="setup-page-header__text">
-				<h1 class="setup-page-header__title">Postback / Pixel</h1>
-				<p class="setup-page-header__subtitle">Configure conversion tracking for your affiliate networks</p>
-			</div>
-		</div>
+<div class="p202-page-header p202-page-header--accent">
+	<div class="p202-page-header__icon"><i class="bi bi-arrow-left-right"></i></div>
+	<div class="p202-page-header__text">
+		<h1 class="p202-page-header__title">Postback / Pixel</h1>
+		<p class="p202-page-header__desc">Report conversions back to Prosper202: a pixel on the thank-you page, or a postback URL the network calls.</p>
 	</div>
 </div>
 
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<div class="alert alert-info">
-			<i class="fa fa-info-circle"></i>
-			<strong>How it works:</strong> Place conversion pixels on advertiser pages to automatically track conversions in real-time. 
-			Postback URLs enable server-to-server tracking with supported networks. 
-			<a href="#" data-toggle="tooltip" title="Learn more about pixel implementation">
-				<i class="fa fa-question-circle"></i>
-			</a>
-		</div>
-	</div>
-</div>	
-
-<div class="row form_seperator" style="margin-bottom:15px;">
-	<div class="col-xs-12"></div>
-</div>
-
-<div class="row">
-	<div class="col-xs-12">
-		<form method="post" id="tracking_form" class="form-horizontal" role="form" style="margin:0px 0px 15px 0px;">
-			<div class="form-group" style="margin-bottom: 0px;" id="pixel-type">
-				<label class="col-md-3 control-label" style="text-align: left;"><i class="fa fa-crosshairs"></i> Pixel Type:</label>
-
-				<div class="col-md-9 radio-group" style="margin-top: 15px;">
-					<div class="radio-option active">
-						<label class="radio">
-	            			<input type="radio" name="pixel_type" value="0" data-toggle="radio" checked="">
-	            			<span class="radio-title">Simple Pixel</span>
-	            			<div class="help-text">Basic tracking - one click tracked at a time. Perfect for simple campaigns.</div>
-	          			</label>
-					</div>
-	          		<div class="radio-option">
-	          			<label class="radio">
-	            			<input type="radio" name="pixel_type" value="1" data-toggle="radio">
-	            			<span class="radio-title">Advanced Pixel</span>
-	            			<div class="help-text">Multi-click tracking - handle multiple simultaneous clicks with campaign-specific targeting.</div>
-	          			</label>
-					</div>
-	          		<div class="radio-option">
-	          			<label class="radio">
-	            			<input type="radio" name="pixel_type" value="2" data-toggle="radio">
-	            			<span class="radio-title">Universal Smart Pixel</span>
-	            			<div class="help-text">Intelligent tracking - automatically fires 3rd party pixels and optimizes conversion attribution.</div>
-	          			</label>
-					</div>
-	          	</div>
-	        </div>
-
-	        <div class="form-group" style="margin-bottom: 0px;" id="secure-pixels">
-				<label class="col-md-3 control-label" style="text-align: left;"><i class="fa fa-shield"></i> Protocol:</label>
-
-				<div class="col-md-9" style="margin-top: 15px;">
-					<div class="row">
-						<div class="col-md-6">
-							<label class="radio">
-		            			<input type="radio" name="secure_type" value="0" data-toggle="radio" checked="">
-		            				<i class="fa fa-unlock text-warning"></i> HTTP <span class="label label-default">http://</span>
-		          			</label>
-						</div>
-
-						<div class="col-md-6">
-							<label class="radio">
-			            		<input type="radio" name="secure_type" value="1" data-toggle="radio">
-			            			<i class="fa fa-lock text-success"></i> HTTPS <span class="label label-success">https://</span>
-			          		</label>
-						</div>
-					</div>
-					<small class="help-block">Use HTTPS only if you have SSL certificates installed on your tracking domain.</small>
-	          	</div>
-	        </div>
-
-	        <div class="form-group" style="margin-bottom: 0px;">
-				<label class="col-md-3 control-label" for="amount_value" style="text-align: left;">Amount:</label>
-				<div class="col-md-6" style="margin-top: 10px;">
-					<input class="form-control input-sm" type="text" name="amount_value" id="amount_value"/>
-					<span class="help-block" style="font-size: 10px;">Enter an amount to override the affiliate campaign default</span>
-				</div>
+<div class="row g-4" data-postback-builder data-root-path="<?php echo p202_setup_e($domain . $base . 'tracking202/static/'); ?>">
+	<div class="col-12 col-lg-5">
+		<section class="p202-panel">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">Your pixel</h2>
+				<p class="p202-panel__sub">The simple pixel suits most campaigns.</p>
 			</div>
-
-			<div id="advanced_pixel_type" style="display:none;">
-				<div class="form-group" style="margin-bottom: 0px;">
-			        <label for="aff_network_id" class="col-md-3 control-label" style="text-align: left;">Category:</label>
-			        <div class="col-md-6" style="margin-top: 10px;">
-			        	<img id="aff_network_id_div_loading" src="/202-img/loader-small.gif" />
-						<div id="aff_network_id_div"></div>
-			        </div>
-			    </div>
-			    <div class="form-group" style="margin-bottom: 0px;">
-			        <label for="aff_campaign_id" class="col-md-3 control-label" style="text-align: left;">Campaign:</label>
-			        <div class="col-md-6" style="margin-top: 10px;">
-			        	<img id="aff_campaign_id_div_loading" src="/202-img/loader-small.gif" style="display: none;" />
-						<div id="aff_campaign_id_div">
-							<select class="form-control input-sm" id="aff_campaign_id" disabled="">
-			                	<option>--</option>
-			            	</select>
+			<div class="p202-panel__body">
+				<form id="tracking_form" onsubmit="return false;">
+					<fieldset class="mb-3" id="pixel-type">
+						<legend class="form-label">Pixel type</legend>
+						<div class="form-check">
+							<input class="form-check-input" type="radio" name="pixel_type" id="pixel_type0" value="0" checked>
+							<label class="form-check-label" for="pixel_type0">Simple: one click tracked at a time</label>
 						</div>
-			        </div>
-			    </div>
+						<div class="form-check">
+							<input class="form-check-input" type="radio" name="pixel_type" id="pixel_type1" value="1">
+							<label class="form-check-label" for="pixel_type1">Advanced: several clicks at once, per campaign</label>
+						</div>
+						<div class="form-check">
+							<input class="form-check-input" type="radio" name="pixel_type" id="pixel_type2" value="2">
+							<label class="form-check-label" for="pixel_type2">Universal smart pixel: also fires your traffic sources' pixels</label>
+						</div>
+					</fieldset>
 
-		    </div>
-		    					<div class="form-group">
-						<label class="col-md-3 control-label" for="subid_value" style="text-align: left;"><i class="fa fa-tag"></i> SubID:</label>
-						<div class="col-md-4">
-							<input class="form-control" type="text" name="subid_value" id="subid_value" placeholder="{aff_sub}"/>
-							<p class="help-block">Network-specific subID parameter. Common formats:</p>
-							<div class="subid-examples">
-								<span class="label label-info">%subid1%</span>
-								<span class="label label-info">#s1#</span>
-								<span class="label label-info">{aff_sub}</span>
+					<div class="mb-3" data-p202-show-when="pixel_type=1" hidden>
+						<label class="form-label" for="aff_campaign_id">Campaign</label>
+						<select class="form-select" id="aff_campaign_id" name="aff_campaign_id">
+							<?php echo p202_setup_options($campaignOptions, null, 'Choose a campaign', ''); ?>
+						</select>
+						<div class="form-text">Fills the <code>cid</code> the advanced pixel reports under.</div>
+					</div>
+
+					<div class="mb-3">
+						<label class="form-label" for="subid_value">Sub id placeholder</label>
+						<input class="form-control" type="text" name="subid_value" id="subid_value" placeholder="{aff_sub}" list="subid-formats">
+						<datalist id="subid-formats"><option value="{aff_sub}">HasOffers</option><option value="#s2#">Cake</option><option value="xxC1xx">HitPath</option><option value="[=SID=]">LinkTrust</option><option value="%subid1%"></option><option value="#s1#"></option></datalist>
+						<div class="form-text">Your network's token for the sub id, such as <code>{aff_sub}</code> or <code>#s1#</code>; empty leaves <code>subid=</code> for you to fill.</div>
+					</div>
+
+					<details class="p202-disclosure" data-p202-remember="setup-postback-advanced">
+						<summary>Advanced <span class="p202-disclosure__hint">amount, protocol</span></summary>
+						<div class="p202-disclosure__body">
+							<div class="mb-3">
+								<label class="form-label" for="amount_value">Amount</label>
+								<input class="form-control" type="text" inputmode="decimal" name="amount_value" id="amount_value">
+								<div class="form-text">Empty by default, so each conversion pays the campaign's payout. An amount here overrides it.</div>
 							</div>
+							<fieldset id="secure-pixels">
+								<legend class="form-label">Protocol</legend>
+								<div class="form-check form-check-inline">
+									<input class="form-check-input" type="radio" name="secure_type" id="secure_type0" value="0"<?php echo $secure ? '' : ' checked'; ?>>
+									<label class="form-check-label" for="secure_type0">http://</label>
+								</div>
+								<div class="form-check form-check-inline">
+									<input class="form-check-input" type="radio" name="secure_type" id="secure_type1" value="1"<?php echo $secure ? ' checked' : ''; ?>>
+									<label class="form-check-label" for="secure_type1">https://</label>
+								</div>
+								<div class="form-text">Use https:// only when your tracking domain has a certificate.</div>
+							</fieldset>
 						</div>
-					</div>
-			
-		</form>
+					</details>
+					<p class="p202-decided mt-2 mb-0"><i class="bi bi-check2-circle"></i> <span data-postback-decided><?php echo $secure ? 'Links use https://, because this page was served over HTTPS.' : 'Links use http://, because this page was served over HTTP.'; ?></span> <a href="#secure-pixels" data-postback-change>change</a></p>
+				</form>
+			</div>
+		</section>
+	</div>
+
+	<div class="col-12 col-lg-7">
+		<section class="p202-panel" data-p202-show-when="pixel_type=0">
+			<div class="p202-panel__head"><h2 class="p202-panel__title">Simple pixel and postback</h2></div>
+			<div class="p202-panel__body">
+				<p>Put the pixel on your conversion or thank-you page. It records the conversion whenever it loads.</p>
+				<?php echo p202_setup_code_box($snippets['simple_pixel'], ['label' => 'Global tracking pixel', 'id' => 'unsecure_pixel']); ?>
+				<p>Or give the network this postback URL for server-to-server tracking: it calls it with the sub id when a conversion happens. If the network only supports <code>sid</code>, change <code>?subid=</code> to <code>?sid=</code>.</p>
+				<?php echo p202_setup_code_box($snippets['simple_postback'], ['label' => 'Global postback URL', 'id' => 'unsecure_postback']); ?>
+			</div>
+		</section>
+		<section class="p202-panel" data-p202-show-when="pixel_type=1" hidden>
+			<div class="p202-panel__head"><h2 class="p202-panel__title">Advanced pixel and postback</h2></div>
+			<div class="p202-panel__body">
+				<p>For several clicks at once: the campaign you choose fills <code>cid</code>, so each conversion lands on its own campaign.</p>
+				<?php echo p202_setup_code_box($snippets['advanced_pixel'], ['label' => 'Advanced global tracking pixel', 'id' => 'unsecure_pixel_2']); ?>
+				<?php echo p202_setup_code_box($snippets['advanced_postback'], ['label' => 'Advanced global postback URL', 'id' => 'unsecure_postback_2']); ?>
+			</div>
+		</section>
+		<section class="p202-panel" data-p202-show-when="pixel_type=2" hidden>
+			<div class="p202-panel__head"><h2 class="p202-panel__title">Universal smart pixel</h2></div>
+			<div class="p202-panel__body">
+				<p>Records the conversion and fires your traffic sources' pixels too. The JavaScript version carries a fallback for browsers without JavaScript.</p>
+				<?php echo p202_setup_code_box($snippets['universal_js'], ['label' => 'JavaScript universal smart pixel', 'id' => 'unsecure_universal_pixel_js', 'long' => true]); ?>
+				<?php echo p202_setup_code_box($snippets['universal_iframe'], ['label' => 'Iframe universal smart pixel', 'id' => 'unsecure_universal_pixel']); ?>
+			</div>
+		</section>
 	</div>
 </div>
 
-	<div class="row form_seperator" style="margin-bottom:15px;">
-		<div class="col-xs-12"></div>
-	</div>
-<div class="row">
-	<div class="col-xs-12">
-		<?php
-
-		printf('
-			<div id="pixel_type_simple_id" class="tracking-output">
-				<div class="panel panel-default setup-side-panel">
-					<div class="panel-heading">
-						<h3 class="panel-title">
-							<i class="fa fa-image"></i> Simple Global Tracking Pixel
-						</h3>
-					</div>
-					<div class="panel-body">
-						<div class="alert alert-info">
-							<i class="fa fa-info-circle"></i> Place this pixel on your conversion/thank you page. It will automatically track conversions when fired.
-						</div>
-						
-						<div class="code-wrapper">
-							<div class="input-group">
-								<textarea id="unsecure_pixel" class="form-control code-textarea" rows="2" readonly>%s</textarea>
-								<span class="input-group-btn">
-									<button class="btn btn-primary copy-btn" type="button" data-target="unsecure_pixel" data-toggle="tooltip" title="Copy to clipboard">
-										<i class="fa fa-copy"></i> Copy
-									</button>
-								</span>
-							</div>
-						</div>
-					</div>
-				</div>
-				<div class="panel panel-default setup-side-panel">
-					<div class="panel-heading">
-						<h3 class="panel-title">
-							<i class="fa fa-link"></i> Simple Global Post Back URL
-						</h3>
-					</div>
-					<div class="panel-body">
-						<div class="alert alert-info">
-							<i class="fa fa-info-circle"></i> For server-to-server tracking. The network calls this URL with the SUBID parameter when conversions occur.
-							<br><small><strong>Tip:</strong> Replace <code>?subid=</code> with <code>?sid=</code> if your network only supports the sid parameter.</small>
-						</div>
-						
-						<div class="code-wrapper">
-							<div class="input-group">
-								<textarea id="unsecure_postback" class="form-control code-textarea" rows="2" readonly>%s</textarea>
-								<span class="input-group-btn">
-									<button class="btn btn-primary copy-btn" type="button" data-target="unsecure_postback" data-toggle="tooltip" title="Copy to clipboard">
-										<i class="fa fa-copy"></i> Copy
-									</button>
-								</span>
-							</div>
-						</div>
-					</div>
-				</div>
-			</div>
-', $unSecuredPixel, $unSecuredPostBackUrl
-		);
-
-		printf('
-<div id="pixel_type_advanced_id" style="display:none;">
-	<div class="panel panel-default setup-side-panel">
-		<div class="panel-heading">
-			<h3 class="panel-title">
-				<i class="fa fa-cogs"></i> Advanced Global Tracking Pixel
-			</h3>
-		</div>
-		<div class="panel-body">
-			<div class="alert alert-success">
-				<i class="fa fa-check-circle"></i> Advanced pixel supports campaign-specific tracking and multiple simultaneous clicks.
-			</div>
-			
-			<div class="code-wrapper">
-				<div class="input-group">
-					<textarea id="unsecure_pixel_2" class="form-control code-textarea" rows="2" readonly>%s</textarea>
-					<span class="input-group-btn">
-						<button class="btn btn-primary copy-btn" type="button" data-target="unsecure_pixel_2" data-toggle="tooltip" title="Copy to clipboard">
-							<i class="fa fa-copy"></i> Copy
-						</button>
-					</span>
-				</div>
-			</div>
-		</div>
-	</div>
-
-	<div class="panel panel-default setup-side-panel">
-		<div class="panel-heading">
-			<h3 class="panel-title">
-				<i class="fa fa-exchange"></i> Advanced Global Post Back URL
-			</h3>
-		</div>
-		<div class="panel-body">
-			<div class="alert alert-info">
-				<i class="fa fa-server"></i> Server-to-server postback with campaign targeting capabilities.
-				<br><small><strong>Note:</strong> Requires campaign selection above to populate the CID parameter.</small>
-			</div>
-			
-			<div class="code-wrapper">
-				<div class="input-group">
-					<textarea id="unsecure_postback_2" class="form-control code-textarea" rows="2" readonly>%s</textarea>
-					<span class="input-group-btn">
-						<button class="btn btn-primary copy-btn" type="button" data-target="unsecure_postback_2" data-toggle="tooltip" title="Copy to clipboard">
-							<i class="fa fa-copy"></i> Copy
-						</button>
-					</span>
-				</div>
-			</div>
-		</div>
-	</div>
-</div>
-', $unSecuredPixel_2, $unSecuredPostBackUrl_2
-		);
-		
-		printf('
-<div id="pixel_type_universal_id" style="display:none;">
-	<div class="panel panel-default setup-side-panel">
-		<div class="panel-heading">
-			<h3 class="panel-title">
-				<i class="fa fa-magic"></i> Javascript Universal Smart Tracking Pixel
-			</h3>
-		</div>
-		<div class="panel-body">
-			<div class="alert alert-warning">
-				<i class="fa fa-star"></i> <strong>Smart Technology:</strong> Automatically fires your traffic source pixels in addition to Prosper202 tracking. 
-				Includes fallback noscript version for maximum compatibility.
-			</div>
-			
-			<div class="code-wrapper">
-				<div class="input-group">
-					<textarea id="unsecure_universal_pixel_js" class="form-control code-textarea" rows="13" readonly>%s</textarea>
-					<span class="input-group-btn">
-						<button class="btn btn-primary copy-btn" type="button" data-target="unsecure_universal_pixel_js" data-toggle="tooltip" title="Copy to clipboard">
-							<i class="fa fa-copy"></i> Copy
-						</button>
-					</span>
-				</div>
-			</div>
-		</div>
-	</div>
-
-	<div class="panel panel-default setup-side-panel">
-		<div class="panel-heading">
-			<h3 class="panel-title">
-				<i class="fa fa-code"></i> Iframe Universal Smart Tracking Pixel
-			</h3>
-		</div>
-		<div class="panel-body">
-			<div class="alert alert-info">
-				<i class="fa fa-info-circle"></i> Simple iframe version of the Universal Smart Pixel. Use when JavaScript implementation is not possible.
-			</div>
-			
-			<div class="code-wrapper">
-				<div class="input-group">
-					<textarea id="unsecure_universal_pixel" class="form-control code-textarea" rows="2" readonly>%s</textarea>
-					<span class="input-group-btn">
-						<button class="btn btn-primary copy-btn" type="button" data-target="unsecure_universal_pixel" data-toggle="tooltip" title="Copy to clipboard">
-							<i class="fa fa-copy"></i> Copy
-						</button>
-					</span>
-				</div>
-			</div>
-		</div>
-	</div>
-
-</div>
-', $unSecuredUniversalPixelJS, $unSecuredUniversalPixel
-		); ?>
-	</div>
-</div>
-</div> <!-- Close container-fluid -->
-
-<script type="text/javascript">
-$(document).ready(function() {
-    // Initialize radio buttons and tooltips
-    $('[data-toggle="radio"]').radiocheck();
-    $('[data-toggle="tooltip"]').tooltip();
-    
-    // Enhanced radio button styling and interactions
-    setupRadioInteractions();
-    
-    // Copy functionality
-    setupCopyButtons();
-    
-    // Form change handlers
-    $("#secure-pixels input:radio").on("change.radiocheck", function () {
-        change_pixel_data();
-        updateSecurityBadges();
-    });
-
-    $('#amount_value').keyup(function () { 
-        debounce(change_pixel_data, 300)();
-        validateAmount();
-    });
-    
-    $('#subid_value').keyup(function () { 
-        debounce(change_pixel_data, 300)();
-        validateSubid();
-    });
-
-    // Initialize
-    load_aff_network_id();
-    change_pixel_data();
-    updateSecurityBadges();
-});
-
-// Enhanced radio button interactions
-function setupRadioInteractions() {
-    // Handle pixel type selection
-    $("#pixel-type input:radio").on("change.radiocheck", function() {
-        const value = $(this).val();
-        
-        // Update visual state
-        $('.radio-option').removeClass('active');
-        $(this).closest('.radio-option').addClass('active');
-        
-        // Show/hide appropriate panels
-        $('.tracking-output > div').hide();
-        
-        if (value === '0') {
-            $('#pixel_type_simple_id').fadeIn(300);
-        } else if (value === '1') {
-            $('#pixel_type_advanced_id').fadeIn(300);
-            $('#advanced_pixel_type').show();
-        } else if (value === '2') {
-            $('#pixel_type_universal_id').fadeIn(300);
-        }
-        
-        change_pixel_data();
-    });
-    
-    // Security type changes
-    $("#secure-pixels input:radio").on("change.radiocheck", function() {
-        updateSecurityBadges();
-    });
-}
-
-// Copy to clipboard functionality
-function setupCopyButtons() {
-    $(document).on('click', '.copy-btn', function(e) {
-        e.preventDefault();
-        
-        const button = $(this);
-        const targetId = button.data('target');
-        const textarea = $('#' + targetId);
-        
-        if (textarea.length === 0) return;
-        
-        // Select and copy text
-        textarea.select();
-        textarea[0].setSelectionRange(0, 99999); // For mobile devices
-        
-        try {
-            const successful = document.execCommand('copy');
-            if (successful) {
-                showCopySuccess(button);
-            } else {
-                showCopyError(button);
-            }
-        } catch (err) {
-            // Fallback for modern browsers
-            navigator.clipboard.writeText(textarea.val()).then(function() {
-                showCopySuccess(button);
-            }).catch(function() {
-                showCopyError(button);
-            });
-        }
-        
-        // Deselect text
-        window.getSelection().removeAllRanges();
-    });
-}
-
-function showCopySuccess(button) {
-    const originalHtml = button.html();
-    button.addClass('success')
-          .html('<i class="fa fa-check"></i> Copied!');
-    
-    setTimeout(function() {
-        button.removeClass('success').html(originalHtml);
-    }, 2000);
-}
-
-function showCopyError(button) {
-    const originalHtml = button.html();
-    button.addClass('btn-danger')
-          .html('<i class="fa fa-exclamation"></i> Error');
-    
-    setTimeout(function() {
-        button.removeClass('btn-danger').html(originalHtml);
-    }, 2000);
-}
-
-// Update security badges
-function updateSecurityBadges() {
-    const isSecure = $("input[name=secure_type]:checked").val() === '1';
-    const protocol = isSecure ? 'HTTPS' : 'HTTP';
-    const icon = isSecure ? 'fa-lock' : 'fa-unlock';
-    const color = isSecure ? 'success' : 'warning';
-    
-    $('.protocol-badge').remove();
-    $('.panel-heading').each(function() {
-        const badge = $('<span class="badge badge-' + color + ' protocol-badge pull-right">')
-                     .html('<i class="fa ' + icon + '"></i> ' + protocol);
-        $(this).find('.panel-title').prepend(badge);
-    });
-}
-
-// Input validation
-function validateAmount() {
-    const amount = $('#amount_value').val();
-    const formGroup = $('#amount_value').closest('.form-group');
-    
-    formGroup.removeClass('has-error has-success');
-    
-    if (amount && isNaN(amount)) {
-        formGroup.addClass('has-error');
-        showFieldError('#amount_value', 'Please enter a valid number');
-    } else if (amount && parseFloat(amount) < 0) {
-        formGroup.addClass('has-error');
-        showFieldError('#amount_value', 'Amount cannot be negative');
-    } else if (amount) {
-        formGroup.addClass('has-success');
-        hideFieldError('#amount_value');
-    }
-}
-
-function validateSubid() {
-    const subid = $('#subid_value').val();
-    const formGroup = $('#subid_value').closest('.form-group');
-    
-    formGroup.removeClass('has-error has-success');
-    
-    if (subid) {
-        formGroup.addClass('has-success');
-    }
-}
-
-function showFieldError(selector, message) {
-    hideFieldError(selector);
-    const errorDiv = $('<div class="alert alert-danger field-error">')
-                    .html('<small>' + message + '</small>');
-    $(selector).closest('.form-group').append(errorDiv);
-}
-
-function hideFieldError(selector) {
-    $(selector).closest('.form-group').find('.field-error').remove();
-}
-
-// Debounce function for performance
-function debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-        const later = () => {
-            clearTimeout(timeout);
-            func(...args);
-        };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-    };
-}
-
-// Enhanced pixel data change function
-function change_pixel_data(){
-    $('.tracking-output').addClass('loading');
-    pixel_data_changed("<?php echo getTrackingDomain(); ?>");
-    
-    setTimeout(function() {
-        $('.tracking-output').removeClass('loading');
-        $('.tracking-output .panel:visible').addClass('fade-in-success');
-        
-        setTimeout(function() {
-            $('.fade-in-success').removeClass('fade-in-success');
-        }, 500);
-    }, 300);
-}
-
-// Add smooth scrolling to results
-function scrollToResults() {
-    $('html, body').animate({
-        scrollTop: $('.tracking-output:visible').offset().top - 20
-    }, 500);
-}
-
-// Enhanced form submission feedback
-$(document).on('change', '#tracking_form input, #tracking_form select', function() {
-    if (!$('.tracking-output:visible').length) return;
-    
-    debounce(function() {
-        scrollToResults();
-    }, 1000)();
-});
-</script>
-
-<style>
-/* Setup Page Header */
-.setup-page-header {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 24px;
-    background: #2f6fdd;
-    border-radius: 12px;
-    color: #fff;
-    box-shadow: 0 4px 15px rgba(47, 111, 221, 0.2);
-}
-
-.setup-page-header__icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 56px;
-    height: 56px;
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 12px;
-    flex-shrink: 0;
-}
-
-.setup-page-header__icon .glyphicon {
-    font-size: 28px;
-}
-
-.setup-page-header__text {
-    flex: 1;
-}
-
-.setup-page-header__title {
-    margin: 0 0 4px 0;
-    font-size: 24px;
-    font-weight: 600;
-    color: #fff;
-}
-
-.setup-page-header__subtitle {
-    margin: 0;
-    font-size: 14px;
-    color: rgba(255, 255, 255, 0.85);
-}
-
-/* Enhanced Panel Styling */
-.panel {
-    border-radius: 12px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-    border: 1px solid #e7e8ea;
-}
-
-.panel-heading {
-    background: #fafbfc !important;
-    border-bottom: 1px solid #e7e8ea;
-    border-radius: 12px 12px 0 0 !important;
-    padding: 16px 20px;
-}
-
-.panel-title {
-    font-weight: 600;
-    font-size: 15px;
-    color: #1f2328;
-}
-
-.panel-body {
-    padding: 24px;
-}
-
-/* Form Enhancements */
-.form-control {
-    border: 2px solid #e7e8ea;
-    border-radius: 8px;
-    padding: 10px 14px;
-    transition: all 0.2s ease;
-}
-
-.form-control:focus {
-    border-color: #2f6fdd;
-    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.15);
-}
-
-/* Button Enhancements */
-.btn-primary {
-    background: #2f6fdd;
-    border: none;
-    border-radius: 8px;
-    padding: 10px 20px;
-    font-weight: 600;
-    box-shadow: 0 4px 12px rgba(47, 111, 221, 0.25);
-    transition: all 0.2s ease;
-}
-
-.btn-primary:hover {
-    transform: none;
-    box-shadow: 0 6px 16px rgba(47, 111, 221, 0.35);
-}
-
-.btn-success {
-    background: #217a41;
-    border: none;
-    border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);
-}
-
-/* Code Block Styling */
-pre, code {
-    border-radius: 8px;
-    background: #fafbfc;
-    border: 1px solid #e7e8ea;
-}
-
-/* Radio group enhancements */
-.radio-group {
-    display: flex;
-    flex-direction: column;
-    gap: 15px;
-}
-
-.radio-option {
-    background: #fafbfc;
-    border: 2px solid #f0f1f2;
-    border-radius: 8px;
-    padding: 15px;
-    transition: all 0.3s ease;
-    cursor: pointer;
-}
-
-.radio-option:hover {
-    border-color: #2f6fdd;
-    background: #eaf2fc;
-}
-
-.radio-option.active {
-    border-color: #2f6fdd;
-    background: #eaf2fc;
-}
-
-.radio-title {
-    font-weight: 600;
-    font-size: 16px;
-    color: #333;
-    display: block;
-    margin-top: 5px;
-}
-
-.help-text {
-    color: #666;
-    font-size: 13px;
-    margin: 5px 0 0 25px;
-}
-
-.subid-examples {
-    margin-top: 10px;
-}
-
-.subid-examples .label {
-    margin-right: 8px;
-}
-
-.code-wrapper {
-    position: relative;
-    margin-bottom: 10px;
-}
-
-.code-textarea {
-    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-    font-size: 12px;
-    background-color: #fafbfc !important;
-    border: 1px solid #e7e8ea;
-    border-radius: 4px;
-    resize: vertical;
-    min-height: 60px;
-}
-
-.code-textarea:focus {
-    border-color: #2f6fdd;
-    box-shadow: 0 0 0 0.2rem rgba(47, 111, 221, 0.25);
-}
-
-.copy-btn {
-    position: relative;
-    z-index: 10;
-}
-
-.copy-btn.success {
-    background-color: #217a41;
-    border-color: #217a41;
-    color: white;
-}
-
-.tracking-output {
-    margin-top: 30px;
-}
-
-/* Alert Styles - Design System */
-.alert-info {
-    background: #eaf2fc;
-    border: 1px solid #bcd4f6;
-    color: #2861c4;
-    border-radius: 8px;
-    padding: 12px 16px;
-}
-
-.alert-success {
-    background: #e7f5ec;
-    border: 1px solid #e7f5ec;
-    color: #1d6c3a;
-    border-radius: 8px;
-    padding: 12px 16px;
-}
-
-.alert-warning {
-    background: #fdf3e2;
-    border: 1px solid #b54708;
-    color: #9a3c07;
-    border-radius: 8px;
-    padding: 12px 16px;
-}
-
-/* Better form styling */
-.form-group {
-    margin-bottom: 25px;
-}
-
-.control-label {
-    font-weight: 600;
-    color: #374151;
-}
-
-.input-group-addon {
-    background-color: #f0f1f2;
-    border-color: #c9cdd3;
-}
-
-/* Loading animations */
-.loading {
-    opacity: 0.7;
-    pointer-events: none;
-}
-
-.spinner {
-    display: inline-block;
-    width: 20px;
-    height: 20px;
-    border: 3px solid #f0f1f2;
-    border-top: 3px solid #2f6fdd;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
-
-/* Success animations */
-@keyframes fadeInSuccess {
-    0% { opacity: 0; transform: none; }
-    100% { opacity: 1; transform: translateY(0); }
-}
-
-.fade-in-success {
-    animation: fadeInSuccess 0.5s ease-out;
-}
-
-/* Setup List Item Styling */
-.setup-list-name {
-    display: inline-block;
-    flex: 1;
-    word-break: break-word;
-}
-
-.filter_xxx_name {
-    font-weight: 500;
-    color: #333;
-}
-
-.setup-list-actions {
-    display: inline-block;
-    white-space: nowrap;
-    margin-left: 15px;
-}
-
-.setup-list-actions a {
-    display: inline-block;
-    margin-left: 10px;
-    padding: 4px 12px;
-    font-size: 12px;
-    font-weight: 500;
-    border-radius: 4px;
-    text-decoration: none;
-    transition: all 0.2s ease;
-}
-
-.setup-list-actions .action-edit {
-    background-color: #eaf2fc;
-    color: #2861c4;
-    border: 1px solid #bcd4f6;
-}
-
-.setup-list-actions .action-edit:hover {
-    background-color: #eaf2fc;
-    color: #2861c4;
-}
-
-.setup-list-actions .action-remove {
-    background-color: #fdecec;
-    color: #b02a20;
-    border: 1px solid #fdecec;
-}
-
-.setup-list-actions .action-remove:hover {
-    background-color: #fdecec;
-    color: #b02a20;
-}
-
-ul.setup-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-}
-
-ul.setup-list li {
-    display: flex;
-    align-items: center;
-    padding: 12px 15px;
-    border: 1px solid #e7e8ea;
-    border-radius: 6px;
-    margin-bottom: 8px;
-    background: #ffffff;
-    transition: all 0.2s ease;
-}
-
-ul.setup-list li:hover {
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-    border-color: #c9cdd3;
-}
-
-/* Responsive */
-@media (max-width: 768px) {
-    .setup-page-header {
-        flex-direction: column;
-        text-align: center;
-        padding: 20px;
-    }
-
-    .setup-page-header__title {
-        font-size: 20px;
-    }
-
-    .setup-page-header__icon {
-        width: 48px;
-        height: 48px;
-    }
-
-    .setup-page-header__icon .glyphicon {
-        font-size: 20px;
-    }
-
-    .setup-page-header__subtitle {
-        font-size: 13px;
-    }
-
-    .radio-group {
-        gap: 10px;
-    }
-
-    .radio-option {
-        padding: 12px;
-    }
-
-    .col-md-3,
-    .col-md-4,
-    .col-md-6,
-    .col-md-8,
-    .col-md-9,
-    .col-md-12 {
-        padding-left: 10px;
-        padding-right: 10px;
-    }
-
-    ul.setup-list li {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-
-    .setup-list-actions {
-        margin-left: 0;
-        margin-top: 10px;
-        display: flex;
-        width: 100%;
-    }
-
-    .setup-list-actions a {
-        margin-left: 0;
-        margin-right: 8px;
-        flex: 0 1 auto;
-    }
-}
-</style>
-
-<?php template_bottom(); ?>
+<?php echo p202_setup_script_tag($base); ?>
+<?php template_bottom();

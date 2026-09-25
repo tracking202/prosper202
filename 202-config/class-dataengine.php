@@ -426,10 +426,17 @@ class DataEngine
     {
         $filters = $this->getFilters();
 
+        // The group itself breaks ties in the sort. Every sort key is a
+        // metric, and metrics tie all the time (every keyword with no leads
+        // ties on the default sort), so without it MySQL returns tied rows
+        // in whatever order the plan produces — a different order on two
+        // runs of the same query, which moved rows between pages of a
+        // paginated report (one row on two pages, another on none) and made
+        // two downloads of the same report disagree.
         $sql = 'SELECT ' . $definition->labelSelect . ',' . MetricsSql::GROUPED_SELECT
             . $this->groupedReportFrom($definition, (string) $clickFrom, (string) $clickTo, $filters)
             . ' group by ' . $definition->groupBy
-            . $this->sortOrder()
+            . $this->sortOrder() . ', ' . $definition->groupBy
             . $filters['limit'];
 
         $data = $this->collectRows($sql, $cpv);

@@ -87,6 +87,28 @@ body {
     box-sizing: border-box;
 }
 
+/* ---------- Type the chrome owns ----------
+
+   Every piece of chrome states its own font size and line height instead of
+   inheriting them from <body>, because the two shells disagree about <body>:
+   Flat UI Pro sets 18px with a line height of 1, Bootstrap 5 15px with 1.5.
+   Anything left to inherit rendered at two sizes — the Analyze strip was 37px
+   tall on a classic page and 43px on a v2 one, each account-menu item 30px
+   against 36px, and the account toggle a pixel taller on classic because the
+   chevron's <svg> sat on the text baseline there and in the middle under
+   Bootstrap 5's reboot. The values are the ones v2 pages already rendered,
+   so measured before and after, no box of the v2 chrome moved (only the
+   chevron's own wrapper shrank, inside a toggle the badge sets the height
+   of). tests/browser/specs/chrome-shells.spec.js measures both shells
+   against each other. */
+.p202c-header,
+.p202c-tabs,
+.p202c-strip,
+.p202c-subnav {
+    font-size: 15px;
+    line-height: 1.5;
+}
+
 /* ---------- Header ---------- */
 
 .p202c-header {
@@ -198,6 +220,7 @@ body {
     flex-shrink: 0;
     width: 15px;
     height: 15px;
+    vertical-align: middle;
 }
 
 .p202c-nav__link > span,
