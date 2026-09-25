@@ -1759,15 +1759,17 @@ operator surface is `AppIntegrityController`; the guide is
 
 ### 5.12 As built: decisions (PR 7)
 
-(Numbered 5.12 because PR 6, built in parallel, takes §5.11; whichever
-lands second renumbers.)
+(Numbered 5.12: PR 6's decisions are §5.11. PR 7 was built on PR 5 while
+PR 6 was built in parallel, then PR 6 was merged in and the SDK wired to it;
+the Play Integrity bullet below is that wiring.)
 
 What PR 7 settled, where it departs from §4.3 and §5.6, and what it leaves.
 The SDK is `sdk/android-attribution/`: `core/` (package
 `com.prosper202.attribution.core`: `Json`, `InstallToken`, `InstallPayload`,
 `EventPayload`, `CustomerId`, `AttributionConfig`, `AttributionEngine`,
-`Answers`, and the platform seams in `Platform.kt`) and `android/`
-(`P202Attribution`, `PlayInstallReferrerSource`). The guide is
+`Answers`, and the platform seams in `Platform.kt`), `android/`
+(`P202Attribution`, `PlayInstallReferrerSource`) and the optional
+`integrity/` (`PlayIntegrityProvider`). The guide is
 `documentation/api/24-android-sdk.md`.
 
 - **Two modules, one of them platform-free.** Everything that decides
@@ -1851,8 +1853,13 @@ The SDK is `sdk/android-attribution/`: `core/` (package
   (`p202 app install simulate`/`list`) is PR 5's, whose case android-001
   stands. The customer claim's server side is covered by the live pass and
   `InstallCustomerLinkIntegrationTest`.
-- **No schema fetch.** The SDK does not read `GET /apps/schema`: the batch
-  size is the contract's 100 and `integrity_mode` is PR 6's to consume.
+- **The schema document is read once per process**, before the first
+  attempt to send the install (not for events): it is where the
+  registration says whether to request a Play Integrity token. A document
+  that cannot be read now (network, `429`, `5xx`) holds the install back
+  like its own failure would; one refused for good (`4xx`) or silent about
+  integrity means no token, and the install's own answer says what is
+  wrong. Batch size stays the contract's 100.
 - **No goal evaluator.** Android goals are evaluated on the server (§4.3),
   so the Kotlin SDK runs the `android/`, `customer-id.json` and
   `app-identity.json` (Android keys) vectors, not `goals/`. The
@@ -1864,30 +1871,66 @@ The SDK is `sdk/android-attribution/`: `core/` (package
   `AttributionEngineTest` (virtual time: one install, same bytes on every
   retry, backoff across a relaunch, refusal and re-arm, batching under
   both caps, the queue bound, refuted installs, both customer routes, the
-  integrity seam, the file store), `JsonTest`. `tests/live/android-sdk.sh`
+  schema-gated integrity request, holding back for Play and a waiting
+  install's events, the file store), `JsonTest`. `tests/live/android-sdk.sh`
   runs the real engine (`LiveServerTest`) against an instance and reads
   the database back: attributed install, events paying level 3, the phone's
   click joining a web click's person through `setCustomerId`, a relaunch
   that sends nothing, an organic and a forged install, the stored body
-  replayed (duplicate) and changed (409). Server side:
-  `InstallCustomerLinkIntegrationTest`. The Android module was type-checked
-  against the `android-34` platform stubs and installreferrer 2.2's classes
-  as plain Kotlin; it was not assembled with AGP, not linted, and not run on
-  a device or emulator.
-- **Play Integrity: a seam, not a guess.** `IntegrityProvider.tokenFor
-  (InstallAttempt)` is called on the worker before each install attempt
-  with the install's uuid, canonical body and its SHA-256; its token (if
-  non-empty and ≤ 8 KB) is sent as `integrity_token`, which the canonical
-  form and fingerprint leave out, so a retry with a fresh token is still the
-  same install. The default is `IntegrityProvider.NONE` (no token; PR 5's
-  intake stores `not_requested`). **TODO (PR 6 merged in):** (1) implement
-  the provider with Play Integrity's standard request, binding
-  `requestHash` to whatever PR 6's verifier defines — §5.6 says SHA-256 of
-  the canonical install body, which is `InstallAttempt.fingerprint`, but
-  that is PR 6's to confirm; (2) read `integrity_mode` from the schema
-  document and ask only when it is not `off`; (3) decide whether a
-  `pending_integrity` install's events (503) need anything beyond the
-  existing retry.
+  replayed (duplicate) and changed (409), and Play Integrity under
+  `require` against PR 6's fake Google (below). Server side:
+  `InstallCustomerLinkIntegrationTest` and the integrity worker's customer
+  test. The Android and integrity modules were type-checked against the
+  `android-34` platform stubs and installreferrer 2.2's, integrity 1.6.0's
+  and play-services-tasks/basement's classes as plain Kotlin (warnings as
+  errors); they were not assembled with AGP (the disk had no room for it),
+  not linted, and not run on a device or emulator.
+- **Play Integrity, as PR 6 built the server (§5.11).** When the schema
+  document's `integrity` block says `request_token: true` with
+  `token_type: standard`, `request_hash:
+  sha256_hex_of_canonical_install_body` and a `cloud_project_number` (a
+  decimal string on the wire, parsed to the `long` Play takes), every
+  attempt to send the install asks the `IntegrityProvider` for a **fresh**
+  token with `requestHash` = `InstallAttempt.requestHash`, the install's
+  fingerprint — the `android/integrity.json` vectors pin that hash for
+  every body, and the live pass proves the binding end to end: the fake
+  Google signs the hash the SDK bound, and the server's own policy accepts
+  it only because it equals the stored `body_hash` (planted: binding the
+  wire bytes instead ends `integrity_failed`). A block naming another
+  token type or binding, or no project, is not requested against: a token
+  bound some other way would be refuted as another install's, where no
+  token is only unvouched. The provider is asked only then (under `off` it
+  is never called).
+  - **The Android provider is an optional module**, `integrity/`
+    (`com.prosper202:integrity`, `PlayIntegrityProvider`, depending on
+    `com.google.android.play:integrity:1.6.0`), so an app that does not use
+    Play Integrity keeps the base SDK's single dependency (§5.6). It
+    prepares the standard token provider once per process and Cloud project,
+    requests with the body's hash, re-prepares once on
+    `INTEGRITY_TOKEN_PROVIDER_INVALID`, and sorts Play's error codes:
+    network, server, quota, transient and binding errors are retryable.
+  - **A retryable failure holds the install back** — no token under
+    `require` means `integrity_unverified`, never paid, which is worth a
+    wait — for at most `MAX_INTEGRITY_ATTEMPTS` (3) asks on the install's
+    backoff, then it goes without; any other failure sends it without a
+    token at once. A registration that asks for tokens from an app that
+    configured no provider gets the install without one and a Logcat
+    warning.
+  - **Waiting installs keep their events.** `pending_integrity` (like
+    `pending_click`) answers events `503` with `Retry-After`; they stay
+    queued and go when it settles. `integrity_failed` is refuted: its events
+    are `409`, and the SDK drops them and stops. `integrity_unverified` is
+    unvouched, and its events are evaluated as an organic install's.
+  - **The customer id links when the verdict passes.** PR 6's worker
+    settles a waiting install; it now links the claim its body carried,
+    after its commit, as the intake and the pending-click settler do
+    (`IntegrityIntegrationTest::testAWaitingInstallsCustomerLinksOnlyWhenItsVerdictPasses`).
+  - **Not done:** the provider has not requested a real token — that needs
+    a Play-distributed build of an app linked to a Cloud project, a device,
+    and Google; the JVM tests hand the engine a provider, and the Android
+    code was only type-checked against the `integrity` 1.6.0 and
+    play-services-tasks classes. Play Integrity's remediation dialogs
+    (`showDialog`) are not offered.
 
 ---
 
@@ -2574,7 +2617,7 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 | 4b | **Web events:** `event=` on pixels and postbacks, `POST /events`, `p202.js` `track()`, the web campaign goal editor, the Transactions ID docs pointing to goals | 2, 4 |
 | 5 | **Android intake:** install token, `MatchState`, installs and events endpoints, conversions through goals, traffic-source notify, pending-click cron. **Built; `tests/live/android-intake.sh` (with `goals.sh`, `app-core.sh`, `conversion-ledger.sh`, `legacy-pixels.sh` re-run), vectors in `tests/fixtures/app-sdk-contract/android/`, agent-eval case android-001. Decisions in §5.10.** | 1, 3, 4 |
 | 6 | **Play Integrity** (opt-in modes). **Built; `tests/live/play-integrity.sh` against a local TLS fake of Google (with `android-intake.sh`, `goals.sh`, `app-core.sh`, `conversion-ledger.sh` re-run), vectors in `tests/fixtures/app-sdk-contract/android/integrity.json`. Decisions in §5.11. No request has been made to Google itself.** | 5 |
-| 7 | **Android SDK** (installs, events, customer id, integrity). **Built on PR 5 (PR 6 in parallel): `sdk/android-attribution/` (a JVM core with every `android/`, `customer-id.json` and Android `app-identity.json` vector, and the Android module), the server's `customer` claim on both intake bodies, `tests/live/android-sdk.sh`. Play Integrity is a seam until PR 6 merges. Decisions in §5.12.** | 5, 6 |
+| 7 | **Android SDK** (installs, events, customer id, integrity). **Built; `sdk/android-attribution/` (a JVM core with every `android/` — `integrity.json` included —, `customer-id.json` and Android `app-identity.json` vector; the Android module; the optional Play Integrity module), the server's `customer` claim on both intake bodies, `tests/live/android-sdk.sh` (the SDK's engine against an instance, Play Integrity under `require` against PR 6's fake Google). Decisions in §5.12.** | 5, 6 |
 | 8 | **iOS SDK:** header rename, `setCustomerId`, on-device goal evaluator on the shared vectors | 3, 4 |
 | 9 | **MTA engine:** schema rewrite and rungs, worker, models, credits, reports API; v2 and dead code deleted | 1, 2 |
 | 10 | **MTA UI and exports:** dashboard on the v2 shell, comparison, journey metrics, SSRF-safe webhooks | 9 |

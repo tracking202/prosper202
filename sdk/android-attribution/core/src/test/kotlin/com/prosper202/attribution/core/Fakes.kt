@@ -52,6 +52,26 @@ class Request(val url: String, val headers: Map<String, String>, val body: Strin
 /** Answers from a queue of canned responses (or a function), and records every request. */
 class FakeTransport : HttpTransport {
     val requests = ArrayList<Request>()
+    val schemaReads = ArrayList<String>()
+    private val schemaCanned = ArrayDeque<() -> HttpResponse>()
+
+    /** The schema document's answer: Play Integrity off, as PR 5 and an `off` registration say. */
+    var schema: () -> HttpResponse = { schemaDoc(request = false) }
+
+    fun thenSchema(status: Int, body: String = "", headers: Map<String, String> = emptyMap()): FakeTransport {
+        schemaCanned.addLast { HttpResponse(status, body, headers) }
+        return this
+    }
+
+    fun thenSchemaFail(): FakeTransport {
+        schemaCanned.addLast { throw IOException("connection refused") }
+        return this
+    }
+
+    override fun get(url: String, headers: Map<String, String>): HttpResponse {
+        schemaReads.add(url)
+        return (schemaCanned.removeFirstOrNull() ?: schema)()
+    }
     private val canned = ArrayDeque<(Request) -> HttpResponse>()
     var fallback: (Request) -> HttpResponse = { ok(it) }
 
@@ -82,6 +102,29 @@ class FakeTransport : HttpTransport {
     fun events() = requests.filter { it.url.endsWith("/events") }
 
     companion object {
+        /** The Android schema document (PR 6's shape). */
+        fun schemaDoc(
+            request: Boolean,
+            project: Long? = 123456789012,
+            type: String = "standard",
+            scheme: String = "sha256_hex_of_canonical_install_body",
+        ): HttpResponse {
+            val integrity = jsonObj(
+                "request_token" to JsonValue.Bool(request),
+                "token_type" to type.json(),
+                // A string, as the server sends it.
+                "cloud_project_number" to project?.toString().json(),
+                "request_hash" to scheme.json(),
+            )
+            val data = jsonObj(
+                "platform" to "android".json(),
+                "app_key" to "com.example.summit".json(),
+                "integrity_mode" to (if (request) "require" else "off").json(),
+                "integrity" to integrity,
+            )
+            return HttpResponse(200, Json.write(jsonObj("data" to data)))
+        }
+
         /** The contract's success for either route, echoing what was sent. */
         fun ok(r: Request, match: String = "attributed", customer: String? = "linked"): HttpResponse {
             val body = r.json

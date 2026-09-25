@@ -27,6 +27,8 @@ class AttributionConfig private constructor(
 ) {
     val installsUrl: String get() = "$endpoint/api/v3/apps/installs"
 
+    val schemaUrl: String get() = "$endpoint/api/v3/apps/schema"
+
     fun eventsUrl(installUuid: String): String = "$endpoint/api/v3/apps/installs/$installUuid/events"
 
     /** What a refusal is tied to: a new endpoint or token re-arms a refused install. */

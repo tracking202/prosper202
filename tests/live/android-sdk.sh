@@ -17,7 +17,17 @@
 #   - device C: a forged token (bad_token), whose events are refused and
 #     dropped;
 #   - the SDK's persisted install body, replayed byte for byte, is a
-#     duplicate, and with one field changed it is a 409.
+#     duplicate, and with one field changed it is a 409;
+#   - Play Integrity under `require` (PR 6), against the local TLS fake of
+#     Google (tests/fixtures/play-integrity/fake_google.py, port
+#     P202_FAKE_GOOGLE_PORT, default 8251): the SDK reads the schema,
+#     requests a token bound to its body's fingerprint, the install waits
+#     (pending_integrity) with its event; the fake is given a verdict whose
+#     requestHash is the one the SDK bound, the worker
+#     (202-cronjobs/app-installs.php, from this checkout) settles it
+#     attributed and paid, the customer that rode its body links then, and
+#     the relaunched SDK delivers the event it kept. A device with no
+#     provider sends no token (missing).
 #
 # Needs a JDK and Gradle (P202_GRADLE, default `gradle`); the SDK's
 # dependencies come from Maven Central on the first run. Truncates the app,
@@ -29,6 +39,8 @@ DB_USER=${P202_DB_USER:-root}
 DB_PASS=${P202_DB_PASS:-}
 P202_API_KEY=${P202_API_KEY:-}
 GRADLE=${P202_GRADLE:-gradle}
+PHP=${P202_PHP:-php}
+FAKE_PORT=${P202_FAKE_GOOGLE_PORT:-8251}
 
 if [ -z "$P202_API_KEY" ]; then
     echo "P202_API_KEY is not set: this pass drives the REST API as the instance's admin." >&2
@@ -81,7 +93,9 @@ print(urllib.parse.parse_qs(q).get('referrer', [''])[0])" "$1"
 OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE api_key='$P202_API_KEY'")
 [ -n "$OWNER" ] || { echo "the API key is not in $DB" >&2; exit 2; }
 
+FAKE_PID=
 cleanup() {
+  [ -n "$FAKE_PID" ] && kill "$FAKE_PID" 2> /dev/null
   mysql_q "$DB" <<SQL
 SET SESSION sql_mode='';
 DELETE FROM 202_attribution_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE campaign_id IN (SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_name LIKE 'android-sdk-pass%'));
@@ -95,7 +109,7 @@ DELETE FROM 202_ppc_accounts WHERE ppc_account_name = 'android-sdk-pass';
 DELETE FROM 202_aff_campaigns WHERE aff_campaign_name LIKE 'android-sdk-pass%';
 TRUNCATE 202_goals; TRUNCATE 202_goal_versions; TRUNCATE 202_campaign_goals; TRUNCATE 202_goal_subjects;
 TRUNCATE 202_goal_events; TRUNCATE 202_goal_progress; TRUNCATE 202_goal_outcomes;
-TRUNCATE 202_app_registrations; TRUNCATE 202_app_installs; TRUNCATE 202_notification_pending;
+TRUNCATE 202_app_registrations; TRUNCATE 202_app_installs; TRUNCATE 202_notification_pending; TRUNCATE 202_app_integrity_credentials;
 SQL
 }
 cleanup
@@ -199,6 +213,80 @@ printf '{"customer":{"id":"%s","type":"custom","signature":"%s"}}' "$CUST" "$FOR
 eq "$(device POST "/apps/installs/$UA_/events" "$TOKEN" "$OUT/forged-customer.json")" 200 "a customer with a signature the operator never made"
 eq "$(field "d['data']['customer']")" unverified "is answered unverified and links nothing"
 has "$ROOT/tests/fixtures/app-sdk-contract/android/events-requests.json" '"a customer alone"' "(the shape is in the shared vectors)"
+
+# ─────────────────────────────────────────────────────────────────────
+say "Play Integrity under require: the SDK binds a standard token to its body"
+TLS="$OUT/tls"
+fake() { curl -s -o /dev/null -w '%{http_code}' --noproxy '*' --cacert "$TLS/cert.pem" -X POST --data "$2" "https://127.0.0.1:$FAKE_PORT$1"; }
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$OUT/sa.pem" 2> /dev/null
+openssl pkey -in "$OUT/sa.pem" -pubout -out "$OUT/sa-pub.pem" 2> /dev/null
+python3 - "$OUT/sa.pem" "$OUT/key.json" <<'PY'
+import json, sys
+key = {"type": "service_account", "project_id": "p202-sdk-pass", "private_key_id": "a1b2c3d4e5f60718", "private_key": open(sys.argv[1]).read(),
+       "client_email": "integrity@p202-sdk-pass.iam.gserviceaccount.com", "client_id": "1", "token_uri": "https://oauth2.googleapis.com/token"}
+json.dump({"credential": key}, open(sys.argv[2], "w"))
+PY
+python3 "$ROOT/tests/fixtures/play-integrity/fake_google.py" --port "$FAKE_PORT" --tls-dir "$TLS" --sa-public-key "$OUT/sa-pub.pem" > "$OUT/fake.out" 2> "$OUT/fake.err" &
+FAKE_PID=$!
+for _ in $(seq 1 50); do grep -q READY "$OUT/fake.out" 2> /dev/null && break; sleep 0.2; done
+has "$OUT/fake.out" "READY $FAKE_PORT" "a fake of Google's endpoints listens on $FAKE_PORT"
+eq "$(curl -s -o "$OUT/body" -w '%{http_code}' -X PUT -H "Authorization: Bearer $P202_API_KEY" -H 'Content-Type: application/json' --data-binary "@$OUT/key.json" "$BASE/api/v3/apps/$R/integrity-credential")" 200 \
+   "the app's service-account credential"
+PROJECT=123456789012
+eq "$(api PUT "/apps/$R" "{\"integrity_mode\":\"require\",\"integrity_cloud_project_number\":\"$PROJECT\"}")" 200 "the registration requires Play Integrity"
+eq "$(curl -s -o "$OUT/body" -w '%{http_code}' -H "X-P202-App-Token: $TOKEN" "$BASE/api/v3/apps/schema")" 200 "the schema document"
+eq "$(field "[d['data']['integrity']['request_token'], d['data']['integrity']['token_type'], d['data']['integrity']['cloud_project_number']]")" \
+   "[true, \"standard\", \"$PROJECT\"]" "tells the SDK to request a standard token for the project"
+CI=$(click "$TRK" "$OUT/hi")
+[ -n "$CI" ] && ok "a third phone's click ($CI)" || bad "no click recorded"
+live_phase() { # PHASE [EXTRA-ENV...]
+    env P202_LIVE_BASE="$BASE" P202_LIVE_APP_TOKEN="$TOKEN" P202_LIVE_APP_KEY=com.p202.sdk.summit P202_LIVE_REFERRER="$(referrer_of "$OUT/hi")" \
+        P202_LIVE_CLICK_TIME="$(Q "SELECT click_time FROM 202_clicks WHERE click_id=$CI")" P202_LIVE_CLOUD_PROJECT="$PROJECT" \
+        P202_LIVE_CUSTOMER_ID="$CUST" P202_LIVE_CUSTOMER_SIG="$SIG" P202_LIVE_OUT="$OUT/live-$1.json" P202_LIVE_PHASE="$1" "${@:2}" \
+        "$GRADLE" -p "$ROOT/sdk/android-attribution" --no-daemon -q :core:test --tests '*LiveServerTest*' --rerun > "$OUT/gradle-$1.log" 2>&1
+}
+if live_phase integrity1; then
+    ok "the SDK read the schema, asked its provider for a token, and was answered pending_integrity (LiveServerTest)"
+else
+    bad "LiveServerTest integrity1 failed (see $OUT/gradle-integrity1.log)"
+    sed -n '1,40p' "$OUT/gradle-integrity1.log" | grep -v JAVA_TOOL_OPTIONS
+fi
+L1="$OUT/live-integrity1.json"
+UD=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['install_d'])" "$L1" 2>/dev/null)
+UE=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['install_e'])" "$L1" 2>/dev/null)
+TOKD=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['token_d'])" "$L1" 2>/dev/null)
+HASHD=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['request_hash_d'])" "$L1" 2>/dev/null)
+STORE_D=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['store_d'])" "$L1" 2>/dev/null)
+eq "$(Q "SELECT CONCAT_WS('/', match_state, integrity_mode, integrity_state, ISNULL(click_id)) FROM 202_app_installs WHERE install_uuid='$UD'")" \
+   "pending_integrity/require/pending/1" "device D waits for its verdict, holding no click"
+eq "$(Q "SELECT body_hash FROM 202_app_installs WHERE install_uuid='$UD'")" "$HASHD" "the hash the SDK bound its token to is the server's fingerprint of the body"
+eq "$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id=$CI")" 0 "nothing is paid while it waits"
+eq "$(Q "SELECT CONCAT_WS('/', match_state, integrity_state) FROM 202_app_installs WHERE install_uuid='$UE'")" "organic/missing" "device E, with no provider, sent no token"
+VERDICT=$(python3 -c "
+import json, sys, time
+print(json.dumps([{'status': 200, 'payload': {
+  'requestDetails': {'requestPackageName': 'com.p202.sdk.summit', 'requestHash': sys.argv[1], 'timestampMillis': str(int((time.time() - 5) * 1000))},
+  'appIntegrity': {'appRecognitionVerdict': 'PLAY_RECOGNIZED', 'packageName': 'com.p202.sdk.summit', 'versionCode': '42'},
+  'deviceIntegrity': {'deviceRecognitionVerdict': ['MEETS_DEVICE_INTEGRITY']},
+  'accountDetails': {'appLicensingVerdict': 'LICENSED'}}}]))" "$HASHD")
+eq "$(fake /control/scenario "{\"token\": \"$TOKD\", \"responses\": $VERDICT}")" 200 "Google (the fake) will vouch for the token, signing the hash the SDK bound"
+(cd "$ROOT" && P202_PLAY_INTEGRITY_ENDPOINT="https://127.0.0.1:$FAKE_PORT" P202_PLAY_INTEGRITY_CA_FILE="$TLS/cert.pem" \
+    "$PHP" 202-cronjobs/app-installs.php) > "$OUT/cron.txt" 2>&1
+eq "$(Q "SELECT CONCAT_WS('/', match_state, trusted, integrity_state, click_id) FROM 202_app_installs WHERE install_uuid='$UD'")" \
+   "attributed/1/valid/$CI" "the worker decoded it: valid, and the install is attributed"
+eq "$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id=$CI AND dedupe_key='install'")" 1 "and paid, once"
+eq "$(person "$CI")" "$(person "$CW")" "the customer that rode its body linked when the verdict passed"
+if live_phase integrity2 P202_LIVE_STORE="$STORE_D"; then
+    ok "the relaunched SDK delivered the event it kept while the install waited (LiveServerTest)"
+else
+    bad "LiveServerTest integrity2 failed (see $OUT/gradle-integrity2.log)"
+    sed -n '1,40p' "$OUT/gradle-integrity2.log" | grep -v JAVA_TOOL_OPTIONS
+fi
+eq "$(Q "SELECT COUNT(*) FROM 202_goal_events e JOIN 202_app_installs i ON e.subject_type='install' AND e.subject_id=i.install_row_id WHERE i.install_uuid='$UD' AND e.name='level_reached'")" 1 \
+   "the event is stored under the settled install"
+eq "$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id=$CI AND dedupe_key LIKE 'goal:%' AND payable=1 AND superseded_by IS NULL AND deleted=0")" 1 "and reaches level 3"
+# E sent no token: once the worker has had its say (at once, for missing), it is recorded, never paid.
+eq "$(Q "SELECT integrity_state FROM 202_app_installs WHERE install_uuid='$UE'")" missing "device E stays missing (organic: nothing to hold)"
 
 # The SDK's stores (one directory the Kotlin test made) are read; drop them.
 case "$STORE_A" in /*/a.json) rm -rf "$(dirname "$STORE_A")" ;; esac

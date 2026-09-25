@@ -127,6 +127,10 @@ interface HttpTransport {
      */
     @Throws(IOException::class)
     fun post(url: String, headers: Map<String, String>, body: String): HttpResponse
+
+    /** GET [url] with [headers] (the schema document), as [post] answers. */
+    @Throws(IOException::class)
+    fun get(url: String, headers: Map<String, String>): HttpResponse
 }
 
 /** java.net.HttpURLConnection: in the JDK and on every Android release. */
@@ -134,20 +138,26 @@ class UrlConnectionTransport(
     private val connectTimeoutMillis: Int = 15_000,
     private val readTimeoutMillis: Int = 30_000,
 ) : HttpTransport {
-    override fun post(url: String, headers: Map<String, String>, body: String): HttpResponse {
+    override fun post(url: String, headers: Map<String, String>, body: String): HttpResponse = exchange(url, headers, body)
+
+    override fun get(url: String, headers: Map<String, String>): HttpResponse = exchange(url, headers, null)
+
+    private fun exchange(url: String, headers: Map<String, String>, body: String?): HttpResponse {
         val conn = java.net.URI(url).toURL().openConnection() as java.net.HttpURLConnection
         try {
-            conn.requestMethod = "POST"
+            conn.requestMethod = if (body == null) "GET" else "POST"
             conn.connectTimeout = connectTimeoutMillis
             conn.readTimeout = readTimeoutMillis
-            conn.doOutput = true
             conn.instanceFollowRedirects = false
-            conn.setRequestProperty("Content-Type", "application/json")
             conn.setRequestProperty("Accept", "application/json")
             for ((k, v) in headers) conn.setRequestProperty(k, v)
-            val bytes = body.toByteArray(Charsets.UTF_8)
-            conn.setFixedLengthStreamingMode(bytes.size)
-            conn.outputStream.use { it.write(bytes) }
+            if (body != null) {
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/json")
+                val bytes = body.toByteArray(Charsets.UTF_8)
+                conn.setFixedLengthStreamingMode(bytes.size)
+                conn.outputStream.use { it.write(bytes) }
+            }
             val status = conn.responseCode
             val stream = if (status >= 400) conn.errorStream else conn.inputStream
             val text = stream?.use { String(it.readBytes(), Charsets.UTF_8) } ?: ""
@@ -220,23 +230,35 @@ fun interface ReferrerSource {
 }
 
 /**
- * The Play Integrity seam (plan §5.6, PR 6).
+ * Play Integrity (plan §5.6, §5.11): where the install's `integrity_token`
+ * comes from.
  *
- * Called on the SDK's worker thread before each attempt to send the
- * install; the token it returns (or null for none) is added as the body's
- * `integrity_token`, which the canonical form and the fingerprint leave out,
- * so a retry carrying a fresh token is still the same install. The default
- * is [IntegrityProvider.NONE]: no token, which the server accepts
- * (`integrity_state = not_requested`).
+ * The engine asks only when the registration's schema document says so
+ * (`integrity.request_token`, under `observe` or `require`), and asks
+ * afresh before every attempt to send the install — the server refuses a
+ * token issued more than 10 minutes before the install arrives. It hands
+ * over the [InstallAttempt]: the **standard** token must be requested with
+ * `requestHash` = [InstallAttempt.requestHash], the lower-case hex SHA-256
+ * of the install body's canonical form, for the Cloud project the schema
+ * names; `tests/fixtures/app-sdk-contract/android/integrity.json` pins the
+ * hash. The token itself is left out of the canonical form, so a retry with
+ * a fresh token is still the same install.
  *
- * TODO(PR 6): wire Play Integrity's standard request here. Two things are
- * PR 6's to decide and are deliberately not guessed: (1) the request-hash
- * binding — the plan (§5.6) says `requestHash = SHA-256(canonical install
- * body)`, which is [InstallAttempt.fingerprint], but the server's verifier
- * defines it and has not landed; (2) when to ask — the schema document's
- * `integrity_mode` (`off` until PR 6), which the SDK does not fetch yet.
+ * Return the token, or null when there is none to give. Throw
+ * [IntegrityUnavailableException] with `retryable = true` for a failure
+ * worth waiting out (Play's network or server errors, too many requests):
+ * the engine holds the install back and retries it with backoff, at most
+ * [AttributionEngine.MAX_INTEGRITY_ATTEMPTS] times, before sending it
+ * without a token — which under `require` is recorded
+ * `integrity_unverified` and never paid, so it is worth the wait. Any other
+ * exception sends the install without a token at once.
+ *
+ * Called on the SDK's worker thread; blocking is expected. The Android
+ * implementation is `PlayIntegrityProvider` (the `integrity` module); the
+ * default, [NONE], gives no token.
  */
 fun interface IntegrityProvider {
+    @Throws(IntegrityUnavailableException::class)
     fun tokenFor(install: InstallAttempt): String?
 
     companion object {
@@ -245,14 +267,22 @@ fun interface IntegrityProvider {
     }
 }
 
-/** What the integrity seam is told about the install it is asked to vouch for. */
+/** A Play Integrity request that failed; [retryable] says whether waiting may help. */
+class IntegrityUnavailableException(message: String, val retryable: Boolean, cause: Throwable? = null) : Exception(message, cause)
+
+/** What the integrity provider is asked to vouch for. */
 class InstallAttempt(
     val installUuid: String,
     /** The canonical body (integrity_token excluded): the bytes the server fingerprints. */
     val canonicalBody: String,
-    /** Lower-case hex SHA-256 of [canonicalBody]. */
-    val fingerprint: String,
-)
+    /** Lower-case hex SHA-256 of [canonicalBody]: the standard request's `requestHash`. */
+    val requestHash: String,
+    /** The Cloud project the schema document names (`integrity.cloud_project_number`). */
+    val cloudProjectNumber: Long,
+) {
+    /** The server's name for the same value (`body_hash`, the replay check). */
+    val fingerprint: String get() = requestHash
+}
 
 /** What happened, for the app's own logging and for tests. Every method has a default. */
 interface AttributionListener {

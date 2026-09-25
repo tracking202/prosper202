@@ -68,7 +68,8 @@ class App : Application() {
   of the app. It selects the registration; `422` is the answer if it is
   another app's.
 - On the first launch the SDK reads the install referrer, builds the
-  install body **once**, stores it, and sends it. Later launches send
+  install body **once**, stores it, reads the registration's schema
+  document (for Play Integrity, §8), and sends it. Later launches send
   nothing unless the first send has not been answered yet.
 - Debuggable builds send `test: true`; those installs count only while the
   registration's `accept_test_signals` is on. Override with
@@ -177,12 +178,41 @@ sent as `null` rather than costing the install.
 
 ## 8. Play Integrity
 
-`P202Attribution.Options(integrity = …)` takes an `IntegrityProvider`: it is
-called before each install attempt with the install's canonical body and
-its SHA-256, and what it returns is sent as `integrity_token`. The default
-sends none, which the server accepts. The server's verdicts and the
-provider that asks Play for a token are Play Integrity's own release (plan
-PR 6); until then the server stores a token it is sent and judges nothing.
+If the registration uses Play Integrity (`integrity_mode` `observe` or
+`require`, [23-android-installs.md §9](23-android-installs.md#9-play-integrity)),
+add the optional integrity module and hand its provider to `configure`:
+
+```kotlin
+// app/build.gradle.kts
+implementation("com.prosper202:integrity:1.0.0")
+
+// Application.onCreate()
+P202Attribution.configure(this, "https://track.example.com", "<app token>",
+    P202Attribution.Options(integrity = PlayIntegrityProvider(this)))
+```
+
+- Before it first sends the install, the SDK reads the registration's
+  schema document. When it asks for a token, every attempt requests a
+  fresh **standard** token for the Cloud project it names, with
+  `requestHash` = the SHA-256 of the install body's canonical form — the
+  bytes the server fingerprints, so the token cannot be moved onto another
+  install. Under `off` the provider is never called.
+- Play's network, server, quota and transient errors hold the install back
+  and ask again (at most three times, on the install's backoff): under
+  `require` an install without a token is recorded `integrity_unverified`
+  and never paid. Other errors (no Play Store or services, an outdated
+  one) send it without a token at once.
+- Under `require` an attributable install is answered `pending_integrity`
+  until the server's worker has Google's verdict; its events wait on the
+  device (`503`) and go once it settles. `integrity_failed` refutes it, and
+  its events are dropped.
+- A registration that asks for tokens from a build without the provider
+  gets installs without one, and a Logcat warning.
+- The module depends on `com.google.android.play:integrity:1.6.0`; apps
+  that do not use Play Integrity leave it out and keep the base SDK's
+  single dependency. For a custom source of tokens, implement
+  `IntegrityProvider` yourself: `tokenFor(install)` receives the install's
+  `requestHash` and `cloudProjectNumber`.
 
 ## 9. Diagnostics
 

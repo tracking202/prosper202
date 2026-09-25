@@ -41,6 +41,16 @@ import java.util.UUID
  * body was built, and otherwise the next events request (alone, if there
  * are no events), until one request carrying it is answered.
  *
+ * **Play Integrity.** Before the first attempt to send the install in a
+ * process, the engine reads the registration's schema document
+ * (`GET /apps/schema`); when it says `integrity.request_token` (the
+ * registration is `observe` or `require`), every attempt asks [integrity]
+ * for a fresh standard token bound to the body's fingerprint
+ * ([InstallAttempt.requestHash]) and sends it as `integrity_token`. A
+ * `require` install is answered `pending_integrity` and its events `503`
+ * until the server's verdict worker settles it: they stay queued and are
+ * retried. `integrity_failed` refutes the install (its events are `409`).
+ *
  * Every piece of work runs on [scheduler], one at a time; the public
  * methods only validate and hand over.
  */
@@ -65,6 +75,11 @@ class AttributionEngine(
         const val MAX_BACKOFF_MILLIS = 6 * 60 * 60 * 1000L
         const val FLUSH_DELAY_MILLIS = 5_000L
         const val STORE_RETRY_MILLIS = 60_000L
+        /** Attempts held back for a retryable Play Integrity failure before the install goes without a token. */
+        const val MAX_INTEGRITY_ATTEMPTS = 3
+        /** The binding the SDK implements; a schema naming another is not requested against (PR 6's IntegrityBinding). */
+        const val REQUEST_HASH_SCHEME = "sha256_hex_of_canonical_install_body"
+        const val TOKEN_TYPE = "standard"
         /** Room left in a batch for the customer object and the wrapper. */
         private const val BODY_MARGIN = 2048
 
@@ -89,6 +104,8 @@ class AttributionEngine(
         internal const val K_CUSTOMER = "customer"
         internal const val K_CUSTOMER_SENT = "customer_sent"
         internal const val K_LAST_OCCURRED = "last_occurred_at"
+        internal const val K_INTEGRITY_ATTEMPTS = "integrity_attempts"
+        internal const val K_INTEGRITY = "install_integrity"
 
         internal const val RECORDED = "recorded"
         internal const val REFUSED = "refused"
@@ -101,6 +118,12 @@ class AttributionEngine(
     private var referrerInFlight = false
     private var wakeAt = Long.MAX_VALUE
     private var cancelWake: (() -> Unit)? = null
+    /** The schema document's integrity instruction, read once per process and target. */
+    private var integrityPlan: Pair<String, IntegrityPlan>? = null
+    private var warnedNoProvider = false
+
+    /** What the schema document says about Play Integrity for this registration. */
+    internal class IntegrityPlan(val request: Boolean, val cloudProjectNumber: Long?)
 
     /** Start, or change the endpoint/token. Safe to call on every launch. */
     fun configure(config: AttributionConfig) {
@@ -156,6 +179,9 @@ class AttributionEngine(
     /** Events waiting to be sent. */
     val queuedEvents: Int get() = queue().size
 
+    /** The install's Play Integrity state as the server last answered it (`not_requested`, `pending`, …). */
+    val installIntegrity: String? get() = store.get(K_INTEGRITY)
+
     // ---------------------------------------------------------------- worker
 
     private fun now() = clock.nowMillis()
@@ -207,7 +233,8 @@ class AttributionEngine(
                     wake(next)
                     return
                 }
-                sendInstall(cfg)
+                val plan = integrityPlan(cfg) ?: return
+                sendInstall(cfg, plan)
             }
         }
     }
@@ -280,7 +307,56 @@ class AttributionEngine(
         pump()
     }
 
-    private fun sendInstall(cfg: AttributionConfig) {
+    /**
+     * The schema document's Play Integrity instruction, or null when it
+     * could not be read for a reason worth waiting out (the attempt is then
+     * rescheduled). A document that cannot be read for good (a 4xx) or
+     * says nothing about integrity means no token: the install's own
+     * answer will say what is wrong with the token or the app.
+     */
+    private fun integrityPlan(cfg: AttributionConfig): IntegrityPlan? {
+        integrityPlan?.let { (target, plan) -> if (target == cfg.target) return plan }
+        val response = try {
+            transport.get(cfg.schemaUrl, mapOf(HEADER to cfg.appToken))
+        } catch (e: IOException) {
+            logger.info("p202: the schema document could not be read (${e.message}); retrying")
+            retryInstall(null)
+            return null
+        }
+        if (Answers.isRetried(response.status) || response.status == 0) {
+            retryInstall(retryAfterMillis(response))
+            return null
+        }
+        val plan = readIntegrityPlan(successData(response))
+        integrityPlan = cfg.target to plan
+        return plan
+    }
+
+    private fun readIntegrityPlan(data: JsonValue.Obj?): IntegrityPlan {
+        val integrity = data?.get("integrity")?.objOrNull ?: return IntegrityPlan(false, null)
+        if (integrity["request_token"]?.boolOrNull != true) return IntegrityPlan(false, null)
+        val type = integrity["token_type"]?.stringOrNull
+        val scheme = integrity["request_hash"]?.stringOrNull
+        // A decimal string on the wire (it can exceed 2^53); Play takes a long.
+        val project = when (val raw = integrity["cloud_project_number"]) {
+            is JsonValue.Str -> raw.value.takeIf { Regex("^[1-9][0-9]{0,18}$").matches(it) }?.toLongOrNull()
+            is JsonValue.Int -> raw.value
+            else -> null
+        }
+        if (type != TOKEN_TYPE || scheme != REQUEST_HASH_SCHEME) {
+            // A token bound some other way would be refused as another
+            // install's (integrity_failed); none is only unvouched.
+            logger.warn("p202: the server asks for a $type Play Integrity token bound as $scheme, which this SDK does not implement; no token is sent")
+            return IntegrityPlan(false, null)
+        }
+        if (project == null || project <= 0) {
+            logger.warn("p202: the server asks for a Play Integrity token but names no Cloud project number; no token is sent")
+            return IntegrityPlan(false, null)
+        }
+        return IntegrityPlan(true, project)
+    }
+
+    private fun sendInstall(cfg: AttributionConfig, plan: IntegrityPlan) {
         val body = parseOrNull(store.get(K_BODY) ?: return)?.objOrNull
         if (body == null) {
             // Never guessed back into shape: the stored body is the install.
@@ -291,11 +367,29 @@ class AttributionEngine(
         }
         val uuid = body["install_uuid"]?.stringOrNull ?: ""
         val canonical = InstallPayload.canonical(body)
-        val token = try {
-            integrity.tokenFor(InstallAttempt(uuid, canonical, sha256Hex(canonical)))
-        } catch (e: Exception) {
-            logger.warn("p202: the integrity provider failed (${e.message}); the install is sent without a token")
-            null
+        var token: String? = null
+        if (plan.request && integrity === IntegrityProvider.NONE) {
+            if (!warnedNoProvider) {
+                warnedNoProvider = true
+                logger.warn("p202: this app's registration uses Play Integrity, but no IntegrityProvider was configured (add the integrity module's PlayIntegrityProvider); the install is sent without a token")
+            }
+        } else if (plan.request) {
+            token = try {
+                integrity.tokenFor(InstallAttempt(uuid, canonical, sha256Hex(canonical), plan.cloudProjectNumber!!))
+            } catch (e: IntegrityUnavailableException) {
+                val held = store.get(K_INTEGRITY_ATTEMPTS)?.toIntOrNull() ?: 0
+                if (e.retryable && held + 1 < MAX_INTEGRITY_ATTEMPTS) {
+                    logger.info("p202: Play Integrity is unavailable (${e.message}); the install waits and asks again")
+                    store.edit(mapOf(K_INTEGRITY_ATTEMPTS to (held + 1).toString()))
+                    retryInstall(null)
+                    return
+                }
+                logger.warn("p202: Play Integrity gave no token (${e.message}); the install is sent without one")
+                null
+            } catch (e: Exception) {
+                logger.warn("p202: the integrity provider failed (${e.message}); the install is sent without a token")
+                null
+            }
         }
         val wire = LinkedHashMap(body.fields)
         if (token != null) {
@@ -319,6 +413,7 @@ class AttributionEngine(
                 val reason = data["reason"]?.stringOrNull ?: ""
                 val changes = linkedMapOf<String, String?>(
                     K_STATE to RECORDED, K_MATCH to match, K_REASON to reason, K_ATTEMPTS to null, K_NEXT_AT to null,
+                    K_INTEGRITY to data["integrity"]?.stringOrNull, K_INTEGRITY_ATTEMPTS to null,
                 )
                 val sentCustomer = CustomerId.fromWire(body["customer"])
                 val linked = data["customer"]?.stringOrNull
@@ -573,9 +668,18 @@ object Answers {
     val MATCH_STATES: List<String> = listOf(
         "attributed", "organic", "third_party", "unavailable", "pending_click", "bad_token",
         "foreign_click", "implausible", "outside_window", "duplicate_click", "pending_integrity",
+        "integrity_failed", "integrity_unverified",
     )
 
     /** Refuted installs: their events are refused (409), so the SDK stops sending them. */
     @JvmField
-    val REFUTED: Set<String> = setOf("bad_token", "foreign_click", "implausible")
+    val REFUTED: Set<String> = setOf("bad_token", "foreign_click", "implausible", "integrity_failed")
+
+    /** Waiting installs: their events are answered 503 until the server settles them; the SDK keeps them. */
+    @JvmField
+    val PENDING: Set<String> = setOf("pending_click", "pending_integrity")
+
+    /** The values of an install answer's `integrity`, in the server's order. */
+    @JvmField
+    val INTEGRITY_STATES: List<String> = listOf("not_requested", "received", "missing", "pending", "valid", "invalid", "error", "skipped")
 }

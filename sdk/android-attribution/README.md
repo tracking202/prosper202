@@ -22,10 +22,11 @@ P202Attribution.setCustomerId(user.id, signatureFromYourServer)
 |---|---|---|
 | `core/` | Everything that decides anything: the install token, the install and events bodies and the canonical form the server fingerprints, the customer id, the durable queue, the retry rules, the `HttpURLConnection` transport, the file store | a JDK |
 | `android/` | `P202Attribution` (the facade), Play's `InstallReferrerClient`, the store in `noBackupFilesDir`, device facts, flushing when the app goes to the background | an Android SDK and AGP |
+| `integrity/` (optional) | `PlayIntegrityProvider`: Play Integrity's standard request, bound to the install body's fingerprint | an Android SDK and AGP; `com.google.android.play:integrity` |
 
 The core is plain Kotlin that runs on Android from API 21 (no `java.nio.file`,
 `java.util.Base64` or `java.time`) and on the JVM, which is where its tests
-run. `settings.gradle.kts` includes `android/` only when an Android SDK is
+run. `settings.gradle.kts` includes `android/` and `integrity/` only when an Android SDK is
 found and `-Pp202.android=false` is not given.
 
 ## Tests
@@ -35,7 +36,8 @@ gradle -p sdk/android-attribution -Pp202.android=false :core:test
 ```
 
 - `ContractVectorsTest` runs every vector in `tests/fixtures/app-sdk-contract/`
-  that concerns this SDK — `android/` (the token, every install body's
+  that concerns this SDK — `android/` (the token, the Play Integrity
+  request hash of every `integrity.json` body, every install body's
   field errors, canonical form and fingerprint, every events body, the
   answers and which are retried), `customer-id.json` and the Android keys
   of `app-identity.json` — the same files the PHP suite runs.
@@ -43,7 +45,9 @@ gradle -p sdk/android-attribution -Pp202.android=false :core:test
   scripted server: one install, the same bytes on every retry, backoff and
   `Retry-After` across a relaunch, refusals re-armed only by a new token,
   batching under the caps, the queue bound, refuted installs, the customer
-  on either route, the integrity seam, the file store.
+  on either route, a token requested only when the schema asks and bound to
+  the body, holding back for Play, a waiting install's events, the file
+  store.
 - `LiveServerTest` runs the real engine against an instance; it skips
   unless `tests/live/android-sdk.sh` sets `P202_LIVE_BASE`.
 

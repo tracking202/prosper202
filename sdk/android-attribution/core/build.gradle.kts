@@ -30,7 +30,8 @@ tasks.test {
     systemProperty("p202.contractDir", rootProject.file("../../tests/fixtures/app-sdk-contract").absolutePath)
     // The live pass (tests/live/android-sdk.sh) hands the running instance in.
     for (name in listOf("P202_LIVE_BASE", "P202_LIVE_APP_TOKEN", "P202_LIVE_APP_KEY", "P202_LIVE_REFERRER", "P202_LIVE_CLICK_TIME",
-            "P202_LIVE_CUSTOMER_ID", "P202_LIVE_CUSTOMER_SIG", "P202_LIVE_OUT")) {
+            "P202_LIVE_CUSTOMER_ID", "P202_LIVE_CUSTOMER_SIG", "P202_LIVE_OUT",
+            "P202_LIVE_PHASE", "P202_LIVE_CLOUD_PROJECT", "P202_LIVE_STORE")) {
         System.getenv(name)?.let { environment(name, it) }
     }
     testLogging {

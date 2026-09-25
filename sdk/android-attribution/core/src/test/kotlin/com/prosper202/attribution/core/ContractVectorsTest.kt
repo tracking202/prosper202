@@ -166,6 +166,7 @@ class ContractVectorsTest {
     fun theAnswersAreRetriedExactlyAsTheContractSays() {
         val v = vectors("android/responses.json")
         assertEquals(Answers.MATCH_STATES, v["match_states"].list().map { it.str() })
+        assertEquals(Answers.INTEGRITY_STATES, v["integrity_states"].list().map { it.str() })
         for (route in listOf("installs", "events")) {
             for (row in v[route].list()) {
                 val o = row.objOrNull!!
@@ -175,6 +176,22 @@ class ContractVectorsTest {
         }
         assertTrue(v["installs"].list().any { it.objOrNull!!["when"].str().contains(InstallPayload.MAX_BODY_BYTES.toString()) })
         assertTrue(v["events"].list().any { it.objOrNull!!["when"].str().contains(EventPayload.MAX_BODY_BYTES.toString()) })
+    }
+
+    @Test
+    fun theIntegrityRequestHashIsTheFingerprintOfEveryBody() {
+        val v = vectors("android/integrity.json")
+        assertEquals(AttributionEngine.TOKEN_TYPE, v["token_type"].str())
+        assertEquals(AttributionEngine.REQUEST_HASH_SCHEME, v["request_hash"].str())
+        val cases = v["cases"].list()
+        assertTrue(cases.size >= 5)
+        for (c in cases) {
+            val o = c.objOrNull!!
+            val body = o["body"]!!.objOrNull!!
+            assertEquals(emptyMap(), InstallPayload.validate(body), o["name"].str())
+            assertEquals(o["canonical"].str(), InstallPayload.canonical(body), o["name"].str())
+            assertEquals(o["request_hash"].str(), InstallPayload.fingerprint(body), o["name"].str())
+        }
     }
 
     @Test

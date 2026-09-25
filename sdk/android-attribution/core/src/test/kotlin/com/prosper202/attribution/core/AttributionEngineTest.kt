@@ -209,17 +209,31 @@ class AttributionEngineTest {
     }
 
     @Test
+    fun aTokenIsRequestedOnlyWhenTheSchemaSaysAndIsBoundToTheBody() {
+        // off: the provider is never asked, and the schema is read once.
+        var asked = 0
+        integrity = IntegrityProvider { asked++; "never" }
+        val off = started()
+        assertEquals(0, asked)
+        assertNull(http.installs().single().json["integrity_token"])
+        assertEquals(listOf("https://track.example.com/api/v3/apps/schema"), http.schemaReads)
+        assertEquals("attributed", off.installMatch)
+    }
+
+    @Test
     fun theIntegritySeamSeesTheCanonicalBodyAndItsTokenStaysOutOfTheFingerprint() {
         var seen: InstallAttempt? = null
         integrity = IntegrityProvider { seen = it; "token-1" }
+        http.schema = { FakeTransport.schemaDoc(request = true, project = 987654321) }
         http.then(503)
         val e = started()
         val first = http.installs()[0].json
         assertEquals("token-1", first["integrity_token"]!!.stringOrNull)
         val attempt = seen!!
         assertEquals(e.installUuid, attempt.installUuid)
+        assertEquals(987654321L, attempt.cloudProjectNumber)
         assertEquals(InstallPayload.canonical(first), attempt.canonicalBody)
-        assertEquals(InstallPayload.fingerprint(first), attempt.fingerprint)
+        assertEquals(InstallPayload.fingerprint(first), attempt.requestHash)
         assertFalse(attempt.canonicalBody.contains("integrity_token"))
 
         // A fresh token on the retry is still the same install.
@@ -229,14 +243,101 @@ class AttributionEngineTest {
         assertEquals("token-2", second["integrity_token"]!!.stringOrNull)
         assertEquals(InstallPayload.fingerprint(first), InstallPayload.fingerprint(second))
 
+        assertEquals(1, http.schemaReads.size, "the schema is read once per process")
+
         // A provider that fails or returns nothing usable costs the token, not the install.
-        for (p in listOf(IntegrityProvider { throw IllegalStateException("no Play services") }, IntegrityProvider { "" })) {
+        for (p in listOf(
+            IntegrityProvider { throw IllegalStateException("no Play services") },
+            IntegrityProvider { throw IntegrityUnavailableException("API_NOT_AVAILABLE", retryable = false) },
+            IntegrityProvider { "" },
+        )) {
             val t = VirtualTime()
             val h = FakeTransport()
+            h.schema = { FakeTransport.schemaDoc(request = true) }
             AttributionEngine(InMemoryStore(), h, t, t, FakeReferrer(REFERRER), p, RecordingListener(), SilentLogger) { 1.0 }.configure(config())
             t.settle()
             assertNull(h.installs().single().json["integrity_token"])
         }
+    }
+
+    @Test
+    fun aRetryablePlayIntegrityFailureHoldsTheInstallBackThenItGoesWithout() {
+        var asked = 0
+        integrity = IntegrityProvider { asked++; throw IntegrityUnavailableException("NETWORK_ERROR", retryable = true) }
+        http.schema = { FakeTransport.schemaDoc(request = true) }
+        started()
+        assertEquals(1, asked)
+        assertEquals(0, http.installs().size, "held back: under require no token is never paid")
+        time.advance(30_000)
+        assertEquals(2, asked)
+        assertEquals(0, http.installs().size)
+        time.advance(60_000)
+        assertEquals(AttributionEngine.MAX_INTEGRITY_ATTEMPTS, asked)
+        assertNull(http.installs().single().json["integrity_token"], "then sent without one rather than never")
+    }
+
+    @Test
+    fun aSchemaTheSdkCannotHonourMeansNoToken() {
+        for (doc in listOf(
+            FakeTransport.schemaDoc(request = true, scheme = "sha512_of_something_else"),
+            FakeTransport.schemaDoc(request = true, type = "classic"),
+            FakeTransport.schemaDoc(request = true, project = null),
+            HttpResponse(404, """{"error":true,"message":"Unknown app token","status":404}"""),
+            HttpResponse(200, """{"data":{"platform":"android","integrity_mode":"off"}}"""),
+        )) {
+            val t = VirtualTime()
+            val h = FakeTransport()
+            h.schema = { doc }
+            var asked = 0
+            AttributionEngine(InMemoryStore(), h, t, t, FakeReferrer(REFERRER), { asked++; "t" }, RecordingListener(), SilentLogger) { 1.0 }.configure(config())
+            t.settle()
+            assertEquals(0, asked, doc.body)
+            assertEquals(1, h.installs().size)
+        }
+        // A schema that cannot be read now is waited out, like the install.
+        http.thenSchema(503, "", mapOf("retry-after" to "120")).thenSchemaFail()
+        http.schema = { FakeTransport.schemaDoc(request = true) }
+        integrity = IntegrityProvider { "tok" }
+        started()
+        assertEquals(0, http.installs().size)
+        time.advance(120_000)
+        assertEquals(0, http.installs().size)
+        time.advance(60_000)
+        assertEquals("tok", http.installs().single().json["integrity_token"]!!.stringOrNull)
+    }
+
+    @Test
+    fun aPendingIntegrityInstallKeepsItsEventsUntilItSettlesAndAFailedOneStopsThem() {
+        http.then(200, """{"data":{"install_uuid":"x","match":"pending_integrity","reason":"Waiting for the Play Integrity verdict.","trusted":null,"test":false,"integrity":"pending","duplicate":false}}""")
+        http.schema = { FakeTransport.schemaDoc(request = true) }
+        integrity = IntegrityProvider { "tok" }
+        val e = started()
+        assertEquals("pending_integrity", e.installMatch)
+        assertEquals("pending", e.installIntegrity)
+        val pending = """{"error":true,"message":"still pending_integrity","status":503,"match":"pending_integrity"}"""
+        http.then(503, pending, mapOf("retry-after" to "60")).then(503, pending, mapOf("retry-after" to "60"))
+        val a = e.logEvent("level_reached", mapOf("level" to 3))
+        time.advance(AttributionEngine.FLUSH_DELAY_MILLIS)
+        time.advance(60_000)
+        assertEquals(1, e.queuedEvents, "kept while the verdict is pending")
+        time.advance(60_000)
+        assertEquals(listOf(a), listener.delivered)
+        assertEquals(3, http.events().size)
+
+        // integrity_failed: refuted, events stop.
+        val t = VirtualTime()
+        val h = FakeTransport()
+        val l = RecordingListener()
+        val f = AttributionEngine(InMemoryStore(), h, t, t, FakeReferrer(REFERRER), IntegrityProvider.NONE, l, SilentLogger) { 1.0 }
+        f.configure(config())
+        t.settle()
+        h.then(409, """{"error":true,"message":"classified integrity_failed","status":409,"match":"integrity_failed"}""")
+        val b = f.logEvent("x")
+        t.advance(AttributionEngine.FLUSH_DELAY_MILLIS)
+        f.logEvent("y")
+        t.advance(3600_000)
+        assertEquals(1, h.events().size)
+        assertEquals(b, l.dropped.first().first)
     }
 
     @Test

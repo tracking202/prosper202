@@ -19,7 +19,7 @@ rootProject.name = "p202-android-attribution"
 // transport) and its contract-vector tests need only a JDK.
 include(":core")
 
-// The Android library needs an Android SDK. It is included when one is found
+// The Android libraries need an Android SDK. They are included when one is found
 // (ANDROID_HOME, ANDROID_SDK_ROOT, or sdk.dir in local.properties) unless
 // -Pp202.android=false says not to — which CI's JVM job does, because the
 // runner image ships an SDK and the core must not wait on AGP.
@@ -30,4 +30,6 @@ val androidSdk = listOf(System.getenv("ANDROID_HOME"), System.getenv("ANDROID_SD
 val wanted = providers.gradleProperty("p202.android").orNull != "false"
 if (wanted && androidSdk != null && File(androidSdk).isAbsolute && File(androidSdk).isDirectory) {
     include(":android")
+    // Optional Play Integrity provider (com.google.android.play:integrity).
+    include(":integrity")
 }

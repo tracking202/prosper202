@@ -72,6 +72,12 @@ class LiveServerTest {
             statuses.add(url.substringAfter("/api/v3/") + " " + r.status)
             return r
         }
+
+        override fun get(url: String, headers: Map<String, String>): HttpResponse {
+            val r = real.get(url, headers)
+            statuses.add("GET " + url.substringAfter("/api/v3/") + " " + r.status)
+            return r
+        }
     }
 
     private fun referrer(installReferrer: String, clickTime: Long) = ReferrerDetails(
@@ -88,6 +94,10 @@ class LiveServerTest {
     @Test
     fun installEventsAndCustomerAgainstARunningInstance() {
         assumeTrue("set P202_LIVE_BASE (tests/live/android-sdk.sh) to run against an instance", System.getenv("P202_LIVE_BASE") != null)
+        when (System.getenv("P202_LIVE_PHASE") ?: "main") {
+            "integrity1" -> return integrityRequireFirstLaunch()
+            "integrity2" -> return integrityRequireAfterTheVerdict()
+        }
         val base = env("P202_LIVE_BASE")
         val token = env("P202_LIVE_APP_TOKEN")
         val appKey = env("P202_LIVE_APP_KEY")
@@ -134,7 +144,10 @@ class LiveServerTest {
         Thread.sleep(500)
         relaunched.drain(10_000)
         assertEquals(sent, http.statuses.toList(), "nothing is resent after a relaunch")
-        assertEquals(listOf("apps/installs 200", "apps/installs/${a.installUuid}/events 200", "apps/installs/${a.installUuid}/events 200"), sent)
+        assertEquals(
+            listOf("GET apps/schema 200", "apps/installs 200", "apps/installs/${a.installUuid}/events 200", "apps/installs/${a.installUuid}/events 200"),
+            sent,
+        )
 
         // ---- Device B: an organic install, its customer set before the first launch.
         val recB = Recorder()
@@ -172,6 +185,84 @@ class LiveServerTest {
         results["store_a"] = storeA.absolutePath.json()
         out.writeText(Json.write(JsonValue.Obj(results)))
         println("live: " + Json.write(JsonValue.Obj(results)))
+    }
+
+    /**
+     * Phase 1 under `require`: the SDK reads the schema, asks its provider
+     * for a token bound to the body, and the install waits
+     * (`pending_integrity`); its events wait with it (503). The provider
+     * stands in for Play: it mints a token and records the requestHash it
+     * was asked to bind, which the shell hands the fake Google as the
+     * verdict's `requestHash` — so the server's check passes only if the
+     * SDK bound the token to the bytes the server fingerprints. A second
+     * device with no provider sends no token (`missing`).
+     */
+    private fun integrityRequireFirstLaunch() {
+        val base = env("P202_LIVE_BASE")
+        val token = env("P202_LIVE_APP_TOKEN")
+        val appKey = env("P202_LIVE_APP_KEY")
+        val clickTime = env("P202_LIVE_CLICK_TIME").toLong()
+        val out = File(env("P202_LIVE_OUT"))
+        val dir = Files.createTempDirectory("p202-live").toFile()
+        val asked = Collections.synchronizedList(ArrayList<InstallAttempt>())
+        val provider = IntegrityProvider { attempt ->
+            asked.add(attempt)
+            "sdk-live-" + attempt.installUuid
+        }
+        val rec = Recorder()
+        val worker = ExecutorScheduler()
+        val d = AttributionEngine(FileStore(File(dir, "d.json")), UrlConnectionTransport(), worker, Clock { System.currentTimeMillis() },
+            ReferrerSource { it(referrer(env("P202_LIVE_REFERRER"), clickTime)) }, provider, rec, PrintLogger)
+        d.setCustomerId(CustomerId.of(env("P202_LIVE_CUSTOMER_ID"), env("P202_LIVE_CUSTOMER_SIG")))
+        d.configure(AttributionConfig.of(base, token, appKey, "3.2.0", "15"))
+        rec.await("the install") { rec.recorded.isNotEmpty() || rec.refused.isNotEmpty() }
+        assertEquals(listOf("pending_integrity|false"), rec.recorded.toList())
+        assertEquals("pending", d.installIntegrity)
+        assertEquals(1, asked.size, "one token, for the one attempt")
+        assertEquals(env("P202_LIVE_CLOUD_PROJECT").toLong(), asked[0].cloudProjectNumber)
+        val e1 = d.logEvent("level_reached", mapOf("level" to 3))
+        d.flush()
+        Thread.sleep(1500)
+        worker.drain(10_000)
+        assertEquals(1, d.queuedEvents, "the event waits with the install (503)")
+
+        val recE = Recorder()
+        val workerE = ExecutorScheduler()
+        val e = AttributionEngine(FileStore(File(dir, "e.json")), UrlConnectionTransport(), workerE, Clock { System.currentTimeMillis() },
+            ReferrerSource { it(referrer("utm_source=google-play&utm_medium=organic", clickTime)) }, IntegrityProvider.NONE, recE, PrintLogger)
+        e.configure(AttributionConfig.of(base, token, appKey, "3.2.0", "15"))
+        recE.await("install E") { recE.recorded.isNotEmpty() || recE.refused.isNotEmpty() }
+        assertEquals("missing", e.installIntegrity, "no provider: no token")
+
+        val results = linkedMapOf<String, JsonValue>(
+            "install_d" to d.installUuid.json(),
+            "install_e" to e.installUuid.json(),
+            "token_d" to ("sdk-live-" + d.installUuid).json(),
+            "request_hash_d" to asked[0].requestHash.json(),
+            "event_d" to e1.json(),
+            "store_d" to File(dir, "d.json").absolutePath.json(),
+        )
+        out.writeText(Json.write(JsonValue.Obj(results)))
+        println("live: " + Json.write(JsonValue.Obj(results)))
+    }
+
+    /**
+     * Phase 2: the verdict has passed (the shell ran the worker against the
+     * fake Google). The same device relaunches — its clock a minute on, past
+     * the 503's Retry-After — and the event it kept is delivered.
+     */
+    private fun integrityRequireAfterTheVerdict() {
+        val store = File(env("P202_LIVE_STORE"))
+        val rec = Recorder()
+        val worker = ExecutorScheduler()
+        val d = AttributionEngine(FileStore(store), UrlConnectionTransport(), worker, Clock { System.currentTimeMillis() + 61_000 },
+            ReferrerSource { error("a relaunch must not read the referrer again") }, { error("a recorded install asks for no token") }, rec, PrintLogger)
+        d.configure(AttributionConfig.of(env("P202_LIVE_BASE"), env("P202_LIVE_APP_TOKEN"), env("P202_LIVE_APP_KEY"), "3.2.0", "15"))
+        d.flush()
+        rec.await("the kept event") { rec.delivered.isNotEmpty() || rec.dropped.isNotEmpty() }
+        assertEquals(1, rec.delivered.size)
+        assertEquals(0, d.queuedEvents)
+        store.parentFile.deleteRecursively()
     }
 
     private object PrintLogger : Logger {
