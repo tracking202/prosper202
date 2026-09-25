@@ -61,6 +61,23 @@ if ($cookie !== '') {
 }
 
 if ($click_id > 0) {
+	// An event (plan §2.2), on a click of the campaign's owner: stored and
+	// evaluated by the click's goals; a refusal is logged (an image cannot
+	// say more). A campaign without goals records its plain conversion
+	// below, as always, with the event's name kept on the row.
+	$webEvent = null;
+	try {
+		$webEvent = p202RecordWebEvent($db, $click_id, $_GET, ['user_id' => (int) $mysql['user_id'], 'browser' => false]);
+	} catch (\Throwable $webEventError) {
+		error_log('px: event recording failed for click ' . $click_id . ': ' . $webEventError->getMessage());
+		exit;
+	}
+	if ($webEvent !== null && $webEvent['status'] !== 'no_goals') {
+		if ($webEvent['status'] !== 'recorded') {
+			error_log('px: event refused for click ' . $click_id . ' (' . $webEvent['status'] . '): ' . ($webEvent['message'] ?? $webEvent['reason'] ?? ''));
+		}
+		exit;
+	}
 	try {
 		// user_id: a cookie names any click on this install; only one that
 		// belongs to the campaign's owner may convert for this campaign.
@@ -68,6 +85,7 @@ if ($click_id > 0) {
 			'user_id'    => (int) $mysql['user_id'],
 			'ip'         => p202ClientIp($_SERVER),
 			'user_agent' => (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''),
+			'event_name' => $webEvent['event_name'] ?? null,
 		]);
 		if ($outcome['recorded'] || ($outcome['duplicate'] ?? false)) {
 			p202LinkConversionIdentity($db, $click_id, $_GET);

@@ -1,0 +1,35 @@
+{
+  "cases": [
+    {
+      "id": "events-001-a-purchase-reported-on-a-click",
+      "priority": "high",
+      "state": "seeded fixture; setup puts a goal named EVAL EVENT SALE (a purchase, paid at the event's revenue) on the campaign of the most recent click, archiving any earlier one",
+      "setup": [
+        "cid=$(p202 click list --limit 1 --json | jq -r '.data[0].aff_campaign_id'); p202 goal list --campaign-id \"$cid\" --json | jq -r '.data[] | select(.name==\"EVAL EVENT SALE\") | .goal_id' | xargs -r -I{} p202 goal delete {} --force",
+        "cid=$(p202 click list --limit 1 --json | jq -r '.data[0].aff_campaign_id'); p202 goal create --campaign-id \"$cid\" --name 'EVAL EVENT SALE' --event purchase --value-from-property --json >/dev/null"
+      ],
+      "ask": "The most recent click just bought something. Report a purchase event on that click, with event id EVAL-ORD-77 and revenue 20.",
+      "expected": {
+        "runs_one_of": [
+          "event send"
+        ],
+        "checks": [
+          {
+            "run": "click=$(p202 click list --limit 1 --json | jq -r '.data[0].click_id'); cid=$(p202 click list --limit 1 --json | jq -r '.data[0].aff_campaign_id'); gid=$(p202 goal list --campaign-id \"$cid\" --json | jq -r '.data[] | select(.name==\"EVAL EVENT SALE\") | .goal_id' | head -1); p202 goal outcomes \"$gid\" --json | jq --arg c \"$click\" '[.data[] | select(.event_id==\"EVAL-ORD-77\" and ((.subject_id|tostring)==$c) and .payable==true and (.value|tonumber)==20)] | length == 1'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if the most recent click has exactly one outcome of EVAL EVENT SALE, reached by the event EVAL-ORD-77 and paying 20. FAIL if the event went to another click, carried another id or revenue, or was recorded as a plain conversion instead of an event.",
+        "reply_includes": [
+          "EVAL-ORD-77"
+        ]
+      },
+      "cleanup": [
+        "cid=$(p202 click list --limit 1 --json | jq -r '.data[0].aff_campaign_id'); p202 goal list --campaign-id \"$cid\" --json | jq -r '.data[] | select(.name==\"EVAL EVENT SALE\") | .goal_id' | xargs -r -I{} p202 goal delete {} --force"
+      ],
+      "notes": "The check reads the goal's outcome, not the reply: an event sent to another click, with another id, or recorded with `p202 conversion create` (a plain conversion no goal evaluates) fails. The event id is the idempotency the ask names, so a run against an instance where that click already reported EVAL-ORD-77 answers a duplicate and writes no outcome for the new goal: run it on a freshly seeded instance, as CI does."
+    }
+  ]
+}

@@ -21,6 +21,12 @@ namespace Prosper202\Goals;
  *   revenue_trusted  whether the path it arrived by may set a paid value
  *                    (decided by the intake, never by the payload)
  *   transaction_id   the network's id for it, kept on the ledger row
+ *   clocked_by_server the reporter sent no occurred_at, so the intake used
+ *                    its own clock (a pixel, p202.track(), an API event
+ *                    without one). Such a time is not something the
+ *                    reporter said, so a retry that arrives a second
+ *                    later is still the same event (GoalEngine compares it
+ *                    at the stored time).
  *
  * The evaluation time is `min(occurred_at, received_at)`: a reporter's clock
  * can move an event earlier, never later than it arrived, so it cannot be
@@ -47,7 +53,26 @@ final class GoalEvent
         public readonly bool $revenueTrusted,
         public readonly ?string $transactionId,
         public readonly bool $isInstall = false,
+        public readonly bool $clockedByServer = false,
     ) {
+    }
+
+    /** The same event at another occurred_at (a server-clocked retry compared at the stored time). */
+    public function withOccurredAt(int $occurredAt): self
+    {
+        return new self(
+            $this->eventId, $this->name, $occurredAt, $this->receivedAt, $this->properties, $this->revenue,
+            $this->revenueTrusted, $this->transactionId, $this->isInstall, $this->clockedByServer,
+        );
+    }
+
+    /** The same event, marked as timed by the intake's clock rather than the reporter's. */
+    public function clockedByServer(): self
+    {
+        return new self(
+            $this->eventId, $this->name, $this->occurredAt, $this->receivedAt, $this->properties, $this->revenue,
+            $this->revenueTrusted, $this->transactionId, $this->isInstall, true,
+        );
     }
 
     /** The install itself, as the one event an install trigger matches. */

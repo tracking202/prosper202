@@ -511,7 +511,12 @@ final class GoalsController
         }
         $after = array_key_exists('after', $input) ? self::id($input['after'], 'after', allowZero: true) : 0;
 
-        return $this->guard(fn () => (new GoalEngine($this->conn, $this->goals))->reevaluate($this->userId, $id, $version, $apply, $limit, $after));
+        // An outcome the old version never reached is new to the traffic
+        // source and is announced like any other; a replacement is not
+        // (GoalEngine decides which is which).
+        $engine = new GoalEngine($this->conn, $this->goals, null, null, new \Prosper202\Goals\TrafficSourceNotifier($this->conn, false));
+
+        return $this->guard(fn () => $engine->reevaluate($this->userId, $id, $version, $apply, $limit, $after));
     }
 
     // ─── Checks ─────────────────────────────────────────────────────

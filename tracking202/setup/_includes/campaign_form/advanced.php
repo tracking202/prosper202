@@ -16,13 +16,24 @@ $errors = $campaignForm['errors'];
 $rotationOffered = (bool) $campaignForm['rotation_offered'];
 $rotating = (string) $values['aff_campaign_rotate'] === '1';
 $advancedSet = (string) $values['aff_campaign_cloaking'] === '1'
+	|| (string) ($values['payout_mode'] ?? 'replace') === 'accumulate'
+	|| p202_setup_invalid($errors, 'payout_mode') !== ''
 	|| $rotating
 	|| (string) ($values['attribution_model_id'] ?? '') !== ''
 	|| p202_setup_invalid($errors, 'aff_campaign_url_2', 'aff_campaign_url_3', 'aff_campaign_url_4', 'aff_campaign_url_5') !== '';
 ?>
 <details class="p202-disclosure mb-3" data-p202-remember="setup-campaigns-advanced"<?php echo $advancedSet ? ' open' : ''; ?>>
-	<summary>Advanced <span class="p202-disclosure__hint">cloaking, attribution model<?php echo $rotationOffered ? ', URL rotation' : ''; ?></span></summary>
+	<summary>Advanced <span class="p202-disclosure__hint">cloaking, several conversions per click, attribution model<?php echo $rotationOffered ? ', URL rotation' : ''; ?></span></summary>
 	<div class="p202-disclosure__body">
+		<div class="mb-3">
+			<label class="form-label" for="payout_mode">When a click converts more than once</label>
+			<select class="form-select<?php echo p202_setup_invalid($errors, 'payout_mode'); ?>" id="payout_mode" name="payout_mode">
+				<?php echo p202_setup_options(['replace' => 'Keep the latest', 'accumulate' => 'Add them up'], (string) ($values['payout_mode'] ?? 'replace')); ?>
+			</select>
+			<div class="form-text">Keep the latest by default: a later postback corrects the click's value. Add them up pays every step of a funnel of goals on one click.</div>
+			<?php echo p202_setup_feedback($errors, 'payout_mode'); ?>
+		</div>
+
 		<div class="mb-3">
 			<label class="form-label" for="aff_campaign_cloaking">Cloaking</label>
 			<select class="form-select" id="aff_campaign_cloaking" name="aff_campaign_cloaking">

@@ -26,6 +26,10 @@ scope area (`goals:read`, `goals:write`, `goals:stage`). The CLI is
 
 Writes are stageable (`?staged=1`); creates honor `Idempotency-Key`.
 
+Events reach goals from pixels and postbacks (`event=`), `POST /events` and
+`p202.track()` on landing pages — see [web events](23-events.md) — and a
+campaign's own goals are edited on its Setup › Campaigns page too.
+
 ## Owners
 
 Every goal has one owner (`scope`, `scope_id`):
@@ -114,6 +118,12 @@ see it like any other conversion. Whether it pays is the campaign's:
   a paid value (`revenue_trusted`) — an untrusted one is stored on the row
   but not credited (`value_note: untrusted_value`);
 - an ineligible outcome never pays.
+
+A payable goal whose campaign term has `notify_traffic_source` (the default)
+tells the click's traffic source when it is reached, once, with
+`[[p202_goal]]`, `[[p202_goal_id]]` and `[[p202_goal_value]]` filled; an
+outcome written in place of an earlier one by a replay or a re-evaluation
+is never announced again ([web events](23-events.md#telling-the-traffic-source)).
 
 The click's value is the ledger's: `accumulate` campaigns add their payable
 goal rows, `replace` campaigns show the latest. Attaching goals does not

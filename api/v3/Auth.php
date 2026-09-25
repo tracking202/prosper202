@@ -142,6 +142,7 @@ final readonly class Auth
         'attribution',
         'apps',
         'goals',
+        'events',
         'users',
         'system',
         'sync',

@@ -95,6 +95,15 @@ class CapabilitiesController
                         'subjects' => [\Prosper202\Goals\GoalSubject::CLICK, \Prosper202\Goals\GoalSubject::INSTALL],
                         'evaluator_format' => 1,
                     ],
+                    // Web events (plan §2.2): POST /events keyed by
+                    // click_id, `event=` on pixels and postbacks, and
+                    // p202.track() on landing pages.
+                    'events' => [
+                        'max_per_request' => \Api\V3\Controllers\EventsController::MAX_EVENTS,
+                        'max_per_subject' => \Prosper202\Goals\GoalEngine::MAX_EVENTS_PER_SUBJECT,
+                        'max_properties' => \Prosper202\Goals\GoalEvent::MAX_PROPERTIES,
+                        'goal_tokens' => ['[[p202_goal]]', '[[p202_goal_id]]', '[[p202_goal_value]]'],
+                    ],
                 ],
                 'limits' => [
                     'max_bulk_rows' => $this->maxBulkRows(),

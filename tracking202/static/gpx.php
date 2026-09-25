@@ -82,6 +82,27 @@ if (is_numeric($mysql['click_id'])) {
 		return;
 	}
 
+	// An event (plan §2.2): stored on the click and evaluated by its goals.
+	// The image has already been sent, so a refusal is logged. The event
+	// id dedupes a reload, so the one-conversion-per-click gate below is
+	// for plain conversions only; a campaign without goals takes that path
+	// as it always has, with the event's name kept on the row.
+	$eventName = null;
+	try {
+		$webEvent = p202RecordWebEvent($db, (int) $mysql['click_id'], $_GET, ['browser' => false]);
+	} catch (\Throwable $webEventError) {
+		error_log('gpx: event recording failed for click ' . $mysql['click_id'] . ': ' . $webEventError->getMessage());
+		return;
+	}
+	if ($webEvent !== null && $webEvent['status'] !== 'no_goals') {
+		if ($webEvent['status'] !== 'recorded') {
+			error_log('gpx: event refused for click ' . $mysql['click_id'] . ' (' . $webEvent['status'] . '): '
+				. ($webEvent['message'] ?? $webEvent['reason'] ?? ''));
+		}
+		return;
+	}
+	$eventName = $webEvent['event_name'] ?? null;
+
         // Record when the click has not converted yet, OR when the pixel
         // carries a transaction id: a distinct txid is a repeat purchase from
         // the same click (LTV), while a replayed txid is safely de-duplicated
@@ -136,6 +157,7 @@ if (is_numeric($mysql['click_id'])) {
 				'pixel_type'      => 1,
 				'user_agent'      => $_SERVER['HTTP_USER_AGENT'] ?? '',
 				'click_payout'    => $click_payout_for_log,
+				'event_name'      => $eventName,
 				// The click_lead read above is a fast path; the writer re-checks
 				// it under the click lock so two concurrent id-less pixels
 				// record one conversion, not two.

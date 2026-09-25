@@ -76,7 +76,7 @@ class ClicksController
             LEFT JOIN 202_platforms p ON ca.platform_id = p.platform_id
             LEFT JOIN 202_browsers b ON ca.browser_id = b.browser_id
             $whereClause
-            ORDER BY c.click_time DESC
+            ORDER BY c.click_time DESC, c.click_id DESC
             LIMIT ? OFFSET ?";
 
         $binds[] = $limit;

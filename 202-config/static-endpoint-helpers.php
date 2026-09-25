@@ -51,7 +51,7 @@ if (!function_exists('p202RespondJsonError')) {
     }
 }
 
-const P202_POSTBACK_USER_AGENT = 'Mozilla/5.0 Postback202-Bot v1.8';
+const P202_POSTBACK_USER_AGENT = \Prosper202\Conversion\TrafficSourcePixels::POSTBACK_USER_AGENT;
 
 if (!function_exists('p202ApplyConversionClickSide')) {
     /**
@@ -129,103 +129,21 @@ if (!function_exists('p202ExtractReversal')) {
 if (!function_exists('p202FireTrafficSourcePixels')) {
     /**
      * Tell the click's traffic source about a conversion: the one sender for
-     * every 202_ppc_account_pixels pixel, used by gpb.php and upx.php (and the
-     * notification worker that comes with the Android intake).
+     * every 202_ppc_account_pixels pixel, used by gpb.php and upx.php and by
+     * the goal notifier (Prosper202\Goals\TrafficSourceNotifier). The rules
+     * live in Prosper202\Conversion\TrafficSourcePixels::fire(), which this
+     * delegates to so the paths that never load this file send the same.
      *
-     * Every pixel row the traffic source has is fired (the setup page lets an
-     * account hold several; gpb.php used to read only the first). Pixel
-     * types, as the setup page defines them:
-     *   1 image, 2 iframe, 3 script — markup for a browser, returned;
-     *   4 server-to-server postback — fetched here, one GET per URL;
-     *   5 raw code — returned with its tokens replaced.
-     *
-     * $tokens are replaceTokens() tokens. The caller fills `transactionid`
-     * with the conversion's transaction id, or its dedupe key when the
-     * network sent none, so a network receiving several conversions for one
-     * click can tell them apart.
-     *
-     * @param array<string, scalar> $tokens
+     * @param array<string, scalar> $tokens replaceTokens() tokens; the caller
+     *        fills `transactionid` with the conversion's transaction id, or
+     *        its dedupe key when the network sent none
      * @param (callable(string): bool)|null $fetch Performs a type-4 GET and
-     *        says whether it succeeded (a 2xx or 3xx status); defaults to
-     *        curl with the postback user agent. Injected by tests.
-     * @return array{markup: string, types: list<int>, server_calls: int, server_failures: int}
+     *        says whether it succeeded; injected by tests.
+     * @return array{markup: string, types: list<int>, server_calls: int, server_failures: int, browser_skipped: int}
      */
     function p202FireTrafficSourcePixels(mysqli $db, int $ppcAccountId, array $tokens, ?callable $fetch = null): array
     {
-        $out = ['markup' => '', 'types' => [], 'server_calls' => 0, 'server_failures' => 0];
-        if ($ppcAccountId <= 0) {
-            return $out;
-        }
-
-        $conn = new \Prosper202\Database\Connection($db);
-        $stmt = $conn->prepareRead(
-            'SELECT pixel_code, pixel_type_id FROM 202_ppc_account_pixels WHERE ppc_account_id = ? ORDER BY pixel_id'
-        );
-        $conn->bind($stmt, 'i', [$ppcAccountId]);
-        $pixels = $conn->fetchAll($stmt);
-
-        // getUrl() answers '' both for a failed request and for an empty
-        // body, so it cannot say whether the network heard us. This asks
-        // curl for the status as well.
-        $fetch ??= static function (string $url): bool {
-            $ch = curl_init($url);
-            if ($ch === false) {
-                return false;
-            }
-            curl_setopt_array($ch, [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_FOLLOWLOCATION => true,
-                CURLOPT_MAXREDIRS => 5,
-                CURLOPT_TIMEOUT => 10,
-                CURLOPT_CONNECTTIMEOUT => 5,
-                CURLOPT_USERAGENT => P202_POSTBACK_USER_AGENT,
-            ]);
-            $body = curl_exec($ch);
-            $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-            curl_close($ch);
-
-            return $body !== false && $status >= 200 && $status < 400;
-        };
-
-        foreach ($pixels as $pixel) {
-            $type = (int) $pixel['pixel_type_id'];
-            $code = (string) $pixel['pixel_code'];
-            $out['types'][] = $type;
-
-            if ($type === 5) {
-                $out['markup'] .= replaceTokens($code, $tokens) . "\n";
-                continue;
-            }
-
-            foreach (explode(' ', $code) as $url) {
-                if ($url === '') {
-                    continue;
-                }
-                $url = replaceTokens($url, $tokens);
-                $attr = htmlspecialchars((string) $url, ENT_QUOTES);
-                switch ($type) {
-                    case 1:
-                        $out['markup'] .= "<img src='{$attr}' height='0' width='0' style='display:none' />\n";
-                        break;
-                    case 2:
-                        $out['markup'] .= "<iframe src='{$attr}' height='0' width='0'></iframe>\n";
-                        break;
-                    case 3:
-                        $out['markup'] .= "<script async src='{$attr}'></script>\n";
-                        break;
-                    case 4:
-                        $out['server_calls']++;
-                        if (!$fetch((string) $url)) {
-                            $out['server_failures']++;
-                            error_log('traffic source postback failed for ppc account ' . $ppcAccountId . ': ' . $url);
-                        }
-                        break;
-                }
-            }
-        }
-        $out['types'] = array_values(array_unique($out['types']));
-
-        return $out;
+        return \Prosper202\Conversion\TrafficSourcePixels::fire(new \Prosper202\Database\Connection($db), $ppcAccountId, $tokens, $fetch);
     }
 }
 
@@ -541,6 +459,11 @@ if (!function_exists('p202RecordConversion')) {
         if (isset($log['reversal_ref']) && (string) $log['reversal_ref'] !== '') {
             $data['reversal_ref'] = (string) $log['reversal_ref'];
         }
+        if (isset($log['event_name']) && (string) $log['event_name'] !== '') {
+            // The `event=` of a hit on a campaign without goals: kept on the
+            // row for the breakdown, and nothing else (p202RecordWebEvent).
+            $data['event_name'] = (string) $log['event_name'];
+        }
         if (!empty($log['once_per_click'])) {
             // The one-conversion-per-click rule for id-less hits, enforced by
             // the writer under its click lock (see MysqlConversionRepository::record).
@@ -822,9 +745,10 @@ if (!function_exists('p202RecordLegacyConversion')) {
      * @param array{
      *     user_id?: int, campaign_id?: int, transaction_id?: string,
      *     use_pixel_payout?: bool, payout?: string, ip?: string, user_agent?: string,
-     *     source?: string, reversal?: bool, reversal_ref?: string
+     *     source?: string, reversal?: bool, reversal_ref?: string, event_name?: string|null
      * } $opts source is the ledger source the row is recorded under
-     *     (legacy_pixel for px and pb, clickbank for cb202).
+     *     (legacy_pixel for px and pb, clickbank for cb202); event_name is
+     *     a campaign-without-goals hit's `event=`, kept on the row.
      * @return array{recorded: bool, duplicate: bool, conv_id: int, reason: string}
      *         reason is '' when recorded; otherwise one of unknown_click,
      *         foreign_click, campaign_mismatch, already_lead, duplicate.
@@ -894,6 +818,7 @@ if (!function_exists('p202RecordLegacyConversion')) {
                 'source'          => (string) ($opts['source'] ?? \Prosper202\Conversion\Ledger\ConversionSource::LEGACY_PIXEL->value),
                 'reversal'        => !empty($opts['reversal']),
                 'reversal_ref'    => (string) ($opts['reversal_ref'] ?? ''),
+                'event_name'      => (string) ($opts['event_name'] ?? ''),
             ],
             (string) ($click['click_cpa'] ?? ''),
             $usePixelPayout,
@@ -931,5 +856,147 @@ if (!function_exists('p202RecordLegacyConversion')) {
             'conv_id'   => $result['conv_id'],
             'reason'    => $reason,
         ];
+    }
+}
+
+if (!function_exists('p202RecordWebEvent')) {
+    /**
+     * A pixel or postback that carries `event=` (plan §2.2): the event is
+     * stored on the click and evaluated by the click's goals through
+     * GoalEngine::ingest(), which records whatever the goals reach through
+     * the conversion ledger and tells the traffic source about each payable
+     * goal the campaign notifies for.
+     *
+     * Returns null when the request carries no event — the endpoint then
+     * does exactly what it did before events existed. Otherwise one of:
+     *
+     *   status no_goals   the click's campaign evaluates no goals: the
+     *                     endpoint records its plain conversion as it always
+     *                     has, with `event_name` (the event's name when it is
+     *                     a valid one, else null) kept on the row. Goals are
+     *                     opt-in per campaign, so an existing postback that
+     *                     happens to carry `event=` changes nothing.
+     *   status recorded   the event was stored (or was a duplicate): `result`
+     *                     is the engine's answer, `markup` the browser pixels
+     *                     to echo on a browser path.
+     *   status invalid    the event was malformed (`errors` by parameter);
+     *                     nothing was written. HTTP 422.
+     *   status refused    the engine refused it (`code` 409 for an event id
+     *                     reused with other content, 422 for a subject at its
+     *                     event cap or an event that is also a reversal).
+     *   status not_found  no such click, or not the click the endpoint's
+     *                     scope allows (`reason`). HTTP 404.
+     *
+     * A database failure propagates: the caller answers 500 so a sender that
+     * retries failures retries, and the event id makes the retry safe.
+     *
+     * @param array<string, mixed> $get the request's query
+     * @param array{user_id?: int, campaign_id?: int, browser?: bool, trusted?: bool} $opts
+     *        user_id / campaign_id: the click must belong to that owner /
+     *        campaign (px / pb scopes). browser: a browser renders the
+     *        response, so image, iframe and script pixels are returned for
+     *        it to load. trusted: whether `amount` may set a paid value, as it
+     *        does for this endpoint's plain conversions (default true).
+     * @return array<string, mixed>|null
+     */
+    function p202RecordWebEvent(mysqli $db, int $clickId, array $get, array $opts = []): ?array
+    {
+        if (!\Prosper202\Goals\WebEvents::requested($get)) {
+            return null;
+        }
+        $conn = new \Prosper202\Database\Connection($db);
+        $events = new \Prosper202\Goals\WebEvents($conn);
+        $click = $events->click($clickId);
+        if ($click === null) {
+            return ['status' => 'not_found', 'reason' => 'unknown_click'];
+        }
+        if (isset($opts['user_id']) && $click['user_id'] !== (int) $opts['user_id']) {
+            return ['status' => 'not_found', 'reason' => 'foreign_click'];
+        }
+        if (isset($opts['campaign_id']) && $click['campaign_id'] !== (int) $opts['campaign_id']) {
+            return ['status' => 'not_found', 'reason' => 'campaign_mismatch'];
+        }
+        $now = time();
+        if (!$events->campaignEvaluatesGoals($click['user_id'], $click['campaign_id'], $now)) {
+            return ['status' => 'no_goals', 'event_name' => \Prosper202\Goals\WebEvents::nameFrom($get)];
+        }
+        if (p202ExtractReversal($get)['reversal']) {
+            return ['status' => 'refused', 'code' => 422, 'message' => 'An event cannot also be a reversal: send status=reversed '
+                . 'with the transaction id of the conversion it reverses, and no event.'];
+        }
+
+        try {
+            $event = \Prosper202\Goals\WebEvents::fromQuery($get, p202ExtractTransactionId($get), $now, (bool) ($opts['trusted'] ?? true));
+        } catch (\Prosper202\Goals\InvalidGoalDefinition $e) {
+            return ['status' => 'invalid', 'errors' => $e->errors(), 'message' => $e->getMessage()];
+        }
+
+        $notifier = new \Prosper202\Goals\TrafficSourceNotifier($conn, (bool) ($opts['browser'] ?? false));
+        $engine = new \Prosper202\Goals\GoalEngine($conn, null, null, null, $notifier);
+        try {
+            $result = $engine->ingest($click['user_id'], $engine->clickSubject($click['user_id'], $clickId), [$event]);
+        } catch (\Prosper202\Goals\GoalEngineException $e) {
+            if ($e->reason === \Prosper202\Goals\GoalEngineException::EVENT_CONFLICT) {
+                return ['status' => 'refused', 'code' => 409, 'message' => $e->getMessage()];
+            }
+            if ($e->reason === \Prosper202\Goals\GoalEngineException::EVENT_CAP) {
+                return ['status' => 'refused', 'code' => 422, 'message' => $e->getMessage()];
+            }
+            if ($e->reason === \Prosper202\Goals\GoalEngineException::NOT_FOUND) {
+                return ['status' => 'not_found', 'reason' => 'unknown_click'];
+            }
+            throw $e;
+        }
+        if ($result['accepted'] !== []) {
+            p202LinkConversionIdentity($db, $clickId, $get);
+        }
+
+        return ['status' => 'recorded', 'event_id' => $event->eventId, 'result' => $result, 'markup' => $notifier->markup()];
+    }
+}
+
+if (!function_exists('p202RespondWebEvent')) {
+    /**
+     * Answer a server-to-server event hit (gpb, pb, upx) and stop: 200 with
+     * what happened, or the refusal's status with its reason. A browser path
+     * that returned an image before it knew (gpx, px) logs instead.
+     *
+     * @param array<string, mixed> $outcome p202RecordWebEvent()'s answer
+     */
+    function p202RespondWebEvent(array $outcome, string $endpoint, bool $echoMarkup = false): void
+    {
+        switch ($outcome['status']) {
+            case 'invalid':
+                http_response_code(422);
+                header('Content-Type: application/json');
+                echo json_encode(['error' => true, 'code' => 422, 'msg' => (string) $outcome['message'], 'field_errors' => $outcome['errors']]);
+                die();
+            case 'refused':
+                p202RespondJsonError((int) $outcome['code'], (string) $outcome['message']);
+                return;
+            case 'not_found':
+                p202RespondJsonError(404, 'Unknown subid' . ($outcome['reason'] === 'campaign_mismatch' ? ' for this campaign' : ''));
+                return;
+            case 'recorded':
+                $result = $outcome['result'];
+                if ($echoMarkup && $outcome['markup'] !== '') {
+                    echo $outcome['markup'];
+                    die();
+                }
+                header('Content-Type: application/json');
+                echo json_encode([
+                    'error' => false,
+                    'code' => 200,
+                    'msg' => $result['accepted'] !== [] ? 'Event recorded' : 'Event already recorded',
+                    'event_id' => $outcome['event_id'],
+                    'duplicate' => $result['accepted'] === [],
+                    'outcomes' => array_map(static fn (array $o): array => [
+                        'goal_id' => $o['goal_id'], 'n' => $o['n'], 'payable' => $o['payable'], 'amount' => $o['amount'], 'conversion_id' => $o['conversion_id'],
+                    ], $result['outcomes']),
+                    'notifications' => $result['notifications'],
+                ]);
+                die();
+        }
+        error_log($endpoint . ': unexpected web event status ' . (string) $outcome['status']);
     }
 }

@@ -1421,13 +1421,14 @@ is `GoalsController`; the CLI is `p202 goal …`.
     with the evaluator that needs it.
   - `notify_traffic_source` is stored on campaign goals but nothing fires
     yet. The notification outbox goes to PR 5 (installs) and 4b (web
-    events).
+    events). **4b:** fires, without an outbox (§5.8).
   - Install subjects, `app_registration_id` on outcomes, the install
     goal's ledger rows and `trust_client_revenue` go to PR 5.
     `GoalSubject` and the evaluator already model an install subject, but
     no intake produces one.
   - There is no HTTP event intake yet (PRs 4b and 5). The live pass
-    drives the engine through `tests/live/goals-ingest.php`.
+    drives the engine through `tests/live/goals-ingest.php`. **4b:** web
+    events arrive over HTTP three ways (§5.8).
   - There are no PHP CLI (`bin/p202`) goal commands, matching PR 3; the
     Go CLI is the CLI.
 - **Known limitation.** When a retired outcome is revived (a re-evaluation
@@ -1436,6 +1437,102 @@ is `GoalsController`; the CLI is `p202 goal …`.
   undeleted. No path that soft-deletes (a re-evaluation retire with no
   replacement) is known to lead back to the same key, but that has not
   been proven.
+
+### 5.8 As built: decisions (PR 4b)
+
+What PR 4b settled for web events (§2.2), where it stops short, and which PR
+picks up the rest. The intake is `Prosper202\Goals\WebEvents` (reading a
+request into an event, finding the click a visitor id names), the
+notification is `TrafficSourceNotifier` behind the engine's
+`OutcomeNotifier` seam, the sender is `Prosper202\Conversion\TrafficSourcePixels`;
+the API is `EventsController`; the CLIs are `p202 event send` and
+`bin/p202 event:send`. The user-facing contract is
+`documentation/api/23-events.md`.
+
+- **Three intakes, one engine.** `event=` on gpb, gpx, upx, pb and px
+  (through `p202RecordWebEvent()`), `POST /events`, and `p202.track()`
+  (`tracking202/static/event.php`) all end in `GoalEngine::ingest()` on the
+  click subject; nothing else writes an event or a goal conversion.
+  `WebEventPathsTest` fails when an endpoint that records a conversion does
+  not ask the event path first (ClickBank is exempt by name: its INS has no
+  event), and when a `GoalEngine` is built outside the tests without a
+  notifier.
+- **Legacy first.** A request without `event=` never reaches the event
+  code (one array lookup). `event=` on a campaign with no *live* goal (none,
+  or all archived) is the plain conversion it always was — same payout,
+  same keys, same gates — with the name kept in `event_name` when it is a
+  valid event name (one that is not is not kept: the conversion is what
+  that request always meant, and refusing it would lose a sale). Goals are opt-in per
+  campaign, so a network that already appends `event` changes nothing.
+  `POST /events` has no legacy to keep: on a campaign without goals it
+  stores the events and says so (`goals_evaluated: false`, a note naming
+  re-evaluation), because an API caller asked for events.
+- **Event ids.** An explicit id is the caller's. A pixel without one gets
+  `@tx:<txid>` (hashed as `@txh:<sha256>` when too long or not printable),
+  or `@once:<name>` without a transaction id — the once-per-click pixel
+  rule, per event name. `@` starts no caller id (GoalEvent refuses it), so
+  derived and sent ids cannot collide (#17).
+- **Server-clocked events.** A pixel, `p202.track()`, and an API event with
+  no `occurred_at` are timed by the server, and a retry later would carry a
+  different time into the fingerprint and be refused as a conflict. Such
+  events are marked (`GoalEvent::$clockedByServer`) and the engine compares
+  a stored id at its stored time; a time the reporter gave is still part of
+  the event (the PR 4 rule).
+- **Trust.** A pixel's or postback's `amount` pays a `from_property` goal,
+  as it sets a plain conversion's payout today; the API's `revenue` pays;
+  `p202.track()`'s never does (stored with `untrusted_value`).
+- **`p202.track()` names no click.** The click is the newest one of the
+  page's account observed with the page's `p202lpid` (the simple page's own
+  campaign, any campaign for an advanced page), within 30 days, unless the
+  signal is quarantined. No consent or capture off means no id and nothing
+  sent. Calls wait for the pageview's `record.php` (the click must exist);
+  `&p202_beacon=0` loads the script on a thank-you page without recording a
+  click. The answer never says which click was found.
+- **Notification, without an outbox.** The engine decides each written
+  outcome's `kind` inside the transaction that knows which rows are
+  replacements: `reached` (payable, newly on the ledger, its campaign term
+  notifies), `suppressed` (a replay's or a re-evaluation's replacement,
+  or an outcome whose event already reached the goal in an outcome the same
+  plan retires — a replay that shifts n: $5, $10 and a late $1 become $1,
+  $5, $10 and the network hears nothing new, so it has $15 of a $16 click
+  until correction postbacks exist; `no_click`), `off`, `none` (unpaid). After the commit the notifier sends
+  `reached` ones through `TrafficSourcePixels::fire()` with
+  `[[p202_goal]]`, `[[p202_goal_id]]`, `[[p202_goal_value]]` (money written
+  `4.00`), `[[payout]]` and `[[transactionid]]` (the event's transaction id,
+  else the row's dedupe key). A notifier that throws is logged and reported
+  as `failed`; the write stands (#13). Re-evaluation apply notifies the
+  outcomes the old version never reached. Browser pixels render only where a
+  browser asked (upx's answer); elsewhere they are counted `browser_only`.
+- **The sender became a class.** `replaceTokens()` (connect2.php) and
+  `p202FireTrafficSourcePixels()` delegate to `TrafficSourcePixels`, so the
+  API path sends exactly what gpb sends; the old `replaceTokens()` was run
+  against the new one on every token and fill mode before it was replaced.
+- **Endpoint answers.** gpb, pb and upx answer an event with JSON (upx with
+  the notification's browser pixels when there are any); `422` with
+  `field_errors` names a bad `event`, `event_id`, `event_props` or `amount`;
+  `409` a reused id; an event that is also a reversal is refused. gpx and px
+  have already sent their image and log a refusal.
+- **`POST /events`.** Scope area `events`; stageable like `POST
+  /conversions`; `Idempotency-Key` honored; `event_id` required; `201`
+  when something was stored, `200` for an all-duplicate retry.
+- **The goal editor** is a Goals panel under the campaign form (edit mode):
+  the common shape open, the rest under Advanced, writing through
+  `GoalsController` so page and API refuse alike. A goal the form cannot
+  show faithfully is listed with a pointer to `p202 goal update`, never
+  rewritten by the form. The campaign form gains **When a click converts
+  more than once** (`payout_mode`) under Advanced; a post without the field
+  keeps the stored mode.
+- **Order within a second.** Events are ordered by time, then arrival,
+  then id, at one-second resolution; two funnel steps posted in the same
+  second are ordered by id. Documented, not changed.
+- **Deferred.**
+  - The notification outbox (`kind`, delivery state, retries) with
+    correction and retraction postbacks goes to PR 5, as §5.5 describes;
+    until then a replacement is never sent and a failed delivery is
+    reported, not retried.
+  - The per-click breakdown of events and outcomes in the UI is PR 1b's.
+  - The PHP CLI has no `Idempotency-Key` support at all (not only for
+    events); each event's id is what makes its retries safe.
 
 ---
 
@@ -2113,7 +2210,7 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 | 2 | **Identity capture:** `p202vid`, LP first-party id (in `landing.php`, with `p202.consent()`), signed `cust` on clicks and conversions, `202_identity_*`, `202_clicks_visitor`, consent switch and per-campaign `identity_signals`. **Built; `tests/live/identity-graph.sh`, `tests/browser/specs/identity-landing.spec.js`.** | — |
 | 3 | **App core reshape** (§4): registry, `AppIdentity`, token rename, verdicts, `PublicIntake`, retention, user-deletion purge, `/apps` and `p202 app` renames, legacy guard deleted. **Built; `tests/live/app-core.sh` (with `setup-mobile-apps.sh`, `analyze-mobile-apps.sh` and both mobile-apps browser specs ported). Decisions in §4.7.** | — |
 | 4 | **Goals engine** (core): definitions, validation, versioning, server evaluator keyed by subject (click or install), cross-language vectors, campaign goal payouts, SKAN encodings pointing at goals, `/goals` API and `p202 goal …`. **Built; `tests/live/goals.sh` (with `app-core.sh`, `conversion-ledger.sh`, `setup-mobile-apps.sh`, `analyze-mobile-apps.sh` re-run and both mobile-apps browser specs), vectors in `tests/fixtures/app-sdk-contract/goals/`. Decisions in §5.7.** | 1, 3 |
-| 4b | **Web events:** `event=` on pixels and postbacks, `POST /events`, `p202.js` `track()`, the web campaign goal editor, the Transactions ID docs pointing to goals | 2, 4 |
+| 4b | **Web events:** `event=` on pixels and postbacks, `POST /events`, `p202.js` `track()`, the web campaign goal editor, the Transactions ID docs pointing to goals. **Built; `tests/live/web-events.sh` (with `legacy-pixels.sh`, `goals.sh`, `identity-graph.sh`, `conversion-ledger.sh` re-run), `tests/browser/specs/web-events.spec.js`. Decisions in §5.8.** | 2, 4 |
 | 5 | **Android intake:** install token, `MatchState`, installs and events endpoints, conversions through goals, traffic-source notify, pending-click cron | 1, 3, 4 |
 | 6 | **Play Integrity** (opt-in modes) | 5 |
 | 7 | **Android SDK** (installs, events, customer id, integrity) | 5, 6 |
