@@ -148,7 +148,6 @@ eq "$(pyf "$OUT/ingest" "d['outcomes_written']")" 3 "three outcomes: install, tu
 eq "$(gpb "subid=$A&amount=5&txid=A-1")" 200 "postback A-1 \$5 on the accumulate click"
 eq "$(gpb "subid=$A&amount=2&txid=A-2")" 200 "postback A-2 \$2"
 eq "$(api POST /conversions "{\"click_id\":$A,\"transaction_id\":\"A-1\",\"status\":\"reversed\"}")" 201 "A-1 reversed through the API"
-REV_A=$(field "d['data']['conv_id']")
 eq "$(gpb "subid=$R&amount=4&txid=R-1")" 200 "postback R-1 \$4 on the replace click"
 eq "$(gpb "subid=$R&amount=6&txid=R-2")" 200 "postback R-2 \$6 replaces it"
 eq "$(api POST /conversions "{\"click_id\":$R,\"transaction_id\":\"R-API\",\"payout\":\"3\"}")" 201 "an API sale R-API \$3 replaces that"
