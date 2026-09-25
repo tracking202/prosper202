@@ -374,6 +374,12 @@ func (c *Client) Post(path string, body interface{}) ([]byte, error) {
 	return c.do("POST", path, nil, body)
 }
 
+// PostWithHeaders is Post with extra request headers — for the public app
+// intake, which is selected by X-P202-App-Token rather than the API key.
+func (c *Client) PostWithHeaders(path string, body interface{}, headers map[string]string) ([]byte, error) {
+	return c.doWithHeaders("POST", path, nil, body, headers)
+}
+
 // PostIdempotent sends a create with an Idempotency-Key header. Retrying the
 // same key and payload replays the recorded response (idempotent_replay: true
 // in the body) instead of creating a duplicate. Requires a server whose

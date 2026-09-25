@@ -155,6 +155,12 @@ final class WebEventPathsTest extends TestCase
                     continue;
                 }
                 $built++;
+                if (str_starts_with($relative, 'api/v3/Apps/Android/')) {
+                    // The Android intake's engines evaluate install subjects,
+                    // whose postbacks the engine queues in the notification
+                    // outbox itself (PR 5).
+                    continue;
+                }
                 [$args, $named] = self::arguments($tokens, $i);
                 self::assertTrue($args >= 5 || in_array('notifier', $named, true),
                     $relative . ' builds a GoalEngine without a notifier: payable goals the campaign notifies for would be told to no one. '

@@ -178,6 +178,7 @@ services:
           php 202-cronjobs/attribution-worker.php || true
           php 202-cronjobs/attribution-exports.php || true
           php 202-cronjobs/sync-worker.php || true
+          php 202-cronjobs/app-installs.php || true
           now=$$(date +%s)
           if [ $$((now - last_hourly)) -ge 3600 ]; then
             php 202-cronjobs/app-retention.php || true

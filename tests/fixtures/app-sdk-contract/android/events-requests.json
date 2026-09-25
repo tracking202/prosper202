@@ -1,0 +1,285 @@
+{
+  "description": "Bodies of POST /api/v3/apps/installs/{install_uuid}/events (plan §5.5). The body is {\"events\": [...]}, 1-100 events. Each event is {event_id, name, occurred_at, properties?, revenue?, transaction_id?}: received_at and revenue trust are the server's, and a device that sends them is refused by name. An invalid body is a 400 whose field_errors name exactly the listed fields.",
+  "max_events": 100,
+  "cases": [
+    {
+      "name": "one event",
+      "body": {
+        "events": [
+          {
+            "event_id": "e-1",
+            "name": "level_reached",
+            "occurred_at": 1727200500,
+            "properties": {
+              "level": 3
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "name": "a purchase with revenue and a transaction id",
+      "body": {
+        "events": [
+          {
+            "event_id": "p-1",
+            "name": "purchase",
+            "occurred_at": 1727200600,
+            "revenue": 4.99,
+            "transaction_id": "GPA.1234-5678"
+          }
+        ]
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "name": "properties of every type",
+      "body": {
+        "events": [
+          {
+            "event_id": "e-2",
+            "name": "tutorial_complete",
+            "occurred_at": 1727200700,
+            "properties": {
+              "step": "last",
+              "seconds": 42.5,
+              "skipped": false
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "name": "no events",
+      "body": {
+        "events": []
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "events"
+        ]
+      }
+    },
+    {
+      "name": "not wrapped in events",
+      "body": {
+        "event_id": "e-1",
+        "name": "level_reached",
+        "occurred_at": 1727200500,
+        "properties": {
+          "level": 3
+        }
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "event_id",
+          "name",
+          "occurred_at",
+          "properties"
+        ]
+      }
+    },
+    {
+      "name": "received_at from the device",
+      "body": {
+        "events": [
+          {
+            "event_id": "e-1",
+            "name": "level_reached",
+            "occurred_at": 1727200500,
+            "properties": {
+              "level": 3
+            },
+            "received_at": 1727200500
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "events[0].received_at"
+        ]
+      }
+    },
+    {
+      "name": "revenue_trusted from the device",
+      "body": {
+        "events": [
+          {
+            "event_id": "e-1",
+            "name": "level_reached",
+            "occurred_at": 1727200500,
+            "properties": {
+              "level": 3
+            },
+            "revenue_trusted": true
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "events[0].revenue_trusted"
+        ]
+      }
+    },
+    {
+      "name": "a currency (revenue is in the account currency)",
+      "body": {
+        "events": [
+          {
+            "event_id": "e-1",
+            "name": "level_reached",
+            "occurred_at": 1727200500,
+            "properties": {
+              "level": 3
+            },
+            "currency": "USD"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "events[0].currency"
+        ]
+      }
+    },
+    {
+      "name": "an event id starting with @",
+      "body": {
+        "events": [
+          {
+            "event_id": "@install",
+            "name": "level_reached",
+            "occurred_at": 1727200500,
+            "properties": {
+              "level": 3
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "events[0].event_id"
+        ]
+      }
+    },
+    {
+      "name": "occurred_at as a string",
+      "body": {
+        "events": [
+          {
+            "event_id": "e-1",
+            "name": "level_reached",
+            "occurred_at": "1727200500",
+            "properties": {
+              "level": 3
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "events[0].occurred_at"
+        ]
+      }
+    },
+    {
+      "name": "a nested property",
+      "body": {
+        "events": [
+          {
+            "event_id": "e-1",
+            "name": "level_reached",
+            "occurred_at": 1727200500,
+            "properties": {
+              "level": {
+                "n": 3
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "events[0].properties.level"
+        ]
+      }
+    },
+    {
+      "name": "revenue as a string",
+      "body": {
+        "events": [
+          {
+            "event_id": "e-1",
+            "name": "level_reached",
+            "occurred_at": 1727200500,
+            "properties": {
+              "level": 3
+            },
+            "revenue": "4.99"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "events[0].revenue"
+        ]
+      }
+    },
+    {
+      "name": "the second event is bad",
+      "body": {
+        "events": [
+          {
+            "event_id": "e-1",
+            "name": "level_reached",
+            "occurred_at": 1727200500,
+            "properties": {
+              "level": 3
+            }
+          },
+          {
+            "event_id": "e-2",
+            "name": "",
+            "occurred_at": 1727200500,
+            "properties": {
+              "level": 3
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "status": 400,
+        "field_errors": [
+          "events[1].name"
+        ]
+      }
+    }
+  ]
+}

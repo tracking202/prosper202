@@ -98,6 +98,11 @@ final class TableRegistry
     // Conversion ledger (ConversionTables)
     public const string ATTRIBUTION_PENDING = '202_attribution_pending';
     public const string CONVERSION_UPLOADS = '202_conversion_uploads';
+    public const string NOTIFICATION_PENDING = '202_notification_pending';
+
+    // Deployment-wide secrets (SecretTables): owned by the installation, not
+    // by any user
+    public const string DEPLOYMENT_SECRETS = '202_deployment_secrets';
 
     // Identity graph (IdentityTables)
     public const string IDENTITY_KEYS = '202_identity_keys';
@@ -180,6 +185,8 @@ final class TableRegistry
     public const string APP_POSTBACKS = '202_app_postbacks';
     public const string APP_SKAN_ENCODINGS = '202_app_skan_encodings';
     public const string APP_SKAN_ENCODING_HISTORY = '202_app_skan_encoding_history';
+    // and the Android signal source's installs
+    public const string APP_INSTALLS = '202_app_installs';
 
     // Goals engine (GoalTables): definitions and their versions, campaign
     // payouts, and per-subject events, progress and outcomes

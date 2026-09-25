@@ -244,7 +244,7 @@ eq "$(Q "SELECT CONCAT(user_id, '/', registration_id) FROM 202_app_postbacks WHE
    "$OTHER/$ORID" "their registration claimed the postback"
 eq "$(api DELETE "/users/$OTHER?dry_run=1")" 200 "the delete preview answers"
 eq "$(field "[c['resource'] + ':' + c['action'].split(' ')[0] for c in d['data']['cascade'] if c['resource'].startswith(('202_app_', '202_api_'))]")" \
-   '["202_api_keys:delete", "202_app_postbacks:release", "202_app_skan_encodings:delete", "202_app_skan_encoding_history:delete", "202_app_registrations:delete"]' \
+   '["202_api_keys:delete", "202_app_postbacks:release", "202_app_skan_encodings:delete", "202_app_skan_encoding_history:delete", "202_app_installs:delete", "202_app_registrations:delete"]' \
    "and names the keys and app tables with what happens to each"
 eq "$(Q "SELECT COUNT(*) FROM 202_app_registrations WHERE user_id=$OTHER")" 1 "the preview deleted nothing"
 eq "$(api DELETE "/users/$OTHER")" 204 "DELETE /users/{id} answers 204"

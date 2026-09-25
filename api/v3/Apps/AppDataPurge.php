@@ -40,6 +40,7 @@ final class AppDataPurge
         '202_app_postbacks' => 'release',
         '202_app_skan_encodings' => 'delete',
         '202_app_skan_encoding_history' => 'delete',
+        '202_app_installs' => 'delete',
         '202_app_registrations' => 'delete',
     ];
 
@@ -69,6 +70,9 @@ final class AppDataPurge
         );
         $this->run('DELETE FROM 202_app_skan_encodings WHERE user_id = ?', 'i', $userId);
         $this->run('DELETE FROM 202_app_skan_encoding_history WHERE user_id = ?', 'i', $userId);
+        // An install is the user's own record (their registration's SDK
+        // reported it to them), not a platform's: deleted, not released.
+        $this->run('DELETE FROM 202_app_installs WHERE user_id = ?', 'i', $userId);
         $this->run('DELETE FROM 202_app_registrations WHERE user_id = ?', 'i', $userId);
     }
 

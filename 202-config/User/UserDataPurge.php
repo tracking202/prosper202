@@ -27,8 +27,11 @@ use Prosper202\Attribution\ExportFiles;
  *    keys, its visitors, signals and merges, and the per-click observations
  *    and visitor keys of the user's clicks — the links that say which
  *    clicks were one person;
- *  - app measurement is purged by AppDataPurge: registrations and SKAN
- *    encodings deleted, postbacks released to unclaimed;
+ *  - app measurement is purged by AppDataPurge: registrations, SKAN
+ *    encodings and Android installs deleted, postbacks released to
+ *    unclaimed;
+ *  - the traffic-source notification outbox rows of the user's conversions
+ *    are deleted (PR 5): a deleted account's queued postbacks never go out;
  *  - the goals engine (PR 4) is deleted: goals and their versions, campaign
  *    payouts, and every subject's events, progress and outcomes — the
  *    ledger rows the outcomes wrote stay, with the clicks;
@@ -90,6 +93,11 @@ final class UserDataPurge
         'DELETE FROM 202_goals WHERE user_id = ?',
     ];
 
+    /** Queued traffic-source postbacks: a deleted account's never go out. */
+    private const NOTIFICATION_STATEMENTS = [
+        'DELETE FROM 202_notification_pending WHERE user_id = ?',
+    ];
+
     /** What lets the user act at all through the API; revoked with the rest. */
     private const ACCESS_STATEMENTS = [
         'DELETE FROM 202_api_keys WHERE user_id = ?',
@@ -112,7 +120,7 @@ final class UserDataPurge
     public static function cascade(int $userId): array
     {
         $cascade = [];
-        foreach (array_merge(self::ACCESS_STATEMENTS, self::MTA_STATEMENTS, self::IDENTITY_STATEMENTS, self::GOAL_STATEMENTS) as $sql) {
+        foreach (array_merge(self::ACCESS_STATEMENTS, self::NOTIFICATION_STATEMENTS, self::MTA_STATEMENTS, self::IDENTITY_STATEMENTS, self::GOAL_STATEMENTS) as $sql) {
             if (preg_match('/^DELETE (?:\w+ )?FROM (\w+)/', $sql, $m) !== 1) {
                 throw new \LogicException('Unreadable purge statement: ' . $sql);
             }
@@ -154,7 +162,7 @@ final class UserDataPurge
         try {
             // Read inside the transaction, before the rows that hold them go.
             $exportFileNames = $this->exportFileNames($userId);
-            foreach (array_merge(self::ACCESS_STATEMENTS, self::MTA_STATEMENTS, self::IDENTITY_STATEMENTS, self::GOAL_STATEMENTS) as $sql) {
+            foreach (array_merge(self::ACCESS_STATEMENTS, self::NOTIFICATION_STATEMENTS, self::MTA_STATEMENTS, self::IDENTITY_STATEMENTS, self::GOAL_STATEMENTS) as $sql) {
                 $this->run($sql, $userId);
             }
             (new AppDataPurge($this->db))->purgeUser($userId);

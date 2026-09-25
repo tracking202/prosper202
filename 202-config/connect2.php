@@ -2191,12 +2191,61 @@ function foreach_memcache_mysql_fetch_assoc($arg1, $arg2 = null, $allowCaching =
     }
 }
 
+/**
+ * `[[p202_install_token]]` for a click (plan §5.1): the click id signed with
+ * the installation's install-token key, `<click_id>.<mac>`, which a Google
+ * Play store link carries in `referrer=p202%3D[[p202_install_token]]` to the
+ * Android intake.
+ *
+ * Expands EMPTY — never to the bare click id — when the click id is not a
+ * canonical positive integer (the fallback redirect's "p202", a cloaked
+ * placeholder) or the key is missing or unreadable: the install is then
+ * recorded unattributed rather than attributable to a guessable click
+ * (CLAUDE.md #11, #16). The key is read once per process and kept only when
+ * it was read; one indexed primary-key lookup, made only for a URL that
+ * carries the token.
+ */
+function p202InstallToken($clickId): string
+{
+    // Read once per process, and kept only when it was read: a missing or
+    // unreadable key is asked for again next time, never cached as "none".
+    static $key = null;
+
+    return \Api\V3\Apps\Android\InstallToken::expand($clickId, static function () use (&$key): ?string {
+        if ($key === null) {
+            $db = $GLOBALS['db'] ?? null;
+            if (!($db instanceof mysqli) && class_exists('DB')) {
+                $db = DB::getInstance()->getConnection();
+            }
+            if (!($db instanceof mysqli)) {
+                throw new \RuntimeException('no database connection');
+            }
+            $key = \Api\V3\Apps\Android\InstallTokenKey::load($db);
+        }
+
+        return $key;
+    });
+}
+
 function replaceTokens($url, $tokens = [], $fillblanks = 0)
 {
+    // The install token is computed from the RAW click id, only when the
+    // URL asks for it, and handed to the one implementation as a token of
+    // its own. Its alphabet (digits, ".", base64url) is unchanged by the
+    // encoding there. (PR 5; the replacement itself is TrafficSourcePixels'.)
+    $tokens = is_array($tokens) ? $tokens : [];
+    if (!isset($tokens['p202_install_token']) && stripos((string) $url, '[[p202_install_token]]') !== false) {
+        if (isset($tokens['subid'])) {
+            $tokens['p202_install_token'] = p202InstallToken($tokens['subid']);
+        } elseif ($fillblanks) {
+            $tokens['p202_install_token'] = '';
+        }
+    }
+
     // One implementation for the tracker's URLs and the traffic-source
     // pixels alike, so a path that never loads this file (POST /events,
     // the goal notifier) replaces tokens exactly as the tracker does.
-    return \Prosper202\Conversion\TrafficSourcePixels::replaceTokens($url, is_array($tokens) ? $tokens : [], $fillblanks ? 1 : 0);
+    return \Prosper202\Conversion\TrafficSourcePixels::replaceTokens($url, $tokens, $fillblanks ? 1 : 0);
 }
 
 function rawurlencode202($token)
@@ -3447,6 +3496,10 @@ function processCacheRedirect(): void
             if ($getUrl) {
 
                 $new_url = str_replace("[[subid]]", "p202", $getUrl);
+                // No click is recorded while MySQL is down, so there is no
+                // click to sign: the install token expands empty (plan §5.1),
+                // never to a value an install could be credited through.
+                $new_url = str_ireplace('[[p202_install_token]]', '', $new_url);
 
                 // t202pubid string replace for cached redirect
                 if (isset($_GET['t202pubid']) && $_GET['t202pubid'] != '') {

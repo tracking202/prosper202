@@ -68,7 +68,9 @@ final class AppSchemaTest extends TestCase
                 ]]
                 : [],
             'FROM 202_app_skan_encodings' => $rules,
-            'FROM 202_goal_versions v JOIN 202_goals g' => $versions ?? $generated,
+            // The versions read carries each goal's builtin marker (PR 5's
+            // install goal); these fixtures are ordinary goals.
+            'FROM 202_goal_versions v JOIN 202_goals g' => array_map(static fn (array $r): array => $r + ['builtin' => null], $versions ?? $generated),
         ]);
         return new AppSchemaController($db);
     }

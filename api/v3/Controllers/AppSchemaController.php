@@ -28,8 +28,9 @@ use Prosper202\Goals\MysqlGoalRepository;
  *    two directions cannot drift. The SDK evaluates the goals on the device
  *    (plan §5.5): Apple's postback carries only the value, so nothing else
  *    could decide which one to set;
- *  - Android gets its registration's identity and nothing else yet; the
- *    Android intake adds the SDK settings.
+ *  - Android gets its registration's identity, the integrity mode (off
+ *    until PR 6) and the SDK settings: where installs and events go and how
+ *    many events one request may carry.
  *
  * Revenue is withheld from both: the document carries what a device needs
  * to act, never what the operator is paid.
@@ -117,9 +118,19 @@ final class AppSchemaController
     /** @return array<string, mixed> */
     private function androidDocument(AppRegistration $registration): array
     {
+        // Android's goals are evaluated on the server, so the SDK reports
+        // every event and needs no goal view; what it needs is how to talk
+        // to the intake. Play Integrity is PR 6: until then it is off for
+        // every registration, and the SDK requests no token.
         return [
             'platform' => AppIdentity::ANDROID,
             'app_key' => $registration->identity->appKey,
+            'integrity_mode' => 'off',
+            'sdk' => [
+                'installs_path' => '/api/v3/apps/installs',
+                'events_path' => '/api/v3/apps/installs/{install_uuid}/events',
+                'max_events_per_request' => \Api\V3\Apps\Android\InstallEventsIntake::MAX_EVENTS,
+            ],
         ];
     }
 

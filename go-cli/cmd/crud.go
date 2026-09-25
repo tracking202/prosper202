@@ -845,6 +845,7 @@ func init() {
 				{Name: "aff_campaign_rotate", Desc: "Enable rotation (0 or 1)"},
 				{Name: "payout_mode", Desc: "How conversions set a click's value: replace (latest payout, default) or accumulate (sum)"},
 				{Name: "identity_signals", Desc: "Link this campaign's clicks into multi-touch journeys (1, default) or not (0)"},
+				{Name: "app_registration_id", Desc: "The Android app registration this campaign's store links install (`p202 app list --platform android`; 0 unlinks). An install of another app on its click is foreign_click"},
 				{Name: "aff_campaign_postback_url", Desc: "Postback URL"},
 				{Name: "aff_campaign_postback_append", Desc: "Postback append string"},
 			},

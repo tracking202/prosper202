@@ -20,7 +20,10 @@ namespace Api\V3\Apps;
  *   null  unvouched  nobody could vouch for it either way
  *
  * Implemented by backed enums, so a state no policy knows how to price
- * cannot be constructed and every `match` over one is exhaustive.
+ * cannot be constructed and every `match` over one is exhaustive — and by
+ * Android\InstallVerdict, which pairs such an enum (MatchState) with the
+ * SDK's test flag, because on Android "test" rides beside the state rather
+ * than being one.
  */
 interface Verdict
 {

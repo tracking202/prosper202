@@ -48,6 +48,17 @@ use Prosper202\Database\Schema\TableRegistry;
  * ids are case-sensitive, so com.Example.app and com.example.app are two
  * apps, and the table default collation would fold them into one UNIQUE
  * slot (CLAUDE.md #17).
+ *
+ * 202_app_installs is the Android signal source's store (plan §5.2–§5.4):
+ * one row per install an SDK reported, idempotent on (registration_id,
+ * install_uuid), with the referrer it carried, the MatchState it was
+ * classified into and the `trusted` bit that state is worth. An attributed,
+ * trusted row names its click and the ledger row of the built-in install
+ * goal (`conversion_id`). `install_uuid` is ascii_bin: the intake accepts
+ * only the canonical lower-case form, and a case-folding collation would
+ * let two spellings of one id share a slot. `body_hash` is the fingerprint
+ * of the body that created the row, so a replay of the same id with other
+ * content is told from a retry (CLAUDE.md #15).
  */
 final class AppTables
 {
@@ -63,6 +74,7 @@ final class AppTables
             self::appPostbacks(),
             self::appSkanEncodings(),
             self::appSkanEncodingHistory(),
+            self::appInstalls(),
         ];
     }
 
@@ -78,6 +90,8 @@ final class AppTables
                 `app_name` varchar(255) NOT NULL,
                 `notes` varchar(500) DEFAULT NULL,
                 `accept_test_signals` tinyint(1) unsigned NOT NULL DEFAULT '0',
+                `attribution_window_days` smallint(5) unsigned NOT NULL DEFAULT '7',
+                `trust_client_revenue` tinyint(1) unsigned NOT NULL DEFAULT '0',
                 `app_token` varchar(64) NOT NULL,
                 `created_at` int(10) unsigned NOT NULL,
                 `updated_at` int(10) unsigned NOT NULL,
@@ -182,6 +196,59 @@ final class AppTables
                 KEY `user_retired` (`user_id`,`retired_at`),
                 KEY `encoding_id` (`encoding_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='What each SKAN encoding meant before an edit or delete, and until when (decoded within the 35-day postback horizon)'"
+        );
+    }
+
+    public static function appInstalls(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::APP_INSTALLS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::APP_INSTALLS . "` (
+                `install_row_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `registration_id` int(10) unsigned NOT NULL,
+                `install_uuid` char(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `body_hash` char(64) NOT NULL,
+                `store` varchar(16) NOT NULL,
+                `click_id` bigint(20) unsigned DEFAULT NULL,
+                `conversion_id` int(11) unsigned DEFAULT NULL,
+                `match_state` varchar(20) NOT NULL,
+                `match_reason` varchar(255) NOT NULL,
+                `trusted` tinyint(1) unsigned DEFAULT NULL,
+                `is_test` tinyint(1) unsigned NOT NULL DEFAULT '0',
+                `has_events` tinyint(1) unsigned NOT NULL DEFAULT '0',
+                `referrer_status` varchar(24) NOT NULL,
+                `referrer_raw` varchar(2048) DEFAULT NULL,
+                `referrer_truncated` tinyint(1) unsigned NOT NULL DEFAULT '0',
+                `utm_source` varchar(255) DEFAULT NULL,
+                `utm_medium` varchar(255) DEFAULT NULL,
+                `utm_campaign` varchar(255) DEFAULT NULL,
+                `utm_term` varchar(255) DEFAULT NULL,
+                `utm_content` varchar(255) DEFAULT NULL,
+                `gclid` varchar(255) DEFAULT NULL,
+                `referrer_click_at` int(10) unsigned DEFAULT NULL,
+                `install_begin_at` int(10) unsigned DEFAULT NULL,
+                `referrer_click_server_at` int(10) unsigned DEFAULT NULL,
+                `install_begin_server_at` int(10) unsigned DEFAULT NULL,
+                `install_version` varchar(64) DEFAULT NULL,
+                `google_play_instant` tinyint(1) unsigned DEFAULT NULL,
+                `app_version` varchar(64) DEFAULT NULL,
+                `sdk_version` varchar(32) DEFAULT NULL,
+                `os_version` varchar(32) DEFAULT NULL,
+                `integrity_state` varchar(16) NOT NULL DEFAULT 'not_requested',
+                `first_open_at` int(10) unsigned DEFAULT NULL,
+                `received_at` int(10) unsigned NOT NULL,
+                `settled_at` int(10) unsigned DEFAULT NULL,
+                `raw_payload` text NOT NULL,
+                `remote_ip` varchar(45) NOT NULL DEFAULT '',
+                PRIMARY KEY (`install_row_id`),
+                UNIQUE KEY `registration_install` (`registration_id`,`install_uuid`),
+                KEY `click_state` (`click_id`,`match_state`),
+                KEY `user_received` (`user_id`,`received_at`),
+                KEY `registration_received` (`registration_id`,`received_at`),
+                KEY `state_received` (`match_state`,`received_at`),
+                KEY `trusted_received` (`trusted`,`received_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Android installs reported by the SDK: the Play referrer, its MatchState and trust'"
         );
     }
 }

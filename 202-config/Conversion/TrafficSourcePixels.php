@@ -26,7 +26,7 @@ use Prosper202\Database\Connection;
  */
 final class TrafficSourcePixels
 {
-    public const POSTBACK_USER_AGENT = 'Mozilla/5.0 Postback202-Bot v1.8';
+    public const POSTBACK_USER_AGENT = \Prosper202\Notifications\PostbackSender::USER_AGENT;
 
     /**
      * Every token replaceTokens() fills, in the order it fills them, as
@@ -45,6 +45,10 @@ final class TrafficSourcePixels
         'referer' => ['referer', 'referrer'], 'sourceid' => ['sourceid'],
         'transactionid' => ['transactionid', 't202txid'],
         'p202_goal' => ['p202_goal'], 'p202_goal_id' => ['p202_goal_id'], 'p202_goal_value' => ['p202_goal_value'],
+        // The Android install token (plan §5.1): computed by the caller from
+        // the raw click id (connect2.php's replaceTokens(), which knows the
+        // key); here only placed, like any other token.
+        'p202_install_token' => ['p202_install_token'],
     ];
 
     private function __construct()
@@ -119,28 +123,11 @@ final class TrafficSourcePixels
         $conn->bind($stmt, 'i', [$ppcAccountId]);
         $pixels = $conn->fetchAll($stmt);
 
-        // A response body cannot say whether the network heard us (an
-        // empty 200 and a failure both read as ''), so curl is asked for
-        // the status as well.
-        $fetch ??= static function (string $url): bool {
-            $ch = curl_init($url);
-            if ($ch === false) {
-                return false;
-            }
-            curl_setopt_array($ch, [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_FOLLOWLOCATION => true,
-                CURLOPT_MAXREDIRS => 5,
-                CURLOPT_TIMEOUT => 10,
-                CURLOPT_CONNECTTIMEOUT => 5,
-                CURLOPT_USERAGENT => self::POSTBACK_USER_AGENT,
-            ]);
-            $body = curl_exec($ch);
-            $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-            curl_close($ch);
-
-            return $body !== false && $status >= 200 && $status < 400;
-        };
+        // The one server-to-server sender, shared with the notification
+        // outbox's worker (PR 5): it answers whether the network heard us
+        // (a status, not a body — an empty 200 and a failure both read as
+        // ''), and refuses anything but http(s), redirects included.
+        $fetch ??= \Prosper202\Notifications\PostbackSender::fetch(...);
 
         foreach ($pixels as $pixel) {
             $type = (int) $pixel['pixel_type_id'];

@@ -339,6 +339,63 @@ final class ConversionLedgerUpgradeIntegrationTest extends TestCase
     }
 
     /**
+     * The Android install-token key (plan §5.1) is minted by the rung, once:
+     * a second run keeps the key, so links already in circulation keep
+     * verifying. The installer mints it with the same statement; the fresh
+     * path is asserted in InstallIntakeIntegrationTest and by the live pass,
+     * which installs an instance and signs a click with it.
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testTheRungMintsTheInstallTokenKeyOnceAndLinksCampaignsToApps(): void
+    {
+        $db = $this->preLedgerDatabase();
+        $db->query('DROP TABLE IF EXISTS 202_deployment_secrets');
+        $this->assertTrue(_upgrade_measurement_tables(array_merge(
+            \Prosper202\Database\Tables\AppTables::getDefinitions(),
+            \Prosper202\Database\Tables\ConversionTables::getDefinitions(),
+            \Prosper202\Database\Tables\IdentityTables::getDefinitions(),
+            \Prosper202\Database\Tables\GoalTables::getDefinitions(),
+            \Prosper202\Database\Tables\SecretTables::getDefinitions()
+        )));
+        $first = \Api\V3\Apps\Android\InstallTokenKey::load($db);
+        $this->assertIsString($first, 'the rung mints the key');
+        $this->assertSame(32, strlen($first));
+        $this->assertTrue(_upgrade_measurement_tables(\Prosper202\Database\Tables\SecretTables::getDefinitions()));
+        $this->assertSame($first, \Api\V3\Apps\Android\InstallTokenKey::load($db), 'a second run never replaces the key');
+
+        $columns = [];
+        $result = $db->query('SHOW COLUMNS FROM 202_aff_campaigns');
+        while ($row = $result->fetch_assoc()) {
+            $columns[$row['Field']] = $row['Null'];
+        }
+        $this->assertSame('YES', $columns['app_registration_id'] ?? null, 'a campaign may name the Android app its links install');
+
+        $rung = (string)file_get_contents(dirname(__DIR__, 2) . '/202-config/functions-upgrade.php');
+        $this->assertMatchesRegularExpression(
+            '/_upgrade_measurement_tables\(array_merge\([^;]*SecretTables::getDefinitions\(\)[^;]*\)\);/s',
+            $rung,
+            'the 1.9.75 rung creates the secrets table (and so mints the key)'
+        );
+        // Code only, and the very next statement after the version seed: a
+        // commented-out call, or one in a branch somewhere below, is not a
+        // mint that runs whenever the install does.
+        $install = '';
+        foreach (token_get_all((string)file_get_contents(dirname(__DIR__, 2) . '/202-config/functions-install.php')) as $token) {
+            if (is_array($token) && ($token[0] === T_COMMENT || $token[0] === T_DOC_COMMENT)) {
+                continue;
+            }
+            $install .= is_array($token) ? $token[1] : $token;
+        }
+        $this->assertMatchesRegularExpression(
+            '/\$seeder->seedVersion\(\$php_version\);\s*\\\\Api\\\\V3\\\\Apps\\\\Android\\\\InstallTokenKey::ensure\(\$db\);/',
+            $install,
+            'a fresh install never runs a rung, so the installer mints the key itself, right after seeding the version'
+        );
+    }
+
+    /**
      * @runInSeparateProcess
      * @preserveGlobalState disabled
      */
