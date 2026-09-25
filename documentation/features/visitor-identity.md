@@ -13,8 +13,11 @@ behind the same office or carrier network.
 | `p202lpid` | `landing.php`, the script your landing pages already load. It keeps a random id in the landing page's own storage, sends it with the pageview and adds it to links into your tracker when they are followed | Clicks on your own sites, even where the tracking domain's cookie is cleared |
 | Signed customer id | `cust` with `cust_sig` on a tracking link, pixel or postback, or `customer_ref` on `POST /api/v3/conversions` | One person across browsers and devices |
 
-Only a hash of each value is stored. None of them is passed on to the offer:
-`p202lpid`, `cust_sig` and `p202_consent` are removed from the redirect.
+Only a hash of each value is stored. None of them is passed on to an offer:
+the redirect drops `p202lpid`, `cust`, `customer_ref`, their `_type` fields,
+`cust_sig` and `p202_consent`. The customer id, its signature and
+`p202_consent` do go on to your own landing page when a redirector sends the
+visitor there, so the page can personalise and honour the refusal.
 
 ## Signing customer ids
 
@@ -60,8 +63,12 @@ One switch turns all of it off:
 
 - `p202_consent=0` on a tracking link;
 - `p202.consent(false)` on a landing page (remembered, and sent on every
-  pageview and followed link); `p202.consent(true)` turns it back on;
-- a campaign's `identity_signals` set to `0` (API and both CLIs).
+  pageview and followed link); `p202.consent(true)` turns it back on. The
+  pageview is sent once the page's scripts have run, so a consent tool that
+  calls it right after the snippet stops the first pageview too. A tool that
+  decides before the snippet loads can set `window.p202 = {consent: false}`;
+- a campaign's `identity_signals` set to `0` (API and both CLIs). Its
+  landing pages then read, create and send no landing-page id either.
 
 Then no cookie is set or read, the landing-page id is deleted, and each click
 is a journey of one.
