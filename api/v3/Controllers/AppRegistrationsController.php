@@ -280,16 +280,42 @@ class AppRegistrationsController extends Controller
         }
 
         $policyFields = ['attribution_window_days', 'trust_client_revenue', 'integrity_mode', 'integrity_cloud_project_number'];
-        if (array_intersect(array_keys($payload), $policyFields) !== []) {
-            $current = (array)$this->get($id)['data'];
-            self::assertAndroidPolicy($payload, (string)$current['platform']);
-            if (array_key_exists('integrity_mode', $payload) || array_key_exists('integrity_cloud_project_number', $payload)) {
-                // Only a write that names Play Integrity is held to it: an
-                // unrelated field is never refused over the stored setting.
-                $this->assertIntegrityUsable((int)$id, $payload, $current);
-            }
+        $namesIntegrity = array_key_exists('integrity_mode', $payload) || array_key_exists('integrity_cloud_project_number', $payload);
+        if (array_intersect(array_keys($payload), $policyFields) !== [] && !$namesIntegrity) {
+            self::assertAndroidPolicy($payload, (string)((array)$this->get($id)['data'])['platform']);
         }
-        $updated = parent::update($id, $payload);
+        if ($namesIntegrity) {
+            // Only a write that names Play Integrity is held to it: an
+            // unrelated field is never refused over the stored setting. The
+            // check and the write commit under the registration's row lock,
+            // which DELETE /apps/{id}/integrity-credential takes for its own
+            // check and delete: checked apart from the write, a credential
+            // cleared in between leaves observe or require committed with
+            // nothing to decode (AppIntegrityController::clearCredential()).
+            $committed = null;
+            $updated = $this->transaction(function () use ($id, $payload, &$committed): ?array {
+                $current = AppIntegrityController::lockRegistration($this->db, $this->userId, (int)$id);
+                self::assertAndroidPolicy($payload, (string)$current['platform']);
+                $this->assertIntegrityUsable((int)$id, $payload, $current);
+                try {
+                    return parent::update($id, $payload);
+                } catch (WriteCommittedException $e) {
+                    // The write stands: let the transaction commit it, and
+                    // say so after (CLAUDE.md #13).
+                    $committed = $e;
+
+                    return null;
+                }
+            });
+            if ($committed !== null) {
+                throw $committed;
+            }
+            if ($updated === null) {
+                throw new \LogicException('the locked registration update returned nothing');
+            }
+        } else {
+            $updated = parent::update($id, $payload);
+        }
         // Re-run the claim on every update so unclaimed history (or a claim
         // that failed at create time) is picked up by touching the
         // registration, and re-apply the test-signal policy so toggling it
@@ -351,7 +377,7 @@ class AppRegistrationsController extends Controller
             return; // off, or a mode assertAndroidPolicy() already refused
         }
         $errors = [];
-        if ((new IntegrityCredentialStore(new \Prosper202\Database\Connection($this->db)))->summary($this->userId, $id) === null) {
+        if (!(new IntegrityCredentialStore(new \Prosper202\Database\Connection($this->db)))->existsLocked($this->userId, $id)) {
             // Refused rather than accepted into a state where every install
             // waits for a verdict nothing can decode (observe would record
             // only errors; require would pay nothing).
@@ -416,13 +442,6 @@ class AppRegistrationsController extends Controller
         (new UnverifiableInstalls(new \Prosper202\Database\Connection($this->db)))
             ->settleForDeletedRegistration($this->userId, $registrationId, time());
 
-        // The Play Integrity credential is the operator's secret for this
-        // app; nothing may sign with it once the registration is gone.
-        $stmt = $this->prepare('DELETE FROM 202_app_integrity_credentials WHERE registration_id = ? AND user_id = ?');
-        $this->bind($stmt, 'ii', $registrationId, $this->userId);
-        $this->execute($stmt, 'Integrity credential delete failed');
-        $stmt->close();
-
         // Installs still waiting for their click can never settle once the
         // registration is gone: the settler reads an install only through
         // its registration, retention never prunes a pending install, and no
@@ -431,6 +450,21 @@ class AppRegistrationsController extends Controller
         // paid (OrphanedPendingClicks).
         (new OrphanedPendingClicks(new \Prosper202\Database\Connection($this->db)))
             ->settleForDeletedRegistration($this->userId, $registrationId, time());
+
+        // The Play Integrity credential is the operator's secret for this
+        // app; nothing may sign with it once the registration is gone. It is
+        // deleted under the registration's row lock, the lock a Play
+        // Integrity mode write and the credential routes take
+        // (AppIntegrityController::lockRegistration()), so none of them can
+        // land between this DELETE and the commit and leave a key stored for
+        // an app that no longer exists. Taken after the install writes
+        // above, in the order the settlers take theirs (the install, then
+        // its registration), so the two never wait on each other in a cycle.
+        AppIntegrityController::lockRegistration($this->db, $this->userId, $registrationId);
+        $stmt = $this->prepare('DELETE FROM 202_app_integrity_credentials WHERE registration_id = ? AND user_id = ?');
+        $this->bind($stmt, 'ii', $registrationId, $this->userId);
+        $this->execute($stmt, 'Integrity credential delete failed');
+        $stmt->close();
 
         // Encodings exist only for their registration; left behind they
         // would decode nothing and hold UNIQUE slots nobody can see.

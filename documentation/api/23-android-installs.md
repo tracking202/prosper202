@@ -267,6 +267,13 @@ file>}`, then `PUT /apps/{id}` with `integrity_mode`; `bin/p202` has
   arriving (`p202 app integrity status 3` shows
   `installs.by_integrity_state.pending`). Rotating it (setting it again) is
   always allowed.
+- These rules hold under concurrency too: a mode write, a credential set
+  or clear, and a registration delete all take the registration's row
+  lock for their check and their write, so two requests that overlap are
+  decided one after the other — a clear that races a switch to `observe`
+  either lands first (and the switch is refused) or sees `observe` (and is
+  refused), and a credential set that races a delete never leaves a key
+  stored for an app that no longer exists.
 - The key is stored **encrypted** (AES-256-GCM under an installation key in
   `202_deployment_secrets`, bound to the registration), and no response,
   CLI output or error message ever contains it — the status shows the

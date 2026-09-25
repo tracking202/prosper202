@@ -225,6 +225,107 @@ final class IntegritySettingsIntegrationTest extends TestCase
         self::assertTrue($integrity->clearCredential(5)['data']['cleared']);
     }
 
+    /**
+     * A mode write and a credential clear run in two sessions and overlap:
+     * each has to see what the other committed, so the app is never left in
+     * observe or require without a credential. The second request runs in a
+     * child process (its own connection) while this one holds its half open.
+     */
+    public function testAModeWriteAndACredentialClearAreSerialized(): void
+    {
+        $integrity = new AppIntegrityController(self::$db, 1);
+        $integrity->setCredential(5, ['credential' => self::keyFile(FakeGoogle::rsaKey()[0])]);
+        $this->registrations()->update(5, ['integrity_cloud_project_number' => '123456789012']);
+
+        // Clear in flight (mode read as off, about to delete): a mode write
+        // arriving now must wait, then see the credential gone.
+        self::$db->begin_transaction();
+        AppIntegrityController::lockRegistration(self::$db, 1, 5);
+        $child = self::child('(new \Api\V3\Controllers\AppRegistrationsController($db, 1))->update(5, ["integrity_mode" => "observe"]);');
+        usleep(1_500_000); // the child is either waiting on the lock or, unlocked, has already read the credential
+        (new IntegrityCredentialStore(new Connection(self::$db)))->clear(1, 5);
+        self::$db->commit();
+        $result = self::finish($child);
+        self::assertFalse($result['ok'], 'the mode write saw the cleared credential: ' . json_encode($result));
+        self::assertStringContainsString('Play Integrity needs a credential first', $result['message']);
+        self::assertSame('off', self::$db->query('SELECT integrity_mode FROM 202_app_registrations WHERE registration_id = 5')->fetch_row()[0]);
+
+        // Mode write in flight (credential checked, mode about to commit): a
+        // clear arriving now must wait, then see the mode is no longer off.
+        $integrity->setCredential(5, ['credential' => self::keyFile(FakeGoogle::rsaKey()[0])]);
+        self::$db->begin_transaction();
+        AppIntegrityController::lockRegistration(self::$db, 1, 5);
+        $child = self::child('(new \Api\V3\Controllers\AppIntegrityController($db, 1))->clearCredential(5);');
+        usleep(1_500_000);
+        self::$db->query("UPDATE 202_app_registrations SET integrity_mode = 'observe' WHERE registration_id = 5");
+        self::$db->commit();
+        $result = self::finish($child);
+        self::assertFalse($result['ok'], 'the clear saw the mode written before it: ' . json_encode($result));
+        self::assertStringContainsString('Play Integrity is observe for this app', $result['message']);
+        self::assertSame(1, self::rows('202_app_integrity_credentials'), 'observe keeps its credential');
+
+        // A registration delete in flight (its credential deleted, not yet
+        // committed): a credential set arriving now must wait, then find the
+        // registration gone — never leave a key stored for a deleted app.
+        self::fixture("UPDATE 202_app_registrations SET integrity_mode = 'off' WHERE registration_id = 5");
+        self::$db->begin_transaction();
+        AppIntegrityController::lockRegistration(self::$db, 1, 5);
+        self::$db->query('DELETE FROM 202_app_integrity_credentials WHERE registration_id = 5');
+        $child = self::child('(new \\Api\\V3\\Controllers\\AppIntegrityController($db, 1))->setCredential(5, ["credential" => '
+            . var_export(self::keyFile(FakeGoogle::rsaKey()[0]), true) . ']);');
+        usleep(1_500_000);
+        self::$db->query('DELETE FROM 202_app_registrations WHERE registration_id = 5');
+        self::$db->commit();
+        $result = self::finish($child);
+        self::assertFalse($result['ok'], 'the set saw the registration deleted: ' . json_encode($result));
+        self::assertStringContainsString('not found', $result['message']);
+        self::assertSame(0, self::rows('202_app_integrity_credentials'), 'no key outlives its app');
+    }
+
+    /** @return array{0: resource, 1: array<int, resource>, 2: string} a child PHP process running $action on its own connection */
+    private static function child(string $action): array
+    {
+        $script = (string) tempnam(sys_get_temp_dir(), 'p202-race-');
+        $autoload = dirname(__DIR__, 4) . '/vendor/autoload.php';
+        file_put_contents($script, '<?php
+require ' . var_export($autoload, true) . ';
+function _mysqli_query($dbOrSql, $sql = null) { return $sql === null ? null : $dbOrSql->query($sql); }
+class DataEngine { public function setDirtyHour($id) {} public function getSummary($s, $e, $p, $u = 1, $up = false, $n = false) { return ""; } }
+mysqli_report(MYSQLI_REPORT_STRICT);
+$db = mysqli_connect(' . var_export((string) getenv('P202_TEST_DB_HOST'), true) . ', ' . var_export((string) (getenv('P202_TEST_DB_USER') ?: 'root'), true) . ', '
+            . var_export((string) (getenv('P202_TEST_DB_PASS') ?: ''), true) . ', ' . var_export((string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'), true) . ', '
+            . (int) (getenv('P202_TEST_DB_PORT') ?: 3306) . ');
+$db->query("SET SESSION sql_mode=\'STRICT_TRANS_TABLES\'");
+try {
+    ' . $action . '
+    echo json_encode(["ok" => true]);
+} catch (\Throwable $e) {
+    echo json_encode(["ok" => false, "class" => get_class($e), "message" => $e->getMessage()]);
+}
+');
+        $process = proc_open([PHP_BINARY, $script], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        self::assertIsResource($process, 'the child started');
+
+        return [$process, $pipes, $script];
+    }
+
+    /**
+     * @param array{0: resource, 1: array<int, resource>, 2: string} $child
+     * @return array{ok: bool, class?: string, message?: string}
+     */
+    private static function finish(array $child): array
+    {
+        [$process, $pipes, $script] = $child;
+        $out = (string) stream_get_contents($pipes[1]);
+        $err = (string) stream_get_contents($pipes[2]);
+        proc_close($process);
+        unlink($script);
+        $decoded = json_decode($out, true);
+        self::assertIsArray($decoded, 'the child answered: ' . $out . $err);
+
+        return $decoded;
+    }
+
     public function testNoModeButOffWithoutAProjectNumberAndTheNumberIsNeverCleared(): void
     {
         (new IntegrityCredentialStore(new Connection(self::$db)))->set(1, 5, \Api\V3\Apps\Android\Integrity\ServiceAccountCredential::fromKeyFile(self::keyFile(FakeGoogle::rsaKey()[0])), 1);
