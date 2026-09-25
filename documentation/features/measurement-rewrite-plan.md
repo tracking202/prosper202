@@ -133,6 +133,141 @@ table the same upgrade step creates. If MTA is disabled or broken, rows
 accumulate and are processed when it is fixed. That is a backlog, not a lost
 journey.
 
+### 2.1 The conversion ledger: every amount, where it came from, and how it rolls up
+
+**The requirement.** A click showing $10 must be explainable as, for example:
+
+| Amount | Counted in the $10? | Source | Linked to |
+|---|---|---|---|
+| $5.00 | yes | Android install | goal "Install" v1, campaign "Summit CPI" |
+| $3.00 | yes | App event `level_reached` | goal "Reached level 3" v2 |
+| $2.00 | yes | Global postback | transaction `A-7731` |
+| $0.00 | no, unpaid | App event `tutorial_complete` | goal "Tutorial" v1 (tracked, not paid) |
+
+Paid and unpaid outcomes are both visible, and each one is linked to whatever
+generated it.
+
+**What exists today, from reading the code:**
+
+- **A click can hold several `202_conversion_logs` rows.** Each is keyed by a
+  distinct transaction id (`UNIQUE (click_id, transaction_id)`), and each
+  keeps its own amount, `pixel_type`, IP, user agent and time. That is the
+  basis of the documented **Transactions ID** funnel feature
+  (`documentation/setting-up-prosper202-pro/999-transactions-id.md`): each
+  funnel step posts its own conversion with a transaction id.
+- **Nothing is called a "sub-conversion" or "sub-subid".** Nothing rolls rows
+  up into the click. The click's income is one value that the latest
+  conversion overwrites (§5.5).
+- **Several paths write no row at all**, so their amounts can never be
+  broken down:
+  - the revenue CSV upload (`tracking202/update/upload.php:128-165`) sums per
+    subid within a file and writes only the total;
+  - the legacy `px.php` / `pb.php` pixels only flag the click;
+  - the ClickBank endpoint (`cb202.php`) overwrites `click_payout` with the
+    order total.
+- **A row cannot say what produced it.** `pixel_type` distinguishes only
+  pixel (1), postback (2), universal pixel (3) and "other" (0). The V3 API
+  and the manual subid upload are told apart only by an empty user agent
+  versus the string `subid-upload`.
+- **No per-click view exists.** Group Overview's **Transaction ID** level
+  joins conversion rows to the click (`202-config/ReportSummaryForm.class.php:907-909`)
+  but adds up the click's single income figure. So each transaction row shows
+  the click's last payout, and a click with N transactions is counted N times.
+  That is a live defect, fixed below. The LTV customer panel does list
+  revenue events, but per customer, not per click, and only for conversions
+  linked to a customer.
+
+**The design: `202_conversion_logs` becomes the ledger, and the click total
+becomes a cache of it.**
+
+1. **Every path writes a row.** This includes the three that write none today:
+   - the CSV upload writes one row per CSV line, tagged with its upload batch;
+   - `px.php` / `pb.php` write a row each;
+   - ClickBank writes one row per receipt, using the receipt as the
+     transaction id. Its duplicate notifications then dedupe for free, as they
+     do not today.
+2. **Provenance columns** on every row:
+
+   | Column | Values |
+   |---|---|
+   | `source` | `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `app_install`, `goal` |
+   | `source_ref` | What generated it: goal id and version, upload batch id, API key id, app install row. Resolved by the UI into a name and a link |
+   | `event_name` | The event that reached the goal, or the postback's `event=` value |
+   | `payable` | `1` counts toward income and leads. `0` is a tracked outcome: an unpaid goal, or an event reported for visibility |
+   | `superseded_by` | Set in `replace` mode when a later payable row replaced this one's value, so the breakdown can say *why* a row is not in the total |
+
+   `pixel_type` is kept as it is, for compatibility.
+3. **The click total is derived from the ledger, never written on its own.**
+   `record()` and `softDelete()` recompute the click's cached `click_payout`
+   and `click_lead` from its rows under the click lock they already hold:
+   - `accumulate` campaigns: the sum of payable, non-deleted rows;
+   - `replace` campaigns: the latest payable, non-deleted row, with earlier
+     rows marked `superseded_by`. The number is the same one those campaigns
+     show today.
+   - The CSV upload keeps "the file replaces the click's uploaded revenue":
+     rows from an earlier upload batch for the same click are superseded by
+     the new batch's rows.
+
+   The earlier objection to summing rows was that uploads write none. It
+   disappears once every path writes rows.
+4. **Default payouts come from the goal or the campaign, never from the
+   cached `click_payout`.** Today an amount-less conversion reads that field
+   (`MysqlConversionRepository.php:165`), which in `accumulate` mode is a
+   running total.
+5. **The breakdown is a first-class read:**
+   - `GET /api/v3/clicks/{id}/conversions` returns every row with its amount,
+     `payable`, `source` and resolved `source_ref` (goal name and version,
+     batch, key), its transaction id and time, and whether it is counted,
+     with the reason when it is not (`unpaid`, `superseded`, `deleted`,
+     `duplicate`);
+   - the click row in the Visitors / click-history views opens that
+     breakdown;
+   - `GET /conversions` gains `click_id`, `source` and `goal` filters and
+     returns the provenance columns.
+6. **Reports can group by what generated the value.** Group Overview gains a
+   **Goal / source** level whose income sums **ledger rows**. The broken
+   **Transaction ID** level is fixed the same way: it sums the rows' own
+   amounts, so a click with three transactions shows three amounts that add
+   up to the click's income.
+7. **Leads stay "converting clicks".** A click is a lead if it has at least
+   one payable row. Unpaid outcomes are counted separately, as events.
+
+**Compatibility.**
+
+- In `replace` mode (the default), income per click is unchanged for every
+  existing campaign.
+- **One real change, stated as such:** the legacy pixels, ClickBank and the
+  CSV upload start writing conversion rows. On upgraded installs those
+  conversions appear from the upgrade on in conversion lists, the API and MTA.
+  Before, they changed the click and left no trace. Historical clicks are not
+  backfilled, because their individual amounts were never stored.
+
+### 2.2 Goals are a core feature, for web campaigns as well as apps
+
+Goals (§5.5 has the full definition) evaluate **events** into **outcomes**.
+Nothing in that design is specific to apps. What differs is the *subject*
+whose progress is tracked:
+
+| | Subject | Events come from |
+|---|---|---|
+| App campaign | The install (and through it, its click) | The SDK's `logEvent` |
+| Web campaign | **The click** | A pixel or postback carrying `event=` (with optional `event_props` as JSON, and `amount`); `POST /api/v3/events` keyed by `click_id`; `p202.js`'s `track(name, props)` on landing and thank-you pages, tied to the click by the first-party ids of §6.2 |
+
+- **Goal definitions attach to campaigns.** An app registration supplies a
+  default set that its campaigns inherit. Payable goals, payouts and
+  "notify traffic source" are configured per campaign, as in §5.5.
+- **Progress is keyed by subject:**
+  `202_goal_progress (subject_type ENUM('click','install'), subject_id, goal_id, goal_version, count, sum, reached_at, times_reached)`.
+  The app-specific tables in §5.4 keep only what is app-specific.
+- **Old web setups keep working unchanged.** A pixel or postback without
+  `event=` is today's plain conversion: one ledger row, `source` =
+  pixel/postback, no goal. Goals are opt-in per campaign.
+- **Goals replace the Transactions ID workaround.** A funnel becomes one
+  campaign with goals (opt-in → sale → upsell), each with its own payout,
+  rolled up per click by `accumulate` and broken down by §2.1. Today it means
+  copying the campaign once per step. The old recipe still works; the docs
+  point to the new one.
+
 ---
 
 # Part B: app measurement
@@ -206,7 +341,7 @@ moves to `202_app_*`.
 |---|---|---|
 | `202_attribution_apps` | `202_app_registrations` | Identity becomes `(platform, app_key)`; per-app policy |
 | `202_attribution_postbacks` | `202_app_postbacks` | Adds `registration_id`; `signature_valid` becomes `trusted` |
-| `202_attribution_conversion_values` | `202_app_goals` + `202_app_skan_encodings` | What an outcome is worth is split from how iOS encodes it |
+| `202_attribution_conversion_values` | `202_goals` (core, §2.2) + `202_app_skan_encodings` | What an outcome is worth is split from how iOS encodes it |
 | — | `202_app_installs`, `202_app_install_events` | Android (§5) |
 
 **The legacy guard is deleted, not extended.**
@@ -316,7 +451,7 @@ A conversion-value rule currently does two jobs: *what an outcome is worth*,
 and *how iOS encodes it in 6 bits*. Android needs only the first, and it needs
 it to be far more expressive than "this event name" (§5.5). The split:
 
-- **Goals, `202_app_goals`.** Both platforms use them. A goal is a named
+- **Goals, `202_goals`** (core, §2.2). Web campaigns and both app platforms use them. A goal is a named
   outcome ("install", "level 3", "first purchase ≥ $10") with its value. It is
   the only place revenue is configured. Goals are defined in §5.5.
 - **`202_app_skan_encodings`**
@@ -481,7 +616,7 @@ Every row carries a `match_reason` sentence, shown as-is in the UI.
 
 **`202_app_install_events`**: `UNIQUE (install_row_id, event_id)`, plus `name`, `properties` JSON, `occurred_at` and `received_at`.
 
-**`202_app_goals`** (versioned definitions), **`202_app_goal_progress`**, and **`202_app_campaign_goals`** (`campaign_id, goal_id, payout, notify_traffic_source`) (§5.5).
+Goal tables are core, not app tables (§2.2): **`202_goals`** (versioned definitions, owned by a campaign or by an app registration as its default set), **`202_goal_progress`** (keyed by subject: click or install), and **`202_campaign_goals`** (`campaign_id, goal_id, payout, notify_traffic_source`).
 
 **`202_aff_campaigns.app_registration_id`** NULL, used by `foreign_click` and
 the link builder. It is added in the 1.9.75 rung, next to the app tables.
@@ -519,7 +654,7 @@ pays and reports on (**goals**).
   `P202Attribution.logEvent("level_reached", mapOf("level" to 3))`, the same
   on iOS.
 
-**Goals: what counts.** `202_app_goals`, per registration. `install` is a
+**Goals: what counts.** `202_goals` (core, §2.2); for apps the registration supplies the default set. `install` is a
 built-in goal every registration has, and it is payable by default. A goal is
 a validated JSON definition. It is data, never code: there is no expression
 evaluation, so there is nothing to inject.
@@ -554,7 +689,7 @@ become a performance or denial-of-service problem.
 
 - Goals are evaluated **server-side** for Android, in the same transaction as
   the event insert, against per-install state in
-  `202_app_goal_progress (install_row_id, goal_id, goal_version, count, sum, reached_at, times_reached)`.
+  `202_goal_progress`, with `subject_type = 'install'` (§2.2).
 - It is deterministic and idempotent by `event_id`, so a retried event can
   never reach a goal twice.
 - Events are processed in arrival order. `within` windows compare
@@ -610,34 +745,24 @@ Prosper202 has, but it is limited in three ways that decide the design here:
   to *correct* a payout (pending → approved, a different transaction id,
   a new amount) would be double-counted if every conversion added.
 
-**Design: a per-campaign payout mode, applied in the one writer.**
+**Design: a per-campaign payout mode, computed from the ledger (§2.1).**
 
-- **`202_aff_campaigns.payout_mode`**
+- **`202_aff_campaigns.payout_mode`:**
   - `replace`: today's behaviour. It is the default for every existing
     campaign and every web campaign.
-  - `accumulate`: each new conversion **adds** its payout to the click's.
-    It is the default for campaigns linked to an app registration, and
+  - `accumulate`: the click's value is the sum of its payable conversions. It
+    is the default for campaigns with goals and for app campaigns, and it is
     selectable on any campaign.
-- **In `accumulate` mode**, `record()` does the addition under the click lock
-  it already holds (`MysqlConversionRepository.php:136-144`):
-  - the first conversion on a click (`click_lead = 0`) **sets** `click_payout`,
-    replacing the campaign default the click was recorded with (`dl.php:282`);
-  - each later conversion **adds** to it;
-  - `softDelete()` subtracts the deleted conversion's payout.
-  - A duplicate never reaches the update, because the dedupe runs before it.
-- **Default payouts come from the campaign or goal, never from
-  `click_payout`.** Today a conversion without an amount takes its payout from
-  `click_payout` (`:165`). Under `accumulate` that field is a running total, so
-  the second amount-less conversion would pay the total again. In
-  `accumulate` mode the default comes from the goal's payout or the
-  campaign's `aff_campaign_payout`.
-- **The CSV upload keeps its meaning.** It replaces with the file's
-  consolidated total, as it does now. It is an import and correction tool,
-  and the docs say it replaces in both modes.
-- **`click_lead` stays a flag,** so "leads" still counts converting clicks,
-  and income becomes the consolidated value.
-- **What does not change:** nothing changes for any existing campaign. Only
-  campaigns an operator switches, or new app campaigns, accumulate.
+- **Both modes derive the click's cached value from its ledger rows** under
+  the click lock `record()` already holds
+  (`MysqlConversionRepository.php:136-144`). Neither mode increments a running
+  total, so a delete, a supersede or a replayed request cannot leave the
+  cache disagreeing with the rows.
+- **The CSV upload** keeps "the file replaces the click's uploaded revenue":
+  it now writes one row per line, and a new batch supersedes the earlier
+  batch's rows for the same click.
+- **Nothing changes for any existing campaign's income.** Only campaigns an
+  operator switches, or new goal and app campaigns, accumulate.
 
 **Revenue trust.** Anyone holding the app token can post events.
 
@@ -1160,7 +1285,42 @@ answer as the unoptimised path on a sparse and a dense dataset (CLAUDE.md,
   a hostname resolving to one. Each is refused at schedule time and at send
   time.
 
+**Ledger and breakdown (PRs 1, 1b):**
+- **Live pass on a click:**
+  1. a $2 postback with a transaction id;
+  2. a CSV upload row of $1 for the same subid;
+  3. an app goal of $5;
+  4. an unpaid goal.
+
+  Then assert that `GET /clicks/{id}/conversions` lists four rows with the
+  right `source`, `source_ref` names, `payable` flags and counted reasons.
+  Under `accumulate`, the click value is $8. Under `replace` it is the latest
+  payable row, and the others are marked superseded.
+- **Group Overview:** the Transaction ID level's rows sum to the click's
+  income. Today it multiplies the click's income by the transaction count; a
+  regression test fixes that in place.
+- **Legacy paths:** `px.php`, `pb.php`, ClickBank (including a duplicate
+  receipt) and the CSV upload (including a re-upload superseding the earlier
+  batch) each write the expected rows. Income per click is unchanged in
+  `replace` mode.
+- **Consistency:** a structural test asserts that nothing **updates**
+  `click_payout` or `click_lead` on an existing click in `202_clicks` or
+  `202_clicks_spy` except the ledger's recompute. Click creation still seeds
+  the campaign default (`connect2.php:3186-3211`). The writers PR 1 moves
+  behind the recompute are, by a grep of every `UPDATE` touching those
+  columns:
+  - `p202ApplyConversionUpdate()` (`static-endpoint-helpers.php:57-118`, used
+    by gpx, gpb, upx, px, pb and cb202);
+  - `applyStandardClickUpdate()` (`MysqlConversionRepository.php:345-353`);
+  - `tracking202/update/upload.php:153-163`;
+  - `tracking202/update/subids.php:66`.
+
+  That invariant keeps the cache honest (error pattern #5).
+
 **Goals:**
+- **Web:** a postback with `event=optin` and then `event=sale` on one
+  campaign's click reaches two goals, with two ledger rows and a rolled-up
+  value.
 - **Evaluator vectors** (`tests/fixtures/app-sdk-contract/goals/`) run by PHP
   and Swift: predicates, `count`, `sum`, `after` chains, windows, repeat
   caps, clock clamping, and an invalid definition.
@@ -1220,10 +1380,12 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 
 | # | PR | Depends on |
 |---|---|---|
-| 1 | **Conversion writer:** outbox row in `record()`; per-campaign `payout_mode` (`replace` default, `accumulate`) in `record()` and `softDelete()`; `ConversionTables` split out; `gpb.php` pixel-firing logic extracted to one function | — |
+| 1 | **Conversion ledger** (§2.1): provenance columns; every path writes rows (CSV upload, `px`/`pb`, ClickBank included); click value derived from rows under `payout_mode`; outbox row in `record()`; `ConversionTables` split out; `gpb.php` pixel-firing logic extracted to one function | — |
+| 1b | **Breakdown reads:** `GET /clicks/{id}/conversions`, `/conversions` filters, the click-history breakdown view, Group Overview's Goal/source level, and the Transaction ID level fixed to sum rows | 1 |
 | 2 | **Identity capture:** `p202vid`, LP first-party id and `p202.js`, `cust` on clicks, `202_identity_*`, `202_clicks_visitor`, consent switch | — |
 | 3 | **App core reshape** (§4): registry, `AppIdentity`, token rename, verdicts, `PublicIntake`, retention, user-deletion purge, `/apps` and `p202 app` renames, legacy guard deleted | — |
-| 4 | **Goals engine:** definitions, validation, versioning, server evaluator, cross-language vectors, campaign goal payouts, SKAN encodings pointing at goals | 1, 3 |
+| 4 | **Goals engine** (core): definitions, validation, versioning, server evaluator keyed by subject (click or install), cross-language vectors, campaign goal payouts, SKAN encodings pointing at goals | 1, 3 |
+| 4b | **Web events:** `event=` on pixels and postbacks, `POST /events`, `p202.js` `track()`, the web campaign goal editor, the Transactions ID docs pointing to goals | 2, 4 |
 | 5 | **Android intake:** install token, `MatchState`, installs and events endpoints, conversions through goals, traffic-source notify, pending-click cron | 1, 3, 4 |
 | 6 | **Play Integrity** (opt-in modes) | 5 |
 | 7 | **Android SDK** (installs, events, customer id, integrity) | 5, 6 |
@@ -1233,7 +1395,7 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 | 11 | **Mobile Apps UI:** Android pages, link builder, goal editor and funnel, cross-platform report | 3–5 |
 | 12 | **Release gate:** upgrade-equals-install from a real 1.9.55 database, full live passes, agent-eval cases, docs and OpenAPI | all |
 
-- PRs 1–3 have no dependencies and can proceed in parallel.
+- PRs 1, 2 and 3 have no dependencies and can proceed in parallel.
 - The later extensions (Meta decryption, other stores, deep links) come after
   the release.
 
@@ -1255,5 +1417,13 @@ in the first release by construction.
 | 7 | Naming | App measurement: `202_app_*`, `/apps/*`, scope `apps`, `p202 app`, `app_key`, `app_token`, `accept_test_signals`. MTA: `202_attribution_*`, `/attribution/*`, scope `attribution`, `p202 attribution` | §1 |
 | 8 | Several payouts on one click | A per-campaign `payout_mode`. `replace` keeps today's behaviour and is the default for every existing and web campaign. `accumulate` consolidates payouts into one value per click, like the revenue CSV upload already does within a file, and is the default for app campaigns | §5.5 |
 
-Nothing is open. Decision 8 was the only candidate for changing existing
-reports, and the per-campaign mode avoids that change entirely.
+| 9 | Seeing what a click's value is made of | `202_conversion_logs` becomes a ledger with provenance (`source`, `source_ref`, `event_name`, `payable`, `superseded_by`); every path writes rows; the click value is derived from them; a per-click breakdown in the API and UI; reports group by goal/source | §2.1 |
+| 10 | Goals on web campaigns | Goals are core: the subject is the click (web) or the install (app), and events come from pixel/postback `event=`, `POST /events` and `p202.js` | §2.2 |
+
+**One behaviour change to confirm.** Decision 9 has the legacy pixels
+(`px.php`, `pb.php`), ClickBank and the revenue CSV upload **start writing
+conversion rows**. Today they change the click and leave no trace. After the
+upgrade those conversions appear in conversion lists, the API, MTA and the
+breakdown. Income per click in `replace` mode is unchanged. Without this, a
+click whose value came from one of those paths cannot be broken down, so the
+plan assumes yes.
