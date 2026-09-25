@@ -209,6 +209,36 @@ final class GoalWritersTest extends TestCase
         yield 'aliased delete' => ['$db->query("DELETE s FROM 202_goal_subjects s WHERE s.user_id = 1");', 'delete'];
     }
 
+    /**
+     * The engine retires a goal row with no replacement through
+     * retireGoalRowInTransaction(), which marks the deletion as the engine's.
+     * A plain softDelete() from the goals code leaves no mark, so a later
+     * revival reads it as an operator's deletion and leaves the revived
+     * outcome live and unpaid (RevivalRestoresTheLedgerTest). Nor may goals
+     * code write the ledger table itself.
+     */
+    public function testGoalsCodeRetiresLedgerRowsOnlyThroughTheMarkedWriter(): void
+    {
+        $offenders = [];
+        foreach (glob(dirname(__DIR__, 2) . '/202-config/Goals/*.php') ?: [] as $path) {
+            $tokens = token_get_all((string) file_get_contents($path));
+            foreach ($tokens as $i => $t) {
+                if (!is_array($t) || $t[0] !== T_STRING || !in_array(strtolower($t[1]), ['softdelete', 'softdeleteintransaction', 'clearclicks'], true)) {
+                    continue;
+                }
+                $offenders[] = basename($path) . ':' . $t[2] . ' ' . $t[1];
+            }
+            if (preg_match('/\bUPDATE\s+`?202_conversion_logs`?\b/i', SqlLiteralText::of((string) file_get_contents($path))) === 1) {
+                $offenders[] = basename($path) . ' UPDATE 202_conversion_logs';
+            }
+        }
+        self::assertSame([], $offenders, 'goal ledger rows are retired by MysqlConversionRepository::retireGoalRowInTransaction() '
+            . 'and revived by reviveGoalRowInTransaction(), never deleted unmarked');
+        $engine = (string) file_get_contents(dirname(__DIR__, 2) . '/202-config/Goals/GoalEngine.php');
+        self::assertStringContainsString('->retireGoalRowInTransaction(', $engine);
+        self::assertStringContainsString('->reviveGoalRowInTransaction(', $engine);
+    }
+
     /** @dataProvider plantedOutcomeReads */
     public function testEveryPlantedOutcomeReadIsSeen(string $code): void
     {
