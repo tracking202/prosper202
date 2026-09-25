@@ -9,7 +9,7 @@ include_once(substr(__DIR__, 0,-19) . '/202-config/static-endpoint-helpers.php')
 // through the same writer every other conversion path uses. A transaction
 // id (txid / transaction_id / order_id ...) de-duplicates a replay and lets
 // one click carry a repeat purchase; without one the click converts once.
-// Before, this endpoint only flagged the click and left no trace.
+// `status=reversed` with a transaction id reverses that conversion.
 
 //get the aff_camapaign_id
 $mysql['aff_campaign_id_public'] = $db->real_escape_string((string)($_GET['acip'] ?? ''));
@@ -29,17 +29,30 @@ try {
 	// campaign_id: the postback names a campaign, and only a click on that
 	// campaign may convert for it — the scope the old click update applied
 	// in its WHERE clause, now checked before anything is written.
+	// status=reversed with the transaction id of an earlier conversion
+	// records a reversal row that nets against it (see p202ExtractReversal).
 	$outcome = p202RecordLegacyConversion($db, $click_id, 2, [
 		'campaign_id'    => (int) $aff_campaign_row['aff_campaign_id'],
 		'transaction_id' => p202ExtractTransactionId($_GET),
 		'ip'             => p202ClientIp($_SERVER),
 		'user_agent'     => (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''),
-	]);
+		'source'         => \Prosper202\Conversion\Ledger\ConversionSource::LEGACY_PIXEL->value,
+	] + p202ExtractReversal($_GET));
+} catch (\Prosper202\Conversion\Ledger\ReversalException $reversalError) {
+	// Said to the sender in its own words: which transaction, and for a
+	// second reversal of one sale, the reversal already on file.
+	p202RespondJsonError(
+		$reversalError->kind === \Prosper202\Conversion\Ledger\ReversalException::CONFLICT ? 422 : 404,
+		$reversalError->getMessage()
+	);
 } catch (\Throwable $conversionError) {
 	// A non-2xx, so a sender that retries only failures does not treat an
 	// unrecorded conversion as accepted and drop it for good.
 	error_log('pb: conversion recording failed for click ' . $click_id . ': ' . $conversionError->getMessage());
 	p202RespondJsonError(500, 'Failed to record conversion');
+}
+if ($outcome['recorded'] || $outcome['duplicate']) {
+	p202LinkConversionIdentity($db, $click_id, $_GET);
 }
 if (!$outcome['recorded'] && !$outcome['duplicate'] && $outcome['reason'] !== 'already_lead') {
 	// unknown_click or campaign_mismatch: the same 404 gpb.php answers for a

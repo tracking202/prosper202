@@ -8,12 +8,15 @@ use PHPUnit\Framework\TestCase;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
 use Tests\Support\FakeMysqliConnection;
+use Tests\Support\InsertReportingFakeMysqliConnection;
 
 final class MysqlConversionRepositoryTest extends TestCase
 {
     public function testCreateUsesWriteConnectionAndLocksClickRow(): void
     {
-        $write = new FakeMysqliConnection();
+        // The writer refuses an insert that reports no id, and only the
+        // insert-reporting double can report one on PHP 8.4.
+        $write = new InsertReportingFakeMysqliConnection(21);
         $read = new FakeMysqliConnection();
         $write->whenQueryContainsReturnRows(
             'FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE',
@@ -22,6 +25,7 @@ final class MysqlConversionRepositoryTest extends TestCase
                 'aff_campaign_id' => 44,
                 'click_payout' => 2.75,
                 'click_time' => 1700000000,
+                'click_lead' => 0,
             ]]
         );
 
@@ -56,11 +60,13 @@ final class MysqlConversionRepositoryTest extends TestCase
      * Run record() against fresh fakes with a subscribed bridge webhook,
      * returning the emitted bridge payload alongside record()'s result.
      *
-     * @return array{result: array<string, mixed>, payload: array<string, mixed>, write: FakeMysqliConnection}
+     * @return array{result: array<string, mixed>, payload: array<string, mixed>, write: InsertReportingFakeMysqliConnection}
      */
     private function recordWithBridgeEmit(string $transactionId): array
     {
-        $write = new FakeMysqliConnection();
+        // The writer refuses an insert that reports no id, and only the
+        // insert-reporting double can report one on PHP 8.4.
+        $write = new InsertReportingFakeMysqliConnection(21);
         $read = new FakeMysqliConnection();
         $write->whenQueryContainsReturnRows(
             'FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE',
@@ -69,6 +75,7 @@ final class MysqlConversionRepositoryTest extends TestCase
                 'aff_campaign_id' => 44,
                 'click_payout' => 2.75,
                 'click_time' => 1700000000,
+                'click_lead' => 0,
             ]]
         );
         $read->whenQueryContainsReturnRows('FROM 202_ltv_webhooks', [['webhook_id' => 5]]);
@@ -99,9 +106,7 @@ final class MysqlConversionRepositoryTest extends TestCase
         // conversions on the same click are both legitimate, so their emit
         // keys must not collapse to a shared '<clickId>:' (review finding).
         // The key embeds the conversion row id instead: stable across retries
-        // of the same conversion, distinct per row. (mysqli's insert_id is an
-        // engine-virtual property the fakes cannot set on PHP 8.4+, so the
-        // row id observed here is the fallback 0; per-row distinctness with
+        // of the same conversion, distinct per row. (Per-row distinctness with
         // real AUTO_INCREMENT ids is pinned by ConversionBridgeIntegrationTest.)
         $emitted = $this->recordWithBridgeEmit('   ');
 
@@ -113,12 +118,11 @@ final class MysqlConversionRepositoryTest extends TestCase
         self::assertSame('', $emitted['payload']['transaction_id'], 'the payload txid stays blank; only the key carries the conv marker');
         self::assertSame($emitted['result']['convId'], $emitted['payload']['conv_id']);
 
-        // Unit-pin the premise: no txid → no dedupe lookup, row stored NULL.
-        self::assertSame(
-            [],
-            $emitted['write']->statementsContaining('FROM 202_conversion_logs WHERE click_id = ? AND transaction_id = ?'),
-            'blank txids must skip the idempotent-replay lookup'
-        );
+        // Unit-pin the premise: no txid → the row is keyed by its own id
+        // (row:<conv_id>), so it is never deduplicated, and stored NULL.
+        $keyed = $emitted['write']->statementsContaining('UPDATE 202_conversion_logs SET dedupe_key = ?');
+        self::assertCount(1, $keyed, 'a blank txid in replace mode gets the per-row key');
+        self::assertSame(['row:21', 21], $keyed[0]->boundValues);
         $convInserts = $emitted['write']->statementsContaining('INSERT INTO 202_conversion_logs');
         self::assertCount(1, $convInserts);
         self::assertNull($convInserts[0]->boundValues[1], 'blank transaction ids are stored as NULL');

@@ -593,6 +593,10 @@ p202 user apikey rotate <user_id> <old_api_key> [--scope S] [--keep-old] [--forc
                        [--update-config] [--force-config-update] [--json]
                        # without --scope, the old key's scope carries onto the new key
 
+p202 user identity-key get    <user_id> [--json]          # the key your server signs customer ids with
+p202 user identity-key rotate <user_id> [--force] [--json]
+                       # cust_sig = hex(HMAC-SHA256(key, "<cust_type>:<cust>")); rotating stops old signatures linking
+
 p202 user prefs get    <user_id> [--json]
 p202 user prefs update <user_id> [--user_tracking_domain S]
                        [--user_account_currency S] [--user_slack_incoming_webhook S]

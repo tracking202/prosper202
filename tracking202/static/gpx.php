@@ -26,25 +26,22 @@ $mysql['cid'] = 0;
 $mysql['use_pixel_payout'] = 0;
 $advertiserId = null;
 
-//grab the cid
-if(array_key_exists('cid',$_GET) && is_numeric($_GET['cid'])) {
-	$mysql['cid']= $db->real_escape_string((string)$_GET['cid']);
+//grab the cid (the campaign whose own cookie names the click)
+$campaignIdFromRequest = p202ParseClickId($_GET['cid'] ?? null) ?? 0;
+$mysql['cid'] = (string) $campaignIdFromRequest;
+
+// The click: the subid parameter, the campaign's cookie, the general cookie
+// (p202ClickIdFromRequest). A value that is present and not an exact click
+// id is refused rather than cast ("123.9" is not click 123) and rather than
+// falling back to the IP lookup below.
+$requestedClick = p202ClickIdFromRequest($_GET, $_COOKIE, $campaignIdFromRequest);
+if ($requestedClick['malformed'] !== null) {
+    error_log('gpx: refusing malformed ' . $requestedClick['malformed'] . ' click id');
+    exit;
 }
-    
-// grab the subid
-if (array_key_exists('subid', $_GET) && is_numeric($_GET['subid'])) {
-    $mysql['click_id'] = $db->real_escape_string((string)$_GET['subid']);
-} elseif (array_key_exists('sid', $_GET) && is_numeric($_GET['sid'])) {
-    $mysql['click_id'] = $db->real_escape_string((string)$_GET['sid']);
-} else { // no subid found get from cookie or fingerprint
-       
-    // see if it has the cookie in the campaign id, then the general match, then do whatever we can to grab SOMETHING to tie this lead to
-    if (isset($_COOKIE['tracking202subid_a_' . $mysql['cid']]) && $_COOKIE['tracking202subid_a_' . $mysql['cid']] && $mysql['cid'] != '0') {
-        $mysql['click_id'] = $db->real_escape_string($_COOKIE['tracking202subid_a_' . $mysql['cid']]);
-    } else
-        if (isset($_COOKIE['tracking202subid']) && $_COOKIE['tracking202subid']) {
-            $mysql['click_id'] = $db->real_escape_string($_COOKIE['tracking202subid']);
-        } else {
+if ($requestedClick['click_id'] !== null) {
+    $mysql['click_id'] = (string) $requestedClick['click_id'];
+} else { // nothing named a click: fall back to this address's last click
             // ok grab the last click from this ip_id
             $mysql['ip_address'] = $db->real_escape_string($_SERVER['REMOTE_ADDR']);
             $daysago = time() - 2592000; // 30 days ago
@@ -65,7 +62,6 @@ if (array_key_exists('subid', $_GET) && is_numeric($_GET['subid'])) {
                 $mysql['click_id'] = $db->real_escape_string($click_row1['click_id']);
                 $mysql['ppc_account_id'] = $db->real_escape_string($click_row1['ppc_account_id'] ?? '');
             }
-        }
 }
 
 if (is_numeric($mysql['click_id'])) {
@@ -156,6 +152,9 @@ if (is_numeric($mysql['click_id'])) {
 			error_log('gpx: conversion recording failed for click ' . $mysql['click_id'] . ': ' . $conversionError->getMessage());
 		}
 		$conversionId = $conversionResult['conv_id'];
+		if ($conversionId > 0) {
+			p202LinkConversionIdentity($db, (int) $mysql['click_id'], $_GET);
+		}
 
                 if ($conversionId > 0 && !$conversionResult['duplicate']) {
                         $scope = [
