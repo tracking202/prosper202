@@ -218,6 +218,9 @@ if (is_numeric($mysql['click_id'])) {
 		error_log('upx: conversion recording failed for click ' . $mysql['click_id'] . ': ' . $conversionError->getMessage());
 	}
 	$conversionId = $conversionResult['conv_id'];
+	if ($conversionId > 0) {
+		p202LinkConversionIdentity($db, $clickId, $_GET);
+	}
 
 	// Tell the traffic source after recording, and only about a conversion
 	// that was newly recorded: the pixel used to fire first, so a reload of

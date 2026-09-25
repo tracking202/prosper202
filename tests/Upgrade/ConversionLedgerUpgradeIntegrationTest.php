@@ -141,6 +141,10 @@ final class ConversionLedgerUpgradeIntegrationTest extends TestCase
         $this->assertSame("enum('replace','accumulate')", $mode['Type']);
         $this->assertSame('replace', $mode['Default'], 'every existing campaign keeps replacing');
 
+        $identity = $db->query("SHOW COLUMNS FROM 202_aff_campaigns WHERE Field = 'identity_signals'")->fetch_assoc();
+        $this->assertIsArray($identity, 'the campaign identity switch is added');
+        $this->assertSame('1', (string) $identity['Default'], 'existing campaigns capture identity, as a new one does');
+
         // A reversal row can now share a sale's transaction id.
         $this->assertTrue($db->query("INSERT INTO 202_conversion_logs (click_id, campaign_id, user_id, click_time, conv_time, time_difference, ip,
             pixel_type, user_agent, transaction_id, click_payout, deleted, source, dedupe_key, reverses_conv_id)
@@ -164,6 +168,30 @@ final class ConversionLedgerUpgradeIntegrationTest extends TestCase
         $this->assertTrue($reconciler->reconcile(ConversionTables::conversionLogs()));
         $this->assertSame([], $reconciler->getApplied(), 'the upgraded table already has every column and key the installer declares');
         $this->assertSame([], $reconciler->getUnreconciled());
+    }
+
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testTheRungCreatesTheIdentityGraphAsTheInstallerDeclaresIt(): void
+    {
+        $db = $this->preLedgerDatabase();
+        foreach (\Prosper202\Database\Tables\IdentityTables::getDefinitions() as $def) {
+            $db->query('DROP TABLE IF EXISTS `' . $def->tableName . '`');
+        }
+        // The rung's own list: the postback tables' backfill runs in the same call.
+        $this->assertTrue(_upgrade_attribution_tables(array_merge(
+            \Prosper202\Database\Tables\AttributionPostbackTables::getDefinitions(),
+            \Prosper202\Database\Tables\ConversionTables::getDefinitions(),
+            \Prosper202\Database\Tables\IdentityTables::getDefinitions()
+        )));
+        $reconciler = new SchemaReconciler(static fn (string $sql) => _upgrade_query($sql));
+        foreach (\Prosper202\Database\Tables\IdentityTables::getDefinitions() as $def) {
+            $this->assertNotNull($db->query("SHOW TABLES LIKE '" . $def->tableName . "'")->fetch_row(), $def->tableName);
+            $this->assertTrue($reconciler->reconcile($def));
+        }
+        $this->assertSame([], $reconciler->getApplied(), 'created with every column and key the installer declares');
     }
 
     /**

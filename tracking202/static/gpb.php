@@ -192,6 +192,9 @@ try {
 	p202RespondJsonError(500, 'Failed to record conversion');
 }
 $conversionId = $conversionResult['conv_id'];
+if ($conversionId > 0) {
+	p202LinkConversionIdentity($db, (int) $mysql['click_id'], $_GET);
+}
 $newlyRecorded = $conversionId > 0 && !$conversionResult['duplicate'];
 
 // A reversal nets an earlier sale; announcing it to the traffic source as a

@@ -2457,6 +2457,12 @@ function getPrePopVars($vars)
         't202id',
         't202b',
         't202ctx', // Landing Page Optimizer context token: minted fresh per click, never re-passed
+        // Identity signals are for this tracker, not the destination: the
+        // landing page's first-party id and the operator's signature of a
+        // customer id never leave with the redirect, nor does the consent flag.
+        'p202lpid',
+        'cust_sig',
+        'p202_consent',
         't202ref',
         't202pubid',
         'acip',

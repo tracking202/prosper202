@@ -152,6 +152,9 @@ if (is_numeric($mysql['click_id'])) {
 			error_log('gpx: conversion recording failed for click ' . $mysql['click_id'] . ': ' . $conversionError->getMessage());
 		}
 		$conversionId = $conversionResult['conv_id'];
+		if ($conversionId > 0) {
+			p202LinkConversionIdentity($db, (int) $mysql['click_id'], $_GET);
+		}
 
                 if ($conversionId > 0 && !$conversionResult['duplicate']) {
                         $scope = [

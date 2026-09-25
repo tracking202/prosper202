@@ -774,6 +774,29 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 		setClickIdCookie($mysql['click_id'],$rule['aff_campaign_id']);
 	}
 
+	// Identity signals (plan §6.2): the p202vid cookie, the p202lpid a
+	// landing page sends, a signed customer id. The rotator writes its click
+	// rows inline, so the click is linked here, once they are stored.
+	// A rule that points at a bare URL has no campaign and leaves capture on;
+	// a campaign whose setting cannot be read captures nothing.
+	$rtrCampaignAllows = true;
+	if ((int) $rule['aff_campaign_id'] > 0) {
+		$rtrCampaignRow = memcache_mysql_fetch_assoc(
+			$db,
+			"SELECT identity_signals FROM 202_aff_campaigns WHERE aff_campaign_id='" . $mysql['aff_campaign_id'] . "'"
+		);
+		$rtrCampaignAllows = is_array($rtrCampaignRow)
+			&& \Prosper202\Identity\RequestSignals::campaignAllows($rtrCampaignRow['identity_signals'] ?? '0');
+	}
+	$rtrIdentity = \Prosper202\Identity\ClickIdentity::fromRequest($_GET, $_COOKIE, $rtrCampaignAllows);
+	$rtrIdentity->sendCookie($_SERVER);
+	$rtrIdentity->attach(
+		\Prosper202\Repository\LookupRepositoryFactory::connection($db),
+		(int) $mysql['user_id'],
+		(int) $mysql['click_id'],
+		(int) $mysql['click_time']
+	);
+
 	//set dirty hour
 	$de = new DataEngine();
 	$data = $de->setDirtyHour($mysql['click_id']);

@@ -51,6 +51,9 @@ try {
 	error_log('pb: conversion recording failed for click ' . $click_id . ': ' . $conversionError->getMessage());
 	p202RespondJsonError(500, 'Failed to record conversion');
 }
+if ($outcome['recorded'] || $outcome['duplicate']) {
+	p202LinkConversionIdentity($db, $click_id, $_GET);
+}
 if (!$outcome['recorded'] && !$outcome['duplicate'] && $outcome['reason'] !== 'already_lead') {
 	// unknown_click or campaign_mismatch: the same 404 gpb.php answers for a
 	// subid it cannot convert, so the sender's log shows the mismatch.

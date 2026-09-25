@@ -54,6 +54,7 @@ final class CampaignTables
                 `aff_campaign_foreign_payout` decimal(8,2) NOT NULL,
                 `attribution_model_id` int(11) DEFAULT NULL,
                 `payout_mode` enum('replace','accumulate') NOT NULL DEFAULT 'replace',
+                `identity_signals` tinyint(1) NOT NULL DEFAULT '1',
                 PRIMARY KEY (`aff_campaign_id`),
                 KEY `aff_network_id` (`aff_network_id`),
                 KEY `aff_campaign_deleted` (`aff_campaign_deleted`),

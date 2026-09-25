@@ -62,4 +62,8 @@ final class ClickRecord
     public int $clickOutboundSiteUrlId = 0;
     public int $clickCloakingSiteUrlId = 0;
     public int $clickRedirectSiteUrlId = 0;
+
+    // Identity signals the request carried (202_clicks_visitor and the
+    // identity graph), linked after the click's own transaction commits.
+    public ?\Prosper202\Identity\ClickIdentity $identity = null;
 }
