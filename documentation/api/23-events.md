@@ -187,8 +187,11 @@ same transaction as the conversion (`202_notification_pending`), and the
 worker — `202-cronjobs/app-installs.php`, and the web cron
 `202-cronjobs/index.php` every minute — sends it: a failure is retried with
 backoff (1 minute doubling, at most 6 hours) and marked `failed` after 8
-attempts, and never undoes the recorded conversion. The response reports
-`status: queued` with the number of rows waiting (`queued`). Image, iframe
+attempts, and never undoes the recorded conversion. A pixel whose code
+holds several space-separated URLs queues one row per URL, each retried on
+its own, so a URL that refuses is asked again without resending to one
+that accepted. The response reports `status: queued` with the number of
+rows waiting (`queued`). Image, iframe
 and script pixels cannot wait for a worker: they are returned to a browser
 where one asked (the universal pixel's answer, `status: rendered`), and
 counted as `browser_only` elsewhere.
@@ -202,7 +205,9 @@ so the replacement is not sent (`notify: suppressed`) and a correction is
 recorded, unsent, in the outbox (no pixel has a correction URL yet). The
 same holds when a late event shifts the count — purchases of $5 and $10
 followed by a late $1 that happened first become $1, $5 and $10, and the
-$10 purchase, now the third, is not announced a second time.
+$10 purchase, now the third, is not announced a second time. Each rule is
+decided per URL: a URL that had not yet been sent the earlier outcome
+hears the one that stands, once, while one that had is told nothing more.
 A goal that is not paid (tracked only) sends nothing.
 
 ## Setup › Campaigns

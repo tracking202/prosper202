@@ -1924,12 +1924,18 @@ operator's reads are `AppInstallsController`; the guide is
   10,000 events and the per-peer rate limit; no separate per-install rate.
 - **Notifications.** `202_notification_pending` is conversion schema
   (`ConversionTables`), written in the conversion's transaction, one row per
-  **server postback pixel** (type 4) of the click's traffic-source account;
+  URL of each **server postback pixel** (type 4) of the click's
+  traffic-source account;
   browser pixels have no page on an install and are not queued. The URL is
-  resolved at queue time. A pixel holding several URLs is one row (the
-  table's key is `(conv_id, pixel_id, kind)`); a partial failure resends
-  all of them, which the `[[transactionid]]` they carry lets a network
-  dedupe. **Nothing is sent on the request path** — §7.3's "no external
+  resolved at queue time. **The unit is the destination, not the pixel**: a
+  pixel's code may hold several space-separated URLs, and each is its own
+  row (`destination`, its position in the code; the key is `(conv_id,
+  pixel_id, destination, kind)`) with its own attempts, backoff and status.
+  An earlier draft stored a pixel's URLs in one row, so a failure at the
+  second URL left the row pending and every retry started again at the
+  first — an endpoint that had accepted the conversion was sent it up to 8
+  times. The column is created by the 1.9.75 rung with the rest of the
+  table (see Constraints: no database holds it). **Nothing is sent on the request path** — §7.3's "no external
   calls" won over §5.2's "may attempt the send" — so the worker
   (`202-cronjobs/app-installs.php`, every minute) sends, claiming each row by
   compare-and-set on its attempt count, backing off 1 minute doubling to 6
@@ -1949,11 +1955,32 @@ operator's reads are `AppInstallsController`; the guide is
   this one survives a crash between commit and send. Its type-4 pixel
   filter, token resolution and send-once rule are the ones to keep; its
   immediate send is what the worker replaces.
-- **Once per outcome.** A replaced outcome's pending, unattempted `reached`
-  is cancelled and the replacement's goes out; one that was sent or
-  attempted is never repeated, and a `correction` (or, with no
-  replacement, a `retraction`) is stored `suppressed` — no pixel has a
-  correction URL yet (configuration of one is deferred to the UI, PR 11).
+- **Once per outcome, per destination.** A replaced outcome's pending,
+  unattempted `reached` is cancelled and the replacement's goes out; one
+  that was sent or attempted is never repeated, and a `correction` (or,
+  with no replacement, a `retraction`) is stored `suppressed` — no pixel has
+  a correction URL yet (configuration of one is deferred to the UI, PR 11).
+  Each destination is decided on its own: the replacement's `reached` is
+  cancelled only at the destinations the replaced row announced (an earlier
+  draft cancelled all of them, so a pixel the replaced row never reached
+  heard nothing at all). A destination is *announced* when the replaced
+  row's `reached` there was attempted, or when the replaced row carries a
+  `correction` there — it is itself a replacement whose predecessor went out
+  (an earlier draft missed this and re-announced on the second move). The
+  table (`NotificationOutboxIntegrationTest` has a case per row):
+
+  | Replaced row's `reached` at a destination | Announced | Replaced row | Replacement's `reached` there | Recorded |
+  |---|---|---|---|---|
+  | pending, unattempted | no | cancelled | goes out (if present) | — |
+  | pending, attempted (retrying) | yes | left retrying | cancelled | `correction` / `retraction`, suppressed |
+  | sent | yes | left sent | cancelled | `correction` / `retraction`, suppressed |
+  | failed (attempts exhausted; may have landed) | yes | left failed | cancelled | `correction` / `retraction`, suppressed |
+  | cancelled, with a `correction` on the replaced row | yes | left cancelled | cancelled | `correction` / `retraction`, suppressed |
+  | cancelled, no `correction` | no | left cancelled | goes out | — (not produced: a row whose reached was cancelled unannounced has been replaced and is not replaced again) |
+  | none (pixel added since) | no | — | goes out | — |
+
+  "If present": the replacement has no row at a destination whose pixel was
+  removed in between, and nothing is recorded for an unannounced one.
 - **One sender.** `PostbackSender::fetch()` is the curl call gpb and upx
   used inline; `p202FireTrafficSourcePixels()` and the worker share it. It
   now refuses a URL that is not `http(s)://` (a `file://` pixel used to be
@@ -1974,6 +2001,19 @@ operator's reads are `AppInstallsController`; the guide is
 - **Deletion.** A user's installs and queued postbacks are deleted with the
   user. Deleting a registration keeps its installs (their conversions stay
   on the ledger) and archives its goals, the install goal among them.
+  Both delete paths — the registration delete and the user purge
+  (`AppDataPurge`) — **unlink the campaigns** that name a registration they
+  remove (`app_registration_id = NULL`), in the same transaction. Left
+  dangling, a link reads as "linked to another app" once the same app is
+  registered again under a new id: token generation refuses the campaign's
+  clicks and the intake classifies their installs `foreign_click`. A stale
+  link is **not** tolerated at read time: both delete paths now clear it,
+  no installation holds one from before (Constraints), and reading a
+  dangling id as "unlinked" would mean a join to the registration under the
+  click's `FOR UPDATE` in the intake — locking the registration row for
+  every install — to cover a state nothing produces. A link that somehow
+  dangles fails closed (`foreign_click`, unpaid) and names the missing
+  registration in its reason.
 - **Operator reads** live under the registration — `GET /apps/{id}/installs`,
   `/apps/{id}/installs/{install_uuid}` — because `GET /apps/installs` is the
   public probe. `GET /apps/{id}/install-token?click_id=` is a read (no
@@ -2029,7 +2069,12 @@ operator's reads are `AppInstallsController`; the guide is
     third". `onEventMoved()` cancels a written outcome's postback when its
     reaching event had reached the goal in a retired outcome that was
     announced; if that one was cancelled unsent, the new one stands. This
-    now also covers installs.
+    now also covers installs. Both rules are decided **per destination**
+    (PR 5's review moved the outbox to one row per URL): a replacement or
+    a moved event is withheld only at the (pixel, URL) pairs the retired
+    outcome announced — its `reached` sent or attempted, or a `correction`
+    of it recording that the URL had already heard the event — and a URL
+    that heard nothing hears the outcome that stands, once.
   - **4b's kinds, decided from the outbox.** `reached` / `suppressed` are
     read back from what the outbox holds after the retirements (a
     replacement of an unsent outcome is `reached`, where 4b said
@@ -2045,7 +2090,10 @@ operator's reads are `AppInstallsController`; the guide is
     `TrafficSourcePixels`' default and the source of its user agent, so
     gpb/upx pixels and the outbox send the same way.
   Checked by `WebEventsIntegrationTest` (4b's cases, the worker run
-  between requests, plus a replacement of an unsent outcome) and
+  between requests, plus a replacement of an unsent outcome, and a
+  two-URL pixel: one URL refusing is retried alone, a replacement is
+  withheld only at the URL that heard the first value, and a replay that
+  shifts n reaches each URL with each event once) and
   `InstallIntakeIntegrationTest`, and live by `web-events.sh` (which now
   runs the worker) and `android-intake.sh`.
 

@@ -41,6 +41,9 @@ final class WebEventsIntegrationTest extends TestCase
     /** @var list<string> */
     private array $fetched = [];
 
+    /** A URL prefix the recording sender answers as refused (null: every URL is accepted). */
+    private ?string $refusing = null;
+
     protected function setUp(): void
     {
         $this->goalSetUp();
@@ -48,6 +51,7 @@ final class WebEventsIntegrationTest extends TestCase
             self::$db->query('TRUNCATE TABLE ' . $t);
         }
         $this->fetched = [];
+        $this->refusing = null;
     }
 
     private function notifier(bool $browser = false): TrafficSourceNotifier
@@ -61,7 +65,7 @@ final class WebEventsIntegrationTest extends TestCase
         return new NotificationOutbox($this->conn, fn (): int => $this->clock, function (string $url): bool {
             $this->fetched[] = $url;
 
-            return true;
+            return $this->refusing === null || !str_starts_with($url, $this->refusing);
         });
     }
 
@@ -199,6 +203,114 @@ final class WebEventsIntegrationTest extends TestCase
         $this->deliver();
         self::assertCount(1, $this->fetched);
         self::assertStringContainsString('&v=1.00&', $this->fetched[0], 'the value that stands, not the one it replaced');
+    }
+
+    /**
+     * A server pixel holding two URLs (PR 5's per-destination outbox) on a
+     * web goal: each URL is its own row, a refusing URL is retried alone
+     * while the accepting one is never sent a second time, and a replay's
+     * replacement is withheld only where the replaced outcome was announced
+     * — the URL that had heard the first value is told nothing more, the one
+     * that had heard nothing hears the value that stands, once.
+     */
+    public function testATwoUrlPixelAnnouncesOncePerUrlAndRetriesOnlyTheOneThatFailed(): void
+    {
+        $this->campaign(7, 'accumulate');
+        $this->click(100, 7);
+        self::fixture("UPDATE 202_clicks SET ppc_account_id=" . self::PPC);
+        self::fixture("INSERT INTO 202_ppc_account_pixels (ppc_account_id, pixel_code, pixel_type_id) VALUES
+            (" . self::PPC . ", 'https://up.test/pb?g=[[p202_goal]]&v=[[p202_goal_value]]  https://down.test/pb?g=[[p202_goal]]&v=[[p202_goal_value]]', 4)");
+        $this->goal(7, ['name' => 'Buy', 'trigger' => ['event' => 'buy'], 'value' => ['type' => 'from_property']]);
+        $engine = $this->engineWith($this->notifier());
+        $this->refusing = 'https://down.test/';
+
+        $first = $this->send($engine, 100, [$this->event('late', 'buy', self::T + 100, [], 10, true)]);
+        self::assertSame('reached', $first['outcomes'][0]['kind']);
+        self::assertSame(2, $first['notifications'][0]['queued'], 'one row per URL (a doubled space is not a destination)');
+        self::assertSame(['sent' => 1, 'failed' => 0, 'retrying' => 1], $this->deliver());
+        $this->clock += NotificationOutbox::backoff(1);
+        self::assertSame(['sent' => 0, 'failed' => 0, 'retrying' => 1], $this->deliver(), 'only the refusing URL is due again');
+        self::assertSame(['https://up.test/pb?g=Buy&v=10.00', 'https://down.test/pb?g=Buy&v=10.00', 'https://down.test/pb?g=Buy&v=10.00'], $this->fetched,
+            'the accepting URL heard the conversion once; the refusing one was asked twice');
+        $rows = self::$db->query('SELECT destination, kind, status, attempts FROM 202_notification_pending ORDER BY notification_id')->fetch_all(MYSQLI_ASSOC);
+        self::assertSame(['0/reached/sent/1', '1/reached/pending/2'], array_map(static fn (array $r): string => implode('/', $r), $rows));
+
+        // A late event that happened first replaces the outcome ($10 -> $1).
+        // Both URLs may have heard $10 — the refusing one was attempted, and
+        // an attempt cannot be taken back — so neither is told $1.
+        $replay = $this->send($engine, 100, [$this->event('early', 'buy', self::T, [], 1, true)]);
+        self::assertTrue($replay['replayed']);
+        self::assertSame(['suppressed', 'replacement'], [$replay['outcomes'][0]['kind'], $replay['outcomes'][0]['reason']]);
+        $this->refusing = null;
+        $this->clock += NotificationOutbox::backoff(2);
+        $this->deliver();
+        self::assertSame(['https://up.test/pb?g=Buy&v=10.00', 'https://down.test/pb?g=Buy&v=10.00', 'https://down.test/pb?g=Buy&v=10.00', 'https://down.test/pb?g=Buy&v=10.00'],
+            $this->fetched, 'the retry carries the value it was queued with; the replacement is sent nowhere');
+        $byConv = self::$db->query("SELECT GROUP_CONCAT(CONCAT_WS('/', destination, kind, status) ORDER BY destination, kind SEPARATOR ' ') AS r
+            FROM 202_notification_pending GROUP BY conv_id ORDER BY conv_id")->fetch_all(MYSQLI_ASSOC);
+        self::assertSame(['0/reached/sent 1/reached/sent', '0/correction/suppressed 0/reached/cancelled 1/correction/suppressed 1/reached/cancelled'],
+            array_column($byConv, 'r'));
+    }
+
+    /**
+     * The per-URL decision where the two URLs differ: the worker sent the
+     * first URL's postback and had not yet reached the second's when a
+     * replay replaced the outcome. The first URL heard $10 and is told
+     * nothing more; the second heard nothing, so its $10 is cancelled and it
+     * hears the $1 that stands.
+     */
+    public function testAReplacementIsWithheldOnlyWhereTheReplacedOutcomeWasAnnounced(): void
+    {
+        $this->campaign(7, 'accumulate');
+        $this->click(100, 7);
+        self::fixture("UPDATE 202_clicks SET ppc_account_id=" . self::PPC);
+        self::fixture("INSERT INTO 202_ppc_account_pixels (ppc_account_id, pixel_code, pixel_type_id) VALUES
+            (" . self::PPC . ", 'https://one.test/pb?v=[[p202_goal_value]] https://two.test/pb?v=[[p202_goal_value]]', 4)");
+        $this->goal(7, ['name' => 'Buy', 'trigger' => ['event' => 'buy'], 'value' => ['type' => 'from_property']]);
+        $engine = $this->engineWith($this->notifier());
+
+        $this->send($engine, 100, [$this->event('late', 'buy', self::T + 100, [], 10, true)]);
+        self::assertSame(['sent' => 1, 'failed' => 0, 'retrying' => 0], $this->outbox()->sendDue(1), 'the worker gets through the first URL only');
+        $replay = $this->send($engine, 100, [$this->event('early', 'buy', self::T, [], 1, true)]);
+        self::assertSame('reached', $replay['outcomes'][0]['kind'], 'announced where the network has not heard it');
+        self::assertSame(1, $replay['notifications'][0]['queued']);
+        $this->deliver();
+        self::assertSame(['https://one.test/pb?v=10.00', 'https://two.test/pb?v=1.00'], $this->fetched, 'each URL hears the outcome exactly once');
+    }
+
+    /**
+     * 4b's event rule per URL (onEventMoved()): $5 then $10 are queued at two
+     * URLs and the worker gets only $5 to the first before a late $1 that
+     * happened first shifts them to $1, $5, $10. Each URL must hear each
+     * event once: the first heard $5 and now hears $10; the second heard
+     * nothing and now hears all three.
+     */
+    public function testAShiftedEventIsAnnouncedOncePerUrl(): void
+    {
+        $this->campaign(7, 'accumulate');
+        $this->click(100, 7);
+        self::fixture("UPDATE 202_clicks SET ppc_account_id=" . self::PPC);
+        self::fixture("INSERT INTO 202_ppc_account_pixels (ppc_account_id, pixel_code, pixel_type_id) VALUES
+            (" . self::PPC . ", 'https://one.test/pb?v=[[p202_goal_value]] https://two.test/pb?v=[[p202_goal_value]]', 4)");
+        $this->goal(7, ['name' => 'Buy', 'trigger' => ['event' => 'buy'], 'repeat' => ['mode' => 'each'], 'value' => ['type' => 'from_property']]);
+        $engine = $this->engineWith($this->notifier());
+
+        $this->send($engine, 100, [$this->event('a', 'buy', self::T + 10, [], 5, true)]);
+        self::assertSame(1, $this->outbox()->sendDue(1)['sent'], 'the first URL hears $5; the second has not been reached');
+        $this->send($engine, 100, [$this->event('b', 'buy', self::T + 20, [], 10, true)]);
+        $replay = $this->send($engine, 100, [$this->event('c', 'buy', self::T, [], 1, true)]);
+        self::assertTrue($replay['replayed']);
+        $this->deliver();
+
+        $heard = ['one' => [], 'two' => []];
+        foreach ($this->fetched as $url) {
+            $heard[str_starts_with($url, 'https://one.test/') ? 'one' : 'two'][] = (string) preg_replace('/^.*v=/', '', $url);
+        }
+        self::assertSame(['5.00', '10.00'], $heard['one'], 'the first URL heard $5 once and is told of $10');
+        $two = $heard['two'];
+        sort($two);
+        self::assertSame(['1.00', '5.00', '10.00'], $two, 'the second URL, which had heard nothing, hears each event once');
+        self::assertSame(['lead' => 1, 'payout' => '16.00000'], $this->clickState(100));
     }
 
     /** @return list<string> kind:status of every outbox row, in order */

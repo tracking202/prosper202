@@ -104,14 +104,15 @@ OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE api_key='$P202_API_KEY'")
 RUN=$(date +%s)$RANDOM
 NOW=$(date +%s)
 T=$((NOW - 3600))
-PPC=960900
+PPC=960900; PPC2=960901
 ACIP_G=960100; ACIP_N=960101; ACIP_R=960102; LP_PUBLIC=960200
 C_GPB=960001; C_GPX=960002; C_UPX=960003; C_PB=960004; C_PX=960005; C_BAD=960006; C_PLAIN=960007
-C_LEG=960008; C_LEG2=960009; C_API=960010; C_APIN=960011; C_STAGE=960012; C_REPLAY=960013; C_OTHER=960014; C_CLI=960015
-CLICKS="$C_GPB,$C_GPX,$C_UPX,$C_PB,$C_PX,$C_BAD,$C_PLAIN,$C_LEG,$C_LEG2,$C_API,$C_APIN,$C_STAGE,$C_REPLAY,$C_OTHER,$C_CLI"
+C_LEG=960008; C_LEG2=960009; C_API=960010; C_APIN=960011; C_STAGE=960012; C_REPLAY=960013; C_OTHER=960014; C_CLI=960015; C_TWO=960016
+CLICKS="$C_GPB,$C_GPX,$C_UPX,$C_PB,$C_PX,$C_BAD,$C_PLAIN,$C_LEG,$C_LEG2,$C_API,$C_APIN,$C_STAGE,$C_REPLAY,$C_OTHER,$C_CLI,$C_TWO"
 
 cleanup() {
   mysql_q "$DB" <<SQL
+DELETE FROM 202_notification_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICKS));
 DELETE FROM 202_attribution_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICKS) OR campaign_id IN (SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public IN ($ACIP_G, $ACIP_N, $ACIP_R)));
 DELETE FROM 202_conversion_logs WHERE click_id IN ($CLICKS) OR campaign_id IN (SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public IN ($ACIP_G, $ACIP_N, $ACIP_R));
 DELETE FROM 202_dataengine WHERE click_id IN ($CLICKS);
@@ -121,7 +122,7 @@ DELETE FROM 202_clicks WHERE click_id IN ($CLICKS);
 DELETE FROM 202_clicks_spy WHERE click_id IN ($CLICKS);
 DELETE FROM 202_clicks_tracking WHERE click_id IN ($CLICKS);
 DELETE FROM 202_landing_pages WHERE landing_page_id_public = $LP_PUBLIC;
-DELETE FROM 202_ppc_account_pixels WHERE ppc_account_id = $PPC;
+DELETE FROM 202_ppc_account_pixels WHERE ppc_account_id IN ($PPC, $PPC2);
 DELETE FROM 202_aff_campaigns WHERE aff_campaign_id_public IN ($ACIP_G, $ACIP_N, $ACIP_R);
 DELETE FROM 202_aff_networks WHERE aff_network_name = 'web events pass';
 TRUNCATE 202_goals; TRUNCATE 202_goal_versions; TRUNCATE 202_campaign_goals; TRUNCATE 202_goal_subjects;
@@ -152,10 +153,10 @@ seed_click() { # id campaign
       VALUES ($1, $OWNER, $2, 0, $PPC, 0.10, 0, 0, 0, 0, 0, $T);
     INSERT INTO 202_clicks_tracking (click_id, c1_id, c2_id, c3_id, c4_id) VALUES ($1, 0, 0, 0, 0);"
 }
-for c in $C_GPB $C_GPX $C_UPX $C_PB $C_PX $C_BAD $C_PLAIN $C_API $C_STAGE $C_REPLAY $C_CLI; do seed_click "$c" "$CAMP_G"; done
+for c in $C_GPB $C_GPX $C_UPX $C_PB $C_PX $C_BAD $C_PLAIN $C_API $C_STAGE $C_REPLAY $C_CLI $C_TWO; do seed_click "$c" "$CAMP_G"; done
 for c in $C_LEG $C_LEG2 $C_APIN; do seed_click "$c" "$CAMP_N"; done
 seed_click $C_OTHER "$CAMP_R"
-[ "$(Q "SELECT COUNT(*) FROM 202_clicks WHERE click_id IN ($CLICKS)")" = 15 ] || { echo "seeding clicks failed" >&2; exit 2; }
+[ "$(Q "SELECT COUNT(*) FROM 202_clicks WHERE click_id IN ($CLICKS)")" = 16 ] || { echo "seeding clicks failed" >&2; exit 2; }
 
 # The traffic source: a server-to-server postback addressed to this instance
 # (read back from its request log) and an image pixel (read back from the
@@ -310,6 +311,24 @@ eq "$(notified Purchase)" "$((before + 1))" "so the network is not told a second
 eq "$(Q "SELECT GROUP_CONCAT(CONCAT(n.kind, ':', n.status) ORDER BY n.notification_id) FROM 202_notification_pending n JOIN 202_conversion_logs c ON c.conv_id = n.conv_id WHERE c.click_id=$C_REPLAY")" \
    "reached:sent,reached:cancelled,correction:suppressed" "its postback is cancelled, and the correction no pixel can carry is recorded"
 eq "$(rows $C_REPLAY)" "goal:purchase:10.00000:1:sup goal:purchase:1.00000:1:live" "the ledger supersedes the moved row"
+
+say "a server pixel with two URLs: one row per URL, a refusing one retried alone"
+# PR 5's per-destination outbox on a web goal: the second URL answers 404,
+# which the worker retries; the first accepted and must never hear it again.
+mysql_q "$DB" -e "UPDATE 202_clicks SET ppc_account_id = $PPC2 WHERE click_id = $C_TWO; UPDATE 202_clicks_spy SET ppc_account_id = $PPC2 WHERE click_id = $C_TWO;
+  INSERT INTO 202_ppc_account_pixels (ppc_account_id, pixel_code, pixel_type_id) VALUES
+  ($PPC2, '$BASE/tracking202/static/index.html?p202two=$RUN&v=[[p202_goal_value]]&s=[[subid]] $BASE/api/v3/p202-refuses-$RUN?v=[[p202_goal_value]]&s=[[subid]]', 4);"
+two_rows() { Q "SELECT GROUP_CONCAT(CONCAT_WS('/', destination, kind, status, attempts) ORDER BY destination) FROM 202_notification_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id=$C_TWO)"; }
+eq "$(hit "/tracking202/static/gpb.php?subid=$C_TWO&event=signup")" 200 "a signup on a click whose traffic source's pixel holds two URLs"
+eq "$(field "[d['notifications'][0]['status'], d['notifications'][0]['queued']]")" '["queued", 2]' "queues one postback per URL"
+deliver
+eq "$(two_rows)" "0/reached/sent/1,1/reached/pending/1" "the worker sends the first; the refusing second waits to retry"
+Q "UPDATE 202_notification_pending SET next_attempt_at = 0 WHERE status = 'pending' AND attempts > 0 AND conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id=$C_TWO)"
+deliver
+eq "$(two_rows)" "0/reached/sent/1,1/reached/pending/2" "the next run retries the refusing URL, and only it"
+eq "$(grep -c "GET /tracking202/static/index.html?p202two=$RUN&v=1.00&s=$C_TWO" "$SERVER_LOG")" 1 "the accepting URL heard the signup exactly once"
+eq "$(grep -c "GET /api/v3/p202-refuses-$RUN?v=1.00&s=$C_TWO" "$SERVER_LOG")" 2 "the refusing URL was asked twice"
+Q "UPDATE 202_notification_pending SET status = 'cancelled' WHERE status = 'pending' AND conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id=$C_TWO)"
 
 say "events is its own scope area; POST /events is stageable"
 mint() {

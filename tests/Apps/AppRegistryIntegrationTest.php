@@ -38,7 +38,7 @@ final class AppRegistryIntegrationTest extends TestCase
         '202_attribution_models', '202_attribution_audit', '202_attribution_credits',
         '202_attribution_journeys', '202_attribution_journey_meta', '202_attribution_exports',
         '202_attribution_pending', '202_conversion_logs',
-        '202_goals', '202_goal_versions',
+        '202_goals', '202_goal_versions', '202_aff_campaigns',
     ];
 
     /** A live plain event goal (what an SKAN encoding names, plan §4.5). */
@@ -78,6 +78,10 @@ final class AppRegistryIntegrationTest extends TestCase
             return;
         }
         $db->query("SET SESSION sql_mode=''");
+        // Another suite may have left a campaigns table of its own shape (the
+        // upgrade tests build a minimal one); the unlink tests write the
+        // installer's, so it is rebuilt from it.
+        $db->query('DROP TABLE IF EXISTS 202_aff_campaigns');
         (new SchemaInstaller($db))->install();
         $db->query("SET SESSION sql_mode='STRICT_TRANS_TABLES'");
         self::$db = $db;
@@ -216,6 +220,12 @@ final class AppRegistryIntegrationTest extends TestCase
             'owner kept, registration unlinked, test-signal trust withdrawn');
         $this->assertSame(0, (int) self::$db->query('SELECT COUNT(*) AS c FROM 202_app_skan_encodings')->fetch_assoc()['c'],
             'the registration\'s encodings went with it');
+        $android = (int) $this->apps()->create(['app_key' => 'com.example.app', 'app_name' => 'Android'])['data']['registration_id'];
+        $this->assertContains(
+            ['resource' => 'campaigns', 'action' => 'unlink (app_registration_id set to NULL)', 'where' => 'app_registration_id = ' . $android],
+            $this->apps()->deletePreview($android)['data']['cascade'],
+            'the delete preview says the campaigns linked to the app are unlinked'
+        );
 
         $again = (int) $this->apps()->create(['app_key' => '525463029', 'app_name' => 'A', 'accept_test_signals' => 1])['data']['registration_id'];
         $this->assertSame(['user_id' => self::OWNER, 'registration_id' => $again, 'trusted' => 1], $this->postbackRow($dev),
@@ -258,8 +268,24 @@ final class AppRegistryIntegrationTest extends TestCase
         self::$db->query('INSERT INTO 202_clicks_visitor (click_id, user_id, visitor_key, click_time) VALUES (1, ' . self::OWNER . ', 1, 1), (2, ' . self::OTHER . ', 2, 1)');
         self::$db->query("INSERT INTO 202_api_keys (user_id, api_key, created_at) VALUES (" . self::OWNER . ", 'owner-key', 1), (" . self::OTHER . ", 'other-key', 1)");
         $theirGoal = self::plainGoal(self::OTHER, 'install');
+        $android = (int) $this->apps()->create(['app_key' => 'com.example.app', 'app_name' => 'Android'])['data']['registration_id'];
+        // Written directly: created through the controller it would also
+        // create the other user's install goal, which the goal assertions
+        // below do not expect.
+        self::$db->query("INSERT INTO 202_app_registrations SET user_id = " . self::OTHER . ", platform = 'android', app_key = 'com.other.app',
+            app_name = 'Theirs', accept_test_signals = 0, attribution_window_days = 7, trust_client_revenue = 0, app_token = REPEAT('e', 64), created_at = 1, updated_at = 1");
+        $theirAndroid = (int) self::$db->insert_id;
+        foreach ([[501, self::OWNER, $android], [502, self::OWNER, null], [503, self::OTHER, $theirAndroid]] as [$campaign, $user, $link]) {
+            self::$db->query("INSERT INTO 202_aff_campaigns SET aff_campaign_id = $campaign, user_id = $user, aff_network_id = 1, aff_campaign_name = 'c',
+                aff_campaign_url = 'http://x', aff_campaign_payout = 1, aff_campaign_time = 1, aff_campaign_foreign_payout = 1,
+                app_registration_id = " . ($link ?? 'NULL'));
+        }
 
         (new UserDataPurge(self::$db))->deleteUser(self::OWNER);
+
+        $this->assertSame([['501', null], ['502', null], ['503', (string) $theirAndroid]],
+            self::$db->query('SELECT aff_campaign_id, app_registration_id FROM 202_aff_campaigns ORDER BY aff_campaign_id')->fetch_all(),
+            'the user\'s campaigns stay, unlinked from the registrations the purge deleted; nobody else\'s link moves');
 
         $this->assertSame([[(string) $theirGoal]], self::$db->query('SELECT goal_id FROM 202_goals')->fetch_all(),
             'the deleted user\'s goals go (UserDataPurge::GOAL_STATEMENTS); nobody else\'s do');

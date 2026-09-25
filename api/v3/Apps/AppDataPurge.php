@@ -44,6 +44,15 @@ final class AppDataPurge
         '202_app_registrations' => 'delete',
     ];
 
+    /**
+     * Rows outside the app tables that point at a registration the purge
+     * deletes, and what happens to them; the user delete preview lists
+     * these beside TABLE_ACTIONS.
+     */
+    public const LINK_ACTIONS = [
+        '202_aff_campaigns' => 'unlink (app_registration_id set to NULL; the campaign is kept)',
+    ];
+
     public function __construct(private readonly \mysqli $db)
     {
     }
@@ -73,6 +82,17 @@ final class AppDataPurge
         // An install is the user's own record (their registration's SDK
         // reported it to them), not a platform's: deleted, not released.
         $this->run('DELETE FROM 202_app_installs WHERE user_id = ?', 'i', $userId);
+        // The user's campaigns stay (like their clicks); their links to the
+        // registrations deleted next go, as a registration delete unlinks
+        // them (AppRegistrationsController::beforeDelete()). Matched by the
+        // registration's owner, not the campaign's, so no campaign is left
+        // naming a registration this purge removes.
+        $this->run(
+            'UPDATE 202_aff_campaigns SET app_registration_id = NULL
+             WHERE app_registration_id IN (SELECT registration_id FROM 202_app_registrations WHERE user_id = ?)',
+            'i',
+            $userId
+        );
         $this->run('DELETE FROM 202_app_registrations WHERE user_id = ?', 'i', $userId);
     }
 
