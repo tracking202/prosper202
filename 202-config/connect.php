@@ -187,7 +187,7 @@ $_SERVER['HTTP_X_FORWARDED_FOR'] = match (true) {
     !empty($_SERVER['HTTP_X_SUCURI_CLIENTIP']) => $_SERVER['HTTP_X_SUCURI_CLIENTIP'],
     !empty($_SERVER['HTTP_X_REAL_IP']) => $_SERVER['HTTP_X_REAL_IP'],
     !empty($_SERVER['HTTP_CLIENT_IP']) => $_SERVER['HTTP_CLIENT_IP'],
-    !empty($_SERVER['HTTP_X_FORWARDED_FOR']) && ($_SERVER['SERVER_ADDR'] != $_SERVER['HTTP_X_FORWARDED_FOR']) => $_SERVER['HTTP_X_FORWARDED_FOR'],
+    !empty($_SERVER['HTTP_X_FORWARDED_FOR']) && (($_SERVER['SERVER_ADDR'] ?? '') != $_SERVER['HTTP_X_FORWARDED_FOR']) => $_SERVER['HTTP_X_FORWARDED_FOR'],
     // REMOTE_ADDR does not exist under CLI (cron workers)
     default => $_SERVER['REMOTE_ADDR'] ?? '',
 };
