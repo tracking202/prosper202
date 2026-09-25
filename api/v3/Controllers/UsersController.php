@@ -191,6 +191,10 @@ class UsersController
             $this->execute($stmt, 'Failed to create user preferences');
             $stmt->close();
 
+            // Every account starts with its default attribution model, in the
+            // same transaction as the account (plan §6.4).
+            \Prosper202\Attribution\DefaultModel::ensureFor(new \Prosper202\Database\Connection($this->db), (int) $newId);
+
             $this->db->commit();
         } catch (\Throwable $e) {
             $this->db->rollback();

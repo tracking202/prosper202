@@ -69,6 +69,9 @@ final class MysqlUserRepository implements UserRepositoryInterface
             $this->conn->execute($stmt);
             $stmt->close();
 
+            // Every account starts with its default attribution model (plan §6.4).
+            \Prosper202\Attribution\DefaultModel::ensureFor($this->conn, $userId);
+
             return $userId;
         });
     }

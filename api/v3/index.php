@@ -486,19 +486,48 @@ try {
             $r->delete('/{id}/rules/{ruleId}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteRule((int)$ctx['id'], (int)$ctx['ruleId'])));
         });
 
-        // ── Attribution ──────────────────────────────────────────────────
-        $router->group('/attribution/models', function (Router $r) use ($crud, $idempotent, $queryParams, $payload) {
+        // ── Multi-touch attribution ──────────────────────────────────────
+        // Gated by the same role permissions as the session pages (plan
+        // §6.3: one permission check per operation on every surface):
+        // view_attribution_reports to read, manage_attribution_models to
+        // change a model. Scope enforcement (attribution:read/write) runs as
+        // well, centrally below.
+        $router->group('/attribution/models', function (Router $r) use ($crud, $idempotent, $queryParams, $payload, $auth, $db) {
             $cls = \Api\V3\Controllers\AttributionController::class;
+            $manage = static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'manage_attribution_models');
+            };
             $r->get('',        fn() => $crud($cls)->listModels($queryParams));
-            $r->post('',       fn() => ['_status' => 201] + $idempotent('attribution/models', $payload, fn() => $crud($cls)->createModel($payload)));
             $r->get('/{id}',   fn($ctx) => $crud($cls)->getModel((int)$ctx['id']));
-            $r->put('/{id}',   fn($ctx) => $crud($cls)->updateModel((int)$ctx['id'], $payload));
-            $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteModel((int)$ctx['id'])));
-
-            $r->get('/{id}/snapshots', fn($ctx) => $crud($cls)->listSnapshots((int)$ctx['id'], $queryParams));
-            $r->get('/{id}/exports',   fn($ctx) => $crud($cls)->listExports((int)$ctx['id']));
-            $r->post('/{id}/exports',  fn($ctx) => ['_status' => 201] + $idempotent('attribution/models/' . (int)$ctx['id'] . '/exports', $payload, fn() => $crud($cls)->scheduleExport((int)$ctx['id'], $payload)));
-        });
+            $r->post('',       function () use ($manage, $crud, $cls, $idempotent, $payload) {
+                $manage();
+                return ['_status' => 201] + $idempotent('attribution/models', $payload, fn() => $crud($cls)->createModel($payload));
+            });
+            $r->put('/{id}',   function ($ctx) use ($manage, $crud, $cls, $payload) {
+                $manage();
+                return $crud($cls)->updateModel((int)$ctx['id'], $payload);
+            });
+            $r->delete('/{id}', function ($ctx) use ($manage, $crud, $cls) {
+                $manage();
+                $crud($cls)->deleteModel((int)$ctx['id']);
+                return null; // 204
+            });
+        }, [
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'view_attribution_reports');
+            },
+        ]);
+        $router->group('/attribution', function (Router $r) use ($crud, $queryParams) {
+            $cls = \Api\V3\Controllers\AttributionController::class;
+            $r->get('/reports/breakdown',          fn() => $crud($cls)->breakdown($queryParams));
+            $r->get('/reports/journeys',           fn() => $crud($cls)->journeyMetrics($queryParams));
+            $r->get('/conversions/{id}/journey',   fn($ctx) => $crud($cls)->journey((int)$ctx['id']));
+            $r->get('/queue',                      fn() => $crud($cls)->queue($queryParams));
+        }, [
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'view_attribution_reports');
+            },
+        ]);
 
         // ── SKAdNetwork (SKAN) ───────────────────────────────────────────
         // Postbacks arrive through the public receiver
@@ -647,7 +676,7 @@ try {
                 'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart}',
                 'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}',
                 'rotators'      => '/rotators',
-                'attribution'   => '/attribution/{models|apps|conversion-values|postbacks|report|verify}',
+                'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|apps|conversion-values|postbacks|report|verify}',
                 'users'         => '/users',
                 'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics}',
                 'sync'          => '/sync/{plan|jobs|status|history|re-sync}',
@@ -732,7 +761,6 @@ try {
         $r->post('', $stageable);
         $r->put('/{id}', $stageable);
         $r->delete('/{id}', $stageable);
-        $r->post('/{id}/exports', $stageable);
     });
     $stageableRouter->group('/attribution', function (Router $r) use ($stageable) {
         $r->post('/apps', $stageable);

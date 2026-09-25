@@ -33,8 +33,6 @@ final class UncheckedExecuteTest extends TestCase
         '202-Mobile/202-login.php',
         '202-login.php',
         '202-account/account.php',
-        'api/v2/app.php',
-        '202-config/Attribution/AttributionIntegrationService.php',
     ];
 
     /** @return array<string, int> file (repo-relative) => count of bare execute() calls */
