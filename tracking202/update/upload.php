@@ -60,8 +60,8 @@ switch ($case) {
 		about_revenue_upload();
 			echo '<div class="row">
 					<div class="col-xs-12">
-						<form enctype="application/x-www-form-urlencoded" action="'.get_absolute_url().'tracking202/update/upload.php" method="get">';
-					echo '<input type="hidden" name="case" value="2"/>';
+						<form enctype="application/x-www-form-urlencoded" action="'.get_absolute_url().'tracking202/update/upload.php?case=2" method="post">';
+					echo '<input type="hidden" name="token" value="'.htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES).'"/>';
 					echo '<input type="hidden" name="file" value="'.htmlspecialchars($name, ENT_QUOTES).'"/>';
 				echo '<table class="table table-bordered" id="stats-table">';
 				echo '<tr>';
@@ -93,10 +93,20 @@ switch ($case) {
 		break;
 		 
 	case 2:
-		
+
+		// Applying a report writes conversions, so it is a POST that carries
+		// the session token; it used to run from a GET link.
+		$name = basename((string)($_POST['file'] ?? ''));
+		if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !AUTH::check_csrf_token()) {
+			template_top('Upload Revenue Reports');
+			about_revenue_upload();
+			echo '<div class="error"><small><span class="fui-alert"></span>Your session expired before the report was applied. Nothing was changed; <a href="'.get_absolute_url().'tracking202/update/upload.php">upload it again</a>.</small></div>';
+			template_bottom();
+			die();
+		}
+
 		// scope filename to a basename inside the reports dir
-		$name = basename((string)($_GET['file'] ?? ''));
-		if ($name === '' || $name !== ($_GET['file'] ?? '')) {
+		if ($name === '' || $name !== ($_POST['file'] ?? '')) {
 			template_top('Upload Revenue Reports');
 			about_revenue_upload();
 			echo '<div class="error"><small><span class="fui-alert"></span>This file does not exist that you are trying to import or you have already successfully uploaded it.</small></div>';
@@ -104,7 +114,10 @@ switch ($case) {
 			die();
 		}
 
-		if ( (!is_numeric($_GET['click_id'])) or (!is_numeric($_GET['click_payout'])) ) {
+		// The two radio buttons carry column indexes (0, 1, ...).
+		$subidColumn = isset($_POST['click_id']) && is_string($_POST['click_id']) && ctype_digit($_POST['click_id']) ? (int) $_POST['click_id'] : null;
+		$amountColumn = isset($_POST['click_payout']) && is_string($_POST['click_payout']) && ctype_digit($_POST['click_payout']) ? (int) $_POST['click_payout'] : null;
+		if ($subidColumn === null || $amountColumn === null) {
 
 			template_top('Upload Revenue Reports');
 			about_revenue_upload();
@@ -124,88 +137,84 @@ switch ($case) {
 			template_bottom();
 			die();
 		}
-		
-		$click_payouts = [];
-		
-		$handle = fopen($file, 'rb'); 
-		
-		$de = new DataEngine();
-		
-		while ($row = @fgetcsv($handle, 100000, ",", escape: '\\')) {
-			
-			#store all the subid values and payouts
-			$click_id = $row[ $_GET['click_id'] ];
-			$click_payout = $row[ $_GET['click_payout'] ];
-			$click_payout = str_replace('$','', $click_payout);
-			
-			if (is_numeric($click_id)) { 
-			
-				if (!$click_payouts[$click_id]) 	$click_payouts[$click_id] = $click_payout;
-				else 							$click_payouts[$click_id] = $click_payout + $click_payouts[$click_id];
-				
-				#now upload each row into prosper202 and update the subids accordingly
-				$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-				$mysql['click_id'] = $db->real_escape_string($click_id);
-				$mysql['click_payout'] = $db->real_escape_string($click_payouts[$click_id]);
-				$mysql['click_update_time'] = time();
-				$mysql['click_update_type'] = 'upload';
-				
-				$update_sql = "UPDATE 202_clicks SET click_lead='1', `click_filtered`='0', `click_payout`='".$mysql['click_payout']."' WHERE click_id='" . $mysql['click_id'] ."' AND user_id='".$mysql['user_id']."'";
-				$update_result = _mysqli_query($update_sql);
-		
-				$update_sql = "
-					UPDATE 202_clicks_spy
-					SET
-						click_lead='1',
-						`click_filtered`='0',
-						`click_payout`='".$mysql['click_payout']."'
-					WHERE
-						click_id='" . $mysql['click_id'] ."'
-						AND user_id='".$mysql['user_id']."'
-				";
-				
-				$de->setDirtyHour($mysql['click_id']);
-				$update_result = _mysqli_query($update_sql);
-			}
+
+		$handle = fopen($real_file, 'rb');
+		if ($handle === false) {
+			template_top('Upload Revenue Reports');
+			about_revenue_upload();
+			echo '<div class="error"><small><span class="fui-alert"></span>The uploaded report could not be read. Nothing was changed; please upload it again.</small></div>';
+			template_bottom();
+			die();
 		}
-		
+
+		// Every line becomes a ledger row of this upload's batch; the newest
+		// batch's lines for a click are summed and replace what earlier
+		// uploads and conversions set (RevenueUploadImporter).
+		$conn = new \Prosper202\Database\Connection($db);
+		$importer = new \Prosper202\Conversion\RevenueUploadImporter($conn, new \Prosper202\Conversion\MysqlConversionRepository($conn));
+		try {
+			$import = $importer->import((int) $_SESSION['user_id'], $name, $handle, $subidColumn, $amountColumn);
+		} catch (\Throwable $importError) {
+			fclose($handle);
+			error_log('upload: revenue import failed: ' . $importError->getMessage());
+			template_top('Upload Revenue Reports');
+			about_revenue_upload();
+			echo '<div class="error"><small><span class="fui-alert"></span>The report could not be applied: '.htmlspecialchars($importError->getMessage(), ENT_QUOTES).'. Lines before the failure were recorded; uploading the file again records the rest without repeating them.</small></div>';
+			template_bottom();
+			die();
+		}
+		fclose($handle);
+
+		$de = new DataEngine();
+		foreach (array_keys($import['totals']) as $convertedClickId) {
+			$de->setDirtyHour((string) $convertedClickId);
+		}
+
 		#update is now complete, delete the .csv
 		// only remove a file confirmed inside the reports dir
-		if ($real_file !== false && str_starts_with($real_file, $real_dir . DIRECTORY_SEPARATOR)) {
+		if (str_starts_with($real_file, $real_dir . DIRECTORY_SEPARATOR)) {
 			unlink($real_file);
 		}
 
-		
-		template_top('Upload Revenue Reports'); 
+		template_top('Upload Revenue Reports');
 		about_revenue_upload();
 			echo '<div class="row">
 					<div class="col-xs-12">
-					<div class="success"><small><span class="fui-check-inverted"></span>Your report has been uploaded successfully</small></div><br/>
-					<small>The subids have been marked and set accordingly:</small>
-					
+					<div class="success"><small><span class="fui-check-inverted"></span>Your report has been uploaded: '.(int) $import['recorded'].' line(s) recorded'.($import['skipped'] > 0 ? ', '.(int) $import['skipped'].' skipped (listed below)' : '').'.</small></div><br/>
+					<small>Each subid\'s income is now the sum of its lines in this report:</small>
+
 					<table class="table table-bordered" id="stats-table">
 					<tr>
 						<th>SUBID</th>
 						<th>COMMISSION</th>
 					</tr>';
-			foreach( $click_payouts as $key => $row ) {
+			foreach ($import['totals'] as $key => $total) {
 				printf("<tr>
 							<td>%s</td>
 							<td>$%s</td>
-					     </tr>", $key,  $row);
-			}  
+					     </tr>", (int) $key, htmlspecialchars((string) $total, ENT_QUOTES));
+			}
 			echo '</table>';
-			echo '</div></div>';  
+			$skippedLines = array_filter($import['lines'], static fn (array $l): bool => $l['status'] === 'skipped');
+			if ($skippedLines !== []) {
+				echo '<small>Lines not recorded:</small><table class="table table-bordered"><tr><th>LINE</th><th>SUBID</th><th>COMMISSION</th><th>WHY</th></tr>';
+				foreach ($skippedLines as $l) {
+					printf('<tr><td>%d</td><td>%s</td><td>%s</td><td>%s</td></tr>', (int) $l['line'],
+						htmlspecialchars($l['subid'], ENT_QUOTES), htmlspecialchars($l['amount'], ENT_QUOTES), htmlspecialchars($l['reason'], ENT_QUOTES));
+				}
+				echo '</table>';
+			}
+			echo '</div></div>';
 		template_bottom();
-		
+
 		break;
-		
+
 	default:
 		
 		if ($_SERVER['REQUEST_METHOD'] == 'POST') { 
 			
 			// Initialize error variable
-			$error = false;
+			$error = !AUTH::check_csrf_token();
 			
 			// Check if file was uploaded properly
 			if (!isset($_FILES['csv']) || !isset($_FILES['csv']['tmp_name']) || empty($_FILES['csv']['tmp_name'])) {
@@ -242,24 +251,14 @@ switch ($case) {
 			
 			if (!$error) { 
 			
-				#now write the csv to the reports folder
-				$handle = fopen($tmp_name, "rb");
-				if ($handle !== false) {
-					$data = fread($handle, 100000);
-					$file = random_int(0,100) . time() . random_int(0,100) .'.csv';
-					$newHandle = fopen($upload_dir . $file, 'w');
-					if ($newHandle !== false) {
-						fwrite($newHandle, $data);
-						fclose($newHandle);
-					} else {
-						$error = true;
-					}
-					fclose($handle);
-				} else {
-					$error = true;
+				#now write the csv to the reports folder — all of it. This
+				#used to copy the first 100,000 bytes, so a larger report
+				#lost its later lines without a word.
+				$file = bin2hex(random_bytes(8)) . '.csv';
+				if (move_uploaded_file($tmp_name, $upload_dir . $file)) {
+					header('location: '.get_absolute_url().'tracking202/update/upload.php?case=1&file='.$file); die();
 				}
-				
-				header('location: '.get_absolute_url().'tracking202/update/upload.php?case=1&file='.$file); die();
+				$error = true;
 			}
 		}
 		

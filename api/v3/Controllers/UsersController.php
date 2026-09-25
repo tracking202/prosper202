@@ -339,6 +339,60 @@ class UsersController
         return ['data' => $rows];
     }
 
+    /**
+     * The account's customer-id linking key (plan §6.2): what the operator's
+     * own server signs customer ids with, so a `cust` on a public pixel links
+     * journeys only when it carries `cust_sig`. Minted on first read. It is a
+     * signing secret, so it is shown in full only here, to the account itself
+     * or an admin, and never in a list.
+     */
+    public function identityKey(int $userId): array
+    {
+        $this->requireUser($userId);
+        $keys = new \Prosper202\Identity\IdentityKeys(new \Prosper202\Database\Connection($this->db));
+
+        return ['data' => self::identityKeyView($keys->forUser($userId)['link'])];
+    }
+
+    /**
+     * Replace the linking key. Every signature computed with the old key
+     * stops linking at once; ids already linked stay linked.
+     */
+    public function rotateIdentityKey(int $userId): array
+    {
+        $this->requireUser($userId);
+        $keys = new \Prosper202\Identity\IdentityKeys(new \Prosper202\Database\Connection($this->db));
+
+        return ['data' => self::identityKeyView($keys->rotateLinkKey($userId))];
+    }
+
+    /** @return array<string, string> */
+    private static function identityKeyView(string $linkKey): array
+    {
+        return [
+            'linking_key' => $linkKey,
+            'algorithm' => 'HMAC-SHA256',
+            'signs' => '<cust_type>:<cust>, e.g. custom:12345 or email_sha256:<lower-case hex digest>; cust_type defaults to custom',
+            'parameter' => 'cust_sig (lower-case hex)',
+        ];
+    }
+
+    private function requireUser(int $userId): void
+    {
+        $stmt = $this->prepare('SELECT user_id FROM 202_users WHERE user_id = ? AND user_deleted = 0 LIMIT 1');
+        $this->bind($stmt, 'i', $userId);
+        $this->execute($stmt, 'Query failed');
+        if (!$stmt->store_result()) {
+            $stmt->close();
+            throw new DatabaseException('Failed to read user ' . $userId);
+        }
+        $found = $stmt->num_rows > 0;
+        $stmt->close();
+        if (!$found) {
+            throw new NotFoundException('User not found');
+        }
+    }
+
     public function createApiKey(int $userId, array $payload = [], ?\Api\V3\Auth $auth = null): array
     {
         $scopeTokens = $this->normalizeRequestedScope($payload['scope'] ?? null);

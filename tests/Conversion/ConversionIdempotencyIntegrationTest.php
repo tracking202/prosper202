@@ -160,25 +160,34 @@ final class ConversionIdempotencyIntegrationTest extends TestCase
         self::assertSame(2, (int) $res->fetch_assoc()['c'], 'Empty transaction ids must be stored as NULL');
     }
 
-    public function testUniqueKeyRejectsDuplicateTransactionIdAtDbLevel(): void
+    public function testUniqueKeyRejectsADuplicateLedgerKeyAtDbLevel(): void
     {
         $this->insertClick(1002);
         $db = self::$db;
+        $row = "click_id=1002, campaign_id=7, user_id=1, click_time=1, conv_time=1, time_difference='', ip='', pixel_type=1, user_agent='', deleted=0, source='postback'";
 
-        $ok = $db->query("INSERT INTO 202_conversion_logs SET click_id=1002, transaction_id='X1', campaign_id=7, click_payout=1, user_id=1, click_time=1, conv_time=1, time_difference='', ip='', pixel_type=1, user_agent='', deleted=0");
+        $ok = $db->query("INSERT INTO 202_conversion_logs SET $row, click_payout=1, transaction_id='X1', dedupe_key='tx:X1'");
         self::assertTrue($ok);
 
-        // Second insert with the same (click_id, transaction_id) must violate the
-        // UNIQUE backstop even if application-level dedup were bypassed. Depending
-        // on the mysqli_report mode this surfaces either as a false return or a
-        // thrown exception — both must carry ER_DUP_ENTRY (1062).
+        // The backstop is UNIQUE (click_id, dedupe_key) — the key every path
+        // builds through DedupeKey — and it holds even if the application's
+        // own lookup were bypassed. Depending on the mysqli_report mode this
+        // surfaces as a false return or a thrown exception; both carry
+        // ER_DUP_ENTRY (1062) naming the key.
         try {
-            $dup = $db->query("INSERT INTO 202_conversion_logs SET click_id=1002, transaction_id='X1', campaign_id=7, click_payout=1, user_id=1, click_time=1, conv_time=1, time_difference='', ip='', pixel_type=1, user_agent='', deleted=0");
-            self::assertFalse($dup, 'The UNIQUE (click_id, transaction_id) key must reject a duplicate');
+            $dup = $db->query("INSERT INTO 202_conversion_logs SET $row, click_payout=1, transaction_id='X1', dedupe_key='tx:X1'");
+            self::assertFalse($dup, 'The UNIQUE (click_id, dedupe_key) key must reject a duplicate');
             self::assertSame(1062, $db->errno, 'MySQL ER_DUP_ENTRY expected');
+            self::assertStringContainsString('uniq_click_dedupe', $db->error);
         } catch (\mysqli_sql_exception $e) {
             self::assertSame(1062, $e->getCode(), 'MySQL ER_DUP_ENTRY expected');
+            self::assertStringContainsString('uniq_click_dedupe', $e->getMessage());
         }
+
+        // The transaction id itself is no longer unique per click: a reversal
+        // carries the id of the sale it reverses, under its own key.
+        $reversal = $db->query("INSERT INTO 202_conversion_logs SET $row, click_payout=-1, transaction_id='X1', dedupe_key='rev:1:1', reverses_conv_id=1");
+        self::assertTrue($reversal, 'a reversal row shares its sale\'s transaction id');
     }
 
     public function testMissingSourceClickWritesNoOrphanConversion(): void

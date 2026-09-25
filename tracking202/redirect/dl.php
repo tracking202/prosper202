@@ -216,6 +216,7 @@ $tracker_sql = "SELECT 202_trackers.user_id,
 						aff_campaign_url_5,
 						aff_campaign_payout,
 						aff_campaign_cloaking,
+						202_aff_campaigns.identity_signals,
 						2cv.ppc_variable_ids,
 						2cv.parameters,
                         user_timezone, 
@@ -522,8 +523,22 @@ if ($cloaking_on === true) {
 	$cloaking_site_url = 'http://' . $_SERVER['SERVER_NAME'] . '/tracking202/redirect/cl.php?pci=' . $click_id_public;
 }
 
+// Identity signals (the p202vid cookie, the landing page's p202lpid, a
+// signed customer id): captured now, because the cookie has to go out with
+// the redirect, and linked after the click is stored. Consent withheld —
+// p202_consent=0, or the campaign's identity capture off — captures nothing.
+// A tracker with no campaign has NULL there, which leaves capture on (the
+// column's default); anything but '1' or '0' reads as off.
+$clickIdentity = \Prosper202\Identity\ClickIdentity::fromRequest(
+	$_GET,
+	$_COOKIE,
+	\Prosper202\Identity\RequestSignals::campaignAllows(
+		array_key_exists('identity_signals', $tracker_row) ? $tracker_row['identity_signals'] : null
+	)
+);
+
 // Helper: compute remaining click data and record
-$computeAndRecordClick = function () use (&$mysql, $custom_var_ids, $trackingRepo, $locationRepo, $tracker_row, $referer_query, $redirect_site_url, $click_id, $clickRepo, $cloaking_on, $cloaking_site_url, $ip_address): void {
+$computeAndRecordClick = function () use (&$mysql, $custom_var_ids, $trackingRepo, $locationRepo, $tracker_row, $referer_query, $redirect_site_url, $click_id, $clickRepo, $cloaking_on, $cloaking_site_url, $ip_address, $clickIdentity): void {
 	// GEO lookup (deferred here so MaxMind reads stay off the redirect hot path)
 	$GeoData = getGeoData($ip_address);
 	$country_id = $locationRepo->findOrCreateCountry($GeoData['country'] ?? '', $GeoData['country_code'] ?? '');
@@ -590,11 +605,13 @@ $computeAndRecordClick = function () use (&$mysql, $custom_var_ids, $trackingRep
 	// Record click via repository (all 9 tables in one atomic transaction)
 	$clickRecord = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql);
 	$clickRecord->clickId = $click_id;
+	$clickRecord->identity = $clickIdentity;
 	$clickRepo->recordClick($clickRecord);
 };
 
 $urlvars = getPrePopVars($_GET);
 setClickIdCookie($mysql['click_id'], $mysql['aff_campaign_id']);
+$clickIdentity->sendCookie($_SERVER);
 if ($cloaking_on === true) {
 	// Cloaked: cl.php needs click rows to exist, so record BEFORE redirect
 	$computeAndRecordClick();

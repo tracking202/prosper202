@@ -158,6 +158,87 @@ var utm_term = t202GetVar('utm_term');
 var utm_content = t202GetVar('utm_content');
 var utm_campaign = t202GetVar('utm_campaign');
 
+// --- First-party identity (plan §6.2) ---
+// The landing page's own visitor id (p202lpid): 128 random bits kept in this
+// site's localStorage, sent with the pageview and added to links into the
+// tracker, so clicks through this site's pages link to one visitor even when
+// the tracking domain's cookie is blocked. It is never a fingerprint.
+// Consent is one switch: p202.consent(false) — or ?p202_consent=0 on the
+// URL — deletes the id and tells the tracker to capture nothing.
+var P202_LPID_KEY = 'p202lpid';
+var P202_CONSENT_KEY = 'p202_consent';
+var p202TrackerHost = <?php echo json_encode((string) parse_url($baseUrl, PHP_URL_HOST)); ?>;
+
+function p202Store(op, key, value) {
+	try {
+		if (op === 'get') { return window.localStorage.getItem(key); }
+		if (op === 'set') { window.localStorage.setItem(key, value); }
+		if (op === 'del') { window.localStorage.removeItem(key); }
+	} catch (e) { /* storage blocked: no id, nothing linked */ }
+	return null;
+}
+
+function p202ConsentGiven() {
+	return p202Store('get', P202_CONSENT_KEY) !== '0';
+}
+
+function p202Lpid() {
+	if (!p202ConsentGiven()) { return ''; }
+	var id = p202Store('get', P202_LPID_KEY);
+	if (id && /^[0-9a-f]{32}$/.test(id)) { return id; }
+	try {
+		var bytes = new Uint8Array(16);
+		window.crypto.getRandomValues(bytes);
+		id = '';
+		for (var i = 0; i < bytes.length; i++) { id += ('0' + bytes[i].toString(16)).slice(-2); }
+	} catch (e) { return ''; }
+	p202Store('set', P202_LPID_KEY, id);
+	return p202Store('get', P202_LPID_KEY) === id ? id : '';
+}
+
+if (t202GetVar(P202_CONSENT_KEY) === '0') {
+	p202Store('set', P202_CONSENT_KEY, '0');
+	p202Store('del', P202_LPID_KEY);
+}
+
+window.p202 = window.p202 || {};
+window.p202.consent = function(given) {
+	if (given === false) {
+		p202Store('set', P202_CONSENT_KEY, '0');
+		p202Store('del', P202_LPID_KEY);
+	} else if (given === true) {
+		p202Store('del', P202_CONSENT_KEY);
+	}
+	return p202ConsentGiven();
+};
+window.p202.lpid = p202Lpid;
+
+// Links into the tracker carry the id (or the refusal) when they are
+// followed, so a later click through this page joins the same visitor.
+function p202DecorateLink(a) {
+	try {
+		if (!a || !a.href || a.hostname !== p202TrackerHost) { return; }
+		var url = new URL(a.href);
+		url.searchParams.delete('p202lpid');
+		url.searchParams.delete(P202_CONSENT_KEY);
+		if (!p202ConsentGiven()) {
+			url.searchParams.set(P202_CONSENT_KEY, '0');
+		} else {
+			var id = p202Lpid();
+			if (id) { url.searchParams.set('p202lpid', id); }
+		}
+		a.href = url.toString();
+	} catch (e) { /* a link we cannot parse is followed as it is */ }
+}
+function p202OnFollow(ev) {
+	var el = ev.target;
+	while (el && el.tagName !== 'A') { el = el.parentElement; }
+	p202DecorateLink(el);
+}
+document.addEventListener('mousedown', p202OnFollow, true);
+document.addEventListener('click', p202OnFollow, true);
+document.addEventListener('keydown', function(ev) { if (ev.key === 'Enter') { p202OnFollow(ev); } }, true);
+
 // --- Tracking beacon ---
 (function() {
 	var lpip = <?php echo $lpip_js; ?>;
@@ -206,6 +287,11 @@ var utm_campaign = t202GetVar('utm_campaign');
 		// first pageview — without this the ref never reaches record.php.
 		"cust=" + t202Enc(t202GetVar('cust') || t202GetVar('customer_ref')),
 		"cust_type=" + t202Enc(t202GetVar('cust_type') || t202GetVar('customer_ref_type')),
+		// The operator's signature of that customer id: only a signed id
+		// links clicks across devices (an unsigned one keeps its LTV role).
+		"cust_sig=" + t202Enc(t202GetVar('cust_sig')),
+		// First-party identity: this site's visitor id, or the refusal.
+		(p202ConsentGiven() ? "p202lpid=" + t202Enc(p202Lpid()) : "p202_consent=0"),
 		// Personalization: report the token's DIGEST cookie (h:sha256) so the
 		// tracker can VALIDATE it — repeat pageviews within a visit reuse a
 		// usable token, while a dead one (expired unredeemed / past replay)
