@@ -129,6 +129,12 @@ tags:
     description: App measurement — the app registry (iOS and Android), Apple's SKAdNetwork and AdAttributionKit postback receivers, SKAN encodings, the report, and the runtime schema
   - name: Goals
     description: Goals — versioned, data-only definitions of what counts as a conversion, owned by a campaign, an app registration or the account; the campaigns that pay for them; their outcomes; validation, evaluation and re-evaluation
+  - name: Forecast Events
+    description: Calendar events (holidays, promotions) that event-aware forecasting shifts predictions around
+  - name: LTV
+    description: Customer lifetime value — customers, companies, revenue, subscriptions, products, custom fields, webhooks and integrations (scopes `ltv:read` / `ltv:write`)
+  - name: Sync
+    description: Server-side sync between Prosper202 instances — plans, jobs, the change feed and the audit trail (admin, scopes `sync:read` / `sync:write`)
   - name: Events
     description: Web events — what a click went on to do, reported by click id and evaluated by its campaign's goals (also `event=` on pixels and postbacks, and `p202.track()` on landing pages)
 
@@ -1659,6 +1665,34 @@ paths:
         required: true
         schema:
           type: integer
+    put:
+      tags: [Rotators]
+      summary: Update a rule
+      description: >-
+        Replaces the fields it sends among rule_name, splittest, status,
+        criteria and redirects (any other field is a 422). PATCH is accepted
+        as the same operation.
+      operationId: updateRotatorRule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RotatorRuleCreate"
+      responses:
+        "200":
+          description: Rule updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/RotatorRule"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
     delete:
       parameters:
         - $ref: "#/components/parameters/dryRun"
@@ -4277,6 +4311,3377 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+
+  # ─── Discovery, LTV, sync, forecast events and bulk upserts ─────────
+  # Served since before the measurement rewrite and documented at the
+  # release gate (RoutesAreDocumentedTest holds the router and this
+  # file to the same set of operations).
+
+  /:
+    get:
+      tags:
+      - System
+      summary: API index
+      description: Names the endpoint families. Any valid key may read it, whatever its scope.
+      operationId: apiIndex
+      responses:
+        '200':
+          description: The API name and a map of its endpoint families
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: string
+                  endpoints:
+                    type: object
+                    additionalProperties:
+                      type: string
+                  auth:
+                    type: string
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /versions:
+    get:
+      tags:
+      - System
+      summary: Supported API versions
+      description: Unauthenticated, like `GET /system/health`.
+      operationId: apiVersions
+      security: []
+      responses:
+        '200':
+          description: The preferred and supported versions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      preferred:
+                        type: string
+                        example: v3
+                      supported:
+                        type: array
+                        items:
+                          type: string
+
+  /capabilities:
+    get:
+      tags:
+      - System
+      summary: What this server supports
+      description: Readable by any valid key, whatever its scope. See documentation/api/17-capabilities.md.
+      operationId: apiCapabilities
+      responses:
+        '200':
+          description: Entity support, sync features and the `features` flags clients check (`api_key_scopes`, `create_idempotency`,
+            `delete_dry_run`, `staged_writes`, `app_platforms`, `app_postbacks`, …)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /system/metrics:
+    get:
+      tags:
+      - System
+      summary: Server metrics
+      description: Admin only.
+      operationId: systemMetrics
+      responses:
+        '200':
+          description: Counters and the sync job queue (queued, running, oldest queued age)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /reports/weekpart:
+    get:
+      tags:
+      - Reports
+      summary: Performance by day of week
+      description: Performance metrics aggregated by day of week, in the account's timezone.
+      operationId: reportWeekpart
+      parameters:
+      - name: sort
+        in: query
+        schema:
+          type: string
+          default: day_of_week
+          enum:
+          - day_of_week
+          - total_clicks
+          - total_click_throughs
+          - total_leads
+          - total_income
+          - total_cost
+          - total_net
+          - epc
+          - avg_cpc
+          - conv_rate
+          - roi
+          - cpa
+      - name: sort_dir
+        in: query
+        schema:
+          type: string
+          default: ASC
+          enum:
+          - ASC
+          - DESC
+      - $ref: '#/components/parameters/period'
+      - $ref: '#/components/parameters/timeFrom'
+      - $ref: '#/components/parameters/timeTo'
+      - $ref: '#/components/parameters/filterCampaign'
+      - $ref: '#/components/parameters/filterAffNetwork'
+      - $ref: '#/components/parameters/filterPpcAccount'
+      - $ref: '#/components/parameters/filterPpcNetwork'
+      - $ref: '#/components/parameters/filterLandingPage'
+      - $ref: '#/components/parameters/filterCountry'
+      responses:
+        '200':
+          description: One row per weekday (`day_of_week` 0 = Monday … 6 = Sunday, `day_name`) with the same metrics
+            as `/reports/daypart`, in the account's timezone
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /campaigns/bulk-upsert:
+    post:
+      tags:
+      - Campaigns
+      summary: Bulk create or update campaigns
+      description: Rows without the primary key (or `id`) are created and need every required field; rows naming an
+        existing id are updated with the fields they send. At most `P202_MAX_BULK_ROWS` rows per request.
+      operationId: bulkUpsertCampaigns
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: 'Required. Identifies one batch: a retry with the same rows replays the recorded response (`idempotent_replay:
+          true`); reusing it for different rows or another endpoint is a 422.'
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: array
+                items:
+                  type: object
+                  additionalProperties: true
+              - type: object
+                properties:
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                required:
+                - rows
+      responses:
+        '200':
+          description: Per-row results and a summary; a failed row does not stop the others
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      summary:
+                        type: object
+                        properties:
+                          created:
+                            type: integer
+                          updated:
+                            type: integer
+                          skipped:
+                            type: integer
+                          error:
+                            type: integer
+                      results:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            index:
+                              type: integer
+                            status:
+                              type: string
+                              enum:
+                              - created
+                              - updated
+                              - skipped
+                              - error
+                            message:
+                              type: string
+                            data:
+                              type: object
+                              additionalProperties: true
+                  idempotent_replay:
+                    type: boolean
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /aff-networks/bulk-upsert:
+    post:
+      tags:
+      - Affiliate Networks
+      summary: Bulk create or update affiliate networks
+      description: Rows without the primary key (or `id`) are created and need every required field; rows naming an
+        existing id are updated with the fields they send. At most `P202_MAX_BULK_ROWS` rows per request.
+      operationId: bulkUpsertAffNetworks
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: 'Required. Identifies one batch: a retry with the same rows replays the recorded response (`idempotent_replay:
+          true`); reusing it for different rows or another endpoint is a 422.'
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: array
+                items:
+                  type: object
+                  additionalProperties: true
+              - type: object
+                properties:
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                required:
+                - rows
+      responses:
+        '200':
+          description: Per-row results and a summary; a failed row does not stop the others
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      summary:
+                        type: object
+                        properties:
+                          created:
+                            type: integer
+                          updated:
+                            type: integer
+                          skipped:
+                            type: integer
+                          error:
+                            type: integer
+                      results:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            index:
+                              type: integer
+                            status:
+                              type: string
+                              enum:
+                              - created
+                              - updated
+                              - skipped
+                              - error
+                            message:
+                              type: string
+                            data:
+                              type: object
+                              additionalProperties: true
+                  idempotent_replay:
+                    type: boolean
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /ppc-networks/bulk-upsert:
+    post:
+      tags:
+      - PPC Networks
+      summary: Bulk create or update PPC networks
+      description: Rows without the primary key (or `id`) are created and need every required field; rows naming an
+        existing id are updated with the fields they send. At most `P202_MAX_BULK_ROWS` rows per request.
+      operationId: bulkUpsertPpcNetworks
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: 'Required. Identifies one batch: a retry with the same rows replays the recorded response (`idempotent_replay:
+          true`); reusing it for different rows or another endpoint is a 422.'
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: array
+                items:
+                  type: object
+                  additionalProperties: true
+              - type: object
+                properties:
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                required:
+                - rows
+      responses:
+        '200':
+          description: Per-row results and a summary; a failed row does not stop the others
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      summary:
+                        type: object
+                        properties:
+                          created:
+                            type: integer
+                          updated:
+                            type: integer
+                          skipped:
+                            type: integer
+                          error:
+                            type: integer
+                      results:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            index:
+                              type: integer
+                            status:
+                              type: string
+                              enum:
+                              - created
+                              - updated
+                              - skipped
+                              - error
+                            message:
+                              type: string
+                            data:
+                              type: object
+                              additionalProperties: true
+                  idempotent_replay:
+                    type: boolean
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /ppc-accounts/bulk-upsert:
+    post:
+      tags:
+      - PPC Accounts
+      summary: Bulk create or update PPC accounts
+      description: Rows without the primary key (or `id`) are created and need every required field; rows naming an
+        existing id are updated with the fields they send. At most `P202_MAX_BULK_ROWS` rows per request.
+      operationId: bulkUpsertPpcAccounts
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: 'Required. Identifies one batch: a retry with the same rows replays the recorded response (`idempotent_replay:
+          true`); reusing it for different rows or another endpoint is a 422.'
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: array
+                items:
+                  type: object
+                  additionalProperties: true
+              - type: object
+                properties:
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                required:
+                - rows
+      responses:
+        '200':
+          description: Per-row results and a summary; a failed row does not stop the others
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      summary:
+                        type: object
+                        properties:
+                          created:
+                            type: integer
+                          updated:
+                            type: integer
+                          skipped:
+                            type: integer
+                          error:
+                            type: integer
+                      results:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            index:
+                              type: integer
+                            status:
+                              type: string
+                              enum:
+                              - created
+                              - updated
+                              - skipped
+                              - error
+                            message:
+                              type: string
+                            data:
+                              type: object
+                              additionalProperties: true
+                  idempotent_replay:
+                    type: boolean
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /trackers/bulk-upsert:
+    post:
+      tags:
+      - Trackers
+      summary: Bulk create or update trackers
+      description: Rows without the primary key (or `id`) are created and need every required field; rows naming an
+        existing id are updated with the fields they send. At most `P202_MAX_BULK_ROWS` rows per request.
+      operationId: bulkUpsertTrackers
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: 'Required. Identifies one batch: a retry with the same rows replays the recorded response (`idempotent_replay:
+          true`); reusing it for different rows or another endpoint is a 422.'
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: array
+                items:
+                  type: object
+                  additionalProperties: true
+              - type: object
+                properties:
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                required:
+                - rows
+      responses:
+        '200':
+          description: Per-row results and a summary; a failed row does not stop the others
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      summary:
+                        type: object
+                        properties:
+                          created:
+                            type: integer
+                          updated:
+                            type: integer
+                          skipped:
+                            type: integer
+                          error:
+                            type: integer
+                      results:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            index:
+                              type: integer
+                            status:
+                              type: string
+                              enum:
+                              - created
+                              - updated
+                              - skipped
+                              - error
+                            message:
+                              type: string
+                            data:
+                              type: object
+                              additionalProperties: true
+                  idempotent_replay:
+                    type: boolean
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /landing-pages/bulk-upsert:
+    post:
+      tags:
+      - Landing Pages
+      summary: Bulk create or update landing pages
+      description: Rows without the primary key (or `id`) are created and need every required field; rows naming an
+        existing id are updated with the fields they send. At most `P202_MAX_BULK_ROWS` rows per request.
+      operationId: bulkUpsertLandingPages
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: 'Required. Identifies one batch: a retry with the same rows replays the recorded response (`idempotent_replay:
+          true`); reusing it for different rows or another endpoint is a 422.'
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: array
+                items:
+                  type: object
+                  additionalProperties: true
+              - type: object
+                properties:
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                required:
+                - rows
+      responses:
+        '200':
+          description: Per-row results and a summary; a failed row does not stop the others
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      summary:
+                        type: object
+                        properties:
+                          created:
+                            type: integer
+                          updated:
+                            type: integer
+                          skipped:
+                            type: integer
+                          error:
+                            type: integer
+                      results:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            index:
+                              type: integer
+                            status:
+                              type: string
+                              enum:
+                              - created
+                              - updated
+                              - skipped
+                              - error
+                            message:
+                              type: string
+                            data:
+                              type: object
+                              additionalProperties: true
+                  idempotent_replay:
+                    type: boolean
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /text-ads/bulk-upsert:
+    post:
+      tags:
+      - Text Ads
+      summary: Bulk create or update text ads
+      description: Rows without the primary key (or `id`) are created and need every required field; rows naming an
+        existing id are updated with the fields they send. At most `P202_MAX_BULK_ROWS` rows per request.
+      operationId: bulkUpsertTextAds
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: 'Required. Identifies one batch: a retry with the same rows replays the recorded response (`idempotent_replay:
+          true`); reusing it for different rows or another endpoint is a 422.'
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: array
+                items:
+                  type: object
+                  additionalProperties: true
+              - type: object
+                properties:
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                required:
+                - rows
+      responses:
+        '200':
+          description: Per-row results and a summary; a failed row does not stop the others
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      summary:
+                        type: object
+                        properties:
+                          created:
+                            type: integer
+                          updated:
+                            type: integer
+                          skipped:
+                            type: integer
+                          error:
+                            type: integer
+                      results:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            index:
+                              type: integer
+                            status:
+                              type: string
+                              enum:
+                              - created
+                              - updated
+                              - skipped
+                              - error
+                            message:
+                              type: string
+                            data:
+                              type: object
+                              additionalProperties: true
+                  idempotent_replay:
+                    type: boolean
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /forecast-events/bulk-upsert:
+    post:
+      tags:
+      - Forecast Events
+      summary: Bulk create or update forecast events
+      description: Rows without the primary key (or `id`) are created and need every required field; rows naming an
+        existing id are updated with the fields they send. At most `P202_MAX_BULK_ROWS` rows per request.
+      operationId: bulkUpsertForecastEvents
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: 'Required. Identifies one batch: a retry with the same rows replays the recorded response (`idempotent_replay:
+          true`); reusing it for different rows or another endpoint is a 422.'
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: array
+                items:
+                  type: object
+                  additionalProperties: true
+              - type: object
+                properties:
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                required:
+                - rows
+      responses:
+        '200':
+          description: Per-row results and a summary; a failed row does not stop the others
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      summary:
+                        type: object
+                        properties:
+                          created:
+                            type: integer
+                          updated:
+                            type: integer
+                          skipped:
+                            type: integer
+                          error:
+                            type: integer
+                      results:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            index:
+                              type: integer
+                            status:
+                              type: string
+                              enum:
+                              - created
+                              - updated
+                              - skipped
+                              - error
+                            message:
+                              type: string
+                            data:
+                              type: object
+                              additionalProperties: true
+                  idempotent_replay:
+                    type: boolean
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /forecast-events:
+    get:
+      tags:
+      - Forecast Events
+      summary: List forecast events
+      operationId: listForecastEvents
+      parameters:
+      - $ref: '#/components/parameters/limit'
+      - $ref: '#/components/parameters/offset'
+      - name: filter[tags]
+        in: query
+        schema:
+          type: string
+        description: Events carrying this tag in their comma-separated list
+      responses:
+        '200':
+          description: Events ordered by `event_date`
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        event_name:
+                          type: string
+                          maxLength: 255
+                        event_date:
+                          type: string
+                          format: date
+                          description: Start date, YYYY-MM-DD
+                        end_date:
+                          type: string
+                          format: date
+                          nullable: true
+                        recurrence:
+                          type: string
+                          enum:
+                          - none
+                          - monthly
+                          - yearly
+                          - custom
+                          default: none
+                        impact_type:
+                          type: string
+                          enum:
+                          - boost
+                          - suppress
+                          - neutral
+                          default: neutral
+                        expected_impact_pct:
+                          type: number
+                          nullable: true
+                        lead_days:
+                          type: integer
+                          default: 0
+                        lag_days:
+                          type: integer
+                          default: 0
+                        tags:
+                          type: string
+                          maxLength: 500
+                          description: Comma-separated
+                        notes:
+                          type: string
+                          maxLength: 500
+                        created_at:
+                          type: integer
+                        updated_at:
+                          type: integer
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags:
+      - Forecast Events
+      summary: Create a forecast event
+      description: Honors `Idempotency-Key`.
+      operationId: createForecastEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - event_name
+              - event_date
+              properties:
+                event_name:
+                  type: string
+                  maxLength: 255
+                event_date:
+                  type: string
+                  format: date
+                  description: Start date, YYYY-MM-DD
+                end_date:
+                  type: string
+                  format: date
+                  nullable: true
+                recurrence:
+                  type: string
+                  enum:
+                  - none
+                  - monthly
+                  - yearly
+                  - custom
+                  default: none
+                impact_type:
+                  type: string
+                  enum:
+                  - boost
+                  - suppress
+                  - neutral
+                  default: neutral
+                expected_impact_pct:
+                  type: number
+                  nullable: true
+                lead_days:
+                  type: integer
+                  default: 0
+                lag_days:
+                  type: integer
+                  default: 0
+                tags:
+                  type: string
+                  maxLength: 500
+                  description: Comma-separated
+                notes:
+                  type: string
+                  maxLength: 500
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: integer
+                      event_name:
+                        type: string
+                        maxLength: 255
+                      event_date:
+                        type: string
+                        format: date
+                        description: Start date, YYYY-MM-DD
+                      end_date:
+                        type: string
+                        format: date
+                        nullable: true
+                      recurrence:
+                        type: string
+                        enum:
+                        - none
+                        - monthly
+                        - yearly
+                        - custom
+                        default: none
+                      impact_type:
+                        type: string
+                        enum:
+                        - boost
+                        - suppress
+                        - neutral
+                        default: neutral
+                      expected_impact_pct:
+                        type: number
+                        nullable: true
+                      lead_days:
+                        type: integer
+                        default: 0
+                      lag_days:
+                        type: integer
+                        default: 0
+                      tags:
+                        type: string
+                        maxLength: 500
+                        description: Comma-separated
+                      notes:
+                        type: string
+                        maxLength: 500
+                      created_at:
+                        type: integer
+                      updated_at:
+                        type: integer
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /forecast-events/{id}:
+    parameters:
+    - $ref: '#/components/parameters/resourceId'
+    get:
+      tags:
+      - Forecast Events
+      summary: Get a forecast event
+      operationId: getForecastEvent
+      responses:
+        '200':
+          description: The event
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: integer
+                      event_name:
+                        type: string
+                        maxLength: 255
+                      event_date:
+                        type: string
+                        format: date
+                        description: Start date, YYYY-MM-DD
+                      end_date:
+                        type: string
+                        format: date
+                        nullable: true
+                      recurrence:
+                        type: string
+                        enum:
+                        - none
+                        - monthly
+                        - yearly
+                        - custom
+                        default: none
+                      impact_type:
+                        type: string
+                        enum:
+                        - boost
+                        - suppress
+                        - neutral
+                        default: neutral
+                      expected_impact_pct:
+                        type: number
+                        nullable: true
+                      lead_days:
+                        type: integer
+                        default: 0
+                      lag_days:
+                        type: integer
+                        default: 0
+                      tags:
+                        type: string
+                        maxLength: 500
+                        description: Comma-separated
+                      notes:
+                        type: string
+                        maxLength: 500
+                      created_at:
+                        type: integer
+                      updated_at:
+                        type: integer
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags:
+      - Forecast Events
+      summary: Update a forecast event
+      operationId: updateForecastEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                event_name:
+                  type: string
+                  maxLength: 255
+                event_date:
+                  type: string
+                  format: date
+                  description: Start date, YYYY-MM-DD
+                end_date:
+                  type: string
+                  format: date
+                  nullable: true
+                recurrence:
+                  type: string
+                  enum:
+                  - none
+                  - monthly
+                  - yearly
+                  - custom
+                  default: none
+                impact_type:
+                  type: string
+                  enum:
+                  - boost
+                  - suppress
+                  - neutral
+                  default: neutral
+                expected_impact_pct:
+                  type: number
+                  nullable: true
+                lead_days:
+                  type: integer
+                  default: 0
+                lag_days:
+                  type: integer
+                  default: 0
+                tags:
+                  type: string
+                  maxLength: 500
+                  description: Comma-separated
+                notes:
+                  type: string
+                  maxLength: 500
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: integer
+                      event_name:
+                        type: string
+                        maxLength: 255
+                      event_date:
+                        type: string
+                        format: date
+                        description: Start date, YYYY-MM-DD
+                      end_date:
+                        type: string
+                        format: date
+                        nullable: true
+                      recurrence:
+                        type: string
+                        enum:
+                        - none
+                        - monthly
+                        - yearly
+                        - custom
+                        default: none
+                      impact_type:
+                        type: string
+                        enum:
+                        - boost
+                        - suppress
+                        - neutral
+                        default: neutral
+                      expected_impact_pct:
+                        type: number
+                        nullable: true
+                      lead_days:
+                        type: integer
+                        default: 0
+                      lag_days:
+                        type: integer
+                        default: 0
+                      tags:
+                        type: string
+                        maxLength: 500
+                        description: Comma-separated
+                      notes:
+                        type: string
+                        maxLength: 500
+                      created_at:
+                        type: integer
+                      updated_at:
+                        type: integer
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    delete:
+      tags:
+      - Forecast Events
+      summary: Delete a forecast event
+      operationId: deleteForecastEvent
+      parameters:
+      - $ref: '#/components/parameters/dryRun'
+      responses:
+        '200':
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
+        '204':
+          description: Deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /ltv/summary:
+    get:
+      tags:
+      - LTV
+      summary: Lifetime value summary
+      description: Needs the `ltv:read` scope. Custom-field filters are `cf.<key>` (and `cf.<key>.min` / `.max` for
+        numbers).
+      operationId: ltvSummary
+      parameters:
+      - $ref: '#/components/parameters/period'
+      - $ref: '#/components/parameters/timeFrom'
+      - $ref: '#/components/parameters/timeTo'
+      responses:
+        '200':
+          description: Customers, revenue, orders and averages over the window
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /ltv/customers:
+    get:
+      tags:
+      - LTV
+      summary: List customers with their lifetime value
+      description: Needs the `ltv:read` scope.
+      operationId: ltvListCustomers
+      parameters:
+      - $ref: '#/components/parameters/period'
+      - $ref: '#/components/parameters/timeFrom'
+      - $ref: '#/components/parameters/timeTo'
+      - $ref: '#/components/parameters/limit'
+      - $ref: '#/components/parameters/offset'
+      - name: sort
+        in: query
+        schema:
+          type: string
+          default: total_revenue
+        description: Column to sort by
+      - name: dir
+        in: query
+        schema:
+          type: string
+          default: DESC
+          enum:
+          - ASC
+          - DESC
+      - name: q
+        in: query
+        schema:
+          type: string
+        description: Search email, name or external id
+      - name: segment
+        in: query
+        schema:
+          type: string
+        description: Only this segment
+      responses:
+        '200':
+          description: Customers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    post:
+      tags:
+      - LTV
+      summary: Create or update a customer
+      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
+        an `idempotency_key` field instead) and have no `dry_run` preview. The customer is resolved from `customer_id`,
+        or from `customer_ref` with `customer_ref_type`, and created when none matches; the whole write is one transaction.
+        Queues a `customer.updated` webhook.
+      operationId: ltvUpsertCustomer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                customer_id:
+                  type: integer
+                customer_ref:
+                  type: string
+                customer_ref_type:
+                  type: string
+                  description: What customer_ref is (email, external id, …)
+                email:
+                  type: string
+                first_name:
+                  type: string
+                last_name:
+                  type: string
+                phone:
+                  type: string
+                company:
+                  type: string
+                address_line1:
+                  type: string
+                address_line2:
+                  type: string
+                city:
+                  type: string
+                region:
+                  type: string
+                postal_code:
+                  type: string
+                country:
+                  type: string
+                aliases:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                        default: custom
+                      value:
+                        type: string
+                    required:
+                    - value
+                custom_fields:
+                  type: object
+                  additionalProperties: true
+                  description: Custom field values by field key
+              additionalProperties: true
+      responses:
+        '201':
+          description: The customer, as `GET /ltv/customers/{id}` shows it
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /ltv/customers/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Customer id
+    get:
+      tags:
+      - LTV
+      summary: Get a customer
+      description: Needs the `ltv:read` scope.
+      operationId: ltvGetCustomer
+      responses:
+        '200':
+          description: The customer with aliases, fields and totals
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+      - LTV
+      summary: Update a customer
+      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
+        an `idempotency_key` field instead) and have no `dry_run` preview.
+      operationId: ltvPatchCustomer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                first_name:
+                  type: string
+                last_name:
+                  type: string
+                phone:
+                  type: string
+                company:
+                  type: string
+                address_line1:
+                  type: string
+                address_line2:
+                  type: string
+                city:
+                  type: string
+                region:
+                  type: string
+                postal_code:
+                  type: string
+                country:
+                  type: string
+                aliases:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                        default: custom
+                      value:
+                        type: string
+                    required:
+                    - value
+                custom_fields:
+                  type: object
+                  additionalProperties: true
+                  description: Custom field values by field key
+              additionalProperties: true
+      responses:
+        '200':
+          description: The updated customer
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    delete:
+      tags:
+      - LTV
+      summary: Erase a customer
+      description: 'Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
+        an `idempotency_key` field instead) and have no `dry_run` preview. Erases the customer''s personal data and
+        queues a `customer.updated` webhook (`erased: true`).'
+      operationId: ltvDeleteCustomer
+      responses:
+        '204':
+          description: Erased
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /ltv/customers/{id}/engagement:
+    get:
+      tags:
+      - LTV
+      summary: A customer's engagement
+      description: Needs the `ltv:read` scope.
+      operationId: ltvCustomerEngagement
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Customer id
+      - name: days
+        in: query
+        schema:
+          type: integer
+          default: 90
+          minimum: 1
+          maximum: 365
+        description: Window in days (1-365)
+      responses:
+        '200':
+          description: '`browsing` and `events` over `window_days`'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /ltv/customers/{id}/next-offer:
+    get:
+      tags:
+      - LTV
+      summary: The next offer to show a customer
+      description: Needs the `ltv:read` scope.
+      operationId: ltvCustomerNextOffer
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Customer id
+      responses:
+        '200':
+          description: 'The recommended campaign and why, or `data: null`'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /ltv/customers/{id}/next-offer/impression:
+    post:
+      tags:
+      - LTV
+      summary: Record that an offer was delivered
+      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
+        an `idempotency_key` field instead) and have no `dry_run` preview. For senders the tracker cannot see (an
+        email, an external CRM); feeds the fatigue rule. Without `campaign_id` the current recommendation is recorded.
+      operationId: ltvRecordNextOfferImpression
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Customer id
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                campaign_id:
+                  type: integer
+              additionalProperties: true
+      responses:
+        '201':
+          description: The impression recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /ltv/customers/{id}/merge:
+    post:
+      tags:
+      - LTV
+      summary: Merge another customer into this one
+      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
+        an `idempotency_key` field instead) and have no `dry_run` preview.
+      operationId: ltvMergeCustomer
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Customer id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                source_customer_id:
+                  type: integer
+                  description: The customer merged into this one
+              required:
+              - source_customer_id
+      responses:
+        '200':
+          description: The surviving customer
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /ltv/customers/{id}/aliases:
+    post:
+      tags:
+      - LTV
+      summary: Map an external identifier to a customer
+      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
+        an `idempotency_key` field instead) and have no `dry_run` preview. A value already mapped to another customer
+        is a 422 naming that customer; merge them instead.
+      operationId: ltvAddAlias
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Customer id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type:
+                  type: string
+                  default: custom
+                value:
+                  type: string
+              required:
+              - value
+      responses:
+        '201':
+          description: The customer
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /ltv/customers/{id}/aliases/{aliasId}:
+    delete:
+      tags:
+      - LTV
+      summary: Remove a customer alias
+      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
+        an `idempotency_key` field instead) and have no `dry_run` preview.
+      operationId: ltvDeleteAlias
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Customer id
+      - name: aliasId
+        in: path
+        required: true
+        schema:
+          type: integer
+      responses:
+        '204':
+          description: Removed
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /ltv/abm:
+    get:
+      tags:
+      - LTV
+      summary: Account-based engagement by company
+      description: Needs the `ltv:read` scope.
+      operationId: ltvAbm
+      parameters:
+      - name: days
+        in: query
+        schema:
+          type: integer
+          default: 90
+          minimum: 1
+          maximum: 365
+        description: Window in days (1-365)
+      - $ref: '#/components/parameters/limit'
+      - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: Companies ranked by engagement over `window_days`
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /ltv/abm/company:
+    get:
+      tags:
+      - LTV
+      summary: One company's engagement
+      description: Needs the `ltv:read` scope.
+      operationId: ltvAbmCompany
+      parameters:
+      - name: name
+        in: query
+        schema:
+          type: string
+        description: The company
+        required: true
+      - name: days
+        in: query
+        schema:
+          type: integer
+          default: 90
+          minimum: 1
+          maximum: 365
+        description: Window in days (1-365)
+      responses:
+        '200':
+          description: The company's people and events over `window_days`
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /ltv/breakdown:
+    get:
+      tags:
+      - LTV
+      summary: Lifetime value grouped by a dimension
+      description: Needs the `ltv:read` scope.
+      operationId: ltvBreakdown
+      parameters:
+      - $ref: '#/components/parameters/period'
+      - $ref: '#/components/parameters/timeFrom'
+      - $ref: '#/components/parameters/timeTo'
+      - name: by
+        in: query
+        schema:
+          type: string
+          default: campaign
+        description: Grouping (alias `breakdown`)
+      - $ref: '#/components/parameters/limit'
+      - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: Rows for the grouping named in `breakdown`
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /ltv/cohorts:
+    get:
+      tags:
+      - LTV
+      summary: Lifetime value by acquisition cohort
+      description: Needs the `ltv:read` scope.
+      operationId: ltvCohorts
+      parameters:
+      - name: months
+        in: query
+        schema:
+          type: integer
+          default: 6
+          minimum: 1
+          maximum: 24
+        description: Cohort months (1-24)
+      responses:
+        '200':
+          description: Maturation by months since first seen
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /ltv/mrr:
+    get:
+      tags:
+      - LTV
+      summary: Monthly recurring revenue
+      description: Needs the `ltv:read` scope.
+      operationId: ltvMrr
+      responses:
+        '200':
+          description: MRR from active subscriptions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /ltv/predict:
+    get:
+      tags:
+      - LTV
+      summary: Predicted lifetime value
+      description: Needs the `ltv:read` scope.
+      operationId: ltvPredict
+      parameters:
+      - $ref: '#/components/parameters/period'
+      - $ref: '#/components/parameters/timeFrom'
+      - $ref: '#/components/parameters/timeTo'
+      - name: by
+        in: query
+        schema:
+          type: string
+        description: Optional grouping
+      responses:
+        '200':
+          description: Predicted value, optionally per group
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /ltv/products:
+    get:
+      tags:
+      - LTV
+      summary: List products
+      description: Needs the `ltv:read` scope.
+      operationId: ltvListProducts
+      parameters:
+      - $ref: '#/components/parameters/limit'
+      - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: Products, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags:
+      - LTV
+      summary: Create or update a product
+      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
+        an `idempotency_key` field instead) and have no `dry_run` preview.
+      operationId: ltvUpsertProduct
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                external_product_id:
+                  type: string
+                sku:
+                  type: string
+                name:
+                  type: string
+                price:
+                  type: number
+              additionalProperties: true
+      responses:
+        '201':
+          description: '`product_id`'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /ltv/companies:
+    get:
+      tags:
+      - LTV
+      summary: List companies
+      description: Needs the `ltv:read` scope.
+      operationId: ltvListCompanies
+      parameters:
+      - $ref: '#/components/parameters/limit'
+      - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: Companies
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags:
+      - LTV
+      summary: Create a company
+      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
+        an `idempotency_key` field instead) and have no `dry_run` preview.
+      operationId: ltvCreateCompany
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                domain:
+                  type: string
+                  nullable: true
+              required:
+              - name
+      responses:
+        '201':
+          description: The company
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /ltv/companies/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Company id
+    patch:
+      tags:
+      - LTV
+      summary: Update a company
+      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
+        an `idempotency_key` field instead) and have no `dry_run` preview. Supply `name`, `domain` or both.
+      operationId: ltvPatchCompany
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                domain:
+                  type: string
+                  nullable: true
+      responses:
+        '200':
+          description: The company
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    delete:
+      tags:
+      - LTV
+      summary: Delete a company
+      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
+        an `idempotency_key` field instead) and have no `dry_run` preview.
+      operationId: ltvDeleteCompany
+      responses:
+        '204':
+          description: Deleted
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /ltv/companies/{id}/merge:
+    post:
+      tags:
+      - LTV
+      summary: Merge another company into this one
+      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
+        an `idempotency_key` field instead) and have no `dry_run` preview.
+      operationId: ltvMergeCompany
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Company id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                source_company_id:
+                  type: integer
+              required:
+              - source_company_id
+      responses:
+        '200':
+          description: The surviving company
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /ltv/subscriptions:
+    get:
+      tags:
+      - LTV
+      summary: List subscriptions
+      description: Needs the `ltv:read` scope.
+      operationId: ltvListSubscriptions
+      parameters:
+      - $ref: '#/components/parameters/limit'
+      - $ref: '#/components/parameters/offset'
+      - name: status
+        in: query
+        schema:
+          type: string
+        description: Only this status
+      responses:
+        '200':
+          description: Subscriptions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags:
+      - LTV
+      summary: Create or update a subscription
+      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
+        an `idempotency_key` field instead) and have no `dry_run` preview. Keyed by the provider's subscription id;
+        queues a `subscription.changed` webhook.
+      operationId: ltvUpsertSubscription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                external_sub_id:
+                  type: string
+                customer_id:
+                  type: integer
+                customer_ref:
+                  type: string
+                customer_ref_type:
+                  type: string
+                  description: What customer_ref is (email, external id, …)
+                plan_name:
+                  type: string
+                status:
+                  type: string
+                amount:
+                  type: number
+                currency:
+                  type: string
+                billing_interval:
+                  type: string
+                billing_interval_count:
+                  type: integer
+                started_at:
+                  type: integer
+                current_period_start:
+                  type: integer
+                current_period_end:
+                  type: integer
+                grace_days:
+                  type: integer
+              additionalProperties: true
+      responses:
+        '201':
+          description: '`subscriptionId` and `customerId`'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /ltv/subscriptions/{ref}/events:
+    post:
+      tags:
+      - LTV
+      summary: Record a subscription event
+      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
+        an `idempotency_key` field instead) and have no `dry_run` preview.
+      operationId: ltvSubscriptionEvent
+      parameters:
+      - name: ref
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The provider's subscription id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                event_type:
+                  type: string
+                  enum:
+                  - renewal
+                  - cancel
+                  - refund
+                amount:
+                  type: number
+                occurred_at:
+                  type: integer
+                idempotency_key:
+                  type: string
+              required:
+              - event_type
+              additionalProperties: true
+      responses:
+        '200':
+          description: What changed; an idempotent replay changes nothing and queues no webhook
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /ltv/revenue:
+    post:
+      tags:
+      - LTV
+      summary: Record a revenue event
+      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
+        an `idempotency_key` field instead) and have no `dry_run` preview. A clickless revenue event (an ESP order,
+        a membership charge). Refunds and chargebacks are stored negative; renewals go through `/ltv/subscriptions`.
+      operationId: ltvRecordRevenue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                event_type:
+                  type: string
+                  enum:
+                  - purchase
+                  - one_time
+                  - refund
+                  - chargeback
+                  - adjustment
+                  default: purchase
+                amount:
+                  type: number
+                currency:
+                  type: string
+                  description: Defaults to the account currency
+                occurred_at:
+                  type: integer
+                items:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: true
+                idempotency_key:
+                  type: string
+                external_ref:
+                  type: string
+                transaction_id:
+                  type: string
+                customer_id:
+                  type: integer
+                customer_ref:
+                  type: string
+                customer_ref_type:
+                  type: string
+                  description: What customer_ref is (email, external id, …)
+              required:
+              - amount
+              additionalProperties: true
+      responses:
+        '201':
+          description: 'Recorded (`duplicate: false`)'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '200':
+          description: 'A replay of the same `idempotency_key` (`duplicate: true`)'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /ltv/events:
+    post:
+      tags:
+      - LTV
+      summary: Record an engagement event
+      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
+        an `idempotency_key` field instead) and have no `dry_run` preview. A server-side ABM event ("demo_requested",
+        "pricing_viewed", …). The customer is resolved from the payload in the same transaction.
+      operationId: ltvRecordEngagementEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                event:
+                  type: string
+                  description: Alias `event_name`
+                value:
+                  type: number
+                  nullable: true
+                occurred_at:
+                  type: integer
+                customer_id:
+                  type: integer
+                customer_ref:
+                  type: string
+                customer_ref_type:
+                  type: string
+                  description: What customer_ref is (email, external id, …)
+              required:
+              - event
+              additionalProperties: true
+      responses:
+        '201':
+          description: '`engagement_id` and `customer_id`'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /ltv/fields:
+    get:
+      tags:
+      - LTV
+      summary: List custom customer fields
+      description: Needs the `ltv:read` scope.
+      operationId: ltvListFields
+      responses:
+        '200':
+          description: Field definitions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags:
+      - LTV
+      summary: Define a custom customer field
+      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
+        an `idempotency_key` field instead) and have no `dry_run` preview.
+      operationId: ltvCreateField
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                field_key:
+                  type: string
+                label:
+                  type: string
+                field_type:
+                  type: string
+                is_required:
+                  type: boolean
+                sort_order:
+                  type: integer
+                options:
+                  type: array
+                  items:
+                    type: string
+              additionalProperties: true
+      responses:
+        '201':
+          description: '`field_id`'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /ltv/fields/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Field id
+    patch:
+      tags:
+      - LTV
+      summary: Update a custom field
+      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
+        an `idempotency_key` field instead) and have no `dry_run` preview.
+      operationId: ltvUpdateField
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:
+                  type: string
+                is_required:
+                  type: boolean
+                sort_order:
+                  type: integer
+                options:
+                  type: array
+                  items:
+                    type: string
+              additionalProperties: true
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    delete:
+      tags:
+      - LTV
+      summary: Delete a custom field
+      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
+        an `idempotency_key` field instead) and have no `dry_run` preview.
+      operationId: ltvDeleteField
+      responses:
+        '204':
+          description: Deleted
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /ltv/webhooks:
+    get:
+      tags:
+      - LTV
+      summary: List outbound webhooks
+      description: Needs the `ltv:read` scope.
+      operationId: ltvListWebhooks
+      responses:
+        '200':
+          description: Webhooks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags:
+      - LTV
+      summary: Create an outbound webhook
+      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
+        an `idempotency_key` field instead) and have no `dry_run` preview.
+      operationId: ltvCreateWebhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url:
+                  type: string
+                  description: The https endpoint (alias `webhook_url`)
+                events:
+                  type: array
+                  items:
+                    type: string
+                  description: e.g. customer.updated, subscription.changed
+              required:
+              - url
+              additionalProperties: true
+      responses:
+        '201':
+          description: The webhook
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /ltv/webhooks/{id}:
+    delete:
+      tags:
+      - LTV
+      summary: Delete an outbound webhook
+      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
+        an `idempotency_key` field instead) and have no `dry_run` preview.
+      operationId: ltvDeleteWebhook
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Webhook id
+      responses:
+        '204':
+          description: Deleted
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /ltv/integrations:
+    get:
+      tags:
+      - LTV
+      summary: List inbound integrations
+      description: Needs the `ltv:read` scope.
+      operationId: ltvListIntegrations
+      responses:
+        '200':
+          description: Integrations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags:
+      - LTV
+      summary: Create an inbound integration
+      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
+        an `idempotency_key` field instead) and have no `dry_run` preview.
+      operationId: ltvCreateIntegration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                provider:
+                  type: string
+                name:
+                  type: string
+                config:
+                  type: object
+                  additionalProperties: true
+              required:
+              - provider
+              additionalProperties: true
+      responses:
+        '201':
+          description: The integration
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /ltv/integrations/{id}:
+    delete:
+      tags:
+      - LTV
+      summary: Delete an inbound integration
+      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
+        an `idempotency_key` field instead) and have no `dry_run` preview.
+      operationId: ltvDeleteIntegration
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Integration id
+      responses:
+        '204':
+          description: Deleted
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /sync/plan:
+    post:
+      tags:
+      - Sync
+      summary: Plan a sync
+      description: Admin only, with the `sync:read` scope. Changes nothing.
+      operationId: syncPlan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                source:
+                  type: object
+                  properties:
+                    url:
+                      type: string
+                    api_key:
+                      type: string
+                  required:
+                  - url
+                target:
+                  type: object
+                  properties:
+                    url:
+                      type: string
+                    api_key:
+                      type: string
+                  required:
+                  - url
+                entity:
+                  type: string
+                  default: all
+                  enum:
+                  - all
+                  - aff-networks
+                  - ppc-networks
+                  - ppc-accounts
+                  - campaigns
+                  - landing-pages
+                  - text-ads
+                  - rotators
+                  - trackers
+                collision_mode:
+                  type: string
+                  enum:
+                  - warn
+                  - manual
+                  default: warn
+                prune:
+                  type: boolean
+                prune_preview:
+                  type: boolean
+                dry_run:
+                  type: boolean
+                skip_errors:
+                  type: boolean
+                force_update:
+                  type: boolean
+                max_attempts:
+                  type: integer
+                  minimum: 1
+                  maximum: 10
+                  default: 3
+              required:
+              - source
+              - target
+              additionalProperties: true
+      responses:
+        '200':
+          description: What a sync would create, update and collide on
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /sync/status:
+    get:
+      tags:
+      - Sync
+      summary: Latest sync between two profiles
+      description: Admin only, with the `sync:read` scope.
+      operationId: syncStatus
+      parameters:
+      - name: source
+        in: query
+        schema:
+          type: string
+        description: Source profile or URL
+      - name: target
+        in: query
+        schema:
+          type: string
+        description: Target profile or URL
+      responses:
+        '200':
+          description: '`source`, `target` and the `latest` audit record'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /sync/history:
+    get:
+      tags:
+      - Sync
+      summary: Sync history between two profiles
+      description: Admin only, with the `sync:read` scope.
+      operationId: syncHistory
+      parameters:
+      - name: source
+        in: query
+        schema:
+          type: string
+        description: Source profile or URL
+      - name: target
+        in: query
+        schema:
+          type: string
+        description: Target profile or URL
+      responses:
+        '200':
+          description: Audit records, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /sync/jobs:
+    post:
+      tags:
+      - Sync
+      summary: Queue a sync job
+      description: Admin only, with the `sync:write` scope. Honors `Idempotency-Key`.
+      operationId: syncCreateJob
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                source:
+                  type: object
+                  properties:
+                    url:
+                      type: string
+                    api_key:
+                      type: string
+                  required:
+                  - url
+                target:
+                  type: object
+                  properties:
+                    url:
+                      type: string
+                    api_key:
+                      type: string
+                  required:
+                  - url
+                entity:
+                  type: string
+                  default: all
+                  enum:
+                  - all
+                  - aff-networks
+                  - ppc-networks
+                  - ppc-accounts
+                  - campaigns
+                  - landing-pages
+                  - text-ads
+                  - rotators
+                  - trackers
+                collision_mode:
+                  type: string
+                  enum:
+                  - warn
+                  - manual
+                  default: warn
+                prune:
+                  type: boolean
+                prune_preview:
+                  type: boolean
+                dry_run:
+                  type: boolean
+                skip_errors:
+                  type: boolean
+                force_update:
+                  type: boolean
+                max_attempts:
+                  type: integer
+                  minimum: 1
+                  maximum: 10
+                  default: 3
+              required:
+              - source
+              - target
+              additionalProperties: true
+      responses:
+        '202':
+          description: The job (credentials never echoed)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /sync/jobs/{id}:
+    get:
+      tags:
+      - Sync
+      summary: Get a sync job
+      description: Admin only, with the `sync:read` scope.
+      operationId: syncGetJob
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Job id
+      responses:
+        '200':
+          description: The job (credentials never echoed)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /sync/jobs/{id}/events:
+    get:
+      tags:
+      - Sync
+      summary: A sync job's events
+      description: Admin only, with the `sync:read` scope.
+      operationId: syncJobEvents
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Job id
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 100
+          minimum: 1
+          maximum: 500
+      - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: Events
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /sync/jobs/{id}/run:
+    post:
+      tags:
+      - Sync
+      summary: Run a sync job now
+      description: Admin only, with the `sync:write` scope.
+      operationId: syncRunJob
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Job id
+      responses:
+        '200':
+          description: The job (credentials never echoed)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /sync/jobs/{id}/cancel:
+    post:
+      tags:
+      - Sync
+      summary: Cancel a sync job
+      description: Admin only, with the `sync:write` scope.
+      operationId: syncCancelJob
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Job id
+      responses:
+        '200':
+          description: The job (credentials never echoed)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /sync/worker/run:
+    post:
+      tags:
+      - Sync
+      summary: Run the sync worker
+      description: Admin only, with the `sync:write` scope. Processes up to `limit` queued jobs.
+      operationId: syncRunWorker
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                limit:
+                  type: integer
+                  minimum: 1
+                  maximum: 100
+                  default: 10
+      responses:
+        '200':
+          description: The jobs processed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /sync/re-sync:
+    post:
+      tags:
+      - Sync
+      summary: Queue an incremental re-sync
+      description: 'Admin only, with the `sync:write` scope. `POST /sync/jobs` with `incremental: true`.'
+      operationId: syncReSync
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                source:
+                  type: object
+                  properties:
+                    url:
+                      type: string
+                    api_key:
+                      type: string
+                  required:
+                  - url
+                target:
+                  type: object
+                  properties:
+                    url:
+                      type: string
+                    api_key:
+                      type: string
+                  required:
+                  - url
+                entity:
+                  type: string
+                  default: all
+                  enum:
+                  - all
+                  - aff-networks
+                  - ppc-networks
+                  - ppc-accounts
+                  - campaigns
+                  - landing-pages
+                  - text-ads
+                  - rotators
+                  - trackers
+                collision_mode:
+                  type: string
+                  enum:
+                  - warn
+                  - manual
+                  default: warn
+                prune:
+                  type: boolean
+                prune_preview:
+                  type: boolean
+                dry_run:
+                  type: boolean
+                skip_errors:
+                  type: boolean
+                force_update:
+                  type: boolean
+                max_attempts:
+                  type: integer
+                  minimum: 1
+                  maximum: 10
+                  default: 3
+              required:
+              - source
+              - target
+              additionalProperties: true
+      responses:
+        '202':
+          description: The job (credentials never echoed)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /changes/{entity}:
+    get:
+      tags:
+      - Sync
+      summary: Incremental changes to an entity
+      description: Admin only, with the `sync:read` scope.
+      operationId: syncListChanges
+      parameters:
+      - name: entity
+        in: path
+        required: true
+        schema:
+          type: string
+        description: An entity sync supports (see `/capabilities`)
+      - name: cursor
+        in: query
+        schema:
+          type: string
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 200
+          minimum: 1
+          maximum: 1000
+      - name: cursor_ttl
+        in: query
+        schema:
+          type: integer
+          default: 3600
+        description: Seconds the cursor stays valid (60-86400)
+      - name: updated_since
+        in: query
+        schema:
+          type: integer
+      - name: deleted_since
+        in: query
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: Changed and deleted rows with a `cursor` for the next page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /audit/sync-jobs:
+    get:
+      tags:
+      - Sync
+      summary: Sync audit records
+      description: Admin only, with the `sync:read` scope.
+      operationId: syncAuditList
+      parameters:
+      - name: actor
+        in: query
+        schema:
+          type: string
+      - name: source
+        in: query
+        schema:
+          type: string
+      - name: target
+        in: query
+        schema:
+          type: string
+      - name: status
+        in: query
+        schema:
+          type: string
+      - name: from_epoch
+        in: query
+        schema:
+          type: integer
+      - name: to_epoch
+        in: query
+        schema:
+          type: integer
+      - name: format
+        in: query
+        schema:
+          type: string
+          default: json
+          enum:
+          - json
+          - csv
+      responses:
+        '200':
+          description: Audit records
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /audit/sync-jobs/{id}:
+    get:
+      tags:
+      - Sync
+      summary: One sync job's audit record
+      description: Admin only, with the `sync:read` scope.
+      operationId: syncAuditGet
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Job id
+      - name: format
+        in: query
+        schema:
+          type: string
+          default: json
+          enum:
+          - json
+          - csv
+      responses:
+        '200':
+          description: The record
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
 
 components:
   securitySchemes:
