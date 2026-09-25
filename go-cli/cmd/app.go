@@ -716,6 +716,9 @@ func init() {
 		cmd.Flags().String("notes", "", "Free-form notes")
 		cmd.Flags().String("accept-test-signals", "", "1 = trust test signals for this app (AdAttributionKit development-signed postbacks; integration testing), 0 = store them flagged (default)")
 	}
+	// Update sends exactly the flags given, an empty one included (clearing
+	// the notes): a deliberate write, not a missing value (collectAppBody).
+	allowEmpty(appUpdateCmd, "app-name", "notes", "accept-test-signals")
 	registerDeleteFlags(appDeleteCmd, "app registration")
 
 	registerPagedListFlags(appPostbacksListCmd)
@@ -737,6 +740,7 @@ func init() {
 		cmd.Flags().String("goal-id", "", "The goal the value means (`p202 goal list --registration-id <id>`; a plain event goal)")
 		cmd.Flags().String("revenue-override", "", "Revenue per decoded postback, instead of the goal's own value (tiered decoding)")
 	}
+	allowEmpty(appEncodingUpdateCmd, "registration-id", "fine-value", "coarse-value", "goal-id", "revenue-override")
 	appEncodingUpdateCmd.Flags().Bool("clear-revenue-override", false, "Go back to the goal's own value")
 	appEncodingUpdateCmd.Flags().Bool("clear-fine-value", false, "Set fine_value to null (pair with --coarse-value to switch kinds)")
 	appEncodingUpdateCmd.Flags().Bool("clear-coarse-value", false, "Set coarse_value to null (pair with --fine-value to switch kinds)")

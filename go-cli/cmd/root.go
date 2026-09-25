@@ -40,7 +40,9 @@ var rootCmd = &cobra.Command{
 		if jsonOutput && csvOutput {
 			return validationError("--json and --csv cannot be used together").WithHint("Pick one output mode.")
 		}
-		return nil
+		// Before any command reads its flags: an explicitly empty value
+		// would otherwise read as "not given" (empty_flags.go).
+		return refuseEmptyStringFlags(cmd)
 	},
 }
 
