@@ -2,8 +2,13 @@
 declare(strict_types=1);
 include_once(substr(__DIR__, 0,-21) . '/202-config/connect.php');
 include_once(substr(__DIR__, 0,-21) . '/202-config/ReportSummaryForm.class.php');
+require_once(substr(__DIR__, 0,-21) . '/202-config/functions-ui-overview.php');
 
 AUTH::require_user();
+
+// Draw the view the page rendered, not whatever the stored filters say by
+// now (ReportView); a request that carries none reads the stored ones.
+$reportView = p202_report_view_begin(array_keys(p202_overview_groupings()));
 
 //set the timezone for this user.
 	AUTH::set_timezone($_SESSION['user_timezone']);
@@ -20,7 +25,7 @@ AUTH::require_user();
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$user_sql = "SELECT * FROM 202_users_pref WHERE user_id=".$mysql['user_id'];
 	$user_result = _mysqli_query($user_sql);
-	$user_row = $user_result->fetch_assoc();
+	$user_row = \Prosper202\DataEngine\ReportView::apply($user_result->fetch_assoc() ?? [], $_SESSION['user_id']);
 
 	$html['user_pref_group_1'] = htmlentities((string)($user_row['user_pref_group_1'] ?? ''), ENT_QUOTES, 'UTF-8');
 	$html['user_pref_group_2'] = htmlentities((string)($user_row['user_pref_group_2'] ?? ''), ENT_QUOTES, 'UTF-8');

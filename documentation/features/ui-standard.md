@@ -302,3 +302,14 @@ not drawn under filters it does not match. Dates are read by one function,
 calendar's `mm/dd/yyyy` and the picker's `YYYY-MM-DD` mean the same day.
 Overview, Visitors and Spy are built this way; the fragments they load are
 listed in `NoLegacyBootstrapClassesTest::V2_SHARED`.
+
+The stored row is one per user, and a second tab writes it. So the row is only
+the default: every request a page makes after it renders — the fragment, a
+page link, a Spy poll, a download — carries the page's view in a `view`
+parameter (`p202_report_view_query()` / `p202_report_view_url()`), and that
+request installs it with `p202_report_view_begin()`. Every reader of the row
+passes it through `Prosper202\DataEngine\ReportView::apply()`, which lays
+the view over it in memory for that request; nothing is written. A request
+with no view reads the stored row, as before; one whose view does not read
+answers 400 with the reason. `tests/Report/ReportViewReadersTest` holds every
+reader and every handed-off URL to this.

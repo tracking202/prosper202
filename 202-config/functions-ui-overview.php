@@ -10,7 +10,10 @@ declare(strict_types=1);
  * tracking202/ajax/ draws the report into. The fragments read the filters
  * from 202_users_pref, as every classic report does, so the page applies the
  * query string to that row before the fragment is asked for anything
- * (functions-report-prefs.php says why and how). What is here:
+ * (functions-report-prefs.php says why and how), and hands the fragment,
+ * its polls and the download the view it rendered, so a second tab writing
+ * the row meanwhile does not change what this one draws (ReportView). What
+ * is here:
  *
  *   p202_overview_page_state()     read the stored filters, apply the URL's,
  *                                  and say what the form shows
@@ -52,7 +55,7 @@ const P202_OVERVIEW_PUBLISHER_HIDDEN = [
  * (whose file also lifts the request's time limit as it loads);
  * tests/Api/V3/OverviewPagesTest pins them to the class's constants.
  */
-const P202_OVERVIEW_GROUP_NONE = '0';
+const P202_OVERVIEW_GROUP_NONE = P202_REPORT_GROUP_NONE;
 const P202_OVERVIEW_GROUP_TRAFFIC_SOURCE = '1';
 
 /**
@@ -120,7 +123,11 @@ function p202_overview_groupings(): array
  *     range: string,
  *     from: string,
  *     to: string,
+ *     view: string,
  * }
+ *   view  the page's filters and window as a query string, for its
+ *         fragment, poll and download to draw under (ReportView); '' when
+ *         the filters were refused
  */
 function p202_overview_page_state(\Prosper202\Database\Connection $conn, int $userId, array $spec, array $query): array
 {
@@ -155,6 +162,9 @@ function p202_overview_page_state(\Prosper202\Database\Connection $conn, int $us
 
     if ($read['errors'] === [] && $read['columns'] !== []) {
         p202_report_prefs_save($conn, $userId, $read['columns']);
+        // The rest of this request draws what it just wrote, whatever
+        // another tab writes meanwhile (ReportView).
+        \Prosper202\DataEngine\ReportView::install($userId, $read['columns']);
         $prefs = p202_report_prefs_load($conn, $userId);
     }
 
@@ -189,6 +199,16 @@ function p202_overview_page_state(\Prosper202\Database\Connection $conn, int $us
         $to = preg_match('/^\d{4}-\d{2}-\d{2}$/', $sentTo) === 1 ? $sentTo : '';
     }
 
+    // What this page shows, for the requests it makes later: the report
+    // fragment, the poll, the download. Each draws this view rather than
+    // whatever the stored row says by then (ReportView).
+    $view = '';
+    if ($read['errors'] === []) {
+        $filterNames = array_values(array_filter($names, static fn (string $n): bool => $n !== 'range'));
+        $window = in_array('range', $names, true) ? ['range' => $range, 'from' => $from, 'to' => $to] : null;
+        $view = p202_report_view_query($filterNames, $values, $window, $groups);
+    }
+
     return [
         'prefs' => $prefs,
         'values' => $values,
@@ -198,6 +218,7 @@ function p202_overview_page_state(\Prosper202\Database\Connection $conn, int $us
         'range' => $range,
         'from' => $from,
         'to' => $to,
+        'view' => $view,
     ];
 }
 
@@ -302,6 +323,7 @@ function p202_overview_filter_lists(\Prosper202\Database\Connection $conn, int $
  *     range?: bool,
  *     note?: string,
  *     aside?: string,
+ *     download?: string,
  *     header_action?: string,
  *     spy?: bool,
  *     before_panel?: string,
@@ -315,6 +337,8 @@ function p202_overview_filter_lists(\Prosper202\Database\Connection $conn, int $
  *                window and is not listed here
  *   common       names shown in the first row though the catalog files them
  *                under Advanced (the grouping on a grouped page)
+ *   download     the page's download URL: a "Download to Excel" button that
+ *                exports the page's view (ReportView)
  *   header_action TRUSTED HTML for the page header's action slot
  *   before_panel TRUSTED HTML between the filters and the report panel
  */
@@ -372,13 +396,21 @@ function p202_overview_page(array $page): string
         $reset[$name] = $defaults[$name] ?? '';
     }
 
+    // A download exports this page's view, not whatever the stored filters
+    // say by the time it is clicked.
+    $aside = $page['aside'] ?? '';
+    if (($page['download'] ?? '') !== '' && $errors === []) {
+        $aside .= '<a class="btn btn-secondary btn-sm" href="' . $e(p202_report_view_url((string) $page['download'], (string) ($state['view'] ?? ''))) . '">'
+            . '<i class="bi bi-file-earmark-spreadsheet"></i> Download to Excel</a>';
+    }
+
     $bar = [
         'action' => $page['action'],
         'id' => $page['id'] . '-filters',
         'filters' => $filters,
         'reset' => $page['action'] . '?' . http_build_query($reset),
         'note' => $page['note'] ?? 'The filters you apply open by default here and on the other reports.',
-        'aside' => $page['aside'] ?? '',
+        'aside' => $aside,
         'remember' => 'overview-filters',
     ];
     if ($withRange) {
@@ -423,7 +455,7 @@ function p202_overview_page(array $page): string
             . '<div>Correct the field marked above and apply again. The report is not drawn under filters it does not match.</div>'
             . '</div>';
     } else {
-        $html .= '<div id="' . $e($page['id']) . '-report" data-p202-report="' . $e($page['fragment']) . '"'
+        $html .= '<div id="' . $e($page['id']) . '-report" data-p202-report="' . $e(p202_report_view_url($page['fragment'], (string) ($state['view'] ?? ''))) . '"'
             . (!empty($page['spy']) ? ' data-p202-spy' : '')
             . ' data-p202-offset="' . (int) ($page['offset'] ?? 0) . '" aria-live="polite" aria-busy="true">'
             . '<span class="p202-skeleton mb-2" style="width: 40%;" aria-hidden="true"></span>'

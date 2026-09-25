@@ -14,6 +14,10 @@ require_once(substr(__DIR__, 0, -17) . '/202-config/functions-ui-overview.php');
 
 AUTH::require_user();
 
+// Draw the view the page rendered, not whatever the stored filters say by
+// now (ReportView); a request that carries none reads the stored ones.
+$reportView = p202_report_view_begin();
+
 $incremental = false;
 $isSpy = (isset($_GET['spy']) && $_GET['spy'] == 1);
 

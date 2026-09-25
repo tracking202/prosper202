@@ -28,6 +28,12 @@ declare(strict_types=1);
  *     — each comes back as the sentence to show under its field, and nothing
  *     is written (CLAUDE.md error pattern #4).
  *
+ * The stored row is the per-user default, not the view: it is one row per
+ * user, and a second tab writes it. The requests a page makes after it
+ * renders carry the page's view (p202_report_view_query(), _url(), _begin()
+ * at the end of this file) and draw under it without writing, through
+ * Prosper202\DataEngine\ReportView.
+ *
  * p202_report_parse_date() is also what set_user_prefs.php reads a date with,
  * so the classic calendar (mm/dd/yyyy, and the two-digit year its presets
  * fill in) and the v2 range picker (YYYY-MM-DD) are read by one function.
@@ -35,6 +41,12 @@ declare(strict_types=1);
 
 /** The ppc_network_id meaning "clicks with no traffic source" (the column's maximum). */
 const P202_REPORT_NO_TRAFFIC_SOURCE = '16777215';
+
+/**
+ * ReportBasicForm's "no grouping" id, the value group_2 to group_4 accept
+ * besides a grouping (tests/Api/V3/OverviewPagesTest pins it to the class).
+ */
+const P202_REPORT_GROUP_NONE = '0';
 
 /**
  * The request names a report page may send, with the column each writes and
@@ -384,5 +396,141 @@ function p202_report_prefs_load(\Prosper202\Database\Connection $conn, int $user
 {
     $stmt = $conn->prepareRead('SELECT * FROM 202_users_pref WHERE user_id = ?');
     $conn->bind($stmt, 'i', [$userId]);
-    return $conn->fetchOne($stmt) ?? [];
+    return \Prosper202\DataEngine\ReportView::apply($conn->fetchOne($stmt) ?? [], $userId);
+}
+
+/**
+ * The view a report page drew, as the query string its fragments, polls and
+ * downloads carry (ReportView says why).
+ *
+ * `$names` are the filters the page offers and `$values` what the page shows
+ * for them (p202_report_prefs_values()); `$window` is the range picker's
+ * state, or null for a page with no window. What goes in is exactly what
+ * p202_report_prefs_from_query() accepts: a stored value it would refuse (a
+ * classic `landingpages`, say) is left out, and the request that carries the
+ * view reads that one column from the stored row, as it always did.
+ *
+ * @param list<string> $names
+ * @param array<string, string> $values
+ * @param array{range: string, from: string, to: string}|null $window
+ * @param list<int|string> $groups  grouping ids, when `$names` has group_N
+ */
+function p202_report_view_query(array $names, array $values, ?array $window, array $groups = []): string
+{
+    $query = [];
+    $offered = [];
+    if ($window !== null) {
+        $offered[] = 'range';
+        $query['range'] = $window['range'];
+        if ($window['range'] === P202_RANGE_CUSTOM) {
+            $query['from'] = $window['from'];
+            $query['to'] = $window['to'];
+        }
+    }
+    foreach ($names as $name) {
+        if ($name === 'range') {
+            continue;
+        }
+        $offered[] = $name;
+        $query[$name] = (string) ($values[$name] ?? '');
+    }
+    $read = p202_report_prefs_from_query($query, $offered, $groups, P202_REPORT_GROUP_NONE);
+    foreach (array_keys($read['errors']) as $refused) {
+        unset($query[$refused]);
+        if ($refused === 'range') {
+            unset($query['from'], $query['to']);
+        }
+    }
+    return http_build_query($query);
+}
+
+/** `$url` with a view added to its query string. */
+function p202_report_view_url(string $url, string $view): string
+{
+    if ($view === '') {
+        return $url;
+    }
+    [$path, $fragment] = array_pad(explode('#', $url, 2), 2, null);
+    $url = $path . (str_contains($path, '?') ? '&' : '?') . \Prosper202\DataEngine\ReportView::PARAM . '=' . rawurlencode($view);
+    return $fragment === null ? $url : $url . '#' . $fragment;
+}
+
+/**
+ * Read the view a request carries and install it for this request.
+ *
+ * Returns the view as received ('' when the request carries none, in which
+ * case the stored filters stand, as they did before views existed). A view
+ * that does not read — a name that is not a report filter, a value the page
+ * would have refused — is an error, never "no view": drawing the stored
+ * filters under a page that asked for others is the defect views exist to
+ * prevent (CLAUDE.md error pattern #4).
+ *
+ * The window's dates are read in the user's timezone, which this sets first,
+ * as every report request does.
+ *
+ * @param array<string, mixed> $request  typically $_GET
+ * @param list<int|string> $groups       grouping ids, for a view with group_N
+ * @throws InvalidArgumentException with the sentence to show
+ */
+function p202_report_view_from_request(array $request, int $userId, array $groups = []): string
+{
+    if (!array_key_exists(\Prosper202\DataEngine\ReportView::PARAM, $request)) {
+        return '';
+    }
+    $raw = $request[\Prosper202\DataEngine\ReportView::PARAM];
+    if (!is_string($raw)) {
+        throw new InvalidArgumentException('The report view was sent more than once.');
+    }
+    if (isset($_SESSION['user_timezone'])) {
+        AUTH::set_timezone($_SESSION['user_timezone']);
+    }
+    $query = [];
+    parse_str($raw, $query);
+    $known = array_keys(p202_report_pref_fields());
+    $names = [];
+    foreach (array_keys($query) as $name) {
+        $name = (string) $name;
+        if ($name === 'from' || $name === 'to') {
+            if (!array_key_exists('range', $query)) {
+                throw new InvalidArgumentException('The report view has dates but no range.');
+            }
+            continue;
+        }
+        if ($name !== 'range' && !in_array($name, $known, true)) {
+            throw new InvalidArgumentException("The report view names '$name', which is not a report filter.");
+        }
+        if (str_starts_with($name, 'group_') && $groups === []) {
+            throw new InvalidArgumentException("The report view names '$name', which this report does not group by.");
+        }
+        $names[] = $name;
+    }
+    $read = p202_report_prefs_from_query($query, $names, $groups, P202_REPORT_GROUP_NONE);
+    if ($read['errors'] !== []) {
+        throw new InvalidArgumentException('The report view was not applied: ' . implode(' ', $read['errors']));
+    }
+    if ($read['columns'] !== []) {
+        \Prosper202\DataEngine\ReportView::install($userId, $read['columns']);
+    }
+    return $raw;
+}
+
+/**
+ * p202_report_view_from_request() for a fragment, poll or download: a view
+ * that does not read answers 400 with its sentence and ends the request, so
+ * nothing is drawn under filters the page did not show.
+ *
+ * @param list<int|string> $groups
+ */
+function p202_report_view_begin(array $groups = []): string
+{
+    try {
+        return p202_report_view_from_request($_GET, (int) ($_SESSION['user_id'] ?? 0), $groups);
+    } catch (InvalidArgumentException $refused) {
+        http_response_code(400);
+        header('Content-Type: text/html; charset=utf-8');
+        echo '<div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body">'
+            . htmlspecialchars($refused->getMessage(), ENT_QUOTES, 'UTF-8')
+            . ' Reload the report page and try again.</div></div>';
+        exit;
+    }
 }

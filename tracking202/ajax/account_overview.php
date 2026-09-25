@@ -20,6 +20,10 @@ require_once(substr(__DIR__, 0, -17) . '/202-config/functions-ui-overview.php');
 
 AUTH::require_user();
 
+// Draw the view the page rendered, not whatever the stored filters say by
+// now (ReportView); a request that carries none reads the stored ones.
+$reportView = p202_report_view_begin();
+
 //set the timezone for this user.
 AUTH::set_timezone($_SESSION['user_timezone']);
 
@@ -45,6 +49,7 @@ if (!$user_result instanceof mysqli_result) {
 $aff_campaigns = [];
 $user_row = ['user_cpc_or_cpv' => 'cpc', 'chart_data' => '', 'chart_time_range' => ''];
 while ($user_row2 = $user_result->fetch_assoc()) {
+	$user_row2 = \Prosper202\DataEngine\ReportView::apply($user_row2, $_SESSION['user_id']);
 	$user_row['user_cpc_or_cpv'] = (string) $user_row2['user_cpc_or_cpv'];
 	$user_row['chart_data'] = (string) ($user_row2['chart_data'] ?? '');
 	$user_row['chart_time_range'] = (string) ($user_row2['chart_time_range'] ?? '');
@@ -97,7 +102,7 @@ if ($canSee) {
 			<div class="btn-group btn-group-sm" role="group" aria-label="Chart resolution">
 				<?php foreach (['hours' => 'By hour', 'days' => 'By day'] as $value => $label) { ?>
 					<input type="radio" class="btn-check" name="chart_time_range" id="overview-chart-<?php echo $value; ?>" value="<?php echo $value; ?>" autocomplete="off"
-						data-p202-chart-range="overview-chart" data-p202-chart-url="<?php echo $e($base . 'tracking202/ajax/charts.php'); ?>"<?php echo $range === $value ? ' checked' : ''; ?>>
+						data-p202-chart-range="overview-chart" data-p202-chart-url="<?php echo $e(p202_report_view_url($base . 'tracking202/ajax/charts.php', $reportView)); ?>"<?php echo $range === $value ? ' checked' : ''; ?>>
 					<label class="btn btn-outline-primary" for="overview-chart-<?php echo $value; ?>"><?php echo $label; ?></label>
 				<?php } ?>
 			</div>
@@ -110,7 +115,7 @@ if ($canSee) {
 
 	<div class="modal fade" id="overview-chart-builder" tabindex="-1" aria-labelledby="overview-chart-builder-title" aria-hidden="true">
 		<div class="modal-dialog modal-lg">
-			<form class="modal-content" id="p202-build-chart" method="post" action="<?php echo $e($base . 'tracking202/ajax/charts.php'); ?>">
+			<form class="modal-content" id="p202-build-chart" method="post" action="<?php echo $e(p202_report_view_url($base . 'tracking202/ajax/charts.php', $reportView)); ?>">
 				<div class="modal-header">
 					<h5 class="modal-title" id="overview-chart-builder-title">Choose what the chart shows</h5>
 					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>

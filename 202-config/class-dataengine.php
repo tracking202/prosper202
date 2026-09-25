@@ -6,6 +6,7 @@ use Prosper202\DataEngine\ClickRollupSql;
 use Prosper202\DataEngine\GroupedReportDefinition;
 use Prosper202\DataEngine\GroupedReportRegistry;
 use Prosper202\DataEngine\HtmlReportFormatter;
+use Prosper202\DataEngine\ReportView;
 use Prosper202\DataEngine\MetricsSql;
 use Prosper202\DataEngine\ReportTotals;
 use Prosper202\DataEngine\SortOrder;
@@ -228,7 +229,7 @@ class DataEngine
         }
         // Fix #2: a missing pref row (brand-new account) should degrade
         // gracefully, not 500.  Build filters from an empty row → all defaults.
-        $user_row = $user_result->fetch_assoc() ?: [];
+        $user_row = ReportView::apply($user_result->fetch_assoc() ?: [], $_SESSION['user_id']);
 
         // Stored prefs are still attacker-influenced input: escape the free
         // text value before it is interpolated into a LIKE clause.
@@ -262,7 +263,7 @@ class DataEngine
             throw new Exception('Unable to load user report preferences');
         }
         // Fix #2: no pref row (brand-new account) → degrade to default ('all').
-        $user_row = $user_result->fetch_assoc() ?: [];
+        $user_row = ReportView::apply($user_result->fetch_assoc() ?: [], $_SESSION['user_id']);
 
         return UserPrefFilters::showFilter((string) ($user_row['user_pref_show'] ?? 'all'));
     }
@@ -1844,7 +1845,7 @@ class UserPrefs
 
         $user_row = $user_result->fetch_assoc();
         if ($user_row) {
-            self::$userPref = $user_row;
+            self::$userPref = ReportView::apply($user_row, $_SESSION['user_id']);
         }
     }
 
