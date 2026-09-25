@@ -115,6 +115,14 @@ eq "$(txids $CLICK_B)" "ORDER-1,ORDER-2" "both transaction ids kept on their row
 curl -sS -o /dev/null "$BASE/tracking202/static/pb.php?acip=$ACIP&subid=$CLICK_B"
 eq "$(rows $CLICK_B)" 2 "a postback without an id on a click that already converted adds nothing"
 
+say "pb.php: a forwarding chain longer than the ip column still records, with one address"
+XFF='2001:db8:85a3:8d3:1319:8a2e:370:7348, 2001:db8:85a3:8d3:1319:8a2e:370:7349, 2001:db8::1'
+eq "$(curl -sS -o /dev/null -w '%{http_code}' -H "X-Forwarded-For: $XFF" "$BASE/tracking202/static/pb.php?acip=$ACIP&subid=$CLICK_B&txid=ORDER-3")" 200 "answers 200 behind several IPv6 proxies (${#XFF} chars of X-Forwarded-For)"
+eq "$(rows $CLICK_B)" 3 "the row is written"
+eq "$(Q "SELECT ip FROM 202_conversion_logs WHERE click_id=$CLICK_B AND transaction_id='ORDER-3'")" "2001:db8:85a3:8d3:1319:8a2e:370:7348" "and carries the leftmost hop only"
+eq "$(curl -sS -o /dev/null -w '%{http_code}' -H "X-Forwarded-For: $(printf 'x%.0s' $(seq 1 200))" "$BASE/tracking202/static/pb.php?acip=$ACIP&subid=$CLICK_B&txid=ORDER-4")" 200 "answers 200 with a garbage header"
+eq "$(Q "SELECT ip FROM 202_conversion_logs WHERE click_id=$CLICK_B AND transaction_id='ORDER-4'")" "127.0.0.1" "and stores the peer address instead"
+
 say "pb.php: a click on a different campaign is refused by the campaign scope"
 eq "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/tracking202/static/pb.php?acip=$ACIP&subid=$CLICK_C&txid=ORDER-9")" 404 "answers 404 for a click on another campaign"
 eq "$(rows $CLICK_C)" 0 "no row for a click that belongs to another campaign"

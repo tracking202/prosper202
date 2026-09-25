@@ -97,7 +97,7 @@ if (function_exists('openssl_decrypt')) {
                 'transaction_id'   => $receipt,
                 'use_pixel_payout' => true,
                 'payout'           => (string) $amount,
-                'ip'               => (string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? ''),
+                'ip'               => p202ClientIp($_SERVER),
                 'user_agent'       => (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''),
             ]);
         } catch (\Throwable $conversionError) {

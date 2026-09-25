@@ -66,7 +66,7 @@ if ($click_id > 0) {
 		// belongs to the campaign's owner may convert for this campaign.
 		$outcome = p202RecordLegacyConversion($db, $click_id, 1, [
 			'user_id'    => (int) $mysql['user_id'],
-			'ip'         => (string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? ''),
+			'ip'         => p202ClientIp($_SERVER),
 			'user_agent' => (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''),
 		]);
 		if (!$outcome['recorded'] && $outcome['reason'] !== 'already_lead') {

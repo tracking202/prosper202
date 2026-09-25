@@ -32,7 +32,7 @@ try {
 	$outcome = p202RecordLegacyConversion($db, $click_id, 2, [
 		'campaign_id'    => (int) $aff_campaign_row['aff_campaign_id'],
 		'transaction_id' => p202ExtractTransactionId($_GET),
-		'ip'             => (string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? ''),
+		'ip'             => p202ClientIp($_SERVER),
 		'user_agent'     => (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''),
 	]);
 } catch (\Throwable $conversionError) {

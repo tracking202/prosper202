@@ -271,7 +271,7 @@ if (is_numeric($mysql['click_id'])) {
 			'click_time'      => $click_time_raw,
 			'conv_time'       => $conv_time,
 			'time_difference' => $time_difference,
-			'ip'              => $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '',
+			'ip'              => p202ClientIp($_SERVER),
 			'pixel_type'      => 3,
 			'user_agent'      => $_SERVER['HTTP_USER_AGENT'] ?? '',
 			'click_payout'    => $click_payout_for_log,

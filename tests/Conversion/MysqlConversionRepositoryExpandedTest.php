@@ -117,6 +117,42 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         self::assertSame('', $bound[10], 'user_agent defaults to empty string');
     }
 
+    /**
+     * The ip column is varchar(45). A forwarding chain, or anything that is
+     * not one address, is bound as '' so the INSERT can never fail on it under
+     * strict sql_mode and roll the conversion back.
+     *
+     * @dataProvider ipValuesTheWriterBounds
+     */
+    public function testRecordBindsOneValidAddressOrNothingAsTheIp(string $given, string $bound): void
+    {
+        $write = new InsertReportingFakeMysqliConnection(7);
+        $write->whenQueryContainsReturnRows(
+            'FROM 202_clicks WHERE click_id = ?',
+            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000]]
+        );
+        $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
+
+        $repo->record(1, ['click_id' => 10, 'transaction_id' => 'TX-1', 'ip' => $given]);
+
+        $insertStmts = $write->statementsContaining('INSERT INTO 202_conversion_logs');
+        self::assertCount(1, $insertStmts);
+        self::assertSame($bound, $insertStmts[0]->boundValues[8]);
+    }
+
+    /** @return iterable<string, array{string, string}> */
+    public static function ipValuesTheWriterBounds(): iterable
+    {
+        yield 'one IPv4' => ['198.51.100.7', '198.51.100.7'];
+        yield 'one IPv6, trimmed' => [' 2001:db8::1 ', '2001:db8::1'];
+        yield 'a forwarding chain longer than 45 chars' => [
+            '2001:db8:85a3:8d3:1319:8a2e:370:7348, 2001:db8:85a3:8d3:1319:8a2e:370:7349',
+            '',
+        ];
+        yield 'garbage' => [str_repeat('x', 60), ''];
+        yield 'empty' => ['', ''];
+    }
+
     public function testCreateUpdatesClickLeadFlag(): void
     {
         $write = new FakeMysqliConnection();
