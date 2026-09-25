@@ -93,11 +93,21 @@ if (isset($_GET['dni']) && isset($_GET['request_offer_access']) && isset($_GET['
 }
 
 if (isset($_GET['dni']) && isset($_GET['offer_id']) && isset($_GET['submit_offer_questions'])) {
+	// The one POST here submits answers to the network on the user's behalf,
+	// so it asks for the session token like every other Setup POST (U4; error
+	// pattern #5). The page posts through jQuery, whose prefilter attaches it,
+	// and the token is not forwarded to the network with the answers.
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+		http_response_code(403);
+		die('Invalid token, please reload the page and try again.');
+	}
+	$answers = $_POST;
+	unset($answers['token']);
 	$sql = "SELECT dni.networkId, dni.apiKey, dni.affiliateId, dni.name, 2u.install_hash FROM 202_dni_networks AS dni LEFT JOIN 202_users AS 2u USING(user_id) WHERE dni.user_id = '".$mysql['user_id']."' AND dni.id = '".$mysql['dni_id']."'";
 	$results = $db->query($sql);
 	if ($results->num_rows > 0) {
 		$dni = $results->fetch_assoc();
-		echo submitDniOfferAnswers($dni['install_hash'], $dni['networkId'], $dni['apiKey'], $dni['affiliateId'], $_GET['offer_id'], $_POST);
+		echo submitDniOfferAnswers($dni['install_hash'], $dni['networkId'], $dni['apiKey'], $dni['affiliateId'], $_GET['offer_id'], $answers);
 	}
 }
 

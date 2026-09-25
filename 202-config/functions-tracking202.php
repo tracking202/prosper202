@@ -3141,6 +3141,11 @@ function rotator_data($query, $type)
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    // Bounded: Setup › Redirector asks this as the user types, and an
+    // upstream that hangs must cost a missing suggestion, not a worker held
+    // for the default connect timeout.
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
     // Execute
     $result = curl_exec($ch);
 

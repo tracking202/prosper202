@@ -15,7 +15,15 @@ if (!empty($user_row['url']))
 	$slack = new Slack($user_row['url']);
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && $userObj->hasPermission("remove_tracker")) {
-	
+
+	// Deleting a tracker is a write, and every other Setup write asks for the
+	// session token (error pattern #5); this one did not until U4. The page
+	// posts through jQuery, whose prefilter attaches the token.
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+		http_response_code(403);
+		die('Invalid token, please reload the page and try again.');
+	}
+
 	if (!isset($_POST['tracker_id'])) {
 		die("Error: No tracker ID provided");
 	}

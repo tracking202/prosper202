@@ -456,7 +456,52 @@ function chromeMatches(ctx, a, b, options = {}) {
   expect.ok(compared > 0, label + 'there was chrome to compare');
 }
 
+/* U4: Setup ---------------------------------------------------------------
+ * The Setup pages on the v2 shell, one entry each: the page, the sub-menu
+ * entry that marks it current, and the classes it uses only as script hooks
+ * (legitimately unstyled). `pageBaseline` runs every check the standard asks
+ * of a v2 page against one entry, so a spec walks the list rather than
+ * repeating the checks per page.
+ */
+const LEGACY_SAMPLE = ['col-xs-12', 'col-xs-6', 'col-md-offset-4', 'panel', 'panel-body', 'panel-heading', 'well',
+  'form-horizontal', 'form-group', 'control-label', 'input-sm', 'btn-default', 'btn-xs', 'btn-block', 'help-block',
+  'glyphicon', 'label', 'pull-right', 'sr-only', 'input-group-addon', 'radio', 'checkbox'];
+
+const SETUP_PAGES = [
+  { path: '/tracking202/setup/ppc_accounts.php', menu: 'Traffic Sources' },
+  { path: '/tracking202/setup/aff_networks.php', menu: 'Categories' },
+  { path: '/tracking202/setup/aff_campaigns.php', menu: 'Campaigns' },
+  { path: '/tracking202/setup/landing_pages.php', menu: 'Landing Pages' },
+  { path: '/tracking202/setup/text_ads.php', menu: 'Text Ads' },
+  { path: '/tracking202/setup/rotator.php', menu: 'Redirector' },
+  { path: '/tracking202/setup/get_simple_landing_code.php', menu: 'Get LP Code' },
+  { path: '/tracking202/setup/get_adv_landing_code.php', menu: 'Get LP Code' },
+  { path: '/tracking202/setup/get_dynamic_smart_component_code.php', menu: null },
+  { path: '/tracking202/setup/get_trackers.php', menu: 'Get Links' },
+  { path: '/tracking202/setup/get_postback.php', menu: 'Postback/Pixel' },
+];
+
+/**
+ * Everything the standard asks of a v2 page, for one SETUP_PAGES entry:
+ * the baseline, no legacy class in the live DOM, every component class
+ * styled, no flex container eating its spaces, and the page's own sub-menu
+ * entry current and on screen. The caller has navigated to the page.
+ */
+async function pageBaseline(ctx, entry) {
+  const { app, expect } = ctx;
+  await baseline(ctx);
+  await noLegacyClasses(ctx, LEGACY_SAMPLE);
+  await componentClassesAreStyled(ctx, entry.scriptOnly || []);
+  await flexContainersKeepTheirSpaces(ctx);
+  if (entry.menu) {
+    expect.eq(await app.currentSubMenuItem(), entry.menu, 'the sub-menu marks ' + entry.menu + ' as current');
+    await currentSubMenuItemIsVisible(ctx);
+  }
+}
+
 module.exports = {
+  SETUP_PAGES,
+  pageBaseline,
   chromeGeometry,
   chromeMatches,
   baseline,

@@ -83,6 +83,16 @@ final class NoLegacyBootstrapClassesTest extends TestCase
      */
     private const V2_SHARED = [
         '202-config/functions-ui-partials.php',
+        // U4: Setup — the pieces its v2 pages include, the AJAX fragments
+        // only those pages load, and their page script.
+        'tracking202/setup/_includes/setup_ui.php',
+        'tracking202/setup/_includes/campaign_form/offer.php',
+        'tracking202/setup/_includes/campaign_form/advanced.php',
+        'tracking202/setup/_includes/attribution_model_field.php',
+        'tracking202/ajax/generate_tracking_link.php',
+        'tracking202/ajax/get_landing_code.php',
+        'tracking202/ajax/get_adv_landing_code.php',
+        '202-js/p202-setup.js',
     ];
 
     private const CHROME_STYLESHEET = '202-css/p202-chrome.css';
