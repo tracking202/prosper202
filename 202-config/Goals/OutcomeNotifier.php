@@ -16,13 +16,16 @@ namespace Prosper202\Goals;
  *   (string|null), dedupe_key (string|null), and `kind`, the engine's
  *   decision:
  *     reached     the first row of an outcome, payable, newly recorded on
- *                 the ledger, on a campaign that notifies: send it;
- *     suppressed  a payable outcome that must not be sent, with `reason`:
+ *                 the ledger, on a campaign that notifies: announced — its
+ *                 server-to-server postbacks are already queued in the
+ *                 notification outbox (`queued` counts them), and the
+ *                 notifier renders its browser pixels where it can;
+ *     suppressed  a payable outcome that must not be announced, with `reason`:
  *                 `replacement` (a replay or re-evaluation wrote it in place
- *                 of an outcome the traffic source may already have heard
- *                 about, and a delivered postback cannot be recalled; or
- *                 its event already reached the goal in an outcome the same
- *                 replay retires, when a late event shifted n),
+ *                 of an outcome the traffic source has already heard about,
+ *                 and a postback that went out cannot be recalled; or its
+ *                 event already reached the goal in an announced outcome
+ *                 the same replay retires, when a late event shifted n),
  *                 `no_click` (an install with no click has no traffic
  *                 source);
  *     off         payable, but the campaign does not notify for this goal;

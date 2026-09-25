@@ -1533,7 +1533,9 @@ is `GoalsController`; the CLI is `p202 goal …`.
     with the evaluator that needs it.
   - `notify_traffic_source` is stored on campaign goals but nothing fires
     yet. The notification outbox goes to PR 5 (installs) and 4b (web
-    events). **4b:** fires, without an outbox (§5.8).
+    events). **4b:** fires, without an outbox (§5.8); **combined:** web
+    and app outcomes both queue through PR 5's outbox (§5.10, "Merged with
+    PR 4b").
   - Install subjects, `app_registration_id` on outcomes, the install
     goal's ledger rows and `trust_client_revenue` go to PR 5.
     `GoalSubject` and the evaluator already model an install subject, but
@@ -1600,7 +1602,9 @@ the API is `EventsController`; the CLIs are `p202 event send` and
   sent. Calls wait for the pageview's `record.php` (the click must exist);
   `&p202_beacon=0` loads the script on a thank-you page without recording a
   click. The answer never says which click was found.
-- **Notification, without an outbox.** The engine decides each written
+- **Notification, without an outbox** (as 4b shipped it; the server
+  postbacks now queue through PR 5's outbox, §5.10 "Merged with PR 4b" —
+  the kinds, tokens and send-once rule below are kept). The engine decides each written
   outcome's `kind` inside the transaction that knows which rows are
   replacements: `reached` (payable, newly on the ledger, its campaign term
   notifies), `suppressed` (a replay's or a re-evaluation's replacement,
@@ -1641,7 +1645,7 @@ the API is `EventsController`; the CLIs are `p202 event send` and
   - The notification outbox (`kind`, delivery state, retries) with
     correction and retraction postbacks goes to PR 5, as §5.5 describes;
     until then a replacement is never sent and a failed delivery is
-    reported, not retried.
+    reported, not retried. (Done when the PRs were combined: §5.10.)
   - The per-click breakdown of events and outcomes in the UI is PR 1b's.
   - The PHP CLI has no `Idempotency-Key` support at all (not only for
     events); each event's id is what makes its retries safe.
@@ -1892,8 +1896,8 @@ operator's reads are `AppInstallsController`; the guide is
   calls" won over §5.2's "may attempt the send" — so the worker
   (`202-cronjobs/app-installs.php`, every minute) sends, claiming each row by
   compare-and-set on its attempt count, backing off 1 minute doubling to 6
-  hours, `failed` after 8. Queuing is gated to install subjects; web clicks
-  join with PR 4b.
+  hours, `failed` after 8. Queuing was gated to install subjects until the
+  merge with PR 4b below; it now covers every subject with a click.
 - **One way to tell a network, to be reconciled with PR 4b.** The engine
   reaches the outbox only through `OutcomeNotificationSink`
   (`queueReached()`, `onReplaced()`, both called inside the ledger row's
@@ -1962,8 +1966,51 @@ operator's reads are `AppInstallsController`; the guide is
   `p202 goal reevaluate --subject-type`; OpenAPI and
   `AppOpenApiCoverageTest` cover the install columns, states and routes.
 - **Deferred.** Android in `GET /apps/report` and the Mobile Apps pages
-  (PR 11); the correction URL (PR 11); web clicks' notifications (PR 4b);
+  (PR 11); the correction URL (PR 11); web clicks' notifications (PR 4b; done when the two were combined, below);
   Play Integrity (PR 6); the Kotlin SDK reading `android/` vectors (PR 7).
+- **Merged with PR 4b.** When the two branches were combined, 4b's
+  notifier moved onto this outbox, as the bullet above requires. One path
+  now: the engine queues every payable, notifying outcome with a click —
+  web or install — through `OutcomeNotificationSink::queueReached()` in
+  the ledger row's transaction, and the worker sends it; the request path
+  sends no server postback. `202-cronjobs/index.php` runs `sendDue()`
+  every minute beside `app-installs.php`, since web installs often have no
+  host crontab and 4b's postbacks used to leave with the request. What
+  each side kept:
+  - **4b's tokens and money.** The outbox resolves URLs with
+    `TrafficSourcePixels` (the tracker's and gpb's rules, and its click
+    tokens: keyword, c1–c4, click ids, UTM, CPC, referrer), adds
+    `[[sourceid]]`, `[[p202_goal_id]]` and 4b's money format (`4.00`, not
+    `4.00000`), so a queued postback reads as an immediate one did.
+    `NotificationOutbox::replaceTokens()` delegates to it with blanks
+    filled; PR 5's own copy of the click query is gone.
+  - **The send-once rule, for both.** PR 5's slot rule (a replacement of an
+    outcome that never went out is the one announced; of one that went
+    out, it is cancelled with a `correction` recorded) plus 4b's event
+    rule, which PR 5 lacked: a replay that shifts n ($5, $10 and a late $1
+    become $1, $5, $10) must not announce the $10 event again as "the
+    third". `onEventMoved()` cancels a written outcome's postback when its
+    reaching event had reached the goal in a retired outcome that was
+    announced; if that one was cancelled unsent, the new one stands. This
+    now also covers installs.
+  - **4b's kinds, decided from the outbox.** `reached` / `suppressed` are
+    read back from what the outbox holds after the retirements (a
+    replacement of an unsent outcome is `reached`, where 4b said
+    `suppressed`); with no server pixel queued they are decided
+    structurally, as 4b did. `notifications[].status` is `queued` (with
+    `queued`, the rows waiting), `rendered`, `browser_only`, `no_pixels`
+    or `not_sent`; `sent` and `server_calls` are gone from the answer.
+  - **Browser pixels stay on the request.** An image, iframe or script
+    pixel cannot wait for a worker, so `TrafficSourceNotifier` still
+    renders them into a browser's answer (upx) for `reached` notices;
+    `TrafficSourcePixels::fire()` takes `$server = false` for that.
+  - **One sender.** `PostbackSender` (http(s) only, redirects included) is
+    `TrafficSourcePixels`' default and the source of its user agent, so
+    gpb/upx pixels and the outbox send the same way.
+  Checked by `WebEventsIntegrationTest` (4b's cases, the worker run
+  between requests, plus a replacement of an unsent outcome) and
+  `InstallIntakeIntegrationTest`, and live by `web-events.sh` (which now
+  runs the worker) and `android-intake.sh`.
 
 ---
 

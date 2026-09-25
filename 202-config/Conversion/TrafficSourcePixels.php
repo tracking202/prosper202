@@ -102,17 +102,20 @@ final class TrafficSourcePixels
      *
      * With $browser false (no browser on the other end: an API call, a
      * server-to-server intake) the markup types are counted in
-     * `browser_skipped` and not rendered; only type 4 is sent.
+     * `browser_skipped` and not rendered; only type 4 is sent. With $server
+     * false the type-4 postbacks are not sent here but counted in
+     * `server_skipped`: the goal engine queues them in the notification
+     * outbox, which the worker sends with retries.
      *
      * @param array<string, scalar|null> $tokens
      * @param (callable(string): bool)|null $fetch Performs a type-4 GET and
      *        says whether it succeeded (a 2xx or 3xx status); defaults to
      *        curl with the postback user agent. Injected by tests.
-     * @return array{markup: string, types: list<int>, server_calls: int, server_failures: int, browser_skipped: int}
+     * @return array{markup: string, types: list<int>, server_calls: int, server_failures: int, browser_skipped: int, server_skipped: int}
      */
-    public static function fire(Connection $conn, int $ppcAccountId, array $tokens, ?callable $fetch = null, bool $browser = true): array
+    public static function fire(Connection $conn, int $ppcAccountId, array $tokens, ?callable $fetch = null, bool $browser = true, bool $server = true): array
     {
-        $out = ['markup' => '', 'types' => [], 'server_calls' => 0, 'server_failures' => 0, 'browser_skipped' => 0];
+        $out = ['markup' => '', 'types' => [], 'server_calls' => 0, 'server_failures' => 0, 'browser_skipped' => 0, 'server_skipped' => 0];
         if ($ppcAccountId <= 0) {
             return $out;
         }
@@ -164,6 +167,12 @@ final class TrafficSourcePixels
                         $out['markup'] .= "<script async src='{$attr}'></script>\n";
                         break;
                     case 4:
+                        if (!$server) {
+                            // Queued by the caller in the notification
+                            // outbox instead (a goal outcome, plan §5.10).
+                            $out['server_skipped']++;
+                            break;
+                        }
                         $out['server_calls']++;
                         if (!$fetch($url)) {
                             $out['server_failures']++;
@@ -183,11 +192,15 @@ final class TrafficSourcePixels
      * values, keyword, click ids, UTM values, CPC, referrer), plus the
      * click's traffic source. Null when the click is not this user's.
      *
+     * $inTransaction reads through the write connection: the notification
+     * outbox resolves a postback inside the transaction that records the
+     * conversion it announces.
+     *
      * @return array{ppc_account_id: int, tokens: array<string, scalar>}|null
      */
-    public static function clickTokens(Connection $conn, int $userId, int $clickId): ?array
+    public static function clickTokens(Connection $conn, int $userId, int $clickId, bool $inTransaction = false): ?array
     {
-        $stmt = $conn->prepareRead(
+        $sql =
             'SELECT c.click_id, c.ppc_account_id, c.click_cpc, c1.c1, c2.c2, c3.c3, c4.c4, kw.keyword, g.gclid,
                     us.utm_source, um.utm_medium, uca.utm_campaign, ut.utm_term, uco.utm_content, su.site_url_address
              FROM 202_clicks AS c
@@ -207,8 +220,8 @@ final class TrafficSourcePixels
              LEFT JOIN 202_clicks_site AS cs ON cs.click_id = c.click_id
              LEFT JOIN 202_site_urls AS su ON su.site_url_id = cs.click_referer_site_url_id
              WHERE c.click_id = ? AND c.user_id = ?
-             LIMIT 1'
-        );
+             LIMIT 1';
+        $stmt = $inTransaction ? $conn->prepareWrite($sql) : $conn->prepareRead($sql);
         $conn->bind($stmt, 'ii', [$clickId, $userId]);
         $row = $conn->fetchOne($stmt);
         if ($row === null) {

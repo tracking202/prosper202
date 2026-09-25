@@ -69,11 +69,15 @@ use Throwable;
  * at the listed payout or else the campaign's default payout
  * (installPayability()).
  *
- * Install subjects' payable outcomes with "notify traffic source" on queue
- * their traffic-source postback in the notification outbox, in the same
- * transaction as the ledger row (NotificationOutbox); a retired or replaced
- * row tells the outbox, which cancels what has not gone out and records
- * what cannot be recalled. Click subjects join with PR 4b.
+ * Payable outcomes with "notify traffic source" on queue their traffic
+ * source's server-to-server postbacks in the notification outbox, in the
+ * same transaction as the ledger row (NotificationOutbox) — web clicks
+ * (PR 4b) and app installs (PR 5) alike; the worker sends them with
+ * retries. A retired or replaced row tells the outbox, which cancels what
+ * has not gone out and records what cannot be recalled, and an event a
+ * replay moved to another n is announced once (execute()). The notifier
+ * handed to the constructor is told after the commit, for what only the
+ * request can do: render browser pixels into its response, and report.
  */
 final class GoalEngine
 {
@@ -703,13 +707,22 @@ final class GoalEngine
      *
      * @param array{keep: array<string, array<string, mixed>>, write: list<Outcome>, retire: list<array{0: array<string, mixed>, 1: string|null}>} $plan
      * Each written outcome is also noted in $post['notices'] with the
-     * notification decision (OutcomeNotifier). A written outcome is a
-     * `replacement`, never announced as newly reached, when it takes the
-     * place of a retired one, or when its reaching event reached the same
-     * goal in an outcome this plan retires: a replay that shifts n moves an
-     * already-announced event to a new n ($5, $10 and a late $1 become $1,
-     * $5, $10), and announcing the "new" third outcome would tell the
-     * network about the $10 a second time.
+     * notification decision (OutcomeNotifier), made once the retirements
+     * have run, from what the notification outbox then holds. A traffic
+     * source hears about an outcome once (plan §5.8, §5.10):
+     * - a written outcome that takes the place of a retired one (same goal,
+     *   version and n) is announced only if the retired one never was —
+     *   its pending postback is cancelled and the replacement's goes out
+     *   instead; one that went out cannot be recalled, so the replacement's
+     *   is cancelled and a correction recorded (onReplaced());
+     * - a written outcome whose reaching event reached the same goal in an
+     *   outcome this plan retires is withheld when that one was announced: a
+     *   replay that shifts n moves an already-announced event to a new n ($5,
+     *   $10 and a late $1 become $1, $5, $10), and announcing the "new" third
+     *   outcome would tell the network about the $10 a second time
+     *   (onEventMoved());
+     * - a revived outcome and a duplicate ledger row are never announced
+     *   again.
      *
      * @param list<GoalEvent> $events
      * @param array{ledger: list<array<string, mixed>>, clicks: array<int, true>, notices: list<array<string, mixed>>} $post
@@ -727,16 +740,18 @@ final class GoalEngine
         foreach ($plan['keep'] as $key => $row) {
             $ids[$key] = ['outcome_id' => (int) $row['outcome_id'], 'conversion_id' => $row['conversion_id'] !== null ? (int) $row['conversion_id'] : null];
         }
-        // The outcomes written in place of a retired one: a traffic source
-        // may already have been told about the one they replace.
+        // The outcomes written in place of a retired one, and the ledger
+        // rows of retired outcomes by (goal, reaching event): a traffic
+        // source may already have been told about them.
         $replacing = [];
         $retiredEvents = [];
         foreach ($plan['retire'] as [$stored, $replacementKey]) {
             if ($replacementKey !== null) {
                 $replacing[$replacementKey] = true;
             }
-            $retiredEvents[(int) $stored['goal_id'] . "\0" . (string) $stored['event_id']] = true;
+            $retiredEvents[(int) $stored['goal_id'] . "\0" . (string) $stored['event_id']][] = $stored['conversion_id'] !== null ? (int) $stored['conversion_id'] : null;
         }
+        $writtenAll = [];
         foreach ($plan['write'] as $o) {
             $event = $eventsById[$o->eventId] ?? null;
             if ($event === null && $o->eventId !== GoalEvent::INSTALL_EVENT_ID) {
@@ -747,8 +762,7 @@ final class GoalEngine
             $term = $terms[$o->goalId] ?? null;
             $written = $this->writeOutcome($userId, $subject, $o, $term, $event, $now, $post);
             $ids[$key] = ['outcome_id' => $written['outcome_id'], 'conversion_id' => $written['conversion_id']];
-            $announced = isset($replacing[$key]) || isset($retiredEvents[$o->goalId . "\0" . $o->eventId]) || $written['revived'];
-            $post['notices'][] = self::notice($o, $written, $term, $subject, $announced);
+            $writtenAll[] = [$o, $written, $key];
         }
 
         $ledger = new MysqlConversionLedger($this->conn);
@@ -791,6 +805,16 @@ final class GoalEngine
             }
         }
 
+        foreach ($writtenAll as [$o, $written, $key]) {
+            $prior = $retiredEvents[$o->goalId . "\0" . $o->eventId] ?? [];
+            $priorConvs = array_values(array_filter($prior, static fn (?int $c): bool => $c !== null && $c !== $written['conversion_id']));
+            if ($written['conversion_id'] !== null && $written['conversion_new'] && $priorConvs !== []) {
+                $this->outbox->onEventMoved($userId, $written['conversion_id'], $priorConvs);
+            }
+            $follows = isset($replacing[$key]) || $prior !== [];
+            $post['notices'][] = $this->notice($o, $written, $subject, $follows);
+        }
+
         return ['written' => count($plan['write']), 'retired' => count($plan['retire'])];
     }
 
@@ -799,7 +823,7 @@ final class GoalEngine
      *
      * @param array<string, mixed>|null $term the campaign_goals row for this goal
      * @param array{ledger: list<array<string, mixed>>, clicks: array<int, true>, notices: list<array<string, mixed>>} $post
-     * @return array{outcome_id: int, conversion_id: int|null, revived: bool, conversion_new: bool, payable: bool, amount_units: int|null, transaction_id: string|null, dedupe_key: string|null}
+     * @return array{outcome_id: int, conversion_id: int|null, revived: bool, conversion_new: bool, payable: bool, amount_units: int|null, transaction_id: string|null, dedupe_key: string|null, notify: bool}
      */
     private function writeOutcome(int $userId, GoalSubject $subject, Outcome $o, ?array $term, ?GoalEvent $event, int $now, array &$post): array
     {
@@ -850,7 +874,7 @@ final class GoalEngine
 
             return [
                 'outcome_id' => (int) $existing['outcome_id'], 'conversion_id' => $convId, 'revived' => true, 'conversion_new' => false,
-                'payable' => $payable, 'amount_units' => $amountUnits, 'transaction_id' => $event?->transactionId, 'dedupe_key' => null,
+                'payable' => $payable, 'amount_units' => $amountUnits, 'transaction_id' => $event?->transactionId, 'dedupe_key' => null, 'notify' => $notify,
             ];
         }
 
@@ -921,7 +945,11 @@ final class GoalEngine
             $this->conn->bind($link, 'ii', [$convId, $outcomeId]);
             $this->conn->executeUpdate($link);
 
-            if (!$recorded['duplicate'] && $payable && $notify && $subject->type === GoalSubject::INSTALL) {
+            // Every subject with a click — a web click (PR 4b) or an app
+            // install (PR 5) — announces through the outbox, in this
+            // transaction. execute() then decides whether a replay's rows
+            // stand (onReplaced, onEventMoved).
+            if (!$recorded['duplicate'] && $payable && $notify) {
                 $this->outbox->queueReached(
                     $userId,
                     $convId,
@@ -930,36 +958,50 @@ final class GoalEngine
                     Amount::fromUnits((int) $amountUnits),
                     (string) ($recorded['dedupeKey'] ?? $data['dedupe_key']),
                     $event?->transactionId,
+                    $o->goalId,
                 );
             }
         }
 
         return [
             'outcome_id' => $outcomeId, 'conversion_id' => $convId, 'revived' => false, 'conversion_new' => $conversionNew,
-            'payable' => $payable, 'amount_units' => $amountUnits, 'transaction_id' => $event?->transactionId, 'dedupe_key' => $dedupeKey,
+            'payable' => $payable, 'amount_units' => $amountUnits, 'transaction_id' => $event?->transactionId, 'dedupe_key' => $dedupeKey, 'notify' => $notify,
         ];
     }
 
     /**
      * What a written outcome is, for the notifier (see OutcomeNotifier for
-     * the kinds). Decided here, inside the transaction that knows which
-     * rows are replacements, so no caller can announce a replacement as a
-     * newly reached outcome.
+     * the kinds). Decided in the transaction that knows which rows are
+     * replacements, after the outbox has settled them, so no caller can
+     * announce a replacement as a newly reached outcome.
      *
-     * @param array{outcome_id: int, conversion_id: int|null, revived: bool, conversion_new: bool, payable: bool, amount_units: int|null, transaction_id: string|null, dedupe_key: string|null} $written
-     * @param array<string, mixed>|null $term
+     * With server-to-server postbacks queued, the outbox is the record:
+     * `reached` when a queued, sent or failed row stands for this
+     * conversion, `suppressed` (replacement) when every one was cancelled.
+     * With none queued (no traffic source, or only browser pixels) the
+     * decision is structural: a written outcome that follows a retired one
+     * ($follows) is a replacement.
+     *
+     * @param array{outcome_id: int, conversion_id: int|null, revived: bool, conversion_new: bool, payable: bool, amount_units: int|null, transaction_id: string|null, dedupe_key: string|null, notify: bool} $written
      * @return array<string, mixed>
      */
-    private static function notice(Outcome $o, array $written, ?array $term, GoalSubject $subject, bool $replacement): array
+    private function notice(Outcome $o, array $written, GoalSubject $subject, bool $follows): array
     {
         $kind = 'none';
         $reason = null;
+        $queued = 0;
         if ($written['payable']) {
-            if ($term === null || (int) ($term['notify_traffic_source'] ?? 0) !== 1) {
+            $state = $written['conversion_id'] !== null ? $this->outbox->reachedState($written['conversion_id']) : ['total' => 0, 'live' => 0, 'pending' => 0];
+            if (!$written['notify']) {
                 $kind = 'off';
             } elseif ($subject->clickId === null) {
                 [$kind, $reason] = ['suppressed', 'no_click'];
-            } elseif ($replacement || !$written['conversion_new']) {
+            } elseif ($written['revived'] || !$written['conversion_new']) {
+                [$kind, $reason] = ['suppressed', 'replacement'];
+            } elseif ($state['total'] > 0) {
+                [$kind, $reason] = $state['live'] > 0 ? ['reached', null] : ['suppressed', 'replacement'];
+                $queued = $state['pending'];
+            } elseif ($follows) {
                 [$kind, $reason] = ['suppressed', 'replacement'];
             } else {
                 $kind = 'reached';
@@ -979,6 +1021,7 @@ final class GoalEngine
             'dedupe_key' => $written['dedupe_key'],
             'kind' => $kind,
             'reason' => $reason,
+            'queued' => $queued,
         ];
     }
 

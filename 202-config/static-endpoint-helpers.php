@@ -100,7 +100,7 @@ if (!function_exists('p202FireTrafficSourcePixels')) {
      *        its dedupe key when the network sent none
      * @param (callable(string): bool)|null $fetch Performs a type-4 GET and
      *        says whether it succeeded; injected by tests.
-     * @return array{markup: string, types: list<int>, server_calls: int, server_failures: int, browser_skipped: int}
+     * @return array{markup: string, types: list<int>, server_calls: int, server_failures: int, browser_skipped: int, server_skipped: int}
      */
     function p202FireTrafficSourcePixels(mysqli $db, int $ppcAccountId, array $tokens, ?callable $fetch = null): array
     {

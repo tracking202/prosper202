@@ -121,7 +121,7 @@ final class LedgerEndpointHelpersTest extends TestCase
     {
         $db = new FakeMysqliConnection();
         $out = p202FireTrafficSourcePixels($db, 0, []);
-        self::assertSame(['markup' => '', 'types' => [], 'server_calls' => 0, 'server_failures' => 0, 'browser_skipped' => 0], $out);
+        self::assertSame(['markup' => '', 'types' => [], 'server_calls' => 0, 'server_failures' => 0, 'browser_skipped' => 0, 'server_skipped' => 0], $out);
         self::assertSame([], $db->statements);
     }
 

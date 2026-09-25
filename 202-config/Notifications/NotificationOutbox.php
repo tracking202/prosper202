@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace Prosper202\Notifications;
 
+use Prosper202\Conversion\TrafficSourcePixels;
 use Prosper202\Database\Connection;
 
 /**
- * The traffic-source notification outbox (plan §5.2 step 6, §5.5).
+ * The traffic-source notification outbox (plan §5.2 step 6, §5.5, §5.10):
+ * every server-to-server postback for a goal outcome, web clicks (PR 4b)
+ * and app installs (PR 5) alike.
  *
  * Writes happen inside the caller's transaction, beside the ledger row they
  * announce, so a conversion and its queued postback commit or roll back
@@ -17,20 +20,24 @@ use Prosper202\Database\Connection;
  *
  * What is queued: one `reached` row per server-to-server pixel (type 4) of
  * the click's traffic-source account. The browser pixel types (image,
- * iframe, script, raw) are markup a page renders; an app install has no
- * page, so they are not queued. The URL is resolved at queue time with the
- * row's own tokens — [[subid]], [[c1]]–[[c4]], [[t202kw]], [[gclid]], the
- * utm_* tokens, [[sourceid]], [[cpc]], [[payout]] (this row's amount, not
- * the click's total), [[transactionid]] / [[t202txid]] (the network's id,
- * else the ledger key), [[p202_goal]], [[p202_goal_value]], [[timestamp]]
- * and [[random]] — so what is sent is what the transaction decided.
+ * iframe, script, raw) are markup a page renders, so they are not queued (a
+ * web intake a browser loads renders them itself, TrafficSourceNotifier).
+ * The URL is resolved at queue time by TrafficSourcePixels (the tracker's
+ * rules) with the click's tokens — [[subid]], [[c1]]–[[c4]], [[t202kw]],
+ * [[gclid]], the utm_* tokens, [[cpc]], [[referer]], [[timestamp]],
+ * [[random]] — and the row's own: [[sourceid]], [[payout]] (this row's
+ * amount as a network reads money, `4.00`, not the click's total),
+ * [[transactionid]] / [[t202txid]] (the network's id, else the ledger key),
+ * [[p202_goal]], [[p202_goal_id]] and [[p202_goal_value]] — so what is sent
+ * is what the transaction decided.
  *
  * A traffic source is told about an outcome once (onReplaced()): a pending
  * `reached` whose outcome is replaced is cancelled and the replacement's own
  * `reached` goes out instead; one that went out (or may have: an attempt was
  * made) cannot be recalled, so the replacement's `reached` is cancelled and
  * a `correction` — or, with no replacement, a `retraction` — is recorded as
- * `suppressed`, because no pixel has a correction URL to carry it yet.
+ * `suppressed`, because no pixel has a correction URL to carry it yet. An
+ * event a replay moved to another n is announced once too (onEventMoved()).
  *
  * Sending (sendDue()) is the worker's: never on the request path, which
  * makes no external calls (plan §7.3). Each row is claimed with a
@@ -75,37 +82,31 @@ final class NotificationOutbox implements OutcomeNotificationSink
         string $amount,
         string $dedupeKey,
         ?string $transactionId,
+        ?int $goalId = null,
     ): int {
-        $click = $this->clickTokens($clickId);
-        if ($click === null || (int) $click['ppc_account_id'] <= 0) {
+        $click = TrafficSourcePixels::clickTokens($this->conn, $userId, $clickId, true);
+        if ($click === null || $click['ppc_account_id'] <= 0) {
             return 0;
         }
         $stmt = $this->conn->prepareWrite(
             'SELECT pixel_id, pixel_code FROM 202_ppc_account_pixels WHERE ppc_account_id = ? AND pixel_type_id = 4 ORDER BY pixel_id'
         );
-        $this->conn->bind($stmt, 'i', [(int) $click['ppc_account_id']]);
+        $this->conn->bind($stmt, 'i', [$click['ppc_account_id']]);
         $pixels = $this->conn->fetchAll($stmt);
         if ($pixels === []) {
             return 0;
         }
 
+        $money = self::money($amount);
         $tokens = [
-            'subid' => (string) $clickId,
-            't202kw' => $click['keyword'],
-            'c1' => $click['c1'], 'c2' => $click['c2'], 'c3' => $click['c3'], 'c4' => $click['c4'],
-            'gclid' => $click['gclid'],
-            'utm_source' => $click['utm_source'], 'utm_medium' => $click['utm_medium'], 'utm_campaign' => $click['utm_campaign'],
-            'utm_term' => $click['utm_term'], 'utm_content' => $click['utm_content'],
             'sourceid' => (string) $click['ppc_account_id'],
-            'cpc' => (string) round((float) $click['click_cpc'], 2),
-            'cpc2' => (string) $click['click_cpc'],
-            'payout' => $amount,
-            'transactionid' => $transactionId ?? $dedupeKey,
-            'p202_goal' => $goalName,
-            'p202_goal_value' => $amount,
             'timestamp' => (string) $this->now(),
-            'random' => (string) random_int(1000000, 9999999),
-        ];
+            'payout' => $money,
+            'transactionid' => $transactionId !== null && $transactionId !== '' ? $transactionId : $dedupeKey,
+            'p202_goal' => $goalName,
+            'p202_goal_id' => $goalId !== null ? (string) $goalId : null,
+            'p202_goal_value' => $money,
+        ] + $click['tokens'];
 
         $queued = 0;
         $now = $this->now();
@@ -259,23 +260,91 @@ final class NotificationOutbox implements OutcomeNotificationSink
     /**
      * The URL with its known tokens filled, each value rawurlencoded as
      * replaceTokens() does (with @ kept), and a known token that has no
-     * value emptied. Unknown [[tokens]] are left as they are.
+     * value emptied. Unknown [[tokens]] are left as they are. The rules are
+     * TrafficSourcePixels' (the tracker's and gpb's), so a queued postback
+     * reads exactly as an immediate one would.
      *
-     * @param array<string, string|null> $tokens
+     * @param array<string, scalar|null> $tokens
      */
     public static function replaceTokens(string $url, array $tokens): string
     {
-        return (string) preg_replace_callback('/\[\[([A-Za-z0-9_]+)\]\]/', static function (array $m) use ($tokens): string {
-            $name = strtolower($m[1]);
-            if ($name === 't202txid') {
-                $name = 'transactionid';
-            }
-            if (!array_key_exists($name, $tokens)) {
-                return $m[0];
-            }
+        return TrafficSourcePixels::replaceTokens($url, $tokens, 1);
+    }
 
-            return str_replace('%40', '@', rawurlencode((string) ($tokens[$name] ?? '')));
-        }, $url);
+    /**
+     * A ledger amount ("12.50000") as a network reads money: at least two
+     * decimals, and no trailing zeros past them ("12.50", "0.12345").
+     */
+    public static function money(string $amount): string
+    {
+        if (preg_match('/^(-?\d+)(?:\.(\d*))?$/D', $amount, $m) !== 1) {
+            return $amount;
+        }
+        $fraction = rtrim($m[2] ?? '', '0');
+
+        return $m[1] . '.' . str_pad($fraction, 2, '0');
+    }
+
+    /**
+     * An outcome written by a replay or re-evaluation whose reaching event
+     * had already reached the same goal in a retired outcome (a late event
+     * shifted n: $5, $10 and a late $1 become $1, $5, $10). If any of those
+     * retired outcomes was announced — sent, or attempted, since a send
+     * cannot be taken back — the new outcome's pending `reached` is
+     * cancelled and a `correction` recorded as suppressed: the network has
+     * heard about this event for this goal once. If none was (they were
+     * cancelled unsent), the new one stands and is the announcement.
+     * In the caller's transaction. Returns whether it suppressed.
+     *
+     * @param list<int> $priorConvIds the retired outcomes' ledger rows
+     */
+    public function onEventMoved(int $userId, int $newConvId, array $priorConvIds): bool
+    {
+        if ($priorConvIds === []) {
+            return false;
+        }
+        $stmt = $this->conn->prepareWrite(
+            "SELECT DISTINCT pixel_id FROM 202_notification_pending
+             WHERE kind = 'reached' AND (status IN ('sent', 'failed') OR attempts > 0)
+               AND conv_id IN (" . implode(',', array_fill(0, count($priorConvIds), '?')) . ')'
+        );
+        $this->conn->bind($stmt, str_repeat('i', count($priorConvIds)), array_values($priorConvIds));
+        $delivered = array_map(static fn (array $r): int => (int) $r['pixel_id'], $this->conn->fetchAll($stmt));
+        if ($delivered === []) {
+            return false;
+        }
+        $cancel = $this->conn->prepareWrite(
+            "UPDATE 202_notification_pending SET status = 'cancelled', last_error = ?
+             WHERE conv_id = ? AND kind = 'reached' AND status = 'pending' AND attempts = 0"
+        );
+        $this->conn->bind($cancel, 'si', ['this event already reached the goal in an announced outcome (conversion ' . implode(', ', $priorConvIds) . ')', $newConvId]);
+        $this->conn->executeUpdate($cancel);
+        $now = $this->now();
+        foreach ($delivered as $pixelId) {
+            $this->insert($userId, $newConvId, $pixelId, self::KIND_CORRECTION, 'suppressed', '',
+                self::NO_CORRECTION_URL . ' (the event was announced by conversion ' . implode(', ', $priorConvIds) . ')', $now);
+        }
+
+        return true;
+    }
+
+    /**
+     * What the outbox holds for a conversion's `reached` announcement:
+     * rows in all, rows not cancelled (queued, sent or failed), and rows
+     * still waiting to go out.
+     *
+     * @return array{total: int, live: int, pending: int}
+     */
+    public function reachedState(int $convId): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            "SELECT COUNT(*) AS total, COALESCE(SUM(status <> 'cancelled'), 0) AS live, COALESCE(SUM(status = 'pending'), 0) AS pending
+             FROM 202_notification_pending WHERE conv_id = ? AND kind = 'reached'"
+        );
+        $this->conn->bind($stmt, 'i', [$convId]);
+        $row = $this->conn->fetchOne($stmt) ?? [];
+
+        return ['total' => (int) ($row['total'] ?? 0), 'live' => (int) ($row['live'] ?? 0), 'pending' => (int) ($row['pending'] ?? 0)];
     }
 
     private function insert(int $userId, int $convId, int $pixelId, string $kind, string $status, string $url, ?string $note, int $now): int
@@ -300,35 +369,4 @@ final class NotificationOutbox implements OutcomeNotificationSink
         $this->conn->executeUpdate($stmt);
     }
 
-    /** @return array<string, string|null>|null */
-    private function clickTokens(int $clickId): ?array
-    {
-        $stmt = $this->conn->prepareWrite(
-            'SELECT c.click_id, c.ppc_account_id, c.click_cpc,
-                    t1.c1, t2.c2, t3.c3, t4.c4, kw.keyword, g.gclid,
-                    us.utm_source, um.utm_medium, uca.utm_campaign, ut.utm_term, uco.utm_content
-             FROM 202_clicks c
-             LEFT JOIN 202_clicks_advance ca ON ca.click_id = c.click_id
-             LEFT JOIN 202_clicks_tracking ct ON ct.click_id = c.click_id
-             LEFT JOIN 202_tracking_c1 t1 ON t1.c1_id = ct.c1_id
-             LEFT JOIN 202_tracking_c2 t2 ON t2.c2_id = ct.c2_id
-             LEFT JOIN 202_tracking_c3 t3 ON t3.c3_id = ct.c3_id
-             LEFT JOIN 202_tracking_c4 t4 ON t4.c4_id = ct.c4_id
-             LEFT JOIN 202_keywords kw ON kw.keyword_id = ca.keyword_id
-             LEFT JOIN 202_google g ON g.click_id = c.click_id
-             LEFT JOIN 202_utm_source us ON us.utm_source_id = g.utm_source_id
-             LEFT JOIN 202_utm_medium um ON um.utm_medium_id = g.utm_medium_id
-             LEFT JOIN 202_utm_campaign uca ON uca.utm_campaign_id = g.utm_campaign_id
-             LEFT JOIN 202_utm_term ut ON ut.utm_term_id = g.utm_term_id
-             LEFT JOIN 202_utm_content uco ON uco.utm_content_id = g.utm_content_id
-             WHERE c.click_id = ? LIMIT 1'
-        );
-        $this->conn->bind($stmt, 'i', [$clickId]);
-        $row = $this->conn->fetchOne($stmt);
-        if ($row === null) {
-            return null;
-        }
-
-        return array_map(static fn (mixed $v): ?string => $v === null ? null : (string) $v, $row);
-    }
 }

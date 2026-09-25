@@ -55,7 +55,7 @@ final class InstallIntakeIntegrationTest extends TestCase
         $out = self::outbox();
         self::assertCount(1, $out);
         self::assertSame(['reached', 'pending', '90', (string) $ledger[0]['conv_id']], [$out[0]['kind'], $out[0]['status'], (string) $out[0]['pixel_id'], (string) $out[0]['conv_id']]);
-        self::assertSame('https://ts.example/pb?sub=100&goal=install&v=2.50000&tx=install&p=2.50000', $out[0]['url']);
+        self::assertSame('https://ts.example/pb?sub=100&goal=install&v=2.50&tx=install&p=2.50', $out[0]['url']);
 
         // The worker sends it once.
         $outbox = new NotificationOutbox(new Connection(self::$db), fn (): int => $this->clock, function (string $url): bool {
@@ -275,7 +275,7 @@ final class InstallIntakeIntegrationTest extends TestCase
         self::assertSame(['lead' => 1, 'payout' => '6.50000'], self::clickValue(100), 'install 2.50 + level 3 4.00, accumulated');
         $reached = array_values(array_filter(self::outbox(), static fn (array $r): bool => $r['kind'] === 'reached'));
         self::assertCount(2, $reached);
-        self::assertStringContainsString('goal=Level%203&v=4.00000', $reached[1]['url']);
+        self::assertStringContainsString('goal=Level%203&v=4.00', $reached[1]['url']);
 
         // Revenue from the device: stored, not paid, until the registration trusts it.
         $this->events(self::U1, [['event_id' => 'p1', 'name' => 'purchase', 'occurred_at' => $t + 10, 'revenue' => 5]]);
@@ -314,7 +314,7 @@ final class InstallIntakeIntegrationTest extends TestCase
         $this->events(self::U1, [['event_id' => 'p0', 'name' => 'purchase', 'occurred_at' => $t + 5, 'revenue' => 1]]);
         $rows = array_values(array_filter(self::outbox(), static fn (array $r): bool => str_contains($r['url'], 'Second') || $r['kind'] !== 'reached'));
         self::assertSame(['cancelled', 'pending'], array_column($rows, 'status'));
-        self::assertStringContainsString('v=5.00000', $rows[1]['url'], 'the corrected value is the first the network hears');
+        self::assertStringContainsString('v=5.00', $rows[1]['url'], 'the corrected value is the first the network hears');
 
         // Sent, then moved again: nothing new goes out; the correction is
         // recorded as suppressed (no correction URL).

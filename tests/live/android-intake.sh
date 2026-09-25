@@ -243,7 +243,7 @@ eq "$(Q "SELECT COUNT(*) FROM 202_attribution_pending WHERE conv_id='$CONV1'")" 
 eq "$(Q "SELECT CONCAT_WS('/', kind, status) FROM 202_notification_pending WHERE conv_id='$CONV1'")" "reached/pending" \
    "one server postback queued (the browser pixel has no page to render on)"
 eq "$(Q "SELECT url FROM 202_notification_pending WHERE conv_id='$CONV1'")" \
-   "$BASE/api/v3/versions?pr5=android&sub=$C1&goal=install&v=2.50000&tx=install" "with the goal tokens filled"
+   "$BASE/api/v3/versions?pr5=android&sub=$C1&goal=install&v=2.50&tx=install" "with the goal tokens filled"
 eq "$(Q "SELECT CONCAT_WS('/', o.event_id, o.app_registration_id, o.conversion_id) FROM 202_goal_outcomes o WHERE o.goal_id=$G_INSTALL")" "@install/$R/$CONV1" \
    "the install goal's outcome links the conversion and the app"
 
@@ -317,7 +317,7 @@ eq "$(Q "SELECT GROUP_CONCAT(CONCAT(source, ':', click_payout) ORDER BY conv_id)
 eq "$(Q "SELECT GROUP_CONCAT(CONCAT(o.event_id, ':', o.payable) ORDER BY o.outcome_id) FROM 202_goal_outcomes o JOIN 202_app_installs i ON i.install_row_id=o.subject_id WHERE o.subject_type='install' AND i.install_uuid='$U1' AND o.goal_id=$G_LEVEL AND o.superseded_at IS NULL")" \
    "l3:1" "level 3 is reached once, by the level-3 event, and is payable"
 eq "$(Q "SELECT click_payout FROM 202_clicks WHERE click_id=$C1")" "6.50000" "accumulated to \$6.50"
-eq "$(Q "SELECT COUNT(*) FROM 202_notification_pending WHERE kind='reached' AND url LIKE '%goal=Level%203&v=4.00000%'")" 1 "level 3 queued its own postback"
+eq "$(Q "SELECT COUNT(*) FROM 202_notification_pending WHERE kind='reached' AND url LIKE '%goal=Level%203&v=4.00%'")" 1 "level 3 queued its own postback"
 events_body "$OUT/e.json" '[{"event_id":"r1","name":"level_reached","occurred_at":1,"received_at":1}]'
 eq "$(device POST "/apps/installs/$U1/events" "$TOKEN" "$OUT/e.json")" 400 "the server's clock is not the app's to set"
 eq "$(field "list(d['field_errors'])")" '["events[0].received_at"]' "named by field"
@@ -383,8 +383,8 @@ eq "$(Q "SELECT GROUP_CONCAT(DISTINCT status) FROM 202_notification_pending WHER
    "every queued postback was sent"
 eq "$(Q "SELECT COUNT(*) FROM 202_notification_pending WHERE status='pending' AND notification_id <= $QUEUED_BEFORE")" 0 "and nothing queued before the run was left behind"
 if [ -n "$SERVER_LOG" ]; then
-    has "$SERVER_LOG" "GET /api/v3/versions?pr5=android&sub=$C1&goal=install&v=2.50000&tx=install" "the network received the install postback"
-    has "$SERVER_LOG" "GET /api/v3/versions?pr5=android&sub=$C1&goal=Level%203&v=4.00000" "and level 3's, each once"
+    has "$SERVER_LOG" "GET /api/v3/versions?pr5=android&sub=$C1&goal=install&v=2.50&tx=install" "the network received the install postback"
+    has "$SERVER_LOG" "GET /api/v3/versions?pr5=android&sub=$C1&goal=Level%203&v=4.00" "and level 3's, each once"
     eq "$(grep -c "pr5=android&sub=$C1&goal=install&" "$SERVER_LOG")" 1 "the install postback arrived exactly once"
 fi
 (cd "$ROOT" && "$PHP" 202-cronjobs/app-installs.php extra) > "$OUT/cron-bad.txt" 2>&1

@@ -2480,7 +2480,8 @@ paths:
         conversions are superseded or deleted, recomputing the click's
         value. An outcome the old version never reached is announced to the
         campaign's traffic source like any newly reached one; one written in
-        place of a retired outcome is not (`notifications` per subject).
+        place of a retired outcome is announced only if the retired one
+        never went out (`notifications` per subject).
         Stageable.
       operationId: applyGoalReevaluation
       requestBody:
@@ -2514,9 +2515,10 @@ paths:
         goals in one transaction (plan §2.2). A goal an event reaches writes
         an outcome and, through the conversion ledger, a conversion
         (`source: goal`); for a payable goal the campaign notifies for, the
-        click's traffic source is sent its server-to-server postback with
-        `[[p202_goal]]`, `[[p202_goal_id]]` and `[[p202_goal_value]]` filled
-        (`notifications`). An event on its own records nothing: on a
+        click's traffic source's server-to-server postback, with
+        `[[p202_goal]]`, `[[p202_goal_id]]` and `[[p202_goal_value]]` filled,
+        is queued in the notification outbox in the same transaction and
+        sent by the worker with retries (`notifications`). An event on its own records nothing: on a
         campaign with no live goals the events are stored (`goals_evaluated:
         false`, with a `note`), and a goal added later applies to them
         through `POST /goals/{id}/reevaluation`.
@@ -6623,7 +6625,7 @@ components:
                   conversion_id: {type: integer, nullable: true}
                   payable: {type: boolean}
                   amount: {type: string, nullable: true}
-                  notify: {type: string, enum: [reached, suppressed, "off", none], description: "reached: announced to the traffic source; suppressed: a replacement, never announced twice; off: the campaign does not notify for this goal; none: not payable"}
+                  notify: {type: string, enum: [reached, suppressed, "off", none], description: "reached: announced to the traffic source (its server postbacks queued in the notification outbox); suppressed: a replacement of an outcome already announced, never announced twice; off: the campaign does not notify for this goal; none: not payable"}
             notifications:
               type: array
               items:
@@ -6633,10 +6635,11 @@ components:
                   n: {type: integer}
                   outcome_id: {type: integer}
                   kind: {type: string}
-                  status: {type: string, enum: [sent, failed, not_sent, no_pixels, browser_only]}
+                  status: {type: string, enum: [queued, rendered, failed, not_sent, no_pixels, browser_only], description: "queued: the server-to-server postbacks are in the notification outbox, which the worker sends with retries; rendered: browser pixels were returned to the browser that asked"}
                   reason: {type: string, nullable: true}
-                  server_calls: {type: integer}
-                  server_failures: {type: integer}
+                  queued: {type: integer, description: "Server-to-server postbacks waiting in the notification outbox"}
+                  browser_pixels: {type: integer}
+                  browser_skipped: {type: integer}
             note: {type: string, description: "Present when goals_evaluated is false"}
         idempotent_replay: {type: boolean}
 

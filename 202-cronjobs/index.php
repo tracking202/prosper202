@@ -453,6 +453,22 @@ function RunSecondsCronjob()
                 error_log('Attribution export runner failed: ' . $e->getMessage());
             }
 
+            // Traffic-source postbacks for goal outcomes, web and app alike
+            // (plan §5.8, §5.10), queued in the notification outbox with the
+            // conversions they announce. 202-cronjobs/app-installs.php sends
+            // them too; each row is claimed by a compare-and-set on its
+            // attempt count, so two senders never send one row. A send's
+            // failure is recorded on its row and retried with backoff.
+            try {
+                $notifications = (new \Prosper202\Notifications\NotificationOutbox(new \Prosper202\Database\Connection($db)))->sendDue(200);
+                if ($notifications['sent'] + $notifications['failed'] + $notifications['retrying'] > 0) {
+                    echo 'Traffic-source notifications: ' . (int) $notifications['sent'] . ' sent, ' . (int) $notifications['retrying'] . ' retrying, '
+                        . (int) $notifications['failed'] . ' failed<br>';
+                }
+            } catch (\Throwable $e) {
+                error_log('Notification outbox failed: ' . $e->getMessage());
+            }
+
             echo 'Done<br>';
             ob_flush();
             flush();

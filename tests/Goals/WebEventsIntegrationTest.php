@@ -16,10 +16,13 @@ use Prosper202\Identity\IdentityGraph;
 use Prosper202\Identity\IdentityKeys;
 use Prosper202\Identity\IdentitySignal;
 use Prosper202\Identity\SignalType;
+use Prosper202\Notifications\NotificationOutbox;
 
 /**
  * Web events against a real database (plan §2.2, §5.5): what the engine
- * tells the traffic source about the outcomes it writes, how a
+ * tells the traffic source about the outcomes it writes — queued in the
+ * notification outbox with the conversion and sent by its worker (plan
+ * §5.8, §5.10), which these tests run with a recording sender — how a
  * server-clocked retry is recognised, and which click a landing page's
  * visitor id names.
  *
@@ -40,7 +43,7 @@ final class WebEventsIntegrationTest extends TestCase
     protected function setUp(): void
     {
         $this->goalSetUp();
-        foreach (['202_ppc_account_pixels', '202_landing_pages', '202_identity_observations', '202_identity_signals', '202_identity_keys', '202_goals'] as $t) {
+        foreach (['202_ppc_account_pixels', '202_landing_pages', '202_identity_observations', '202_identity_signals', '202_identity_keys', '202_goals', '202_notification_pending'] as $t) {
             self::$db->query('TRUNCATE TABLE ' . $t);
         }
         $this->fetched = [];
@@ -48,7 +51,13 @@ final class WebEventsIntegrationTest extends TestCase
 
     private function notifier(bool $browser = false): TrafficSourceNotifier
     {
-        return new TrafficSourceNotifier($this->conn, $browser, function (string $url): bool {
+        return new TrafficSourceNotifier($this->conn, $browser);
+    }
+
+    /** The outbox, with a sender that records what it sends and says it arrived. */
+    private function outbox(): NotificationOutbox
+    {
+        return new NotificationOutbox($this->conn, fn (): int => $this->clock, function (string $url): bool {
             $this->fetched[] = $url;
 
             return true;
@@ -57,7 +66,13 @@ final class WebEventsIntegrationTest extends TestCase
 
     private function engineWith(?OutcomeNotifier $notifier): GoalEngine
     {
-        return new GoalEngine($this->conn, $this->goals, null, fn (): int => $this->clock, $notifier);
+        return new GoalEngine($this->conn, $this->goals, null, fn (): int => $this->clock, $notifier, $this->outbox());
+    }
+
+    /** Run the worker's send: what is queued and due goes out. */
+    private function deliver(): array
+    {
+        return $this->outbox()->sendDue(100);
     }
 
     /** @param list<GoalEvent> $events */
@@ -93,14 +108,18 @@ final class WebEventsIntegrationTest extends TestCase
 
         $first = $this->send($engine, 100, [$this->event('e1', 'signup', self::T, [], null, false, 'NET 9')]);
         self::assertSame('reached', $first['outcomes'][0]['kind']);
-        self::assertSame('sent', $first['notifications'][0]['status']);
+        self::assertSame('queued', $first['notifications'][0]['status']);
+        self::assertSame(1, $first['notifications'][0]['queued'], 'the server postback waits in the outbox, committed with the conversion');
         self::assertSame(1, $first['notifications'][0]['browser_skipped'], 'no browser on this path: the image pixel is counted, not rendered');
+        self::assertSame([], $this->fetched, 'the request itself sends nothing');
+        self::assertSame(['sent' => 1, 'failed' => 0, 'retrying' => 0], $this->deliver());
         self::assertSame(['https://s2s.test/pb?g=Sign%20up&id=' . $signup . '&v=1.50&p=1.50&tx=NET%209&s=100'], $this->fetched);
 
         $again = $this->send($engine, 100, [$this->event('e1', 'signup', self::T, [], null, false, 'NET 9')]);
         self::assertSame(['e1'], $again['duplicates']);
         self::assertSame([], $again['outcomes']);
         self::assertSame([], $again['notifications']);
+        $this->deliver();
         self::assertCount(1, $this->fetched, 'a duplicate is never announced again');
     }
 
@@ -111,6 +130,7 @@ final class WebEventsIntegrationTest extends TestCase
         $this->pixels();
         $g = $this->goal(7, ['name' => 'S', 'trigger' => ['event' => 's'], 'value' => ['type' => 'fixed', 'amount' => 2]]);
         $this->send($this->engineWith($this->notifier()), 100, [$this->event('x', 's', self::T)]);
+        $this->deliver();
         self::assertStringContainsString('&tx=goal%3A' . $g . '%3A1%3A1%3Ax&', $this->fetched[0]);
     }
 
@@ -129,7 +149,8 @@ final class WebEventsIntegrationTest extends TestCase
         ]);
 
         self::assertSame(['none', 'off', 'reached'], array_column($result['outcomes'], 'kind'));
-        self::assertSame(['not_sent', 'not_sent', 'sent'], array_column($result['notifications'], 'status'));
+        self::assertSame(['not_sent', 'not_sent', 'queued'], array_column($result['notifications'], 'status'));
+        $this->deliver();
         self::assertCount(1, $this->fetched);
         self::assertStringContainsString("<img src='https://img.test/px?g=Loud'", $notifier->markup(), 'a browser path renders the image pixel');
     }
@@ -143,6 +164,7 @@ final class WebEventsIntegrationTest extends TestCase
         $engine = $this->engineWith($this->notifier());
 
         $this->send($engine, 100, [$this->event('late', 'buy', self::T + 100, [], 10, true)]);
+        $this->deliver();
         self::assertCount(1, $this->fetched);
         $replay = $this->send($engine, 100, [$this->event('early', 'buy', self::T, [], 1, true)]);
 
@@ -152,7 +174,39 @@ final class WebEventsIntegrationTest extends TestCase
             $replay['outcomes']
         ));
         self::assertSame('not_sent', $replay['notifications'][0]['status']);
+        $this->deliver();
         self::assertCount(1, $this->fetched, 'the network heard the first value and is not told a second one');
+        self::assertSame(['reached:sent', 'reached:cancelled', 'correction:suppressed'], self::outboxRows(),
+            'the replacement\'s postback is cancelled and the correction that cannot be sent is recorded');
+    }
+
+    public function testAReplacementOfAnOutcomeNotYetSentIsTheOneAnnounced(): void
+    {
+        // The worker has not run between the two requests: the network has
+        // heard nothing, so it hears the corrected value, once.
+        $this->campaign(7, 'accumulate');
+        $this->click(100, 7);
+        $this->pixels();
+        $this->goal(7, ['name' => 'Buy', 'trigger' => ['event' => 'buy'], 'value' => ['type' => 'from_property']]);
+        $engine = $this->engineWith($this->notifier());
+
+        $this->send($engine, 100, [$this->event('late', 'buy', self::T + 100, [], 10, true)]);
+        $replay = $this->send($engine, 100, [$this->event('early', 'buy', self::T, [], 1, true)]);
+
+        self::assertSame('reached', $replay['outcomes'][0]['kind']);
+        self::assertSame(['reached:cancelled', 'reached:pending'], self::outboxRows());
+        $this->deliver();
+        self::assertCount(1, $this->fetched);
+        self::assertStringContainsString('&v=1.00&', $this->fetched[0], 'the value that stands, not the one it replaced');
+    }
+
+    /** @return list<string> kind:status of every outbox row, in order */
+    private static function outboxRows(): array
+    {
+        return array_map(
+            static fn (array $r): string => $r['kind'] . ':' . $r['status'],
+            self::$db->query('SELECT kind, status FROM 202_notification_pending ORDER BY notification_id')->fetch_all(MYSQLI_ASSOC)
+        );
     }
 
     public function testAReplayThatShiftsNNeverAnnouncesAnEventASecondTime(): void
@@ -168,11 +222,13 @@ final class WebEventsIntegrationTest extends TestCase
 
         $this->send($engine, 100, [$this->event('a', 'buy', self::T + 10, [], 5, true)]);
         $this->send($engine, 100, [$this->event('b', 'buy', self::T + 20, [], 10, true)]);
+        $this->deliver();
         self::assertCount(2, $this->fetched);
         $replay = $this->send($engine, 100, [$this->event('c', 'buy', self::T, [], 1, true)]);
 
         self::assertSame([1, 2, 3], array_column($replay['outcomes'], 'n'));
         self::assertSame(['suppressed', 'suppressed', 'suppressed'], array_column($replay['outcomes'], 'kind'));
+        $this->deliver();
         self::assertCount(2, $this->fetched, 'the $10 event, now the third purchase, is not announced again');
         self::assertSame(['lead' => 1, 'payout' => '16.00000'], $this->clickState(100));
     }
