@@ -2797,7 +2797,9 @@ function getTrackingDomain(): string
     $tracking_domain_result = _mysqli_query($db, $tracking_domain_sql); //($user_sql);
     $tracking_domain_row = $tracking_domain_result->fetch_assoc();
     if (isset($tracking_domain_row['user_tracking_domain']) && strlen((string) $tracking_domain_row['user_tracking_domain']) > 0) {
-        $tracking_domain = $tracking_domain_row['user_tracking_domain'];
+        // host[:port] only: a stored full URL doubled the scheme in every
+        // link built from it (see TrackingDomain).
+        $tracking_domain = \Prosper202\Click\TrackingDomain::normalize((string) $tracking_domain_row['user_tracking_domain']) ?: $tracking_domain;
     }
     return $tracking_domain;
 }
