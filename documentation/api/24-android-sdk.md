@@ -138,6 +138,16 @@ sent once — with the install when it was set before the first launch's
 install was built, otherwise on the next events request (on its own if
 there are no events) — and again whenever it changes.
 
+Clearing it (`clearCustomerId()`, on sign-out) or setting a different one
+before the install has been answered takes the earlier id's signed claim
+out of the waiting install, so a retry can never link the install to a
+customer who has signed out; a new id then goes on the events route once
+the install is recorded. If the install had already reached the server
+before the change, the server answers the changed body `409` (a reused
+install id with other content): the SDK takes that as "recorded" — the
+listener hears `onInstallRecorded` with an empty `match` — and never sends
+the first version, with its withdrawn claim, again.
+
 What the server does with it: once the install is **attributed and
 trusted**, it verifies the signature and links the click. The answer says
 which happened (`AttributionListener.onCustomerLinked`): `linked`;
@@ -154,6 +164,13 @@ settles.
   honoured — and the next attempt's time is stored, so a relaunch waits
   too. Every other answer is final for that request
   ([contract](21-app-sdk-contract.md#retry-semantics)).
+- A `2xx` counts only when it is the route's receipt: for the install, its
+  own `install_uuid` echoed with a `match`; for events, the `install_uuid`
+  echoed with `accepted` and `duplicates` that together name every event
+  sent; for the schema document, the document. Anything else — a captive
+  portal's page, a proxy's JSON, an answer about another install or that
+  leaves an event out — is retried like a `5xx`, so nothing is marked sent
+  on the strength of a `200` alone.
 - An install the server refuses (`400`, `404`, `409`, `422`) is not sent
   again under the same endpoint and token. A build that ships a corrected
   token re-arms it; the stored body, and so the install, is unchanged.
