@@ -415,7 +415,7 @@ code=$(post --data-urlencode goal_action=save --data-urlencode goal_id= --data-u
   --data-urlencode goal_event=renewal --data-urlencode goal_value=property --data-urlencode goal_count=1 --data-urlencode goal_repeat=each \
   --data-urlencode goal_repeat_max=12 --data-urlencode goal_within_days=30 --data-urlencode "goal_after=$G_BUY" \
   --data-urlencode goal_where_prop=plan --data-urlencode goal_where_op=eq --data-urlencode goal_where_value=pro \
-  --data-urlencode goal_payout=3 --data-urlencode goal_notify=0)
+  --data-urlencode goal_where_type=auto --data-urlencode goal_payout=3 --data-urlencode goal_notify=0)
 case "$code" in *goal_saved=1*) ok "a goal with every advanced setting is saved (redirected)";; *) bad "a goal with every advanced setting is saved (got '$code')";; esac
 G_REN=$(Q "SELECT goal_id FROM 202_goals WHERE scope_id=$CAMP_G AND name='Renewal'")
 eq "$(Q "SELECT definition FROM 202_goal_versions WHERE goal_id='$G_REN'")" \
@@ -438,6 +438,60 @@ curl -sS -b "$JAR" -c "$JAR" -o "$OUT/post.html" "$OTHER_PAGE" --data-urlencode 
   --data-urlencode goal_action=archive --data-urlencode "goal_id=$G_UP"
 has "$OUT/post.html" "not one of this campaign" "another campaign's page cannot archive this campaign's goal"
 eq "$(Q "SELECT archived_at IS NULL FROM 202_goals WHERE goal_id=$G_UP")" 1 "which stays live"
+
+# Open-and-save keeps a condition's JSON type: goal equality is typed, so
+# the text "123" turned into the number 123 (or true into "true") would stop
+# matching the events it matched. Each goal is made through the API, opened
+# in the editor, and the editor's own form posted back as a browser would
+# send it; nothing may change, so no version is added.
+form_body() { # page.html — the goal form's fields, urlencoded, as a browser submits them
+  python3 - "$1" <<'PY'
+import html, re, sys, urllib.parse
+s = open(sys.argv[1]).read()
+f = re.search(r'<form[^>]*id="goal-form".*?</form>', s, re.S).group(0)
+pairs = []
+# In document order, so a later field of the same name wins as in PHP.
+for m in re.finditer(r'<select\b([^>]*)>(.*?)</select>|<input\b([^>]*)>', f, re.S):
+    tag = 'select' if m.group(1) is not None else 'input'
+    attrs, body = (m.group(1), m.group(2)) if tag == 'select' else (m.group(3), '')
+    a = dict((k, html.unescape(v)) for k, v in re.findall(r'([\w-]+)="([^"]*)"', attrs))
+    if 'name' not in a or re.search(r'\bdisabled\b', attrs):
+        continue
+    if tag == 'select':
+        opts = re.findall(r'<option value="([^"]*)"([^>]*)>', body)
+        chosen = [v for v, rest in opts if 'selected' in rest] or [opts[0][0]]
+        pairs.append((a['name'], html.unescape(chosen[0])))
+    elif a.get('type') in ('radio', 'checkbox'):
+        if re.search(r'\bchecked\b', attrs):
+            pairs.append((a['name'], a.get('value', 'on')))
+    else:
+        pairs.append((a['name'], a.get('value', '')))
+print(urllib.parse.urlencode(pairs))
+PY
+}
+n=0
+for v in '"123"' 123 true false '"true"' 3.0 3 '1.0e+20' '-0.5' '""'; do
+  n=$((n + 1))
+  G_T=$(goal "Typed $n" "{\"name\":\"Typed $n\",\"trigger\":{\"event\":\"typed\",\"where\":[{\"prop\":\"k\",\"op\":\"eq\",\"value\":$v}]},\"value\":{\"type\":\"fixed\",\"amount\":\"1.00\"}}")
+  stored=$(Q "SELECT definition FROM 202_goal_versions WHERE goal_id='$G_T'")
+  curl -sS -b "$JAR" -c "$JAR" "$PAGE&edit_goal_id=$G_T" -o "$OUT/edit.html"
+  if grep -q "name=\"goal_id\" value=\"$G_T\"" "$OUT/edit.html"; then
+    code=$(curl -sS -b "$JAR" -c "$JAR" -o "$OUT/post.html" -w '%{http_code} %{redirect_url}' "$PAGE&edit_goal_id=$G_T" --data "$(form_body "$OUT/edit.html")")
+    case "$code" in *goal_saved=1*) ok "the value $v: the editor opens it and saves it";; *) bad "the value $v: the editor saves it (got '$code')";; esac
+  else
+    bad "the value $v: the editor opens the goal"
+  fi
+  eq "$(Q "SELECT CONCAT(current_version, ' ', (SELECT definition FROM 202_goal_versions WHERE goal_id='$G_T' ORDER BY version DESC LIMIT 1)) FROM 202_goals WHERE goal_id='$G_T'")" \
+     "1 $stored" "the value $v: an unchanged save stores nothing new (the value's type is kept)"
+done
+G_IN=$(goal "Typed in" '{"name":"Typed in","trigger":{"event":"typed","where":[{"prop":"k","op":"in","value":["123",123]}]}}')
+curl -sS -b "$JAR" -c "$JAR" "$PAGE" -o "$OUT/campaign.html"
+has "$OUT/campaign.html" "edit with p202 goal update $G_IN" "a condition the form cannot show is listed with the CLI pointer"
+if grep -q "edit_goal_id=$G_IN" "$OUT/campaign.html"; then bad "and has no edit link"; else ok "and has no edit link"; fi
+post --data-urlencode goal_action=save --data-urlencode "goal_id=$G_IN" --data-urlencode "goal_name=Typed in" \
+  --data-urlencode goal_event=typed --data-urlencode goal_value=none --data-urlencode goal_count=1 --data-urlencode goal_repeat=once > /dev/null
+has "$OUT/post.html" "Edit it with p202 goal update $G_IN" "a form posted for it anyway is refused with the same pointer"
+eq "$(Q "SELECT current_version FROM 202_goals WHERE goal_id='$G_IN'")" 1 "and the goal is not rewritten"
 
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 echo "artifacts: $OUT"

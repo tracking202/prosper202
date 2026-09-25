@@ -1519,7 +1519,12 @@ the API is `EventsController`; the CLIs are `p202 event send` and
   the common shape open, the rest under Advanced, writing through
   `GoalsController` so page and API refuse alike. A goal the form cannot
   show faithfully is listed with a pointer to `p202 goal update`, never
-  rewritten by the form. The campaign form gains **When a click converts
+  rewritten by the form. "Faithfully" is a round trip, not a list: the form
+  is filled from the stored definition, built back, and must give the same
+  canonical definition compared strictly, so a condition value keeps its
+  JSON type (the form carries it in a "compare as" field; `"123"`, `123`,
+  `true`, `"true"`, `3` and `3.0` all survive an unchanged save), and a
+  save for a goal that no longer fits is refused. The campaign form gains **When a click converts
   more than once** (`payout_mode`) under Advanced; a post without the field
   keeps the stored mode.
 - **Order within a second.** Events are ordered by time, then arrival,
