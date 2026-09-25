@@ -205,7 +205,7 @@ becomes a cache of it.**
    | `source` | `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `app_install`, `goal`, `legacy_baseline` (below) |
    | `source_ref` | What generated it: goal id and version, upload batch id, API key id, app install row. Resolved by the UI into a name and a link |
    | `event_name` | The event that reached the goal, or the postback's `event=` value |
-   | `payable` | `1` counts toward income and leads. `0` is a tracked outcome: an unpaid goal, or an event reported for visibility |
+   | `payable` | `1` counts toward income and leads. `0` is a tracked outcome on a click: an unpaid goal, or an event reported for visibility. Outcomes on a subject with no click (an organic install) live only in `202_goal_outcomes`, §5.5 |
    | `superseded_by` | Set in `replace` mode when a later payable row replaced this one's value, so the breakdown can say *why* a row is not in the total |
 
    A reversal (below) is a row with a negative amount whose `source` is the
@@ -551,7 +551,14 @@ than `NULL` on purpose: MySQL's `UNIQUE` admits any number of `NULL`s, so
 
   Revenue is withheld from both.
 - **Both SDKs** expose `configure(endpoint, appToken)`,
-  `logEvent(name, properties)` and `setCustomerId(id)`.
+  `logEvent(name, properties)` and `setCustomerId(id, signature)`. The
+  signature is the operator-server-computed `cust_sig` of §6.2, carried on
+  the wire as `customer: {id, signature}` in the install and event bodies;
+  the server verifies it before the id becomes an identity signal, and an
+  id without a valid signature is stored for LTV only and links nothing.
+  There is no one-argument form: the app token is public, so an unsigned id
+  from the SDK is exactly the request-controlled `cust` a public pixel
+  carries.
 
 ### 4.4 Trust: one vocabulary, per-source verdicts
 
@@ -870,9 +877,17 @@ because the same app is often sold under different deals.
   notification outbox of §5.2, with new tokens `[[p202_goal]]` and
   `[[p202_goal_value]]`, so a network can be told "install" and "level 3"
   separately, or only "level 3".
-- **Non-payable** goals write a ledger row with `payable = 0` — that is how
-  they appear in the breakdown and the funnel — and nothing else: no income,
-  no lead, no MTA credit, no notification.
+- **Every reached goal writes an outcome row**, whether or not the subject
+  has a click: `202_goal_outcomes (subject_type, subject_id, goal_id,
+  goal_version, n, reached_at, payable, conversion_id NULL)`. That is the
+  funnel's and the app report's source, and it is what makes an organic
+  install's goals visible at all — `202_conversion_logs` is click-bound, so
+  an install with no click can have no ledger row.
+- **When the subject has a click**, the outcome also writes a ledger row and
+  links it through `conversion_id`: payable outcomes as described above;
+  **non-payable** ones with `payable = 0`, so the click breakdown shows them,
+  and nothing else follows — no income, no lead, no MTA credit, no
+  notification.
 - A campaign that has configured no payable goals pays on `install`. That is
   the default the decision in §9 asks for; turning it off is a campaign
   setting, not a global one.
@@ -1300,11 +1315,16 @@ conversion table.
 - The 1.9.56 rung's `202_aff_campaigns.attribution_model_id` column and the
   permission rows 22 and 23 are kept. They are now read.
 
-**No seeded models.** Today upgraded installs get a "last-touch-default" model
-row per user, and fresh installs get none (error pattern #5). After the
-rewrite neither path seeds anything. An account with no model row reports
-under an implicit `last_touch` default, so "no rows" is a state the engine
-defines instead of one that depends on how the database was created.
+**One default model, on every path.** Today upgraded installs get a
+"last-touch-default" row per user and fresh installs get none (error pattern
+#5). Credits need a `model_id`, so an account with no model row would have no
+credits and empty MTA and campaign-report attribution until someone created
+one. The rewrite therefore seeds a real `last_touch` model, flagged default,
+for every account through one idempotent `ensureDefaultModel(user_id)` called
+from the fresh installer, the 1.9.56 rung and user creation — the same
+one-function-both-paths shape as `K_install` (§5.1) — and the
+upgrade-equals-install test asserts every account has exactly one default.
+The worker computes credits for every active model, the default included.
 - **Deletions.** The dead code is deleted outright: `MysqlAttributionRepository`,
   `InMemoryAttributionRepository`, the `Attribution\Export\*` stack,
   `MysqlExportRepository`, both migration runners and their `.sql`, v2, the
