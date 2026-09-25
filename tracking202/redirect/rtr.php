@@ -736,6 +736,10 @@ if ($cloaking_on == true) {
 // destination comes from the type='lp' branch below (p202-edge-sync §3.3) —
 // never for campaign/url/auto_monetizer targets (offer URLs must not carry it).
 $t202ctx_lp_destination = false;
+// Whether the visitor goes to the operator's own landing page (a rule or the
+// rotator's default pointing at one) rather than an offer: only then do the
+// customer id and the consent flag ride along (see getPrePopVars()).
+$rtrToOwnLandingPage = false;
 if ($rule['aff_campaign_id'] != null) {
 	//rotate the urls
 	$redirect_site_url = rotateTrackerUrl($db, $rule);
@@ -747,12 +751,14 @@ if ($rule['aff_campaign_id'] != null) {
 	} else if ($rule['type'] == 'lp') {
 		$redirect_site_url = $rule['landing_page_url'];
 		$t202ctx_lp_destination = true;
+		$rtrToOwnLandingPage = true;
 	} else if ($rule['type'] == 'auto_monetizer') {
 		$redirect_site_url = "http://prosper202.com";
 	} else if ($rule['default_url'] != null) {
 		$redirect_site_url = $rule['default_url'];
 	} else if ($rule['default_lp'] != null) {
 		$redirect_site_url = $rule['landing_page_url'];
+		$rtrToOwnLandingPage = true;
 	}
 }
 
@@ -801,7 +807,7 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 	$de = new DataEngine();
 	$data = $de->setDirtyHour($mysql['click_id']);
 
-	$urlvars = getPrePopVars($_GET);
+	$urlvars = getPrePopVars($_GET, $rtrToOwnLandingPage);
 
 	// Landing Page Optimizer: on rotator→LP destinations only, append the
 	// signed per-click context token (t202ctx, p202-edge-sync §3.2/§3.3) so

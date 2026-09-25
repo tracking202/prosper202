@@ -21,10 +21,21 @@ const OFFER = 'http://offer.example/';
 const CAMP = 940011;
 const TRACKER = 940211;
 const LP_PUBLIC = 940311;
+// A second campaign with identity capture off, and a landing page on it.
+const CAMP_OFF = 940012;
+const LP_OFF = 940312;
 
-function landingHtml(base) {
-  return '<!doctype html><html><head><title>LP</title>' +
-    '<script src="' + base + '/tracking202/static/landing.php?lpip=' + LP_PUBLIC + '"></script>' +
+/**
+ * The landing page, by path: `/` the plain snippet; `/preload` a consent
+ * tool's refusal set before the snippet; `/late` a refusal from a script
+ * after it; `/off` a page on the capture-off campaign.
+ */
+function landingHtml(base, path) {
+  const lpip = path.startsWith('/off') ? LP_OFF : LP_PUBLIC;
+  const before = path.startsWith('/preload') ? '<script>window.p202 = {consent: false};</script>' : '';
+  const after = path.startsWith('/late') ? '<script>window.p202.consent(false);</script>' : '';
+  return '<!doctype html><html><head><title>LP</title>' + before +
+    '<script src="' + base + '/tracking202/static/landing.php?lpip=' + lpip + '"></script>' + after +
     '</head><body><h1>Landing</h1>' +
     '<a id="go" href="' + base + '/tracking202/redirect/dl.php?t202id=' + TRACKER + '">Get the offer</a>' +
     '<a id="away" href="https://elsewhere.example/page">Elsewhere</a>' +
@@ -39,7 +50,7 @@ async function landingServer(ctx) {
   const base = ctx.config.base.replace(/\/$/, '');
   const server = http.createServer((req, res) => {
     res.setHeader('content-type', 'text/html');
-    res.end(landingHtml(base));
+    res.end(landingHtml(base, req.url || '/'));
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   server.unref();
@@ -55,14 +66,14 @@ async function landingServer(ctx) {
 }
 
 /** Load the landing page and wait for its beacon; returns the beacon URL. */
-async function openLanding(ctx, query = '') {
+async function openLanding(ctx, query = '', path = '') {
   const { page } = ctx;
   const origin = await landingServer(ctx);
   // Both waits are armed before the navigation: the beacon can finish before
   // a wait registered after the request would start listening.
   const beacon = page.waitForRequest((r) => r.url().includes('/tracking202/static/record.php'));
   const answered = page.waitForResponse((r) => r.url().includes('/tracking202/static/record.php'));
-  await page.goto(origin + '/' + query);
+  await page.goto(origin + '/' + path + query);
   const req = await beacon;
   await answered;
   return new URL(req.url());
@@ -87,14 +98,18 @@ module.exports = {
     db.truncate(['202_identity_visitors', '202_identity_signals', '202_identity_observations', '202_identity_merges', '202_clicks_visitor']);
     db.write('DELETE FROM 202_clicks WHERE aff_campaign_id = ' + CAMP);
     db.write('DELETE FROM 202_trackers WHERE tracker_id_public = ' + TRACKER);
-    db.write('DELETE FROM 202_landing_pages WHERE landing_page_id_public = ' + LP_PUBLIC);
-    db.write('DELETE FROM 202_aff_campaigns WHERE aff_campaign_id = ' + CAMP);
+    db.write('DELETE FROM 202_landing_pages WHERE landing_page_id_public IN (' + LP_PUBLIC + ', ' + LP_OFF + ')');
+    db.write('DELETE FROM 202_aff_campaigns WHERE aff_campaign_id IN (' + CAMP + ', ' + CAMP_OFF + ')');
     const now = Math.floor(Date.now() / 1000);
     db.write("SET SESSION sql_mode=''; INSERT INTO 202_aff_campaigns SET aff_campaign_id=" + CAMP + ', aff_campaign_id_public=' + CAMP +
       ", user_id=1, aff_network_id=1, aff_campaign_name='identity-landing', aff_campaign_url='" + OFFER + "', aff_campaign_payout=1, aff_campaign_time=" + now);
     db.write("SET SESSION sql_mode=''; INSERT INTO 202_trackers SET user_id=1, tracker_id_public=" + TRACKER + ', aff_campaign_id=' + CAMP + ', click_cloaking=0, tracker_time=' + now);
     db.write("SET SESSION sql_mode=''; INSERT INTO 202_landing_pages SET user_id=1, landing_page_id_public=" + LP_PUBLIC + ', aff_campaign_id=' + CAMP +
       ", landing_page_nickname='identity-landing', landing_page_url='http://localhost/', landing_page_time=" + now + ', landing_page_type=0');
+    db.write("SET SESSION sql_mode=''; INSERT INTO 202_aff_campaigns SET aff_campaign_id=" + CAMP_OFF + ', aff_campaign_id_public=' + CAMP_OFF +
+      ", user_id=1, aff_network_id=1, aff_campaign_name='identity-landing-off', aff_campaign_url='" + OFFER + "', aff_campaign_payout=1, identity_signals=0, aff_campaign_time=" + now);
+    db.write("SET SESSION sql_mode=''; INSERT INTO 202_landing_pages SET user_id=1, landing_page_id_public=" + LP_OFF + ', aff_campaign_id=' + CAMP_OFF +
+      ", landing_page_nickname='identity-landing-off', landing_page_url='http://localhost/off', landing_page_time=" + now + ', landing_page_type=0');
   },
 
   scenarios: [
@@ -190,6 +205,43 @@ module.exports = {
         const later = await openLanding(ctx);
         expect.eq(later.searchParams.get('p202_consent'), '0', 'on the next pageview without the parameter');
         await page.evaluate(() => window.p202.consent(true));
+      },
+    },
+
+    {
+      name: 'A refusal set before the snippet, or by a script after it, stops the very first beacon',
+      async run(ctx) {
+        const { page, expect } = ctx;
+        await page.evaluate(() => { window.localStorage.clear(); });
+        const early = await openLanding(ctx, '', 'preload');
+        expect.eq(early.searchParams.get('p202_consent'), '0', 'window.p202 = {consent: false} before the snippet: the first beacon refuses');
+        expect.eq(early.searchParams.get('p202lpid'), null, 'and carries no id');
+        expect.eq(await page.evaluate(() => window.localStorage.getItem('p202lpid')), null, 'none was minted');
+        expect.eq(await page.evaluate(() => typeof window.p202.consent), 'function', 'and the page still gets the p202.consent() API');
+        await page.evaluate(() => { window.localStorage.clear(); });
+
+        const late = await openLanding(ctx, '', 'late');
+        expect.eq(late.searchParams.get('p202_consent'), '0', 'p202.consent(false) in a script after the snippet: the first beacon already refuses');
+        expect.eq(late.searchParams.get('p202lpid'), null, 'and carries no id');
+        await page.evaluate(() => { window.localStorage.clear(); });
+      },
+    },
+
+    {
+      name: 'A page on a campaign with capture off reads, mints and sends no id',
+      async run(ctx) {
+        const { page, db, expect, state } = ctx;
+        await page.evaluate(() => { window.localStorage.clear(); });
+        const beacon = await openLanding(ctx, '', 'off');
+        expect.eq(beacon.searchParams.get('p202lpid'), null, 'the beacon carries no landing-page id');
+        expect.eq(beacon.searchParams.get('p202_consent'), null, 'and no refusal either: the visitor did not refuse');
+        expect.eq(await page.evaluate(() => window.localStorage.getItem('p202lpid')), null, 'no id is minted in the page\'s storage');
+        const click = Number(db.value('SELECT COALESCE(MAX(click_id), 0) FROM 202_clicks WHERE aff_campaign_id = ' + CAMP_OFF));
+        expect.ok(click > 0, 'the pageview still records its click');
+        expect.eq(Number(db.value('SELECT COUNT(*) FROM 202_clicks_visitor WHERE click_id = ' + click)), 0, 'which links to no one');
+        const nav = page.waitForRequest((r) => r.url().includes('/tracking202/redirect/dl.php'));
+        await page.click('#go');
+        expect.eq(new URL((await nav).url()).searchParams.get('p202lpid'), null, 'a link into the tracker is left alone');
         state.lpServer.close();
       },
     },
