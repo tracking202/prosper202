@@ -36,7 +36,7 @@ trait AttributionDatabase
         '202_ppc_accounts', '202_attribution_pending', '202_attribution_models', '202_attribution_credits',
         '202_attribution_journeys', '202_attribution_journey_meta', '202_attribution_audit',
         '202_identity_keys', '202_identity_visitors', '202_identity_signals', '202_identity_observations',
-        '202_identity_merges', '202_clicks_visitor', '202_browsers',
+        '202_identity_merges', '202_clicks_visitor', '202_browsers', '202_attribution_exports',
     ];
 
     public static function setUpBeforeClass(): void

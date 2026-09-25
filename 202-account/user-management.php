@@ -114,6 +114,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['delete_user_id'])) {
 		p202_account_redirect('202-account/user-management.php');
 	}
 
+	// Attribution export files first: the export rows deleted below are the
+	// only record of their names (plan §7.2, "export files on disk").
+	try {
+		$exportFiles = new \Prosper202\Attribution\ExportFiles();
+		foreach ((new \Prosper202\Attribution\ExportStore(new \Prosper202\Database\Connection($db)))->fileNames((int) $mysql['user_id']) as $exportFile) {
+			if (!$exportFiles->remove($exportFile)) {
+				error_log('user-management: attribution export file ' . $exportFile . ' of user ' . (int) $mysql['user_id'] . ' could not be removed');
+			}
+		}
+	} catch (\Throwable $exception) {
+		error_log('user-management: attribution export files of user ' . (int) $mysql['user_id'] . ' not removed: ' . $exception->getMessage());
+	}
+
 	// Purge attribution data for the deleted user
 	// (The full user-deletion cascade is plan §7.2's, PR 3; these are the
 	// multi-touch attribution tables, in dependency order.)

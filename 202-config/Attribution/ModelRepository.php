@@ -186,12 +186,14 @@ final class ModelRepository
     public function delete(int $userId, int $modelId): void
     {
         $this->deleteCredits($modelId);
-        foreach (['DELETE FROM 202_attribution_exports WHERE model_id = ? AND user_id = ?',
-                  'DELETE FROM 202_attribution_models WHERE model_id = ? AND user_id = ?'] as $sql) {
-            $stmt = $this->conn->prepareWrite($sql);
-            $this->conn->bind($stmt, 'ii', [$modelId, $userId]);
-            $this->conn->executeUpdate($stmt);
-        }
+        // Exports that read this model, as the model or as the comparison,
+        // go with it (their files are removed by the caller after commit).
+        $stmt = $this->conn->prepareWrite('DELETE FROM 202_attribution_exports WHERE (model_id = ? OR compare_model_id = ?) AND user_id = ?');
+        $this->conn->bind($stmt, 'iii', [$modelId, $modelId, $userId]);
+        $this->conn->executeUpdate($stmt);
+        $stmt = $this->conn->prepareWrite('DELETE FROM 202_attribution_models WHERE model_id = ? AND user_id = ?');
+        $this->conn->bind($stmt, 'ii', [$modelId, $userId]);
+        $this->conn->executeUpdate($stmt);
         // A campaign pointing at a deleted model falls back to the default;
         // clear the pointer so it does not name a row that will never exist.
         $stmt = $this->conn->prepareWrite(

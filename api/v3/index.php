@@ -528,6 +528,24 @@ try {
                 $auth->requirePermission($db, 'view_attribution_reports');
             },
         ]);
+        // Exports (plan §6.3): a breakdown written to CSV by the export
+        // runner, downloadable and optionally sent to an SSRF-checked
+        // webhook. Reading the account's reports is what an export does, so
+        // view_attribution_reports gates every route, the same permission
+        // the dashboard's Exports tab asks for.
+        $router->group('/attribution/exports', function (Router $r) use ($crud, $idempotent, $queryParams, $payload) {
+            $cls = \Api\V3\Controllers\AttributionController::class;
+            $r->get('',                fn() => $crud($cls)->listExports($queryParams));
+            $r->get('/{id}',           fn($ctx) => $crud($cls)->getExport((int)$ctx['id']));
+            $r->get('/{id}/download',  fn($ctx) => $crud($cls)->downloadExport((int)$ctx['id']));
+            $r->post('',               fn() => ['_status' => 201] + $idempotent('attribution/exports', $payload, fn() => $crud($cls)->createExport($payload)));
+            $r->post('/{id}/retry',    fn($ctx) => $crud($cls)->retryExport((int)$ctx['id']));
+            $r->delete('/{id}',        fn($ctx) => tap($crud($cls), fn($c) => $c->deleteExport((int)$ctx['id'])));
+        }, [
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'view_attribution_reports');
+            },
+        ]);
 
         // ── SKAdNetwork (SKAN) ───────────────────────────────────────────
         // Postbacks arrive through the public receiver
@@ -676,7 +694,7 @@ try {
                 'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart}',
                 'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}',
                 'rotators'      => '/rotators',
-                'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|apps|conversion-values|postbacks|report|verify}',
+                'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|exports|apps|conversion-values|postbacks|report|verify}',
                 'users'         => '/users',
                 'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics}',
                 'sync'          => '/sync/{plan|jobs|status|history|re-sync}',
@@ -703,6 +721,7 @@ try {
         $previewRouter->delete('/rotators/{id}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->delete('/rotators/{id}/rules/{ruleId}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deleteRulePreview((int)$ctx['id'], (int)$ctx['ruleId']));
         $previewRouter->delete('/attribution/models/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionController::class)->deleteModelPreview((int)$ctx['id']));
+        $previewRouter->delete('/attribution/exports/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionController::class)->deleteExportPreview((int)$ctx['id']));
         $previewRouter->delete('/attribution/apps/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionAppsController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->delete('/attribution/conversion-values/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionConversionValuesController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->group('/users', function (Router $r) use ($db, $auth) {
@@ -760,6 +779,11 @@ try {
     $stageableRouter->group('/attribution/models', function (Router $r) use ($stageable) {
         $r->post('', $stageable);
         $r->put('/{id}', $stageable);
+        $r->delete('/{id}', $stageable);
+    });
+    $stageableRouter->group('/attribution/exports', function (Router $r) use ($stageable) {
+        $r->post('', $stageable);
+        $r->post('/{id}/retry', $stageable);
         $r->delete('/{id}', $stageable);
     });
     $stageableRouter->group('/attribution', function (Router $r) use ($stageable) {
@@ -959,6 +983,18 @@ try {
     if ($response === null) {
         // DELETE — 204 No Content
         http_response_code(204);
+    } elseif (isset($response['_file']) && is_array($response['_file'])) {
+        // A file download (an attribution export): the bytes, not JSON.
+        // The filename is built by the controller from fixed parts; it is
+        // still reduced to a safe set here because it reaches a header.
+        $file = $response['_file'];
+        $filename = preg_replace('/[^A-Za-z0-9._-]+/', '-', (string) ($file['filename'] ?? 'download')) ?? 'download';
+        http_response_code(200);
+        header('Content-Type: ' . (string) ($file['content_type'] ?? 'application/octet-stream'));
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Content-Length: ' . strlen((string) $file['body']));
+        header('Cache-Control: no-store');
+        echo (string) $file['body'];
     } else {
         $status = $response['_status'] ?? 200;
         unset($response['_status']);

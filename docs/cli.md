@@ -694,6 +694,35 @@ p202 attribution queue
 Each row has attributed conversions (Σ credit), attributed revenue, the
 dimension's own clicks and cost, ROI, and assisted conversions.
 
+### Exports
+
+```bash
+p202 attribution export create --group-by campaign --model 3 --period last30
+p202 attribution export create --group-by day --run-at 1790000000 \
+  --webhook-url https://hooks.example.com/p202
+p202 attribution export list --status failed
+p202 attribution export download 7 --output export.csv
+p202 attribution export retry 7
+p202 attribution export delete 7
+```
+
+An export writes every group of a breakdown to a CSV (the minutely cron runs
+it), downloadable, and optionally POSTs it to an https webhook signed with
+HMAC-SHA256 (`X-P202-Signature: sha256=<hex>` over `<X-P202-Timestamp>.<body>`).
+The create response carries `webhook_secret` once. Webhooks go only to public
+addresses (every resolved address is checked, the connection is pinned to it,
+redirects are not followed); a refused URL is a validation error naming the
+address.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--group-by` | campaign | A breakdown dimension |
+| `--model`, `--compare-model` | the default model | Model ids |
+| `--period`, `--time-from/--time-to` | last 30 days | As for `breakdown` |
+| `--run-at` | now | Unix seconds |
+| `--webhook-url`, `--webhook-secret` | none, generated | https only |
+| `--output` / `-O` (download) | stdout | Write the CSV to a file |
+
 ## Users
 
 ### List and manage users

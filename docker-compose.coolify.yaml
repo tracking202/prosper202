@@ -47,10 +47,11 @@ x-app-environment: &app-environment
   P202_GEO_DIR: /var/lib/prosper202/geo
 
 x-app-volumes: &app-volumes
-  # Shared between web and attribution-cron: reserved for attribution export
-  # files, which the export worker writes and web serves (the export pipeline
-  # is rebuilt with the attribution dashboard); both must survive redeploys of
-  # the (otherwise immutable) app containers.
+  # Shared between web and attribution-cron: attribution export files, which
+  # the export runner (202-cronjobs/attribution-exports.php, or the web's own
+  # minutely cron) writes and web serves through the authenticated download
+  # endpoints (Prosper202\Attribution\ExportFiles); both must survive
+  # redeploys of the (otherwise immutable) app containers.
   - attribution_exports:/var/www/html/202-config/temp/attribution-exports
   # Shared: the API (web) enqueues sync jobs, the sync worker processes them.
   - api_state:/var/lib/prosper202/api-v3-state
@@ -175,6 +176,7 @@ services:
         last_hourly=0
         while true; do
           php 202-cronjobs/attribution-worker.php || true
+          php 202-cronjobs/attribution-exports.php || true
           php 202-cronjobs/sync-worker.php || true
           now=$$(date +%s)
           if [ $$((now - last_hourly)) -ge 3600 ]; then

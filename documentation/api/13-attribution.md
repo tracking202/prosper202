@@ -23,6 +23,12 @@ on top of the key's `attribution:read` / `attribution:write` scope.
 | `GET` | `/attribution/reports/journeys` | Journey length, time to convert, one-touch share by browser |
 | `GET` | `/attribution/conversions/{id}/journey` | One conversion's touches, the signals that linked them, every model's credit |
 | `GET` | `/attribution/queue` | The worker's backlog: waiting, failing (with the error), and why each row was queued |
+| `GET` | `/attribution/exports` | Export jobs, newest first (`?status=`, `?limit=`) |
+| `GET` | `/attribution/exports/{id}` | One export job |
+| `POST` | `/attribution/exports` | Queue an export: a breakdown written to CSV, now or at `run_at`, optionally to a webhook (honors `Idempotency-Key`; supports `?staged=1`) |
+| `GET` | `/attribution/exports/{id}/download` | The export's CSV (`text/csv`) |
+| `POST` | `/attribution/exports/{id}/retry` | Queue a failed export again |
+| `DELETE` | `/attribution/exports/{id}` | Delete an export and its file (`?dry_run=1` previews); not while it runs |
 
 ## Models
 
@@ -97,6 +103,63 @@ credited range is the conversions' `conv_time`; the cost range is the clicks'
 `click_time`. `totals.attributed_revenue` is the counted value of the
 conversions in range, the same under every model.
 
+## Exports
+
+An export is a job the export runner (`202-cronjobs/attribution-exports.php`,
+also run by the minutely cron) picks up once its `run_at` has come: it builds
+the breakdown the job names — every group, no row limit; more than 50,000
+groups fails the job with the reason rather than cutting it — writes it as
+CSV, and, when the job has a `webhook_url`, POSTs the file there. Creating,
+reading, retrying and deleting exports needs `view_attribution_reports`.
+
+| Field | Default | |
+| ----- | ------- | - |
+| `group_by` | `campaign` | A breakdown dimension |
+| `model_id` | the account default | Stored as the id, so the job reads a fixed model |
+| `compare_model_id` | none | Adds `compare_*` columns |
+| `period` or `time_from`/`time_to` | the last 30 days | As in the breakdown; times are JSON numbers |
+| `run_at` | now | Unix seconds, at most a year ahead |
+| `webhook_url` | none | See below |
+| `webhook_secret` | generated | 16–255 printable characters; returned once, in the create response |
+
+The CSV's columns are the breakdown row's: `key, name, clicks, cost,
+attributed_conversions, attributed_revenue, roi, assisted_conversions` (and
+`compare_attributed_conversions, compare_attributed_revenue, compare_roi`).
+Money and credit are exact decimals. A text cell starting with `=`, `+`, `-`
+or `@` gets a leading apostrophe, because keywords and c1–c4 come from click
+URLs anyone can write.
+
+**Webhooks.** The URL must be `https://host[:port][/path]`, spelled plainly
+(no user name, fragment or backslash). The host is resolved and every
+address it resolves to must be public: private, loopback, link-local (where
+cloud metadata answers), carrier-grade NAT, documentation, benchmarking,
+multicast and reserved ranges are refused, IPv6 unique-local and link-local
+too, and an IPv4 address carried inside IPv6 (`::ffff:10.0.0.1`,
+`64:ff9b::a9fe:a9fe`) is judged as the IPv4 address. Other spellings of an
+address (`2130706433`, `0x7f.1`, `0177.0.0.1`) are refused by name. The check
+runs when the export is saved (a 422 on `webhook_url`) and again when it is
+sent; the connection goes to the address that passed, with the host pinned,
+TLS verified against the host name, no proxy and no redirects. An operator
+whose receiver is on their own network can allow that network with
+`define('P202_WEBHOOK_ALLOW_NETWORKS', '10.20.0.0/16');` in `202-config.php`;
+link-local and the metadata endpoints can never be allowed, and an entry that
+does not parse stops every webhook until it is fixed.
+
+Each delivery carries `X-P202-Export-Id`, `X-P202-Delivery-Attempt`,
+`X-P202-Timestamp` and `X-P202-Signature: sha256=<hex>`, the HMAC-SHA256 of
+`<timestamp>.<body>` under the export's secret. Verify it with a constant-time
+comparison and refuse a timestamp more than a few minutes old. A 2xx answer
+completes the export; no connection, a timeout, 5xx, 408 or 429 is retried
+after one minute and then two (three runs in all); a redirect, another 4xx or
+a refused address fails the export at once. The file stays downloadable
+whatever the webhook did.
+
+```bash
+curl -H "Authorization: Bearer $KEY" -X POST "$URL/api/v3/attribution/exports" \
+  -d '{"group_by":"traffic_source","model_id":2,"period":"last7","webhook_url":"https://hooks.example.com/p202"}'
+curl -H "Authorization: Bearer $KEY" -o export.csv "$URL/api/v3/attribution/exports/7/download"
+```
+
 ## Examples
 
 ```bash
@@ -109,5 +172,6 @@ curl -H "Authorization: Bearer $KEY" "$URL/api/v3/attribution/conversions/1234/j
 ```
 
 The CLI equivalents are `p202 attribution model …`, `p202 attribution
-breakdown`, `p202 attribution journeys`, `p202 attribution journey <id>` and
-`p202 attribution queue`.
+breakdown`, `p202 attribution journeys`, `p202 attribution journey <id>`,
+`p202 attribution queue` and `p202 attribution export …`. The dashboard,
+Account › Attribution, reads and writes through the same controller.

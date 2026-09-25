@@ -412,7 +412,11 @@ async function chromeGeometry(ui) {
  * @param {{expect: import('./report').Expect}} ctx
  * @param {object} a  chromeGeometry() of the first page
  * @param {object} b  chromeGeometry() of the second page
- * @param {{label?: string, paint?: boolean}} [options]
+ * `options.labelsDiffer` names parts whose entries carry different words on
+ * the two pages (two families' strips): their width and x follow the words,
+ * so only their height, y, count, type and spacing are compared.
+ *
+ * @param {{label?: string, paint?: boolean, labelsDiffer?: string[]}} [options]
  */
 function chromeMatches(ctx, a, b, options = {}) {
   const { expect } = ctx;
@@ -432,8 +436,9 @@ function chromeMatches(ctx, a, b, options = {}) {
       const p = left[i];
       const q = right[i];
       const where = '[' + i + ' ' + JSON.stringify(p.text) + '] ';
-      const keys = ['w', 'h'];
-      if (!part.scrolls) { keys.push('x'); }
+      const wordsDiffer = (options.labelsDiffer || []).includes(part.sel);
+      const keys = wordsDiffer ? ['h'] : ['w', 'h'];
+      if (!part.scrolls && !wordsDiffer) { keys.push('x'); }
       if (!part.afterContent) { keys.push('y'); }
       keys.forEach((key) => {
         if (!near(p[key], q[key])) { diffs.push(where + key + ' ' + Math.round(p[key]) + ' vs ' + Math.round(q[key])); }
@@ -537,6 +542,7 @@ const ACCOUNT_PAGES = [
   { name: 'App key required', path: '/202-account/app-key-required.php', banned: ['big-alert'] },
   { name: '1-click upgrade', path: '/202-account/auto-upgrade.php' },
   { name: 'Premium upgrade', path: '/202-account/auto-upgrade-premium.php' },
+  { name: 'Attribution', path: '/202-account/attribution.php' },
 ];
 
 /** What every Account page was built on before U6: the classic grid and panels. */
@@ -670,3 +676,45 @@ async function overviewPageBaseline(ctx, entry, options = {}) {
 module.exports.OVERVIEW_FAMILY_PAGES = OVERVIEW_FAMILY_PAGES;
 module.exports.overviewReportDrawn = overviewReportDrawn;
 module.exports.overviewPageBaseline = overviewPageBaseline;
+
+/* PR 10: the attribution dashboard ---------------------------------------- */
+
+/**
+ * The views of Account › Attribution (202-account/attribution.php), one
+ * baseline entry each. `journey` needs a conversion id, which the caller's
+ * state carries (`state.conv`, '0' when the account has none); `ready` is an
+ * element the view always renders, so a view that fell back to another
+ * cannot pass for itself.
+ */
+const MTA_DASHBOARD_VIEWS = [
+  { view: 'report', ready: '#attribution-filters' },
+  { view: 'journeys', ready: '#journey-filters' },
+  { view: 'journey', ready: '#journey-summary', needsConversion: true },
+  { view: 'models', ready: '#model-list' },
+  { view: 'exports', ready: '#export-form' },
+];
+
+/**
+ * One dashboard view's baseline at whatever viewport and theme the session
+ * has: the header's Attribution entry current, then the v2 baseline (shell,
+ * no errors, styled components, spaces kept, no Bootstrap 3 class, tables
+ * scrolling in their own box), on the view the URL named.
+ */
+async function mtaDashboardBaseline(ctx, entry, state) {
+  const { app, ui, expect } = ctx;
+  if (entry.needsConversion && (!state || !state.conv || state.conv === '0')) {
+    expect.skip(entry.view, 'no attributed conversion to open');
+    return;
+  }
+  const query = entry.view === 'journey' ? 'view=journey&conv_id=' + state.conv : 'view=' + entry.view;
+  expect.section('Attribution ?' + query);
+  await app.goto('/202-account/attribution.php?' + query);
+  expect.ok(await ui.exists(entry.ready), 'the ' + entry.view + ' view rendered (' + entry.ready + ')');
+  // Account pages have no sub-menu strip; the header's own entry is the
+  // current-page marker.
+  expect.eq(await ui.attr('#AttributionPage', 'aria-current'), 'page', 'the header marks Attribution as the current page');
+  await v2PageBaseline(ctx);
+}
+
+module.exports.MTA_DASHBOARD_VIEWS = MTA_DASHBOARD_VIEWS;
+module.exports.mtaDashboardBaseline = mtaDashboardBaseline;

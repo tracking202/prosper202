@@ -1718,7 +1718,7 @@ JourneyLookbackTest, AttributionReportsIntegrationTest}`.
   PR 10's, so this PR has no export endpoint.
 - **The dashboard** (`202-account/attribution.php`) is a v2-shell page that
   says it is being rebuilt, lists the account's models and the worker's
-  backlog, and names the CLI and API reads. `tracking202/setup/attribution_models.php`
+  backlog, and names the CLI and API reads. (PR 10 replaced it: §6.6.) `tracking202/setup/attribution_models.php`
   (the old model editor) redirects there, and its Setup tab is gone. The
   Slim v2 app (`api/v2/app.php`, `index.php`, `.htaccess`) is deleted;
   `api/v2/categories` and `api/v2/reports` are the older key-based API,
@@ -1759,6 +1759,118 @@ MysqlConversionRepositoryTest, PositionBasedStrategyTest,
 TimeDecayStrategyTest, Support/RepositoryFakes}` and
 `tests/playwright/attribution-dashboard.spec.js` — each tested a class,
 page or endpoint that no longer exists; none was failing.
+
+### 6.6 As built (PR 10)
+
+PR 10 built the dashboard and the export pipeline §6.3 describes. The live
+pass is `tests/live/mta-ui.sh`, the browser pass
+`tests/browser/specs/mta-dashboard.spec.js`; the SSRF guard's tests are
+`tests/Attribution/{WebhookGuardTest, WebhookSenderTest}` and the pipeline's
+`tests/Attribution/AttributionExportsIntegrationTest`.
+
+**The dashboard.**
+
+- **It stays at `202-account/attribution.php`**, the URL PR 9 gave it and the
+  header's *Attribution* entry points at, rather than moving under Analyze
+  (`ui-standard.md`, migration step 2): its links, permissions and tests
+  already name it, and nothing on it depends on the Analyze filters.
+- **One code path.** Every read and write on the page calls
+  `Api\V3\Controllers\AttributionController`, the object the v3 routes call,
+  so the page enforces exactly the API's rules and permissions (error pattern
+  #5) and shows the API's sentences under the fields they name. Numbers the
+  API reads as JSON numbers are parsed strictly on the page first, so a typo
+  gets a field sentence rather than the API's "not a string" refusal.
+- **Views:** Report (breakdown, effective or chosen model, a comparison
+  model under *Advanced*, CSV of exactly what is shown), Journeys (length,
+  time to convert, the one-touch share by browser of §6.2 with its honest
+  limit said on the page, and the newest 25 conversions), Journey (one
+  conversion: touches, the signals that linked them, every model's share and
+  revenue per touch, each column summed exactly — integer units, not
+  floats — on the page), Models (add, edit, switch off/on, make default,
+  delete, each behind the session token; a role without
+  `manage_attribution_models` sees them read-only and its POST is refused)
+  and Exports.
+- **The window** is the classic calendar's: presets in the account's time
+  zone, whole days, `last7` meaning seven days before today's midnight
+  through today. The page sends explicit `time_from`/`time_to`; the API's own
+  `period` list is unchanged.
+- **The API grew two reads for it:** the breakdown's `meta.groups` (how many
+  groups there are, so a page of the top `limit` says what it left out) and
+  the journey metrics' `recent_conversions` (the drill-down's entry points).
+
+**Exports.**
+
+- **The schema is PR 9's, unchanged.** "Scheduled" is `queued_at` in the
+  future (`run_at` on the API); there is no recurring schedule, which would
+  need a schedule table and a rolling window. `model_id` is NOT NULL, so an
+  export names a model: the account default when none is given, stored as
+  its id so the job reads a fixed model (the effective mode is a report
+  view, not an export).
+- **Every group.** An export writes the whole breakdown; more than 50,000
+  groups fails the job with the reason instead of cutting it.
+- **The runner** (`202-cronjobs/attribution-exports.php`, and the minutely
+  cron) claims a job with a conditional UPDATE, so two runners never share
+  one; a job left `running` for 15 minutes by a runner that died is put back
+  (or failed after three attempts). A malformed job — an unknown dimension, a
+  model gone or switched off, a backwards range — fails alone with its reason.
+- **Retries:** no connection, a timeout, 5xx, 408 or 429 retries after one
+  minute and then two, three runs in all; a redirect, another 4xx, a refused
+  destination or a body over 5 MB fails at once. The file is kept and
+  downloadable whatever the webhook did; a retry rewrites it.
+- **Files** live in `202-config/temp/attribution-exports/` (the directory the
+  Coolify compose file already mounts) or `P202_EXPORT_DIR`: a deny-all
+  `.htaccess`, an empty `index.html`, and names with 128 random bits. The row
+  holds the name only, checked against its pattern before it touches the
+  disk, and downloads go through the authenticated endpoints. Deleting an
+  export, its model (as the model or the comparison) or its user removes the
+  file; export rows and files are otherwise kept until deleted.
+
+**Webhooks (§7.1).**
+
+- `https://host[:port][/path]` only, matched by a strict pattern rather than
+  `parse_url()`: no user info, fragment, backslash, whitespace or non-ASCII.
+  An IP literal must be a canonical dotted quad or bracketed IPv6; decimal,
+  hex, octal, short and zero-padded spellings are refused by name. A
+  single-label name and `.localhost`, `.local`, `.internal` are refused.
+- Every address the host resolves to (IPv4 through the C library, so
+  `/etc/hosts` counts; IPv6 from AAAA records) is checked against the IANA
+  not-globally-reachable ranges — this-network, private, CGNAT, loopback,
+  link-local, IETF, documentation, benchmarking, 6to4, multicast, reserved;
+  IPv6 outside global unicast, unique-local, site-local, discard, Teredo,
+  6to4 and documentation — plus the Alibaba, Oracle, Azure and AWS IPv6
+  metadata addresses. IPv4-mapped and NAT64 addresses are judged as the IPv4
+  they carry. One bad answer refuses the URL.
+- The check runs at save time (a field error) and again at send time; the
+  connection goes to the checked address with the host pinned
+  (`CURLOPT_RESOLVE`), the proxy disabled (an inherited `https_proxy` would
+  resolve the name itself), TLS verified against the host name, no redirects,
+  5 s to connect, 15 s in all, 64 KB of answer read. The address curl reports
+  having connected to is compared with the pinned one.
+- **The operator's allowlist:** `P202_WEBHOOK_ALLOW_NETWORKS` in
+  `202-config.php` (CIDRs) admits a receiver on the operator's own network.
+  It can never admit link-local, the metadata addresses, this-network,
+  multicast or reserved space, and an entry that does not parse stops every
+  webhook with the reason (error pattern #11). The live pass uses it for
+  `127.0.0.2` only, and asserts `127.0.0.1` stays refused.
+- **Signing:** `X-P202-Signature: sha256=<hex>` over
+  `<X-P202-Timestamp>.<body>`, with `X-P202-Export-Id` and
+  `X-P202-Delivery-Attempt`. The secret is per export, generated (64 hex
+  characters) or given (16–255 printable characters), returned once — in the
+  create response, and on the page in a panel shown on the next render only —
+  and stored as is, because the server signs with it.
+- **Permissions:** creating, retrying, deleting and downloading exports
+  needs `view_attribution_reports`, like the reports an export reads.
+
+**Surfaces.** REST v3 (`/attribution/exports`, `/{id}`, `/{id}/download`,
+`/{id}/retry`, DELETE with `dry_run`, staged writes), `docs/openapi.yaml`
+(checked field by field by `tests/Attribution/ExportSurfacesAgreeTest`), the
+Go CLI `p202 attribution export list|get|create|download|retry|delete` (the
+download refuses a body over 64 MB rather than truncating it, unlike the
+JSON reads), and the PHP CLI `attribution:export:*`.
+
+**Not done here:** recurring export schedules; a retention policy for old
+export jobs and files; agent-eval cases for MTA (PR 12's, §8); the report
+performance target at 1M conversions (measured in PR 12).
 
 ---
 
@@ -2059,7 +2171,7 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 | 7 | **Android SDK** (installs, events, customer id, integrity) | 5, 6 |
 | 8 | **iOS SDK:** header rename, `setCustomerId`, on-device goal evaluator on the shared vectors | 3, 4 |
 | 9 | **MTA engine:** schema rewrite and rungs, worker, models, credits, reports API; v2 and dead code deleted. **Built; `tests/live/mta-engine.sh`; decisions in §6.5.** | 1, 2 |
-| 10 | **MTA UI and exports:** dashboard on the v2 shell, comparison, journey metrics, SSRF-safe webhooks | 9 |
+| 10 | **MTA UI and exports:** dashboard on the v2 shell, comparison, journey metrics, SSRF-safe webhooks. **Built; `tests/live/mta-ui.sh` (and `mta-engine.sh` re-run), `tests/browser/specs/mta-dashboard.spec.js`; decisions in §6.6.** | 9 |
 | 11 | **Mobile Apps UI:** Android pages, link builder, goal editor and funnel, cross-platform report | 3–5 |
 | 12 | **Release gate:** upgrade-equals-install from a real 1.9.55 database, full live passes, agent-eval cases, docs and OpenAPI, and the whole-app browser pass on v2 | all, including U8 |
 

@@ -440,6 +440,19 @@ function RunSecondsCronjob()
                 error_log('Attribution worker failed: ' . $e->getMessage());
             }
 
+            // Attribution exports whose time has come (202-cronjobs/
+            // attribution-exports.php is the same run on its own). A job's
+            // failure is recorded on its row; only a database error lands
+            // here, and every job it did not reach is still pending.
+            try {
+                $exports = (new \Prosper202\Attribution\ExportRunner(new \Prosper202\Database\Connection($db)))->run(15);
+                if ($exports['completed'] + $exports['failed'] + $exports['retrying'] > 0) {
+                    echo 'Attribution exports: ' . (int) $exports['completed'] . ' completed, ' . (int) $exports['failed'] . ' failed<br>';
+                }
+            } catch (\Throwable $e) {
+                error_log('Attribution export runner failed: ' . $e->getMessage());
+            }
+
             echo 'Done<br>';
             ob_flush();
             flush();

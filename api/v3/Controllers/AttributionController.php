@@ -9,11 +9,15 @@ use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
 use Prosper202\Attribution\AttributionReports;
+use Prosper202\Attribution\ExportFiles;
+use Prosper202\Attribution\ExportStore;
 use Prosper202\Attribution\InvalidModelConfig;
 use Prosper202\Attribution\Model;
 use Prosper202\Attribution\ModelConfig;
 use Prosper202\Attribution\ModelRepository;
 use Prosper202\Attribution\ModelType;
+use Prosper202\Attribution\WebhookGuard;
+use Prosper202\Attribution\WebhookRefused;
 use Prosper202\Database\Connection;
 
 /**
@@ -190,8 +194,8 @@ class AttributionController
             [$this->userId, $id]
         );
         $exports = $this->count(
-            'SELECT COUNT(*) AS c FROM 202_attribution_exports WHERE user_id = ? AND model_id = ?',
-            [$this->userId, $id]
+            'SELECT COUNT(*) AS c FROM 202_attribution_exports WHERE user_id = ? AND (model_id = ? OR compare_model_id = ?)',
+            [$this->userId, $id, $id]
         );
 
         return ['data' => [
@@ -213,7 +217,8 @@ class AttributionController
 
     public function deleteModel(int $id): void
     {
-        $this->conn->transaction(function () use ($id): void {
+        $files = [];
+        $this->conn->transaction(function () use ($id, &$files): void {
             $row = $this->models->row($this->userId, $id, true);
             if ($row === null) {
                 throw new NotFoundException('Attribution model not found');
@@ -224,9 +229,12 @@ class AttributionController
                     ['model_id' => $id]
                 );
             }
+            $files = (new ExportStore($this->conn))->fileNames($this->userId, $id);
             $this->models->delete($this->userId, $id);
             $this->audit($id, 'model_deleted', ['model_type' => (string) $row['model_type']]);
         });
+        // After the commit: a rolled-back delete must not lose its files.
+        $this->removeFiles($files);
     }
 
     // --- Reports ---
@@ -280,6 +288,10 @@ class AttributionController
                 'group_by' => $groupBy,
                 'time_from' => $from,
                 'time_to' => $to,
+                // How many groups the report has; more than `limit` means
+                // the rows above are the top `limit` by attributed revenue.
+                'groups' => $result['groups'],
+                'limit' => $limit,
                 'model' => $model !== null ? self::present($model) : [
                     'mode' => 'effective',
                     'description' => "Each conversion under its campaign's model override when that model is active, otherwise the account default.",
@@ -326,6 +338,313 @@ class AttributionController
         $limit = self::positiveInt($params, 'limit') ?? 50;
 
         return ['data' => (new AttributionReports($this->conn))->queue($this->userId, min(500, $limit))];
+    }
+
+    // --- Exports ---
+
+    /** How far ahead an export may be scheduled. */
+    public const MAX_SCHEDULE_AHEAD = 366 * 86400;
+
+    /**
+     * GET /attribution/exports
+     */
+    public function listExports(array $params): array
+    {
+        self::rejectUnknown($params, ['status', 'limit']);
+        $status = isset($params['status']) && $params['status'] !== '' ? (string) $params['status'] : null;
+        if ($status !== null && !in_array($status, ExportStore::STATUSES, true)) {
+            throw new ValidationException('Invalid status', ['status' => 'Valid: ' . implode(', ', ExportStore::STATUSES)]);
+        }
+        $limit = self::positiveInt($params, 'limit') ?? 50;
+        if ($limit > 200) {
+            throw new ValidationException('limit too large', ['limit' => 'At most 200']);
+        }
+
+        return ['data' => array_map([self::class, 'presentExport'], (new ExportStore($this->conn))->rows($this->userId, $status, $limit))];
+    }
+
+    /**
+     * GET /attribution/exports/{id}
+     */
+    public function getExport(int $id): array
+    {
+        return ['data' => self::presentExport($this->requireExportRow($id))];
+    }
+
+    /**
+     * POST /attribution/exports
+     *
+     * Fields: group_by (default campaign), model_id (default: the account
+     * default, stored as its id so the job reads a fixed model),
+     * compare_model_id, time_from/time_to or period (default the last 30
+     * days), run_at (unix seconds; default now), webhook_url and
+     * webhook_secret (generated when a webhook is given without one). Every
+     * number is a JSON number, read as sent (CLAUDE.md error pattern #18).
+     */
+    public function createExport(array $payload): array
+    {
+        $known = ['group_by', 'model_id', 'compare_model_id', 'time_from', 'time_to', 'period', 'run_at', 'webhook_url', 'webhook_secret'];
+        $unknown = array_diff(array_keys($payload), $known);
+        if ($unknown !== []) {
+            throw new ValidationException(
+                'Unknown field(s): ' . implode(', ', $unknown),
+                array_fill_keys(array_values($unknown), 'Not an export field; valid: ' . implode(', ', $known))
+            );
+        }
+
+        $groupBy = $payload['group_by'] ?? 'campaign';
+        if (!is_string($groupBy) || !in_array($groupBy, AttributionReports::dimensions(), true)) {
+            throw new ValidationException('Invalid group_by', ['group_by' => 'Valid: ' . implode(', ', AttributionReports::dimensions())]);
+        }
+
+        $rangeParams = [];
+        foreach (['time_from', 'time_to', 'period'] as $field) {
+            if (!array_key_exists($field, $payload)) {
+                continue;
+            }
+            $value = $payload[$field];
+            if ($field === 'period' ? !is_string($value) : (!is_int($value) || $value < 0)) {
+                throw new ValidationException('Invalid ' . $field, [$field => $field === 'period' ? 'One of: ' . implode(', ', self::PERIODS) : 'Unix time in seconds, as a JSON number']);
+            }
+            $rangeParams[$field] = (string) $value;
+        }
+        [$from, $to] = self::range($rangeParams);
+
+        $default = $this->models->defaultRow($this->userId);
+        if ($default === null) {
+            throw new ConflictException('This account has no default attribution model; create one with is_default: true.');
+        }
+        $modelId = self::bodyId($payload, 'model_id') ?? (int) $default['model_id'];
+        $this->reportableModel($modelId, 'model_id');
+        $compareId = self::bodyId($payload, 'compare_model_id');
+        if ($compareId !== null) {
+            if ($compareId === $modelId) {
+                throw new ValidationException('compare_model_id must differ from model_id', ['compare_model_id' => 'Pick a different model to compare against']);
+            }
+            $this->reportableModel($compareId, 'compare_model_id');
+        }
+
+        $now = time();
+        $runAt = $now;
+        if (array_key_exists('run_at', $payload) && $payload['run_at'] !== null) {
+            if (!is_int($payload['run_at']) || $payload['run_at'] < 0) {
+                throw new ValidationException('Invalid run_at', ['run_at' => 'Unix time in seconds, as a JSON number']);
+            }
+            if ($payload['run_at'] > $now + self::MAX_SCHEDULE_AHEAD) {
+                throw new ValidationException('run_at too far ahead', ['run_at' => 'At most a year from now']);
+            }
+            // A time already past means "as soon as possible", not an error.
+            $runAt = max($now, $payload['run_at']);
+        }
+
+        [$webhookUrl, $secret] = self::webhook($payload);
+
+        $id = (new ExportStore($this->conn))->insert($this->userId, $modelId, $compareId, $groupBy, $from, $to, $webhookUrl, $secret, $runAt);
+
+        try {
+            $this->audit($modelId, 'export_created', ['export_id' => $id, 'group_by' => $groupBy, 'webhook' => $webhookUrl !== null]);
+            $out = $this->getExport($id);
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException('attribution export', $e);
+        }
+        if ($secret !== null) {
+            // The only time the secret is returned: the receiver needs it to
+            // check the signature, and no later read shows it again.
+            $out['data']['webhook_secret'] = $secret;
+        }
+
+        return $out;
+    }
+
+    /**
+     * GET /attribution/exports/{id}/download — the file, as text/csv.
+     *
+     * @return array{_file: array{body: string, filename: string, content_type: string}}
+     */
+    public function downloadExport(int $id): array
+    {
+        $row = $this->requireExportRow($id);
+        $name = $row['file_path'] !== null ? (string) $row['file_path'] : '';
+        if ($name === '') {
+            throw new ConflictException(
+                'Export ' . $id . ' has no file yet (status ' . $row['status'] . '); it is written when the export runs.',
+                ['export_id' => $id, 'status' => $row['status']]
+            );
+        }
+        try {
+            $body = (new ExportFiles())->read($name);
+        } catch (\RuntimeException $e) {
+            // A corrupt name (UnexpectedValueException) or an unreadable file.
+            throw new ConflictException('Export ' . $id . ': ' . $e->getMessage(), ['export_id' => $id]);
+        }
+        if ($body === null) {
+            throw new ConflictException(
+                'The file for export ' . $id . ' is no longer on disk; retry the export to write it again.',
+                ['export_id' => $id]
+            );
+        }
+
+        return ['_file' => [
+            'body' => $body,
+            'filename' => 'attribution-' . preg_replace('/[^a-z0-9_]/', '', (string) $row['group_by']) . '-export-' . $id . '.csv',
+            'content_type' => 'text/csv; charset=utf-8',
+        ]];
+    }
+
+    /**
+     * POST /attribution/exports/{id}/retry — a failed export, queued again.
+     */
+    public function retryExport(int $id): array
+    {
+        $row = $this->requireExportRow($id);
+        if (!(new ExportStore($this->conn))->retry($this->userId, $id)) {
+            throw new ConflictException(
+                'Only a failed export can be retried; export ' . $id . ' is ' . $row['status'] . '.',
+                ['export_id' => $id, 'status' => $row['status']]
+            );
+        }
+
+        return $this->getExport($id);
+    }
+
+    public function deleteExportPreview(int $id): array
+    {
+        $row = $this->requireExportRow($id);
+
+        return ['data' => [
+            'dry_run' => true,
+            'action' => 'delete',
+            'resource' => 'attribution-exports',
+            'mode' => 'hard',
+            'record' => self::presentExport($row),
+            'refused' => $row['status'] === 'running' ? 'The export is running; delete it once it has finished.' : null,
+            'cascade' => [
+                ['resource' => 'export-files', 'count' => $row['file_path'] !== null ? 1 : 0],
+            ],
+        ]];
+    }
+
+    /**
+     * DELETE /attribution/exports/{id} — the row and its file.
+     */
+    public function deleteExport(int $id): void
+    {
+        $row = $this->requireExportRow($id);
+        if (!(new ExportStore($this->conn))->delete($this->userId, $id)) {
+            throw new ConflictException(
+                'Export ' . $id . ' is running and cannot be deleted until it has finished; try again in a minute.',
+                ['export_id' => $id, 'status' => 'running']
+            );
+        }
+        $this->removeFiles($row['file_path'] !== null ? [(string) $row['file_path']] : []);
+    }
+
+    /** @return array<string, mixed> */
+    private function requireExportRow(int $id): array
+    {
+        $row = (new ExportStore($this->conn))->row($this->userId, $id);
+        if ($row === null) {
+            throw new NotFoundException('Attribution export not found');
+        }
+
+        return $row;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    public static function presentExport(array $row): array
+    {
+        $hasFile = $row['file_path'] !== null && $row['file_path'] !== '';
+
+        return [
+            'export_id' => (int) $row['export_id'],
+            'model_id' => (int) $row['model_id'],
+            'compare_model_id' => $row['compare_model_id'] !== null ? (int) $row['compare_model_id'] : null,
+            'group_by' => (string) $row['group_by'],
+            'time_from' => (int) $row['range_start'],
+            'time_to' => (int) $row['range_end'],
+            'status' => (string) $row['status'],
+            'rows_exported' => $row['rows_exported'] !== null ? (int) $row['rows_exported'] : null,
+            'file_ready' => $hasFile,
+            'download_path' => $hasFile ? '/attribution/exports/' . (int) $row['export_id'] . '/download' : null,
+            'webhook_url' => $row['webhook_url'],
+            'webhook_signed' => $row['webhook_url'] !== null && (string) $row['webhook_secret'] !== '',
+            'webhook_status_code' => $row['webhook_status_code'] !== null ? (int) $row['webhook_status_code'] : null,
+            'attempts' => (int) $row['attempts'],
+            'last_error' => $row['last_error'],
+            'run_at' => (int) $row['queued_at'],
+            'started_at' => $row['started_at'] !== null ? (int) $row['started_at'] : null,
+            'completed_at' => $row['completed_at'] !== null ? (int) $row['completed_at'] : null,
+            'created_at' => (int) $row['created_at'],
+        ];
+    }
+
+    /**
+     * The webhook URL, checked now so the person saving it is told (the
+     * sender checks again at send time), and its signing secret.
+     *
+     * @return array{0: string|null, 1: string|null}
+     */
+    private static function webhook(array $payload): array
+    {
+        $url = $payload['webhook_url'] ?? null;
+        $secret = $payload['webhook_secret'] ?? null;
+        if ($url === null || $url === '') {
+            if ($secret !== null && $secret !== '') {
+                throw new ValidationException('webhook_secret without webhook_url', ['webhook_secret' => 'A secret signs webhook deliveries; send webhook_url with it, or leave both out']);
+            }
+
+            return [null, null];
+        }
+        if (!is_string($url)) {
+            throw new ValidationException('Invalid webhook_url', ['webhook_url' => 'An https:// URL, as a string']);
+        }
+        try {
+            (new WebhookGuard())->check($url);
+        } catch (WebhookRefused $e) {
+            throw new ValidationException('webhook_url refused', ['webhook_url' => $e->getMessage()]);
+        } catch (\UnexpectedValueException $e) {
+            throw new ValidationException('Webhooks are unavailable on this server', ['webhook_url' => $e->getMessage()]);
+        }
+
+        if ($secret === null || $secret === '') {
+            return [$url, bin2hex(random_bytes(32))];
+        }
+        if (!is_string($secret) || preg_match('/^[\x21-\x7E]{16,255}$/D', $secret) !== 1) {
+            throw new ValidationException('Invalid webhook_secret', ['webhook_secret' => '16 to 255 printable ASCII characters, no spaces; or leave it out and one is generated']);
+        }
+
+        return [$url, $secret];
+    }
+
+    /** A positive id in a JSON body: a JSON number, nothing else. */
+    private static function bodyId(array $payload, string $field): ?int
+    {
+        if (!array_key_exists($field, $payload) || $payload[$field] === null) {
+            return null;
+        }
+        if (!is_int($payload[$field]) || $payload[$field] < 1) {
+            throw new ValidationException('Invalid ' . $field, [$field => 'A positive whole number, as a JSON number; list models with GET /attribution/models']);
+        }
+
+        return $payload[$field];
+    }
+
+    /** @param list<string> $names */
+    private function removeFiles(array $names): void
+    {
+        $files = new ExportFiles();
+        foreach ($names as $name) {
+            try {
+                if (!$files->remove($name)) {
+                    error_log('p202 attribution: export file ' . $name . ' could not be removed');
+                }
+            } catch (\UnexpectedValueException $e) {
+                error_log('p202 attribution: ' . $e->getMessage());
+            }
+        }
     }
 
     // --- Helpers ---

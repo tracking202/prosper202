@@ -31,16 +31,16 @@ const path = require('path');
 const checks = require('../lib/checks');
 
 const PAIRS = [
-  // The Analyze pair went with U3: every Analyze page is on v2 now, so the
-  // family has no classic page to hold the strip against. The strip shape
-  // comes back when a family that uses it (Overview, Update) has a page on
-  // each shell; until then the Setup grid and the account pair are measured.
-  // Attribution Models is the one Setup page U4 left classic (the MTA rewrite
-  // replaces it); every other Setup page is on v2 now.
-  { name: 'setup', classic: '/tracking202/setup/attribution_models.php', v2: '/tracking202/setup/mobile_apps.php' },
-  // U6 moved help.php to v2; the attribution dashboard is the Account page
-  // that stays classic until the MTA rewrite replaces it.
-  { name: 'account', classic: '/202-account/attribution.php', v2: '/202-account/help.php' },
+  // The Analyze pair went with U3, and the Setup and Account pairs with the
+  // MTA rewrite: their classic pages were the old attribution model editor
+  // (now a redirect to the dashboard) and the attribution dashboard (rebuilt
+  // on v2 in PR 10), so neither family has a classic page left. The report
+  // strip is what is left to hold across shells: Update is still classic and
+  // Overview is v2, and both draw the one strip (tracking202/_config/
+  // sub-menu.php) under the same section tabs.
+  // The two strips name different pages, so their entries' widths follow
+  // their words; everything else about them is held equal.
+  { name: 'strip', classic: '/tracking202/update/subids.php', v2: '/tracking202/overview/', labelsDiffer: ['.p202c-strip__list > li > a'] },
 ];
 
 const WIDTHS = [1280, 390];
@@ -83,6 +83,7 @@ function scenariosFor(scheme) {
           checks.chromeMatches({ expect }, measured.classic, measured.v2, {
             label: pair.name,
             paint: scheme === 'light',
+            labelsDiffer: pair.labelsDiffer || [],
           });
         }
       });

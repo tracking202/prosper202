@@ -58,5 +58,43 @@ The breakdown's revenue under every model adds up to the same total — the
 value of the conversions in the range; models differ in *where* it lands.
 Cost is each dimension's own click cost, so ROI per source is real.
 
-The Attribution page in the account menu lists your models and the worker's
-backlog; its charts are being rebuilt.
+## 5. The Attribution page
+
+**Attribution** in the header opens the same reports without a terminal:
+
+- **Report** — the breakdown by any dimension, under the effective model or
+  one you choose, with a second model side by side under *Advanced*, and a
+  CSV of exactly what is on screen.
+- **Journeys** — journey length, time to convert, and the share of one-touch
+  journeys by browser: Safari and Chrome with third-party cookies blocked
+  clear a redirect domain's cookie, so their journeys are undercounted, and
+  this is where you see by how much. The newest conversions open to their
+  journey: each touch, the signal that linked it, and every model's credit,
+  each column summing to the whole conversion.
+- **Models** — add, edit, switch off, make default, delete; the same rules as
+  the API (the default must stay active and cannot be deleted).
+- **Exports** — every group of a breakdown as a CSV, now or at a time you
+  choose, optionally sent to your server as a signed POST.
+
+## 6. Exports and webhooks
+
+```bash
+p202 attribution export create --group-by traffic_source --period last7 --webhook-url https://hooks.example.com/p202
+p202 attribution export download 7 --output last7.csv
+```
+
+The minutely cron runs due exports (or `202-cronjobs/attribution-exports.php`
+on its own). A webhook must be `https` on a public address; the server checks
+every address the name resolves to, connects only to the one it checked, and
+never follows a redirect. Verify each delivery: `X-P202-Signature` is
+`sha256=` and the HMAC-SHA256 of `X-P202-Timestamp`, a dot and the body,
+under the secret shown once when you created the export. If your receiver is
+on your own network, allow that network in `202-config.php`:
+
+```php
+define('P202_WEBHOOK_ALLOW_NETWORKS', '10.20.0.0/16');
+```
+
+Export files are kept under `202-config/temp/attribution-exports/` (set
+`P202_EXPORT_DIR` to keep them outside the web root) until you delete the
+export.

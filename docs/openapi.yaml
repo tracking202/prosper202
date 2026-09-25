@@ -1838,6 +1838,163 @@ paths:
                   data:
                     $ref: "#/components/schemas/AttributionQueue"
 
+  /attribution/exports:
+    get:
+      tags: [Attribution]
+      summary: List attribution exports
+      description: The account's export jobs, newest first. Needs view_attribution_reports.
+      operationId: listAttributionExports
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, running, completed, failed]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: Export jobs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AttributionExport"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    post:
+      tags: [Attribution]
+      summary: Queue an attribution export
+      description: >-
+        Queues a breakdown to be written as CSV by the export runner (the
+        minutely cron), now or at run_at, with every group (no row limit; more
+        than 50,000 groups fails the job with the reason). With webhook_url,
+        the runner also POSTs the file there, signed: X-P202-Signature is
+        sha256=<hex HMAC-SHA256 of "<X-P202-Timestamp>.<body>"> under the
+        export's secret, which this response carries once. Webhook URLs must
+        be https and every address the host resolves to must be public
+        (private, loopback, link-local, metadata, documentation, multicast and
+        reserved ranges are refused, IPv4 carried in IPv6 included); the
+        check runs here and again at send time, the connection is pinned to
+        the checked address, and redirects are not followed. Ids and times
+        are JSON numbers; a string is refused, not cast. Needs
+        view_attribution_reports. Honors `Idempotency-Key`.
+      operationId: createAttributionExport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttributionExportInput"
+      responses:
+        "201":
+          description: Queued. data.webhook_secret is present only here, only when the export has a webhook.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AttributionExport"
+        "409":
+          description: The model named is inactive or invalid, or the account has no default model.
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /attribution/exports/{id}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Attribution]
+      summary: Get an attribution export
+      operationId: getAttributionExport
+      responses:
+        "200":
+          description: The export job
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AttributionExport"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
+      tags: [Attribution]
+      summary: Delete an attribution export and its file
+      description: Refused (409) while the export is running.
+      operationId: deleteAttributionExport
+      responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
+        "204":
+          description: Export and file deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The export is running.
+
+  /attribution/exports/{id}/download:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Attribution]
+      summary: Download an export's CSV
+      description: >-
+        The file the runner wrote: key, name, clicks, cost,
+        attributed_conversions, attributed_revenue, roi, assisted_conversions,
+        and compare_attributed_conversions, compare_attributed_revenue,
+        compare_roi with a comparison model. Money and credit are exact
+        decimals; a text cell starting with =, +, - or @ is prefixed with an
+        apostrophe so a spreadsheet does not run it.
+      operationId: downloadAttributionExport
+      responses:
+        "200":
+          description: The CSV
+          content:
+            text/csv:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: No file yet (the export has not run), or the file is no longer on disk.
+
+  /attribution/exports/{id}/retry:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    post:
+      tags: [Attribution]
+      summary: Queue a failed export again
+      description: Resets its attempts; only a failed export can be retried (409 otherwise).
+      operationId: retryAttributionExport
+      responses:
+        "200":
+          description: Queued again
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AttributionExport"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The export is not failed.
+
   # ─── Users ───────────────────────────────────────────────────────────
 
   /users:
@@ -4516,6 +4673,100 @@ components:
             compare_model:
               type: object
               nullable: true
+            groups:
+              type: integer
+              description: How many groups the report has; more than limit means data holds the top `limit` by attributed revenue.
+            limit:
+              type: integer
+
+    AttributionExportInput:
+      type: object
+      additionalProperties: false
+      properties:
+        group_by:
+          $ref: "#/components/schemas/AttributionDimension"
+        model_id:
+          type: integer
+          minimum: 1
+          description: Default the account default model, stored as its id so the job reads a fixed model.
+        compare_model_id:
+          type: integer
+          minimum: 1
+        period:
+          type: string
+          enum: [today, yesterday, last7, last30, last90]
+        time_from:
+          type: integer
+          description: Unix seconds; with time_to, instead of period. Default the last 30 days.
+        time_to:
+          type: integer
+        run_at:
+          type: integer
+          description: Unix seconds, at most a year ahead; a past time means as soon as possible. Default now.
+        webhook_url:
+          type: string
+          maxLength: 500
+          description: https://host[:port][/path], spelled plainly (no user info, fragment or backslash); the host a DNS name or a canonical IP address that is public.
+        webhook_secret:
+          type: string
+          minLength: 16
+          maxLength: 255
+          description: Printable ASCII, no spaces. Generated (64 hex characters) when a webhook is given without one.
+
+    AttributionExport:
+      type: object
+      properties:
+        export_id:
+          type: integer
+        model_id:
+          type: integer
+        compare_model_id:
+          type: integer
+          nullable: true
+        group_by:
+          type: string
+        time_from:
+          type: integer
+        time_to:
+          type: integer
+        status:
+          type: string
+          enum: [pending, running, completed, failed]
+        rows_exported:
+          type: integer
+          nullable: true
+        file_ready:
+          type: boolean
+        download_path:
+          type: string
+          nullable: true
+        webhook_url:
+          type: string
+          nullable: true
+        webhook_signed:
+          type: boolean
+        webhook_secret:
+          type: string
+          description: Only in the create response.
+        webhook_status_code:
+          type: integer
+          nullable: true
+        attempts:
+          type: integer
+          description: Runs so far; a retryable webhook failure (no connection, timeout, 5xx, 408, 429) is retried after 1 and then 2 minutes, 3 runs in all.
+        last_error:
+          type: string
+          nullable: true
+        run_at:
+          type: integer
+        started_at:
+          type: integer
+          nullable: true
+        completed_at:
+          type: integer
+          nullable: true
+        created_at:
+          type: integer
 
     AttributionJourneyMetrics:
       type: object
@@ -4560,6 +4811,27 @@ components:
                 type: integer
               one_touch_share:
                 type: number
+        recent_conversions:
+          type: array
+          description: The newest 25 attributed conversions in range, the entry points of a journey drill-down.
+          items:
+            type: object
+            properties:
+              conv_id:
+                type: integer
+              conv_time:
+                type: integer
+              touches:
+                type: integer
+              identified:
+                type: boolean
+              truncated:
+                type: boolean
+              amount:
+                type: string
+              campaign_name:
+                type: string
+                nullable: true
 
     AttributionConversionJourney:
       type: object
