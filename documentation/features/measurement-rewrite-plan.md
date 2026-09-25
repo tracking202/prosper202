@@ -1410,11 +1410,15 @@ labelled as such.
   `setCustomerId()`, a person on two devices is two visitors.
 - **Consent is one switch.** `p202_consent=0` on a tracking URL, or
   `p202.consent(false)` on a landing page (remembered in its storage, and
-  sent on the beacon and on every link into the tracker), or a campaign's
-  `identity_signals = 0`, captures nothing: no cookie is set or read, the LP
-  id is deleted, and the click is a one-touch journey. The identity
-  parameters (`p202lpid`, `cust_sig`, `p202_consent`) never ride the redirect
-  to the offer.
+  sent on the beacon and on every link into the tracker; the beacon waits
+  for the page's scripts, and `window.p202 = {consent: false}` set before the
+  snippet counts), or a campaign's `identity_signals = 0` (which its landing
+  pages honour too: no LP id is read, minted or sent), captures nothing: no
+  cookie is set or read, and the click is a one-touch journey. No identity
+  parameter rides the redirect to an offer (`p202lpid`, `cust` and
+  `customer_ref` with their types, `cust_sig`, `p202_consent`); the customer
+  id, its signature and the refusal do reach the operator's own landing page
+  when a redirector sends the visitor there, for `landing.php`.
 - **A cross-site LP beacon mints nothing.** When the LP and the tracker are
   different sites (`Sec-Fetch-Site: cross-site`) the browser neither sends
   nor keeps the tracker's cookie on the beacon, so the beacon links by
