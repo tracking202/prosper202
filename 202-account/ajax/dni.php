@@ -15,6 +15,13 @@ if (isset($_GET['getProgress'])) {
 }
 
 if (isset($_GET['updateStatus'])) {
+	// A write, so it carries the session token like every other Account
+	// write: the API integrations page posts it, and the classic shell's
+	// jQuery prefilter adds it to same-origin posts.
+	if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !AUTH::check_csrf_token()) {
+		http_response_code(403);
+		die('Invalid token.');
+	}
 	$mysql['dni'] = $db->real_escape_string((string)$_GET['dni']);
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$sql = "UPDATE 202_dni_networks SET processed = '1' WHERE id = '".$mysql['dni']."' AND user_id = '".$mysql['user_id']."'";

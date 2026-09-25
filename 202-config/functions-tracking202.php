@@ -3710,7 +3710,13 @@ function getData($url, int $timeout = 60, int $connectTimeout = 5)
     }
 }
 
-function showHelp($page)
+/**
+ * The help article for a page, or '' when there is none.
+ *
+ * showHelp() prints it as the classic shell's help button; a v2 page renders
+ * its own link from this URL rather than that Bootstrap 3 markup.
+ */
+function showHelpUrl(string $page): string
 {
     $url = '';
     switch ($page) {
@@ -3781,8 +3787,14 @@ function showHelp($page)
             break;
     }
 
+    return $url === '' ? '' : $url . 'helpdocs';
+}
+
+function showHelp($page)
+{
+    $url = showHelpUrl((string) $page);
     if ($url !== '') {
-        echo '<a href="' . $url . 'helpdocs" class="btn btn-info btn-xs" target="_blank"><span class="glyphicon glyphicon-question-sign" aria-hidden="true" title="Get Help"></span></a>';
+        echo '<a href="' . $url . '" class="btn btn-info btn-xs" target="_blank"><span class="glyphicon glyphicon-question-sign" aria-hidden="true" title="Get Help"></span></a>';
     }
 }
 

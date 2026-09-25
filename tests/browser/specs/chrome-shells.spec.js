@@ -32,7 +32,9 @@ const checks = require('../lib/checks');
 const PAIRS = [
   { name: 'analyze', classic: '/tracking202/analyze/keywords.php', v2: '/tracking202/analyze/mobile_apps.php' },
   { name: 'setup', classic: '/tracking202/setup/aff_networks.php', v2: '/tracking202/setup/mobile_apps.php' },
-  { name: 'account', classic: '/202-account/help.php', v2: '/202-account/ui-kit.php' },
+  // U6 moved help.php to v2; the attribution dashboard is the Account page
+  // that stays classic until the MTA rewrite replaces it.
+  { name: 'account', classic: '/202-account/attribution.php', v2: '/202-account/help.php' },
 ];
 
 const WIDTHS = [1280, 390];
