@@ -640,7 +640,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                                         <option
                                             value="<?php echo ReportBasicForm::DETAIL_LEVEL_NONE; ?>"
                                             <?php echo $html['user_pref_group_1'] == ReportBasicForm::DETAIL_LEVEL_NONE ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById(ReportBasicForm::DETAIL_LEVEL_NONE); ?></option>
-                                        <?php foreach (ReportBasicForm::getDetailArray() as $detail_item) { ?>
+                                        <?php foreach (ReportSummaryForm::getDetailArray() as $detail_item) { ?>
                                             <option value="<?php echo $detail_item ?>"
                                                 <?php echo $html['user_pref_group_4'] == $detail_item ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById($detail_item); ?></option>
                                         <?php } ?>
