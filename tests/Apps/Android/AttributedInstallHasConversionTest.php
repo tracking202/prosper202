@@ -28,6 +28,12 @@ use Tests\Support\SqlLiteralText;
  *    other match_state write is UnverifiableInstalls' retirement of an
  *    install whose registration is gone: pending_integrity to the constant
  *    integrity_unverified, never touching trust, click or conversion.
+ *    The third is OrphanedPendingClicks' retirement of a pending click
+ *    whose registration is gone: pending_click to the constant bad_token
+ *    (refuted), never touching click or conversion.
+ *    The trust bit alone is re-judged when the registration's test-signal
+ *    policy changes (InstallIntake::rejudgeTestInstalls()), and that moves
+ *    the install's outcomes and conversion in the same transaction.
  * 3. Every redirect fallback that substitutes a placeholder for [[subid]]
  *    while MySQL is down also empties [[p202_install_token]] (plan §5.1):
  *    there is no click to sign, and a literal placeholder would reach Play.
@@ -39,6 +45,7 @@ final class AttributedInstallHasConversionTest extends TestCase
         'api/v3/Apps/Android/InstallEventsIntake.php' => ['update'],
         'api/v3/Apps/Android/Integrity/IntegrityVerifier.php' => ['update'],
         'api/v3/Apps/Android/Integrity/UnverifiableInstalls.php' => ['update'],
+        'api/v3/Apps/Android/OrphanedPendingClicks.php' => ['update'],
         'api/v3/Apps/AppDataPurge.php' => ['delete'],
     ];
 
@@ -116,6 +123,17 @@ final class AttributedInstallHasConversionTest extends TestCase
         self::assertSame([
             ["match_state = 'integrity_unverified', match_reason = ?, settled_at = ?", "match_state = 'pending_integrity'"],
             ["integrity_state = 'error', integrity_reason = ?, integrity_next_at = NULL", "integrity_state = 'pending'"],
+        ], array_map(static fn (array $s): array => [preg_replace('/\s+/', ' ', $s[1]), preg_replace('/\s+/', ' ', $s[2])], $m));
+
+        // Pending clicks whose registration is gone are retired by one
+        // constant transition, from the pending state it ends, to a refuted
+        // state; click and conversion are never written, so this writer
+        // cannot make anything payable.
+        $orphans = $tree['api/v3/Apps/Android/OrphanedPendingClicks.php'];
+        self::assertSame(1, preg_match_all('/\bUPDATE\b/i', $orphans), 'the retirement writes one statement');
+        preg_match_all('/UPDATE\s+202_app_installs\s+SET\s+([^;]*?)\s+WHERE\s+([^;]*?)\s+AND\s+\?/i', $orphans, $m, PREG_SET_ORDER);
+        self::assertSame([
+            ["match_state = 'bad_token', match_reason = ?, trusted = 0, settled_at = ?", "match_state = 'pending_click'"],
         ], array_map(static fn (array $s): array => [preg_replace('/\s+/', ' ', $s[1]), preg_replace('/\s+/', ' ', $s[2])], $m));
 
         // Retention deletes through its classes, whose table is data: the

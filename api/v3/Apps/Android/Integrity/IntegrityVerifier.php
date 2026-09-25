@@ -51,7 +51,11 @@ use Throwable;
  * most an hour, until the install is DEADLINE old or has had MAX_ATTEMPTS;
  * then it is `error`, terminal, and under require the install is
  * integrity_unverified — recorded, never paid. A quota refusal is a retry
- * like any other: it is never waved through (error pattern #11).
+ * like any other: it is never waved through (error pattern #11). The limits
+ * hold on every path: an install already past them is retired before its
+ * token is decoded, a passing verdict that lands after the deadline is not
+ * accepted, and an attempt that throws spends its attempt and, at the
+ * limits, retires the install rather than leaving it due for ever.
  */
 final class IntegrityVerifier
 {
@@ -59,6 +63,8 @@ final class IntegrityVerifier
     public const MAX_ATTEMPTS = 24;
     public const FIRST_BACKOFF = 60;
     public const MAX_BACKOFF = 3600;
+    /** 202_app_installs.integrity_attempts is a tinyint unsigned; the claim's LEAST() spells the same number. */
+    public const ATTEMPTS_CEILING = 255;
 
     private Connection $conn;
     private GoalEngine $engine;
@@ -148,35 +154,95 @@ final class IntegrityVerifier
         $attempts = (int) $row['integrity_attempts'];
         $now = $this->now();
         $claim = $this->conn->prepareWrite(
-            "UPDATE 202_app_installs SET integrity_attempts = integrity_attempts + 1, integrity_next_at = ?
+            "UPDATE 202_app_installs SET integrity_attempts = LEAST(integrity_attempts + 1, 255), integrity_next_at = ?
              WHERE install_row_id = ? AND integrity_state = 'pending' AND integrity_attempts = ? AND integrity_next_at <= ?"
         );
         // Due, and still at the count we read: a second worker — or this one
         // run again while an earlier claim's call is in flight — finds the
-        // lease (next_at pushed out) or the bumped count, and leaves it.
+        // lease (next_at pushed out) or the bumped count, and leaves it. The
+        // count stops at the column's ceiling rather than overflowing it: an
+        // unsigned tinyint past 255 is an error under strict mode, which
+        // would fail this claim on every run and pin the row at the head of
+        // the oldest-first batch for good.
         $this->conn->bind($claim, 'iiii', [$now + self::backoff($attempts + 1), $installRowId, $attempts, $now]);
         if ($this->conn->executeUpdate($claim) !== 1) {
             return null;
         }
-        $attempt = $attempts + 1;
+        $attempt = min($attempts + 1, self::ATTEMPTS_CEILING);
+        $receivedAt = (int) $row['received_at'];
 
-        $outcome = $this->decide($row, $now);
-        if ($outcome['state'] === IntegrityState::PENDING) {
-            $overdue = $now >= (int) $row['received_at'] + self::DEADLINE || $attempt >= self::MAX_ATTEMPTS;
-            if (!$overdue) {
-                $this->recordRetry($installRowId, $attempt, $outcome['reason']);
-
-                return IntegrityState::PENDING;
-            }
-            $outcome = [
-                'state' => IntegrityState::ERROR,
-                'reason' => 'No verdict after ' . $attempt . ' attempt' . ($attempt === 1 ? '' : 's') . ': ' . $outcome['reason'],
-                'verdict' => null,
-                'decoded' => false,
-            ];
+        // The deadline is enforced before anything is decoded: a worker that
+        // was stopped or backlogged past it must not turn a late verdict into
+        // an attribution the 24-hour rule already refused.
+        if (self::expired($receivedAt, $attempt, $now)) {
+            return $this->retire($installRowId, $attempt, self::expiredReason($receivedAt, $attempt, $now, null));
         }
 
-        return $this->finish($installRowId, $attempt, $outcome);
+        try {
+            $outcome = $this->decide($row, $now);
+            if ($outcome['state'] === IntegrityState::PENDING) {
+                if (!self::expired($receivedAt, $attempt, $now)) {
+                    $this->recordRetry($installRowId, $attempt, $outcome['reason']);
+
+                    return IntegrityState::PENDING;
+                }
+                $outcome = self::errorOutcome('No verdict after ' . $attempt . ' attempt' . ($attempt === 1 ? '' : 's') . ': ' . $outcome['reason']);
+            }
+
+            return $this->finish($installRowId, $attempt, $outcome);
+        } catch (Throwable $e) {
+            // The claim has spent an attempt. Below the limits the row is
+            // retried when its lease runs out (run() counts the failure);
+            // at them it is retired here, so a failure that repeats on
+            // every run (a key that cannot be loaded, a stored body that no
+            // longer parses) ends like any other exhausted install instead
+            // of being claimed for ever.
+            if (!self::expired($receivedAt, $attempt, $this->now())) {
+                throw $e;
+            }
+
+            return $this->retire($installRowId, $attempt, self::expiredReason($receivedAt, $attempt, $this->now(), $e->getMessage()));
+        }
+    }
+
+    /** Past the deadline, or out of attempts. */
+    private static function expired(int $receivedAt, int $attempt, int $now): bool
+    {
+        return $now >= $receivedAt + self::DEADLINE || $attempt >= self::MAX_ATTEMPTS;
+    }
+
+    private static function expiredReason(int $receivedAt, int $attempt, int $now, ?string $failure): string
+    {
+        $why = $now >= $receivedAt + self::DEADLINE
+            ? 'No verdict within ' . intdiv(self::DEADLINE, 3600) . ' hours of receipt'
+            : 'No verdict after ' . $attempt . ' attempts';
+
+        return $why . ($failure !== null ? ': the last attempt failed (' . $failure . ')' : '; the token was not decoded') . '.';
+    }
+
+    /** @return array{state: IntegrityState, reason: string, verdict: string|null, decoded: bool} */
+    private static function errorOutcome(string $reason): array
+    {
+        return ['state' => IntegrityState::ERROR, 'reason' => $reason, 'verdict' => null, 'decoded' => false];
+    }
+
+    /**
+     * Retire an expired install as `error`: through finish() when it can
+     * run, so a held install is settled by settle()'s gate like every other
+     * (integrity_unverified, evaluated for the funnel); and when finish()
+     * itself fails, by UnverifiableInstalls' constant transition, which
+     * needs no key, no body and no classification — terminal, never paid.
+     */
+    private function retire(int $installRowId, int $attempt, string $reason): ?IntegrityState
+    {
+        try {
+            return $this->finish($installRowId, $attempt, self::errorOutcome($reason));
+        } catch (Throwable $e) {
+            error_log('p202 play integrity: install ' . $installRowId . ' could not be settled normally; retiring it: ' . $e->getMessage());
+            $retired = (new UnverifiableInstalls($this->conn))->settleExhausted($installRowId, $attempt, self::cut($reason), $this->now());
+
+            return $retired > 0 ? IntegrityState::ERROR : null;
+        }
     }
 
     /**
@@ -256,6 +322,18 @@ final class IntegrityVerifier
                 return $none; // another worker's claim superseded ours
             }
             $now = $this->now();
+            if ($outcome['state'] === IntegrityState::VALID && $now >= (int) $row['received_at'] + self::DEADLINE) {
+                // Decoded, but after the deadline: the rule is "a verdict
+                // within 24 hours", and a slow call or a backlogged worker
+                // does not extend it. Recorded (the verdict is kept), never
+                // accepted.
+                $outcome = [
+                    'state' => IntegrityState::ERROR,
+                    'reason' => 'A passing verdict arrived after the ' . intdiv(self::DEADLINE, 3600) . '-hour deadline and was not accepted.',
+                    'verdict' => $outcome['verdict'],
+                    'decoded' => $outcome['decoded'],
+                ];
+            }
             $write = $this->conn->prepareWrite(
                 'UPDATE 202_app_installs SET integrity_state = ?, integrity_reason = ?, integrity_verdict = ?, integrity_next_at = NULL,
                         integrity_checked_at = IF(?, ?, integrity_checked_at)
