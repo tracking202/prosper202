@@ -28,8 +28,15 @@ use Api\V3\Apps\Verdict;
  *   implausible        0      timing contradicts the click
  *   outside_window     null   later than attribution_window_days
  *   duplicate_click    null   the click already has an install conversion
- *   pending_integrity  null   Play Integrity is required and its verdict is
- *                             being decoded (PR 6; nothing produces it yet)
+ *   pending_integrity  null   the install would be attributed, and its
+ *                             registration requires Play Integrity: it
+ *                             waits for the verdict worker
+ *   integrity_failed   0      it would be attributed, but its Play Integrity
+ *                             verdict failed the policy (or it sent another
+ *                             install's token)
+ *   integrity_unverified null it would be attributed, but no verdict could
+ *                             be had: no token sent, or none decoded before
+ *                             the worker's deadline. Recorded, never paid
  *
  * A test install (the SDK's `test: true`) is judged the same way; what the
  * test flag changes is priced by InstallVerdict, which pairs a state with it.
@@ -47,14 +54,16 @@ enum MatchState: string implements Verdict
     case OUTSIDE_WINDOW = 'outside_window';
     case DUPLICATE_CLICK = 'duplicate_click';
     case PENDING_INTEGRITY = 'pending_integrity';
+    case INTEGRITY_FAILED = 'integrity_failed';
+    case INTEGRITY_UNVERIFIED = 'integrity_unverified';
 
     public function trustBit(AppPolicy $policy): ?int
     {
         return match ($this) {
             self::ATTRIBUTED => 1,
-            self::BAD_TOKEN, self::FOREIGN_CLICK, self::IMPLAUSIBLE => 0,
+            self::BAD_TOKEN, self::FOREIGN_CLICK, self::IMPLAUSIBLE, self::INTEGRITY_FAILED => 0,
             self::ORGANIC, self::THIRD_PARTY, self::UNAVAILABLE, self::PENDING_CLICK,
-            self::OUTSIDE_WINDOW, self::DUPLICATE_CLICK, self::PENDING_INTEGRITY => null,
+            self::OUTSIDE_WINDOW, self::DUPLICATE_CLICK, self::PENDING_INTEGRITY, self::INTEGRITY_UNVERIFIED => null,
         };
     }
 

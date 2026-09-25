@@ -49,7 +49,10 @@ platform-shaped:
 
 ```json
 {"data": {"platform": "android", "app_key": "com.example.app",
-  "integrity_mode": "off",
+  "integrity_mode": "require",
+  "integrity": {"request_token": true, "token_type": "standard",
+                "cloud_project_number": "123456789012",
+                "request_hash": "sha256_hex_of_canonical_install_body"},
   "sdk": {"installs_path": "/api/v3/apps/installs",
           "events_path": "/api/v3/apps/installs/{install_uuid}/events",
           "max_events_per_request": 100},
@@ -60,10 +63,12 @@ platform-shaped:
   to set when the app reports that event (`events` is always a JSON object,
   even when empty). With the goals engine (plan §4.5, §5.5) it becomes an
   evaluation-only view of the goals.
-- **Android** gets its identity, `integrity_mode` (`off` until Play
-  Integrity ships; the SDK then requests no token) and `sdk`: where installs
-  and events go and how many events one request may carry. Its goals are
-  evaluated on the server, so the SDK reports every event.
+- **Android** gets its identity, `integrity_mode` (`off`, `observe` or
+  `require`), `integrity` — whether to request a Play Integrity token
+  (`request_token`, true under `observe` and `require`), for which Google
+  Cloud project number, and what to bind it to (below) — and `sdk`: where
+  installs and events go and how many events one request may carry. Its
+  goals are evaluated on the server, so the SDK reports every event.
 - **Revenue is withheld from both.** The document says what a device should
   do, never what the operator is paid.
 - `ETag` is the quoted `schema_version` and changes exactly when the
@@ -118,8 +123,10 @@ Sent once, on first launch, with what the Play Install Referrer API returned:
   `service_disconnected`, `permission_error`); with anything but `ok` the
   other referrer fields are absent.
 - `app_key` must be the token's app (`422` naming both).
-- `integrity_token` is reserved for Play Integrity (a later release): sent
-  or not, it is not judged yet.
+- `integrity_token` is a Play Integrity token or `null` (below). Under
+  `off` it is kept and never decoded; under `observe` and `require` it is
+  decoded by the server's worker after the answer, never on the request
+  path.
 - `customer` is optional: the signed customer id (below), when the app
   knew it before the body was built. It is part of the body, so it is part
   of the fingerprint.
@@ -130,11 +137,51 @@ The answer never carries the click, a conversion or money:
 ```json
 {"data": {"install_uuid": "8d7c4a52-…", "match": "attributed",
   "reason": "Attributed to click 1042.", "trusted": 1, "test": false,
-  "duplicate": false}}
+  "integrity": "not_requested", "duplicate": false}}
 ```
 
 With a `customer` in the body, the answer also carries `"customer"` — see
-below.
+[the signed customer id](#the-signed-customer-id).
+
+`integrity` is where the install's Play Integrity verdict stands:
+`not_requested` or `received` under `off`, `missing` (no token) or
+`pending` under `observe` and `require`; the worker later makes it `valid`,
+`invalid`, `error` or `skipped`. Under `require` an install that would be
+attributed is answered `match: pending_integrity` and settled by the worker
+into `attributed`, `integrity_failed` or `integrity_unverified`; its events
+are `503` with `Retry-After` until then, like a pending click's.
+
+### Play Integrity: binding the token to the install
+
+When the schema document says `integrity.request_token: true`, the SDK
+requests a **standard** integrity token
+(`StandardIntegrityManager`, prepared once for `cloud_project_number`) with
+
+```
+requestHash = lower-case hex SHA-256 of the install body's canonical form
+```
+
+— exactly the bytes the server's replay check fingerprints: the body
+without `integrity_token`, object keys sorted (byte order) at every level,
+no whitespace, `/` and non-ASCII unescaped, UTF-8. The SDK builds the body,
+computes the hash, requests the token, puts it in `integrity_token` and
+sends that body. Because the hash covers `install_uuid` and the referrer,
+a token cannot be moved onto another install; the server compares the
+hash Google signed into the verdict with the hash of the body it stored.
+
+- Request a **fresh token for each send attempt** that is not a replay of a
+  committed install: the server refuses a token issued more than 10 minutes
+  before the install arrived (or 2 minutes after). Resending the same body
+  with a new token is fine — the token is not part of the fingerprint, and
+  a replay of a committed install is its duplicate whatever token it carries.
+- A device that cannot get a token (no Play services, a Play error) sends
+  `integrity_token: null`. Under `require` that install is recorded
+  `integrity_unverified` and never paid; under `observe` it is `missing`.
+- Classic (nonce) requests are not accepted: a verdict without
+  `requestHash` fails.
+
+`android/integrity.json` pins the hash for a set of bodies, and the
+server's verdict policy over Google's decoded payload.
 
 ### `POST /apps/installs/{install_uuid}/events`
 
@@ -226,8 +273,10 @@ evaluated on the server, so the Kotlin SDK has no evaluator to run them
 against). `android/` holds the intake's: `install-token.json` (the
 token format under a test key), `install-requests.json` (install bodies, the
 field errors of each invalid one, and each valid one's canonical form and
-fingerprint), `events-requests.json` and `responses.json` (every answer and
-whether the SDK retries it), specified in `android/README.md` and run by
+fingerprint), `events-requests.json`, `responses.json` (every answer and
+whether the SDK retries it) and `integrity.json` (the Play Integrity
+request hash and the server's verdict policy), specified in
+`android/README.md` and run by
 `tests/Apps/Android/AndroidContractVectorsTest.php` and the Android SDK's
 `ContractVectorsTest`; the vectors were written by an implementation
 independent of both.

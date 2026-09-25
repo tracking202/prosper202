@@ -12,6 +12,7 @@
           "reason": "Attributed to click 42.",
           "trusted": 1,
           "test": false,
+          "integrity": "not_requested",
           "duplicate": false
         }
       }
@@ -27,6 +28,7 @@
           "reason": "Attributed to click 42.",
           "trusted": 1,
           "test": false,
+          "integrity": "not_requested",
           "duplicate": true
         }
       }
@@ -170,6 +172,18 @@
     "implausible",
     "outside_window",
     "duplicate_click",
-    "pending_integrity"
+    "pending_integrity",
+    "integrity_failed",
+    "integrity_unverified"
+  ],
+  "integrity_states": [
+    "not_requested",
+    "received",
+    "missing",
+    "pending",
+    "valid",
+    "invalid",
+    "error",
+    "skipped"
   ]
 }

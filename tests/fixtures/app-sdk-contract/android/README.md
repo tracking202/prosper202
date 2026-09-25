@@ -73,9 +73,31 @@ hexadecimal characters. Its field errors are `customer.<field>`; the
 signatures in these cases were computed with Python's `hmac` under
 `customer-id.json`'s test linking key.
 
+## `integrity.json`
+
+Play Integrity (PR 6). The SDK requests a **standard** token with
+`requestHash` = the lower-case hex SHA-256 of the install body's canonical
+form — the same form and the same hash as `install-requests.json`'s
+`fingerprint` — and sends the token as `integrity_token` in that body.
+
+- `cases[]` — `{name, body, canonical, request_hash}`: the hash for bodies
+  the SDK builds. The token is not hashed (it is derived from the hash), so
+  the reference body with and without a token share one; another
+  `install_uuid` or another click's referrer gives another hash, which is
+  what stops a token being moved onto another install.
+- `verdicts[]` — `{name, payload, expect: {valid, code}}`: the server's
+  policy over Google's decoded `tokenPayloadExternal`, for an install of
+  `package` received at `received_at` whose request hash is `cases[0]`'s.
+  `code` is `valid` or the first check that failed: `wrong_package`,
+  `request_hash`, `stale` (issued more than 600 s before arrival), `future`
+  (more than 120 s after), `app_not_recognized`, `device_integrity`,
+  `unlicensed`. The SDK does not judge verdicts; these pin the server for
+  anyone reimplementing it.
+
 ## `responses.json`
 
 Every answer the two routes give, the situation that produces it, and
 whether the SDK retries it (`retry`). Only `429` and `5xx` are retried; a
 `Retry-After` header, when present, is honoured. `match_states` is the list
-an install can be classified into, in the server's order.
+an install can be classified into, in the server's order, and
+`integrity_states` the values of an answer's `integrity`.

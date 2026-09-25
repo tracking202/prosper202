@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Api\V3\Apps\Android;
 
+use Api\V3\Apps\Android\Integrity\IntegrityBinding;
+use Api\V3\Apps\Android\Integrity\IntegrityMode;
+use Api\V3\Apps\Android\Integrity\IntegrityState;
 use Api\V3\Apps\AppIdentity;
 use Api\V3\Apps\AppRegistration;
 use Api\V3\Apps\AppRegistry;
@@ -198,20 +201,26 @@ final class InstallIntake
             $clickId = $classified['click_id'];
         }
 
-        $result = $this->settle($registration, $payload->test, $rowId, $state, $reason, $clickId, $now);
+        $settled = $this->settle($registration, $payload->test, $rowId, $state, $reason, $clickId, $now);
 
-        return ['row' => $this->row($rowId), 'post' => $result];
+        return ['row' => $this->row($rowId), 'post' => $settled['post']];
     }
 
     /**
      * Write a classification onto the install row and, for a state that is
      * final, evaluate the install subject — in the caller's transaction.
-     * Shared by the intake and the pending-click settler.
+     * Shared by the intake, the pending-click settler and the Play Integrity
+     * worker. Returns the state actually written, which is not always the
+     * one passed in: an attributed install under `require` leaves here as
+     * whatever the integrity gate made of it.
      *
-     * @return array{ledger: list<array<string, mixed>>, clicks: array<int, true>}
+     * @return array{state: MatchState, post: array{ledger: list<array<string, mixed>>, clicks: array<int, true>}}
      */
     public function settle(AppRegistration $registration, bool $test, int $rowId, MatchState $state, string $reason, ?int $clickId, int $now): array
     {
+        if ($state === MatchState::ATTRIBUTED) {
+            [$state, $reason, $clickId] = $this->integrityGate($rowId, $reason, (int) $clickId);
+        }
         $trusted = (new InstallVerdict($state, $test))->trustBit($registration->policy);
         $stmt = $this->conn->prepareWrite(
             'UPDATE 202_app_installs SET match_state = ?, match_reason = ?, trusted = ?, click_id = ?, settled_at = ?
@@ -227,7 +236,7 @@ final class InstallIntake
         if ($state->isPending() || $state->isRefuted()) {
             // A pending install is evaluated when it settles; a refuted one
             // (a forged or implausible claim) never reaches the goals.
-            return $post;
+            return ['state' => $state, 'post' => $post];
         }
 
         $this->goals->ensureBuiltinInstallGoal($registration->userId, $registration->registrationId, $now);
@@ -242,7 +251,49 @@ final class InstallIntake
             $this->conn->executeUpdate($link);
         }
 
-        return $evaluated['post'];
+        return ['state' => $state, 'post' => $evaluated['post']];
+    }
+
+    /**
+     * Play Integrity's `require` (plan §5.6, §5.11), applied at the one place
+     * an install becomes attributed: every path — the intake, the
+     * pending-click settler and the integrity worker — writes its final
+     * state through settle(), so none can attribute (and pay, and notify)
+     * an install whose verdict has not passed. The mode is the install's
+     * own snapshot, taken when it arrived.
+     *
+     *   valid                      attributed, as classified
+     *   pending                    pending_integrity: the worker settles it
+     *   invalid, skipped           integrity_failed (refuted)
+     *   anything else (missing, error, or a state require never writes)
+     *                              integrity_unverified (unvouched)
+     *
+     * Under `off` and `observe` the classification stands whatever the
+     * verdict says.
+     *
+     * @return array{0: MatchState, 1: string, 2: int|null}
+     */
+    private function integrityGate(int $rowId, string $reason, int $clickId): array
+    {
+        $stmt = $this->conn->prepareWrite('SELECT integrity_mode, integrity_state, integrity_reason FROM 202_app_installs WHERE install_row_id = ? LIMIT 1');
+        $this->conn->bind($stmt, 'i', [$rowId]);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            throw new \RuntimeException('install ' . $rowId . ' vanished before its integrity gate');
+        }
+        if (IntegrityMode::fromStored($row['integrity_mode']) !== IntegrityMode::REQUIRE) {
+            return [MatchState::ATTRIBUTED, $reason, $clickId];
+        }
+        $why = trim((string) ($row['integrity_reason'] ?? ''));
+
+        return match (IntegrityState::tryFrom((string) $row['integrity_state'])) {
+            IntegrityState::VALID => [MatchState::ATTRIBUTED, $reason . ' Play Integrity: valid.', $clickId],
+            IntegrityState::PENDING => [MatchState::PENDING_INTEGRITY, 'Click ' . $clickId . ' matches; waiting for the Play Integrity verdict this app requires.', null],
+            IntegrityState::INVALID, IntegrityState::SKIPPED => [MatchState::INTEGRITY_FAILED, 'Play Integrity failed: ' . ($why !== '' ? $why : 'the verdict does not pass.'), null],
+            IntegrityState::MISSING => [MatchState::INTEGRITY_UNVERIFIED, 'This app requires Play Integrity and the install carried no integrity token.', null],
+            default => [MatchState::INTEGRITY_UNVERIFIED, 'This app requires Play Integrity and no verdict could be obtained'
+                . ($why !== '' ? ': ' . $why : '.'), null],
+        };
     }
 
     /**
@@ -305,15 +356,25 @@ final class InstallIntake
                  utm_source, utm_medium, utm_campaign, utm_term, utm_content, gclid,
                  referrer_click_at, install_begin_at, referrer_click_server_at, install_begin_server_at,
                  install_version, google_play_instant, app_version, sdk_version, os_version,
-                 integrity_state, first_open_at, received_at, settled_at, raw_payload, remote_ip)
+                 integrity_mode, integrity_state, integrity_token_hash, integrity_next_at,
+                 first_open_at, received_at, settled_at, raw_payload, remote_ip)
              VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, NULL,
                      ?, 0, ?, ?, ?,
                      ?, ?, ?, ?, ?, ?,
                      ?, ?, ?, ?,
                      ?, ?, ?, ?, ?,
-                     ?, ?, ?, NULL, ?, ?)'
+                     ?, ?, ?, ?,
+                     ?, ?, NULL, ?, ?)'
         );
-        $this->conn->bind($stmt, 'iisssssississssssiiiisissssiiss', [
+        // Play Integrity: the mode this install arrived under governs it for
+        // good (a later change of mode re-judges nothing), and a token to
+        // decode queues it for the verdict worker at once. The token itself
+        // stays in raw_payload, where the worker reads it; only its hash is
+        // a column, for the replay check.
+        $mode = $registration->policy->integrityMode;
+        $integrity = IntegrityState::onArrival($mode, $payload->integrityToken !== null);
+        $queued = $integrity === IntegrityState::PENDING;
+        $this->conn->bind($stmt, 'iisssssississssssiiiisissssssiiiss', [
             $registration->userId, $registration->registrationId, $payload->installUuid, $payload->fingerprint(), $payload->store,
             $state->value, mb_strimwidth($reason, 0, 255, '…', 'UTF-8'),
             $payload->test ? 1 : 0, $payload->referrerStatus, $parsed['raw'] ?? null, !empty($parsed['truncated']) ? 1 : 0,
@@ -321,9 +382,9 @@ final class InstallIntake
             $payload->referrerClickAt, $payload->installBeginAt, $payload->referrerClickServerAt, $payload->installBeginServerAt,
             $payload->installVersion, $payload->googlePlayInstant === null ? null : ($payload->googlePlayInstant ? 1 : 0),
             $payload->appVersion, $payload->sdkVersion, $payload->osVersion,
-            // Play Integrity is PR 6: the token is kept in raw_payload for its
-            // verdict worker, and nothing here judges it.
-            $payload->integrityToken === null ? 'not_requested' : 'received',
+            $mode->value, $integrity->value,
+            $payload->integrityToken === null ? null : IntegrityBinding::tokenHash($payload->integrityToken),
+            $queued ? $now : null,
             $payload->firstOpenAt, $now, $payload->raw(), self::ip($remoteIp),
         ]);
         $id = $this->conn->executeInsert($stmt);
@@ -430,8 +491,8 @@ final class InstallIntake
 
     /**
      * What the device is told: the install's own id, its state and reason,
-     * its trust and whether this answer is a replay. Never the click, the
-     * conversion or any money.
+     * its trust, where its Play Integrity verdict stands, and whether this
+     * answer is a replay. Never the click, the conversion or any money.
      *
      * @param array<string, mixed> $row
      * @return array<string, mixed>
@@ -444,6 +505,7 @@ final class InstallIntake
             'reason' => (string) $row['match_reason'],
             'trusted' => $row['trusted'] === null ? null : (int) $row['trusted'],
             'test' => (int) $row['is_test'] === 1,
+            'integrity' => (string) $row['integrity_state'],
             'duplicate' => $duplicate,
         ];
     }

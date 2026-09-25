@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Api\V3\Apps\AppIdentity;
+use Api\V3\Apps\Android\Integrity\IntegrityState;
 use Api\V3\Apps\Android\InstallToken;
 use Api\V3\Apps\Android\InstallTokenKey;
 use Api\V3\Apps\Android\MatchState;
@@ -38,17 +39,21 @@ final class AppInstallsController
     private const COLUMNS = 'install_row_id, registration_id, install_uuid, store, click_id, conversion_id, match_state, match_reason, '
         . 'trusted, is_test, referrer_status, referrer_raw, referrer_truncated, utm_source, utm_medium, utm_campaign, utm_term, '
         . 'utm_content, gclid, referrer_click_at, install_begin_at, referrer_click_server_at, install_begin_server_at, '
-        . 'install_version, google_play_instant, app_version, sdk_version, os_version, integrity_state, first_open_at, '
+        . 'install_version, google_play_instant, app_version, sdk_version, os_version, integrity_mode, integrity_state, integrity_reason, '
+        . 'integrity_attempts, integrity_next_at, integrity_checked_at, integrity_verdict, first_open_at, '
         . 'received_at, settled_at, remote_ip';
 
     private const UNTRUSTED_FIELDS = [
         'referrer_raw', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'gclid',
         'install_version', 'app_version', 'sdk_version', 'os_version', 'remote_ip',
+        // Carries Google's own error text when a decode failed.
+        'integrity_reason',
     ];
 
     private const INT_FIELDS = [
         'install_row_id', 'registration_id', 'click_id', 'conversion_id', 'trusted', 'referrer_click_at', 'install_begin_at',
         'referrer_click_server_at', 'install_begin_server_at', 'first_open_at', 'received_at', 'settled_at',
+        'integrity_attempts', 'integrity_next_at', 'integrity_checked_at',
     ];
 
     public function __construct(private readonly \mysqli $db, private readonly int $userId)
@@ -59,7 +64,7 @@ final class AppInstallsController
     public function list(int $registrationId, array $params): array
     {
         $this->registration($registrationId);
-        $allowed = ['match_state', 'trusted', 'test', 'click_id', 'time_from', 'time_to', 'limit', 'offset'];
+        $allowed = ['match_state', 'integrity_state', 'trusted', 'test', 'click_id', 'time_from', 'time_to', 'limit', 'offset'];
         $unknown = array_diff(array_map('strval', array_keys($params)), $allowed);
         if ($unknown !== []) {
             throw new ValidationException('Unknown filter', array_fill_keys(array_values($unknown), 'is not a filter here (allowed: ' . implode(', ', $allowed) . ')'));
@@ -78,6 +83,15 @@ final class AppInstallsController
             $where[] = 'match_state = ?';
             $types .= 's';
             $binds[] = $state->value;
+        }
+        if (isset($params['integrity_state'])) {
+            $integrity = IntegrityState::tryFrom((string) $params['integrity_state']);
+            if ($integrity === null) {
+                throw new ValidationException('Invalid integrity_state', ['integrity_state' => 'must be one of ' . implode(', ', IntegrityState::values())]);
+            }
+            $where[] = 'integrity_state = ?';
+            $types .= 's';
+            $binds[] = $integrity->value;
         }
         if (isset($params['trusted'])) {
             $where[] = match ((string) $params['trusted']) {
@@ -227,6 +241,14 @@ final class AppInstallsController
         $row['is_test'] = (int) $row['is_test'] === 1;
         $row['referrer_truncated'] = (int) $row['referrer_truncated'] === 1;
         $row['google_play_instant'] = $row['google_play_instant'] === null ? null : (int) $row['google_play_instant'] === 1;
+        // The verdict summary the worker stored (the fields the policy read,
+        // never the token), as an object; a value that does not parse is
+        // shown as unreadable rather than dropped.
+        $verdict = $row['integrity_verdict'];
+        if ($verdict !== null) {
+            $decoded = json_decode((string) $verdict, true);
+            $row['integrity_verdict'] = is_array($decoded) ? ResponseSanitizer::cleanRowFields($decoded, array_keys(array_filter($decoded, 'is_string')), 200) : ['unreadable' => true];
+        }
 
         return $row;
     }

@@ -15,6 +15,9 @@ final class AppRegistration
         public readonly int $userId,
         public readonly AppIdentity $identity,
         public readonly AppPolicy $policy,
+        // Android: the Google Cloud project number standard Play Integrity
+        // tokens are requested with (published in the schema document).
+        public readonly ?string $integrityCloudProjectNumber = null,
     ) {
     }
 }

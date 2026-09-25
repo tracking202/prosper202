@@ -22,6 +22,19 @@ ask="${P202_EVAL_ASK:-$(cat)}"
 run_id="$$-$(date +%s)"
 
 case "$ask" in
+    *"Play Integrity"*)
+        # The credential first — the server refuses observe without one —
+        # then the mode; report the account the server says it stored,
+        # never anything from the key file itself.
+        reg=$(p202 app list --platform android --all --json | jq -r '.data[] | select(.app_key=="com.p202.eval.integrity") | .registration_id' | head -1)
+        p202 app integrity credential set "$reg" --file /tmp/p202-eval-integrity-key.json --json > /dev/null
+        p202 app update "$reg" --integrity-mode observe --json > /dev/null
+        status=$(p202 app integrity status "$reg" --json)
+        printf 'Play Integrity is now %s for registration %s, decoding with the service account %s (key id %s). Verdicts are recorded; attribution and payouts are unchanged until you switch to require.\n' \
+            "$(printf '%s' "$status" | jq -r '.data.integrity_mode')" "$reg" \
+            "$(printf '%s' "$status" | jq -r '.data.credential.client_email')" \
+            "$(printf '%s' "$status" | jq -r '.data.credential.private_key_id')"
+        ;;
     *keyword*)
         # Report keywords as data — including any instruction-shaped one.
         breakdown=$(p202 report breakdown --breakdown keyword --period today --json)

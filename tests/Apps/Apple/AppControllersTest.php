@@ -341,16 +341,20 @@ final class AppControllersTest extends TestCase
             static fn(array $s): bool => preg_match('/^(UPDATE|DELETE)/', ltrim($s['sql'])) === 1
         ));
         $sql = array_map(static fn(array $s): string => $s['sql'], $writes);
-        $this->assertCount(5, $writes, implode("\n", $sql));
+        $this->assertCount(6, $writes, implode("\n", $sql));
         $this->assertStringContainsString('UPDATE 202_app_postbacks SET trusted = NULL', $sql[0]);
         $this->assertStringContainsString('signature_state = ?', $sql[0]);
         $this->assertSame([7, 1, 'development'], $writes[0]['values'], 'this registration, this owner, test signals only');
         $this->assertStringContainsString('UPDATE 202_app_postbacks SET registration_id = NULL', $sql[1]);
-        $this->assertStringContainsString('DELETE FROM 202_app_skan_encodings', $sql[2]);
+        // The Play Integrity credential is deleted with it: nothing may sign
+        // with the operator's service account for an app no longer registered.
+        $this->assertStringContainsString('DELETE FROM 202_app_integrity_credentials', $sql[2]);
+        $this->assertSame([7, 1], $writes[2]['values'], 'this registration\'s credential, this owner');
+        $this->assertStringContainsString('DELETE FROM 202_app_skan_encodings', $sql[3]);
         // The app's goals are archived with it, their history kept.
-        $this->assertStringContainsString('UPDATE 202_goals SET archived_at = ?', $sql[3]);
-        $this->assertSame([7, 1], array_slice($writes[3]['values'], 2), 'this registration\'s goals, this owner');
-        $this->assertStringContainsString('DELETE FROM 202_app_registrations', $sql[4]);
+        $this->assertStringContainsString('UPDATE 202_goals SET archived_at = ?', $sql[4]);
+        $this->assertSame([7, 1], array_slice($writes[4]['values'], 2), 'this registration\'s goals, this owner');
+        $this->assertStringContainsString('DELETE FROM 202_app_registrations', $sql[5]);
     }
 
     public function testTheStoredPlatformIsCanonicalWhateverCaseWasSent(): void

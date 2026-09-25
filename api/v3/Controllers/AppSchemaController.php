@@ -22,9 +22,10 @@ use Api\V3\Support\MysqliStatements;
  *  - iOS gets the SKAN encode map — event name -> {fine_value,
  *    coarse_value} — built from the same encoding rows the report decodes
  *    through (/apps/skan-encodings), so the two directions cannot drift;
- *  - Android gets its registration's identity, the integrity mode (off
- *    until PR 6) and the SDK settings: where installs and events go and how
- *    many events one request may carry.
+ *  - Android gets its registration's identity, its Play Integrity mode and
+ *    what the SDK needs to request a token bound to the install, and the SDK
+ *    settings: where installs and events go and how many events one request
+ *    may carry.
  *
  * Revenue is withheld from both: the document carries what a device needs
  * to act, never what the operator is paid.
@@ -123,12 +124,22 @@ final class AppSchemaController
     {
         // Android's goals are evaluated on the server, so the SDK reports
         // every event and needs no goal view; what it needs is how to talk
-        // to the intake. Play Integrity is PR 6: until then it is off for
-        // every registration, and the SDK requests no token.
+        // to the intake, and whether to request a Play Integrity token: under
+        // observe or require it requests a standard token for the cloud
+        // project named here, with requestHash = the install's fingerprint
+        // (IntegrityBinding), and sends it as integrity_token.
+        $mode = $registration->policy->integrityMode;
+
         return [
             'platform' => AppIdentity::ANDROID,
             'app_key' => $registration->identity->appKey,
-            'integrity_mode' => 'off',
+            'integrity_mode' => $mode->value,
+            'integrity' => [
+                'request_token' => $mode->decodes(),
+                'token_type' => 'standard',
+                'cloud_project_number' => $registration->integrityCloudProjectNumber,
+                'request_hash' => 'sha256_hex_of_canonical_install_body',
+            ],
             'sdk' => [
                 'installs_path' => '/api/v3/apps/installs',
                 'events_path' => '/api/v3/apps/installs/{install_uuid}/events',
