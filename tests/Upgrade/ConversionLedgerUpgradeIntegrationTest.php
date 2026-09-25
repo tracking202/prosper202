@@ -327,7 +327,8 @@ final class ConversionLedgerUpgradeIntegrationTest extends TestCase
         }
         $this->assertSame([], $reconciler->getApplied(), 'created with every column and key the installer declares');
         $create = (string)$db->query('SHOW CREATE TABLE 202_app_skan_encodings')->fetch_row()[1];
-        $this->assertStringContainsString('`goal_id` int(10) unsigned NOT NULL', $create, 'an encoding names a goal');
+        // MySQL 8 prints `int unsigned`; MariaDB still prints the display width.
+        $this->assertMatchesRegularExpression('/`goal_id` int(\(10\))? unsigned NOT NULL/', $create, 'an encoding names a goal');
         $this->assertStringNotContainsString('`event_name`', $create);
 
         $rung = (string)file_get_contents(dirname(__DIR__, 2) . '/202-config/functions-upgrade.php');
