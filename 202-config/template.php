@@ -208,7 +208,11 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 		<?php if ($extraHeadMarkup !== '') {
 			echo $extraHeadMarkup;
 		} ?>
-		<?php foreach ($assets['js_page'] as $item) { echo "\t\t" . p202_shell_asset_tag($item, $base) . "\n"; } ?>
+		<?php
+		// Deferred on v2: they run after the body is parsed, in this order
+		// (p202_shell_defers_page_scripts() says why and what it asks of a page).
+		$deferPage = p202_shell_defers_page_scripts($ui);
+		foreach ($assets['js_page'] as $item) { echo "\t\t" . p202_shell_asset_tag($item, $base, $deferPage) . "\n"; } ?>
 		<script>
 			/* Attach the session token to same-origin POST requests so server-side
 			   token checks succeed without modifying every individual caller. */

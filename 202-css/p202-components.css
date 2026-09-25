@@ -9,7 +9,8 @@
  *   .p202-panel         a titled card with a count and a filter slot
  *   .p202-tile          a KPI tile (label, number, sub-line, tone)
  *   .p202-pill          a status pill in five tones
- *   .p202-table         the report table (uppercase headers, totals row)
+ *   .p202-table         the report table (uppercase headers, totals row);
+ *                       .p202-sort is a sortable column's header button
  *   .p202-list          the side-panel list (name, pills, actions, children)
  *   .p202-empty         an empty state with one next action
  *   .p202-code          a read-only code box with a Copy button
@@ -360,6 +361,50 @@ a.p202-pill:focus-visible {
 
 .p202-table__link-row {
     cursor: pointer;
+}
+
+/* A sortable column's header (p202_data_table(), sortable). The label is a
+   button so the sort is reachable from the keyboard; tablesort.js listens on
+   the <th>, which the click reaches by bubbling. The arrow says the order
+   from aria-sort, which p202-ui.js keeps in step with the rows. Inline, not
+   flex: a flex label would drop the spaces in a multi-word heading. */
+.p202-sort {
+    display: inline;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    cursor: pointer;
+}
+
+.p202-sort::after {
+    content: "\2195";
+    display: inline-block;
+    margin-left: 0.3em;
+    opacity: 0.35;
+}
+
+.p202-table th[aria-sort="ascending"] > .p202-sort::after {
+    content: "\2191";
+    opacity: 1;
+}
+
+.p202-table th[aria-sort="descending"] > .p202-sort::after {
+    content: "\2193";
+    opacity: 1;
+}
+
+.p202-table th[aria-sort] {
+    color: var(--bs-body-color);
+}
+
+.p202-sort:focus-visible {
+    outline: none;
+    border-radius: 4px;
+    box-shadow: 0 0 0 0.2rem var(--bs-focus-ring-color);
 }
 
 .p202-table-toolbar {

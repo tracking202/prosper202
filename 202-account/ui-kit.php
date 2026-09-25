@@ -30,6 +30,7 @@ $sections = [
 	'pills' => 'Pills',
 	'tiles' => 'Tiles',
 	'table' => 'Table',
+	'reports' => 'Report partials',
 	'panel' => 'Panel &amp; list',
 	'states' => 'Empty &amp; flash',
 	'code' => 'Code &amp; strip',
@@ -288,6 +289,155 @@ $sections = [
 			<li class="page-item"><a class="page-link" href="#table">›</a></li>
 		</ul>
 	</nav>
+</section>
+
+<section class="p202-section" id="reports">
+	<h2 class="p202-section__title">Report partials</h2>
+	<p class="text-secondary">Rendered by the shared partials in <code>202-config/functions-ui-partials.php</code>, not written by hand: <code>p202_date_range()</code>, <code>p202_report_filter_bar()</code> with <code>p202_report_filters()</code>, and <code>p202_data_table()</code>. A report page calls them rather than copying this markup.</p>
+
+	<?php
+	$kitAction = $base . '202-account/ui-kit.php';
+	$kitLists = [
+		'ppc_network_id' => ['1' => 'Google Ads', '2' => 'Meta', '3' => 'TikTok'],
+		'aff_campaign_id' => [
+			'EVAL Offer Network' => ['11' => 'EVAL Campaign A', '12' => 'EVAL Campaign B'],
+			'Second Network' => ['21' => 'Summer promo'],
+		],
+		'ppc_account_id' => ['101' => 'Main account', '102' => 'Test account'],
+		'aff_network_id' => ['7' => 'EVAL Offer Network', '8' => 'Second Network'],
+		'landing_page_id' => ['31' => 'Quiz page', '32' => 'Advertorial'],
+		'text_ad_id' => ['41' => 'Headline A'],
+		'country_id' => ['US' => 'United States', 'GB' => 'United Kingdom', 'DE' => 'Germany'],
+		'region_id' => ['1' => 'California', '2' => 'Texas'],
+		'isp_id' => ['1' => 'Comcast', '2' => 'Vodafone'],
+		'device_id' => ['1' => 'Desktop', '2' => 'Mobile', '3' => 'Tablet'],
+		'browser_id' => ['1' => 'Chrome', '2' => 'Safari'],
+		'platform_id' => ['1' => 'Windows', '2' => 'iOS', '3' => 'Android'],
+	];
+	?>
+
+	<div class="row g-4">
+		<div class="col-12">
+			<div class="p202-panel">
+				<div class="p202-panel__head"><h3 class="p202-panel__title">Date range</h3><span class="p202-panel__sub">a preset, a custom window, and a window the server refused</span></div>
+				<div class="p202-panel__body">
+					<form class="p202-toolbar mb-3" method="get" action="#reports" onsubmit="return false;" id="kit-range-preset-form">
+						<?php echo p202_date_range(['range' => 'last7', 'from' => '2026-09-04', 'to' => '2026-09-11', 'id' => 'kit-range-preset']); ?>
+					</form>
+					<form class="p202-toolbar mb-3" method="get" action="#reports" onsubmit="return false;" id="kit-range-custom-form">
+						<?php echo p202_date_range(['range' => P202_RANGE_CUSTOM, 'from' => '2026-08-01', 'to' => '2026-08-31', 'id' => 'kit-range-custom', 'max' => '2026-09-25']); ?>
+					</form>
+					<form class="p202-toolbar" method="get" action="#reports" onsubmit="return false;" id="kit-range-error-form">
+						<?php echo p202_date_range(['range' => P202_RANGE_CUSTOM, 'from' => '2026-09-11', 'to' => '2026-09-04', 'id' => 'kit-range-error', 'error' => 'The start date is after the end date.']); ?>
+					</form>
+				</div>
+			</div>
+		</div>
+
+		<div class="col-12">
+			<div class="p202-panel">
+				<div class="p202-panel__head"><h3 class="p202-panel__title">Filter bar, nothing set</h3><span class="p202-panel__sub">the common case in one row; the rest under Advanced, closed</span></div>
+				<div class="p202-panel__body">
+					<?php echo p202_report_filter_bar([
+						'action' => $kitAction,
+						'id' => 'kit-filters',
+						'hidden' => ['view' => 'report'],
+						'range' => ['range' => 'last7', 'from' => '2026-09-18', 'to' => '2026-09-25'],
+						'filters' => p202_report_filters(['user_pref_show' => 'real', 'user_pref_limit' => '50'], $kitLists),
+						'reset' => $kitAction . '#reports',
+						'note' => 'Last 7 days of real clicks from every traffic source, 50 rows.',
+						'aside' => '<a class="btn btn-secondary btn-sm" href="#reports"><i class="bi bi-file-earmark-spreadsheet"></i> Download to CSV</a>',
+					]); ?>
+				</div>
+			</div>
+		</div>
+
+		<div class="col-12">
+			<div class="p202-panel">
+				<div class="p202-panel__head"><h3 class="p202-panel__title">Filter bar, filtered</h3><span class="p202-panel__sub">an Advanced filter set, a value the list no longer has, a suggestion field, and a server error</span></div>
+				<div class="p202-panel__body">
+					<?php
+					$kitFiltered = p202_report_filters([
+						'ppc_network_id' => '2',
+						'aff_campaign_id' => '99',
+						'user_pref_show' => 'leads',
+						'country_id' => 'GB',
+						'user_pref_limit' => '50',
+						'ip' => '203.0.113.300',
+					], $kitLists, ['ppc_network_id', 'aff_campaign_id', 'user_pref_show', 'country_id', 'device_id', 'ip', 'user_pref_limit']);
+					foreach ($kitFiltered as $index => $kitFilter) {
+						if ($kitFilter['name'] === 'ip') {
+							$kitFiltered[$index]['error'] = '203.0.113.300 is not an IP address.';
+						}
+					}
+					$kitFiltered[] = [
+						'name' => 'keyword',
+						'label' => 'Keyword',
+						'type' => 'suggest',
+						'value' => '',
+						'advanced' => true,
+						'placeholder' => 'Start typing',
+						'suggestions' => ['running shoes', 'trail running', 'marathon plan'],
+						'hint' => 'Suggestions are the keywords this account has seen.',
+					];
+					echo p202_report_filter_bar([
+						'action' => $kitAction,
+						'id' => 'kit-filtered',
+						'range' => ['range' => P202_RANGE_CUSTOM, 'from' => '2026-08-01', 'to' => '2026-08-31'],
+						'filters' => $kitFiltered,
+						'reset' => $kitAction . '#reports',
+					]);
+					?>
+				</div>
+			</div>
+		</div>
+
+		<div class="col-lg-7">
+			<h3 class="p202-section__title">Sortable table with totals</h3>
+			<?php echo p202_data_table(
+				[
+					['key' => 'keyword', 'label' => 'Keyword'],
+					['key' => 'clicks', 'label' => 'Clicks', 'num' => true],
+					['key' => 'leads', 'label' => 'Leads', 'num' => true],
+					['key' => 'revenue', 'label' => 'Revenue', 'num' => true],
+					['key' => 'status', 'label' => 'Status', 'sort' => false],
+				],
+				[
+					['keyword' => 'running shoes', 'clicks' => ['text' => '1,412', 'sort' => 1412], 'leads' => ['text' => '94', 'sort' => 94], 'revenue' => ['text' => '$1,304.00', 'sort' => 1304], 'status' => ['html' => '<span class="p202-pill p202-pill--good">converting</span>']],
+					['keyword' => 'Marathon plan', 'clicks' => ['text' => '98', 'sort' => 98], 'leads' => ['text' => '7', 'sort' => 7], 'revenue' => ['text' => '$612.00', 'sort' => 612], 'status' => ['html' => '<span class="p202-pill">steady</span>']],
+					['keyword' => 'trail running', 'clicks' => ['text' => '310', 'sort' => 310], 'leads' => ['text' => '0', 'sort' => 0], 'revenue' => ['text' => '$0.00', 'sort' => 0], 'status' => ['html' => '<span class="p202-pill p202-pill--bad">no leads</span>']],
+				],
+				[
+					'id' => 'kit-sortable',
+					'caption' => 'Keywords, sortable by any column but Status',
+					'sortable' => true,
+					'totals' => ['keyword' => 'Totals for report', 'clicks' => '1,820', 'leads' => '101', 'revenue' => '$1,916.00', 'status' => ''],
+				]
+			); ?>
+			<p class="form-text">Click a heading, or tab to it and press Enter. The totals row stays last.</p>
+		</div>
+		<div class="col-lg-5">
+			<h3 class="p202-section__title">Server-ordered, and empty</h3>
+			<?php echo p202_data_table(
+				[
+					['key' => 'day', 'label' => 'Day'],
+					['key' => 'clicks', 'label' => 'Clicks', 'num' => true],
+				],
+				[
+					['day' => '2026-09-12', 'clicks' => '212'],
+					['day' => '2026-09-11', 'clicks' => '98'],
+				],
+				['id' => 'kit-ordered', 'caption' => 'Clicks per day, newest first', 'sorted' => ['key' => 'day', 'dir' => 'descending']]
+			); ?>
+			<div class="mt-3">
+				<?php echo p202_data_table(
+					[['key' => 'day', 'label' => 'Day'], ['key' => 'clicks', 'label' => 'Clicks', 'num' => true]],
+					[],
+					['empty' => ['icon' => 'bi-inbox', 'title' => 'No clicks in this range', 'body' => 'Widen the range, or check that the tracking link is live.', 'action' => 'Get a tracking link', 'href' => '#reports']]
+				); ?>
+			</div>
+		</div>
+	</div>
 </section>
 
 <section class="p202-section" id="panel">

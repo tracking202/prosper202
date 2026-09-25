@@ -71,16 +71,21 @@ function p202_asset_url(string $id, string $base): string
 
 /**
  * The <link> or <script> tag for an asset, decided by its extension.
+ *
+ * $defer marks a script `defer`; it is refused for a stylesheet, where it
+ * means nothing and would read as though it did something.
  */
-function p202_asset_tag(string $id, string $base): string
+function p202_asset_tag(string $id, string $base, bool $defer = false): string
 {
     $asset = p202_asset($id);
     $location = $asset['url'] ?? $asset['path'];
     $extension = strtolower(pathinfo(parse_url($location, PHP_URL_PATH) ?: $location, PATHINFO_EXTENSION));
     $url = htmlspecialchars(p202_asset_url($id, $base), ENT_QUOTES, 'UTF-8');
     return match ($extension) {
-        'css' => '<link rel="stylesheet" href="' . $url . '">',
-        'js' => '<script src="' . $url . '"></script>',
+        'css' => $defer
+            ? throw new InvalidArgumentException("Asset '$id' is a stylesheet; only a script can be deferred")
+            : '<link rel="stylesheet" href="' . $url . '">',
+        'js' => '<script src="' . $url . '"' . ($defer ? ' defer' : '') . '></script>',
         default => throw new InvalidArgumentException("Asset '$id' is not a stylesheet or script"),
     };
 }
@@ -107,7 +112,10 @@ function p202_ui_shell(mixed $requested): string
  *
  * Returns three ordered lists — 'css', 'js_head' (scripts every page needs,
  * loaded before the page's own extra head markup) and 'js_page' (scripts that
- * depend on the section or page, loaded after it). Each item is either
+ * depend on the section or page, loaded after it). On the v2 shell the
+ * 'js_page' scripts are deferred (see p202_shell_defers_page_scripts()), so
+ * they run in order after the document is parsed; 'js_head' stays blocking
+ * because inline scripts in the page call jQuery as they are parsed. Each item is either
  * ['asset' => <manifest id>] or ['path' => <repo-relative first-party file>],
  * the latter optionally with a 'query' string. A third-party file is always
  * a manifest id — tests/Api/V3/ShellIsolationTest.php refuses a bare path
@@ -151,6 +159,9 @@ function p202_shell_assets(string $ui, array $context = []): array
             $jsPage[] = ['asset' => 'highcharts.js'];
             $jsPage[] = ['path' => '202-js/chart.theme.js'];
         }
+        // Sortable tables (p202_data_table(..., ['sortable' => true])); loaded
+        // before p202-ui.js, which wires every table[data-p202-sort] to it.
+        $jsPage[] = ['asset' => 'tablesort.js'];
         $jsPage[] = ['path' => '202-js/p202-ui.js'];
         $jsPage[] = ['path' => '202-js/p202-chrome.js'];
         return ['css' => $css, 'js_head' => $jsHead, 'js_page' => $jsPage];
@@ -218,14 +229,35 @@ function p202_shell_assets(string $ui, array $context = []): array
 }
 
 /**
+ * Whether a shell emits its 'js_page' scripts with `defer`.
+ *
+ * On v2 they are deferred: the shell prints them in <head>, before the body
+ * exists, and a deferred script runs after the document is parsed and before
+ * DOMContentLoaded, in the order it was listed. That makes the porting rule
+ * for a script moved to v2 simple and checkable: DOM work runs under
+ * DOMContentLoaded (or later), never as the script is parsed — and an inline
+ * script in the page that calls a js_page library (Highcharts, Tablesort,
+ * window.p202ui) does so from a DOMContentLoaded handler, because at parse
+ * time the deferred library has not run yet.
+ *
+ * The classic shell keeps blocking scripts: 202-js/custom.php and the page
+ * scripts written against it run code as they load, and it is deleted in U8
+ * rather than ported.
+ */
+function p202_shell_defers_page_scripts(string $ui): bool
+{
+    return p202_ui_shell($ui) === P202_UI_V2;
+}
+
+/**
  * Render one shell asset item as its tag.
  *
  * @param array<string, string> $item
  */
-function p202_shell_asset_tag(array $item, string $base): string
+function p202_shell_asset_tag(array $item, string $base, bool $defer = false): string
 {
     if (isset($item['asset'])) {
-        return p202_asset_tag($item['asset'], $base);
+        return p202_asset_tag($item['asset'], $base, $defer);
     }
     $path = ltrim($item['path'], '/');
     $url = rtrim($base, '/') . '/' . $path;
@@ -236,9 +268,12 @@ function p202_shell_asset_tag(array $item, string $base): string
     $extension = strtolower(pathinfo(parse_url($path, PHP_URL_PATH) ?: $path, PATHINFO_EXTENSION));
     // First-party .php files under 202-js/ emit JavaScript.
     if ($extension === 'css') {
+        if ($defer) {
+            throw new InvalidArgumentException("$path is a stylesheet; only a script can be deferred");
+        }
         return '<link rel="stylesheet" href="' . $url . '">';
     }
-    return '<script src="' . $url . '"></script>';
+    return '<script src="' . $url . '"' . ($defer ? ' defer' : '') . '></script>';
 }
 
 /**
@@ -308,3 +343,5 @@ function p202_chrome_icon(string $name): string
     }
     return '<svg class="p202c-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="' . $paths[$name] . '"/></svg>';
 }
+
+require_once __DIR__ . '/functions-ui-partials.php';
