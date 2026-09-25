@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php');
+require_once(substr(__DIR__, 0,-17) . '/202-config/functions-report-prefs.php');
 
 AUTH::require_user();
 

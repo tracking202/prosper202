@@ -274,6 +274,10 @@ final class ReportFilterInput
      * `mm/dd/yy` its preset buttons wrote). Anything else, or a day that does
      * not exist, is null — the caller says so rather than guessing.
      *
+     * The one date reader for reports: p202_report_parse_date() (the classic
+     * writer's name for it) delegates here. Spaces around the slashes are
+     * accepted, as the classic reader's trim-and-explode did.
+     *
      * A two-digit year means 20yy, as the classic path's mktime() read it
      * (0–69 → 2000–2069, 70–99 → 1970–1999).
      *
@@ -282,9 +286,9 @@ final class ReportFilterInput
     public static function parseDate(string $value): ?array
     {
         $value = trim($value);
-        if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})$/', $value, $m) === 1) {
+        if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})$/D', $value, $m) === 1) {
             [$year, $month, $day] = [(int) $m[1], (int) $m[2], (int) $m[3]];
-        } elseif (preg_match('#^(\d{1,2})/(\d{1,2})/(\d{2}|\d{4})$#', $value, $m) === 1) {
+        } elseif (preg_match('#^(\d{1,2})\s*/\s*(\d{1,2})\s*/\s*(\d{2}|\d{4})$#D', $value, $m) === 1) {
             [$month, $day] = [(int) $m[1], (int) $m[2]];
             $year = (int) $m[3];
             if (strlen($m[3]) === 2) {

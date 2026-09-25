@@ -95,6 +95,19 @@ final class NoLegacyBootstrapClassesTest extends TestCase
         'tracking202/ajax/ltv_settings.php',
         'tracking202/ajax/ltv_merge_modal.php',
         '202-js/ltv.js',
+        // U2: Overview, Visitors, Spy. The fragments these pages draw their
+        // reports from, and the script that draws them. OverviewPagesTest
+        // fails when a page of the family names a fragment not listed here.
+        '202-js/p202-overview.js',
+        'tracking202/ajax/account_overview.php',
+        'tracking202/ajax/ltv_snapshot.php',
+        'tracking202/ajax/sort_breakdown.php',
+        'tracking202/ajax/sort_hourly.php',
+        'tracking202/ajax/sort_weekly.php',
+        'tracking202/ajax/group_overview.php',
+        'tracking202/ajax/sort_rotator.php',
+        'tracking202/ajax/click_history.php',
+        'tracking202/ajax/click_history_row.php',
     ];
 
     private const CHROME_STYLESHEET = '202-css/p202-chrome.css';
