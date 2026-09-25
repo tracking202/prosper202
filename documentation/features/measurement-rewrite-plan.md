@@ -2585,6 +2585,14 @@ pass is `tests/live/mta-ui.sh`, the browser pass
 - **The API grew two reads for it:** the breakdown's `meta.groups` (how many
   groups there are, so a page of the top `limit` says what it left out) and
   the journey metrics' `recent_conversions` (the drill-down's entry points).
+- **A conversion's amount is what it counts for.** Wherever a conversion's
+  amount is shown beside its credits (the drill-down, the recent
+  conversions, their API reads) `amount` is the worker's own number — the
+  recorded amount net of the reversals naming it, from the one function the
+  worker splits (`CountedAmount`) — so a $10 sale reversed by $4 reads $6
+  over model columns that each sum to $6. `recorded_amount` and `counted`
+  sit beside it, and the page names a partial reversal. The breakdown, its
+  CSV and the exports sum credits, which were net already.
 
 **Exports.**
 

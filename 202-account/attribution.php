@@ -823,6 +823,9 @@ $modelSettings = static function (array $m): string {
 	<?php $meta = $journey['journey']; ?>
 	<div class="p202-strip mb-4" id="journey-summary">
 		<div class="p202-strip__row"><span class="p202-pill p202-pill--accent">Conversion <?php echo (int) $journey['conv_id']; ?></span><span class="p202-strip__label">Amount</span><span class="p202-strip__value" data-p202-total="amount"><?php echo $h(p202_attr_money((string) $journey['amount'])); ?></span></div>
+		<?php if (!$journey['counted'] || $journey['recorded_amount'] !== $journey['amount']) { ?>
+			<div class="p202-strip__row"><span class="p202-pill p202-pill--warn"><?php echo $journey['counted'] ? 'Reversed in part' : 'Does not count'; ?></span><span class="p202-strip__label">Recorded</span><span class="p202-strip__value" data-p202-total="recorded"><?php echo $h(p202_attr_money((string) $journey['recorded_amount']) . ($journey['counted'] ? '; reversals leave the amount above, which the credits split' : '; not payable, replaced, deleted, a reversal itself or reversed in full, so no model credits it')); ?></span></div>
+		<?php } ?>
 		<div class="p202-strip__row"><span class="p202-pill">When</span><span class="p202-strip__label">Converted</span><span class="p202-strip__value"><?php echo $h(date('Y-m-d H:i:s', (int) $journey['conv_time'])); ?></span></div>
 		<?php if ($meta !== null) { ?>
 			<div class="p202-strip__row"><span class="p202-pill<?php echo $meta['identified'] ? ' p202-pill--good' : ''; ?>"><?php echo $meta['identified'] ? 'Linked' : 'No visitor id'; ?></span><span class="p202-strip__label">Journey</span><span class="p202-strip__value"><?php echo $h((int) $meta['touches'] . ' touch' . ((int) $meta['touches'] === 1 ? '' : 'es') . ', built over ' . (int) $meta['built_lookback_days'] . ' days' . ($meta['truncated'] ? ', cut at 25 touches' : '')); ?></span></div>

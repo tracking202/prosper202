@@ -7,7 +7,9 @@
 #   - every dashboard view renders on the v2 shell with no PHP noise; the
 #     report's numbers are the database's (per row, the totals row, the
 #     comparison columns, the CSV of what is shown); the journey drill-down's
-#     per-model sums are the stored credits' sums;
+#     per-model sums are the stored credits' sums; a partially reversed sale
+#     reads its net amount wherever it is shown, and that amount is what its
+#     credits sum to on the page, in the CSV and in an export;
 #   - model management through the page's own forms, each one submitted with
 #     the fields the page rendered (form-body.py): add, refuse, edit, make
 #     default, switch off, delete — and what the API refuses the page refuses
@@ -27,7 +29,7 @@
 # allowlist; 127.0.0.1 stays refused) and runs the export runner with
 # -d curl.cainfo pointing at its CA. Both are put back on exit.
 #
-# Needs a scratch database (it seeds campaigns 960001-960003 and removes
+# Needs a scratch database (it seeds campaigns 960001-960004 and removes
 # them), the admin's password (P202_PASS) and an API key (P202_API_KEY). Run
 # from the repository root of the instance being served. With P202_BIN (the
 # Go CLI, configured against the instance under P202_CLI_HOME) it drives the
@@ -100,9 +102,9 @@ probe() { python3 "$OUT/probe.py" "$@"; }
 USER_ID=$(Q "SELECT user_id FROM 202_users WHERE user_name='$P202_USER'")
 [ -n "$USER_ID" ] || { echo "no user $P202_USER in $DB" >&2; exit 2; }
 NOW=$(date +%s)
-CAMP1=960001; CAMP2=960002; CAMP3=960003
-T1=960101; T2=960102; T3=960103
-CAMPS="$CAMP1,$CAMP2,$CAMP3"
+CAMP1=960001; CAMP2=960002; CAMP3=960003; CAMP4=960004
+T1=960101; T2=960102; T3=960103; T4=960104
+CAMPS="$CAMP1,$CAMP2,$CAMP3,$CAMP4"
 MANAGER=mta_ui_manager
 CONFIG_BACKUP="$OUT/202-config.php.orig"
 cp 202-config.php "$CONFIG_BACKUP"
@@ -120,7 +122,7 @@ DELETE FROM 202_conversion_logs WHERE campaign_id IN ($CAMPS);
 DELETE FROM 202_clicks_visitor WHERE click_id IN (SELECT click_id FROM 202_clicks WHERE aff_campaign_id IN ($CAMPS));
 DELETE FROM 202_clicks_spy WHERE aff_campaign_id IN ($CAMPS);
 DELETE FROM 202_clicks WHERE aff_campaign_id IN ($CAMPS);
-DELETE FROM 202_trackers WHERE tracker_id_public IN ($T1, $T2, $T3);
+DELETE FROM 202_trackers WHERE tracker_id_public IN ($T1, $T2, $T3, $T4);
 DELETE FROM 202_aff_campaigns WHERE aff_campaign_id IN ($CAMPS);
 DELETE FROM 202_attribution_exports WHERE user_id = $USER_ID;
 DELETE FROM 202_last_ips WHERE ip_id IN (SELECT ip_id FROM 202_ips WHERE ip_address LIKE '198.51.100.%');
@@ -241,6 +243,9 @@ INSERT INTO 202_aff_campaigns SET aff_campaign_id=$CAMP2, aff_campaign_id_public
   aff_campaign_name='mta-ui-two', aff_campaign_url='http://offer.example/two', aff_campaign_payout=1, aff_campaign_time=$NOW, identity_signals=1;
 INSERT INTO 202_aff_campaigns SET aff_campaign_id=$CAMP3, aff_campaign_id_public=$CAMP3, user_id=$USER_ID, aff_network_id=1,
   aff_campaign_name='=HYPERLINK("http://evil.example","x")', aff_campaign_url='http://offer.example/three', aff_campaign_payout=1, aff_campaign_time=$NOW, identity_signals=1;
+INSERT INTO 202_aff_campaigns SET aff_campaign_id=$CAMP4, aff_campaign_id_public=$CAMP4, user_id=$USER_ID, aff_network_id=1,
+  aff_campaign_name='mta-ui-four', aff_campaign_url='http://offer.example/four', aff_campaign_payout=1, aff_campaign_time=$NOW, identity_signals=1;
+INSERT INTO 202_trackers SET user_id=$USER_ID, tracker_id_public=$T4, aff_campaign_id=$CAMP4, click_cpc=0.10, click_cloaking=0, tracker_time=$NOW;
 INSERT INTO 202_trackers SET user_id=$USER_ID, tracker_id_public=$T1, aff_campaign_id=$CAMP1, click_cpc=0.20, click_cloaking=0, tracker_time=$NOW;
 INSERT INTO 202_trackers SET user_id=$USER_ID, tracker_id_public=$T2, aff_campaign_id=$CAMP2, click_cpc=0.30, click_cloaking=0, tracker_time=$NOW;
 INSERT INTO 202_trackers SET user_id=$USER_ID, tracker_id_public=$T3, aff_campaign_id=$CAMP3, click_cpc=0.10, click_cloaking=0, tracker_time=$NOW;
@@ -260,17 +265,26 @@ A2=$(click "$OUT/a" "t202id=$T2" 198.51.100.110); sleep 1
 A3=$(click "$OUT/a" "t202id=$T1" 198.51.100.110); sleep 1
 S1=$(click "$OUT/s" "t202id=$T2" 198.51.100.120)
 X1=$(click "$OUT/x" "t202id=$T3" 198.51.100.130)
-for c in A1 A2 A3 S1 X1; do [ -n "${!c}" ] && ok "click $c = ${!c}" || bad "click $c not recorded"; done
+R1=$(click "$OUT/r" "t202id=$T4" 198.51.100.140); sleep 1
+R2=$(click "$OUT/r" "t202id=$T4" 198.51.100.140)
+for c in A1 A2 A3 S1 X1 R1 R2; do [ -n "${!c}" ] && ok "click $c = ${!c}" || bad "click $c not recorded"; done
 eq "$(gpb "subid=$A3&amount=12&txid=UI-A")" 200 "the first browser converts for \$12 on its third click"
 eq "$(gpb "subid=$S1&amount=3&txid=UI-S")" 200 "the stranger for \$3"
 eq "$(gpb "subid=$X1&amount=1&txid=UI-X")" 200 "and a click on the campaign with a formula for a name for \$1"
-CONV_A=$(convid "$A3" UI-A); CONV_S=$(convid "$S1" UI-S)
+eq "$(gpb "subid=$R2&amount=10&txid=UI-R")" 200 "a third browser converts for \$10 on its second click"
+CONV_A=$(convid "$A3" UI-A); CONV_S=$(convid "$S1" UI-S); CONV_R=$(convid "$R2" UI-R)
+# A partial reversal: the sale counts \$6 from here on, in the engine and on
+# every surface that shows the conversion's amount beside its credits.
+eq "$(api -o "$OUT/reversal.json" -w '%{http_code}' -X POST -d "{\"click_id\": $R2, \"transaction_id\": \"UI-R\", \"status\": \"reversed\", \"payout\": 4}" "$BASE/api/v3/conversions")" 201 "the network reverses \$4 of it"
+eq "$(Q "SELECT click_payout FROM 202_conversion_logs WHERE reverses_conv_id=$CONV_R")" "-4.00000" "recorded as a -\$4 row naming the sale"
 
 LINEAR=$(api -X POST -d '{"model_name":"UI Linear","model_type":"linear"}' "$BASE/api/v3/attribution/models" | js 'd["data"]["model_id"]')
 [[ "$LINEAR" =~ ^[0-9]+$ ]] && ok "a linear model to compare with ($LINEAR)" || bad "no linear model: $LINEAR"
 eq "$(worker)" 0 "the attribution worker runs"
 eq "$(Q "SELECT GROUP_CONCAT(click_id ORDER BY position) FROM 202_attribution_journeys WHERE conv_id=$CONV_A")" "$A1,$A2,$A3" "the journey is the browser's three clicks"
 eq "$(Q "SELECT GROUP_CONCAT(click_id ORDER BY position) FROM 202_attribution_journeys WHERE conv_id=$CONV_S")" "$S1" "the stranger's is their one click"
+eq "$(Q "SELECT GROUP_CONCAT(click_id ORDER BY position) FROM 202_attribution_journeys WHERE conv_id=$CONV_R")" "$R1,$R2" "the reversed sale's journey is its browser's two clicks"
+eq "$(Q "SELECT GROUP_CONCAT(DISTINCT s ORDER BY s) FROM (SELECT SUM(revenue) AS s FROM 202_attribution_credits WHERE conv_id=$CONV_R GROUP BY model_id) x")" "6.00000" "the reversed sale's credits sum to \$6 under every model"
 
 # ─────────────────────────────────────────────────────────────────────
 say "sign in; every view renders on the v2 shell, with no PHP noise"
@@ -300,6 +314,7 @@ eq "$(probe "$OUT/report.html" cell attribution-breakdown mta-ui-one 7)" '1.00' 
 eq "$(probe "$OUT/report.html" cell attribution-breakdown mta-ui-one 8)" '$12.00' "and its \$12"
 eq "$(probe "$OUT/report.html" cell attribution-breakdown mta-ui-one 1)" "$(Q "SELECT COUNT(*) FROM 202_clicks WHERE aff_campaign_id=$CAMP1 AND click_bot=0")" "campaign one's clicks are its own"
 eq "$(probe "$OUT/report.html" cell attribution-breakdown mta-ui-one 2)" '$0.40' "and so is its cost"
+eq "$(probe "$OUT/report.html" cell attribution-breakdown mta-ui-four 4)|$(probe "$OUT/report.html" cell attribution-breakdown mta-ui-four 8)" '$6.00|$6.00' "the partially reversed \$10 sale is \$6 under both models"
 DBREV=$(Q "SELECT COALESCE(SUM(revenue),0) FROM 202_attribution_credits WHERE model_id=$LINEAR AND conv_time BETWEEN $FROM AND $TO")
 eq "$(probe "$OUT/report.html" totals attribution-breakdown 4)" "\$$(printf '%.2f' "$DBREV")" "the totals row is the stored credits' revenue under the model (\$$DBREV)"
 DBCOST=$(Q "SELECT COALESCE(SUM(click_cpc),0) FROM 202_clicks WHERE user_id=$USER_ID AND click_bot=0 AND click_time BETWEEN $FROM AND $TO")
@@ -314,6 +329,7 @@ say "the CSV is what is shown, exactly, and safe to open"
 curl -sS -b "$JAR" -D "$OUT/csv.h" -o "$OUT/report.csv" "$BASE/$PAGE?view=report&group_by=campaign&model_id=$LINEAR&compare_model_id=$DEFAULT&format=csv"
 grep -qi '^content-type: text/csv' "$OUT/csv.h" && ok "served as text/csv" || bad "content type: $(grep -i content-type "$OUT/csv.h")"
 eq "$(python3 -c "import csv,sys; r={x['name']:x for x in csv.DictReader(open('$OUT/report.csv'))}; print(r['mta-ui-one']['attributed_revenue'], r['mta-ui-one']['compare_attributed_revenue'])")" "8.00000 12.00000" "exact decimals, the comparison included"
+eq "$(python3 -c "import csv,sys; r={x['name']:x for x in csv.DictReader(open('$OUT/report.csv'))}; print(r['mta-ui-four']['attributed_revenue'], r['mta-ui-four']['compare_attributed_revenue'])")" "6.00000 6.00000" "the partially reversed sale is \$6 in the CSV too"
 grep -qF "\"'=HYPERLINK(" "$OUT/report.csv" && ok "a formula in a campaign name is written as text" || bad "formula cell: $(grep -F HYPERLINK "$OUT/report.csv")"
 eq "$(( $(wc -l < "$OUT/report.csv") - 1 ))" "$(probe "$OUT/report.html" count attribution-breakdown)" "one CSV row per table row"
 
@@ -328,6 +344,19 @@ for m in "$DEFAULT" "$LINEAR"; do
   eq "$(probe "$OUT/journey.html" attr "revenue-sum=$m")" "\$$(Q "SELECT FORMAT(SUM(revenue), 2) FROM 202_attribution_credits WHERE conv_id=$CONV_A AND model_id=$m")" "model $m: and its revenue sum, \$12.00"
 done
 eq "$(probe "$OUT/journey.html" attr "credit-sum=$LINEAR")" "100.00%" "each column sums to the whole conversion"
+hasnt "$OUT/journey.html" 'data-p202-total="recorded"' "a sale nothing reversed shows no recorded amount beside its own"
+
+say "a partially reversed sale: the amount shown is the amount its credits sum to"
+eq "$(api "$BASE/api/v3/attribution/conversions/$CONV_R/journey" | js 'd["data"]["amount"] + "|" + d["data"]["recorded_amount"] + "|" + str(d["data"]["counted"])')" "6.00000|10.00000|True" "the API's journey: amount \$6 net of the reversal, \$10 recorded"
+get "$PAGE?view=journey&conv_id=$CONV_R" "$OUT/journey-r.html"
+eq "$(probe "$OUT/journey-r.html" attr total=amount)" '$6.00' "the drill-down's amount is \$6"
+for m in "$DEFAULT" "$LINEAR"; do
+  eq "$(probe "$OUT/journey-r.html" attr "revenue-sum=$m")" '$6.00' "model $m: its revenue column sums to that amount"
+  eq "$(probe "$OUT/journey-r.html" attr "credit-sum=$m")" '100.00%' "model $m: and its credit to the whole conversion"
+done
+probe "$OUT/journey-r.html" attr total=recorded | grep -qF '$10.00' && ok "the recorded \$10 is named beside it" || bad "recorded amount: $(probe "$OUT/journey-r.html" attr total=recorded)"
+eq "$(probe "$OUT/journeys.html" cell recent-table "Conversion $CONV_R" 3)" '$6.00' "the recent conversions list it at \$6"
+eq "$(probe "$OUT/journeys.html" cell recent-table "Conversion $CONV_A" 3)" '$12.00' "and the unreversed sale at its \$12"
 curl -sS -L -b "$JAR" -c "$JAR" -o "$OUT/nojourney.html" "$BASE/$PAGE?view=journey&conv_id=999999999"
 has "$OUT/nojourney.html" 'Conversion 999999999 was not found in this account.' "another account's or a missing conversion is not shown"
 
@@ -450,6 +479,7 @@ PY
 api -o "$OUT/api-download.csv" "$BASE/api/v3/attribution/exports/$HOOK_EXPORT/download"
 cmp -s "$OUT/api-download.csv" "$OUT/download.csv" && ok "the API download is the same file" || bad "API and page downloads differ"
 eq "$(python3 -c "import csv; r={x['name']:x for x in csv.DictReader(open('$OUT/download.csv'))}; print(r['mta-ui-one']['attributed_revenue'], r['mta-ui-one']['compare_attributed_revenue'])")" "8.00000 12.00000" "the export's numbers are the report's"
+eq "$(python3 -c "import csv; r={x['name']:x for x in csv.DictReader(open('$OUT/download.csv'))}; print(r['mta-ui-four']['attributed_revenue'], r['mta-ui-four']['compare_attributed_revenue'])")" "6.00000 6.00000" "the export (and so the webhook's body) has the reversed sale at \$6"
 eq "$(( $(wc -l < "$OUT/download.csv") - 1 ))" "$(Q "SELECT rows_exported FROM 202_attribution_exports WHERE export_id=$HOOK_EXPORT")" "rows_exported counts the file's rows"
 eq "$(( $(wc -l < "$OUT/download.csv") - 1 ))" "$(api "$BASE/api/v3/attribution/reports/breakdown?group_by=campaign&model_id=$LINEAR&compare_model_id=$DEFAULT&limit=1000" | js 'd["meta"]["groups"]')" "every group of the breakdown, not a page of it"
 
