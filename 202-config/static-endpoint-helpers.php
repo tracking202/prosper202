@@ -579,15 +579,9 @@ if (!function_exists('p202RecordConversion')) {
             }
         );
 
-        // Invalidate the hour cache only when a NEW conversion was recorded — not on
-        // an idempotent duplicate, and not when the click was missing.
-        if ($result['clickFound'] && !$result['duplicate']) {
-            $de = new DataEngine();
-            $de->setDirtyHour((string) $clickId);
-            // (conversion.recorded now emits from MysqlConversionRepository::
-            // record() post-commit — the single writer shared with the V3 API —
-            // so every ingestion path fires the bridge identically.)
-        }
+        // The report row (202_dataengine) is re-rolled by the repository's
+        // record() after its commit, for this path and every other writer
+        // alike, as the conversion.recorded bridge event is.
 
         return [
             'conv_id' => $result['convId'],
