@@ -8,6 +8,7 @@ use Api\V3\Apps\Android\Integrity\IntegrityBinding;
 use Api\V3\Apps\Android\Integrity\IntegrityMode;
 use Api\V3\Apps\Android\Integrity\IntegrityState;
 use Api\V3\Apps\AppIdentity;
+use Api\V3\Apps\AppPolicy;
 use Api\V3\Apps\AppRegistration;
 use Api\V3\Apps\AppRegistry;
 use Api\V3\Apps\AppToken;
@@ -270,6 +271,110 @@ final class InstallIntake
             default => [MatchState::INTEGRITY_UNVERIFIED, 'This app requires Play Integrity and no verdict could be obtained'
                 . ($why !== '' ? ': ' . $why : '.'), null],
         };
+    }
+
+    /**
+     * Re-apply the registration's test-signal policy to the test installs
+     * already stored (accept_test_signals is a live policy, as it is for
+     * AdAttributionKit development postbacks): a test install whose trust
+     * bit the policy now decides differently gets the new bit, and its
+     * outcomes move onto its click (conversions written or revived, paid
+     * and notified) or off it (conversions retired, a notification not yet
+     * sent cancelled, one that went out followed by a retraction) —
+     * GoalEngine::recreditInstallInTransaction().
+     *
+     * Each install in its own transaction, locked with its registration
+     * (the settler's lock order: the install row, then its registration),
+     * and judged against the registration as it is at that moment, so two
+     * concurrent toggles converge on whichever committed last. Idempotent:
+     * an install whose bit already matches is left alone, so re-running it
+     * (updating the registration again) finishes what a failure left.
+     * Pending installs are skipped: they are judged when they settle, under
+     * the policy of that moment.
+     *
+     * @return array{examined: int, changed: int}
+     */
+    public function rejudgeTestInstalls(int $userId, int $registrationId): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            "SELECT install_row_id FROM 202_app_installs
+             WHERE registration_id = ? AND user_id = ? AND is_test = 1 AND match_state NOT IN ('pending_click', 'pending_integrity')
+             ORDER BY install_row_id"
+        );
+        $this->conn->bind($stmt, 'ii', [$registrationId, $userId]);
+        $ids = array_map(static fn (array $r): int => (int) $r['install_row_id'], $this->conn->fetchAll($stmt));
+
+        $out = ['examined' => count($ids), 'changed' => 0];
+        foreach ($ids as $rowId) {
+            $work = fn (): ?array => $this->rejudgeOne($userId, $rowId);
+            try {
+                $done = $this->conn->transaction($work);
+            } catch (Throwable $e) {
+                if (!Connection::isRetryableLockError($e)) {
+                    throw $e;
+                }
+                $done = $this->conn->transaction($work);
+            }
+            if ($done === null) {
+                continue;
+            }
+            $out['changed']++;
+            try {
+                $this->engine->finishCommitted($userId, $done);
+            } catch (Throwable $e) {
+                error_log('p202 android policy: install ' . $rowId . ' re-judged; its report refresh failed: ' . $e->getMessage());
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * One install of rejudgeTestInstalls(), in its transaction: null when
+     * its trust bit already matches the policy.
+     *
+     * @return array{ledger: list<array<string, mixed>>, clicks: array<int, true>}|null
+     */
+    private function rejudgeOne(int $userId, int $rowId): ?array
+    {
+        $lock = $this->conn->prepareWrite(
+            'SELECT i.install_row_id, i.match_state, i.is_test, i.trusted, r.*
+             FROM 202_app_installs i JOIN 202_app_registrations r ON r.registration_id = i.registration_id
+             WHERE i.install_row_id = ? AND i.user_id = ? LIMIT 1 FOR UPDATE'
+        );
+        $this->conn->bind($lock, 'ii', [$rowId, $userId]);
+        $row = $this->conn->fetchOne($lock);
+        if ($row === null) {
+            return null; // deleted meanwhile, with its registration or by the purge
+        }
+        $state = MatchState::tryFrom((string) $row['match_state']);
+        if ($state === null) {
+            throw new \RuntimeException('install ' . $rowId . ' has an unknown match_state "' . (string) $row['match_state'] . '"');
+        }
+        if ($state->isPending()) {
+            return null;
+        }
+        $bit = (new InstallVerdict($state, (int) $row['is_test'] === 1))->trustBit(AppPolicy::fromRow($row));
+        $stored = $row['trusted'] === null ? null : (int) $row['trusted'];
+        if ($bit === $stored) {
+            return null;
+        }
+        $stmt = $this->conn->prepareWrite('UPDATE 202_app_installs SET trusted = ? WHERE install_row_id = ?');
+        $this->conn->bind($stmt, 'ii', [$bit, $rowId]);
+        $this->conn->executeUpdate($stmt);
+        if ($state->isRefuted()) {
+            return ['ledger' => [], 'clicks' => []]; // never evaluated, so nothing to move
+        }
+
+        $recredited = $this->engine->recreditInstallInTransaction($userId, $rowId);
+        if ($bit === 1 && $state === MatchState::ATTRIBUTED && $recredited['install_conversion_id'] === null) {
+            throw new \RuntimeException('install ' . $rowId . ' is attributed and now trusted but its install goal has no conversion');
+        }
+        $link = $this->conn->prepareWrite('UPDATE 202_app_installs SET conversion_id = ? WHERE install_row_id = ?');
+        $this->conn->bind($link, 'ii', [$recredited['install_conversion_id'], $rowId]);
+        $this->conn->executeUpdate($link);
+
+        return $recredited['post'];
     }
 
     /**

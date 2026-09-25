@@ -102,6 +102,13 @@ anything fails, so the SDK's retry is safe):
 Every install carries a `match_reason` sentence. A **test** install (a debug
 build's `test: true`) is classified the same way and counts — is trusted,
 and pays — only when the registration's `accept_test_signals` is `1`.
+The policy is live: changing it re-judges the test installs already
+stored. One that becomes trusted is credited as if it had arrived then —
+its install conversion and its goal conversions written on its click (or
+the ones an earlier change retired, restored), and its traffic source
+notified. One that stops being trusted keeps its place in the funnel, but
+its conversions are retired: a notification not yet sent is cancelled,
+and one that went out is followed by a retraction.
 
 ## 4. What an install pays
 
@@ -203,9 +210,11 @@ credential. Installs of that registration still waiting for a Play
 Integrity verdict can then never get one, so the delete settles them in the
 same transaction: `integrity_state` becomes `error` and a held
 `pending_integrity` install `integrity_unverified` — recorded, never paid,
-with a reason naming the deletion. (A `pending_click` install of a deleted
-registration stays `pending_click`: there is no policy left to settle it
-under.) Both unlink the campaigns linked to the deleted registration
+with a reason naming the deletion. An install still `pending_click` can
+never be settled either, so the delete settles it as the 24-hour deadline
+would: `bad_token`, never paid, pruned with the refuted installs. The
+verifier and the pending-click settler do the same for installs whose
+registration disappeared any other way. Both unlink the campaigns linked to the deleted registration
 (`app_registration_id` back to `null`), so registering the app again and
 linking the campaign to the new registration is all it takes to attribute
 its clicks again.
