@@ -455,7 +455,9 @@ fi
 
 # ─────────────────────────────────────────────────────────────────────
 say "put the account back"
-IFS='|' read -r TZ DE KW BID REF PRIV CLOAK ADS DOM CUR IPQS DAYS ERASE <<< "$ORIG_PREFS"
+# The 13th field, user_delete_data_clickid, is only asserted unchanged above
+# (the pass never schedules a deletion), so there is nothing to put back.
+IFS='|' read -r TZ DE KW BID REF PRIV CLOAK ADS DOM CUR IPQS DAYS _ <<< "$ORIG_PREFS"
 mysql_q "$DB" -e "UPDATE 202_users SET user_timezone='$TZ' WHERE user_id=$OWNER; UPDATE 202_users_pref SET user_daily_email='$DE', user_keyword_searched_or_bidded='$KW', user_pref_dynamic_bid='$BID', user_pref_referer_data='$REF', user_pref_privacy='$PRIV', user_pref_cloak_referer='$CLOAK', user_pref_ad_settings='$ADS', user_tracking_domain='$DOM', user_account_currency='$CUR', ipqs_api_key='$IPQS', user_auto_database_optimization_days='$DAYS' WHERE user_id=$OWNER"
 drop_probe_users
 J3=$(mktemp)
