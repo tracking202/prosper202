@@ -305,6 +305,12 @@ eq "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/v3/apps/instal
 # ─────────────────────────────────────────────────────────────────────
 say "events reach the campaign's goals, once, whatever the order"
 T=$(( $(ctime "$C1") + 100 ))
+# The server clamps an event dated in its future to the time it received
+# it, which would erase the order the purchases below depend on (p0 must
+# stay earlier than p1 and p2). The latest one is T + 20, so wait until
+# that is in the past; a pass that reaches here fast pays up to ~2 minutes.
+wait_s=$(( T + 21 - $(date +%s) ))
+if [ "$wait_s" -gt 0 ]; then sleep "$wait_s"; fi
 for level in 1 2 3; do
     events_body "$OUT/e.json" "[{\"event_id\":\"l$level\",\"name\":\"level_reached\",\"occurred_at\":$((T + level)),\"properties\":{\"level\":$level}}]"
     device POST "/apps/installs/$U1/events" "$TOKEN" "$OUT/e.json" > /dev/null
