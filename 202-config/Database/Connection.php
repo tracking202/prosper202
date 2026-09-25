@@ -195,14 +195,41 @@ final class Connection
     public function fetchOne(object $stmt): ?array
     {
         $this->execute($stmt);
-        $result = $stmt->get_result();
-        $row = ($result instanceof mysqli_result) ? $result->fetch_assoc() : null;
-        if ($result instanceof mysqli_result) {
-            $result->free();
-        }
+        $result = $this->resultSet($stmt);
+        $row = $result->fetch_assoc();
+        $result->free();
         $stmt->close();
 
         return $row ?? null;
+    }
+
+    /**
+     * The result set of an executed read, or a QueryException.
+     *
+     * A SELECT that matched nothing is a mysqli_result with no rows; `false`
+     * from get_result() means the fetch itself failed (no mysqlnd, a lost
+     * connection, an out-of-memory result). Reading that false as "no rows"
+     * turned a database failure into a silent empty answer — a click lookup
+     * reported "no such click" and the conversion was dropped (CLAUDE.md
+     * error pattern #1: a false that is indistinguishable from a legitimate
+     * empty answer). It is an error, so it throws.
+     *
+     * @param mysqli_stmt $stmt
+     * @throws QueryException
+     */
+    private function resultSet(object $stmt): mysqli_result
+    {
+        $result = $stmt->get_result();
+        if ($result instanceof mysqli_result) {
+            return $result;
+        }
+        try {
+            $error = $stmt->error;
+        } catch (\Error) {
+            $error = '(unknown)';
+        }
+        $stmt->close();
+        throw new QueryException('MySQL get_result failed: ' . ($error !== '' ? $error : '(no result set)'));
     }
 
     /**
@@ -214,14 +241,12 @@ final class Connection
     public function fetchAll(object $stmt): array
     {
         $this->execute($stmt);
-        $result = $stmt->get_result();
+        $result = $this->resultSet($stmt);
         $rows = [];
-        if ($result instanceof mysqli_result) {
-            while ($row = $result->fetch_assoc()) {
-                $rows[] = $row;
-            }
-            $result->free();
+        while ($row = $result->fetch_assoc()) {
+            $rows[] = $row;
         }
+        $result->free();
         $stmt->close();
 
         return $rows;

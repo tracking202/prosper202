@@ -400,6 +400,11 @@ if (!function_exists('p202RecordConversion')) {
             'pixel_type'      => (int) ($log['pixel_type'] ?? 0),
             'user_agent'      => (string) ($log['user_agent'] ?? ''),
         ];
+        if (!empty($log['once_per_click'])) {
+            // The one-conversion-per-click rule for id-less hits, enforced by
+            // the writer under its click lock (see MysqlConversionRepository::record).
+            $data['once_per_click'] = true;
+        }
 
         // LTV: customer identity + product line items ride the same
         // transactional write (customer upsert, ledger event, line items and
@@ -444,6 +449,31 @@ if (!function_exists('p202RecordConversion')) {
         }
 
         return ['conv_id' => $result['convId'], 'duplicate' => $result['duplicate']];
+    }
+}
+
+if (!function_exists('p202ParseClickId')) {
+    /**
+     * A click id from untrusted input (a cookie, a query parameter, a
+     * network's tracking code), or null when the value is not exactly one.
+     *
+     * Digits only, no sign, no leading zero, within bigint. `is_numeric()`
+     * followed by an int cast accepted "123.9", "1e3" and " 42" and silently
+     * turned each into a DIFFERENT click, so a corrupted cookie could credit a
+     * conversion to a real click nobody meant (the same shape as CLAUDE.md
+     * error pattern #18). The round trip pins the value: what is returned
+     * prints back as exactly what was given.
+     */
+    function p202ParseClickId(mixed $value): ?int
+    {
+        if (is_int($value)) {
+            return $value > 0 ? $value : null;
+        }
+        if (!is_string($value) || preg_match('/^[1-9][0-9]{0,18}$/D', $value) !== 1) {
+            return null;
+        }
+        $id = (int) $value;
+        return $id > 0 && (string) $id === $value ? $id : null;
     }
 }
 
@@ -507,7 +537,7 @@ if (!function_exists('p202RecordLegacyConversion')) {
      * } $opts
      * @return array{recorded: bool, duplicate: bool, conv_id: int, reason: string}
      *         reason is '' when recorded; otherwise one of unknown_click,
-     *         foreign_click, campaign_mismatch, already_lead.
+     *         foreign_click, campaign_mismatch, already_lead, duplicate.
      */
     function p202RecordLegacyConversion(mysqli $db, int $clickId, int $pixelType, array $opts = []): array
     {
@@ -541,6 +571,9 @@ if (!function_exists('p202RecordLegacyConversion')) {
             return $none + ['reason' => 'campaign_mismatch'];
         }
 
+        // Fast path only: the same rule is enforced again by the writer under
+        // its click lock (once_per_click below), which is what makes two
+        // concurrent id-less requests record one conversion, not two.
         $transactionId = trim((string) ($opts['transaction_id'] ?? ''));
         $blocked = p202LegacyConversionGate((int) $click['click_lead'] === 1, $transactionId);
         if ($blocked !== null) {
@@ -565,6 +598,7 @@ if (!function_exists('p202RecordLegacyConversion')) {
                 'pixel_type'      => $pixelType,
                 'user_agent'      => (string) ($opts['user_agent'] ?? ''),
                 'click_payout'    => $payout,
+                'once_per_click'  => $transactionId === '',
             ],
             (string) ($click['click_cpa'] ?? ''),
             $usePixelPayout,
@@ -572,11 +606,23 @@ if (!function_exists('p202RecordLegacyConversion')) {
             $transactionId
         );
 
+        // conv_id 0 with duplicate = the writer's under-lock gate: another
+        // id-less request converted this click first. conv_id 0 without it =
+        // the click vanished between the lookup and the lock.
+        $recorded = $result['conv_id'] > 0 && !$result['duplicate'];
+        if ($recorded) {
+            $reason = '';
+        } elseif ($result['duplicate']) {
+            $reason = $result['conv_id'] > 0 ? 'duplicate' : 'already_lead';
+        } else {
+            $reason = 'unknown_click';
+        }
+
         return [
-            'recorded'  => $result['conv_id'] > 0 && !$result['duplicate'],
+            'recorded'  => $recorded,
             'duplicate' => $result['duplicate'],
             'conv_id'   => $result['conv_id'],
-            'reason'    => $result['conv_id'] > 0 ? '' : 'unknown_click',
+            'reason'    => $reason,
         ];
     }
 }

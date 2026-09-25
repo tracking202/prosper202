@@ -60,18 +60,28 @@ if (function_exists('openssl_decrypt')) {
             $slack->push('cb_key_verified', []);
 
     } else if($order['transactionType'] == 'SALE') {
-        if (!isset($order['trackingCodes'][0]) || !is_numeric($order['trackingCodes'][0])) {
+        // An exact positive integer, or nothing: "123.9" must not become
+        // click 123.
+        $click_id = p202ParseClickId($order['trackingCodes'][0] ?? null);
+        if ($click_id === null) {
             p202RespondJsonError(400, 'Missing tracking code');
         }
-        // The order total is the payout. A value that is not a number is
-        // refused rather than recorded as 0 (CLAUDE.md #4): a silent zero
-        // would look like a free sale in every report.
-        $amount = $order['totalAccountAmount'] ?? '0';
-        if (!is_numeric($amount)) {
-            p202RespondJsonError(400, 'Malformed totalAccountAmount');
+        // The order total is the payout. A missing, null or non-numeric
+        // value is refused rather than recorded as 0 (CLAUDE.md #4): a silent
+        // zero would look like a free sale in every report.
+        $amount = $order['totalAccountAmount'] ?? null;
+        if (!is_scalar($amount) || !is_numeric($amount)) {
+            p202RespondJsonError(400, 'Missing or malformed totalAccountAmount');
         }
-        $click_id = (int) $order['trackingCodes'][0];
-
+        // The receipt is the transaction id: it is what de-duplicates a
+        // repeated INS delivery and tells two sales on one click apart. A
+        // notification without one cannot be recorded safely, so it is
+        // refused rather than stored with no id.
+        $receipt = $order['receipt'] ?? null;
+        $receipt = is_scalar($receipt) ? trim((string) $receipt) : '';
+        if ($receipt === '') {
+            p202RespondJsonError(400, 'Missing receipt');
+        }
         // One conversion row per receipt (pixel_type 2: a server-to-server
         // postback), through the same writer as every other conversion path.
         // The receipt is the transaction id, so ClickBank's repeated INS
@@ -79,8 +89,12 @@ if (function_exists('openssl_decrypt')) {
         // two rows. Before, this endpoint only flagged the click and
         // overwrote its payout, and left no trace of either sale.
         try {
+            // user_id: the notification was authenticated with THIS account's
+            // ClickBank key, so a tracking code naming another account's click
+            // is refused rather than converting in the other tenant.
             $outcome = p202RecordLegacyConversion($db, $click_id, 2, [
-                'transaction_id'   => trim((string) ($order['receipt'] ?? '')),
+                'user_id'          => (int) $mysql['user_id'],
+                'transaction_id'   => $receipt,
                 'use_pixel_payout' => true,
                 'payout'           => (string) $amount,
                 'ip'               => (string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? ''),

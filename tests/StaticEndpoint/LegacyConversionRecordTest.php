@@ -66,6 +66,56 @@ final class LegacyConversionRecordTest extends TestCase
         self::assertStringEndsWith(' sec', p202TimeDifference(0, 1_700_000_000));
     }
 
+    // --- click ids from untrusted input -------------------------------------
+
+    /**
+     * @dataProvider acceptedClickIds
+     */
+    public function testParseClickIdAcceptsExactPositiveIntegers(mixed $input, int $expected): void
+    {
+        self::assertSame($expected, p202ParseClickId($input));
+    }
+
+    /** @return iterable<string, array{mixed, int}> */
+    public static function acceptedClickIds(): iterable
+    {
+        yield 'digits' => ['910000001', 910000001];
+        yield 'one' => ['1', 1];
+        yield 'an int' => [42, 42];
+        yield 'bigint-sized' => ['9223372036854775807', PHP_INT_MAX];
+    }
+
+    /**
+     * Every shape is_numeric() would have let through and the int cast would
+     * then have turned into a DIFFERENT click, plus the plainly invalid ones.
+     *
+     * @dataProvider refusedClickIds
+     */
+    public function testParseClickIdRefusesAnythingElse(mixed $input): void
+    {
+        self::assertNull(p202ParseClickId($input));
+    }
+
+    /** @return iterable<string, array{mixed}> */
+    public static function refusedClickIds(): iterable
+    {
+        yield 'fraction (would become 123)' => ['123.9'];
+        yield 'exponent (would become 1000)' => ['1e3'];
+        yield 'leading space' => [' 42'];
+        yield 'trailing newline' => ["42\n"];
+        yield 'plus sign' => ['+42'];
+        yield 'negative' => ['-1'];
+        yield 'zero' => ['0'];
+        yield 'leading zero' => ['042'];
+        yield 'hex' => ['0x1A'];
+        yield 'beyond bigint (would saturate)' => ['99999999999999999999'];
+        yield 'empty' => [''];
+        yield 'null' => [null];
+        yield 'float' => [12.0];
+        yield 'bool' => [true];
+        yield 'array' => [['1']];
+    }
+
     // --- input guard, before any database work ----------------------------
 
     public function testNonPositiveClickIdThrowsBeforeAnyQuery(): void

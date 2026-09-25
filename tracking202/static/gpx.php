@@ -140,6 +140,10 @@ if (is_numeric($mysql['click_id'])) {
 				'pixel_type'      => 1,
 				'user_agent'      => $_SERVER['HTTP_USER_AGENT'] ?? '',
 				'click_payout'    => $click_payout_for_log,
+				// The click_lead read above is a fast path; the writer re-checks
+				// it under the click lock so two concurrent id-less pixels
+				// record one conversion, not two.
+				'once_per_click'  => p202ExtractTransactionId($_GET) === '',
 			],
 			(string) ($cpa_row['click_cpa'] ?? ''),
 			$mysql['use_pixel_payout'] == 1,

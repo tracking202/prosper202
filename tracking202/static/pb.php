@@ -19,9 +19,11 @@ $aff_campaign_row =  memcache_mysql_fetch_assoc($db, $aff_campaign_sql);
 
 if (!$aff_campaign_row) { die(); }
 
-if (empty($_GET['subid']) || !is_numeric($_GET['subid'])) { die(); }
-
-$click_id = (int) $_GET['subid'];
+// An exact positive integer, or nothing: "123.9" must not become click 123.
+$click_id = p202ParseClickId($_GET['subid'] ?? null);
+if ($click_id === null) {
+	p202RespondJsonError(404, 'Missing or malformed subid');
+}
 
 try {
 	// campaign_id: the postback names a campaign, and only a click on that
@@ -33,9 +35,14 @@ try {
 		'ip'             => (string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? ''),
 		'user_agent'     => (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''),
 	]);
-	if (!$outcome['recorded'] && !$outcome['duplicate'] && $outcome['reason'] !== 'already_lead') {
-		error_log('pb: no conversion recorded for click ' . $click_id . ': ' . $outcome['reason']);
-	}
 } catch (\Throwable $conversionError) {
+	// A non-2xx, so a sender that retries only failures does not treat an
+	// unrecorded conversion as accepted and drop it for good.
 	error_log('pb: conversion recording failed for click ' . $click_id . ': ' . $conversionError->getMessage());
+	p202RespondJsonError(500, 'Failed to record conversion');
+}
+if (!$outcome['recorded'] && !$outcome['duplicate'] && $outcome['reason'] !== 'already_lead') {
+	// unknown_click or campaign_mismatch: the same 404 gpb.php answers for a
+	// subid it cannot convert, so the sender's log shows the mismatch.
+	p202RespondJsonError(404, 'Unknown subid for this campaign');
 }

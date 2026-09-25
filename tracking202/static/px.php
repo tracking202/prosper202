@@ -24,12 +24,10 @@ if (!$aff_campaign_row) { die(); }
 $mysql['user_id'] = $db->real_escape_string((string)$aff_campaign_row['user_id']);
 
 //see if it has the cookie, do whatever we can to grab to grab SOMETHING to tie this lead to
-$click_id = 0;
-if (!empty($_COOKIE['tracking202subid']) && is_numeric($_COOKIE['tracking202subid'])) {
-
-	$click_id = (int) $_COOKIE['tracking202subid'];
-
-} else  {
+// A cookie is untrusted input: only an exact positive integer names a click
+// ("123.9" or "1e3" must not become click 123 or 1000).
+$click_id = p202ParseClickId($_COOKIE['tracking202subid'] ?? null) ?? 0;
+if ($click_id === 0) {
 
 	//ok grab the last click from this ip_id
 	$mysql['ip_address'] = $db->real_escape_string((string)($_SERVER['REMOTE_ADDR'] ?? ''));

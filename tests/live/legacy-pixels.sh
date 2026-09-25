@@ -40,13 +40,13 @@ eq()   { if [ "$1" = "$2" ]; then ok "$3"; else bad "$3 (got '$1' want '$2')"; f
 USER_ID=$(Q "SELECT user_id FROM 202_users ORDER BY user_id LIMIT 1")
 [ -n "$USER_ID" ] || { echo "no user in $DB" >&2; exit 2; }
 NOW=$(date +%s)
-CLICK_A=910000001; CLICK_B=910000002; CLICK_C=910000003; CLICK_D=910000004
+CLICK_A=910000001; CLICK_B=910000002; CLICK_C=910000003; CLICK_D=910000004; CLICK_E=910000005
 ACIP=987654321
 
 mysql_q "$DB" <<SQL
-DELETE FROM 202_conversion_logs WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D);
-DELETE FROM 202_clicks      WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D);
-DELETE FROM 202_clicks_spy  WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D);
+DELETE FROM 202_conversion_logs WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E);
+DELETE FROM 202_clicks      WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E);
+DELETE FROM 202_clicks_spy  WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E);
 DELETE FROM 202_aff_campaigns WHERE aff_campaign_id_public IN ($ACIP, $((ACIP+1)));
 INSERT INTO 202_aff_campaigns (aff_campaign_id_public, user_id, aff_network_id, aff_campaign_name, aff_campaign_url, aff_campaign_payout, aff_campaign_time, aff_campaign_foreign_payout)
   VALUES ($ACIP, $USER_ID, 0, 'legacy-pixels pass', 'http://example.test/', 7.50, $NOW, 7.50),
@@ -59,10 +59,11 @@ INSERT INTO 202_clicks (click_id, user_id, aff_campaign_id, landing_page_id, ppc
   VALUES ($CLICK_A, $USER_ID, $CAMP,  0, 0, 0.10, 7.50, 0, 0, 0, 0, $((NOW-3600)), 0, 0),
          ($CLICK_B, $USER_ID, $CAMP,  0, 0, 0.10, 7.50, 0, 0, 0, 0, $((NOW-3600)), 0, 0),
          ($CLICK_C, $USER_ID, $OTHER, 0, 0, 0.10, 1.00, 0, 0, 0, 0, $((NOW-3600)), 0, 0),
-         ($CLICK_D, $USER_ID, $CAMP,  0, 0, 0.10, 7.50, 0, 0, 0, 0, $((NOW-3600)), 0, 0);
+         ($CLICK_D, $USER_ID, $CAMP,  0, 0, 0.10, 7.50, 0, 0, 0, 0, $((NOW-3600)), 0, 0),
+         ($CLICK_E, $((USER_ID+1000)), $CAMP, 0, 0, 0.10, 7.50, 0, 0, 0, 0, $((NOW-3600)), 0, 0);
 INSERT INTO 202_clicks_spy (click_id, user_id, aff_campaign_id, landing_page_id, ppc_account_id, click_cpc, click_payout, click_lead, click_filtered, click_bot, click_alp, click_time)
   SELECT click_id, user_id, aff_campaign_id, landing_page_id, ppc_account_id, click_cpc, click_payout, click_lead, click_filtered, click_bot, click_alp, click_time
-  FROM 202_clicks WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D);
+  FROM 202_clicks WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E);
 SQL
 
 rows()   { Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id=$1 AND deleted=0"; }
@@ -81,12 +82,15 @@ eq "$(payout $CLICK_A)" 7.50000 "click payout kept at the campaign payout (pixel
 curl -sS -o /dev/null -b "tracking202subid=$CLICK_A" "$BASE/tracking202/static/px.php?acip=$ACIP"
 eq "$(rows $CLICK_A)" 1 "a second fire of the same pixel adds no row (one conversion per click without an id)"
 
-say "px.php: a click that belongs to another campaign's owner does not convert"
-# The click is real but the cookie names it for a campaign owned by the same
-# user here, so ownership passes; the campaign check is pb's. What px must
-# refuse is a non-numeric or absent cookie, which falls to the IP lookup.
+say "px.php: a cookie naming another account's click does not convert for this campaign"
+# CLICK_E is a real click owned by a different user_id. A cookie can name any
+# click on the install, so the owner check is what keeps it out.
+curl -sS -o /dev/null -w '%{http_code}\n' -b "tracking202subid=$CLICK_E" "$BASE/tracking202/static/px.php?acip=$ACIP" > "$OUT/pxE"
+eq "$(cat "$OUT/pxE")" 200 "the pixel still answers 200 (it is an image tag)"
+eq "$(rows $CLICK_E)" 0 "no row for the other account's click"
+eq "$(lead $CLICK_E)" 0 "and it is not flagged"
 curl -sS -o /dev/null -b "tracking202subid=not-a-number" "$BASE/tracking202/static/px.php?acip=$ACIP"
-eq "$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE ip='' AND click_id NOT IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D) AND conv_time>=$NOW")" 0 "a garbage cookie records nothing for a made-up click"
+eq "$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id NOT IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E) AND conv_time>=$NOW")" 0 "a garbage cookie records nothing for a made-up click"
 
 say "pb.php: the per-campaign postback records rows and de-duplicates by transaction id"
 curl -sS -o /dev/null -w '%{http_code}\n' "$BASE/tracking202/static/pb.php?acip=$ACIP&subid=$CLICK_B&txid=ORDER-1" > "$OUT/pb1"
@@ -102,9 +106,16 @@ curl -sS -o /dev/null "$BASE/tracking202/static/pb.php?acip=$ACIP&subid=$CLICK_B
 eq "$(rows $CLICK_B)" 2 "a postback without an id on a click that already converted adds nothing"
 
 say "pb.php: a click on a different campaign is refused by the campaign scope"
-curl -sS -o /dev/null "$BASE/tracking202/static/pb.php?acip=$ACIP&subid=$CLICK_C&txid=ORDER-9"
+eq "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/tracking202/static/pb.php?acip=$ACIP&subid=$CLICK_C&txid=ORDER-9")" 404 "answers 404 for a click on another campaign"
 eq "$(rows $CLICK_C)" 0 "no row for a click that belongs to another campaign"
 eq "$(lead $CLICK_C)" 0 "that click is not flagged either"
+eq "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/tracking202/static/pb.php?acip=$ACIP&subid=910099999&txid=ORDER-9")" 404 "answers 404 for a subid this install does not have"
+
+say "click ids are exact integers, never cast from a fraction"
+eq "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/tracking202/static/pb.php?acip=$ACIP&subid=$CLICK_C.9&txid=FRAC-1")" 404 "pb refuses a fractional subid"
+eq "$(rows $CLICK_C)" 0 "and records nothing on the click it would have cast to"
+curl -sS -o /dev/null -b "tracking202subid=$CLICK_C.9" "$BASE/tracking202/static/px.php?acip=$((ACIP+1))"
+eq "$(rows $CLICK_C)" 0 "px refuses a fractional cookie (records nothing on the truncated click)"
 
 say "cb202.php: one row per ClickBank receipt, payout from the order total"
 CBKEY="livepasskey123"
@@ -129,6 +140,18 @@ eq "$(cb_post RCPT-B $CLICK_D 10.00 SALE)" 200 "a second receipt answers 200"
 eq "$(rows $CLICK_D)" 2 "a second sale on the click is a second row"
 eq "$(cb_post RCPT-X 910099999 5.00 SALE)" 404 "a sale naming an unknown click is a 404, not a silent 200"
 grep -q 'Unknown tracking code' "$OUT/cb.out" && ok "the 404 names the cause" || bad "the 404 names the cause"
+eq "$(cb_post RCPT-F $CLICK_E 5.00 SALE)" 404 "a sale naming another account's click is a 404 (scoped to the key's account)"
+eq "$(rows $CLICK_E)" 0 "and nothing was written in the other account"
+eq "$(cb_post RCPT-G $CLICK_D.9 5.00 SALE)" 400 "a fractional tracking code is a 400"
+eq "$(cb_post '' $CLICK_D 5.00 SALE)" 400 "a sale without a receipt is a 400"
+grep -q 'Missing receipt' "$OUT/cb.out" && ok "the 400 names the missing receipt" || bad "the 400 names the missing receipt"
+php -r '
+  $key="'"$CBKEY"'"; $iv=random_bytes(16);
+  $order=json_encode(["transactionType"=>"SALE","receipt"=>"RCPT-H","trackingCodes"=>["'"$CLICK_D"'"]]);
+  $enc=openssl_encrypt($order,"AES-128-CBC",substr(sha1($key),0,32),OPENSSL_RAW_DATA,$iv);
+  echo json_encode(["notification"=>base64_encode($enc),"iv"=>base64_encode($iv)]);' > "$OUT/cbnototal.json"
+eq "$(curl -sS -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' --data-binary @"$OUT/cbnototal.json" "$BASE/tracking202/static/cb202.php")" 400 "a sale with no total at all is a 400, not a zero-value sale"
+eq "$(rows $CLICK_D)" 2 "and neither wrote anything"
 php -r '
   $key="'"$CBKEY"'"; $iv=random_bytes(16);
   $order=json_encode(["transactionType"=>"SALE","receipt"=>"RCPT-Z","trackingCodes"=>["'"$CLICK_D"'"],"totalAccountAmount"=>"lots"]);
