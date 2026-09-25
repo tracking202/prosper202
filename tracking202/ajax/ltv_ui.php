@@ -34,8 +34,16 @@ function p202_ltv_ui_styles(): string
  * Section tabs shown on every top-level LTV view: the kit's .p202-tabs.
  * Real links (to the view's URL), so a middle-click or a copied link works;
  * a plain click is routed in place by ltvNav().
+ *
+ * Each link carries the window the view is drawn for, as ltvNav() puts it on
+ * the address bar (range, then from/to for a custom one): without it a copied
+ * or middle-clicked tab opened ltv.php with no window, which shows the stored
+ * one — whatever another page stored since, not the one on screen.
+ *
+ * @param array<string, string>|null $window  range/from/to as query values;
+ *   null reads the window this request is drawn for (p202_ltv_window_query())
  */
-function p202_ltv_tabs(string $active): string
+function p202_ltv_tabs(string $active, ?array $window = null): string
 {
     $tabs = [
         'report' => ['bi-graph-up', 'Report'],
@@ -44,18 +52,43 @@ function p202_ltv_tabs(string $active): string
         'companies' => ['bi-building', 'Companies'],
         'settings' => ['bi-gear', 'Settings'],
     ];
+    $window ??= p202_ltv_window_query();
     $base = get_absolute_url() . 'tracking202/analyze/ltv.php';
     $html = '<nav class="nav p202-tabs" aria-label="Customer LTV views">';
     foreach ($tabs as $view => [$icon, $label]) {
         $current = $view === $active;
+        $query = http_build_query($window + ($view === 'report' ? [] : ['view' => $view]));
         $html .= '<a class="nav-link' . ($current ? ' active' : '') . '"'
             . ($current ? ' aria-current="page"' : '')
-            . ' href="' . p202_ltv_esc($base . ($view === 'report' ? '' : '?view=' . $view)) . '"'
+            . ' href="' . p202_ltv_esc($base . ($query === '' ? '' : '?' . $query)) . '"'
             . ' onclick="ltvNav(\'' . $view . '\'); return false;">'
             . '<i class="bi ' . $icon . ' me-1"></i>' . p202_ltv_esc($label) . '</a>';
     }
 
     return $html . '</nav>';
+}
+
+/**
+ * The window an LTV view is drawn for, as the query values ltv.php reads: a
+ * preset's name, or `custom` with its two days. Every LTV partial reads its
+ * window through grab_timeframe(), so this is the one on screen.
+ *
+ * @param array<string, mixed>|null $time  grab_timeframe(); read when null
+ * @return array<string, string>
+ */
+function p202_ltv_window_query(?array $time = null): array
+{
+    $time ??= grab_timeframe();
+    $range = (string) ($time['user_pref_time_predefined'] ?? '');
+    if (in_array($range, \Tracking202\Report\ReportFilterInput::RANGES, true)) {
+        return ['range' => $range];
+    }
+    $from = (int) ($time['from'] ?? 0);
+    $to = (int) ($time['to'] ?? 0);
+    if ($from <= 0 || $to <= 0) {
+        return [];
+    }
+    return ['range' => \Tracking202\Report\ReportFilterInput::RANGE_CUSTOM, 'from' => date('Y-m-d', $from), 'to' => date('Y-m-d', $to)];
 }
 
 /**

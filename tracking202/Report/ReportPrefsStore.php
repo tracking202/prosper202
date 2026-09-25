@@ -32,11 +32,24 @@ final class ReportPrefsStore
     }
 
     /**
-     * The user's stored report preferences.
+     * The user's report preferences as this request draws them: the stored
+     * row, with the request's view laid over it when one is installed
+     * (ReportView).
      *
      * @return array<string, mixed>
      */
     public function load(int $userId): array
+    {
+        return \Prosper202\DataEngine\ReportView::apply($this->loadStored($userId), $userId);
+    }
+
+    /**
+     * The row as stored, whatever view this request draws: what save() reads
+     * back to prove its write.
+     *
+     * @return array<string, mixed>
+     */
+    private function loadStored(int $userId): array
     {
         $rows = $this->query('SELECT * FROM 202_users_pref WHERE user_id = ?', $userId);
         return $rows[0] ?? [];
@@ -133,7 +146,7 @@ final class ReportPrefsStore
             $this->conn->bind($stmt, str_repeat('s', count($params)), $params);
             $this->conn->executeUpdate($stmt);
 
-            $stored = $this->load($userId);
+            $stored = $this->loadStored($userId);
             if ($stored === []) {
                 throw new RuntimeException('There is no preferences row for this user to save the report filters in.');
             }

@@ -32,5 +32,5 @@ p202_overview_run([
     'fragment' => $base . 'tracking202/ajax/click_history.php',
     'panel' => 'Clicks',
     'names' => [...P202_OVERVIEW_CLICK_FILTERS, 'user_pref_limit'],
-    'aside' => '<a class="btn btn-secondary btn-sm" href="' . htmlspecialchars($base . 'tracking202/visitors/download/', ENT_QUOTES, 'UTF-8') . '"><i class="bi bi-file-earmark-spreadsheet"></i> Download to Excel</a>',
+    'download' => $base . 'tracking202/visitors/download/',
 ]);

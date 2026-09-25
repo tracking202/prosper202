@@ -171,19 +171,28 @@ final class ReportFilterInput
             }
         }
 
+        // A custom window, however it was asked for: both dates, and the
+        // first no later than the second. One reader, so the two ways of
+        // asking cannot check different things.
+        $custom = static function () use ($read, &$errors): ?array {
+            $from = self::parseDate((string) $read('from'));
+            $to = self::parseDate((string) $read('to'));
+            if ($from === null || $to === null) {
+                $errors['range'] = 'Choose a start and an end date for a custom range.';
+                return null;
+            }
+            if (sprintf('%04d%02d%02d', ...$from) > sprintf('%04d%02d%02d', ...$to)) {
+                $errors['range'] = 'The start date is after the end date.';
+                return null;
+            }
+            return ['range' => self::RANGE_CUSTOM, 'from' => $from, 'to' => $to];
+        };
+
         $window = null;
         $range = $read('range');
         if ($range !== null) {
             if ($range === self::RANGE_CUSTOM) {
-                $from = self::parseDate((string) $read('from'));
-                $to = self::parseDate((string) $read('to'));
-                if ($from === null || $to === null) {
-                    $errors['range'] = 'Choose a start and an end date for a custom range.';
-                } elseif (sprintf('%04d%02d%02d', ...$from) > sprintf('%04d%02d%02d', ...$to)) {
-                    $errors['range'] = 'The start date is after the end date.';
-                } else {
-                    $window = ['range' => self::RANGE_CUSTOM, 'from' => $from, 'to' => $to];
-                }
+                $window = $custom();
             } elseif (in_array($range, self::RANGES, true)) {
                 $window = ['range' => $range, 'from' => null, 'to' => null];
             } else {
@@ -192,13 +201,7 @@ final class ReportFilterInput
         } elseif ($read('from') !== null || $read('to') !== null) {
             // Dates with no range say "custom" without saying it; read them
             // as that rather than dropping a window someone typed.
-            $from = self::parseDate((string) $read('from'));
-            $to = self::parseDate((string) $read('to'));
-            if ($from === null || $to === null) {
-                $errors['range'] = 'Choose a start and an end date for a custom range.';
-            } else {
-                $window = ['range' => self::RANGE_CUSTOM, 'from' => $from, 'to' => $to];
-            }
+            $window = $custom();
         }
 
         $page = 1;

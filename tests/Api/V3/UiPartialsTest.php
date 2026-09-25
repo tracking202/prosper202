@@ -126,6 +126,39 @@ final class UiPartialsTest extends TestCase
         self::assertSame('1 set', trim($this->one($dom, '//span[@class="p202-disclosure__hint"]')->textContent), 'the default row count is not counted as set');
     }
 
+    /**
+     * The classic calendar's "--" option posted 0 and set_user_prefs.php
+     * stored it as given, so a stored "All" is often '0'. Read as a value it
+     * rendered a selected "0 (not in your list)", counted Advanced as "N set"
+     * and was resubmitted as 0.
+     */
+    public function testTheClassicZeroSentinelReadsAsAll(): void
+    {
+        $names = ['ppc_network_id', 'aff_campaign_id', 'ppc_account_id', 'aff_network_id', 'landing_page_id', 'text_ad_id',
+            'method_of_promotion', 'country_id', 'region_id', 'isp_id', 'device_id', 'browser_id', 'platform_id'];
+        $lists = [];
+        $values = [];
+        foreach ($names as $name) {
+            $lists[$name] = ['7' => 'Seven'];
+            $values[$name] = '0';
+        }
+        $specs = p202_report_filters($values, $lists, $names);
+        foreach ($specs as $spec) {
+            self::assertSame('', $spec['value'], "{$spec['name']}: a stored 0 is the classic All");
+        }
+        $dom = $this->dom(p202_report_filter_bar(['action' => '/r.php', 'id' => 'f', 'filters' => $specs]));
+        foreach ($names as $name) {
+            self::assertSame('', $this->selectedValue($dom, 'f-' . $name), "$name shows its All option");
+        }
+        self::assertSame(0, $this->nodes($dom, '//option[@value="0"]'), 'no synthetic 0 option is rendered, so none is resubmitted');
+        self::assertFalse($this->one($dom, '//details[contains(@class,"p202-disclosure")]')->hasAttribute('open'), 'nothing counts as set');
+
+        // A 0 on a setting with no "All" entry is not a sentinel: it is kept
+        // as the value it is, rather than silently becoming the default.
+        $limit = p202_report_filters(['user_pref_limit' => '0'], [], ['user_pref_limit']);
+        self::assertSame('0', $limit[0]['value']);
+    }
+
     public function testNothingSetLeavesAdvancedClosedAndRemembered(): void
     {
         $filters = p202_report_filters([], ['device_id' => ['1' => 'Desktop']], ['device_id', 'user_pref_limit', 'user_cpc_or_cpv']);
