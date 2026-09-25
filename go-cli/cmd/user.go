@@ -656,6 +656,9 @@ func init() {
 	registerSingleDeleteFlags(userAPIKeyDeleteCmd)
 	userAPIKeyCreateCmd.Flags().String("scope", "", "Scope for the new key: *, read, write, stage, or comma-separated <area>:read/<area>:write/<area>:stage tokens (`read,stage` is the propose-only agent shape; default: full access)")
 	userAPIKeyRotateCmd.Flags().String("scope", "", "Scope for the replacement key (default: the old key's scope, carried over)")
+	emptyHint(userAPIKeyCreateCmd, "scope", "Name the scope (`read`, `write`, `stage`, or `<area>:read`/`<area>:write`/`<area>:stage`, comma-separated), "+
+		"or omit --scope entirely to mint a full-access key on purpose.")
+	emptyHint(userAPIKeyRotateCmd, "scope", "Name the new key's scope, or omit --scope to carry the old key's scope forward.")
 	userAPIKeyRotateCmd.Flags().Bool("keep-old", false, "Do not delete the old API key")
 	userAPIKeyRotateCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt when deleting old key")
 	userAPIKeyRotateCmd.Flags().Bool("update-config", false, "Update local ~/.p202/config.json with the new API key")

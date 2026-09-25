@@ -763,6 +763,9 @@ func init() {
 		cmd.Flags().String("integrity-mode", "", "Android: Play Integrity off (default), observe (record verdicts) or require (attribute only a passing verdict); needs `app integrity credential set` first and --integrity-cloud-project-number")
 		cmd.Flags().String("integrity-cloud-project-number", "", "Android: the Google Cloud project NUMBER the SDK requests integrity tokens for (required for observe/require; can be replaced, not cleared)")
 	}
+	// Update sends exactly the flags given, an empty one included (clearing
+	// the notes): a deliberate write, not a missing value (collectAppBody).
+	allowEmpty(appUpdateCmd, "app-name", "notes", "accept-test-signals")
 	registerDeleteFlags(appDeleteCmd, "app registration")
 
 	registerPagedListFlags(appPostbacksListCmd)
@@ -784,6 +787,7 @@ func init() {
 		cmd.Flags().String("goal-id", "", "The goal the value means (`p202 goal list --registration-id <id>`; evaluated on the device, so no click window)")
 		cmd.Flags().String("revenue-override", "", "Revenue per decoded postback, instead of the goal's own value (tiered decoding)")
 	}
+	allowEmpty(appEncodingUpdateCmd, "registration-id", "fine-value", "coarse-value", "goal-id", "revenue-override")
 	appEncodingUpdateCmd.Flags().Bool("clear-revenue-override", false, "Go back to the goal's own value")
 	appEncodingUpdateCmd.Flags().Bool("clear-fine-value", false, "Set fine_value to null (pair with --coarse-value to switch kinds)")
 	appEncodingUpdateCmd.Flags().Bool("clear-coarse-value", false, "Set coarse_value to null (pair with --fine-value to switch kinds)")
