@@ -35,11 +35,15 @@ use Prosper202\Conversion\Ledger\Amount;
  *    days * 86400. A window whose anchor the subject lacks does not exclude
  *    the event: the outcomes are recorded as ineligible instead.
  * 4. Counting adds one to `count`; a `sum` threshold adds the property's
- *    value in units of 0.00001 (an event whose property is missing or not a
- *    number is not counted at all).
+ *    value in units of 0.00001 (an event whose property is missing, not a
+ *    number, or outside ±999999.99999 is not counted at all). The running
+ *    sum is held between SUM_FLOOR_UNITS and the largest threshold the
+ *    goal can still use (cap × S), so it never leaves int range.
  * 5. The goal is reached for the n-th time when count >= n * N (or sum >=
- *    n * S), up to 1 time (`once`) or `max` times (`each`); one event can
- *    reach several n at once when a sum jumps.
+ *    n * S), up to 1 time (`once`) or `max` times (`each`; a sum's `each`
+ *    always has a max); one event can reach several n at once when a sum
+ *    jumps. How many is computed (floor(sum / S)), never searched for, so
+ *    an event costs the outcomes it reaches and nothing more.
  *
  * Nothing here decides money: an outcome carries the goal's own value, and
  * the campaign's payout, payability and revenue trust are applied by the
@@ -48,19 +52,31 @@ use Prosper202\Conversion\Ledger\Amount;
 final class GoalEvaluator
 {
     /**
+     * The lowest a running sum goes (-10,000,000,000.00000). Upward a sum is
+     * held at cap × gte, the largest threshold the goal can still use
+     * (at most 10000 × 99999999999 < 10^15): a sum that reaches it has
+     * reached every n it ever can, so holding it there changes no outcome.
+     * Downward nothing reaches anything, so a floor is needed only to keep
+     * the arithmetic inside a 64-bit integer — every evaluator holds the sum
+     * in one — and a server subject (at most 10,000 events of at most
+     * 99999999999 units each) never gets there.
+     */
+    public const SUM_FLOOR_UNITS = -1_000_000_000_000_000;
+
+    /**
      * Evaluate every event of a subject from nothing. For an install
      * subject the install itself is the first event (GoalEvent::install()).
      *
      * @param list<GoalSpec> $specs
      * @param list<GoalEvent> $events
      */
-    public static function evaluateAll(array $specs, GoalSubject $subject, array $events): EvaluationResult
+    public static function evaluateAll(array $specs, GoalSubject $subject, array $events, ?int $maxOutcomes = null): EvaluationResult
     {
         if ($subject->type === GoalSubject::INSTALL && $subject->installAt !== null) {
             $events[] = GoalEvent::install($subject->installAt);
         }
 
-        return self::fold($specs, $subject, $events, new EvaluationState());
+        return self::fold($specs, $subject, $events, new EvaluationState(), $maxOutcomes);
     }
 
     /**
@@ -80,7 +96,7 @@ final class GoalEvaluator
      * @param list<GoalSpec> $specs
      * @param list<GoalEvent> $events
      */
-    private static function fold(array $specs, GoalSubject $subject, array $events, EvaluationState $state): EvaluationResult
+    private static function fold(array $specs, GoalSubject $subject, array $events, EvaluationState $state, ?int $maxOutcomes = null): EvaluationResult
     {
         $seen = [];
         foreach ($events as $event) {
@@ -151,6 +167,9 @@ final class GoalEvaluator
                 [$version, $def] = $selected[$goalId];
                 foreach (self::step($goalId, $version, $def, $subject, $event, $state) as $outcome) {
                     $outcomes[] = $outcome;
+                }
+                if ($maxOutcomes !== null && count($outcomes) > $maxOutcomes) {
+                    throw new EvaluationTooLarge($maxOutcomes);
                 }
             }
             foreach ($cyclic as $goalId) {
@@ -284,26 +303,41 @@ final class GoalEvaluator
             }
         }
 
+        if ($def->repeatMode === 'once') {
+            $cap = 1;
+        } elseif ($def->repeatMax !== null) {
+            $cap = $def->repeatMax;
+        } elseif ($def->thresholdKind === 'count') {
+            $cap = PHP_INT_MAX; // a count grows by one per event: at most one more n per event
+        } else {
+            // GoalDefinition::parse() refuses a repeating sum without max.
+            throw new \LogicException('goal ' . $goalId . ' version ' . $version . ' repeats a sum without a max');
+        }
+
         $p = &$state->entry($goalId, $version);
         $p['count']++;
         if ($sumUnits !== null) {
-            $p['sum'] += $sumUnits;
+            // Every term is bounded, so the addition stays inside int range:
+            // a sum this fold held is within [SUM_FLOOR_UNITS, ceiling]
+            // (|x| <= 10^15), one read back from 202_goal_progress has at
+            // most 13 whole digits (Amount::toUnits() refuses more, so
+            // < 10^18 units), and a summand is at most MAX_SUMMAND_UNITS.
+            $ceiling = $cap * $def->sumGteUnits;
+            $p['sum'] = min($ceiling, max(self::SUM_FLOOR_UNITS, $p['sum'] + $sumUnits));
         }
+        // How many times the goal is reached in total now, computed rather
+        // than searched for: the loop below runs once per outcome written.
+        $total = $def->thresholdKind === 'count'
+            ? intdiv($p['count'], $def->count)
+            : ($p['sum'] > 0 ? intdiv($p['sum'], $def->sumGteUnits) : 0);
+        $total = min($cap, $total);
 
-        $cap = $def->repeatMode === 'once' ? 1 : ($def->repeatMax ?? PHP_INT_MAX);
         $out = [];
-        while ($p['times'] < $cap) {
-            $next = $p['times'] + 1;
-            $crossed = $def->thresholdKind === 'count'
-                ? $p['count'] >= $next * $def->count
-                : $p['sum'] >= $next * $def->sumGteUnits;
-            if (!$crossed) {
-                break;
-            }
-            $p['times'] = $next;
+        for ($n = $p['times'] + 1; $n <= $total; $n++) {
+            $p['times'] = $n;
             $p['reached_at'] ??= $t;
             [$valueUnits, $source, $note] = self::value($def, $event);
-            $out[] = new Outcome($goalId, $version, $next, $event->eventId, $t, $valueUnits, $source, $note, $ineligible);
+            $out[] = new Outcome($goalId, $version, $n, $event->eventId, $t, $valueUnits, $source, $note, $ineligible);
             if ($ineligible === null) {
                 $state->reached[$goalId] = true;
             }
@@ -376,21 +410,27 @@ final class GoalEvaluator
 
     /**
      * A property value in units of 0.00001, or null when it is not a number
-     * the ledger can hold.
+     * the ledger can hold: within ±999999.99999 (MAX_SUMMAND_UNITS) once
+     * rounded to units. This bounds every summand, so a running sum is a
+     * sum of small integers and cannot overflow (see SUM_FLOOR_UNITS).
      */
     private static function units(mixed $v): ?int
     {
         if (!GoalDefinition::isNumber($v)) {
             return null;
         }
-        if (abs((float) $v) > 99999999999999.0) {
+        // Refuse the far-out ones before converting: Amount::toUnits()
+        // multiplies an int by 100000, which must not leave int range.
+        if (abs((float) $v) > 1000000.0) {
             return null;
         }
         try {
-            return Amount::toUnits($v);
+            $units = Amount::toUnits($v);
         } catch (\InvalidArgumentException) {
             return null;
         }
+
+        return abs($units) <= GoalDefinition::MAX_SUMMAND_UNITS ? $units : null;
     }
 
     /**

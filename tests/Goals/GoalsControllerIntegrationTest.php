@@ -197,4 +197,58 @@ final class GoalsControllerIntegrationTest extends TestCase
         $valid = $this->api()->validate(['definition' => ['name' => 'X', 'trigger' => ['event' => 'x']]])['data'];
         self::assertTrue($valid['plain_event']);
     }
+
+    /**
+     * A sum that repeats without a bound, a summand or revenue too large for
+     * the ledger, and an answer too large to build are each refused by name
+     * at the outermost entry point, never looped over or overflowed.
+     */
+    public function testEvaluateAndValidateBoundWhatOneRequestCanCost(): void
+    {
+        $sumEach = ['name' => 'Every cent', 'trigger' => ['event' => 'buy'], 'threshold' => ['sum' => ['prop' => '$revenue', 'gte' => '0.00001']],
+            'repeat' => ['mode' => 'each']];
+        self::assertArrayHasKey('definition.repeat.max', self::fieldErrors(fn () => $this->api()->validate(['definition' => $sumEach])));
+        self::assertArrayHasKey('definition.repeat.max', self::fieldErrors(fn () => $this->api()->create(['scope' => 'account', 'definition' => $sumEach])));
+
+        // Handed to evaluate as a stored version would be, it is disabled
+        // and reaches nothing — before the fix, this one event looped
+        // 100,000 times (and 10^11 times at a revenue of 999999).
+        $result = $this->api()->evaluate([
+            'goals' => [['goal_id' => 1, 'definition' => $sumEach]],
+            'subject' => ['type' => 'click', 'click_at' => 100],
+            'events' => [['event_id' => 'e', 'name' => 'buy', 'occurred_at' => 150, 'received_at' => 150, 'revenue' => 1]],
+        ])['data'];
+        self::assertSame([], $result['outcomes']);
+        self::assertSame([['goal_id' => 1, 'version' => 1, 'reason' => 'invalid_definition']], $result['disabled']);
+
+        foreach ([1000000, -1000000, 9999999999999, 1.0e300] as $revenue) {
+            self::assertArrayHasKey('events[0].revenue', self::fieldErrors(fn () => $this->api()->evaluate([
+                'goals' => [['goal_id' => 1, 'definition' => ['name' => 'Buy', 'trigger' => ['event' => 'buy']]]],
+                'subject' => ['type' => 'click'],
+                'events' => [['event_id' => 'e', 'name' => 'buy', 'occurred_at' => 1, 'received_at' => 1, 'revenue' => $revenue]],
+            ])), var_export($revenue, true) . ' is more than a conversion holds');
+        }
+
+        // Two bounded sums, 6000 each from one event: 12,000 outcomes, more
+        // than one answer holds.
+        $bounded = static fn (int $id): array => ['goal_id' => $id, 'definition' => ['name' => 'G' . $id, 'trigger' => ['event' => 'buy'],
+            'threshold' => ['sum' => ['prop' => '$revenue', 'gte' => '0.00001']], 'repeat' => ['mode' => 'each', 'max' => 6000]]];
+        $errors = self::fieldErrors(fn () => $this->api()->evaluate([
+            'goals' => [$bounded(1), $bounded(2)],
+            'subject' => ['type' => 'click'],
+            'events' => [['event_id' => 'e', 'name' => 'buy', 'occurred_at' => 1, 'received_at' => 1, 'revenue' => 1]],
+        ]));
+        self::assertArrayHasKey('events', $errors);
+        self::assertStringContainsString('more than 10000 outcomes', $errors['events']);
+
+        // One of them alone is 6000, inside the budget, and its sum is held
+        // at max × gte.
+        $one = $this->api()->evaluate([
+            'goals' => [$bounded(1)],
+            'subject' => ['type' => 'click'],
+            'events' => [['event_id' => 'e', 'name' => 'buy', 'occurred_at' => 1, 'received_at' => 1, 'revenue' => 999999.99999]],
+        ])['data'];
+        self::assertCount(6000, $one['outcomes']);
+        self::assertSame('0.06000', $one['progress'][0]['sum']);
+    }
 }

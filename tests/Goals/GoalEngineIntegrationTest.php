@@ -212,4 +212,38 @@ final class GoalEngineIntegrationTest extends TestCase
             $row['subject_type'], $row['subject_id'], $row['conversion_id'], $row['payable'], $row['value_note'], $row['app_registration_id'],
         ]);
     }
+
+    /**
+     * A subject whose live outcomes pass what one read holds is refused by
+     * name, never reconciled against a truncated read (which would take the
+     * unread outcomes for missing and write them a second time).
+     */
+    public function testASubjectWithMoreLiveOutcomesThanOneReadHoldsIsRefusedNotTruncated(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7);
+        $goal = $this->goal(7, ['name' => 'Buy', 'trigger' => ['event' => 'buy'], 'repeat' => ['mode' => 'each']]);
+        $this->ingest(100, [$this->event('b1', 'buy', self::T + 1)]);
+        $digits = '(SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 '
+            . 'UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9)';
+        // 100,000 more live outcomes of goal version 99 beside the real one.
+        self::fixture("INSERT INTO 202_goal_outcomes (user_id, subject_type, subject_id, goal_id, goal_version, n, event_id, reached_at,
+                value_source, payable, created_at)
+            SELECT 1, 'click', 100, $goal, 99, 1 + a.d + 10 * b.d + 100 * c.d + 1000 * e.d + 10000 * f.d, 'x', 1, 'none', 0, 1
+            FROM $digits a, $digits b, $digits c, $digits e, $digits f");
+        self::assertSame((string) (\Prosper202\Goals\GoalEngine::MAX_LIVE_OUTCOMES_PER_SUBJECT + 1),
+            self::$db->query('SELECT COUNT(*) AS n FROM 202_goal_outcomes WHERE superseded_at IS NULL')->fetch_assoc()['n']);
+
+        foreach (['an in-order event' => self::T + 2, 'a replay' => self::T] as $what => $at) {
+            try {
+                $this->ingest(100, [$this->event('b' . $at, 'buy', $at)]);
+                self::fail($what . ' was evaluated against a truncated read');
+            } catch (GoalEngineException $e) {
+                self::assertSame(GoalEngineException::INTEGRITY, $e->reason, $what);
+                self::assertStringContainsString('more than 100000 live goal outcomes', $e->getMessage(), $what);
+            }
+        }
+        self::assertSame('1', self::$db->query('SELECT COUNT(*) AS n FROM 202_goal_events WHERE subject_id = 100')->fetch_assoc()['n'],
+            'the refused events rolled back');
+    }
 }
