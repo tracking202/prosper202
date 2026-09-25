@@ -14,6 +14,9 @@
  *                                load draws the table; every five seconds
  *                                after, only clicks newer than the newest one
  *                                shown are fetched and put on top
+ *   [data-p202-breakdown="<url>"] on a click history row: open the click's
+ *                                conversions (#p202-click-conversions) and
+ *                                draw their breakdown into it
  *   [data-p202-snippet="<url>"]  an optional panel (the LTV strip): loaded
  *                                once, removed when the fragment has nothing
  *   [data-p202-chart]            a Highcharts config as JSON, drawn in place
@@ -299,6 +302,62 @@
         poll();
         window.setInterval(poll, SPY_INTERVAL);
     }
+
+    /* ── A click's conversions ──────────────────────────────────────── */
+
+    /* A row's "n conversions" button opens the click history's modal and
+       draws that click's breakdown into it (tracking202/ajax/
+       click_conversions.php). A later click on another row replaces the
+       body; an answer that arrives for a row no longer asked about is
+       dropped, so a slow first request never overwrites the second. */
+    var breakdownAsked = null;
+    document.addEventListener('click', function (event) {
+        var button = event.target.closest ? event.target.closest('[data-p202-breakdown]') : null;
+        if (!button) {
+            return;
+        }
+        event.preventDefault();
+        var modal = document.getElementById('p202-click-conversions');
+        if (!modal || !window.bootstrap) {
+            return;
+        }
+        var body = modal.querySelector('[data-p202-breakdown-body]');
+        var title = modal.querySelector('.modal-title');
+        var url = button.getAttribute('data-p202-breakdown');
+        breakdownAsked = url;
+        if (title) {
+            title.textContent = button.getAttribute('data-p202-breakdown-title') || 'Conversions on this click';
+        }
+        body.setAttribute('aria-busy', 'true');
+        body.innerHTML = '<p class="text-secondary mb-0">Loading…</p>';
+        window.bootstrap.Modal.getOrCreateInstance(modal).show();
+        window.jQuery.get(url)
+            .done(function (html) {
+                if (breakdownAsked !== url) {
+                    return;
+                }
+                window.jQuery(body).html(html);
+                body.setAttribute('aria-busy', 'false');
+                prepare(body);
+            })
+            .fail(function (xhr) {
+                if (breakdownAsked !== url) {
+                    return;
+                }
+                body.setAttribute('aria-busy', 'false');
+                /* The fragment answers a refusal with its own sentence
+                   (a click that is not yours, a row it cannot read);
+                   show that, and say what failed only when it sent none. */
+                if (xhr && xhr.responseText && /p202-flash/.test(xhr.responseText)) {
+                    window.jQuery(body).html(xhr.responseText);
+                    return;
+                }
+                body.innerHTML = '<div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i>'
+                    + '<div class="p202-flash__body">The conversions could not be loaded ('
+                    + escapeHtml(xhr && xhr.status ? 'HTTP ' + xhr.status : 'no answer from the server')
+                    + '). Your session may have expired; reload the page and try again.</div></div>';
+            });
+    });
 
     /* ── Start ──────────────────────────────────────────────────────── */
 

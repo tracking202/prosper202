@@ -653,7 +653,7 @@ final class GoalEngine
             $data = [
                 'click_id' => $subject->clickId,
                 'source' => ConversionSource::GOAL->value,
-                'source_ref' => 'goal:' . $o->goalId . ':' . $o->version,
+                'source_ref' => \Prosper202\Conversion\Ledger\SourceRef::goal($o->goalId, $o->version),
                 'event_name' => $event?->name,
                 'payable' => $payable,
                 'payout' => Amount::fromUnits($payable ? (int) $amountUnits : ($amountUnits ?? 0)),

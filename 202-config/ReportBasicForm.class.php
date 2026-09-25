@@ -47,6 +47,8 @@ class ReportBasicForm
 	const DETAIL_LEVEL_ROTATOR_RULE_REDIRECT = 34;
 	const DETAIL_LEVEL_TRANSACTIONS = 35;
 	const DETAIL_LEVEL_PUBLISHERS = 36;
+	/** Income by what generated it: each goal, or each conversion source (ledger rows, like Transaction ID). */
+	const DETAIL_LEVEL_GOAL_SOURCE = 37;
 
 	const DETAIL_GROUP_NONE = 0;
 
@@ -1867,6 +1869,8 @@ class ReportBasicForm
 			return "Transaction ID";
 		} else if ($arg0 == self::DETAIL_LEVEL_PUBLISHERS) {
 			return "Publisher/User";
+		} else if ($arg0 == self::DETAIL_LEVEL_GOAL_SOURCE) {
+			return "Goal / source";
 		} else {
 			return "Unknown";
 		}

@@ -304,8 +304,8 @@ becomes a cache of it.**
 - gpx, upx and gpb read click ids with the exact parser PR 0 gave px and pb;
   a present-but-malformed value is refused, never cast or sent to the IP
   fallback.
-- Deferred to PR 1b: `source_ref` naming the API key that wrote an API row
-  (the key id is not available to controllers today).
+- Deferred to PR 1b, and done there: `source_ref` naming the API key that
+  wrote an API row (§2.3).
 
 **Compatibility.**
 
@@ -434,6 +434,109 @@ whose progress is tracked:
   rolled up per click by `accumulate` and broken down by §2.1. Today it means
   copying the campaign once per step. The old recipe still works; the docs
   point to the new one.
+
+### 2.3 As built: decisions (PR 1b)
+
+PR 1b built the reads of §2.1 points 5 and 6. The pieces:
+`Prosper202\Conversion\Ledger\LedgerExplainer` (which rows count, and why
+not), `ClickBreakdown` (one click, resolved), `LedgerReportSql` (the same
+question in SQL, for reports), `SourceRef` (the one builder and reader of
+`source_ref`); the API route `GET /clicks/{id}/conversions` and the
+`/conversions` filters; `p202 click conversions` and `click:conversions`;
+`tracking202/ajax/click_conversions.php` opened from Visitors and Spy; Group
+Overview's Goal / source level and the repaired Transaction ID level.
+
+- **One definition of "counts".** Whether a row is part of its click's value
+  is `ClickValueCalculator`'s answer, read from its `counted` set; the
+  breakdown adds only the reason for each row left out, in a fixed order:
+  `deleted`, `unpaid`, `superseded` (with the row's `superseded_reason` —
+  stored for the fixed reasons, from the calculator for the derived ones),
+  and `not_netted` for a reversal whose sale does not count. §2.1 named a
+  fourth reason, `duplicate`; it is not built, because a repeat is answered as
+  a duplicate and never stored, so no stored row can be one. A payable, live,
+  non-reversal row that neither counts nor is superseded has no reason under
+  the rules; the explainer throws naming it instead of inventing one.
+- **The breakdown says whether it adds up.** `click` carries the reports'
+  figure (`click_payout`, `lead`) beside what the counted rows add up to
+  (`ledger_value`) and `matches_click`, so a cache that drifted from its
+  rows is visible instead of looking right. A lead with no ledger-managed row
+  is `ledger_state: pre_ledger` and matches by definition: its value lives in
+  the cache until its next conversion carries it in (§2.1 point 3).
+- **Scope: both reads.** The route is in the `clicks` area by path and shows
+  conversion rows, so it requires `clicks:read` (the dispatcher) and
+  `conversions:read` (the route). It is not paged: a click's rows are all
+  returned, oldest first.
+- **API rows name their key by a digest.** 202_api_keys has no id; the key
+  is the secret. `source_ref` for a row written through `POST /conversions`
+  is `apikey:` and the first 16 hex digits of the key's SHA-256
+  (`SourceRef::apiKey`), carried from `Auth` through `RequestContext`. The
+  breakdown matches it against the account's keys and names the key by when
+  it was created, or as revoked; the key never appears in a response. A
+  staged create records the key of the request that applied it, which is the
+  key that executed the write.
+- **`/conversions` filters are strict.** `click_id` and `goal` must be
+  positive integer ids and `source` a ledger source, or the request is a 422
+  naming each bad field — an ignored filter would answer with every
+  conversion of the account. `goal` matches every version of the goal
+  (`source_ref LIKE 'goal:<id>:%'`, the colon keeping goal 1 from goal 12).
+  Rows now carry their provenance columns, `payable` as a boolean, and a goal
+  row's `goal_id` and `goal_version`. Deleted rows stay out of the list; the
+  breakdown shows them.
+- **Reports read the persisted state, pinned to the calculator.**
+  `LedgerReportSql::countedPredicate()` is "payable, live, no
+  `superseded_reason`" for a sale, and for a reversal "its target counts, or
+  its target is a live pre-ledger row while the click's baseline counts" —
+  what the recompute persists under the click lock. Its equivalence with the
+  calculator is not argued but tested: `LedgerReadsIntegrationTest` builds a
+  click in every shape the rules name, through the real repository, and
+  requires the same set click by click.
+- **The ledger levels partition a click.** A report part is one counted row;
+  income is the part's own amount; the click's clicks, click-throughs, leads
+  and cost sit on exactly one part, its latest counted non-reversal row.
+  Children therefore add up to their parent, the report's totals are the
+  same with or without a ledger level, and "leads stay converting clicks"
+  (§2.1 point 7) holds at every level. A click with no counted row is one
+  part carrying its report row whole: `[Not converted]`, or — a pre-ledger
+  lead whose value is still its cache — `[No transaction ID]` and `Value
+  before the ledger`, where its baseline row will land. Clicks, leads and
+  cost come from 202_dataengine and income from the ledger, so a report row
+  the rollup has not refreshed yet shows the ledger's income.
+- **Group keys are injective (CLAUDE.md #17).** The Transaction ID level's
+  key is a kind prefix and the HEX of the id's bytes: the column's collation
+  (utf8mb4_general_ci) would otherwise fold `A-1`, `a-1` and `Ä-1` into one
+  group. The Goal / source level groups goal rows by goal, every version
+  together, and every other row by its source.
+- **The Transaction ID level no longer joins every row.** It joined all of a
+  click's conversion rows to its report row and summed the click's income per
+  row, so a click with N rows counted N times, and its children were keyed by
+  a `conv_id` picked arbitrarily from each group. Its key is now
+  `transaction_key`; stored preferences hold the level's number (35), so no
+  saved setting changes.
+- **The click history.** A row whose click has any ledger row (deleted and
+  superseded included) shows "n conversions"; the button opens a modal drawn
+  with the table and fills it from `click_conversions.php`. The fragment
+  reads no report filter — a click's rows are the same in every window — so
+  it takes no view (ReportView); it follows the history's owner rule (a
+  publisher sees their own clicks, other sessions every account's), and a
+  role without campaign data sees `?` for amounts, as Group Overview does.
+- **CLIs.** The Go and PHP CLIs print one flattened line per row and end
+  with the click's value, saying so when the rows do not add up; `--json`
+  is the API's answer unchanged. Both check `--source` against their own copy
+  of the source list before any request; `ConversionSourceListsTest` pins
+  both copies to the enum.
+- **Found, not fixed: dedupe keys fold case.** `dedupe_key` is
+  utf8mb4_general_ci, so on one click `tx:A-1` and `tx:a-1` are one key (a
+  UNIQUE violation, executed): a network that sends ids differing only in
+  case has the second answered as a duplicate. Fixing it is a column change
+  in the 1.9.76 rung (utf8mb4_bin on `dedupe_key`, and the same question for
+  `transaction_id` lookups of reversals); it belongs with the ledger's
+  schema, not these reads, and is left to PR 12's release gate to schedule.
+
+Checked by `tests/Conversion/Ledger/` (`LedgerExplainerTest`,
+`LedgerReadsIntegrationTest`, `LedgerReadsOpenApiTest`,
+`ConversionSourceListsTest`), `tests/Cli/Commands/ClickConversionsCommandTest`,
+`go-cli/cmd/click_test.go`, the live pass `tests/live/breakdown-reads.sh`, and
+`tests/browser/specs/click-breakdown.spec.js`.
 
 ---
 
@@ -2109,7 +2212,7 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 |---|---|---|
 | 0 | **Legacy endpoints record conversions** (§2.1): `px.php`, `pb.php` and `cb202.php` through the shared writer; `tests/live/legacy-pixels.sh`. **Merged first, alone.** | — |
 | 1 | **Conversion ledger** (§2.1): provenance columns; the CSV upload writes rows (the last path that does not); click value derived from rows under `payout_mode`; outbox row in `record()`; `ConversionTables` split out; `gpb.php` pixel-firing logic extracted to one function. **Built; `tests/live/conversion-ledger.sh`.** | — |
-| 1b | **Breakdown reads:** `GET /clicks/{id}/conversions` and `p202 click conversions <id>`, `/conversions` filters, the click-history breakdown view, Group Overview's Goal/source level, and the Transaction ID level fixed to sum rows | 1, 4 (for goal names); U2 |
+| 1b | **Breakdown reads:** `GET /clicks/{id}/conversions` and `p202 click conversions <id>`, `/conversions` filters, the click-history breakdown view, Group Overview's Goal/source level, and the Transaction ID level fixed to sum rows. **Built; `tests/live/breakdown-reads.sh`, `tests/browser/specs/click-breakdown.spec.js`. Decisions in §2.3.** | 1, 4 (for goal names); U2 |
 | 2 | **Identity capture:** `p202vid`, LP first-party id (in `landing.php`, with `p202.consent()`), signed `cust` on clicks and conversions, `202_identity_*`, `202_clicks_visitor`, consent switch and per-campaign `identity_signals`. **Built; `tests/live/identity-graph.sh`, `tests/browser/specs/identity-landing.spec.js`.** | — |
 | 3 | **App core reshape** (§4): registry, `AppIdentity`, token rename, verdicts, `PublicIntake`, retention, user-deletion purge, `/apps` and `p202 app` renames, legacy guard deleted. **Built; `tests/live/app-core.sh` (with `setup-mobile-apps.sh`, `analyze-mobile-apps.sh` and both mobile-apps browser specs ported). Decisions in §4.7.** | — |
 | 4 | **Goals engine** (core): definitions, validation, versioning, server evaluator keyed by subject (click or install), cross-language vectors, campaign goal payouts, SKAN encodings pointing at goals, `/goals` API and `p202 goal …`. **Built; `tests/live/goals.sh` (with `app-core.sh`, `conversion-ledger.sh`, `setup-mobile-apps.sh`, `analyze-mobile-apps.sh` re-run and both mobile-apps browser specs), vectors in `tests/fixtures/app-sdk-contract/goals/`. Decisions in §5.7.** | 1, 3 |

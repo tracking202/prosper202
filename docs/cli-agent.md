@@ -466,13 +466,16 @@ p202 click list [--limit 50] [--offset 0] [--time_from T] [--time_to T]
                 [--aff_campaign_id N] [--ppc_account_id N] [--landing_page_id N] [--all]
                 [--click_lead 0|1] [--click_bot 0|1] [--json]
 p202 click get <id> [--json]
+p202 click conversions <id> [--json]   # every conversion on the click, counted or not and why
 ```
 
 ### Conversions
 
 ```
 p202 conversion list   [--limit 50] [--offset 0] [--campaign_id N] [--all]
-                       [--time_from T] [--time_to T] [--json]
+                       [--time_from T] [--time_to T] [--click_id N]
+                       [--source pixel|postback|universal_pixel|api|subid_upload|revenue_upload|legacy_pixel|clickbank|app_install|goal|legacy_baseline]
+                       [--goal N] [--json]
 p202 conversion get    <id> [--json]
 p202 conversion create --click_id N [--payout F] [--transaction_id S] [--idempotency-key S] [--json]
 p202 conversion delete <id> [--force] [--dry-run] [--json]

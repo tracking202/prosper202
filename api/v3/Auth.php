@@ -17,7 +17,9 @@ final readonly class Auth
         /** @var string[] lower-cased role names */
         private array $roles,
         /** @var string[] lower-cased api key scopes */
-        private array $scopes = ['*']
+        private array $scopes = ['*'],
+        /** The key's ledger reference (SourceRef::apiKey()): a digest, never the key. */
+        private string $apiKeyRef = ''
     )
     {
     }
@@ -69,10 +71,10 @@ final readonly class Auth
 
         $scopes = self::parseScopes((string)($row['scope'] ?? ''));
 
-        return self::loadRoles((int)$row['user_id'], $db, $scopes);
+        return self::loadRoles((int)$row['user_id'], $db, $scopes, \Prosper202\Conversion\Ledger\SourceRef::apiKey($apiKey));
     }
 
-    private static function loadRoles(int $userId, \mysqli $db, array $scopes = ['*']): self
+    private static function loadRoles(int $userId, \mysqli $db, array $scopes = ['*'], string $apiKeyRef = ''): self
     {
         $roles = [];
         $stmt = $db->prepare(
@@ -101,12 +103,22 @@ final readonly class Auth
         }
         $stmt->close();
 
-        return new self($userId, $roles, $scopes);
+        return new self($userId, $roles, $scopes, $apiKeyRef);
     }
 
     public function userId(): int
     {
         return $this->userId;
+    }
+
+    /**
+     * What a conversion written with this key records as its source_ref
+     * (SourceRef::apiKey()): a truncated digest of the key, so the
+     * breakdown can name the key without anyone reading it back.
+     */
+    public function apiKeyRef(): string
+    {
+        return $this->apiKeyRef;
     }
 
     /** @return string[] */

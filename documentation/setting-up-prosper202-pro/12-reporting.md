@@ -29,6 +29,13 @@ The analyze tab and its numerous sub-navigation options gives you a quick glance
 ## Visitor and Spy Views
 
 The spy view is a live time feed of all your clicks coming in. It shows a limited number of feeds and refreshes constantly. If you want to go through your click history, that’s what the visitor tab is for. They are essentially the same except visitor is your history log with no real time update and spy view is your real time feed of the past 24 hours worth of clicks without the history log.
+
+A click with conversions shows how many on its row ("3 conversions"). Clicking
+it opens the click's breakdown: every conversion recorded on it — the ones
+that count toward its value and the ones that do not, with the reason (a later
+conversion replaced it, it was deleted, it is tracked but not paid) — with
+what produced each one (a postback, a goal and its version, an upload, the
+API) and its transaction id, adding up to the click's value.
 ![Screen Shot 2015-12-03 at 10.40.01 AM.png](../images/reporting-4.png)
 ## Update
 

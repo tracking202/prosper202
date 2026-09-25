@@ -109,3 +109,9 @@ echo p202_data_table($columns, $rows, [
 	'totals' => $rows === [] ? null : ['label' => 'Totals for report'] + $figures($summary_form->getReportData()),
 	'empty' => p202_overview_empty(get_absolute_url()),
 ]);
+
+// The two levels that split a click by its conversions say how, once.
+$groups = array_map('intval', [$user_row['user_pref_group_1'] ?? 0, $user_row['user_pref_group_2'] ?? 0, $user_row['user_pref_group_3'] ?? 0, $user_row['user_pref_group_4'] ?? 0]);
+if ($rows !== [] && array_intersect($groups, [ReportBasicForm::DETAIL_LEVEL_TRANSACTIONS, ReportBasicForm::DETAIL_LEVEL_GOAL_SOURCE]) !== []) {
+	echo '<p class="form-text mb-0" data-p202-ledger-note>Transaction ID and Goal / source rows add up the conversions that count toward each click, so a click with three transactions shows three amounts. Its click, lead and cost sit on the row of its latest counted conversion.</p>';
+}

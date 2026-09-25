@@ -15,6 +15,19 @@ class ConversionsController
     {
     }
 
+    /**
+     * The columns a conversion is served with: the row, its campaign's name,
+     * and its provenance in the ledger (what produced it, what that is,
+     * whether it is paid, and what replaced or reverses it). Whether a row
+     * counts toward its click is a property of the click's rows together,
+     * so it is answered by GET /clicks/{id}/conversions, not here.
+     */
+    private const COLUMNS = 'cl.conv_id, cl.click_id, cl.transaction_id, cl.campaign_id,
+                cl.click_payout, cl.user_id, cl.click_time, cl.conv_time, cl.deleted,
+                cl.source, cl.source_ref, cl.event_name, cl.payable, cl.reverses_conv_id,
+                cl.superseded_by, cl.superseded_reason,
+                ac.aff_campaign_name';
+
     public function list(array $params): array
     {
         $limit = max(1, min(500, (int)($params['limit'] ?? 50)));
@@ -40,22 +53,64 @@ class ConversionsController
             $types .= 'i';
         }
 
+        // The ledger filters. A value that cannot be read is refused, never
+        // dropped: an ignored filter answers with every conversion of the
+        // account, which reads as "these are the ones you asked for"
+        // (CLAUDE.md #4).
+        $errors = [];
+        if (array_key_exists('click_id', $params)) {
+            $clickId = self::positiveId($params['click_id']);
+            if ($clickId === null) {
+                $errors['click_id'] = 'Must be a positive integer click id (see `p202 click list`)';
+            } else {
+                $where[] = 'cl.click_id = ?';
+                $binds[] = $clickId;
+                $types .= 'i';
+            }
+        }
+        if (array_key_exists('source', $params)) {
+            $source = is_string($params['source']) ? \Prosper202\Conversion\Ledger\ConversionSource::tryFrom($params['source']) : null;
+            if ($source === null) {
+                $errors['source'] = 'Must be one of: ' . implode(', ', array_map(
+                    static fn (\Prosper202\Conversion\Ledger\ConversionSource $s): string => $s->value,
+                    \Prosper202\Conversion\Ledger\ConversionSource::cases()
+                ));
+            } else {
+                $where[] = 'cl.source = ?';
+                $binds[] = $source->value;
+                $types .= 's';
+            }
+        }
+        if (array_key_exists('goal', $params)) {
+            $goalId = self::positiveId($params['goal']);
+            if ($goalId === null) {
+                $errors['goal'] = 'Must be a positive integer goal id (see `p202 goal list`)';
+            } else {
+                // Every version of the goal. The prefix ends in its colon, so
+                // goal 1 never matches goal 12's rows.
+                $where[] = "cl.source = 'goal' AND cl.source_ref LIKE ?";
+                $binds[] = 'goal:' . $goalId . ':%';
+                $types .= 's';
+            }
+        }
+        if ($errors !== []) {
+            throw new ValidationException('Invalid conversion filter: ' . implode(', ', array_keys($errors)), $errors);
+        }
+
         $whereClause = 'WHERE ' . implode(' AND ', $where) . ' AND cl.deleted = 0';
 
         $countSql = "SELECT COUNT(*) as total FROM 202_conversion_logs cl $whereClause";
         $stmt = $this->prepare($countSql);
         $this->bind($stmt, $types, ...$binds);
         $this->execute($stmt, 'Count query failed');
-        $total = (int)$stmt->get_result()->fetch_assoc()['total'];
+        $total = (int)$this->result($stmt)->fetch_assoc()['total'];
         $stmt->close();
 
-        $sql = "SELECT cl.conv_id, cl.click_id, cl.transaction_id, cl.campaign_id,
-                cl.click_payout, cl.user_id, cl.click_time, cl.conv_time, cl.deleted,
-                ac.aff_campaign_name
+        $sql = 'SELECT ' . self::COLUMNS . "
             FROM 202_conversion_logs cl
             LEFT JOIN 202_aff_campaigns ac ON cl.campaign_id = ac.aff_campaign_id
             $whereClause
-            ORDER BY cl.conv_time DESC LIMIT ? OFFSET ?";
+            ORDER BY cl.conv_time DESC, cl.conv_id DESC LIMIT ? OFFSET ?";
 
         $binds[] = $limit;
         $types .= 'i';
@@ -65,11 +120,11 @@ class ConversionsController
         $stmt = $this->prepare($sql);
         $this->bind($stmt, $types, ...$binds);
         $this->execute($stmt, 'List query failed');
-        $result = $stmt->get_result();
+        $result = $this->result($stmt);
 
         $rows = [];
         while ($row = $result->fetch_assoc()) {
-            $rows[] = $row;
+            $rows[] = self::present($row);
         }
         $stmt->close();
 
@@ -81,23 +136,54 @@ class ConversionsController
 
     public function get(int $id): array
     {
-        $sql = "SELECT cl.conv_id, cl.click_id, cl.transaction_id, cl.campaign_id,
-                cl.click_payout, cl.user_id, cl.click_time, cl.conv_time, cl.deleted,
-                ac.aff_campaign_name
+        $sql = 'SELECT ' . self::COLUMNS . '
             FROM 202_conversion_logs cl
             LEFT JOIN 202_aff_campaigns ac ON cl.campaign_id = ac.aff_campaign_id
-            WHERE cl.conv_id = ? AND cl.user_id = ? AND cl.deleted = 0 LIMIT 1";
+            WHERE cl.conv_id = ? AND cl.user_id = ? AND cl.deleted = 0 LIMIT 1';
 
         $stmt = $this->prepare($sql);
         $this->bind($stmt, 'ii', $id, $this->userId);
         $this->execute($stmt, 'Query failed');
-        $row = $stmt->get_result()->fetch_assoc();
+        $row = $this->result($stmt)->fetch_assoc();
         $stmt->close();
 
         if (!$row) {
             throw new NotFoundException('Conversion not found');
         }
-        return ['data' => $row];
+        return ['data' => self::present($row)];
+    }
+
+    /**
+     * A stored row as served: `payable` as a boolean, and a goal row's goal
+     * and version beside its raw source_ref, so a caller can filter and
+     * join without parsing the reference.
+     *
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    private static function present(array $row): array
+    {
+        $row['payable'] = (int) $row['payable'] === 1;
+        $ref = \Prosper202\Conversion\Ledger\SourceRef::parse(isset($row['source_ref']) ? (string) $row['source_ref'] : null);
+        $isGoal = $ref !== null && $ref['kind'] === \Prosper202\Conversion\Ledger\SourceRef::GOAL;
+        $row['goal_id'] = $isGoal ? $ref['id'] : null;
+        $row['goal_version'] = $isGoal ? $ref['version'] : null;
+
+        return $row;
+    }
+
+    /** A positive integer id from a query value, or null when it is not one. */
+    private static function positiveId(mixed $value): ?int
+    {
+        if (is_int($value)) {
+            return $value > 0 ? $value : null;
+        }
+        if (!is_string($value) || preg_match('/^[1-9][0-9]{0,18}$/D', $value) !== 1) {
+            return null;
+        }
+        $id = filter_var($value, FILTER_VALIDATE_INT);
+
+        return is_int($id) && $id > 0 ? $id : null;
     }
 
     public function create(array $payload): array
@@ -111,7 +197,14 @@ class ConversionsController
             'click_id' => $clickId,
             'transaction_id' => (string)($payload['transaction_id'] ?? ''),
             'conv_time' => (int)($payload['conv_time'] ?? time()),
+            // Provenance: written through the API, by this key (a digest of
+            // it; the breakdown names the key from it).
+            'source' => \Prosper202\Conversion\Ledger\ConversionSource::API->value,
         ];
+        $keyRef = \Api\V3\RequestContext::apiKeyRef();
+        if ($keyRef !== '') {
+            $data['source_ref'] = $keyRef;
+        }
         if (array_key_exists('payout', $payload)) {
             // An amount that is not a number is refused, never cast to 0:
             // the ledger records exactly what it is given (CLAUDE.md #4).
@@ -252,6 +345,17 @@ class ConversionsController
         } catch (\Throwable $e) {
             throw new DatabaseException('Delete failed: ' . $e->getMessage(), $e);
         }
+    }
+
+    private function result(\mysqli_stmt $stmt): \mysqli_result
+    {
+        $result = $stmt->get_result();
+        if (!$result instanceof \mysqli_result) {
+            $stmt->close();
+            throw new DatabaseException('Reading the result failed');
+        }
+
+        return $result;
     }
 
     private function prepare(string $sql): \mysqli_stmt

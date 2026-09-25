@@ -90,7 +90,7 @@ final class RevenueUploadImporter
                 'click_id' => $clickId,
                 'payout' => $amount,
                 'source' => ConversionSource::REVENUE_UPLOAD->value,
-                'source_ref' => 'batch:' . $batchId,
+                'source_ref' => \Prosper202\Conversion\Ledger\SourceRef::uploadBatch($batchId),
                 'dedupe_key' => DedupeKey::upload($batchId, $lineNo),
                 'user_agent' => 'revenue-upload',
                 'pixel_type' => 0,
