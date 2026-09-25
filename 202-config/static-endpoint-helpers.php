@@ -446,3 +446,137 @@ if (!function_exists('p202RecordConversion')) {
         return ['conv_id' => $result['convId'], 'duplicate' => $result['duplicate']];
     }
 }
+
+if (!function_exists('p202LegacyConversionGate')) {
+    /**
+     * Whether a hit on a legacy endpoint (px.php, pb.php, cb202.php) records a
+     * conversion row. Returns null to record, or the reason not to.
+     *
+     * Without a transaction id a retry cannot be told apart from a repeat
+     * purchase, so a click that is already a lead records nothing more — the
+     * same one-conversion-per-click gate gpx.php applies (gpx.php:94). A
+     * transaction id lifts the gate: a new id is a repeat purchase, and a
+     * replayed one is de-duplicated by the writer.
+     */
+    function p202LegacyConversionGate(bool $clickLead, string $transactionId): ?string
+    {
+        if ($clickLead && trim($transactionId) === '') {
+            return 'already_lead';
+        }
+        return null;
+    }
+}
+
+if (!function_exists('p202TimeDifference')) {
+    /**
+     * The click-to-conversion gap in the wording the legacy endpoints store
+     * in 202_conversion_logs.time_difference ("N days, H hours, M min and S
+     * sec"); the V3 API stores the gap in seconds instead.
+     */
+    function p202TimeDifference(int $clickTime, int $convTime): string
+    {
+        $from = new \DateTime('@' . max(0, $clickTime));
+        $to = new \DateTime('@' . max(0, $convTime));
+        $diff = $from->diff($to);
+        return $diff->d . ' days, ' . $diff->h . ' hours, ' . $diff->i . ' min and ' . $diff->s . ' sec';
+    }
+}
+
+if (!function_exists('p202RecordLegacyConversion')) {
+    /**
+     * Record a conversion for one of the legacy endpoints — the per-campaign
+     * pixel (px.php), the per-campaign postback (pb.php) and the ClickBank
+     * INS receiver (cb202.php).
+     *
+     * Until now these three only flagged the click (click_lead, cpa, payout)
+     * and wrote no 202_conversion_logs row, so a payout they produced could
+     * not be listed, broken down, attributed or reversed. They now go through
+     * the same writer as gpx/gpb/upx and the V3 API: the click is locked, the
+     * row and the click flag commit together, and a transaction id
+     * de-duplicates a replay.
+     *
+     * The click is loaded here, once, with everything the writer needs, and
+     * the two ownership checks a caller may ask for are applied before any
+     * write: `user_id` (px: the click must belong to the campaign's owner)
+     * and `campaign_id` (pb: the click must belong to the campaign the
+     * postback names). Both were implicit or absent before.
+     *
+     * @param array{
+     *     user_id?: int, campaign_id?: int, transaction_id?: string,
+     *     use_pixel_payout?: bool, payout?: string, ip?: string, user_agent?: string
+     * } $opts
+     * @return array{recorded: bool, duplicate: bool, conv_id: int, reason: string}
+     *         reason is '' when recorded; otherwise one of unknown_click,
+     *         foreign_click, campaign_mismatch, already_lead.
+     */
+    function p202RecordLegacyConversion(mysqli $db, int $clickId, int $pixelType, array $opts = []): array
+    {
+        if ($clickId <= 0) {
+            throw new \InvalidArgumentException('p202RecordLegacyConversion: click_id must be a positive integer');
+        }
+
+        // The checked wrapper: prepare, bind, execute and get_result are each
+        // verified inside Connection (CLAUDE.md #1), and a failure throws
+        // rather than reading as "no such click".
+        $conn = new \Prosper202\Database\Connection($db);
+        $stmt = $conn->prepareRead(
+            'SELECT c.user_id, c.aff_campaign_id, c.click_lead, c.click_time, c.click_payout, t.click_cpa
+             FROM 202_clicks AS c
+             LEFT JOIN 202_cpa_trackers AS cp ON cp.click_id = c.click_id
+             LEFT JOIN 202_trackers AS t ON t.tracker_id_public = cp.tracker_id_public
+             WHERE c.click_id = ?
+             LIMIT 1'
+        );
+        $conn->bind($stmt, 'i', [$clickId]);
+        $click = $conn->fetchOne($stmt);
+
+        $none = ['recorded' => false, 'duplicate' => false, 'conv_id' => 0];
+        if (!is_array($click)) {
+            return $none + ['reason' => 'unknown_click'];
+        }
+        if (isset($opts['user_id']) && (int) $click['user_id'] !== (int) $opts['user_id']) {
+            return $none + ['reason' => 'foreign_click'];
+        }
+        if (isset($opts['campaign_id']) && (int) $click['aff_campaign_id'] !== (int) $opts['campaign_id']) {
+            return $none + ['reason' => 'campaign_mismatch'];
+        }
+
+        $transactionId = trim((string) ($opts['transaction_id'] ?? ''));
+        $blocked = p202LegacyConversionGate((int) $click['click_lead'] === 1, $transactionId);
+        if ($blocked !== null) {
+            return $none + ['reason' => $blocked];
+        }
+
+        $usePixelPayout = (bool) ($opts['use_pixel_payout'] ?? false);
+        $payout = $usePixelPayout ? (string) ($opts['payout'] ?? '0') : (string) $click['click_payout'];
+        $convTime = time();
+        $clickTime = (int) $click['click_time'];
+
+        $result = p202RecordConversion(
+            $db,
+            [
+                'click_id'        => $clickId,
+                'campaign_id'     => (int) $click['aff_campaign_id'],
+                'user_id'         => (int) $click['user_id'],
+                'click_time'      => $clickTime,
+                'conv_time'       => $convTime,
+                'time_difference' => p202TimeDifference($clickTime, $convTime),
+                'ip'              => (string) ($opts['ip'] ?? ''),
+                'pixel_type'      => $pixelType,
+                'user_agent'      => (string) ($opts['user_agent'] ?? ''),
+                'click_payout'    => $payout,
+            ],
+            (string) ($click['click_cpa'] ?? ''),
+            $usePixelPayout,
+            $usePixelPayout ? $payout : '',
+            $transactionId
+        );
+
+        return [
+            'recorded'  => $result['conv_id'] > 0 && !$result['duplicate'],
+            'duplicate' => $result['duplicate'],
+            'conv_id'   => $result['conv_id'],
+            'reason'    => $result['conv_id'] > 0 ? '' : 'unknown_click',
+        ];
+    }
+}

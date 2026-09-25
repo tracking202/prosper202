@@ -63,26 +63,37 @@ if (function_exists('openssl_decrypt')) {
         if (!isset($order['trackingCodes'][0]) || !is_numeric($order['trackingCodes'][0])) {
             p202RespondJsonError(400, 'Missing tracking code');
         }
-        $mysql['click_id'] = $db->real_escape_string((string) $order['trackingCodes'][0]);
-        $mysql['click_payout'] = $db->real_escape_string((string) ($order['totalAccountAmount'] ?? '0'));
-
-        $cpa_sql = "SELECT 202_cpa_trackers.tracker_id_public, 202_trackers.click_cpa FROM 202_cpa_trackers LEFT JOIN 202_trackers USING (tracker_id_public) WHERE click_id = '".$mysql['click_id']."'";
-        $cpa_result = $db->query($cpa_sql);
-        if ($cpa_result === false) {
-            p202RespondJsonError(500, 'CPA lookup failed');
+        // The order total is the payout. A value that is not a number is
+        // refused rather than recorded as 0 (CLAUDE.md #4): a silent zero
+        // would look like a free sale in every report.
+        $amount = $order['totalAccountAmount'] ?? '0';
+        if (!is_numeric($amount)) {
+            p202RespondJsonError(400, 'Malformed totalAccountAmount');
         }
-        $cpa_row = $cpa_result->fetch_assoc();
+        $click_id = (int) $order['trackingCodes'][0];
 
-        $mysql['click_cpa'] = $db->real_escape_string((string) ($cpa_row['click_cpa'] ?? ''));
-
-        if (!p202ApplyConversionUpdate(
-            $db,
-            (string) $mysql['click_id'],
-            (string) $mysql['click_cpa'],
-            true,
-            (string) $mysql['click_payout']
-        )) {
-            error_log('cb202: failed to apply conversion update for click ' . $mysql['click_id']);
+        // One conversion row per receipt (pixel_type 2: a server-to-server
+        // postback), through the same writer as every other conversion path.
+        // The receipt is the transaction id, so ClickBank's repeated INS
+        // deliveries of one sale de-duplicate, and two sales on one click are
+        // two rows. Before, this endpoint only flagged the click and
+        // overwrote its payout, and left no trace of either sale.
+        try {
+            $outcome = p202RecordLegacyConversion($db, $click_id, 2, [
+                'transaction_id'   => trim((string) ($order['receipt'] ?? '')),
+                'use_pixel_payout' => true,
+                'payout'           => (string) $amount,
+                'ip'               => (string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? ''),
+                'user_agent'       => (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''),
+            ]);
+        } catch (\Throwable $conversionError) {
+            error_log('cb202: conversion recording failed for click ' . $click_id . ': ' . $conversionError->getMessage());
+            p202RespondJsonError(500, 'Failed to record conversion');
+        }
+        if (!$outcome['recorded'] && !$outcome['duplicate'] && $outcome['reason'] !== 'already_lead') {
+            // A sale naming a click this install does not have: say so, so
+            // ClickBank's log shows the mismatch instead of a silent 200.
+            p202RespondJsonError(404, 'Unknown tracking code');
         }
     }
 
