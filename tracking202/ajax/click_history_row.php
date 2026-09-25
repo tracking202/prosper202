@@ -1,12 +1,17 @@
 <?php
 declare(strict_types=1);
 /**
- * Renders a single <tr> for the click history table.
+ * Renders a single <tr> of the click history table (Visitors and Spy, on the
+ * v2 shell).
+ *
  * Expected variables in scope:
  *   $click_row (assoc array from DB)
- *   $html (array, may contain prior values)
- *   $tr_attrs (string, attributes for the <tr> tag)
- * Included by click_history.php inside a while loop for both full and incremental renders.
+ *   $html      (array, may contain prior values)
+ *   $tr_attrs  (string, extra attributes for the <tr> tag)
+ * Included by click_history.php inside a while loop for both full and
+ * incremental renders. Every row carries data-click-id and data-click-time,
+ * which 202-js/p202-overview.js uses to put new Spy rows on top without
+ * repeating one it already shows.
  */
 
 $html['referer'] = htmlentities(safe_url((string)($click_row['referer'] ?? '')), ENT_QUOTES, 'UTF-8');
@@ -59,13 +64,22 @@ if ($html['referer']) {
 	}
 }
 
-$ppc_network_icon = pcc_network_icon($click_row['ppc_network_name'], $click_row['ppc_account_name']);
+// The traffic source's names are escaped before the icon helper puts them in
+// an attribute, which it does as given.
+$ppc_network_icon = pcc_network_icon(
+	htmlentities((string)($click_row['ppc_network_name'] ?? ''), ENT_QUOTES, 'UTF-8'),
+	htmlentities((string)($click_row['ppc_account_name'] ?? ''), ENT_QUOTES, 'UTF-8')
+);
 $html['type_name'] = htmlentities((string)($click_row['type_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 
-if (!$click_row['type_name']) {
-	$html['device_type'] = '<span id="device-tooltip"><span data-toggle="tooltip" title="Browser: ' . $html['browser_name'] . '<br/> Platform: ' . $html['platform_name'] . ' <br/>Device: ' . $html['device_name'] . '"><img title="' . $html['type_name'] . '" src="' . get_absolute_url() . '202-img/icons/platforms/other.png"/></span></span>';
-} else {
-	$html['device_type'] = '<span id="device-tooltip"><span data-toggle="tooltip" title="Browser: ' . $html['browser_name'] . '<br/> Platform: ' . $html['platform_name'] . ' <br/>Device: ' . $html['device_name'] . '"><img title="' . $html['type_name'] . '" src="' . get_absolute_url() . '202-img/icons/platforms/' . urlencode((string)$click_row['type_name']) . '.png"/></span></span> <img src="' . get_absolute_url() . '202-img/icons/browsers/' . urlencode(getBrowserIcon($html['browser_name'])) . '.png">';
+// The device, browser and platform in one tooltip over the device-type icon,
+// as the classic table had them. Bootstrap's tooltip sanitises the HTML.
+$deviceTip = 'Browser: ' . $html['browser_name'] . '<br>Platform: ' . $html['platform_name'] . '<br>Device: ' . $html['device_name'];
+$deviceIcon = $click_row['type_name'] ? urlencode((string)$click_row['type_name']) : 'other';
+$html['device_type'] = '<span data-bs-toggle="tooltip" data-bs-html="true" tabindex="0" title="' . htmlspecialchars($deviceTip, ENT_QUOTES, 'UTF-8') . '">'
+	. '<img alt="' . ($html['type_name'] !== '' ? $html['type_name'] : 'Other device') . '" src="' . get_absolute_url() . '202-img/icons/platforms/' . $deviceIcon . '.png"></span>';
+if ($click_row['type_name']) {
+	$html['device_type'] .= ' <img alt="' . $html['browser_name'] . '" src="' . get_absolute_url() . '202-img/icons/browsers/' . urlencode(getBrowserIcon($html['browser_name'])) . '.png">';
 }
 
 if (!$html['country_code']) {
@@ -75,59 +89,58 @@ if (!$html['country_code']) {
 if ($click_row['click_alp'] == 1) {
 	$html['aff_campaign_name'] = $html['landing_page_nickname'];
 }
+
+$geoTip = $html['country_name'] . ' (' . $html['country_code'] . '), ' . $html['city_name'] . ' (' . $html['region_name'] . ')';
 ?>
-					<tr <?php echo $tr_attrs ?? ''; ?>>
-						<td id="<?php echo $html['click_id']; ?>"><?php printf('%s', $html['click_id']); ?></td>
-						<td style="text-align:left; padding-left:10px;"><?php echo $html['click_time']; ?></td>
-						<td class="device_info"><?php echo $html['device_type']; ?></td>
-						<td class="geo"><span data-toggle="tooltip" <?php echo 'title="' . $html['country_name'] . ' (' . $html['country_code'] . '), ' . $html['city_name'] . ' (' . $html['region_name'] . ')"'; ?>><img src="<?php echo get_absolute_url(); ?>202-img/flags/<?php echo strtolower((string) $html['country_code']); ?>.png"></span></td>
-						<td class="isp"><?php if ($html['isp_name']) echo $html['isp_name'];
-						else echo "-" ?></td>
-						<td class="filter">
+					<tr data-click-id="<?php echo $html['click_id']; ?>" data-click-time="<?php echo (int)$click_row['click_time']; ?>" <?php echo $tr_attrs ?? ''; ?>>
+						<td class="num"><?php echo $html['click_id']; ?></td>
+						<td class="text-nowrap"><?php echo $html['click_time']; ?></td>
+						<td class="text-nowrap"><?php echo $html['device_type']; ?></td>
+						<td><span data-bs-toggle="tooltip" tabindex="0" title="<?php echo $geoTip; ?>"><img alt="<?php echo $html['country_code']; ?>" src="<?php echo get_absolute_url(); ?>202-img/flags/<?php echo strtolower((string) $html['country_code']); ?>.png"></span></td>
+						<td><?php echo $html['isp_name'] !== '' ? $html['isp_name'] : '-'; ?></td>
+						<td>
 							<?php if ($click_row['click_filtered'] == '1') { ?>
-								<span class="label label-default" title="This click was filtered out (bot / rules)">Filtered</span>
+								<span class="p202-pill" title="This click was filtered out (bot / rules)">Filtered</span>
 							<?php } elseif ($click_row['click_lead'] == '1') { ?>
-								<span class="label label-success" title="This click converted into a lead / sale">Lead</span>
+								<span class="p202-pill p202-pill--good" title="This click converted into a lead / sale">Lead</span>
 							<?php } else { ?>
-								<span class="label label-primary" title="A real (unfiltered) click">Real</span>
+								<span class="p202-pill p202-pill--accent" title="A real (unfiltered) click">Real</span>
 							<?php } ?>
 						</td>
-						<td class="ip"><?php echo $html['ip_address']; ?></td>
-						<td class="ppc"><?php echo $ppc_network_icon; ?></td>
-						<td class="aff"><?php echo $html['aff_campaign_name']; ?></td>
-						<td class="referer_big">
-							<div style="text-overflow: ellipsis; overflow : hidden; white-space: nowrap; width: 150px;" title="<?php if ($html['referer']) echo $html['referer'];
-						else echo "-";   ?>"><?php
-								printf('<a href="%s" target="_new" title="Referer">%s</a>', $html['referer'], $html['referer_host']); ?></div>
+						<td class="text-nowrap"><?php echo $html['ip_address']; ?></td>
+						<td><?php echo $ppc_network_icon; ?></td>
+						<td><?php echo $html['aff_campaign_name']; ?></td>
+						<td>
+							<?php if ($html['referer'] !== '') { ?>
+								<a class="d-inline-block text-truncate align-bottom" style="max-width: 150px;" href="<?php echo $html['referer']; ?>" target="_blank" rel="noopener noreferrer" title="<?php echo $html['referer']; ?>"><?php echo $html['referer_host'] !== '' ? $html['referer_host'] : $html['referer']; ?></a>
+							<?php } else { ?>
+								-
+							<?php } ?>
 						</td>
-						<td class="ad"><?php if ($html['text_ad_name']) echo $html['text_ad_name'];
-						else echo "-"; ?></td>
-						<td class="referer">
+						<td><?php echo $html['text_ad_name'] !== '' ? $html['text_ad_name'] : '-'; ?></td>
+						<td class="text-nowrap">
 							<?php
-							// Journey links: the visitor's referer → landing → outbound
-							// → cloaked → redirect hops, as labelled Font Awesome icons
-							// (scalable + on-palette) instead of opaque 16x16 PNGs.
-							$journeyStyle = 'color:#2f6fdd; margin-right:6px;';
-							if ($html['referer'] != '') {
-								printf('<a href="%s" target="_new" style="%s" aria-label="Referer" title="Referer: %s"><i class="fa fa-sign-in"></i></a>', $html['referer'], $journeyStyle, $html['referer']);
-							}
-							if ($html['landing'] != '') {
-								printf('<a href="%s" target="_new" style="%s" aria-label="Landing page" title="Landing Page: %s"><i class="fa fa-file-o"></i></a>', $html['landing'], $journeyStyle, $html['landing']);
-							}
-							if (($html['outbound'] != '') and ($click_row['click_out'] == 1)) {
-								printf('<a href="%s" target="_new" style="%s" aria-label="Outbound" title="Outbound: %s"><i class="fa fa-external-link"></i></a>', $html['outbound'], $journeyStyle, $html['outbound']);
-							}
-							if (($html['cloaking'] != '') and ($click_row['click_out'] == 1)) {
-								printf('<a href="%s" target="_new" style="%s" aria-label="Cloaked referer" title="Cloaked Referer: %s"><i class="fa fa-user-secret"></i></a>', $html['cloaking'], $journeyStyle, $html['cloaking']);
-							}
-							if (($html['redirect'] != '') and ($click_row['click_out'] == 1)) {
-								printf('<a href="%s" target="_new" style="%s" aria-label="Redirect" title="Redirect: %s"><i class="fa fa-forward"></i></a>', $html['redirect'], $journeyStyle, $html['redirect']);
+							// The visitor's journey: referer → landing → outbound →
+							// cloaked → redirect, one labelled icon per hop it made.
+							$hops = [
+								['referer', 'Referer', 'bi-box-arrow-in-right', $html['referer'] !== ''],
+								['landing', 'Landing page', 'bi-file-earmark', $html['landing'] !== ''],
+								['outbound', 'Outbound', 'bi-box-arrow-up-right', $html['outbound'] !== '' && $click_row['click_out'] == 1],
+								['cloaking', 'Cloaked referer', 'bi-incognito', $html['cloaking'] !== '' && $click_row['click_out'] == 1],
+								['redirect', 'Redirect', 'bi-skip-forward', $html['redirect'] !== '' && $click_row['click_out'] == 1],
+							];
+							foreach ($hops as [$key, $label, $icon, $show]) {
+								if ($show) {
+									printf('<a class="me-2" href="%s" target="_blank" rel="noopener noreferrer" aria-label="%s" title="%s: %s"><i class="bi %s"></i></a>', $html[$key], $label, $label, $html[$key], $icon);
+								}
 							}
 							?>
 						</td>
-						<td class="keyword">
-							<div style="text-overflow: ellipsis; overflow : hidden; white-space: nowrap; width: 250px;" title="<?php if ($html['keyword']) echo $html['keyword'];
-						else echo "-";   ?>"><?php if ($html['keyword']) echo "<em>" . $html['keyword'] . "</em>";
-								else echo "-"; ?></div>
+						<td>
+							<?php if ($html['keyword'] !== '') { ?>
+								<em class="d-inline-block text-truncate align-bottom" style="max-width: 250px;" title="<?php echo $html['keyword']; ?>"><?php echo $html['keyword']; ?></em>
+							<?php } else { ?>
+								-
+							<?php } ?>
 						</td>
 					</tr>

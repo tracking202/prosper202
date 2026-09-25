@@ -1,55 +1,41 @@
 <?php
 
 declare(strict_types=1);
+
+/**
+ * Overview › Day Parting: the report per hour of the day, added up over the
+ * window.
+ *
+ * Drawn into tracking202/overview/day-parting.php on the v2 shell; the
+ * filters are the user's report preferences, which that page has just
+ * applied from its URL.
+ */
+
 include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
 include_once(substr(__DIR__, 0, -17) . '/202-config/class-dataengine.php');
+require_once(substr(__DIR__, 0, -17) . '/202-config/functions-ui-overview.php');
 
 AUTH::require_user();
 
 //set the timezone for the user, for entering their dates.
 AUTH::set_timezone($_SESSION['user_timezone']);
 
-//show real or filtered clicks
-$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-$user_sql = "SELECT user_pref_breakdown, user_pref_show, user_cpc_or_cpv FROM 202_users_pref WHERE user_id=" . $mysql['user_id'];
-$user_result = _mysqli_query($user_sql); //($user_sql);
-$user_row = $user_result->fetch_assoc();
-$breakdown = $user_row['user_pref_breakdown'];
-
-if ($user_row['user_pref_show'] == 'all') {
-	$click_filtered = '';
-}
-if ($user_row['user_pref_show'] == 'real') {
-	$click_filtered = " AND click_filtered='0' ";
-}
-if ($user_row['user_pref_show'] == 'filtered') {
-	$click_filtered = " AND click_filtered='1' ";
-}
-if ($user_row['user_pref_show'] == 'filtered_bot') {
-	$click_filtered = " AND click_bot='1' ";
-}
-if ($user_row['user_pref_show'] == 'leads') {
-	$click_filtered = " AND click_lead='1' ";
-}
-
-if ($user_row['user_cpc_or_cpv'] == 'cpv')  $cpv = true;
-else 										$cpv = false;
+$prefs = p202_report_prefs_load(new \Prosper202\Database\Connection($db), (int) $_SESSION['user_id']);
+$cpv = ($prefs['user_cpc_or_cpv'] ?? '') === 'cpv';
 
 //grab the users date range preferences
 $time = grab_timeframe();
-$mysql['to'] = $db->real_escape_string((string)$time['to']);
-$mysql['from'] = $db->real_escape_string((string)$time['from']);
 
 $de = new DataEngine();
-$data = ($de->getReportData('hourly', $mysql['from'], $mysql['to'], $cpv));
+$data = $de->getReportData('hourly', (string) $time['from'], (string) $time['to'], $cpv);
 
-$dr = new DisplayData();
-$dr->displayReport('hourly', $data, $de->foundRows());
-
-?>
-
-<script type="text/javascript">
-	new Tablesort(document.getElementById('stats-table'), {
-		descending: true
-	});
-</script>
+// Every row is on the page (this report is not paginated), so sorting in the
+// browser is honest.
+echo p202_overview_metrics_table($data, [
+    'id' => 'day-parting-table',
+    'label' => 'Hour',
+    'caption' => 'Your figures per hour of the day',
+    'key' => static fn (array $row): string => (string) ($row['click_time_from_disp'] ?? ''),
+    'masked' => isset($userObj) && !$userObj->hasPermission('access_to_campaign_data') && empty($_SESSION['publisher']),
+    'empty' => p202_overview_empty(get_absolute_url()),
+]);

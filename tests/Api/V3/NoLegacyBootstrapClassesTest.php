@@ -83,6 +83,19 @@ final class NoLegacyBootstrapClassesTest extends TestCase
      */
     private const V2_SHARED = [
         '202-config/functions-ui-partials.php',
+        // U2: Overview, Visitors, Spy. The fragments these pages draw their
+        // reports from, and the script that draws them. OverviewPagesTest
+        // fails when a page of the family names a fragment not listed here.
+        '202-js/p202-overview.js',
+        'tracking202/ajax/account_overview.php',
+        'tracking202/ajax/ltv_snapshot.php',
+        'tracking202/ajax/sort_breakdown.php',
+        'tracking202/ajax/sort_hourly.php',
+        'tracking202/ajax/sort_weekly.php',
+        'tracking202/ajax/group_overview.php',
+        'tracking202/ajax/sort_rotator.php',
+        'tracking202/ajax/click_history.php',
+        'tracking202/ajax/click_history_row.php',
     ];
 
     private const CHROME_STYLESHEET = '202-css/p202-chrome.css';

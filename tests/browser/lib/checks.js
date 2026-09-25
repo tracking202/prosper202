@@ -468,3 +468,64 @@ module.exports = {
   darkThemeApplies,
   tablesScrollThemselves,
 };
+
+/* U2: Overview, Visitors, Spy */
+
+/**
+ * The pages of the Overview, Visitors and Spy family on the v2 shell, one
+ * baseline entry each: where the page is, what its sub-menu entry is called
+ * (null where the section has no sub-menu), and the element that says its
+ * report panel has drawn. specs/overview-visitors-spy.spec.js runs
+ * overviewPageBaseline() over every entry, light and dark, at 1280px and
+ * 390px; adding a page to the family is a line here.
+ */
+const OVERVIEW_FAMILY_PAGES = [
+  { path: '/tracking202/overview/', subMenu: 'Campaign Overview', report: '#overview-report' },
+  { path: '/tracking202/overview/breakdown.php', subMenu: 'Breakdown Analysis', report: '#breakdown-report' },
+  { path: '/tracking202/overview/day-parting.php', subMenu: 'Day Parting', report: '#day-parting-report' },
+  { path: '/tracking202/overview/week-parting.php', subMenu: 'Week Parting', report: '#week-parting-report' },
+  { path: '/tracking202/overview/group-overview.php', subMenu: 'Group Overview', report: '#group-overview-report' },
+  { path: '/tracking202/overview/rotator-breakdown.php', subMenu: null, report: '#rotator-breakdown-report' },
+  { path: '/tracking202/visitors/', subMenu: null, report: '#visitors-report' },
+  { path: '/tracking202/spy/', subMenu: null, report: '#spy-report' },
+];
+
+/**
+ * Wait for a report panel drawn by 202-js/p202-overview.js: its fragment has
+ * answered (aria-busy is false) and the skeleton is gone. A panel that
+ * failed says so in a flash, which the caller's assertions then see.
+ */
+async function overviewReportDrawn(ui, selector) {
+  await ui.untilInPage((sel) => {
+    const panel = document.querySelector(sel);
+    return panel !== null && panel.getAttribute('aria-busy') === 'false' && !panel.querySelector('.p202-skeleton');
+  }, selector, { describe: 'the report in ' + selector + ' to be drawn' });
+}
+
+/**
+ * Everything the standard asks of one page of the family, on the page the
+ * session is already on: shell, no errors, no legacy class, every class
+ * styled, no flex container eating spaces, the current sub-menu entry on
+ * screen, wide tables scrolling themselves — and, in dark mode, the page
+ * actually dark.
+ */
+async function overviewPageBaseline(ctx, entry, options = {}) {
+  await overviewReportDrawn(ctx.ui, entry.report);
+  const failed = await ctx.ui.exists(entry.report + ' > .alert-danger');
+  ctx.expect.notOk(failed, 'the report panel drew its fragment', failed ? await ctx.ui.text(entry.report) : '');
+  await baseline(ctx);
+  await componentClassesAreStyled(ctx);
+  await flexContainersKeepTheirSpaces(ctx);
+  await noLegacyClasses(ctx, ['col-xs-6', 'col-xs-12', 'panel', 'panel-body', 'label', 'label-info', 'label-primary', 'input-sm', 'btn-xs', 'btn-default', 'form-group', 'pull-right']);
+  await tablesScrollThemselves(ctx);
+  if (entry.subMenu !== null) {
+    await currentSubMenuItemIsVisible(ctx);
+  }
+  if (options.dark) {
+    await darkThemeApplies(ctx);
+  }
+}
+
+module.exports.OVERVIEW_FAMILY_PAGES = OVERVIEW_FAMILY_PAGES;
+module.exports.overviewReportDrawn = overviewReportDrawn;
+module.exports.overviewPageBaseline = overviewPageBaseline;
