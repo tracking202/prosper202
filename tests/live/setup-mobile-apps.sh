@@ -5,7 +5,7 @@
 # somewhere other than the machine it was written on. The names match
 # tests/browser (see its README): one instance can serve both passes.
 #
-# P202_DB must be a SCRATCH database. This pass TRUNCATEs the attribution
+# P202_DB must be a SCRATCH database. This pass TRUNCATEs the app
 # tables and rewrites the account currency; the guard below refuses a name
 # that does not read as disposable, which is the same protection
 # tests/browser/lib/db.js applies.
@@ -47,7 +47,7 @@ eq()   { if [ "$1" = "$2" ]; then ok "$3"; else bad "$3 (got '$1' want '$2')"; f
 msgs() { grep -oE '<div class="p202-flash__body">[^<]*|<div class="invalid-feedback[^"]*">[^<]*' "$1" \
            | sed -E 's/<[^>]*>//' | sed 's/^/    | /'; }
 
-mysql_q "$DB" -e "TRUNCATE 202_attribution_apps; TRUNCATE 202_attribution_conversion_values; TRUNCATE 202_attribution_postbacks;"
+mysql_q "$DB" -e "TRUNCATE 202_app_registrations; TRUNCATE 202_app_skan_encodings; TRUNCATE 202_app_postbacks;"
 
 say "login"
 curl -sS -c "$JAR" -b "$JAR" "$BASE/202-login.php" -o "$OUT/login.html"
@@ -60,6 +60,10 @@ curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/" -o "$OUT/home.html"
 # is proof the session took. A bare URL-string check passed against the
 # login page itself.
 hasnt "$OUT/home.html" 'name="user_pass"' "session established"
+# ...and a login page that FAILED to render has no password field either (a
+# fatal before the form passed the line above), so ask for what only a
+# signed-in page carries.
+has "$OUT/home.html" '202-account/signout.php' "the signed-in chrome offers a sign-out"
 
 get()  { curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/setup/mobile_apps.php$1" -o "$2"; }
 # POST and follow the PRG redirect; -w reports the FIRST status so a 200 where
@@ -89,19 +93,20 @@ has "$OUT/page.html" "setup/mobile_apps.php" "sub-menu links the page"
 has "$OUT/page.html" ".well-known/skadnetwork/report-attribution"  "SKAdNetwork receiver URL shown"
 has "$OUT/page.html" ".well-known/appattribution/report-attribution" "AdAttributionKit receiver URL shown"
 
-say "register: a Play Store link gets the Android sentence"
+say "register: a Play Store link is read, and pointed at the API"
 post x "$OUT/android.html" --data-urlencode action=register \
   --data-urlencode "app_reference=https://play.google.com/store/apps/details?id=com.example.app"
 msgs "$OUT/android.html"
-has "$OUT/android.html" "Android apps are not supported yet" "Android refusal sentence"
-eq "$(Q 'SELECT COUNT(*) FROM 202_attribution_apps')" "0" "no app was created"
+has "$OUT/android.html" "That is a Google Play app (com.example.app)" "the link was read as the Android app it names"
+has "$OUT/android.html" "p202 app create --store-link" "and the sentence says where Android apps register"
+eq "$(Q 'SELECT COUNT(*) FROM 202_app_registrations')" "0" "no app was created"
 
 say "register: junk gets the App Store sentence"
 get "" "$OUT/page.html"
 post x "$OUT/junk.html" --data-urlencode action=register --data-urlencode "app_reference=not-a-link"
 msgs "$OUT/junk.html"
 has "$OUT/junk.html" "Must be an App Store link" "junk refusal sentence"
-eq "$(Q 'SELECT COUNT(*) FROM 202_attribution_apps')" "0" "still no app"
+eq "$(Q 'SELECT COUNT(*) FROM 202_app_registrations')" "0" "still no app"
 
 say "register: empty asks for the link rather than failing oddly"
 get "" "$OUT/page.html"
@@ -118,53 +123,54 @@ get "" "$OUT/page.html"
 post x "$OUT/reg.html" --data-urlencode action=register \
   --data-urlencode "app_reference=https://apps.apple.com/us/app/summit-run/id990077001"
 msgs "$OUT/reg.html"
-eq "$(Q 'SELECT COUNT(*) FROM 202_attribution_apps')" "1" "exactly one app row"
-eq "$(Q 'SELECT app_id FROM 202_attribution_apps')"   "990077001" "app_id derived from the link"
-eq "$(Q 'SELECT platform FROM 202_attribution_apps')" "ios" "platform derived as ios"
-eq "$(Q 'SELECT LENGTH(schema_token) FROM 202_attribution_apps')" "64" "schema token is 64 chars"
-printf '    name=%s\n' "$(Q 'SELECT app_name FROM 202_attribution_apps')"
-ROWID=$(Q 'SELECT attribution_app_id FROM 202_attribution_apps')
+eq "$(Q 'SELECT COUNT(*) FROM 202_app_registrations')" "1" "exactly one app row"
+eq "$(Q 'SELECT app_key FROM 202_app_registrations')"   "990077001" "app_key derived from the link"
+eq "$(Q 'SELECT platform FROM 202_app_registrations')" "ios" "platform derived as ios"
+eq "$(Q "SELECT app_token REGEXP '^[0-9a-f]{64}\$' FROM 202_app_registrations")" "1" "app token is 64 hex characters"
+printf '    name=%s\n' "$(Q 'SELECT app_name FROM 202_app_registrations')"
+ROWID=$(Q 'SELECT registration_id FROM 202_app_registrations')
 
 say "app detail"
 get "?app=$ROWID" "$OUT/page.html"
 hasnt "$OUT/page.html" "Warning:" "no PHP warning on detail"
 hasnt "$OUT/page.html" "Fatal error" "no PHP fatal on detail"
-has "$OUT/page.html" "http://127.0.0.1:8097" "origin resolved absolutely in the snippets"
+has "$OUT/page.html" "$BASE" "origin resolved absolutely in the snippets"
+has "$OUT/page.html" 'id="app-token"' "the app token is shown under its own name"
 has "$OUT/page.html" "990077001" "app id shown on detail"
 has "$OUT/page.html" "iOS" "platform label reads iOS"
 hasnt "$OUT/page.html" ">IOS<" "platform label never upper-cased"
 
 say "starter schema"
 post x "$OUT/schema.html" --data-urlencode action=starter_schema \
-  --data-urlencode "attribution_app_id=$ROWID" --data-urlencode "app_id=990077001"
-eq "$(Q 'SELECT COUNT(*) FROM 202_attribution_conversion_values WHERE app_id=990077001')" "6" "starter schema added 6 rules"
+  --data-urlencode "registration_id=$ROWID"
+eq "$(Q "SELECT COUNT(*) FROM 202_app_skan_encodings WHERE registration_id=$ROWID")" "6" "starter schema added 6 rules"
 say "starter schema is idempotent (never overwrites a decision)"
 get "?app=$ROWID" "$OUT/page.html"
 post x "$OUT/schema2.html" --data-urlencode action=starter_schema \
-  --data-urlencode "attribution_app_id=$ROWID" --data-urlencode "app_id=990077001"
-eq "$(Q 'SELECT COUNT(*) FROM 202_attribution_conversion_values WHERE app_id=990077001')" "6" "still 6 rules after a second click"
+  --data-urlencode "registration_id=$ROWID"
+eq "$(Q "SELECT COUNT(*) FROM 202_app_skan_encodings WHERE registration_id=$ROWID")" "6" "still 6 rules after a second click"
 
-say "development postbacks toggle"
+say "test signals toggle"
 get "?app=$ROWID" "$OUT/page.html"
 post x "$OUT/dev.html" --data-urlencode action=accept_dev \
-  --data-urlencode "attribution_app_id=$ROWID" --data-urlencode "accept=1"
-eq "$(Q 'SELECT accept_development_postbacks FROM 202_attribution_apps')" "1" "accept_development_postbacks set"
+  --data-urlencode "registration_id=$ROWID" --data-urlencode "accept=1"
+eq "$(Q 'SELECT accept_test_signals FROM 202_app_registrations')" "1" "accept_test_signals set"
 
 say "token rotation changes the token"
-BEFORE=$(Q 'SELECT schema_token FROM 202_attribution_apps')
+BEFORE=$(Q 'SELECT app_token FROM 202_app_registrations')
 get "?app=$ROWID" "$OUT/page.html"
-post x "$OUT/rot.html" --data-urlencode action=rotate_token --data-urlencode "attribution_app_id=$ROWID"
-AFTER=$(Q 'SELECT schema_token FROM 202_attribution_apps')
+post x "$OUT/rot.html" --data-urlencode action=rotate_token --data-urlencode "registration_id=$ROWID"
+AFTER=$(Q 'SELECT app_token FROM 202_app_registrations')
 if [ "$BEFORE" != "$AFTER" ] && [ ${#AFTER} = 64 ]; then ok "token rotated to a new 64-char value"; else bad "token rotation: before=$BEFORE after=$AFTER"; fi
 
 say "a rule can be added by hand"
 get "?app=$ROWID" "$OUT/page.html"
 post x "$OUT/rule.html" --data-urlencode action=rule_save \
-  --data-urlencode "attribution_app_id=$ROWID" --data-urlencode "app_id=990077001" \
+  --data-urlencode "registration_id=$ROWID" \
   --data-urlencode "kind=fine" --data-urlencode "fine_value=7" \
   --data-urlencode "event_name=subscribed" --data-urlencode "revenue=9.99"
-eq "$(Q 'SELECT event_name FROM 202_attribution_conversion_values WHERE app_id=990077001 AND fine_value=7')" "subscribed" "rule stored"
-eq "$(Q 'SELECT revenue FROM 202_attribution_conversion_values WHERE app_id=990077001 AND fine_value=7')" "9.99000" "revenue stored"
+eq "$(Q "SELECT event_name FROM 202_app_skan_encodings WHERE registration_id=$ROWID AND fine_value=7")" "subscribed" "rule stored"
+eq "$(Q "SELECT revenue FROM 202_app_skan_encodings WHERE registration_id=$ROWID AND fine_value=7")" "9.99000" "revenue stored"
 
 say "a refused rule save says why, on the page it was submitted from"
 # handleGet() reads the app id from the query string and a POST has none, so
@@ -172,14 +178,14 @@ say "a refused rule save says why, on the page it was submitted from"
 # rejected value that the page never mentioned.
 get "?app=$ROWID" "$OUT/page.html"
 post x "$OUT/badrule.html" --data-urlencode action=rule_save \
-  --data-urlencode "attribution_app_id=$ROWID" --data-urlencode "app_id=990077001" \
+  --data-urlencode "registration_id=$ROWID" \
   --data-urlencode "kind=fine" --data-urlencode "fine_value=33" \
   --data-urlencode "event_name=refused_probe" --data-urlencode "revenue=-5"
 msgs "$OUT/badrule.html"
 has "$OUT/badrule.html" "Conversion values" "lands back on the app, not the apps list"
 has "$OUT/badrule.html" "invalid-feedback" "the API's sentence is shown under the field"
 has "$OUT/badrule.html" 'value="refused_probe"' "what was typed is still in the form"
-eq "$(Q "SELECT COUNT(*) FROM 202_attribution_conversion_values WHERE event_name='refused_probe'")" "0" "and no rule was created"
+eq "$(Q "SELECT COUNT(*) FROM 202_app_skan_encodings WHERE event_name='refused_probe'")" "0" "and no rule was created"
 
 say "revenue renders as money in the account's currency"
 get "?app=$ROWID" "$OUT/page.html"
@@ -202,13 +208,13 @@ post x "$OUT/dup.html" --data-urlencode action=register --data-urlencode "app_re
 msgs "$OUT/dup.html"
 has "$OUT/dup.html" "already registered this app" "re-paste lands on the app you have"
 redirected "$OUT/dup.html" "re-paste redirects rather than re-rendering the form"
-eq "$(Q 'SELECT COUNT(*) FROM 202_attribution_apps')" "1" "still exactly one row"
+eq "$(Q 'SELECT COUNT(*) FROM 202_app_registrations')" "1" "still exactly one row"
 
 say "an app registered by SOMEBODY ELSE is refused, never revealed"
 # The registration is unique across all users (the receiver resolves ownership
 # by app id alone). The re-paste fast path above is user-scoped, so this must
 # fall through to the API's conflict sentence and must not name the other app.
-mysql_q "$DB" -e "INSERT INTO 202_attribution_apps (user_id, app_id, app_name, platform, accept_development_postbacks, schema_token, created_at, updated_at) VALUES (2, 555000111, 'Somebody Elses App', 'ios', 0, 'tok-theirs', 1, 1)"
+mysql_q "$DB" -e "INSERT INTO 202_app_registrations (user_id, platform, app_key, app_name, accept_test_signals, app_token, created_at, updated_at) VALUES (2, 'ios', '555000111', 'Somebody Elses App', 0, REPEAT('e5', 32), 1, 1)"
 get "" "$OUT/page.html"
 # A full store link so the name resolves from the slug without the network,
 # which is what production does via the store lookup. With a bare id and no
@@ -219,9 +225,9 @@ msgs "$OUT/other.html"
 has "$OUT/other.html" "already registered" "the API's conflict sentence is shown"
 hasnt "$OUT/other.html" "Somebody Elses App" "the other user's app name is not leaked"
 hasnt "$OUT/other.html" "already registered this app. Here it is" "no redirect into another user's app"
-eq "$(Q 'SELECT COUNT(*) FROM 202_attribution_apps WHERE app_id=555000111')" "1" "no second row for their app"
-eq "$(Q 'SELECT user_id FROM 202_attribution_apps WHERE app_id=555000111')" "2" "their app still theirs"
-mysql_q "$DB" -e "DELETE FROM 202_attribution_apps WHERE user_id=2"
+eq "$(Q "SELECT COUNT(*) FROM 202_app_registrations WHERE app_key='555000111'")" "1" "no second row for their app"
+eq "$(Q "SELECT user_id FROM 202_app_registrations WHERE app_key='555000111'")" "2" "their app still theirs"
+mysql_q "$DB" -e "DELETE FROM 202_app_registrations WHERE user_id=2"
 
 say "the development nudge names the app that is WAITING, not the busiest one"
 # The nudge asks one grouped question for every waiting app at once. Groups
@@ -234,34 +240,37 @@ say "the development nudge names the app that is WAITING, not the busiest one"
 # still works against an instance whose login is not user 1. Named OWNER
 # because bash's own user-id variable is readonly and cannot be assigned.
 OWNER=$(Q "SELECT user_id FROM 202_users WHERE user_name='$P202_USER'")
-mysql_q "$DB" -e "DELETE FROM 202_attribution_apps WHERE app_id IN (910000001, 910000002)"
-mysql_q "$DB" -e "INSERT INTO 202_attribution_apps (user_id, app_id, app_name, platform, accept_development_postbacks, schema_token, created_at, updated_at) VALUES ($OWNER, 910000001, 'Nudge Waiting App', 'ios', 0, 'tok-nudge-waiting', 1, 1), ($OWNER, 910000002, 'Nudge Trusted App', 'ios', 1, 'tok-nudge-trusted', 1, 1)"
-mysql_q "$DB" -e "DELETE FROM 202_attribution_postbacks WHERE transaction_id LIKE 'nudge-%'"
+mysql_q "$DB" -e "DELETE FROM 202_app_registrations WHERE platform='ios' AND app_key IN ('910000001', '910000002')"
+mysql_q "$DB" -e "INSERT INTO 202_app_registrations (user_id, platform, app_key, app_name, accept_test_signals, app_token, created_at, updated_at) VALUES ($OWNER, 'ios', '910000001', 'Nudge Waiting App', 0, REPEAT('f1', 32), 1, 1), ($OWNER, 'ios', '910000002', 'Nudge Trusted App', 1, REPEAT('f2', 32), 1, 1)"
+reg_of() { Q "SELECT registration_id FROM 202_app_registrations WHERE platform='ios' AND app_key='$1'"; }
+WAITING=$(reg_of 910000001); TRUSTED=$(reg_of 910000002)
+mysql_q "$DB" -e "DELETE FROM 202_app_postbacks WHERE transaction_id LIKE 'nudge-%'"
 for tx in w1 w2; do
-  mysql_q "$DB" -e "INSERT INTO 202_attribution_postbacks (user_id, received_at, protocol, version, ad_network_id, transaction_id, app_id, signature_state, signature_valid, attribution_signature, raw_payload, remote_ip, dedupe_hash, created_at) VALUES ($OWNER, UNIX_TIMESTAMP(), 'skadnetwork', '4.0', 'nudge.skadnetwork', 'nudge-$tx', 910000001, 'development', 1, 'sig', '{}', '127.0.0.1', SHA1('nudge-$tx'), UNIX_TIMESTAMP())"
+  mysql_q "$DB" -e "INSERT INTO 202_app_postbacks (user_id, registration_id, received_at, protocol, version, ad_network_id, transaction_id, app_id, signature_state, trusted, attribution_signature, raw_payload, remote_ip, dedupe_hash, created_at) VALUES ($OWNER, $WAITING, UNIX_TIMESTAMP(), 'skadnetwork', '4.0', 'nudge.skadnetwork', 'nudge-$tx', 910000001, 'development', NULL, 'sig', '{}', '127.0.0.1', SHA1('nudge-$tx'), UNIX_TIMESTAMP())"
 done
 # Strictly more, so it outranks the waiting app in a busiest-first ordering.
 for tx in t1 t2 t3 t4 t5; do
-  mysql_q "$DB" -e "INSERT INTO 202_attribution_postbacks (user_id, received_at, protocol, version, ad_network_id, transaction_id, app_id, signature_state, signature_valid, attribution_signature, raw_payload, remote_ip, dedupe_hash, created_at) VALUES ($OWNER, UNIX_TIMESTAMP(), 'skadnetwork', '4.0', 'nudge.skadnetwork', 'nudge-$tx', 910000002, 'development', 1, 'sig', '{}', '127.0.0.1', SHA1('nudge-$tx'), UNIX_TIMESTAMP())"
+  mysql_q "$DB" -e "INSERT INTO 202_app_postbacks (user_id, registration_id, received_at, protocol, version, ad_network_id, transaction_id, app_id, signature_state, trusted, attribution_signature, raw_payload, remote_ip, dedupe_hash, created_at) VALUES ($OWNER, $TRUSTED, UNIX_TIMESTAMP(), 'skadnetwork', '4.0', 'nudge.skadnetwork', 'nudge-$tx', 910000002, 'development', 1, 'sig', '{}', '127.0.0.1', SHA1('nudge-$tx'), UNIX_TIMESTAMP())"
 done
 get "" "$OUT/nudge.html"
 eq "$(grep -c 'value="accept_dev"' "$OUT/nudge.html")" "1" "exactly one nudge, for the one waiting app"
 has "$OUT/nudge.html" "2 development postbacks have arrived" "it carries the waiting app's own count"
 hasnt "$OUT/nudge.html" "5 development postbacks have arrived" "not the trusted app's, which needs no nudge"
 hasnt "$OUT/nudge.html" "Fatal error" "no PHP fatal"
-mysql_q "$DB" -e "DELETE FROM 202_attribution_postbacks WHERE transaction_id LIKE 'nudge-%'"
-mysql_q "$DB" -e "DELETE FROM 202_attribution_apps WHERE app_id IN (910000001, 910000002)"
+mysql_q "$DB" -e "DELETE FROM 202_app_postbacks WHERE transaction_id LIKE 'nudge-%'"
+mysql_q "$DB" -e "DELETE FROM 202_app_registrations WHERE platform='ios' AND app_key IN ('910000001', '910000002')"
 
 say "removal"
 get "?app=$ROWID" "$OUT/page.html"
-post x "$OUT/rm.html" --data-urlencode action=remove --data-urlencode "attribution_app_id=$ROWID"
-eq "$(Q 'SELECT COUNT(*) FROM 202_attribution_apps')" "0" "app removed"
+post x "$OUT/rm.html" --data-urlencode action=remove --data-urlencode "registration_id=$ROWID"
+eq "$(Q 'SELECT COUNT(*) FROM 202_app_registrations')" "0" "app removed"
+eq "$(Q "SELECT COUNT(*) FROM 202_app_skan_encodings WHERE registration_id=$ROWID")" "0" "its SKAN encodings went with it"
 
 say "CSRF is enforced"
 curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/setup/mobile_apps.php" \
   --data-urlencode "csrf_token=wrong" --data-urlencode action=register \
   --data-urlencode "app_reference=id123456789" -o "$OUT/csrf.html"
-eq "$(Q 'SELECT COUNT(*) FROM 202_attribution_apps')" "0" "a bad CSRF token writes nothing"
+eq "$(Q 'SELECT COUNT(*) FROM 202_app_registrations')" "0" "a bad CSRF token writes nothing"
 
 printf '\n\033[1mLive pass: %d passed, %d failed\033[0m  (artifacts: %s)\n' "$PASS" "$FAIL" "$OUT"
 [ "$FAIL" = 0 ]

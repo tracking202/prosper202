@@ -44,7 +44,7 @@ and stage writes, but a person's key performs them.
 
 Areas: `campaigns`, `aff-networks`, `ppc-networks`, `ppc-accounts`,
 `trackers`, `landing-pages`, `text-ads`, `forecast-events`, `clicks`,
-`conversions`, `reports`, `ltv`, `rotators`, `attribution`, `users`,
+`conversions`, `reports`, `ltv`, `rotators`, `attribution`, `apps`, `users`,
 `system`, `sync` (the `changes` and `audit` routes fall under `sync`),
 `staged-changes`.
 
@@ -284,7 +284,7 @@ Empty response body.
 | Reports | Summary, breakdown, timeseries, daypart, weekpart | [Reports](11-reports.md) |
 | Rotators | CRUD + nested rules, criteria, redirects | [Rotators](12-rotators.md) |
 | Attribution | Models, snapshots, exports | [Attribution](13-attribution.md) |
-| Attribution postbacks | Apple SKAdNetwork and AdAttributionKit postbacks, apps, conversion values, report | [Attribution postbacks](19-attribution-postbacks.md) |
+| Apps | The app registry (iOS and Android), Apple SKAdNetwork and AdAttributionKit postbacks, SKAN encodings, report | [App measurement](19-app-measurement.md) |
 | Forecast Events | CRUD + bulk-upsert | [Forecast Events](18-forecast-events.md) |
 | Users | CRUD + roles, API keys, preferences | [Users](14-users.md) |
 | System | Health, version, cron, errors, metrics, db-stats | [System](15-system.md) |

@@ -167,7 +167,7 @@ var attrSnapshotListCmd = &cobra.Command{
 	Short: "List snapshots for a model",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Shares runAttributionList with the postbacks/apps/conversion-values
+		// Shares runPagedList with the app registrations/encodings/postbacks
 		// lists so --limit/--offset are validated the same way (and before the
 		// client is built) and --all traverses pages the same way. Hand-rolling
 		// the body here is how this command drifted: it used to pass --limit
@@ -177,7 +177,7 @@ var attrSnapshotListCmd = &cobra.Command{
 		if v, _ := cmd.Flags().GetString("scope_type"); v != "" {
 			params["scope_type"] = v
 		}
-		return runAttributionList(cmd, "attribution/models/"+args[0]+"/snapshots", params)
+		return runPagedList(cmd, "attribution/models/"+args[0]+"/snapshots", params)
 	},
 }
 
@@ -255,7 +255,7 @@ func init() {
 
 	// Snapshot flags
 	attrSnapshotListCmd.Flags().String("scope_type", "", "Filter: global, campaign, landing_page")
-	registerAttributionListFlags(attrSnapshotListCmd)
+	registerPagedListFlags(attrSnapshotListCmd)
 
 	attrSnapshotCmd.AddCommand(attrSnapshotListCmd)
 

@@ -262,17 +262,22 @@ class UsersController
             'resource' => 'users',
             'mode' => 'soft',
             'record' => $existing['data'],
-            'cascade' => [],
+            'cascade' => \Prosper202\User\UserDataPurge::cascade($id),
         ]];
     }
 
     public function delete(int $id): void
     {
         $this->get($id);
-        $stmt = $this->prepare('UPDATE 202_users SET user_deleted = 1 WHERE user_id = ?');
-        $this->bind($stmt, 'i', $id);
-        $this->execute($stmt, 'Delete failed');
-        $stmt->close();
+        // The soft delete and the purge of what must not outlive the user
+        // (API keys, app registrations, the identity graph, MTA state) commit
+        // together; the account page deletes through the same class.
+        try {
+            (new \Prosper202\User\UserDataPurge($this->db))->deleteUser($id);
+        } catch (\RuntimeException $e) {
+            error_log('p202 users: ' . $e->getMessage());
+            throw new DatabaseException('Delete failed; the user and their data are unchanged');
+        }
     }
 
     // --- Roles ---

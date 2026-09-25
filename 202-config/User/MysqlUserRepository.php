@@ -112,12 +112,9 @@ final class MysqlUserRepository implements UserRepositoryInterface
 
     public function softDelete(int $id): void
     {
-        $stmt = $this->conn->prepareWrite(
-            'UPDATE 202_users SET user_deleted = 1 WHERE user_id = ?'
-        );
-        $this->conn->bind($stmt, 'i', [$id]);
-        $this->conn->execute($stmt);
-        $stmt->close();
+        // Every user delete purges what must not outlive the user, in the
+        // same transaction as the soft delete (UserDataPurge).
+        (new UserDataPurge($this->conn->writeConnection()))->deleteUser($id);
     }
 
     public function listRoles(): array

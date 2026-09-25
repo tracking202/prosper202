@@ -79,7 +79,7 @@ module.exports = {
   // Optional. Only runs when --keep-data is absent, and only writes through
   // the guard in lib/db.js.
   async reset(db) {
-    db.truncate(['202_attribution_postbacks']);
+    db.truncate(['202_app_postbacks']);
   },
 
   // Optional. Signs in, seeds, whatever the whole spec needs once.

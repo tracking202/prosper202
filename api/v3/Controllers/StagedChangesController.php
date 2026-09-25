@@ -86,7 +86,7 @@ final class StagedChangesController
      * The broader forms were measured and rejected: '_key' also matches
      * export_keyword*, user_pref_keyword and user_keyword_searched_or_bidded;
      * 'signature' also matches attribution_signature, signature_state and
-     * signature_valid; 'config' also matches config and weighting_config.
+     * trusted; 'config' also matches config and weighting_config.
      *
      * `bridge_config` is the odd one out and is here on different grounds:
      * the *name* is not a credential, but the value is a JSON document whose
@@ -392,7 +392,7 @@ final class StagedChangesController
             //
             // This is the same redactor present() uses on the stored payload,
             // deliberately: a private one-key copy that only knew
-            // `schema_token` left every other credential the write surface
+            // `app_token` left every other credential the write surface
             // can return exposed.
             $result = self::redactSecrets($result);
         } elseif ($result !== null) {
@@ -634,7 +634,7 @@ final class StagedChangesController
         // would touch, so nothing in stage() ever inspected it; it is shown
         // to every reviewer alongside the payload and gets the same
         // treatment. Today's previews are already credential-free at the
-        // source (AttributionAppsController::deletePreview drops the schema
+        // source (AppRegistrationsController::deletePreview drops the schema
         // token, UsersController::get() never selects user_pass), which is
         // exactly the kind of per-site care that stops holding as previews
         // are added.

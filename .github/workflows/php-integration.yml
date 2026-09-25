@@ -90,14 +90,22 @@ jobs:
           # retry while a forgery and the genuine postback both land.
           vendor/bin/phpunit --configuration phpunit.ci.xml \
             --group integration \
-            tests/Attribution/Postbacks/PostbackReceiverIntegrationTest.php \
+            tests/Apps/Apple/PostbackReceiverIntegrationTest.php \
             --verbose --no-coverage
           # The report's unique-postback counting (COUNT DISTINCT over the
           # postback identity), the protocol dimension and the live
           # development opt-in are SQL semantics only a real server shows.
           vendor/bin/phpunit --configuration phpunit.ci.xml \
             --group integration \
-            tests/Attribution/Postbacks/AttributionReportIntegrationTest.php \
+            tests/Apps/Apple/AppReportIntegrationTest.php \
+            --verbose --no-coverage
+          # The app registry: the claim on registration, uniqueness under a
+          # case-sensitive collation, the delete cascade, encoding ownership,
+          # the user-deletion purge in one transaction (and its rollback), and
+          # retention — each a statement only a real server runs.
+          vendor/bin/phpunit --configuration phpunit.ci.xml \
+            --group integration \
+            tests/Apps/AppRegistryIntegrationTest.php \
             --verbose --no-coverage
           # Checks the SQL the v3 API ships against the schema it ships, by
           # preparing every statically-known statement on a real server. It

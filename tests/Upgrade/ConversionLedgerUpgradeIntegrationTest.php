@@ -180,9 +180,9 @@ final class ConversionLedgerUpgradeIntegrationTest extends TestCase
         foreach (\Prosper202\Database\Tables\IdentityTables::getDefinitions() as $def) {
             $db->query('DROP TABLE IF EXISTS `' . $def->tableName . '`');
         }
-        // The rung's own list: the postback tables' backfill runs in the same call.
-        $this->assertTrue(_upgrade_attribution_tables(array_merge(
-            \Prosper202\Database\Tables\AttributionPostbackTables::getDefinitions(),
+        // The rung's own list.
+        $this->assertTrue(_upgrade_measurement_tables(array_merge(
+            \Prosper202\Database\Tables\AppTables::getDefinitions(),
             \Prosper202\Database\Tables\ConversionTables::getDefinitions(),
             \Prosper202\Database\Tables\IdentityTables::getDefinitions()
         )));
@@ -192,6 +192,55 @@ final class ConversionLedgerUpgradeIntegrationTest extends TestCase
             $this->assertTrue($reconciler->reconcile($def));
         }
         $this->assertSame([], $reconciler->getApplied(), 'created with every column and key the installer declares');
+    }
+
+    /**
+     * The app tables arrive under their new names in their new shape, from
+     * the installer's definitions, and nothing is created under the names
+     * they had before the reshape (plan §4.1).
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testTheRungCreatesTheAppTablesInTheirNewShapeAndNoneOfTheOldNames(): void
+    {
+        $db = $this->preLedgerDatabase();
+        $old = ['202_attribution_apps', '202_attribution_postbacks', '202_attribution_conversion_values'];
+        foreach (array_merge($old, array_map(
+            static fn ($def): string => $def->tableName,
+            \Prosper202\Database\Tables\AppTables::getDefinitions()
+        )) as $table) {
+            $db->query('DROP TABLE IF EXISTS `' . $table . '`');
+        }
+
+        $this->assertTrue(_upgrade_measurement_tables(array_merge(
+            \Prosper202\Database\Tables\AppTables::getDefinitions(),
+            \Prosper202\Database\Tables\ConversionTables::getDefinitions(),
+            \Prosper202\Database\Tables\IdentityTables::getDefinitions()
+        )));
+
+        foreach ($old as $table) {
+            $this->assertNull($db->query("SHOW TABLES LIKE '" . $table . "'")->fetch_row(), "$table must not be created");
+        }
+        $reconciler = new SchemaReconciler(static fn (string $sql) => _upgrade_query($sql));
+        foreach (\Prosper202\Database\Tables\AppTables::getDefinitions() as $def) {
+            $this->assertTrue($reconciler->reconcile($def), $def->tableName);
+        }
+        $this->assertSame([], $reconciler->getApplied(), 'created with every column and key the installer declares');
+
+        $create = (string)$db->query('SHOW CREATE TABLE 202_app_registrations')->fetch_row()[1];
+        $this->assertMatchesRegularExpression('/`app_key` varchar\(255\)[^,]*COLLATE utf8mb4_bin/', $create,
+            'app_key compares byte for byte: Android application ids are case-sensitive');
+        $this->assertStringContainsString('UNIQUE KEY `platform_app_key` (`platform`,`app_key`)', $create);
+
+        $columns = [];
+        $result = $db->query('SHOW COLUMNS FROM 202_app_postbacks');
+        while ($row = $result->fetch_assoc()) {
+            $columns[$row['Field']] = $row['Null'];
+        }
+        $this->assertSame('YES', $columns['registration_id'] ?? null, 'an unclaimed postback has no registration');
+        $this->assertSame('YES', $columns['trusted'] ?? null, 'unvouched is NULL');
+        $this->assertArrayNotHasKey('signature_valid', $columns);
     }
 
     /**

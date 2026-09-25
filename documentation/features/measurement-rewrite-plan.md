@@ -1,6 +1,6 @@
 # Measurement rewrite: app measurement (iOS + Android) and multi-touch attribution
 
-Status: **in progress.** PR 0 (legacy endpoints) and PR 1 (the conversion ledger) are built; the rest is proposal.
+Status: **in progress.** PR 0 (legacy endpoints), PR 1 (the conversion ledger), PR 2 (identity capture) and PR 3 (the app core reshape) are built; the rest is proposal.
 
 ## Scope
 
@@ -673,6 +673,90 @@ it to be far more expressive than "this event name" (§5.5). The split:
 - **The Analyze page and report filters** move from raw `app_id(s)` to
   `registration_id(s)`. The postback's own `app_id` stays as a forensic column
   and filter.
+
+### 4.7 As built: decisions
+
+What PR 3 settled, including where it stops short of §4.1–§4.6 and which PR
+picks the rest up.
+
+- **Namespaces.** The platform-neutral core is `Api\V3\Apps` (`AppIdentity`,
+  `AppRegistry`, `AppToken`, `AppPolicy`, `Verdict`, `PublicIntake`,
+  `AppRetention`, `RetentionClass`, `AppDataPurge`); Apple's receiver, its
+  protocols and `SignatureState` live under `Api\V3\Apps\Apple`. The
+  controllers are `AppRegistrationsController`, `AppSkanEncodingsController`,
+  `AppPostbacksController` and `AppSchemaController`.
+- **Tables.** `202_app_registrations`, `202_app_postbacks` and
+  `202_app_skan_encodings`, created by the 1.9.75 rung from `AppTables`
+  alongside the ledger and identity tables (`_upgrade_measurement_tables`).
+  The legacy guard, the backfill and the "Upgrade paused" halt are deleted;
+  RELEASING.md says databases above 1.9.55 are reinstalled.
+- **`app_key` is `utf8mb4_bin`.** Package names are case-sensitive, and the
+  install's default collation is not: under it `com.Example.App` and
+  `com.example.app` would share the `UNIQUE (platform, app_key)` slot
+  (error pattern #17).
+- **The Android-only registration columns are not added yet**
+  (`attribution_window_days`, `trust_client_revenue`, the integrity mode):
+  nothing reads them before the Android intake, so they arrive with PR 5/6
+  rather than as columns with no behaviour.
+- **Android is registrable through the API and the CLI** (`POST /apps`,
+  `p202 app create --store-link`). The Setup and Analyze pages stay iOS-only
+  — their app view is SKAN's — and a Google Play link pasted into Setup is
+  read and pointed at those two. The Android pages are PR 11.
+- **Identity is fixed at create.** `platform` and `app_key` (and
+  `store_link`) are accepted on update only when they name the app the
+  registration already is; anything else is a 422. Identity is parsed from
+  the raw payload in `create()`/`update()`, never in a hook the base class
+  has already cast (error pattern #18). `store_link` and `app_key` are
+  exclusive; a `platform` that contradicts the link is a 422.
+- **Deleting a registration** withdraws test-signal trust, unlinks its
+  postbacks (`registration_id` → NULL, owner kept) and deletes its
+  encodings, in one transaction. Registering the app again relinks the
+  owner's rows; the claim is `app_id = ? AND registration_id IS NULL AND
+  (user_id = 0 OR user_id = caller)`.
+- **SKAN encodings keep `event_name`/`revenue`** for now and gain
+  `registration_id` (`0` = account-wide). A non-zero id must be one of the
+  caller's own iOS registrations, validated on the raw payload. Pointing
+  encodings at goals is PR 4.
+- **Routes and scope.** Everything moved under `/apps`
+  (`/apps/skan-encodings`, `/apps/postbacks`, `/apps/report`,
+  `/apps/verify`, `/apps/{id}/app-token/rotate`) in a new `apps` scope area;
+  `POST /apps/verify` is a read. The old `/attribution/apps…` routes answer
+  404; `attribution` is MTA's alone. The CLI is `p202 app …` and
+  `p202 app encoding …`, with no aliases for the old names (nothing shipped
+  them).
+- **Report vocabulary.** Group mode `registration` replaces `app`; the
+  per-class counts are `trusted_count`, `refuted_count`, `unvouched_count`
+  and `test_count`; `meta.trusted` is `trusted-only`.
+- **The app token.** `X-P202-App-Token` only (never a query parameter);
+  `GET /apps/schema` answers 400 for a malformed or missing header, 404 for
+  an unknown token, 405 for anything but GET/HEAD, and sends `Vary` on the
+  header. The iOS document keeps `app_id` beside `platform`/`app_key`; the
+  Android one carries its identity and nothing else until the intake adds
+  its settings. The iOS SDK's URL and header constants moved in this PR,
+  because the server stopped answering the old ones; the Swift API rename
+  (`schemaToken`) is PR 8.
+- **The contract and vectors.** `documentation/api/21-app-sdk-contract.md`
+  covers the token, the schema document, the retry table and the test flag;
+  the intake and events routes join it with PR 5.
+  `tests/fixtures/app-sdk-contract/app-identity.json` is read by the PHP
+  suite today; the Swift and Kotlin suites read it from PRs 8 and 7.
+- **Trust.** `Verdict` is implemented by `SignatureState` (DEVELOPMENT is the
+  test class); `AppPolicy::fromRow()` accepts only `1`/`'1'`, so an
+  unreadable policy is untrusting. The receiver never asks the registry
+  about app 0.
+- **`PublicIntake`** serves both `/.well-known/` receivers and
+  `GET /apps/schema` (rate-limited per peer address); `POST /apps/installs`
+  joins it in PR 5.
+- **Retention** is registered by the source (`PostbackReceiver::retentionClasses()`);
+  the environment variables are `P202_APP_RETENTION_DAYS_POSTBACKS_<CLASS>`.
+  The install classes arrive with `202_app_installs` in PR 5.
+- **User deletion** is one class, `Prosper202\User\UserDataPurge`, used by all
+  three delete paths (the API, Account › User Management and the user
+  repository) and pinned by `UserDeletionPurgeTest`; see §7.2 for the
+  cascade. It also revokes the user's REST API keys: the API authenticates
+  by key alone, and a deleted user's key otherwise kept working — found by
+  the live pass, which then watched it register an app whose postbacks the
+  purge had just released.
 
 ## 5. Android on the core (PRs 4–7)
 
@@ -1673,6 +1757,33 @@ The worker computes credits for every active model, the default included.
   cascade keeps the user's clicks, the ledger rows are deleted with the
   same policy the clicks get.
 
+  **The audit (PR 3).** Before PR 3 there were three writers of
+  `user_deleted = 1` — the API's `UsersController::delete()`, which purged
+  nothing; `user-management.php`, which deleted the MTA tables statement by
+  statement with no transaction; and `MysqlUserRepository::softDelete()`,
+  which purged nothing — so what a deletion removed depended on the screen it
+  came from. All three now call `UserDataPurge::deleteUser()`, one
+  transaction that rolls everything back when any statement fails, and
+  `UserDeletionPurgeTest` refuses a fourth writer. What it does today:
+
+  | Data | Action | Since |
+  |---|---|---|
+  | `202_api_keys` | deleted (sessions already refuse a deleted user) | PR 3 |
+  | `202_attribution_touchpoints`, `_snapshots`, `_settings`, `_models`, `_audit` | deleted | before PR 3 (account page only) |
+  | `202_identity_observations` (for the user's clicks), `202_clicks_visitor`, `202_identity_merges`, `_signals`, `_visitors`, `_keys` | deleted | PR 3 (the tables are PR 2's) |
+  | `202_app_registrations`, `202_app_skan_encodings` | deleted | PR 3 |
+  | `202_app_postbacks` | released: `user_id = 0`, `registration_id = NULL`, test-signal trust withdrawn; pruned by the unclaimed window | PR 3 |
+  | `202_users` | `user_deleted = 1`, last | — |
+  | `202_clicks*`, `202_conversion_logs` and the ledger rows | kept, as the clicks always were | — |
+
+  Still to join the cascade, each with the PR that creates it: the
+  attribution outbox rows, `202_attribution_credits` and `_journeys` (PR 9),
+  goals, campaign goals, goal events and progress (PR 4 and 4b),
+  `202_app_installs` (PR 5), and export files on disk (PR 10). Each PR adds
+  its statements to `UserDataPurge` (or, for app tables, an action to
+  `AppDataPurge::TABLE_ACTIONS`, which `UserDeletionPurgeTest` requires to
+  cover every table in `AppTables`).
+
 ### 7.3 Performance
 
 **Redirect hot path.** It gains one cookie read or write, one HMAC for the
@@ -1908,7 +2019,7 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 | 1 | **Conversion ledger** (§2.1): provenance columns; the CSV upload writes rows (the last path that does not); click value derived from rows under `payout_mode`; outbox row in `record()`; `ConversionTables` split out; `gpb.php` pixel-firing logic extracted to one function. **Built; `tests/live/conversion-ledger.sh`.** | — |
 | 1b | **Breakdown reads:** `GET /clicks/{id}/conversions` and `p202 click conversions <id>`, `/conversions` filters, the click-history breakdown view, Group Overview's Goal/source level, and the Transaction ID level fixed to sum rows | 1, 4 (for goal names); U2 |
 | 2 | **Identity capture:** `p202vid`, LP first-party id (in `landing.php`, with `p202.consent()`), signed `cust` on clicks and conversions, `202_identity_*`, `202_clicks_visitor`, consent switch and per-campaign `identity_signals`. **Built; `tests/live/identity-graph.sh`, `tests/browser/specs/identity-landing.spec.js`.** | — |
-| 3 | **App core reshape** (§4): registry, `AppIdentity`, token rename, verdicts, `PublicIntake`, retention, user-deletion purge, `/apps` and `p202 app` renames, legacy guard deleted | — |
+| 3 | **App core reshape** (§4): registry, `AppIdentity`, token rename, verdicts, `PublicIntake`, retention, user-deletion purge, `/apps` and `p202 app` renames, legacy guard deleted. **Built; `tests/live/app-core.sh` (with `setup-mobile-apps.sh`, `analyze-mobile-apps.sh` and both mobile-apps browser specs ported). Decisions in §4.7.** | — |
 | 4 | **Goals engine** (core): definitions, validation, versioning, server evaluator keyed by subject (click or install), cross-language vectors, campaign goal payouts, SKAN encodings pointing at goals, `/goals` API and `p202 goal …` | 1, 3 |
 | 4b | **Web events:** `event=` on pixels and postbacks, `POST /events`, `p202.js` `track()`, the web campaign goal editor, the Transactions ID docs pointing to goals | 2, 4 |
 | 5 | **Android intake:** install token, `MatchState`, installs and events endpoints, conversions through goals, traffic-source notify, pending-click cron | 1, 3, 4 |

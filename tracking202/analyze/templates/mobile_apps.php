@@ -22,10 +22,13 @@ $num = static fn (mixed $v): string => number_format((float)$v);
 $currency = (string)$mobileReport['currency'];
 $money = static fn (mixed $v): string => (string)dollar_format((float)$v, $currency);
 
-/** App Store id to registered name, for the rows that only carry the id. */
+/** Registration to name and App Store id, for the rows that only carry the registration. */
 $appNames = [];
 foreach ($mobileReport['apps'] as $knownApp) {
-    $appNames[(string)$knownApp['app_id']] = (string)($knownApp['app_name'] ?? '');
+    $appNames[(string)$knownApp['registration_id']] = [
+        'name' => (string)($knownApp['app_name'] ?? ''),
+        'key' => (string)($knownApp['app_key'] ?? ''),
+    ];
 }
 
 $setupUrl = rtrim((string)$mobileReport['self'], '/');
@@ -81,7 +84,7 @@ $link = static function (array $changes) use ($self, $filters, $view, $customRan
         'range' => $range,
         'from' => $custom ? $pick('from', $filters['from']) : null,
         'to' => $custom ? $pick('to', $filters['to']) : null,
-        'app_id' => $pick('app_id', $filters['app_id']),
+        'registration_id' => $pick('registration_id', $filters['registration_id']),
         'signature' => $pick('signature', $filters['signature']),
         'page' => $changes['page'] ?? null,
         'download' => $changes['download'] ?? null,
@@ -279,26 +282,26 @@ template_top('Analyze Mobile Apps', ['ui' => 'v2']);
                 <span class="form-text" data-p202-range-hint>Choose <em>Custom Date</em> to set these.</span>
             <?php } ?>
 
-            <label class="form-label mb-0" for="app_id">App</label>
+            <label class="form-label mb-0" for="registration_id">App</label>
             <?php
-            // An app_id with no option of its own would leave the menu on
+            // A registration_id with no option of its own would leave the menu on
             // "All apps" over a report that IS still filtered — and the next
             // Apply would submit the empty value and widen it without a word.
             // It happens: an app deleted since the link was made, one past
             // RegisteredApps::MAX, a postback for an app that was never
             // registered, or an apps read that failed.
-            $appIds = array_map(static fn (array $a): string => (string)($a['app_id'] ?? ''), $apps);
-            $unlisted = $filters['app_id'] !== '' && !in_array((string)$filters['app_id'], $appIds, true);
+            $appIds = array_map(static fn (array $a): string => (string)($a['registration_id'] ?? ''), $apps);
+            $unlisted = $filters['registration_id'] !== '' && !in_array((string)$filters['registration_id'], $appIds, true);
             ?>
-            <select class="form-select form-select-sm" id="app_id" name="app_id" style="width:auto">
+            <select class="form-select form-select-sm" id="registration_id" name="registration_id" style="width:auto">
                 <option value="">All apps</option>
                 <?php if ($unlisted) { ?>
-                    <option value="<?php echo $e($filters['app_id']); ?>" selected>
-                        <?php echo $e($filters['app_id']); ?> (not in your list)
+                    <option value="<?php echo $e($filters['registration_id']); ?>" selected>
+                        registration <?php echo $e($filters['registration_id']); ?> (not in your list)
                     </option>
                 <?php } ?>
                 <?php foreach ($apps as $app) { ?>
-                    <option value="<?php echo (int)$app['app_id']; ?>"<?php echo (string)$filters['app_id'] === (string)$app['app_id'] ? ' selected' : ''; ?>><?php echo $e($app['app_name'] ?? ''); ?></option>
+                    <option value="<?php echo (int)$app['registration_id']; ?>"<?php echo (string)$filters['registration_id'] === (string)$app['registration_id'] ? ' selected' : ''; ?>><?php echo $e($app['app_name'] ?? ''); ?></option>
                 <?php } ?>
             </select>
 
@@ -308,7 +311,7 @@ template_top('Analyze Mobile Apps', ['ui' => 'v2']);
                 <?php /* The states the column really holds, from the enum that
                          defines them, so the menu and the controller's
                          validation cannot offer and accept different sets. */ ?>
-                <?php foreach (\Api\V3\Attribution\SignatureState::values() as $key) { ?>
+                <?php foreach (\Api\V3\Apps\Apple\SignatureState::values() as $key) { ?>
                     <option value="<?php echo $e($key); ?>"<?php echo $filters['signature'] === $key ? ' selected' : ''; ?>><?php echo $e(ucfirst($key)); ?></option>
                 <?php } ?>
             </select>
@@ -360,7 +363,7 @@ template_top('Analyze Mobile Apps', ['ui' => 'v2']);
                 <div class="p202-tile__label">Installs</div>
                 <div class="p202-tile__value"><?php echo $num($totals['installs']); ?></div>
                 <div class="p202-tile__sub">
-                    <?php echo $report['trusted'] === 'verified-only' ? 'verified only' : 'as filtered'; ?>
+                    <?php echo $report['trusted'] === 'trusted-only' ? 'verified only' : 'as filtered'; ?>
                 </div>
             </div>
             <div class="p202-tile">
@@ -390,7 +393,7 @@ template_top('Analyze Mobile Apps', ['ui' => 'v2']);
         </div>
         <?php } ?>
 
-        <?php if ($totals !== null && $report['trusted'] !== 'verified-only') { ?>
+        <?php if ($totals !== null && $report['trusted'] !== 'trusted-only') { ?>
             <?php /* The opposite of reassurance: a signature filter turns the
                      trust gate OFF, so these numbers are computed over rows
                      that failed verification, could not be verified, or were
@@ -404,17 +407,17 @@ template_top('Analyze Mobile Apps', ['ui' => 'v2']);
                     <a href="<?php echo $e($link(['signature' => null])); ?>">Drop the filter</a> to count verified postbacks only.
                 </div>
             </div>
-        <?php } elseif ($totals !== null && $totals['postbacks'] > $totals['signature_valid_count']) { ?>
+        <?php } elseif ($totals !== null && $totals['postbacks'] > $totals['trusted_count']) { ?>
             <div class="alert alert-info p202-flash" role="status">
                 <i class="bi bi-info-circle"></i>
                 <div class="p202-flash__body">
                     Installs, losses and revenue count <strong>signature-verified postbacks only</strong>.
                     Of <?php echo $num($totals['postbacks']); ?> postbacks in this range,
-                    <?php echo $num($totals['signature_valid_count']); ?> verified,
-                    <?php echo $num($totals['signature_invalid_count']); ?> failed verification and
-                    <?php echo $num($totals['signature_unverified_count']); ?> could not be verified;
-                    <?php echo $num($totals['signature_development_count']); ?> of them
-                    <?php echo $totals['signature_development_count'] === 1 ? 'was' : 'were'; ?> development-signed,
+                    <?php echo $num($totals['trusted_count']); ?> verified,
+                    <?php echo $num($totals['refuted_count']); ?> failed verification and
+                    <?php echo $num($totals['unvouched_count']); ?> could not be verified;
+                    <?php echo $num($totals['test_count']); ?> of them
+                    <?php echo $totals['test_count'] === 1 ? 'was' : 'were'; ?> development-signed,
                     which is a class the others overlap rather than a fourth share of the total.
                     Filter by signature above to count a different class.
                 </div>
@@ -468,7 +471,7 @@ template_top('Analyze Mobile Apps', ['ui' => 'v2']);
                                 <td class="num"><?php echo $num($group['reengagements'] ?? 0); ?></td>
                                 <td class="num"><?php echo $num($group['losses'] ?? 0); ?></td>
                                 <td class="num"><?php echo $e($money($groupRevenue)); ?></td>
-                                <td class="num"><?php echo $num($group['signature_valid_count'] ?? 0); ?></td>
+                                <td class="num"><?php echo $num($group['trusted_count'] ?? 0); ?></td>
                             </tr>
                         <?php } ?>
                             <?php if ($totals !== null) { ?>
@@ -480,7 +483,7 @@ template_top('Analyze Mobile Apps', ['ui' => 'v2']);
                                 <td class="num"><?php echo $num($totals['reengagements']); ?></td>
                                 <td class="num"><?php echo $num($totals['losses']); ?></td>
                                 <td class="num"><?php echo $e($money($totals['revenue'])); ?></td>
-                                <td class="num"><?php echo $num($totals['signature_valid_count']); ?></td>
+                                <td class="num"><?php echo $num($totals['trusted_count']); ?></td>
                             </tr>
                             <?php } ?>
                         </tbody>
@@ -568,7 +571,7 @@ template_top('Analyze Mobile Apps', ['ui' => 'v2']);
                                 // reads; the registered name is, and this page
                                 // already holds the list it comes from.
                                 $rowAppId = (string)($row['app_id'] ?? '');
-                                $rowAppName = $appNames[$rowAppId] ?? '';
+                                $rowAppName = $appNames[(string)($row['registration_id'] ?? '')]['name'] ?? '';
                                 echo $rowAppName === ''
                                     ? $e($rowAppId)
                                     : $e($rowAppName) . ' <span class="text-secondary">' . $e($rowAppId) . '</span>';

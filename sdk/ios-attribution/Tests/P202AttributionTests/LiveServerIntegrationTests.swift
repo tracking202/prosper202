@@ -7,7 +7,7 @@ import XCTest
 /// environment provides an instance:
 ///
 ///     P202ATTRIBUTION_LIVE_ENDPOINT=http://127.0.0.1:8000 \
-///     P202ATTRIBUTION_LIVE_TOKEN=<schema token from POST /attribution/apps> \
+///     P202ATTRIBUTION_LIVE_TOKEN=<app_token from POST /apps> \
 ///     swift test --filter LiveServerIntegrationTests
 final class LiveServerIntegrationTests: XCTestCase {
     private var endpoint: URL? {

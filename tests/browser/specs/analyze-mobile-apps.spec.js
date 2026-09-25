@@ -56,7 +56,7 @@ function postbackSql(n, daysBack, overrides) {
     conversion_type: 'download',
     did_win: 1,
     signature_state: 'valid',
-    signature_valid: 1,
+    trusted: 1,
     country_code: 'US',
     source_identifier: '12',
     conversion_value: 3,
@@ -65,17 +65,22 @@ function postbackSql(n, daysBack, overrides) {
   const at = todayUtc() - daysBack * DAY + 3600 + n * 61;
   const quoted = (v) => (v === null ? 'NULL' : "'" + String(v).replace(/'/g, "''") + "'");
 
-  return "INSERT INTO 202_attribution_postbacks "
-    + '(user_id, received_at, protocol, version, ad_network_id, transaction_id, app_id, '
+  // The registration the app id names, looked up rather than assumed: a
+  // TRUNCATE resets the counter, but nothing here should depend on that.
+  const registration = "(SELECT registration_id FROM 202_app_registrations WHERE platform = 'ios' AND app_key = '"
+    + row.app_id + "')";
+
+  return "INSERT INTO 202_app_postbacks "
+    + '(user_id, registration_id, received_at, protocol, version, ad_network_id, transaction_id, app_id, '
     + 'source_identifier, conversion_value, postback_sequence_index, conversion_type, '
     + 'redownload, did_win, country_code, attribution_signature, signature_state, '
-    + 'signature_valid, dedupe_hash, raw_payload, remote_ip, created_at) VALUES ('
-    + ['1', at, quoted(row.protocol), quoted(row.version), quoted(row.ad_network_id),
+    + 'trusted, dedupe_hash, raw_payload, remote_ip, created_at) VALUES ('
+    + ['1', registration, at, quoted(row.protocol), quoted(row.version), quoted(row.ad_network_id),
       quoted('browser-' + n), row.app_id, quoted(row.source_identifier),
       row.conversion_value === null ? 'NULL' : row.conversion_value, '0',
       quoted(row.conversion_type), '0', row.did_win, quoted(row.country_code),
       quoted('sig'), quoted(row.signature_state),
-      row.signature_valid === null ? 'NULL' : row.signature_valid,
+      row.trusted === null ? 'NULL' : row.trusted,
       "SHA1('browser-" + n + "')", quoted('{}'), quoted('198.51.100.7'), at].join(', ')
     + ')';
 }
@@ -111,20 +116,21 @@ module.exports = {
 
   async reset(db) {
     db.truncate([
-      '202_attribution_apps',
-      '202_attribution_conversion_values',
-      '202_attribution_postbacks',
+      '202_app_registrations',
+      '202_app_skan_encodings',
+      '202_app_postbacks',
     ]);
     db.write("UPDATE 202_users_pref SET user_account_currency='USD' WHERE user_id=1");
 
     const now = Math.floor(Date.now() / 1000);
-    db.write("INSERT INTO 202_attribution_apps "
-      + '(user_id, app_id, app_name, platform, accept_development_postbacks, schema_token, created_at, updated_at) VALUES '
-      + "(1, " + APP_ID + ", 'Summit Run', 'ios', 0, 'browser-token-aaaaaaaaaaaaaaaaaaaaaaaa', " + now + ', ' + now + '), '
-      + "(1, " + OTHER_APP_ID + ", 'Summit Racer', 'ios', 0, 'browser-token-bbbbbbbbbbbbbbbbbbbbbbbb', " + now + ', ' + now + ')');
-    db.write('INSERT INTO 202_attribution_conversion_values '
-      + '(user_id, app_id, fine_value, coarse_value, event_name, revenue, created_at, updated_at) VALUES '
-      + "(1, " + APP_ID + ", 3, NULL, 'purchase', 4.99000, " + now + ', ' + now + ')');
+    db.write("INSERT INTO 202_app_registrations "
+      + '(user_id, platform, app_key, app_name, accept_test_signals, app_token, created_at, updated_at) VALUES '
+      + "(1, 'ios', '" + APP_ID + "', 'Summit Run', 0, REPEAT('ab', 32), " + now + ', ' + now + '), '
+      + "(1, 'ios', '" + OTHER_APP_ID + "', 'Summit Racer', 0, REPEAT('cd', 32), " + now + ', ' + now + ')');
+    db.write('INSERT INTO 202_app_skan_encodings '
+      + '(user_id, registration_id, fine_value, coarse_value, event_name, revenue, created_at, updated_at) '
+      + "SELECT 1, registration_id, 3, NULL, 'purchase', 4.99000, " + now + ', ' + now
+      + " FROM 202_app_registrations WHERE platform = 'ios' AND app_key = '" + APP_ID + "'");
 
     // Today, so every preset from Today upwards has something; and eight days
     // back, which only the longer presets and a custom window reach.
@@ -132,7 +138,7 @@ module.exports = {
     db.write(postbackSql(2, 0, { conversion_type: 're-engagement', country_code: 'GB' }));
     db.write(postbackSql(3, 0, { app_id: OTHER_APP_ID, ad_network_id: 'beta.skadnetwork', did_win: 0 }));
     db.write(postbackSql(4, 1, { protocol: 'adattributionkit', version: '1.0', country_code: null }));
-    db.write(postbackSql(5, 8, { signature_state: 'invalid', signature_valid: 0 }));
+    db.write(postbackSql(5, 8, { signature_state: 'invalid', trusted: 0 }));
   },
 
   async setup(ctx) {
@@ -253,10 +259,12 @@ module.exports = {
     {
       name: 'Grouping and filters survive each other',
       async run(ctx) {
-        const { app, ui, expect } = ctx;
+        const { app, db, ui, expect } = ctx;
         await app.goto(PAGE + '?range=last30');
+        const other = String(db.value("SELECT registration_id FROM 202_app_registrations WHERE platform = 'ios' AND app_key = '"
+          + OTHER_APP_ID + "'"));
 
-        await ui.select('#app_id', String(OTHER_APP_ID));
+        await ui.select('#registration_id', other);
         await ui.clickThrough('.p202-table-toolbar button:has-text("Apply")');
         expect.eq(await ui.text('.p202-tile:has-text("Postbacks") .p202-tile__value'), '1',
           'the app filter narrows the report');
@@ -264,8 +272,8 @@ module.exports = {
         await ui.clickThrough('.p202-pill:has-text("Country")');
         const url = new URL(ui.page.url());
         expect.eq(url.searchParams.get('group_by'), 'country', 'a grouping pill regroups');
-        expect.eq(url.searchParams.get('app_id'), String(OTHER_APP_ID), 'and keeps the app filter');
-        expect.eq(await ui.value('#app_id'), String(OTHER_APP_ID), 'which the toolbar still shows');
+        expect.eq(url.searchParams.get('registration_id'), other, 'and keeps the app filter');
+        expect.eq(await ui.value('#registration_id'), other, 'which the toolbar still shows');
         expect.ok(await ui.exists('.p202-pill--accent:has-text("Country")'),
           'and the pill for the current grouping is the accented one');
 

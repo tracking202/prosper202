@@ -38,9 +38,9 @@ module.exports = {
 
   async reset(db) {
     db.truncate([
-      '202_attribution_apps',
-      '202_attribution_conversion_values',
-      '202_attribution_postbacks',
+      '202_app_registrations',
+      '202_app_skan_encodings',
+      '202_app_postbacks',
     ]);
     db.write("UPDATE 202_users_pref SET user_account_currency='USD' WHERE user_id=1");
   },
@@ -128,9 +128,9 @@ module.exports = {
       async run(ctx) {
         const { db, ui, expect, shot } = ctx;
 
-        expect.match(await register(ctx, PLAY_LINK), /Android apps are not supported yet/,
-          'a Play Store link is refused by name');
-        expect.eq(db.count('202_attribution_apps'), 0, 'and nothing was registered');
+        expect.match(await register(ctx, PLAY_LINK), /That is a Google Play app \(com\.example\.app\)/,
+          'a Play Store link is read, and pointed at the API and CLI that register it');
+        expect.eq(db.count('202_app_registrations'), 0, 'and nothing was registered');
 
         expect.match(await register(ctx, 'not-a-link'), /Must be an App Store link/,
           'junk gets the App Store sentence');
@@ -144,7 +144,7 @@ module.exports = {
         expect.ok(validity.required && validity.valueMissing,
           'an empty field is caught by the browser before it is sent', JSON.stringify(validity));
         expect.eq(ui.page.url(), before, 'so the form does not submit at all');
-        expect.eq(db.count('202_attribution_apps'), 0, 'still nothing registered');
+        expect.eq(db.count('202_app_registrations'), 0, 'still nothing registered');
         await shot('refusal');
       },
     },
@@ -155,13 +155,13 @@ module.exports = {
         const { app, db, ui, expect, state, shot } = ctx;
         const said = await register(ctx, STORE_LINK);
 
-        expect.eq(db.count('202_attribution_apps'), 1, 'exactly one app row exists');
-        expect.eq(db.value('SELECT app_id FROM 202_attribution_apps'), APP_ID, 'the id came from the link');
-        expect.eq(db.value('SELECT platform FROM 202_attribution_apps'), 'ios', 'the platform was derived');
-        expect.eq(db.value('SELECT LENGTH(schema_token) FROM 202_attribution_apps'), 64, 'a schema token was minted');
+        expect.eq(db.count('202_app_registrations'), 1, 'exactly one app row exists');
+        expect.eq(db.value('SELECT app_key FROM 202_app_registrations'), String(APP_ID), 'the id came from the link');
+        expect.eq(db.value('SELECT platform FROM 202_app_registrations'), 'ios', 'the platform was derived');
+        expect.eq(db.value('SELECT LENGTH(app_token) FROM 202_app_registrations'), 64, 'an app token was minted');
         expect.match(said, /App registered/, 'the page confirms it');
 
-        state.rowId = db.value('SELECT attribution_app_id FROM 202_attribution_apps');
+        state.rowId = db.value('SELECT registration_id FROM 202_app_registrations');
         expect.match(ui.page.url(), new RegExp('app=' + state.rowId), 'and lands on the app it just made');
 
         const body = await ui.bodyText();
@@ -198,7 +198,7 @@ module.exports = {
         expect.ok(await ui.visible('text=No rules yet, so nothing decodes'), 'an app with no rules says so');
 
         await app.submit('button:has-text("Use starter schema")');
-        expect.eq(db.count('202_attribution_conversion_values', 'app_id=' + APP_ID), 6,
+        expect.eq(db.count('202_app_skan_encodings', 'registration_id=' + state.rowId), 6,
           'one click adds six rules');
         expect.ok(await ui.count('table.p202-table tbody tr') >= 6, 'and the table shows them');
       },
@@ -224,15 +224,15 @@ module.exports = {
     {
       name: 'Adding a rule by typing',
       async run(ctx) {
-        const { app, db, ui, expect } = ctx;
+        const { app, db, ui, expect, state } = ctx;
         await ui.select('select[name="fine_value"]', 7);
         await ui.fill({ 'input[name="event_name"]': 'subscribed', 'input[name="revenue"]': '9.99' });
         await app.submit('button:has-text("Add rule")');
 
-        const where = 'app_id=' + APP_ID + ' AND fine_value=7';
-        expect.eq(db.value('SELECT event_name FROM 202_attribution_conversion_values WHERE ' + where),
+        const where = 'registration_id=' + state.rowId + ' AND fine_value=7';
+        expect.eq(db.value('SELECT event_name FROM 202_app_skan_encodings WHERE ' + where),
           'subscribed', 'the rule is stored');
-        expect.eq(db.value('SELECT revenue FROM 202_attribution_conversion_values WHERE ' + where),
+        expect.eq(db.value('SELECT revenue FROM 202_app_skan_encodings WHERE ' + where),
           '9.99000', 'with its revenue');
       },
     },
@@ -252,17 +252,17 @@ module.exports = {
     {
       name: 'Editing a rule',
       async run(ctx) {
-        const { app, db, ui, expect } = ctx;
-        const where = 'app_id=' + APP_ID + ' AND fine_value=7';
+        const { app, db, ui, expect, state } = ctx;
+        const where = 'registration_id=' + state.rowId + ' AND fine_value=7';
 
         await app.submit('tr:has-text("subscribed") a:has-text("edit")');
         expect.eq(await ui.value('input[name="event_name"]'), 'subscribed', 'the form opens with the rule in it');
 
         await ui.fill({ 'input[name="revenue"]': '14.50' });
         await app.submit('button:has-text("Save rule"), button:has-text("Add rule")');
-        expect.eq(db.value('SELECT revenue FROM 202_attribution_conversion_values WHERE ' + where),
+        expect.eq(db.value('SELECT revenue FROM 202_app_skan_encodings WHERE ' + where),
           '14.50000', 'saving updates it');
-        expect.eq(db.count('202_attribution_conversion_values', 'app_id=' + APP_ID), 7,
+        expect.eq(db.count('202_app_skan_encodings', 'registration_id=' + state.rowId), 7,
           'and does not add a second rule');
       },
     },
@@ -289,25 +289,25 @@ module.exports = {
         } else {
           expect.fail('and what was typed is still there', 'the rules form is not on the page that came back');
         }
-        expect.eq(db.count('202_attribution_conversion_values', "event_name='refused_probe'"), 0,
+        expect.eq(db.count('202_app_skan_encodings', "event_name='refused_probe'"), 0,
           'no rule was created');
       },
     },
 
     {
-      name: 'The schema token reveals and hides',
+      name: 'The app token reveals and hides',
       async run(ctx) {
         const { app, db, ui, expect, state } = ctx;
         await app.goto(PAGE + '?app=' + state.rowId);
-        state.token = db.value('SELECT schema_token FROM 202_attribution_apps');
+        state.token = db.value('SELECT app_token FROM 202_app_registrations');
 
-        const masked = await ui.text('#schema-token');
+        const masked = await ui.text('#app-token');
         expect.ok(masked.includes(DOT), 'it starts masked', masked.slice(0, 12));
         expect.notOk(masked.includes(state.token), 'the whole token is not on screen');
 
-        expect.eq(await app.reveal('#schema-token'), state.token, 'Reveal shows the real token');
+        expect.eq(await app.reveal('#app-token'), state.token, 'Reveal shows the real token');
         expect.eq(await ui.text('[data-p202-reveal]'), 'Hide', 'and the button becomes Hide');
-        expect.ok((await app.reveal('#schema-token')).includes(DOT), 'clicking again masks it');
+        expect.ok((await app.reveal('#app-token')).includes(DOT), 'clicking again masks it');
       },
     },
 
@@ -339,13 +339,13 @@ module.exports = {
         const { app, db, expect, state } = ctx;
 
         const said = await app.confirmAnd('dismiss', 'button:has-text("Rotate")');
-        expect.match(said, /Replace this schema token/, 'it warns what rotating costs',
+        expect.match(said, /Replace this app token/, 'it warns what rotating costs',
           said || '(no dialog appeared)');
-        expect.eq(db.value('SELECT schema_token FROM 202_attribution_apps'), state.token,
+        expect.eq(db.value('SELECT app_token FROM 202_app_registrations'), state.token,
           'saying no changes nothing');
 
         await app.confirmAnd('accept', 'button:has-text("Rotate")');
-        const rotated = db.value('SELECT schema_token FROM 202_attribution_apps');
+        const rotated = db.value('SELECT app_token FROM 202_app_registrations');
         expect.ne(rotated, state.token, 'saying yes mints a new one');
         expect.eq(rotated.length, 64, 'of the same length');
         state.token = rotated;
@@ -355,16 +355,16 @@ module.exports = {
     {
       name: 'Removing a rule asks first',
       async run(ctx) {
-        const { app, db, expect } = ctx;
+        const { app, db, expect, state } = ctx;
         const selector = 'tr:has-text("subscribed") button:has-text("remove"), tr:has-text("subscribed") a:has-text("remove")';
-        const before = db.count('202_attribution_conversion_values', 'app_id=' + APP_ID);
+        const before = db.count('202_app_skan_encodings', 'registration_id=' + state.rowId);
 
         await app.confirmAnd('dismiss', selector);
-        expect.eq(db.count('202_attribution_conversion_values', 'app_id=' + APP_ID), before,
+        expect.eq(db.count('202_app_skan_encodings', 'registration_id=' + state.rowId), before,
           'saying no keeps the rule');
 
         await app.confirmAnd('accept', selector);
-        expect.eq(db.count('202_attribution_conversion_values', 'app_id=' + APP_ID), before - 1,
+        expect.eq(db.count('202_app_skan_encodings', 'registration_id=' + state.rowId), before - 1,
           'saying yes removes it');
       },
     },
@@ -372,26 +372,26 @@ module.exports = {
     {
       name: 'The development-postback nudge',
       async run(ctx) {
-        const { app, db, ui, expect, shot } = ctx;
+        const { app, db, ui, expect, shot, state } = ctx;
         db.write(
-          'INSERT INTO 202_attribution_postbacks (user_id, received_at, protocol, version, ad_network_id,'
-          + ' transaction_id, app_id, conversion_value, conversion_type, signature_state, signature_valid,'
+          'INSERT INTO 202_app_postbacks (user_id, registration_id, received_at, protocol, version, ad_network_id,'
+          + ' transaction_id, app_id, conversion_value, conversion_type, signature_state, trusted,'
           + ' dedupe_hash, attribution_signature, raw_payload, remote_ip, created_at, did_win) VALUES'
-          + " (1, UNIX_TIMESTAMP(), 'skadnetwork', '4.0', 'acme.skadnetwork', 'txn-dev-1', " + APP_ID + ","
+          + " (1, " + state.rowId + ", UNIX_TIMESTAMP(), 'skadnetwork', '4.0', 'acme.skadnetwork', 'txn-dev-1', " + APP_ID + ","
           + " 3, 'install', 'development', NULL, SHA1('dev1'), 'sig', '{}', '127.0.0.1', UNIX_TIMESTAMP(), 1),"
-          + " (1, UNIX_TIMESTAMP(), 'skadnetwork', '4.0', 'acme.skadnetwork', 'txn-dev-2', " + APP_ID + ","
+          + " (1, " + state.rowId + ", UNIX_TIMESTAMP(), 'skadnetwork', '4.0', 'acme.skadnetwork', 'txn-dev-2', " + APP_ID + ","
           + " 5, 'install', 'development', NULL, SHA1('dev2'), 'sig', '{}', '127.0.0.1', UNIX_TIMESTAMP(), 1)"
         );
 
         await app.goto(PAGE);
         expect.match(await ui.text('.alert-warning'), /2 development postbacks have arrived/,
           'it appears where the app is listed');
-        expect.eq(db.value('SELECT accept_development_postbacks FROM 202_attribution_apps'), 0,
+        expect.eq(db.value('SELECT accept_test_signals FROM 202_app_registrations'), 0,
           'and they are not counted yet');
         await shot('nudge');
 
         await app.submit('button:has-text("Accept")');
-        expect.eq(db.value('SELECT accept_development_postbacks FROM 202_attribution_apps'), 1,
+        expect.eq(db.value('SELECT accept_test_signals FROM 202_app_registrations'), 1,
           'one click accepts them');
         expect.notOk(await ui.visible('.alert-warning'), 'and the nudge is gone');
       },
@@ -408,7 +408,7 @@ module.exports = {
 
         await ui.fill({ 'input[name="app_name"]': 'Summit Run Pro' });
         await app.submit('button:has-text("Save")');
-        expect.eq(db.value('SELECT app_name FROM 202_attribution_apps'), 'Summit Run Pro',
+        expect.eq(db.value('SELECT app_name FROM 202_app_registrations'), 'Summit Run Pro',
           'the rename is saved');
       },
     },
@@ -420,7 +420,7 @@ module.exports = {
         await app.goto(PAGE);
         expect.match(await register(ctx, STORE_LINK), /already registered this app/,
           'it says you already have it');
-        expect.eq(db.count('202_attribution_apps'), 1, 'and does not duplicate it');
+        expect.eq(db.count('202_app_registrations'), 1, 'and does not duplicate it');
         expect.match(ui.page.url(), /app=/, 'landing on the app itself');
       },
     },
@@ -494,7 +494,7 @@ module.exports = {
           await app.goto(PAGE + '?app=' + state.rowId);
 
           const layout = await ui.page.evaluate(() => {
-            const value = document.querySelector('#schema-token');
+            const value = document.querySelector('#app-token');
             const row = value.closest('.p202-code');
             const buttons = Array.from(row.children).filter((child) => child !== value);
             const valueBox = value.getBoundingClientRect();
@@ -539,10 +539,10 @@ module.exports = {
         const selector = 'button:has-text("remove"), a:has-text("remove")';
 
         await app.confirmAnd('dismiss', selector);
-        expect.eq(db.count('202_attribution_apps'), 1, 'saying no keeps the app');
+        expect.eq(db.count('202_app_registrations'), 1, 'saying no keeps the app');
 
         await app.confirmAnd('accept', selector);
-        expect.eq(db.count('202_attribution_apps'), 0, 'saying yes removes it');
+        expect.eq(db.count('202_app_registrations'), 0, 'saying yes removes it');
       },
     },
 

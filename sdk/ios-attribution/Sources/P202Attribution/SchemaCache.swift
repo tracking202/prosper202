@@ -60,7 +60,7 @@ struct SchemaCache: Codable, Equatable {
 /// postback's value, or vice versa.
 ///
 /// Deliberately NOT part of SchemaCache: it is device conversion state, not
-/// fetch state. The conversion windows keep running across a schema-token
+/// fetch state. The conversion windows keep running across an app-token
 /// rotation (a new build with a new token), so forgetting the value with
 /// the old token's cache would make the next coarse-only update report
 /// fine value 0 and silently downgrade the postback.

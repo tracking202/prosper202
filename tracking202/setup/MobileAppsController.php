@@ -4,15 +4,16 @@ declare(strict_types=1);
 
 namespace Tracking202\Setup;
 
-use Api\V3\Controllers\AttributionAppsController;
-use Api\V3\Controllers\AttributionConversionValuesController;
-use Api\V3\Controllers\AttributionPostbacksController;
+use Api\V3\Apps\AppIdentity;
+use Api\V3\Controllers\AppRegistrationsController;
+use Api\V3\Controllers\AppSkanEncodingsController;
+use Api\V3\Controllers\AppPostbacksController;
 use Api\V3\Controllers\UsersController;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\HttpException;
-use Tracking202\Attribution\RegisteredApps;
+use Tracking202\Apps\RegisteredApps;
 
 require_once __DIR__ . '/_base/SetupController.php';
 require_once __DIR__ . '/../../202-config/functions-install-helpers.php';
@@ -38,9 +39,9 @@ class MobileAppsController extends SetupController
     private const MANAGE_PERMISSION = 'manage_attribution_models';
 
     private \mysqli $db;
-    private AttributionAppsController $apps;
-    private AttributionConversionValuesController $rules;
-    private AttributionPostbacksController $postbacks;
+    private AppRegistrationsController $apps;
+    private AppSkanEncodingsController $rules;
+    private AppPostbacksController $postbacks;
     private UsersController $users;
 
     /** @var list<array{kind: string, text: string}> */
@@ -61,9 +62,9 @@ class MobileAppsController extends SetupController
         global $db;
         $this->db = $db;
         $userId = $this->getUserId();
-        $this->apps = new AttributionAppsController($db, $userId);
-        $this->rules = new AttributionConversionValuesController($db, $userId);
-        $this->postbacks = new AttributionPostbacksController($db, $userId);
+        $this->apps = new AppRegistrationsController($db, $userId);
+        $this->rules = new AppSkanEncodingsController($db, $userId);
+        $this->postbacks = new AppPostbacksController($db, $userId);
         $this->users = new UsersController($db);
     }
 
@@ -150,7 +151,7 @@ class MobileAppsController extends SetupController
      */
     private function restoreContext(string $action): void
     {
-        $id = (int)($_POST['attribution_app_id'] ?? 0);
+        $id = (int)($_POST['registration_id'] ?? 0);
         if ($id <= 0) {
             $this->fallBackToList();
             return;
@@ -203,26 +204,29 @@ class MobileAppsController extends SetupController
     private function registerApp(): void
     {
         $reference = trim((string)($_POST['app_reference'] ?? ''));
-        $parsed = self::parseStoreReference($reference);
-
-        if ($parsed['platform'] !== AttributionAppsController::PLATFORM_IOS) {
-            // Recognised store, no receiver for it. Ask the API for the
-            // sentence so this page cannot drift from the CLI's answer, and
-            // show it under the one field the user filled in.
-            try {
-                AttributionAppsController::assertSupportedPlatform(['platform' => $parsed['platform']]);
-            } catch (ValidationException $e) {
-                throw new ValidationException('Validation failed', [
-                    'app_reference' => $e->getFieldErrors()['platform'] ?? 'That store is not supported yet.',
-                ]);
-            }
-        }
-
-        if ($parsed['app_id'] === null || $parsed['app_id'] <= 0) {
+        if ($reference === '') {
             throw new ValidationException('Validation failed', [
-                'app_reference' => $reference === ''
-                    ? 'Paste the app\'s App Store link, or its numeric App Store id.'
-                    : 'Must be an App Store link or a positive App Store id (the number after "id" in the app\'s App Store URL).',
+                'app_reference' => 'Paste the app\'s App Store link, or its numeric App Store id.',
+            ]);
+        }
+        // AppIdentity is the one reader of store links, shared with the API's
+        // store_link and the CLI's --store-link; its sentence is shown under
+        // the one field the user filled in.
+        try {
+            $identity = AppIdentity::fromStoreLink($reference);
+        } catch (ValidationException $e) {
+            throw new ValidationException('Validation failed', [
+                'app_reference' => $e->getFieldErrors()['store_link'] ?? $e->getMessage(),
+            ]);
+        }
+        if ($identity->platform !== AppIdentity::IOS) {
+            // The registry takes Android apps (POST /api/v3/apps, p202 app
+            // create --store-link); this page's app view — SKAN values, the
+            // Info.plist keys, the Swift snippet — is iOS's, and the Android
+            // page arrives with Android install tracking.
+            throw new ValidationException('Validation failed', [
+                'app_reference' => 'That is a Google Play app (' . $identity->appKey . '). This page manages iOS apps; '
+                    . 'register an Android app with `p202 app create --store-link` or POST /api/v3/apps.',
             ]);
         }
 
@@ -234,22 +238,24 @@ class MobileAppsController extends SetupController
         // list() is scoped to this user, so an app registered by somebody
         // else is not found, is not hinted at, and still gets the API's own
         // "already registered" answer from create() below.
-        $mine = $this->apps->list(['filter' => ['app_id' => $parsed['app_id']], 'limit' => 1])['data'];
+        $mine = $this->apps->list([
+            'filter' => ['platform' => $identity->platform, 'app_key' => $identity->appKey],
+            'limit' => 1,
+        ])['data'];
         if ($mine !== []) {
             $this->redirect('tracking202/setup/mobile_apps.php?app='
-                . (int)$mine[0]['attribution_app_id'] . '&already=1');
+                . (int)$mine[0]['registration_id'] . '&already=1');
         }
 
-        $platform = (string)($_POST['platform'] ?? $parsed['platform']);
         $name = trim((string)($_POST['app_name'] ?? ''));
         if ($name === '') {
-            $name = $this->lookUpAppName($parsed['app_id'], $parsed['slug']);
+            $name = $this->lookUpAppName($identity->appleAppId(), $identity->slug);
         }
         if ($name === '') {
             // Everything except the name was derived; ask only for that.
             $this->formState = $_POST + [
-                'derived_app_id' => $parsed['app_id'],
-                'derived_platform' => $platform,
+                'derived_app_key' => $identity->appKey,
+                'derived_platform' => $identity->platform,
                 'needs_name' => true,
             ];
             $this->fieldErrors['app_name'] = 'The App Store did not answer, so the name could not be looked up. Type it once and it is saved with the registration.';
@@ -257,39 +263,36 @@ class MobileAppsController extends SetupController
         }
 
         $payload = [
-            'app_id' => $parsed['app_id'],
+            'platform' => $identity->platform,
+            'app_key' => $identity->appKey,
             'app_name' => $name,
-            'platform' => $platform,
             'notes' => trim((string)($_POST['notes'] ?? '')),
-            'accept_development_postbacks' => isset($_POST['accept_development_postbacks']) ? 1 : 0,
+            'accept_test_signals' => isset($_POST['accept_test_signals']) ? 1 : 0,
         ];
         $created = $this->apps->create($payload)['data'];
 
         $this->sendSlackNotification('mobile_app_registered', [
             'app' => $name,
-            'app_id' => $parsed['app_id'],
+            'app_id' => $identity->appKey,
         ]);
-        $this->redirect('tracking202/setup/mobile_apps.php?app=' . (int)$created['attribution_app_id'] . '&registered=1');
+        $this->redirect('tracking202/setup/mobile_apps.php?app=' . (int)$created['registration_id'] . '&registered=1');
     }
 
     private function updateApp(): void
     {
-        $id = (int)($_POST['attribution_app_id'] ?? 0);
+        $id = (int)($_POST['registration_id'] ?? 0);
         $payload = [
             'app_name' => trim((string)($_POST['app_name'] ?? '')),
             'notes' => trim((string)($_POST['notes'] ?? '')),
-            'accept_development_postbacks' => isset($_POST['accept_development_postbacks']) ? 1 : 0,
+            'accept_test_signals' => isset($_POST['accept_test_signals']) ? 1 : 0,
         ];
-        if (isset($_POST['platform'])) {
-            $payload['platform'] = (string)$_POST['platform'];
-        }
         $this->apps->update($id, $payload);
         $this->redirect('tracking202/setup/mobile_apps.php?saved=1');
     }
 
     private function removeApp(): void
     {
-        $id = (int)($_POST['attribution_app_id'] ?? 0);
+        $id = (int)($_POST['registration_id'] ?? 0);
         $this->apps->delete($id);
         $this->redirect('tracking202/setup/mobile_apps.php?removed=1');
     }
@@ -297,16 +300,16 @@ class MobileAppsController extends SetupController
     /** The nudge's one click, and the Advanced toggle, are the same write. */
     private function setDevelopmentTrust(): void
     {
-        $id = (int)($_POST['attribution_app_id'] ?? 0);
+        $id = (int)($_POST['registration_id'] ?? 0);
         $accept = (string)($_POST['accept'] ?? '0') === '1';
-        $this->apps->update($id, ['accept_development_postbacks' => $accept ? 1 : 0]);
+        $this->apps->update($id, ['accept_test_signals' => $accept ? 1 : 0]);
         $this->redirect('tracking202/setup/mobile_apps.php?app=' . $id . '&dev=' . ($accept ? '1' : '0'));
     }
 
     private function rotateToken(): void
     {
-        $id = (int)($_POST['attribution_app_id'] ?? 0);
-        $this->apps->rotateSchemaToken($id);
+        $id = (int)($_POST['registration_id'] ?? 0);
+        $this->apps->rotateAppToken($id);
         $this->redirect('tracking202/setup/mobile_apps.php?app=' . $id . '&rotated=1');
     }
 
@@ -321,13 +324,12 @@ class MobileAppsController extends SetupController
      */
     private function saveRule(): void
     {
-        $appRowId = (int)($_POST['attribution_app_id'] ?? 0);
-        $appStoreId = (int)($_POST['app_id'] ?? 0);
+        $appRowId = (int)($_POST['registration_id'] ?? 0);
         $ruleId = (int)($_POST['rule_id'] ?? 0);
         $kind = (string)($_POST['kind'] ?? 'fine');
 
         $payload = [
-            'app_id' => $appStoreId,
+            'registration_id' => $appRowId,
             'event_name' => trim((string)($_POST['event_name'] ?? '')),
             'revenue' => (string)($_POST['revenue'] ?? '0'),
             'fine_value' => null,
@@ -353,7 +355,7 @@ class MobileAppsController extends SetupController
 
     private function removeRule(): void
     {
-        $appRowId = (int)($_POST['attribution_app_id'] ?? 0);
+        $appRowId = (int)($_POST['registration_id'] ?? 0);
         $this->rules->delete((int)($_POST['rule_id'] ?? 0));
         $this->redirect('tracking202/setup/mobile_apps.php?app=' . $appRowId . '&rule_removed=1');
     }
@@ -364,8 +366,7 @@ class MobileAppsController extends SetupController
      */
     private function applyStarterSchema(): void
     {
-        $appRowId = (int)($_POST['attribution_app_id'] ?? 0);
-        $appStoreId = (int)($_POST['app_id'] ?? 0);
+        $appRowId = (int)($_POST['registration_id'] ?? 0);
         $starter = [
             ['fine_value' => 1,  'coarse_value' => null,     'event_name' => 'install',       'revenue' => 0],
             ['fine_value' => 10, 'coarse_value' => null,     'event_name' => 'trial_started', 'revenue' => 0],
@@ -377,7 +378,7 @@ class MobileAppsController extends SetupController
         $added = 0;
         foreach ($starter as $rule) {
             try {
-                $this->rules->create($rule + ['app_id' => $appStoreId]);
+                $this->rules->create($rule + ['registration_id' => $appRowId]);
                 $added++;
             } catch (ConflictException) {
                 // A value already mapped keeps the rule it has: the starter
@@ -396,33 +397,6 @@ class MobileAppsController extends SetupController
     }
 
     // ─── Deriving what the app can derive ────────────────────────────
-
-    /**
-     * Read an App Store reference: a store link, or a bare numeric id.
-     *
-     * @return array{app_id: int|null, platform: string, slug: string}
-     */
-    /**
-     * A run of digits as an App Store id, or null when it is not one.
-     *
-     * The round trip is the whole point: (int) SATURATES, so a twenty-digit
-     * number becomes PHP_INT_MAX — a positive integer the API accepts, which
-     * would register an app nobody named. Casting back and comparing is what
-     * catches it (CLAUDE.md error pattern #18).
-     *
-     * One implementation because parseStoreReference() reads a bare id and an
-     * id inside a store URL, and only the bare one used to check: the URL
-     * form, which is the paste the page actually invites, saturated. The
-     * comparison is against the digits exactly as given — the bare branch's
-     * rule, unchanged — so a leading zero is still refused rather than
-     * quietly meaning some other app.
-     */
-    private static function appStoreId(string $digits): ?int
-    {
-        $id = (int)$digits;
-
-        return $id > 0 && (string)$id === $digits ? $id : null;
-    }
 
     /**
      * How many apps the page is showing, in the two wordings it needs.
@@ -460,46 +434,6 @@ class MobileAppsController extends SetupController
             'pill' => 'first ' . $shown . ' apps',
             'checklist' => 'first ' . $shown . ' shown',
         ];
-    }
-
-    public static function parseStoreReference(string $reference): array
-    {
-        $reference = trim($reference);
-        $result = ['app_id' => null, 'platform' => AttributionAppsController::PLATFORM_IOS, 'slug' => ''];
-        if ($reference === '') {
-            return $result;
-        }
-
-        // A bare id: the common paste from App Store Connect.
-        if (preg_match('/^\d+$/', $reference) === 1) {
-            $result['app_id'] = self::appStoreId($reference);
-            return $result;
-        }
-
-        $host = strtolower((string)(parse_url($reference, PHP_URL_HOST) ?? ''));
-        $path = (string)(parse_url($reference, PHP_URL_PATH) ?? '');
-        if (str_contains($host, 'play.google.com') || str_contains($reference, 'play.google.com')) {
-            // Recognised, and refused by name further down: the platform is
-            // what makes the refusal readable.
-            $result['platform'] = 'android';
-            $result['app_id'] = 0; // recognised store, no Apple id to use
-            return $result;
-        }
-
-        // https://apps.apple.com/us/app/summit-run/id990077001?mt=8, and the
-        // last segment of that URL on its own — "id990077001" is what someone
-        // copying "the number after id" out of the address bar actually
-        // lands on, and the refusal sentence invites exactly that paste.
-        // Anchored to a segment boundary so "covid19" is not an app id.
-        if (preg_match('~(?:^|/)id(\d+)~', $path, $m) === 1) {
-            $result['app_id'] = self::appStoreId($m[1]);
-            if (preg_match('~/app/([^/]+)/id\d+~', $path, $slug) === 1) {
-                $result['slug'] = urldecode($slug[1]);
-            }
-            return $result;
-        }
-
-        return $result;
     }
 
     /**
@@ -591,9 +525,9 @@ class MobileAppsController extends SetupController
             'editing' => $this->editingApp,
         ];
         if ($this->currentApp !== null) {
-            $view['rules'] = $this->rulesFor((int)$this->currentApp['app_id']);
+            $view['rules'] = $this->rulesFor((int)$this->currentApp['registration_id']);
             $view['defaultRules'] = $this->rulesFor(0);
-            $view['recent'] = $this->recentPostbacks((int)$this->currentApp['app_id']);
+            $view['recent'] = $this->recentPostbacks((int)$this->currentApp['registration_id']);
         }
         $view['nudges'] = $this->developmentNudges($view['apps']);
 
@@ -618,7 +552,7 @@ class MobileAppsController extends SetupController
             $out[] = ['kind' => 'ok', 'text' => 'Registration removed. Postbacks it had claimed keep their owner; development trust is withdrawn.'];
         }
         if (isset($_GET['rotated'])) {
-            $out[] = ['kind' => 'ok', 'text' => 'Schema token replaced. The old token stopped working just now; apps keep their last cached schema until they fetch with the new one.'];
+            $out[] = ['kind' => 'ok', 'text' => 'App token replaced. The old token stopped working just now; apps keep their last cached schema until they fetch with the new one.'];
         }
         if (isset($_GET['dev'])) {
             $out[] = ['kind' => 'ok', 'text' => (string)$_GET['dev'] === '1'
@@ -668,13 +602,13 @@ class MobileAppsController extends SetupController
     }
 
     /** @return list<array<string, mixed>> */
-    private function rulesFor(int $appStoreId): array
+    private function rulesFor(int $registrationId): array
     {
-        $result = $this->rules->list(['limit' => 200, 'filter' => ['app_id' => $appStoreId]]);
+        $result = $this->rules->list(['limit' => 200, 'filter' => ['registration_id' => $registrationId]]);
         $rows = $result['data'] ?? [];
         // Belt and braces: the filter is the API's, this keeps the page
         // honest if a later change widens it.
-        $rows = array_values(array_filter($rows, static fn (array $r): bool => (int)($r['app_id'] ?? 0) === $appStoreId));
+        $rows = array_values(array_filter($rows, static fn (array $r): bool => (int)($r['registration_id'] ?? 0) === $registrationId));
         // Fine values in numeric order, then the three coarse buckets in
         // their own order. Spelled as a map rather than array_search(...) ?: 0,
         // which returns 0 both for 'low' (index 0) and for no match at all —
@@ -703,17 +637,17 @@ class MobileAppsController extends SetupController
      *
      * @return list<array<string, mixed>>|null
      */
-    private function recentPostbacks(int $appStoreId): ?array
+    private function recentPostbacks(int $registrationId): ?array
     {
         try {
             // No signature filter: the card shows what arrived, trusted or
             // not, which is the point of looking at it during setup.
             $result = $this->postbacks->list([
                 'limit' => 10,
-                'app_id' => $appStoreId,
+                'registration_id' => $registrationId,
             ]);
         } catch (HttpException $e) {
-            error_log('Mobile Apps setup: could not read postbacks for app ' . $appStoreId . ': ' . $e->getMessage());
+            error_log('Mobile Apps setup: could not read postbacks for registration ' . $registrationId . ': ' . $e->getMessage());
             return null;
         }
         return $result['data'] ?? [];
@@ -730,14 +664,14 @@ class MobileAppsController extends SetupController
      * (CLAUDE.md #1 and #7 — the pattern check refuses one).
      *
      * @param list<array<string, mixed>> $apps
-     * @return array<int, int> attribution_app_id => count
+     * @return array<int, int> registration_id => count
      */
     private function developmentNudges(array $apps): array
     {
         $waiting = [];
         foreach ($apps as $app) {
-            if ((int)($app['accept_development_postbacks'] ?? 0) !== 1) {
-                $waiting[(int)($app['app_id'] ?? 0)] = (int)$app['attribution_app_id'];
+            if ((int)($app['accept_test_signals'] ?? 0) !== 1) {
+                $waiting[(int)$app['registration_id']] = true;
             }
         }
         if ($waiting === []) {
@@ -757,7 +691,7 @@ class MobileAppsController extends SetupController
         // report would show for the same app: a replay stops being counted
         // twice here too.
         //
-        // app_ids, not the limit. Groups come back busiest first, so asking
+        // registration_ids, not the limit. Groups come back busiest first, so asking
         // for `count($waiting)` groups over EVERY app returned the busiest
         // apps, not the waiting ones: one app that already accepts
         // development postbacks and has more of them took the only slot, and
@@ -767,9 +701,9 @@ class MobileAppsController extends SetupController
         $ids = array_keys($waiting);
         try {
             $answer = $this->postbacks->report([
-                'group_by' => 'app',
+                'group_by' => 'registration',
                 'signature' => 'development',
-                'app_ids' => $ids,
+                'registration_ids' => $ids,
                 'limit' => max(1, count($ids)),
             ]);
         } catch (HttpException) {
@@ -778,10 +712,10 @@ class MobileAppsController extends SetupController
 
         $nudges = [];
         foreach ($answer['data']['groups'] ?? [] as $group) {
-            $appStoreId = (int)($group['app_id'] ?? 0);
+            $registrationId = (int)($group['registration_id'] ?? 0);
             $count = (int)($group['postbacks'] ?? 0);
-            if ($count > 0 && isset($waiting[$appStoreId])) {
-                $nudges[$waiting[$appStoreId]] = $count;
+            if ($count > 0 && isset($waiting[$registrationId])) {
+                $nudges[$registrationId] = $count;
             }
         }
 

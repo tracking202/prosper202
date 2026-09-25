@@ -1,8 +1,8 @@
 import Foundation
 
 /// The conversion-value schema served by a Prosper202 server at
-/// `GET /api/v3/attribution/schema` — the encode side of the rules configured in
-/// `/attribution/conversion-values`. The server builds this document and the
+/// `GET /api/v3/apps/schema` — the encode side of the encodings configured in
+/// `/apps/skan-encodings`. The server builds this document and the
 /// decode reports from the same rows, so the two directions cannot drift.
 public struct P202AttributionSchema: Codable, Equatable {
     /// The coarse conversion values (the same three in SKAdNetwork and
