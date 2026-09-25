@@ -1497,7 +1497,6 @@ in the first release by construction.
 | 6 | Release shape | Small PRs in dependency order, one 1.9.76 release | §8 |
 | 7 | Naming | App measurement: `202_app_*`, `/apps/*`, scope `apps`, `p202 app`, `app_key`, `app_token`, `accept_test_signals`. MTA: `202_attribution_*`, `/attribution/*`, scope `attribution`, `p202 attribution` | §1 |
 | 8 | Several payouts on one click | A per-campaign `payout_mode`. `replace` keeps today's behaviour and is the default for every existing and web campaign. `accumulate` consolidates payouts into one value per click, like the revenue CSV upload already does within a file, and is the default for app campaigns | §5.5 |
-
 | 9 | Seeing what a click's value is made of | `202_conversion_logs` becomes a ledger with provenance (`source`, `source_ref`, `event_name`, `payable`, `superseded_by`); every path writes rows; the click value is derived from them; a per-click breakdown in the API and UI; reports group by goal/source | §2.1 |
 | 9a | Transaction ids | Kept, with one meaning: the external id, for reconciliation and reversals. Deduplication moves to a namespaced `dedupe_key`. A blank-id payable row counts once per click in `accumulate` mode. The id is passed to traffic sources via `[[transactionid]]` | §2.1 |
 | 10 | Goals on web campaigns | Goals are core: the subject is the click (web) or the install (app), and events come from pixel/postback `event=`, `POST /events` and `p202.js` | §2.2 |
