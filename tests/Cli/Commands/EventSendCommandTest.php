@@ -75,5 +75,46 @@ class EventSendCommandTest extends TestCase
         yield 'props that are a list' => [['props' => '[1]'], '--props'];
         yield 'props that are not JSON' => [['props' => '{bad'], '--props'];
         yield 'a file with a flag' => [['file' => '/dev/null', 'revenue' => '1'], 'exclusive'];
+        yield 'props with a second object after the first' => [['props' => '{"plan":"pro"}{"seats":3}'], '--props'];
+    }
+
+    /**
+     * A file with more after its first JSON value is refused, never read as
+     * its first value with the rest dropped (the Go CLI's --file had that
+     * gap; this pins that the PHP one does not).
+     *
+     * @dataProvider trailing
+     */
+    public function testAFileWithMoreThanOneJsonValueIsRefused(string $contents): void
+    {
+        $file = tempnam(sys_get_temp_dir(), 'ev');
+        file_put_contents($file, $contents);
+        try {
+            EventSendCommand::body(['click_id' => '9', 'file' => $file]);
+            $this->fail('refused');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('is not one JSON value', $e->getMessage());
+            $this->assertStringContainsString('one list', $e->getMessage());
+        } finally {
+            unlink($file);
+        }
+    }
+
+    public static function trailing(): iterable
+    {
+        yield 'two lists' => ["[{\"event_id\":\"a\",\"name\":\"s\"}]\n[{\"event_id\":\"b\",\"name\":\"s\"}]"];
+        yield 'two objects' => ['{"events":[{"event_id":"a","name":"s"}]}{"events":[{"event_id":"b","name":"s"}]}'];
+        yield 'a list and garbage' => ['[{"event_id":"a","name":"s"}] oops'];
+    }
+
+    public function testAFileMayEndInWhitespace(): void
+    {
+        $file = tempnam(sys_get_temp_dir(), 'ev');
+        file_put_contents($file, "[{\"event_id\":\"a\",\"name\":\"s\"}]\n\n  ");
+        try {
+            $this->assertSame([['event_id' => 'a', 'name' => 's']], EventSendCommand::body(['click_id' => '9', 'file' => $file])['events']);
+        } finally {
+            unlink($file);
+        }
     }
 }

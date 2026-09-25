@@ -102,9 +102,10 @@ func readGoalDefinitionJSON(cmd *cobra.Command) (map[string]interface{}, error) 
 		return nil, nil
 	}
 	var def map[string]interface{}
-	dec := json.NewDecoder(strings.NewReader(raw))
-	dec.UseNumber()
-	if err := dec.Decode(&def); err != nil || def == nil {
+	if err := decodeOneJSON([]byte(raw), &def); errors.Is(err, errTrailingJSON) {
+		return nil, validationError("%s holds more than one JSON value: %v", source, err).
+			WithHint("A definition is one object: pass one definition per command (run `p202 goal create` once per goal).")
+	} else if err != nil || def == nil {
 		return nil, validationError("%s is not a JSON object", source).
 			WithHint("A definition is an object, e.g. {\"name\":\"Sale\",\"trigger\":{\"event\":\"sale\"},\"value\":{\"type\":\"fixed\",\"amount\":\"20.00\"}} — see documentation/api/22-goals.md.")
 	}
@@ -669,9 +670,10 @@ var goalEvaluateCmd = &cobra.Command{
 			return validationError("reading %s: %v", file, err)
 		}
 		var body map[string]interface{}
-		dec := json.NewDecoder(strings.NewReader(string(data)))
-		dec.UseNumber()
-		if err := dec.Decode(&body); err != nil || body == nil {
+		if err := decodeOneJSON(data, &body); errors.Is(err, errTrailingJSON) {
+			return validationError("%s holds more than one JSON value: %v", file, err).
+				WithHint("The body is one object, {\"goals\": […], \"subject\": {…}, \"events\": […]}; evaluate each case with its own call.")
+		} else if err != nil || body == nil {
 			return validationError("%s is not a JSON object", file).
 				WithHint("The body is {\"goals\": […], \"subject\": {…}, \"events\": […]}.")
 		}
