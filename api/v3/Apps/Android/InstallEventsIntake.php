@@ -105,15 +105,21 @@ final class InstallEventsIntake
         }
 
         $rowId = (int) $install['install_row_id'];
-        // A hint for retention only (installs with events are kept), set
-        // before the evaluation so a crash between the two keeps, never
-        // prunes, what the engine may have stored.
-        $flag = $this->conn->prepareWrite('UPDATE 202_app_installs SET has_events = 1 WHERE install_row_id = ? AND has_events = 0');
-        $this->conn->bind($flag, 'i', [$rowId]);
-        $this->conn->executeUpdate($flag);
+        // A hint for retention only (installs with events are kept). It is
+        // written inside the engine's transaction, once the engine has
+        // stored at least one new event: set ahead of the evaluation, a batch
+        // the engine refuses (a conflicting event id, the event cap) stored
+        // nothing and still exempted the install from retention for good;
+        // set after the commit, a crash between the two would leave stored
+        // events on a row retention may prune.
+        $markHasEvents = function (array $accepted) use ($rowId): void {
+            $flag = $this->conn->prepareWrite('UPDATE 202_app_installs SET has_events = 1 WHERE install_row_id = ? AND has_events = 0');
+            $this->conn->bind($flag, 'i', [$rowId]);
+            $this->conn->executeUpdate($flag);
+        };
 
         try {
-            $result = $this->engine->ingest($registration->userId, $this->engine->installSubject($registration->userId, $rowId), $events);
+            $result = $this->engine->ingest($registration->userId, $this->engine->installSubject($registration->userId, $rowId), $events, $markHasEvents);
         } catch (GoalEngineException $e) {
             return match ($e->reason) {
                 GoalEngineException::EVENT_CONFLICT => InstallIntake::error(409, $e->getMessage()),

@@ -268,12 +268,18 @@ final class GoalEngine
      * (EVENT_CONFLICT), and so is the whole batch. A subject holds at most
      * MAX_EVENTS_PER_SUBJECT events (EVENT_CAP).
      *
+     * $onStored, when given, runs inside the same transaction once at least
+     * one new event has been stored, with the accepted event ids: a caller's
+     * own bookkeeping about "this subject has events" then commits with the
+     * events or not at all, never ahead of a batch the engine refuses.
+     *
      * @param list<GoalEvent> $events
+     * @param (callable(list<string>): void)|null $onStored
      * @return array{accepted: list<string>, duplicates: list<string>, replayed: bool, outcomes_written: int, outcomes_retired: int}
      */
-    public function ingest(int $userId, GoalSubject $subject, array $events): array
+    public function ingest(int $userId, GoalSubject $subject, array $events, ?callable $onStored = null): array
     {
-        $work = fn (): array => $this->ingestLocked($userId, $subject, $events);
+        $work = fn (): array => $this->ingestLocked($userId, $subject, $events, $onStored);
         try {
             $done = $this->conn->transaction($work);
         } catch (Throwable $e) {
@@ -291,7 +297,7 @@ final class GoalEngine
      * @param list<GoalEvent> $events
      * @return array{result: array{accepted: list<string>, duplicates: list<string>, replayed: bool, outcomes_written: int, outcomes_retired: int}, post: array{ledger: list<array<string, mixed>>, clicks: array<int, true>}}
      */
-    private function ingestLocked(int $userId, GoalSubject $subject, array $events): array
+    private function ingestLocked(int $userId, GoalSubject $subject, array $events, ?callable $onStored = null): array
     {
         $now = $this->now();
         $post = ['ledger' => [], 'clicks' => []];
@@ -349,6 +355,9 @@ final class GoalEngine
         foreach ($new as $event) {
             $this->insertEvent($userId, $subject, $event);
             $result['accepted'][] = $event->eventId;
+        }
+        if ($onStored !== null) {
+            $onStored($result['accepted']);
         }
 
         $last = self::lastEvent($row);

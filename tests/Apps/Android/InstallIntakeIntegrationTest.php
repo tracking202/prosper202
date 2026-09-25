@@ -88,6 +88,30 @@ final class InstallIntakeIntegrationTest extends TestCase
         self::assertCount(1, self::outbox());
     }
 
+    public function testOnlyAnAcceptedEventExemptsAnUnvouchedInstallFromRetention(): void
+    {
+        self::assertSame('organic', $this->install(self::body(self::U1, 'utm_source=google-play&utm_medium=organic'))['body']['data']['match']);
+        self::assertSame(0, (int) self::installRow(self::U1)['has_events']);
+
+        // A batch the engine refuses stores nothing, so it must not keep the
+        // install past retention either.
+        $conflict = $this->events(self::U1, [
+            ['event_id' => 'e1', 'name' => 'level_reached', 'occurred_at' => self::CLICK_TIME + 500],
+            ['event_id' => 'e1', 'name' => 'level_reached', 'occurred_at' => self::CLICK_TIME + 501],
+        ]);
+        self::assertSame(409, $conflict['status'], json_encode($conflict));
+        self::assertSame(0, self::rows('202_goal_events'));
+        self::assertSame(0, (int) self::installRow(self::U1)['has_events'], 'a refused batch leaves the retention hint alone');
+
+        self::assertSame(200, $this->events(self::U1, [['event_id' => 'e1', 'name' => 'level_reached', 'occurred_at' => self::CLICK_TIME + 500]])['status']);
+        self::assertSame(1, self::rows('202_goal_events'));
+        self::assertSame(1, (int) self::installRow(self::U1)['has_events'], 'a stored event keeps the install');
+
+        // A later refused batch does not undo the hint for events already stored.
+        self::assertSame(409, $this->events(self::U1, [['event_id' => 'e1', 'name' => 'level_reached', 'occurred_at' => self::CLICK_TIME + 999]])['status']);
+        self::assertSame(1, (int) self::installRow(self::U1)['has_events']);
+    }
+
     public function testASecondDeviceOnTheSameClickIsADuplicateClick(): void
     {
         $this->click(100);
