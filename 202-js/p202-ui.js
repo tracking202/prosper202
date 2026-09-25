@@ -286,7 +286,31 @@
                     }
                 });
             });
-            new window.Tablesort(table);
+            var sorter = new window.Tablesort(table);
+            seedSortState(table, sorter);
+        });
+    }
+
+    /* A table the server delivered in order says so with aria-sort on that
+       column's header (p202_data_table()'s `sorted`). Tablesort does not read
+       it: with no class on the header, its first click sorts ascending (see
+       sortDirection()), so a column already ascending would "sort" into the
+       order it was in and the click would look dead. So the order is handed
+       to tablesort in its own terms — the header's class, and the instance's
+       `current`, which its click handler reads to clear the previous
+       column's class — without re-sorting rows the server already ordered.
+       Its `sort-default` class is not used for this: that re-sorts on load,
+       with a comparator that need not agree with the server's. */
+    function seedSortState(table, sorter) {
+        var cells = table.tHead.rows[table.tHead.rows.length - 1].cells;
+        Array.prototype.forEach.call(cells, function (th) {
+            var direction = th.getAttribute('aria-sort');
+            if (th.classList.contains('no-sort') || (direction !== 'ascending' && direction !== 'descending')) {
+                return;
+            }
+            th.classList.remove('sort-up', 'sort-down');
+            th.classList.add(direction === 'ascending' ? 'sort-down' : 'sort-up');
+            sorter.current = th;
         });
     }
 
