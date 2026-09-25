@@ -237,6 +237,11 @@ final class LtvIngestTest extends TestCase
             'FROM 202_revenue_events WHERE conv_id = ?',
             [['event_id' => 7001, 'amount' => 2.75, 'currency' => 'USD', 'event_type' => 'purchase', 'occurred_at' => 1700000050]]
         );
+        // Never reinstated (a revived goal row would be), so the first void key.
+        $write->whenQueryContainsReturnRows(
+            'SELECT COUNT(*) AS n FROM 202_revenue_events',
+            [['n' => 0]]
+        );
 
         $conn = new Connection($write, new FakeMysqliConnection());
         $repo = new MysqlConversionRepository($conn);
