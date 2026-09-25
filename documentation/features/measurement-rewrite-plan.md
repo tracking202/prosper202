@@ -703,9 +703,38 @@ The steps:
 1. **Validate strictly** (error pattern #4).
 2. **Resolve the registration** by token. A mismatched `app_key` is a 422
    naming both values.
-3. **Insert the install row**, idempotent on `(registration_id, install_uuid)`.
-   A replay answers 200 with `duplicate: true`.
-4. **Classify** into `MatchState`.
+3. **Open one transaction for everything durable that follows.** Steps
+   3–6 — the install row, the classification, the conversion, the outbox
+   rows — commit together or not at all. The `(registration_id,
+   install_uuid)` row is inserted *inside* that transaction, so a failure
+   anywhere before the commit leaves nothing behind and the retry does the
+   whole job again. Making only the notification atomic with the conversion
+   would leave a hole: a durable install row written first, then a failure
+   in classification or `ConversionRecorder`, and every retry answered
+   `duplicate: true` with the conversion, the MTA outbox row and the
+   notification never written (error pattern #13, seen from the retry
+   side). The invariant the transaction buys is **an `attributed` install
+   row always has its `conversion_id`**; `ConversionRecorder` is the only
+   writer of install conversions and it runs inside the same transaction as
+   the row that points at it, so the invariant is a fact of the schema's
+   write path, not of a retry's good luck. The lock order is install row
+   (the `INSERT`), then the click `FOR UPDATE` inside `record()`, everywhere.
+
+   Then **insert the install row**, idempotent on `(registration_id,
+   install_uuid)`. A replay of a committed install answers 200 with
+   `duplicate: true` and the stored `match`; a replay of one that never
+   committed finds nothing and runs the flow. The settle paths — the
+   pending-click cron of §5.3 and the Play Integrity decoder — use the same
+   transaction shape: `UPDATE` the install row (`match_state`, `settled_at`,
+   `conversion_id`) in the transaction that records the conversion and
+   queues the notification, locking the install row `FOR UPDATE` first so a
+   concurrent replay of the same install waits for the settle rather than
+   reading the half-settled row.
+4. **Classify** into `MatchState`. Classification is a pure computation over
+   the referrer, the token and one click lookup; the one network call
+   (decoding a Play Integrity token) is never made inside the transaction —
+   `pending_integrity` is a stored state that a worker settles later, as
+   above.
 5. **Record the conversion** for `attributed` rows, via `ConversionRecorder`
    (§2):
    - **This row *is* the built-in `install` goal's row.** Its key is
@@ -729,9 +758,22 @@ The steps:
    Without the outbox, a process killed between the commit and the send
    would leave nothing for cron to find, and a replay of the install exits
    as a duplicate before reaching the send.
-7. **A failure after commit still answers 200.** The response says
-   `match: "pending"` and the workers finish the work from the outbox rows
-   (error pattern #13).
+7. **Commit, then answer.** A failure *before* the commit answers 500 with
+   nothing stored, and the SDK's retry is safe by construction. A failure
+   *after* the commit — the immediate send attempt, the response itself —
+   still answers 200 with the stored `match`, and the workers finish the
+   work from the outbox rows; that is the boundary `WriteCommittedException`
+   marks (error pattern #13). The one thing the request never does is
+   answer 200 for an install whose row it did not commit.
+
+   `tests/Api/V3/AppInstallAtomicityTest` plants a throw in each of
+   classification, `record()` and the notification enqueue and asserts, for
+   every plant, that no install row exists afterwards and that the replay
+   records the conversion, the outbox row and the notification exactly
+   once; and the structural check
+   `AttributedInstallHasConversionTest` scans the schema for any writer of
+   `202_app_installs.match_state = 'attributed'` outside the two
+   transactional paths above.
 
 The `GET` probe answers `ready`. The response never carries click data the
 referrer did not already have.
@@ -770,8 +812,9 @@ Every row carries a `match_reason` sentence, shown as-is in the UI.
 
 Events and goals are core, not app tables (§2.2): **`202_goals`** (versioned
 definitions, owned by a campaign or by an app registration as its default
-set), **`202_goal_events`** and **`202_goal_progress`** (keyed by subject:
-click or install), and **`202_campaign_goals`**
+set), **`202_goal_events`**, **`202_goal_progress`** and **`202_goal_subjects`**
+(the per-subject lock row, §5.5; all keyed by subject: click or install),
+**`202_goal_outcomes`** (§5.5), and **`202_campaign_goals`**
 (`campaign_id, goal_id, payout, notify_traffic_source`). An app event is a
 `202_goal_events` row with `subject_type = 'install'`.
 
@@ -849,9 +892,46 @@ become a performance or denial-of-service problem.
   `202_goal_progress` (§2.2).
 - It is deterministic and idempotent by `event_id`, so a retried event can
   never reach a goal twice.
-- Events are processed in arrival order. `within` windows compare
-  `occurred_at`, clamped to `received_at` so a device clock cannot move an
-  event into a window.
+- **Events are evaluated in event-time order per subject, not in arrival
+  order.** The order key is `(occurred_at, received_at, event_id)`, with
+  `occurred_at` clamped to `received_at` so a device clock cannot move an
+  event into a window; `within` windows compare the same clamped value.
+  Retries, offline queues and separate web callers reorder deliveries, so a
+  prerequisite `A` can arrive after the `B` whose `after` names it. An
+  engine that evaluated `B` on arrival and never looked at it again would
+  miss that funnel for good with both `occurred_at` values sitting in the
+  table. Instead:
+  - every request that appends events for a subject takes that subject's
+    lock first (`SELECT … FOR UPDATE` on a `202_goal_subjects (subject_type,
+    subject_id)` row, inserted on first sight), so two requests for one
+    subject serialize and the evaluation below never races itself;
+  - an event whose order key sorts **after** everything already stored for
+    the subject is evaluated incrementally against `202_goal_progress`, the
+    common case and O(goals);
+  - an event whose order key sorts **before** a stored one is a
+    **replay**: progress for the subject is recomputed from its stored
+    events in order-key order, under the same lock, in the same
+    transaction. Replay is bounded — a subject holds at most 10,000 events
+    (the 10,001st is refused with a 422 naming the cap), and the recompute
+    is pure PHP over one indexed read — so out-of-order delivery costs one
+    bounded recompute and can never fork the result from what in-order
+    delivery would have produced.
+  - **Reaching is monotone across a replay.** Adding an earlier event to a
+    subject's history can make more `(goal, version, n)` outcomes reachable
+    and never fewer: a replay writes any outcome row that is now reached and
+    not yet stored, and withdraws nothing. Which event *is* "the 3rd
+    purchase" may change under replay; the outcome for `n = 3` does not, and
+    the ledger row it wrote stays keyed by `goal:<id>:<version>:3` either
+    way. The one thing that is never re-decided by arrival is the version:
+    events are evaluated under the goal versions current at their own
+    `received_at`, not at replay time, so a replay can never apply an edit
+    to history — that is what the explicit re-evaluation operation below is
+    for.
+
+  `tests/Goals/EventOrderTest` delivers every permutation of a three-step
+  funnel's events and asserts the same outcomes for each, and plants the
+  gap directly: `B` first, then `A`, and asserts the `after: [A]` goal is
+  reached.
 - **Goals are versioned.** Editing a goal creates a new version. Conversions
   record the version that produced them, so an edit never rewrites history.
   Re-evaluating past installs under a new version is an explicit operation
@@ -868,10 +948,34 @@ because the same app is often sold under different deals.
   it enters MTA. When the triggering event carried a network transaction id,
   that id is kept in `transaction_id`. The built-in `install` goal is the
   exception: its row is the intake's install row (key `install`, §5.2).
-- **Re-evaluation under a new version** writes that version's rows and marks
-  the previous version's rows for the same subject and goal `superseded_by`
-  them, so an edit re-applied to history replaces outcomes rather than
-  adding to them; the preview shows exactly which rows would change.
+- **Re-evaluation under a new version** replaces the previous version's
+  results for each subject it touches, in both tables, in one transaction
+  per subject:
+  - every `202_goal_outcomes` row of the same `(subject, goal_id)` at an
+    older version gets `superseded_by_version = <new version>`; the new
+    version's outcome rows are then written. Because the marker is the
+    *version* and not a row id, a subject the new definition no longer
+    qualifies is handled the same way: its old outcomes are retired and
+    nothing new is written. Without a marker on the outcome table, the funnel
+    and app report — which read this table, not the ledger — would count
+    both versions and every re-evaluation would inflate them; superseding
+    the ledger rows alone does not touch what those reports read;
+  - the ledger rows those outcomes had written are marked `superseded_by`
+    the new version's row for the same `(subject, goal)` where one exists,
+    and **soft-deleted** (`softDelete()`, which recomputes the click total
+    under the click lock) where the new version reaches nothing for the
+    subject; a row cannot be superseded by a row that does not exist.
+
+  Every read of `202_goal_outcomes` — the funnel, the app report, the
+  per-subject breakdown, the CLI — filters `superseded_by_version IS NULL`
+  through one repository method, and `202_goal_progress` needs no marker
+  because it is already keyed by `goal_version`. The preview lists exactly
+  the outcome rows that would be retired and written and the ledger rows
+  that would be superseded or deleted, per subject, before anything is
+  applied. `tests/Goals/ReevaluationSupersedesOutcomesTest` re-evaluates a
+  subject under a version that reaches the goal, one that reaches it at a
+  different `n`, and one that does not reach it, and asserts the funnel
+  count is one, one and zero, never two.
 - Each payable goal also has a **"notify traffic source"** option (default
   on). It queues the campaign's traffic-source postback through the
   notification outbox of §5.2, with new tokens `[[p202_goal]]` and
@@ -879,7 +983,9 @@ because the same app is often sold under different deals.
   separately, or only "level 3".
 - **Every reached goal writes an outcome row**, whether or not the subject
   has a click: `202_goal_outcomes (subject_type, subject_id, goal_id,
-  goal_version, n, reached_at, payable, conversion_id NULL)`. That is the
+  goal_version, n, reached_at, payable, conversion_id NULL,
+  superseded_by_version NULL)`, `UNIQUE (subject_type, subject_id, goal_id,
+  goal_version, n)`. That is the
   funnel's and the app report's source, and it is what makes an organic
   install's goals visible at all — `202_conversion_logs` is click-bound, so
   an install with no click can have no ledger row.
@@ -1567,7 +1673,12 @@ answer as the unoptimised path on a sparse and a dense dataset (CLAUDE.md,
   4. assert two traffic-source notifications, carrying the goal tokens;
   5. assert the MTA credits for both conversions.
 - **Versioning:** edit the goal; the old conversions keep their version;
-  a preview of re-evaluation changes nothing until applied.
+  a preview of re-evaluation changes nothing until applied; applying it
+  leaves the funnel count for the subject at one, with the old outcome
+  carrying `superseded_by_version`.
+- **Order:** deliver `level_reached` 3 before 1 and 2, and a `tutorial_complete`
+  after the `register` that its goal's `after` requires but with the earlier
+  `occurred_at`; assert the same conversions as the in-order run.
 
 **Play Integrity:** `observe` stores the verdict without changing
 attribution. Under `require`:
