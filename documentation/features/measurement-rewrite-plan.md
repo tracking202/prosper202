@@ -153,7 +153,7 @@ on Android, was **retired on 17 October 2025**
 No replacement postback exists.
 
 Both platforms share **everything around the signal**: registry and
-ownership, app token and SDK contract, event catalogue and revenue, public
+ownership, app token and SDK contract, events, goals and revenue, public
 intake plumbing, trust vocabulary, retention and the report surface. They
 differ only in **how a signal is received and judged**, and the architecture
 makes that boundary explicit:
@@ -165,7 +165,7 @@ makes that boundary explicit:
                          │ AppIdentity     parse + validate an app id  │
                          │                 or a store link             │
                          │ AppToken        header-only; rotatable      │
-                         │ EventCatalog    event → revenue             │
+                         │ Goals           events → outcomes → value   │
                          │ Verdict         source state → trust bit    │
                          │ PublicIntake    probe, 405/413, DB, peer    │
                          │                 rate limit, bounded body    │
@@ -206,7 +206,7 @@ moves to `202_app_*`.
 |---|---|---|
 | `202_attribution_apps` | `202_app_registrations` | Identity becomes `(platform, app_key)`; per-app policy |
 | `202_attribution_postbacks` | `202_app_postbacks` | Adds `registration_id`; `signature_valid` becomes `trusted` |
-| `202_attribution_conversion_values` | `202_app_events` + `202_app_skan_encodings` | The catalogue is split from the iOS encoding |
+| `202_attribution_conversion_values` | `202_app_goals` + `202_app_skan_encodings` | What an outcome is worth is split from how iOS encodes it |
 | — | `202_app_installs`, `202_app_install_events` | Android (§5) |
 
 **The legacy guard is deleted, not extended.**
@@ -281,11 +281,15 @@ than `NULL` on purpose: MySQL's `UNIQUE` admits any number of `NULL`s, so
 - **Cross-language vectors** in `tests/fixtures/app-sdk-contract/` are read by
   the PHP, Swift and Kotlin tests. This is the pattern
   `t202ctx-vectors.json` already uses.
-- **`GET /apps/schema`** is platform-shaped. iOS gets fine/coarse encodings;
-  Android gets the mapped event names, so the SDK refuses unmapped names
-  locally. Revenue is withheld from both.
-- **Both SDKs** expose `configure(endpoint, appToken)` and
-  `logEvent(name, …)`.
+- **`GET /apps/schema`** is platform-shaped:
+  - iOS gets the goal definitions and their fine/coarse encodings, and
+    evaluates goals on the device (§5.5);
+  - Android gets the integrity mode and the SDK settings. Its goals are
+    evaluated on the server, so the SDK reports every event.
+
+  Revenue is withheld from both.
+- **Both SDKs** expose `configure(endpoint, appToken)`,
+  `logEvent(name, properties)` and `setCustomerId(id)`.
 
 ### 4.4 Trust: one vocabulary, per-source verdicts
 
@@ -306,18 +310,19 @@ interface Verdict   // implemented by backed enums
 - An unreadable policy resolves to *untrusting* (error pattern #11), in one
   place.
 
-### 4.5 Event catalogue vs iOS encoding
+### 4.5 Goals and iOS encoding
 
-A conversion-value rule currently does two jobs: *what an event is worth*,
-and *how iOS encodes it in 6 bits*. Android needs only the first.
+A conversion-value rule currently does two jobs: *what an outcome is worth*,
+and *how iOS encodes it in 6 bits*. Android needs only the first, and it needs
+it to be far more expressive than "this event name" (§5.5). The split:
 
-- **`202_app_events`**
-  - Columns: `(user_id, registration_id /* 0 = account-wide */, event_name, revenue)`.
-  - Key: `UNIQUE (user_id, registration_id, event_name)`.
-  - Both platforms use it. It is the only place revenue is configured.
+- **Goals, `202_app_goals`.** Both platforms use them. A goal is a named
+  outcome ("install", "level 3", "first purchase ≥ $10") with its value. It is
+  the only place revenue is configured. Goals are defined in §5.5.
 - **`202_app_skan_encodings`**
-  - Columns: `(user_id, registration_id, fine_value | coarse_value, event_name, revenue_override NULL)`.
-  - Apple only. `revenue_override` keeps tiered decoding.
+  - Columns: `(user_id, registration_id, fine_value | coarse_value, goal_id, revenue_override NULL)`.
+  - Apple only. An encoding says which fine or coarse value means "this goal
+    was reached". `revenue_override` keeps tiered decoding.
 - **Decode** keeps today's resolution: app-specific before account-wide, and
   no fallback from fine to coarse. **Encode** keeps the highest-value tie-break.
 - **Behaviour change:** an encoding must name a registration or be
@@ -456,6 +461,7 @@ referrer did not already have.
 | `implausible` | 0 | Timing contradicts the click (§7.1) |
 | `outside_window` | null | Later than `attribution_window_days` |
 | `duplicate_click` | null | The click already has an install conversion |
+| `pending_integrity` | null | Registration requires Play Integrity; the verdict is being decoded |
 
 Every row carries a `match_reason` sentence, shown as-is in the UI.
 
@@ -473,7 +479,9 @@ Every row carries a `match_reason` sentence, shown as-is in the UI.
 - Other: `integrity_state`, `first_open_at`, `received_at`, `settled_at`,
   `raw_payload`, `remote_ip`.
 
-**`202_app_install_events`** (phase 2): `UNIQUE (install_row_id, event_id)`.
+**`202_app_install_events`**: `UNIQUE (install_row_id, event_id)`, plus `name`, `properties` JSON, `occurred_at` and `received_at`.
+
+**`202_app_goals`** (versioned definitions), **`202_app_goal_progress`**, and **`202_app_campaign_goals`** (`campaign_id, goal_id, payout, notify_traffic_source`) (§5.5).
 
 **`202_aff_campaigns.app_registration_id`** NULL, used by `foreign_click` and
 the link builder. It is added in the 1.9.75 rung, next to the app tables.
@@ -483,17 +491,139 @@ the link builder. It is added in the 1.9.75 rung, next to the app tables.
 (`install_uuid`, click). Merging them would make every identity column
 nullable and weaken the uniqueness that deduplication rests on.
 
-### 5.5 In-app events (phase 2)
+### 5.5 Events and goals: engagement-based conversions
 
+The requirement: an install can be the conversion, but so can **any
+engagement after it**, and it has to be very flexible. For example:
+
+- install;
+- reach level 3;
+- complete the tutorial *after* registering;
+- the 3rd purchase;
+- cumulative purchases of $20 or more within 7 days of install;
+- every subscription renewal, capped at 12.
+
+The design separates what the app reports (**events**) from what the operator
+pays and reports on (**goals**).
+
+**Events: what the app reports.**
 `POST /apps/installs/{install_uuid}/events` accepts
-`{event_id, event_name, occurred_at, revenue?, currency?}`.
+`{event_id, name, occurred_at, properties: {…}, revenue?, currency?}`.
 
-- Each event is a conversion on the install's click, with
-  `transaction_id = 'p202-evt:' . event_id`, so it enters MTA too.
-- Revenue comes from `202_app_events`. Client revenue is stored separately
-  and used only under `trust_client_revenue`.
-- Unmapped names are counted as unmapped. They are never credited and never
-  dropped.
+- Properties are flat and typed (string, number, bool). At most 32 per event.
+- Events are stored in `202_app_install_events`, idempotent on
+  `(install_row_id, event_id)`.
+- An event on its own records nothing: it is evidence, and goals decide what
+  it is worth.
+- The SDK call is
+  `P202Attribution.logEvent("level_reached", mapOf("level" to 3))`, the same
+  on iOS.
+
+**Goals: what counts.** `202_app_goals`, per registration. `install` is a
+built-in goal every registration has, and it is payable by default. A goal is
+a validated JSON definition. It is data, never code: there is no expression
+evaluation, so there is nothing to inject.
+
+```json
+{
+  "name": "Reached level 3",
+  "trigger": {"event": "level_reached",
+              "where": [{"prop": "level", "op": "gte", "value": 3}]},
+  "threshold": {"count": 1},
+  "after": ["tutorial_complete"],
+  "within": {"days": 7, "from": "install"},
+  "repeat": {"mode": "once"},
+  "value": {"type": "fixed", "amount": 4.00}
+}
+```
+
+| Field | Options |
+|---|---|
+| `trigger` | `install`, or an event name, plus `where` predicates on its properties: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `exists`. The predicates are ANDed; a second goal expresses OR |
+| `threshold` | `count` (the Nth matching event) or `sum` of a numeric property (cumulative spend) |
+| `after` | Goals that must already be reached: sequences and funnels |
+| `within` | A window from `install` or from `click`; unset means for the life of the install |
+| `repeat` | `once`, or `each` with an optional `max`: every renewal, capped |
+| `value` | `fixed`, `from_property` (the event's revenue), or `none` (tracked, not paid) |
+
+Complexity is bounded (at most 20 predicates, at most 5 `after` references,
+no cycles), so evaluation is O(goals) per event and a definition can never
+become a performance or denial-of-service problem.
+
+**Evaluation.**
+
+- Goals are evaluated **server-side** for Android, in the same transaction as
+  the event insert, against per-install state in
+  `202_app_goal_progress (install_row_id, goal_id, goal_version, count, sum, reached_at, times_reached)`.
+- It is deterministic and idempotent by `event_id`, so a retried event can
+  never reach a goal twice.
+- Events are processed in arrival order. `within` windows compare
+  `occurred_at`, clamped to `received_at` so a device clock cannot move an
+  event into a window.
+- **Goals are versioned.** Editing a goal creates a new version. Conversions
+  record the version that produced them, so an edit never rewrites history.
+  Re-evaluating past installs under a new version is an explicit operation
+  with a dry-run preview. It is stageable like other writes.
+
+**What a reached goal does.** This is decided per **campaign**, not per goal,
+because the same app is often sold under different deals.
+
+- A campaign linked to the registration lists its **payable goals** and a
+  payout for each. It can override the goal's `value`.
+- **Payable** goals record a conversion on the install's click, with
+  `transaction_id = 'p202-goal:' . goal_id . ':' . n`, where `n` is the
+  repeat index. It is deduped by the existing unique key, and it enters MTA.
+- Each payable goal also has a **"notify traffic source"** option (default
+  on). It fires the campaign's traffic-source postback with new tokens
+  `[[p202_goal]]` and `[[p202_goal_value]]`, so a network can be told
+  "install" and "level 3" separately, or only "level 3".
+- **Non-payable** goals are counted in the app report and the funnel, and
+  nothing else happens.
+- A campaign with no payable goals configured pays on `install`, which is
+  your answer to "yes by default".
+
+**One click, several payouts: a real constraint in the core.** Classic
+campaign reports allow one lead and one payout per click. Income is
+`IF(click_lead>0, click_payout, 0)` (`202-config/DataEngine/ClickRollupSql.php:68`),
+and every conversion **overwrites** `click_payout`; nothing adds to it
+(`MysqlConversionRepository::applyStandardClickUpdate()`, `:345-353`;
+`p202ApplyConversionUpdate()`, `static-endpoint-helpers.php:57-118`).
+
+- A campaign paying $1 for the install and $4 for level 3 would show $4 of
+  income, not $5.
+- This is already wrong today for any click with two web conversions carrying
+  different transaction ids.
+- The fix belongs in the one writer: after inserting a conversion, `record()`
+  sets `click_payout` to the **sum of the click's non-deleted conversions**,
+  under the click lock it already holds (`:136-144`), and `softDelete()`
+  recomputes it the same way. `click_lead` stays a flag, so "leads" still
+  counts converting clicks, and income becomes correct.
+- **This changes what existing reports show for multi-conversion clicks on
+  upgraded installs**, from the moment of upgrade. Historical rows are left as
+  stored.
+- It is the one change in this plan outside the two features. It is listed
+  as a decision (§9) because it is a change in meaning, not a refactor.
+
+**Revenue trust.** Anyone holding the app token can post events.
+
+- Goal values come from the goal or campaign definition.
+- A `from_property` value is paid only if the registration sets
+  `trust_client_revenue`. Otherwise it is stored and reported, but not
+  credited.
+- Reports say which regime produced each number.
+
+**iOS uses the same goals.** An SKAN encoding maps a fine or coarse value to a
+goal, so decoded postbacks report "reached level 3" in the same vocabulary as
+Android.
+
+- Apple's postback carries only the value, so the **iOS SDK evaluates goals
+  on the device** to decide which value to set. The schema document ships the
+  goal definitions, and the helper runs the same evaluator.
+- One evaluator specification, with cross-language vectors in
+  `tests/fixtures/app-sdk-contract/goals/`, is run by the PHP and Swift test
+  suites, so the two evaluators cannot drift.
+- Until the Swift evaluator lands, iOS encodings can name a goal whose trigger
+  is a plain event, which is exactly today's behaviour.
 
 ### 5.6 UI, report, testing, SDK
 
@@ -542,10 +672,46 @@ shared partials with the iOS page.
 - No advertising ID and no `AD_ID` permission.
 - Tests: JVM tests over the contract vectors, plus a live integration test.
 
+**Play Integrity, in phase 1, opt-in per registration.** It is the only
+control that tells a real app on a real device from a click-spamming script,
+and this plan attaches payouts to installs and goals. It therefore belongs
+next to the payouts, not two phases later. It needs the app owner's Google
+Cloud project, so it cannot be on by default.
+
+- **Modes:**
+  - `off` (the default);
+  - `observe`: store the verdict and report it; attribution is unaffected;
+  - `require`: attribution and payable goals wait for a `valid` verdict.
+- **The SDK** requests a standard token with
+  `requestHash = SHA-256(canonical install body)` when the registration's
+  schema document says integrity is on.
+- **The server** decodes the token through Google's `decodeIntegrityToken`,
+  using the owner's service account. The OAuth JWT is signed RS256 with
+  `openssl_sign`, so no new dependency is needed. The credential is encrypted
+  at rest and redacted like the app token.
+- **A cron worker does the decoding, off the request path.** Under `require`
+  the install waits as `pending_integrity`, which is typically seconds.
+- A verdict is `valid` only with `PLAY_RECOGNIZED` plus
+  `MEETS_DEVICE_INTEGRITY`, **and** a `requestHash` that matches the stored
+  body.
+- Google's default quota is 10,000 decodes per app per day. The page shows
+  usage, and a request refused by quota stays pending. Under `require` it is
+  never waved through (error pattern #11).
+
+**Advertising ID: not collected.** Nothing in this design needs it:
+
+- the referrer carries the click;
+- the goals ride the install id;
+- deduplication uses our own ids.
+
+Collecting it would add the `AD_ID` permission, a consent flow and a Play Data
+safety declaration to every app that uses the SDK. It is all zeros for users
+who deleted it and for apps without the permission. If an ad network later
+requires a device id in its postback, it can be added as an opt-in SDK field
+without changing anything here.
+
 **Phase 3, each part independent:**
 
-- Play Integrity: standard tokens decoded via the app owner's Google Cloud
-  service account, queued to cron; the default quota is 10,000 per day per app.
 - Meta referrer decryption: AES-256-GCM with the per-app key.
 - Huawei, Samsung and Xiaomi stores. Huawei reports milliseconds.
 - Deferred deep links, and `assetlinks.json`.
@@ -609,22 +775,45 @@ journey source, the storage and the reports, which is all of the engine.
 
 A journey needs an identity that belongs to one person. Prosper202 has none
 at click time today: its cookies are per-click (`tracking202subid*`,
-`connect2.php:695-718`). The rewrite adds a ranked set of identities:
+`connect2.php:695-718`).
 
-| Identity | Source | Strength | Limits |
+A single cookie would work, but it fails exactly where browsers are
+tightening. So the identity is **a small identity graph fed by several
+first-party signals**, each allowed only to *link*, never to *guess*.
+
+| Signal | Where it comes from | What it links | Why it helps |
 |---|---|---|---|
-| `customer_id` | The LTV customer the conversion resolves to (`cust` param) | Deterministic, cross-device | Only known **at conversion**, so it links a customer's conversions, not their earlier clicks, unless a click also carried `cust` |
-| `visitor_id` (new) | A first-party cookie `p202vid` (128-bit random) set by `dl.php`, `rtr.php` and `lp.php` on the tracking domain, and stored with the click | Links clicks in one browser | Browser-bound; see below |
-| IP address | — | **Never used.** Carrier-grade NAT and offices merge strangers, which is today's defect in another form | |
+| **Tracking-domain cookie** `p202vid` | 128-bit random, set by `dl.php`/`rtr.php` (`Secure`, `HttpOnly`, `SameSite=Lax`, 400-day cap) | Clicks through redirects in one browser | Works everywhere redirects do; the baseline |
+| **Landing-page first-party id** | The LP script (`record_simple.php`/`record_adv.php` and a new small `p202.js`) stores an id in the **landing page's own** first-party storage and sends it with LP clicks and with the next outbound click | Clicks on the operator's own sites | The LP domain is a site the user actually interacts with, so browsers treat its storage as first-party. It survives where a bounce-only tracking domain is cleared |
+| **Customer id** | `cust` on a click or conversion (already parsed by `p202ExtractCustomer`), and `P202Attribution.setCustomerId()` in both SDKs; stored hashed | A person across browsers, **and web → app** | The only deterministic cross-device link. It joins a web click journey to the same person's app install and goals |
+| IP address, user agent, fingerprinting | — | **Never used** | Carrier-grade NAT and offices merge strangers, which is today's defect in another form. Fingerprinting is a privacy and platform-policy problem, and it is wrong often enough to corrupt credit silently |
 
-**Where it is stored.** `visitor_id` goes in a new
-`202_clicks_visitor (click_id PK, user_id, visitor_id BINARY(16), click_time)`
-with `KEY (user_id, visitor_id, click_time)`. It is not a column on the hot
-`202_clicks`, and it is written in the same `recordClick()` transaction.
+**How the graph works.** Each click records the signals it saw in
+`202_identity_signals (user_id, signal_type, signal_hash, visitor_key)`.
+A click carrying two signals that already map to different visitor keys
+**merges** them, union-find style:
+
+- a row in `202_identity_merges` records the merge;
+- the lower key becomes the alias of the higher;
+- journeys resolve to the canonical key.
+
+Merges are append-only and explainable: the journey view shows which signal
+linked which clicks. The click row itself stores its canonical `visitor_key`
+in `202_clicks_visitor (click_id PK, user_id, visitor_key, click_time)`, with
+`KEY (user_id, visitor_key, click_time)`, written in the same `recordClick()`
+transaction. It is not a column on the hot `202_clicks`.
+
+**Guards against over-merging.** A graph that merges too eagerly collapses
+strangers, which is the failure being replaced.
+
+- A signal that has linked more than a set number of visitor keys (default 20)
+  is quarantined. It stops linking, and it is reported. This catches a
+  shared kiosk, a `cust=test` used in QA, or a leaked `p202vid`.
+- Customer ids pass through the same cap.
 
 **Journey rule.** A journey is the clicks with the converting click's
-`visitor_id`, within the model's lookback (default 30 days), **across all
-campaigns**. Crossing campaigns is the point: a journey limited to one
+canonical `visitor_key`, within the model's lookback (default 30 days),
+**across all campaigns**. Crossing campaigns is the point: a journey limited to one
 campaign cannot tell models apart at the campaign level. Clicks flagged bot or
 filtered are excluded. A click with no `visitor_id` makes a one-touch journey,
 labelled as such.
@@ -641,7 +830,8 @@ labelled as such.
   load the tracking domain as a third-party script. The cookie is partitioned
   or blocked there. Those clicks get a visitor id only when the LP domain and
   the tracking domain are the same site. The docs say so.
-- **No cross-device.** Cross-device linking comes only from `customer_id`.
+- **Cross-device only through customer ids.** Without `cust` or
+  `setCustomerId()`, a person on two devices is two visitors.
 - **Nothing before the upgrade.** Clicks recorded before an install runs the
   release containing visitor capture have no visitor id and cannot be
   backfilled. Every install upgrading from 1.9.55 or older starts with
@@ -795,19 +985,27 @@ defines instead of one that depends on how the database was created.
 | Row minting on public intakes | Body caps; rate limit on `REMOTE_ADDR` (#16) with injective bucket names (#17); a retention class for every untrusted state |
 | App token lifted into another app | `app_key` mismatch is a visible 422; the token rotates |
 | SSRF through MTA export webhooks | `https` only, private-range refusal at schedule time and at send time |
-| MTA journey poisoning (a crafted `p202vid` cookie joins someone else's journey) | The cookie is random and 128-bit, so guessing one is infeasible. A user can only pollute journeys in their own browser. Credits are bounded by conversions, which MTA never creates |
+| MTA journey poisoning (a crafted `p202vid`, LP id or `cust` joins someone else's journey) | Browser ids are random 128-bit values, so guessing one is infeasible, and a user can only pollute their own journeys. Customer ids are operator-supplied and hashed. Any signal linking more than the cap is quarantined (§6.2). Credits are bounded by conversions, which MTA never creates |
+| **Fabricated in-app events** to reach payable goals (the app token is public) | Goals pay only for installs that are `attributed`, and under `require`, only for integrity-valid ones. Values come from the goal or campaign, never from the client unless `trust_client_revenue` is set. `(install_row_id, event_id)` stops replays inflating counts. Per-install event rate caps apply. Reports flag installs whose goals were reached implausibly fast |
+| Goal definitions as an attack surface | Data only (JSON schema validated on write and on load), bounded complexity, no expression evaluation. An invalid stored definition disables that goal with its reason and never throws through other goals (#11) |
 | Permission drift between surfaces | One permission check per operation, and a structural test over the routes |
 | Malformed values resolving permissively | Missing HMAC key, unparseable referrer, unreadable policy and invalid model config all resolve to the non-trusting or disabled state (#11) |
 
 ### 7.2 Privacy
 
-- The only new persistent identifier is `p202vid`, a random first-party cookie
-  on the tracking domain. It carries no information and is never sent to third
-  parties.
-- Operators must cover it in their consent flow where their jurisdiction
-  requires consent for analytics cookies. `dl.php` honours a `p202_consent=0`
-  parameter or a per-campaign setting that suppresses it; the journey is then
-  one touch.
+- **New identifiers:** `p202vid` (tracking-domain cookie), the landing-page
+  first-party id, and hashed customer ids. The two browser ids are random
+  and carry no information. Customer ids are stored as a keyed hash
+  (HMAC with an install secret), so a raw email address or user id is
+  never stored. None of them is sent to third parties.
+- **Consent:** operators must cover these in their consent flow where their
+  jurisdiction requires it. One switch suppresses every browser signal: a
+  `p202_consent=0` parameter, `p202.js`'s `consent(false)`, or a per-campaign
+  setting. The journey is then one touch.
+- **Browser limits on landing-page storage:** Safari caps storage written by
+  scripts (seven days without interaction) and may clear it sooner. The
+  landing-page id therefore extends journeys; it does not guarantee them. The
+  one-touch share by browser (§6.2) measures what is lost.
 - No device identifiers are collected on Android, and no advertising ID.
 - User deletion purges every `202_app_*` and `202_attribution_*` table and `202_clicks_visitor`, plus export
   files on disk.
@@ -832,8 +1030,14 @@ click dimensions. The target is under 2 s for 30 days at 1M conversions. If
 measurement misses it, the fix is an hourly rollup keyed on
 (model, dimension, hour), recomputed from credits for dirty hours only.
 
-**Android intake.** p95 under 100 ms. It makes no external calls on the
-request path.
+**Android intake and events.** p95 under 100 ms. There are no external calls
+on the request path: Integrity decoding and pixel firing are deferred. Goal
+evaluation is O(goals) per event, bounded by the complexity limits, and
+touches only the install's own progress rows.
+
+**Identity graph.** Each click does one indexed lookup per signal it carries
+(at most three) and, rarely, a merge. Journeys resolve a canonical key
+through an alias table capped in depth by path compression at merge time.
 
 **App measurement reshape.** It must not slow the iOS receiver: the same
 statements under new names.
@@ -921,6 +1125,34 @@ answer as the unoptimised path on a sparse and a dense dataset (CLAUDE.md,
   a hostname resolving to one. Each is refused at schedule time and at send
   time.
 
+**Goals:**
+- **Evaluator vectors** (`tests/fixtures/app-sdk-contract/goals/`) run by PHP
+  and Swift: predicates, `count`, `sum`, `after` chains, windows, repeat
+  caps, clock clamping, and an invalid definition.
+- **Live pass:** an install on a campaign paying install $1 and level 3 $4:
+  1. post `level_reached` with levels 1, 2 and 3, plus a replay of level 3;
+  2. assert exactly two conversions;
+  3. if decision 1 stands, assert `click_payout` = 5.00 and campaign-report
+     income 5.00;
+  4. assert two traffic-source notifications, carrying the goal tokens;
+  5. assert the MTA credits for both conversions.
+- **Versioning:** edit the goal; the old conversions keep their version;
+  a preview of re-evaluation changes nothing until applied.
+
+**Play Integrity:** `observe` stores the verdict without changing
+attribution. Under `require`:
+- a missing or invalid token leaves the install unattributed, with its
+  reason;
+- a quota refusal stays pending and is never waved through.
+
+This runs against recorded Google responses, because a live Google call is
+not possible in CI.
+
+**Identity:**
+- A cookie-jar live pass across a tracking-domain click, an LP click and a
+  `cust` conversion asserts one visitor key.
+- A signal driven past the cap is quarantined and stops merging.
+
 **Cross-feature:** an attributed Android install appears in the MTA report on
 the install click's campaign, with that browser's earlier web clicks in its
 journey.
@@ -931,45 +1163,67 @@ journey.
 - simulate an install;
 - read both reports.
 
-## 8. Phasing
+## 8. Delivery: many small PRs, one release
 
-| Phase | Scope | Depends on |
+**Code quality comes from review size and verification per change, not from
+release count.** So the work lands as a sequence of small PRs, each
+independently reviewable and verified, and ships as **one 1.9.76 release**.
+
+- **Every release adds an upgrade origin.** Anything released becomes a
+  version some database can sit at, and the ladder must upgrade it forever.
+  Today the only origin is ≤ 1.9.55. Shipping phase 0 first would add a
+  second: a database with the reshaped app tables but no Android or goal
+  tables. The next release would have to reconcile that, which is exactly the
+  machinery this plan deletes.
+- **One release means the upgrade-equals-install test (§7.6) has exactly one
+  path to prove.**
+- **Nothing is half-shipped.** The goal model spans iOS and Android. Shipping
+  one platform's half would freeze a schema the other half may need to change.
+- **Each PR is still merged green,** with its own live pass where it touches
+  a user path. "One release" is not "one PR".
+
+| # | PR | Depends on |
 |---|---|---|
-| **M0: visitor capture** | `p202vid` cookie, `202_clicks_visitor`, consent switch. Nothing reads it yet | — |
-| **0: app reshape** | Part B §4: registry, catalogue, verdicts, plumbing, retention, renames to `/apps` and `p202 app`, user-deletion purge | — |
-| **M1: MTA engine** | Outbox in `record()`; removal of the inline pixel hooks; worker; models; credits; reports API; deletion of v2, dead code and the old journey crons | M0 |
-| **1: Android installs** | §5.1–5.4, §5.6 | 0, plus the `record()` outbox from M1 if MTA should see installs |
-| **M2: MTA UI and exports** | Dashboard on the v2 shell, model comparison, journey metrics, hardened exports | M1 |
-| **2: Android events and fraud signals** | §5.5, CTIT, third-party breakdowns | 1 |
-| **3: extensions** | Play Integrity, Meta decryption, other stores, deep links | 1 |
+| 1 | **Conversion writer:** outbox row in `record()`; `click_payout` as the sum of the click's conversions (if decision 1 below stands); `ConversionTables` split out; `gpb.php` pixel-firing logic extracted to one function | — |
+| 2 | **Identity capture:** `p202vid`, LP first-party id and `p202.js`, `cust` on clicks, `202_identity_*`, `202_clicks_visitor`, consent switch | — |
+| 3 | **App core reshape** (§4): registry, `AppIdentity`, token rename, verdicts, `PublicIntake`, retention, user-deletion purge, `/apps` and `p202 app` renames, legacy guard deleted | — |
+| 4 | **Goals engine:** definitions, validation, versioning, server evaluator, cross-language vectors, campaign goal payouts, SKAN encodings pointing at goals | 1, 3 |
+| 5 | **Android intake:** install token, `MatchState`, installs and events endpoints, conversions through goals, traffic-source notify, pending-click cron | 1, 3, 4 |
+| 6 | **Play Integrity** (opt-in modes) | 5 |
+| 7 | **Android SDK** (installs, events, customer id, integrity) | 5, 6 |
+| 8 | **iOS SDK:** header rename, `setCustomerId`, on-device goal evaluator on the shared vectors | 3, 4 |
+| 9 | **MTA engine:** schema rewrite and rungs, worker, models, credits, reports API; v2 and dead code deleted | 1, 2 |
+| 10 | **MTA UI and exports:** dashboard on the v2 shell, comparison, journey metrics, SSRF-safe webhooks | 9 |
+| 11 | **Mobile Apps UI:** Android pages, link builder, goal editor and funnel, cross-platform report | 3–5 |
+| 12 | **Release gate:** upgrade-equals-install from a real 1.9.55 database, full live passes, agent-eval cases, docs and OpenAPI | all |
 
-The phases are **merge order**. Nothing has been released since 1.9.55, so
-they can all go out in one 1.9.76 release or be split across releases.
+- PRs 1–3 have no dependencies and can proceed in parallel.
+- Phase 3 extensions (Meta decryption, other stores, deep links) come after
+  the release.
 
-**M0 must be in the first release that goes out, whatever else is.** Journeys
-cannot be backfilled: every click an install records before it has M0 is a
-one-touch journey forever.
+Identity capture (PR 2) gets no special ordering: with a single release, it is
+in the first release by construction.
 
-**0 and M1 are independent** and can proceed in parallel. They meet only at
-`record()`.
+## 9. Decisions
 
-## 9. Decisions needed before implementation
+**Settled** (2026-09-25):
 
-1. **Is an install a conversion by default?** The plan says yes, per
-   registration.
-2. **Fire traffic-source postbacks on install?** The plan says yes, reusing the
-   `gpb.php` logic.
-3. **Play Integrity in phase 1 or phase 3?** It needs each app owner's Google
-   Cloud credentials.
-4. **GAID: never, or opt-in?** The plan collects none.
-5. **The visitor cookie.** Is a first-party `p202vid` cookie on the tracking
-   domain acceptable as the journey identity, with the consent switch in §7.2?
-   Without it, a journey can only be built from `customer_id`, which only
-   links conversions to each other, or it cannot be built at all.
-6. **One release or several?** Everything can ship as a single 1.9.76, or
-   phase 0 + M0 + M1 can ship first with Android following. The plan works
-   either way; it changes only what the first release notes promise.
-7. **Naming:**
-   - app measurement: `202_app_*`, `/apps/*`, scope `apps`, `p202 app`;
-   - MTA: `202_attribution_*`, `/attribution/*`, scope `attribution`;
-   - `app_key`, `app_token`, `accept_test_signals`.
+| # | Question | Decision | Where |
+|---|---|---|---|
+| 1 | Install as a conversion by default? | Yes, and any engagement after it can be the conversion too, through versioned, data-defined goals: event predicates, counts and sums, sequences, windows, repeats, fixed or property values, chosen per campaign | §5.5 |
+| 2 | Traffic-source postbacks? | An option per payable goal per campaign, default on, with `[[p202_goal]]` / `[[p202_goal_value]]` tokens | §5.5 |
+| 3 | Play Integrity | Phase 1, opt-in per registration: `off` / `observe` / `require` | §5.6 |
+| 4 | Advertising ID | Not collected; nothing in the design needs it | §5.6 |
+| 5 | Journey identity | An identity graph: tracking-domain cookie, landing-page first-party id, hashed customer id; merge caps; never IP or fingerprinting | §6.2 |
+| 6 | Release shape | Small PRs in dependency order, one 1.9.76 release | §8 |
+| 7 | Naming | App measurement: `202_app_*`, `/apps/*`, scope `apps`, `p202 app`, `app_key`, `app_token`, `accept_test_signals`. MTA: `202_attribution_*`, `/attribution/*`, scope `attribution`, `p202 attribution` | §1 |
+
+**Still open, one question:**
+
+1. **Should `click_payout` become the sum of a click's conversions?** Without
+   it, multi-step payouts (install $1 + level 3 $4) show only the last payout
+   in classic campaign reports. The same is already true of web clicks with
+   two conversions. The change is in the conversion writer, outside the two
+   features, and it changes what upgraded installs' reports show for
+   multi-conversion clicks from the upgrade on (§5.5). The plan recommends
+   yes.
