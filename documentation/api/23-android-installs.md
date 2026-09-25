@@ -137,9 +137,12 @@ given.
 ## 6. Traffic-source postbacks
 
 Each paid install or goal conversion with "notify traffic source" on queues
-one row per **server postback pixel** (type 4) of the click's traffic-source
-account in `202_notification_pending`, in the same transaction as the
-conversion. Browser pixels (image, iframe, script, raw) have no page to
+one row per URL of each **server postback pixel** (type 4) of the click's
+traffic-source account in `202_notification_pending`, in the same
+transaction as the conversion. A pixel whose code holds several
+space-separated URLs gets a row for each (`destination` is the URL's
+position), so each endpoint is retried on its own and one that accepted is
+never sent the conversion again because another failed. Browser pixels (image, iframe, script, raw) have no page to
 render on and are not queued. The URL is resolved when queued, with the
 click's tokens plus `[[payout]]` (this conversion's amount),
 `[[transactionid]]` (the network's id, else the ledger key),
@@ -148,10 +151,12 @@ click's tokens plus `[[payout]]` (this conversion's amount),
 `202-cronjobs/app-installs.php` sends what is due (the request path makes no
 external calls), retrying with backoff from a minute to six hours and
 marking a row `failed` after 8 attempts. A traffic source hears about an
-outcome **once**: if a late event moves an outcome to another event and its
-postback has not gone out, it is cancelled and the replacement's goes out
-instead; if it has gone out, nothing more is sent and a `correction` is
-recorded as `suppressed` (no pixel has a correction URL yet).
+outcome **once**, decided per URL: if a late event moves an outcome to
+another event and its postback to a URL has not been attempted, it is
+cancelled and the replacement's goes to that URL instead; if it has been
+attempted (sent, retrying or failed), nothing more is sent there and a
+`correction` is recorded as `suppressed` (no pixel has a correction URL
+yet). Other URLs are unaffected by that decision.
 
 Schedule the job every minute:
 
@@ -183,4 +188,7 @@ without events after 180 (`P202_APP_RETENTION_DAYS_INSTALLS_REFUTED`,
 pending ones and installs with events are kept. Deleting a user deletes
 their installs and their queued postbacks; deleting a registration keeps
 its installs (their conversions stay on the ledger) but no token reaches
-them any more.
+them any more. Both unlink the campaigns linked to the deleted registration
+(`app_registration_id` back to `null`), so registering the app again and
+linking the campaign to the new registration is all it takes to attribute
+its clicks again.

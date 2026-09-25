@@ -13,24 +13,33 @@ use Prosper202\Database\Connection;
  * announce, so a conversion and its queued postback commit or roll back
  * together; a process killed after the commit leaves the row for the worker
  * rather than nothing, and a replayed install finds the row already queued
- * (UNIQUE (conv_id, pixel_id, kind)) rather than queuing it twice.
+ * (UNIQUE (conv_id, pixel_id, destination, kind)) rather than queuing it
+ * twice.
  *
- * What is queued: one `reached` row per server-to-server pixel (type 4) of
- * the click's traffic-source account. The browser pixel types (image,
- * iframe, script, raw) are markup a page renders; an app install has no
- * page, so they are not queued. The URL is resolved at queue time with the
+ * What is queued: one `reached` row per destination — per URL — of each
+ * server-to-server pixel (type 4) of the click's traffic-source account. A
+ * pixel's code may hold several space-separated URLs, and each is tracked on
+ * its own row (`destination` is its position in the code), because a retry
+ * that restarted a multi-URL row at its first URL would resend the
+ * conversion to every endpoint that had already accepted it. The browser
+ * pixel types (image, iframe, script, raw) are markup a page renders; an app
+ * install has no page, so they are not queued. The URL is resolved at queue time with the
  * row's own tokens — [[subid]], [[c1]]–[[c4]], [[t202kw]], [[gclid]], the
  * utm_* tokens, [[sourceid]], [[cpc]], [[payout]] (this row's amount, not
  * the click's total), [[transactionid]] / [[t202txid]] (the network's id,
  * else the ledger key), [[p202_goal]], [[p202_goal_value]], [[timestamp]]
  * and [[random]] — so what is sent is what the transaction decided.
  *
- * A traffic source is told about an outcome once (onReplaced()): a pending
- * `reached` whose outcome is replaced is cancelled and the replacement's own
- * `reached` goes out instead; one that went out (or may have: an attempt was
- * made) cannot be recalled, so the replacement's `reached` is cancelled and
- * a `correction` — or, with no replacement, a `retraction` — is recorded as
- * `suppressed`, because no pixel has a correction URL to carry it yet.
+ * A traffic source is told about an outcome once (onReplaced()), decided
+ * per destination: where the replaced row's `reached` is still pending and
+ * unattempted it is cancelled and the replacement's own `reached` goes out
+ * instead; where it went out (or may have: an attempt was made, or the row
+ * is itself a replacement whose predecessor had gone out, which its
+ * `correction` row records) it cannot be recalled, so the replacement's
+ * `reached` for that destination — and only that one — is cancelled and a
+ * `correction` — or, with no replacement, a `retraction` — is recorded as
+ * `suppressed`, because no pixel has a correction URL to carry it yet. The
+ * full table is in plan §5.10.
  *
  * Sending (sendDue()) is the worker's: never on the request path, which
  * makes no external calls (plan §7.3). Each row is claimed with a
@@ -110,16 +119,9 @@ final class NotificationOutbox implements OutcomeNotificationSink
         $queued = 0;
         $now = $this->now();
         foreach ($pixels as $pixel) {
-            $urls = [];
-            foreach (explode(' ', (string) $pixel['pixel_code']) as $url) {
-                if (trim($url) !== '') {
-                    $urls[] = self::replaceTokens(trim($url), $tokens);
-                }
+            foreach (self::destinations((string) $pixel['pixel_code']) as $destination => $url) {
+                $queued += $this->insert($userId, $convId, (int) $pixel['pixel_id'], $destination, self::KIND_REACHED, 'pending', self::replaceTokens($url, $tokens), null, $now);
             }
-            if ($urls === []) {
-                continue;
-            }
-            $queued += $this->insert($userId, $convId, (int) $pixel['pixel_id'], self::KIND_REACHED, 'pending', implode("\n", $urls), null, $now);
         }
 
         return $queued;
@@ -132,9 +134,14 @@ final class NotificationOutbox implements OutcomeNotificationSink
      */
     public function onReplaced(int $userId, int $oldConvId, ?int $newConvId): void
     {
+        // The replaced row's reached rows and its corrections. A correction
+        // on this row means its own reached was cancelled because a
+        // predecessor had already announced the outcome at that destination:
+        // the destination has heard it although this row's reached never
+        // went out.
         $stmt = $this->conn->prepareWrite(
-            "SELECT notification_id, pixel_id, status, attempts FROM 202_notification_pending
-             WHERE conv_id = ? AND kind = 'reached' FOR UPDATE"
+            "SELECT notification_id, pixel_id, destination, kind, status, attempts FROM 202_notification_pending
+             WHERE conv_id = ? AND kind IN ('reached', 'correction') ORDER BY notification_id FOR UPDATE"
         );
         $this->conn->bind($stmt, 'i', [$oldConvId]);
         $old = $this->conn->fetchAll($stmt);
@@ -142,36 +149,51 @@ final class NotificationOutbox implements OutcomeNotificationSink
             return;
         }
         $now = $this->now();
-        $delivered = [];
+        /** @var array<string, array{0: int, 1: int}> $announced (pixel, destination) pairs that heard the outcome */
+        $announced = [];
         foreach ($old as $row) {
-            if ((string) $row['status'] === 'pending' && (int) $row['attempts'] === 0) {
+            $at = [(int) $row['pixel_id'], (int) $row['destination']];
+            $status = (string) $row['status'];
+            if ((string) $row['kind'] === self::KIND_CORRECTION) {
+                $announced[$at[0] . ':' . $at[1]] = $at;
+                continue;
+            }
+            if ($status === 'pending' && (int) $row['attempts'] === 0) {
                 $this->setStatus((int) $row['notification_id'], 'cancelled',
                     $newConvId !== null ? 'the outcome was replaced by conversion ' . $newConvId . ' before this was sent' : 'the outcome was retired before this was sent');
                 continue;
             }
-            if ((string) $row['status'] !== 'cancelled') {
-                $delivered[(int) $row['pixel_id']] = true;
+            // Sent, failed, or pending after an attempt: each may have
+            // reached the network. A cancelled reached is announced only if
+            // a correction says so (above).
+            if ($status !== 'cancelled') {
+                $announced[$at[0] . ':' . $at[1]] = $at;
             }
         }
-        if ($delivered === []) {
-            return;
-        }
 
-        if ($newConvId !== null) {
-            // The network already heard this outcome: the replacement's own
-            // "reached" would count it twice upstream.
-            $cancel = $this->conn->prepareWrite(
-                "UPDATE 202_notification_pending SET status = 'cancelled', last_error = ?
-                 WHERE conv_id = ? AND kind = 'reached' AND status = 'pending' AND attempts = 0"
-            );
-            $this->conn->bind($cancel, 'si', ['conversion ' . $oldConvId . ' already announced this outcome; a correction is recorded instead', $newConvId]);
-            $this->conn->executeUpdate($cancel);
-        }
-        foreach (array_keys($delivered) as $pixelId) {
+        foreach ($announced as [$pixelId, $destination]) {
+            if ($newConvId !== null) {
+                // This destination already heard the outcome: the
+                // replacement's own "reached" there would count it twice
+                // upstream. Only there — a destination the replaced row never
+                // reached still gets the replacement's.
+                $cancel = $this->conn->prepareWrite(
+                    "UPDATE 202_notification_pending SET status = 'cancelled', last_error = ?
+                     WHERE conv_id = ? AND pixel_id = ? AND destination = ? AND kind = 'reached' AND status = 'pending' AND attempts = 0"
+                );
+                $this->conn->bind($cancel, 'siii', [
+                    'conversion ' . $oldConvId . ' already announced this outcome here; a correction is recorded instead',
+                    $newConvId,
+                    $pixelId,
+                    $destination,
+                ]);
+                $this->conn->executeUpdate($cancel);
+            }
             $this->insert(
                 $userId,
                 $newConvId ?? $oldConvId,
                 $pixelId,
+                $destination,
                 $newConvId !== null ? self::KIND_CORRECTION : self::KIND_RETRACTION,
                 'suppressed',
                 '',
@@ -223,14 +245,10 @@ final class NotificationOutbox implements OutcomeNotificationSink
                 continue;
             }
 
-            $failedUrl = null;
-            foreach (explode("\n", (string) $row['url']) as $url) {
-                if ($url !== '' && !($this->fetch)($url)) {
-                    $failedUrl = $url;
-                    break;
-                }
-            }
-            if ($failedUrl === null) {
+            // One row, one URL (queueReached()): a retry resends only the
+            // destination that did not accept it.
+            $url = (string) $row['url'];
+            if (($this->fetch)($url)) {
                 $done = $this->conn->prepareWrite(
                     "UPDATE 202_notification_pending SET status = 'sent', sent_at = ?, last_error = NULL WHERE notification_id = ?"
                 );
@@ -239,7 +257,7 @@ final class NotificationOutbox implements OutcomeNotificationSink
                 $out['sent']++;
                 continue;
             }
-            $error = mb_strimwidth('the traffic source did not accept ' . $failedUrl, 0, 255, '…', 'UTF-8');
+            $error = mb_strimwidth('the traffic source did not accept ' . $url, 0, 255, '…', 'UTF-8');
             $status = $attempts >= self::MAX_ATTEMPTS ? 'failed' : 'pending';
             $mark = $this->conn->prepareWrite('UPDATE 202_notification_pending SET status = ?, last_error = ? WHERE notification_id = ?');
             $this->conn->bind($mark, 'ssi', [$status, $error, $id]);
@@ -278,17 +296,36 @@ final class NotificationOutbox implements OutcomeNotificationSink
         }, $url);
     }
 
-    private function insert(int $userId, int $convId, int $pixelId, string $kind, string $status, string $url, ?string $note, int $now): int
+    /**
+     * A pixel's destinations: its code's space-separated URLs, numbered by
+     * position. Blank runs between them are not destinations, so a doubled
+     * space does not shift the numbers of the URLs after it.
+     *
+     * @return list<string>
+     */
+    public static function destinations(string $pixelCode): array
+    {
+        $urls = [];
+        foreach (explode(' ', $pixelCode) as $url) {
+            if (trim($url) !== '') {
+                $urls[] = trim($url);
+            }
+        }
+
+        return $urls;
+    }
+
+    private function insert(int $userId, int $convId, int $pixelId, int $destination, string $kind, string $status, string $url, ?string $note, int $now): int
     {
         $stmt = $this->conn->prepareWrite(
             // ON DUPLICATE KEY, not IGNORE: IGNORE would also turn a value
             // the column refuses into a silently truncated row.
             'INSERT INTO 202_notification_pending
-                (user_id, conv_id, pixel_id, kind, status, url, attempts, next_attempt_at, last_error, created_at, sent_at)
-             VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL)
+                (user_id, conv_id, pixel_id, destination, kind, status, url, attempts, next_attempt_at, last_error, created_at, sent_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL)
              ON DUPLICATE KEY UPDATE notification_id = notification_id'
         );
-        $this->conn->bind($stmt, 'iiisssisi', [$userId, $convId, $pixelId, $kind, $status, $url, $now, $note, $now]);
+        $this->conn->bind($stmt, 'iiiisssisi', [$userId, $convId, $pixelId, $destination, $kind, $status, $url, $now, $note, $now]);
 
         return $this->conn->executeUpdate($stmt);
     }

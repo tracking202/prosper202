@@ -104,6 +104,9 @@ final class UserDeletionPurgeTest extends TestCase
         foreach (AppDataPurge::TABLE_ACTIONS as $table => $action) {
             $this->assertStringStartsWith($action, $byTable[$table] ?? '', "$table: the preview says $action");
         }
+        foreach (AppDataPurge::LINK_ACTIONS as $table => $action) {
+            $this->assertSame($action, $byTable[$table] ?? null, "$table: the preview says $action");
+        }
         $this->assertSame('202_users', end($cascade)['resource'], 'the soft delete is last, as it runs');
     }
 
@@ -142,6 +145,9 @@ final class UserDeletionPurgeTest extends TestCase
         foreach (AppDataPurge::TABLE_ACTIONS as $table => $action) {
             $statement = $action === 'release' ? 'UPDATE ' . $table . ' SET user_id = 0' : 'DELETE FROM ' . $table . ' WHERE user_id = ?';
             $this->assertStringContainsString($statement, $src, "$table: $action");
+        }
+        foreach (array_keys(AppDataPurge::LINK_ACTIONS) as $table) {
+            $this->assertStringContainsString('UPDATE ' . $table . ' SET app_registration_id = NULL', $src, "$table: unlinked");
         }
     }
 }
