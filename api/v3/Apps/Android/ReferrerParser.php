@@ -68,7 +68,7 @@ final class ReferrerParser
         $meta = $fields['utm_content'] !== null && self::isMetaEnvelope($fields['utm_content']);
         if ($tokens !== []) {
             $class = 'ours';
-        } elseif (self::isOrganic($pairs, $fields)) {
+        } elseif (self::isOrganic($pairs)) {
             $class = 'organic';
         } else {
             $class = 'third_party';
@@ -91,27 +91,40 @@ final class ReferrerParser
     }
 
     /**
-     * No referrer at all, or exactly Play's organic marker (and nothing a
-     * campaign would add to it).
+     * No referrer at all, or exactly Play's organic marker: every non-empty
+     * pair is one of `utm_source=google-play` and `utm_medium=organic`, and
+     * both are there. Read from the raw pairs, not the recognised-field map,
+     * because the map drops every name it does not know — so
+     * `…&adjust_tracker=x`, a second `utm_medium=cpc`, or any other tracker's
+     * parameter would vanish from it and leave a campaign's referrer reading
+     * as organic.
      *
      * @param list<string> $pairs
-     * @param array<string, string|null> $fields
      */
-    private static function isOrganic(array $pairs, array $fields): bool
+    private static function isOrganic(array $pairs): bool
     {
-        if ($pairs === [] || array_filter($pairs, static fn (string $p): bool => $p !== '') === []) {
+        $pairs = array_values(array_filter($pairs, static fn (string $p): bool => $p !== ''));
+        if ($pairs === []) {
             return true;
         }
-        if ($fields['utm_source'] !== 'google-play' || $fields['utm_medium'] !== 'organic') {
-            return false;
-        }
-        foreach ($fields as $name => $value) {
-            if ($value !== null && $name !== 'utm_source' && $name !== 'utm_medium') {
+        $seen = ['utm_source' => false, 'utm_medium' => false];
+        foreach ($pairs as $pair) {
+            $eq = strpos($pair, '=');
+            if ($eq === false) {
+                return false;
+            }
+            $name = urldecode(substr($pair, 0, $eq));
+            $value = urldecode(substr($pair, $eq + 1));
+            if ($name === 'utm_source' && $value === 'google-play') {
+                $seen['utm_source'] = true;
+            } elseif ($name === 'utm_medium' && $value === 'organic') {
+                $seen['utm_medium'] = true;
+            } else {
                 return false;
             }
         }
 
-        return true;
+        return $seen['utm_source'] && $seen['utm_medium'];
     }
 
     /** Meta's install referrer: utm_content holding {"source": {"data": …, "nonce": …}}. */

@@ -25,6 +25,12 @@ extension UserDefaults: P202KeyValueStore {
 /// definitions are validated with JSON's integer/fraction distinction intact
 /// (see JSONValue), and only the server's own bytes are sure to keep it. A
 /// body that no longer decodes loads as an empty cache, never a crash.
+///
+/// The ETag and the fetch time describe the body, so they are kept only
+/// with one. A cache written before the body was stored (it held `schema`,
+/// `etag` and `fetchedAt`, and the schema is not re-decodable) loads with
+/// no ETag: sent as If-None-Match, that ETag would be answered 304 — "you
+/// have it" — for a document this device no longer holds, on every fetch.
 struct SchemaCache: Codable, Equatable {
     var body: Data?
     var etag: String?
@@ -45,6 +51,11 @@ struct SchemaCache: Codable, Equatable {
         fetchedAt = try c.decodeIfPresent(Date.self, forKey: .fetchedAt)
         if let body {
             schema = try P202AttributionSchema.decode(responseBody: body)
+        }
+        if schema == nil {
+            // No document to vouch for: the next fetch is unconditional.
+            etag = nil
+            fetchedAt = nil
         }
     }
 
@@ -149,8 +160,28 @@ struct DeviceGoalState: Codable, Equatable {
     var installAt: Int?
     var installEvaluated = false
     var lastReceivedAt = 0
+    /// The install postback's goal progress.
     var state = EvaluationState()
+    /// The re-engagement postback's, kept apart (P202Attribution.evaluate):
+    /// optional so a state stored before re-engagement had its own decodes
+    /// (as a fresh lifecycle) rather than failing and starting everything
+    /// over.
+    var reengagementState: EvaluationState?
     var pending: [Pending] = []
+
+    func progress(for type: ConversionUpdate.ConversionType) -> EvaluationState {
+        switch type {
+        case .install: return state
+        case .reengagement: return reengagementState ?? EvaluationState()
+        }
+    }
+
+    mutating func setProgress(_ progress: EvaluationState, for type: ConversionUpdate.ConversionType) {
+        switch type {
+        case .install: state = progress
+        case .reengagement: reengagementState = progress
+        }
+    }
 
     /// A stored state that cannot be read starts over rather than crash;
     /// that is the one path that can re-report the install's goals, and the

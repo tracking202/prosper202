@@ -71,6 +71,22 @@ final class InstallClassificationTest extends TestCase
         self::assertSame('organic', ReferrerParser::parse('utm_source=google-play&utm_medium=organic')['class']);
         self::assertSame('third_party', ReferrerParser::parse('utm_source=google-play&utm_medium=organic&utm_campaign=x')['class'],
             'the organic marker plus a campaign is somebody\'s link');
+        self::assertSame('organic', ReferrerParser::parse('utm_medium=organic&&utm_source=google-play&')['class'],
+            'order and empty pairs do not change the marker');
+        // The marker is exactly two pairs. Anything else rides a campaign,
+        // including names the parser does not recognise and a second value
+        // for a name it does — both vanish from the recognised-field map.
+        foreach ([
+            'utm_source=google-play&utm_medium=organic&adjust_tracker=x',
+            'utm_source=google-play&utm_medium=organic&af_c_id=1',
+            'utm_source=google-play&utm_medium=organic&utm_medium=cpc',
+            'utm_source=google-play&utm_source=partner&utm_medium=organic',
+            'utm_source=google-play&utm_medium=organic&flag',
+            'utm_source=google-play',
+            'utm_medium=organic',
+        ] as $referrer) {
+            self::assertSame('third_party', ReferrerParser::parse($referrer)['class'], $referrer);
+        }
         self::assertSame('third_party', ReferrerParser::parse('gclid=Cj0KCQ')['class']);
         self::assertSame('third_party', ReferrerParser::parse('utm_source=apps.facebook.com&utm_content=' . rawurlencode('{"app":1,"t":2,"source":{"data":"x","nonce":"y"}}'))['class']);
         self::assertTrue(ReferrerParser::parse('utm_content=' . rawurlencode('{"source":{"data":"x","nonce":"y"}}'))['meta_envelope']);

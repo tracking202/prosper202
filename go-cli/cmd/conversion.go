@@ -257,6 +257,12 @@ func init() {
 	conversionListCmd.Flags().String("click_id", "", "Only this click's conversions (see also `p202 click conversions <id>`)")
 	conversionListCmd.Flags().String("source", "", "Only conversions from this source: "+strings.Join(conversionSources, ", "))
 	conversionListCmd.Flags().String("goal", "", "Only this goal's outcomes, every version (goal id from `p202 goal list`)")
+	// An empty filter is refused by name (empty_flags.go): read as "not
+	// given" it would list every conversion as though filtered.
+	emptyHint(conversionListCmd, "click_id", "Omit --click_id to list every click's conversions, or pass an internal click id from `p202 click list`.")
+	emptyHint(conversionListCmd, "source", "Omit --source to list every source, or pass one of: "+strings.Join(conversionSources, ", ")+".")
+	emptyHint(conversionListCmd, "goal", "Omit --goal to list every goal's conversions, or pass a goal id from `p202 goal list`.")
+	emptyHint(conversionListCmd, "aff_campaign_id", "Omit --aff_campaign_id to list every campaign's conversions, or pass a campaign id from `p202 campaign list`.")
 
 	conversionCreateCmd.Flags().String("click_id", "", "Click ID (required)")
 	conversionCreateCmd.Flags().String("click_id_public", "", "Legacy alias for --click_id")

@@ -437,37 +437,60 @@ final class MysqlGoalRepository
 
             return $row !== null ? (int) $row['goal_id'] : null;
         };
+        $definition = GoalDefinition::parse(self::BUILTIN_INSTALL_DEFINITION);
         $existing = $find();
         if ($existing !== null) {
+            $this->ensureBuiltinInstallVersion($existing, $definition, $now);
+
             return $existing;
         }
-        $definition = GoalDefinition::parse(self::BUILTIN_INSTALL_DEFINITION);
         $stmt = $this->conn->prepareWrite(
             "INSERT INTO 202_goals (user_id, scope, scope_id, name, current_version, builtin, archived_at, created_at, updated_at)
              VALUES (?, 'registration', ?, ?, 1, 'install', NULL, ?, ?)
              ON DUPLICATE KEY UPDATE goal_id = goal_id"
         );
         $this->conn->bind($stmt, 'iisii', [$userId, $registrationId, $definition->name, $now, $now]);
-        // Affected rows, not the insert id: an INSERT that hit the key
-        // reports no id of its own, and the connection-level fallback would
-        // hand back whatever this connection inserted last.
-        $inserted = $this->conn->executeUpdate($stmt) === 1;
+        // Read back, not the insert id: an INSERT that hit the key reports
+        // no id of its own, and the connection-level fallback would hand
+        // back whatever this connection inserted last.
+        $this->conn->executeUpdate($stmt);
         $goalId = $find();
         if ($goalId === null) {
             throw new GoalEngineException('the built-in install goal of registration ' . $registrationId . ' could not be created', GoalEngineException::INTEGRITY);
         }
-        if ($inserted) {
-            // Effective from the epoch: the install goal applies to every
-            // install of the registration, including one received in the
-            // same second the goal was made.
-            $version = $this->conn->prepareWrite(
-                'INSERT INTO 202_goal_versions (goal_id, version, definition, effective_at, created_at) VALUES (?, 1, ?, 0, ?)'
-            );
-            $this->conn->bind($version, 'isi', [$goalId, $definition->toJson(), $now]);
-            $this->conn->executeUpdate($version);
-        }
+        $this->ensureBuiltinInstallVersion($goalId, $definition, $now);
 
         return $goalId;
+    }
+
+    /**
+     * The install goal's one version, written when it is missing — on
+     * every call, not only by the call that inserted the goal. The two
+     * INSERTs are not always one transaction (registration create runs
+     * this in autocommit), so a goal row can commit without its version;
+     * such a goal evaluates nothing, and every attributed install of the
+     * registration would then fail its "an attributed install names its
+     * conversion" check, retry after retry. Found missing here, it is
+     * repaired by whichever caller comes next. The goal row is locked by
+     * the caller's find(), and the PRIMARY KEY (goal_id, version) settles
+     * two repairers outside a transaction.
+     */
+    private function ensureBuiltinInstallVersion(int $goalId, GoalDefinition $definition, int $now): void
+    {
+        $has = $this->conn->prepareWrite('SELECT 1 AS present FROM 202_goal_versions WHERE goal_id = ? AND version = 1 LIMIT 1');
+        $this->conn->bind($has, 'i', [$goalId]);
+        if ($this->conn->fetchOne($has) !== null) {
+            return;
+        }
+        // Effective from the epoch: the install goal applies to every
+        // install of the registration, including one received in the same
+        // second the goal was made.
+        $version = $this->conn->prepareWrite(
+            'INSERT INTO 202_goal_versions (goal_id, version, definition, effective_at, created_at) VALUES (?, 1, ?, 0, ?)
+             ON DUPLICATE KEY UPDATE goal_id = goal_id'
+        );
+        $this->conn->bind($version, 'isi', [$goalId, $definition->toJson(), $now]);
+        $this->conn->executeUpdate($version);
     }
 
     /** 202_goals.builtin of the built-in install goal. */

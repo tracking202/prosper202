@@ -107,6 +107,13 @@ anything fails, so the SDK's retry is safe):
 Every install carries a `match_reason` sentence. A **test** install (a debug
 build's `test: true`) is classified the same way and counts — is trusted,
 and pays — only when the registration's `accept_test_signals` is `1`.
+The policy is live: changing it re-judges the test installs already
+stored. One that becomes trusted is credited as if it had arrived then —
+its install conversion and its goal conversions written on its click (or
+the ones an earlier change retired, restored), and its traffic source
+notified. One that stops being trusted keeps its place in the funnel, but
+its conversions are retired: a notification not yet sent is cancelled,
+and one that went out is followed by a retraction.
 
 ## 4. What an install pays
 
@@ -246,9 +253,11 @@ its clicks again. Installs of that registration still waiting for a Play
 Integrity verdict can then never get one, so the delete settles them in the
 same transaction: `integrity_state` becomes `error` and a held
 `pending_integrity` install `integrity_unverified` — recorded, never paid,
-with a reason naming the deletion. (A `pending_click` install of a deleted
-registration stays `pending_click`: there is no policy left to settle it
-under.)
+with a reason naming the deletion. An install still `pending_click` can
+never be settled either, so the delete settles it as the 24-hour deadline
+would: `bad_token`, never paid, pruned with the refuted installs. The
+verifier and the pending-click settler do the same for installs whose
+registration disappeared any other way.
 
 ## 9. Play Integrity
 
@@ -298,6 +307,13 @@ file>}`, then `PUT /apps/{id}` with `integrity_mode`; `bin/p202` has
   arriving (`p202 app integrity status 3` shows
   `installs.by_integrity_state.pending`). Rotating it (setting it again) is
   always allowed.
+- These rules hold under concurrency too: a mode write, a credential set
+  or clear, and a registration delete all take the registration's row
+  lock for their check and their write, so two requests that overlap are
+  decided one after the other — a clear that races a switch to `observe`
+  either lands first (and the switch is refused) or sees `observe` (and is
+  refused), and a credential set that races a delete never leaves a key
+  stored for an app that no longer exists.
 - The key is stored **encrypted** (AES-256-GCM under an installation key in
   `202_deployment_secrets`, bound to the registration), and no response,
   CLI output or error message ever contains it — the status shows the
@@ -348,6 +364,14 @@ after 1 minute, doubling to at most an hour, for 24 hours. Then the verdict
 is `error`, and under `require` the install is `integrity_unverified` —
 recorded, unvouched, never paid. Nothing is ever waved through. The
 install's `integrity_reason` says what the last attempt met.
+
+The 24 hours are counted from when the install arrived, whatever the
+worker's timing: an install already past them when the worker reaches it
+(the cron was stopped, or a backlog) is not decoded at all, and a passing
+verdict that comes back after them is kept on the install for the record
+but not accepted. An attempt that fails inside the server (not at Google)
+counts as an attempt too, so at 24 hours or 24 attempts the install is
+retired like any other rather than tried for ever.
 
 Google's default quota is 10,000 decodes per app per day;
 `GET /apps/{id}/integrity` shows how many tokens Google decoded since UTC

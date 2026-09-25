@@ -92,6 +92,26 @@ final class SchemaCacheTests: XCTestCase {
         )
     }
 
+    func testALegacyCacheWithoutItsBodyLoadsWithoutItsETag() throws {
+        // Written before the body was stored: the document itself cannot be
+        // read back, so its ETag must not be either — sent as If-None-Match
+        // it would be answered 304 for a document this device does not hold.
+        let store = InMemoryStore()
+        let legacy = #"{"schema":{"app_id":42,"schema_version":"abc"},"etag":"\"abc\"","fetchedAt":748000000}"#
+        store.set(Data(legacy.utf8), forKey: SchemaCache.storageKey(appToken: "token-a"))
+        let loaded = SchemaCache.load(from: store, appToken: "token-a")
+        XCTAssertNil(loaded.schema)
+        XCTAssertNil(loaded.etag, "no body, no ETag")
+        XCTAssertNil(loaded.fetchedAt, "no body, no fetch to throttle on")
+
+        // A cache with its body keeps both.
+        var cache = SchemaCache()
+        cache.store(body: TestSchema.body, schema: try P202AttributionSchema.decode(responseBody: TestSchema.body))
+        cache.fetchedAt = Date(timeIntervalSince1970: 1_725_690_000)
+        cache.save(to: store, appToken: "token-b")
+        XCTAssertEqual(SchemaCache.load(from: store, appToken: "token-b").etag, "\"abc\"")
+    }
+
     func testCorruptStoredDataLoadsAsEmptyNotACrash() {
         let store = InMemoryStore()
         store.set(Data("not json".utf8), forKey: SchemaCache.storageKey(appToken: "token-a"))

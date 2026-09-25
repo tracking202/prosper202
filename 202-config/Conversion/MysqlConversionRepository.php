@@ -786,6 +786,10 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
 
     /**
      * A goal row of this account, or a refusal naming what it is instead.
+     * The built-in install goal's row (source app_install) is a goal row
+     * too: the engine writes it for that goal's outcome, and a withdrawn
+     * install credit retires it and a restored one revives it
+     * (GoalEngine::recreditInstallInTransaction()).
      *
      * @return array{click_id: int|string, dedupe_key: string}
      */
@@ -799,7 +803,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         if ($row === null) {
             throw new LedgerIntegrityException('conversion ' . $convId . ' does not exist');
         }
-        if ((string) $row['source'] !== ConversionSource::GOAL->value) {
+        if ((string) $row['source'] !== ConversionSource::GOAL->value && (string) $row['source'] !== ConversionSource::APP_INSTALL->value) {
             throw new LedgerIntegrityException('conversion ' . $convId . ' is a ' . (string) $row['source'] . ' row, not a goal row');
         }
 
