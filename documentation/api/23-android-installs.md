@@ -161,6 +161,13 @@ attempted (sent, retrying or failed), nothing more is sent there and a
 `correction` is recorded as `suppressed` (no pixel has a correction URL
 yet). Other URLs are unaffected by that decision.
 
+What a network knows is decided per goal and `n`, not per conversion. A
+goal re-evaluation that retires an outcome and a later one that brings the
+same outcome back never announces it twice: the retraction is cancelled if
+it never went out, and a `correction` is recorded if it did. An outcome a
+new goal version writes for an `n` an earlier version already announced
+is a `correction` at that URL, not a new postback.
+
 Schedule the job every minute:
 
 ```

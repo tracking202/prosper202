@@ -41,6 +41,27 @@ use Prosper202\Database\Connection;
  * `suppressed`, because no pixel has a correction URL to carry it yet. The
  * full table is in plan §5.10.
  *
+ * Announced-ness belongs to the outcome, not the row (plan §5.7): a traffic
+ * source's knowledge is per (subject, goal, n) and per destination.
+ * - A revived row keeps its conv_id, so its `reached` already exists and is
+ *   never queued a second time (onRevived()). A retraction of it that is
+ *   still pending and unattempted is cancelled, and so is one stored
+ *   `suppressed` (neither went out, so the network still holds the revived
+ *   value); one that was delivered — sent, failed, or attempted — is
+ *   answered by a `correction` with previous value 0. A `reached` the
+ *   retirement cancelled unsent, at a destination nothing else announced
+ *   the outcome to, is queued again: that network has heard nothing.
+ * - A new row for an (subject, goal, n) that some earlier row — retired rows
+ *   included, whatever their version — announced at a destination is a
+ *   `correction` there, not a fresh `reached` (onAnnouncedBefore()).
+ * Every correction and retraction follows one rule (amend()): sent to the
+ * destination's correction URL when it has one, stored `suppressed` with the
+ * reason otherwise. No destination has one until they can be configured
+ * (PR 11); the resolver is a constructor seam. `generation` numbers the
+ * corrections and retractions of one conversion at one destination, so a
+ * row retired, revived and retired again records each step instead of the
+ * second retraction being swallowed by the first one's key.
+ *
  * Sending (sendDue()) is the worker's: never on the request path, which
  * makes no external calls (plan §7.3). Each row is claimed with a
  * compare-and-set on its attempt count before the send, so two workers
@@ -58,13 +79,20 @@ final class NotificationOutbox implements OutcomeNotificationSink
     /** @var callable(string): bool */
     private $fetch;
 
+    /** @var callable(int, int): ?string */
+    private $correctionUrl;
+
     /**
      * @param (callable(): int)|null $clock
      * @param (callable(string): bool)|null $fetch
+     * @param (callable(int, int): ?string)|null $correctionUrl a destination's
+     *        correction URL (pixel id, destination), or null where it has
+     *        none; by default none has one (configuring them is PR 11's)
      */
-    public function __construct(private Connection $conn, private $clock = null, ?callable $fetch = null)
+    public function __construct(private Connection $conn, private $clock = null, ?callable $fetch = null, ?callable $correctionUrl = null)
     {
         $this->fetch = $fetch ?? PostbackSender::fetch(...);
+        $this->correctionUrl = $correctionUrl ?? static fn (int $pixelId, int $destination): ?string => null;
     }
 
     private function now(): int
@@ -120,7 +148,7 @@ final class NotificationOutbox implements OutcomeNotificationSink
         $now = $this->now();
         foreach ($pixels as $pixel) {
             foreach (self::destinations((string) $pixel['pixel_code']) as $destination => $url) {
-                $queued += $this->insert($userId, $convId, (int) $pixel['pixel_id'], $destination, self::KIND_REACHED, 'pending', self::replaceTokens($url, $tokens), null, $now);
+                $queued += $this->insert($userId, $convId, (int) $pixel['pixel_id'], $destination, self::KIND_REACHED, 0, 'pending', self::replaceTokens($url, $tokens), null, $now);
             }
         }
 
@@ -189,18 +217,170 @@ final class NotificationOutbox implements OutcomeNotificationSink
                 ]);
                 $this->conn->executeUpdate($cancel);
             }
-            $this->insert(
+            $this->amend(
                 $userId,
                 $newConvId ?? $oldConvId,
                 $pixelId,
                 $destination,
                 $newConvId !== null ? self::KIND_CORRECTION : self::KIND_RETRACTION,
-                'suppressed',
-                '',
-                self::NO_CORRECTION_URL . ' (announced by conversion ' . $oldConvId . ')',
+                $oldConvId,
+                null,
+                'announced by conversion ' . $oldConvId,
                 $now
             );
         }
+    }
+
+    /**
+     * Ledger row $convId, retired earlier, counts again (plan §5.7 (1)): the
+     * engine revived its outcome and restored the row. It keeps its conv_id,
+     * so its `reached` already exists and is never queued a second time.
+     * Decided per destination, in the caller's transaction:
+     * - its open retraction (the latest, with no correction after it)
+     *   pending and unattempted, or `suppressed`: cancelled — it never went
+     *   out, so the network still holds the value it was told;
+     * - delivered (sent, failed, or pending after an attempt — any of which
+     *   may have landed): a retrying one is stopped, since a later success
+     *   would zero what the correction restores, and a `correction` with
+     *   previous value 0 is recorded under the correction-URL rule;
+     * - no open retraction, and its `reached` cancelled unsent with no
+     *   correction beside it (the retirement stopped it before it went out,
+     *   and no earlier row announced the outcome there): queued again;
+     * - otherwise nothing.
+     */
+    public function onRevived(int $userId, int $convId): void
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT notification_id, pixel_id, destination, kind, status, attempts FROM 202_notification_pending
+             WHERE conv_id = ? ORDER BY notification_id FOR UPDATE'
+        );
+        $this->conn->bind($stmt, 'i', [$convId]);
+        /** @var array<string, array{pixel: int, destination: int, reached: array<string, mixed>|null, retraction: array<string, mixed>|null, corrected: bool}> $at */
+        $at = [];
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $key = (int) $row['pixel_id'] . ':' . (int) $row['destination'];
+            $at[$key] ??= ['pixel' => (int) $row['pixel_id'], 'destination' => (int) $row['destination'], 'reached' => null, 'retraction' => null, 'corrected' => false];
+            $kind = (string) $row['kind'];
+            if ($kind === self::KIND_REACHED) {
+                $at[$key]['reached'] = $row;
+            } elseif ($kind === self::KIND_RETRACTION) {
+                // In id order: the latest retraction is the open one unless
+                // a correction follows it.
+                $at[$key]['retraction'] = $row;
+            } elseif ($kind === self::KIND_CORRECTION) {
+                $at[$key]['corrected'] = true;
+                $at[$key]['retraction'] = null;
+            }
+        }
+        $now = $this->now();
+        foreach ($at as $d) {
+            $retraction = $d['retraction'];
+            if ($retraction !== null && (string) $retraction['status'] !== 'cancelled') {
+                $status = (string) $retraction['status'];
+                $attempts = (int) $retraction['attempts'];
+                if ($status === 'suppressed' || ($status === 'pending' && $attempts === 0)) {
+                    $this->setStatus((int) $retraction['notification_id'], 'cancelled',
+                        'the outcome was revived before this retraction went out; the network still holds its value');
+                    continue;
+                }
+                if ($status === 'pending') {
+                    $this->setStatus((int) $retraction['notification_id'], 'cancelled',
+                        'the outcome was revived while this retraction was retrying; a correction follows');
+                }
+                $this->amend($userId, $convId, $d['pixel'], $d['destination'], self::KIND_CORRECTION, $convId, '0',
+                    'conversion ' . $convId . ' was revived after its retraction was delivered', $now);
+                continue;
+            }
+            $reached = $d['reached'];
+            if ($reached !== null && !$d['corrected'] && $retraction === null
+                && (string) $reached['status'] === 'cancelled' && (int) $reached['attempts'] === 0) {
+                $restore = $this->conn->prepareWrite(
+                    "UPDATE 202_notification_pending SET status = 'pending', next_attempt_at = ?, last_error = NULL
+                     WHERE notification_id = ? AND status = 'cancelled' AND attempts = 0"
+                );
+                $this->conn->bind($restore, 'ii', [$now, (int) $reached['notification_id']]);
+                if ($this->conn->executeUpdate($restore) !== 1) {
+                    throw new \RuntimeException('notification ' . (int) $reached['notification_id'] . ' of revived conversion ' . $convId . ' could not be queued again');
+                }
+            }
+        }
+    }
+
+    /**
+     * Ledger row $newConvId is new, and $priorConvIds are the other rows
+     * ever written for its (subject, goal, n) — retired ones included,
+     * whatever their version (plan §5.7 (2)). At every destination where
+     * one of them was announced — its `reached` sent, failed or attempted,
+     * or a correction or retraction recorded for it there — this row is a
+     * `correction`, not a fresh `reached`: its pending, unattempted
+     * `reached` there is cancelled and a correction recorded, whose previous
+     * value is what the network last heard there. A destination where this
+     * row already carries a correction (onReplaced() recorded it a moment
+     * earlier in the same transaction: a new row has no older one) is left
+     * as it is. In the caller's transaction; returns whether any destination
+     * was withheld.
+     *
+     * @param list<int> $priorConvIds
+     */
+    public function onAnnouncedBefore(int $userId, int $newConvId, array $priorConvIds): bool
+    {
+        $priorConvIds = array_values(array_unique(array_filter($priorConvIds, static fn (int $c): bool => $c !== $newConvId)));
+        if ($priorConvIds === []) {
+            return false;
+        }
+        $stmt = $this->conn->prepareWrite(
+            'SELECT conv_id, pixel_id, destination, kind, status, attempts FROM 202_notification_pending
+             WHERE conv_id IN (' . implode(',', array_fill(0, count($priorConvIds), '?')) . ') ORDER BY notification_id'
+        );
+        $this->conn->bind($stmt, str_repeat('i', count($priorConvIds)), $priorConvIds);
+        /** @var array<string, array{pixel: int, destination: int, last: array{0: int, 1: bool}|null}> $announced last: [conversion, retracted] */
+        $announced = [];
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $kind = (string) $row['kind'];
+            $status = (string) $row['status'];
+            $delivered = $status === 'sent' || $status === 'failed' || (int) $row['attempts'] > 0;
+            if ($kind === self::KIND_REACHED && !$delivered) {
+                continue;
+            }
+            $key = (int) $row['pixel_id'] . ':' . (int) $row['destination'];
+            $announced[$key] ??= ['pixel' => (int) $row['pixel_id'], 'destination' => (int) $row['destination'], 'last' => null];
+            // What the network last heard there: a delivered reached or
+            // correction is that row's value, a delivered retraction zero.
+            // A suppressed or unsent amendment changed nothing upstream, but
+            // a correction marks a row whose predecessor was heard.
+            if ($delivered) {
+                $announced[$key]['last'] = [(int) $row['conv_id'], $kind === self::KIND_RETRACTION];
+            } elseif ($announced[$key]['last'] === null && $kind === self::KIND_CORRECTION) {
+                $announced[$key]['last'] = [(int) $row['conv_id'], false];
+            }
+        }
+        if ($announced === []) {
+            return false;
+        }
+        $now = $this->now();
+        $note = mb_strimwidth('an earlier row for this goal and n (conversion ' . implode(', ', $priorConvIds) . ') was announced here; a correction is recorded instead', 0, 255, '…', 'UTF-8');
+        foreach ($announced as $d) {
+            $has = $this->conn->prepareWrite(
+                "SELECT COUNT(*) AS n FROM 202_notification_pending WHERE conv_id = ? AND pixel_id = ? AND destination = ? AND kind = 'correction'"
+            );
+            $this->conn->bind($has, 'iii', [$newConvId, $d['pixel'], $d['destination']]);
+            if ((int) ($this->conn->fetchOne($has)['n'] ?? 0) > 0) {
+                continue;
+            }
+            $cancel = $this->conn->prepareWrite(
+                "UPDATE 202_notification_pending SET status = 'cancelled', last_error = ?
+                 WHERE conv_id = ? AND pixel_id = ? AND destination = ? AND kind = 'reached' AND status = 'pending' AND attempts = 0"
+            );
+            $this->conn->bind($cancel, 'siii', [$note, $newConvId, $d['pixel'], $d['destination']]);
+            $this->conn->executeUpdate($cancel);
+            // A retraction-only history (its reached cancelled, a correction
+            // suppressed) still names the row the network heard of.
+            [$lastConv, $retracted] = $d['last'] ?? [$priorConvIds[0], false];
+            $this->amend($userId, $newConvId, $d['pixel'], $d['destination'], self::KIND_CORRECTION, $lastConv,
+                $retracted ? '0' : null, 'this goal and n were announced by conversion ' . $lastConv, $now);
+        }
+
+        return true;
     }
 
     /**
@@ -315,19 +495,96 @@ final class NotificationOutbox implements OutcomeNotificationSink
         return $urls;
     }
 
-    private function insert(int $userId, int $convId, int $pixelId, int $destination, string $kind, string $status, string $url, ?string $note, int $now): int
+    private function insert(int $userId, int $convId, int $pixelId, int $destination, string $kind, int $generation, string $status, string $url, ?string $note, int $now): int
     {
         $stmt = $this->conn->prepareWrite(
             // ON DUPLICATE KEY, not IGNORE: IGNORE would also turn a value
             // the column refuses into a silently truncated row.
             'INSERT INTO 202_notification_pending
-                (user_id, conv_id, pixel_id, destination, kind, status, url, attempts, next_attempt_at, last_error, created_at, sent_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL)
+                (user_id, conv_id, pixel_id, destination, kind, generation, status, url, attempts, next_attempt_at, last_error, created_at, sent_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL)
              ON DUPLICATE KEY UPDATE notification_id = notification_id'
         );
-        $this->conn->bind($stmt, 'iiiisssisi', [$userId, $convId, $pixelId, $destination, $kind, $status, $url, $now, $note, $now]);
+        $this->conn->bind($stmt, 'iiiisissisi', [$userId, $convId, $pixelId, $destination, $kind, $generation, $status, $url, $now, $note, $now]);
 
         return $this->conn->executeUpdate($stmt);
+    }
+
+    /**
+     * Record a correction or retraction of $convId at one destination, as
+     * its next generation there: queued for the destination's correction URL
+     * when it has one — tokens [[subid]], [[p202_goal_value]] and [[payout]]
+     * (the value the network should now hold, 0 for a retraction),
+     * [[p202_previous_value]], [[p202_conv_id]], [[p202_original_conv_id]],
+     * [[p202_notification]] (the kind), [[transactionid]] / [[t202txid]],
+     * [[timestamp]], [[random]] — and stored `suppressed`, with why,
+     * otherwise. $previousValue null means $originalConvId's value; the
+     * ledger is read only for a URL, so a suppressed amendment needs no row.
+     */
+    private function amend(int $userId, int $convId, int $pixelId, int $destination, string $kind, int $originalConvId, ?string $previousValue, string $why, int $now): void
+    {
+        $gen = $this->conn->prepareWrite(
+            'SELECT COALESCE(MAX(generation) + 1, 0) AS g FROM 202_notification_pending
+             WHERE conv_id = ? AND pixel_id = ? AND destination = ? AND kind = ? FOR UPDATE'
+        );
+        $this->conn->bind($gen, 'iiis', [$convId, $pixelId, $destination, $kind]);
+        $generation = (int) ($this->conn->fetchOne($gen)['g'] ?? 0);
+
+        $template = ($this->correctionUrl)($pixelId, $destination);
+        if ($template === null || trim($template) === '') {
+            $status = 'suppressed';
+            $url = '';
+            $note = mb_strimwidth(self::NO_CORRECTION_URL . ' (' . $why . ')', 0, 255, '…', 'UTF-8');
+        } else {
+            $row = $this->conversion($convId);
+            $holds = $kind === self::KIND_RETRACTION ? '0' : $row['value'];
+            $status = 'pending';
+            $note = null;
+            $url = self::replaceTokens(trim($template), [
+                'subid' => (string) $row['click_id'],
+                'payout' => $holds,
+                'p202_goal_value' => $holds,
+                'p202_previous_value' => $previousValue ?? $this->conversion($originalConvId)['value'],
+                'p202_conv_id' => (string) $convId,
+                'p202_original_conv_id' => (string) $originalConvId,
+                'p202_notification' => $kind,
+                'transactionid' => $row['transaction_id'] ?? $row['dedupe_key'],
+                'timestamp' => (string) $now,
+                'random' => (string) random_int(1000000, 9999999),
+            ]);
+        }
+        if ($this->insert($userId, $convId, $pixelId, $destination, $kind, $generation, $status, $url, $note, $now) !== 1) {
+            // Only a concurrent writer at the same generation lands here, and
+            // the engine's subject lock rules that out: refused, not lost.
+            throw new \RuntimeException('the ' . $kind . ' of conversion ' . $convId . ' at pixel ' . $pixelId . ' destination ' . $destination
+                . ' (generation ' . $generation . ') was not recorded');
+        }
+    }
+
+    /**
+     * What an amendment says about a ledger row: its click, its value, and
+     * its transaction id or ledger key.
+     *
+     * @return array{click_id: int, value: string, transaction_id: string|null, dedupe_key: string}
+     */
+    private function conversion(int $convId): array
+    {
+        $stmt = $this->conn->prepareWrite('SELECT click_id, click_payout, transaction_id, dedupe_key FROM 202_conversion_logs WHERE conv_id = ? LIMIT 1');
+        $this->conn->bind($stmt, 'i', [$convId]);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            // The user purge deletes a conversion's notifications with it: a
+            // notification without its row is a broken link, and an
+            // amendment carrying a made-up value would be worse than none.
+            throw new \RuntimeException('conversion ' . $convId . ' has notifications but no ledger row');
+        }
+
+        return [
+            'click_id' => (int) $row['click_id'],
+            'value' => (string) $row['click_payout'],
+            'transaction_id' => $row['transaction_id'] !== null && $row['transaction_id'] !== '' ? (string) $row['transaction_id'] : null,
+            'dedupe_key' => (string) $row['dedupe_key'],
+        ];
     }
 
     private function setStatus(int $id, string $status, string $note): void

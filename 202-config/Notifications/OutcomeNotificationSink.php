@@ -35,4 +35,20 @@ interface OutcomeNotificationSink
      * replacement ($newConvId null).
      */
     public function onReplaced(int $userId, int $oldConvId, ?int $newConvId): void;
+
+    /**
+     * Ledger row $convId, which the engine had retired, counts again: its
+     * outcome was revived (plan §5.7 (1)). Never a second `reached`.
+     */
+    public function onRevived(int $userId, int $convId): void;
+
+    /**
+     * Ledger row $newConvId is new, and $priorConvIds are the other rows
+     * ever written for its (subject, goal, n), retired ones included (plan
+     * §5.7 (2)). Returns whether it was withheld anywhere because one of
+     * them had been announced there.
+     *
+     * @param list<int> $priorConvIds
+     */
+    public function onAnnouncedBefore(int $userId, int $newConvId, array $priorConvIds): bool;
 }
