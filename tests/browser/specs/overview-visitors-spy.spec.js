@@ -270,6 +270,46 @@ module.exports = {
     },
 
     {
+      // Every ISP any account's clicks have named is a row of
+      // 202_locations_isp; the menu is this account's, from its clicks.
+      name: 'The ISP menu lists this account\'s ISPs, not the install\'s, and keeps the one in force',
+      async run(ctx) {
+        const { app, ui, db, expect } = ctx;
+        db.write(PREF_RESET);
+        const name = 'Probe ISP ' + Date.now();
+        // The stored ISP filter is a TINYINT, so a filterable ISP has an id
+        // of 255 or less: take the highest free one.
+        const used = new Set(db.rows('SELECT isp_id FROM 202_locations_isp WHERE isp_id <= 255').map((r) => String(r[0])));
+        let id = '';
+        for (let n = 255; n >= 1 && id === ''; n--) {
+          if (!used.has(String(n))) { id = String(n); }
+        }
+        if (id === '') {
+          expect.skip('the ISP menu', 'every ISP id a filter can store is taken');
+          return;
+        }
+        db.write('INSERT INTO 202_locations_isp (isp_id, isp_name) VALUES (' + Number(id) + ", '" + name + "')");
+        try {
+          await app.goto('/tracking202/visitors/');
+          await checks.overviewReportDrawn(ui, '#visitors-report');
+          const options = await ui.page.$$eval('#visitors-filters-isp_id option', (os) => os.map((o) => o.textContent.trim()));
+          const seen = Number(db.value('SELECT COUNT(DISTINCT isp_id) FROM 202_dataengine WHERE user_id=1 AND isp_id IS NOT NULL'
+            + ' AND click_time BETWEEN UNIX_TIMESTAMP(CURDATE()) AND UNIX_TIMESTAMP(CURDATE() + INTERVAL 1 DAY)'));
+          expect.eq(options.length, seen + 1, 'the menu is "All" and the ISPs this account\'s clicks came through today', JSON.stringify(options));
+          expect.notOk(options.includes(name), 'an ISP no click of this account came through is not offered');
+
+          await app.goto('/tracking202/visitors/?isp_id=' + id);
+          await checks.overviewReportDrawn(ui, '#visitors-report');
+          expect.eq(await ui.value('#visitors-filters-isp_id'), id, 'a filter in force stays selected');
+          expect.eq(await ui.page.$eval('#visitors-filters-isp_id option:checked', (o) => o.textContent.trim()), name, 'under its name, not as a bare number');
+        } finally {
+          db.write('DELETE FROM 202_locations_isp WHERE isp_id=' + Number(id));
+          db.write(PREF_RESET);
+        }
+      },
+    },
+
+    {
       name: 'Both downloads answer with a file of the report',
       async run(ctx) {
         const { app, ui, expect } = ctx;
