@@ -372,7 +372,24 @@ The pre-login forms carry the session token exactly as
 `PreLoginPostRequiresTokenTest` reads it (a hidden input whose value is one
 echo of the escaped `$_SESSION['token']`, inside the form, at the form's PHP
 depth); the setup wizard, which runs before `connect.php` can, mints the same
-token itself (`p202_standalone_wizard_token()`).
+token itself (`p202_standalone_wizard_token()`), in a session whose cookie
+takes its Secure flag from the same answer every other page's does,
+`p202_request_is_https()` (`202-config/request-https.php`, which reads a
+TLS-terminating proxy's headers); `SessionCookieSecureTest` holds every
+session start to it.
+
+On an installed instance the wizard is locked: it will not show or rewrite
+the database settings. The one thing that passes the lock is the update of a
+`202-config.php` from a release before the `DB` class
+(`setup-config.php?step=1.1`, offered on the lock page when the file is in
+that format), and it is built so that passing it wins nothing: it opens only
+while the file is in the legacy format, read narrowly
+(`p202_setup_config_is_legacy()`: plain settings, no code), it takes no
+setting from the request and shows none — every value is carried over
+unchanged, so it cannot point the install at another database, replica or
+cache — its POST carries the session token, the carried settings must
+connect before anything is written, and the file is replaced in one rename.
+Changing a setting stays an edit on the server.
 
 ## A feed is read into rows, never printed
 

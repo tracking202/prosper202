@@ -193,6 +193,75 @@ fi
 FRESH=$(mktemp)
 get "$FRESH" "202-login.php" "$OUT/login-after.html"
 eq "$(code)" 200 "the instance still answers from its own database"
+get "$WJAR" "202-config/setup-config.php?step=1.1" "$OUT/wiz-mig-modern.html"
+has "$OUT/wiz-mig-modern.html" 'is already in the current format' "the legacy-format update does not open on a current 202-config.php"
+hasnt "$OUT/wiz-mig-modern.html" 'id="setup-config-migrate"' "and offers no update"
+
+# ─────────────────────────────────────────────────────────────────────
+say "behind a TLS-terminating proxy every session cookie is Secure, the wizard's too"
+for page in 202-config/setup-config.php 202-login.php; do
+  SC=$(curl -sS -o /dev/null -D - -H 'X-Forwarded-Proto: https' "$BASE/$page" | tr -d '\r' | grep -i '^set-cookie: PHPSESSID=')
+  if printf '%s' "$SC" | grep -qi '; secure'; then ok "$page: the session cookie carries Secure"; else bad "$page: the session cookie carries Secure (got '$SC')"; fi
+  SC=$(curl -sS -o /dev/null -D - "$BASE/$page" | tr -d '\r' | grep -i '^set-cookie: PHPSESSID=')
+  if [ -n "$SC" ] && ! printf '%s' "$SC" | grep -qi '; secure'; then ok "$page: and not over plain HTTP"; else bad "$page: and not over plain HTTP (got '$SC')"; fi
+done
+
+# ─────────────────────────────────────────────────────────────────────
+# The legacy-format update (setup-config.php?step=1.1 → 2.2) is the one
+# thing that passes the wizard's lock on an installed instance. Driven only
+# when this pass can see the configuration the server runs from (it swaps in
+# a legacy one and puts the original bytes back, whatever happens).
+if [ -f "$CONFIG" ] && [ -w "$CONFIG" ] && grep -qF "\$dbname = '$DB';" "$CONFIG"; then
+  say "a legacy 202-config.php is brought to the current format, and nothing else passes the lock"
+  CONFIG_SAVED=$(mktemp)
+  cp -p "$CONFIG" "$CONFIG_SAVED"
+  put_config_back() { cp -p "$CONFIG_SAVED" "$CONFIG"; }
+  trap 'put_config_back; restore' EXIT
+  # The settings the running config holds, in the format before the DB class.
+  { echo '<?php'; echo '// ** MySQL settings ** //'
+    grep -E "^\\\$(dbname|dbuser|dbpass|dbhost|mchost) = '" "$CONFIG"; } > "$OUT/legacy-config.php"
+  cp "$OUT/legacy-config.php" "$CONFIG"
+  LEGACY_MD5=$(md5sum "$CONFIG" | cut -d' ' -f1)
+  sleep 3 # php -S revalidates cached bytecode every 2s (CLAUDE.md)
+  MJAR=$(mktemp)
+  get "$MJAR" "202-config/setup-config.php?step=1" "$OUT/mig-lock.html"
+  has "$OUT/mig-lock.html" 'Prosper202 is already set up' "a legacy install is still locked against the database form"
+  hasnt "$OUT/mig-lock.html" 'name="dbpass"' "which is not rendered"
+  has "$OUT/mig-lock.html" "href='setup-config.php?step=1.1'>Update 202-config.php</a>" "and the lock page offers the format update"
+  get "$MJAR" "202-config/setup-config.php?step=1.1" "$OUT/mig1.html"
+  standalone "$OUT/mig1.html" "setup-config.php?step=1.1"
+  has "$OUT/mig1.html" 'id="setup-config-migrate"' "the update is offered on a legacy 202-config.php"
+  DBPASS_NOW=$(grep -oE "^\\\$dbpass = '[^']*'" "$OUT/legacy-config.php" | sed "s/^[^']*'//; s/'\$//")
+  if [ -n "$DBPASS_NOW" ]; then hasnt "$OUT/mig1.html" "$DBPASS_NOW" "and the page does not show the database password"; fi
+  curl -sS -b "$MJAR" -c "$MJAR" -o "$OUT/mig-get.html" "$BASE/202-config/setup-config.php?step=2.2"
+  has "$OUT/mig-get.html" 'Security check failed' "a GET to the write step writes nothing"
+  submit "$MJAR" "$OUT/mig1.html" token "202-config/setup-config.php?step=2.2" "$OUT/mig-notoken.html" token=
+  has "$OUT/mig-notoken.html" 'Security check failed' "a POST without the session token is refused in words"
+  eq "$(md5sum "$CONFIG" | cut -d' ' -f1)" "$LEGACY_MD5" "and 202-config.php is not rewritten"
+  # The request carries hosts a forger would send (ones the connection check
+  # before the write does not try, so only reading them could let them in).
+  submit "$MJAR" "$OUT/mig1.html" token "202-config/setup-config.php?step=2.2" "$OUT/mig2.html" dbhostro=203.0.113.9 mchost=203.0.113.9
+  has "$OUT/mig2.html" '202-config.php updated' "the form's own POST updates the file"
+  grep -q 'class DB' "$CONFIG" && ok "202-config.php is in the current format" || bad "202-config.php is in the current format"
+  for v in dbname dbuser dbpass dbhost mchost; do
+    eq "$(grep -E "^\\\$$v = '" "$CONFIG" | sed 's/ *\/\/.*//')" "$(grep -E "^\\\$$v = '" "$OUT/legacy-config.php" | sed 's/ *\/\/.*//')" "\$$v is carried over unchanged, whatever the request said"
+  done
+  eq "$(grep -E "^\\\$dbhostro = '" "$CONFIG" | sed "s/^[^']*'//; s/'.*//")" "$(grep -E "^\\\$dbhost = '" "$CONFIG" | sed "s/^[^']*'//; s/'.*//")" "the reporting host it did not have is the database host"
+  eq "$(stat -c %a "$CONFIG")" "640" "owner/group readable only"
+  eq "$(find "$(dirname "$CONFIG")" -maxdepth 1 -name '.202-config.*.tmp.php' | wc -l)" "0" "no temporary file is left beside it"
+  sleep 3
+  get "$(mktemp)" "202-login.php" "$OUT/mig-login.html"
+  eq "$(code)" 200 "the instance answers from the updated file"
+  hasnt "$OUT/mig-login.html" 'Fatal error' "without a PHP error"
+  AFTER_MD5=$(md5sum "$CONFIG" | cut -d' ' -f1)
+  submit "$MJAR" "$OUT/mig1.html" token "202-config/setup-config.php?step=2.2" "$OUT/mig3.html"
+  has "$OUT/mig3.html" 'is already in the current format' "the update does not run a second time"
+  eq "$(md5sum "$CONFIG" | cut -d' ' -f1)" "$AFTER_MD5" "and the current file is left as it is"
+  put_config_back
+  sleep 3
+else
+  say "SKIP the legacy-format update: $CONFIG is not this instance's writable configuration"
+fi
 
 # ─────────────────────────────────────────────────────────────────────
 say "signed in: TV202, Hot Deals and the App Store on the v2 shell"

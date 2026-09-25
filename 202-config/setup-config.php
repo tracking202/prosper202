@@ -17,6 +17,9 @@ if (!file_exists(substr(__DIR__, 0, -10) . '/202-config-sample.php')) {
 
 //lets make a new config file
 $configFile = file(substr(__DIR__, 0, -10) . '/202-config-sample.php');
+if ($configFile === false) {
+	_die('Sorry, I could not read 202-config-sample.php. Please re-upload this file from your Prosper202 installation.');
+}
 
 
 //check to see if the directory is writable
@@ -25,22 +28,8 @@ if (!is_writable(substr(__DIR__, 0, -10) . '/')) {
 }
 
 
-// Escape a value for inclusion in a single-quoted PHP string in 202-config.php
-function escape_config_value(string $value): string
-{
-	return str_replace(['\\', "'"], ['\\\\', "\\'"], $value);
-}
-
-// Inverse of escape_config_value(), for reading values back out of the file
-function unescape_config_value(string $value): string
-{
-	return strtr($value, ['\\\\' => '\\', "\\'" => "'"]);
-}
-
-// Matches "$var = 'value';" config lines. The value part accepts any
-// character, with \' and \\ treated as escape sequences, so hostnames with
-// dots/hyphens and escaped passwords written by this wizard round-trip.
-$config_line_re = '/(\$\w+) = \'((?:[^\'\\\\]|\\\\.)*)\';/';
+require_once __DIR__ . '/functions-setup-config.php';
+$config_line_re = P202_SETUP_CONFIG_LINE_RE;
 
 // Check if 202-config.php has been created
 if (file_exists(substr(__DIR__, 0, -10) . '/202-config.php')) {
@@ -126,6 +115,12 @@ function p202_setup_config_locked(bool $configExists, ?string $host, ?string $us
 	return !is_array($row) || (int) $row['cnt'] > 0;
 }
 
+$config_path = substr(__DIR__, 0, -10) . '/202-config.php';
+$config_source = file_exists($config_path) ? @file_get_contents($config_path) : false;
+// A 202-config.php in the format before the DB class (see
+// p202_setup_config_is_legacy()); false when it cannot be read.
+$config_legacy = is_string($config_source) && p202_setup_config_is_legacy($config_source);
+
 $config_locked = p202_setup_config_locked(
 	file_exists(substr(__DIR__, 0, -10) . '/202-config.php'),
 	$odbhost ?? null,
@@ -140,10 +135,82 @@ if (isset($_GET['step'])) {
 	$step = 0;
 }
 
+/*
+ * The legacy format migration (step=1.1, then a POST to step=2.2) rewrites a
+ * 202-config.php from a release before the DB class into the current format.
+ * The installs that need it are installed ones, so the lock above does not
+ * stop it — but it is the only thing that passes the lock, and it is built so
+ * that passing it wins nothing:
+ *
+ *  - it runs only while 202-config.php is in the legacy format, read
+ *    narrowly (p202_setup_config_is_legacy(): plain settings and no code), so
+ *    a current configuration is never rewritten by it;
+ *  - it takes no settings from the request. Every value — database, user,
+ *    password, hosts — is carried over from the old file unchanged, so it
+ *    cannot point the install at another database, replica or cache; changing
+ *    one is an edit on the server, as the lock says. The page does not show
+ *    them either;
+ *  - its POST carries the session token, and the carried settings must
+ *    connect to their database before anything is written; the file is
+ *    replaced in one rename, never truncated in place.
+ *
+ * So an unauthenticated visitor can do no more than the operator was asked
+ * to: bring the file to the current format with the settings it already has.
+ */
+$migrating = $step === '1.1' || $step === '2.2';
+if ($migrating) {
+	if (!$config_legacy) {
+		_die("<h6>Nothing to update</h6>
+		<p><small>" . (is_string($config_source)
+			? "This install's <code>202-config.php</code> is already in the current format."
+			: "There is no <code>202-config.php</code> to update yet.") . "</small></p>
+		<p><a class='btn btn-primary w-100' href='" . (is_string($config_source) ? get_absolute_url() . "202-login.php'>Sign in" : "setup-config.php?step=1'>Enter the database settings") . "</a></p>");
+	}
+	$carried = p202_setup_config_values((string) $config_source);
+	$carried += ['dbpass' => ''];
+	$carried += ['dbhostro' => $carried['dbhost'], 'mchost' => 'localhost'];
+
+	if ($step === '1.1') {
+		info_top(['title' => 'Update 202-config.php - Prosper202 ClickServer', 'wide' => true]);
+		echo p202_standalone_card('Update 202-config.php', 'Your 202-config.php is from an older release and needs to be rewritten in the current format.');
+?>
+			<p>The database name, user, password and hosts in it are carried over unchanged; nothing else in the install changes. To change any of them, edit <code>202-config.php</code> on the server instead.</p>
+			<form method="post" action="setup-config.php?step=2.2" id="setup-config-migrate">
+				<input type="hidden" name="token" value="<?php echo htmlspecialchars($wizard_token, ENT_QUOTES, 'UTF-8'); ?>">
+				<button class="btn btn-primary w-100" type="submit">Update 202-config.php</button>
+			</form>
+<?php
+		echo p202_standalone_card_end();
+		info_bottom();
+		exit;
+	}
+
+	if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !p202_standalone_wizard_token_ok()) {
+		_die("<h6>Security check failed</h6>
+		<p><small>Your session has expired or the security check failed, so nothing was written. Open the update again.</small></p>
+		<p><a href='setup-config.php?step=1.1' class='btn btn-primary w-100'>Update 202-config.php</a></p>");
+	}
+	mysqli_report(MYSQLI_REPORT_OFF);
+	$probe = @mysqli_connect($carried['dbhost'], $carried['dbuser'], $carried['dbpass'], $carried['dbname']);
+	if (!$probe) {
+		$db_error_msg = htmlspecialchars((string) mysqli_connect_error(), ENT_QUOTES, 'UTF-8');
+		_die("<h6>The settings in 202-config.php do not connect</h6>
+		<p><small>Nothing was written. The database settings in your old <code>202-config.php</code> could not reach their database, so they are not carried into the new format. Correct them in the file on the server, then open the update again.</small></p>
+		<p class='text-danger'><strong>MySQL Error: $db_error_msg</strong></p>
+		<p><a href='setup-config.php?step=1.1' class='btn btn-primary w-100'>Update 202-config.php</a></p>");
+	}
+	mysqli_close($probe);
+	if (!p202_setup_config_replace($config_path, p202_setup_config_render($configFile, $carried))) {
+		_die("<p>Could not write <code>202-config.php</code>. Nothing was changed; check the directory permissions, or update the file by hand from <code>202-config-sample.php</code>.</p>");
+	}
+	_die("<h6>202-config.php updated</h6><p><small>It is in the current format now, with the same database settings.</small></p><p><a class='btn btn-primary w-100' href='" . get_absolute_url() . "202-login.php'>Sign in</a></p>");
+}
+
 if ($config_locked) {
 	_die("<h6>Prosper202 is already set up</h6>
-		<p><small>This install already has a <code>202-config.php</code> and an account, so the setup wizard will not change its database settings. To change them, edit <code>202-config.php</code> on the server.</small></p>
-		<p><a class='btn btn-primary w-100' href='" . get_absolute_url() . "202-login.php'>Sign in</a></p>");
+		<p><small>This install already has a <code>202-config.php</code> and an account, so the setup wizard will not change its database settings. To change them, edit <code>202-config.php</code> on the server.</small></p>"
+		. ($config_legacy ? "<p><small>Its <code>202-config.php</code> is from an older release and needs updating to the current format, which keeps every setting.</small></p><p><a class='btn btn-primary w-100' href='setup-config.php?step=1.1'>Update 202-config.php</a></p>" : '')
+		. "<p><a class='btn " . ($config_legacy ? 'btn-secondary' : 'btn-primary') . " w-100' href='" . get_absolute_url() . "202-login.php'>Sign in</a></p>");
 }
 
 
@@ -170,16 +237,9 @@ switch ($step) {
 		break;
 
 	case 1:
-	case 1.1:
 		info_top(['title' => 'Database - Prosper202 ClickServer', 'wide' => true]);
-		if ($step == 1) {
-			$msg = "Enter your database connection details. If you're not sure about these, contact your host.";
-			$action = "setup-config.php?step=2";
-		} else {
-			$msg = "Your 202-config.php needs to be updated to a new format. Please review the settings we got from your old file and make changes as needed.";
-			$action = "setup-config.php?step=2.2";
-		}
-		echo p202_standalone_card('Your database', $msg);
+		$action = "setup-config.php?step=2";
+		echo p202_standalone_card('Your database', "Enter your database connection details. If you're not sure about these, contact your host.");
 		?>
 			<form method="post" action="<?php echo htmlspecialchars($action, ENT_QUOTES, 'UTF-8'); ?>" id="setup-config-form">
 				<input type="hidden" name="token" value="<?php echo htmlspecialchars($wizard_token, ENT_QUOTES, 'UTF-8'); ?>">
@@ -232,7 +292,6 @@ switch ($step) {
 		break;
 
 	case 2:
-	case 2.2:
 		// Writing 202-config.php is a POST from the form above, carrying the
 		// session token; a link or a cross-site form writes nothing.
 		if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !p202_standalone_wizard_token_ok()) {
@@ -304,30 +363,13 @@ switch ($step) {
 		");
 		}
 
-		$configPath = substr(__DIR__, 0, -10) . '/202-config.php';
-		$handle = fopen($configPath, 'w');
-		if ($handle === false) {
-			_die("<p>Could not open <code>202-config.php</code> for writing. Please check the directory permissions, or create the file manually from <code>202-config-sample.php</code>.</p>");
+		$written = p202_setup_config_replace($config_path, p202_setup_config_render($configFile, [
+			'dbname' => $dbname, 'dbuser' => $dbuser, 'dbpass' => $dbpass,
+			'dbhost' => $dbhost, 'dbhostro' => $dbhostro, 'mchost' => $mchost,
+		]));
+		if (!$written) {
+			_die("<p>Could not write <code>202-config.php</code>. Please check the directory permissions, or create the file manually from <code>202-config-sample.php</code>.</p>");
 		}
-
-		foreach ($configFile as $line) {
-			if (!preg_match($config_line_re, $line, $matches)) {
-				fwrite($handle, $line);
-				continue;
-			}
-			match ($matches[1]) {
-                '$dbname' => fwrite($handle, str_replace("putyourdbnamehere", escape_config_value($dbname), $line)),
-                '$dbuser' => fwrite($handle, str_replace("usernamehere", escape_config_value($dbuser), $line)),
-                '$dbpass' => fwrite($handle, str_replace("yourpasswordhere", escape_config_value($dbpass), $line)),
-                '$dbhost' => fwrite($handle, str_replace("localhosthere", escape_config_value($dbhost), $line)),
-                '$dbhostro' => fwrite($handle, str_replace("localhostreplica", escape_config_value($dbhostro), $line)),
-                '$mchost' => fwrite($handle, str_replace("localhostmemcache", escape_config_value($mchost), $line)),
-                default => fwrite($handle, $line),
-            };
-		}
-		fclose($handle);
-		// Owner/group read only — this file holds database credentials
-		chmod($configPath, 0640);
 
 			_die("<h6>Database connected</h6><p><small>All right sparky! You've made it through this part of the installation. Prosper202 can now communicate with your database.</small></p><p><a class='btn btn-primary w-100' href=\"requirements.php\">Continue the install</a></p>");
 	}
