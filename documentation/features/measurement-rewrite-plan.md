@@ -16,12 +16,23 @@ This plan covers three things:
 
 ## Constraints
 
-- Neither the app-measurement feature nor MTA has users or installs, so both
-  may be rewritten freely.
+- **No install exists above 1.9.55.** Every real database is at 1.9.55 or
+  older, and nobody sits at any version from 1.9.56 to 1.9.76.
+  - Any schema created by the 1.9.55 → 1.9.76 rungs may therefore change
+    **in place**: its table names, its columns and the rungs themselves.
+  - The upgrade path that matters is **≤ 1.9.55 → 1.9.76**, and the only
+    upgrade behaviour to preserve is that path's.
+  - Development and branch databases above 1.9.55 are disposable and are
+    reinstalled, not repaired.
+- Neither the app-measurement feature (added in 1.9.76) nor MTA (added in
+  1.9.56) has users, so both may be rewritten freely.
 - **The release stays 1.9.76.**
 - Nothing outside these two features changes shape. The click pipeline, the
   conversion writer and the pixel endpoints are touched only where these
   features attach to them.
+- The same freedom would allow other cleanups in the 1.9.56–1.9.75 rungs, for
+  example the guarded repeat of the `202_api_keys.scope` repair. Those are out
+  of scope here and are listed only so they are not forgotten.
 
 ## Sources
 
@@ -73,11 +84,12 @@ real click. A conversion is what MTA distributes credit for. So:
 anything more would couple two things that change for different reasons.
 That includes a table prefix, a scope area, a CLI parent and a report.
 
-**Consequence:** they are separated by name.
+**Consequence:** they are separated by name. MTA is the attribution engine, so
+it keeps the `attribution` names. App measurement moves out to `app` names.
 
 | | App measurement | MTA |
 |---|---|---|
-| Tables | `202_app_*` | `202_mta_*` |
+| Tables | `202_app_*` | `202_attribution_*` |
 | API routes | `/apps/*` | `/attribution/*` |
 | API scope area | `apps` | `attribution` |
 | CLI | `p202 app …` | `p202 attribution …` |
@@ -96,7 +108,7 @@ plan the Android intake. It already emits `conversion.recorded` after the
 commit for the LTV/LPO bridge (`:278-295`).
 
 MTA attaches through an **outbox written inside that same transaction**. A
-row in `202_mta_pending (conv_id PK, enqueued_at)` goes in beside the
+row in `202_attribution_pending (conv_id PK, enqueued_at)` goes in beside the
 conversion, and the MTA worker consumes it. The alternative, a post-commit
 callback, is rejected:
 
@@ -185,15 +197,10 @@ done when:
 
 ### 4.1 Tables: new names, new shape
 
-Why rename rather than reshape in place:
-
-- **The reconciler cannot reshape.** `SchemaReconciler` only adds columns and
-  indexes and relaxes `NOT NULL`. It never drops, renames or retypes (its
-  class docblock). A branch deployment already at 1.9.76 would keep, for
-  example, `app_id bigint NOT NULL`, and every insert that stopped supplying
-  it would die with errno 1364. That docblock records exactly this failure
-  from the first 1.9.76 reshape.
-- **The prefix is shared with MTA** (§1).
+The tables are renamed by meaning, not by necessity. No database holds the
+1.9.76 tables (see Constraints), so they could be reshaped under their old
+names. The `attribution` names belong to MTA (§1), though, so app measurement
+moves to `202_app_*`.
 
 | Old | New | What changes |
 |---|---|---|
@@ -202,15 +209,18 @@ Why rename rather than reshape in place:
 | `202_attribution_conversion_values` | `202_app_events` + `202_app_skan_encodings` | The catalogue is split from the iOS encoding |
 | — | `202_app_installs`, `202_app_install_events` | Android (§5) |
 
-**Legacy guard.** `_upgrade_attribution_tables()` halts the upgrade when the
-pre-release `202_skan_*` tables hold rows (`functions-upgrade.php:307-350`).
-It is generalised to a list of legacy generations, and the first-cut three
-tables are added to the list **by exact name**, because the prefix is shared
-with MTA's legacy tables:
+**The legacy guard is deleted, not extended.**
+`_upgrade_attribution_legacy_skan_state()` and the "Upgrade paused" halt in
+`_upgrade_attribution_tables()` (`functions-upgrade.php:307-350`) exist to
+protect postbacks in the pre-release `202_skan_*` tables. Only a branch
+deployment above 1.9.55 could hold those, and none exists.
 
-- empty → proceed;
-- rows → "Upgrade paused";
-- probe failed → do nothing and retry.
+- The 1.9.75 rung keeps one job: create the app tables from their installer
+  definitions.
+- Its test pins what matters now: the ≤ 1.9.55 path, and the rung's shape
+  rules (the version is written only on success).
+- RELEASING.md's branch-deployment repair section is replaced by one line:
+  databases above 1.9.55 from before this change are reinstalled.
 
 ### 4.2 One registry for both platforms
 
@@ -466,8 +476,7 @@ Every row carries a `match_reason` sentence, shown as-is in the UI.
 **`202_app_install_events`** (phase 2): `UNIQUE (install_row_id, event_id)`.
 
 **`202_aff_campaigns.app_registration_id`** NULL, used by `foreign_click` and
-the link builder. It is an additive nullable column, which the reconciler
-handles.
+the link builder. It is added in the 1.9.75 rung, next to the app tables.
 
 **Why the two signal tables stay separate.** Postback identity is Apple's
 (network, transaction, window, signature). Install identity is ours
@@ -609,7 +618,7 @@ at click time today: its cookies are per-click (`tracking202subid*`,
 | IP address | — | **Never used.** Carrier-grade NAT and offices merge strangers, which is today's defect in another form | |
 
 **Where it is stored.** `visitor_id` goes in a new
-`202_mta_click_identity (click_id PK, user_id, visitor_id BINARY(16), click_time)`
+`202_clicks_visitor (click_id PK, user_id, visitor_id BINARY(16), click_time)`
 with `KEY (user_id, visitor_id, click_time)`. It is not a column on the hot
 `202_clicks`, and it is written in the same `recordClick()` transaction.
 
@@ -633,13 +642,15 @@ labelled as such.
   or blocked there. Those clicks get a visitor id only when the LP domain and
   the tracking domain are the same site. The docs say so.
 - **No cross-device.** Cross-device linking comes only from `customer_id`.
-- **Nothing before the feature ships.** Clicks recorded before visitor capture
-  ships have no visitor id and cannot be backfilled. That is why visitor
-  capture ships first and alone (§8, phase M0).
+- **Nothing before the upgrade.** Clicks recorded before an install runs the
+  release containing visitor capture have no visitor id and cannot be
+  backfilled. Every install upgrading from 1.9.55 or older starts with
+  one-touch journeys, and they fill in as new clicks arrive. That is why
+  visitor capture must be in the first release that goes out (§8, phase M0).
 
 ### 6.3 Engine
 
-**Trigger.** The outbox (§2). The worker `202-cronjobs/mta-worker.php`, run
+**Trigger.** The outbox (§2). The worker `202-cronjobs/attribution-worker.php`, run
 every minute with overlap protection, claims pending rows in batches. For each
 conversion it builds the journey once and computes credits for each active
 model. It is idempotent: it deletes and reinserts the conversion's credits in
@@ -666,7 +677,7 @@ it, and a structural test fails if any surface lists a value the enum lacks
   stored config that fails validation marks that model `invalid` with the
   reason. It never throws in a way that takes other models down.
 
-**Storage.** `202_mta_credits`:
+**Storage.** `202_attribution_credits`:
 
 - Columns: `(conv_id, model_id, click_id, position, credit decimal(9,8), revenue decimal(11,5))`.
 - Key: `PRIMARY KEY (conv_id, model_id, click_id)`.
@@ -675,7 +686,7 @@ it, and a structural test fails if any surface lists a value the enum lacks
 `revenue` is the conversion's `click_payout` × credit, so the credits of a
 conversion sum exactly to its revenue. The rounding remainder is assigned to
 the last touch, and a test pins the sum. The journey itself is in
-`202_mta_journeys (conv_id, position, click_id, click_time)`, and it is what
+`202_attribution_journeys (conv_id, position, click_id, click_time)`, and it is what
 reports explain.
 
 **Reports** are grouped over credits, joined to the clicks' own dimensions.
@@ -720,23 +731,45 @@ permissions that v2 enforces.
 
 ### 6.4 Schema and upgrade
 
-- **New tables** under `202_mta_`: `_models`, `_journeys`, `_credits`,
-  `_click_identity`, `_pending`, `_exports`, `_audit`. They are created by the
-  1.9.75 → 1.9.76 rung, so there is no version change.
-- **Legacy MTA tables are left in place, unread.** They were created by the
-  released 1.9.56–1.9.59 rungs and include `202_attribution_models`,
-  `_snapshots`, `_touchpoints`, `_settings`, `_audit`, `_exports` and
-  `202_conversion_touchpoints`. The upgrade does not drop them:
-  - dropping tables in an upgrade is irreversible;
-  - every upgraded install holds seeded "last-touch-default" rows (upgrade
-    rung at `functions-upgrade.php:3291-3314`), so a "halt if rows exist"
-    guard would halt every one.
+The MTA schema is created by the 1.9.56 – 1.9.58 rungs, which no install has
+run. So it is **redefined in place and its rungs are rewritten**. Nothing is
+left behind to guard or to drop.
 
-  The docs name them as removable, and a later release can drop them once
-  nobody has reason to keep them.
-- **Campaign column.** `202_aff_campaigns.attribution_model_id` stays (the
-  reconciler cannot drop it) and is ignored. The override reads a new
-  `mta_model_id`.
+**Tables.**
+
+| Today | After | Notes |
+|---|---|---|
+| `202_attribution_models` | `202_attribution_models`, reshaped | `model_type` constrained to the enum (§6.3); `weighting_config` validated JSON; `status` (`active`/`invalid`) plus `status_reason`; one default per account |
+| `202_attribution_snapshots`, `202_attribution_touchpoints` | `202_attribution_credits` | Per-conversion credit rows replace hourly global snapshots |
+| `202_conversion_touchpoints` | `202_attribution_journeys` | Journeys built from visitor identity, not from the account's campaign clicks |
+| `202_attribution_settings` | *(gone)* | The multi-touch toggle existed to keep the engine off the pixel path. The outbox takes it off that path permanently, so the toggle has nothing left to protect. Per-campaign model choice uses `202_aff_campaigns.attribution_model_id` |
+| — | `202_attribution_pending` | The outbox (§2) |
+| — | `202_clicks_visitor` | `(click_id PK, user_id, visitor_id BINARY(16), click_time)`, `KEY (user_id, visitor_id, click_time)`. A click attribute, so it takes the click tables' prefix |
+| `202_attribution_exports` | `202_attribution_exports`, reshaped | One column set. Today there are two conflicting DDLs, in the 1.9.56 and 1.9.58 rungs |
+| `202_attribution_audit` | unchanged | |
+
+**Where the definitions live.** They move into
+`AttributionTables::getDefinitions()`. `202_conversion_logs`, a core table
+whose definition sits in `AttributionTables` today, moves out to its own
+`ConversionTables`. Rewriting MTA's definitions then cannot touch the
+conversion table.
+
+**Rungs.**
+
+- The 1.9.56 rung creates every MTA table from those definitions: the same
+  "installer definitions, advance only on success" shape the 1.9.75 rung uses
+  for app tables.
+- The 1.9.57 and 1.9.58 rungs lose their MTA DDL (settings columns, the second
+  exports DDL, `202_conversion_touchpoints`) and keep only their version
+  advance. Their other work stays exactly as it is.
+- The 1.9.56 rung's `202_aff_campaigns.attribution_model_id` column and the
+  permission rows 22 and 23 are kept. They are now read.
+
+**No seeded models.** Today upgraded installs get a "last-touch-default" model
+row per user, and fresh installs get none (error pattern #5). After the
+rewrite neither path seeds anything. An account with no model row reports
+under an implicit `last_touch` default, so "no rows" is a state the engine
+defines instead of one that depends on how the database was created.
 - **Deletions.** The dead code is deleted outright: `MysqlAttributionRepository`,
   `InMemoryAttributionRepository`, the `Attribution\Export\*` stack,
   `MysqlExportRepository`, both migration runners and their `.sql`, v2, the
@@ -776,7 +809,7 @@ permissions that v2 enforces.
   parameter or a per-campaign setting that suppresses it; the journey is then
   one touch.
 - No device identifiers are collected on Android, and no advertising ID.
-- User deletion purges every `202_app_*` and `202_mta_*` table, plus export
+- User deletion purges every `202_app_*` and `202_attribution_*` table and `202_clicks_visitor`, plus export
   files on disk.
 
 ### 7.3 Performance
@@ -825,8 +858,9 @@ answer as the unoptimised path on a sparse and a dense dataset (CLAUDE.md,
 
 ### 7.5 Compatibility
 
-- The release stays 1.9.76. All new tables are created in the existing rung.
-  Legacy tables are guarded (app) or left in place (MTA).
+- The release stays 1.9.76. The ≤ 1.9.55 → 1.9.76 path creates the final
+  schema directly. No database holds an intermediate shape, so no legacy
+  guard or drop is needed.
 - PHP 8.3 (CI) and 8.4; MySQL 5.7 and 8, and MariaDB.
 - iOS 14+ SDK behaviour is unchanged apart from the header rename. Android
   needs API 21+ and Play Store app 8.3.73+.
@@ -837,10 +871,17 @@ answer as the unoptimised path on a sparse and a dense dataset (CLAUDE.md,
 
 **Phase 0 (iOS reshape):**
 - iOS tests are ported and green, and the signature vectors are unchanged.
-- The upgrade-step tests are green against:
-  - a fresh database;
-  - each legacy generation, empty and populated;
-  - a branch deployment at 1.9.76.
+- **Upgrade equals install.** The test goes in three steps:
+  1. Build a 1.9.55 database by running the installer from the last commit
+     whose `202-config/version.php` reads 1.9.55. That needs a full-history
+     clone; this sandbox's is shallow.
+  2. Upgrade it with the new code.
+  3. Compare `SHOW CREATE TABLE` for every table the 1.9.56–1.9.76 rungs touch
+     against a fresh 1.9.76 install. They must match, apart from the
+     normalisation differences the reconciler docblock lists.
+
+  This one test covers the only real upgrade path. It runs for MTA's rungs
+  as well as the app tables'.
 - The iOS live, browser and SDK suites are green.
 
 **Phase 1 (Android):**
@@ -894,16 +935,20 @@ journey.
 
 | Phase | Scope | Depends on |
 |---|---|---|
-| **M0: visitor capture** | `p202vid` cookie, `202_mta_click_identity`, consent switch. Nothing reads it yet | — |
+| **M0: visitor capture** | `p202vid` cookie, `202_clicks_visitor`, consent switch. Nothing reads it yet | — |
 | **0: app reshape** | Part B §4: registry, catalogue, verdicts, plumbing, retention, renames to `/apps` and `p202 app`, user-deletion purge | — |
-| **M1: MTA engine** | Outbox in `record()`; removal of the inline pixel hooks; worker; models; credits; reports API; deletion of v2, dead code and legacy crons | M0 |
+| **M1: MTA engine** | Outbox in `record()`; removal of the inline pixel hooks; worker; models; credits; reports API; deletion of v2, dead code and the old journey crons | M0 |
 | **1: Android installs** | §5.1–5.4, §5.6 | 0, plus the `record()` outbox from M1 if MTA should see installs |
 | **M2: MTA UI and exports** | Dashboard on the v2 shell, model comparison, journey metrics, hardened exports | M1 |
 | **2: Android events and fraud signals** | §5.5, CTIT, third-party breakdowns | 1 |
 | **3: extensions** | Play Integrity, Meta decryption, other stores, deep links | 1 |
 
-**M0 ships first** because journeys cannot be backfilled: every click recorded
-before it is a one-touch journey forever.
+The phases are **merge order**. Nothing has been released since 1.9.55, so
+they can all go out in one 1.9.76 release or be split across releases.
+
+**M0 must be in the first release that goes out, whatever else is.** Journeys
+cannot be backfilled: every click an install records before it has M0 is a
+one-touch journey forever.
 
 **0 and M1 are independent** and can proceed in parallel. They meet only at
 `record()`.
@@ -921,9 +966,10 @@ before it is a one-touch journey forever.
    domain acceptable as the journey identity, with the consent switch in §7.2?
    Without it, a journey can only be built from `customer_id`, which only
    links conversions to each other, or it cannot be built at all.
-6. **Legacy MTA tables:** leave them in place (the plan), or drop them in this
-   release on your assurance that no install holds data worth keeping?
+6. **One release or several?** Everything can ship as a single 1.9.76, or
+   phase 0 + M0 + M1 can ship first with Android following. The plan works
+   either way; it changes only what the first release notes promise.
 7. **Naming:**
    - app measurement: `202_app_*`, `/apps/*`, scope `apps`, `p202 app`;
-   - MTA: `202_mta_*`, `/attribution/*`, scope `attribution`;
+   - MTA: `202_attribution_*`, `/attribution/*`, scope `attribution`;
    - `app_key`, `app_token`, `accept_test_signals`.
