@@ -9,35 +9,45 @@ import StoreKit
 import AdAttributionKit
 #endif
 
-/// Remote-configured conversion values for a Prosper202 server, reported
-/// to both of Apple's attribution frameworks.
+/// Remote-configured goals and conversion values for a Prosper202 server,
+/// reported to both of Apple's attribution frameworks.
 ///
-/// The app ships once with the server URL and its app's schema token; from
-/// then on, what each event encodes to is edited in Prosper202
-/// (`/apps/skan-encodings`) and picked up at runtime — no App Store
-/// resubmission. Usage:
+/// The app ships once with the server URL and its app token; from then on,
+/// what counts as an outcome (goals: `/goals`) and which conversion value
+/// means it (`/apps/skan-encodings`) are edited in Prosper202 and picked up
+/// at runtime — no App Store resubmission. Usage:
 ///
 ///     P202Attribution.shared.configure(
 ///         endpoint: URL(string: "https://your-domain.com")!,
-///         schemaToken: "<the app_token from POST /apps>"
+///         appToken: "<the app_token from POST /apps>"
 ///     )
 ///     ...
-///     P202Attribution.shared.logEvent("purchase")
-///     P202Attribution.shared.logEvent("purchase", conversionTypes: [.reengagement])
+///     try P202Attribution.shared.logEvent("level_reached", properties: ["level": .int(3)])
+///     try P202Attribution.shared.logEvent("purchase", revenue: 4.99)
+///     try P202Attribution.shared.setCustomerId("u-829", signature: sigFromYourServer)
 ///
-/// `logEvent` resolves the event through the fetched schema and hands the
-/// values to `SKAdNetwork.updatePostbackConversionValue` and, on iOS 17.4+,
-/// to AdAttributionKit's `Postback.updateConversionValue` — Apple's guidance
-/// for an app whose ad networks may use either framework is to call both,
-/// and the system ignores whichever has no pending postback. An update
-/// scoped with `conversionTypes` (iOS 18+) reaches only those
+/// Apple's postback carries only a conversion value, so the goals are
+/// evaluated **on the device** (plan §5.5): each event runs through the same
+/// evaluator the server uses (held to the shared vectors in
+/// tests/fixtures/app-sdk-contract/goals/), against the evaluation-only
+/// goals the schema document carries. When an event reaches goals that an
+/// encoding maps, the highest mapped fine and coarse values are handed to
+/// `SKAdNetwork.updatePostbackConversionValue` and, on iOS 17.4+, to
+/// AdAttributionKit's `Postback.updateConversionValue` — Apple's guidance for
+/// an app whose ad networks may use either framework is to call both. An
+/// update scoped with `conversionTypes` (iOS 18+) reaches only those
 /// AdAttributionKit postbacks; one that leaves out `.install` is never sent
 /// to SKAdNetwork, whose only postback is the install one, and is dropped
-/// entirely on iOS 17.4-17.x, which has no re-engagement postback and no
-/// way to scope an update to one. Unmapped events are no-ops by design.
-/// The schema is cached (with its ETag) across launches, so the device
-/// encodes correctly offline and refreshes cheaply — the server answers 304
-/// until a rule actually changes.
+/// entirely on iOS 17.4-17.x. An event that reaches no encoded goal changes
+/// nothing, by design.
+///
+/// The device is the subject `install`: its install time is the first
+/// launch that configured the SDK, and it has no click, so a goal windowed
+/// `from: click` never counts here. Events logged before the first schema
+/// arrives wait (up to `maxPendingEvents`) and are evaluated, with their own
+/// times, as soon as it does, so a first-launch goal is not lost to a slow
+/// network. The schema is cached (with its ETag) across launches, so the
+/// device encodes correctly offline and refreshes cheaply.
 ///
 /// Note: `NSAdvertisingAttributionReportEndpoint` (SKAdNetwork) and
 /// `AttributionCopyEndpoint` (AdAttributionKit) in Info.plist cannot be set
@@ -45,18 +55,18 @@ import AdAttributionKit
 public final class P202Attribution {
     public struct Configuration {
         public let endpoint: URL
-        public let schemaToken: String
+        public let appToken: String
         public let lockWindow: Bool
         public let refreshInterval: TimeInterval
 
         public init(
             endpoint: URL,
-            schemaToken: String,
+            appToken: String,
             lockWindow: Bool = false,
             refreshInterval: TimeInterval = 6 * 60 * 60
         ) {
             self.endpoint = endpoint
-            self.schemaToken = schemaToken
+            self.appToken = appToken
             self.lockWindow = lockWindow
             self.refreshInterval = refreshInterval
         }
@@ -66,7 +76,7 @@ public final class P202Attribution {
         case notConfigured
         case unexpectedStatus(Int)
         case emptyResponse
-        /// The configuration changed (a different schema token) while this
+        /// The configuration changed (a different app token) while this
         /// fetch was in flight; its response was discarded rather than
         /// written into the new configuration's cache.
         case superseded
@@ -74,9 +84,32 @@ public final class P202Attribution {
         /// arrived. Unreachable through `shared`; possible for short-lived
         /// injected instances.
         case deallocated
+        /// No schema has arrived yet and `maxPendingEvents` events are
+        /// already waiting for one; this event was not recorded. The
+        /// earliest events are the ones kept, because the first conversion
+        /// window is the one they belong to.
+        case pendingEventsFull
+    }
+
+    /// Why `logEvent` refused an event: the rules the server applies to an
+    /// event (plan §5.5), checked where the mistake can be fixed.
+    public enum EventError: Error, Equatable {
+        /// 1-64 of letters, digits, `_ . : -`, starting with a letter,
+        /// digit or `_`.
+        case invalidName(String)
+        /// At most 32 properties.
+        case tooManyProperties(Int)
+        /// A letter or `_`, then letters, digits or `_`, up to 64.
+        case invalidPropertyName(String)
+        /// A string of at most 255 bytes, a finite number or a bool.
+        case invalidPropertyValue(String)
+        case invalidRevenue
     }
 
     public static let shared = P202Attribution()
+
+    /// How many events may wait for the first schema.
+    public static let maxPendingEvents = 100
 
     private let queue = DispatchQueue(label: "com.prosper202.attribution")
     private let store: P202KeyValueStore
@@ -87,11 +120,18 @@ public final class P202Attribution {
     /// for AdAttributionKit's re-engagement postback (see LastFineValueStore).
     private var lastFineValue: Int?
     private var lastReengagementFineValue: Int?
+    private var goals = DeviceGoalState()
     private var refreshInFlight = false
     /// When the last refresh ATTEMPT resolved, successfully or not. Distinct
     /// from `cache.fetchedAt`, which records only successes — see
     /// refreshIfStale() for why a failure has to be remembered too.
     private var lastAttemptAt: Date?
+
+    /// The clock, in unix seconds. Injectable so tests can walk windows.
+    var clock: () -> Int = { Int(Date().timeIntervalSince1970) }
+    /// Every update handed to the frameworks, for tests (off-iOS the
+    /// framework calls compile to nothing).
+    var onSubmit: ((ConversionUpdate) -> Void)?
 
     /// The store and session are injectable for tests; production uses
     /// UserDefaults and the shared URLSession.
@@ -101,26 +141,37 @@ public final class P202Attribution {
     }
 
     /// Configure and kick off the first (or a conditional) schema fetch.
+    /// The first call on a device records the install time.
     public func configure(
         endpoint: URL,
-        schemaToken: String,
+        appToken: String,
         lockWindow: Bool = false,
         refreshInterval: TimeInterval = 6 * 60 * 60
     ) {
         let config = Configuration(
             endpoint: endpoint,
-            schemaToken: schemaToken,
+            appToken: appToken,
             lockWindow: lockWindow,
             refreshInterval: refreshInterval
         )
-        queue.sync {
+        let flushed: [ConversionUpdate] = queue.sync {
             self.configuration = config
-            self.cache = SchemaCache.load(from: store, schemaToken: schemaToken)
+            self.cache = SchemaCache.load(from: store, appToken: appToken)
             // Token-independent on purpose: the device's conversion windows
-            // keep running across a token rotation (see LastFineValueStore).
+            // keep running across a token rotation (see LastFineValueStore),
+            // and so does its install.
             self.lastFineValue = LastFineValueStore.load(from: store, for: .install)
             self.lastReengagementFineValue = LastFineValueStore.load(from: store, for: .reengagement)
+            self.goals = DeviceGoalState.load(from: store)
+            if self.goals.installAt == nil {
+                let now = clock()
+                self.goals.installAt = now
+                self.goals.lastReceivedAt = max(self.goals.lastReceivedAt, now)
+                self.goals.save(to: store)
+            }
+            return flushPending()
         }
+        submitAll(flushed)
         refreshSchema()
     }
 
@@ -129,61 +180,95 @@ public final class P202Attribution {
         return queue.sync { cache.schema }
     }
 
-    /// Report an event by the name it carries in `/apps/skan-encodings`.
-    /// Returns the update that was handed to the frameworks, or nil when the
-    /// schema does not map the event (a deliberate no-op) or no schema is
-    /// available yet. The return value exists for the app's own logging.
+    /// The customer id `setCustomerId` stored, if any.
+    public var customerId: P202CustomerId? {
+        return queue.sync { CustomerIdStore.load(from: store) }
+    }
+
+    /// Record who the app's user is, as a customer id your own server has
+    /// signed (`cust_sig`, documentation/features/visitor-identity.md). The
+    /// signature is what makes the id link one person across devices; there
+    /// is no unsigned form, because the app token is public and an id
+    /// anyone can send links nothing. Kept across launches until
+    /// `clearCustomerId()`; carried as the `customer` object of the SDK wire
+    /// contract. Throws `P202CustomerId.Invalid` for an id or signature the
+    /// server would refuse, and stores nothing then.
+    public func setCustomerId(_ id: String, signature: String, type: P202CustomerId.IdType = .custom) throws {
+        let customer = try P202CustomerId(id: id, signature: signature, type: type)
+        queue.sync {
+            CustomerIdStore.save(customer, to: store)
+        }
+    }
+
+    /// Forget the customer id (for example on sign-out).
+    public func clearCustomerId() {
+        queue.sync {
+            store.removeValue(forKey: CustomerIdStore.key)
+        }
+    }
+
+    /// Report an event, with optional properties and revenue, for the goals
+    /// to evaluate. Returns the update handed to the frameworks, or nil when
+    /// the event reached no encoded goal (a deliberate no-op) or is waiting
+    /// for the first schema. The return value exists for the app's own
+    /// logging.
+    ///
+    /// Throws `EventError` for an event the server's rules refuse (nothing
+    /// is recorded then), `SDKError.notConfigured` before `configure`, and
+    /// `SDKError.pendingEventsFull` when no schema has arrived and the
+    /// waiting queue is full.
     ///
     /// `conversionTypes` scopes the update to AdAttributionKit's install
     /// and/or re-engagement postback (iOS 18+). Leave it nil for the install
     /// postback, which is the only one every supported system has. An update
-    /// that leaves out `.install` is not sent to SKAdNetwork at all — its
-    /// only postback is the install one — and is dropped on iOS 17.4-17.x
-    /// too, where AdAttributionKit cannot scope an update and would apply it
-    /// to that same install postback: a re-engagement conversion must not
+    /// that leaves out `.install` is not sent to SKAdNetwork at all and is
+    /// dropped on iOS 17.4-17.x: a re-engagement conversion must not
     /// overwrite the install postback's value.
     @discardableResult
     public func logEvent(
         _ name: String,
+        properties: [String: EventValue] = [:],
+        revenue: Double? = nil,
         conversionTypes: [ConversionUpdate.ConversionType]? = nil
-    ) -> ConversionUpdate? {
-        let resolved: (update: ConversionUpdate, lockWindow: Bool)? = queue.sync {
-            guard let config = configuration, let schema = cache.schema else {
+    ) throws -> ConversionUpdate? {
+        try Self.validate(name: name, properties: properties, revenue: revenue)
+
+        let update: ConversionUpdate? = try queue.sync {
+            guard configuration != nil else {
+                throw SDKError.notConfigured
+            }
+            // Never earlier than an event already evaluated: a clock set
+            // back must not make a new event sort before an old one, which
+            // the incremental evaluation cannot take back.
+            let now = max(clock(), goals.lastReceivedAt)
+            let event = GoalEvent(
+                eventId: UUID().uuidString,
+                name: name,
+                occurredAt: now,
+                receivedAt: now,
+                properties: properties,
+                revenue: revenue.map { EventValue.double($0) }
+            )
+            guard let schema = cache.schema, goals.installEvaluated else {
+                guard goals.pending.count < Self.maxPendingEvents else {
+                    throw SDKError.pendingEventsFull
+                }
+                goals.pending.append(DeviceGoalState.Pending(event: event, conversionTypes: conversionTypes))
+                goals.lastReceivedAt = now
+                goals.save(to: store)
                 return nil
             }
-            // A coarse-only mapping falls back to the last fine value of the
-            // postback being updated — never the other postback's.
-            let updatesInstall = conversionTypes?.contains(.install) ?? true
-            let history = updatesInstall ? lastFineValue : lastReengagementFineValue
-            guard let decision = ConversionUpdate.resolve(
-                event: name,
-                in: schema,
-                lastFineValue: history
-            ) else {
-                return nil
-            }
-            let update = decision.scoped(to: conversionTypes)
-            // Persist only on change: repeated events with the same fine
-            // value must not write the store on every call.
-            if !update.usedFineFallback {
-                if update.includesInstall && lastFineValue != update.fineValue {
-                    lastFineValue = update.fineValue
-                    LastFineValueStore.save(update.fineValue, to: store, for: .install)
-                }
-                if update.includesReengagement && lastReengagementFineValue != update.fineValue {
-                    lastReengagementFineValue = update.fineValue
-                    LastFineValueStore.save(update.fineValue, to: store, for: .reengagement)
-                }
-            }
-            return (update, config.lockWindow)
+            goals.lastReceivedAt = now
+            let update = evaluate(event, conversionTypes: conversionTypes, schema: schema)
+            goals.save(to: store)
+            return update
         }
 
         refreshIfStale()
 
-        guard let (update, lockWindow) = resolved else {
-            return nil
+        if let update {
+            submitAll([update])
         }
-        Self.submit(update, lockWindow: lockWindow)
         return update
     }
 
@@ -194,12 +279,8 @@ public final class P202Attribution {
     /// Safe to call at any point in the app's life, including from
     /// `applicationDidBecomeActive`, which is where developers habitually
     /// put it: it re-asserts the value already reported rather than
-    /// resetting to 0. Hardcoding 0 would have reported 0 to Apple after a
-    /// `logEvent` had reported 40 AND left `lastFineValue` at 40, so the
-    /// SDK's own state disagreed with what Apple held — and the next
-    /// coarse-only event would have re-reported 40 out of nowhere.
-    /// Returns the update handed to the frameworks, like `logEvent`, so the
-    /// app can log what was reported.
+    /// resetting to 0. Returns the update handed to the frameworks, like
+    /// `logEvent`, so the app can log what was reported.
     @discardableResult
     public func registerAttribution() -> ConversionUpdate {
         let update = ConversionUpdate(
@@ -207,7 +288,7 @@ public final class P202Attribution {
             coarseValue: nil,
             usedFineFallback: false
         )
-        Self.submit(update, lockWindow: false)
+        submitAll([update])
         return update
     }
 
@@ -230,11 +311,11 @@ public final class P202Attribution {
             refreshInFlight = true
             var req = URLRequest(url: Self.schemaURL(endpoint: config.endpoint))
             req.httpMethod = "GET"
-            req.setValue(config.schemaToken, forHTTPHeaderField: "X-P202-App-Token")
+            req.setValue(config.appToken, forHTTPHeaderField: Self.appTokenHeader)
             if let etag = cache.etag {
                 req.setValue(etag, forHTTPHeaderField: "If-None-Match")
             }
-            return (req, config.schemaToken)
+            return (req, config.appToken)
         }
         guard let prepared else {
             completion?(.failure(SDKError.notConfigured))
@@ -257,53 +338,155 @@ public final class P202Attribution {
         }.resume()
     }
 
-    /// Apply one fetch's outcome to the cache. Internal (not private) so
-    /// tests can drive it with crafted responses — the stale-token guard is
-    /// exactly the kind of seam a unit test must exercise for real.
+    /// Apply one fetch's outcome to the cache, and evaluate any events that
+    /// were waiting for a schema. Internal (not private) so tests can drive
+    /// it with crafted responses — the stale-token guard is exactly the kind
+    /// of seam a unit test must exercise for real.
     func finishRefresh(
         requestToken: String,
         data: Data?,
         response: URLResponse?,
         error: Error?
     ) -> Result<P202AttributionSchema, Error> {
-        return queue.sync {
-            guard let config = configuration, config.schemaToken == requestToken else {
+        let (result, flushed): (Result<P202AttributionSchema, Error>, [ConversionUpdate]) = queue.sync {
+            guard let config = configuration, config.appToken == requestToken else {
                 // A different token is configured now (or none). This
                 // response belongs to the old configuration: drop it without
                 // touching the cache or the new fetch's in-flight marker.
-                return .failure(SDKError.superseded)
+                return (.failure(SDKError.superseded), [])
             }
             refreshInFlight = false
             lastAttemptAt = Date()
             if let error {
-                return .failure(error)
+                return (.failure(error), [])
             }
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             if status == 304, let cached = cache.schema {
                 cache.fetchedAt = Date()
-                cache.save(to: store, schemaToken: config.schemaToken)
-                return .success(cached)
+                cache.save(to: store, appToken: config.appToken)
+                return (.success(cached), flushPending())
             }
             guard status == 200 else {
-                return .failure(SDKError.unexpectedStatus(status))
+                return (.failure(SDKError.unexpectedStatus(status)), [])
             }
             guard let data, !data.isEmpty else {
-                return .failure(SDKError.emptyResponse)
+                return (.failure(SDKError.emptyResponse), [])
             }
             do {
                 let schema = try P202AttributionSchema.decode(responseBody: data)
-                cache.schema = schema
-                cache.etag = "\"\(schema.schemaVersion)\""
+                cache.store(body: data, schema: schema)
                 cache.fetchedAt = Date()
-                cache.save(to: store, schemaToken: config.schemaToken)
-                return .success(schema)
+                cache.save(to: store, appToken: config.appToken)
+                return (.success(schema), flushPending())
             } catch {
-                return .failure(error)
+                return (.failure(error), [])
             }
+        }
+        submitAll(flushed)
+        return result
+    }
+
+    // MARK: - Goal evaluation (call on `queue`)
+
+    /// Evaluate the install (once) and every waiting event, in order, now
+    /// that a schema is here. Returns the updates to submit.
+    private func flushPending() -> [ConversionUpdate] {
+        guard let schema = cache.schema, let installAt = goals.installAt else {
+            return []
+        }
+        var updates: [ConversionUpdate] = []
+        if !goals.installEvaluated {
+            if let update = evaluate(.install(at: installAt), conversionTypes: nil, schema: schema) {
+                updates.append(update)
+            }
+            goals.installEvaluated = true
+        }
+        let waiting = goals.pending
+        goals.pending = []
+        for item in waiting {
+            if let update = evaluate(item.event, conversionTypes: item.conversionTypes, schema: schema) {
+                updates.append(update)
+            }
+        }
+        goals.save(to: store)
+        return updates
+    }
+
+    /// One event through the evaluator, from the stored progress; the
+    /// update its eligible outcomes encode to, if any.
+    private func evaluate(
+        _ event: GoalEvent,
+        conversionTypes: [ConversionUpdate.ConversionType]?,
+        schema: P202AttributionSchema
+    ) -> ConversionUpdate? {
+        let subject = GoalSubject(kind: .install, clickAt: nil, installAt: goals.installAt)
+        guard let result = try? GoalEvaluator.continueFrom(schema.goals, subject: subject, state: goals.state, events: [event]) else {
+            // Only a document with a goal twice can get here, and decode()
+            // refuses that; the state is left as it was.
+            return nil
+        }
+        goals.state = result.state
+
+        // A coarse-only mapping falls back to the last fine value of the
+        // postback being updated — never the other postback's.
+        let updatesInstall = conversionTypes?.contains(.install) ?? true
+        let history = updatesInstall ? lastFineValue : lastReengagementFineValue
+        guard let decision = ConversionUpdate.resolve(outcomes: result.outcomes, in: schema, lastFineValue: history) else {
+            return nil
+        }
+        let update = decision.scoped(to: conversionTypes)
+        // Persist only on change: repeated events with the same fine value
+        // must not write the store on every call.
+        if !update.usedFineFallback {
+            if update.includesInstall && lastFineValue != update.fineValue {
+                lastFineValue = update.fineValue
+                LastFineValueStore.save(update.fineValue, to: store, for: .install)
+            }
+            if update.includesReengagement && lastReengagementFineValue != update.fineValue {
+                lastReengagementFineValue = update.fineValue
+                LastFineValueStore.save(update.fineValue, to: store, for: .reengagement)
+            }
+        }
+        return update
+    }
+
+    static func validate(name: String, properties: [String: EventValue], revenue: Double?) throws {
+        guard GoalDefinition.isEventName(name) else {
+            throw EventError.invalidName(name)
+        }
+        guard properties.count <= GoalEvent.maxProperties else {
+            throw EventError.tooManyProperties(properties.count)
+        }
+        for (key, value) in properties {
+            guard GoalDefinition.isPropName(key) else {
+                throw EventError.invalidPropertyName(key)
+            }
+            switch value {
+            case let .string(s) where s.utf8.count > GoalDefinition.maxString:
+                throw EventError.invalidPropertyValue(key)
+            case let .double(d) where !d.isFinite:
+                throw EventError.invalidPropertyValue(key)
+            default:
+                break
+            }
+        }
+        if let revenue, !revenue.isFinite {
+            throw EventError.invalidRevenue
+        }
+    }
+
+    private func submitAll(_ updates: [ConversionUpdate]) {
+        let lockWindow = queue.sync { configuration?.lockWindow ?? false }
+        for update in updates {
+            onSubmit?(update)
+            Self.submit(update, lockWindow: lockWindow)
         }
     }
 
     // MARK: - Internals
+
+    /// The header the app token travels in, and only there.
+    static let appTokenHeader = "X-P202-App-Token"
 
     static func schemaURL(endpoint: URL) -> URL {
         return endpoint

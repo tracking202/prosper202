@@ -30,7 +30,7 @@ final class LiveServerIntegrationTests: XCTestCase {
         var firstSchema: P202AttributionSchema?
 
         let first = expectation(description: "initial fetch")
-        sdk.configure(endpoint: endpoint, schemaToken: token)
+        sdk.configure(endpoint: endpoint, appToken: token)
         sdk.refreshSchema { result in
             if case let .success(schema) = result {
                 firstSchema = schema
@@ -58,14 +58,31 @@ final class LiveServerIntegrationTests: XCTestCase {
         }
         wait(for: [second], timeout: 15)
 
-        // Resolution runs against the live document (the SKAdNetwork call
-        // itself is a no-op off-iOS). Every event the server serves must
-        // resolve; an unmapped name must not.
-        for (name, mapping) in schema.events where mapping.fineValue != nil {
-            let update = sdk.logEvent(name)
-            XCTAssertEqual(update?.fineValue, mapping.fineValue)
+        // The live document's goals evaluate on this device: every goal the
+        // server served parses (none is disabled), and an event nobody
+        // mapped changes nothing. P202ATTRIBUTION_LIVE_EXPECT, when set, is a
+        // JSON list of [event name, properties object, expected fine value
+        // or null] steps the live pass seeded goals for, run in order.
+        let probe = try GoalEvaluator.evaluateAll(schema.goals, subject: GoalSubject(kind: .install, clickAt: nil, installAt: 0), events: [])
+        XCTAssertEqual(probe.disabled, [], "the server served a goal this evaluator cannot read")
+        XCTAssertNil(try sdk.logEvent("an-event-nobody-mapped-\(UUID().uuidString.prefix(8))"))
+        if let raw = ProcessInfo.processInfo.environment["P202ATTRIBUTION_LIVE_EXPECT"] {
+            guard case let .array(steps) = try JSONValue.parse(raw) else {
+                return XCTFail("P202ATTRIBUTION_LIVE_EXPECT is not a JSON list")
+            }
+            XCTAssertFalse(steps.isEmpty)
+            for step in steps {
+                guard case let .array(parts) = step, parts.count == 3, let name = parts[0].stringValue else {
+                    return XCTFail("a step is [name, properties, expected fine value]")
+                }
+                var properties: [String: EventValue] = [:]
+                if case let .object(pairs) = parts[1] {
+                    for (k, v) in pairs { properties[k] = EventValue(json: v) }
+                }
+                let update = try sdk.logEvent(name, properties: properties)
+                XCTAssertEqual(update?.fineValue, parts[2].intValue, "after \(name) \(parts[1].jsonText)")
+            }
         }
-        XCTAssertNil(sdk.logEvent("an-event-nobody-mapped-\(UUID().uuidString)"))
     }
 
     func testWrongTokenIsSurfacedAsAnHTTPStatusNotACrash() throws {
@@ -74,7 +91,7 @@ final class LiveServerIntegrationTests: XCTestCase {
         }
 
         let sdk = P202Attribution(store: InMemoryStore())
-        sdk.configure(endpoint: endpoint, schemaToken: String(repeating: "ff", count: 32))
+        sdk.configure(endpoint: endpoint, appToken: String(repeating: "ff", count: 32))
         let done = expectation(description: "rejected fetch")
         sdk.refreshSchema { result in
             if case let .failure(error) = result {
@@ -85,6 +102,6 @@ final class LiveServerIntegrationTests: XCTestCase {
             done.fulfill()
         }
         wait(for: [done], timeout: 15)
-        XCTAssertNil(sdk.logEvent("purchase"), "no schema means logEvent must be a no-op")
+        XCTAssertNil(try sdk.logEvent("purchase"), "no schema: the event waits and nothing is set")
     }
 }
