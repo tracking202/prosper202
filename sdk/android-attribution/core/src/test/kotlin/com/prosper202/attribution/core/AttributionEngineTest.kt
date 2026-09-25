@@ -308,7 +308,9 @@ class AttributionEngineTest {
 
     @Test
     fun aPendingIntegrityInstallKeepsItsEventsUntilItSettlesAndAFailedOneStopsThem() {
-        http.then(200, """{"data":{"install_uuid":"x","match":"pending_integrity","reason":"Waiting for the Play Integrity verdict.","trusted":null,"test":false,"integrity":"pending","duplicate":false}}""")
+        http.thenAnswer { r ->
+            HttpResponse(200, """{"data":{"install_uuid":"${r.json["install_uuid"]!!.stringOrNull}","match":"pending_integrity","reason":"Waiting for the Play Integrity verdict.","trusted":null,"test":false,"integrity":"pending","duplicate":false}}""")
+        }
         http.schema = { FakeTransport.schemaDoc(request = true) }
         integrity = IntegrityProvider { "tok" }
         val e = started()
@@ -617,6 +619,125 @@ class AttributionEngineTest {
         assertNull(e.customerId)
         time.advance(3600_000)
         assertEquals(1, http.events().size)
+    }
+
+    @Test
+    fun clearingOrReplacingTheCustomerTakesItsClaimOutOfTheUnansweredInstall() {
+        val c1 = CustomerId.of("u-829", "c21cbbf0bddfc93538dd9329f809dbb663e3029dc51fb6c145dc2fbae3e670b4")
+        val c2 = CustomerId.of("sub_123", "b2a3c954b1f334ae7227c1defc9ba26195a4d77e0041b02c7e4232feb72b3d2c", CustomerId.Type.ESP_ID)
+
+        // Cleared while the install waits out a 503: the retry carries no claim.
+        http.then(503, "{}")
+        val e = engine()
+        e.setCustomerId(c1)
+        e.configure(config())
+        time.settle()
+        assertNotNull(http.installs()[0].json["customer"])
+        e.clearCustomerId()
+        time.advance(3600_000)
+        assertNull(http.installs()[1].json["customer"], "the signed-out customer's claim is not resent")
+        assertEquals("attributed", e.installMatch)
+        assertEquals(0, http.events().size, "and nothing offers it on the events route either")
+
+        // Replaced: the old claim leaves the body; the new id goes on the
+        // events route once the install is recorded.
+        val t = VirtualTime()
+        val h = FakeTransport().then(503, "{}")
+        val f = AttributionEngine(InMemoryStore(), h, t, t, FakeReferrer(REFERRER), IntegrityProvider.NONE, RecordingListener(), SilentLogger) { 1.0 }
+        f.setCustomerId(c1)
+        f.configure(config())
+        t.settle()
+        f.setCustomerId(c2)
+        t.advance(3600_000)
+        assertNull(h.installs()[1].json["customer"])
+        assertEquals("sub_123", h.events().single().json["customer"]!!.objOrNull!!["id"]!!.stringOrNull)
+        // Setting the same id again changes nothing.
+        val t3 = VirtualTime()
+        val h3 = FakeTransport().then(503, "{}")
+        val g = AttributionEngine(InMemoryStore(), h3, t3, t3, FakeReferrer(REFERRER), IntegrityProvider.NONE, RecordingListener(), SilentLogger) { 1.0 }
+        g.setCustomerId(c1)
+        g.configure(config())
+        t3.settle()
+        g.setCustomerId(CustomerId.of("u-829", "c21cbbf0bddfc93538dd9329f809dbb663e3029dc51fb6c145dc2fbae3e670b4"))
+        t3.advance(3600_000)
+        assertEquals(h3.installs()[0].body, h3.installs()[1].body, "the same claim: the same bytes")
+    }
+
+    @Test
+    fun anInstallTheServerKeptBeforeItsClaimWasWithdrawnIsTakenAsRecorded() {
+        // The first send reached the server but its answer did not come back;
+        // the retry, without the withdrawn claim, is "other content" (409).
+        http.thenFail().then(409, """{"error":true,"message":"install_uuid … was already reported with different content.","status":409}""")
+        val e = engine()
+        e.setCustomerId(CustomerId.of("u-829", "c21cbbf0bddfc93538dd9329f809dbb663e3029dc51fb6c145dc2fbae3e670b4"))
+        e.configure(config())
+        time.settle()
+        e.clearCustomerId()
+        time.advance(3600_000)
+        assertEquals(2, http.installs().size, "the first version, which carries the claim, is not sent again")
+        assertNull(http.installs()[1].json["customer"])
+        assertEquals(emptyList(), listener.refused)
+        assertEquals(listOf(""), listener.recorded)
+        assertNull(e.installMatch, "recorded, classification unknown")
+        e.logEvent("after")
+        time.advance(AttributionEngine.FLUSH_DELAY_MILLIS)
+        assertEquals(1, http.events().size, "its events go")
+
+        // A 409 without a withdrawn claim is still a refusal.
+        val t = VirtualTime()
+        val h = FakeTransport().then(409, "{}")
+        val l = RecordingListener()
+        AttributionEngine(InMemoryStore(), h, t, t, FakeReferrer(REFERRER), IntegrityProvider.NONE, l, SilentLogger) { 1.0 }.configure(config())
+        t.advance(3600_000)
+        assertEquals(listOf(409), l.refused)
+    }
+
+    @Test
+    fun aTwoHundredThatIsNotTheRoutesReceiptIsRetried() {
+        // Install: a 2xx with `data` that does not echo this install.
+        for (body in listOf(
+            """{"data":{}}""",
+            """{"data":{"install_uuid":"00000000-0000-4000-8000-000000000000","match":"attributed","duplicate":false}}""",
+            """{"data":{"install_uuid":"%s","duplicate":false}}""",
+        )) {
+            val t = VirtualTime()
+            val h = FakeTransport().thenAnswer { r -> HttpResponse(200, body.replace("%s", r.json["install_uuid"]!!.stringOrNull!!)) }
+            val e = AttributionEngine(InMemoryStore(), h, t, t, FakeReferrer(REFERRER), IntegrityProvider.NONE, RecordingListener(), SilentLogger) { 1.0 }
+            e.configure(config())
+            t.settle()
+            assertNull(e.installMatch, body)
+            t.advance(3600_000)
+            assertEquals(2, h.installs().size, body)
+            assertEquals("attributed", e.installMatch, body)
+        }
+
+        // Events: an answer that does not cover the batch keeps it queued.
+        val e = started()
+        val a = e.logEvent("a")
+        val b = e.logEvent("b")
+        http.thenAnswer { r ->
+            val uuid = r.url.substringAfter("/installs/").substringBefore("/events")
+            HttpResponse(200, """{"data":{"install_uuid":"$uuid","accepted":["$a"],"duplicates":[]}}""")
+        }.thenAnswer { HttpResponse(200, """{"data":{}}""") }
+            .thenAnswer { HttpResponse(200, """{"data":{"install_uuid":"someone-else","accepted":["$a","$b"],"duplicates":[]}}""") }
+        time.advance(AttributionEngine.FLUSH_DELAY_MILLIS)
+        assertEquals(2, e.queuedEvents, "a receipt naming one of two events is not a receipt for the batch")
+        assertEquals(emptyList(), listener.delivered)
+        time.advance(3600_000)
+        assertEquals(4, http.events().size)
+        assertEquals(0, e.queuedEvents)
+        assertEquals(listOf(a, b), listener.delivered)
+        assertEquals(1, http.events().map { it.body }.toSet().size, "the same batch each time")
+
+        // Schema: a 2xx that is not the document is waited out, not read as "no integrity".
+        val t = VirtualTime()
+        val h = FakeTransport().thenSchema(200, """{"data":{}}""").thenSchema(200, "<html>portal</html>")
+        h.schema = { FakeTransport.schemaDoc(request = true) }
+        AttributionEngine(InMemoryStore(), h, t, t, FakeReferrer(REFERRER), { "tok" }, RecordingListener(), SilentLogger) { 1.0 }.configure(config())
+        t.settle()
+        assertEquals(0, h.installs().size)
+        t.advance(3600_000)
+        assertEquals("tok", h.installs().single().json["integrity_token"]!!.stringOrNull)
     }
 
     @Test

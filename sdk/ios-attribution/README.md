@@ -69,7 +69,9 @@ try P202Attribution.shared.logEvent("level_reached", properties: ["level": .int(
 try P202Attribution.shared.logEvent("purchase", revenue: 4.99)
 
 // A conversion that belongs to a re-engagement (AdAttributionKit, iOS 18+)
-// rather than the install:
+// rather than the install; call beginReengagement() when the app is opened
+// from a re-engagement ad, so that postback's goals start over:
+P202Attribution.shared.beginReengagement()
 try P202Attribution.shared.logEvent("purchase", conversionTypes: [.reengagement])
 
 // Who the user is, signed by YOUR server (see "Customer id" below):
@@ -106,6 +108,14 @@ update, it is dropped rather than applied to the install postback. Each
 postback keeps its own last fine value for coarse-only mappings, so a
 re-engagement update never falls back to, or overwrites, the install
 postback's value.
+
+Each postback also keeps its own **goal progress**: an event scoped to the
+re-engagement postback advances only that postback's counts, sums and
+`once` goals, and one scoped to both is evaluated from each postback's own
+progress — the two can reach different goals, and then each is sent its
+own value. The install postback's progress runs from the install; the
+re-engagement postback's from the last `beginReengagement()` (its value
+starts over too, as the postback does).
 
 ## Customer id
 
@@ -157,7 +167,10 @@ customer rides the first iOS body route when one exists.
   evaluating everything again.
 - **Offline-safe.** The schema is cached across launches (keyed by token,
   so rotation never reuses a stale cache) and refreshed with `If-None-Match`
-  — an unchanged schema costs a 304. The default refresh interval is 6
+  — an unchanged schema costs a 304. The ETag is kept only with the
+  document it names, so a 304 always means "the one you hold"; one for a
+  document the device does not hold (an old cache, a misbehaving proxy)
+  starts an unconditional fetch at once. The default refresh interval is 6
   hours; `refreshSchema()` forces one (call it on foregrounding if you want
   faster pickup). A document that is not an iOS app's (a token lifted into
   the wrong build) is refused whole.

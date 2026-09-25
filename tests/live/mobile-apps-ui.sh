@@ -435,6 +435,19 @@ tiles = dict(re.findall(r'<div class="p202-tile__label">([^<]+)</div>\s*<div cla
 print(html.unescape(tiles.get('Installs', '?')), html.unescape(tiles.get('Goals reached', '?')), html.unescape(tiles.get('Refuted', '?')))
 PY
 eq "$(cat "$OUT/an1.txt")" "$DB_INSTALLS $DB_REACHED $DB_REFUTED" "its tiles say the rows' installs, goals and refuted"
+# Under an explicit trust filter the Installs tile counts the filtered class
+# (every row of it), never the trusted count a refuted class cannot have.
+for class in refuted unvouched; do
+    get "$ANALYZE?platform=android&group_by=registration&registration_id=$RA&trusted=$class" "$OUT/an-$class.html"
+    python3 - "$OUT/an-$class.html" > "$OUT/an-$class.txt" <<'PY'
+import html, re, sys
+page = open(sys.argv[1], encoding='utf-8').read()
+m = re.search(r'<div class="p202-tile__label">Installs</div>\s*<div class="p202-tile__value">([^<]+)</div>\s*<div class="p202-tile__sub">([^<]+)</div>', page)
+print(html.unescape(m.group(1)) + '|' + html.unescape(m.group(2)).strip() if m else '?')
+PY
+    want=$(Q "SELECT COUNT(*) FROM 202_app_installs WHERE registration_id=$RA AND $( [ "$class" = refuted ] && echo 'trusted=0' || echo 'trusted IS NULL' )")
+    eq "$(cat "$OUT/an-$class.txt")" "$want|$class installs, as filtered" "with trusted=$class the Installs tile counts the $class installs"
+done
 has "$OUT/an1.html" "How installs were matched" "with the match-state breakdown"
 has "$OUT/an1.html" ">bad token<" "naming the forged install's state"
 get "$ANALYZE?view=funnel&registration_id=$RA" "$OUT/an2.html"

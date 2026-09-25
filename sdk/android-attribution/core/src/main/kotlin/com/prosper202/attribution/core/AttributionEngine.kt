@@ -19,9 +19,11 @@ import java.util.UUID
  * conflict, not a retry.
  *
  * **Answers** follow tests/fixtures/app-sdk-contract/android/responses.json:
- * a 2xx with the contract's `data` is success; 429 and 5xx (and a network
- * failure, and a 2xx that is not the contract's answer, which is what a
- * captive portal sends) are retried with backoff — [BASE_BACKOFF_MILLIS]
+ * a 2xx whose `data` is that route's receipt — the install echoing its
+ * `install_uuid` with a `match`, the events echoing it with `accepted` and
+ * `duplicates` that together name every event sent — is success; 429 and
+ * 5xx (and a network failure, and any other 2xx, which is what a captive
+ * portal or a proxy's error page sends) are retried with backoff — [BASE_BACKOFF_MILLIS]
  * doubling to [MAX_BACKOFF_MILLIS], jittered, `Retry-After` honoured — and
  * the next attempt's time is persisted, so a relaunch waits too; every
  * other status is terminal. A refused install is tied to the endpoint and
@@ -39,7 +41,14 @@ import java.util.UUID
  *
  * **The customer id** rides the install body when the app set it before the
  * body was built, and otherwise the next events request (alone, if there
- * are no events), until one request carrying it is answered.
+ * are no events), until one request carrying it is answered. Clearing it, or
+ * replacing it with another, while the install is still unanswered takes
+ * the old id's signed claim out of the persisted body, so a retry never
+ * links the install to a customer the app has signed out; the new one goes
+ * on the events route once the install is recorded. The body is otherwise
+ * never rebuilt, so when it had already been sent the server may hold the
+ * first version: its `409` (a reused install id with other content) then
+ * means the install is recorded, and is taken as such.
  *
  * **Play Integrity.** Before the first attempt to send the install in a
  * process, the engine reads the registration's schema document
@@ -106,6 +115,10 @@ class AttributionEngine(
         internal const val K_LAST_OCCURRED = "last_occurred_at"
         internal const val K_INTEGRITY_ATTEMPTS = "integrity_attempts"
         internal const val K_INTEGRITY = "install_integrity"
+        /** Set once the install body has been handed to the transport: the server may hold it from then on. */
+        internal const val K_BODY_POSTED = "install_body_posted"
+        /** The body was changed (a customer claim withdrawn) after it may have reached the server. */
+        internal const val K_BODY_CHANGED = "install_body_changed_after_post"
 
         internal const val RECORDED = "recorded"
         internal const val REFUSED = "refused"
@@ -156,12 +169,34 @@ class AttributionEngine(
     fun setCustomerId(customer: CustomerId) {
         run {
             store.edit(mapOf(K_CUSTOMER to Json.write(customer.toWire())))
+            withdrawPendingCustomer(keep = customer)
             pump()
         }
     }
 
     fun clearCustomerId() {
-        run { store.edit(mapOf(K_CUSTOMER to null, K_CUSTOMER_SENT to null)) }
+        run {
+            store.edit(mapOf(K_CUSTOMER to null, K_CUSTOMER_SENT to null))
+            withdrawPendingCustomer(keep = null)
+        }
+    }
+
+    /**
+     * Take a customer claim other than [keep] out of an install body the
+     * server has not answered yet. Built once and resent unchanged, the body
+     * would otherwise carry a signed-out customer's claim on every retry,
+     * and the server links whatever claim the install it records carries.
+     */
+    private fun withdrawPendingCustomer(keep: CustomerId?) {
+        if (store.get(K_STATE) == RECORDED) return
+        val body = parseOrNull(store.get(K_BODY) ?: return)?.objOrNull ?: return
+        val claim = body["customer"] ?: return
+        val sent = CustomerId.fromWire(claim)
+        if (keep != null && sent != null && customerKey(sent) == customerKey(keep)) return
+        val changes = linkedMapOf<String, String?>(K_BODY to Json.write(JsonValue.Obj(body.fields.filterKeys { it != "customer" })))
+        if (store.get(K_BODY_POSTED) != null) changes[K_BODY_CHANGED] = "1"
+        store.edit(changes)
+        logger.info("p202: the customer id changed before the install was answered; its earlier claim was taken out of the install")
     }
 
     /** Send what is due now rather than after the flush delay (the app going to the background). */
@@ -327,7 +362,16 @@ class AttributionEngine(
             retryInstall(retryAfterMillis(response))
             return null
         }
-        val plan = readIntegrityPlan(successData(response))
+        val data = successData(response)
+        if (response.status in 200..299 && (data == null || data["platform"]?.stringOrNull != "android")) {
+            // A 2xx that is not the schema document (a captive portal, a
+            // proxy's page) says nothing about Play Integrity: believed, it
+            // would send a `require` install without its token for good.
+            logger.info("p202: the schema document's answer was not the document; retrying")
+            retryInstall(null)
+            return null
+        }
+        val plan = readIntegrityPlan(data)
         integrityPlan = cfg.target to plan
         return plan
     }
@@ -399,6 +443,7 @@ class AttributionEngine(
                 logger.warn("p202: the integrity provider returned an empty or oversized token; the install is sent without it")
             }
         }
+        if (store.get(K_BODY_POSTED) == null) store.edit(mapOf(K_BODY_POSTED to "1"))
         val response = try {
             transport.post(cfg.installsUrl, mapOf(HEADER to cfg.appToken), Json.write(JsonValue.Obj(wire)))
         } catch (e: IOException) {
@@ -406,14 +451,14 @@ class AttributionEngine(
             retryInstall(null)
             return
         }
-        val data = successData(response)
+        val data = successData(response)?.takeIf { isInstallReceipt(it, uuid) }
         when {
             data != null -> {
                 val match = data["match"]?.stringOrNull ?: ""
                 val reason = data["reason"]?.stringOrNull ?: ""
                 val changes = linkedMapOf<String, String?>(
                     K_STATE to RECORDED, K_MATCH to match, K_REASON to reason, K_ATTEMPTS to null, K_NEXT_AT to null,
-                    K_INTEGRITY to data["integrity"]?.stringOrNull, K_INTEGRITY_ATTEMPTS to null,
+                    K_INTEGRITY to data["integrity"]?.stringOrNull, K_INTEGRITY_ATTEMPTS to null, K_BODY_CHANGED to null,
                 )
                 val sentCustomer = CustomerId.fromWire(body["customer"])
                 val linked = data["customer"]?.stringOrNull
@@ -424,6 +469,21 @@ class AttributionEngine(
                 pump()
             }
             retryable(response.status) -> retryInstall(retryAfterMillis(response))
+            response.status == 409 && store.get(K_BODY_CHANGED) != null -> {
+                // The body changed after it may have reached the server (a
+                // customer claim withdrawn), and the server answers that this
+                // install id holds other content: it recorded the first
+                // version. The install is recorded; the first version is not
+                // sent again, since it carries the withdrawn claim.
+                val reason = "The install was recorded before its customer id changed; its classification was not returned again."
+                logger.info("p202: $reason")
+                store.edit(mapOf(
+                    K_STATE to RECORDED, K_MATCH to null, K_REASON to reason, K_ATTEMPTS to null, K_NEXT_AT to null,
+                    K_INTEGRITY_ATTEMPTS to null, K_BODY_CHANGED to null,
+                ))
+                listener.onInstallRecorded("", reason, true)
+                pump()
+            }
             response.status == 400 && body["customer"] != null && onlyCustomerErrors(response) -> {
                 // A server that predates the customer field: the install goes
                 // without it (nothing was stored, so a changed body is not a
@@ -522,7 +582,7 @@ class AttributionEngine(
             retryEvents(null)
             return
         }
-        val data = successData(response)
+        val data = successData(response)?.takeIf { isEventsReceipt(it, uuid, ids) }
         when {
             data != null -> {
                 val changes = linkedMapOf<String, String?>(K_EVENTS_ATTEMPTS to null, K_EVENTS_NEXT_AT to null)
@@ -613,10 +673,35 @@ class AttributionEngine(
 
     private fun customerKey(c: CustomerId) = c.canonical + "|" + c.signature
 
-    /** The contract's success: a 2xx whose body is `{"data": {…}}`. */
+    /** A 2xx whose body is `{"data": {…}}`; whether `data` is the route's receipt is checked by the route. */
     private fun successData(r: HttpResponse): JsonValue.Obj? {
         if (r.status !in 200..299) return null
         return parseOrNull(r.body)?.objOrNull?.get("data")?.objOrNull
+    }
+
+    /**
+     * The install route's receipt: this install's id echoed, with the
+     * classification. Anything else in a 2xx is not an answer about this
+     * install and is retried — the body is idempotent on its id.
+     */
+    private fun isInstallReceipt(data: JsonValue.Obj, uuid: String): Boolean =
+        uuid.isNotEmpty() && data["install_uuid"]?.stringOrNull == uuid &&
+            !data["match"]?.stringOrNull.isNullOrEmpty() && data["duplicate"]?.boolOrNull != null
+
+    /**
+     * The events route's receipt: this install's id echoed, and `accepted`
+     * and `duplicates` lists of ids that together name every event sent.
+     * An answer that leaves one out is not a receipt for the batch, and the
+     * batch is retried (the server is idempotent on event ids), never
+     * dropped from the queue as delivered.
+     */
+    private fun isEventsReceipt(data: JsonValue.Obj, uuid: String, ids: List<String>): Boolean {
+        if (data["install_uuid"]?.stringOrNull != uuid) return false
+        val accepted = data["accepted"]?.arrOrNull?.items ?: return false
+        val duplicates = data["duplicates"]?.arrOrNull?.items ?: return false
+        val named = HashSet<String>()
+        for (item in accepted + duplicates) named.add(item.stringOrNull ?: return false)
+        return named.containsAll(ids)
     }
 
     /**

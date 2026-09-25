@@ -191,6 +191,86 @@ final class FacadeTests: XCTestCase {
         XCTAssertEqual(coarseOnly?.fineValue, 63, "a coarse-only update after rotation must keep the pre-rotation fine value")
     }
 
+    func testANotModifiedForADocumentTheDeviceDoesNotHoldRefetchesUnconditionally() throws {
+        // A cache that kept an ETag but lost its document (a legacy cache,
+        // or any other way): every conditional fetch is answered 304, which
+        // says nothing the device can use.
+        let store = InMemoryStore()
+        store.set(try JSONEncoder().encode(["etag": "\"abc\""]), forKey: SchemaCache.storageKey(appToken: "token-a"))
+        let sdk = P202Attribution(store: store, session: .shared)
+        var requests: [URLRequest] = []
+        sdk.onFetch = { requests.append($0) }
+        sdk.configure(endpoint: Self.deadEndpoint, appToken: "token-a")
+        XCTAssertNil(requests.last?.value(forHTTPHeaderField: "If-None-Match"), "an ETag without its document is not sent")
+
+        // A 304 for a document the device does not hold (a server or a proxy
+        // answering one anyway) starts an unconditional fetch rather than
+        // leaving the device without a document until the next refresh.
+        let fetchesBefore = requests.count
+        let result = sdk.finishRefresh(requestToken: "token-a", data: nil, response: httpResponse(status: 304), error: nil)
+        guard case let .failure(error) = result else {
+            return XCTFail("a 304 with nothing cached is not a schema")
+        }
+        XCTAssertEqual(error as? P202Attribution.SDKError, .unexpectedStatus(304))
+        XCTAssertEqual(requests.count, fetchesBefore + 1, "a new fetch starts at once")
+        XCTAssertNil(requests.last?.value(forHTTPHeaderField: "If-None-Match"), "and it is unconditional")
+        XCTAssertNil(SchemaCache.load(from: store, appToken: "token-a").etag, "for good, not just this once")
+
+        // The unconditional answer is stored and used.
+        _ = try sdk.finishRefresh(requestToken: "token-a", data: TestSchema.body, response: httpResponse(status: 200), error: nil).get()
+        XCTAssertEqual(sdk.currentSchema?.appId, 42)
+    }
+
+    func testEachPostbackKeepsItsOwnGoalProgress() throws {
+        // A once goal and a count goal on the same event. Shared progress
+        // would spend the install postback's first purchase for the
+        // re-engagement postback and count its purchases toward the second.
+        let body = TestSchema.document(
+            goals: [
+                TestSchema.goal(1, #"{"name":"First purchase","trigger":{"event":"purchase"}}"#),
+                TestSchema.goal(2, #"{"name":"Second purchase","trigger":{"event":"purchase"},"threshold":{"count":2}}"#),
+            ],
+            encodings: [
+                #"{"goal_id":1,"fine_value":30,"coarse_value":null}"#,
+                #"{"goal_id":2,"fine_value":50,"coarse_value":null}"#,
+            ]
+        )
+        let h = try Harness(body: body, test: self)
+        XCTAssertEqual(try h.sdk.logEvent("purchase")?.fineValue, 30, "install: the first purchase")
+
+        let first = try XCTUnwrap(try h.sdk.logEvent("purchase", conversionTypes: [.reengagement]))
+        XCTAssertEqual([first.fineValue], [30], "re-engagement: its own first purchase, not the install postback's second")
+        XCTAssertEqual(first.conversionTypes, [.reengagement])
+        XCTAssertEqual(try h.sdk.logEvent("purchase", conversionTypes: [.reengagement])?.fineValue, 50)
+
+        // Scoped to both: each postback from its own progress. The install
+        // postback reaches its second purchase; the re-engagement postback
+        // has reached both goals already, so it is not touched.
+        h.submitted = []
+        let both = try XCTUnwrap(try h.sdk.logEvent("purchase", conversionTypes: [.install, .reengagement]))
+        XCTAssertEqual(h.submitted, [ConversionUpdate(fineValue: 50, coarseValue: nil, usedFineFallback: false, conversionTypes: [.install])])
+        XCTAssertEqual(both.conversionTypes, [.install])
+
+        // Kept across a relaunch, and a new re-engagement starts its own lifecycle.
+        let relaunched = P202Attribution(store: h.store, session: .shared)
+        relaunched.clock = { h.now }
+        relaunched.configure(endpoint: Self.deadEndpoint, appToken: "token-a")
+        XCTAssertNil(try relaunched.logEvent("purchase", conversionTypes: [.reengagement]), "both re-engagement goals already reached")
+        relaunched.beginReengagement()
+        XCTAssertNil(LastFineValueStore.load(from: h.store, for: .reengagement))
+        XCTAssertEqual(try relaunched.logEvent("purchase", conversionTypes: [.reengagement])?.fineValue, 30)
+        XCTAssertEqual(LastFineValueStore.load(from: h.store, for: .install), 50, "the install postback is untouched")
+    }
+
+    func testAGoalStateStoredBeforeReengagementHadItsOwnStillLoads() throws {
+        let store = InMemoryStore()
+        store.set(Data(#"{"installAt":1000,"installEvaluated":true,"lastReceivedAt":1000,"state":{"progress":{},"reached":[]},"pending":[]}"#.utf8), forKey: DeviceGoalState.key)
+        let loaded = DeviceGoalState.load(from: store)
+        XCTAssertEqual(loaded.installAt, 1000, "decoded, not started over")
+        XCTAssertNil(loaded.reengagementState)
+        XCTAssertEqual(loaded.progress(for: .reengagement), EvaluationState())
+    }
+
     // MARK: - Goals on the device
 
     func testAFunnelGoalIsReachedOnlyInOrderAndOnlyAtItsLevel() throws {

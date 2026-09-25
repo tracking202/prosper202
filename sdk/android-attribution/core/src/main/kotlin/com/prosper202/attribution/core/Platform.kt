@@ -286,7 +286,12 @@ class InstallAttempt(
 
 /** What happened, for the app's own logging and for tests. Every method has a default. */
 interface AttributionListener {
-    /** The server recorded the install (or answered a replay of it). */
+    /**
+     * The server recorded the install (or answered a replay of it). [match]
+     * is empty in one case: the install had been sent, then its customer id
+     * was withdrawn, and the server's answer to the changed body said the
+     * first version was already recorded — without classifying it again.
+     */
     fun onInstallRecorded(match: String, reason: String, duplicate: Boolean) {}
 
     /** The server refused the install for good ([status]); it is not resent unless the app token changes. */

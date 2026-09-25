@@ -16,7 +16,7 @@ use Prosper202\Database\Connection;
  *                                          trust, click and conversion stay
  *                                          NULL, as the gate leaves them)
  *
- * Two callers:
+ * Three callers:
  *
  *  - deleting a registration (AppRegistrationsController::beforeDelete),
  *    inside the delete's own transaction, so the registration, its
@@ -27,10 +27,15 @@ use Prosper202\Database\Connection;
  *    installs whose registration disappeared some other way — a row deleted
  *    by hand, or a delete made before this class existed. Its selection
  *    joins the registration as well, so such a row can never occupy a slot
- *    in the oldest-first batch and starve every other app's verdicts.
+ *    in the oldest-first batch and starve every other app's verdicts;
+ *  - the verdict worker again, for one install past its deadline or its
+ *    attempts whose normal settlement keeps failing
+ *    (IntegrityVerifier::retire(), settleExhausted()): the one path that
+ *    must end without a key or a readable body.
  *
  * The goal engine is not run for these installs: the registration's goals
- * are archived with it, and nothing about an unverified install is payable.
+ * are archived with it (or, for an exhausted install, its settlement is
+ * what failed), and nothing about an unverified install is payable.
  * The user purge deletes installs outright (AppDataPurge), so it leaves
  * nothing for this class.
  *
@@ -85,6 +90,20 @@ final class UnverifiableInstalls
 
         return (int) $this->conn->transaction(
             fn (): int => $this->retire($scope, str_repeat('i', count($ids)), $ids, self::ORPHANED_REASON, $now)
+        );
+    }
+
+    /**
+     * Retire one install the verdict worker has run out of time or
+     * attempts for and cannot settle normally (its settle keeps failing):
+     * the same two constant transitions, scoped to that install at the
+     * attempt the worker claimed, so a newer claim is left alone. Opens its
+     * own transaction. Returns how many rows changed.
+     */
+    public function settleExhausted(int $installRowId, int $attempt, string $why, int $now): int
+    {
+        return (int) $this->conn->transaction(
+            fn (): int => $this->retire('install_row_id = ? AND integrity_attempts = ?', 'ii', [$installRowId, $attempt], $why, $now)
         );
     }
 

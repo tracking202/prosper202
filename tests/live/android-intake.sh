@@ -377,6 +377,18 @@ install_body "$OUT/i7.json" "$U7" "$(referrer_of "$OUT/h7")" "$(ctime "$C7")" te
 device POST /apps/installs "$TOKEN" "$OUT/i7.json" > /dev/null
 eq "$(field "[d['data']['match'], d['data']['trusted'], d['data']['test']]")" '["attributed", null, true]' "a test install on a registration that refuses test signals"
 eq "$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id=$C7")" 0 "pays nothing"
+# accept_test_signals is a live policy: the test install already stored is
+# re-judged when it changes, its conversion written, then retired.
+eq "$(api PUT "/apps/$R" '{"accept_test_signals":1}')" 200 "the operator accepts test signals"
+eq "$(Q "SELECT CONCAT_WS('/', trusted, conversion_id IS NOT NULL) FROM 202_app_installs WHERE install_uuid='$U7'")" "1/1" \
+   "the stored test install is re-judged: trusted, with its conversion"
+eq "$(Q "SELECT CONCAT_WS('/', COUNT(*), SUM(deleted), MIN(dedupe_key)) FROM 202_conversion_logs WHERE click_id=$C7")" "1/0/install" "its install conversion is on its click"
+eq "$(Q "SELECT click_lead FROM 202_clicks WHERE click_id=$C7")" 1 "and the click counts it"
+eq "$(api PUT "/apps/$R" '{"accept_test_signals":0}')" 200 "the operator withdraws test signals again"
+eq "$(Q "SELECT CONCAT_WS('/', IFNULL(trusted, 'null'), ISNULL(conversion_id)) FROM 202_app_installs WHERE install_uuid='$U7'")" "null/1" \
+   "the install is unvouched again, off its click"
+eq "$(Q "SELECT CONCAT_WS('/', COUNT(*), SUM(deleted)) FROM 202_conversion_logs WHERE click_id=$C7")" "1/1" "its conversion is retired"
+eq "$(Q "SELECT click_lead FROM 202_clicks WHERE click_id=$C7")" 0 "and the click no longer counts it"
 
 # ─────────────────────────────────────────────────────────────────────
 say "a pending click is settled by the cron, which also sends the postbacks"
@@ -464,9 +476,17 @@ else
 fi
 
 say "deleting a registration unlinks its campaigns; registering the app again attributes them"
+# An install of the other app still waiting for its click when the app goes.
+UPEND=$(uuid)
+Q "INSERT INTO 202_app_installs (user_id, registration_id, install_uuid, body_hash, store, match_state, match_reason, referrer_status, received_at, raw_payload)
+   SELECT user_id, registration_id, '$UPEND', 'pending', 'google_play', 'pending_click', 'Click not recorded yet.', 'ok', UNIX_TIMESTAMP(), '{}'
+   FROM 202_app_registrations WHERE registration_id=$R_OTHER"
 eq "$(api DELETE "/apps/$R_OTHER?dry_run=1")" 200 "a delete preview"
 eq "$(field "[c['action'] for c in d['data']['cascade'] if c['resource'] == 'campaigns']")" '["unlink (app_registration_id set to NULL)"]' "names the campaigns it unlinks"
+has "$OUT/body" "pending_click → bad_token" "and the pending clicks it settles"
 eq "$(api DELETE "/apps/$R_OTHER")" 204 "the other app's registration is deleted"
+eq "$(Q "SELECT CONCAT_WS('/', match_state, trusted, settled_at IS NOT NULL) FROM 202_app_installs WHERE install_uuid='$UPEND'")" "bad_token/0/1" \
+   "its pending click is settled as the deadline would, never paid, not left pending for good"
 eq "$(api GET "/campaigns/$CAMP_B")" 200 "its campaign is kept"
 eq "$(field "d['data']['app_registration_id']")" "" "unlinked in the delete"
 eq "$(api POST /apps '{"store_link":"com.p202.pass.other","app_name":"Other again"}')" 201 "the app is registered again"

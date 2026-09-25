@@ -134,7 +134,7 @@ var appNotificationsCmd = &cobra.Command{
 
 func init() {
 	appLinkCmd.Flags().String("campaign-id", "", "Say whether this campaign sends its clicks to the store link (`p202 campaign list`)")
-	appLinkCmd.Flags().Bool("apply", false, "Set the campaign's offer URL to the store link and, for Android, link it to the app")
+	appLinkCmd.Flags().Bool("apply", false, "Set the campaign's offer URL to the store link and, for Android, link it to the app (and turn URL rotation off when an alternate in rotation is not the app's link)")
 
 	registerPagedListFlags(appNotificationsCmd)
 	appNotificationsCmd.Flags().String("registration-id", "", "Only this app's postbacks (`p202 app list`)")
