@@ -718,3 +718,91 @@ async function updatePageBaseline(ctx, entry, options = {}) {
 
 module.exports.UPDATE_PAGES = UPDATE_PAGES;
 module.exports.updatePageBaseline = updatePageBaseline;
+
+/* U7: Standalone and pre-login */
+
+/**
+ * The pages a signed-out visitor reaches, on the standalone v2 shell
+ * (info_top()): where each is, and the heading its card opens with — a
+ * card title, or the heading of a _die() message. There is no chrome and no
+ * sub-menu on these pages. specs/prelogin-pages.spec.js runs
+ * standalonePageBaseline() over every entry, light and dark, at 1280px and
+ * 390px, in a session that has not signed in.
+ */
+const STANDALONE_PAGES = [
+  { path: '/202-login.php', heading: 'Sign in' },
+  { path: '/202-lost-pass.php', heading: 'Reset your password' },
+  { path: '/202-pass-reset.php?key=unknown', heading: 'This reset link does not work' },
+  { path: '/202-404.php', heading: 'Page not found' },
+  { path: '/api-key-required.php', heading: 'Your license key is missing or expired' },
+  { path: '/202-config/requirements.php', heading: 'Already Installed' },
+  { path: '/202-config/setup-config.php', heading: 'Prosper202 is already set up' },
+];
+
+/** The signed-in sections that left the classic shell with U7. */
+const FEED_SECTION_PAGES = [
+  { path: '/202-tv/', heading: 'TV202' },
+  { path: '/202-resources/', heading: 'Hot deals & discounts' },
+  { path: '/202-appstore/', heading: 'App Store' },
+];
+
+/** What the standalone pages were built on before U7: Bootstrap 3 and Flat UI's sign-in form. */
+const STANDALONE_CLASSIC_CLASSES = ['col-xs-4', 'col-xs-7', 'col-xs-8', 'col-xs-12', 'form-signin', 'form-horizontal', 'form-group',
+  'control-label', 'input-sm', 'btn-p202', 'btn-block', 'login_tooltip', 'infotext', 'has-error',
+  'label', 'label-primary', 'label-important', 'media', 'media-left', 'panel', 'panel-default', 'tile', 'tile-title'];
+
+/**
+ * One standalone page's baseline, at whatever viewport and theme the session
+ * has: it navigates, then checks the shell, the heading, every component
+ * class styled, no flex container eating its spaces, no classic class in the
+ * live DOM, wide tables in their own box, and that the column — not the
+ * wallpaper link behind it — takes a click in its middle.
+ */
+async function standalonePageBaseline(ctx, entry, options = {}) {
+  const { app, ui, expect } = ctx;
+  expect.section(entry.path);
+  await app.goto(entry.path);
+  await baseline(ctx);
+  const heading = await ui.page.evaluate(() => {
+    const el = document.querySelector('.p202-standalone__title, .p202-standalone__message h6');
+    return el ? el.textContent.trim() : '';
+  });
+  expect.eq(heading, entry.heading, 'the card opens with its heading');
+  expect.ok(await ui.exists('body.p202-standalone .p202-standalone__column'), 'the page is one standalone column');
+  const hit = await ui.page.evaluate(() => {
+    const card = document.querySelector('.p202-standalone__card');
+    if (!card) { return 'no card'; }
+    const box = card.getBoundingClientRect();
+    const el = document.elementFromPoint(box.left + box.width / 2, box.top + Math.min(box.height / 2, 40));
+    return el && el.closest('.p202-standalone__card') ? 'card' : (el ? el.tagName.toLowerCase() + '.' + el.className : 'nothing');
+  });
+  expect.eq(hit, 'card', 'the card takes a click in its middle, not the wallpaper behind it');
+  await componentClassesAreStyled(ctx, entry.scriptOnly || []);
+  await flexContainersKeepTheirSpaces(ctx);
+  await noLegacyClasses(ctx, STANDALONE_CLASSIC_CLASSES);
+  await tablesScrollThemselves(ctx);
+  if (options.dark) {
+    await darkThemeApplies(ctx);
+  }
+}
+
+/** A signed-in section page's baseline: v2 shell, header, components, no classic class. */
+async function feedSectionBaseline(ctx, entry, options = {}) {
+  const { app, ui, expect } = ctx;
+  expect.section(entry.path);
+  await app.goto(entry.path);
+  await baseline(ctx);
+  expect.eq(await ui.text('h1.p202-page-header__title'), entry.heading, 'the page opens with its header');
+  await componentClassesAreStyled(ctx);
+  await flexContainersKeepTheirSpaces(ctx);
+  await noLegacyClasses(ctx, STANDALONE_CLASSIC_CLASSES);
+  await tablesScrollThemselves(ctx);
+  if (options.dark) {
+    await darkThemeApplies(ctx);
+  }
+}
+
+module.exports.STANDALONE_PAGES = STANDALONE_PAGES;
+module.exports.FEED_SECTION_PAGES = FEED_SECTION_PAGES;
+module.exports.standalonePageBaseline = standalonePageBaseline;
+module.exports.feedSectionBaseline = feedSectionBaseline;

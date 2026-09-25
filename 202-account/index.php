@@ -43,7 +43,6 @@ foreach ($gs_steps as $gs_step) {
 $apps = [
     ['ClickServer', 'Advanced conversion tracking and optimization.', $base . 'tracking202/', 'shield.svg', false],
     ['TV202', 'Exclusive marketing interviews and tutorials.', $base . '202-tv/', 'video.svg', false],
-    ['Mobile202', 'Your stats on the mobile version of Prosper202.', $base . '202-Mobile', 'responsive.svg', false],
     ['Resources202', 'More applications to help you sell.', $base . '202-resources/', 'basket.svg', false],
 ];
 $resources = [

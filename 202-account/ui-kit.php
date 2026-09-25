@@ -35,6 +35,7 @@ $sections = [
 	'states' => 'Empty &amp; flash',
 	'code' => 'Code &amp; strip',
 	'overlays' => 'Overlays',
+	'standalone' => 'Standalone',
 ];
 ?>
 
@@ -600,6 +601,33 @@ $sections = [
 			}
 		});
 	</script>
+</section>
+
+<section class="p202-section" id="standalone">
+	<h2 class="p202-section__title">Standalone</h2>
+	<p class="text-secondary">The pages before a login — sign in, the password reset, the installer, the upgrader, the 404 — render through <code>info_top()</code>: no chrome, one centred column (<code>.p202-standalone__column</code>, <code>--wide</code> for the installer) of Bootstrap cards over the partner wallpaper. Open <a href="<?php echo $base; ?>202-404.php">the 404 page</a> in a signed-out window to see one whole.</p>
+	<div class="row g-4">
+		<div class="col-md-6">
+			<div class="p202-standalone__column mx-auto">
+				<section class="card p202-standalone__card"><div class="card-body">
+					<h1 class="p202-standalone__title">Sign in</h1>
+					<p class="p202-standalone__desc">to your Prosper202 ClickServer</p>
+					<div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body">Your username or password is incorrect.</div></div>
+					<div class="mb-3"><label class="form-label" for="kit-sa-user">Username</label><input type="text" class="form-control" id="kit-sa-user" value="admin"></div>
+					<button type="button" class="btn btn-primary w-100">Sign in</button>
+				</div></section>
+			</div>
+		</div>
+		<div class="col-md-6">
+			<div class="p202-standalone__column mx-auto">
+				<section class="card p202-standalone__card"><div class="card-body"><div class="p202-standalone__message">
+					<h6>Already Upgraded</h6>
+					<small>A <code>_die()</code> message: a heading and a sentence its caller wrote, with <a href="#standalone">a link</a> onward.</small>
+				</div></div></section>
+				<p class="p202-standalone__foot">Prosper202 ClickServer &middot; <a href="#standalone">Help</a></p>
+			</div>
+		</div>
+	</div>
 </section>
 
 <?php template_bottom(); ?>
