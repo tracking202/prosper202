@@ -18,25 +18,22 @@ $mysql['cid'] = 0;
 $mysql['use_pixel_payout'] = 0;
 $advertiserId = null;
 
-//grab the cid
-if(array_key_exists('cid',$_GET) && is_numeric($_GET['cid'])) {
-	$mysql['cid']= $db->real_escape_string((string)$_GET['cid']);
+//grab the cid (the campaign whose own cookie names the click)
+$campaignIdFromRequest = p202ParseClickId($_GET['cid'] ?? null) ?? 0;
+$mysql['cid'] = (string) $campaignIdFromRequest;
+
+// The click: the subid parameter, the campaign's cookie, the general cookie
+// (p202ClickIdFromRequest). A value that is present and not an exact click
+// id is refused rather than cast ("123.9" is not click 123) and rather than
+// falling back to the IP lookup below.
+$requestedClick = p202ClickIdFromRequest($_GET, $_COOKIE, $campaignIdFromRequest);
+if ($requestedClick['malformed'] !== null) {
+    error_log('upx: refusing malformed ' . $requestedClick['malformed'] . ' click id');
+    exit;
 }
-    
-// grab the subid
-if (array_key_exists('subid', $_GET) && is_numeric($_GET['subid'])) {
-    $mysql['click_id'] = $db->real_escape_string((string)$_GET['subid']);
-} elseif (array_key_exists('sid', $_GET) && is_numeric($_GET['sid'])) {
-    $mysql['click_id'] = $db->real_escape_string((string)$_GET['sid']);
-} else { // no subid found get from cookie or fingerprint
-       
-    // see if it has the cookie in the campaign id, then the general match, then do whatever we can to grab SOMETHING to tie this lead to
-    if (isset($_COOKIE['tracking202subid_a_' . $mysql['cid']]) && is_numeric($_COOKIE['tracking202subid_a_' . $mysql['cid']]) && $mysql['cid'] != '0') {
-        $mysql['click_id'] = $db->real_escape_string((string) $_COOKIE['tracking202subid_a_' . $mysql['cid']]);
-    } else
-        if (isset($_COOKIE['tracking202subid']) && is_numeric($_COOKIE['tracking202subid'])) {
-            $mysql['click_id'] = $db->real_escape_string((string) $_COOKIE['tracking202subid']);
-        } else {
+if ($requestedClick['click_id'] !== null) {
+    $mysql['click_id'] = (string) $requestedClick['click_id'];
+} else { // nothing named a click: fall back to this address's last click
             // ok grab the last click from this ip_id
             $mysql['ip_address'] = $db->real_escape_string($_SERVER['REMOTE_ADDR']);
             $daysago = time() - 2592000; // 30 days ago
@@ -57,7 +54,6 @@ if (array_key_exists('subid', $_GET) && is_numeric($_GET['subid'])) {
                 $mysql['click_id'] = $db->real_escape_string($click_row1['click_id']);
                 $mysql['ppc_account_id'] = $db->real_escape_string($click_row1['ppc_account_id'] ?? '');
             }
-        }
 }
 
 if(!$mysql['click_id']){
@@ -172,71 +168,6 @@ $account_id_sql="SELECT 202_clicks.ppc_account_id
 $account_id_result = $db->query($account_id_sql);
 $account_id_row = $account_id_result ? $account_id_result->fetch_assoc() : null;
 $mysql['ppc_account_id'] = $db->real_escape_string($account_id_row['ppc_account_id'] ?? '');
-//$mysql['ppc_account_id']=1; //commenut out in live
-if($mysql['ppc_account_id']){
-	$pixel_sql='SELECT 202_ppc_account_pixels.pixel_code,202_ppc_account_pixels.pixel_type_id FROM 202_ppc_account_pixels WHERE 202_ppc_account_pixels.ppc_account_id='.$mysql['ppc_account_id'];
-	//"SELECT 202_ppc_account_pixels.pixel_code,202_ppc_account_pixels.pixel_type_id FROM 202_ppc_account_pixels LEFT JOIN 202_clicks ON 202_clicks.ppc_account_id=202_ppc_account_pixels.ppc_account_id WHERE 202_ppc_account_pixels.ppc_account_id=".$mysql['ppc_account_id'];
-    
-	$pixel_result = $db->query($pixel_sql);
-	if ($pixel_result && $pixel_result->num_rows > 0) {
-		while ($pixel_result_row = $pixel_result->fetch_assoc()) {
-			//$pixel_result_row = memcache_mysql_fetch_assoc($pixel_sql);
-			$mysql['pixel_type_id'] = $db->real_escape_string($pixel_result_row['pixel_type_id']);
-			if ($mysql['pixel_type_id'] == 5) {
-				$mysql['pixel_code'] = stripslashes((string) $pixel_result_row['pixel_code']);
-			}else{
-				$mysql['pixel_code'] = $db->real_escape_string($pixel_result_row['pixel_code']);
-			}
-
-			//get the list of pixel urls
-		    if($mysql['pixel_type_id'] != 5) $pixel_urls = explode(' ',(string) $mysql['pixel_code']);
-		   
-			switch ($mysql['pixel_type_id']) {
-				case 1:
-					foreach($pixel_urls as $pixel_url){
-					  if(!empty($pixel_url)) {
-					    $pixel_url=replaceTokens($pixel_url,$tokens);
-					    echo "<img src='{$pixel_url}' height='0' width='0' style='display:none' />\n";
-					  }
-					}
-
-					break;
-				case 2:
-			        foreach($pixel_urls as $pixel_url){
-					  if(!empty($pixel_url)) {
-					    $pixel_url=replaceTokens($pixel_url,$tokens);
-					    echo "<iframe src='{$pixel_url}' height='0' width='0'></iframe>\n";
-					  }
-					}
-
-					break;
-				case 3:
-			        foreach($pixel_urls as $pixel_url){
-					  if(!empty($pixel_url)) {
-					   $pixel_url=replaceTokens($pixel_url,$tokens);
-					   echo "<script async src='{$pixel_url}'></script>\n";
-					  }
-					}
-			
-					break;
-				case 4:
-		        	foreach($pixel_urls as $pixel_url){
-					  if(!empty($pixel_url)) {
-					    $pixel_url=replaceTokens($pixel_url,$tokens);
-					    getUrl($pixel_url, 'GET', 10, [], [], P202_POSTBACK_USER_AGENT, 5);
-					  }
-					}
-					break;
-
-				case 5:
-					echo replaceTokens($mysql['pixel_code'],$tokens);
-
-					break;
-				
-			}
-		}
-	}
-}
 
 if (is_numeric($mysql['click_id'])) {
 
@@ -287,6 +218,18 @@ if (is_numeric($mysql['click_id'])) {
 		error_log('upx: conversion recording failed for click ' . $mysql['click_id'] . ': ' . $conversionError->getMessage());
 	}
 	$conversionId = $conversionResult['conv_id'];
+
+	// Tell the traffic source after recording, and only about a conversion
+	// that was newly recorded: the pixel used to fire first, so a reload of
+	// the page notified the network again and a failed write notified it of
+	// a conversion this install never kept.
+	if ($conversionId > 0 && !$conversionResult['duplicate'] && ($conversionResult['reverses_conv_id'] ?? 0) === 0 && $mysql['ppc_account_id']) {
+		$tokens['transactionid'] = $conversionResult['transaction_id'] !== ''
+			? $conversionResult['transaction_id']
+			: $conversionResult['dedupe_key'];
+		$tokens['payout'] = $conversionResult['payout'];
+		echo p202FireTrafficSourcePixels($db, (int) $mysql['ppc_account_id'], $tokens)['markup'];
+	}
 
         if ($conversionId > 0 && !$conversionResult['duplicate']) {
                 $scope = [

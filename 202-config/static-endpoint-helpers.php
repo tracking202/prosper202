@@ -53,68 +53,179 @@ if (!function_exists('p202RespondJsonError')) {
 
 const P202_POSTBACK_USER_AGENT = 'Mozilla/5.0 Postback202-Bot v1.8';
 
-if (!function_exists('p202ApplyConversionUpdate')) {
-    function p202ApplyConversionUpdate(
-        mysqli $db,
-        string $clickId,
-        string $clickCpa,
-        bool $usePixelPayout = false,
-        string $clickPayout = '',
-        ?string $affCampaignId = null,
-        bool $deferDirtyHour = false
-    ): bool {
-        $escapedCpa = $db->real_escape_string($clickCpa);
-        $sqlSet = $escapedCpa !== ''
-            ? "click_cpc='" . $escapedCpa . "', click_lead='1', click_filtered='0'"
-            : "click_lead='1', click_filtered='0'";
+if (!function_exists('p202ApplyConversionClickSide')) {
+    /**
+     * The click-side part of a conversion that is not its value: a CPA
+     * campaign's cost moves onto the click (click_cpc = the tracker's CPA),
+     * and a converting click is never left filtered.
+     *
+     * This used to set click_lead and click_payout as well. Those are now
+     * derived from the click's ledger rows by MysqlConversionLedger::recompute(),
+     * which runs in the same transaction right after this; writing them here
+     * too would let the cache disagree with its rows (ClickValueWritersTest).
+     *
+     * @return bool Whether the 202_clicks update ran. The 202_clicks_spy copy
+     *         is best-effort (its row may already have aged out), so its
+     *         failure is logged, not returned.
+     */
+    function p202ApplyConversionClickSide(mysqli $db, int $clickId, string $clickCpa): bool
+    {
+        $cpa = trim($clickCpa);
+        $setCost = $cpa !== '' && is_numeric($cpa);
+        $conn = new \Prosper202\Database\Connection($db);
 
-        $where = "click_id='" . $db->real_escape_string($clickId) . "'";
-        if ($affCampaignId !== null) {
-            $where .= " AND aff_campaign_id='" . $db->real_escape_string($affCampaignId) . "'";
-        }
-
-        $escapedPayout = $db->real_escape_string($clickPayout);
-
-        $updateClicksSql = "\n\t\tUPDATE\n\t\t\t202_clicks\n\t\tSET\n\t\t\t" . $sqlSet;
-        if ($usePixelPayout) {
-            $updateClicksSql .= "\n\t\t\t, click_payout='" . $escapedPayout . "'";
-        }
-        $updateClicksSql .= "\n\t\tWHERE\n\t\t\t" . $where;
-        $clicksUpdateOk = true;
-        if (!$db->query($updateClicksSql)) {
-            $clicksUpdateOk = false;
+        $ok = true;
+        foreach (['202_clicks', '202_clicks_spy'] as $table) {
+            $sql = $table === '202_clicks'
+                ? ($setCost
+                    ? 'UPDATE 202_clicks SET click_cpc = ?, click_filtered = 0 WHERE click_id = ?'
+                    : 'UPDATE 202_clicks SET click_filtered = 0 WHERE click_id = ?')
+                : ($setCost
+                    ? 'UPDATE 202_clicks_spy SET click_cpc = ?, click_filtered = 0 WHERE click_id = ?'
+                    : 'UPDATE 202_clicks_spy SET click_filtered = 0 WHERE click_id = ?');
             try {
-                error_log('p202ApplyConversionUpdate: failed to update 202_clicks: ' . $db->error);
-            } catch (\Error $e) {
-                error_log('p202ApplyConversionUpdate: failed to update 202_clicks (error inaccessible)');
+                $stmt = $conn->prepareWrite($sql);
+                if ($setCost) {
+                    $conn->bind($stmt, 'si', [$cpa, $clickId]);
+                } else {
+                    $conn->bind($stmt, 'i', [$clickId]);
+                }
+                $conn->executeUpdate($stmt);
+            } catch (\Prosper202\Database\Exceptions\QueryException $e) {
+                error_log('p202ApplyConversionClickSide: the ' . $table . ' update failed: ' . $e->getMessage());
+                if ($table === '202_clicks') {
+                    $ok = false;
+                }
             }
         }
 
-        $updateSpySql = "\n\t\tUPDATE\n\t\t\t202_clicks_spy\n\t\tSET\n\t\t\t" . $sqlSet;
-        if ($usePixelPayout) {
-            $updateSpySql .= "\n\t\t\t, click_payout='" . $escapedPayout . "'";
+        return $ok;
+    }
+}
+
+if (!function_exists('p202ExtractReversal')) {
+    /**
+     * Whether a postback reverses an earlier conversion, and the network's
+     * reference for the reversal.
+     *
+     * `status=reversed` marks one; the transaction id names the conversion it
+     * reverses. A negative `amount` with a transaction id already on file is
+     * a reversal too, decided by the writer, which is the one place that can
+     * see whether the id is on file. `reversal_id` is the network's own id
+     * for the reversal; without one, a sale can be reversed once.
+     *
+     * @param array<string,mixed> $source Typically $_GET.
+     * @return array{reversal: bool, reversal_ref: string}
+     */
+    function p202ExtractReversal(array $source): array
+    {
+        $status = isset($source['status']) && is_scalar($source['status']) ? strtolower(trim((string) $source['status'])) : '';
+        $ref = isset($source['reversal_id']) && is_scalar($source['reversal_id']) ? trim((string) $source['reversal_id']) : '';
+
+        return ['reversal' => $status === 'reversed', 'reversal_ref' => $ref];
+    }
+}
+
+if (!function_exists('p202FireTrafficSourcePixels')) {
+    /**
+     * Tell the click's traffic source about a conversion: the one sender for
+     * every 202_ppc_account_pixels pixel, used by gpb.php and upx.php (and the
+     * notification worker that comes with the Android intake).
+     *
+     * Every pixel row the traffic source has is fired (the setup page lets an
+     * account hold several; gpb.php used to read only the first). Pixel
+     * types, as the setup page defines them:
+     *   1 image, 2 iframe, 3 script — markup for a browser, returned;
+     *   4 server-to-server postback — fetched here, one GET per URL;
+     *   5 raw code — returned with its tokens replaced.
+     *
+     * $tokens are replaceTokens() tokens. The caller fills `transactionid`
+     * with the conversion's transaction id, or its dedupe key when the
+     * network sent none, so a network receiving several conversions for one
+     * click can tell them apart.
+     *
+     * @param array<string, scalar> $tokens
+     * @param (callable(string): bool)|null $fetch Performs a type-4 GET and
+     *        says whether it succeeded (a 2xx or 3xx status); defaults to
+     *        curl with the postback user agent. Injected by tests.
+     * @return array{markup: string, types: list<int>, server_calls: int, server_failures: int}
+     */
+    function p202FireTrafficSourcePixels(mysqli $db, int $ppcAccountId, array $tokens, ?callable $fetch = null): array
+    {
+        $out = ['markup' => '', 'types' => [], 'server_calls' => 0, 'server_failures' => 0];
+        if ($ppcAccountId <= 0) {
+            return $out;
         }
-        $updateSpySql .= "\n\t\tWHERE\n\t\t\t" . $where;
-        if (!$db->query($updateSpySql)) {
-            try {
-                error_log('p202ApplyConversionUpdate: failed to update 202_clicks_spy: ' . $db->error);
-            } catch (\Error $e) {
-                error_log('p202ApplyConversionUpdate: failed to update 202_clicks_spy (error inaccessible)');
+
+        $conn = new \Prosper202\Database\Connection($db);
+        $stmt = $conn->prepareRead(
+            'SELECT pixel_code, pixel_type_id FROM 202_ppc_account_pixels WHERE ppc_account_id = ? ORDER BY pixel_id'
+        );
+        $conn->bind($stmt, 'i', [$ppcAccountId]);
+        $pixels = $conn->fetchAll($stmt);
+
+        // getUrl() answers '' both for a failed request and for an empty
+        // body, so it cannot say whether the network heard us. This asks
+        // curl for the status as well.
+        $fetch ??= static function (string $url): bool {
+            $ch = curl_init($url);
+            if ($ch === false) {
+                return false;
+            }
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_MAXREDIRS => 5,
+                CURLOPT_TIMEOUT => 10,
+                CURLOPT_CONNECTTIMEOUT => 5,
+                CURLOPT_USERAGENT => P202_POSTBACK_USER_AGENT,
+            ]);
+            $body = curl_exec($ch);
+            $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+            curl_close($ch);
+
+            return $body !== false && $status >= 200 && $status < 400;
+        };
+
+        foreach ($pixels as $pixel) {
+            $type = (int) $pixel['pixel_type_id'];
+            $code = (string) $pixel['pixel_code'];
+            $out['types'][] = $type;
+
+            if ($type === 5) {
+                $out['markup'] .= replaceTokens($code, $tokens) . "\n";
+                continue;
+            }
+
+            foreach (explode(' ', $code) as $url) {
+                if ($url === '') {
+                    continue;
+                }
+                $url = replaceTokens($url, $tokens);
+                $attr = htmlspecialchars((string) $url, ENT_QUOTES);
+                switch ($type) {
+                    case 1:
+                        $out['markup'] .= "<img src='{$attr}' height='0' width='0' style='display:none' />\n";
+                        break;
+                    case 2:
+                        $out['markup'] .= "<iframe src='{$attr}' height='0' width='0'></iframe>\n";
+                        break;
+                    case 3:
+                        $out['markup'] .= "<script async src='{$attr}'></script>\n";
+                        break;
+                    case 4:
+                        $out['server_calls']++;
+                        if (!$fetch((string) $url)) {
+                            $out['server_failures']++;
+                            error_log('traffic source postback failed for ppc account ' . $ppcAccountId . ': ' . $url);
+                        }
+                        break;
+                }
             }
         }
+        $out['types'] = array_values(array_unique($out['types']));
 
-        // Cache invalidation (memcache write). Transactional callers defer this
-        // until AFTER commit so the click-row lock is not held across cache I/O.
-        if (!$deferDirtyHour) {
-            $de = new DataEngine();
-            $de->setDirtyHour($clickId);
-        }
-
-        // Report whether the primary 202_clicks update succeeded so transactional
-        // callers (p202RecordConversion) can roll back instead of committing a
-        // conversion whose click never got flagged. The 202_clicks_spy update is a
-        // denormalised real-time copy: its failure is logged but not fatal.
-        return $clicksUpdateOk;
+        return $out;
     }
 }
 
@@ -349,20 +460,30 @@ if (!function_exists('p202RecordConversion')) {
      *
      * Thin adapter over the canonical writer MysqlConversionRepository::record():
      * the click is locked (SELECT ... FOR UPDATE), the conversion is de-duplicated
-     * on a non-empty transaction id (idempotent replay), and the conversion_logs
-     * insert plus the legacy click-side update (lead flag / cpa / payout / spy
-     * table) commit or roll back together. The dirty-hour cache write happens
-     * after commit, only for a newly recorded conversion.
+     * on its dedupe key (idempotent replay), and the ledger row, the click-side
+     * update (CPA cost, filtered flag) and the recompute of the click's value
+     * from its rows commit or roll back together. The dirty-hour cache write
+     * happens after commit, only for a newly recorded conversion.
      *
-     * @param array<string,int|float|string> $log Conversion_logs column values.
+     * @param array<string,int|float|string|bool> $log Conversion_logs column values.
      *        Required keys: click_id, campaign_id, user_id, click_time, conv_time,
-     *        time_difference, ip, pixel_type, user_agent, click_payout.
+     *        time_difference, ip, pixel_type, user_agent. Optional: source (a
+     *        ConversionSource value; defaults from pixel_type), reversal and
+     *        reversal_ref (see p202ExtractReversal), once_per_click.
+     *        click_payout is read only when $usePixelPayout: without an
+     *        explicit amount the writer applies the campaign's default.
      * @param array{customer_ref?: string, customer_ref_type?: string} $customer
      *        LTV customer identity (see p202ExtractCustomer); [] = unlinked.
      * @param list<array<string,mixed>> $items Product line items for the
      *        revenue ledger event (see p202ExtractItems); [] = none.
-     * @return array{conv_id:int, duplicate:bool} conv_id is 0 only when the source
-     *         click no longer exists (no orphan row is written).
+     * @return array{conv_id:int, duplicate:bool, transaction_id:string, dedupe_key:string, payout:string, reverses_conv_id:int}
+     *         conv_id is 0 when the source click no longer exists (no orphan
+     *         row is written) or an id-less hit found the click already
+     *         converted (duplicate). dedupe_key is the row's ledger key, which
+     *         the traffic-source pixel sends in place of a transaction id the
+     *         network never gave. reverses_conv_id is the sale a reversal row
+     *         nets against, 0 for every other row: a reversal is not a new
+     *         conversion, so the caller must not announce it as one.
      */
     function p202RecordConversion(
         mysqli $db,
@@ -392,7 +513,6 @@ if (!function_exists('p202RecordConversion')) {
             'click_id'        => $clickId,
             'transaction_id'  => trim($transactionId),
             'campaign_id'     => (int) ($log['campaign_id'] ?? 0),
-            'payout'          => (float) ($log['click_payout'] ?? 0),
             'click_time'      => (int) ($log['click_time'] ?? 0),
             'conv_time'       => (int) ($log['conv_time'] ?? time()),
             'time_difference' => (string) ($log['time_difference'] ?? ''),
@@ -400,6 +520,27 @@ if (!function_exists('p202RecordConversion')) {
             'pixel_type'      => (int) ($log['pixel_type'] ?? 0),
             'user_agent'      => (string) ($log['user_agent'] ?? ''),
         ];
+        if ($usePixelPayout) {
+            // An explicit amount. Without one the writer applies the campaign's
+            // default — the click's current value in replace mode, the
+            // campaign payout in accumulate mode — rather than trusting a
+            // cached click_payout that may be a running total.
+            $data['payout'] = $clickPayout !== '' ? $clickPayout : (string) ($log['click_payout'] ?? '0');
+        }
+        $data['source'] = isset($log['source']) && $log['source'] !== ''
+            ? (string) $log['source']
+            : match ((int) ($log['pixel_type'] ?? 0)) {
+                1 => \Prosper202\Conversion\Ledger\ConversionSource::PIXEL->value,
+                2 => \Prosper202\Conversion\Ledger\ConversionSource::POSTBACK->value,
+                3 => \Prosper202\Conversion\Ledger\ConversionSource::UNIVERSAL_PIXEL->value,
+                default => \Prosper202\Conversion\Ledger\ConversionSource::API->value,
+            };
+        if (!empty($log['reversal'])) {
+            $data['reversal'] = true;
+        }
+        if (isset($log['reversal_ref']) && (string) $log['reversal_ref'] !== '') {
+            $data['reversal_ref'] = (string) $log['reversal_ref'];
+        }
         if (!empty($log['once_per_click'])) {
             // The one-conversion-per-click rule for id-less hits, enforced by
             // the writer under its click lock (see MysqlConversionRepository::record).
@@ -431,8 +572,8 @@ if (!function_exists('p202RecordConversion')) {
         $result = $repo->record(
             (int) ($log['user_id'] ?? 0),
             $data,
-            function (int $lockedClickId, float $payout) use ($db, $clickCpa, $usePixelPayout, $clickPayout): void {
-                if (!p202ApplyConversionUpdate($db, (string) $lockedClickId, $clickCpa, $usePixelPayout, $clickPayout, null, true)) {
+            function (int $lockedClickId, float $payout) use ($db, $clickCpa): void {
+                if (!p202ApplyConversionClickSide($db, $lockedClickId, $clickCpa)) {
                     throw new \RuntimeException('p202RecordConversion: click update failed for click ' . $lockedClickId);
                 }
             }
@@ -448,7 +589,14 @@ if (!function_exists('p202RecordConversion')) {
             // so every ingestion path fires the bridge identically.)
         }
 
-        return ['conv_id' => $result['convId'], 'duplicate' => $result['duplicate']];
+        return [
+            'conv_id' => $result['convId'],
+            'duplicate' => $result['duplicate'],
+            'transaction_id' => trim($transactionId),
+            'dedupe_key' => (string) ($result['dedupeKey'] ?? ''),
+            'payout' => isset($result['payout']) ? (string) $result['payout'] : '',
+            'reverses_conv_id' => (int) ($result['reversesConvId'] ?? 0),
+        ];
     }
 }
 
@@ -466,14 +614,7 @@ if (!function_exists('p202ParseClickId')) {
      */
     function p202ParseClickId(mixed $value): ?int
     {
-        if (is_int($value)) {
-            return $value > 0 ? $value : null;
-        }
-        if (!is_string($value) || preg_match('/^[1-9][0-9]{0,18}$/D', $value) !== 1) {
-            return null;
-        }
-        $id = (int) $value;
-        return $id > 0 && (string) $id === $value ? $id : null;
+        return \Prosper202\Click\ClickId::parse($value);
     }
 }
 
@@ -505,6 +646,55 @@ if (!function_exists('p202ClientIp')) {
             return $remote;
         }
         return '';
+    }
+}
+
+if (!function_exists('p202ClickIdFromRequest')) {
+    /**
+     * Which click a pixel request names, from the places gpx.php and upx.php
+     * look, in their order: the subid (or sid) parameter, the campaign's own
+     * cookie (tracking202subid_a_<cid>), the general cookie.
+     *
+     * Each value is untrusted and must be an exact positive integer
+     * (p202ParseClickId): "123.9" is not click 123. An empty value is absent
+     * and the next place is tried, which is what an unfilled [[subid]] in a
+     * template has always done. A value that is PRESENT and not a click id
+     * is refused outright: the caller must not fall back to the IP lookup,
+     * which behind a NAT would credit whichever click last came from that
+     * address to a request whose own identity was garbage (the rule px.php
+     * already applies, CLAUDE.md error pattern #5).
+     *
+     * @param array<string, mixed> $get
+     * @param array<string, mixed> $cookies
+     * @return array{click_id: int|null, malformed: string|null}
+     *         click_id null with malformed null: nothing named a click, the
+     *         IP fallback may run. malformed set: the name of the value that
+     *         was present and unreadable; record nothing.
+     */
+    function p202ClickIdFromRequest(array $get, array $cookies, int $campaignId): array
+    {
+        $places = [
+            ['subid', $get['subid'] ?? null],
+            ['sid', $get['sid'] ?? null],
+        ];
+        if ($campaignId > 0) {
+            $places[] = ['tracking202subid_a_' . $campaignId, $cookies['tracking202subid_a_' . $campaignId] ?? null];
+        }
+        $places[] = ['tracking202subid', $cookies['tracking202subid'] ?? null];
+
+        foreach ($places as [$name, $value]) {
+            if ($value === null || $value === '') {
+                continue;
+            }
+            $clickId = p202ParseClickId(is_string($value) ? $value : (is_int($value) ? $value : null));
+            if ($clickId === null) {
+                return ['click_id' => null, 'malformed' => $name];
+            }
+
+            return ['click_id' => $clickId, 'malformed' => null];
+        }
+
+        return ['click_id' => null, 'malformed' => null];
     }
 }
 
@@ -612,8 +802,10 @@ if (!function_exists('p202RecordLegacyConversion')) {
      *
      * @param array{
      *     user_id?: int, campaign_id?: int, transaction_id?: string,
-     *     use_pixel_payout?: bool, payout?: string, ip?: string, user_agent?: string
-     * } $opts
+     *     use_pixel_payout?: bool, payout?: string, ip?: string, user_agent?: string,
+     *     source?: string, reversal?: bool, reversal_ref?: string
+     * } $opts source is the ledger source the row is recorded under
+     *     (legacy_pixel for px and pb, clickbank for cb202).
      * @return array{recorded: bool, duplicate: bool, conv_id: int, reason: string}
      *         reason is '' when recorded; otherwise one of unknown_click,
      *         foreign_click, campaign_mismatch, already_lead, duplicate.
@@ -654,7 +846,9 @@ if (!function_exists('p202RecordLegacyConversion')) {
         // its click lock (once_per_click below), which is what makes two
         // concurrent id-less requests record one conversion, not two.
         $transactionId = trim((string) ($opts['transaction_id'] ?? ''));
-        $blocked = p202LegacyConversionGate((int) $click['click_lead'] === 1, $transactionId);
+        $blocked = !empty($opts['reversal'])
+            ? null
+            : p202LegacyConversionGate((int) $click['click_lead'] === 1, $transactionId);
         if ($blocked !== null) {
             return $none + ['reason' => $blocked];
         }
@@ -677,7 +871,10 @@ if (!function_exists('p202RecordLegacyConversion')) {
                 'pixel_type'      => $pixelType,
                 'user_agent'      => (string) ($opts['user_agent'] ?? ''),
                 'click_payout'    => $payout,
-                'once_per_click'  => $transactionId === '',
+                'once_per_click'  => $transactionId === '' && empty($opts['reversal']),
+                'source'          => (string) ($opts['source'] ?? \Prosper202\Conversion\Ledger\ConversionSource::LEGACY_PIXEL->value),
+                'reversal'        => !empty($opts['reversal']),
+                'reversal_ref'    => (string) ($opts['reversal_ref'] ?? ''),
             ],
             (string) ($click['click_cpa'] ?? ''),
             $usePixelPayout,

@@ -96,6 +96,10 @@ final class TableRegistry
     public const string CONVERSION_LOGS = '202_conversion_logs';
     public const string CONVERSION_TOUCHPOINTS = '202_conversion_touchpoints';
 
+    // Conversion ledger (ConversionTables)
+    public const string ATTRIBUTION_PENDING = '202_attribution_pending';
+    public const string CONVERSION_UPLOADS = '202_conversion_uploads';
+
     // LTV tables (customer identity, revenue ledger, subscriptions)
     public const string CUSTOMERS = '202_customers';
     public const string CUSTOMER_ALIASES = '202_customer_aliases';

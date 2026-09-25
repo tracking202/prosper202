@@ -26,7 +26,6 @@ final class AttributionTables
             self::attributionSettings(),
             self::attributionAudit(),
             self::attributionExports(),
-            self::conversionLogs(),
             self::conversionTouchpoints(),
         ];
     }
@@ -176,34 +175,6 @@ final class AttributionTables
                 KEY `model_status` (`model_id`,`status`),
                 KEY `user_status` (`user_id`,`status`),
                 KEY `queued_at` (`queued_at`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
-        );
-    }
-
-    public static function conversionLogs(): SchemaDefinition
-    {
-        return SchemaBuilder::fromRawSql(
-            TableRegistry::CONVERSION_LOGS,
-            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::CONVERSION_LOGS . "` (
-                `conv_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
-                `click_id` bigint(20) unsigned NOT NULL,
-                `transaction_id` varchar(255) DEFAULT NULL,
-                `campaign_id` mediumint(8) unsigned NOT NULL,
-                `click_payout` decimal(11,5) NOT NULL,
-                `user_id` mediumint(8) unsigned NOT NULL,
-                `click_time` int(10) NOT NULL,
-                `conv_time` int(10) NOT NULL,
-                `time_difference` text NOT NULL,
-                `ip` varchar(45) NOT NULL DEFAULT '',
-                `pixel_type` int(11) unsigned NOT NULL,
-                `user_agent` text NOT NULL,
-                `deleted` tinyint(4) NOT NULL DEFAULT '0',
-                `customer_id` bigint(20) unsigned DEFAULT NULL,
-                PRIMARY KEY (`conv_id`),
-                UNIQUE KEY `uniq_click_transaction` (`click_id`,`transaction_id`),
-                KEY `user_id` (`user_id`),
-                KEY `campaign_id` (`campaign_id`),
-                KEY `customer_id` (`customer_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

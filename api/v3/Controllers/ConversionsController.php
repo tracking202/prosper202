@@ -113,7 +113,29 @@ class ConversionsController
             'conv_time' => (int)($payload['conv_time'] ?? time()),
         ];
         if (array_key_exists('payout', $payload)) {
-            $data['payout'] = (float)$payload['payout'];
+            // An amount that is not a number is refused, never cast to 0:
+            // the ledger records exactly what it is given (CLAUDE.md #4).
+            $payout = $payload['payout'];
+            if (!is_int($payout) && !is_float($payout) && !(is_string($payout) && preg_match('/^-?\d+(\.\d+)?$/D', trim($payout)) === 1)) {
+                throw new ValidationException('payout must be a number', ['payout' => 'Must be a decimal number, e.g. 12.50']);
+            }
+            $data['payout'] = is_string($payout) ? trim($payout) : $payout;
+        }
+
+        // A reversal nets an earlier conversion on the same click, named by
+        // its transaction_id: status "reversed", optionally with the
+        // network's reversal_id. A sale can be reversed once.
+        if (array_key_exists('status', $payload)) {
+            if ($payload['status'] !== 'reversed') {
+                throw new ValidationException('status must be "reversed" when given', ['status' => 'The only status a conversion can be created with is "reversed"']);
+            }
+            $data['reversal'] = true;
+            if (isset($payload['reversal_id'])) {
+                if (!is_scalar($payload['reversal_id']) || trim((string) $payload['reversal_id']) === '') {
+                    throw new ValidationException('reversal_id must be a non-empty string', ['reversal_id' => 'The network\'s id for this reversal']);
+                }
+                $data['reversal_ref'] = trim((string) $payload['reversal_id']);
+            }
         }
 
         // LTV: optional customer identity + product line items. An invalid
@@ -143,7 +165,8 @@ class ConversionsController
 
         // Delegate to the single canonical conversion writer so the V3 API and the
         // legacy postback/pixel endpoints share one transactional, idempotent path
-        // (locks the click, de-dupes on transaction_id, inserts + flags the click).
+        // (locks the click, de-dupes on its ledger key, inserts the row and
+        // recomputes the click's value from its rows).
         $repo = new \Prosper202\Conversion\MysqlConversionRepository(
             new \Prosper202\Database\Connection($this->db)
         );
@@ -152,6 +175,11 @@ class ConversionsController
             $convId = $repo->create($this->userId, $data);
         } catch (\Prosper202\Conversion\ClickNotFoundException $e) {
             throw new NotFoundException('Click not found or not owned by user');
+        } catch (\Prosper202\Conversion\Ledger\ReversalException $e) {
+            if ($e->kind === \Prosper202\Conversion\Ledger\ReversalException::NO_TARGET) {
+                throw new NotFoundException($e->getMessage());
+            }
+            throw new ValidationException($e->getMessage(), ['transaction_id' => $e->getMessage()]);
         } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
             // A real database failure is a 500 even though QueryException
             // extends RuntimeException — under MYSQLI_REPORT_STRICT a failed

@@ -3884,42 +3884,6 @@ function getForeignPayout($currency, $payout_currency, $payout)
     return $result;
 }
 
-function updateForeignPayout(&$mysql)
-{
-    global $db;
-    // update currency value
-    if (isset($_GET['amount']) && is_numeric($_GET['amount'])) {
-        $mysql['fpa']  = $_GET['amount'];
-    } else {
-        $mysql['fpa']  = $_GET['aff_campaign_foreign_payout'];
-    }
-    if (isset($mysql['aff_campaign_currency']) && isset($mysql['user_account_currency']) && isset($mysql['aff_campaign_id']) && ($mysql['aff_campaign_currency'] != $mysql['user_account_currency'])) {
-
-        $exchangePayout = getForeignPayout($mysql['user_account_currency'], $mysql['aff_campaign_currency'], $mysql['fpa']);
-
-        $mysql['aff_campaign_payout'] = $db->real_escape_string($exchangePayout['exchange_payout']);
-
-        //if a payout was set in the postback or pixel then use that but don't update the default campaign info
-        if (isset($_GET['amount']) && is_numeric($_GET['amount'])) {
-
-            $mysql['payout'] = $mysql['click_payout'] * $mysql['aff_campaign_payout'] / $mysql['fpa']; // calculate the value without doing a second api call for exchange rate
-            $mysql['aff_campaign_payout'] = $mysql['payout'];
-        } else { //
-            $mysql['payout'] = $db->real_escape_string($exchangePayout['exchange_payout']);
-
-            $aff_campaign_sql = "UPDATE `202_aff_campaigns` SET";
-            $aff_campaign_sql .= " `aff_campaign_payout`='" . $mysql['aff_campaign_payout'] . "' ";
-            $aff_campaign_sql .= "WHERE `aff_campaign_id`='" . $mysql['aff_campaign_id'] . "'";
-            $db->query($aff_campaign_sql);
-        }
-
-        $click_sql = "UPDATE `202_clicks` SET";
-        $click_sql .= " `click_payout`='" . $mysql['aff_campaign_payout'] . "' ";
-        $click_sql .= "WHERE `click_id`='" . $mysql['click_id'] . "'";
-        $db->query($click_sql);
-    }
-}
-
 function getDynamicEPVPixelId(&$mysql)
 {
     global $db;
