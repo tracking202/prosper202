@@ -2131,6 +2131,8 @@ func TestCampaignCreatePassesExtendedFields(t *testing.T) {
 		"--aff_campaign_foreign_payout=12.34",
 		"--aff_campaign_cloaking=1",
 		"--aff_campaign_rotate=1",
+		"--payout_mode=accumulate",
+		"--identity_signals=0",
 	)
 	if err != nil {
 		t.Fatalf("campaign create error: %v", err)
@@ -2148,6 +2150,8 @@ func TestCampaignCreatePassesExtendedFields(t *testing.T) {
 		"aff_campaign_foreign_payout",
 		"aff_campaign_cloaking",
 		"aff_campaign_rotate",
+		"payout_mode",
+		"identity_signals",
 	} {
 		if _, ok := gotBody[key]; !ok {
 			t.Errorf("request body missing %q", key)
@@ -4773,5 +4777,86 @@ func TestUIFriendlyAliasesHitSameEndpoints(t *testing.T) {
 				t.Errorf("alias %q hit %q, want %q", tt.alias, gotPath, tt.wantEndpoint)
 			}
 		})
+	}
+}
+
+func TestUserIdentityKeyGetAndRotate(t *testing.T) {
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path+"?"+r.URL.RawQuery)
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":{"linking_key":"ab12","algorithm":"HMAC-SHA256"}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("user", "identity-key", "get", "7")
+	if err != nil {
+		t.Fatalf("identity-key get error: %v", err)
+	}
+	if !strings.Contains(stdout, "ab12") {
+		t.Errorf("output should show the key, got:\n%s", stdout)
+	}
+	if _, _, err := executeCommand("user", "identity-key", "rotate", "7", "--force"); err != nil {
+		t.Fatalf("identity-key rotate error: %v", err)
+	}
+	want := []string{"GET /api/v3/users/7/identity-key?", "POST /api/v3/users/7/identity-key/rotate?"}
+	if len(calls) != len(want) {
+		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+	for i := range want {
+		if calls[i] != want[i] {
+			t.Errorf("call %d = %q, want %q", i, calls[i], want[i])
+		}
+	}
+}
+
+func TestUserIdentityKeyRotateWithoutForceAsksAndCancels(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(200)
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	// No answer on stdin reads as "no".
+	stdout, _, err := executeCommand("user", "identity-key", "rotate", "7")
+	if err != nil {
+		t.Fatalf("identity-key rotate error: %v", err)
+	}
+	if called {
+		t.Error("rotate reached the server without confirmation")
+	}
+	if !strings.Contains(stdout, "Cancelled.") {
+		t.Errorf("expected a cancellation, got:\n%s", stdout)
+	}
+}
+
+func TestUserIdentityKeyRotateStagedProposesWithoutAsking(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Method + " " + r.URL.Path + "?" + r.URL.RawQuery
+		w.WriteHeader(202)
+		w.Write([]byte(`{"data":{"change_id":"chg_1","status":"staged"}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	if _, _, err := executeCommand("user", "identity-key", "rotate", "7", "--staged"); err != nil {
+		t.Fatalf("staged rotate error: %v", err)
+	}
+	if got != "POST /api/v3/users/7/identity-key/rotate?staged=1" {
+		t.Errorf("request = %q, want a staged POST", got)
 	}
 }

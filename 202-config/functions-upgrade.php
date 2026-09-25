@@ -285,6 +285,190 @@ if (!function_exists('_upgrade_attribution_backfill_added_columns')) {
     }
 }
 
+if (!function_exists('_upgrade_conversion_ledger_columns')) {
+    /**
+     * The ledger columns _upgrade_conversion_ledger() adds to
+     * 202_conversion_logs, in the order it adds them. ConversionTables
+     * declares them in the same order after customer_id, so an upgraded
+     * table and a fresh one list them alike. dedupe_key is added nullable
+     * here and made NOT NULL once every row holds a key.
+     *
+     * @return array<int, array{0: string, 1: string}> [column, definition]
+     */
+    function _upgrade_conversion_ledger_columns(): array
+    {
+        return [
+            ['source', "`source` varchar(32) NOT NULL DEFAULT ''"],
+            ['source_ref', '`source_ref` varchar(255) DEFAULT NULL'],
+            ['event_name', '`event_name` varchar(255) DEFAULT NULL'],
+            ['payable', "`payable` tinyint(1) NOT NULL DEFAULT '1'"],
+            ['reverses_conv_id', '`reverses_conv_id` int(11) unsigned DEFAULT NULL'],
+            ['superseded_by', '`superseded_by` int(11) unsigned DEFAULT NULL'],
+            ['superseded_reason', '`superseded_reason` varchar(16) DEFAULT NULL'],
+            ['dedupe_key', '`dedupe_key` varchar(320) DEFAULT NULL'],
+        ];
+    }
+}
+
+if (!function_exists('_upgrade_conversion_ledger_backfill_sql')) {
+    /**
+     * The one statement that gives every pre-ledger conversion row its
+     * ledger values. It touches only rows that have no dedupe key yet, so a
+     * re-run changes nothing.
+     *
+     * - source: from what the row carried, exactly as
+     *   ConversionSource::fromLegacyRow() maps it (a test holds the two
+     *   equal).
+     * - dedupe_key: tx:<transaction_id> where the network sent an id,
+     *   row:<conv_id> where it did not — each unique per click, because
+     *   (click_id, transaction_id) was already unique, so nothing merges.
+     * - superseded_reason = pre_ledger: the click's value was set by writes
+     *   that left no row or overwrote each other, so these rows cannot be
+     *   re-added into it. The first ledger write on such a click carries the
+     *   cached value in as a legacy_baseline row instead
+     *   (MysqlConversionLedger::ensureManaged()).
+     */
+    function _upgrade_conversion_ledger_backfill_sql(): string
+    {
+        return "UPDATE `202_conversion_logs` SET "
+            . "`source` = CASE WHEN `pixel_type` = 1 THEN 'pixel' WHEN `pixel_type` = 2 THEN 'postback' "
+            . "WHEN `pixel_type` = 3 THEN 'universal_pixel' WHEN `user_agent` = 'subid-upload' THEN 'subid_upload' "
+            . "ELSE 'api' END, "
+            . "`dedupe_key` = CASE WHEN `transaction_id` IS NOT NULL AND `transaction_id` <> '' "
+            . "THEN CONCAT('tx:', `transaction_id`) ELSE CONCAT('row:', `conv_id`) END, "
+            . "`superseded_reason` = 'pre_ledger' "
+            . "WHERE `dedupe_key` IS NULL";
+    }
+}
+
+if (!function_exists('_upgrade_conversion_ledger')) {
+    /**
+     * Turn an existing 202_conversion_logs into the ledger, and give
+     * campaigns their payout mode.
+     *
+     * The schema reconciler cannot do this on its own: it would add
+     * dedupe_key NOT NULL (every existing row gets '') and the UNIQUE
+     * (click_id, dedupe_key) key in one pass, and the key fails on the
+     * first click with two rows. So the steps run in the order the database
+     * can accept, each one probed first so a re-run after a failure resumes
+     * where it stopped:
+     *
+     *   1. add each missing ledger column (dedupe_key nullable);
+     *   2. backfill the rows that have no dedupe key;
+     *   3. make dedupe_key NOT NULL;
+     *   4. add KEY click_transaction and UNIQUE uniq_click_dedupe, then drop
+     *      the old UNIQUE (click_id, transaction_id) — a reversal carries the
+     *      transaction id of the row it reverses, so the id cannot stay
+     *      unique per click;
+     *   5. add 202_aff_campaigns.payout_mode.
+     *
+     * Every probe is tri-state: a SHOW that fails stops the step (false, so
+     * the version stays and the next run retries) rather than reading as
+     * "missing" and emitting ALTERs against a table it could not see
+     * (CLAUDE.md #1, #11).
+     */
+    function _upgrade_conversion_ledger(): bool
+    {
+        $columns = _upgrade_conversion_ledger_probe('SHOW COLUMNS FROM `202_conversion_logs`', 'Field', 'Null');
+        if ($columns === null) {
+            error_log('Prosper202 upgrade: could not read the columns of 202_conversion_logs; the ledger step will retry.');
+            return false;
+        }
+
+        foreach (_upgrade_conversion_ledger_columns() as [$column, $ddl]) {
+            if (array_key_exists($column, $columns)) {
+                continue;
+            }
+            if (_upgrade_query('ALTER TABLE `202_conversion_logs` ADD COLUMN ' . $ddl) === false) {
+                error_log('Prosper202 upgrade: failed to add 202_conversion_logs.' . $column . '; the ledger step will retry.');
+                return false;
+            }
+            $columns[$column] = 'YES';
+        }
+
+        if (_upgrade_query(_upgrade_conversion_ledger_backfill_sql()) === false) {
+            error_log('Prosper202 upgrade: failed to backfill the conversion ledger columns; the ledger step will retry.');
+            return false;
+        }
+
+        if (($columns['dedupe_key'] ?? 'YES') === 'YES') {
+            if (_upgrade_query('ALTER TABLE `202_conversion_logs` MODIFY `dedupe_key` varchar(320) NOT NULL') === false) {
+                error_log('Prosper202 upgrade: failed to make 202_conversion_logs.dedupe_key NOT NULL; the ledger step will retry.');
+                return false;
+            }
+        }
+
+        $indexes = _upgrade_conversion_ledger_probe('SHOW INDEX FROM `202_conversion_logs`', 'Key_name', 'Key_name');
+        if ($indexes === null) {
+            error_log('Prosper202 upgrade: could not read the indexes of 202_conversion_logs; the ledger step will retry.');
+            return false;
+        }
+        $indexSteps = [
+            ['click_transaction', true, 'ALTER TABLE `202_conversion_logs` ADD KEY `click_transaction` (`click_id`,`transaction_id`)'],
+            ['uniq_click_dedupe', true, 'ALTER TABLE `202_conversion_logs` ADD UNIQUE KEY `uniq_click_dedupe` (`click_id`,`dedupe_key`)'],
+            ['uniq_click_transaction', false, 'ALTER TABLE `202_conversion_logs` DROP INDEX `uniq_click_transaction`'],
+        ];
+        foreach ($indexSteps as [$name, $wanted, $ddl]) {
+            if (array_key_exists($name, $indexes) === $wanted) {
+                continue;
+            }
+            if (_upgrade_query($ddl) === false) {
+                error_log('Prosper202 upgrade: failed to ' . ($wanted ? 'add' : 'drop') . ' index ' . $name
+                    . ' on 202_conversion_logs; the ledger step will retry.');
+                return false;
+            }
+        }
+
+        $campaignColumns = _upgrade_conversion_ledger_probe('SHOW COLUMNS FROM `202_aff_campaigns`', 'Field', 'Null');
+        if ($campaignColumns === null) {
+            error_log('Prosper202 upgrade: could not read the columns of 202_aff_campaigns; the ledger step will retry.');
+            return false;
+        }
+        // The campaign settings the measurement rewrite adds, in the order
+        // CampaignTables declares them: how a click's conversions roll up,
+        // and whether the campaign's clicks carry identity signals.
+        $campaignAdds = [
+            ['payout_mode', "ALTER TABLE `202_aff_campaigns` ADD COLUMN `payout_mode` enum('replace','accumulate') NOT NULL DEFAULT 'replace'"],
+            ['identity_signals', "ALTER TABLE `202_aff_campaigns` ADD COLUMN `identity_signals` tinyint(1) NOT NULL DEFAULT '1'"],
+        ];
+        foreach ($campaignAdds as [$column, $ddl]) {
+            if (!array_key_exists($column, $campaignColumns) && _upgrade_query($ddl) === false) {
+                error_log('Prosper202 upgrade: failed to add 202_aff_campaigns.' . $column . '; the ledger step will retry.');
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
+if (!function_exists('_upgrade_conversion_ledger_probe')) {
+    /**
+     * Run a SHOW statement and map one column of its rows to another, or
+     * return null when the statement failed. Null is never "no rows".
+     *
+     * @return array<string, string>|null
+     */
+    function _upgrade_conversion_ledger_probe(string $sql, string $keyColumn, string $valueColumn): ?array
+    {
+        $result = _upgrade_query($sql);
+        if (!($result instanceof \mysqli_result)) {
+            return null;
+        }
+        $map = [];
+        while (($row = $result->fetch_assoc()) !== null) {
+            if (!is_array($row) || !isset($row[$keyColumn])) {
+                $result->free();
+                return null;
+            }
+            $map[(string) $row[$keyColumn]] = (string) ($row[$valueColumn] ?? '');
+        }
+        $result->free();
+
+        return $map;
+    }
+}
+
 if (!function_exists('_upgrade_attribution_tables')) {
     /**
      * Create the attribution-postback tables and converge the ones that
@@ -357,6 +541,19 @@ if (!function_exists('_upgrade_attribution_tables')) {
             error_log($halt);
             _die("<h6>Upgrade paused</h6>
                     <small>This install holds attribution postbacks in both the pre-release <code>202_skan_*</code> tables and the <code>202_attribution_*</code> tables that replaced them. The upgrade cannot tell whether the old rows were already copied across or whether the new rows simply arrived since the rename, so it stopped rather than assume. Copy any missing rows into the <code>202_attribution_*</code> tables by hand, drop the <code>202_skan_*</code> tables, then re-run this upgrade. <a href='" . get_absolute_url() . "202-login.php'>Back to login</a></small>");
+        }
+
+        // The conversion ledger's existing table has to be converted in a
+        // fixed order before the reconciler compares it with its definition
+        // (see _upgrade_conversion_ledger()); a failure there leaves the
+        // version where it is, like every other failure in this step.
+        foreach ($definitions as $definition) {
+            if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::CONVERSION_LOGS) {
+                if (!_upgrade_conversion_ledger()) {
+                    return false;
+                }
+                break;
+            }
         }
 
         $ok = true;
@@ -4202,8 +4399,11 @@ class UPGRADE
 
             // Platform-signed attribution postbacks (SKAdNetwork and
             // AdAttributionKit): the postback store, the app registry and the
-            // conversion-value rules. The DDL is the installer's own
-            // definitions, so this block cannot drift from them.
+            // conversion-value rules; and the conversion ledger — the
+            // provenance and dedupe columns on 202_conversion_logs, its MTA
+            // outbox and upload batches, and the campaigns' payout mode; and
+            // the identity graph. The DDL is the installer's own definitions,
+            // so this block cannot drift from them.
             //
             // It reconciles as well as creates: CREATE IF NOT EXISTS is a
             // no-op against a table already present in an older shape. Folded
@@ -4213,9 +4413,11 @@ class UPGRADE
             // anyway (upgrade_needed() is `stored != code`). RELEASING.md has
             // the branch-deployment repair; AttributionUpgradeStepTest
             // refuses the block.
-            $attribution_ok = _upgrade_attribution_tables(
-                \Prosper202\Database\Tables\AttributionPostbackTables::getDefinitions()
-            );
+            $attribution_ok = _upgrade_attribution_tables(array_merge(
+                \Prosper202\Database\Tables\AttributionPostbackTables::getDefinitions(),
+                \Prosper202\Database\Tables\ConversionTables::getDefinitions(),
+                \Prosper202\Database\Tables\IdentityTables::getDefinitions()
+            ));
 
             if ($attribution_ok) {
                 // Advance the version only once every DDL statement

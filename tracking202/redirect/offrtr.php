@@ -316,6 +316,11 @@ if ($default == false) {
 				$mysql['aff_campaign_id'] = $db->real_escape_string((string)$rule_redirect_row['aff_campaign_id']);
 				$mysql['click_payout'] = $db->real_escape_string((string)$rule_redirect_row['aff_campaign_payout']);
 
+				// The click leaves the landing page for this offer: route it to the
+				// offer's campaign and seed its payout with the campaign's. Only a click
+				// that has not converted: a converted click's value belongs to its
+				// conversion ledger (MysqlConversionLedger), and re-seeding it here would
+				// leave the click disagreeing with its rows.
 				$update_sql = "
 					UPDATE
 						202_clicks AS 2c
@@ -327,6 +332,7 @@ if ($default == false) {
 						2cs.click_payout='" . $mysql['click_payout'] . "'
 					WHERE
 						2c.click_id='" . $mysql['click_id'] . "'
+						AND 2c.click_lead = 0
 				";
 				$click_result = $db->query($update_sql) or record_mysql_error($db);
 
@@ -441,6 +447,11 @@ if ($default == false) {
 				$mysql['aff_campaign_id'] = $db->real_escape_string((string)$rotator_row['aff_campaign_id']);
 				$mysql['click_payout'] = $db->real_escape_string((string)$rotator_row['aff_campaign_payout']);
 
+				// The click leaves the landing page for this offer: route it to the
+				// offer's campaign and seed its payout with the campaign's. Only a click
+				// that has not converted: a converted click's value belongs to its
+				// conversion ledger (MysqlConversionLedger), and re-seeding it here would
+				// leave the click disagreeing with its rows.
 				$update_sql = "
 					UPDATE
 						202_clicks AS 2c
@@ -452,6 +463,7 @@ if ($default == false) {
 						2cs.click_payout='" . $mysql['click_payout'] . "'
 					WHERE
 						2c.click_id='" . $mysql['click_id'] . "'
+						AND 2c.click_lead = 0
 				";
 				$click_result = $db->query($update_sql) or record_mysql_error($db);
 

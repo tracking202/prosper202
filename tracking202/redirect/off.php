@@ -279,6 +279,11 @@ $mysql['click_id'] = $db->real_escape_string((string)$click_id);
 $mysql['aff_campaign_id'] = $db->real_escape_string((string)$info_row['aff_campaign_id']);
 $mysql['click_payout'] = $db->real_escape_string((string)$info_row['aff_campaign_payout']);
 
+// The click leaves the landing page for this offer: route it to the
+// offer's campaign and seed its payout with the campaign's. Only a click
+// that has not converted: a converted click's value belongs to its
+// conversion ledger (MysqlConversionLedger), and re-seeding it here would
+// leave the click disagreeing with its rows.
 $update_sql = "
 	UPDATE
 		202_clicks AS 2c
@@ -290,6 +295,7 @@ $update_sql = "
 		2cs.click_payout='" . $mysql['click_payout'] . "'
 	WHERE
 		2c.click_id='" . $mysql['click_id'] . "'
+		AND 2c.click_lead = 0
 ";
 // this function delays the sql, because UPDATING is very very slow
 //delay_sql($db, $update_sql);
