@@ -33,14 +33,16 @@ final class MysqlCustomerRepository
 
     /**
      * Idempotency-key namespaces the system mints internally: soft-delete
-     * voids ('void:'/'void-nc:'), the historical backfill ('backfill:') and
-     * derived subscription-renewal keys ('sub:'). The ledger's uniqueness is
-     * per (user, key) across ALL sources, so an external caller supplying
-     * e.g. 'void:conv:123' would make the later compensating void of
-     * conversion 123 read as a replay and silently skip — leaving deleted
-     * revenue in LTV totals. External surfaces reject these prefixes.
+     * voids ('void:'/'void-nc:'), the re-posting of a revived goal
+     * conversion's voided revenue ('reinstate:'), the historical backfill
+     * ('backfill:') and derived subscription-renewal keys ('sub:'). The
+     * ledger's uniqueness is per (user, key) across ALL sources, so an
+     * external caller supplying e.g. 'void:conv:123' would make the later
+     * compensating void of conversion 123 read as a replay and silently
+     * skip — leaving deleted revenue in LTV totals. External surfaces
+     * reject these prefixes.
      */
-    public const RESERVED_IDEMPOTENCY_PREFIXES = ['void:', 'void-nc:', 'backfill:', 'sub:'];
+    public const RESERVED_IDEMPOTENCY_PREFIXES = ['void:', 'void-nc:', 'reinstate:', 'backfill:', 'sub:'];
 
     public function __construct(private Connection $conn)
     {

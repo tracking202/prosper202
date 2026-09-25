@@ -22,7 +22,10 @@
 #     re-values the click; staged, it is a proposal until applied; a
 #     prerequisite that stops matching takes the goal waiting on it along
 #     (previewed by goal, conversions deleted), and the next events reach
-#     each once again;
+#     each once again; and a re-evaluation that returns to exactly an
+#     outcome an earlier one retired (a prerequisite that matches, stops,
+#     and matches again) revives the dependent's deleted conversion in
+#     place, so the click is paid for it again, once;
 #   - what one request can cost: a sum that repeats without max is refused
 #     by field (API and CLI), revenue beyond what a conversion holds is
 #     refused by field, and /goals/evaluate refuses an answer of more than
@@ -94,8 +97,8 @@ ev()    { # id name occurred-offset [extra json fields]
 OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE api_key='$P202_API_KEY'")
 [ -n "$OWNER" ] || { echo "the API key is not in $DB" >&2; exit 2; }
 T=$(( $(date +%s) - 86400 ))
-ACC=940001; REP=940002; MISS=940003; LATE=940004; TRUST=940005; REEV=940006; DEP=940007
-CLICKS="$ACC,$REP,$MISS,$LATE,$TRUST,$REEV,$DEP"
+ACC=940001; REP=940002; MISS=940003; LATE=940004; TRUST=940005; REEV=940006; DEP=940007; BACK=940008
+CLICKS="$ACC,$REP,$MISS,$LATE,$TRUST,$REEV,$DEP,$BACK"
 ACIP_A=940100; ACIP_R=940101
 
 cleanup() {
@@ -132,9 +135,9 @@ seed_click() { # id campaign
       VALUES ($1, $OWNER, $2, 0, 0, 0.10, 0, 0, 0, 0, 0, $((T - 3600)));
     INSERT INTO 202_clicks_tracking (click_id, c1_id, c2_id, c3_id, c4_id) VALUES ($1, 0, 0, 0, 0);"
 }
-for c in $ACC $MISS $LATE $TRUST $REEV $DEP; do seed_click "$c" "$CAMP_A"; done
+for c in $ACC $MISS $LATE $TRUST $REEV $DEP $BACK; do seed_click "$c" "$CAMP_A"; done
 seed_click $REP "$CAMP_R"
-[ "$(Q "SELECT COUNT(*) FROM 202_clicks WHERE click_id IN ($CLICKS)")" = 7 ] || { echo "seeding clicks failed" >&2; exit 2; }
+[ "$(Q "SELECT COUNT(*) FROM 202_clicks WHERE click_id IN ($CLICKS)")" = 8 ] || { echo "seeding clicks failed" >&2; exit 2; }
 
 # ─────────────────────────────────────────────────────────────────────
 say "goals are validated strictly, and by field"
@@ -360,6 +363,34 @@ ingest $DEP "[$(ev d4 upsell2 4)]"
 eq "$(value $DEP)" "1/5.00000" "a cart of 200 and another upsell reach both again"
 eq "$(Q "SELECT GROUP_CONCAT(CONCAT(goal_id, ':', goal_version, ':', n, '@', event_id) ORDER BY goal_id) FROM 202_goal_outcomes WHERE subject_id=$DEP AND superseded_at IS NULL")" \
    "$G_CO:2:1@d3,$G_CU:1:1@d4" "once each, never a second live outcome beside a retired one"
+
+say "a re-evaluation that returns to a retired outcome pays for it again"
+eq "$(api POST /goals "{\"scope\":\"campaign\",\"scope_id\":$CAMP_A,\"definition\":{\"name\":\"Order\",\"trigger\":{\"event\":\"order\"},\"value\":{\"type\":\"fixed\",\"amount\":5}}}")" 201 \
+   "an order goal (\$5)"
+G_OR=$(field "d['data']['goal_id']")
+eq "$(api POST /goals "{\"scope\":\"campaign\",\"scope_id\":$CAMP_A,\"definition\":{\"name\":\"Order upsell\",\"trigger\":{\"event\":\"order_upsell\"},\"after\":[$G_OR],\"value\":{\"type\":\"fixed\",\"amount\":3}}}")" 201 \
+   "and an upsell (\$3) that waits for it"
+G_OU=$(field "d['data']['goal_id']")
+ingest $BACK "[$(ev b1 order 1 '"properties":{"cart":10}'), $(ev b2 order_upsell 2)]"
+eq "$(value $BACK)" "1/8.00000" "both reached: \$5 + \$3"
+eq "$(api PUT "/goals/$G_OR" '{"definition":{"name":"Order","trigger":{"event":"order","where":[{"prop":"cart","op":"gte","value":100}]},"value":{"type":"fixed","amount":5}}}')" 200 \
+   "the order goal now needs a cart of 100"
+eq "$(api POST "/goals/$G_OR/reevaluation" '{}')" 200 "applying it"
+eq "$(Q "SELECT click_lead FROM 202_clicks WHERE click_id=$BACK")" 0 "retires both: the click is no longer a lead"
+eq "$(col $BACK deleted)/$(col $BACK superseded_reason)" "1,1/reevaluation,reevaluation" "both conversions deleted, each marked as the engine's retirement"
+eq "$(api PUT "/goals/$G_OR" '{"definition":{"name":"Order","trigger":{"event":"order"},"value":{"type":"fixed","amount":5}}}')" 200 \
+   "the order goal matches any cart again (version 3)"
+eq "$(api GET "/goals/$G_OR/reevaluation")" 200 "the preview"
+eq "$(field "[sorted(w['goal_id'] for w in s['write']) for s in d['data']['subjects'] if s['subject_id'] == $BACK]")" "[[$G_OR, $G_OU]]" \
+   "writes the order under version 3 and the upsell under the version it always had"
+eq "$(api POST "/goals/$G_OR/reevaluation" '{}')" 200 "applying it"
+eq "$(Q "SELECT GROUP_CONCAT(CONCAT(goal_id, ':', goal_version, ':', n, '@', event_id) ORDER BY goal_id) FROM 202_goal_outcomes WHERE subject_id=$BACK AND superseded_at IS NULL")" \
+   "$G_OR:3:1@b1,$G_OU:1:1@b2" "both outcomes are live"
+eq "$(value $BACK)" "1/8.00000" "and both are paid: the upsell's conversion is revived, not left deleted"
+eq "$(Q "SELECT CONCAT(leads, '/', payout) FROM 202_dataengine WHERE click_id=$BACK")" "1/8.00" "the report row says so"
+eq "$(col $BACK source_ref)" "goal:$G_OR:1,goal:$G_OU:1,goal:$G_OR:3" "three rows: the retired order, the upsell, the new order"
+eq "$(col $BACK deleted)/$(col $BACK superseded_reason)" "1,0,0/reevaluation,-,-" "the upsell's own row is live again, unmarked"
+eq "$(Q "SELECT COUNT(*) FROM 202_goal_outcomes WHERE subject_id=$BACK AND goal_id=$G_OU")" 1 "revived in place: one upsell outcome, never a second"
 
 say "what one request can cost is bounded"
 eq "$(api POST /goals "{\"scope\":\"campaign\",\"scope_id\":$CAMP_A,\"definition\":{\"name\":\"Every cent\",\"trigger\":{\"event\":\"buy\"},\"threshold\":{\"sum\":{\"prop\":\"\$revenue\",\"gte\":\"0.00001\"}},\"repeat\":{\"mode\":\"each\"}}}")" 422 \
