@@ -19,7 +19,12 @@ if (!$userObj->hasPermission("access_to_update_section")) {
  * update_cpc2.php wrote — without asking for the session token). The form is
  * a GET, so "Check these clicks" is a link that can be sent; it answers with
  * what will change and how many clicks that is, counted with the same clause
- * the update runs. "Update N clicks" is a POST that carries the token.
+ * the update runs. "Update N clicks" is a POST that carries the token, the
+ * count N and the highest click id the check saw: the update is bounded by
+ * that id and runs only if the bounded selection still counts N, so it never
+ * changes a click the person did not count (a window that includes today
+ * keeps gaining clicks). When the count moved, nothing is written and the
+ * page shows the check again with the new count.
  *
  * The days are the account's days: the timezone is set before the dates are
  * read, as update_cpc2.php did.
@@ -39,7 +44,12 @@ $errors = [];
 $values = null;
 $labels = [];
 $matching = null;
+$through = '0';
 $updated = null;
+// Set when a confirm was refused because it no longer names the clicks the
+// person checked: ['confirmed' => the count they saw, or null when the
+// confirm did not carry one].
+$stale = null;
 
 if ($isApply || $isPreview) {
 	if ($isApply && !AUTH::check_csrf_token()) {
@@ -52,29 +62,58 @@ if ($isApply || $isPreview) {
 		if ($errors === []) {
 			$labels = p202_update_cpc_labels($conn, $values, $userId, $errors);
 		}
-		if ($errors === []) {
-			$scope = p202_update_cpc_scope($values, $userId);
-			if ($isApply) {
-				$stmt = $conn->prepareWrite('UPDATE 202_clicks' . $scope['joins'] . ' SET 202_clicks.click_cpc = ?' . $scope['where']);
-				$conn->bind($stmt, 's' . $scope['types'], array_merge([(string) $values['cpc']], $scope['params']));
-				$updated = $conn->executeUpdate($stmt);
-
-				// The data engine rebuilds the hours these clicks fall in, for
-				// the slice they were chosen by.
-				$dirty = $conn->prepareWrite('INSERT IGNORE INTO 202_dirty_hours SET ppc_account_id = ?, aff_campaign_id = ?, user_id = ?, click_time_from = ?, click_time_to = ?, aff_network_id = ?, text_ad_id = ?, landing_page_id = ?, ppc_network_id = ?');
-				$conn->bind($dirty, 'iiiiiiiii', [(int) $values['ppc_account_id'], (int) $values['aff_campaign_id'], $userId, (int) $values['from_time'], (int) $values['to_time'],
-					(int) $values['aff_network_id'], (int) $values['text_ad_id'], (int) $values['landing_page_id'], (int) $values['ppc_network_id']]);
-				$conn->executeUpdate($dirty);
+		if ($errors === [] && $isApply) {
+			// The confirm names the clicks the check counted: at most the
+			// highest id it saw, and exactly as many. Counted again under a
+			// lock and written in the same transaction, so the number on the
+			// button is the number that changes; when the selection moved (a
+			// click edited into it, or recorded late below the boundary),
+			// nothing is written and the page checks again.
+			$snapshot = p202_update_cpc_snapshot($_POST);
+			if ($snapshot === null) {
+				$stale = ['confirmed' => null];
 			} else {
-				$stmt = $conn->prepareWrite('SELECT COUNT(DISTINCT 202_clicks.click_id) AS matching FROM 202_clicks' . $scope['joins'] . $scope['where']);
-				$conn->bind($stmt, $scope['types'], $scope['params']);
-				$count = $conn->fetchOne($stmt);
-				if ($count === null) {
-					// A COUNT always answers one row; none means the read failed.
-					throw new \RuntimeException('Update CPC: counting the clicks returned no row');
-				}
-				$matching = (int) $count['matching'];
+				$scope = p202_update_cpc_scope($values, $userId, $snapshot['through']);
+				$stale = $conn->transaction(static function () use ($conn, $scope, $values, $userId, $snapshot, &$updated): ?array {
+					$stmt = $conn->prepareWrite('SELECT COUNT(DISTINCT 202_clicks.click_id) AS matching FROM 202_clicks' . $scope['joins'] . $scope['where'] . ' FOR UPDATE');
+					$conn->bind($stmt, $scope['types'], $scope['params']);
+					$row = $conn->fetchOne($stmt);
+					if ($row === null) {
+						// A COUNT always answers one row; none means the read failed.
+						throw new \RuntimeException('Update CPC: counting the clicks returned no row');
+					}
+					if ((int) $row['matching'] !== $snapshot['count']) {
+						return ['confirmed' => $snapshot['count']];
+					}
+
+					$stmt = $conn->prepareWrite('UPDATE 202_clicks' . $scope['joins'] . ' SET 202_clicks.click_cpc = ?' . $scope['where']);
+					$conn->bind($stmt, 's' . $scope['types'], array_merge([(string) $values['cpc']], $scope['params']));
+					$updated = $conn->executeUpdate($stmt);
+
+					// The data engine rebuilds the hours these clicks fall in, for
+					// the slice they were chosen by.
+					$dirty = $conn->prepareWrite('INSERT IGNORE INTO 202_dirty_hours SET ppc_account_id = ?, aff_campaign_id = ?, user_id = ?, click_time_from = ?, click_time_to = ?, aff_network_id = ?, text_ad_id = ?, landing_page_id = ?, ppc_network_id = ?');
+					$conn->bind($dirty, 'iiiiiiiii', [(int) $values['ppc_account_id'], (int) $values['aff_campaign_id'], $userId, (int) $values['from_time'], (int) $values['to_time'],
+						(int) $values['aff_network_id'], (int) $values['text_ad_id'], (int) $values['landing_page_id'], (int) $values['ppc_network_id']]);
+					$conn->executeUpdate($dirty);
+					return null;
+				});
 			}
+		}
+		if ($errors === [] && ($isPreview || $stale !== null)) {
+			// The check, and the check again after a refused confirm: how many
+			// clicks match now, and the highest click id among them, which the
+			// confirm form carries back.
+			$scope = p202_update_cpc_scope($values, $userId);
+			$stmt = $conn->prepareWrite('SELECT COUNT(DISTINCT 202_clicks.click_id) AS matching, COALESCE(MAX(202_clicks.click_id), 0) AS through_click_id FROM 202_clicks' . $scope['joins'] . $scope['where']);
+			$conn->bind($stmt, $scope['types'], $scope['params']);
+			$count = $conn->fetchOne($stmt);
+			if ($count === null) {
+				// A COUNT always answers one row; none means the read failed.
+				throw new \RuntimeException('Update CPC: counting the clicks returned no row');
+			}
+			$matching = (int) $count['matching'];
+			$through = (string) $count['through_click_id'];
 		}
 	}
 }
@@ -105,7 +144,12 @@ template_top('Update CPC', ['ui' => 'v2']);
 echo p202_update_header('bi-currency-dollar', 'Update CPC', 'Prosper202 records the bid as each click\'s cost. Set what a set of past clicks really cost, so your reports show the real spend.');
 
 if ($updated !== null) {
-	echo p202_flash('ok', $updated . ($updated === 1 ? ' click' : ' clicks') . ' updated. Every click in this selection now costs ' . p202_update_money((string) $values['cpc']) . '.');
+	echo p202_flash('ok', $updated . ($updated === 1 ? ' click' : ' clicks') . ' updated. Every click you checked now costs ' . p202_update_money((string) $values['cpc']) . '; clicks recorded since keep their own cost.');
+}
+if ($stale !== null) {
+	echo p202_flash('warn', $stale['confirmed'] === null
+		? 'This confirmation did not say which clicks you checked, so nothing was changed. Check the count below, then confirm again.'
+		: 'The clicks in this selection changed after you checked them: you confirmed ' . $stale['confirmed'] . ' and ' . $matching . ' match now. Nothing was changed. Check the count below, then confirm again.');
 }
 if ($tokenRefused) {
 	echo p202_flash('bad', P202_UPDATE_TOKEN_REFUSED);
@@ -242,6 +286,8 @@ if ($errors !== []) {
 						<?php foreach (['from', 'to', 'aff_network_id', 'aff_campaign_id', 'ppc_network_id', 'ppc_account_id', 'landing_page_id', 'text_ad_id', 'method_of_promotion', 'cpc'] as $field) { ?>
 							<input type="hidden" name="<?php echo p202_setup_e($field); ?>" value="<?php echo p202_setup_e((string) $values[$field]); ?>">
 						<?php } ?>
+						<input type="hidden" name="expect_clicks" value="<?php echo $matching; ?>">
+						<input type="hidden" name="through_click_id" value="<?php echo p202_setup_e($through); ?>">
 						<div class="p202-form-actions">
 							<button type="submit" class="btn btn-primary" id="update-cpc-confirm">Update <?php echo $matching . ' ' . ($matching === 1 ? 'click' : 'clicks'); ?></button>
 						</div>

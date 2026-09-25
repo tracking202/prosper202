@@ -335,6 +335,18 @@ the write, it is the page's one primary button and the check becomes a
 secondary one. A value the server cannot read is refused under its field; it
 never falls back to "every campaign" (error pattern #11).
 
+The number on the button is a promise: "Update 4 clicks" never changes a
+fifth. A selection whose window includes today keeps gaining rows between
+the check and the confirm, so the confirm form also carries the count the
+check showed and the highest row id it counted. The write is bounded by that
+id (rows recorded since are left alone, and the result says so), and it runs
+only if the bounded selection still counts the same, counted again under a
+lock in the write's own transaction. When it does not (a row edited into the
+selection, or recorded late below the boundary), nothing is written and the
+page shows the check again with both numbers and the new count to confirm. A
+confirm that does not carry the count is refused the same way, never read as
+"no limit".
+
 The Update pages answer a write in place with what it did (what was marked,
 what was skipped and why) rather than redirecting, because the answer is a
 report and each write is safe to send twice. Their destructive forms confirm
