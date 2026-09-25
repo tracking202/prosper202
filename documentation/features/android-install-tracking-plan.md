@@ -1,620 +1,805 @@
-# Android install tracking — design plan
+# Mobile app measurement: Android install tracking, on a core shared with iOS
 
-Status: **proposal, not implemented.** This document plans native Android
-install tracking alongside the iOS attribution feature shipped in 1.9.76
-(SKAdNetwork / AdAttributionKit, `documentation/api/19-attribution-postbacks.md`).
-Facts about the Android platform were checked against Google's and Meta's
-documentation on 2026-09-25; facts about this codebase cite files as they are
-on `main` at `99972c2`.
+Status: **proposal, not implemented.**
 
-## 1. The one thing that makes Android different
+This plans native Android install tracking. It also **reshapes the iOS
+implementation shipped in 1.9.76** (SKAdNetwork / AdAttributionKit,
+`documentation/api/19-attribution-postbacks.md`) so that both platforms are
+built from the same parts.
 
-"Like iOS" can only mean *like iOS in the product surface*, not in the
-mechanism, because Android has no equivalent of what iOS uses.
+The reshape is allowed because nothing depends on the current shape. The iOS
+feature has no users and no installs, and **the release stays 1.9.76**: the
+reshaped schema is what the existing 1.9.75 → 1.9.76 rung creates.
 
-| | iOS (shipped) | Android (this plan) |
+Sources:
+
+- Android platform facts were checked against Google's and Meta's
+  documentation on 2026-09-25.
+- Codebase facts cite `main` at `99972c2`.
+
+---
+
+## 1. What "like iOS" can and cannot mean
+
+Android has no counterpart to the iOS mechanism, so the two platforms can
+share a product surface but not a pipeline.
+
+| | iOS | Android |
 |---|---|---|
-| Mechanism | The OS sends a **signed, aggregate postback** (SKAdNetwork / AdAttributionKit) to a well-known URL | The app **reads the Google Play Install Referrer** on first launch and reports it to us |
-| Who sends | The device OS, 24–48 h+ after install, privacy-delayed | Our SDK inside the app, seconds after first open |
-| Trust anchor | Apple's ECDSA signature | None from the platform. Trust comes from a signed token we put in the referrer, click plausibility checks, and optionally Play Integrity |
-| Granularity | No click id, no device, conversion value 0–63 | **Deterministic, click-level**: the referrer carries whatever we put in the store link, including the Prosper202 click id |
-| Result in Prosper202 | Rows in `202_attribution_postbacks`, reported separately, never joined to clicks | **A real conversion on the originating click** in `202_conversion_logs`, so it shows up in every existing campaign report |
+| Mechanism | The OS sends a **signed, aggregate postback** to a well-known URL | Our SDK reads the **Google Play Install Referrer** on first launch and reports it |
+| Timing | 24–48 h+ after install, deliberately delayed | Seconds after first open |
+| Trust anchor | Apple's ECDSA signature | None from the platform. Trust comes from a signed token we put in the store link, click plausibility checks, and optionally Play Integrity |
+| Granularity | No click, no device; a 6-bit conversion value | **Click-level**: the referrer carries our click id |
+| What it becomes in Prosper202 | Report rows that can never join a click | **A real conversion on the originating click**, visible in every existing campaign report |
 
-Google's privacy-preserving counterpart to SKAdNetwork, the Privacy Sandbox
-Attribution Reporting API on Android, was **retired on 17 October 2025**
-(together with SDK Runtime, Protected Audience and Topics on Android;
-<https://privacysandbox.google.com/blog/update-on-plans-for-privacy-sandbox-technologies>).
-No replacement postback exists. Building a receiver for it would be building for
-a dead API, so this plan does not.
+Google's SKAdNetwork analogue, the Privacy Sandbox Attribution Reporting API
+on Android, was **retired on 17 October 2025**
+(<https://privacysandbox.google.com/blog/update-on-plans-for-privacy-sandbox-technologies>).
+No replacement postback exists.
 
-The consequence runs through every section below. On iOS the hard problem was
-*verifying a signature and decoding six bits*. On Android the hard problems are:
+So the two platforms share **everything around the signal**:
 
-1. **joining an install to a click correctly**, and
-2. **refusing forged installs** on an endpoint that has no platform signature to lean on.
+- the app registry and ownership;
+- the app token and the SDK contract;
+- the event catalogue and revenue;
+- the public-endpoint plumbing;
+- the trust vocabulary and retention;
+- the report surface.
 
-## 2. How it works end to end
+They differ only in **how a signal is received and judged**. The reshape makes
+that boundary the architecture.
+
+---
+
+## 2. Target architecture
 
 ```
- ad click ──► tracking202/redirect/dl.php?t202id=…      (click_id allocated, :486)
-                │  campaign URL (aff_campaign_url) is a Play link:
-                │  https://play.google.com/store/apps/details?id=com.example.app
-                │      &referrer=p202%3D[[p202_install_token]]
-                ▼
-           Google Play ── user installs ── Play keeps the referrer for 90 days
-                ▼
-           first app launch: P202Attribution (Android SDK)
-             • InstallReferrerClient → install_referrer, click / install-begin
-               timestamps (device and Google-server variants), install_version
-             • install_uuid (random, generated once, excluded from backup)
-                ▼
-           POST /api/v3/attribution/installs      X-P202-App-Token: <app token>
-                ▼
-           InstallReceiver
-             1. validate body, resolve app by token (package must match)
-             2. store the install row (idempotent on app + install_uuid)
-             3. parse the referrer → verify the p202 token's HMAC → click_id
-             4. plausibility: click belongs to the app's owner, Google's server
-                click time is close to our click_time, install-begin is after
-                the click, and the install falls inside the attribution window
-             5. MysqlConversionRepository::record(click_id,
-                transaction_id = 'p202-install') → one install conversion per click
-             6. fire the traffic source's postback (the same one gpb.php fires)
-                ▼
-           200 {"data":{"install_id":…, "match":"attributed"|"organic"|…}}
+                         ┌──────────────── shared core ────────────────┐
+  store link / SDK /     │ AppRegistry     one registration per app,   │
+  Setup page / CLI  ───► │                 keyed (platform, app_key)   │
+                         │ AppIdentity     parse + validate an app id  │
+                         │                 or store link, per platform │
+                         │ AppToken        the credential the SDK      │
+                         │                 ships; header-only; rotate  │
+                         │ EventCatalog    event → revenue, per app    │
+                         │                 or account-wide             │
+                         │ Verdict         source state → trust bit    │
+                         │                 under the app's policy      │
+                         │ PublicIntake    probe, 405/413, DB bring-up,│
+                         │                 peer rate limit, body read  │
+                         │ Retention       per-source prune classes,   │
+                         │                 one cron                    │
+                         │ ReportSource    shared metric set; one      │
+                         │                 report across platforms     │
+                         └──────────▲───────────────────▲──────────────┘
+                                    │                   │
+               ┌────────────────────┴───┐   ┌───────────┴─────────────────┐
+               │ Apple signal source     │   │ Android signal source        │
+               │ SkadnetworkProtocol     │   │ InstallReferrerIntake        │
+               │ AdAttributionKitProtocol│   │ InstallToken (HMAC)          │
+               │ PostbackVerifier / JWS  │   │ ReferrerParser               │
+               │ SignatureState: Verdict │   │ MatchState: Verdict          │
+               │ SkanEncoding (6-bit CV) │   │ ClickConversionBridge        │
+               │ 202_app_postbacks       │   │ 202_app_installs,            │
+               │                         │   │ 202_app_install_events       │
+               └─────────────────────────┘   └──────────────────────────────┘
 ```
 
-Later in-app events (`logEvent("purchase")`) go to
-`POST /api/v3/attribution/installs/{install_uuid}/events` and become further
-conversions on the same click (phase 2).
+The rule for the boundary: **a class goes in the core only when both sources
+call it.** A class goes in a source only when it knows something about one
+platform. For example, `SkanEncoding` is Apple's 6-bit value space, so it is
+not in the core, even though the event catalogue it points into is.
 
-## 3. Functional design
+---
 
-### 3.1 App registry: Android apps
+## 3. The reshape of the Apple implementation (phase 0)
 
-`202_attribution_apps` already anticipates Android. The `platform` column
-exists "so an Android receiver can be added without a migration"
-(`AttributionAppsController.php:61-66`), and `android` is refused with a
-sentence (`:40-44`). The Setup page recognises `play.google.com` links and
-refuses them by name (`MobileAppsController.php:481-487`).
+Phase 0 changes no user-visible iOS behaviour except the renames listed here.
+It is finished when every existing iOS test has been **ported, not deleted**,
+and passes; the SKAN and AAK signature vectors are byte-identical; and the
+existing live passes (`tests/live/setup-mobile-apps.sh`,
+`analyze-mobile-apps.sh`) and browser specs are green on the new code.
 
-What the registry is missing is an identity for an Android app. `app_id` is a
-`bigint NOT NULL` with a global `UNIQUE` key, but an Android app is identified
-by its **package name** (`com.example.app`), a string. The plan:
+### 3.1 Tables: new names, new shape
 
-- Add `package_name varchar(255) NULL` with `UNIQUE KEY package_name`.
-- Change `app_id` to `NULL`-able. MySQL's `UNIQUE` admits many `NULL`s, and
-  storing `0` for every Android app would collide on the first two
-  registrations.
-- Controller invariant, checked on the **raw** payload before `validatePayload()`
-  casts it (error pattern #18):
-  - `platform=ios` requires `app_id` and forbids `package_name`;
-  - `platform=android` requires `package_name` and forbids `app_id`.
-- Package names are validated against Android's grammar: dot-separated
-  segments, each `[A-Za-z][A-Za-z0-9_]*`, at least two segments. Case is
-  preserved, and a package name is compared exactly because it is
+The three iOS tables are replaced by tables under a new `202_app_` prefix.
+There are two reasons to rename rather than reshape in place.
+
+- **The reconciler cannot reshape.** `SchemaReconciler` only adds columns and
+  indexes and relaxes `NOT NULL`; it never drops, renames or retypes anything
+  (`202-config/Database/SchemaReconciler.php`, class docblock). A branch or
+  dev deployment already at 1.9.76 would keep, for example, the old
+  `app_id bigint NOT NULL`. Every insert that no longer supplies it would then
+  fail with errno 1364, which is the exact failure that docblock records from
+  the first 1.9.76 reshape. New names are created fresh, so nothing old is
+  ever half-converged.
+- **The prefix is already taken.** `202_attribution_*` also holds the
+  multi-touch attribution engine (`202_attribution_models`, `_snapshots`,
+  `_touchpoints`, `_settings`, `_audit`, `_exports`; `TableRegistry.php:90-95`).
+  App measurement is a different feature, and sharing a prefix already made
+  user deletion miss it (§3.8).
+
+| Old | New | What changes |
+|---|---|---|
+| `202_attribution_apps` | `202_app_registrations` | Identity becomes `(platform, app_key)`, per-app policy fields (below) |
+| `202_attribution_postbacks` | `202_app_postbacks` | Adds `registration_id`; `signature_valid` → `trusted` (§3.4) |
+| `202_attribution_conversion_values` | `202_app_events` + `202_app_skan_encodings` | Split: *what an event is worth* vs *how iOS encodes it* (§3.5) |
+| — | `202_app_installs`, `202_app_install_events` | Android (§4) |
+
+**The legacy guard is extended, not duplicated.**
+`_upgrade_attribution_tables()` already halts the upgrade when pre-release
+`202_skan_*` tables hold rows (`functions-upgrade.php:307-350`). The same guard
+takes a list of legacy generations. The first-cut `202_attribution_postbacks`,
+`_apps` and `_conversion_values` become the second entry, named exactly,
+because the prefix is shared with live multi-touch tables. The rules are:
+
+- empty legacy tables → proceed;
+- rows present → halt with the same "Upgrade paused" contract;
+- probe failed → do nothing, and retry.
+
+`AttributionUpgradeStepTest` and RELEASING.md's branch-deployment repair are
+updated to name the new tables.
+
+### 3.2 App registry: one identity for both platforms
+
+`202_app_registrations`:
+
+| Column | Notes |
+|---|---|
+| `registration_id` int PK | **The key everything else uses.** No other table stores a raw app id as its link to a registration |
+| `user_id` | owner |
+| `platform` varchar(16) | `ios` or `android` |
+| `app_key` varchar(255) | Apple: the App Store item id as canonical decimal. Android: the application id (package name). `UNIQUE (platform, app_key)` |
+| `app_name`, `notes` | |
+| `app_token` char(64) | Renamed from `schema_token`. `UNIQUE` |
+| `accept_test_signals` tinyint | Renamed from `accept_development_postbacks`. One policy covers AAK development-key postbacks **and** Android test installs (§3.4) |
+| `attribution_window_days` smallint | Android only; `NULL` on iOS |
+| `count_install_as_conversion` tinyint | Android only; `NULL` on iOS |
+| `created_at`, `updated_at` | |
+
+The Android identity is the **package**, not the store listing. The same
+package can ship through Play, Galaxy Store and AppGallery, and it is one app.
+The store an install came from is a property of the install row, not of the
+registration.
+
+**`AppIdentity`** is the one implementation of "is this a valid app id, and
+what does this store link name". Today that logic is split three ways:
+
+- `AttributionAppsController::assertUsableAppId()`, on the raw payload per
+  error pattern #18;
+- `MobileAppsController::appStoreId()`, the round-trip that catches `(int)`
+  saturation;
+- `MobileAppsController::parseStoreReference()`, the link parser that
+  recognises and then refuses `play.google.com`.
+
+It becomes one class with a per-platform rule:
+
+- **Apple:** digits, positive, round-trip exact, no leading zero.
+- **Android:** dot-separated segments `[A-Za-z][A-Za-z0-9_]*`, at least two,
   case-sensitive.
-- **Hazard to close in the same change.** Every iOS path reads
-  `(int)$row['app_id']`, and in `202_attribution_conversion_values`
-  `app_id = 0` means "account-wide fallback". An Android row read through an
-  iOS path would therefore turn `NULL` into `0` and silently adopt the
-  account-wide rules (error pattern #11). Every iOS query on the registry must
-  filter `platform = 'ios'` (or `app_id IS NOT NULL`), and a structural test
-  should pin that. The conversion-value rules and `GET /attribution/schema`
-  stay iOS-only: Android has no 6-bit value to decode.
-- The `schema_token` capability generalises to an **app token**. It is the same
-  column, the same rotation, and the same header discipline (header only, never
-  a query string). For Android it gates the install intake instead of the
-  schema document. It is *not* a secret: it ships in the APK and identifies the
-  app, it does not authenticate a device. The plan never treats it as more than
-  that (see §4.1).
-- New per-app settings:
 
-  | Field | Default | Meaning |
-  |---|---|---|
-  | `attribution_window_days` | 7 | Latest install, counted from the click, that is still credited |
-  | `count_install_as_conversion` | 1 | Off for apps whose campaigns pay on an in-app event, not the install |
-  | `accept_test_installs` | 0 | The Android analogue of `accept_development_postbacks`, see §3.6 |
+It also has one link parser: `apps.apple.com/…/id123`, a bare id,
+`play.google.com/store/apps/details?id=com.x`, `market://details?id=com.x`, or
+a bare package. The API, the Setup page and a new CLI `--store-link` flag all
+call it, so a link is read the same way everywhere (error pattern #5).
 
-- **Setup › Mobile Apps.** Pasting a Play link reads `id=` as the package and
-  sets platform `android`. There is no public Play lookup API, so the name
-  lookup is a best-effort fetch of the listing's `og:title` with the existing
-  fallback of asking for that one field (UI standard: the app finds what it
-  can and says what it derived).
+**The `app_id = 0` sentinel disappears.** Today `0` means "account-wide" in the
+conversion-value rules, and an Android app with no numeric id would have cast
+to that same `0`. With `registration_id` as the key, account-wide is
+`registration_id = 0`. That value can never be a real registration, because
+auto-increment starts at 1, and no code casts an app identifier into it. It
+stays `NOT NULL DEFAULT 0` rather than `NULL` on purpose: MySQL's `UNIQUE`
+admits any number of `NULL`s, so `NULL` would silently allow duplicate
+account-wide rules.
 
-### 3.2 Getting the click id into the store link
+**API shape** (`/attribution/apps`): `platform` + `app_key` on write and read.
+The request also accepts `store_link`, which `AppIdentity` expands to both, and
+a mismatch between an explicit value and the link is a 422 naming both. The
+old `app_id` field is gone, which is safe with zero users.
+
+### 3.3 App token and the SDK contract
+
+- **The token is renamed.** `schema_token` becomes `app_token`, and the header
+  `X-P202-Schema-Token` becomes `X-P202-App-Token`. It is still minted with
+  `bin2hex(random_bytes(32))`, still header-only (never a query string), still
+  rotatable, and still redacted from idempotency replays, staged-change
+  results and delete previews (`SchemaTokenHygieneTest` is ported).
+- **It is documented as an identifier, not a secret.** It ships in every app
+  binary. On iOS it gates a read-only document. On Android it also gates the
+  install intake, where it identifies the app and never authenticates a device
+  (§6.1).
+- **One wire contract, two SDKs.** `documentation/api/21-app-sdk-contract.md`
+  defines `GET /attribution/schema`, the intake, the events route, retry
+  semantics (400/413 terminal, 429/5xx retry), the test flag and the token
+  header once.
+- **Cross-language vectors.** Test vectors in
+  `tests/fixtures/app-sdk-contract/` (requests, responses, referrer strings,
+  schema documents) are read by the PHP tests, the Swift tests and the Kotlin
+  tests. This is the pattern `t202ctx-vectors.json` already uses for
+  `CtxToken`, and it keeps three implementations from drifting apart.
+- **`GET /attribution/schema` becomes platform-shaped:**
+  - iOS: `events: {name: {fine_value, coarse_value}}`, as today;
+  - Android: `events: {name: {}}`, the list of mapped event names, so the SDK
+    can refuse unmapped names locally as the iOS helper already does.
+
+  Revenue is withheld from both.
+- **The two SDKs share an API:** `configure(endpoint, appToken)` and
+  `logEvent(name, …)`. A later React Native or Flutter wrapper can then be a
+  thin shim over the two.
+
+### 3.4 Trust: one vocabulary, per-source verdicts
+
+`SignatureState` already separates *what was established* from *what it is
+worth* (`trustBit()`). That idea becomes the core interface:
+
+```php
+interface Verdict            // implemented by backed enums
+{
+    public function trustBit(AppPolicy $policy): ?int;   // 1 trusted, 0 refuted, null unvouched
+    public function isTest(): bool;                       // governed by accept_test_signals
+}
+```
+
+- **Apple:** `SignatureState implements Verdict`. It is unchanged, except
+  that `DEVELOPMENT` reports `isTest()`.
+- **Android:** `MatchState implements Verdict` (§4.3).
+  - `attributed` → 1.
+  - `bad_token`, `foreign_click`, `implausible` → 0 (refuted).
+  - `organic`, `third_party`, `unavailable`, `pending_click` → `NULL`.
+  - Test installs → 1 only under `accept_test_signals`.
+- Both signal tables store `trusted` (renamed from `signature_valid`, because on
+  Android nothing is a signature) plus their source's own state column
+  (`signature_state`, `match_state`).
+- **Reports use one rule for both:** headline numbers count `trusted = 1`, and
+  every other class is visible in its own column. This is today's
+  `meta.trusted`, applied to both sources.
+- `AppPolicy` is read once per request from the registration. A value that
+  cannot be read resolves to *untrusting*, which is today's `resolveOwner()`
+  rule (error pattern #11), now in one place.
+
+### 3.5 Events and revenue: separate the catalogue from iOS's encoding
+
+A conversion-value rule currently does two jobs: it says what an event is
+worth, and it says how iOS encodes it into 6 bits. Android needs only the
+first. The split:
+
+- **`202_app_events`**
+  - Columns: `(user_id, registration_id /* 0 = account-wide */, event_name, revenue)`.
+  - Key: `UNIQUE (user_id, registration_id, event_name)`.
+  - Shared by both platforms. It is the only place revenue is configured.
+- **`202_app_skan_encodings`**
+  - Columns: `(user_id, registration_id, fine_value | coarse_value, event_name, revenue_override NULL)`.
+  - Keys: `UNIQUE (user_id, registration_id, fine_value)` and `UNIQUE (…, coarse_value)`.
+  - Apple only.
+  - `revenue_override` keeps today's ability to decode tiered values, for
+    example fine values 10–20 as "purchase" at different amounts.
+- **Decode**, unchanged in effect: `value → encoding` (app-specific, then
+  account-wide) `→ revenue_override ?? event revenue`. A fine value with no
+  encoding stays undecoded and never falls back to a coarse encoding, which is
+  today's rule.
+- **Encode** (`/attribution/schema`): the same encodings read in the other
+  direction, with the same highest-value-wins tie-break.
+- **API.** `/attribution/events` is the catalogue on both platforms.
+  `/attribution/conversion-values` survives as the iOS encoding resource, so
+  the familiar name keeps its meaning.
+- **CLI.** `p202 attribution cv …` keeps working. `p202 attribution event …` is
+  added.
+- **Behaviour change, said plainly:** an encoding must now name a registered
+  app or be account-wide. Today a rule can be scoped to an App Store id nobody
+  registered, which decodes nothing until someone does. Nothing is lost, and
+  the Setup page already offers to register first.
+
+### 3.6 Public intake plumbing
+
+`PostbackEndpoint` becomes `PublicIntake`. It keeps the same responsibilities:
+
+- GET probe answered from constants;
+- 405/413 before any database;
+- 503 on database bring-up failure;
+- `softIpRateLimit` keyed on `REMOTE_ADDR` (error pattern #16);
+- bounded body read;
+- a single JSON error envelope.
+
+What changes is that it dispatches to an `IntakeHandler` rather than a
+`PostbackProtocol`.
+
+- **Apple** keeps its Apple-dictated physical entry points under
+  `/.well-known/`, which are two lines each.
+- **Android's intake and the schema document** are pre-auth routes in
+  `api/v3/index.php`. They call the same class instead of the inline copy the
+  schema route has today (`index.php:131-153`). The rate-limit bucket names
+  stay per surface.
+
+### 3.7 Retention: one mechanism, per-source classes
+
+`PostbackReceiver::PRUNE_CLASSES` moves into `Retention` as data that each
+source registers:
+
+```php
+Retention::register('202_app_postbacks', [
+    'unclaimed'    => ['P202_APP_RETENTION_DAYS_POSTBACK_UNCLAIMED', 30, 'user_id = 0'],
+    'refuted'      => ['P202_APP_RETENTION_DAYS_POSTBACK_REFUTED',   90, 'trusted = 0'],
+    'unvouched'    => ['P202_APP_RETENTION_DAYS_POSTBACK_UNVOUCHED', 90, 'trusted IS NULL'],
+]);
+Retention::register('202_app_installs', [
+    'refuted'      => ['P202_APP_RETENTION_DAYS_INSTALL_REFUTED',    90, 'trusted = 0'],
+    'unvouched'    => ['P202_APP_RETENTION_DAYS_INSTALL_UNVOUCHED', 180, "trusted IS NULL AND match_state <> 'pending_click'"],
+]);
+```
+
+- `202-cronjobs/app-retention.php` (renamed from `attribution-retention.php`)
+  prunes every registered source, drains the backlog, and prints each resolved
+  window. The existing rules carry over:
+  - a malformed override prunes nothing and is named in the log;
+  - `0` disables that class.
+- The environment variables are renamed with the tables. With zero installs,
+  nobody's overrides are lost.
+- The opportunistic 1-in-100 prune stays on the receiver path for both sources.
+
+### 3.8 Things the reshape fixes along the way
+
+- **Deleting a user leaves their app data behind.** The purge list in
+  `202-account/user-management.php:287-296` names only the multi-touch tables.
+  A deleted user's registrations therefore keep their global
+  `UNIQUE (platform, app_key)` slot, and nobody can register that app again.
+  The reshape adds every `202_app_*` table to the purge. Postbacks are
+  released to unclaimed (`user_id = 0`, `registration_id = NULL`) rather than
+  deleted, consistent with "history is never reassigned, unclaimed rows
+  expire".
+- **The Analyze page stops reading raw app ids.** `MobileAppsReportController`
+  and the report API filter on `app_id`/`app_ids`. They become
+  `registration_id`/`registration_ids`. The postback's own `app_id` (what
+  Apple said) stays as a column and a filter for forensics, as does
+  `app_key`.
+
+### 3.9 Blast radius
+
+The files phase 0 touches, from a sweep of every reference to the three tables,
+`schema_token`, `/attribution/apps` and `/attribution/conversion-values`:
+
+- **PHP core:**
+  - `api/v3/Attribution/*` (receiver, endpoint, protocols, `SignatureState`);
+  - `api/v3/Controllers/Attribution{Apps,ConversionValues,Postbacks,Schema}Controller.php`,
+    `StagedChangesController.php`, `SystemController.php`;
+  - `api/v3/index.php`;
+  - `202-config/Database/Tables/AttributionPostbackTables.php`,
+    `TableRegistry.php`, `functions-upgrade.php`;
+  - `202-cronjobs/attribution-retention.php`;
+  - `202-account/user-management.php`.
+- **UI:** `tracking202/setup/MobileAppsController.php` + template,
+  `tracking202/analyze/MobileAppsReportController.php` + template,
+  `202-account/ui-kit.php`.
+- **Go CLI:** `go-cli/cmd/attribution_postbacks.go` + tests,
+  `go-cli/internal/eval/grade.go` + tests, `internal/api/client.go`.
+- **iOS SDK:** header rename in `P202Attribution.swift` and `Schema.swift`;
+  tests, including the live suite.
+- **Tests:** everything under `tests/Attribution/Postbacks/` (21
+  files), `tests/live/*mobile-apps*.sh`, `tests/browser/specs/*mobile-apps*`,
+  `StaticSqlSchemaTest`, and the scope and auth-path structural tests.
+- **Docs:** `documentation/api/19-attribution-postbacks.md`,
+  `docs/openapi.yaml`, `documentation/cli/10-go-cli.md`,
+  `sdk/ios-attribution/README.md`, `RELEASING.md`, `README.md`.
+
+---
+
+## 4. Android on the core (phase 1)
+
+### 4.1 Getting the click into the store link
 
 A new token, **`[[p202_install_token]]`**, is added to `replaceTokens()` /
 `replaceTrackerPlaceholders()` (`202-config/connect2.php:486-680, 2192-2255`).
 It expands to `<click_id>.<mac>`, where
 `mac = first 12 bytes of HMAC-SHA256(K_install, "p202-install-v1|" . click_id)`,
-base64url with no padding.
+encoded as base64url without padding.
 
-Why not just `[[subid]]`:
+**Why not `[[subid]]`:** click ids are sequential integers. An unsigned
+referrer lets anyone who can reach the intake credit an install, and a payout,
+to any click. That is error pattern #16: the identity must be what the
+attacker cannot choose. With the MAC, only referrers our redirect minted
+verify.
 
-- Click ids are sequential integers. Anyone can type one.
-- An unsigned referrer lets anyone who can reach the intake endpoint credit an
-  install, and a payout, to any click. That is error pattern #16 exactly: the
-  identity must be *what the attacker cannot choose*.
+**The key.** `K_install` is a random 32-byte install-wide secret. It is
+generated by the 1.9.76 rung and never served. `CtxToken`'s key cannot be
+reused, because it derives from the LPO webhook secret, which most installs
+never set. The key must be readable on the redirect hot path without a query,
+as `CtxToken`'s cached `ctx_key` is. **If it is missing, the token fails
+closed**: it expands to empty, and the intake records the install as
+unattributed rather than accepting an unsigned id.
 
-With the MAC, only a referrer minted by our own redirect verifies. That proves
-the install came through a link we generated for that click. It does **not**
-prove a real install happened; that is §4.1.
+**Encoding.** The referrer is itself a query string, so it is percent-encoded
+as a whole: `…&referrer=p202%3D[[p202_install_token]]`. The token alphabet
+`[0-9A-Za-z._-]` survives `rawurlencode202()` unchanged. The Setup page's link
+builder writes the whole URL (§4.6).
 
-Details:
+**Timing.** In `dl.php` the click row is written *after* the redirect for
+non-cloaked links (`:518` vs `:626-629`), so only first-pass tokens are
+reliable, and this one must be computed in the first pass from `$click_id`. The
+fallback path used while MySQL is down (`dl.php:106-190`) substitutes the
+literal `p202` for `[[subid]]`. It must substitute **empty** for this token.
 
-- `K_install` is a random 32-byte install-wide secret, generated by the upgrade
-  step and never served. `CtxToken`'s key is not reusable because it is derived
-  from the LPO webhook secret, which most installs never set. Where the key is
-  stored (an existing settings table or a new one) is decided in
-  implementation, and must satisfy two conditions:
-  - it is readable on the redirect hot path without an extra query, as
-    `CtxToken`'s cached `ctx_key` is;
-  - a missing key **fails closed**: the token expands empty and the intake
-    rejects, it never falls back to an unsigned id (error pattern #11).
-- **Encoding.** The referrer value is itself a query string, so it must be
-  percent-encoded as a whole: `referrer=p202%3D<token>`. The token alphabet
-  (`[0-9A-Za-z._-]`) needs no escaping, so a campaign URL written as
-  `…&referrer=p202%3D[[p202_install_token]]` survives `rawurlencode202()`
-  unchanged. Operators who add their own `utm_*` inside the referrer write them
-  encoded (`%26utm_source%3D…`). The link builder in §3.7 writes this for them.
-- **The token must be the first thing substituted.** In `dl.php` the click row
-  is written *after* the redirect for non-cloaked links (`dl.php:518` vs
-  `:626-629`), so the second-pass substitution, which reads the click back from
-  the database, finds nothing. `[[subid]]` survives this because the first pass
-  sets it from `$click_id`, and `[[p202_install_token]]` must be computed in
-  that same first pass. The fallback path that runs with MySQL down
-  (`dl.php:106-190`) substitutes the literal `p202` for `[[subid]]`. It must
-  expand the install token to the **empty string**, so the install is
-  recorded as unattributed instead of crediting a fake click.
-- `getPrePopVars()` appends unknown query parameters to the destination URL at
-  the top level (`connect2.php:2447-2510`). Those land beside `referrer=`, not
-  inside it, and Play ignores them. That is harmless, but it means a
-  passthrough parameter never reaches the app. The docs must say so.
-- **Other stores.** Huawei AppGallery, Samsung Galaxy Store and Xiaomi GetApps
-  each have their own install-referrer API. Huawei, for one, reports
-  timestamps in **milliseconds**. They are phase 3. The same token works in
-  their links because the SDK, not the store, reports it.
+**Parameters that never reach the app.** `getPrePopVars()` appends passthrough
+parameters to the destination URL at the top level, beside `referrer=`, not
+inside it. Play ignores them, so they never reach the app. The docs say so.
 
-### 3.3 The intake endpoint
+### 4.2 Intake: `POST /api/v3/attribution/installs`
 
-`POST /api/v3/attribution/installs` is public (pre-auth) and gated by
-`X-P202-App-Token`. It is routed next to `GET /attribution/schema`
-(`api/v3/index.php:131-153`) and rate-limited the same way: `softIpRateLimit`,
-keyed on `REMOTE_ADDR`, never on `X-Forwarded-For`. It is not under
-`/.well-known/`, because no platform dictates this URL: our SDK chooses it.
-
-A `GET` on the same path answers `{"status":"ready"}` from constants, like the
-postback receivers' probe, so the Setup page can check reachability from the
-browser. Unlike Apple, Google imposes no HTTPS or port rule, but the SDK
-refuses `http://` outside debug builds.
-
-Request body (JSON, capped at 16 KB):
+It is served by `PublicIntake` (§3.6) and gated by `X-P202-App-Token`. The body
+is JSON, capped at 16 KB:
 
 ```json
 {
-  "install_uuid": "8d7c…",          // SDK-generated v4 UUID, required
-  "package_name": "com.example.app", // must equal the token's app
-  "store": "google_play",            // google_play | huawei | samsung | xiaomi | unknown
+  "install_uuid": "8d7c…",            // SDK-generated v4 UUID
+  "app_key": "com.example.app",        // must equal the token's registration
+  "store": "google_play",              // google_play | huawei | samsung | xiaomi | unknown
   "referrer": {
-    "install_referrer": "p202=…&utm_source=…",   // may be absent (sideload, non-Play)
+    "status": "ok",                    // ok | feature_not_supported | service_unavailable | permission_error
+    "install_referrer": "p202=…&utm_source=…",
     "referrer_click_timestamp_seconds": 1727200000,
     "install_begin_timestamp_seconds": 1727200042,
     "referrer_click_timestamp_server_seconds": 1727200001,
     "install_begin_timestamp_server_seconds": 1727200043,
     "install_version": "3.2.0",
-    "google_play_instant": false,
-    "status": "ok"                   // ok | feature_not_supported | service_unavailable | permission_error
+    "google_play_instant": false
   },
   "first_open_at": 1727200100,
-  "app_version": "3.2.0",
-  "sdk_version": "1.0.0",
-  "os_version": "15",
+  "app_version": "3.2.0", "sdk_version": "1.0.0", "os_version": "15",
   "test": false,
-  "integrity_token": null            // phase 3
+  "integrity_token": null
 }
 ```
 
-What the endpoint does:
+The steps:
 
-1. **Validate strictly** (error pattern #4). Malformed JSON, a wrong type or an
-   unknown `store` is a 400 naming the field. The SDK treats 400 and 413 as
-   terminal and 429 and 5xx as retry.
-2. **Resolve the app** by token. Unknown token → 404. `package_name` ≠ the
-   app's package → 422 that names both values. A leaked token pointed at a
-   different package is then visible as a rejection, not stored.
-3. **Store the install row first** (§3.5), deduped on
-   `(attribution_app_id, install_uuid)`. A replay answers 200 with the stored
-   outcome and `duplicate: true`, as the iOS receiver does.
-4. **Classify the referrer** into `match_state`:
-
-   | `match_state` | Meaning |
-   |---|---|
-   | `attributed` | Token verified, click found, plausible → conversion recorded |
-   | `organic` | Play's organic referrer (`utm_source=google-play&utm_medium=organic`) or no referrer from Play |
-   | `third_party` | A referrer we did not mint: Google Ads `gclid`, Meta's `utm_content` envelope, another tracker. Stored with its parsed fields, no conversion |
-   | `bad_token` | `p202=` present but the MAC fails, or the click id is malformed |
-   | `foreign_click` | Token valid, but the click belongs to another user, or to a campaign not linked to this app (§3.7) |
-   | `implausible` | The timing checks failed (§4.1) |
-   | `outside_window` | Install later than the app's attribution window |
-   | `duplicate_click` | The click already has an install conversion (a second device installed from one click) |
-   | `pending_click` | Token valid but the click row does not exist *yet*, see step 6 |
-   | `unavailable` | The referrer API answered FEATURE_NOT_SUPPORTED, SERVICE_UNAVAILABLE or PERMISSION_ERROR |
-
-5. **Record the conversion** for `attributed`, through the one transactional
-   writer, `MysqlConversionRepository::record()`
+1. **Validate strictly** (error pattern #4): 400 naming the field.
+2. **Resolve the registration** by token (404 if unknown). A mismatched
+   `app_key` is a 422 naming both values.
+3. **Insert the install row** (idempotent on
+   `(registration_id, install_uuid)`). A replay answers 200 with the stored
+   outcome and `duplicate: true`.
+4. **Classify** into `MatchState` (§4.3).
+5. **For `attributed`, record a conversion** through `ClickConversionBridge` →
+   `MysqlConversionRepository::record()`
    (`202-config/Conversion/MysqlConversionRepository.php:120-298`):
-   - `transaction_id = 'p202-install'`. The existing `UNIQUE (click_id, transaction_id)`
-     then guarantees **one install conversion per click** at the database,
-     whatever the SDK or a replayer sends.
-   - `pixel_type = 4` (new, "app install"), so reports can tell installs from
-     pixel and postback conversions.
-   - `conv_time` is Google's `install_begin_timestamp_server_seconds` when
-     present, otherwise the time we received the install.
-   - Payout is the campaign's, and the click-side update is the same one
-     `p202RecordConversion()` applies: `click_lead`, `click_filtered` and CPA.
-   - The conversion id is written back onto the install row.
-6. **The race with the click writer.** For non-cloaked links the click row is
-   inserted after `fastcgi_finish_request()`, so an install reported
-   quickly, or a click writer that failed, can find no row. That is not a
-   rejection. The row stores as `pending_click`, and the reconciliation cron
-   (§3.8) retries it for a bounded period (default 24 h) before settling it as
-   `bad_token` with the reason "click never recorded".
-7. **Fire the traffic source's postback** after the conversion commits. This
-   uses the same `202_ppc_account_pixels` logic `gpb.php` runs (`:166-240`),
-   extracted into one shared function so the two cannot drift (error pattern
-   #5). This is what lets Prosper202 send server-to-server *install* postbacks
-   to ad networks, which is the main thing a CPI buyer needs.
-8. **A failure after a commit is reported as committed** (error pattern #13).
-   If the install row committed but the conversion or pixel step threw, the
-   response is still 200 with `match: "pending"`, and the cron completes it.
-   The SDK must never be told to retry something that already landed.
+   - `transaction_id = 'p202-install'`. The existing
+     `UNIQUE KEY uniq_click_transaction (click_id, transaction_id)` makes
+     **one install conversion per click** a database fact.
+   - `pixel_type = 4`, a new value. Values 0–3 are in use.
+   - `conv_time` is Google's server install-begin time when present.
+   - Payout is the campaign's; the click-side update is the one
+     `p202RecordConversion()` applies.
+   - The conversion is skipped when `count_install_as_conversion = 0`.
+6. **Fire the traffic source's postback.** The `202_ppc_account_pixels` logic
+   in `gpb.php:166-240` is extracted into one function that both call, so an
+   ad network receives an S2S install postback.
+7. **A failure after the commit is still a success** (error pattern #13). The
+   row is committed, the response is 200 with `match: "pending"`, and cron
+   finishes the job. The SDK is never invited to retry something that already
+   landed.
 
-Response: `{"data":{"install_id":…,"match":"attributed","duplicate":false}}`.
-Phase 3 adds deferred-deep-link fields here (§3.9). The response never returns
-click data the referrer did not already carry, because the token is public.
+**Probe.** `GET` on the same path answers `{"status":"ready"}` for the Setup
+page's reachability check. The SDK refuses `http://` endpoints outside debug
+builds.
 
-### 3.4 In-app events (phase 2)
+**What the response may contain.** It never returns click data the referrer
+did not already carry, because the token is public.
 
-`POST /api/v3/attribution/installs/{install_uuid}/events` accepts
+### 4.3 `MatchState`
+
+| State | Trust | Meaning |
+|---|---|---|
+| `attributed` | 1 | Token MAC verified, click found and owned, timing plausible, inside the window |
+| `organic` | null | Play's organic referrer (`utm_source=google-play&utm_medium=organic`) or none |
+| `third_party` | null | A referrer we did not mint: Google Ads `gclid`, Meta's `utm_content` envelope, another tracker's. Parsed fields are stored |
+| `unavailable` | null | The referrer API returned FEATURE_NOT_SUPPORTED, SERVICE_UNAVAILABLE or PERMISSION_ERROR |
+| `pending_click` | null | Token valid, click row not written *yet* (the `dl.php` post-redirect write). Settled by cron within 24 h |
+| `bad_token` | 0 | `p202=` present, MAC fails or malformed, or the click was never recorded |
+| `foreign_click` | 0 | The click belongs to another user, or to a campaign linked to a different registration |
+| `implausible` | 0 | Timing contradicts the click (§6.1) |
+| `outside_window` | null | Install later than `attribution_window_days` after the click |
+| `duplicate_click` | null | The click already has an install conversion |
+
+Every row also carries a `match_reason` sentence, which the UI shows as-is.
+
+### 4.4 Tables
+
+**`202_app_installs`:**
+
+- `install_row_id`, `user_id`, `registration_id`, `install_uuid`
+  (`UNIQUE (registration_id, install_uuid)`), `store`;
+- `click_id` NULL, `conversion_id` NULL;
+- `match_state`, `match_reason`, `trusted`, `is_test`;
+- `referrer_raw` varchar(2048), truncated with a flag and never rejected,
+  because Google documents no limit; parsed `utm_*` and `gclid`;
+- the four referrer timestamps (device and Google-server);
+- `install_version`, `app_version`, `sdk_version`, `os_version`;
+- `integrity_state`;
+- `first_open_at`, `received_at`, `settled_at`;
+- `raw_payload`, `remote_ip`.
+
+Indexes: `(user_id, received_at)`, `(registration_id, received_at)`,
+`(click_id)`, `(match_state, received_at)`.
+
+**`202_app_install_events`** (phase 2): `UNIQUE (install_row_id, event_id)`,
+`event_name`, catalogue revenue, `client_revenue`, `conversion_id`.
+
+**`202_aff_campaigns.registration_id`** NULL: the optional campaign → app link
+used by `foreign_click` and the link builder. The reconciler adds it as a
+nullable column, and a column it can add is a column it handles.
+
+The two signal tables stay separate even with the freedom to merge them.
+Postback identity is Apple's (`ad_network_id`, `transaction_id`, conversion
+window, signature). Install identity is ours (`install_uuid`, `click_id`).
+Merging would make every identity column nullable, and weaken the uniqueness
+that deduplication rests on. The composition belongs above the tables, in
+§3.4, §3.7 and §4.5.
+
+### 4.5 In-app events (phase 2)
+
+`POST /attribution/installs/{install_uuid}/events` accepts
 `{event_id, event_name, occurred_at, revenue?, currency?}`.
 
 - Each event becomes a conversion on the install's click with
-  `transaction_id = 'p202-evt:' . event_id`. It deduplicates per click at the
-  database and is recorded only for `attributed` installs.
-- **Revenue is untrusted.** Anyone holding the app token can post an event.
-  The server-side event map decides revenue, which is the Android form of the
-  iOS conversion-value rules: a per-app `event_name → revenue` table, with
-  revenue kept server-side exactly as `/attribution/schema` withholds it.
-  Client-reported revenue is stored in its own column and used only when the
-  app opts in (`trust_client_revenue`, default 0). Reports show which regime
-  produced each number.
-- Unmapped event names are stored and counted as "unmapped", never
-  discarded and never credited.
+  `transaction_id = 'p202-evt:' . event_id`, deduplicated per click by the
+  same unique key. Only `attributed` installs produce conversions.
+- Revenue comes from **`202_app_events`**, the same catalogue iOS decodes
+  through, because anyone with the app token can post an event.
+  Client-reported revenue is stored in its own column and used only under the
+  per-registration `trust_client_revenue` flag (default 0). Reports say which
+  regime produced a number.
+- Unmapped names are stored and counted as unmapped. They are never credited
+  and never dropped.
 
-### 3.5 Data model
+### 4.6 UI
 
-New table `202_attribution_installs`, one row per reported install:
-
-| Column | Notes |
-|---|---|
-| `install_row_id` bigint PK | |
-| `user_id`, `attribution_app_id` | owner resolved via the app token |
-| `install_uuid` char(36) | `UNIQUE (attribution_app_id, install_uuid)` |
-| `store` varchar(16) | |
-| `click_id` bigint NULL | only once the token verifies |
-| `conversion_id` bigint NULL | → `202_conversion_logs.conv_id` |
-| `match_state` varchar(16), `match_reason` varchar(255) | the reason sentence is what the UI shows |
-| `referrer_raw` varchar(2048) | Google documents no length limit; longer values are truncated with a flag, never rejected |
-| `utm_source` … `utm_content`, `gclid` | parsed out of the referrer for `third_party` reporting |
-| `click_ts_device`, `install_begin_ts_device`, `click_ts_server`, `install_begin_ts_server` | int NULL; the **server** pair is what the checks use |
-| `install_version`, `app_version`, `sdk_version`, `os_version` | |
-| `first_open_at`, `received_at`, `created_at`, `settled_at` | |
-| `is_test` tinyint, `integrity_state` varchar(16) | `not_provided` / `valid` / `invalid` / `unverifiable` (phase 3) |
-| `raw_payload` text, `remote_ip` varchar(45) | forensics; never served by the API, as with postbacks |
-
-Why not reuse `202_attribution_postbacks`: its identity columns are Apple's
-(`ad_network_id` and `transaction_id NOT NULL`, `app_id bigint NOT NULL`,
-`attribution_signature NOT NULL`). An install is click-level and signature-less,
-so fitting it into that table would mean either faking those values or
-loosening every one, and the iOS report's trust arithmetic reads those columns.
-Keeping the two tables apart keeps both reports honest. The Mobile Apps page
-presents them together (§3.7).
-
-Also:
-
-- `202_attribution_install_events` (phase 2):
-  `(install_row_id, event_id) UNIQUE`, name, revenue fields, `conversion_id`.
-- `202_aff_campaigns.attribution_app_id` NULL, the optional campaign → app
-  link used by the `foreign_click` check and the link builder.
-- The upgrade rung is `1.9.76 → 1.9.77`. It follows the 1.9.76 pattern
-  exactly: installer definitions reused, reconcile-then-advance,
-  version persisted only on full success, and pinned by an
-  `AttributionUpgradeStepTest`-style test. `app_id` becoming `NULL`-able is a
-  `MODIFY COLUMN` on a table that can already hold rows, so the step must be
-  tested against a populated 1.9.76 schema, not only a fresh one.
-
-### 3.6 Testing installs without the Play Store
-
-A real referrer exists only for a build installed *from Play* (the internal
-testing track works). Developers need a faster loop:
-
-- **Test installs.** A debug build of the SDK can send `test: true` with a
-  referrer the developer supplies. It is the same pipeline, stored
-  `is_test = 1`. With `accept_test_installs = 0` it is classified and shown
-  on the app page but records **no conversion** and counts nowhere, which is
-  the same live-policy semantics as `accept_development_postbacks`. Anyone can
-  send `test: true`, which is exactly why it is untrusted by default.
-- **`p202 attribution install simulate <app-id> --click <click_id>`** mints a
-  real token for a real click (authenticated, `attribution:write`) and posts it
-  as the SDK would. It exercises the real path end to end (error pattern #9),
-  and it is what the live integration test and the agent-eval case use.
-
-### 3.7 Reporting and UI
-
-- **Campaign reports need no change to show installs.** An attributed install
-  is a row in `202_conversion_logs`, so EPC, ROI, conversion rate and every
-  breakdown (c1–c4, keyword, GEO, device) already include it. This is the
-  largest functional gain over iOS, where postbacks can never join a click.
-- **Analyze › Mobile Apps** gains a platform switch. The Android view reports:
-  - installs by `match_state`, with the default counting only `attributed`
-    (§4.1; the same "report counts only the trusted class, the rest are visible
-    beside it" rule as `meta.trusted`);
-  - click-to-install time (CTIT) distribution. It is both a funnel metric and
-    the main click-injection signal;
-  - organic vs attributed, the `third_party` sources (gclid, Meta), and events
-    with revenue by regime.
-  - The postbacks tab has an **Installs** equivalent: individual rows with
-    their `match_reason`.
-- **Setup › Mobile Apps (Android app page)**:
+- **Setup › Mobile Apps.** Pasting a Play link registers an Android app
+  (`AppIdentity`). There is no public Play lookup API, so the name comes from
+  a best-effort fetch of the listing's `og:title`, falling back to asking for
+  that one field. The Android app page offers:
   - the app token with Reveal, Copy and Rotate;
-  - the Gradle and init snippet filled in with this install's URL;
-  - a reachability check of the intake URL;
-  - the **store-link builder**: pick a campaign, get the exact
-    `aff_campaign_url` with the encoded referrer and token, and optionally
-    write it to the campaign and set its `attribution_app_id`. The campaign form
-    accepts only `http(s)://` URLs (`aff_campaigns.php:72-76`), which a
-    `https://play.google.com/...` link satisfies. `market://` stays refused
-    because the web redirect must work on desktop too;
-  - the newest ten installs with their match state;
-  - the test-install opt-in.
-- Markup is copied from `202-account/ui-kit.php` per the UI standard.
-  `ComponentClassIsConsumedTest` and the browser pass cover it.
+  - Gradle and init snippets filled in with this install's URL;
+  - an intake reachability check;
+  - **a store-link builder**: pick a campaign, get the exact
+    `aff_campaign_url`, and optionally write it to the campaign and set its
+    `registration_id`. The URL is `https://play.google.com/…`, which the
+    campaign form's http(s) rule accepts;
+  - the newest ten installs with their reason;
+  - the `accept_test_signals` opt-in.
 
-### 3.8 Cron
+  The shared parts (token panel, reachability, recent signals, test opt-in)
+  become one partial that both platform pages render.
+- **Analyze › Mobile Apps** reads the cross-platform report (§4.7):
+  - a platform filter;
+  - per-source tabs: **Postbacks** for iOS, **Installs** for Android;
+  - the **Verify** tab stays Apple-only, because there is nothing to verify on
+    Android. The Android equivalent is a row's `match_reason`.
 
-`202-cronjobs/attribution-installs.php`, run hourly, does three things:
+### 4.7 One report across both platforms
 
-1. Settles `pending_click` rows, and retries rows whose conversion or pixel
-   step failed after commit.
-2. Prunes. The retention classes mirror `PostbackReceiver::PRUNE_CLASSES`:
-   - `bad_token`, `foreign_click`, `implausible` and untrusted test rows after
-     90 days;
-   - `organic`, `third_party` and `unavailable` rows after a configurable
-     window (default 180 days, matching Google Ads' gclid guidance);
-   - `attributed` rows are kept for as long as their click is.
+`GET /attribution/report` asks each registered `ReportSource` for the shared
+metric set over the same filters and group:
 
-   Malformed overrides prune nothing and are named in the log, as
-   `retentionDays()` already does.
-3. (Phase 3) Decodes queued Play Integrity tokens off the request path.
+- `installs`, `reengagements` (iOS only), `redownloads` (iOS only);
+- `events {name: {count, revenue}}`, `revenue`;
+- `trusted` / `refuted` / `unvouched` / `test` counts.
 
-### 3.9 Phase 3 extensions, each separable
+- **Shared dimensions:** `day`, `registration`, `platform`, `country`.
+- **Source-specific dimensions:** iOS has `ad-network`, `source`, `version`
+  and `conversion-type`; Android has `campaign`, `store`, `match-state` and
+  `ctit-bucket`. These require the matching `platform` filter. Without it the
+  request is a 422 with a hint (`group_by=version applies to iOS postbacks;
+  add platform=ios`). Excluding the other source silently is not allowed:
+  that would be a report quietly missing half its rows.
+- `data.totals` is per platform plus a combined figure. The combined figure is
+  labelled, because iOS numbers are delayed, aggregate and privacy-thresholded,
+  and Android numbers are neither.
+- **Campaign reports need no change.** Attributed Android installs *are*
+  conversions, so EPC, ROI and every click breakdown include them.
 
-- **Play Integrity.** The SDK requests a *standard* integrity token with
-  `requestHash = SHA-256(canonical install body)`. Verifying it needs the
-  **app developer's** Google Cloud project: standard tokens decrypt only
-  through Google's `decodeIntegrityToken`, which needs a service account.
-  Google's default quota is 10,000 requests and 10,000 decodes per app per
-  day. Prosper202 would hold that credential per app, encrypted at rest and
-  redacted like the app token. Verdicts (`PLAY_RECOGNIZED`, `MEETS_DEVICE_INTEGRITY`)
-  set `integrity_state`, and an app can require `valid` to attribute.
-- **Meta install referrer.** Meta's `utm_content` carries AES-256-GCM
-  ciphertext. It is decrypted with the per-app 64-hex key from Meta's
-  dashboard, via `openssl_decrypt('aes-256-gcm', …)` with the 16-byte tag split
-  off the end. That yields campaign, ad set and ad ids for `third_party` rows,
-  so Meta-driven installs can be reported by campaign without a click on our side.
+### 4.8 Testing without the Play Store
+
+A real referrer exists only for builds installed from Play; the internal
+testing track works. For faster loops:
+
+- **Test installs.** A debug build of the SDK sends `test: true` with a
+  developer-supplied referrer. It goes through the same pipeline and is stored
+  with `is_test = 1`, but counts and converts only under
+  `accept_test_signals`. This is the same live-policy semantics as AAK
+  development postbacks, and now literally the same flag.
+- **`p202 attribution install simulate <registration> --click <id>`**
+  (`attribution:write`) mints a real token for a real click and posts it as
+  the SDK would. It drives the live test and the agent-eval case.
+
+### 4.9 Android SDK (`sdk/android-attribution/`)
+
+- **Language and dependencies:** Kotlin, `minSdk 21`. The only dependency is
+  `com.android.installreferrer:installreferrer:2.2`, the latest release
+  (January 2021).
+- **Referrer:** read once on first launch and persisted. Google keeps it for
+  90 days, which leaves ample time to retry.
+- **Retries:** exponential backoff. 400 and 413 are terminal; 429 and 5xx are
+  retried.
+- **Events** queue until the install has been acknowledged.
+- **`install_uuid`** lives in SharedPreferences **excluded from Auto Backup**.
+  Otherwise a restore onto a new phone would dedupe a genuine new install as a
+  replay.
+- **No advertising ID.** Without it the app needs no `AD_ID` permission and
+  has a minimal Play Data safety declaration.
+- **Tests:** JVM unit tests over the shared contract vectors (§3.3), and a
+  live integration test against a running instance, mirroring the iOS suite.
+
+### 4.10 Phase 3 extensions, each independent
+
+- **Play Integrity.** The SDK sends a standard token with
+  `requestHash = SHA-256(canonical body)`. Standard tokens can be decoded only
+  through Google's `decodeIntegrityToken`, which requires the **app owner's**
+  Google Cloud service account, stored per registration and encrypted at rest.
+  The default quota is 10,000 requests and 10,000 decodes per app per day.
+  Decoding runs in cron, off the request path. A registration can require
+  `integrity_state = valid` to attribute.
+- **Meta install referrer.** AES-256-GCM, decrypted with the per-app 64-hex key
+  from Meta's dashboard via `openssl_decrypt` with the 16-byte tag split off
+  the end. It yields campaign, ad set and ad ids for `third_party` rows.
 - **Other stores** (Huawei, Samsung, Xiaomi): SDK modules plus a `store`
-  value. Huawei's timestamps must be converted from milliseconds.
-- **Deferred deep links.** The intake response returns a deep-link path the
-  operator set on the campaign, so the app can route a new user to the
-  advertised content on first open. Prosper202 could also serve
-  `/.well-known/assetlinks.json` for App Links. That is optional and
-  per-domain, and needs the Play App Signing fingerprint.
+  value. Huawei's timestamps are in milliseconds.
+- **Deferred deep links.** The intake response returns a per-campaign path.
+  `/.well-known/assetlinks.json` is optional and needs the Play App Signing
+  fingerprint.
 
-### 3.10 API, CLI, docs
+---
+
+## 5. API, CLI and docs, after both phases
 
 - **API:**
-  - `/attribution/apps` accepts `platform=android` and `package_name`;
-  - new `GET /attribution/installs` (filters: `app_id` or `package_name`,
-    `match_state`, `store`, `time_from`/`time_to`, `is_test`) and
-    `GET /attribution/installs/{id}`;
-  - `GET /attribution/installs/report?group_by=day|app|match-state|store|campaign|ctit-bucket`;
-  - public `POST /attribution/installs` and its events route;
-  - scope area `attribution` (reads `attribution:read`, simulate
-    `attribution:write`);
-  - `GET /capabilities` adds `features.android_install_referrer`.
+  - `/attribution/apps` (`platform`, `app_key`, `store_link`, policy fields);
+  - `/attribution/events` (catalogue);
+  - `/attribution/conversion-values` (iOS encodings);
+  - `/attribution/postbacks`;
+  - `/attribution/installs` (list and get);
+  - `/attribution/report`;
+  - `/attribution/verify` (Apple);
+  - public `/attribution/schema`, `POST /attribution/installs` and
+    `/attribution/installs/{uuid}/events`.
 
-  Every new route goes through `ScopeCoverageTest` and `ApiKeyAuthPathScopeTest`.
-- **CLI (Go):** `p202 attribution app create --platform android --package com.x --name …`,
-  and `p202 attribution install list|get|report|simulate`. All of it follows the
-  agent-actionable error contract in `CLAUDE.md`: validation category, `%w`
-  wrapping, and a hint naming `p202 attribution app list` when a package or
-  token is unknown.
-- **Docs:** `documentation/api/20-android-install-tracking.md`, the SDK README,
-  `docs/openapi.yaml`, `documentation/cli/10-go-cli.md`, and a cross-link from
-  `19-attribution-postbacks.md`, whose "Android is not supported" text goes
-  away.
+  All sit in the existing `attribution` scope area. Every new route goes
+  through `ScopeCoverageTest` and `ApiKeyAuthPathScopeTest`.
+  `features.app_measurement` in `/capabilities` lists the platforms and
+  sources.
+- **Go CLI:**
+  - `p202 attribution app create --store-link <url>` (or
+    `--platform/--app-key`);
+  - `p202 attribution event …`, `cv …`, `postbacks …`,
+    `install list|get|simulate`, `report`.
 
-### 3.11 The Android SDK (`sdk/android-attribution/`)
+  All of it follows the agent-actionable error contract in `CLAUDE.md`,
+  including hints naming `p202 attribution app list` for an unknown token or
+  key.
+- **Docs:**
+  - `19-attribution-postbacks.md` becomes the iOS source page;
+  - new `20-android-install-tracking.md`;
+  - new `21-app-sdk-contract.md`;
+  - OpenAPI, CLI docs, both SDK READMEs.
 
-A small Kotlin library, the counterpart of `sdk/ios-attribution/`.
+---
 
-- **Dependencies:** `com.android.installreferrer:installreferrer:2.2`
-  only. That is the latest release, from January 2021, and the only way to
-  read the referrer. No Google Play Services, no WorkManager.
-- **API:**
+## 6. Non-functional requirements
 
-  ```kotlin
-  P202Attribution.configure(context, endpoint, appToken)
-  P202Attribution.logEvent(name, eventId = UUID, revenue = null)
-  ```
+### 6.1 Security
 
-  `configure` does the rest on first launch.
-- **Behaviour:**
-  - Reads the referrer **once**, as Google instructs, and persists the
-    result. The referrer is available for 90 days, so a failed report can be
-    retried on later launches.
-  - Posts with exponential backoff. 400 and 413 are terminal and logged;
-    429 and 5xx are retried.
-  - Events queue locally until the install report has been acknowledged.
-- **`install_uuid`** lives in a SharedPreferences file **excluded from Auto
-  Backup** (`dataExtractionRules` / `fullBackupContent`). Otherwise a restore
-  onto a new phone carries the old id, and a genuine new install dedupes away
-  as a replay.
-- **No advertising ID.** The SDK does not read GAID. It therefore needs no
-  `AD_ID` permission, adds nothing to the app's Play Data safety declaration
-  beyond "app interactions / diagnostics", and does not depend on consent flows.
-  Attribution does not need GAID when the referrer carries the click.
-- `minSdk 21`. JVM unit tests cover referrer parsing, backoff and queueing. A
-  live-server integration test, like the iOS one, runs against a running
-  instance using a test install.
-
-## 4. Non-functional requirements
-
-### 4.1 Security (the threat model drives the design)
-
-The endpoint is public, and the token that gates it ships in every APK. So
-**the app token is an identifier, not a credential.** Everything below holds
-on the assumption that an attacker has it.
+The Android intake is public, and its gate ships in every APK. The model
+assumes the attacker has the app token.
 
 | Threat | Mitigation |
 |---|---|
-| Forge an install for an arbitrary click, to collect a CPI payout or poison EPC | The HMAC install token: only referrers our redirect minted verify. `bad_token` rows count nowhere |
-| Replay one genuine referrer many times | `UNIQUE (click_id, 'p202-install')`: at most one install conversion per click, enforced by the database, not by code |
-| **Click spamming**: generate many cheap clicks, harvest their tokens, report fake installs | The residual risk, and it is inherent to the referrer model: whoever can click can obtain a valid token. Mitigations, in order of cost: (a) Google's **server** click timestamp must be within minutes of our `click_time` for that click, so a token harvested from our redirect cannot be paired with a fabricated referrer time; (b) the report shows the CTIT distribution and flags implausibly short (under ~10 s, click injection) and long tails; (c) per-app, per-IP caps on the intake; (d) phase 3 Play Integrity (`PLAY_RECOGNIZED` + device integrity), which is the only control that proves a real app on a real device |
-| Click injection (a malicious app on the device fires a click just before install completes) | Compare Google's server `referrer_click_timestamp` with `install_begin_timestamp`. A click after install-begin is `implausible` |
-| Row-minting DoS on the public endpoint | 16 KB body cap, `softIpRateLimit` keyed on `REMOTE_ADDR` (error pattern #16), retention classes for every untrusted state, and the same injective bucket naming the postback receiver needed (error pattern #17) |
-| Token leaked to a competitor's app | `package_name` must match (a 422, visible to the operator) and the token can be rotated. Rotation is a release-coupled step for the developer, and the Setup page says so |
-| Malformed or unknown values resolving permissively | A missing HMAC key, an unparseable referrer or an unknown store never attribute (error pattern #11). They store with a reason and count nowhere |
+| Forge an install for an arbitrary click (CPI payout, EPC poisoning) | HMAC install token. `bad_token` is refuted and counts nowhere |
+| Replay one genuine referrer | `uniq_click_transaction`: one install conversion per click, enforced by the database |
+| **Click spamming**: harvest valid tokens from cheap clicks, report fake installs | The inherent residual risk of any referrer scheme. Mitigations: (a) Google's **server** click time must be within minutes of our `click_time` for that click; (b) the CTIT distribution is reported, and short (under ~10 s) or long tails are flagged; (c) per-registration, per-peer caps on the intake; (d) Play Integrity, the only control that proves a real app on a real device |
+| Click injection | Google's server click time after its server install-begin time → `implausible` |
+| Row-minting DoS | 16 KB cap; rate limit on `REMOTE_ADDR` (#16) with injective bucket names (#17); a retention class for every untrusted state |
+| Token lifted into another app | The `app_key` mismatch is a visible 422, and the token can be rotated. Rotation needs a release, and the page says so |
+| Malformed values resolving permissively | A missing HMAC key, an unparseable referrer, an unknown store or an unreadable policy all resolve to untrusted (#11) |
 
-The trust default in reports is: headline install and revenue numbers count
-`attributed` rows with `is_test = 0` (or opted-in), and everything else is
-visible in separate columns. That is the same stance `meta.trusted` takes for
-postbacks.
+### 6.2 Privacy
 
-### 4.2 Privacy and compliance
+- No device identifiers are collected. The only personal link is the click
+  Prosper202 already holds.
+- The docs tell operators to keep personal data out of `utm_*` in the store
+  link.
+- Retention is configurable.
+- The SDK READMEs give developers the exact Data safety (Android) and privacy
+  manifest (iOS) answers.
 
-- No device identifiers are collected. The only link to a person is the
-  click, which Prosper202 already holds with its IP, as it does today.
-- `referrer_raw` can contain whatever an operator put in the link. The docs
-  tell operators not to put personal data in `utm_*`.
-- Retention windows are configurable (§3.8). The SDK README gives developers
-  the exact Data safety answers.
-- Play policy: the SDK uses only the Install Referrer API and no advertising ID,
-  so the advertising-ID policy does not apply.
+### 6.3 Performance
 
-### 4.3 Performance and capacity
+- The Android intake makes indexed lookups and one short transaction, the same
+  shape as `gpb.php`. The target is p95 < 100 ms.
+- Nothing external runs on the request path: the pixel fires after
+  `fastcgi_finish_request` where available, and Integrity decoding is queued.
+- The redirect hot path gains one HMAC and no query.
+- The reshape must not slow the iOS receiver. It is the same statements under
+  new names, and the verdict lookup is one read, as today.
 
-- The intake does indexed lookups (token → app, click by PK) and one short
-  transaction, the same shape as `gpb.php`. The target is p95 < 100 ms. No
-  external call is made on the request path: pixel firing to traffic
-  sources follows the same pattern `gpb.php` uses today and moves after the
-  response where `fastcgi_finish_request` exists; Integrity decoding is
-  queued to cron.
-- Volume is about one request per install plus one per event, orders of
-  magnitude below click volume. The redirect hot path gains only one HMAC in
-  the first substitution pass (microseconds) and no query.
-- Indexes: `(user_id, received_at)`, `(attribution_app_id, received_at)`,
-  `(click_id)`, `(match_state, received_at)` for the cron and pruning.
+### 6.4 Reliability
 
-### 4.4 Reliability and correctness
+- Exactly-once conversions come from database keys: `install_uuid` per
+  registration, and `(click_id, transaction_id)`.
+- Delivery is at least once, with SDK retries and a 503 on database outage.
+- Post-commit failures are completed by cron (#13).
+- Every fallible call is checked, including `get_result`, `store_result` and
+  `prepare` (#1).
+- `uniq_click_transaction` also blocks soft-deleted rows, so an install
+  conversion an operator deletes can never be re-recorded by the same click.
+  That is intended and documented.
 
-- **Exactly-once install conversions** come from database uniqueness at two
-  levels, not from retry logic: install rows per `install_uuid`, and
-  conversions per click.
-  `uniq_click_transaction` also covers soft-deleted rows. If an operator
-  deletes an install conversion, the same install can never re-record it. That
-  is intended, and the docs have to say so.
-- **At-least-once delivery.** The SDK retries until a 2xx. A database outage
-  answers 503 and the SDK comes back. The 90-day referrer lifetime gives ample
-  room.
-- **Post-commit failures** complete via cron, and the response never invites
-  a duplicating retry (error pattern #13).
-- Every fallible call is checked, including the ones CLAUDE.md lists as
-  silent: `get_result`, `store_result`, `prepare` (error pattern #1).
+### 6.5 Compatibility
 
-### 4.5 Compatibility
+- **Release and upgrade:** 1.9.76, with no new rung. The 1.9.75 → 1.9.76 rung
+  creates the `202_app_*` tables, and the legacy guard covers both
+  pre-release generations (§3.1).
+- **Runtimes:** PHP 8.3 (CI) and 8.4 (sandbox); MySQL 5.7 and 8, and
+  MariaDB.
+- **Devices:** iOS 14+ behaviour is unchanged. Android needs API 21+ and Play
+  Store app 8.3.73+; older devices report `unavailable`.
 
-- **iOS behaviour unchanged.** Every existing attribution test must stay green,
-  and a new structural test pins that iOS queries filter by platform
-  (§3.1 hazard).
-- **Runtimes:** PHP 8.3 (CI) and 8.4 (sandbox); MySQL 5.7 and 8, and MariaDB,
-  for the `NULL`-able `UNIQUE` column.
-- **Android:** API 21+ and Play Store app 8.3.73+, the referrer library's
-  floor. Older devices report `unavailable`.
+### 6.6 Verification (what "done" means per phase)
 
-### 4.6 Observability and operability
+**Phase 0:**
 
-- There is a `GET` probe on the intake, and a reachability check on the Setup
-  page.
-- Every non-attributed row carries a `match_reason` sentence. That answers
-  "why didn't my install count" without log access.
-- The cron prints its resolved retention windows and backlog, as
-  `attribution-retention.php` does.
+- every existing iOS test is ported and green;
+- the SKAN and AAK vectors are unchanged;
+- the upgrade-step tests are green against a fresh database, against one
+  holding each legacy generation (empty and populated), and against a branch
+  deployment already at 1.9.76;
+- the iOS live and browser passes are green on the new code;
+- the iOS SDK tests are green, including the live suite, with the renamed
+  header.
 
-### 4.7 Verification plan (what "done" means)
+**Phase 1:**
 
-This follows CLAUDE.md error patterns #9 and #10: the seam is the product, so
-the seam gets exercised.
+- **Unit tests:** referrer parser (encoded, double-encoded, organic, gclid,
+  Meta envelope, truncated, hostile); token mint and verify (including the
+  missing key); timing rules; `AppIdentity` for both platforms, on the raw
+  payload.
+- **Contract vectors:** exercised by PHP, Swift and Kotlin.
+- **Live pass against a running instance:**
+  - a real click through `dl.php`, with the Play URL read from `Location`
+    and the token's encoding asserted;
+  - an SDK-shaped POST, with the `202_conversion_logs` row and
+    `click_lead = 1` asserted;
+  - a replay → `duplicate: true`;
+  - a second `install_uuid` on the same click → `duplicate_click` with no
+    second conversion;
+  - a tampered MAC → `bad_token`;
+  - the pixel fired.
 
-1. Unit tests:
-   - referrer parser (encoded, double-encoded, organic, gclid, Meta envelope,
-     truncated, hostile);
-   - token mint and verify (including the fail-closed missing key);
-   - plausibility rules;
-   - package-name grammar;
-   - the raw-payload `app_id`/`package_name` invariant.
-2. Structural tests:
-   - `StaticSqlSchemaTest` covers every new statement;
-   - scope coverage for the new routes;
-   - iOS queries filter by platform.
-3. **A live pass against a running instance**, using `tests/live/` and the
-   agent-eval fixture:
-   - create a click through the real `dl.php`, and read the Play URL from the
-     `Location` header;
-   - check the token is in it, correctly encoded;
-   - POST it as the SDK would;
-   - assert the `202_conversion_logs` row, `click_lead = 1`, a second POST
-     answering `duplicate: true`, a second `install_uuid` for the same click
-     answering `duplicate_click` with no second conversion, a tampered MAC
-     answering `bad_token`, and the traffic-source pixel fired.
+  Every negative case asserts the specific state *and* reason ("not
+  succeeded" is not "refused").
+- **Agent-eval case:** register an Android app from a store link, build the
+  campaign link, simulate an install, read the report.
 
-   Every negative case asserts the specific state and reason, not merely "no
-   conversion" (the "'Not succeeded' is not 'refused'" rule).
-4. An agent-eval case under `tests/fixtures/agent-eval/cases/`: register an
-   Android app, build a store link, simulate an install, and read the report.
-5. SDK: JVM unit tests, plus a live integration test against the same
-   instance.
+---
 
-## 5. Phasing
+## 7. Phasing
 
-| Phase | Scope | Why this order |
+| Phase | Scope | Exit criterion |
 |---|---|---|
-| **1** | Registry (`package_name`, `NULL`-able `app_id`, platform guards), the signed install token, the intake endpoint and install table, conversion recording, the traffic-source postback, the pending-click cron, the Setup page with store-link builder, the minimal Mobile Apps report, API/CLI/docs, the SDK (install only), test installs and `simulate` | The smallest thing that makes a CPI campaign measurable end to end with payouts in ordinary campaign reports |
-| **2** | In-app events and the server-side event → revenue map; CTIT reporting and fraud flags; `third_party` breakdowns (gclid) | Most app campaigns optimise on a post-install event, not the install |
-| **3** | Play Integrity, Meta referrer decryption, Huawei/Samsung/Xiaomi, deferred deep links and `assetlinks.json` | Each needs credentials the app owner holds, or a separate store SDK, and each is independently shippable |
+| **0: reshape** | Core extraction (§3), new tables, API/CLI/UI/iOS SDK renames, the user-deletion purge fix. No Android code | §6.6 phase 0: iOS behaves as before, on the core |
+| **1: Android installs** | Install token, intake, `MatchState`, installs table, conversion bridge, traffic-source postback, pending-click cron, Setup page and link builder, cross-platform report, `simulate`, Android SDK (installs), contract doc | §6.6 phase 1 |
+| **2: events and fraud signals** | Events route and catalogue revenue, CTIT reporting and flags, `third_party` breakdowns | Live pass extended to events |
+| **3: extensions** | Play Integrity, Meta decryption, other stores, deferred deep links | Each independently |
 
-## 6. Decisions needed from you before implementation
+Phase 0 lands first and alone, so any iOS regression can be bisected to a
+change with no Android code in it.
 
-1. **Is an install a conversion by default?** The plan says yes, per app
-   (`count_install_as_conversion`), because CPI is the common Android deal. If
-   your users mostly pay out on a purchase, the default should flip.
-2. **Fire traffic-source postbacks on install?** The plan says yes, and reuses
-   the `gpb.php` pixel logic. This is the feature ad networks will ask for, but
-   it means an install reaches third parties automatically.
+## 8. Decisions needed before implementation
+
+1. **Is an install a conversion by default?** The plan says yes, per
+   registration, because CPI is the common Android deal.
+2. **Fire traffic-source postbacks on install?** The plan says yes, reusing
+   the `gpb.php` logic.
 3. **Play Integrity in phase 1 or phase 3?** It is the only real defence
-   against click spamming, but it needs each app owner to set up a Google Cloud
-   service account and hand Prosper202 its credentials.
-4. **GAID: never, or opt-in?** The plan collects none. Some ad networks want a
-   device id in the install postback, and adding it later means an `AD_ID`
-   permission and consent handling in the SDK.
+   against click spamming, but it needs each app owner's Google Cloud
+   credentials.
+4. **GAID: never, or opt-in?** The plan collects none.
+5. **Naming:** the `202_app_*` prefix; `app_key`; `app_token` /
+   `X-P202-App-Token`; `accept_test_signals`. These are cheap to change now
+   and expensive after release.
