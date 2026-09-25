@@ -28,7 +28,11 @@ X-P202-App-Token: <64 hexadecimal characters>
   captured by ordinary request logging, so the server never reads one there.
 - It rotates: `POST /apps/{id}/app-token/rotate` (`p202 app rotate-token
   <id>`) replaces it, and the old one stops working at once. Builds carrying
-  the old token keep their last cached document until they ship the new one.
+  the old token keep their last cached document until they ship the new one
+  — and the iOS SDK encodes with a document for at most 7 days after its
+  last successful fetch (`P202Attribution.maxSchemaAge`, the third term of
+  the report's 48-day decode horizon), so an old build's events wait, and
+  set no conversion value, from then on.
 
 A value that is not 64 hexadecimal characters is a `400` naming the header
 (a pasted API key or a truncated copy); a well-formed token nobody holds is
@@ -126,7 +130,7 @@ and an SDK treats them the same way everywhere:
 | ------ | ------- | ------- |
 | `200`, `304` | Served | Uses the answer |
 | `400` | The request is not one the server will ever accept (a malformed token, a malformed body) | Does not retry the same request |
-| `404` | Unknown token | Does not retry; keeps its cached document |
+| `404` | Unknown token | Does not retry; keeps its cached document (the iOS SDK encodes with it for 7 days from its last successful fetch) |
 | `405` | Method not served | Does not retry |
 | `413` | Body over the route's cap | Does not retry the same body |
 | `429` | Rate limited per peer address; `Retry-After` says when | Retries after that many seconds |

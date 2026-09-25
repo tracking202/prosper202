@@ -6,17 +6,16 @@ namespace Api\V3\Apps\Apple;
 
 /**
  * What a SKAN conversion value meant, over time, and so what a postback
- * that carries it decodes to (plan §5.5).
+ * that carries it decodes to (plan §5.5, §5.8).
  *
  * An in-flight postback carries no version. A device sets a conversion value
- * with the schema document it last fetched, and Apple delivers the postback
- * up to 35 days after the install (the third conversion window closes on
- * day 35); an encoding edited today is still being applied by devices that
- * fetched the old document. So every meaning an encoding has had is kept
- * with the span it applied for — 202_app_skan_encodings holds the current
- * one (in force since `effective_at`), 202_app_skan_encoding_history every
- * one it replaced (until `retired_at`) — and a postback received at R is
- * decoded under every meaning the value had at any instant of
+ * with the schema document it holds, and the postback reaches us well after
+ * the document was fetched; an encoding edited today is still being applied
+ * by devices that fetched the old document. So every meaning an encoding has
+ * had is kept with the span it applied for — 202_app_skan_encodings holds
+ * the current one (in force since `effective_at`), 202_app_skan_encoding_history
+ * every one it replaced (until `retired_at`) — and a postback received at R
+ * is decoded under every meaning the value had at any instant of
  * [R - HORIZON, R]:
  *
  *  - one meaning: the postback decodes to it;
@@ -28,9 +27,37 @@ namespace Api\V3\Apps\Apple;
  *    postbacks are already arriving still reads them (what the report has
  *    always done); a value never given one is undecoded.
  *
- * "At an instant" is the report's existing resolution: the claiming
- * registration's own encoding wins over the account-wide one
- * (registration_id 0), and a fine value never falls back to a coarse one.
+ * The horizon is the longest a document the device used can predate the
+ * postback's arrival, which is three spans added up:
+ *
+ *  - CONVERSION_WINDOW_DAYS (35): the third conversion window closes 35
+ *    days after the install (or the re-engagement), so a value can be set
+ *    up to 35 days after the windows start;
+ *  - DELIVERY_DELAY_DAYS (6): the device sends each postback after a random
+ *    delay — 24 to 48 hours after the first window ends, 24 to 144 hours
+ *    after the second and the third end (SKAdNetwork 4 and AdAttributionKit;
+ *    Apple, "Receiving postbacks in multiple conversion windows"). 144 hours
+ *    is 6 days;
+ *  - SCHEMA_MAX_AGE_DAYS (7): the iOS SDK encodes only with a document
+ *    fetched in the last 7 days (`P202Attribution.maxSchemaAge`); an event
+ *    logged while it holds an older one waits for a fresh one. Without that
+ *    bound a device offline since before an edit could set the old
+ *    meaning's value at any later time. (For an install postback the
+ *    document cannot predate the install either — the SDK's cache lives in
+ *    the app's container — but a re-engagement's windows start whenever the
+ *    user comes back, so the age bound is what bounds that one.)
+ *
+ * A postback that arrives later than Apple's documented delay (a device
+ * that held it offline) can still decode under a later meaning: the horizon
+ * is the documented bound, not a guarantee against a device that breaks it.
+ *
+ * "At an instant" is the report's resolution: the app's own encoding wins
+ * over the account-wide one (app id 0), and a fine value never falls back
+ * to a coarse one. The app is its App Store id — what a postback names that
+ * outlives its registration. A registration deleted and made again for the
+ * same app gets a new registration id; its postbacks, and the meanings its
+ * encodings had, still name the same app, so they keep decoding under the
+ * app's own history rather than falling through to the account-wide set.
  * A meaning is identified by its goal and its revenue_override, which is
  * all a decode reports.
  *
@@ -42,7 +69,10 @@ namespace Api\V3\Apps\Apple;
  */
 final class SkanEncodingTimeline
 {
-    public const HORIZON_DAYS = 35;
+    public const CONVERSION_WINDOW_DAYS = 35;
+    public const DELIVERY_DELAY_DAYS = 6;
+    public const SCHEMA_MAX_AGE_DAYS = 7;
+    public const HORIZON_DAYS = self::CONVERSION_WINDOW_DAYS + self::DELIVERY_DELAY_DAYS + self::SCHEMA_MAX_AGE_DAYS;
     public const HORIZON_SECONDS = self::HORIZON_DAYS * 86400;
 
     public const DECODED = 'decoded';
@@ -50,7 +80,7 @@ final class SkanEncodingTimeline
     public const UNDECODED = 'undecoded';
 
     /**
-     * slot key "<registration>|<kind>|<value>" => spans.
+     * slot key "<app>|<kind>|<value>" => spans.
      *
      * @var array<string, list<array{from: int, until: int|null, goal_id: int, revenue_override: string|null}>>
      */
@@ -60,15 +90,18 @@ final class SkanEncodingTimeline
     private array $breakpoints = [];
 
     /**
-     * @param list<array{registration_id: int, fine_value: int|null, coarse_value: string|null, goal_id: int,
+     * @param list<array{app_id: int, fine_value: int|null, coarse_value: string|null, goal_id: int,
      *                   revenue_override: string|null, effective_at: int, retired_at: int|null}> $meanings
-     *        Current encodings have retired_at null; history rows have it set.
+     *        app_id: the App Store id of the app the encoding was for, 0 for
+     *        the account-wide set; a negative id stands for an app the caller
+     *        could not resolve, and matches no postback. Current encodings
+     *        have retired_at null; history rows have it set.
      */
     public function __construct(array $meanings)
     {
         $points = [];
         foreach ($meanings as $m) {
-            $key = self::slotKey((int) $m['registration_id'], $m['fine_value'], $m['coarse_value']);
+            $key = self::slotKey((int) $m['app_id'], $m['fine_value'], $m['coarse_value']);
             if ($key === null) {
                 continue; // no value at all: nothing can decode through it
             }
@@ -123,17 +156,17 @@ final class SkanEncodingTimeline
     }
 
     /**
-     * Decode one value, received at $receivedAt by a postback that
-     * $registrationId claimed (0: none claimed it).
+     * Decode one value, received at $receivedAt by a postback for the app
+     * $appId (its App Store id; 0 reads the account-wide set only).
      *
      * @return array{status: string, goal_id: int|null, revenue_override: string|null, meanings: int}
      *         meanings: how many distinct meanings the horizon held (2+ when ambiguous)
      */
-    public function decode(int $registrationId, ?int $fine, ?string $coarse, int $receivedAt): array
+    public function decode(int $appId, ?int $fine, ?string $coarse, int $receivedAt): array
     {
         $slots = [];
-        if ($registrationId > 0) {
-            $app = self::slotKey($registrationId, $fine, $coarse);
+        if ($appId > 0) {
+            $app = self::slotKey($appId, $fine, $coarse);
             if ($app !== null) {
                 $slots[] = $this->slots[$app] ?? [];
             }
@@ -194,8 +227,8 @@ final class SkanEncodingTimeline
     }
 
     /**
-     * The meaning in force at $t: the first slot (the registration's own,
-     * then the account-wide) with a span covering it.
+     * The meaning in force at $t: the first slot (the app's own, then the
+     * account-wide) with a span covering it.
      *
      * @param list<list<array{from: int, until: int|null, goal_id: int, revenue_override: string|null}>> $slots
      * @return array{goal_id: int, revenue_override: string|null}|null
@@ -237,14 +270,14 @@ final class SkanEncodingTimeline
         ];
     }
 
-    /** "<registration>|fine|<n>" or "<registration>|coarse|<word>"; null for no value. */
-    private static function slotKey(int $registrationId, mixed $fine, mixed $coarse): ?string
+    /** "<app>|fine|<n>" or "<app>|coarse|<word>"; null for no value. */
+    private static function slotKey(int $appId, mixed $fine, mixed $coarse): ?string
     {
         if ($fine !== null) {
-            return $registrationId . '|fine|' . (int) $fine;
+            return $appId . '|fine|' . (int) $fine;
         }
         if ($coarse !== null) {
-            return $registrationId . '|coarse|' . (string) $coarse;
+            return $appId . '|coarse|' . (string) $coarse;
         }
 
         return null;

@@ -47,7 +47,9 @@ import AdAttributionKit
 /// arrives wait (up to `maxPendingEvents`) and are evaluated, with their own
 /// times, as soon as it does, so a first-launch goal is not lost to a slow
 /// network. The schema is cached (with its ETag) across launches, so the
-/// device encodes correctly offline and refreshes cheaply.
+/// device encodes correctly offline and refreshes cheaply — for
+/// `maxSchemaAge`: an event logged while the device holds only an older
+/// document waits, like one logged before the first, for a fresh one.
 ///
 /// Note: `NSAdvertisingAttributionReportEndpoint` (SKAdNetwork) and
 /// `AttributionCopyEndpoint` (AdAttributionKit) in Info.plist cannot be set
@@ -84,7 +86,8 @@ public final class P202Attribution {
         /// arrived. Unreachable through `shared`; possible for short-lived
         /// injected instances.
         case deallocated
-        /// No schema has arrived yet and `maxPendingEvents` events are
+        /// No usable schema is held (none has arrived yet, or the one held
+        /// is older than `maxSchemaAge`) and `maxPendingEvents` events are
         /// already waiting for one; this event was not recorded. The
         /// earliest events are the ones kept, because the first conversion
         /// window is the one they belong to.
@@ -108,8 +111,19 @@ public final class P202Attribution {
 
     public static let shared = P202Attribution()
 
-    /// How many events may wait for the first schema.
+    /// How many events may wait for a usable schema.
     public static let maxPendingEvents = 100
+
+    /// The oldest schema document the SDK encodes with. A conversion value
+    /// means what the document the device held said it meant, and the
+    /// server decodes a postback under every meaning its value had in a
+    /// fixed horizon before the postback arrived (the 35-day conversion
+    /// windows, Apple's delivery delay of up to 144 hours, and this age:
+    /// `SkanEncodingTimeline::HORIZON_DAYS`). A device offline since before
+    /// an encoding was edited would otherwise set the old meaning's value
+    /// at any later time, and the report would credit it to the new one.
+    /// Not configurable, because the server's horizon is built from it.
+    public static let maxSchemaAge: TimeInterval = 7 * 24 * 60 * 60
 
     private let queue = DispatchQueue(label: "com.prosper202.attribution")
     private let store: P202KeyValueStore
@@ -128,7 +142,25 @@ public final class P202Attribution {
     private var lastAttemptAt: Date?
 
     /// The clock, in unix seconds. Injectable so tests can walk windows.
+    /// Every time the SDK keeps (event times, fetch and attempt times) is
+    /// read from it, so a schema's age and an event's time agree.
     var clock: () -> Int = { Int(Date().timeIntervalSince1970) }
+
+    private func clockDate() -> Date {
+        return Date(timeIntervalSince1970: TimeInterval(clock()))
+    }
+
+    /// The cached schema, when it is young enough to encode with (call on
+    /// `queue`). A fetch time in the future means the clock was set back
+    /// since: the document's real age is unknown, so it is not used either.
+    private func usableSchema() -> P202AttributionSchema? {
+        guard let schema = cache.schema, let fetchedAt = cache.fetchedAt else {
+            return nil
+        }
+        let age = clockDate().timeIntervalSince(fetchedAt)
+        return age >= 0 && age <= Self.maxSchemaAge ? schema : nil
+    }
+
     /// Every update handed to the frameworks, for tests (off-iOS the
     /// framework calls compile to nothing).
     var onSubmit: ((ConversionUpdate) -> Void)?
@@ -175,7 +207,8 @@ public final class P202Attribution {
         refreshSchema()
     }
 
-    /// The schema currently driving `logEvent`, if any (cached or fetched).
+    /// The schema last fetched, if any (cached or fetched). `logEvent`
+    /// encodes with it only while it is at most `maxSchemaAge` old.
     public var currentSchema: P202AttributionSchema? {
         return queue.sync { cache.schema }
     }
@@ -215,7 +248,8 @@ public final class P202Attribution {
     ///
     /// Throws `EventError` for an event the server's rules refuse (nothing
     /// is recorded then), `SDKError.notConfigured` before `configure`, and
-    /// `SDKError.pendingEventsFull` when no schema has arrived and the
+    /// `SDKError.pendingEventsFull` when no usable schema is held (none has
+    /// arrived, or the one held is older than `maxSchemaAge`) and the
     /// waiting queue is full.
     ///
     /// `conversionTypes` scopes the update to AdAttributionKit's install
@@ -249,7 +283,7 @@ public final class P202Attribution {
                 properties: properties,
                 revenue: revenue.map { EventValue.double($0) }
             )
-            guard let schema = cache.schema, goals.installEvaluated else {
+            guard let schema = usableSchema(), goals.installEvaluated else {
                 guard goals.pending.count < Self.maxPendingEvents else {
                     throw SDKError.pendingEventsFull
                 }
@@ -356,13 +390,13 @@ public final class P202Attribution {
                 return (.failure(SDKError.superseded), [])
             }
             refreshInFlight = false
-            lastAttemptAt = Date()
+            lastAttemptAt = clockDate()
             if let error {
                 return (.failure(error), [])
             }
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             if status == 304, let cached = cache.schema {
-                cache.fetchedAt = Date()
+                cache.fetchedAt = clockDate()
                 cache.save(to: store, appToken: config.appToken)
                 return (.success(cached), flushPending())
             }
@@ -375,7 +409,7 @@ public final class P202Attribution {
             do {
                 let schema = try P202AttributionSchema.decode(responseBody: data)
                 cache.store(body: data, schema: schema)
-                cache.fetchedAt = Date()
+                cache.fetchedAt = clockDate()
                 cache.save(to: store, appToken: config.appToken)
                 return (.success(schema), flushPending())
             } catch {
@@ -389,9 +423,9 @@ public final class P202Attribution {
     // MARK: - Goal evaluation (call on `queue`)
 
     /// Evaluate the install (once) and every waiting event, in order, now
-    /// that a schema is here. Returns the updates to submit.
+    /// that a usable schema is here. Returns the updates to submit.
     private func flushPending() -> [ConversionUpdate] {
-        guard let schema = cache.schema, let installAt = goals.installAt else {
+        guard let schema = usableSchema(), let installAt = goals.installAt else {
             return []
         }
         var updates: [ConversionUpdate] = []
@@ -510,7 +544,11 @@ public final class P202Attribution {
             guard let last = [cache.fetchedAt, lastAttemptAt].compactMap({ $0 }).max() else {
                 return true
             }
-            return Date().timeIntervalSince(last) > config.refreshInterval
+            // Never waits so long that the document ages out of use between
+            // two attempts.
+            let interval = min(config.refreshInterval, Self.maxSchemaAge / 2)
+            let since = clockDate().timeIntervalSince(last)
+            return since < 0 || since > interval
         }
         if stale {
             refreshSchema()

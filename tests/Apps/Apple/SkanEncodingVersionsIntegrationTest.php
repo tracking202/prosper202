@@ -15,8 +15,10 @@ use PHPUnit\Framework\TestCase;
  * Encoding versions against a real database (plan §5.5): every edit and
  * every delete of an encoding keeps the meaning it replaced, through each
  * path that can make one (the encodings API and deleting a registration),
- * and the report decodes a postback under every meaning inside the 35-day
- * horizon — the SQL grouping by INTERVAL() included, which no mock runs.
+ * and the report decodes a postback under every meaning inside the postback
+ * horizon — the SQL grouping by INTERVAL() included, which no mock runs —
+ * by the app the postback names, so a deleted registration's meanings keep
+ * reaching its postbacks, before and after the app is registered again.
  *
  * @group integration
  */
@@ -32,29 +34,51 @@ final class SkanEncodingVersionsIntegrationTest extends TestCase
             app_name='App $id', app_token='" . str_repeat((string) $id, 64) . "', created_at=1, updated_at=1");
     }
 
-    private function goal(string $event, string $amount): int
+    private function goal(string $event, string $amount, string $scope = 'registration', int $scopeId = 3): int
     {
         return (int) (new GoalsController(self::$db, 1))->create([
-            'scope' => 'registration', 'scope_id' => 3,
+            'scope' => $scope, 'scope_id' => $scopeId,
             'definition' => ['name' => $event, 'trigger' => ['event' => $event], 'value' => ['type' => 'fixed', 'amount' => $amount]],
         ])['data']['goal_id'];
     }
 
-    private function postback(int $n, int $receivedAt, int $fine): void
+    private function postback(int $n, int $receivedAt, int $fine, int $userId = 1, string $registrationId = '3'): void
     {
         self::fixture("INSERT INTO 202_app_postbacks
             (user_id, registration_id, received_at, protocol, version, ad_network_id, transaction_id, app_id, conversion_value,
              postback_sequence_index, conversion_type, redownload, did_win, attribution_signature, signature_state, trusted,
              dedupe_hash, raw_payload, remote_ip, created_at)
-            VALUES (1, 3, $receivedAt, 'skadnetwork', '4.0', 'it.skadnetwork', 'tx-$n', 993, $fine,
+            VALUES ($userId, $registrationId, $receivedAt, 'skadnetwork', '4.0', 'it.skadnetwork', 'tx-$n', 993, $fine,
              0, 'download', 0, 1, 'sig', 'valid', 1, SHA1('it-$n'), '{}', '198.51.100.1', $receivedAt)");
     }
 
     /** @return list<array<string, mixed>> */
     private static function history(): array
     {
-        return self::$db->query('SELECT encoding_id, goal_id, fine_value, revenue_override, effective_at, retired_at FROM 202_app_skan_encoding_history ORDER BY history_id')
+        return self::$db->query('SELECT encoding_id, registration_id, app_id, goal_id, fine_value, revenue_override, effective_at, retired_at FROM 202_app_skan_encoding_history ORDER BY history_id')
             ->fetch_all(MYSQLI_ASSOC);
+    }
+
+    /**
+     * The report's decode columns, summed over its groups, with the events.
+     *
+     * @return array{decoded: int, ambiguous_encoding: int, undecoded: int, events: array<string, int>}
+     */
+    private static function decodes(int $to): array
+    {
+        $report = (new AppPostbacksController(self::$db, 1))->report(['group_by' => 'registration', 'time_from' => 0, 'time_to' => $to]);
+        $sum = ['decoded' => 0, 'ambiguous_encoding' => 0, 'undecoded' => 0, 'events' => []];
+        foreach ($report['data']['groups'] as $group) {
+            foreach (['decoded', 'ambiguous_encoding', 'undecoded'] as $k) {
+                $sum[$k] += $group[$k];
+            }
+            foreach ((array) $group['events'] as $name => $event) {
+                $sum['events'][$name] = ($sum['events'][$name] ?? 0) + $event['count'];
+            }
+        }
+        ksort($sum['events']);
+
+        return $sum;
     }
 
     public function testEveryEditAndDeleteKeepsTheMeaningItReplaced(): void
@@ -97,6 +121,82 @@ final class SkanEncodingVersionsIntegrationTest extends TestCase
         (new AppRegistrationsController(self::$db, 1))->delete(3);
         self::assertSame('0', self::$db->query('SELECT COUNT(*) AS n FROM 202_app_skan_encodings')->fetch_assoc()['n']);
         self::assertSame([11], array_map('intval', array_column(array_slice(self::history(), 2), 'fine_value')));
+
+        // Every row keeps the app its registration was for.
+        self::assertSame(['993', '993', '993'], array_column(self::history(), 'app_id'));
+    }
+
+    public function testAnAccountWideMeaningIsKeptAsAppZero(): void
+    {
+        $trial = $this->goal('trial', '1.00', 'account', 0);
+        $encodings = new AppSkanEncodingsController(self::$db, 1);
+        $id = (int) $encodings->create(['registration_id' => 0, 'fine_value' => 10, 'goal_id' => $trial])['data']['encoding_id'];
+        $encodings->delete($id);
+        self::assertSame([['0', '0']], array_map(static fn (array $r): array => [$r['registration_id'], $r['app_id']], self::history()));
+    }
+
+    public function testAMeaningWhoseRegistrationIsNotAnIosAppKeepsNoApp(): void
+    {
+        // Damage (an encoding whose registration is gone, or is not an iOS
+        // app): the copy records no app rather than 0, which would read as
+        // account-wide.
+        self::fixture("INSERT INTO 202_app_registrations SET registration_id=8, user_id=1, platform='android', app_key='com.example.app',
+            app_name='Droid', app_token='" . str_repeat('8', 64) . "', created_at=1, updated_at=1");
+        self::fixture("INSERT INTO 202_app_skan_encodings SET encoding_id=70, user_id=1, registration_id=8, fine_value=10, goal_id=1, effective_at=1");
+        self::fixture("INSERT INTO 202_app_skan_encodings SET encoding_id=71, user_id=1, registration_id=77, fine_value=10, goal_id=1, effective_at=1");
+        $history = new \Api\V3\Apps\Apple\SkanEncodingHistory(self::$db);
+        $history->retireEncoding(1, 70, 5);
+        $history->retireRegistration(1, 77, 5);
+        self::assertSame([['8', null], ['77', null]], array_map(static fn (array $r): array => [$r['registration_id'], $r['app_id']], self::history()));
+    }
+
+    /**
+     * Codex P2 on PR 8: deleting a registration unlinks its postbacks
+     * (registration_id NULL) and keeps its encodings' meanings under its
+     * now-gone registration id; registering the app again claims the
+     * postbacks under a NEW id. Decoded by registration id, neither could
+     * reach the kept meanings, and both fell through to the account-wide
+     * set — here, silently crediting a trial as a purchase.
+     */
+    public function testADeletedRegistrationsMeaningsStillDecodeItsPostbacksAfterTheAppIsRegisteredAgain(): void
+    {
+        $this->registration(3); // app 993
+        $trial = $this->goal('trial', '1.00');
+        $purchase = $this->goal('purchase', '5.00', 'account', 0);
+        $encodings = new AppSkanEncodingsController(self::$db, 1);
+        $encodings->create(['registration_id' => 3, 'fine_value' => 10, 'goal_id' => $trial]);
+        $encodings->create(['registration_id' => 0, 'fine_value' => 10, 'goal_id' => $purchase]);
+        $now = time();
+        self::fixture('UPDATE 202_app_skan_encodings SET effective_at = ' . ($now - 100 * 86400));
+
+        $this->postback(1, $now - 10 * 86400, 10);   // claimed by registration 3
+        $this->postback(2, $now - 5 * 86400, 10);
+        self::assertSame(['decoded' => 2, 'ambiguous_encoding' => 0, 'undecoded' => 0, 'events' => ['trial' => 2]], self::decodes($now + 400 * 86400));
+
+        (new AppRegistrationsController(self::$db, 1))->delete(3);
+        self::assertSame('0', self::$db->query('SELECT COUNT(*) AS n FROM 202_app_postbacks WHERE registration_id IS NOT NULL')->fetch_assoc()['n'], 'the delete unlinked them');
+        self::assertSame([['3', '993']], array_map(static fn (array $r): array => [$r['registration_id'], $r['app_id']], self::history()));
+        // While the app is unregistered: its own postbacks still decode
+        // under what its encoding meant.
+        self::assertSame(['decoded' => 2, 'ambiguous_encoding' => 0, 'undecoded' => 0, 'events' => ['trial' => 2]], self::decodes($now + 400 * 86400));
+
+        // A device holding the old document sends one more after the delete
+        // (stored unclaimed), and one arrives far later.
+        $this->postback(3, $now + 10 * 86400, 10, 0, 'NULL');
+        $this->postback(4, $now + 100 * 86400, 10, 0, 'NULL');
+
+        $again = (int) (new AppRegistrationsController(self::$db, 1))->create(['app_key' => '993', 'app_name' => 'App 3 again'])['data']['registration_id'];
+        self::assertNotSame(3, $again);
+        self::assertSame('4', self::$db->query("SELECT COUNT(*) AS n FROM 202_app_postbacks WHERE registration_id = $again")->fetch_assoc()['n'], 'the new registration claimed all four');
+
+        // The two from before the delete: still trial. The one 10 days after
+        // it: the old document's trial or the account-wide purchase — the
+        // report cannot know, so ambiguous. The one 100 days after: only
+        // the account-wide meaning is left.
+        self::assertSame(
+            ['decoded' => 3, 'ambiguous_encoding' => 1, 'undecoded' => 0, 'events' => ['purchase' => 1, 'trial' => 2]],
+            self::decodes($now + 400 * 86400)
+        );
     }
 
     public function testTheReportIsAmbiguousInsideTheHorizonAfterAnEditAndExactAfterIt(): void

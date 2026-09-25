@@ -2865,8 +2865,10 @@ paths:
         goal's name) and the schema served to devices (the goal and the
         values). Every update and delete keeps the meaning it replaces: a
         device may apply the schema it fetched before the edit for as long
-        as a postback takes to arrive, so for 35 days the report counts a
-        value whose meanings disagree as `ambiguous_encoding`.
+        as a postback takes to arrive, so for 48 days (35 of conversion
+        windows, up to 6 of Apple's delivery delay, and the SDK's 7-day
+        limit on the age of the document it encodes with) the report counts
+        a value whose meanings disagree as `ambiguous_encoding`.
         `effective_at` says since when the current meaning applies. Honors
         `Idempotency-Key`.
       operationId: createAppSkanEncoding
@@ -3027,12 +3029,13 @@ paths:
       summary: Aggregate postback report with SKAN decoding
       description: |
         Groups postbacks by `group_by` and decodes winning postbacks'
-        conversion values through the caller's SKAN encodings (the claiming
-        registration's own over the account-wide ones, `registration_id = 0`;
-        a postback no registration claims decodes through the account-wide
-        set only; a fine value with no encoding stays undecoded and never
-        falls back to a coarse one). A postback decodes under every meaning
-        its value had in the 35 days before it arrived: one meaning decodes
+        conversion values through the caller's SKAN encodings (those of the
+        postback's app, by App Store id — a deleted registration's included,
+        so re-registering an app keeps what it encoded — over the
+        account-wide ones, `registration_id = 0`; a fine value with no
+        encoding stays undecoded and never falls back to a coarse one). A
+        postback decodes under every meaning its value had in the 48 days
+        before it arrived: one meaning decodes
         it, two that disagree make it `ambiguous_encoding` (credited to no
         goal), and none leaves it to the first meaning given afterwards, or
         undecoded. Days are UTC, oldest first.
@@ -5206,7 +5209,7 @@ components:
         effective_at:
           type: integer
           readOnly: true
-          description: Unix time the current meaning started to apply (set by every create and update). After an update the report is exact again 35 days later.
+          description: Unix time the current meaning started to apply (set by every create and update). After an update the report is exact again 48 days later.
         user_id:
           type: integer
         version:
@@ -5664,7 +5667,7 @@ components:
           description: Value present but no matching encoding
         ambiguous_encoding:
           type: integer
-          description: Value whose encoding changed within the 35 days before the postback arrived, with meanings that disagree (another goal or revenue override); credited to no goal
+          description: Value whose encoding changed within the 48 days before the postback arrived, with meanings that disagree (another goal or revenue override); credited to no goal
         null_conversion_values:
           type: integer
           description: Value withheld by Apple's privacy tier

@@ -506,13 +506,26 @@ creates) the app's plain goal for the event and stores the revenue as the
 override; any other goal can be encoded through the API or
 `p202 app encoding create --goal-id`.
 
-**Encodings are versioned, and an edit is ambiguous for 35 days.** A device
-sets a value with the schema document it last fetched, and Apple delivers
-the postback up to 35 days later (the third conversion window closes on
-day 35), so an encoding changed today is still being applied by devices
-that hold the old document. Every update and delete first keeps the meaning
-it replaces, with the time it stopped applying, and the report decodes each
-postback under every meaning its value had in the 35 days before it arrived:
+**Encodings are versioned, and an edit is ambiguous for 48 days.** A device
+sets a value with the schema document it holds, so an encoding changed today
+is still being applied by devices that hold the old document, and the
+postback arrives long after the document was fetched. The horizon is the
+longest that can be:
+
+- **35 days** — the third conversion window closes on day 35 after the
+  install (or re-engagement);
+- **6 days** — Apple sends each postback after a random delay: 24–48 hours
+  after the first window ends, 24–144 hours after the second and third
+  (SKAdNetwork 4 and AdAttributionKit, Apple's *Receiving postbacks in
+  multiple conversion windows*);
+- **7 days** — the iOS SDK encodes only with a document fetched in the last
+  7 days (`P202Attribution.maxSchemaAge`); an event logged while it holds an
+  older one waits for a fresh one, so a device offline since before an edit
+  cannot keep setting the old meaning's value indefinitely.
+
+Every update and delete first keeps the meaning it replaces, with the time
+it stopped applying, and the report decodes each postback under every
+meaning its value had in the 48 days before it arrived:
 
 - one meaning — the postback decodes to it;
 - two that disagree (another goal, or another `revenue_override`) — it is
@@ -521,19 +534,26 @@ postback under every meaning its value had in the 35 days before it arrived:
   decodes it, so encodings added once postbacks are already arriving still
   read them; a value never given one is `undecoded`.
 
-So after an edit the report is exact again 35 days later (Setup › Mobile
+So after an edit the report is exact again 48 days later (Setup › Mobile
 Apps says so when you save one). Re-saving the same goal and override is not
 an edit, and deleting an encoding keeps decoding the postbacks that were set
-under it for those 35 days.
+under it for those 48 days. A postback Apple delivers later than its
+documented delay can still decode under a later meaning.
+
+Meanings are kept **by app** (its App Store id), not by registration id:
+deleting a registration unlinks its postbacks, and registering the app again
+gives it a new id, but both the unlinked postbacks and the ones the new
+registration claims keep decoding under what the app's own encodings meant
+before the delete — never falling through to the account-wide set.
 
 Each encoding maps exactly one fine **or** one coarse value (`422`
 otherwise; duplicate mappings return `409`). A non-zero `registration_id`
 must be one of your own **iOS** registrations — anything else is a `422` on
 that field — because an encoding for an app nobody registered would decode
-nothing. Resolution order at decode time: the claiming registration's fine
-encoding → the account-wide (`registration_id = 0`) fine encoding; coarse
-values resolve the same way; a postback no registration claims decodes
-through the account-wide set only. A fine value with no encoding stays
+nothing. Resolution order at decode time: the fine encoding of the
+postback's app (the registration for its App Store id, including what a
+deleted registration of that app encoded) → the account-wide
+(`registration_id = 0`) fine encoding; coarse values resolve the same way. A fine value with no encoding stays
 *undecoded* — it never falls back to a coarse one.
 
 To switch an encoding between kinds, send the clear and the replacement in
@@ -643,7 +663,7 @@ default 100). Days are UTC, listed oldest first. Each group reports:
   carrying a value, across all three conversion windows — so it can exceed
   `installs`, which counts first-window postbacks only), `decoded`,
   `undecoded` (value present, no matching encoding), `ambiguous_encoding`
-  (the value's encoding changed within the 35 days before the postback
+  (the value's encoding changed within the 48 days before the postback
   arrived and its meanings disagree — credited to no goal; see SKAN
   encodings above),
   `null_conversion_values` (value withheld by Apple's privacy tier),

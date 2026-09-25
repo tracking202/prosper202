@@ -302,7 +302,63 @@ final class FacadeTests: XCTestCase {
         )
         let h = try Harness(body: body, test: self)
         h.now -= 3 * 86_400
+        // The document's own fetch time is now in the future, so its age is
+        // unknown and it is not used (see the max-age tests); fetch again.
+        _ = try h.sdk.finishRefresh(requestToken: "token-a", data: body, response: httpResponse(status: 200), error: nil).get()
         XCTAssertEqual(try h.sdk.logEvent("purchase")?.fineValue, 9, "counted at the install, not three days before it")
+    }
+
+    // MARK: - The age of the document the device encodes with
+
+    /// The server decodes a postback under every meaning its value had in a
+    /// horizon built from `maxSchemaAge` (SkanEncodingTimeline). A device
+    /// that kept encoding with an older cached document could set a value
+    /// for a meaning retired before the report looks back to, and have it
+    /// credited to whatever replaced it.
+    func testAnEventWaitsRatherThanEncodeWithADocumentOlderThanTheMaxAge() throws {
+        XCTAssertEqual(P202Attribution.maxSchemaAge, 7 * 86_400)
+        let h = try Harness(test: self)
+        XCTAssertEqual(try h.sdk.logEvent("purchase")?.fineValue, 63, "fresh: encodes")
+        h.now += Int(P202Attribution.maxSchemaAge)
+        XCTAssertEqual(try h.sdk.logEvent("purchase")?.fineValue, 63, "exactly the max age: still encodes")
+
+        h.now += 1
+        h.submitted = []
+        XCTAssertNil(try h.sdk.logEvent("purchase"), "older: the event waits for a fresh document")
+        XCTAssertTrue(h.submitted.isEmpty)
+
+        // Offline, the device's next launch still holds only the old
+        // document: configure must not flush with it either.
+        h.sdk.configure(endpoint: Self.deadEndpoint, appToken: "token-a")
+        XCTAssertTrue(h.submitted.isEmpty, "a relaunch does not encode with the stale document")
+
+        // Meanwhile Purchase was re-encoded as 21. The waiting event is
+        // encoded with the document that arrives, never the old one.
+        let edited = TestSchema.document(
+            goals: [TestSchema.goal(1, #"{"name":"Purchase","trigger":{"event":"purchase"},"repeat":{"mode":"each"}}"#)],
+            encodings: [#"{"goal_id":1,"fine_value":21,"coarse_value":null}"#],
+            version: "def"
+        )
+        _ = try h.sdk.finishRefresh(requestToken: "token-a", data: edited, response: httpResponse(status: 200), error: nil).get()
+        XCTAssertEqual(h.submitted.map(\.fineValue), [21])
+        XCTAssertEqual(try h.sdk.logEvent("purchase")?.fineValue, 21)
+    }
+
+    func testAnUnchangedDocumentConfirmedBy304IsYoungAgain() throws {
+        let h = try Harness(test: self)
+        h.now += Int(P202Attribution.maxSchemaAge) + 1
+        XCTAssertNil(try h.sdk.logEvent("purchase"))
+        h.submitted = []
+        _ = try h.sdk.finishRefresh(requestToken: "token-a", data: nil, response: httpResponse(status: 304), error: nil).get()
+        XCTAssertEqual(h.submitted.map(\.fineValue), [63], "the waiting event, encoded once the document is confirmed current")
+    }
+
+    func testADocumentFetchedInTheDevicesFutureIsNotUsed() throws {
+        // The clock was set back after the fetch: the document's real age
+        // is unknown, so it could be any age at all.
+        let h = try Harness(test: self)
+        h.now -= 60
+        XCTAssertNil(try h.sdk.logEvent("purchase"))
     }
 
     func testAnEventTheServerWouldRefuseIsRefusedHere() throws {
