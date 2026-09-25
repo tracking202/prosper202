@@ -1245,7 +1245,9 @@ because the same app is often sold under different deals.
     the new version's row for the same `(subject, goal)` where one exists,
     and **soft-deleted** (`softDelete()`, which recomputes the click total
     under the click lock) where the new version reaches nothing for the
-    subject; a row cannot be superseded by a row that does not exist.
+    subject; a row cannot be superseded by a row that does not exist. The
+    deletion carries `superseded_reason = 'reevaluation'` so a later
+    revival can tell it from an operator's (§5.7).
 
   Every read of `202_goal_outcomes` — the funnel, the app report, the
   per-subject breakdown, the CLI — filters `superseded_at IS NULL` through
@@ -1579,12 +1581,56 @@ is `GoalsController`; the CLI is `p202 goal …`.
     events arrive over HTTP three ways (§5.8).
   - There are no PHP CLI (`bin/p202`) goal commands, matching PR 3; the
     Go CLI is the CLI.
-- **Known limitation.** When a retired outcome is revived (a re-evaluation
-  returns to exactly that goal, version, n and event), its superseded
-  ledger row is revived too. A row that was soft-deleted instead is not
-  undeleted. No path that soft-deletes (a re-evaluation retire with no
-  replacement) is known to lead back to the same key, but that has not
-  been proven.
+- **Revival restores the ledger row, whichever retirement happened.** A
+  retired outcome that a reconciliation returns to (the same goal, version,
+  n and event — the outcome's UNIQUE key names the event) is revived, not
+  written twice. The path is real: a prerequisite that matches, stops
+  matching and matches again retires its dependent with no replacement
+  (row deleted) and then revives it, and until this was fixed the revived
+  dependent was live and unpaid (`RevivalRestoresTheLedgerTest`, and the
+  last re-evaluation section of `tests/live/goals.sh`). Both retirements
+  and the revival go through the ledger's writer, in the engine's
+  transaction: `MysqlConversionRepository::retireGoalRowInTransaction()`
+  soft-deletes and marks the row with the engine's reason in one
+  statement, and `reviveGoalRowInTransaction()` restores it by state —
+  engine-superseded: the mark is lifted; engine-deleted (deleted, marked,
+  no `superseded_by`): undeleted and unmarked; deleted without the mark
+  (an operator's DELETE or a subid clear): left deleted, because the engine
+  restores what it retired, never what someone else removed; already
+  counting: untouched. Either way the click is recomputed and the row
+  queued for MTA. The row must be the outcome's own (its click and
+  `DedupeKey::goal()` key); a link to any other row is refused as
+  `integrity` and the subject's transaction rolls back, so a revival never
+  pays for an outcome the row does not record. A second live row for the
+  key cannot exist — UNIQUE `(click_id, dedupe_key)` counts deleted rows.
+  A revived row keeps the value it was recorded at (a campaign payout
+  edited in between does not re-price it, as it re-prices no other
+  conversion). Under `payout_mode = replace` "latest" stays insertion
+  order: a revived row keeps its `conv_id`, so it is the click's value only
+  when no newer counted row exists — at the third step of the scenario
+  above, on a replace campaign, the prerequisite's new row is.
+- **LTV follows the row.** Deleting a linked conversion voids its revenue
+  event (`void:conv:<id>`); a revival posts it again as a new event of the
+  original's type and amount keyed `reinstate:conv:<id>:<g>`, and the next
+  deletion voids that with `void:conv:<id>:<g>`, so every cycle compensates
+  exactly once and the reconcile jobs' order count (purchases minus
+  `void:` adjustments) still agrees with the cache. `reinstate:` is a
+  reserved idempotency prefix.
+- **Notifications for revived and re-written outcomes (for 4b and 5).**
+  Decided here, built with the outbox. A traffic source's knowledge is per
+  `(subject, goal, n)`, not per row: (1) a *revived* row keeps its
+  `conv_id`, so its `reached` key `(conv_id, pixel, kind)` already exists
+  and it is never announced again; if its retirement queued a
+  `retraction` that is still pending, the retraction is cancelled; if the
+  retraction was delivered, the revival queues a `correction` (previous
+  value 0), sent only to a pixel with a correction URL and otherwise
+  stored `suppressed`, as every correction is. (2) "An outcome the old version never reached" means no
+  row for that `(subject, goal, n)` was ever announced, retired rows
+  included — so at the third step of the scenario above, the prerequisite's
+  new-version row, written for an `n` whose earlier row was announced and
+  then retired, is a `correction`, not a fresh `reached`. Keying the rule
+  on the immediate predecessor alone would re-announce it, and a network
+  would count the same outcome twice.
 
 ### 5.8 As built: decisions (PR 4b)
 
@@ -2060,6 +2106,52 @@ operator's reads are `AppInstallsController`; the guide is
 
   "If present": the replacement has no row at a destination whose pixel was
   removed in between, and nothing is recorded for an unannounced one.
+- **Revived and re-written outcomes (§5.7's decisions, built here).**
+  Announced-ness is per `(subject, goal, n)` per destination, not per row.
+  `OutcomeNotificationSink` gains `onRevived()` and `onAnnouncedBefore()`:
+  - the engine calls `onRevived($convId)` when a revival restored the
+    row (`reviveGoalRowInTransaction()` changed it; an operator's
+    deletion that stays stays retracted). Its `reached` is never queued a
+    second time. Per destination, its open retraction (the latest, with no
+    correction after it) is cancelled when it never went out — pending and
+    unattempted, or `suppressed` — because the network still holds the
+    value; when it was delivered (sent, failed, or attempted) a retrying
+    one is stopped and a `correction` with previous value 0 is recorded. A
+    `reached` the retirement cancelled unsent, at a destination nothing
+    else announced the outcome to, is queued again: that network has heard
+    nothing.
+  - after the retirements, every outcome written with a new ledger row
+    asks `onAnnouncedBefore($convId, $priors)`, where the priors are every
+    other row for its `(subject, goal, n)` — retired rows and every version
+    included. Wherever one of them was announced (a `reached` sent,
+    failed or attempted, or a correction or retraction recorded there) the
+    new row's pending `reached` is cancelled and a `correction` recorded,
+    with previous value what the network last heard there (0 after a
+    delivered retraction); a destination where `onReplaced()` already
+    recorded the new row's correction is left alone. Keyed on the
+    immediate predecessor alone, the third step of §5.7's funnel
+    re-announced A.
+  - **The correction-URL rule** is one helper for every correction and
+    retraction: queued `pending` to the destination's correction URL when
+    it has one (tokens `[[subid]]`, `[[p202_goal_value]]`/`[[payout]]` —
+    the value the network should now hold, 0 for a retraction —
+    `[[p202_previous_value]]`, `[[p202_conv_id]]`,
+    `[[p202_original_conv_id]]`, `[[p202_notification]]`,
+    `[[transactionid]]`, `[[timestamp]]`, `[[random]]`), `suppressed`
+    otherwise. No destination has one until PR 11 configures them; the
+    outbox takes the resolver as a constructor argument.
+  - **`generation`.** The key is now `(conv_id, pixel_id, destination,
+    kind, generation)`: a `reached` is always generation 0 (a replayed
+    install still finds it queued), and each correction or retraction of
+    a conversion at a destination is the next generation, so a row
+    retired, revived and retired again records its second retraction
+    instead of losing it to the first one's key. Changed in place (see
+    Constraints).
+  `AnnouncedOncePerOutcomeTest` drives the funnel through the engine with
+  and without a correction URL and through two cycles;
+  `NotificationOutboxIntegrationTest` has a case per retraction state and
+  per announced-before destination. Ten planted defects each fail at
+  least one of them.
 - **One sender.** `PostbackSender::fetch()` is the curl call gpb and upx
   used inline; `p202FireTrafficSourcePixels()` and the worker share it. It
   now refuses a URL that is not `http(s)://` (a `file://` pixel used to be
@@ -2145,10 +2237,12 @@ operator's reads are `AppInstallsController`; the guide is
     out, it is cancelled with a `correction` recorded) plus 4b's event
     rule, which PR 5 lacked: a replay that shifts n ($5, $10 and a late $1
     become $1, $5, $10) must not announce the $10 event again as "the
-    third". `onEventMoved()` cancels a written outcome's postback when its
-    reaching event had reached the goal in a retired outcome that was
-    announced; if that one was cancelled unsent, the new one stands. This
-    now also covers installs. Both rules are decided **per destination**
+    third". `onAnnouncedBefore()` (it was `onEventMoved()` until §5.7's
+    per-n rule arrived from PR 5, and the two became one call) cancels a
+    written outcome's postback when its reaching event had reached the
+    goal in a retired outcome that was announced, or when any earlier row
+    for its `(subject, goal, n)` was; if those were cancelled unsent, the
+    new one stands. This now also covers installs. Both rules are decided **per destination**
     (PR 5's review moved the outbox to one row per URL): a replacement or
     a moved event is withheld only at the (pixel, URL) pairs the retired
     outcome announced — its `reached` sent or attempted, or a `correction`

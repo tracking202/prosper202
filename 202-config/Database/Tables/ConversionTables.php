@@ -142,8 +142,8 @@ final class ConversionTables
      * A row is written in the same transaction as the ledger row it
      * announces, so a process killed between the commit and the send leaves
      * the row for the worker (202-cronjobs/app-installs.php) instead of
-     * nothing. UNIQUE (conv_id, pixel_id, destination, kind) makes a
-     * retried request unable to queue the same notification twice.
+     * nothing. UNIQUE (conv_id, pixel_id, destination, kind, generation)
+     * makes a retried request unable to queue the same notification twice.
      *
      * - destination: the URL's 0-based position in its pixel's code. A
      *   pixel may hold several space-separated URLs; each is its own row,
@@ -151,10 +151,17 @@ final class ConversionTables
      *   endpoint never resends to another that already accepted it;
      *
      * - kind: reached (the first row for an outcome), correction (a
-     *   replacement whose predecessor was already sent), retraction (an
-     *   outcome retired with no replacement after its reached was sent);
+     *   replacement whose predecessor was already sent, a new row for an
+     *   outcome an earlier row announced, or a revived row whose retraction
+     *   was delivered), retraction (an outcome retired with no replacement
+     *   after its reached was sent);
+     * - generation: 0 for a reached; the count of earlier rows of the same
+     *   kind for the conversion at the destination for a correction or
+     *   retraction, so a row retired, revived and retired again records
+     *   each step (plan §5.7);
      * - status: pending, sent, failed (attempts exhausted), cancelled (a
-     *   pending reached whose outcome was replaced before it went out) and
+     *   pending reached whose outcome was replaced before it went out, or a
+     *   retraction whose outcome was revived before it went out) and
      *   suppressed (a correction or retraction no correction URL can carry;
      *   `last_error` says why);
      * - url is resolved when the row is queued, with the tokens of the row
@@ -172,6 +179,7 @@ final class ConversionTables
                 `pixel_id` mediumint(8) unsigned NOT NULL,
                 `destination` smallint(5) unsigned NOT NULL DEFAULT '0',
                 `kind` varchar(16) NOT NULL,
+                `generation` smallint(5) unsigned NOT NULL DEFAULT '0',
                 `status` varchar(16) NOT NULL,
                 `url` text NOT NULL,
                 `attempts` smallint(5) unsigned NOT NULL DEFAULT '0',
@@ -180,7 +188,7 @@ final class ConversionTables
                 `created_at` int(10) unsigned NOT NULL,
                 `sent_at` int(10) unsigned DEFAULT NULL,
                 PRIMARY KEY (`notification_id`),
-                UNIQUE KEY `conv_destination_kind` (`conv_id`,`pixel_id`,`destination`,`kind`),
+                UNIQUE KEY `conv_destination_kind` (`conv_id`,`pixel_id`,`destination`,`kind`,`generation`),
                 KEY `status_next` (`status`,`next_attempt_at`),
                 KEY `user_id` (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Traffic-source notifications queued with the conversions they announce'"

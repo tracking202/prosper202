@@ -7,6 +7,7 @@ namespace Prosper202\Goals;
 use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\Ledger\DedupeKey;
+use Prosper202\Conversion\Ledger\LedgerIntegrityException;
 use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\Ledger\SupersededReason;
 use Prosper202\Conversion\MysqlConversionRepository;
@@ -21,8 +22,9 @@ use Throwable;
  * rows always, and ledger rows through the conversion ledger's own writer
  * when the subject has a click. Never a second writer of conversions: every
  * ledger row goes through MysqlConversionRepository::recordInTransaction(),
- * softDeleteInTransaction() or MysqlConversionLedger's goal-row marks, in
- * the same transaction as the events and outcomes that explain it.
+ * retireGoalRowInTransaction(), reviveGoalRowInTransaction() or
+ * MysqlConversionLedger::supersedeGoalRow(), in the same transaction as the
+ * events and outcomes that explain it.
  *
  * Per subject, every write takes the subject's lock row first
  * (202_goal_subjects, SELECT … FOR UPDATE), then the click's (inside the
@@ -77,8 +79,12 @@ use Throwable;
  * same transaction as the ledger row (NotificationOutbox) — web clicks
  * (PR 4b) and app installs (PR 5) alike; the worker sends them with
  * retries. A retired or replaced row tells the outbox, which cancels what
- * has not gone out and records what cannot be recalled, and an event a
- * replay moved to another n is announced once (execute()). The notifier
+ * has not gone out and records what cannot be recalled. A traffic source's
+ * knowledge is per (subject, goal, n) (plan §5.7): a revived row tells the
+ * outbox (onRevived()), which never announces it twice, and a new row for
+ * an n some earlier row was announced for — retired rows and every version
+ * included — or for an event a replay moved to another n is a correction,
+ * not a fresh `reached` (onAnnouncedBefore(), execute()). The notifier
  * handed to the constructor is told after the commit, for what only the
  * request can do: render browser pixels into its response, and report.
  */
@@ -826,10 +832,18 @@ final class GoalEngine
      *   outcome this plan retires is withheld when that one was announced: a
      *   replay that shifts n moves an already-announced event to a new n ($5,
      *   $10 and a late $1 become $1, $5, $10), and announcing the "new" third
-     *   outcome would tell the network about the $10 a second time
-     *   (onEventMoved());
-     * - a revived outcome and a duplicate ledger row are never announced
-     *   again.
+     *   outcome would tell the network about the $10 a second time;
+     * - a written outcome for an n that any earlier row of the goal — retired
+     *   rows and every version included — was announced for is withheld
+     *   where that one was heard and recorded as a correction (plan §5.7
+     *   (2): at the third step of a funnel whose prerequisite matched,
+     *   stopped matching and matched again, the prerequisite's new version
+     *   would otherwise be announced twice). These two are one call,
+     *   onAnnouncedBefore();
+     * - a revived outcome keeps its conversion and is never announced again:
+     *   the outbox cancels its unsent retraction, or records a correction
+     *   where the retraction went out (onRevived(), plan §5.7 (1)); a
+     *   duplicate ledger row is never announced again either.
      *
      * @param list<GoalEvent> $events
      * @param array{ledger: list<array<string, mixed>>, clicks: array<int, true>, notices: list<array<string, mixed>>} $post
@@ -904,21 +918,38 @@ final class GoalEngine
             } else {
                 // Retired with nothing in its place: a row cannot be
                 // superseded by a row that does not exist, so it is deleted
-                // (recomputing the click under its lock).
-                $clickId = $this->conversions->softDeleteInTransaction($convId, $userId);
+                // (recomputing the click under its lock), marked with the
+                // reason so a later revival knows the engine deleted it.
+                $clickId = $this->conversions->retireGoalRowInTransaction($convId, $userId, $reason);
                 if ($clickId !== null) {
                     $post['clicks'][$clickId] = true;
                 }
             }
         }
 
+        // Run after the retirements, so the outbox sees what onReplaced()
+        // just recorded and does not record it twice. What a network may
+        // have heard for a new row (plan §5.7 (2)): every other row of its
+        // (subject, goal, n) — retired ones and every version included, not
+        // only the one this plan retires — and the retired rows its event
+        // had reached the goal in (a replay that shifted n).
         foreach ($writtenAll as [$o, $written, $key]) {
             $prior = $retiredEvents[$o->goalId . "\0" . $o->eventId] ?? [];
-            $priorConvs = array_values(array_filter($prior, static fn (?int $c): bool => $c !== null && $c !== $written['conversion_id']));
-            if ($written['conversion_id'] !== null && $written['conversion_new'] && $priorConvs !== []) {
-                $this->outbox->onEventMoved($userId, $written['conversion_id'], $priorConvs);
+            $history = [];
+            if ($written['conversion_id'] !== null && $written['conversion_new']) {
+                $history = $this->rowsForN($userId, $subject, $o, $written['conversion_id']);
+                $priorConvs = array_values(array_unique(array_merge(
+                    array_filter($prior, static fn (?int $c): bool => $c !== null && $c !== $written['conversion_id']),
+                    array_keys($history)
+                )));
+                if ($priorConvs !== []) {
+                    $this->outbox->onAnnouncedBefore($userId, $written['conversion_id'], $priorConvs);
+                }
             }
-            $follows = isset($replacing[$key]) || $prior !== [];
+            // Without a record in the outbox (browser pixels only), the
+            // structural answer: it follows a retired row, its event moved,
+            // or an earlier row for its n was payable and may have been sent.
+            $follows = isset($replacing[$key]) || $prior !== [] || in_array(true, $history, true);
             $post['notices'][] = $this->notice($o, $written, $subject, $follows);
         }
 
@@ -967,15 +998,47 @@ final class GoalEngine
                 );
             }
             $revive = $this->conn->prepareWrite(
-                'UPDATE 202_goal_outcomes SET superseded_by = NULL, superseded_reason = NULL, superseded_at = NULL WHERE outcome_id = ?'
+                'UPDATE 202_goal_outcomes SET superseded_by = NULL, superseded_reason = NULL, superseded_at = NULL
+                 WHERE outcome_id = ? AND superseded_at IS NOT NULL'
             );
             $this->conn->bind($revive, 'i', [(int) $existing['outcome_id']]);
-            $this->conn->executeUpdate($revive);
+            if ($this->conn->executeUpdate($revive) !== 1) {
+                throw new GoalEngineException('outcome ' . (int) $existing['outcome_id'] . ' could not be revived', GoalEngineException::INTEGRITY);
+            }
+            // Its ledger row comes back the way it went: a superseded row is
+            // un-superseded, one the engine deleted (a retirement with no
+            // replacement) is undeleted, and one an operator deleted stays
+            // deleted. A row that is not this outcome's is refused.
             $convId = $existing['conversion_id'] !== null ? (int) $existing['conversion_id'] : null;
             if ($convId !== null) {
-                (new MysqlConversionLedger($this->conn))->reviveGoalRow($convId);
-                if ($subject->clickId !== null) {
-                    $post['clicks'][$subject->clickId] = true;
+                if ($subject->clickId === null) {
+                    throw new GoalEngineException(
+                        'outcome ' . (int) $existing['outcome_id'] . ' names conversion ' . $convId . ' but its ' . $subject->type . ' has no click',
+                        GoalEngineException::INTEGRITY
+                    );
+                }
+                try {
+                    $changed = $this->conversions->reviveGoalRowInTransaction(
+                        $convId,
+                        $userId,
+                        $subject->clickId,
+                        DedupeKey::goal($o->goalId, $o->version, $o->n, $o->eventId)
+                    );
+                } catch (LedgerIntegrityException $e) {
+                    throw new GoalEngineException(
+                        'outcome ' . (int) $existing['outcome_id'] . ' cannot be revived: ' . $e->getMessage(),
+                        GoalEngineException::INTEGRITY,
+                        [],
+                        $e
+                    );
+                }
+                if ($changed !== null) {
+                    $post['clicks'][$changed] = true;
+                    // The row counts again under its own conv_id (plan §5.7
+                    // (1)): the outbox never re-announces it, and settles a
+                    // retraction its retirement queued. A row left deleted
+                    // (an operator's) stays retracted.
+                    $this->outbox->onRevived($userId, $convId);
                 }
             }
 
@@ -1055,7 +1118,7 @@ final class GoalEngine
             // Every subject with a click — a web click (PR 4b) or an app
             // install (PR 5) — announces through the outbox, in this
             // transaction. execute() then decides whether a replay's rows
-            // stand (onReplaced, onEventMoved).
+            // stand (onReplaced, onAnnouncedBefore).
             if (!$recorded['duplicate'] && $payable && $notify) {
                 $this->outbox->queueReached(
                     $userId,
@@ -1074,6 +1137,31 @@ final class GoalEngine
             'outcome_id' => $outcomeId, 'conversion_id' => $convId, 'revived' => false, 'conversion_new' => $conversionNew,
             'payable' => $payable, 'amount_units' => $amountUnits, 'transaction_id' => $event?->transactionId, 'dedupe_key' => $dedupeKey, 'notify' => $notify,
         ];
+    }
+
+    /**
+     * The ledger rows of every other outcome ever written for this
+     * outcome's (subject, goal, n) — retired ones and every version
+     * included, since what a network was told outlives the row that told
+     * it (plan §5.7 (2)) — each with whether it was payable (a row that
+     * never paid was never announced).
+     *
+     * @return array<int, bool> conversion id => payable
+     */
+    private function rowsForN(int $userId, GoalSubject $subject, Outcome $o, int $convId): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT conversion_id, payable FROM 202_goal_outcomes
+             WHERE user_id = ? AND subject_type = ? AND subject_id = ? AND goal_id = ? AND n = ? AND conversion_id IS NOT NULL AND conversion_id <> ?
+             ORDER BY outcome_id'
+        );
+        $this->conn->bind($stmt, 'isiiii', [$userId, $subject->type, $subject->id, $o->goalId, $o->n, $convId]);
+        $out = [];
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $out[(int) $row['conversion_id']] = ($out[(int) $row['conversion_id']] ?? false) || (int) $row['payable'] === 1;
+        }
+
+        return $out;
     }
 
     /**

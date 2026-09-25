@@ -279,7 +279,7 @@ final class WebEventsIntegrationTest extends TestCase
     }
 
     /**
-     * 4b's event rule per URL (onEventMoved()): $5 then $10 are queued at two
+     * 4b's event rule per URL (onAnnouncedBefore()): $5 then $10 are queued at two
      * URLs and the worker gets only $5 to the first before a late $1 that
      * happened first shifts them to $1, $5, $10. Each URL must hear each
      * event once: the first heard $5 and now hears $10; the second heard
