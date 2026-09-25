@@ -58,7 +58,7 @@ NOW=$(date +%s)
 CAMP_ON=940001; CAMP_OFF=940002
 ACIP_ON=940100; ACIP_OFF=940101
 T_ON=940200; T_OFF=940201; R_ON=940202; R_OFF=940203
-ROT_ON=940400; ROT_OFF=940401
+ROT_ON=940400; ROT_OFF=940401; ROT_LP=940402; R_LP=940204
 LP_PUBLIC=940300
 CAMPS="$CAMP_ON,$CAMP_OFF"
 
@@ -68,9 +68,9 @@ DELETE FROM 202_attribution_pending WHERE conv_id IN (SELECT conv_id FROM 202_co
 DELETE FROM 202_conversion_logs WHERE campaign_id IN ($CAMPS);
 DELETE FROM 202_clicks_spy WHERE aff_campaign_id IN ($CAMPS);
 DELETE FROM 202_clicks WHERE aff_campaign_id IN ($CAMPS);
-DELETE FROM 202_trackers WHERE tracker_id_public IN ($T_ON, $T_OFF, $R_ON, $R_OFF);
-DELETE FROM 202_clicks_rotator WHERE rotator_id IN ($ROT_ON, $ROT_OFF);
-DELETE FROM 202_rotators WHERE id IN ($ROT_ON, $ROT_OFF);
+DELETE FROM 202_trackers WHERE tracker_id_public IN ($T_ON, $T_OFF, $R_ON, $R_OFF, $R_LP);
+DELETE FROM 202_clicks_rotator WHERE rotator_id IN ($ROT_ON, $ROT_OFF, $ROT_LP);
+DELETE FROM 202_rotators WHERE id IN ($ROT_ON, $ROT_OFF, $ROT_LP);
 DELETE FROM 202_landing_pages WHERE landing_page_id_public = $LP_PUBLIC;
 DELETE FROM 202_aff_campaigns WHERE aff_campaign_id IN ($CAMPS);
 TRUNCATE 202_identity_visitors; TRUNCATE 202_identity_signals; TRUNCATE 202_identity_observations;
@@ -135,9 +135,11 @@ ne "$K3" "$K1" "a second browser starts as a different visitor"
 LOC=$(grep -i '^location:' "$OUT/h3" | tr -d '\r')
 [[ "$LOC" == *"offer.example/on"* ]] && ok "redirected to the offer" || bad "unexpected redirect: $LOC"
 [[ "$LOC" != *p202lpid* ]] && ok "the landing-page id does not ride the redirect" || bad "p202lpid leaked: $LOC"
-C4=$(click "$OUT/b1" "t202id=$T_ON&p202lpid=$LPID_A&p202_consent=1&cust_sig=00" "$OUT/h4")
+C4=$(click "$OUT/b1" "t202id=$T_ON&p202lpid=$LPID_A&p202_consent=1&cust_sig=00&cust=ana-1&cust_type=custom&customer_ref=ana-2&customer_ref_type=custom&keep=me" "$OUT/h4")
 LOC=$(grep -i '^location:' "$OUT/h4" | tr -d '\r')
 [[ "$LOC" != *cust_sig* && "$LOC" != *p202_consent* ]] && ok "nor do cust_sig or p202_consent" || bad "identity params leaked: $LOC"
+[[ "$LOC" != *cust=* && "$LOC" != *customer_ref* && "$LOC" != *cust_type* ]] && ok "an offer never receives the customer id, under any alias" || bad "customer id leaked to the offer: $LOC"
+[[ "$LOC" == *keep=me* ]] && ok "while other parameters still pass through" || bad "pass-through broken: $LOC"
 KM=$(vkey "$C4")
 eq "$KM" "$(( K1 > K3 ? K1 : K3 ))" "browser one's lpid click merges both visitors into the higher key"
 eq "$(vkey "$C1")" "$KM" "browser one's first click follows the merge"
@@ -169,6 +171,16 @@ CRO=$(rclick "$OUT/b1" "t202id=$R_OFF" "$OUT/hr2")
 [ -n "$CRO" ] && ok "rotator click on a capture-off campaign recorded ($CRO)" || bad "no rotator click recorded"
 grep -qi '^set-cookie: p202vid=' "$OUT/hr2" && bad "capture-off rotator set p202vid" || ok "a capture-off rotator campaign sets no cookie"
 eq "$(Q "SELECT COUNT(*) FROM 202_clicks_visitor WHERE click_id=$CRO")" 0 "and links nothing"
+
+say "the customer id rides only to the operator's own landing page"
+LP_ID=$(Q "SELECT landing_page_id FROM 202_landing_pages WHERE landing_page_id_public=$LP_PUBLIC")
+mysql_q "$DB" -e "SET SESSION sql_mode=''; INSERT INTO 202_rotators SET id=$ROT_LP, public_id=$ROT_LP, user_id=$USER_ID, name='identity-pass-rot-lp', default_lp=$LP_ID;
+  INSERT INTO 202_trackers SET user_id=$USER_ID, tracker_id_public=$R_LP, aff_campaign_id=0, rotator_id=$ROT_LP, click_cloaking=0, tracker_time=$NOW;"
+rclick "$OUT/b9" "t202id=$R_LP&cust=ana-1&cust_type=custom&p202_consent=0&p202lpid=$LPID_A" "$OUT/hr3" > /dev/null
+LOC=$(grep -i '^location:' "$OUT/hr3" | tr -d '\r')
+[[ "$LOC" == *"lp.example"* ]] && ok "the rotator sends the visitor to the operator's landing page" || bad "unexpected redirect: $LOC"
+[[ "$LOC" == *cust=ana-1* && "$LOC" == *p202_consent=0* ]] && ok "which receives the customer id and the refusal, for landing.php" || bad "own landing page lost them: $LOC"
+[[ "$LOC" != *p202lpid* ]] && ok "but never the landing-page id" || bad "p202lpid leaked: $LOC"
 
 say "consent withheld: nothing captured, the click still recorded"
 C6=$(click "$OUT/b4" "t202id=$T_ON&p202_consent=0&p202lpid=$LPID_A" "$OUT/h6")
