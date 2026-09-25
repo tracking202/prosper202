@@ -38,7 +38,9 @@ final class AccountProfileAndKeysTest extends TestCase
     {
         $page = (string) file_get_contents(dirname(__DIR__, 2) . '/202-account/account.php');
         self::assertSame(1, preg_match_all('/\bp202_account_save_profile\(/', $page), 'the profile form saves through the one transaction');
+        self::assertSame(1, preg_match_all('/\bp202_account_api_keys\(/', $page), 'the key panel reads through the column-aware list');
         self::assertDoesNotMatchRegularExpression('/`?(user_timezone|user_pref_privacy|user_daily_email)`?\s*=\s*\'/i', $page, 'no second, autocommitted profile write beside it');
+        self::assertDoesNotMatchRegularExpression('/SELECT[^;]*FROM\s+202_api_keys/i', $page, 'no second read of the keys that names a column the install may not have');
     }
 
     public function testAProfileSaveIsOneTransactionOverBothRows(): void
@@ -78,5 +80,46 @@ final class AccountProfileAndKeysTest extends TestCase
     {
         $this->expectException(\InvalidArgumentException::class);
         p202_account_save_profile(new Connection(new FakeMysqliConnection()), 7, 'a@example.com', 'UTC', ['user_pref_privacy` = 1, `x' => 'y']);
+    }
+
+    public function testKeysAreReadWithTheirScopeWhereTheColumnExists(): void
+    {
+        $db = new FakeMysqliConnection();
+        $db->whenQueryContainsReturnRows("SHOW COLUMNS FROM 202_api_keys LIKE 'scope'", [['Field' => 'scope']]);
+        $db->whenQueryContainsReturnRows('FROM 202_api_keys WHERE user_id', [['api_key' => 'k1', 'created_at' => 5, 'scope' => 'reports:read']]);
+
+        $keys = p202_account_api_keys($db, 7);
+        self::assertSame([['api_key' => 'k1', 'created_at' => 5, 'scope' => 'reports:read']], $keys);
+        self::assertStringContainsString('SELECT api_key, created_at, scope FROM 202_api_keys', $db->statementsContaining('FROM 202_api_keys WHERE user_id')[0]->sql);
+    }
+
+    public function testKeysAreReadWithoutAScopeColumnAsFullAccess(): void
+    {
+        $db = new FakeMysqliConnection();
+        $db->whenQueryContainsReturnRows("SHOW COLUMNS FROM 202_api_keys LIKE 'scope'", []);
+        $db->whenQueryContainsReturnRows('FROM 202_api_keys WHERE user_id', [['api_key' => 'k1', 'created_at' => 5]]);
+
+        $keys = p202_account_api_keys($db, 7);
+        $select = $db->statementsContaining('FROM 202_api_keys WHERE user_id')[0]->sql;
+        self::assertStringNotContainsString('scope', $select, 'the list does not name a column the install does not have');
+        self::assertSame([['api_key' => 'k1', 'created_at' => 5, 'scope' => null]], $keys);
+        self::assertSame(['*'], \Api\V3\Auth::parseScopes((string) ($keys[0]['scope'] ?? '')), 'which the page reads as full access, as the API grants it');
+    }
+
+    public function testAProbeThatCannotTellIsAnErrorNotAnAnswer(): void
+    {
+        $db = new FakeMysqliConnection();
+        $db->whenQueryContainsResultFails("SHOW COLUMNS FROM 202_api_keys LIKE 'scope'");
+        $this->expectException(\Throwable::class);
+        p202_account_api_keys($db, 7);
+    }
+
+    public function testAFailedListReadIsAnErrorNotNoKeys(): void
+    {
+        $db = new FakeMysqliConnection();
+        $db->whenQueryContainsReturnRows("SHOW COLUMNS FROM 202_api_keys LIKE 'scope'", [['Field' => 'scope']]);
+        $db->whenQueryContainsResultFails('FROM 202_api_keys WHERE user_id');
+        $this->expectException(\Throwable::class);
+        p202_account_api_keys($db, 7);
     }
 }

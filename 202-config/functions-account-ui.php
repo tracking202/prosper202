@@ -162,3 +162,35 @@ function p202_account_save_profile(\Prosper202\Database\Connection $conn, int $u
         $conn->executeUpdate($stmt);
     });
 }
+
+/**
+ * The account's API keys, newest first, each with its scope.
+ *
+ * An install whose 202_api_keys has no scope column (one that predates
+ * scopes, or whose 1.9.75 migration failed) selected a column that is not
+ * there, so the prepare failed and every key read as "could not be read"
+ * while creating one still worked. The column is probed first, with the
+ * predicate the API authenticates through (Auth::apiKeyScopeColumnExists()),
+ * and a key read without it carries no scope — full access, which is what
+ * the API grants such a key and how UsersController::listApiKeys() lists it.
+ * A probe that cannot answer throws rather than answering "no column"
+ * (CLAUDE.md #11), and so does a failed read: an unreadable list must not
+ * render as "no keys yet".
+ *
+ * @return list<array<string, mixed>>  api_key, created_at, scope (null when
+ *   the install has no scope column)
+ * @throws Throwable when the keys cannot be read
+ */
+function p202_account_api_keys(mysqli $db, int $userId): array
+{
+    $hasScope = \Api\V3\Auth::apiKeyScopeColumnExists($db);
+    $conn = new \Prosper202\Database\Connection($db);
+    $stmt = $conn->prepareRead('SELECT api_key, created_at' . ($hasScope ? ', scope' : '') . ' FROM 202_api_keys WHERE user_id = ? ORDER BY created_at DESC');
+    $conn->bind($stmt, 'i', [$userId]);
+    $keys = [];
+    foreach ($conn->fetchAll($stmt) as $row) {
+        $row['scope'] = $hasScope ? ($row['scope'] ?? null) : null;
+        $keys[] = $row;
+    }
+    return $keys;
+}

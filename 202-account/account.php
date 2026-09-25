@@ -766,22 +766,13 @@ $renderOptions = static function (array $choices, string $current) use ($e, $sel
 
 $apiKeys = [];
 if ($canPersonal) {
-	$keyUserId = (int)$_SESSION['user_id'];
-	$key_stmt = $db->prepare('SELECT api_key, created_at, scope FROM 202_api_keys WHERE user_id = ? ORDER BY created_at DESC');
-	$keysReadable = false;
-	if ($key_stmt) {
-		$key_stmt->bind_param('i', $keyUserId);
-		if ($key_stmt->execute()) {
-			$keyResult = $key_stmt->get_result();
-			if ($keyResult !== false) {
-				$apiKeys = $keyResult->fetch_all(MYSQLI_ASSOC);
-				$keysReadable = true;
-			}
-		}
-		$key_stmt->close();
-	}
-	if (!$keysReadable) {
+	try {
+		// Works with or without the scope column: see p202_account_api_keys in functions-account-ui.php.
+		$apiKeys = p202_account_api_keys($db, (int)$_SESSION['user_id']);
+	} catch (Throwable $keysUnreadable) {
 		// An unreadable list must not render as "no keys yet".
+		error_log('Account page: API keys could not be read: ' . $keysUnreadable->getMessage());
+		$apiKeys = [];
 		$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your API keys could not be read just now. Reload the page to see them.'];
 	}
 }
