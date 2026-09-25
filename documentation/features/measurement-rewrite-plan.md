@@ -112,7 +112,7 @@ plan the Android intake. It already emits `conversion.recorded` after the
 commit for the LTV/LPO bridge (`:278-295`).
 
 MTA attaches through an **outbox written inside that same transaction**. A
-row in `202_attribution_pending (conv_id PK, enqueued_at)` goes in beside the
+row in `202_attribution_pending (conv_id PK, enqueued_at, reason)` goes in beside the
 conversion, and the MTA worker consumes it. The alternative, a post-commit
 callback, is rejected:
 
@@ -297,7 +297,7 @@ mixed into one column. The ledger separates them.
   | Source | `dedupe_key` |
   |---|---|
   | Network or merchant id (a ClickBank receipt is one) | `tx:<id>` |
-  | Goal | `goal:<goal_id>:<goal_version>:<n>` (the version is part of the key so a re-evaluation under a new version can write its own rows, §5.5) |
+  | Goal | `goal:<goal_id>:<goal_version>:<n>:<event_id>` (the version is in the key so a re-evaluation under a new version writes its own rows; the event is, so a replay that moves the *n*th outcome to an earlier event writes a new row instead of colliding with the one it supersedes, §5.5) |
   | Install (the built-in `install` goal's row, never a second `goal:` row) | `install` |
   | App or web event | `evt:<subject_type>:<subject_id>:<event_id>` (an event id is unique only within its subject, §2.2) |
   | Reversal | `rev:<original conv_id>:<reversal ref>` (below) |
@@ -749,8 +749,10 @@ The steps:
    - The outbox row means MTA picks it up (§6).
 6. **Queue the traffic source's notification, durably.** In the same
    transaction as the conversion, a row goes into `202_notification_pending`
-   (`conv_id`, pixel id, attempt count, next attempt), keyed unique on
-   `(conv_id, pixel id)` so a retried install cannot queue it twice. The
+   (`conv_id`, pixel id, `kind`, attempt count, next attempt), keyed unique
+   on `(conv_id, pixel id, kind)` so a retried install cannot queue it
+   twice (`kind` is `reached` here; §5.5 adds `correction` and
+   `retraction`). The
    request may attempt the send right after commit, but the outbox row is
    the record: a worker sends whatever is still pending, with backoff, and
    marks the row done. `gpb.php:166-240`'s `202_ppc_account_pixels` logic is
@@ -916,22 +918,48 @@ become a performance or denial-of-service problem.
     is pure PHP over one indexed read — so out-of-order delivery costs one
     bounded recompute and can never fork the result from what in-order
     delivery would have produced.
-  - **Reaching is monotone across a replay.** Adding an earlier event to a
-    subject's history can make more `(goal, version, n)` outcomes reachable
-    and never fewer: a replay writes any outcome row that is now reached and
-    not yet stored, and withdraws nothing. Which event *is* "the 3rd
-    purchase" may change under replay; the outcome for `n = 3` does not, and
-    the ledger row it wrote stays keyed by `goal:<id>:<version>:3` either
-    way. The one thing that is never re-decided by arrival is the version:
+  - **A replay recomputes every outcome, not only reachability.** The
+    recompute yields, for each `(goal, version, n)` the subject has reached,
+    the event that reached it, its `reached_at` and its value. Which event
+    *is* "the 2nd purchase" changes when an earlier one arrives late, and
+    with `from_property` values so does the money: two purchases of $5 and
+    $10 give `n = 1` $5 and `n = 2` $10; a late $1 purchase that occurred
+    before both makes the correct answer $1, $5, $10. Keeping the stored
+    rows would leave revenue and `reached_at` a function of arrival order,
+    the thing this rule exists to remove. So the recomputed set is
+    reconciled against the stored one:
+    - an outcome that is new is written;
+    - an outcome whose stored row names the same event is untouched;
+    - an outcome whose stored row names a *different* event, `reached_at` or
+      value is **superseded**: the stored row gets `superseded_by` the
+      recomputed row, `superseded_reason = 'replay'`, and the new row is
+      written. Its ledger row is treated the same way, below;
+    - no outcome is withdrawn: the number reached for a `(goal, version)`
+      never goes down across a replay, because adding an event can only add
+      matches.
+    The one thing that is never re-decided by arrival is the version:
     events are evaluated under the goal versions current at their own
     `received_at`, not at replay time, so a replay can never apply an edit
     to history — that is what the explicit re-evaluation operation below is
     for.
+  - **The ledger follows.** A goal's ledger key is
+    `goal:<goal_id>:<goal_version>:<n>:<event_id>` (§2.1): a retry of the
+    same event is still a byte-identical duplicate, and a recompute that
+    moves `n` to a different event writes a *different* row rather than
+    colliding with the old one. The old row is marked `superseded_by` the
+    new one, and **a superseded row never counts toward the click total in
+    either payout mode** — `accumulate` sums the rows that are payable,
+    not deleted and not superseded; `replace` takes the latest such row —
+    so the click shows $16 and not $31 after the example above. Both rows
+    go to the MTA outbox, as every change of counted state does (§6.3),
+    and the notification rule below decides what the traffic source hears.
 
   `tests/Goals/EventOrderTest` delivers every permutation of a three-step
-  funnel's events and asserts the same outcomes for each, and plants the
-  gap directly: `B` first, then `A`, and asserts the `after: [A]` goal is
-  reached.
+  funnel's events and asserts the same outcomes for each, plants the gap
+  directly (`B` first, then `A`, and the `after: [A]` goal is reached), and
+  runs the $5, $10, late-$1 purchase case: after the replay the outcomes
+  read $1, $5, $10, the ledger holds two superseded rows and three counted
+  ones, and the click total is $16.
 - **Goals are versioned.** Editing a goal creates a new version. Conversions
   record the version that produced them, so an edit never rewrites history.
   Re-evaluating past installs under a new version is an explicit operation
@@ -943,23 +971,27 @@ because the same app is often sold under different deals.
 - A campaign linked to the registration lists its **payable goals** and a
   payout for each. It can override the goal's `value`.
 - **Payable** goals record a conversion on the install's click, with
-  `dedupe_key = 'goal:' . goal_id . ':' . goal_version . ':' . n`, where `n`
-  is the repeat index. It is deduped by `UNIQUE (click_id, dedupe_key)`, and
-  it enters MTA. When the triggering event carried a network transaction id,
+  `dedupe_key = 'goal:' . goal_id . ':' . goal_version . ':' . n . ':' .
+  event_id`, where `n` is the repeat index and `event_id` the event that
+  reached it. It is deduped by `UNIQUE (click_id, dedupe_key)`, and it
+  enters MTA. When the triggering event carried a network transaction id,
   that id is kept in `transaction_id`. The built-in `install` goal is the
   exception: its row is the intake's install row (key `install`, §5.2).
 - **Re-evaluation under a new version** replaces the previous version's
   results for each subject it touches, in both tables, in one transaction
   per subject:
   - every `202_goal_outcomes` row of the same `(subject, goal_id)` at an
-    older version gets `superseded_by_version = <new version>`; the new
-    version's outcome rows are then written. Because the marker is the
-    *version* and not a row id, a subject the new definition no longer
-    qualifies is handled the same way: its old outcomes are retired and
-    nothing new is written. Without a marker on the outcome table, the funnel
-    and app report — which read this table, not the ledger — would count
-    both versions and every re-evaluation would inflate them; superseding
-    the ledger rows alone does not touch what those reports read;
+    older version is retired: `superseded_reason = 'reevaluation'`,
+    `superseded_at` set, `superseded_by` the new version's row for the same
+    `n` where one exists and NULL where it does not. The new version's
+    outcome rows are then written. Because retirement is a state of the old
+    row and not a pointer it must be able to follow, a subject the new
+    definition no longer qualifies is handled the same way: its old outcomes
+    are retired and nothing new is written. Without a marker on the outcome
+    table, the funnel and app report — which read this table, not the
+    ledger — would count both versions and every re-evaluation would
+    inflate them; superseding the ledger rows alone does not touch what
+    those reports read;
   - the ledger rows those outcomes had written are marked `superseded_by`
     the new version's row for the same `(subject, goal)` where one exists,
     and **soft-deleted** (`softDelete()`, which recomputes the click total
@@ -967,12 +999,13 @@ because the same app is often sold under different deals.
     subject; a row cannot be superseded by a row that does not exist.
 
   Every read of `202_goal_outcomes` — the funnel, the app report, the
-  per-subject breakdown, the CLI — filters `superseded_by_version IS NULL`
-  through one repository method, and `202_goal_progress` needs no marker
-  because it is already keyed by `goal_version`. The preview lists exactly
-  the outcome rows that would be retired and written and the ledger rows
-  that would be superseded or deleted, per subject, before anything is
-  applied. `tests/Goals/ReevaluationSupersedesOutcomesTest` re-evaluates a
+  per-subject breakdown, the CLI — filters `superseded_at IS NULL` through
+  one repository method, and `202_goal_progress` needs no marker because it
+  is already keyed by `goal_version`. The preview lists exactly the outcome
+  rows that would be retired and written, the ledger rows that would be
+  superseded or deleted, and the traffic-source notifications already
+  delivered for them that cannot be recalled, per subject, before anything
+  is applied. `tests/Goals/ReevaluationSupersedesOutcomesTest` re-evaluates a
   subject under a version that reaches the goal, one that reaches it at a
   different `n`, and one that does not reach it, and asserts the funnel
   count is one, one and zero, never two.
@@ -981,11 +1014,34 @@ because the same app is often sold under different deals.
   notification outbox of §5.2, with new tokens `[[p202_goal]]` and
   `[[p202_goal_value]]`, so a network can be told "install" and "level 3"
   separately, or only "level 3".
+- **A traffic source is told about an outcome once.** A postback that has
+  been delivered cannot be recalled, so a replacement row — one written by
+  a replay or a re-evaluation that supersedes an earlier row for the same
+  `(subject, goal, n)` — never queues a fresh "reached" postback: upstream
+  would count, or pay, the same outcome twice while the tables here show
+  one. The outbox row carries a `kind`:
+  - `reached`: the first row for an outcome. The key becomes
+    `(conv_id, pixel id, kind)`;
+  - `correction`: a replacement whose predecessor's `reached` was already
+    sent, carrying `[[p202_goal_value]]` (new), `[[p202_previous_value]]`
+    and `[[p202_original_conv_id]]`; and `retraction`, for an outcome
+    retired by re-evaluation with no replacement. Both are sent only to a
+    traffic-source pixel that has a **correction URL** configured, which is
+    off by default because most networks have no endpoint for one. Without
+    it the row is stored as `suppressed` with its reason, shown in the
+    click breakdown, and counted in the re-evaluation preview as
+    "notifications already delivered that cannot be recalled";
+  - a predecessor whose `reached` row is still *pending* is simpler: that
+    row is cancelled and the replacement queues its own `reached`, so a
+    network that has heard nothing yet hears the corrected value first.
+  An outcome the old version never reached is new to the network, and its
+  first row is a `reached` like any other.
 - **Every reached goal writes an outcome row**, whether or not the subject
-  has a click: `202_goal_outcomes (subject_type, subject_id, goal_id,
-  goal_version, n, reached_at, payable, conversion_id NULL,
-  superseded_by_version NULL)`, `UNIQUE (subject_type, subject_id, goal_id,
-  goal_version, n)`. That is the
+  has a click: `202_goal_outcomes (outcome_id, subject_type, subject_id,
+  goal_id, goal_version, n, event_id, reached_at, value, payable,
+  conversion_id NULL, superseded_by NULL, superseded_reason ENUM('replay',
+  'reevaluation') NULL, superseded_at NULL)`, `UNIQUE (subject_type,
+  subject_id, goal_id, goal_version, n, event_id)`. That is the
   funnel's and the app report's source, and it is what makes an organic
   install's goals visible at all — `202_conversion_logs` is click-bound, so
   an install with no click can have no ledger row.
@@ -1248,7 +1304,28 @@ A click carrying two signals that already map to different visitor keys
 - journeys resolve to the canonical key.
 
 Merges are append-only and explainable: the journey view shows which signal
-linked which clicks. The click row itself stores its canonical `visitor_key`
+linked which clicks.
+
+**A merge re-attributes the conversions it joins.** A signed customer id
+arriving in an SDK event *after* the install — the normal order — merges the
+install click's visitor key with the person's earlier web clicks after the
+install conversion's outbox job has already built its journey. Left there,
+that journey stays one-touch and the web-to-app attribution the graph exists
+for never appears. So a merge is itself a trigger: the merge row is the
+record (`202_identity_merges` gains `requeued_at NULL`), and the attribution
+worker, before it claims pending conversions, takes every merge with
+`requeued_at IS NULL`, finds the conversions of **either** component's clicks
+whose journey window (`conv_time` minus the journey lookback, §6.3) overlaps
+a click of the *other* component — one indexed read of `202_clicks_visitor`
+per component — and enqueues them with reason `identity_merge`, in batches,
+then sets `requeued_at`. The request that caused the merge does only the
+merge; the fan-out runs in the worker so a merge that joins two busy keys
+cannot slow a click. The re-enqueued conversions rebuild their journeys from
+`202_clicks_visitor` under the canonical key, which now spans both sides.
+`tests/Attribution/MergeRequeuesConversionsTest` records a web click, an
+install click with a different visitor key, the install conversion (journey
+built one-touch), then the signed customer id on both, and asserts the
+journey is rebuilt with two touches and credits under every active model. The click row itself stores its canonical `visitor_key`
 in `202_clicks_visitor (click_id PK, user_id, visitor_key, click_time)`, with
 `KEY (user_id, visitor_key, click_time)`, written in the same `recordClick()`
 transaction. It is not a column on the hot `202_clicks`.
@@ -1297,13 +1374,20 @@ model. It is idempotent: in one transaction it deletes and rewrites the
 conversion's journey rows and credit rows, so a row claimed twice produces
 the same result.
 
-**Every change of counted state enqueues.** A conversion's credits must
-reflect whether its ledger row still counts. So `record()` enqueues not only
-the new conversion but every row it superseded; `softDelete()` and a reversal
-enqueue the rows they affect; and the worker, finding a row that no longer
-counts (`payable = 0`, superseded, deleted, or netted to zero), deletes its
-credits rather than recomputing them. Without this, a `replace` campaign with
-a $5 then a $10 conversion reports $15 in MTA while the click shows $10.
+**Every change of counted state enqueues, and so does every change of what
+a journey could contain.** A conversion's credits must reflect whether its
+ledger row still counts. So `record()` enqueues not only the new conversion
+but every row it superseded; `softDelete()` and a reversal enqueue the rows
+they affect; and the worker, finding a row that no longer counts
+(`payable = 0`, superseded, deleted, or netted to zero), deletes its credits
+rather than recomputing them. Without this, a `replace` campaign with a $5
+then a $10 conversion reports $15 in MTA while the click shows $10. The
+other side of the same rule: an identity merge (§6.2) and a model lookback
+wider than a journey was built with (Storage, below) each enqueue the
+conversions whose journeys they can change, with a `reason` column on
+`202_attribution_pending` (`recorded`, `counted_state`, `identity_merge`,
+`rebuild_journey`) so the worker's log and the CLI say why a conversion was
+recomputed.
 
 **Models.** One enum is the only list. The API, CLI, UI and engine all read
 it, and a structural test fails if any surface lists a value the enum lacks
@@ -1339,6 +1423,33 @@ the last touch, and a test pins the sum. The journey itself is in
 `PRIMARY KEY (conv_id, position)`, rebuilt together with the credits in the
 same transaction, and it is what reports explain.
 
+**A stored journey is a superset of every model's window, and says so.** The
+journey has no `model_id`: it is built once per conversion and every model
+reads it. That only works if it was built at least as wide as the widest
+model reads, so:
+
+- a journey is built with the **journey lookback**, the maximum lookback of
+  every active model at build time (never less than the 30-day default),
+  and the fixed 25-touch cap (§7.3), which no model may exceed — the cap is
+  validated on the model, not discovered at read time;
+- `202_attribution_journey_meta (conv_id PK, built_lookback_days, built_at,
+  truncated)` records what each journey was built under. `truncated` says
+  the 25-touch cap cut the journey, so a report can label it;
+- a model activated or edited to a lookback **wider than a journey's
+  `built_lookback_days`** cannot be served from that journey: the clicks it
+  wants were never stored. So such a change enqueues, with reason
+  `rebuild_journey`, every conversion whose `built_lookback_days` is
+  narrower than the new lookback, in batches from the worker, and the
+  worker rebuilds those journeys **from `202_clicks_visitor`** — the raw
+  click identity data, which is retained as long as the clicks are — and
+  then recomputes credits. A narrower change recomputes credits from the
+  stored journey, which already holds more than it needs.
+
+`tests/Attribution/JourneyLookbackTest` activates a 60-day model over a
+conversion whose journey was built at 30 days with a 45-day-old click, and
+asserts that the click appears in the rebuilt journey and its credits, and
+that a 7-day model over the same journey reads it without a rebuild.
+
 **Reports** are grouped over credits, joined to the clicks' own dimensions.
 This is where models differ:
 
@@ -1361,7 +1472,9 @@ This is where models differ:
 read (today `attribution_model_id` is written and never read). The account
 default is used in the campaign reports' "attributed" columns. Changing a
 model or its config marks it for recomputation, and the worker re-derives its
-credits from the stored journeys. Nothing needs the raw clicks again.
+credits from the stored journeys — except a lookback wider than a journey was
+built with, which rebuilds that journey from the raw click identity data
+first (above).
 
 **Exports.**
 
@@ -1675,7 +1788,8 @@ answer as the unoptimised path on a sparse and a dense dataset (CLAUDE.md,
 - **Versioning:** edit the goal; the old conversions keep their version;
   a preview of re-evaluation changes nothing until applied; applying it
   leaves the funnel count for the subject at one, with the old outcome
-  carrying `superseded_by_version`.
+  carrying `superseded_reason = 'reevaluation'`, and queues no second
+  "reached" postback for a goal the traffic source was already told about.
 - **Order:** deliver `level_reached` 3 before 1 and 2, and a `tutorial_complete`
   after the `register` that its goal's `after` requires but with the earlier
   `occurred_at`; assert the same conversions as the in-order run.
