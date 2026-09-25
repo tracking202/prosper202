@@ -120,6 +120,35 @@ module.exports = {
     },
 
     {
+      // p202_data_table(['sortable' => true, 'sorted' => ascending]): the
+      // header said ascending but tablesort had no state, so the first click
+      // sorted ascending again and nothing moved.
+      name: 'A sortable table the server delivered in order toggles on the first click',
+      async run(ctx) {
+        const { app, ui, expect } = ctx;
+        await app.goto(KIT + '#reports');
+
+        expect.eq(await ui.attr('#kit-presorted', 'data-p202-sort-ready'), '1', 'the table is wired to tablesort');
+        expect.eq(await column(ui, 'kit-presorted', 0), ['Canada', 'Germany', 'United States'], 'rows start in the server\'s order');
+        expect.eq(await ariaSorts(ui, 'kit-presorted'), ['ascending', ''], 'and the header says so');
+
+        await ui.click('#kit-presorted th:nth-child(1) .p202-sort');
+        expect.eq(await column(ui, 'kit-presorted', 0), ['United States', 'Germany', 'Canada'],
+          'the first click reverses the order the server delivered');
+        expect.eq(await ariaSorts(ui, 'kit-presorted'), ['descending', ''], 'and the header says descending');
+
+        await ui.click('#kit-presorted th:nth-child(1) .p202-sort');
+        expect.eq(await column(ui, 'kit-presorted', 0), ['Canada', 'Germany', 'United States'], 'the second click puts it back');
+        expect.eq(await ariaSorts(ui, 'kit-presorted'), ['ascending', ''], 'and says ascending');
+
+        await ui.click('#kit-presorted th:nth-child(2) .p202-sort');
+        expect.eq(await column(ui, 'kit-presorted', 1), ['7', '41', '260'], 'another column sorts from its own first click');
+        expect.eq(await ariaSorts(ui, 'kit-presorted'), ['', 'ascending'],
+          'and the column the server ordered by no longer claims an order');
+      },
+    },
+
+    {
       name: 'The range picker: typing a date chooses Custom Date',
       async run(ctx) {
         const { app, ui, expect } = ctx;

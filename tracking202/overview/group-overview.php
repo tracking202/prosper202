@@ -36,5 +36,5 @@ p202_overview_run([
     // With no grouping stored the report is empty, although the classic
     // menu showed "Traffic Source" over it. Store what the menu shows.
     'defaults' => ['group_1' => P202_OVERVIEW_GROUP_TRAFFIC_SOURCE],
-    'aside' => '<a class="btn btn-secondary btn-sm" href="' . htmlspecialchars($base . 'tracking202/overview/group_overview_download.php', ENT_QUOTES, 'UTF-8') . '"><i class="bi bi-file-earmark-spreadsheet"></i> Download to Excel</a>',
+    'download' => $base . 'tracking202/overview/group_overview_download.php',
 ]);

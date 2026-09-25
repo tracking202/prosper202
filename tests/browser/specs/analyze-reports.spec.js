@@ -388,14 +388,27 @@ module.exports = {
         const { app, ui, expect } = ctx;
         await app.goto(PAGE('platforms') + '?range=last30&user_pref_show=all');
         const href = await ui.attr('.p202-table-toolbar__aside a', 'href');
-        expect.match(href || '', /platform_download\.php$/, 'the button is the platform export');
+        expect.match(href || '', /platform_download\.php\?view=/, 'the button is the platform export, carrying the report\'s view');
+        const table = (await tableRows(ui)).slice(0, -1).map((r) => r.cells[0] + '=' + r.cells[1]).sort();
+
+        // A second tab applies another filter, which rewrites the stored
+        // preferences this download used to read.
+        const tabB = await ui.page.context().newPage();
+        try {
+          await tabB.goto(new URL(PAGE('platforms') + '?range=last30&user_pref_show=all&country_id=3', ui.page.url()).toString());
+          await tabB.waitForSelector('#report-filters');
+        } finally {
+          await tabB.close();
+        }
+        expect.eq(ctx.db.value('SELECT user_pref_country_id FROM 202_users_pref WHERE user_id=1'), '3', 'tab B stored its country filter');
+
         const response = await ui.page.request.get(new URL(href, ui.page.url()).toString());
         expect.eq(response.status(), 200, 'which answers');
         const lines = (await response.text()).trim().split('\n');
         expect.eq(lines[0].split('\t').slice(0, 2), ['Platform', 'Clicks'], 'as a tab-separated sheet');
         const sheet = lines.slice(1).map((l) => l.split('\t')).map((c) => c[0] + '=' + c[1]).sort();
-        const table = (await tableRows(ui)).slice(0, -1).map((r) => r.cells[0] + '=' + r.cells[1]).sort();
-        expect.eq(sheet, table, 'with the same platforms and clicks as the table');
+        expect.eq(sheet, table, 'with the same platforms and clicks as this tab\'s table, whatever another tab stored since');
+        ctx.db.write('UPDATE 202_users_pref SET user_pref_country_id=NULL WHERE user_id=1');
       },
     },
 

@@ -184,6 +184,11 @@ function p202_date_range(array $spec): string
  * campaign and which clicks to count are the common case; the rest sit
  * under Advanced, where the classic calendar had them under "More Options".
  *
+ * A stored "All" is read in every spelling the classic writer left: '' and
+ * NULL, and the '0' its "--" options posted, which is normalized to '' for
+ * every menu that has an "All" entry, so it shows as "All" and is not
+ * resubmitted as a filter.
+ *
  * `$lists` supplies the options this function cannot know — each is
  * value => label, or group label => [value => label] for <optgroup>s — and
  * a filter asked for without its list is an error rather than an empty menu.
@@ -254,6 +259,14 @@ function p202_report_filters(array $values, array $lists = [], ?array $include =
         // (user_pref_show is NULL there, which the classic menu shows as
         // its first entry, "all").
         $value = (string) ($values[$name] ?? '');
+        // The classic calendar's "--" option posted 0 for every menu that
+        // has an "All" entry here, and set_user_prefs.php stored it as
+        // given; every classic reader treats 0 as "not filtering". Read
+        // as a value, it would render a selected "0 (not in your list)",
+        // count as a set Advanced filter, and be submitted back as 0.
+        if ($value === '0' && $spec['type'] === 'select' && ($spec['any'] ?? null) !== null) {
+            $value = '';
+        }
         $spec['value'] = $value === '' && isset($spec['default']) ? (string) $spec['default'] : $value;
         $specs[] = $spec;
     }
