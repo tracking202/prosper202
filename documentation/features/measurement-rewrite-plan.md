@@ -116,10 +116,13 @@ row in `202_attribution_pending (conv_id PK, enqueued_at)` goes in beside the
 conversion, and the MTA worker consumes it. The alternative, a post-commit
 callback, is rejected:
 
-- **An outbox is exactly-once, in-transaction.** A conversion either exists
-  with its pending row or does not exist at all. A post-commit hook can die
-  between the commit and the hook, and that journey is silently never built.
-  That is error pattern #13's shape.
+- **An outbox is atomic and at-least-once.** A conversion either exists
+  with its pending row or does not exist at all, so no conversion is ever
+  missed. A worker can still die after claiming a row and process it twice,
+  which is why the worker's credit and journey writes are idempotent (§6.3):
+  the exactly-once *effect* comes from those, not from the outbox. A
+  post-commit hook has neither property: it can die between the commit and
+  the hook, and that journey is silently never built (error pattern #13).
 - **Today's inline hooks are the defect this replaces.** gpb, gpx and upx each
   call `isMultiTouchEnabled()` outside their `try` (`gpb.php:302`,
   `gpx.php:165`, `upx.php:300`). A missing or unreadable settings table
@@ -132,9 +135,14 @@ callback, is rejected:
   and subid upload persist no journey today. They go through `record()`, so
   the outbox covers them.
 
-Recording is unaffected by MTA's state. The outbox insert is one row on a
-table the same upgrade step creates. If MTA is disabled or broken, rows
-accumulate and are processed when it is fixed. That is a backlog, not a lost
+**The outbox table is part of the conversion schema, not of MTA.**
+`202_attribution_pending` is defined in `ConversionTables` beside
+`202_conversion_logs` and created by the same rung; an insert into it failing
+fails the conversion transaction like any other schema failure would, and is
+reported the same way. What recording is isolated from is the MTA *engine*:
+a worker that is down, a credits table that is missing, a model whose config
+is invalid. In every one of those cases rows accumulate in the outbox and
+are processed when the engine is fixed. That is a backlog, not a lost
 journey.
 
 ### 2.1 The conversion ledger: every amount, where it came from, and how it rolls up
@@ -194,7 +202,7 @@ becomes a cache of it.**
 
    | Column | Values |
    |---|---|
-   | `source` | `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `app_install`, `goal` |
+   | `source` | `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `app_install`, `goal`, `legacy_baseline` (below) |
    | `source_ref` | What generated it: goal id and version, upload batch id, API key id, app install row. Resolved by the UI into a name and a link |
    | `event_name` | The event that reached the goal, or the postback's `event=` value |
    | `payable` | `1` counts toward income and leads. `0` is a tracked outcome: an unpaid goal, or an event reported for visibility |
@@ -206,14 +214,29 @@ becomes a cache of it.**
    `pixel_type` is kept as it is, for compatibility.
 3. **The click total is derived from the ledger, never written on its own.**
    `record()` and `softDelete()` recompute the click's cached `click_payout`
-   and `click_lead` from its rows under the click lock they already hold:
-   - `accumulate` campaigns: the sum of payable, non-deleted rows;
-   - `replace` campaigns: the latest payable, non-deleted row, with earlier
-     rows marked `superseded_by`. The number is the same one those campaigns
-     show today.
-   - The CSV upload keeps "the file replaces the click's uploaded revenue":
-     rows from an earlier upload batch for the same click are superseded by
-     the new batch's rows.
+   and `click_lead` from its rows under the click lock they already hold.
+   Reversal rows (below) never compete for "latest": they net against the
+   row they reverse.
+   - `accumulate` campaigns: the sum of payable, non-deleted rows, reversals
+     included.
+   - `replace` campaigns: the latest payable, non-deleted, non-reversal row,
+     **plus the reversals that name it**. A $3 sale reversed is $0, not −$3.
+     Earlier rows are marked `superseded_by`. For a click without reversals
+     the number is the same one those campaigns show today.
+   - **The CSV upload's unit is the batch, not the line.** A file with three
+     lines for one click writes three rows carrying one batch id, and the
+     click's uploaded value is the **sum of the newest batch's rows** for
+     that click, which supersedes earlier batches' rows and earlier plain
+     rows. That is today's "sum within the file, replace across files",
+     kept exactly, with the lines now visible.
+   - **A click converted before the upgrade has no rows, only a cached
+     value.** Such clicks are never recomputed on their own. The first time
+     a new row lands on one (`click_lead = 1`, no ledger rows), the writer
+     first inserts a **`legacy_baseline`** row (amount = the cached
+     `click_payout`, `dedupe_key = legacy`, payable) under the same lock, so
+     the recompute preserves the income and the breakdown shows where it
+     came from. Historical amounts are not otherwise backfilled, because
+     their individual parts were never stored.
 
    The earlier objection to summing rows was that uploads write none. It
    disappears once every path writes rows.
@@ -274,9 +297,11 @@ mixed into one column. The ledger separates them.
   | Source | `dedupe_key` |
   |---|---|
   | Network or merchant id (a ClickBank receipt is one) | `tx:<id>` |
-  | Goal | `goal:<goal_id>:<n>` |
-  | Install | `install` |
-  | App or web event | `evt:<event_id>` |
+  | Goal | `goal:<goal_id>:<goal_version>:<n>` (the version is part of the key so a re-evaluation under a new version can write its own rows, §5.5) |
+  | Install (the built-in `install` goal's row, never a second `goal:` row) | `install` |
+  | App or web event | `evt:<subject_type>:<subject_id>:<event_id>` (an event id is unique only within its subject, §2.2) |
+  | Reversal | `rev:<original conv_id>:<reversal ref>` (below) |
+  | Legacy baseline | `legacy` |
   | CSV upload | `up:<batch>:<line>` |
 
   A prefix before the colon cannot occur inside another source's key, so two
@@ -306,10 +331,17 @@ money**. So:
 its meaning).
 
 - A postback carrying `status=reversed` or a negative `amount`, together with
-  the transaction id of an earlier row, records a **reversal row** linked to
-  the original through `source_ref`. The breakdown then shows
-  "$3.00 sale, reversed −$3.00".
-- The click's value recomputes from the rows.
+  the transaction id of an earlier row, records a **reversal row**: negative
+  amount, `transaction_id` = the original's (that is the linkage), `source_ref`
+  = the original conversion, and its own dedupe key
+  `rev:<original conv_id>:<reversal ref>`, where the reversal ref is the
+  network's reversal id when it sends one and `1` otherwise. The key cannot
+  collide with the original's `tx:<id>`, a replay of the same reversal is a
+  duplicate, and a second distinct reversal of one sale is refused with a
+  422 naming the first. The breakdown then shows "$3.00 sale, reversed
+  −$3.00".
+- The click's value recomputes from the rows, netting the reversal against
+  the row it names (point 3 above), in both payout modes.
 - Today such a postback is either answered as a duplicate and ignored, or
   recorded as an unrelated row.
 - The LTV ledger already records negative payouts as adjustments
@@ -510,8 +542,10 @@ than `NULL` on purpose: MySQL's `UNIQUE` admits any number of `NULL`s, so
   the PHP, Swift and Kotlin tests. This is the pattern
   `t202ctx-vectors.json` already uses.
 - **`GET /apps/schema`** is platform-shaped:
-  - iOS gets the goal definitions and their fine/coarse encodings, and
-    evaluates goals on the device (§5.5);
+  - iOS gets an **evaluation-only** view of the goals — triggers, predicates,
+    thresholds, `after`, windows, repeat rules and the SKAN encodings — with
+    every `value` and every campaign payout stripped, and evaluates goals on
+    the device (§5.5);
   - Android gets the integrity mode and the SDK settings. Its goals are
     evaluated on the server, so the SDK reports every event.
 
@@ -580,8 +614,11 @@ it to be far more expressive than "this event name" (§5.5). The split:
 - **User deletion purges app data.** `202-account/user-management.php:287-296`
   names only the MTA tables today. A deleted user's registration therefore
   keeps its global `UNIQUE` slot forever, and nobody can register that app
-  again. The purge covers every `202_app_*` table. Postbacks are released to
-  unclaimed rather than deleted.
+  again. The purge deletes the user's rows in every `202_app_*` table with
+  **one named exception**: `202_app_postbacks` rows are *released* — `user_id`
+  set to 0 and `registration_id` to NULL — because they are Apple's record
+  of a postback, not the user's data. Released rows then fall under the
+  30-day unclaimed retention window (§4.6) and are pruned by it.
 - **The Analyze page and report filters** move from raw `app_id(s)` to
   `registration_id(s)`. The postback's own `app_id` stays as a forensic column
   and filter.
@@ -601,8 +638,13 @@ it to be far more expressive than "this event name" (§5.5). The split:
 
 **The key.**
 
-- `K_install` is a random 32-byte secret generated by the 1.9.75 → 1.9.76 rung and never
-  served.
+- `K_install` is a random 32-byte secret. **It is minted by one idempotent
+  function called from both paths that create a 1.9.76 schema**: the fresh
+  installer (`INSTALL::install_databases()` / `DataSeeder`) and the
+  1.9.75 → 1.9.76 rung. A fresh install never runs a rung, so a key minted
+  only there would leave every new deployment with no key and, under the
+  fail-closed rule below, no attributed install. The upgrade-equals-install
+  test (§7.6) asserts the key exists on both paths.
 - `CtxToken`'s key derives from the LPO webhook secret, which most installs
   never set, so it cannot be reused.
 - The key is readable on the hot path without a query.
@@ -659,19 +701,30 @@ The steps:
 4. **Classify** into `MatchState`.
 5. **Record the conversion** for `attributed` rows, via `ConversionRecorder`
    (§2):
-   - `dedupe_key = 'install'`, with `transaction_id` left `NULL` because no
-     network sent one. `UNIQUE (click_id, dedupe_key)` makes one install
-     conversion per click a database fact (§2.1, transaction ids).
+   - **This row *is* the built-in `install` goal's row.** Its key is
+     `install`, `transaction_id` is `NULL` because no network sent one, and
+     the goal engine never writes a second `goal:` row for the install.
+     `UNIQUE (click_id, dedupe_key)` makes one install conversion per click a
+     database fact (§2.1, transaction ids).
    - `pixel_type = 4`, which is unused; 0–3 are taken.
    - `conv_time` is Google's server install-begin time.
    - The conversion is skipped when the campaign does not list `install` as
      payable; the install is still stored and reported.
    - The outbox row means MTA picks it up (§6).
-6. **Fire the traffic source's postback.** `gpb.php:166-240`'s
-   `202_ppc_account_pixels` logic is extracted into one function that both
-   call.
+6. **Queue the traffic source's notification, durably.** In the same
+   transaction as the conversion, a row goes into `202_notification_pending`
+   (`conv_id`, pixel id, attempt count, next attempt), keyed unique on
+   `(conv_id, pixel id)` so a retried install cannot queue it twice. The
+   request may attempt the send right after commit, but the outbox row is
+   the record: a worker sends whatever is still pending, with backoff, and
+   marks the row done. `gpb.php:166-240`'s `202_ppc_account_pixels` logic is
+   extracted into the one sender both the request path and the worker call.
+   Without the outbox, a process killed between the commit and the send
+   would leave nothing for cron to find, and a replay of the install exits
+   as a duplicate before reaching the send.
 7. **A failure after commit still answers 200.** The response says
-   `match: "pending"` and cron finishes the work (error pattern #13).
+   `match: "pending"` and the workers finish the work from the outbox rows
+   (error pattern #13).
 
 The `GET` probe answers `ready`. The response never carries click data the
 referrer did not already have.
@@ -774,7 +827,7 @@ evaluation, so there is nothing to inject.
 | `trigger` | `install`, or an event name, plus `where` predicates on its properties: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `exists`. The predicates are ANDed; a second goal expresses OR |
 | `threshold` | `count` (the Nth matching event) or `sum` of a numeric property (cumulative spend) |
 | `after` | Goals that must already be reached: sequences and funnels |
-| `within` | A window from `install` or from `click`; unset means for the life of the install |
+| `within` | A window from `install` or from `click`; unset means for the life of the install. A subject with no click (an organic install) cannot evaluate a `from: click` window: the goal is **ineligible** for it, recorded as a non-payable outcome with reason `no_click`, never silently re-based on the install time |
 | `repeat` | `once`, or `each` with an optional `max`: every renewal, capped |
 | `value` | `fixed`, `from_property` (the event's revenue), or `none` (tracked, not paid) |
 
@@ -803,16 +856,23 @@ because the same app is often sold under different deals.
 - A campaign linked to the registration lists its **payable goals** and a
   payout for each. It can override the goal's `value`.
 - **Payable** goals record a conversion on the install's click, with
-  `dedupe_key = 'goal:' . goal_id . ':' . n`, where `n` is the repeat index.
-  It is deduped by `UNIQUE (click_id, dedupe_key)`, and it enters MTA. When
-  the triggering event carried a network transaction id, that id is kept in
-  `transaction_id`.
+  `dedupe_key = 'goal:' . goal_id . ':' . goal_version . ':' . n`, where `n`
+  is the repeat index. It is deduped by `UNIQUE (click_id, dedupe_key)`, and
+  it enters MTA. When the triggering event carried a network transaction id,
+  that id is kept in `transaction_id`. The built-in `install` goal is the
+  exception: its row is the intake's install row (key `install`, §5.2).
+- **Re-evaluation under a new version** writes that version's rows and marks
+  the previous version's rows for the same subject and goal `superseded_by`
+  them, so an edit re-applied to history replaces outcomes rather than
+  adding to them; the preview shows exactly which rows would change.
 - Each payable goal also has a **"notify traffic source"** option (default
-  on). It fires the campaign's traffic-source postback with new tokens
-  `[[p202_goal]]` and `[[p202_goal_value]]`, so a network can be told
-  "install" and "level 3" separately, or only "level 3".
-- **Non-payable** goals are counted in the app report and the funnel, and
-  nothing else happens.
+  on). It queues the campaign's traffic-source postback through the
+  notification outbox of §5.2, with new tokens `[[p202_goal]]` and
+  `[[p202_goal_value]]`, so a network can be told "install" and "level 3"
+  separately, or only "level 3".
+- **Non-payable** goals write a ledger row with `payable = 0` — that is how
+  they appear in the breakdown and the funnel — and nothing else: no income,
+  no lead, no MTA credit, no notification.
 - A campaign that has configured no payable goals pays on `install`. That is
   the default the decision in §9 asks for; turning it off is a campaign
   setting, not a global one.
@@ -867,7 +927,18 @@ Android.
 
 - Apple's postback carries only the value, so the **iOS SDK evaluates goals
   on the device** to decide which value to set. The schema document ships the
-  goal definitions, and the helper runs the same evaluator.
+  evaluation-only view of the goals (§4.3: no values, no payouts), and the
+  helper runs the same evaluator.
+- **An in-flight postback carries no version.** SKAN postbacks arrive up to
+  35 days after install (the third conversion window), so an encoding edited
+  today is still being applied by devices that fetched the old schema. SKAN
+  encodings are therefore versioned with an effective time and never
+  deleted, and a postback decodes under the encoding version that was active
+  at `received_at − 35 days`. If the encoding changed inside that horizon,
+  the row is decoded under both versions; where they agree it counts, and
+  where they disagree it is reported as `ambiguous_encoding` and credited to
+  neither. The UI says so when an encoding is edited: the report is exact
+  again 35 days later.
 - One evaluator specification, with cross-language vectors in
   `tests/fixtures/app-sdk-contract/goals/`, is run by the PHP and Swift test
   suites, so the two evaluators cannot drift.
@@ -933,7 +1004,11 @@ Cloud project, so it cannot be on by default.
   - `require`: attribution and payable goals wait for a `valid` verdict.
 - **The SDK** requests a standard token with
   `requestHash = SHA-256(canonical install body)` when the registration's
-  schema document says integrity is on.
+  schema document says integrity is on. The canonical body is the install
+  JSON with keys sorted, no insignificant whitespace, and the
+  `integrity_token` field **excluded** (it cannot hash a field derived from
+  itself); the SDK and the server compute it with the same rule, and the
+  contract vectors (§4.3) pin the bytes.
 - **The server** decodes the token through Google's `decodeIntegrityToken`,
   using the owner's service account. The OAuth JWT is signed RS256 with
   `openssl_sign`, so no new dependency is needed. The credential is encrypted
@@ -1034,15 +1109,20 @@ first-party signals**, each allowed only to *link*, never to *guess*.
 |---|---|---|---|
 | **Tracking-domain cookie** `p202vid` | 128-bit random, set by `dl.php`/`rtr.php` (`Secure`, `HttpOnly`, `SameSite=Lax`, 400-day cap) | Clicks through redirects in one browser | Works everywhere redirects do; the baseline |
 | **Landing-page first-party id** | The LP script (`record_simple.php`/`record_adv.php` and a new small `p202.js`) stores an id in the **landing page's own** first-party storage and sends it with LP clicks and with the next outbound click | Clicks on the operator's own sites | The LP domain is a site the user actually interacts with, so browsers treat its storage as first-party. It survives where a bounce-only tracking domain is cleared |
-| **Customer id** | `cust` on a click or conversion (already parsed by `p202ExtractCustomer`), and `P202Attribution.setCustomerId()` in both SDKs; stored hashed | A person across browsers, **and web → app** | The only deterministic cross-device link. It joins a web click journey to the same person's app install and goals |
+| **Customer id, signed** | `cust` plus `cust_sig` on a click or conversion, and `setCustomerId(id, signature)` in both SDKs; stored hashed. `cust_sig = HMAC-SHA256(account linking key, canonical id)`, computed by the operator's own server, which is the only party that holds the key | A person across browsers, **and web → app** | The only deterministic cross-device link. `cust` is request-controlled on public pixels, so an **unsigned** id keeps its LTV role exactly as today and links no journeys: anyone who learns someone's customer id could otherwise join their clicks. The signature is what makes the id a proof rather than a claim |
 | IP address, user agent, fingerprinting | — | **Never used** | Carrier-grade NAT and offices merge strangers, which is today's defect in another form. Fingerprinting is a privacy and platform-policy problem, and it is wrong often enough to corrupt credit silently |
 
-**How the graph works.** Each click records the signals it saw in
+**How the graph works.** Each click records the signals it carried in
+`202_identity_observations (click_id, signal_type, signal_hash, observed_at)`,
+and each distinct signal maps to a visitor key in
 `202_identity_signals (user_id, signal_type, signal_hash, visitor_key)`.
+The observations are the evidence: they say which click carried which
+signal, which is what the journey view uses to explain a link.
 A click carrying two signals that already map to different visitor keys
 **merges** them, union-find style:
 
-- a row in `202_identity_merges` records the merge;
+- a row in `202_identity_merges` records the merge and the click that
+  caused it;
 - the lower key becomes the alias of the higher;
 - journeys resolve to the canonical key.
 
@@ -1092,8 +1172,17 @@ labelled as such.
 **Trigger.** The outbox (§2). The worker `202-cronjobs/attribution-worker.php`, run
 every minute with overlap protection, claims pending rows in batches. For each
 conversion it builds the journey once and computes credits for each active
-model. It is idempotent: it deletes and reinserts the conversion's credits in
-one transaction.
+model. It is idempotent: in one transaction it deletes and rewrites the
+conversion's journey rows and credit rows, so a row claimed twice produces
+the same result.
+
+**Every change of counted state enqueues.** A conversion's credits must
+reflect whether its ledger row still counts. So `record()` enqueues not only
+the new conversion but every row it superseded; `softDelete()` and a reversal
+enqueue the rows they affect; and the worker, finding a row that no longer
+counts (`payable = 0`, superseded, deleted, or netted to zero), deletes its
+credits rather than recomputing them. Without this, a `replace` campaign with
+a $5 then a $10 conversion reports $15 in MTA while the click shows $10.
 
 **Models.** One enum is the only list. The API, CLI, UI and engine all read
 it, and a structural test fails if any surface lists a value the enum lacks
@@ -1125,8 +1214,9 @@ it, and a structural test fails if any surface lists a value the enum lacks
 `revenue` is the conversion row's amount × credit, so the credits of a
 conversion sum exactly to its revenue. The rounding remainder is assigned to
 the last touch, and a test pins the sum. The journey itself is in
-`202_attribution_journeys (conv_id, position, click_id, click_time)`, and it is what
-reports explain.
+`202_attribution_journeys (conv_id, position, click_id, click_time)` with
+`PRIMARY KEY (conv_id, position)`, rebuilt together with the credits in the
+same transaction, and it is what reports explain.
 
 **Reports** are grouped over credits, joined to the clicks' own dimensions.
 This is where models differ:
@@ -1156,9 +1246,14 @@ credits from the stored journeys. Nothing needs the raw clicks again.
 
 - One pipeline, CSV only. The "xls" is tab-separated text today, so the claim
   is dropped.
-- A webhook destination must be `https`. It is resolved and refused if it
-  resolves to a private, loopback or link-local address, and checked again at
-  send time to catch DNS rebinding. It is signed with HMAC as today.
+- A webhook destination must be `https`. At send time the hostname is
+  resolved, every resolved address is checked against the private, loopback,
+  link-local and metadata ranges, and the connection is then made **to the
+  validated address** with the hostname pinned (`CURLOPT_RESOLVE`) and TLS
+  verified against the hostname, so a DNS answer cannot change between the
+  check and the connect. Redirects are not followed at all. The same check
+  runs when the destination is saved, so the error is shown to the person
+  saving it. It is signed with HMAC as today.
 - A malformed job row fails only that job.
 
 **One API surface.** v3 only. The Slim v2 app (`api/v2/`) and the unlinked
@@ -1234,8 +1329,8 @@ defines instead of one that depends on how the database was created.
 | Click injection | Server click time after server install-begin → `implausible` |
 | Row minting on public intakes | Body caps; rate limit on `REMOTE_ADDR` (#16) with injective bucket names (#17); a retention class for every untrusted state |
 | App token lifted into another app | `app_key` mismatch is a visible 422; the token rotates |
-| SSRF through MTA export webhooks | `https` only, private-range refusal at schedule time and at send time |
-| MTA journey poisoning (a crafted `p202vid`, LP id or `cust` joins someone else's journey) | Browser ids are random 128-bit values, so guessing one is infeasible, and a user can only pollute their own journeys. Customer ids are operator-supplied and hashed. Any signal linking more than the cap is quarantined (§6.2). Credits are bounded by conversions, which MTA never creates |
+| SSRF through MTA export webhooks | `https` only; private-range refusal of every resolved address; connect pinned to the validated address; no redirects (§6.3) |
+| MTA journey poisoning (a crafted `p202vid`, LP id or `cust` joins someone else's journey) | Browser ids are random 128-bit values, so guessing one is infeasible, and a user can only pollute their own journeys. A customer id links a journey only when it carries a valid `cust_sig` from the operator's server (§6.2); an unsigned `cust` on a public pixel never links. Any signal linking more than the cap is quarantined. Credits are bounded by conversions, which MTA never creates |
 | **Fabricated in-app events** to reach payable goals (the app token is public) | Goals pay only for installs that are `attributed`, and under `require`, only for integrity-valid ones. Values come from the goal or campaign, never from the client unless `trust_client_revenue` is set. `UNIQUE (subject, event_id)` stops replays inflating counts. Per-install event rate caps apply. Reports flag installs whose goals were reached implausibly fast |
 | Goal definitions as an attack surface | Data only (JSON schema validated on write and on load), bounded complexity, no expression evaluation. An invalid stored definition disables that goal with its reason and never throws through other goals (#11) |
 | Permission drift between surfaces | One permission check per operation, and a structural test over the routes |
@@ -1245,9 +1340,14 @@ defines instead of one that depends on how the database was created.
 
 - **New identifiers:** `p202vid` (tracking-domain cookie), the landing-page
   first-party id, and hashed customer ids. The two browser ids are random
-  and carry no information. Customer ids are stored as a keyed hash
-  (HMAC with an install secret), so a raw email address or user id is
-  never stored. None of them is sent to third parties.
+  and carry no information. A customer id is canonicalised (trimmed;
+  lower-cased where the operator marks the id as an email) and stored as
+  `HMAC-SHA256(account hashing key, canonical id)`, where the key is **one
+  per Prosper202 account**, held server-side, minted with the schema and
+  rotatable. Web pixels, the API and both SDKs all send the raw id over TLS
+  and the server hashes it, so the same person hashes the same way on every
+  path and the raw value is never stored. None of these is sent to third
+  parties.
 - **Consent:** operators must cover these in their consent flow where their
   jurisdiction requires it. One switch suppresses every browser signal: a
   `p202_consent=0` parameter, `p202.js`'s `consent(false)`, or a per-campaign
@@ -1257,9 +1357,17 @@ defines instead of one that depends on how the database was created.
   landing-page id therefore extends journeys; it does not guarantee them. The
   one-touch share by browser (§6.2) measures what is lost.
 - No device identifiers are collected on Android, and no advertising ID.
-- User deletion purges every `202_app_*`, `202_attribution_*`, `202_goal*`,
-  `202_campaign_goals` and `202_identity_*` row of the user, and
-  `202_clicks_visitor`, plus export files on disk.
+- **User deletion.** Today `202-account/user-management.php` deletes no
+  clicks and no conversion rows at all (a grep finds neither table in its
+  purge), so PR 3 first audits the whole cascade and writes it down. The
+  target order is: notification and attribution outbox rows for the user's
+  conversions, `202_attribution_credits` and `_journeys` for them, the
+  user's `202_conversion_logs` rows, goal events and progress, campaign
+  goals and goals, identity observations, signals and merges, and
+  `202_clicks_visitor` for the user's clicks; then the `202_app_*` rows
+  (postbacks released, §4.6) and export files on disk. Where the existing
+  cascade keeps the user's clicks, the ledger rows are deleted with the
+  same policy the clicks get.
 
 ### 7.3 Performance
 
@@ -1304,12 +1412,15 @@ answer as the unoptimised path on a sparse and a dense dataset (CLAUDE.md,
   - `(registration_id, install_uuid)`;
   - `(click_id, dedupe_key)` on the ledger;
   - `(subject, event_id)` on events.
-- **Exactly-once MTA processing** comes from the in-transaction outbox, plus
-  idempotent credit rewrites.
+- **Exactly-once MTA effect** comes from the in-transaction outbox
+  (at-least-once delivery) plus idempotent journey and credit rewrites
+  (§6.3).
 - **Post-commit failures** complete via cron (#13). No response invites a
   duplicating retry.
-- **Isolation.** A broken MTA (missing table, bad config) never affects
-  conversion recording. The outbox simply accumulates.
+- **Isolation.** A broken MTA engine (worker down, credits table missing,
+  invalid model config) never affects conversion recording: the outbox
+  accumulates. The outbox table itself is conversion schema (§2) and is not
+  optional.
 - **Every fallible call is checked,** including `get_result`, `store_result`
   and `prepare` (#1).
 
@@ -1318,7 +1429,8 @@ answer as the unoptimised path on a sparse and a dense dataset (CLAUDE.md,
 - The release stays 1.9.76. The ≤ 1.9.55 → 1.9.76 path creates the final
   schema directly. No database holds an intermediate shape, so no legacy
   guard or drop is needed.
-- PHP 8.3 (CI) and 8.4; MySQL 5.7 and 8, and MariaDB.
+- PHP 8.3 (CI) and 8.4; MySQL 8.0+ and MariaDB 10.6+, the floors the
+  installer enforces (`202-config/install.php:409-417`).
 - The iOS SDK keeps its platform floor (iOS 14+, full support 15.4+) and its
   behaviour, gaining the header rename, `setCustomerId()` and the on-device
   goal evaluator. Android needs API 21+ and Play Store app 8.3.73+.
@@ -1376,8 +1488,13 @@ answer as the unoptimised path on a sparse and a dense dataset (CLAUDE.md,
   7. assert the report grouped by campaign **differs between `first_touch`
      and `last_touch`** (the property today's engine cannot produce);
   8. assert the stranger's click has no credit.
-- **Isolation test:** drop an MTA table, fire a conversion, and assert the
-  conversion records with a 200 and the outbox row is kept.
+- **Isolation test:** drop `202_attribution_credits` (an engine table, not
+  the outbox), fire a conversion, and assert the conversion records with a
+  200 and the outbox row is kept; then restore the table, run the worker and
+  assert the credits appear.
+- **Counted-state test:** on a `replace` campaign record $5 then $10, run the
+  worker, and assert MTA reports $10; soft-delete the $10 row and assert it
+  reports $5 again.
 - **SSRF test:** a webhook to `http://127.0.0.1`, to a private address, and to
   a hostname resolving to one. Each is refused at schedule time and at send
   time.
@@ -1596,7 +1713,13 @@ Standalone pages render their own `<html>`.
   | Select boxes | Native `<select>`, or one pinned searchable select where the list is long |
 
   jQuery stays available on v2 (`jquery.js` is in the manifest), so scripts
-  are ported, not rewritten, where porting is enough.
+  are ported, not rewritten, where porting is enough. **A port is not a
+  copy:** the v2 shell emits page scripts in `<head>`
+  (`202-config/template.php:211`), before the body exists, so a script that
+  touches the DOM as it loads breaks silently there. U1 makes the shell emit
+  `js_page` assets with `defer`, and the porting rule is that DOM work runs
+  under `DOMContentLoaded`; the browser pass's console-error check is what
+  catches the one that was missed.
 - **Pre-login pages keep their security invariants.**
   `PreLoginPostRequiresTokenTest` and `tests/live/upgrade-csrf.sh` pin that
   the form that posts carries the session token inside it (error pattern
