@@ -347,6 +347,22 @@ eq "$(device POST /apps/installs "$TOKEN" "$OUT/in.json")" 200 "an install with 
 eq "$(field "[d['data']['match'], d['data']['trusted'], d['data']['integrity']]")" '["integrity_unverified", null, "missing"]' "is unverified at once, unvouched"
 eq "$(paid "$C")" 0 "and never paid"
 
+say "require: a verdict past the 24-hour deadline is never accepted"
+# A worker stopped for a day: the install is retired unverified before its
+# token is decoded, never attributed or paid. (A passing verdict that comes
+# back late is refused too: IntegrityIntegrationTest drives that one, since
+# a live verdict for a backdated install reads as issued in the future.)
+CL=$(click "$TRK" "$OUT/hl"); REFL=$(referrer_of "$OUT/hl")
+UL=$(uuid); HL=$(body "$OUT/il.json" "$UL" "$REFL" "$(ctime "$CL")" tok-late)
+scenario tok-late "[{\"status\": 200, \"payload\": $(verdict "$HL")}]"
+eq "$(device POST /apps/installs "$TOKEN" "$OUT/il.json")" 200 "an install held for its verdict"
+Q "UPDATE 202_app_installs SET received_at = received_at - 90000 WHERE install_uuid='$UL'"
+cron
+has "$OUT/cron.txt" "error=1" "the backlogged install is retired"
+eq "$(row "$UL")" "integrity_unverified/null/error" "unverified, without a verdict being judged"
+eq "$(fake_requests "len([x for x in r if x.get('integrity_token') == 'tok-late'])")" 0 "its token is never decoded"
+eq "$(paid "$CL")" 0 "and it is never paid"
+
 say "require: Google failing is retried, then recorded unverified"
 C5=$(click "$TRK" "$OUT/h5"); REF5=$(referrer_of "$OUT/h5")
 U5=$(uuid); body "$OUT/i5.json" "$U5" "$REF5" "$(ctime "$C5")" tok-5xx > /dev/null
@@ -366,7 +382,9 @@ Q "UPDATE 202_app_installs SET integrity_next_at = 0, received_at = received_at 
 cron
 has "$OUT/cron.txt" "error=1" "past the 24-hour deadline the worker stops"
 eq "$(row "$U5")" "integrity_unverified/null/error" "integrity_unverified, unvouched"
-eq "$(Q "SELECT integrity_reason FROM 202_app_installs WHERE install_uuid='$U5'" | grep -c 'No verdict after 3 attempts')" 1 "saying how many attempts"
+eq "$(Q "SELECT integrity_reason FROM 202_app_installs WHERE install_uuid='$U5'" | grep -c 'No verdict within 24 hours of receipt; the token was not decoded')" 1 \
+   "retired before another decode, saying the deadline passed"
+eq "$(Q "SELECT integrity_attempts FROM 202_app_installs WHERE install_uuid='$U5'")" 3 "the attempt that found it expired is counted"
 eq "$(paid "$C5")" 0 "never waved through"
 
 C6=$(click "$TRK" "$OUT/h6"); REF6=$(referrer_of "$OUT/h6")
@@ -397,7 +415,8 @@ eq "$(field "[d['data']['integrity_mode'], d['data']['installs']['by_integrity_s
    '["require", 3, 9, 8]' "counts every verdict and the installs require refused"
 hasnt "$OUT/body" "PRIVATE KEY" "never the key"
 eq "$(api GET "/apps/$R/installs?integrity_state=error")" 200 "installs by integrity state"
-eq "$(field "[i['install_uuid'] for i in d['data']]")" "[\"$U5\"]" "the one Google never answered"
+eq "$(field "sorted(i['install_uuid'] for i in d['data'])")" "$(python3 -c 'import json,sys; print(json.dumps(sorted(sys.argv[1:])))' "$U5" "$UL")" \
+   "the ones with no verdict: the one Google never answered, and the backlogged one"
 eq "$(field "d['data'][0]['integrity_attempts']")" 3 "with its attempts"
 eq "$(api GET "/apps/$R/installs/$U2")" 200 "one install"
 eq "$(field "d['data']['integrity_verdict']['code']")" device_integrity "shows the verdict's summary"
