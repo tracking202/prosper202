@@ -157,6 +157,17 @@ add clicks — the selection and the 1,000-click cap are the goal's own — and
 a dependent's version that cannot be evaluated (an invalid definition, a
 missing prerequisite) is left exactly as it is.
 
+A re-evaluation can return to an outcome an earlier one retired — the same
+goal, version, repeat and event, for example a dependent whose prerequisite
+stopped matching and then matched again. That outcome is revived rather than
+written twice, and so is its conversion, whichever way it was retired: a
+superseded conversion counts again, and one the re-evaluation deleted is
+restored (with its revenue posted to the customer again when its deletion
+voided it). A conversion someone deleted by hand stays deleted. The revived
+conversion counts toward the click again under the campaign's payout mode
+(on a `replace` campaign the latest conversion still sets the value, and a
+revived one keeps its original place in that order).
+
 ## Examples
 
 ```bash
