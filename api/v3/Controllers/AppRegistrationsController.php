@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
+use Api\V3\Apps\Android\InstallIntake;
+use Api\V3\Apps\Android\OrphanedPendingClicks;
 use Api\V3\Apps\AppIdentity;
 use Api\V3\Apps\AppPolicy;
 use Api\V3\Apps\AppToken;
@@ -33,7 +35,10 @@ use Api\V3\Exception\WriteCommittedException;
  * `accept_test_signals`, whether development-signed postbacks count as
  * trusted — is applied to the rows already stored on every write, because it
  * is a live policy rather than a receipt-time snapshot; deleting the
- * registration withdraws it.
+ * registration withdraws it. The same flag governs an Android app's test
+ * installs, and is applied to the stored ones the same way: each whose
+ * trust changes has its outcomes moved onto or off its click
+ * (InstallIntake::rejudgeTestInstalls()).
  */
 class AppRegistrationsController extends Controller
 {
@@ -297,6 +302,15 @@ class AppRegistrationsController extends Controller
         $this->execute($stmt, 'Postback unlink failed');
         $stmt->close();
 
+        // Installs still waiting for their click can never settle once the
+        // registration is gone: the settler reads an install only through
+        // its registration, retention never prunes a pending install, and no
+        // app token reaches it. Settled here, in the same transaction, to the
+        // state the pending-click deadline leaves them in — bad_token, never
+        // paid (OrphanedPendingClicks).
+        (new OrphanedPendingClicks(new \Prosper202\Database\Connection($this->db)))
+            ->settleForDeletedRegistration($this->userId, $registrationId, time());
+
         // Encodings exist only for their registration; left behind they
         // would decode nothing and hold UNIQUE slots nobody can see.
         $stmt = $this->prepare('DELETE FROM 202_app_skan_encodings WHERE registration_id = ? AND user_id = ?');
@@ -345,6 +359,7 @@ class AppRegistrationsController extends Controller
             ['resource' => 'campaigns', 'action' => 'unlink (app_registration_id set to NULL)', 'where' => 'app_registration_id = ' . (int)$id],
             ['resource' => 'goals', 'action' => 'archive (versions, outcomes and conversions kept)', 'where' => 'scope = registration, scope_id = ' . (int)$id],
             ['resource' => 'app-installs', 'action' => 'kept (history; their conversions stay on the ledger), no longer reachable by any app token', 'where' => 'registration_id = ' . (int)$id],
+            ['resource' => 'app-installs', 'action' => 'settle the pending clicks: match_state pending_click → bad_token (never paid)', 'where' => 'registration_id = ' . (int)$id . ', still waiting for their click'],
         ];
         return $preview;
     }
@@ -361,9 +376,15 @@ class AppRegistrationsController extends Controller
         AppPolicy $policy,
         bool $claimHistory
     ): void {
+        if ($platform === AppIdentity::ANDROID) {
+            // Android installs are claimed at receipt (the token names the
+            // registration), so there is no history to claim; the policy is
+            // re-applied to the test installs already stored, and each one
+            // whose trust changes moves its outcomes onto or off its click.
+            (new InstallIntake($this->db))->rejudgeTestInstalls($this->userId, $registrationId);
+            return;
+        }
         if ($platform !== AppIdentity::IOS) {
-            // Only the Apple source stores signals today; the Android intake
-            // adds its own claim here.
             return;
         }
         if ($claimHistory) {

@@ -7,6 +7,8 @@ namespace Tests\Apps\Android;
 use Api\V3\Apps\Android\PendingClickSettler;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\Connection;
+use Prosper202\Goals\GoalDefinition;
+use Prosper202\Goals\GoalScope;
 use Prosper202\Notifications\NotificationOutbox;
 
 /**
@@ -269,6 +271,161 @@ final class InstallIntakeIntegrationTest extends TestCase
         $accepted = $this->install(self::body(self::U2, 'p202=' . self::tokenFor(101), ['test' => true]));
         self::assertSame(1, $accepted['body']['data']['trusted']);
         self::assertCount(1, self::ledger(101));
+    }
+
+    /**
+     * accept_test_signals is a live policy: toggling it re-judges the test
+     * installs already stored, and their outcomes move onto or off the
+     * click — the conversions written, retired and revived, never
+     * duplicated, and the traffic source told once.
+     */
+    public function testTogglingAcceptTestSignalsReJudgesTheTestInstallsAlreadyStored(): void
+    {
+        $this->click(100);
+        $level = $this->campaignGoal(30, ['name' => 'Level up', 'trigger' => ['event' => 'level_reached'], 'value' => ['type' => 'fixed', 'amount' => 4]]);
+        $installGoal = $this->goals->ensureBuiltinInstallGoal(1, 5, 1);
+        $this->goals->attach(1, 30, $installGoal, null, true, 1);
+        $r = $this->install(self::body(self::U1, 'p202=' . self::tokenFor(100), ['test' => true]));
+        self::assertSame(['attributed', null], [$r['body']['data']['match'], $r['body']['data']['trusted']]);
+        self::assertSame(200, $this->events(self::U1, [['event_id' => 'l1', 'name' => 'level_reached', 'occurred_at' => self::CLICK_TIME + 100]])['status']);
+        // A non-test install on another click: the policy is not about it.
+        $this->click(101);
+        self::assertSame(1, $this->install(self::body(self::U2, 'p202=' . self::tokenFor(101)))['body']['data']['trusted']);
+        $untouched = self::ledger(101);
+        self::assertSame([], self::ledger(100));
+        self::assertSame(0, self::rows('202_goal_outcomes', 'goal_id = ' . $level), 'the campaign\'s goals apply through the click only');
+        $apps = new \Api\V3\Controllers\AppRegistrationsController(self::$db, 1);
+
+        // On: the stored test install is credited as if it had arrived now.
+        $apps->update(5, ['accept_test_signals' => 1]);
+        $row = self::installRow(self::U1);
+        self::assertSame('1', (string) $row['trusted']);
+        $credited = self::ledger(100);
+        self::assertSame([['app_install', '0'], ['goal', '0']], array_map(static fn (array $c): array => [$c['source'], (string) $c['deleted']], $credited));
+        self::assertSame((string) $credited[0]['conv_id'], (string) $row['conversion_id']);
+        self::assertSame(['lead' => 1, 'payout' => '6.50000'], self::clickValue(100));
+        $reached = static fn (): array => array_values(array_filter(self::outbox(), static fn (array $n): bool => $n['kind'] === 'reached' && in_array((string) $n['conv_id'], array_map(static fn (array $c): string => (string) $c['conv_id'], $credited), true)));
+        self::assertSame(['pending', 'pending'], array_column($reached(), 'status'));
+        self::assertSame(1, self::rows('202_goal_outcomes', 'goal_id = ' . $level . ' AND superseded_at IS NULL AND conversion_id IS NOT NULL'));
+
+        // Idempotent: the same policy again changes nothing.
+        $apps->update(5, ['accept_test_signals' => 1]);
+        self::assertSame($credited, self::ledger(100));
+
+        // Off: withdrawn. The install notification had gone out, so it is
+        // retracted; the goal's never had, so it is cancelled.
+        self::$db->query("UPDATE 202_notification_pending SET status = 'sent', attempts = 1 WHERE conv_id = " . (int) $credited[0]['conv_id'] . " AND kind = 'reached'");
+        $apps->update(5, ['accept_test_signals' => 0]);
+        $row = self::installRow(self::U1);
+        self::assertNull($row['trusted']);
+        self::assertNull($row['conversion_id']);
+        self::assertSame(['1', '1'], array_map(static fn (array $c): string => (string) $c['deleted'], self::ledger(100)));
+        self::assertSame(0, self::clickValue(100)['lead']);
+        self::assertSame(['sent', 'cancelled'], array_column($reached(), 'status'));
+        self::assertSame(1, self::rows('202_notification_pending', "kind = 'retraction' AND conv_id = " . (int) $credited[0]['conv_id']));
+        self::assertSame(1, self::rows('202_goal_outcomes', "event_id = '@install' AND superseded_at IS NULL AND conversion_id IS NULL AND payable = 0 AND campaign_id IS NULL"),
+            'the install stays in the funnel, off its click');
+        self::assertSame(0, self::rows('202_goal_outcomes', 'goal_id = ' . $level . ' AND superseded_at IS NULL'), 'the campaign goal is retired with its row');
+
+        // On again: the same rows come back — revived, not written twice.
+        $apps->update(5, ['accept_test_signals' => 1]);
+        $row = self::installRow(self::U1);
+        self::assertSame('1', (string) $row['trusted']);
+        self::assertSame((string) $credited[0]['conv_id'], (string) $row['conversion_id']);
+        self::assertSame(array_column($credited, 'conv_id'), array_column(self::ledger(100), 'conv_id'));
+        self::assertSame(['0', '0'], array_map(static fn (array $c): string => (string) $c['deleted'], self::ledger(100)));
+        self::assertSame(['lead' => 1, 'payout' => '6.50000'], self::clickValue(100));
+        self::assertSame(['sent', 'pending'], array_column($reached(), 'status'), 'the cancelled one is queued again; the sent one is not re-sent');
+        self::assertSame(1, self::rows('202_goal_outcomes', 'goal_id = ' . $level . ' AND superseded_at IS NULL AND conversion_id IS NOT NULL'));
+        self::assertSame($untouched, self::ledger(101));
+    }
+
+    /**
+     * An outcome retired while its install had one credit and revived under
+     * the other (a re-evaluation returning to it) is bound the way the
+     * install is now: no ledger row without the click, its row back on it.
+     */
+    public function testAnOutcomeRevivedAfterItsInstallsCreditChangedIsBoundTheWayTheInstallIsNow(): void
+    {
+        self::fixture('UPDATE 202_app_registrations SET accept_test_signals = 1 WHERE registration_id = 5');
+        $engine = new \Prosper202\Goals\GoalEngine(new Connection(self::$db), $this->goals, null, fn (): int => $this->clock);
+        $apps = new \Api\V3\Controllers\AppRegistrationsController(self::$db, 1);
+        $goal = $this->goals->create(1, GoalScope::REGISTRATION, 5, GoalDefinition::parse(['name' => 'Level', 'trigger' => ['event' => 'level_reached']]), 1);
+        $this->goals->attach(1, 30, $goal, \Prosper202\Conversion\Ledger\Amount::toUnits('3'), false, 1);
+        $installGoal = $this->goals->ensureBuiltinInstallGoal(1, 5, 1);
+        $this->goals->attach(1, 30, $installGoal, null, false, 1);
+        $this->click(100);
+        self::assertSame(1, $this->install(self::body(self::U1, 'p202=' . self::tokenFor(100), ['test' => true]))['body']['data']['trusted']);
+        self::assertSame(200, $this->events(self::U1, [['event_id' => 'l1', 'name' => 'level_reached', 'occurred_at' => self::CLICK_TIME + 100, 'properties' => ['level' => 1]]])['status']);
+        $outcome = static fn (): array => self::$db->query('SELECT conversion_id, superseded_at, campaign_id FROM 202_goal_outcomes WHERE goal_id = ' . $goal . ' AND goal_version = 1')->fetch_assoc();
+        $row = static fn (int $conv): array => self::$db->query('SELECT deleted FROM 202_conversion_logs WHERE conv_id = ' . $conv)->fetch_assoc();
+        $conv = (int) $outcome()['conversion_id'];
+        self::assertGreaterThan(0, $conv);
+        $edit = function (int $level) use ($goal): void {
+            $this->clock += 100;
+            $this->goals->addVersion(1, $goal, GoalDefinition::parse(['name' => 'Level', 'trigger' => ['event' => 'level_reached', 'where' => [['prop' => 'level', 'op' => 'gte', 'value' => $level]]]], $goal), $this->clock);
+        };
+
+        // Retired with its row while credited; revived with no credit.
+        $edit(2);
+        $engine->reevaluate(1, $goal, null, true);
+        self::assertNotNull($outcome()['superseded_at']);
+        self::assertSame('1', (string) $row($conv)['deleted']);
+        $apps->update(5, ['accept_test_signals' => 0]);
+        $engine->reevaluate(1, $goal, 1, true);
+        self::assertSame(['conversion_id' => null, 'superseded_at' => null, 'campaign_id' => null], $outcome(), 'revived off the click, it names no ledger row');
+        self::assertSame('1', (string) $row($conv)['deleted']);
+        // Credited again: it takes back its own row.
+        $apps->update(5, ['accept_test_signals' => 1]);
+        self::assertSame((string) $conv, (string) $outcome()['conversion_id']);
+        self::assertSame('0', (string) $row($conv)['deleted']);
+
+        // Retired with no row while uncredited; revived with credit.
+        $apps->update(5, ['accept_test_signals' => 0]);
+        self::assertNull($outcome()['conversion_id']);
+        $engine->reevaluate(1, $goal, 2, true);
+        self::assertNotNull($outcome()['superseded_at']);
+        $apps->update(5, ['accept_test_signals' => 1]);
+        $engine->reevaluate(1, $goal, 1, true);
+        self::assertSame((string) $conv, (string) $outcome()['conversion_id'], 'revived on the click, it takes its row back');
+        self::assertNull($outcome()['superseded_at']);
+        self::assertSame('0', (string) $row($conv)['deleted']);
+        self::assertSame(1, self::rows('202_conversion_logs', "click_id = 100 AND source = 'goal'"), 'never written twice');
+    }
+
+    public function testDeletingARegistrationSettlesItsPendingClicks(): void
+    {
+        self::assertSame('pending_click', $this->install(self::body(self::U1, 'p202=' . self::tokenFor(500)))['body']['data']['match']);
+        (new \Api\V3\Controllers\AppRegistrationsController(self::$db, 1))->delete(5);
+        $row = self::installRow(self::U1);
+        self::assertSame(['bad_token', '0'], [$row['match_state'], (string) $row['trusted']]);
+        self::assertNotNull($row['settled_at']);
+        self::assertStringContainsString('registration was deleted', $row['match_reason']);
+        self::assertNull($row['click_id']);
+
+        // A registration gone some other way (deleted by hand): the settler
+        // retires its pending clicks rather than skipping them for ever.
+        $pending = $this->install(self::body(self::U2, 'p202=' . self::tokenFor(501), ['app_key' => 'com.other.app']), self::OTHER_TOKEN);
+        self::assertSame('pending_click', $pending['body']['data']['match'], json_encode($pending));
+        self::fixture('DELETE FROM 202_app_registrations WHERE registration_id = 6');
+        $done = (new PendingClickSettler(self::$db, fn (): int => $this->clock))->run();
+        self::assertSame(0, $done['examined'], 'an orphan never takes a slot in the batch');
+        self::assertSame(['bad_token', '0'], [self::installRow(self::U2)['match_state'], (string) self::installRow(self::U2)['trusted']]);
+        self::assertSame(0, self::rows('202_app_installs', "match_state = 'pending_click'"));
+    }
+
+    public function testAnInstallGoalMissingItsVersionIsRepairedBeforeItIsUsed(): void
+    {
+        // The goal row committed, its version did not (registration create
+        // runs the two INSERTs in autocommit).
+        $goal = $this->goals->ensureBuiltinInstallGoal(1, 5, 1);
+        self::fixture('DELETE FROM 202_goal_versions WHERE goal_id = ' . $goal);
+        $this->click(100);
+        $r = $this->install(self::body(self::U1, 'p202=' . self::tokenFor(100)));
+        self::assertSame(['attributed', 1], [$r['body']['data']['match'], $r['body']['data']['trusted']], json_encode($r));
+        self::assertCount(1, self::ledger(100));
+        self::assertSame(1, self::rows('202_goal_versions', 'goal_id = ' . $goal . ' AND version = 1'));
+        self::assertSame($goal, $this->goals->ensureBuiltinInstallGoal(1, 5, 2), 'the same goal, repaired, not a second one');
     }
 
     public function testWhatAnInstallPaysIsTheCampaignsDecision(): void

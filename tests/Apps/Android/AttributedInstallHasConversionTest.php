@@ -21,6 +21,12 @@ use Tests\Support\SqlLiteralText;
  *    credited install whose install goal wrote no conversion; and settle()
  *    is called only from inside a transaction: the intake's record() (run
  *    by `$this->conn->transaction($work)`) and the settler's $work.
+ *    The one other match_state write is OrphanedPendingClicks' retirement
+ *    of a pending click whose registration is gone: pending_click to the
+ *    constant bad_token (refuted), never touching click or conversion.
+ *    The trust bit alone is re-judged when the registration's test-signal
+ *    policy changes (InstallIntake::rejudgeTestInstalls()), and that moves
+ *    the install's outcomes and conversion in the same transaction.
  * 3. Every redirect fallback that substitutes a placeholder for [[subid]]
  *    while MySQL is down also empties [[p202_install_token]] (plan §5.1):
  *    there is no click to sign, and a literal placeholder would reach Play.
@@ -30,6 +36,7 @@ final class AttributedInstallHasConversionTest extends TestCase
     private const WRITERS = [
         'api/v3/Apps/Android/InstallIntake.php' => ['insert', 'update'],
         'api/v3/Apps/Android/InstallEventsIntake.php' => ['update'],
+        'api/v3/Apps/Android/OrphanedPendingClicks.php' => ['update'],
         'api/v3/Apps/AppDataPurge.php' => ['delete'],
     ];
 
@@ -85,6 +92,17 @@ final class AttributedInstallHasConversionTest extends TestCase
         // The events intake flips its retention hint and touches nothing else.
         preg_match_all('/UPDATE\s+202_app_installs\s+SET\s+([^;]*?)\s+WHERE/i', $tree['api/v3/Apps/Android/InstallEventsIntake.php'], $m);
         self::assertSame(['has_events = 1'], $m[1]);
+
+        // Pending clicks whose registration is gone are retired by one
+        // constant transition, from the pending state it ends, to a refuted
+        // state; click and conversion are never written, so this writer
+        // cannot make anything payable.
+        $orphans = $tree['api/v3/Apps/Android/OrphanedPendingClicks.php'];
+        self::assertSame(1, preg_match_all('/\bUPDATE\b/i', $orphans), 'the retirement writes one statement');
+        preg_match_all('/UPDATE\s+202_app_installs\s+SET\s+([^;]*?)\s+WHERE\s+([^;]*?)\s+AND\s+\?/i', $orphans, $m, PREG_SET_ORDER);
+        self::assertSame([
+            ["match_state = 'bad_token', match_reason = ?, trusted = 0, settled_at = ?", "match_state = 'pending_click'"],
+        ], array_map(static fn (array $s): array => [preg_replace('/\s+/', ' ', $s[1]), preg_replace('/\s+/', ' ', $s[2])], $m));
 
         // Retention deletes through its classes, whose table is data: the
         // only runtime-table DELETE, in a file that never names the table.

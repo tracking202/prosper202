@@ -2784,7 +2784,12 @@ paths:
         `app_key` or `store_link` naming the same app is accepted and changes
         nothing; naming a different app is `422` — register it separately.
         Toggling `accept_test_signals` re-judges the stored test signals
-        too: the policy is live, not a receipt-time snapshot.
+        too: the policy is live, not a receipt-time snapshot. For an Android
+        app that includes the stored test installs: one that becomes trusted
+        gains its conversions (written, or restored when an earlier change
+        retired them) and notifies its traffic source; one that stops being
+        trusted has its conversions retired (an unsent notification
+        cancelled, a sent one retracted) and stays in the funnel.
       operationId: updateApp
       requestBody:
         required: true

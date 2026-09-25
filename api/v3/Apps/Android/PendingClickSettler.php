@@ -53,8 +53,16 @@ final class PendingClickSettler
      */
     public function run(int $limit = 500): array
     {
+        // Installs whose registration is gone can never settle here, and
+        // nothing else would ever touch them: they are retired first
+        // (OrphanedPendingClicks). The selection joins the registration as
+        // settleOne() reads it, so one that appears after the sweep cannot
+        // hold a slot in this oldest-first batch either — enough of them
+        // would starve every other app's pending clicks.
+        (new OrphanedPendingClicks($this->conn))->settleOrphans($this->now());
         $stmt = $this->conn->prepareWrite(
-            "SELECT install_row_id FROM 202_app_installs WHERE match_state = 'pending_click' ORDER BY received_at, install_row_id LIMIT ?"
+            "SELECT i.install_row_id FROM 202_app_installs i JOIN 202_app_registrations r ON r.registration_id = i.registration_id
+             WHERE i.match_state = 'pending_click' ORDER BY i.received_at, i.install_row_id LIMIT ?"
         );
         $this->conn->bind($stmt, 'i', [max(1, $limit)]);
         $ids = array_map(static fn (array $r): int => (int) $r['install_row_id'], $this->conn->fetchAll($stmt));

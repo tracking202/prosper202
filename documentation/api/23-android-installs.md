@@ -99,6 +99,13 @@ anything fails, so the SDK's retry is safe):
 Every install carries a `match_reason` sentence. A **test** install (a debug
 build's `test: true`) is classified the same way and counts — is trusted,
 and pays — only when the registration's `accept_test_signals` is `1`.
+The policy is live: changing it re-judges the test installs already
+stored. One that becomes trusted is credited as if it had arrived then —
+its install conversion and its goal conversions written on its click (or
+the ones an earlier change retired, restored), and its traffic source
+notified. One that stops being trusted keeps its place in the funnel, but
+its conversions are retired: a notification not yet sent is cancelled,
+and one that went out is followed by a retraction.
 
 ## 4. What an install pays
 
@@ -195,7 +202,11 @@ without events after 180 (`P202_APP_RETENTION_DAYS_INSTALLS_REFUTED`,
 pending ones and installs with events are kept. Deleting a user deletes
 their installs and their queued postbacks; deleting a registration keeps
 its installs (their conversions stay on the ledger) but no token reaches
-them any more. Both unlink the campaigns linked to the deleted registration
+them any more. An install still `pending_click` when its registration is
+deleted can never be settled, so the delete settles it as the 24-hour
+deadline would: `bad_token`, never paid, pruned with the refuted installs
+(the settler does the same for one whose registration disappeared any
+other way). Both unlink the campaigns linked to the deleted registration
 (`app_registration_id` back to `null`), so registering the app again and
 linking the campaign to the new registration is all it takes to attribute
 its clicks again.
