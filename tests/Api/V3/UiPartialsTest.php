@@ -272,23 +272,25 @@ final class UiPartialsTest extends TestCase
         }
     }
 
-    // ── The v2 shell defers its page scripts ───────────────────────────
+    // ── The shell defers its page scripts ──────────────────────────────
 
-    public function testTheV2ShellDefersItsPageScriptsAndTheClassicOneDoesNot(): void
+    /**
+     * Every page script renders as a deferred <script>, and the head scripts
+     * as blocking ones. That template_top() and info_top() actually pass
+     * `defer` for the page list is executed in ShellIsolationTest's rendering
+     * probe, not read here.
+     */
+    public function testThePageScriptsRenderDeferredAndTheHeadScriptsBlocking(): void
     {
-        self::assertTrue(p202_shell_defers_page_scripts(P202_UI_V2));
-        self::assertFalse(p202_shell_defers_page_scripts(P202_UI_CLASSIC));
-
-        $context = ['section' => 'tracking202', 'sub' => 'analyze', 'page' => 'keywords.php', 'logged_in' => true];
-        foreach ([P202_UI_V2 => ' defer', P202_UI_CLASSIC => ''] as $ui => $expected) {
-            $assets = p202_shell_assets($ui, $context);
+        foreach ([['section' => 'tracking202', 'logged_in' => true], ['logged_in' => false]] as $context) {
+            $assets = p202_shell_assets($context);
             self::assertNotSame([], $assets['js_page']);
             foreach ($assets['js_page'] as $item) {
-                $tag = p202_shell_asset_tag($item, 'http://x/', p202_shell_defers_page_scripts($ui));
-                self::assertMatchesRegularExpression('~^<script src="[^"]+"' . $expected . '></script>$~', $tag, "$ui: $tag");
+                $tag = p202_shell_asset_tag($item, 'http://x/', true);
+                self::assertMatchesRegularExpression('~^<script src="[^"]+" defer></script>$~', $tag, $tag);
             }
             foreach ($assets['js_head'] as $item) {
-                self::assertStringNotContainsString(' defer', p202_shell_asset_tag($item, 'http://x/'), "$ui: head scripts stay blocking, because inline page scripts call jQuery as they parse");
+                self::assertStringNotContainsString(' defer', p202_shell_asset_tag($item, 'http://x/'), 'head scripts stay blocking, because inline page scripts call jQuery as they parse');
             }
         }
     }
@@ -297,7 +299,7 @@ final class UiPartialsTest extends TestCase
     {
         $order = array_map(
             static fn (array $item): string => $item['asset'] ?? $item['path'],
-            p202_shell_assets(P202_UI_V2, ['section' => '202-account', 'sub' => 'ui-kit.php', 'logged_in' => true])['js_page']
+            p202_shell_assets(['section' => '202-account', 'logged_in' => true])['js_page']
         );
         $tablesort = array_search('tablesort.js', $order, true);
         $ui = array_search('202-js/p202-ui.js', $order, true);

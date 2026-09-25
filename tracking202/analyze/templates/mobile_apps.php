@@ -152,7 +152,7 @@ if (!$hasAndroid) {
     }
 }
 
-template_top('Analyze Mobile Apps', ['ui' => 'v2']);
+template_top('Analyze Mobile Apps');
 ?>
 
 <div class="p202-page-header p202-page-header--accent">

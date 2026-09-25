@@ -145,7 +145,7 @@ $trackerLink = static function (array $tracker) use ($base): array {
 	return [(string) $tracker['aff_campaign_name'], 'direct link', 'http://' . getTrackingDomain() . $base . 'tracking202/redirect/dl.php?t202id=' . $tracker['tracker_id_public'] . '&t202kw=' . $vars_query];
 };
 
-template_top('Get Trackers', ['ui' => 'v2']); ?>
+template_top('Get Trackers'); ?>
 
 <div class="p202-page-header p202-page-header--accent">
 	<div class="p202-page-header__icon"><i class="bi bi-link-45deg"></i></div>

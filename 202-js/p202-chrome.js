@@ -1,11 +1,11 @@
 /*
- * Prosper202 chrome behaviour, shared by both page shells.
+ * Prosper202 chrome behaviour.
  *
- * Plain JavaScript on purpose: the classic shell runs jQuery 1.11 and the v2
- * shell jQuery 3.7, and the chrome must not care which. Everything here is
- * progressive — the account menu is a <details> element that works with no
- * script at all; this only closes it when the user clicks elsewhere or presses
- * Escape, and wires the theme switch the v2 shell renders.
+ * Plain JavaScript, so the chrome depends on no library a page may or may not
+ * use. Everything here is progressive — the account menu is a <details>
+ * element that works with no script at all; this only closes it when the
+ * user clicks elsewhere or presses Escape, wires the theme switch, and draws
+ * the update banner under the header when there is one.
  *
  * It also keeps the current section tab and sub-menu item in view whenever
  * those lists are too long to fit, which is a question about the list rather
@@ -90,7 +90,7 @@
     });
 
     /* Theme switch: three states — follow the system, light, dark. The choice
-       is a per-browser convenience, so localStorage is the right home; the v2
+       is a per-browser convenience, so localStorage is the right home; the
        shell applies it before first paint from the same key. */
     var STORAGE_KEY = 'p202-theme';
     var switchRoot = document.querySelector('.p202c-theme');
@@ -149,6 +149,48 @@
                 media.addEventListener('change', onChange);
             } else if (media.addListener) {
                 media.addListener(onChange);
+            }
+        }
+    }
+
+    /* The update banner (202-config/functions-update-banner.php). The check
+       asks the release feed, so it waits until the page is idle rather than
+       competing with the page's own requests. It is a notice, not the page:
+       a failed request leaves the slot empty and says nothing. Hiding it
+       snoozes it for an hour in this session. */
+    var slot = document.getElementById('update_needed');
+    if (slot && slot.getAttribute('data-p202-banner')) {
+        var fetchText = function (url, options) {
+            return window.fetch(url, options || { credentials: 'same-origin' }).then(function (response) {
+                if (!response.ok) {
+                    throw new Error('HTTP ' + response.status);
+                }
+                return response.text();
+            });
+        };
+        var loadBanner = function () {
+            fetchText(slot.getAttribute('data-p202-check'))
+                .then(function () { return fetchText(slot.getAttribute('data-p202-banner')); })
+                .then(function (html) { slot.innerHTML = html; })
+                .catch(function () { /* a notice: leave the slot empty */ });
+        };
+        slot.addEventListener('click', function (event) {
+            var close = event.target.closest ? event.target.closest('[data-p202-update-banner] .btn-close') : null;
+            if (!close) {
+                return;
+            }
+            fetchText(slot.getAttribute('data-p202-snooze'), {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'delay=1'
+            }).catch(function () { /* the banner is gone for this page either way */ });
+        });
+        if (window.fetch) {
+            if ('requestIdleCallback' in window) {
+                window.requestIdleCallback(loadBanner, { timeout: 2000 });
+            } else {
+                window.setTimeout(loadBanner, 1500);
             }
         }
     }

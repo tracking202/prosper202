@@ -359,7 +359,7 @@ $adItem = static function (array $ad) use ($self, $token, $canRemove, $editId): 
 	return $out . '</span><span class="p202-list__meta">' . p202_setup_e($ad['text_ad_headline'] ?? '') . '</span></li>';
 };
 
-template_top('Text Ads Setup', ['ui' => 'v2']); ?>
+template_top('Text Ads Setup'); ?>
 
 <div class="p202-page-header p202-page-header--accent">
 	<div class="p202-page-header__icon"><i class="bi bi-fonts"></i></div>

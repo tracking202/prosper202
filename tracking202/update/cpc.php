@@ -139,7 +139,7 @@ $advancedSet = $formValue('landing_page_id') !== '' || $formValue('text_ad_id') 
 	|| isset($errors['landing_page_id']) || isset($errors['text_ad_id']) || isset($errors['method_of_promotion']);
 $fieldKeys = ['aff_network_id', 'aff_campaign_id', 'ppc_network_id', 'ppc_account_id', 'landing_page_id', 'text_ad_id', 'method_of_promotion', 'from', 'to', 'cpc'];
 
-template_top('Update CPC', ['ui' => 'v2']);
+template_top('Update CPC');
 
 echo p202_update_header('bi-currency-dollar', 'Update CPC', 'Prosper202 records the bid as each click\'s cost. Set what a set of past clicks really cost, so your reports show the real spend.');
 

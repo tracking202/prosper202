@@ -37,7 +37,7 @@ function info_top(array $options = []): void
 	$title = (string) ($options['title'] ?? 'Prosper202 ClickServer');
 	$wide = !empty($options['wide']);
 	$wp202 = getWallpaper();
-	$assets = p202_shell_assets(P202_UI_V2, ['logged_in' => false]);
+	$assets = p202_shell_assets(['logged_in' => false]);
 	$e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
 	$wallpaperImg = (string) ($wp202['wallpaperImg'] ?? '');
 	$wallpaperUrl = (string) ($wp202['wallpaperUrl'] ?? '');
@@ -93,7 +93,7 @@ function info_top(array $options = []): void
 	</script>
 	<?php } ?>
 </head>
-<body class="p202-shell-<?php echo P202_UI_V2; ?> p202-standalone">
+<body class="<?php echo P202_SHELL_BODY_CLASS; ?> p202-standalone">
 	<?php if ($isWeb($wallpaperImg) && $isWeb($wallpaperUrl)) { ?>
 	<a class="p202-standalone__wallpaper" href="<?php echo $e($wallpaperUrl); ?>" target="_blank" rel="noopener" tabindex="-1" aria-hidden="true" style="background-image: url('<?php echo $e($wallpaperImg); ?>');"></a>
 	<?php } ?>

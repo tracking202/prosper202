@@ -22,7 +22,6 @@ require_once dirname(__DIR__, 2) . '/202-config/functions-ui-overview.php';
 $base = get_absolute_url();
 
 p202_overview_run([
-    'shell' => ['ui' => 'v2'],
     'id' => 'group-overview',
     'page_title' => 'Group Overview',
     'title' => 'Group overview',

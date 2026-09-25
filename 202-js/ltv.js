@@ -1,8 +1,8 @@
 /*
  * Analyze › Customer LTV: the section's router, on the v2 shell.
  *
- * Ported from the LTV block of 202-js/custom.php, which only the classic
- * shell loads. The views are server-rendered partials under tracking202/ajax/
+ * Ported from the LTV block of the classic shell's 202-js/custom.php (deleted
+ * with that shell in U8). The views are server-rendered partials under tracking202/ajax/
  * swapped into #m-content; this keeps what the classic router did:
  *
  *  - ltvNav(view, params) renders a view AND records it in the address bar as

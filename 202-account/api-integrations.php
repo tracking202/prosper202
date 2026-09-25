@@ -592,7 +592,7 @@ $keyIntegrations = [
 ];
 $cb_crypto_ok = extension_loaded('mcrypt') || function_exists("openssl_decrypt");
 
-template_top('API Integrations', ['ui' => 'v2']);
+template_top('API Integrations');
 ?>
 
 <div class="p202-page-header">

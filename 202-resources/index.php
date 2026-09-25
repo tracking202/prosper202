@@ -24,7 +24,7 @@ if (is_string($result) && $httpCode >= 200 && $httpCode < 300) {
 $deals = p202_resource_deals($data);
 $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
 
-template_top('Prosper202 ClickServer Hot Deals', ['ui' => 'v2']);  ?>
+template_top('Prosper202 ClickServer Hot Deals');  ?>
 
 <div class="p202-page-header">
     <div class="p202-page-header__icon"><i class="bi bi-star"></i></div>

@@ -14,9 +14,9 @@ use PHPUnit\Framework\TestCase;
  * private $DETAIL_LEVEL_ARRAY), and the classic advanced builder drew its
  * first three selectors from one and its fourth from the other — so the
  * Goal / source level, added to one copy, could be picked at every depth but
- * the last. The v2 page reads ReportSummaryForm's list for all four
- * (p202_overview_groupings()), and ReportSummaryForm runs every level's query
- * whichever list offered it.
+ * the last. That builder went with the classic shell (U8); the page reads
+ * ReportSummaryForm's list for all four (p202_overview_groupings()), and
+ * ReportSummaryForm runs every level's query whichever list offered it.
  */
 final class GroupingLevelOffersTest extends TestCase
 {
@@ -46,21 +46,17 @@ final class GroupingLevelOffersTest extends TestCase
     }
 
     /**
-     * The classic builder's four "Group By" selectors (display_calendar())
-     * each draw their options from ReportSummaryForm's list — the class that
-     * runs the query — and from nothing else.
+     * Group Overview's four "Group by" selectors draw their options from
+     * ReportSummaryForm's list — the class that runs the query — in its
+     * order, and from nothing else.
      */
-    public function testEveryClassicGroupingSelectorOffersTheReportsOwnList(): void
+    public function testThePageOffersTheReportsOwnList(): void
     {
-        $source = (string) file_get_contents($this->root . '/202-config/functions-tracking202.php');
-        $n = preg_match_all('~<select\b[^>]*\bname="details\[\]"[^>]*>(.*?)</select>~s', $source, $selects);
-        self::assertSame(4, $n, 'the classic builder has four grouping selectors');
-        foreach ($selects[1] as $i => $body) {
-            $level = $i + 1;
-            self::assertSame(1, preg_match_all('/getDetailArray\s*\(/', $body), "selector $level draws one level list");
-            self::assertSame(1, preg_match('/\bforeach\s*\(\s*(\\\\?[A-Za-z_][A-Za-z0-9_\\\\]*)\s*::\s*getDetailArray\s*\(\s*\)\s+as\s+\$detail_item\s*\)/', $body, $m),
-                "selector $level iterates a level list as \$detail_item");
-            self::assertSame('ReportSummaryForm', ltrim($m[1], '\\'), "selector $level offers ReportSummaryForm's levels");
-        }
+        require_once $this->root . '/202-config/functions-ui.php';
+        require_once $this->root . '/202-config/functions-ui-overview.php';
+        self::assertSame(
+            array_map('strval', \ReportSummaryForm::getDetailArray()),
+            array_map('strval', array_keys(p202_overview_groupings()))
+        );
     }
 }

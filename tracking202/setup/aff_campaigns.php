@@ -476,7 +476,7 @@ if (isset($_GET['dl_dni']) && isset($_GET['dl_offer_id']) && !isset($_POST['aff_
 	$getDlDniRow = $getDlDniResult->num_rows > 0 ? $getDlDniResult->fetch_assoc() : null;
 }
 
-template_top('Affiliate Campaigns Setup', ['ui' => 'v2']);
+template_top('Affiliate Campaigns Setup');
 ?>
 
 <div class="p202-page-header p202-page-header--accent">

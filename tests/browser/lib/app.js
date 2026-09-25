@@ -46,10 +46,7 @@ class App {
 
   // ── Getting in ────────────────────────────────────────────────────
 
-  /**
-   * Sign in, and clear the one-off survey that otherwise sits over the first
-   * page a fresh account sees.
-   */
+  /** Sign in. */
   async login() {
     await this.ui.goto(this.url('/202-login.php'));
     await this.ui.fill({
@@ -61,7 +58,6 @@ class App {
       this.page.press('input[type="password"]', 'Enter'),
     ]);
     await this.ui.goto(this.url('/202-account/'));
-    await this.dismissSurvey();
 
     // The login page is the only page with a password field; reaching one
     // without it is the proof the session took. Checking the URL is not
@@ -69,16 +65,6 @@ class App {
     const stillOnLogin = await this.ui.exists('input[type="password"]');
     if (stillOnLogin) {
       throw new Error('Login failed for "' + this.config.user + '" — the password field is still on the page');
-    }
-  }
-
-  async dismissSurvey() {
-    const skip = await this.page.$('#survey-form-skip');
-    if (skip && await skip.isVisible()) {
-      await skip.click();
-      await this.ui.until(async () => !(await this.ui.visible('#survey-form-skip')), {
-        describe: 'the survey to close',
-      });
     }
   }
 

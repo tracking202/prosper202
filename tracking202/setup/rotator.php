@@ -254,7 +254,7 @@ $ruleCard = static function (array $rule, array $criteria, array $redirects, boo
 		. '</div></section>';
 };
 
-template_top('Smart Redirector', ['ui' => 'v2']); ?>
+template_top('Smart Redirector'); ?>
 
 <div class="p202-page-header p202-page-header--accent">
 	<div class="p202-page-header__icon"><i class="bi bi-arrow-repeat"></i></div>

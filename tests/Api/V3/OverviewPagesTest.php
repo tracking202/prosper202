@@ -7,12 +7,11 @@ namespace Tests\Api\V3;
 use Tests\TestCase;
 
 /**
- * The Overview, Visitors and Spy pages on the v2 shell
- * (202-config/functions-ui-overview.php).
+ * The Overview, Visitors and Spy pages (202-config/functions-ui-overview.php).
  *
  * The pages are thin: each names its filters and its fragment, and
  * p202_overview_run() does the rest. What can go wrong without a browser
- * noticing is pinned here: a page that stops opting into the v2 shell, a
+ * noticing is pinned here: a page that stops going through the recipe, a
  * fragment a page loads that NoLegacyBootstrapClassesTest does not scan, the
  * grouping ids spelled out beside ReportBasicForm drifting from it, and the
  * pure helpers the fragments draw with. What only a browser can say is in
@@ -41,21 +40,34 @@ final class OverviewPagesTest extends TestCase
         require_once $this->root . '/202-config/functions-ui-overview.php';
     }
 
-    public function testEveryPageOfTheFamilyOptsIntoTheV2ShellThroughTheRecipe(): void
+    public function testEveryPageOfTheFamilyIsServedThroughTheRecipe(): void
     {
         foreach (self::PAGES as $page) {
             $source = (string) file_get_contents($this->root . '/' . $page);
-            self::assertStringContainsString("'shell' => ['ui' => 'v2']", $source, "$page names the v2 shell");
             self::assertSame(1, preg_match_all('/\bp202_overview_run\(/', $source), "$page is served by p202_overview_run()");
+            self::assertStringNotContainsString("'shell'", $source, "$page passes no 'shell': there is one page shell, and p202_overview_run() refuses the key");
             self::assertStringNotContainsString('display_calendar(', $source, "$page no longer renders the classic calendar");
-            self::assertStringNotContainsString('loadContent(', $source, "$page no longer calls the classic loader in custom.php, which v2 does not load");
+            self::assertStringNotContainsString('loadContent(', $source, "$page no longer calls the classic loader, which was deleted with the classic shell");
         }
     }
 
+    /**
+     * NoLegacyBootstrapClassesTest sweeps the whole tree but for the
+     * directories it names as not served; a fragment drawn into a page must
+     * not live in one of them.
+     */
     public function testEveryFragmentAPageLoadsIsScannedForLegacyClasses(): void
     {
-        $scanned = (new \ReflectionClassConstant(NoLegacyBootstrapClassesTest::class, 'V2_SHARED'))->getValue();
-        self::assertContains('202-js/p202-overview.js', $scanned, 'the script that draws the fragments is scanned');
+        $skipped = (new \ReflectionClassConstant(NoLegacyBootstrapClassesTest::class, 'SKIP_DIRS'))->getValue();
+        $scanned = static function (string $file) use ($skipped): bool {
+            foreach ($skipped as $dir) {
+                if (str_starts_with($file, $dir . '/')) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        self::assertTrue($scanned('202-js/p202-overview.js'), 'the script that draws the fragments is scanned');
         $fragments = [];
         foreach (self::PAGES as $page) {
             $source = (string) file_get_contents($this->root . '/' . $page);
@@ -68,7 +80,8 @@ final class OverviewPagesTest extends TestCase
         // click_history.php includes its row template, which draws every row.
         $fragments[] = 'tracking202/ajax/click_history_row.php';
         foreach (array_unique($fragments) as $fragment) {
-            self::assertContains($fragment, $scanned, "$fragment is drawn into a v2 page, so NoLegacyBootstrapClassesTest must scan it");
+            self::assertFileExists($this->root . '/' . $fragment);
+            self::assertTrue($scanned($fragment), "$fragment is drawn into a page, so NoLegacyBootstrapClassesTest must scan it");
         }
     }
 

@@ -68,7 +68,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $e = static fn (mixed $v): string => htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
 
-template_top('VIP Perks Profile', ['ui' => 'v2']);
+template_top('VIP Perks Profile');
 ?>
 
 <div class="p202-page-header">

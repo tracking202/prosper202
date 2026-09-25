@@ -1,8 +1,10 @@
 # The Prosper202 UI standard
 
-Prosper202's pages are moving, one page family at a time, from Bootstrap 3 with
-the Flat UI Pro theme to Bootstrap 5.3 with a Prosper202 theme. This document is
-the standard the new pages follow and the mechanics that let the two coexist.
+Prosper202's pages render on Bootstrap 5.3 with a Prosper202 theme. They moved
+there one page family at a time from Bootstrap 3 with the Flat UI Pro theme, and
+the old stack was deleted when the last family had moved (U8 of the
+measurement rewrite plan). This document is the standard the pages follow and
+the mechanics that hold them to it.
 
 ## What the standard is
 
@@ -104,35 +106,46 @@ everything, contrast holds in both themes, and dropdowns, tabs and modals work
 from the keyboard. Copy is written from the user's side: "Register app", then
 "Registered".
 
-## The two shells
+## The shell
 
-`template_top()` takes a `ui` option:
+There is one page shell. `template_top()` renders it:
 
 ```php
-template_top('Mobile Apps - Setup', ['ui' => 'v2']);   // Bootstrap 5.3 + theme + components
-template_top('Analyze Your Keywords');                  // classic: today's stack, unchanged
+template_top('Mobile Apps - Setup');
+template_top('Analyze Your Keywords', ['meta_description' => '…', 'body_class' => '…']);
 ```
 
-A v2 page loads Bootstrap 5.3, Bootstrap Icons, the theme and component files,
-jQuery 3.7 (for first-party glue that has not been rewritten yet) and, under
-`tracking202/`, the pinned Highcharts. It does not load Bootstrap 3, Flat UI Pro
-or the classic first-party layers (`custom.css`, `p202-ui.css`,
-`design-system.css`, `202-js/custom.php`): the two Bootstrap versions cannot
-share a page. A classic page gets exactly what it got before.
+It loads Bootstrap 5.3, Bootstrap Icons, the theme and component files, jQuery
+3.7 (for first-party glue that has not been rewritten) and, under
+`tracking202/`, the pinned Highcharts. The standalone pages (`info_top()`) load
+the same list without the chrome.
 
-The lists live in `p202_shell_assets()` in `202-config/functions-ui.php`, and
-`tests/Api/V3/ShellIsolationTest.php` asserts the two never share a framework
-file and that an unknown `ui` value is an error, not a silent fallback.
+Until U8 a second, classic shell existed (Bootstrap 3, Flat UI Pro, jQuery 1.11
+and their plugins), and a page chose with a `ui` option: `['ui' => 'v2']`. That
+option is gone with the classic shell. `template_top()` takes six options
+(`meta_description`, `meta_keywords`, `extra_head`, `body_class`, `body_id`,
+`body_style`) and throws `InvalidArgumentException` for any other key, so a
+leftover `'ui' => 'v2'` fails where it is written, with a sentence saying to
+delete it, instead of reading as though it still chose something. The overview
+family's `'shell'` key is refused the same way by `p202_overview_run()`.
 
-To move a page to v2: pass the option, rewrite its markup with Bootstrap 5
-classes and the component layer, and drop any inline `<style>` that duplicated
-the old kits. `tests/Api/V3/NoLegacyBootstrapClassesTest.php` fails the build if
-a v2 page still carries a Bootstrap 3 or Flat UI Pro class. Its banned set is
-not a hand-written list: it is every class Bootstrap 3.3.4 defines that
-Bootstrap 5.3 does not, read from the two stylesheets in the repository (about
-six hundred names — every grid offset, glyphicon, panel, well and navbar
-variant), plus Flat UI Pro's `fui-*` icons and component classes, plus the
-Bootstrap 3 data-API attributes (`data-toggle=` and friends; Bootstrap 5 uses
+The list lives in `p202_shell_assets()` in `202-config/functions-ui.php`, and
+`tests/Api/V3/ShellIsolationTest.php` asserts, for every context a page can put
+the shell in, that it loads no legacy file; that the manifest carries no
+`legacy.*` entry and nothing unloaded; that no legacy file is left in the tree
+for a page to name by path; that no PHP file passes a `ui` option; and, by
+rendering a page in a process of its own, that `template_top()` refuses one.
+
+`tests/Api/V3/NoLegacyBootstrapClassesTest.php` fails the build if any file the
+install serves — page, fragment, script, standalone page — or any first-party
+stylesheet carries a Bootstrap 3, Flat UI Pro or Font Awesome 4 class. Its
+banned set is not a hand-written list: it is every class Bootstrap 3.3.4
+defines that Bootstrap 5.3 does not (about six hundred names — every grid
+offset, glyphicon, panel, well and navbar variant), recorded from the 3.3.4
+stylesheet before U8 deleted it (`tests/fixtures/ui/bootstrap3-only-classes.txt`)
+and re-checked against the live Bootstrap 5 files, plus Flat UI Pro's `fui-*`
+icons and component classes, Font Awesome's `fa`/`fa-*`, and the Bootstrap 3
+data-API attributes (`data-toggle=` and friends; Bootstrap 5 uses
 `data-bs-*`). A class both versions define (`row`, `btn-primary`, `active`) is
 allowed. It reads class attributes wherever they are written — plain markup,
 inside a PHP string, with escaped quotes — and the ways a script names a class:
@@ -140,13 +153,13 @@ inside a PHP string, with escaped quotes — and the ways a script names a class
 
 ## Page scripts on v2: deferred, and DOM work waits for the document
 
-The v2 shell prints its page scripts (`js_page` in `p202_shell_assets()`:
+The shell prints its page scripts (`js_page` in `p202_shell_assets()`:
 Highcharts, `chart.theme.js`, `tablesort.js`, `p202-ui.js`, `p202-chrome.js`)
 in `<head>` with `defer`, so they run after the body is parsed, in the order
 listed, before `DOMContentLoaded`. jQuery and Bootstrap (`js_head`) still
-block, because inline scripts in a page call them as they are parsed. The
-classic shell is unchanged. `p202_shell_defers_page_scripts()` is the policy
-and `tests/Api/V3/UiPartialsTest` pins it.
+block, because inline scripts in a page call them as they are parsed.
+`tests/Api/V3/UiPartialsTest` pins the tags, and ShellIsolationTest's
+rendering probe that `template_top()` emits them that way.
 
 **The porting rule.** A script moved to a v2 page does its DOM work under
 `DOMContentLoaded` (or later), never as it is parsed. An inline script in the
@@ -165,8 +178,8 @@ A script that forgets throws at load, and the browser pass's
 
 ## One replacement per legacy job
 
-The classic shell carries a plugin for each of these; the v2 shell carries
-one answer each, decided in U1 of the migration and not re-decided per page.
+The classic shell carried a plugin for each of these; the shell carries one
+answer each, decided in U1 of the migration and not re-decided per page.
 
 | Job | On v2 | Why |
 |---|---|---|
@@ -214,48 +227,55 @@ option lists and calls them. The kit renders each in every state.
 ## The chrome is framework-neutral
 
 The header, the Prosper202 CS section tabs, the sub-menu (the Setup button grid
-and the Overview/Analyze/Update strip), the content frame and the footer are
-shared by both shells. Their markup, in `202-config/template.php`,
+and the Overview/Analyze/Update strip), the content frame and the footer were
+written to be shared by both shells while pages migrated, and still depend on
+no framework. Their markup, in `202-config/template.php`,
 `tracking202/_config/top.php` and `tracking202/_config/sub-menu.php`, uses only
 `.p202c-*` classes and inline SVG icons from `p202_chrome_icon()`, and is styled
-by `202-css/p202-chrome.css`, which depends on neither framework and carries its
-own tokens (`--p202c-*`). Never add a Bootstrap class of either version to that
-markup; one of the shells would break, and the structural test above scans all
-three files. The header's logo is the Prosper202 banner placement, an iframe, as
+by `202-css/p202-chrome.css`, which carries its own tokens (`--p202c-*`). The header's logo is the Prosper202 banner placement, an iframe, as
 it has always been; there is no second static logo beside it.
 
 The account menu is a `<details>` element, so it works with no framework
 script. `202-js/p202-chrome.js` closes it on outside clicks and Escape, scrolls
 the current tab and sub-menu item into view whenever the strip does not fit
 (which is a question about the strip, not the window — the Analyze strip
-overflows a 1280px desktop), and wires the theme switch on v2 pages. It is
-loaded in `<head>` (deferred on v2, blocking on classic), so everything it
-does runs from `DOMContentLoaded`.
+overflows a 1280px desktop), wires the theme switch, and draws the update
+banner. It is loaded in `<head>` with `defer`, so everything it does runs from
+`DOMContentLoaded`.
+
+**The update banner.** When a newer release is out, a dismissible flash sits
+under the header (`202-config/functions-update-banner.php`, the kit's
+`.p202-flash`): `p202-chrome.js` asks `202-account/ajax/check-for-update.php`
+to refresh the session's update state once the page is idle, then draws what
+`202-account/ajax/update-needed.php` answers into `#update_needed`. Closing it
+posts to `ajax/delay-alert.php`, which hides it for an hour in the session.
+The classic shell drew this banner in Bootstrap 3 panels from `custom.php`;
+it moved to the component layer in U8, and the release feed's text reaches the
+page as text, never as markup. Publishers (sub-accounts) do not get it.
 
 The chrome states its own font size and line height rather than inheriting
-them, because the two shells' `<body>` disagree (Flat UI Pro 18px/1,
-Bootstrap 5 15px/1.5). `tests/browser/specs/chrome-shells.spec.js` measures
-the chrome on a classic and a v2 page of the same family — at 1280px and
-390px, light and dark — and fails on any difference in a box, a font or,
-in light, a colour.
+them from `<body>`, a habit from when two shells disagreed about `<body>`.
 
 A page family can be styled without touching the chrome: `template_top()` puts
 the shell, the section and the sub-section on `<body>` as
-`p202-shell-<classic|v2> p202-section-<nav1> p202-sub-<nav2>`, which is how
-`custom.css` scopes the setup pages' panel styles to `body.p202-sub-setup`.
+`p202-shell-v2 p202-section-<nav1> p202-sub-<nav2>`. The shell's class kept
+its `v2` name when the classic shell went, because the live and browser passes
+read it.
 
 ## Assets are pinned and served from the install
 
 Every third-party file is listed in `202-config/assets.php` with its version
 and, for files in this repository, the SHA-384 of the exact bytes — Bootstrap 5
-and its icons, jQuery, and on the classic side Bootstrap 3, Flat UI Pro, Font
-Awesome, Select2, tokenfield, typeahead, the tablesorter plugins, tablesort,
-List.js and the rest. A file whose bytes are not an upstream release build says
-so in a `patched` note.
+and its icons, jQuery, tablesort and the pinned Highcharts URL. The classic
+stack's entries (`legacy.*`: Bootstrap 3, Flat UI Pro, Font Awesome, Select2,
+tokenfield, typeahead, the tablesorter plugins, jQuery 1.11 and jQuery UI) and
+List.js went with their files in U8; an asset nobody loads is deleted, and
+ShellIsolationTest fails on one. A file whose bytes are not an upstream release
+build says so in a `patched` note.
 
 `tests/Api/V3/AssetManifestTest.php` checks each file against the list, so a
 re-minified or swapped file, or a version that drifted from its filename, fails
-the build. `tests/Api/V3/ShellIsolationTest.php` closes the other half: a shell
+the build. `tests/Api/V3/ShellIsolationTest.php` closes the other half: the shell
 may name a bare path only for a first-party file it lists, so a new third-party
 file cannot be added without a manifest entry, and it sweeps every PHP, JS and
 HTML file in the tree for a `<script src>`, a stylesheet `<link>` or a quoted
@@ -289,6 +309,7 @@ page that builds its own head, with `p202_asset_tag('<id>', $base)`.
 5. Account pages and login.
 6. The classic shell, Bootstrap 3, Flat UI Pro, jQuery 1.11 and the old CSS
    layers are deleted, and the structural tests apply to the whole tree.
+   **Done in U8.**
 
 <!-- U2: Overview, Visitors, Spy -->
 ## Classic reports on v2: the URL applied to the stored filters

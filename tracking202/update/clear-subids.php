@@ -114,7 +114,7 @@ if ($chosenNetwork === '') {
 	$chosenNetwork = p202_setup_only_option($lists['networks']) ?? '';
 }
 
-template_top('Clear Subids', ['ui' => 'v2']);
+template_top('Clear Subids');
 
 echo p202_update_header('bi-arrow-counterclockwise', 'Reset campaign subids', 'Clear every conversion in a category or one of its campaigns, then upload the right subids again.');
 

@@ -1451,11 +1451,11 @@ class ReportSummaryForm extends ReportBasicForm
 			} else if (ReportBasicForm::DISPLAY_LEVEL_ROI == $display_item_key) {
 
 				if ($row->getRoi() < 0) {
-					$html_val .= '<td><span class="label label-important">';
+					$html_val .= '<td><span class="badge text-bg-danger">';
 				} else if ($row->getRoi() > 0) {
-					$html_val .= '<td><span class="label label-primary">';
+					$html_val .= '<td><span class="badge text-bg-success">';
 				} else {
-					$html_val .= '<td><span class="label label-default">';
+					$html_val .= '<td><span class="badge text-bg-secondary">';
 				}
 				$html_val .= $row->getRoi() . "%</span></td>";
 			}

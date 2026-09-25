@@ -4,7 +4,7 @@ include_once(str_repeat("../", 1).'202-config/connect.php');
 
 AUTH::require_user();
 
-template_top('API Key Required', ['ui' => 'v2']);  ?>
+template_top('API Key Required');  ?>
 
 <div class="p202-page-header">
 	<div class="p202-page-header__icon"><i class="bi bi-key"></i></div>

@@ -43,7 +43,7 @@ $usage = ($domainsUsed !== null && $domainsAvail) ? round($domainsUsed / $domain
 
 $e = static fn (mixed $v): string => htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
 
-template_top('ClickServer Management', ['ui' => 'v2']);
+template_top('ClickServer Management');
 ?>
 
 <div class="p202-page-header">

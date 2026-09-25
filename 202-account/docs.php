@@ -51,7 +51,7 @@ if (preg_match('~^\s*<h1>(.*?)</h1>~s', $html_content, $first_heading)) {
     $html_content = substr($html_content, strlen($first_heading[0]));
 }
 
-template_top($doc_titles[$doc], ['ui' => 'v2']); ?>
+template_top($doc_titles[$doc]); ?>
 
 <div class="p202-page-header">
     <div class="p202-page-header__icon"><i class="bi bi-book"></i></div>

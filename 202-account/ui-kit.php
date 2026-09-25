@@ -20,7 +20,7 @@ if (!isset($userObj) || !$userObj->hasPermission('access_to_settings')) {
 
 $base = get_absolute_url();
 
-template_top('UI Kit', ['ui' => 'v2']);
+template_top('UI Kit');
 
 $sections = [
 	'tokens' => 'Tokens',

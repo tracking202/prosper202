@@ -713,25 +713,24 @@ function p202_overview_empty(string $base, string $title = 'No clicks in this ra
 }
 
 /**
- * Serve a report page: apply the URL's filters, then render the page on the
- * v2 shell. The page file says what it is; this does the rest, the same way
- * for every page in the family.
+ * Serve a report page: apply the URL's filters, then render the page. The
+ * page file says what it is; this does the rest, the same way for every page
+ * in the family.
  *
  * A failure to read or write the filters is said on the page, in the shell,
  * rather than as a blank 500: the report cannot be drawn, and the reader
  * needs to know it was not an empty one.
  *
  * @param array<string, mixed> $page  as p202_overview_page(), without
- *   `state`, `lists`, `base` and `offset`, plus `shell` (the template_top()
- *   options, which must be the v2 shell's), `defaults` for
- *   p202_overview_page_state() and `page_title` for <title>
+ *   `state`, `lists`, `base` and `offset`, plus `defaults` for
+ *   p202_overview_page_state() and `page_title` for <title>. The `shell` key
+ *   the family passed while two page shells existed is refused: there is
+ *   one shell (U8), and a leftover would read as though it chose something.
  */
 function p202_overview_run(array $page): void
 {
-    // The page names its shell, so a grep for the v2 opt-in finds every page
-    // of this family, and NoLegacyBootstrapClassesTest selects it.
-    if (($page['shell'] ?? null) !== ['ui' => 'v2']) {
-        throw new InvalidArgumentException("p202_overview_run(): a page of this family passes 'shell' => ['ui' => 'v2']");
+    if (array_key_exists('shell', $page)) {
+        throw new InvalidArgumentException("p202_overview_run(): 'shell' is gone with the classic page shell; delete it from the page");
     }
     $base = get_absolute_url();
     $userId = (int) ($_SESSION['user_id'] ?? 0);
@@ -761,7 +760,7 @@ function p202_overview_run(array $page): void
         ]);
     } catch (RuntimeException $error) {
         error_log('Report page ' . (string) ($page['id'] ?? '?') . ': ' . $error->getMessage());
-        template_top((string) ($page['page_title'] ?? $page['title']), $page['shell']);
+        template_top((string) ($page['page_title'] ?? $page['title']));
         echo p202_flash('bad', 'The report filters could not be read or saved, so this report cannot be drawn. Reload the page; if it keeps happening, the database is refusing the request and the server log says why.');
         template_bottom();
         return;
@@ -769,7 +768,7 @@ function p202_overview_run(array $page): void
 
     $page['base'] = $base;
     $page['offset'] = max(0, (int) ($_GET['offset'] ?? 0));
-    template_top((string) ($page['page_title'] ?? $page['title']), $page['shell']);
+    template_top((string) ($page['page_title'] ?? $page['title']));
     echo p202_overview_page($page);
     template_bottom();
 }

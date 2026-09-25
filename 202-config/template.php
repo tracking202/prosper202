@@ -21,20 +21,21 @@ require_once __DIR__ . '/functions-ui.php';
  *   template_top('Title', ['meta_description' => '...', 'meta_keywords' => '...',
  *                          'body_class' => 'dashboard', 'body_id' => 'home',
  *                          'body_style' => 'background: #000;',
- *                          'extra_head' => '<link rel="...">',
- *                          'ui' => 'v2']);
+ *                          'extra_head' => '<link rel="...">']);
  *
- * Two page shells exist while the site migrates to Bootstrap 5 (see
- * functions-ui.php): 'classic' (the default, today's stack) and 'v2'
- * (Bootstrap 5.3 with the Prosper202 theme and component layer). The chrome
- * around the page — navbar, section tabs, sub-menu, footer — is the same
- * markup for both and is styled by 202-css/p202-chrome.css, which depends on
- * neither framework. Add Bootstrap classes to the chrome markup in this file,
- * in tracking202/_config/top.php or in tracking202/_config/sub-menu.php and
- * one of the two shells breaks; tests/Api/V3/NoLegacyBootstrapClassesTest.php
- * checks for the Bootstrap 3 ones.
+ * Every page renders on the one shell: Bootstrap 5.3 with the Prosper202
+ * theme and component layer (see functions-ui.php). The chrome around the
+ * page — navbar, section tabs, sub-menu, footer — is styled by
+ * 202-css/p202-chrome.css; tests/Api/V3/NoLegacyBootstrapClassesTest.php
+ * keeps Bootstrap 3 and Flat UI classes out of it and out of every page.
  *
- * Any unrecognised legacy positional arguments are ignored safely.
+ * The options array takes the six keys above and nothing else. A key it does
+ * not know is an InvalidArgumentException, not a silent no-op: in particular
+ * the 'ui' option that chose between the classic and v2 shells is gone with
+ * the classic shell (U8), and a leftover `'ui' => ...` must fail where it is
+ * written rather than read as though it still chose something.
+ *
+ * Positional arguments after the sixth are ignored, as they always were.
  *
  * @param string $title Page title (default: 'Prosper202 ClickServer')
  * @param mixed ...$legacyArgs Variable number of legacy arguments:
@@ -45,6 +46,7 @@ require_once __DIR__ . '/functions-ui.php';
  *   - $legacyArgs[4]: string Body ID (legacy format only)
  *   - $legacyArgs[5]: string Body style (legacy format only)
  * @return void
+ * @throws InvalidArgumentException for an option key other than the six above
  * @since 1.0.0
  */
 function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
@@ -104,8 +106,7 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 			}
 		}
 
-	$ui = p202_ui_shell($options['ui'] ?? null);
-	$GLOBALS['p202_current_ui'] = $ui;
+	p202_template_options_are_known($options);
 
 	if (isset($options['meta_description'])) {
 		$metaDescription = (string) $options['meta_description'];
@@ -120,9 +121,9 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 	}
 
 	// The shell, the section and the sub-section, so a stylesheet can scope
-	// rules to a page family (custom.css scopes the setup pages' styles to
-	// body.p202-sub-setup). Values come from the URL path, so they are slugged.
-	$bodyClasses = ['p202-shell-' . $ui];
+	// rules to a page family (body.p202-sub-setup, say). Values come from the
+	// URL path, so they are slugged.
+	$bodyClasses = [P202_SHELL_BODY_CLASS];
 	$slug = static fn (string $part): string => trim((string) preg_replace('/[^a-z0-9]+/', '-', strtolower((string) preg_replace('/\.php$/', '', $part))), '-');
 	$sectionSlug = $slug((string) ($navigation[1] ?? ''));
 	$subSlug = $slug((string) ($navigation[2] ?? ''));
@@ -161,17 +162,14 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 		$bodyAttributeString = ' ' . implode(' ', $bodyAttributes);
 
 	$base = get_absolute_url();
-	$assets = p202_shell_assets($ui, [
+	$assets = p202_shell_assets([
 		'section' => $navigation[1] ?? '',
-		'sub' => $navigation[2] ?? '',
-		'page' => $navigation[3] ?? '',
 		'logged_in' => !empty($_SESSION['user_id']),
-		'ddlci' => (string) ($_GET['ddlci'] ?? ''),
 	]);
 ?>
 
 	<!DOCTYPE html>
-	<html lang="en"<?php if ($ui === P202_UI_V2) { echo ' data-bs-theme="light"'; } ?>>
+	<html lang="en" data-bs-theme="light">
 
 	<head>
 		<meta charset="utf-8">
@@ -186,7 +184,6 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 		<meta name="robots" content="noindex, nofollow" />
 		<meta http-equiv="imagetoolbar" content="no" />
 		<link rel="shortcut icon" href="<?php echo $base; ?>202-img/favicon.gif" type="image/ico" />
-		<?php if ($ui === P202_UI_V2) { ?>
 		<script>
 			/* Apply the saved or system theme before first paint so the page never flashes. */
 			(function () {
@@ -202,17 +199,15 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 				document.documentElement.setAttribute('data-bs-theme', theme);
 			})();
 		</script>
-		<?php } ?>
 		<?php foreach ($assets['css'] as $item) { echo "\t\t" . p202_shell_asset_tag($item, $base) . "\n"; } ?>
 		<?php foreach ($assets['js_head'] as $item) { echo "\t\t" . p202_shell_asset_tag($item, $base) . "\n"; } ?>
 		<?php if ($extraHeadMarkup !== '') {
 			echo $extraHeadMarkup;
 		} ?>
 		<?php
-		// Deferred on v2: they run after the body is parsed, in this order
-		// (p202_shell_defers_page_scripts() says why and what it asks of a page).
-		$deferPage = p202_shell_defers_page_scripts($ui);
-		foreach ($assets['js_page'] as $item) { echo "\t\t" . p202_shell_asset_tag($item, $base, $deferPage) . "\n"; } ?>
+		// Deferred: they run after the body is parsed, in this order
+		// (p202_shell_assets() says why and what it asks of a page).
+		foreach ($assets['js_page'] as $item) { echo "\t\t" . p202_shell_asset_tag($item, $base, true) . "\n"; } ?>
 		<script>
 			/* Attach the session token to same-origin POST requests so server-side
 			   token checks succeed without modifying every individual caller. */
@@ -250,8 +245,10 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 	<body<?php echo $bodyAttributeString; ?>>
 
 		<div class="p202-frame">
-			<?php echo p202_chrome_header($ui, is_array($navigation) ? $navigation : [], $userObj ?? null, $user_data, $base); ?>
-			<div id="update_needed"></div>
+			<?php echo p202_chrome_header(is_array($navigation) ? $navigation : [], $userObj ?? null, $user_data, $base); ?>
+			<?php if (!empty($_SESSION['user_id']) && empty($_SESSION['publisher'])) { ?>
+			<div id="update_needed" class="p202c-update" data-p202-check="<?php echo htmlspecialchars($base . '202-account/ajax/check-for-update.php', ENT_QUOTES, 'UTF-8'); ?>" data-p202-banner="<?php echo htmlspecialchars($base . '202-account/ajax/update-needed.php', ENT_QUOTES, 'UTF-8'); ?>" data-p202-snooze="<?php echo htmlspecialchars($base . '202-account/ajax/delay-alert.php', ENT_QUOTES, 'UTF-8'); ?>"></div>
+			<?php } ?>
 
 			<?php if (($navigation[1] ?? '') == 'tracking202') {
 				include_once(substr(__DIR__, 0, -10) . '/tracking202/_config/top.php');
@@ -268,19 +265,38 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 			<?php }
 
 /**
+ * Refuse an option template_top() does not know.
+ *
+ * @param array<mixed> $options
+ * @throws InvalidArgumentException
+ */
+function p202_template_options_are_known(array $options): void
+{
+	static $known = ['meta_description', 'meta_keywords', 'extra_head', 'body_class', 'body_id', 'body_style'];
+	foreach (array_keys($options) as $key) {
+		if ($key === 'ui') {
+			throw new InvalidArgumentException("template_top() no longer takes a 'ui' option: there is one page shell since the classic one was removed. Delete 'ui' from the call.");
+		}
+		if (!in_array($key, $known, true)) {
+			throw new InvalidArgumentException("template_top() has no option '" . $key . "'; it takes " . implode(', ', $known) . '.');
+		}
+	}
+}
+
+/**
  * The shared header: the logo placement, primary navigation, account menu.
  *
  * The logo is the Prosper202 banner iframe, as the old navbar had it, so it
  * can change without a release. The static 202-img/prosper202.png that the
  * first draft of this header put beside it is gone: it was a second logo.
  *
- * Framework-neutral markup (see the class comment above); icons are inline
- * SVG so the classic shell, which loads no icon font, draws the same ones.
+ * Framework-neutral markup (see the comment on template_top()); icons are
+ * inline SVG, so the header draws before the icon font arrives.
  *
  * @param array<int, string> $navigation
  * @param array<string, mixed> $userData
  */
-function p202_chrome_header(string $ui, array $navigation, ?object $userObj, array $userData, string $base): string
+function p202_chrome_header(array $navigation, ?object $userObj, array $userData, string $base): string
 {
 	$nav1 = (string) ($navigation[1] ?? '');
 	$nav2 = (string) ($navigation[2] ?? '');
@@ -348,14 +364,12 @@ function p202_chrome_header(string $ui, array $navigation, ?object $userObj, arr
 		}
 		$html .= '</a></li>';
 	}
-	if ($ui === P202_UI_V2) {
-		$html .= '<li class="p202c-menu__sep" role="separator"></li>';
-		$html .= '<li><div class="p202c-theme" role="group" aria-label="Theme"><span>Theme</span>'
-			. '<button type="button" data-theme-choice="system" aria-pressed="false" title="Follow the system setting">Auto</button>'
-			. '<button type="button" data-theme-choice="light" aria-pressed="false" title="Light">' . p202_chrome_icon('sun') . '</button>'
-			. '<button type="button" data-theme-choice="dark" aria-pressed="false" title="Dark">' . p202_chrome_icon('moon') . '</button>'
-			. '</div></li>';
-	}
+	$html .= '<li class="p202c-menu__sep" role="separator"></li>';
+	$html .= '<li><div class="p202c-theme" role="group" aria-label="Theme"><span>Theme</span>'
+		. '<button type="button" data-theme-choice="system" aria-pressed="false" title="Follow the system setting">Auto</button>'
+		. '<button type="button" data-theme-choice="light" aria-pressed="false" title="Light">' . p202_chrome_icon('sun') . '</button>'
+		. '<button type="button" data-theme-choice="dark" aria-pressed="false" title="Dark">' . p202_chrome_icon('moon') . '</button>'
+		. '</div></li>';
 	$html .= '</ul></details>';
 	$html .= '<a class="p202c-nav__link" href="' . $e($base . '202-account/signout.php') . '" id="SignoutPage">' . p202_chrome_icon('exit') . '<span>Sign Out</span></a>';
 	$html .= '</div>';
@@ -367,7 +381,6 @@ function p202_chrome_header(string $ui, array $navigation, ?object $userObj, arr
 			function template_bottom()
 			{
 				global $version;
-				$ui = $GLOBALS['p202_current_ui'] ?? P202_UI_CLASSIC;
 				$base = get_absolute_url();
 
 				?>
@@ -411,13 +424,6 @@ function p202_chrome_header(string $ui, array $navigation, ?object $userObj, arr
 		</script>
 
 
-		<?php
-				// The VIP Perks survey is Bootstrap 3 markup driven by the classic
-				// shell's jQuery; the v2 shell gets its own when the account pages migrate.
-				if ($ui === P202_UI_CLASSIC && (!isset($_SESSION['publisher']) || $_SESSION['publisher'] !== true)) {
-					include __DIR__ . '/template-parts/survey-modal-classic.php';
-				}
-		?>
 		<script type="text/javascript">
 			window.addEventListener('load', function() {
 				window.setTimeout(function() {

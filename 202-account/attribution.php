@@ -526,7 +526,7 @@ if ($reportError !== null) {
 	$pageFlashes[] = ['kind' => 'warn', 'text' => $reportError];
 }
 
-template_top('Attribution', ['ui' => 'v2']);
+template_top('Attribution');
 
 $tabView = $view === 'journey' ? 'journeys' : $view;
 $field = static fn (string $name, string $default = ''): string => (string) ($form[$name] ?? $default);

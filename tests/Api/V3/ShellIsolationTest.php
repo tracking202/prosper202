@@ -7,50 +7,30 @@ namespace Tests\Api\V3;
 use Tests\TestCase;
 
 /**
- * The two page shells never share a framework file, load nothing third-party
- * that the manifest does not pin, and nothing in the tree loads a library
- * from a host this install does not control.
+ * No page can reach a legacy asset, no `ui` option exists, the shell loads
+ * nothing third-party that the manifest does not pin, and nothing in the tree
+ * loads a library from a host this install does not control.
  *
- * A page on the v2 shell runs Bootstrap 5.3; a classic page runs Bootstrap 3
- * with Flat UI Pro. The two cannot coexist on one page — each carries a
- * global reset and its own grid — so p202_shell_assets() must hand every
- * page exactly one of the two stacks, and the chrome, which both shells
- * render, must come from neither. A typo in the 'ui' option must be an
- * error, not a fallback to the wrong stack around the wrong markup.
+ * Until U8 there were two shells, and this test kept their stacks apart. U8
+ * deleted the classic one (Bootstrap 3, Flat UI Pro, jQuery 1.11 and the
+ * plugins written against them) with every file it loaded, so the invariant
+ * is now about every page rather than the pages that opted out:
  *
- * Manifest ids are compared by the file they resolve to, so a classic asset
- * cannot slip into the v2 list under its id; every `legacy.*` id is classic
- * by definition, so the forbidden set grows with the manifest.
+ *   - the shell's asset list, in every context a page can put it in, names
+ *     no legacy file, and every file it names exists;
+ *   - the manifest carries no `legacy.*` entry, no file under a legacy/
+ *     directory and no Bootstrap 3, Flat UI, Font Awesome 4, jQuery 1.x or
+ *     jQuery UI build, and every entry in it is loaded (an asset nobody loads
+ *     is deleted, not kept "just in case");
+ *   - none of those files is left in the tree for a page to name by path;
+ *   - no PHP file names a `ui` (or overview `shell`) option, and
+ *     template_top() refuses one when it is passed anyway — executed, in a
+ *     process of its own, not read.
  */
 final class ShellIsolationTest extends TestCase
 {
-    /** Only the v2 shell may load these (manifest ids or first-party paths). */
-    private const V2_ONLY = [
-        'bootstrap.css',
-        'bootstrap.js',
-        'bootstrap-icons.css',
-        'jquery.js',
-        '202-css/p202-theme.css',
-        '202-css/p202-components.css',
-        '202-js/p202-ui.js',
-    ];
-
-    /** Only the classic shell may load these, in addition to every `legacy.*` manifest id. */
-    private const CLASSIC_ONLY = [
-        '202-css/custom.css',
-        '202-css/p202-ui.css',
-        '202-css/design-system.css',
-        '202-js/custom.php',
-        '202-js/account.php',
-    ];
-
-    private const CHROME = [
-        '202-css/p202-chrome.css',
-        '202-js/p202-chrome.js',
-    ];
-
     /**
-     * The only files a shell may load by bare path. Everything else is
+     * The only files the shell may load by bare path. Everything else is
      * third-party and goes through the manifest, which records its version
      * and hash. Add a first-party file here when the shell gains one.
      */
@@ -59,16 +39,21 @@ final class ShellIsolationTest extends TestCase
         '202-css/p202-theme.css',
         '202-css/p202-components.css',
         '202-css/messenger.css',
-        '202-css/custom.css',
-        '202-css/p202-ui.css',
-        '202-css/design-system.css',
         '202-js/p202-chrome.js',
         '202-js/p202-ui.js',
         '202-js/chart.theme.js',
-        '202-js/custom.php',
-        '202-js/account.php',
-        '202-js/dni.search.offers.tablesorter.php',
     ];
+
+    /**
+     * What a legacy file looks like, by path or URL: the classic stack's
+     * libraries and the first-party layers written for it. Matched against
+     * every file the shell loads, every manifest entry and every file left
+     * in 202-css/ and 202-js/.
+     */
+    private const LEGACY_FILE = '~(?:^|/)legacy/|bootstrap-3\.|flat-?ui|font-?awesome|fontawesome|glyphicons|jquery-1\.|jquery-ui|select2|tablesorter|tokenfield|typeahead|jquery\.validate|radiocheck|fileinput|(?:^|/)(?:custom|design-system|p202-ui)\.css$|(?:^|/)(?:custom|account|dni\.search\.offers\.tablesorter)\.(?:php|js)$~i';
+
+    /** Directories the classic stack lived in; none of them may come back. */
+    private const LEGACY_DIRS = ['202-css/css', '202-css/vendor/legacy', '202-js/vendor/legacy', '202-css/images', '202-config/template-parts'];
 
     /**
      * External script or stylesheet URLs that may appear anywhere in the
@@ -95,78 +80,119 @@ final class ShellIsolationTest extends TestCase
         require_once dirname(__DIR__, 3) . '/202-config/functions-ui.php';
     }
 
-    public function testTheClassicShellLoadsNoBootstrapFiveFile(): void
-    {
-        $forbidden = array_map($this->toFile(...), self::V2_ONLY);
-        foreach ($this->contexts() as $label => $context) {
-            $loaded = $this->filesLoaded(P202_UI_CLASSIC, $context);
-            foreach ($forbidden as $file) {
-                self::assertNotContains($file, $loaded, "classic/$label loads $file, which belongs to the v2 shell");
-            }
-        }
-    }
-
-    public function testTheV2ShellLoadsNoClassicFile(): void
-    {
-        $forbidden = array_map($this->toFile(...), self::CLASSIC_ONLY);
-        $legacyIds = array_values(array_filter(array_keys(p202_asset_manifest()), static fn (string $id): bool => str_starts_with($id, 'legacy.')));
-        self::assertGreaterThan(10, count($legacyIds), 'the manifest lists the classic-only files under the legacy. prefix');
-        foreach ($legacyIds as $id) {
-            $forbidden[] = $this->toFile($id);
-        }
-        foreach ($this->contexts() as $label => $context) {
-            $loaded = $this->filesLoaded(P202_UI_V2, $context);
-            foreach ($forbidden as $file) {
-                self::assertNotContains($file, $loaded, "v2/$label loads $file, which belongs to the classic shell");
-            }
-        }
-    }
-
-    public function testBothShellsLoadTheChromeAndNothingElseSharesAFramework(): void
-    {
-        foreach ($this->contexts() as $label => $context) {
-            foreach ([P202_UI_CLASSIC, P202_UI_V2] as $ui) {
-                $loaded = $this->filesLoaded($ui, $context);
-                foreach (self::CHROME as $chrome) {
-                    self::assertContains($chrome, $loaded, "$ui/$label loads the chrome file $chrome");
-                }
-                $assets = p202_shell_assets($ui, $context);
-                self::assertSame('202-css/p202-chrome.css', $assets['css'][$ui === P202_UI_V2 ? 0 : count($assets['css']) - ($context['logged_in'] ?? false ? 2 : 1)]['path'] ?? '', "$ui/$label: the chrome sheet loads first on v2 and last (before the messenger) on classic");
-            }
-        }
-    }
-
-    public function testEveryBarePathTheShellsLoadIsFirstParty(): void
+    public function testNoContextLoadsALegacyFile(): void
     {
         $root = dirname(__DIR__, 3);
+        foreach ($this->contexts() as $label => $context) {
+            $loaded = $this->filesLoaded($context);
+            self::assertNotEmpty($loaded, "$label loads something");
+            foreach ($loaded as $file) {
+                self::assertSame(0, preg_match(self::LEGACY_FILE, $file), "$label loads $file, a file of the deleted classic stack");
+                if (!str_starts_with($file, 'https://')) {
+                    self::assertFileExists($root . '/' . $file, "$label loads $file, which is not in the repository");
+                }
+            }
+        }
+    }
+
+    public function testTheManifestCarriesNoLegacyEntryAndNothingUnloaded(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $loaded = [];
+        foreach ($this->contexts() as $context) {
+            foreach (['css', 'js_head', 'js_page'] as $list) {
+                foreach (p202_shell_assets($context)[$list] as $item) {
+                    if (isset($item['asset'])) {
+                        $loaded[$item['asset']] = true;
+                    }
+                }
+            }
+        }
+        // A font is loaded by the stylesheet that names it, not by a tag.
+        $stylesheets = '';
+        foreach (array_keys($loaded) as $id) {
+            $asset = p202_asset($id);
+            if (isset($asset['path']) && str_ends_with($asset['path'], '.css')) {
+                $stylesheets .= (string) file_get_contents($root . '/' . $asset['path']);
+            }
+        }
+
+        foreach (p202_asset_manifest() as $id => $asset) {
+            $location = $asset['path'] ?? $asset['url'];
+            self::assertFalse(str_starts_with($id, 'legacy.'), "$id: the legacy entries were deleted with the classic shell");
+            self::assertSame(0, preg_match(self::LEGACY_FILE, $location), "$id ($location) is a file of the deleted classic stack");
+            if (isset($loaded[$id])) {
+                continue;
+            }
+            $isFont = preg_match('~\.(?:woff2?|ttf|otf|eot)$~', $location) === 1;
+            self::assertTrue($isFont && str_contains($stylesheets, basename($location)), "$id is in the manifest but nothing loads it; delete it (an asset nobody loads is not kept)");
+        }
+    }
+
+    public function testNoLegacyFileIsLeftInTheTree(): void
+    {
+        $root = dirname(__DIR__, 3);
+        foreach (self::LEGACY_DIRS as $dir) {
+            self::assertDirectoryDoesNotExist($root . '/' . $dir, "$dir held the classic stack");
+        }
+        $left = [];
+        $seen = 0;
+        foreach (['202-css', '202-js'] as $top) {
+            $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root . '/' . $top, \FilesystemIterator::SKIP_DOTS));
+            foreach ($iterator as $file) {
+                /** @var \SplFileInfo $file */
+                if (!$file->isFile()) {
+                    continue;
+                }
+                $seen++;
+                $relative = substr($file->getPathname(), strlen($root) + 1);
+                if (preg_match(self::LEGACY_FILE, $relative) === 1) {
+                    $left[] = $relative;
+                }
+            }
+        }
+        self::assertGreaterThan(10, $seen, 'the sweep walked 202-css/ and 202-js/');
+        self::assertSame([], $left, "Files of the deleted classic stack are still in the tree, where a page could name them by path:\n" . implode("\n", $left));
+    }
+
+    public function testTheChromeLoadsFirstAndEverywhere(): void
+    {
+        foreach ($this->contexts() as $label => $context) {
+            $assets = p202_shell_assets($context);
+            self::assertSame('202-css/p202-chrome.css', $assets['css'][0]['path'] ?? '', "$label: the chrome sheet loads first");
+            self::assertContains('202-js/p202-chrome.js', $this->filesLoaded($context), "$label loads the chrome script");
+        }
+    }
+
+    public function testEveryBarePathTheShellLoadsIsFirstPartyAndEveryFirstPartyFileIsLoaded(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $used = [];
         foreach (self::FIRST_PARTY as $file) {
             self::assertFileExists($root . '/' . $file, "$file is in the repository");
             self::assertStringNotContainsString('/vendor/', $file, "$file is not a vendored library");
         }
         foreach ($this->contexts() as $label => $context) {
-            foreach ([P202_UI_CLASSIC, P202_UI_V2] as $ui) {
-                $assets = p202_shell_assets($ui, $context);
-                foreach (['css', 'js_head', 'js_page'] as $list) {
-                    foreach ($assets[$list] as $item) {
-                        if (isset($item['asset'])) {
-                            continue;
-                        }
-                        self::assertContains($item['path'] ?? '', self::FIRST_PARTY, "$ui/$label loads {$item['path']} by bare path; a third-party file goes through 202-config/assets.php, a first-party one is listed in this test");
+            $assets = p202_shell_assets($context);
+            foreach (['css', 'js_head', 'js_page'] as $list) {
+                foreach ($assets[$list] as $item) {
+                    if (isset($item['asset'])) {
+                        continue;
                     }
+                    self::assertContains($item['path'] ?? '', self::FIRST_PARTY, "$label loads {$item['path']} by bare path; a third-party file goes through 202-config/assets.php, a first-party one is listed in this test");
+                    $used[$item['path']] = true;
                 }
             }
         }
+        self::assertSame([], array_values(array_diff(self::FIRST_PARTY, array_keys($used))), 'every listed first-party file is loaded in some context; drop the ones that are not');
     }
 
-    public function testTheV2ShellCarriesChartsWhereTheClassicOneDoes(): void
+    public function testChartsLoadOnlyInTheTrackingSection(): void
     {
-        $charted = ['section' => 'tracking202', 'sub' => 'analyze', 'page' => 'keywords.php', 'logged_in' => true];
-        $plain = ['section' => '202-account', 'sub' => 'help.php', 'logged_in' => true];
         $highcharts = $this->toFile('highcharts.js');
-        self::assertContains($highcharts, $this->filesLoaded(P202_UI_V2, $charted));
-        self::assertContains($highcharts, $this->filesLoaded(P202_UI_CLASSIC, $charted));
-        self::assertNotContains($highcharts, $this->filesLoaded(P202_UI_V2, $plain));
-        self::assertNotContains($highcharts, $this->filesLoaded(P202_UI_CLASSIC, $plain));
+        self::assertContains($highcharts, $this->filesLoaded(['section' => 'tracking202', 'logged_in' => true]));
+        self::assertNotContains($highcharts, $this->filesLoaded(['section' => '202-account', 'logged_in' => true]));
+        self::assertNotContains($highcharts, $this->filesLoaded(['logged_in' => false]));
     }
 
     public function testNothingLoadsAScriptOrStylesheetFromAnUnpinnedExternalHost(): void
@@ -217,15 +243,95 @@ final class ShellIsolationTest extends TestCase
         self::assertSame([], $offences, "External script or stylesheet loads that are neither the pinned Highcharts build nor a listed service loader (pin the file in 202-config/assets.php, or add the loader to EXTERNAL_SERVICE_LOADERS with its reason):\n" . implode("\n", $offences));
     }
 
-    public function testUnknownShellIsAnError(): void
+    /**
+     * No PHP file passes a `ui` option as an array key. Read from the token
+     * stream, so a key written with either quote, any spacing or a comment
+     * before the arrow is seen; a string that merely mentions the word (an
+     * error message, a docblock) is not a key and is not flagged. The
+     * overview family's `shell` key is refused by p202_overview_run() and
+     * pinned by OverviewPagesTest; 'shell' is also an API capability name,
+     * so it is not banned tree-wide.
+     */
+    public function testNoPhpFileNamesAUiOption(): void
     {
-        self::assertSame(P202_UI_CLASSIC, p202_ui_shell(null));
-        self::assertSame(P202_UI_CLASSIC, p202_ui_shell(''));
-        self::assertSame(P202_UI_CLASSIC, p202_ui_shell('classic'));
-        self::assertSame(P202_UI_V2, p202_ui_shell('v2'));
+        $root = dirname(__DIR__, 3);
+        $offences = [];
+        $scanned = 0;
+        foreach ($this->sourceFiles($root) as $file) {
+            if (!str_ends_with($file, '.php')) {
+                continue;
+            }
+            $scanned++;
+            $tokens = array_values(array_filter(
+                \PhpToken::tokenize((string) file_get_contents($root . '/' . $file)),
+                static fn (\PhpToken $t): bool => !$t->isIgnorable()
+            ));
+            foreach ($tokens as $i => $token) {
+                if ($token->id !== T_CONSTANT_ENCAPSED_STRING || strtolower(substr($token->text, 1, -1)) !== 'ui') {
+                    continue;
+                }
+                if (($tokens[$i + 1] ?? null)?->id === T_DOUBLE_ARROW) {
+                    $offences[] = "$file:{$token->line}: {$token->text} =>";
+                }
+            }
+        }
+        self::assertGreaterThan(300, $scanned, 'the sweep read the PHP files');
+        self::assertSame([], $offences, "A 'ui' option survives; there is one page shell, and template_top() refuses the key:\n" . implode("\n", $offences));
+    }
 
-        $this->expectException(\InvalidArgumentException::class);
-        p202_ui_shell('bootstrap5');
+    /**
+     * The refusal, executed: template_top() with a leftover 'ui' (either
+     * value the old option took, and one it never took) and with an option
+     * nobody defined throws before a byte of the page is written, and a
+     * page's usual options still render. In a process of its own, because
+     * template.php opens an output buffer when it is loaded.
+     */
+    public function testTemplateTopRefusesAUiOption(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $script = <<<'PHP'
+            $_SERVER['HTTP_HOST'] = 'example.test';
+            $_SERVER['REQUEST_URI'] = '/202-account/';
+            $_SERVER['SCRIPT_NAME'] = '/202-account/index.php';
+            if (!function_exists('get_absolute_url')) { function get_absolute_url() { return '/'; } }
+            if (!function_exists('getDashEmail')) { function getDashEmail() { return ''; } }
+            if (!function_exists('getTrackingDomain')) { function getTrackingDomain() { return 'example.test'; } }
+            require $argv[1] . '/202-config/template.php';
+            $navigation = ['', '202-account'];
+            $said = [];
+            foreach ([['ui' => 'v2'], ['ui' => 'classic'], ['ui' => 'bootstrap5'], ['meta_description' => 'x', 'ui' => 'v2'], ['shell' => 'v2']] as $options) {
+                $before = ob_get_length();
+                try {
+                    template_top('T', $options);
+                    $said[] = 'ACCEPTED ' . json_encode($options);
+                } catch (InvalidArgumentException $e) {
+                    $said[] = 'REFUSED ' . json_encode($options) . ' wrote=' . (ob_get_length() - $before) . ' ' . $e->getMessage();
+                }
+            }
+            template_top('Plain', ['meta_description' => 'd', 'body_class' => 'x']);
+            $page = ob_get_clean();
+            $said[] = 'RENDERED ' . (str_contains((string) $page, '<body class="' . P202_SHELL_BODY_CLASS . ' ') ? 'shell' : 'no-shell');
+            preg_match_all('~<script src="[^"]*/(p202-ui|p202-chrome|jquery-3[^"/]*|bootstrap-5[^"/]*)\.js[^"]*"( defer)?></script>~', (string) $page, $tags, PREG_SET_ORDER);
+            foreach ($tags as $tag) {
+                $said[] = 'SCRIPT ' . $tag[1] . (($tag[2] ?? '') !== '' ? ' deferred' : ' blocking');
+            }
+            echo implode("\n", $said), "\n";
+            PHP;
+        $file = tempnam(sys_get_temp_dir(), 'p202-tt');
+        self::assertIsString($file);
+        file_put_contents($file, "<?php\n" . $script);
+        exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($file) . ' ' . escapeshellarg($root) . ' 2>&1', $out, $code);
+        unlink($file);
+        $output = implode("\n", $out);
+
+        self::assertSame(0, $code, "the probe ran:\n$output");
+        self::assertStringNotContainsString('ACCEPTED', $output, "an option template_top() does not take was accepted:\n$output");
+        self::assertSame(4, substr_count($output, "wrote=0 template_top() no longer takes a 'ui' option"), "each leftover 'ui' is refused by name, before any output:\n$output");
+        self::assertStringContainsString("REFUSED {\"shell\":\"v2\"} wrote=0 template_top() has no option 'shell'", $output, "an unknown option is refused by name:\n$output");
+        self::assertStringContainsString('RENDERED shell', $output, "a page's usual options still render the shell:\n$output");
+        foreach (['p202-ui deferred', 'p202-chrome deferred', 'jquery-3.7.1.min blocking', 'bootstrap-5.3.8.bundle.min blocking'] as $script) {
+            self::assertStringContainsString("SCRIPT $script", $output, "the rendered page loads $script:\n$output");
+        }
     }
 
     /** A manifest id resolves to its file (path or URL); a path is itself. */
@@ -242,9 +348,9 @@ final class ShellIsolationTest extends TestCase
      * @param array<string, mixed> $context
      * @return list<string> files (manifest ids resolved), in load order
      */
-    private function filesLoaded(string $ui, array $context): array
+    private function filesLoaded(array $context): array
     {
-        $assets = p202_shell_assets($ui, $context);
+        $assets = p202_shell_assets($context);
         $loaded = [];
         foreach (['css', 'js_head', 'js_page'] as $list) {
             foreach ($assets[$list] as $item) {
@@ -255,16 +361,20 @@ final class ShellIsolationTest extends TestCase
     }
 
     /**
+     * Every context a page can put the shell in: signed out (the standalone
+     * pages), and each section a signed-in page belongs to.
+     *
      * @return array<string, array<string, mixed>>
      */
     private function contexts(): array
     {
         return [
-            'anonymous' => [],
-            'account home' => ['section' => '202-account', 'sub' => '', 'logged_in' => true],
-            'attribution dashboard' => ['section' => '202-account', 'sub' => 'attribution.php', 'logged_in' => true],
-            'campaigns setup' => ['section' => 'tracking202', 'sub' => 'setup', 'page' => 'aff_campaigns.php', 'logged_in' => true, 'ddlci' => 'x'],
-            'analyze' => ['section' => 'tracking202', 'sub' => 'analyze', 'page' => 'keywords.php', 'logged_in' => true],
+            'signed out' => ['logged_in' => false],
+            'account home' => ['section' => '202-account', 'logged_in' => true],
+            'attribution dashboard' => ['section' => '202-account', 'logged_in' => true],
+            'campaigns setup' => ['section' => 'tracking202', 'logged_in' => true],
+            'analyze' => ['section' => 'tracking202', 'logged_in' => true],
+            'tv202' => ['section' => '202-tv', 'logged_in' => true],
         ];
     }
 

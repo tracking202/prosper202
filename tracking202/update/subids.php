@@ -96,7 +96,7 @@ $typed = $success ? '' : (is_string($_POST['subids'] ?? null) ? $_POST['subids']
 $base = get_absolute_url();
 
 //show the template
-template_top('Update Subids', ['ui' => 'v2']);
+template_top('Update Subids');
 
 echo p202_update_header('bi-check2-square', 'Update subids', 'Mark clicks as converted by pasting the subids from your affiliate network\'s report.');
 

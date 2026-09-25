@@ -20,12 +20,20 @@ use Tests\TestCase;
  * Consumed means one of two things, both of which are somebody acting on the
  * class:
  *
- *  - a stylesheet in 202-css/ has a rule whose selector names it, or
+ *  - a stylesheet the page shell loads has a rule whose selector names it, or
  *  - a script in 202-js/ selects on it, or adds and removes it.
  *
- * The second is not a loophole: `p202-copy-label` carries no styling at all
- * and exists so custom.php can find the span inside a copy button. A class
- * that neither styles anything nor is reachable from a script does nothing.
+ * The second is not a loophole: a class can exist only so a script can find
+ * the element (`data-*` hooks aside, some do). A class that neither styles
+ * anything nor is reachable from a script does nothing.
+ *
+ * "Loads" is the operative word. Until U8 any sheet in 202-css/ counted,
+ * including the classic shell's custom.css, p202-ui.css and design-system.css,
+ * which no v2 page loaded — so a v2 page could use a class only those sheets
+ * defined and pass, unstyled. The sheets read here are the ones
+ * p202_shell_assets() lists, and every first-party sheet in 202-css/ must be
+ * one of them, so a stylesheet nothing loads can neither consume a class nor
+ * sit in the tree.
  *
  * What this does NOT check is the reverse direction. A class defined in the
  * stylesheets and used nowhere is dead CSS, not broken markup, and the
@@ -76,6 +84,15 @@ final class ComponentClassIsConsumedTest extends TestCase
         }
     }
 
+    public function testEveryFirstPartyStylesheetIsOneTheShellLoads(): void
+    {
+        $root = self::repoRoot();
+        $loaded = $this->loadedStylesheets();
+        $sheets = array_map(static fn (string $f): string => substr($f, strlen($root) + 1), glob($root . '/202-css/*.css') ?: []);
+        self::assertNotEmpty($sheets, 'the first-party stylesheets were found');
+        self::assertSame([], array_values(array_diff($sheets, $loaded)), 'stylesheets in 202-css/ that no page loads; delete them, or load them from p202_shell_assets()');
+    }
+
     public function testEveryClassInMarkupIsStyledOrScripted(): void
     {
         $root = self::repoRoot();
@@ -112,14 +129,14 @@ final class ComponentClassIsConsumedTest extends TestCase
     {
         $consumers = [];
 
-        foreach (glob($root . '/202-css/*.css') ?: [] as $sheet) {
-            foreach ($this->selectorClasses((string) file_get_contents($sheet)) as $class) {
-                $consumers[$class] ??= ltrim(str_replace($root, '', $sheet), '/');
+        foreach ($this->loadedStylesheets() as $sheet) {
+            foreach ($this->selectorClasses((string) file_get_contents($root . '/' . $sheet)) as $class) {
+                $consumers[$class] ??= $sheet;
             }
         }
 
-        // 202-js/*.php are scripts served as JavaScript; they carry both
-        // selectors and, in custom.php's case, inline <style> rules.
+        // 202-js/*.php would be scripts served as JavaScript; none is left
+        // since U8, but one added later is read like a script.
         $scripts = array_merge(glob($root . '/202-js/*.js') ?: [], glob($root . '/202-js/*.php') ?: []);
         foreach ($scripts as $script) {
             $source = (string) file_get_contents($script);
@@ -147,6 +164,27 @@ final class ComponentClassIsConsumedTest extends TestCase
         }
 
         return $consumers;
+    }
+
+    /**
+     * The first-party stylesheets the shell loads, in any context a page can
+     * put it in (signed out, and each signed-in section).
+     *
+     * @return list<string> repo-relative paths
+     */
+    private function loadedStylesheets(): array
+    {
+        require_once self::repoRoot() . '/202-config/functions-ui.php';
+        $sheets = [];
+        foreach ([['logged_in' => false], ['section' => '202-account', 'logged_in' => true], ['section' => 'tracking202', 'logged_in' => true]] as $context) {
+            foreach (p202_shell_assets($context)['css'] as $item) {
+                if (isset($item['path'])) {
+                    $sheets[$item['path']] = true;
+                }
+            }
+        }
+        self::assertGreaterThanOrEqual(4, count($sheets), 'the shell loads the chrome, theme, component and messenger sheets');
+        return array_keys($sheets);
     }
 
     /**

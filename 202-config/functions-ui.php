@@ -3,29 +3,28 @@
 declare(strict_types=1);
 
 /**
- * Page-shell helpers: the pinned asset manifest and the asset lists of the two
- * page shells.
+ * Page-shell helpers: the pinned asset manifest and the asset list of the page
+ * shell.
  *
- * Two shells coexist while the site migrates to Bootstrap 5:
- *
- *   classic  today's stack (Bootstrap 3, Flat UI Pro, jQuery 1.11 and the
- *            first-party CSS layers), unchanged except that every third-party
- *            file is served from this install at a pinned version.
- *   v2       Bootstrap 5.3 with the Prosper202 theme and component layer.
- *
- * A page picks its shell with template_top($title, ['ui' => 'v2']); pages that
- * pass nothing get the classic shell. The chrome (navbar, section tabs,
- * sub-menu, footer) is shared by both and styled by 202-css/p202-chrome.css,
- * which depends on neither framework.
+ * There is one shell: Bootstrap 5.3 with the Prosper202 theme and component
+ * layer. The classic shell (Bootstrap 3, Flat UI Pro, jQuery 1.11 and the
+ * plugins written against them) was deleted in U8 with every file it loaded;
+ * template_top() no longer takes a 'ui' option and refuses one (see
+ * template.php). The chrome (navbar, section tabs, sub-menu, footer) is
+ * styled by 202-css/p202-chrome.css.
  *
  * Everything here is a pure function of its arguments — no globals, no output —
  * so tests/Api/V3/ShellIsolationTest.php and AssetManifestTest.php can pin the
- * behaviour: the two shells never share a framework file, and every manifest
- * entry matches the bytes on disk.
+ * behaviour: the shell loads no legacy file, and every manifest entry matches
+ * the bytes on disk.
  */
 
-const P202_UI_CLASSIC = 'classic';
-const P202_UI_V2 = 'v2';
+/**
+ * The class the shell stamps on <body>. The value is the name the migration
+ * gave the Bootstrap 5 shell; it outlived the classic one so the live and
+ * browser passes that read it keep reading it.
+ */
+const P202_SHELL_BODY_CLASS = 'p202-shell-v2';
 
 /**
  * @return array<string, array<string, string>>
@@ -91,156 +90,58 @@ function p202_asset_tag(string $id, string $base, bool $defer = false): string
 }
 
 /**
- * Normalise the value a page passed as its shell.
- *
- * Unknown values are an error rather than a fallback: a typo in 'ui' must not
- * silently render the classic shell around Bootstrap 5 markup.
- */
-function p202_ui_shell(mixed $requested): string
-{
-    if ($requested === null || $requested === '') {
-        return P202_UI_CLASSIC;
-    }
-    if ($requested === P202_UI_CLASSIC || $requested === P202_UI_V2) {
-        return $requested;
-    }
-    throw new InvalidArgumentException("Unknown ui shell '" . (is_scalar($requested) ? (string) $requested : gettype($requested)) . "'; use 'classic' or 'v2'");
-}
-
-/**
- * The ordered assets of a shell.
+ * The ordered assets of the shell.
  *
  * Returns three ordered lists — 'css', 'js_head' (scripts every page needs,
  * loaded before the page's own extra head markup) and 'js_page' (scripts that
- * depend on the section or page, loaded after it). On the v2 shell the
- * 'js_page' scripts are deferred (see p202_shell_defers_page_scripts()), so
- * they run in order after the document is parsed; 'js_head' stays blocking
- * because inline scripts in the page call jQuery as they are parsed. Each item is either
- * ['asset' => <manifest id>] or ['path' => <repo-relative first-party file>],
- * the latter optionally with a 'query' string. A third-party file is always
+ * depend on the section, loaded after it). The shell emits the 'js_page'
+ * scripts with `defer`, so they run in order after the document is parsed
+ * and before DOMContentLoaded: DOM work in them runs under DOMContentLoaded,
+ * and an inline script in the page that calls a js_page library (Highcharts,
+ * Tablesort, window.p202ui) does so from a DOMContentLoaded handler, because
+ * at parse time the deferred library has not run yet. 'js_head' stays
+ * blocking because inline scripts in the page call jQuery as they are
+ * parsed. Each item is either ['asset' => <manifest id>] or
+ * ['path' => <repo-relative first-party file>]. A third-party file is always
  * a manifest id — tests/Api/V3/ShellIsolationTest.php refuses a bare path
  * that is not one of the first-party files it names.
  *
- * $context keys: section ($navigation[1]), sub ($navigation[2]),
- * page ($navigation[3]), logged_in (bool), ddlci (string, campaigns setup).
+ * $context keys: section ($navigation[1]) and logged_in (bool). Other keys
+ * are ignored.
  *
  * @param array<string, mixed> $context
  * @return array{css: list<array<string, string>>, js_head: list<array<string, string>>, js_page: list<array<string, string>>}
  */
-function p202_shell_assets(string $ui, array $context = []): array
+function p202_shell_assets(array $context = []): array
 {
-    $ui = p202_ui_shell($ui);
     $section = (string) ($context['section'] ?? '');
-    $sub = (string) ($context['sub'] ?? '');
-    $page = (string) ($context['page'] ?? '');
     $loggedIn = (bool) ($context['logged_in'] ?? false);
 
-    $isCampaignsSetup = $section === 'tracking202' && $sub === 'setup' && $page === 'aff_campaigns.php';
-    $wantsCharts = $section === 'tracking202';
-
-    if ($ui === P202_UI_V2) {
-        $css = [
-            ['path' => '202-css/p202-chrome.css'],
-            ['asset' => 'bootstrap.css'],
-            ['asset' => 'bootstrap-icons.css'],
-            ['path' => '202-css/p202-theme.css'],
-            ['path' => '202-css/p202-components.css'],
-        ];
-        if ($loggedIn) {
-            $css[] = ['path' => '202-css/messenger.css'];
-        }
-        $jsHead = [
-            ['asset' => 'jquery.js'],
-            ['asset' => 'bootstrap.js'],
-        ];
-        $jsPage = [];
-        if ($wantsCharts) {
-            $jsPage[] = ['asset' => 'highcharts.js'];
-            $jsPage[] = ['path' => '202-js/chart.theme.js'];
-        }
-        // Sortable tables (p202_data_table(..., ['sortable' => true])); loaded
-        // before p202-ui.js, which wires every table[data-p202-sort] to it.
-        $jsPage[] = ['asset' => 'tablesort.js'];
-        $jsPage[] = ['path' => '202-js/p202-ui.js'];
-        $jsPage[] = ['path' => '202-js/p202-chrome.js'];
-        return ['css' => $css, 'js_head' => $jsHead, 'js_page' => $jsPage];
-    }
-
     $css = [
-        ['asset' => 'legacy.bootstrap.css'],
-        ['asset' => 'legacy.flat-ui.css'],
-        ['asset' => 'legacy.font-awesome.css'],
-        ['asset' => 'legacy.tokenfield.css'],
-        ['asset' => 'legacy.tokenfield-typeahead.css'],
+        ['path' => '202-css/p202-chrome.css'],
+        ['asset' => 'bootstrap.css'],
+        ['asset' => 'bootstrap-icons.css'],
+        ['path' => '202-css/p202-theme.css'],
+        ['path' => '202-css/p202-components.css'],
     ];
-    if ($isCampaignsSetup) {
-        $css[] = ['asset' => 'legacy.tablesorter-pager.css'];
-        $css[] = ['asset' => 'legacy.tablesorter-theme.css'];
-    }
-    $css[] = ['asset' => 'legacy.select2.css'];
-    $css[] = ['path' => '202-css/custom.css'];
-    $css[] = ['path' => '202-css/p202-ui.css'];
-    $css[] = ['path' => '202-css/design-system.css'];
-    // The chrome sheet loads last so it settles the navigation and page frame
-    // over anything the three layers above still say about them.
-    $css[] = ['path' => '202-css/p202-chrome.css'];
     if ($loggedIn) {
         $css[] = ['path' => '202-css/messenger.css'];
     }
-
     $jsHead = [
-        ['asset' => 'legacy.jquery.js'],
-        ['asset' => 'legacy.jquery-ui.js'],
-        ['asset' => 'legacy.bootstrap.js'],
-        ['asset' => 'legacy.fileinput.js'],
-        ['asset' => 'legacy.radiocheck.js'],
-        ['asset' => 'legacy.jquery-validate.js'],
-        ['asset' => 'legacy.tokenfield.js'],
-        ['asset' => 'legacy.typeahead.js'],
-        ['asset' => 'tablesort.js'],
-        ['asset' => 'list.js'],
-        ['asset' => 'list-fuzzysearch.js'],
+        ['asset' => 'jquery.js'],
+        ['asset' => 'bootstrap.js'],
     ];
-
     $jsPage = [];
     if ($section === 'tracking202') {
         $jsPage[] = ['asset' => 'highcharts.js'];
         $jsPage[] = ['path' => '202-js/chart.theme.js'];
-        if ($isCampaignsSetup) {
-            $jsPage[] = ['asset' => 'legacy.tablesorter.js'];
-            $jsPage[] = ['asset' => 'legacy.tablesorter-widgets.js'];
-            $jsPage[] = ['asset' => 'legacy.tablesorter-pager.js'];
-            $jsPage[] = ['path' => '202-js/dni.search.offers.tablesorter.php', 'query' => 'ddlci=' . rawurlencode((string) ($context['ddlci'] ?? ''))];
-        }
-    } elseif ($section === '202-account') {
-        $jsPage[] = ['path' => '202-js/account.php'];
     }
-    $jsPage[] = ['asset' => 'legacy.select2.js'];
-    $jsPage[] = ['path' => '202-js/custom.php'];
+    // Sortable tables (p202_data_table(..., ['sortable' => true])); loaded
+    // before p202-ui.js, which wires every table[data-p202-sort] to it.
+    $jsPage[] = ['asset' => 'tablesort.js'];
+    $jsPage[] = ['path' => '202-js/p202-ui.js'];
     $jsPage[] = ['path' => '202-js/p202-chrome.js'];
-
     return ['css' => $css, 'js_head' => $jsHead, 'js_page' => $jsPage];
-}
-
-/**
- * Whether a shell emits its 'js_page' scripts with `defer`.
- *
- * On v2 they are deferred: the shell prints them in <head>, before the body
- * exists, and a deferred script runs after the document is parsed and before
- * DOMContentLoaded, in the order it was listed. That makes the porting rule
- * for a script moved to v2 simple and checkable: DOM work runs under
- * DOMContentLoaded (or later), never as the script is parsed — and an inline
- * script in the page that calls a js_page library (Highcharts, Tablesort,
- * window.p202ui) does so from a DOMContentLoaded handler, because at parse
- * time the deferred library has not run yet.
- *
- * The classic shell keeps blocking scripts: 202-js/custom.php and the page
- * scripts written against it run code as they load, and it is deleted in U8
- * rather than ported.
- */
-function p202_shell_defers_page_scripts(string $ui): bool
-{
-    return p202_ui_shell($ui) === P202_UI_V2;
 }
 
 /**
@@ -297,8 +198,7 @@ function p202_flash(string $kind, string $text): string
 
 /**
  * The inline Bootstrap Icons used by the shared chrome (header, account menu,
- * setup sub-menu). Inline SVG so the classic shell, which does not load the
- * icon font, draws the same icons. Paths are from Bootstrap Icons (MIT), 16x16
+ * setup sub-menu). Inline SVG, so the chrome's icons need no icon font. Paths are from Bootstrap Icons (MIT), 16x16
  * viewBox: house, heart, graph (bar-chart-line), play (tv), star, gear,
  * question (question-circle), exit (box-arrow-right), chevron (chevron-down),
  * person (person-circle), moon (moon-stars), sun; and for the setup sub-menu
