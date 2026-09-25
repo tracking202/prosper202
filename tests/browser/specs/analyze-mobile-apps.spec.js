@@ -125,6 +125,12 @@ module.exports = {
       '202_app_postbacks',
       '202_goals',
       '202_goal_versions',
+      // Installs and their outcomes too: the registration ids restart with
+      // the truncate, so an install another suite left (the agent-eval
+      // Android cases) can name the id the Android scenario gives its app
+      // and be counted as one of its installs.
+      '202_app_installs',
+      '202_goal_outcomes',
     ]);
     db.write("UPDATE 202_users_pref SET user_account_currency='USD' WHERE user_id=1");
 

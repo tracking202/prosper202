@@ -93,8 +93,11 @@ final class NoLegacyBootstrapClassesTest extends TestCase
     /**
      * Not served, or not ours: everything else the install serves is scanned.
      * build/logs is PHPUnit's own report output (phpunit.xml), ignored by git.
+     * sdk holds the mobile SDKs, which the install does not serve; running
+     * the Android SDK's live pass leaves Gradle's HTML test reports under
+     * its (git-ignored) build directories, and those read as page markup.
      */
-    private const SKIP_DIRS = ['vendor', 'node_modules', 'tests', '.git', 'documentation', 'docs', 'build/logs', '202-js/vendor', '202-css/vendor', '202-config/temp', '202-config/data', '202-config/geo'];
+    private const SKIP_DIRS = ['vendor', 'node_modules', 'tests', '.git', 'documentation', 'docs', 'build/logs', 'sdk', '202-js/vendor', '202-css/vendor', '202-config/temp', '202-config/data', '202-config/geo'];
 
     public function testTheBannedSetIsTheRecordedBootstrap3Difference(): void
     {
