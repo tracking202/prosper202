@@ -271,6 +271,18 @@ if (!function_exists('_upgrade_conversion_ledger')) {
                 return false;
             }
         }
+        // The install intake finds a click's campaign link by it, and a
+        // registration delete unlinks by it.
+        $campaignIndexes = _upgrade_conversion_ledger_probe('SHOW INDEX FROM `202_aff_campaigns`', 'Key_name', 'Column_name');
+        if ($campaignIndexes === null) {
+            error_log('Prosper202 upgrade: could not read the indexes of 202_aff_campaigns; the ledger step will retry.');
+            return false;
+        }
+        if (!array_key_exists('app_registration_id', $campaignIndexes)
+            && _upgrade_query('ALTER TABLE `202_aff_campaigns` ADD KEY `app_registration_id` (`app_registration_id`)') === false) {
+            error_log('Prosper202 upgrade: failed to index 202_aff_campaigns.app_registration_id; the ledger step will retry.');
+            return false;
+        }
 
         return true;
     }
