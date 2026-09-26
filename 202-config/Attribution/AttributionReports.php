@@ -35,6 +35,8 @@ use Prosper202\Database\Connection;
  * the same statement; the answer is the full computation's, byte for byte
  * (tests/Attribution/RollupMatchesFullComputationTest). When the rollup
  * cannot serve any of it, the full computation below runs as it always did.
+ * The journey metrics' counts are read the same way, from the rollup's
+ * journey part.
  */
 final class AttributionReports
 {
@@ -109,7 +111,7 @@ final class AttributionReports
     /** More separate runs of servable hours than this and the report is computed in full. */
     private const MAX_RUNS = 2000;
 
-    /** How many hours the last breakdown read from the rollup (0: computed in full). */
+    /** How many hours the last breakdown or journey metrics read from the rollup (0: computed in full). */
     private int $servedHours = 0;
 
     /**
@@ -120,7 +122,7 @@ final class AttributionReports
     {
     }
 
-    /** How many whole hours the last breakdown read from the rollup; 0 when it was computed in full. */
+    /** How many whole hours the last breakdown or journey metrics read from the rollup; 0 when it was computed in full. */
     public function lastServedHours(): int
     {
         return $this->servedHours;
@@ -340,9 +342,74 @@ final class AttributionReports
      * to convert, and the one-touch share by the converting click's browser
      * (plan §6.2: how much journey the browser's storage limits cost).
      *
+     * The counts are read through the rollup like a breakdown (its journey
+     * part, AttributionRollup::PART_JOURNEYS) and computed in full when it
+     * can serve none of the range; the recent conversions are always read
+     * from the rows (the newest 25 by an index).
+     *
      * @return array<string, mixed>
      */
     public function journeyMetrics(int $userId, int $from, int $to): array
+    {
+        $this->servedHours = 0;
+        $counts = $this->useRollup ? $this->rolledJourneyCounts($userId, $from, $to) : null;
+        ['summary' => $s, 'lengths' => $lengths, 'ttc' => $ttc, 'browsers' => $browsers] = $counts ?? $this->journeyCounts($userId, $from, $to);
+
+        $browsers = array_map(static function (array $r): array {
+            $n = (int) $r['conversions'];
+            $one = (int) $r['one_touch'];
+            return ['browser' => (string) $r['browser'], 'conversions' => $n, 'one_touch' => $one, 'one_touch_share' => $n > 0 ? round($one / $n, 4) : 0.0];
+        }, $browsers);
+
+        $conversions = (int) ($s['conversions'] ?? 0);
+
+        return [
+            'conversions' => $conversions,
+            'one_touch' => (int) ($s['one_touch'] ?? 0),
+            'one_touch_share' => $conversions > 0 ? round((int) $s['one_touch'] / $conversions, 4) : 0.0,
+            'truncated' => (int) ($s['truncated'] ?? 0),
+            'unidentified' => (int) ($s['unidentified'] ?? 0),
+            'average_touches' => round((float) ($s['avg_touches'] ?? 0), 2),
+            'length_distribution' => $lengths,
+            'time_to_convert' => $ttc,
+            'one_touch_by_browser' => $browsers,
+            'recent_conversions' => $this->recentJourneys($userId, $from, $to, self::RECENT_JOURNEYS),
+        ];
+    }
+
+    /**
+     * Time to convert, measured from the journey's first touch: the upper
+     * bound (exclusive, in seconds) of each bucket but the last, in order.
+     * The difference is signed — a conversion can be dated before its own
+     * click, and an unsigned one raised "BIGINT UNSIGNED value is out of
+     * range" for the whole report — so such a conversion is under an hour.
+     */
+    private const TIME_TO_CONVERT = ['under_1h' => 3600, '1h_to_1d' => 86400, '1d_to_7d' => 604800, '7d_to_30d' => 2592000, 'over_30d' => null];
+
+    /**
+     * The time-to-convert bucket of a journey as SQL: its name, or (for the
+     * rollup) its position in TIME_TO_CONVERT.
+     */
+    public static function timeToConvertSql(string $convTime, string $firstClickTime, bool $asIndex): string
+    {
+        $diff = "CAST($convTime AS SIGNED) - CAST($firstClickTime AS SIGNED)";
+        $sql = 'CASE';
+        $i = 0;
+        foreach (self::TIME_TO_CONVERT as $name => $below) {
+            $value = $asIndex ? (string) $i : "'$name'";
+            $sql .= $below !== null ? " WHEN $diff < $below THEN $value" : " ELSE $value END";
+            $i++;
+        }
+
+        return $sql;
+    }
+
+    /**
+     * The journey counts computed in full from the rows.
+     *
+     * @return array{summary: array<string, mixed>, lengths: list<array{touches: int, conversions: int}>, ttc: array<string, int>, browsers: list<array<string, mixed>>}
+     */
+    private function journeyCounts(int $userId, int $from, int $to): array
     {
         $stmt = $this->conn->prepareRead(
             'SELECT COUNT(*) AS conversions, COALESCE(SUM(touches = 1), 0) AS one_touch,
@@ -361,20 +428,15 @@ final class AttributionReports
         $lengths = array_map(static fn (array $r): array => ['touches' => (int) $r['touches'], 'conversions' => (int) $r['conversions']], $this->conn->fetchAll($stmt));
 
         $stmt = $this->conn->prepareRead(
-            "SELECT CASE
-                        WHEN jm.conv_time - j.click_time < 3600 THEN 'under_1h'
-                        WHEN jm.conv_time - j.click_time < 86400 THEN '1h_to_1d'
-                        WHEN jm.conv_time - j.click_time < 604800 THEN '1d_to_7d'
-                        WHEN jm.conv_time - j.click_time < 2592000 THEN '7d_to_30d'
-                        ELSE 'over_30d' END AS bucket,
+            'SELECT ' . self::timeToConvertSql('jm.conv_time', 'j.click_time', false) . ' AS bucket,
                     COUNT(*) AS conversions
              FROM 202_attribution_journey_meta jm
              JOIN 202_attribution_journeys j ON j.conv_id = jm.conv_id AND j.position = 0
              WHERE jm.user_id = ? AND jm.conv_time >= ? AND jm.conv_time <= ?
-             GROUP BY bucket"
+             GROUP BY bucket'
         );
         $this->conn->bind($stmt, 'iii', [$userId, $from, $to]);
-        $ttc = ['under_1h' => 0, '1h_to_1d' => 0, '1d_to_7d' => 0, '7d_to_30d' => 0, 'over_30d' => 0];
+        $ttc = array_map(static fn (): int => 0, self::TIME_TO_CONVERT);
         foreach ($this->conn->fetchAll($stmt) as $r) {
             $ttc[(string) $r['bucket']] = (int) $r['conversions'];
         }
@@ -389,26 +451,173 @@ final class AttributionReports
              GROUP BY browser ORDER BY conversions DESC, browser"
         );
         $this->conn->bind($stmt, 'iii', [$userId, $from, $to]);
-        $browsers = array_map(static function (array $r): array {
-            $n = (int) $r['conversions'];
-            $one = (int) $r['one_touch'];
-            return ['browser' => (string) $r['browser'], 'conversions' => $n, 'one_touch' => $one, 'one_touch_share' => $n > 0 ? round($one / $n, 4) : 0.0];
-        }, $this->conn->fetchAll($stmt));
 
-        $conversions = (int) ($s['conversions'] ?? 0);
+        return ['summary' => $s, 'lengths' => $lengths, 'ttc' => $ttc, 'browsers' => $this->conn->fetchAll($stmt)];
+    }
 
-        return [
-            'conversions' => $conversions,
-            'one_touch' => (int) ($s['one_touch'] ?? 0),
-            'one_touch_share' => $conversions > 0 ? round((int) $s['one_touch'] / $conversions, 4) : 0.0,
-            'truncated' => (int) ($s['truncated'] ?? 0),
-            'unidentified' => (int) ($s['unidentified'] ?? 0),
-            'average_touches' => round((float) ($s['avg_touches'] ?? 0), 2),
-            'length_distribution' => $lengths,
-            'time_to_convert' => $ttc,
-            'one_touch_by_browser' => $browsers,
-            'recent_conversions' => $this->recentJourneys($userId, $from, $to, self::RECENT_JOURNEYS),
+    /**
+     * The journey counts through the rollup, or null when it can serve none
+     * of the range. Two statements, each the rollup's journey rows of the
+     * planned hours unioned with the exact rows of the rest and carrying the
+     * plan's guard (rolledParts() for a breakdown): the length, flag and
+     * time-to-convert counts, and the converting clicks' browsers — grouped
+     * by name when the report runs, as the full computation groups them.
+     *
+     * @return array{summary: array<string, mixed>, lengths: list<array{touches: int, conversions: int}>, ttc: array<string, int>, browsers: list<array<string, mixed>>}|null
+     */
+    private function rolledJourneyCounts(int $userId, int $from, int $to): ?array
+    {
+        for ($attempt = 0; $attempt < self::ROLLUP_ATTEMPTS; $attempt++) {
+            $plan = $this->rollupPlan($userId, false, [AttributionRollup::EFFECTIVE], 0, 'journeys', $from, $to);
+            if ($plan === null) {
+                return null;
+            }
+            $counts = $this->rolledJourneyTallies($plan);
+            $browsers = $counts !== null ? $this->rolledJourneyBrowsers($plan) : null;
+            if ($counts === null || $browsers === null) {
+                continue;
+            }
+            $this->servedHours = array_sum(array_map(static fn (array $r): int => $r[1] - $r[0] + 1, $plan['runs']));
+
+            $byTouches = $counts[AttributionRollup::JOURNEY_LENGTH] ?? [];
+            ksort($byTouches);
+            $conversions = array_sum($byTouches);
+            $touches = 0;
+            $lengths = [];
+            foreach ($byTouches as $k => $n) {
+                $touches += $k * $n;
+                $lengths[] = ['touches' => $k, 'conversions' => $n];
+            }
+            $ttc = [];
+            $i = 0;
+            foreach (array_keys(self::TIME_TO_CONVERT) as $name) {
+                $ttc[$name] = $counts[AttributionRollup::JOURNEY_TIME_TO_CONVERT][$i++] ?? 0;
+            }
+
+            return [
+                'summary' => [
+                    'conversions' => $conversions,
+                    'one_touch' => $byTouches[1] ?? 0,
+                    'truncated' => array_sum($counts[AttributionRollup::JOURNEY_TRUNCATED] ?? []),
+                    'unidentified' => array_sum($counts[AttributionRollup::JOURNEY_UNIDENTIFIED] ?? []),
+                    'avg_touches' => $conversions > 0 ? $this->averageTouches($touches, $conversions) : 0,
+                ],
+                'lengths' => $lengths,
+                'ttc' => $ttc,
+                'browsers' => $browsers,
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * AVG(touches) as the full computation's statement returns it: MySQL's
+     * own decimal division of the same two integers (AVG over integers is
+     * that division, at the same div_precision_increment).
+     */
+    private function averageTouches(int $touches, int $conversions): string
+    {
+        $stmt = $this->conn->prepareRead('SELECT ? / ? AS a');
+        $this->conn->bind($stmt, 'ii', [$touches, $conversions]);
+        $r = $this->conn->fetchOne($stmt);
+        if ($r === null || $r['a'] === null) {
+            throw new \RuntimeException('the average journey length could not be computed');
+        }
+
+        return (string) $r['a'];
+    }
+
+    /**
+     * The length, flag and time-to-convert counts: dimension code => key =>
+     * count, or null when the guard failed.
+     *
+     * @param array<string, mixed> $plan
+     * @return array<int, array<int, int>>|null
+     */
+    private function rolledJourneyTallies(array $plan): ?array
+    {
+        $u = (int) $plan['user'];
+        $exact = self::rangesSql('jm.conv_time', $plan['exact']);
+        $branches = [];
+        foreach ([AttributionRollup::JOURNEY_LENGTH, AttributionRollup::JOURNEY_TRUNCATED, AttributionRollup::JOURNEY_UNIDENTIFIED, AttributionRollup::JOURNEY_TIME_TO_CONVERT] as $dim) {
+            array_push($branches, ...self::rollupBranches($plan, AttributionRollup::PART_JOURNEYS, $dim, AttributionRollup::EFFECTIVE,
+                ['r.dim AS dim', 'r.dim_key AS k', 'r.n AS n', 'NULL AS guard']));
+        }
+        $meta = "FROM 202_attribution_journey_meta jm WHERE jm.user_id = $u AND $exact";
+        $branches[] = 'SELECT ' . AttributionRollup::JOURNEY_LENGTH . ", jm.touches, 1, NULL $meta";
+        $branches[] = 'SELECT ' . AttributionRollup::JOURNEY_TRUNCATED . ", jm.touches, jm.truncated, NULL $meta";
+        $branches[] = 'SELECT ' . AttributionRollup::JOURNEY_UNIDENTIFIED . ", jm.touches, jm.identified = 0, NULL $meta";
+        $branches[] = 'SELECT ' . AttributionRollup::JOURNEY_TIME_TO_CONVERT . ', ' . self::timeToConvertSql('jm.conv_time', 'j.click_time', true) . ", 1, NULL
+                       FROM 202_attribution_journey_meta jm
+                       JOIN 202_attribution_journeys j ON j.conv_id = jm.conv_id AND j.position = 0
+                       WHERE jm.user_id = $u AND $exact";
+        $branches[] = 'SELECT NULL, NULL, NULL, ' . self::guardSql($plan, false);
+
+        $stmt = $this->conn->prepareRead(
+            'SELECT u.dim AS dim, u.k AS k, SUM(u.n) AS n, MAX(u.guard) AS guard
+             FROM (' . implode("\n UNION ALL ", $branches) . ') u GROUP BY u.dim, u.k'
+        );
+        $out = [];
+        $guard = null;
+        foreach ($this->conn->fetchAll($stmt) as $r) {
+            if ($r['dim'] === null) {
+                $guard = (int) $r['guard'];
+                continue;
+            }
+            $out[(int) $r['dim']][(int) $r['k']] = (int) $r['n'];
+        }
+
+        return $guard === 1 ? $out : null;
+    }
+
+    /**
+     * The converting clicks' browsers, grouped and ordered by name exactly
+     * as the full computation's statement does, or null when the guard
+     * failed. A NULL browser (no clicks_advance row) and a browser id with
+     * no name both read 'Unknown' there, so the rollup keeps NULL apart
+     * from any id (key_null) and the name is joined here.
+     *
+     * @param array<string, mixed> $plan
+     * @return list<array<string, mixed>>|null
+     */
+    private function rolledJourneyBrowsers(array $plan): ?array
+    {
+        $u = (int) $plan['user'];
+        $columns = static fn (string $conversions, string $oneTouch): array => [
+            '0 AS is_guard', 'IF(r.key_null = 1, NULL, r.dim_key) AS browser_id', "$conversions AS conv_n", "$oneTouch AS one_n", 'NULL AS guard',
         ];
+        $branches = array_merge(
+            self::rollupBranches($plan, AttributionRollup::PART_JOURNEYS, AttributionRollup::JOURNEY_BROWSER, AttributionRollup::EFFECTIVE, $columns('r.n', '0')),
+            self::rollupBranches($plan, AttributionRollup::PART_JOURNEYS, AttributionRollup::JOURNEY_BROWSER_ONE_TOUCH, AttributionRollup::EFFECTIVE, $columns('0', 'r.n')),
+        );
+        $branches[] = "SELECT 0, ca.browser_id, 1, jm.touches = 1, NULL
+                       FROM 202_attribution_journey_meta jm
+                       JOIN 202_attribution_journeys j ON j.conv_id = jm.conv_id AND j.position + 1 = jm.touches
+                       LEFT JOIN 202_clicks_advance ca ON ca.click_id = j.click_id
+                       WHERE jm.user_id = $u AND " . self::rangesSql('jm.conv_time', $plan['exact']);
+        $branches[] = 'SELECT 1, NULL, 0, 0, ' . self::guardSql($plan, false);
+
+        $stmt = $this->conn->prepareRead(
+            "SELECT u.is_guard, COALESCE(b.browser_name, 'Unknown') AS browser, SUM(u.conv_n) AS conversions,
+                    SUM(u.one_n) AS one_touch, MAX(u.guard) AS guard
+             FROM (" . implode("\n UNION ALL ", $branches) . ') u
+             LEFT JOIN 202_browsers b ON b.browser_id = u.browser_id
+             GROUP BY u.is_guard, browser
+             HAVING u.is_guard = 1 OR SUM(u.conv_n) > 0
+             ORDER BY u.is_guard, conversions DESC, browser'
+        );
+        $out = [];
+        $guard = null;
+        foreach ($this->conn->fetchAll($stmt) as $r) {
+            if ((int) $r['is_guard'] === 1) {
+                $guard = (int) $r['guard'];
+                continue;
+            }
+            $out[] = ['browser' => $r['browser'], 'conversions' => $r['conversions'], 'one_touch' => $r['one_touch']];
+        }
+
+        return $guard === 1 ? $out : null;
     }
 
     /** How many of the newest journeys journeyMetrics() lists for a drill-down. */
@@ -614,7 +823,13 @@ final class AttributionReports
     private function rolledParts(int $userId, ?int $modelId, ?int $compareModelId, int $defaultModelId, string $groupBy, int $from, int $to): ?array
     {
         for ($attempt = 0; $attempt < self::ROLLUP_ATTEMPTS; $attempt++) {
-            $plan = $this->rollupPlan($userId, $modelId, $compareModelId, $defaultModelId, $groupBy, $from, $to);
+            $models = [AttributionRollup::EFFECTIVE];
+            foreach ([$modelId, $compareModelId] as $m) {
+                if ($m !== null) {
+                    $models[] = $m;
+                }
+            }
+            $plan = $this->rollupPlan($userId, $modelId === null, $models, $defaultModelId, $groupBy, $from, $to);
             if ($plan === null) {
                 return null;
             }
@@ -651,21 +866,26 @@ final class AttributionReports
      * account's built_through_hour), not dirty, no changed click of the
      * account is unresolved, and — for the effective model — the rows were
      * summed under the live overrides and the default asked for; for the
-     * day dimension, also when every second of it falls on one local date.
+     * day dimension, also when every second of it falls on one local date;
+     * for the journey counts ($groupBy 'journeys'), only while the account's
+     * rollup carries the journey part (AttributionRollup::journeysMarkerSql()).
      *
+     * @param bool $effective the effective rows are read ($defaultModelId is the default asked for)
+     * @param list<int> $models the model ids whose rows are read (EFFECTIVE for the parts no model shapes)
      * @return array<string, mixed>|null
      */
-    private function rollupPlan(int $userId, ?int $modelId, ?int $compareModelId, int $defaultModelId, string $groupBy, int $from, int $to): ?array
+    private function rollupPlan(int $userId, bool $effective, array $models, int $defaultModelId, string $groupBy, int $from, int $to): ?array
     {
-        $effective = $modelId === null;
+        $journeys = $groupBy === 'journeys';
         $stmt = $this->conn->prepareRead(
             'SELECT s.built_through_hour AS built, s.default_model_id AS dm,
                     EXISTS (SELECT 1 FROM 202_attribution_rollup_dirty_clicks x WHERE x.user_id = s.user_id) AS dc,
-                    ' . AttributionRollup::overridesMatchSql($userId) . ' AS map_ok
+                    ' . AttributionRollup::overridesMatchSql($userId) . ' AS map_ok,
+                    ' . AttributionRollup::journeysMarkerSql($userId) . ' AS jm_ok
              FROM 202_attribution_rollup_state s WHERE s.user_id = ' . $userId
         );
         $state = $this->conn->fetchOne($stmt);
-        if ($state === null || (int) $state['dc'] !== 0) {
+        if ($state === null || (int) $state['dc'] !== 0 || ($journeys && (int) $state['jm_ok'] !== 1)) {
             return null;
         }
         if ($effective && ((int) $state['map_ok'] !== 1 || $state['dm'] === null || (int) $state['dm'] !== $defaultModelId)) {
@@ -687,12 +907,6 @@ final class AttributionReports
             $excluded[] = [max($first, (int) $r['hour_from']), min($last, (int) $r['hour_to'])];
         }
 
-        $models = [AttributionRollup::EFFECTIVE];
-        foreach ([$modelId, $compareModelId] as $m) {
-            if ($m !== null) {
-                $models[] = $m;
-            }
-        }
         $dayDimension = $groupBy === 'day';
         if ($dayDimension) {
             // Hours that straddle a local midnight (or a change of offset)
@@ -754,8 +968,9 @@ final class AttributionReports
 
     /**
      * 1 when, in the reading statement's own snapshot, every planned hour is
-     * still summed and clean and the effective rows still answer for the
-     * overrides and default they were planned under.
+     * still summed and clean, the effective rows still answer for the
+     * overrides and default they were planned under, and the journey rows
+     * are still kept for the account.
      *
      * @param array<string, mixed> $plan
      */
@@ -771,6 +986,9 @@ final class AttributionReports
         if ($effective) {
             $sql .= ' AND ' . AttributionRollup::overridesMatchSql($u)
                 . " AND NOT EXISTS (SELECT 1 FROM 202_attribution_models m WHERE m.user_id = $u AND m.model_id NOT IN (" . AttributionRollup::intList($plan['modelIds']) . '))';
+        }
+        if ($plan['groupBy'] === 'journeys') {
+            $sql .= ' AND ' . AttributionRollup::journeysMarkerSql($u);
         }
         if ($plan['groupBy'] === 'day') {
             $sql .= " AND NOT EXISTS (SELECT 1 FROM 202_attribution_rollup r2 WHERE r2.user_id = $u"

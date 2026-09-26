@@ -3496,7 +3496,8 @@ measurement misses it, the fix is an hourly rollup keyed on
 **Built (PR 13, §8.2):** the rollup, per hour and per UTC day, maintained by
 the worker from marks every writer leaves in its own transaction; at 1M
 conversions every breakdown takes 0.10–1.25 s and answers the same bytes as
-the full computation. The journey metrics read is not rolled up (13.5 s).
+the full computation. The journey metrics read is rolled up too (§8.2, "The
+journey metrics"): 0.02 s at 1M conversions, from 12.6 s.
 
 **Android intake and events.** p95 under 100 ms. There are no external calls
 on the request path: Integrity decoding and pixel firing are deferred. Goal
@@ -4039,8 +4040,8 @@ Open for the release decision:
 
 1. ~~**The MTA reports miss their target at 1M conversions** (31–72 s against
    2 s).~~ **Closed by PR 13 (§8.2):** every breakdown 0.10–1.25 s at 1M
-   conversions, the same bytes as the full computation. Still over 2 s: the
-   journey metrics read (13.5 s), which is not rolled up. The rollup costs
+   conversions, the same bytes as the full computation; the journey metrics
+   read, rolled up as well, 0.02 s where it took 12.6 s. The rollup costs
    storage (at 1M conversions 10.8M rows, about 1.5 GB beside the 2.3 GB it
    sums) and a backfill after the upgrade (about 20 minutes of worker time
    per million conversions, during which reports compute in full).
@@ -4210,7 +4211,7 @@ eight answers changed, and changed identically in both modes).
 | campaign, linear (2.5 credit rows a conversion) | 45.7 / 45.7 / 46.4 s | 0.104 / 0.106 / 0.110 s | 50 |
 | campaign, first touch beside last touch | 47.0 / 47.1 / 47.4 s | 0.097 / 0.098 / 0.107 s | 50 |
 | keyword, linear beside last touch | 68.5 / 69.5 / 70.2 s | 1.090 / 1.137 / 1.249 s | 5,000 |
-| journey metrics (not rolled up) | 13.4 s (one run) | 13.5 s (one run) | |
+| journey metrics (rolled up since; see "The journey metrics" below) | 13.4 s (one run) | 13.5 s (one run) | |
 
 Every breakdown is under the 2 s target; the slowest, keyword beside a
 comparison, is 1.25 s at worst. 717 of the window's 720 hours were read from
@@ -4275,10 +4276,119 @@ the data engine job exit 0 once the version is back (the first run caught a
 PHP warning printed ahead of the reason — `$navigation[2]` read on a command
 line with no request path — now read with a default).
 
-**Not done here:** the journey metrics read (`GET
-/attribution/reports/journeys`, 13.5 s at 1M) is not rolled up — its
-recent-conversions list and time-to-convert buckets read rows the rollup does
-not keep; it is the one MTA read still over 2 s at 1M.
+**The journey metrics** (`GET /attribution/reports/journeys`) were the one
+MTA read left over 2 s at 1M: 13.5 s above. Profiled on a fresh 1M dataset
+(the same seed, with journey click times taken from the clicks, 12 browsers,
+truncated and unidentified journeys), its five statements took 1.7 s (the
+summary: 1M secondary-index lookups back into the clustered index for
+`touches`, `truncated`, `identified`), 1.3 s (lengths, the same), 2.3 s
+(time to convert: 1M primary-key lookups into `202_attribution_journeys` for
+position 0), 7.4 s (browsers: the last position's journey row, then
+`202_clicks_advance` by `click_id`, then `202_browsers`) and 4 ms (the 25
+newest conversions, by index). A covering index on
+`(user_id, conv_time, touches, truncated, identified)` took the first two to
+0.4 and 0.3 s and left the joins at 2.5 and 6.3 s (9.5 s in all), and no
+index removes a per-conversion join of 2.5M and 2.5M-row tables, so the index
+was dropped and the counts were folded into the rollup:
+
+- **A journey part** (`AttributionRollup::PART_JOURNEYS`), not per model, one
+  "dimension" per count: conversions by touches, truncated and unidentified
+  by touches, conversions by time-to-convert bucket, and conversions and
+  one-touch conversions by the converting click's browser id — per hour and
+  per UTC day, built in the same transaction as every other part, from the
+  same joins as the full computation. Its sources were already the rollup's
+  (journeys, journey meta, `clicks_advance`), so every mark that keeps a
+  breakdown exact keeps these; `RollupWritersAreMarkedTest` needed nothing.
+- **Names at read time, grouped as the full computation groups them.** The
+  browser is stored by id and named when the report runs, grouped by
+  `COALESCE(name, 'Unknown')` and ordered as before. A NULL browser (no
+  `clicks_advance` row) and a real id are different keys (`key_null`), in the
+  hour rows and — a change to `buildDay()` for every part — in the day rows,
+  which used to fold them together with `MIN(key_null)`. A breakdown sums
+  both into one group either way; the browsers must not, since browser 0 can
+  have a name.
+- **The average** is MySQL's own: `SELECT ? / ?` over Σ touches and the
+  count, the division AVG does at the same `div_precision_increment`. Shown
+  equal as strings to `AVG()` over 74,768 constructed groups, including every
+  `.xxxx5` tie, on MariaDB 10.11.
+- **A rollup summed before the part existed is not read for it.** A marker
+  row (`GRAIN_MARKER`) says the account's hours carry the part. It is written
+  with the account's state; a state without it (a branch deployment that
+  summed before this change) gets it in `sync()` together with a dirty mark on
+  every built hour, in one transaction. The plan and the guard both require
+  it, so such an account's journey metrics are computed in full until its
+  hours are summed again.
+- **A pre-existing failure, fixed on both paths.** The time-to-convert bucket
+  subtracted two unsigned columns, and a conversion dated before its first
+  touch (which the rollup's young-click rule already knows happens) raised
+  "BIGINT UNSIGNED value is out of range": the whole endpoint answered 500.
+  The difference is now signed and such a conversion is under an hour. On
+  data where the old statement answered, the answer is unchanged (below).
+
+Shown the same before speed. `RollupMatchesFullComputationTest` compares
+`journeyMetrics()` with and without the rollup over every range of the three
+randomized tenants, the other account, and every change of the changes test
+while dirty and after re-summing, and asserts served hours for the journey
+comparisons separately. The tenants now carry what the counts can disagree
+on, each asserted present in the data before it is relied on: every
+time-to-convert bucket, first touches after the conversion, journeys missing
+their first or last position, truncated and unidentified journeys,
+converting clicks with no `clicks_advance` row, with a browser id that has no
+row, with browser 0 that has one, two ids of one name and an id named
+'Unknown'. The changes test asserts which changes moved the journey metrics
+(a retraction, a replacement, a partial reversal — through the recent list's
+amount — a revival, a conversion for an old hour, and the rewritten click,
+whose browser the test now changes); writing that assertion found the
+rewritten click's `REPLACE INTO 202_clicks_advance` had never landed
+(unchecked, and missing three NOT NULL columns), so that step had exercised
+only the campaign change. Two new tests: a rollup without the part is read in
+full, marked whole by the next `sync()`, and read from again once re-summed;
+and each journey statement, handed a plan the rollup then moved under (a
+planned hour marked dirty, a changed click unresolved, the marker gone, the
+frontier moved back), refuses it. Run: MariaDB 10.11, 7 tests, 4,378
+assertions; MySQL 8.0.46 with zone tables, 7 tests, 4,690 assertions, and the
+journey comparison again under the server's default `ONLY_FULL_GROUP_BY`
+mode: identical.
+
+Planted, each through the whole test, every file restored by hash:
+
+- no journey rows summed; truncated counts summed an hour late; the hour rows
+  folding a NULL browser into id 0; the day rows doing so (the old
+  `buildDay()`); the one-touch browser counts dropped; the exact branch's
+  browsers read from the first touch; its unidentified count inverted — each
+  caught by the randomized tenants or the changes test;
+- a changed click resolved to its own hours only — caught at "one click
+  rewritten (summed again)";
+- a rollup without the part left unmarked — caught; the marker not written
+  for a new account — caught by the served-hours assertion; the plan and the
+  guard both ignoring the marker — caught;
+- the guard removed from the tallies statement, and from the browsers
+  statement — each caught by the moved-plan test (the differential runs
+  cannot see it: nothing moves between their plan and read);
+- the unsigned subtraction put back — every run errors with "BIGINT UNSIGNED
+  value is out of range", the pre-change behaviour;
+- the plan alone ignoring the marker — **not caught, and not wrong**: the
+  guard refuses the plan three times and the full computation answers.
+
+At 1M conversions (MariaDB 10.11, this sandbox, the same 128 MB buffer pool
+as the table above), the 30-day window, three runs each (five through the rollup):
+
+| Journey metrics (30 days) | min | median | max |
+|---|---|---|---|
+| before: the class at 9896126 | 12.38 s | 12.61 s | 12.61 s |
+| the full computation after this change (`useRollup` false) | 12.42 s | 12.59 s | 12.71 s |
+| through the rollup | 0.018 s | 0.019 s | 0.036 s |
+
+(719 of the window's hours read
+from the rollup, the part-hours at either end computed exactly.) The three
+answers hash the same (`b35fcf0369086590`, 999,959 conversions) and are the
+same file byte for byte. On the rebuilt rollup the eight breakdowns of the
+table above were re-hashed in both modes: identical, 0.02–1.36 s through the
+rollup. The part adds 24,748 rows to 10.8M; its three build statements take
+0.37 s a UTC day at this size, under 1% of the day's build. The backfill took
+52 minutes here against 20 before, with another session's integration
+suites running on the same server throughout, so that time measures the
+sandbox, not the part.
 
 ## 9. Decisions
 

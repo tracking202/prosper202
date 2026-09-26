@@ -48,6 +48,16 @@ use Tests\Attribution\Support\AttributionDatabase;
  * some, or a report that silently fell back to the full computation would
  * pass it.
  *
+ * The journey metrics (AttributionReports::journeyMetrics(), the rollup's
+ * journey part) are compared the same way, over the same tenants, ranges
+ * and changes, with served hours asserted separately: the tenants carry
+ * truncated and unidentified journeys, first touches from minutes to forty
+ * days before the conversion and after it, journeys missing their first or
+ * last position, and converting clicks with no clicks_advance row, with a
+ * browser id that has no row, with browser id 0 that has one, two ids of
+ * one name and an id named 'Unknown'. A rollup summed before it kept the
+ * journey part is shown to be read in full until it is summed again.
+ *
  * @group integration
  */
 final class RollupMatchesFullComputationTest extends TestCase
@@ -130,6 +140,29 @@ final class RollupMatchesFullComputationTest extends TestCase
         // The other account, in the same hours, reads only its own rows.
         $served += $this->assertSameAnswer('the other account', 2, null, null, $t['models']['other'], 'campaign', $t['first'] - 7200, $t['last'] + 7200);
         self::assertGreaterThan(0, $served, 'the rollup served hours; a comparison of the full computation with itself proves nothing');
+
+        if ($cfg['conversions'] >= 300) {
+            // The shapes the journey comparisons are for are in the data.
+            $all = (new AttributionReports($this->conn, false))->journeyMetrics(1, $t['first'] - 7200, $t['last'] + 7200);
+            self::assertSame([], array_keys(array_filter($all['time_to_convert'], static fn (int $n): bool => $n === 0)), 'every time-to-convert bucket is populated');
+            self::assertGreaterThan(0, $all['truncated']);
+            self::assertGreaterThan(0, $all['unidentified']);
+            $browsers = array_column($all['one_touch_by_browser'], 'browser');
+            foreach (['Unknown', 'Browser zero', 'Browser 4', 'Browser 1'] as $name) {
+                self::assertContains($name, $browsers);
+            }
+            self::assertGreaterThan(0, (int) self::scalar('SELECT COUNT(*) FROM 202_attribution_journey_meta jm JOIN 202_attribution_journeys j ON j.conv_id = jm.conv_id AND j.position = 0 WHERE jm.user_id = 1 AND j.click_time > jm.conv_time'), 'a conversion dated before its first touch');
+            self::assertGreaterThan(0, (int) self::scalar('SELECT COUNT(*) FROM 202_attribution_journey_meta jm WHERE jm.user_id = 1 AND NOT EXISTS (SELECT 1 FROM 202_attribution_journeys j WHERE j.conv_id = jm.conv_id AND j.position = 0)'), 'a journey missing its first position');
+            self::assertGreaterThan(0, (int) self::scalar('SELECT COUNT(*) FROM 202_attribution_journey_meta jm WHERE jm.user_id = 1 AND jm.touches > 1 AND NOT EXISTS (SELECT 1 FROM 202_attribution_journeys j WHERE j.conv_id = jm.conv_id AND j.position + 1 = jm.touches)'), 'a journey missing its last position');
+            self::assertGreaterThan(0, (int) self::scalar('SELECT COUNT(*) FROM 202_attribution_journey_meta jm JOIN 202_attribution_journeys j ON j.conv_id = jm.conv_id AND j.position + 1 = jm.touches JOIN 202_clicks_advance ca ON ca.click_id = j.click_id WHERE jm.user_id = 1 AND ca.browser_id IN (7, 8)'), 'a converting click whose browser has no row');
+        }
+
+        $journeysServed = 0;
+        foreach ($ranges as $label => [$from, $to]) {
+            $journeysServed += $this->assertSameJourneys("$label, journey metrics", 1, $from, $to);
+        }
+        $journeysServed += $this->assertSameJourneys('the other account, journey metrics', 2, $t['first'] - 7200, $t['last'] + 7200);
+        self::assertGreaterThan(0, $journeysServed, 'the rollup served journey hours');
         $full = (new AttributionReports($this->conn));
         $full->breakdownAll(1, null, null, $t['models']['default'], 'keyword', $t['first'] - 7200, $t['last'] + 7200);
         self::assertGreaterThan(0, $full->lastServedHours(), 'the whole range is read from the rollup where it is summed');
@@ -148,6 +181,69 @@ final class RollupMatchesFullComputationTest extends TestCase
         self::assertSame(1, (int) self::scalar('SELECT ' . AttributionRollup::hourIsOneLocalDateSql((string) ($straddling - 1))));
         self::$db->query("SET time_zone = '+00:00'");
         self::assertSame(1, (int) self::scalar('SELECT ' . AttributionRollup::hourIsOneLocalDateSql((string) $straddling)));
+    }
+
+    public function testARollupSummedBeforeItKeptTheJourneyPartIsReadInFullUntilSummedAgain(): void
+    {
+        $t = $this->generate(19, ['conversions' => 120, 'span' => 6 * 86400, 'campaigns' => 4]);
+        $this->buildRollup($t['now']);
+        $window = [$t['first'] - 7200, $t['last'] + 7200];
+        self::assertGreaterThan(0, $this->assertSameJourneys('summed', 1, ...$window));
+
+        // What a rollup summed before this part existed holds: every other
+        // part, no journey rows and no marker.
+        self::fixture('DELETE FROM 202_attribution_rollup WHERE user_id = 1 AND part = ' . AttributionRollup::PART_JOURNEYS);
+        self::assertSame(0, $this->assertSameJourneys('without the journey part', 1, ...$window), 'the journey counts are computed in full');
+        self::assertGreaterThan(0, (new AttributionReports($this->conn))->breakdownAll(1, null, null, $t['models']['default'], 'campaign', ...$window)['totals']['conversions']);
+
+        // The next run marks every built hour, and each is summed again.
+        $built = (int) self::scalar('SELECT built_through_hour FROM 202_attribution_rollup_state WHERE user_id = 1');
+        $rollup = new AttributionRollup($this->conn, static fn (): int => $t['now']);
+        $rollup->sync(1);
+        self::assertSame(1, (int) self::scalar('SELECT ' . AttributionRollup::journeysMarkerSql(1)));
+        self::assertSame(1, (int) self::scalar('SELECT COUNT(*) FROM 202_attribution_rollup_dirty WHERE user_id = 1 AND hour_from = 0 AND hour_to = ' . ($built - 1)), 'every built hour is marked');
+        self::assertSame(0, $this->assertSameJourneys('marked, not summed again', 1, ...$window), 'no clean hour lacks journey rows');
+        $this->buildRollup($t['now']);
+        self::assertGreaterThan(0, $this->assertSameJourneys('summed again', 1, ...$window));
+        $rollup->sync(1);
+        self::assertSame(0, (int) self::scalar('SELECT COUNT(*) FROM 202_attribution_rollup_dirty WHERE user_id = 1 AND hour_from = 0'), 'a rollup that keeps the part is not marked again');
+    }
+
+    /**
+     * The window between planning and reading, made deterministic: a plan is
+     * made, the rollup moves under it, and each of the journey statements
+     * must refuse to answer from it (its own guard, in its own snapshot).
+     * No differential run can see a missing guard, since nothing moves
+     * between the two there.
+     */
+    public function testEachJourneyStatementRefusesAPlanTheRollupMovedUnder(): void
+    {
+        $t = $this->generate(29, ['conversions' => 60, 'span' => 4 * 86400, 'campaigns' => 3]);
+        $this->buildRollup($t['now']);
+        $reports = new AttributionReports($this->conn, true);
+        $call = static fn (string $method, mixed ...$args): mixed => (new \ReflectionMethod(AttributionReports::class, $method))->invoke($reports, ...$args);
+        $window = [$t['first'] - 7200, $t['last'] + 7200];
+        $moves = [
+            'a planned hour marked dirty' => fn (array $plan) => self::fixture('INSERT INTO 202_attribution_rollup_dirty (user_id, hour_from, hour_to) VALUES (1, ' . $plan['runs'][0][0] . ', ' . $plan['runs'][0][0] . ')'),
+            'a changed click unresolved' => fn () => self::fixture('INSERT INTO 202_attribution_rollup_dirty_clicks (user_id, click_id) VALUES (1, 1)'),
+            'the journey part no longer kept' => fn () => self::fixture('DELETE FROM 202_attribution_rollup WHERE user_id = 1 AND grain = ' . AttributionRollup::GRAIN_MARKER),
+            'the frontier moved back' => fn (array $plan) => self::fixture('UPDATE 202_attribution_rollup_state SET built_through_hour = ' . $plan['maxHour'] . ' WHERE user_id = 1'),
+        ];
+        foreach ($moves as $label => $move) {
+            self::fixture('DELETE FROM 202_attribution_rollup_dirty');
+            self::fixture('DELETE FROM 202_attribution_rollup_dirty_clicks');
+            $this->buildRollup($t['now']);
+            (new AttributionRollup($this->conn, static fn (): int => $t['now']))->sync(1);
+            $plan = $call('rollupPlan', 1, false, [AttributionRollup::EFFECTIVE], 0, 'journeys', ...$window);
+            self::assertIsArray($plan, "$label: a plan is made");
+            self::assertNotNull($call('rolledJourneyTallies', $plan), "$label: before the move the tallies read");
+            self::assertNotNull($call('rolledJourneyBrowsers', $plan), "$label: before the move the browsers read");
+            $move($plan);
+            self::assertNull($call('rolledJourneyTallies', $plan), "$label: the tallies refuse the plan");
+            self::assertNull($call('rolledJourneyBrowsers', $plan), "$label: the browsers refuse the plan");
+            self::fixture('DELETE FROM 202_attribution_rollup WHERE user_id = 1');
+            self::fixture('DELETE FROM 202_attribution_rollup_state WHERE user_id = 1');
+        }
     }
 
     public function testChangesAfterTheRollupWasSummedAreReadExactlyUntilItIsSummedAgain(): void
@@ -183,11 +279,16 @@ final class RollupMatchesFullComputationTest extends TestCase
                 });
             }
         };
-        $step = function (string $label, callable $change) use ($processOutbox, $window, $first, $linear): void {
+        $journeysMoved = [];
+        $step = function (string $label, callable $change) use ($processOutbox, $window, $first, $linear, &$journeysMoved): void {
             $before = $this->fullComputation($window, $first, $linear);
             $change();
             $processOutbox();
-            self::assertNotSame($before, $this->fullComputation($window, $first, $linear), "$label changes what the reports answer, or comparing after it proves nothing");
+            $after = $this->fullComputation($window, $first, $linear);
+            self::assertNotSame($before, $after, "$label changes what the reports answer, or comparing after it proves nothing");
+            if ($before['journeys'] !== $after['journeys']) {
+                $journeysMoved[] = $label;
+            }
             $this->compareAll("$label (dirty)", $window, $first, $linear, false);
             (new AttributionRollup($this->conn))->run(60);
             self::assertSame(0, (int) self::scalar('SELECT COUNT(*) FROM 202_attribution_rollup_dirty WHERE user_id = 1'), "$label: every dirty hour was summed again");
@@ -216,12 +317,22 @@ final class RollupMatchesFullComputationTest extends TestCase
         });
         $step('one click rewritten', function () use ($clicks): void {
             // What a rotator re-click does to an existing click (rtr.php):
-            // the click row again, now, and its keyword and campaign replaced.
-            $this->conn->transaction(function () use ($clicks): void {
-                self::$db->query('INSERT INTO 202_clicks SET click_id = 14, user_id = 1, aff_campaign_id = 3, ppc_account_id = 0, click_payout = 0, click_cpc = 0.5, click_lead = 0, click_filtered = 0, click_bot = 0, click_time = ' . ($clicks[14] + 90_000));
-                self::$db->query('REPLACE INTO 202_clicks_advance SET click_id = 14, keyword_id = 77, country_id = 3, device_id = 0, browser_id = 0, platform_id = 0');
+            // the click row again, now, and its keyword, country and browser
+            // replaced (a browser the journey metrics name). Each statement
+            // is checked: an unchecked one that fails is a change that
+            // never happened, compared as though it had.
+            $q = static function (string $sql): void {
+                if (self::$db->query($sql) !== true) {
+                    throw new \RuntimeException('the rewrite failed: ' . self::$db->error);
+                }
+            };
+            $q("INSERT INTO 202_browsers SET browser_id = 3, browser_name = 'Rewritten browser'");
+            $this->conn->transaction(function () use ($clicks, $q): void {
+                $q('INSERT INTO 202_clicks SET click_id = 14, user_id = 1, aff_campaign_id = 3, ppc_account_id = 0, click_payout = 0, click_cpc = 0.5, click_lead = 0, click_filtered = 0, click_bot = 0, click_time = ' . ($clicks[14] + 90_000));
+                $q('REPLACE INTO 202_clicks_advance SET click_id = 14, keyword_id = 77, ip_id = 0, country_id = 3, region_id = 0, city_id = 0, device_id = 0, browser_id = 3, platform_id = 0');
                 RollupDirty::click($this->conn, 1, 14);
             });
+            self::assertSame('77', self::scalar('SELECT keyword_id FROM 202_clicks_advance WHERE click_id = 14'));
         });
         $step('a CPC range update', function () use ($base): void {
             $this->conn->transaction(function () use ($base): void {
@@ -229,6 +340,12 @@ final class RollupMatchesFullComputationTest extends TestCase
                 RollupDirty::timeRange($this->conn, 1, $base + 20_000, $base + 60_000);
             });
         });
+        // The journey comparisons above proved something only where the
+        // change moved the journey metrics: the counts (a conversion gone,
+        // back, added, moved to another hour; the converting click's
+        // browser) or, for the reversal, the amount the recent list shows.
+        // Model, override, default and cost changes move no journey.
+        self::assertSame(['a retraction', 'a replacement', 'a partial reversal', 'a revival', 'a conversion for an old hour', 'one click rewritten'], $journeysMoved);
         // A conversion dated before its own click, which is young: the hour
         // of the conversion is summed but left dirty while its journey holds
         // a click younger than the seal, because the redirects that rewrite a
@@ -270,7 +387,9 @@ final class RollupMatchesFullComputationTest extends TestCase
             'whole window' => $window,
             'mid-hour edges' => [$window[0] + 4_321, $window[1] - 2_345],
         ];
+        $journeysServed = 0;
         foreach ($ranges as $rangeLabel => [$from, $to]) {
+            $journeysServed += $this->assertSameJourneys("$label, $rangeLabel, journey metrics", 1, $from, $to);
             foreach (AttributionReports::dimensions() as $dim) {
                 foreach ([[null, null], [$model, $other], [null, $model]] as [$m, $c]) {
                     $served += $this->assertSameAnswer("$label, $rangeLabel, $dim", 1, $m, $c, $default, $dim, $from, $to);
@@ -282,6 +401,7 @@ final class RollupMatchesFullComputationTest extends TestCase
         }
         if ($expectServed) {
             self::assertGreaterThan(0, $served, "$label: the rollup served hours");
+            self::assertGreaterThan(0, $journeysServed, "$label: the rollup served journey hours");
         }
     }
 
@@ -290,7 +410,7 @@ final class RollupMatchesFullComputationTest extends TestCase
      * change moved anything.
      *
      * @param array{0: int, 1: int} $window
-     * @return list<array<string, mixed>>
+     * @return array{breakdowns: list<array<string, mixed>>, journeys: array<string, mixed>}
      */
     private function fullComputation(array $window, int $model, int $other): array
     {
@@ -302,7 +422,7 @@ final class RollupMatchesFullComputationTest extends TestCase
             }
         }
 
-        return $out;
+        return ['breakdowns' => $out, 'journeys' => $full->journeyMetrics(1, $window[0], $window[1])];
     }
 
     /** @return int hours the rollup served */
@@ -311,6 +431,18 @@ final class RollupMatchesFullComputationTest extends TestCase
         $expected = (new AttributionReports($this->conn, false))->breakdownAll($userId, $model, $compare, $default, $dim, $from, $to);
         $reports = new AttributionReports($this->conn, true);
         $actual = $reports->breakdownAll($userId, $model, $compare, $default, $dim, $from, $to);
+        self::assertSame($expected, $actual, "$context [$from, $to]");
+        $this->comparisons++;
+
+        return $reports->lastServedHours();
+    }
+
+    /** @return int hours the rollup served */
+    private function assertSameJourneys(string $context, int $userId, int $from, int $to): int
+    {
+        $expected = (new AttributionReports($this->conn, false))->journeyMetrics($userId, $from, $to);
+        $reports = new AttributionReports($this->conn, true);
+        $actual = $reports->journeyMetrics($userId, $from, $to);
         self::assertSame($expected, $actual, "$context [$from, $to]");
         $this->comparisons++;
 
@@ -421,6 +553,15 @@ final class RollupMatchesFullComputationTest extends TestCase
         foreach (['c1', 'c2', 'c3', 'c4'] as $cn) {
             $this->bulk("202_tracking_$cn", ["{$cn}_id", $cn], array_map(static fn (int $i): array => [$i, "'$cn value $i'"], range(1, 5)));
         }
+        // Browsers 7 and 8 have no row; 4 and 5 share a name; 6 is named
+        // what a missing one reads as; 0 has a row (which only a session
+        // that keeps an explicit 0 can insert).
+        $this->bulk('202_browsers', ['browser_id', 'browser_name'], [[1, "'Browser 1'"], [2, "'Browser 2'"], [3, "'Browser 3'"], [4, "'Browser 4'"], [5, "'Browser 4'"], [6, "'Unknown'"]]);
+        self::$db->query("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_AUTO_VALUE_ON_ZERO'");
+        $zero = self::$db->query("INSERT INTO 202_browsers SET browser_id = 0, browser_name = 'Browser zero'");
+        self::$db->query("SET SESSION sql_mode = 'STRICT_TRANS_TABLES'");
+        self::assertTrue($zero, 'browser 0 inserted: ' . self::$db->error);
+        self::assertSame('Browser zero', self::scalar('SELECT browser_name FROM 202_browsers WHERE browser_id = 0'));
 
         $clickId = 0;
         $convId = 0;
@@ -446,7 +587,7 @@ final class RollupMatchesFullComputationTest extends TestCase
                 $clickRows[] = $again;
             }
             if (mt_rand(0, 9) > 0) {
-                $advance[] = [$id, mt_rand(0, 40), mt_rand(0, 13), mt_rand(0, 7)];
+                $advance[] = [$id, mt_rand(0, 40), mt_rand(0, 13), mt_rand(0, 7), mt_rand(0, 8)];
             }
             if (mt_rand(0, 4) > 0) {
                 $tracking[] = [$id, mt_rand(0, 6), mt_rand(0, 6), mt_rand(0, 6), mt_rand(0, 6)];
@@ -468,9 +609,13 @@ final class RollupMatchesFullComputationTest extends TestCase
             $touches = mt_rand(1, 5);
             $times = [];
             for ($k = 0; $k < $touches; $k++) {
-                $times[] = $convTime - mt_rand(0, 5 * 86400);
+                $times[] = $convTime - (mt_rand(0, 3) === 0 ? mt_rand(0, 40 * 86400) : mt_rand(0, 5 * 86400));
             }
             sort($times);
+            if (mt_rand(0, 24) === 0) {
+                // A conversion dated before its clicks (the first touch after it).
+                $times = array_map(static fn (int $tm): int => $tm + 40 * 86400 + mt_rand(1, 7200), $times);
+            }
             $ids = array_map(fn (int $tm): int => $newClick($user, $tm), $times);
             if (mt_rand(0, 99) === 0) {
                 $ids[0] = 5_000_000 + $clickId; // a touch whose click row is gone
@@ -480,9 +625,14 @@ final class RollupMatchesFullComputationTest extends TestCase
             $last_click = $ids[$touches - 1];
             $convCampaign = $user === 2 ? 900 : (mt_rand(0, 9) === 0 ? mt_rand(1, $campaigns) : ($campaignOf[$last_click] ?? 1));
             $convRows[] = [$id, $last_click, $convCampaign, sprintf("'%.5f'", $amount), $user, $times[$touches - 1], $convTime, "'d$id'"];
-            $meta[] = [$id, $user, $convTime, $touches, 30, 1, 0, 1];
+            $meta[] = [$id, $user, $convTime, $touches, 30, 1, mt_rand(0, 6) === 0 ? 1 : 0, mt_rand(0, 3) === 0 ? 0 : 1];
+            // Now and then a journey missing its first or its last position
+            // (what a half-written journey would leave).
+            $missing = mt_rand(0, 49) === 0 ? mt_rand(0, 1) * ($touches - 1) : -1;
             foreach ($ids as $pos => $cid) {
-                $journeys[] = [$id, $pos, $cid, $times[$pos]];
+                if ($pos !== $missing) {
+                    $journeys[] = [$id, $pos, $cid, $times[$pos]];
+                }
             }
             $modelFor = $user === 2 ? ['default' => $models['other']] : ['default' => $models['default'], 'first' => $models['first'], 'linear' => $models['linear']];
             foreach ($modelFor as $name => $mid) {
@@ -505,7 +655,7 @@ final class RollupMatchesFullComputationTest extends TestCase
         }
 
         $this->bulk('202_clicks', ['click_id', 'user_id', 'aff_campaign_id', 'ppc_account_id', 'landing_page_id', 'click_cpc', 'click_bot', 'click_time'], $clickRows);
-        $this->bulk('202_clicks_advance', ['click_id', 'keyword_id', 'country_id', 'device_id'], $advance);
+        $this->bulk('202_clicks_advance', ['click_id', 'keyword_id', 'country_id', 'device_id', 'browser_id'], $advance);
         $this->bulk('202_clicks_tracking', ['click_id', 'c1_id', 'c2_id', 'c3_id', 'c4_id'], $tracking);
         $this->bulk('202_conversion_logs', ['conv_id', 'click_id', 'campaign_id', 'click_payout', 'user_id', 'click_time', 'conv_time', 'dedupe_key'], $convRows);
         $this->bulk('202_attribution_journey_meta', ['conv_id', 'user_id', 'conv_time', 'touches', 'built_lookback_days', 'built_at', 'truncated', 'identified'], $meta);

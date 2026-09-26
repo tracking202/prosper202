@@ -10,7 +10,9 @@ use Prosper202\Report\RollupDirty;
 /**
  * The report rollup (plan §7.3; built in PR 13): the sums AttributionReports
  * reads, kept per account, part, dimension, model and hour in
- * 202_attribution_rollup, plus one row per UTC day summed from its 24 hours.
+ * 202_attribution_rollup, plus one row per UTC day summed from its 24 hours:
+ * the breakdowns' credits, cost, assists and totals, and the journey
+ * metrics' counts (PART_JOURNEYS).
  *
  * What a report may read from it, and why that is always the same answer as
  * the full computation, rests on four rules:
@@ -55,9 +57,38 @@ final class AttributionRollup
     public const PART_COST = 2;
     public const PART_ASSISTS = 3;
     public const PART_TOTALS = 4;
+    /**
+     * The journey metrics' counts (AttributionReports::journeyMetrics()),
+     * over conversions by conv_time: one "dimension" per count, each row a
+     * number of conversions (n) for one key. Not per model: a journey is
+     * the same under every model.
+     */
+    public const PART_JOURNEYS = 5;
+
+    /** Conversions by journey length; the key is the number of touches. */
+    public const JOURNEY_LENGTH = 1;
+    /** Truncated journeys (the touch cap cut them), keyed by touches. */
+    public const JOURNEY_TRUNCATED = 2;
+    /** Journeys whose converting click had no visitor key, keyed by touches. */
+    public const JOURNEY_UNIDENTIFIED = 3;
+    /** Conversions by time-to-convert bucket (its position in AttributionReports' list). */
+    public const JOURNEY_TIME_TO_CONVERT = 4;
+    /** Conversions by the converting click's browser id (key_null: no clicks_advance row). */
+    public const JOURNEY_BROWSER = 5;
+    /** One-touch conversions by the converting click's browser id. */
+    public const JOURNEY_BROWSER_ONE_TOUCH = 6;
 
     public const GRAIN_HOUR = 0;
     public const GRAIN_DAY = 1;
+    /**
+     * One row per account (part PART_JOURNEYS, bucket 0) saying the
+     * account's built hours carry the journey part: written with the state
+     * row, or — for a rollup summed before the part existed — together with
+     * a mark on every built hour, so no clean hour lacks journey rows.
+     * Reports read the part only while it exists. No hour or day build
+     * touches this grain.
+     */
+    public const GRAIN_MARKER = 2;
 
     /** model_id of the effective rows, and of the parts no model shapes. */
     public const EFFECTIVE = 0;
@@ -213,8 +244,19 @@ final class AttributionRollup
                 $this->conn->bind($ins, 'iii', [$userId, $default, ($this->clock)()]);
                 $this->conn->executeUpdate($ins);
                 $this->storeOverrides($userId, $current);
+                $this->markJourneysKept($userId);
 
                 return;
+            }
+
+            if (!$this->journeysKept($userId)) {
+                // Summed before the rollup kept the journey part: every
+                // built hour lacks it until it is summed again.
+                $this->markJourneysKept($userId);
+                $built = (int) $state['built_through_hour'];
+                if ($built > 0) {
+                    RollupDirty::hours($this->conn, $userId, 0, $built - 1);
+                }
             }
 
             $stored = $this->storedOverrides($userId);
@@ -506,6 +548,8 @@ final class AttributionRollup
             }
         }
 
+        array_push($rows, ...$this->journeyRows($userId, $from, $to));
+
         foreach (array_chunk($rows, self::INSERT_CHUNK) as $chunk) {
             $values = [];
             foreach ($chunk as $r) {
@@ -540,8 +584,78 @@ final class AttributionRollup
     }
 
     /**
+     * The journey part's hour rows for [$from, $to] (seconds): the same
+     * counts, over the same joins, as AttributionReports' full computation.
+     *
+     * @return list<array{0: int, 1: int, 2: int, 3: int, 4: int, 5: string, 6: int, 7: string, 8: string, 9: string}>
+     */
+    private function journeyRows(int $userId, int $from, int $to): array
+    {
+        $rows = [];
+        $row = static fn (int $dim, int $bucket, int $keyNull, string $key, int $n): array => [self::PART_JOURNEYS, $dim, self::EFFECTIVE, $bucket, $keyNull, $key, $n, '0', '0', '0'];
+
+        $stmt = $this->conn->prepareWrite(
+            'SELECT jm.conv_time DIV 3600 AS b, jm.touches AS k, COUNT(*) AS n,
+                    SUM(jm.truncated) AS truncated, SUM(jm.identified = 0) AS unidentified
+             FROM 202_attribution_journey_meta jm
+             WHERE jm.user_id = ? AND jm.conv_time >= ? AND jm.conv_time <= ?
+             GROUP BY b, k'
+        );
+        $this->conn->bind($stmt, 'iii', [$userId, $from, $to]);
+        foreach ($this->conn->fetchAll($stmt) as $r) {
+            $b = (int) $r['b'];
+            $k = (string) $r['k'];
+            $rows[] = $row(self::JOURNEY_LENGTH, $b, 0, $k, (int) $r['n']);
+            if ((int) $r['truncated'] > 0) {
+                $rows[] = $row(self::JOURNEY_TRUNCATED, $b, 0, $k, (int) $r['truncated']);
+            }
+            if ((int) $r['unidentified'] > 0) {
+                $rows[] = $row(self::JOURNEY_UNIDENTIFIED, $b, 0, $k, (int) $r['unidentified']);
+            }
+        }
+
+        $stmt = $this->conn->prepareWrite(
+            'SELECT jm.conv_time DIV 3600 AS b, ' . AttributionReports::timeToConvertSql('jm.conv_time', 'j.click_time', true) . ' AS k, COUNT(*) AS n
+             FROM 202_attribution_journey_meta jm
+             JOIN 202_attribution_journeys j ON j.conv_id = jm.conv_id AND j.position = 0
+             WHERE jm.user_id = ? AND jm.conv_time >= ? AND jm.conv_time <= ?
+             GROUP BY b, k'
+        );
+        $this->conn->bind($stmt, 'iii', [$userId, $from, $to]);
+        foreach ($this->conn->fetchAll($stmt) as $r) {
+            $rows[] = $row(self::JOURNEY_TIME_TO_CONVERT, (int) $r['b'], 0, (string) $r['k'], (int) $r['n']);
+        }
+
+        // Grouped by whether the browser is NULL as well as by its id: the
+        // report names a NULL 'Unknown' and an id by its row, so the two
+        // must not share a row the way a breakdown's NULL and 0 keys do.
+        $stmt = $this->conn->prepareWrite(
+            'SELECT jm.conv_time DIV 3600 AS b, ca.browser_id IS NULL AS kn, COALESCE(ca.browser_id, 0) AS k,
+                    COUNT(*) AS n, SUM(jm.touches = 1) AS one_touch
+             FROM 202_attribution_journey_meta jm
+             JOIN 202_attribution_journeys j ON j.conv_id = jm.conv_id AND j.position + 1 = jm.touches
+             LEFT JOIN 202_clicks_advance ca ON ca.click_id = j.click_id
+             WHERE jm.user_id = ? AND jm.conv_time >= ? AND jm.conv_time <= ?
+             GROUP BY b, kn, k'
+        );
+        $this->conn->bind($stmt, 'iii', [$userId, $from, $to]);
+        foreach ($this->conn->fetchAll($stmt) as $r) {
+            $b = (int) $r['b'];
+            $kn = (int) $r['kn'];
+            $rows[] = $row(self::JOURNEY_BROWSER, $b, $kn, (string) $r['k'], (int) $r['n']);
+            if ((int) $r['one_touch'] > 0) {
+                $rows[] = $row(self::JOURNEY_BROWSER_ONE_TOUCH, $b, $kn, (string) $r['k'], (int) $r['one_touch']);
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
      * A UTC day's rows, summed from its hours. The day dimension has none:
-     * a report groups it by the local date of each hour.
+     * a report groups it by the local date of each hour. A key's NULL and
+     * its value stay apart as they are in the hours (the journey browsers
+     * need that; a breakdown sums both into one group either way).
      */
     public function buildDay(int $userId, int $day): void
     {
@@ -554,10 +668,10 @@ final class AttributionRollup
         $stmt = $this->conn->prepareWrite(
             'INSERT INTO 202_attribution_rollup
                 (user_id, part, dim, model_id, grain, bucket, key_null, dim_key, n, credit, revenue, cost)
-             SELECT user_id, part, dim, model_id, ?, ?, MIN(key_null), dim_key, SUM(n), SUM(credit), SUM(revenue), SUM(cost)
+             SELECT user_id, part, dim, model_id, ?, ?, key_null, dim_key, SUM(n), SUM(credit), SUM(revenue), SUM(cost)
              FROM 202_attribution_rollup
              WHERE user_id = ? AND grain = ? AND bucket BETWEEN ? AND ? AND dim <> ?
-             GROUP BY user_id, part, dim, model_id, dim_key'
+             GROUP BY user_id, part, dim, model_id, key_null, dim_key'
         );
         $this->conn->bind($stmt, 'iiiiiii', [self::GRAIN_DAY, $day, $userId, self::GRAIN_HOUR, $day * 24, $day * 24 + 23, self::DIMENSION_CODES['day']]);
         $this->conn->executeUpdate($stmt);
@@ -704,6 +818,42 @@ final class AttributionRollup
 
         return "(DATE(FROM_UNIXTIME($start)) = DATE(FROM_UNIXTIME($end))
                  AND TO_SECONDS(FROM_UNIXTIME($start)) - $start = TO_SECONDS(FROM_UNIXTIME($end)) - ($end))";
+    }
+
+    /**
+     * 1 when the account's rollup carries the journey part (GRAIN_MARKER):
+     * every built hour was summed with it, or is marked dirty.
+     */
+    public static function journeysMarkerSql(int $userId): string
+    {
+        return sprintf(
+            'EXISTS (SELECT 1 FROM 202_attribution_rollup jmk WHERE jmk.user_id = %d AND jmk.part = %d AND jmk.dim = 0 AND jmk.model_id = %d AND jmk.grain = %d)',
+            $userId,
+            self::PART_JOURNEYS,
+            self::EFFECTIVE,
+            self::GRAIN_MARKER
+        );
+    }
+
+    private function journeysKept(int $userId): bool
+    {
+        $stmt = $this->conn->prepareWrite('SELECT ' . self::journeysMarkerSql($userId) . ' AS kept');
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            throw new \RuntimeException('the rollup could not read whether account ' . $userId . ' keeps the journey part');
+        }
+
+        return (int) $row['kept'] === 1;
+    }
+
+    private function markJourneysKept(int $userId): void
+    {
+        $stmt = $this->conn->prepareWrite(
+            'INSERT INTO 202_attribution_rollup (user_id, part, dim, model_id, grain, bucket, key_null, dim_key, n, credit, revenue, cost)
+             VALUES (?, ?, 0, ?, ?, 0, 0, 0, 1, 0, 0, 0) ON DUPLICATE KEY UPDATE n = 1'
+        );
+        $this->conn->bind($stmt, 'iiii', [$userId, self::PART_JOURNEYS, self::EFFECTIVE, self::GRAIN_MARKER]);
+        $this->conn->executeUpdate($stmt);
     }
 
     /** @param list<int> $ids */
