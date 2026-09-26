@@ -35,7 +35,13 @@ use Prosper202\Attribution\ExportFiles;
  *  - the goals engine (PR 4) is deleted: goals and their versions, campaign
  *    payouts, and every subject's events, progress and outcomes — the
  *    ledger rows the outcomes wrote stay, with the clicks;
- *  - the user's REST API keys are revoked. Sessions already refuse a deleted
+ *  - the LTV state is deleted: customers (names, emails, CRM fields),
+ *    aliases, companies, the revenue ledger and its line items, products,
+ *    subscriptions, integrations and webhooks with their secrets, and the
+ *    personalization, offer and engagement rows;
+ *  - the revenue-upload batch records (the uploaded file names) are deleted;
+ *  - the user's REST API keys and remember-me login keys are revoked, and
+ *    the addresses they signed in from are forgotten. Sessions already refuse a deleted
  *    user (functions-auth.php reads user_deleted); the API authenticates by
  *    key alone, so before this a deleted user's key kept working — and could
  *    register the very apps whose postbacks the purge had just released;
@@ -93,15 +99,74 @@ final class UserDataPurge
         'DELETE FROM 202_goals WHERE user_id = ?',
     ];
 
+    /**
+     * The LTV state (LtvTables): customers and their CRM fields, aliases,
+     * companies, the revenue ledger and its line items, products,
+     * subscriptions, the integrations and webhooks (with their signing
+     * secrets) and their deliveries, and the personalization and offer
+     * state. Every table carries user_id, so each goes by it; children
+     * before the rows they name. Every LtvTables table has a statement here;
+     * UserDeletionPurgeTest holds the two lists equal.
+     */
+    public const LTV_STATEMENTS = [
+        'DELETE FROM 202_ltv_webhook_deliveries WHERE user_id = ?',
+        'DELETE FROM 202_ltv_webhooks WHERE user_id = ?',
+        'DELETE FROM 202_ltv_integrations WHERE user_id = ?',
+        'DELETE FROM 202_revenue_line_items WHERE user_id = ?',
+        'DELETE FROM 202_revenue_events WHERE user_id = ?',
+        'DELETE FROM 202_subscriptions WHERE user_id = ?',
+        'DELETE FROM 202_personalization_tokens WHERE user_id = ?',
+        'DELETE FROM 202_offer_recommendations WHERE user_id = ?',
+        'DELETE FROM 202_offer_transitions WHERE user_id = ?',
+        'DELETE FROM 202_engagement_events WHERE user_id = ?',
+        'DELETE FROM 202_customer_field_values WHERE user_id = ?',
+        'DELETE FROM 202_customer_fields WHERE user_id = ?',
+        'DELETE FROM 202_customer_aliases WHERE user_id = ?',
+        'DELETE FROM 202_customers WHERE user_id = ?',
+        'DELETE FROM 202_companies WHERE user_id = ?',
+        'DELETE FROM 202_products WHERE user_id = ?',
+    ];
+
+    /**
+     * The user's revenue-upload batches: the file names they uploaded. The
+     * conversion rows the batches wrote stay, with the clicks.
+     */
+    public const CONVERSION_STATEMENTS = [
+        'DELETE FROM 202_conversion_uploads WHERE user_id = ?',
+    ];
+
     /** Queued traffic-source postbacks: a deleted account's never go out. */
     private const NOTIFICATION_STATEMENTS = [
         'DELETE FROM 202_notification_pending WHERE user_id = ?',
     ];
 
+    /** Taken first in the delete's transaction: see deleteUser(). */
+    public const LOCK_USER = 'SELECT user_id FROM 202_users WHERE user_id = ? FOR UPDATE';
+
     /** What lets the user act at all through the API; revoked with the rest. */
     private const ACCESS_STATEMENTS = [
         'DELETE FROM 202_api_keys WHERE user_id = ?',
+        'DELETE FROM 202_auth_keys WHERE user_id = ?',
+        'DELETE FROM 202_last_ips WHERE user_id = ?',
     ];
+
+    /**
+     * Every purge statement, in the order deleteUser() runs them.
+     *
+     * @return list<string>
+     */
+    public static function statements(): array
+    {
+        return array_merge(
+            self::ACCESS_STATEMENTS,
+            self::NOTIFICATION_STATEMENTS,
+            self::MTA_STATEMENTS,
+            self::IDENTITY_STATEMENTS,
+            self::GOAL_STATEMENTS,
+            self::LTV_STATEMENTS,
+            self::CONVERSION_STATEMENTS
+        );
+    }
 
     public function __construct(
         private readonly \mysqli $db,
@@ -120,7 +185,7 @@ final class UserDataPurge
     public static function cascade(int $userId): array
     {
         $cascade = [];
-        foreach (array_merge(self::ACCESS_STATEMENTS, self::NOTIFICATION_STATEMENTS, self::MTA_STATEMENTS, self::IDENTITY_STATEMENTS, self::GOAL_STATEMENTS) as $sql) {
+        foreach (self::statements() as $sql) {
             if (preg_match('/^DELETE (?:\w+ )?FROM (\w+)/', $sql, $m) !== 1) {
                 throw new \LogicException('Unreadable purge statement: ' . $sql);
             }
@@ -164,9 +229,19 @@ final class UserDataPurge
             throw new \RuntimeException('Could not start the user deletion transaction');
         }
         try {
+            // The user row is locked first, before anything is purged. The
+            // attribution worker reads user_deleted with a shared lock on
+            // that row before it writes a conversion's journey and credits,
+            // so the two serialize: a worker already holding it finishes and
+            // commits, and the purge below then deletes what it wrote; a
+            // worker that comes after waits for this commit and reads the
+            // user as deleted. Taken last (with the soft delete), the lock
+            // let a worker write between the purge's DELETEs and its commit,
+            // and those rows outlived the user.
+            $this->run(self::LOCK_USER, $userId);
             // Read inside the transaction, before the rows that hold them go.
             $exportFileNames = $this->exportFileNames($userId);
-            foreach (array_merge(self::ACCESS_STATEMENTS, self::NOTIFICATION_STATEMENTS, self::MTA_STATEMENTS, self::IDENTITY_STATEMENTS, self::GOAL_STATEMENTS) as $sql) {
+            foreach (self::statements() as $sql) {
                 $this->run($sql, $userId);
             }
             $unlinked = (new AppDataPurge($this->db))->purgeUser($userId);

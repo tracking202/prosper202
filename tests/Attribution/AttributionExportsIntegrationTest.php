@@ -333,6 +333,44 @@ final class AttributionExportsIntegrationTest extends TestCase
         self::assertSame($filesBefore, self::files(), 'no file of the deleted job is left on disk');
     }
 
+    /**
+     * A model delete and the export runner agree on who owns a running job:
+     * the delete refuses while a runner holds one of the model's exports
+     * (as DELETE of a running export does), so the runner's file is never
+     * left named by nothing; once the run ends, the delete takes the row and
+     * its file, and a claim after the delete finds no row.
+     */
+    public function testAModelDeleteWaitsForItsRunningExportAndThenTakesItsFile(): void
+    {
+        $this->scenario();
+        $linear = $this->addModel('Linear', ModelType::LINEAR);
+        $this->work();
+        $id = (int) $this->api()->createExport(['model_id' => $linear])['data']['export_id'];
+        $asCompare = (int) $this->api()->createExport(['compare_model_id' => $linear])['data']['export_id'];
+        $store = new ExportStore($this->conn);
+        self::assertTrue($store->claim($id, $this->now));
+        $filesBefore = self::files();
+
+        try {
+            $this->api()->deleteModel($linear);
+            self::fail('a model whose export is running was deleted');
+        } catch (\Api\V3\Exception\ConflictException $e) {
+            self::assertStringContainsString('export running (' . $id . ')', $e->getMessage());
+        }
+        self::assertSame('1', (string) self::scalar("SELECT COUNT(*) FROM 202_attribution_models WHERE model_id = $linear"), 'the model is kept');
+        self::assertSame('2', (string) self::scalar("SELECT COUNT(*) FROM 202_attribution_exports WHERE export_id IN ($id, $asCompare)"), 'and its exports');
+
+        self::assertSame('completed', $this->runner()->runClaimed($id), 'the run that held it finishes as its own');
+        $file = self::$dir . '/' . self::row($id)['file_path'];
+        self::assertFileExists($file);
+
+        $this->api()->deleteModel($linear);
+        self::assertFileDoesNotExist($file, 'the delete took the finished job\'s file');
+        self::assertSame($filesBefore, self::files(), 'and no file of the model is left');
+        self::assertFalse($store->claim($asCompare, $this->now), 'a claim after the delete finds no row');
+        self::assertSame(0, $this->runner()->run(10)['completed']);
+    }
+
     public function testARetryReplacesItsFileAndKeepsNoOther(): void
     {
         $this->scenario();

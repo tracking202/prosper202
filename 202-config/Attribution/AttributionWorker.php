@@ -63,6 +63,9 @@ final class AttributionWorker
     /** @var callable(): int */
     private $clock;
 
+    /** The user row, read under a shared lock (userDeleted()). */
+    public const USER_LOCK_SQL = 'SELECT user_deleted FROM 202_users WHERE user_id = ? LOCK IN SHARE MODE';
+
     /** @param (callable(): int)|null $clock */
     public function __construct(private Connection $conn, ?callable $clock = null)
     {
@@ -408,6 +411,28 @@ final class AttributionWorker
     }
 
     /**
+     * Whether the conversion's account is deleted, read with a shared lock
+     * on its user row. UserDataPurge locks that row for update before it
+     * purges, so the two serialize (see UserDataPurge::deleteUser()): this
+     * read waits for a purge in progress and then sees the user deleted,
+     * and a purge that starts after it waits for this transaction's
+     * journey and credits to commit, and deletes them. A locking read also
+     * reads the latest committed row, never an older snapshot.
+     *
+     * An account with no user row at all is treated as deleted: its MTA
+     * state has no owner to be shown to, and the fail-closed answer writes
+     * nothing.
+     */
+    private function userDeleted(int $userId): bool
+    {
+        $stmt = $this->conn->prepareWrite(self::USER_LOCK_SQL);
+        $this->conn->bind($stmt, 'i', [$userId]);
+        $user = $this->conn->fetchOne($stmt);
+
+        return $user === null || (int) $user['user_deleted'] === 1;
+    }
+
+    /**
      * Rewrite one conversion's journey and credits from the current ledger
      * and identity graph. Runs inside the caller's transaction.
      *
@@ -417,8 +442,8 @@ final class AttributionWorker
     {
         $stmt = $this->conn->prepareWrite(
             'SELECT c.conv_id, c.click_id, c.user_id, c.click_payout, c.payable, c.deleted, c.superseded_reason,
-                    c.reverses_conv_id, c.conv_time, c.click_time, u.user_deleted
-             FROM 202_conversion_logs c LEFT JOIN 202_users u ON u.user_id = c.user_id
+                    c.reverses_conv_id, c.conv_time, c.click_time
+             FROM 202_conversion_logs c
              WHERE c.conv_id = ? LIMIT 1'
         );
         $this->conn->bind($stmt, 'i', [$convId]);
@@ -428,7 +453,7 @@ final class AttributionWorker
             $this->store->clear($convId);
             return 'missing';
         }
-        if ((int) ($row['user_deleted'] ?? 0) === 1) {
+        if ($this->userDeleted((int) $row['user_id'])) {
             // UserDataPurge removed this account's MTA state; a conversion
             // that arrives (or was queued) after that must not rebuild it —
             // journeys, credits, and a default model the account no longer has.

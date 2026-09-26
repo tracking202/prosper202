@@ -198,6 +198,36 @@ final class ExportStore
     }
 
     /**
+     * Lock a model's export rows (as the model or the comparison) for the
+     * transaction that is about to delete them, and return the ids of those
+     * a runner holds.
+     *
+     * The lock is what makes a model delete and the export runner agree: a
+     * runner's claim (an UPDATE of a pending row) waits for the delete to
+     * commit and then matches nothing, and a job it already holds is seen
+     * here as `running`, which the delete refuses — as DELETE of a single
+     * running export does — rather than pulling the row out from under the
+     * file the runner is writing.
+     *
+     * @return list<int>
+     */
+    public function lockForModelDelete(int $userId, int $modelId): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT export_id, status FROM 202_attribution_exports WHERE user_id = ? AND (model_id = ? OR compare_model_id = ?) FOR UPDATE'
+        );
+        $this->conn->bind($stmt, 'iii', [$userId, $modelId, $modelId]);
+        $running = [];
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            if ((string) $row['status'] === 'running') {
+                $running[] = (int) $row['export_id'];
+            }
+        }
+
+        return $running;
+    }
+
+    /**
      * The stored file names of an account's exports, or of one model's.
      *
      * @return list<string>

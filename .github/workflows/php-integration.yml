@@ -148,6 +148,18 @@ jobs:
             --group integration \
             tests/Apps/Android/Integrity/IntegritySettingsIntegrationTest.php \
             --verbose --no-coverage
+          # The user delete against the attribution worker (each waits for
+          # the other on the user row; the race is run with a second process)
+          # and a model delete against its running export — lock semantics
+          # only a real server has.
+          vendor/bin/phpunit --configuration phpunit.ci.xml \
+            --group integration \
+            tests/Attribution/UserDeletionPurgesAttributionTest.php \
+            --verbose --no-coverage
+          vendor/bin/phpunit --configuration phpunit.ci.xml \
+            --group integration \
+            tests/Attribution/AttributionExportsIntegrationTest.php \
+            --verbose --no-coverage
           # Checks the SQL the v3 API ships against the schema it ships, by
           # preparing every statically-known statement on a real server. It
           # needs its own database because it installs a fresh schema.
