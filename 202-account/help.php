@@ -19,7 +19,7 @@ $attributionDocs = [
 	['Attribution API endpoints', 'API reference.', 'docs.php?doc=api-integrations'],
 ];
 
-template_top('Help Resources', ['ui' => 'v2']);  ?>
+template_top('Help Resources');  ?>
 
 <div class="p202-page-header">
 	<div class="p202-page-header__icon"><i class="bi bi-question-circle"></i></div>

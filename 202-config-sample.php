@@ -10,21 +10,13 @@ $mchost = 'localhostmemcache'; // this is the memcache server host, if you don't
 
 // ** Optional: JSON report transport ** //
 // Off by default. When enabled, tracking202/ajax/report_dispatch.php answers flat
-// report requests as JSON, and the classic report pages that still use the old
-// calendar render its bounded filter dropdowns (country/region/isp/device/browser/
-// platform) server-side instead of via six AJAX round-trips. The Analyze reports
-// themselves render server-side on the v2 shell whatever this says. Uncomment to enable:
+// report requests as JSON. The Analyze reports themselves render server-side
+// whatever this says. Uncomment to enable:
 //
 // NOTE: these define() calls must come *after* the declare(strict_types=1) above —
 // declare must be the first statement in the file or PHP fatals on load.
 //
 // define('TRACKING202_JSON_ARCHITECTURE_ENABLED', true);
-//
-// Guardrails for the server-rendered filters. A dropdown larger than MAX_OPTIONS is
-// left on the legacy AJAX path, and if the six of them together would exceed MAX_BYTES
-// of HTML they are all left on it — a big ISP or region table should not bloat the page.
-// define('TRACKING202_STATIC_FILTER_SSR_MAX_OPTIONS', 1500);
-// define('TRACKING202_STATIC_FILTER_SSR_MAX_BYTES', 65536);
 
 /*---DONT EDIT ANYTHING BELOW THIS LINE!---*/
 

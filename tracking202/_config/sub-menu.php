@@ -11,9 +11,8 @@
  * tests/Api/V3/NoLegacyBootstrapClassesTest.php scans this file.
  *
  * The setup pages' own component styles (page header, side panel) used to be
- * emitted from here as an inline <style> block; they live in
- * 202-css/custom.css now, scoped to body.p202-sub-setup, and go away with the
- * classic shell.
+ * emitted from here as an inline <style> block; the pages render the
+ * component layer's parts instead (202-css/p202-components.css).
  */
 $p202Nav1 = (string) ($navigation[1] ?? '');
 $p202Nav2 = (string) ($navigation[2] ?? '');

@@ -2,18 +2,16 @@
  * Prosper202 chrome: the page frame, navbar, section tabs, sub-menu strip and
  * footer that every page shares.
  *
- * This sheet depends on neither Bootstrap 3 nor Bootstrap 5. Both page shells
- * load it (the classic shell last, so it settles the chrome over the older
- * layers; the v2 shell first, under the framework), which is what keeps the
- * site looking whole while page bodies migrate one family at a time. Body
- * content is not styled here; the markup it targets is only what
+ * This sheet depends on no framework. The shell loads it first, under
+ * Bootstrap 5; it was written to be shared with the classic Bootstrap 3 shell
+ * while page bodies migrated one family at a time, and that shell is gone
+ * (U8). Body content is not styled here; the markup it targets is only what
  * 202-config/template.php, tracking202/_config/top.php and
  * tracking202/_config/sub-menu.php emit.
  *
  * Tokens carry their own prefix so a chrome rule can never be changed by
- * accident from a page stylesheet. The dark set keys on the attribute the v2
- * shell manages; classic pages never set it, and their Bootstrap 3 bodies
- * would not follow it if they did.
+ * accident from a page stylesheet. The dark set keys on the data-bs-theme
+ * attribute the shell manages.
  */
 
 :root {
@@ -87,20 +85,27 @@ body {
     box-sizing: border-box;
 }
 
+/* The update banner under the header (202-config/functions-update-banner.php):
+   the kit's dismissible flash, spaced like the content card below it. */
+.p202c-update > .alert {
+    margin: 16px 0 0;
+}
+
+.p202c-update__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+}
+
 /* ---------- Type the chrome owns ----------
 
    Every piece of chrome states its own font size and line height instead of
-   inheriting them from <body>, because the two shells disagree about <body>:
-   Flat UI Pro sets 18px with a line height of 1, Bootstrap 5 15px with 1.5.
-   Anything left to inherit rendered at two sizes — the Analyze strip was 37px
-   tall on a classic page and 43px on a v2 one, each account-menu item 30px
-   against 36px, and the account toggle a pixel taller on classic because the
-   chevron's <svg> sat on the text baseline there and in the middle under
-   Bootstrap 5's reboot. The values are the ones v2 pages already rendered,
-   so measured before and after, no box of the v2 chrome moved (only the
-   chevron's own wrapper shrank, inside a toggle the badge sets the height
-   of). tests/browser/specs/chrome-shells.spec.js measures both shells
-   against each other. */
+   inheriting them from <body>. While two shells existed they disagreed about
+   <body> (Flat UI Pro 18px with a line height of 1, Bootstrap 5 15px with
+   1.5), and anything left to inherit rendered at two sizes; the values here
+   are the ones the Bootstrap 5 pages render, so the chrome does not depend
+   on what a page's body says. */
 .p202c-header,
 .p202c-tabs,
 .p202c-strip,

@@ -1,6 +1,6 @@
 # Measurement rewrite: app measurement (iOS + Android) and multi-touch attribution
 
-Status: **in progress.** PR 0 (legacy endpoints), PR 1 (the conversion ledger), PR 1b (breakdown reads), PR 2 (identity capture), PR 3 (the app core reshape), PR 4 (the goals engine), PR 4b (web events), PR 5 (the Android intake), PR 8 (the iOS SDK), PR 9 (the MTA engine) and PR 10 (the MTA UI and exports) are built; the rest is proposal.
+Status: **in progress.** PR 0 (legacy endpoints), PR 1 (the conversion ledger), PR 1b (breakdown reads), PR 2 (identity capture), PR 3 (the app core reshape), PR 4 (the goals engine), PR 4b (web events), PR 5 (the Android intake), PR 8 (the iOS SDK), PR 9 (the MTA engine) and PR 10 (the MTA UI and exports) are built, and Part E's UI migration is complete with U8 (the classic shell removed, §10.4.1); the rest is proposal.
 
 ## Scope
 
@@ -3848,17 +3848,178 @@ Standalone pages render their own `<html>`.
 | **U5** | **Update** (5 pages) | With PR 1 (the same PR or the one next to it): PR 1 rewrites the revenue CSV upload's behaviour and U5 its page, and they are reviewed together. **Done:** Update Subids, Update CPC, Reset Campaign Subids, Delete Subids and Upload Revenue Reports on v2; the CPC update and the campaign reset moved off their AJAX fragments onto their pages (the CPC write had asked for no token). Checked by `tests/live/update-pages.sh` and `tests/live/conversion-ledger.sh`, `tests/browser/specs/update-pages.spec.js` (`UPDATE_PAGES` in `lib/checks.js`), `tests/Update/UpdatePostsRequireTokenTest` and `UpdateUiHelpersTest` |
 | **U6** | **Account** (14 pages; the attribution dashboard is replaced by PR 10, not migrated) | Any time after U1 |
 | **U7** | **Standalone and pre-login** (login, password reset, install, upgrade, error pages, `index.php`, `202-tv`, `202-resources`, `202-appstore`, `202-Mobile` retirement) | Last page family, on its own. **Done:** `info_top()` is the standalone v2 shell (`202-config/functions-standalone-ui.php`, `.p202-standalone`), so sign-in, the password reset pair, the license-key page, the 404, every `_die()` message and the whole install path (wizard, requirements, license key, installer and its success panel, upgrader) render on it; the POST handling of sign-in, install and upgrade is byte-identical, only markup moved. TV202, Hot Deals and the App Store are v2 pages that read their feeds into rows (no remote markup reaches a page). `202-Mobile/` redirects to the responsive pages (its mini stats are Campaign Overview's totals, which pass the 390px browser pass). Token checks added to the license-key page and the setup wizard, which also refuses to touch an installed instance's `202-config.php` except to bring a legacy-format one to the current format with every setting carried over (`setup-config.php?step=1.1`, `tests/Install/SetupConfigHelpersTest`), and whose session cookie takes Secure from the proxy-aware `p202_request_is_https()` every session start shares (`tests/Standalone/SessionCookieSecureTest`); the password reset pages, which died on every request, work again. Checked by `tests/live/prelogin-pages.sh`, `tests/live/upgrade-csrf.sh`, `install-instance.sh` (and a wizard-to-installer run on a fresh database), `tests/browser/specs/prelogin-pages.spec.js` (`STANDALONE_PAGES` and `FEED_SECTION_PAGES` in `lib/checks.js`), `PreLoginPostRequiresTokenTest` (the license-key page added), `tests/Standalone/`, and `MysqliQueryArgumentOrderTest` |
-| **U8** | **Removal:** the classic shell branch of `template_top()`, every `legacy.*` asset, Flat UI Pro, the old stylesheets and `202-js/flat-ui-pro.min.js`; `template_top()` stops taking a `ui` option | After U2–U7 and after every measurement PR that touches a page |
+| **U8** | **Removal:** the classic shell branch of `template_top()`, every `legacy.*` asset, Flat UI Pro, the old stylesheets and `202-js/flat-ui-pro.min.js`; `template_top()` stops taking a `ui` option | After U2–U7 and after every measurement PR that touches a page. **Done:** one page shell; `template_top()` refuses a `ui` option (and any option it does not define) with an `InvalidArgumentException` that says to delete it, and `p202_overview_run()` refuses the overview family's `shell` key the same way. Deleted: the classic branch of `p202_shell_assets()`, every `legacy.*` manifest entry and its file, List.js and its fuzzy-search plugin (only the classic shell loaded them), Bootstrap 3, Flat UI Pro (stylesheet, source map, icon font, kit images, `202-js/flat-ui-pro.min.js`), Font Awesome 4 and the Glyphicons font, `custom.css`, `custom.min.css`, `p202-ui.css`, `design-system.css`, `202-js/custom.php`, `202-js/account.{php,js,min.js}`, the DNI tablesorter scripts, `jquery.caret.js`, the classic survey modal, and the classic-only code nothing reached any more (`display_calendar()`, `showHelp()`, `p202_copy_snippet()`, DataEngine's HTML report renderers, the JSON transport's dependent-filter dropdowns, fifteen AJAX fragments only `custom.php` loaded and one nothing loaded, and two Account AJAX endpoints nothing on a v2 page called). Migrated: the update banner, the one classic feature v2 pages had lost. Checked by the four structural tests pointed at the whole tree (§10.4.1), `UpdateBannerTest`, `tests/browser/specs/update-banner.spec.js`, and the full browser and live passes |
+
+#### 10.4.1 As built: U8
+
+**One shell, and a leftover option is loud.** `p202_shell_assets(array $context)`
+has no shell argument and no classic branch; `P202_UI_CLASSIC`,
+`p202_ui_shell()` and `p202_shell_defers_page_scripts()` are gone, and the
+page scripts are always deferred. `template_top()` checks its options against
+the six it defines before it writes a byte: `'ui'` gets its own sentence
+("no longer takes a 'ui' option … delete 'ui' from the call"), any other
+unknown key names the six. The choice was between that and silently ignoring
+the key; ignoring is the "leftover `ui` does something odd" this PR was told
+to avoid (a reader would still believe the option chose something), and a
+throw is caught on the first request by every live pass and the browser
+suite. The body keeps the class `p202-shell-v2` (`P202_SHELL_BODY_CLASS`),
+because the live passes and the browser harness read it; it names the
+surviving shell, not a choice. All 37 `template_top(..., ['ui' => 'v2'])`
+callers and the 8 overview pages' `'shell' => ['ui' => 'v2']` were simplified.
+
+**Nothing was left on the classic stack.** Every `template_top()` caller
+already passed `'ui' => 'v2'`, and a whole-tree scan with the Bootstrap 3 set
+(below) found legacy classes in 31 files. Each was traced to its caller:
+
+- Loaded only by the classic shell, and deleted with it: `202-js/custom.php`
+  and the fifteen `tracking202/ajax/` fragments it alone posted to
+  (`aff_campaigns`, `aff_networks`, `landing_pages`, `text_ads`,
+  `adv_text_ads`, `ad_preview`, `method_of_promotion`, `ppc_networks`,
+  `ppc_accounts`, `countries`, `regions`, `isp`, `device_type`, `browser`,
+  `platform`), `tracking202/ajax/get_postback.php` (no caller at all),
+  `202-js/account.*`, the DNI tablesorter scripts, the classic survey modal
+  and its `202-account/ajax/survey.php`, and
+  `202-account/ajax/upgrade_submit_api_key.php` (a form in the classic banner
+  posted to the page it was on, so nothing reached it; it compared the token
+  with `!=` and was on `AccountPostRequiresTokenTest`'s known-unguarded list,
+  now one shorter).
+- Classic-only code no page called: `display_calendar()` and
+  `display_calendar2()` (1,000 lines), `showHelp()`, `p202_copy_snippet()`,
+  `DisplayData::displayReport()`, `displayPerPPCReport()`,
+  `displayVariableReport()` and `paginate()`, `SetupController::addSuccess()`,
+  and `StaticFilterOptionsProvider` with the three `tracking202StaticFilterSsr*`
+  helpers and their two constants (only `display_calendar()` read them).
+- The off-by-default JSON report transport's `dependentFilters`: Bootstrap 3
+  dropdowns whose `onchange` handlers called `custom.php` functions. The only
+  in-tree caller asked for none. `DependentFilterPayloadBuilder` is deleted,
+  `includeDependentFilters` leaves the request's allowed fields, and a client
+  that still sends it is refused by name with a 422 (ReportDispatchRequestTest)
+  rather than answered without them.
+- Still reached, and migrated: the update banner (below), the database-error
+  box `record_mysql_error()` prints (now the kit's danger flash, with the
+  admin address escaped; `connect2.php`'s copy too), and the ROI badge in
+  `ReportSummaryForm::getRowHtml()` (`badge text-bg-*`; the method's only
+  caller is itself unreached, but the markup is fixed rather than excused).
+
+**The update banner.** The classic chrome loaded a "new version available"
+notice under the header from `custom.php` (Bootstrap 3 collapsible panels, a
+changelog modal, an inline key form). No v2 page drew it, and the footer's
+"out of date" line reads a session flag only that banner's request set, so
+once every page was on v2 an out-of-date install said nothing at all. It is
+now
+`p202_update_banner()` (`202-config/functions-update-banner.php`), the kit's
+dismissible flash, drawn by `p202-chrome.js` into `#update_needed` once the
+page is idle: `check-for-update.php` first, then `update-needed.php`, with
+closing it posting `delay=1` to `delay-alert.php` (snoozed for an hour, as
+before). The state order is the classic one (managed deployment, 1-click not
+possible, update needed, premium release). Changed on purpose: the release
+feed's headline and body are text, not markup; the register link is used only
+when it is http(s); the changelog modal is a link to the upgrade page, which
+lists what is new; the inline Customer API key form, which posted to whatever
+page it was on, is a link to Personal Settings, where that key is set; the
+key lookup is a prepared statement with every return checked; and publishers
+(sub-accounts) get no banner. `UpdateBannerTest` renders every state;
+`update-banner.spec.js` drives drawing, dismissal and the snooze in a browser
+at 1280 and 390px, light and dark. The instance is newer than any release the
+feed advertises, so the real `update-needed.php` answers with nothing; the
+spec serves the real renderer's markup (run through the PHP CLI) for that one
+response and says so, and everything else is the real path.
+
+**The structural tests now assert the new invariant, over every page.**
+
+- `NoLegacyBootstrapClassesTest` sweeps every PHP, JavaScript and HTML file
+  the install serves (686 today, with a floor and a list of files it must
+  reach) and every first-party stylesheet's selectors, where it used to
+  sweep the pages that opted in, a hand list of shared partials and the
+  chrome sheet. The Bootstrap 3 difference is recorded in
+  `tests/fixtures/ui/bootstrap3-only-classes.txt` (600 classes, read from the
+  3.3.4 stylesheet before it was deleted; its SHA-384 is in the header) and
+  re-checked against the live Bootstrap 5 files, so a class the shell styles
+  can never be banned. Font Awesome's `fa`/`fa-*` joined the Flat UI list,
+  since its stylesheet went too.
+- `ShellIsolationTest` asserts that no context loads a legacy file and every
+  file loaded exists; that the manifest has no `legacy.*` entry, no legacy
+  file, and nothing unloaded (a font counts as loaded when a loaded
+  stylesheet names it); that no legacy file or directory is left in
+  `202-css/` or `202-js/` for a page to name by path; that no PHP file passes
+  a `ui` key (read from the token stream); and, in a process of its own, that
+  `template_top()` refuses `ui` in four spellings and an unknown key before
+  writing anything, still renders a page with its usual options, and emits
+  the page scripts deferred and jQuery and Bootstrap blocking.
+- `ComponentClassIsConsumedTest` counts a class as styled only by a sheet
+  the shell loads. Before, any sheet in `202-css/` counted, including the
+  three the classic shell alone loaded, so a v2 page could use a class only
+  `p202-ui.css` defined and pass unstyled; a new test also requires every
+  sheet in `202-css/` to be one the shell loads.
+- `AssetManifestTest`, `UiPartialsTest`, `OverviewPagesTest`,
+  `AnalyzeReportPagesTest`, `GroupingLevelOffersTest` (the classic builder's
+  selectors are gone; the page's `p202_overview_groupings()` is compared with
+  `ReportSummaryForm`'s list instead) and `AccountPostRequiresTokenTest`
+  follow the removals. `tests/browser/specs/chrome-shells.spec.js`, which
+  compared the chrome across the two shells, is deleted with its helpers and
+  the harness's survey-dismissal step.
+
+Each updated test was shown to fail on a planted regression, the plant
+confirmed on disk and restored by copy from the scratchpad: 19 plants, all
+caught. Where the old test existed, four of the plants were run against it
+on the base commit: a `col-xs-6` in an AJAX fragment no page opted into, a Font
+Awesome icon on an Account page, a Bootstrap 3 selector in the component
+sheet, and a class only an unloaded sheet defines each passed the old tests
+and fail the new ones.
+
+**Deleting CSS, swept.** Every class selector in the deleted stylesheets
+(2,265 names across Bootstrap 3, Flat UI Pro, Font Awesome, Select2,
+tokenfield, the tablesorter themes, `custom.css`, `custom.min.css`,
+`p202-ui.css` and `design-system.css`) was checked against the classes the
+remaining markup and scripts name. 2,106 were defined only in deleted
+sheets; 9 of those are still named, and none of them lost styling in U8,
+because no page loaded a deleted sheet after U7: `error` (the handlers'
+stored message strings, which the v2 helpers turn into text), `infotext`
+(two unreached help printers), `footer` and `advertise-top-left` (the chrome,
+styled by `p202c-footer` and `.p202c-brand iframe`), `list` (a PHP value, not
+a class), `no-sort` and `tablesorter-childRow` (script hooks: tablesort's own
+class, and the DNI server's row markup), and `title` and
+`result_main_column_level_0` (the unreached print renderer). The browser
+suite's `componentClassesAreStyled` check measured every page after the
+deletion.
+
+**Asset weight, before and after, on three pages.** "Before" is the classic
+shell's list at the base commit (the last one that had it), computed from
+`p202_shell_assets()` over the files on disk; "after" is the one shell,
+computed the same way and measured live (bytes the browser fetched from the
+instance, uncompressed). Highcharts (278,589 bytes, from its pinned CDN URL)
+loads on both under `tracking202/` and is left out of the sums.
+
+| Page | Classic shell: files, CSS+JS bytes (gzip) | U8 shell: files, CSS+JS bytes (gzip) | Change (gzip) | U8 live: requests, CSS+JS+fonts bytes |
+|---|---|---|---|---|
+| Analyze › Keywords | 26, 1,052,066 (251,959) | 12, 580,593 (124,357) | −51% | 19, 903,090 |
+| Setup › Campaigns | 32, 1,227,861 (303,057) | 12, 580,593 (124,357) | −59% | 19, 917,030 (adds `p202-setup.js`) |
+| Account home | 26, 1,054,391 (252,912) | 11, 578,073 (123,248) | −51% | 17, 866,654 |
+
+The classic lists also loaded the Flat UI and Font Awesome fonts (311,788
+bytes of woff declared against 343,336 for Lato and Bootstrap Icons now), and
+`custom.php`, a PHP-rendered script, on every page. The U8 shell is 1,681 raw
+bytes (386 gzip) heavier than the v2 shell at the base commit: the banner's
+loader and its two rules. The tree lost 4.5 MB of `202-css/` and 1.2 MB of
+`202-js/`.
+
+**Left open.** CLAUDE.md's "Two page shells, one chrome" note still
+describes the classic shell and the `ui` option; it is project instruction
+and is left for its owner to edit. `renderDynamicContentSegmentHelp()` and
+`getDynamicContentSegment()` print classic-era help markup (`infotext`, no
+banned class) and have no caller. The off-by-default JSON transport
+(`report_dispatch.php`) serves no page since the classic reports went.
 
 ### 10.5 What "migrated" means, checked
 
-- **`NoLegacyBootstrapClassesTest` stops being opt-in.** Today it checks the
-  pages that pass `'ui' => 'v2'`. U8 points it at **every page, AJAX fragment
-  and script in the tree**, so a Bootstrap 3 or Flat UI class anywhere fails
-  CI. Until U8, each U-PR's pages are covered from the moment they opt in.
+- **`NoLegacyBootstrapClassesTest` stops being opt-in.** Until U8 it checked
+  the pages that passed `'ui' => 'v2'`. U8 points it at **every page, AJAX
+  fragment and script in the tree**, so a Bootstrap 3 or Flat UI class
+  anywhere fails CI. **Done in U8** (§10.4.1).
 - **A structural test that the legacy assets are unreachable.** No
   `legacy.*` id in `assets.php` is referenced by any page, and U8 deletes
-  them. An asset nobody loads is removed, not kept "just in case".
+  them. An asset nobody loads is removed, not kept "just in case". **Done in
+  U8:** ShellIsolationTest (§10.4.1).
 - **`ComponentClassIsConsumedTest`** covers every new class, so no class that
   styles nothing ships (error pattern #19).
 - **Browser passes per family** (`tests/browser/`, with a baseline entry per
@@ -3881,7 +4042,8 @@ Standalone pages render their own `<html>`.
 - **Performance.** A v2 page loads Bootstrap 5.3 and the theme instead of
   Bootstrap 3, Flat UI Pro, jQuery UI and a stack of plugins. The asset
   weight per page goes down; U8 measures the before and after on three
-  representative pages rather than asserting it.
+  representative pages rather than asserting it. **Measured in U8**
+  (§10.4.1): 51–59% less CSS and JavaScript after gzip on the three pages.
 - **Accessibility.** Bootstrap 5 components bring focus handling and ARIA
   that the Bootstrap 3 and Flat UI widgets lack. Each family's browser pass
   also checks keyboard reachability of the primary action and labelled form

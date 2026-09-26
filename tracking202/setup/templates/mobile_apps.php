@@ -86,7 +86,7 @@ $appCount = \Tracking202\Setup\MobileAppsController::appCountLabels(
     $mobileApps['appsTruncated']
 );
 
-template_top('Mobile Apps - Setup', ['ui' => 'v2']);
+template_top('Mobile Apps - Setup');
 ?>
 
 <div class="p202-page-header p202-page-header--accent">

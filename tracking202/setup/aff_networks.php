@@ -181,7 +181,7 @@ $formName = $_SERVER['REQUEST_METHOD'] == 'POST'
 	: (string) ($aff_network_row['aff_network_name'] ?? '');
 $editId = $editing ? (int) ($_GET['edit_aff_network_id'] ?? 0) : 0;
 
-template_top('Campaign Category Setup', ['ui' => 'v2']);
+template_top('Campaign Category Setup');
 ?>
 
 <div class="p202-page-header p202-page-header--accent">

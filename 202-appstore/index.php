@@ -65,7 +65,7 @@ $apps = p202_appstore_apps(is_string($result) ? json_decode($result, true) : nul
 $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
 $typedKey = is_string($_POST['clickserver_api_key'] ?? null) ? $_POST['clickserver_api_key'] : $maskedKey;
 
-template_top('Prosper202 ClickServer App Store', ['ui' => 'v2']);
+template_top('Prosper202 ClickServer App Store');
 ?>
 
 <div class="p202-page-header">

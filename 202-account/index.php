@@ -54,7 +54,7 @@ $resources = [
     ['Meetup202', 'Marketing meetup groups around the world.', 'http://meetup.tracking202.com', 'shirt.svg'],
 ];
 
-template_top('Prosper202 ClickServer', ['ui' => 'v2']);  ?>
+template_top('Prosper202 ClickServer');  ?>
 
 <div class="p202-page-header">
     <div class="p202-page-header__icon"><i class="bi bi-house"></i></div>

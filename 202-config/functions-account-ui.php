@@ -8,7 +8,7 @@ declare(strict_types=1);
  *
  * Every state-changing form under 202-account/ posts the session token as
  * `token` — the name the pages used before they moved, and the name the
- * classic shell's jQuery prefilter attaches to same-origin AJAX posts — and
+ * shell's jQuery prefilter (template.php) attaches to same-origin AJAX posts — and
  * the handler refuses the request before it writes anything when the token
  * does not match. A refusal is said, in one sentence, rather than swallowed:
  * the old pages answered a bad token with an empty page or a silent redirect,

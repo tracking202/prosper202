@@ -2634,12 +2634,7 @@ function record_mysql_error($dbOrSql, $sql = null): never
 
     // report error to user and end page    
 ?>
-    <div class="warning" style="margin: 40px auto; width: 450px;">
-        <div>
-            <h3>A database error has occured, the webmaster has been notified</h3>
-            <p>If this error persists, you may email us directly: <?php printf('<a href="mailto:%s">%s</a>', $_SERVER['SERVER_ADMIN'], $_SERVER['SERVER_ADMIN']); ?></p>
-        </div>
-    </div>
+    <div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><strong>A database error has occurred, and it has been recorded.</strong> If it keeps happening, email <?php $p202Admin = htmlspecialchars((string) ($_SERVER['SERVER_ADMIN'] ?? ''), ENT_QUOTES, 'UTF-8'); printf('<a href="mailto:%s">%s</a>', $p202Admin, $p202Admin); ?>.</div></div>
 
 
 <?php

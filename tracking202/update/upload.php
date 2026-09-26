@@ -26,7 +26,7 @@ $self = get_absolute_url() . 'tracking202/update/upload.php';
 /** The page, up to its content. */
 function p202_upload_top(): void
 {
-	template_top('Upload Revenue Reports', ['ui' => 'v2']);
+	template_top('Upload Revenue Reports');
 	echo p202_update_header('bi-file-earmark-arrow-up', 'Upload revenue reports', 'Record the exact amount each subid earned, from your affiliate network\'s CSV report. Useful when you are paid a percentage, or earn more than once per click.');
 }
 

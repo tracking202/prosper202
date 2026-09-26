@@ -213,7 +213,7 @@ if (($_POST['start_upgrade'] ?? '') === '1') {
 $e = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
 $submitted = ($_POST['start_upgrade'] ?? '') === '1';
 
-template_top('1-Click Upgrade', ['ui' => 'v2']);
+template_top('1-Click Upgrade');
 ?>
 
 <div class="p202-page-header">

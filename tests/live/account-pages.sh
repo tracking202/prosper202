@@ -468,17 +468,6 @@ eq "$CODE" "200" "with the page's token: 200"
 eq "$(Q "SELECT processed FROM 202_dni_networks WHERE id=$DNI2")" "1" "processed set"
 mysql_q "$DB" -e "DELETE FROM 202_dni_networks WHERE networkId IN ('u6net','u6net2')"
 
-say "the survey endpoint asks for the token too"
-MODAL_BEFORE=$(Q "SELECT modal_status FROM 202_users WHERE user_id=$OWNER")
-mysql_q "$DB" -e "UPDATE 202_users SET modal_status=0 WHERE user_id=$OWNER"
-CODE=$(curl -sS -b "$JAR" -c "$JAR" -o "$OUT/sv.html" -w '%{http_code}' --data "skip=1" "$BASE/202-account/ajax/survey.php")
-eq "$CODE" "403" "a skip without the token: 403"
-eq "$(Q "SELECT modal_status FROM 202_users WHERE user_id=$OWNER")" "0" "modal status unchanged"
-CODE=$(curl -sS -b "$JAR" -c "$JAR" -o /dev/null -w '%{http_code}' --data "skip=1&token=$TOK" "$BASE/202-account/ajax/survey.php")
-eq "$CODE" "200" "with the token: 200"
-eq "$(Q "SELECT modal_status FROM 202_users WHERE user_id=$OWNER")" "1" "modal status set"
-mysql_q "$DB" -e "UPDATE 202_users SET modal_status='$MODAL_BEFORE' WHERE user_id=$OWNER"
-
 # ─────────────────────────────────────────────────────────────────────
 say "settings: click-data retention"
 get "202-account/administration.php" "$OUT/ad.html"

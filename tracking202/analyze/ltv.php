@@ -57,7 +57,7 @@ $base = rtrim(get_absolute_url(), '/');
 $self = $base . '/tracking202/analyze/ltv.php';
 $e = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
 
-template_top('Customer Lifetime Value', ['ui' => 'v2']);
+template_top('Customer Lifetime Value');
 ?>
 
 <div class="p202-page-header">

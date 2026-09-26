@@ -17,8 +17,9 @@ use PHPUnit\Framework\TestCase;
  *  - the endpoint's code, comments dropped, is its includes, the login
  *    check and then the token comparison, which ends the request when it
  *    fails — nothing before it, so no write can precede it;
- *  - the classic calendar's form, the one set_user_prefs() in custom.php
- *    serializes, carries the session token inside its own bounds.
+ *  - no page or script posts to it any more: the classic calendar's form,
+ *    which carried the token, went with display_calendar() in U8 (and a new
+ *    caller fails here until its form is read for the token too).
  */
 final class SetUserPrefsRequiresTokenTest extends TestCase
 {
@@ -63,23 +64,33 @@ final class SetUserPrefsRequiresTokenTest extends TestCase
         }
     }
 
-    public function testTheCalendarFormCarriesTheTokenInsideIt(): void
+    /**
+     * The classic calendar's form was the one caller that posted here, and
+     * it carried the token; U8 removed it with display_calendar(). Nothing
+     * in the tree posts to the endpoint any more, and a caller that comes
+     * back has to be read the way that form was — this fails until it is.
+     */
+    public function testNoPageOrScriptPostsToTheEndpoint(): void
     {
-        $source = (string) file_get_contents(self::root() . '/202-config/functions-tracking202.php');
-        $open = strpos($source, '<form id="user_prefs"');
-        self::assertNotFalse($open, 'the classic calendar form was found');
-        self::assertSame(1, substr_count($source, '<form id="user_prefs"'), 'one form posts the report filters');
-        $close = strpos($source, '</form>', $open);
-        self::assertNotFalse($close, 'the form is closed');
-        $form = substr($source, $open, $close - $open);
-        self::assertSame(0, preg_match('~<form\b~i', substr($form, 5)), 'no form inside the form');
-        self::assertSame(1, substr_count($form, self::FIELD), 'the form carries the session token, once, in its own bounds');
-        $before = substr($form, 0, (int) strpos($form, self::FIELD));
-        self::assertSame(substr_count($before, '<!--'), substr_count($before, '-->'), 'the token field is not inside an HTML comment');
-        self::assertStringNotContainsString(' disabled', substr($form, (int) strpos($form, self::FIELD), strlen(self::FIELD)));
-
-        // The script that posts it serializes that form, not another.
-        $js = (string) file_get_contents(self::root() . '/202-js/custom.php');
-        self::assertSame(1, preg_match('~\$\.post\("[^"]*tracking202/ajax/set_user_prefs\.php",\s*\$\("#user_prefs"\)\.serialize\(true\)\)~', $js), 'set_user_prefs() posts the #user_prefs form');
+        $skip = '#^(vendor|tests|node_modules|go-cli|sdk|documentation|docs)/|^\.#';
+        $posters = [];
+        $seen = 0;
+        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(self::root(), \FilesystemIterator::SKIP_DOTS));
+        foreach ($iterator as $file) {
+            $path = substr($file->getPathname(), strlen(self::root()) + 1);
+            if (!$file->isFile() || !in_array($file->getExtension(), ['php', 'js', 'html'], true)
+                || preg_match($skip, $path) === 1 || $path === self::ENDPOINT) {
+                continue;
+            }
+            $seen++;
+            $source = (string) file_get_contents($file->getPathname());
+            // PHP is read without its comments; a script or page as it is.
+            $code = $file->getExtension() === 'php' ? self::code($source) : $source;
+            if (str_contains($code, 'set_user_prefs.php') || str_contains($code, 'id="user_prefs"') || str_contains($code, 'display_calendar(')) {
+                $posters[] = $path;
+            }
+        }
+        self::assertGreaterThan(300, $seen, 'the walk read the tree');
+        self::assertSame([], $posters, 'a caller of set_user_prefs.php must carry the session token inside the form it posts; read it here as the calendar form was');
     }
 }

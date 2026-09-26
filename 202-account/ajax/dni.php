@@ -30,8 +30,8 @@ if (isset($_GET['getProgress'])) {
 
 if (isset($_GET['updateStatus'])) {
 	// A write, so it carries the session token like every other Account
-	// write: the API integrations page posts it, and the classic shell's
-	// jQuery prefilter adds it to same-origin posts.
+	// write: the API integrations page posts it, and the shell's jQuery
+	// prefilter (template.php) adds it to same-origin jQuery posts.
 	if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !AUTH::check_csrf_token()) {
 		http_response_code(403);
 		die('Invalid token.');

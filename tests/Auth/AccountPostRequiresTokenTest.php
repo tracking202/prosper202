@@ -13,7 +13,8 @@ use PHPUnit\Framework\TestCase;
  *
  * Error pattern #5 found three writes in this family that asked for no token
  * — the Stats202 app key handler in account.php and the two AJAX endpoints
- * ajax/dni.php (?updateStatus) and ajax/survey.php — and three more that were
+ * ajax/dni.php (?updateStatus) and ajax/survey.php (deleted in U8 with the
+ * classic shell's survey pop-up, its only caller) — and three more that were
  * GET links: removing a user, removing a DNI network, and account.php's
  * profile branch that rewrote the email on any POST that lacked
  * update_profile. Those are POSTs with the token now, and this test keeps the

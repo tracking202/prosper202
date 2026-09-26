@@ -517,7 +517,7 @@ $pixelRow = static function (array $pixel, string $index, array $pixelTypes): st
 		. '</div></div>';
 };
 
-template_top('Traffic Sources', ['ui' => 'v2']); ?>
+template_top('Traffic Sources'); ?>
 
 <div class="p202-page-header p202-page-header--accent">
 	<div class="p202-page-header__icon"><i class="bi bi-globe"></i></div>

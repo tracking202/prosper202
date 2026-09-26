@@ -797,7 +797,7 @@ $currentTimezone = $profileValue('user_timezone', 'user_timezone');
 
 $profileAdvancedErrors = array_intersect_key($profileErrors, array_flip(['user_keyword_searched_or_bidded', 'user_bid', 'user_referer', 'user_pref_privacy', 'cloak_referer', 'user_pref_ad_settings', 'user_tracking_domain']));
 
-template_top('Personal Settings', ['ui' => 'v2']);
+template_top('Personal Settings');
 ?>
 
 <div class="p202-page-header">

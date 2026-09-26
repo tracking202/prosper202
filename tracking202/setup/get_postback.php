@@ -42,7 +42,7 @@ $snippets = [
 	'universal_iframe' => '<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="' . $root . 'upx.php?amount=&subid=" seamless></iframe>',
 ];
 
-template_top('Pixel And Postback URLs', ['ui' => 'v2']);
+template_top('Pixel And Postback URLs');
 ?>
 
 <div class="p202-page-header p202-page-header--accent">

@@ -335,9 +335,8 @@ final class AnalyzeReportController
                 'reportType' => $this->type,
                 'offset' => $page - 1,
                 'order' => $order,
-                'includeDependentFilters' => false,
             ]);
-            return ['result' => FlatReportPayloadBuilder::build($this->type, $data, $engine->foundRows(), $request, $prefsRow)];
+            return ['result' => FlatReportPayloadBuilder::build($this->type, $data, $engine->foundRows(), $request)];
         } catch (\Throwable $e) {
             error_log('Analyze ' . $this->type . ' report failed: ' . $e->getMessage());
             $this->flash('bad', 'The report could not be read. Try again in a moment; if it keeps happening, the server log says why.');

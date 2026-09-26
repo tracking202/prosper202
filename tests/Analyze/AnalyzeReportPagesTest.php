@@ -142,7 +142,7 @@ final class AnalyzeReportPagesTest extends TestCase
         // and tracking-report.js are gone, and nothing else took their place.
         $template = (string) file_get_contents(dirname(__DIR__, 2) . '/tracking202/analyze/templates/report.php');
         self::assertStringNotContainsString('<script', $template);
-        self::assertStringContainsString("template_top((string) \$info['title'], ['ui' => 'v2'])", $template);
+        self::assertStringContainsString("template_top((string) \$info['title']);", $template);
     }
 
     private function xpath(string $html): DOMXPath

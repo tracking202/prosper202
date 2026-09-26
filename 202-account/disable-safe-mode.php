@@ -4,7 +4,7 @@ include_once(str_repeat("../", 1).'202-config/connect.php');
 
 AUTH::require_user();
 
-template_top('PHP Safe Mode Is On', ['ui' => 'v2']);  ?>
+template_top('PHP Safe Mode Is On');  ?>
 
 <div class="p202-page-header">
 	<div class="p202-page-header__icon"><i class="bi bi-shield-exclamation"></i></div>

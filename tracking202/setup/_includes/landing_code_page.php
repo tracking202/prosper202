@@ -53,7 +53,7 @@ function p202_setup_landing_code_page(mysqli $db, string $mode, string $title, s
             . '</div></div>';
     };
 
-    template_top($title, ['ui' => 'v2']);
+    template_top($title);
     ?>
 
     <div class="p202-page-header p202-page-header--accent">

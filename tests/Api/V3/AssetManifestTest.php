@@ -62,21 +62,19 @@ final class AssetManifestTest extends TestCase
         }
     }
 
-    public function testEveryFileTheShellsReferenceExists(): void
+    public function testEveryFileTheShellReferencesExists(): void
     {
         foreach ($this->contexts() as $label => $context) {
-            foreach ([P202_UI_CLASSIC, P202_UI_V2] as $ui) {
-                $assets = p202_shell_assets($ui, $context);
-                foreach (['css', 'js_head', 'js_page'] as $list) {
-                    foreach ($assets[$list] as $item) {
-                        if (isset($item['asset'])) {
-                            $entry = p202_asset($item['asset']);
-                            self::assertNotEmpty($entry, "$ui/$label: asset {$item['asset']} is in the manifest");
-                            continue;
-                        }
-                        self::assertArrayHasKey('path', $item, "$ui/$label: an item names an asset id or a path");
-                        self::assertFileExists($this->root . '/' . $item['path'], "$ui/$label: {$item['path']} exists");
+            $assets = p202_shell_assets($context);
+            foreach (['css', 'js_head', 'js_page'] as $list) {
+                foreach ($assets[$list] as $item) {
+                    if (isset($item['asset'])) {
+                        $entry = p202_asset($item['asset']);
+                        self::assertNotEmpty($entry, "$label: asset {$item['asset']} is in the manifest");
+                        continue;
                     }
+                    self::assertArrayHasKey('path', $item, "$label: an item names an asset id or a path");
+                    self::assertFileExists($this->root . '/' . $item['path'], "$label: {$item['path']} exists");
                 }
             }
         }
@@ -95,8 +93,8 @@ final class AssetManifestTest extends TestCase
         $external = p202_asset_tag('highcharts.js', $base);
         self::assertSame('<script src="https://code.highcharts.com/11.4.8/highcharts.js"></script>', $external);
 
-        $path = p202_shell_asset_tag(['path' => '202-js/dni.search.offers.tablesorter.php', 'query' => 'ddlci=a%26b'], $base);
-        self::assertSame('<script src="https://example.test/p202/202-js/dni.search.offers.tablesorter.php?ddlci=a%26b"></script>', $path);
+        $path = p202_shell_asset_tag(['path' => '202-js/chart.theme.js', 'query' => 'v=a%26b'], $base, true);
+        self::assertSame('<script src="https://example.test/p202/202-js/chart.theme.js?v=a%26b" defer></script>', $path);
     }
 
     public function testUnknownAndUntaggableAssetsAreErrors(): void
@@ -117,11 +115,9 @@ final class AssetManifestTest extends TestCase
     private function contexts(): array
     {
         return [
-            'anonymous' => [],
-            'account home' => ['section' => '202-account', 'sub' => '', 'logged_in' => true],
-            'attribution dashboard' => ['section' => '202-account', 'sub' => 'attribution.php', 'logged_in' => true],
-            'campaigns setup' => ['section' => 'tracking202', 'sub' => 'setup', 'page' => 'aff_campaigns.php', 'logged_in' => true, 'ddlci' => 'x'],
-            'analyze' => ['section' => 'tracking202', 'sub' => 'analyze', 'page' => 'keywords.php', 'logged_in' => true],
+            'signed out' => ['logged_in' => false],
+            'account' => ['section' => '202-account', 'logged_in' => true],
+            'tracking' => ['section' => 'tracking202', 'logged_in' => true],
         ];
     }
 }

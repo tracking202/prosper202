@@ -392,7 +392,7 @@ $pageItem = static function (array $page, bool $advanced) use ($self, $token, $c
 	return $out . '</span><span class="p202-list__meta">' . p202_setup_e($page['landing_page_url'] ?? '') . '</span></li>';
 };
 
-template_top('Landing Page Setup', ['ui' => 'v2']); ?>
+template_top('Landing Page Setup'); ?>
 
 <div class="p202-page-header p202-page-header--accent">
 	<div class="p202-page-header__icon"><i class="bi bi-file-earmark"></i></div>

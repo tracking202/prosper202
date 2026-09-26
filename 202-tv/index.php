@@ -12,7 +12,7 @@ $result = getData('https://my.tracking202.com/api/feeds/tv202?us=' . rawurlencod
 $modules = p202_tv_modules(is_string($result) ? $result : '');
 $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
 
-template_top('Prosper202 ClickServer TV202', ['ui' => 'v2']);
+template_top('Prosper202 ClickServer TV202');
 ?>
 
 <div class="p202-page-header">

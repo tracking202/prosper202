@@ -192,7 +192,7 @@ $noRows = static function () use ($empty, $anyFilter, $resetUrl, $window, $link)
     return $empty('bi-inbox', 'No clicks yet', 'Once a tracking link receives traffic, this report fills in.');
 };
 
-template_top((string) $info['title'], ['ui' => 'v2']);
+template_top((string) $info['title']);
 ?>
 
 <div class="p202-page-header">

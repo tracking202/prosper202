@@ -211,14 +211,6 @@ if (!defined('TRACKING202_JSON_ARCHITECTURE_ENABLED')) {
     define('TRACKING202_JSON_ARCHITECTURE_ENABLED', false);
 }
 
-if (!defined('TRACKING202_STATIC_FILTER_SSR_MAX_OPTIONS')) {
-    define('TRACKING202_STATIC_FILTER_SSR_MAX_OPTIONS', 1500);
-}
-
-if (!defined('TRACKING202_STATIC_FILTER_SSR_MAX_BYTES')) {
-    define('TRACKING202_STATIC_FILTER_SSR_MAX_BYTES', 65536);
-}
-
 if (!function_exists('tracking202NormalizeBooleanFlag')) {
     function tracking202NormalizeBooleanFlag(mixed $value): ?bool
     {
@@ -252,32 +244,6 @@ if (!function_exists('tracking202JsonArchitectureEnabled')) {
         }
 
         return (bool) TRACKING202_JSON_ARCHITECTURE_ENABLED;
-    }
-}
-
-if (!function_exists('tracking202StaticFilterSsrEnabled')) {
-    function tracking202StaticFilterSsrEnabled(): bool
-    {
-        // Deliberately ignores the ?tracking_json_mode override. Enabling static-filter
-        // SSR runs six extra GROUP BY queries (country/region/isp/device/browser/platform)
-        // on every display_calendar() page, and 202_locations_region and 202_locations_isp
-        // are large. A query-string parameter any logged-in user can set must not be able
-        // to turn that on, so this reads the deploy-time constant only.
-        return (bool) TRACKING202_JSON_ARCHITECTURE_ENABLED;
-    }
-}
-
-if (!function_exists('tracking202StaticFilterSsrMaxOptions')) {
-    function tracking202StaticFilterSsrMaxOptions(): int
-    {
-        return (int) TRACKING202_STATIC_FILTER_SSR_MAX_OPTIONS;
-    }
-}
-
-if (!function_exists('tracking202StaticFilterSsrMaxBytes')) {
-    function tracking202StaticFilterSsrMaxBytes(): int
-    {
-        return (int) TRACKING202_STATIC_FILTER_SSR_MAX_BYTES;
     }
 }
 

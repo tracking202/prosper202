@@ -77,7 +77,7 @@ $typed = $success ? '' : (is_string($_POST['subids'] ?? null) ? $_POST['subids']
 $base = get_absolute_url();
 
 //show the template
-template_top('Delete Subids', ['ui' => 'v2']);
+template_top('Delete Subids');
 
 echo p202_update_header('bi-eraser', 'Delete subids', 'The reverse of Update Subids: paste the subids whose conversions should no longer count.');
 

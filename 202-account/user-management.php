@@ -374,7 +374,7 @@ $formValue = static fn (string $field): string => (string)($form[$field] ?? '');
 $active = $editing ? ($formValue('user_active') === '1') : (!$form || $formValue('user_active') === '1');
 $currentRole = $formValue('role_id');
 
-template_top('User Management', ['ui' => 'v2']);
+template_top('User Management');
 ?>
 
 <div class="p202-page-header">

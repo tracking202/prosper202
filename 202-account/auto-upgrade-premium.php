@@ -162,7 +162,7 @@ $details = is_array($_SESSION['premium_p202_details'] ?? null) ? $_SESSION['prem
 $detail = static fn (string $key): string => trim(strip_tags((string) ($details[$key] ?? '')));
 $submitted = ($_POST['start_upgrade'] ?? '') === '1';
 
-template_top('1-Click Upgrade', ['ui' => 'v2']);
+template_top('1-Click Upgrade');
 ?>
 
 <div class="p202-page-header">

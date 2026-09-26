@@ -313,7 +313,7 @@ $yesNo = static fn (bool $on, string $yes = 'Yes', string $no = 'No'): string =>
 
 $user_log_result = _mysqli_query("SELECT * FROM 202_users_log ORDER BY login_id DESC LIMIT 50");
 
-template_top('Administration', ['ui' => 'v2']);
+template_top('Administration');
 ?>
 
 <div class="p202-page-header">
