@@ -7,6 +7,14 @@ include_once(str_repeat("../", 1) . '202-config/class-dataengine.php');
 
 AUTH::require_user();
 
+// Replacing the install's files is an administrator's act: the same
+// permission as Settings (administration.php), not merely being signed in
+// (#165).
+if (!isset($userObj) || !$userObj->hasPermission('access_to_settings')) {
+	header('location: ' . get_absolute_url() . '202-account/');
+	exit;
+}
+
 // On managed deployments (Coolify, or any Docker image built from git) the
 // 1-click upgrade would write into the ephemeral container filesystem and be
 // silently reverted on the next redeploy — refuse before touching anything.
@@ -19,25 +27,6 @@ $log = '';
 $error = false;
 $upgrade_done = false;
 
-function get_safe_upgrade_path(string $basePath, string $zipEntryName)
-{
-	$entry = str_replace('\\', '/', $zipEntryName);
-	$entry = ltrim($entry, '/');
-	$entry = rtrim($entry, '/');
-
-	if ($entry === '' || str_contains($entry, "\0")) {
-		return false;
-	}
-
-	$parts = explode('/', $entry);
-	foreach ($parts as $part) {
-		if ($part === '' || $part === '.' || $part === '..') {
-			return false;
-		}
-	}
-
-	return rtrim($basePath, '/') . '/' . implode('/', $parts);
-}
 
 $update_needed = false;
 $latest_version = $version;
@@ -133,7 +122,12 @@ if (($_POST['start_upgrade'] ?? '') === '1') {
 
 							while ($zip_entry = @zip_read($zip)) {
 								$thisFileName = zip_entry_name($zip_entry);
-								$safePath = get_safe_upgrade_path($basePath, $thisFileName);
+								// A directory entry is confined; a file entry is confined
+								// and never written through a symlink (the same helper as
+								// the premium updater, in functions.php).
+								$safePath = str_ends_with($thisFileName, '/')
+									? resolve_update_target_path($basePath, $thisFileName, true)
+									: resolve_update_write_path($basePath, $thisFileName);
 
 								if ($safePath === false) {
 									$log .= "Skipped unsafe path in archive: " . $thisFileName . "\n";

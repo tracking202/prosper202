@@ -208,5 +208,5 @@ if (!$isSpy) {
 // Server-side pages: the table holds one page of the window, so it is not
 // sorted in the browser (that would reorder this page and nothing else).
 if (!$isSpy) {
-	echo p202_overview_pagination((int)$query['pages'], (int)$query['offset'], 'Pages of clicks');
+	echo p202_overview_pagination((int)$query['pages'], (int)$query['offset'], 'Pages of clicks', $reportView);
 }

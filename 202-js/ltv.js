@@ -46,6 +46,19 @@
        view's URL so a link copied from any view still says which window it
        shows. */
     var windowQuery = [];
+    /* The view ltv.php drew (ReportView): its window, as a query string.
+       Every request this page makes under tracking202/ajax/ carries it, so
+       a partial draws the window on screen rather than whatever another
+       tab has stored since. */
+    var reportView = '';
+
+    function withView(url) {
+        if (reportView === '' || typeof url !== 'string' || url.indexOf(ajaxUrl) !== 0) { return url; }
+        var hash = url.indexOf('#');
+        var tail = hash === -1 ? '' : url.slice(hash);
+        var head = hash === -1 ? url : url.slice(0, hash);
+        return head + (head.indexOf('?') === -1 ? '?' : '&') + 'view=' + encodeURIComponent(reportView) + tail;
+    }
 
     function onLtvPage() {
         var a = document.createElement('a');
@@ -179,6 +192,7 @@
     window.loadContentPost = loadContentPost;
     window.ltvNav = ltvNav;
     window.ltvUrl = ltvUrl;
+    window.ltvWithView = withView;
     window.ltvViewFromLocation = viewFromLocation;
 
     function start() {
@@ -189,6 +203,15 @@
         }
         pageUrl = content.getAttribute('data-ltv-page');
         ajaxUrl = content.getAttribute('data-ltv-ajax');
+        reportView = content.getAttribute('data-ltv-view') || '';
+        // Every request under the partials' directory: the router's own,
+        // and the ones a partial's inline script makes ($.post to its own
+        // URL, the merge search).
+        if (window.jQuery && window.jQuery.ajaxPrefilter) {
+            window.jQuery.ajaxPrefilter(function (options) {
+                options.url = withView(options.url);
+            });
+        }
         new URLSearchParams(window.location.search).forEach(function (value, key) {
             if (key !== 'view' && pageKeys[key]) {
                 windowQuery.push(encodeURIComponent(key) + '=' + encodeURIComponent(value));

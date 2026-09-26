@@ -10,9 +10,10 @@ AUTH::require_user();
  * Account › ClickServers, on the v2 shell: the domains activated with this
  * account's Prosper202 ClickServer API key, each with a switch.
  *
- * A switch posts to 202-config/clickserver_api_management.php exactly as the
- * classic page did (clickserver_id, api_key, method) plus the session token
- * that endpoint checks. Nothing here is linked from the menu; the page
+ * A switch posts to 202-config/clickserver_api_management.php the domain and
+ * the method, with the session token. The endpoint uses this account's
+ * stored key and checks the permission and the domain itself, so the page
+ * no longer hands the key to the browser. Nothing here is linked from the menu; the page
  * answers the users the access_to_clickservers permission names.
  */
 
@@ -123,7 +124,6 @@ template_top('ClickServer Management', ['ui' => 'v2']);
 	<script>
 		document.addEventListener('DOMContentLoaded', function () {
 			var endpoint = <?php echo json_encode(get_absolute_url() . '202-config/clickserver_api_management.php'); ?>;
-			var apiKey = <?php echo json_encode(base64_encode($apiKey)); ?>;
 			var token = <?php echo json_encode((string)($_SESSION['token'] ?? '')); ?>;
 			var host = <?php echo json_encode((string)($_SERVER['HTTP_HOST'] ?? '')); ?>;
 			var used = <?php echo json_encode($domainsUsed); ?>;
@@ -149,7 +149,6 @@ template_top('ClickServer Management', ['ui' => 'v2']);
 					var method = input.checked ? 'activate' : 'deactivate';
 					var body = new URLSearchParams();
 					body.set('clickserver_id', domain);
-					body.set('api_key', apiKey);
 					body.set('method', method);
 					body.set('token', token);
 					input.disabled = true;
