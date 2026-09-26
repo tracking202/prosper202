@@ -352,3 +352,51 @@ what was skipped and why) rather than redirecting, because the answer is a
 report and each write is safe to send twice. Their destructive forms confirm
 through `form[data-p202-confirm]`, saying what is kept.
 
+<!-- U7: Standalone and pre-login -->
+## Pages before a login: the standalone shell
+
+Sign in, the password reset, the license-key page, the 404, the install path
+(setup wizard, server check, license key, installer, upgrader) and every
+`_die()` message render through `info_top()` and `info_bottom()`, which since
+U7 are the v2 shell without chrome: the assets `p202_shell_assets()` gives a
+signed-out v2 page, one centred column (`.p202-standalone__column`, `--wide`
+for the installer's forms and tables) over the partner wallpaper, and
+Bootstrap cards in it opened with `p202_standalone_card($title, $line)`.
+There is no navigation because there is nothing to navigate to yet, and the
+theme follows the saved or system choice with no switch. The Google
+Publisher Tag loads only on the sign-in page, which has its slot
+(`info_top(['ads' => true])`). A `_die()` message is its caller's markup —
+a heading and a sentence — shown in a card; write it without classes.
+
+The pre-login forms carry the session token exactly as
+`PreLoginPostRequiresTokenTest` reads it (a hidden input whose value is one
+echo of the escaped `$_SESSION['token']`, inside the form, at the form's PHP
+depth); the setup wizard, which runs before `connect.php` can, mints the same
+token itself (`p202_standalone_wizard_token()`), in a session whose cookie
+takes its Secure flag from the same answer every other page's does,
+`p202_request_is_https()` (`202-config/request-https.php`, which reads a
+TLS-terminating proxy's headers); `SessionCookieSecureTest` holds every
+session start to it.
+
+On an installed instance the wizard is locked: it will not show or rewrite
+the database settings. The one thing that passes the lock is the update of a
+`202-config.php` from a release before the `DB` class
+(`setup-config.php?step=1.1`, offered on the lock page when the file is in
+that format), and it is built so that passing it wins nothing: it opens only
+while the file is in the legacy format, read narrowly
+(`p202_setup_config_is_legacy()`: plain settings, no code), it takes no
+setting from the request and shows none — every value is carried over
+unchanged, so it cannot point the install at another database, replica or
+cache — its POST carries the session token, the carried settings must
+connect before anything is written, and the file is replaced in one rename.
+Changing a setting stays an edit on the server.
+
+## A feed is read into rows, never printed
+
+TV202, Hot Deals and the App Store show feeds from my.tracking202.com. A
+page reads its feed into plain rows (`202-config/functions-feeds-ui.php`) and
+renders the rows with the component layer: a link survives only as a web
+address, a video only as a YouTube embed (in a `.ratio.ratio-16x9` frame, so
+it fits a phone), and every text is escaped by the page. A feed that does not
+answer gives an empty state that says so, with one Try again.
+

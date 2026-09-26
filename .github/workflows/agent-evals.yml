@@ -133,6 +133,9 @@ jobs:
           P202_DB_PASS: root
           P202_HTTP_PORT: '8000'
           P202_EVAL_RUNTIME_DIR: ${{ runner.temp }}/p202-eval
+          # Known to the pre-login pass below, which signs in with it; a
+          # throwaway instance on a disposable service container.
+          P202_ADMIN_PASS: eval-ci-${{ github.run_id }}
         run: |
           mkdir -p "$P202_EVAL_RUNTIME_DIR"
           KEY=$(tests/fixtures/agent-eval/ci/install-instance.sh)
@@ -155,6 +158,26 @@ jobs:
           P202_DB_PASS: root
           P202_DB_ALLOW_DESTRUCTIVE: yes-i-mean-it
         run: bash tests/live/upgrade-csrf.sh
+
+      - name: Prove the pre-login pages refuse what they must (setup wizard lock included)
+        # tests/live/prelogin-pages.sh drives sign-in, the password reset
+        # pair, the license-key page, the setup wizard on this installed
+        # instance (its lock, and the legacy-format update, which swaps in a
+        # legacy 202-config.php and puts the original bytes back on exit),
+        # the 404, the retired 202-Mobile addresses and the feed pages. It
+        # changes the admin's password and ClickServer key and restores both.
+        env:
+          P202_BASE: http://127.0.0.1:8000
+          P202_DB: prosper202
+          P202_DB_HOST: 127.0.0.1
+          P202_DB_PORT: '3306'
+          P202_DB_USER: root
+          P202_DB_PASS: root
+          P202_DB_ALLOW_DESTRUCTIVE: yes-i-mean-it
+          P202_USER: evalci
+          P202_PASS: eval-ci-${{ github.run_id }}
+          P202_SERVER_LOG: ${{ runner.temp }}/p202-eval/php-server.log
+        run: bash tests/live/prelogin-pages.sh
 
       - name: Configure the CLI
         run: |

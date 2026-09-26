@@ -19,6 +19,7 @@
  *   .p202-skeleton      a loading placeholder
  *   .p202-disclosure    the "Advanced" part of a form, closed by default
  *   .p202-decided       a note where the app decided something, with a change link
+ *   .p202-standalone    the pre-login page: one column of cards, no chrome
  *
  * 202-account/ui-kit.php renders every one of them in every state; look there
  * before inventing a class, and add the new state there when you add one.
@@ -953,4 +954,109 @@ a.p202-sort:hover {
     background: var(--bs-tertiary-bg);
     font-size: 0.8125rem;
     font-weight: 700;
+}
+
+/* U7: Standalone ----------------------------------------------------------
+ *
+ * .p202-standalone is the page a person reaches before there is a login, or
+ * outside the app's chrome: info_top() in 202-config/functions-standalone-ui.php
+ * puts it on <body>. One centred column (__column, --wide for the installer)
+ * over the partner wallpaper (__wallpaper), the logo on top (__brand), then
+ * Bootstrap cards (__card) whose heading is __title with one line of __desc,
+ * and a quiet footer (__foot). __message holds a _die() message, which its
+ * callers write as a heading and a sentence.
+ */
+
+.p202-standalone {
+    min-height: 100vh;
+    background-color: var(--bs-tertiary-bg);
+}
+
+.p202-standalone__wallpaper {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    display: block;
+    background-size: cover;
+    background-repeat: no-repeat;
+    background-position: center;
+}
+
+.p202-standalone__main {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 100vh;
+    padding: 2.5rem 1rem;
+    /* The column takes clicks; the wallpaper behind it takes the rest. */
+    pointer-events: none;
+}
+
+.p202-standalone__column {
+    width: 100%;
+    max-width: 26rem;
+    pointer-events: auto;
+}
+
+.p202-standalone__column--wide {
+    max-width: 46rem;
+}
+
+.p202-standalone__brand {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 1rem;
+}
+
+.p202-standalone__brand img {
+    max-width: 12rem;
+    height: auto;
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--bs-border-radius-lg);
+    background-color: rgba(255, 255, 255, 0.92);
+}
+
+.p202-standalone__card {
+    margin-bottom: 1rem;
+    box-shadow: var(--bs-box-shadow);
+}
+
+.p202-standalone__title {
+    margin-bottom: 0.25rem;
+    font-size: 1.25rem;
+    font-weight: 700;
+}
+
+.p202-standalone__desc {
+    margin-bottom: 1rem;
+    color: var(--bs-secondary-color);
+}
+
+.p202-standalone__message h6 {
+    margin-bottom: 0.5rem;
+    font-size: 1.125rem;
+    font-weight: 700;
+}
+
+.p202-standalone__message small {
+    font-size: inherit;
+}
+
+.p202-standalone__ad {
+    /* The sign-in page's 288x200 placement; empty when nothing is served. */
+    width: 288px;
+    max-width: 100%;
+    margin: 0 auto 1rem;
+}
+
+.p202-standalone__foot {
+    margin: 0;
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--bs-border-radius);
+    background-color: var(--bs-body-bg);
+    color: var(--bs-secondary-color);
+    font-size: 0.8125rem;
+    text-align: center;
 }

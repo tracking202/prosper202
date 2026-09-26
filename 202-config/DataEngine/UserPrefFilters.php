@@ -152,7 +152,6 @@ final class UserPrefFilters
      * The scattered inline copies listed below are being converged to call this
      * method:
      *
-     *   202-Mobile/mini-stats/202-ministats.php,
      *   tracking202/ajax/sort_rotator.php,
      *   tracking202/ajax/account_overview.php,
      *   202-config/ReportSummaryForm.class.php (uses $columnPrefix = '2c.').

@@ -86,8 +86,7 @@ final class ShellIsolationTest extends TestCase
      */
     private const EXTERNAL_SERVICE_LOADERS = [
         'https://dna8twue3dlxq.cloudfront.net/js/profitwell.js' => 'ProfitWell, loaded by template_bottom()',
-        '//www.googletagservices.com/tag/js/gpt.js' => 'Google Publisher Tag on the standalone pages (info_top())',
-        'http://partner.googleadservices.com/gampad/google_service.js' => 'Google ad service on the mobile mini-stats page',
+        '//www.googletagservices.com/tag/js/gpt.js' => 'Google Publisher Tag on the sign-in page (info_top([\'ads\' => true]))',
     ];
 
     private const SKIP_DIRS = ['vendor', 'node_modules', 'tests', '.git', 'go-cli', 'docs', 'documentation', '202-js/vendor', '202-css/vendor', '202-config/temp', '202-config/data', '202-config/geo'];

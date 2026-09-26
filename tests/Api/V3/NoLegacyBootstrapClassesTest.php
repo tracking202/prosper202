@@ -97,6 +97,28 @@ final class NoLegacyBootstrapClassesTest extends TestCase
         // themselves pass 'ui' => 'v2' and are found by the page scan; the
         // AJAX fragments they used to load are retired.
         'tracking202/update/_includes/update_ui.php',
+        // U7: Standalone and pre-login. The shell every page before a login
+        // renders through (info_top(), and _die() in functions.php), the
+        // pages that call it — they build their own document rather than
+        // passing 'ui' => 'v2' — the installer's success panel, and the
+        // feed readers behind TV202, Hot Deals and the App Store.
+        '202-config/functions-standalone-ui.php',
+        '202-config/functions-feeds-ui.php',
+        '202-config/functions-install-helpers.php',
+        '202-login.php',
+        '202-lost-pass.php',
+        '202-pass-reset.php',
+        '202-404.php',
+        'api-key-required.php',
+        'index.php',
+        '202-config/install.php',
+        '202-config/upgrade.php',
+        '202-config/setup-config.php',
+        '202-config/requirements.php',
+        '202-config/get_apikey.php',
+        '202-Mobile/index.php',
+        '202-Mobile/202-login.php',
+        '202-Mobile/mini-stats/index.php',
         // U3: the Customer LTV partials, which render only inside the v2
         // Analyze › Customer LTV page (tracking202/analyze/ltv.php).
         'tracking202/ajax/sort_ltv.php',

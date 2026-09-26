@@ -30,7 +30,6 @@ final class UncheckedExecuteTest extends TestCase
      * @var string[]
      */
     private const KNOWN_UNCHECKED = [
-        '202-Mobile/202-login.php',
         '202-login.php',
         'api/v2/app.php',
         '202-config/Attribution/AttributionIntegrationService.php',

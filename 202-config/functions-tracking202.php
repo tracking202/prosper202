@@ -2893,7 +2893,8 @@ function clickserver_api_upgrade_url($key)
     // Initiate curl
     $ch = curl_init();
     // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Set the url
@@ -2918,7 +2919,8 @@ function clickserver_api_key_validate($key)
     // Initiate curl
     $ch = curl_init();
     // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Set the url
@@ -2947,7 +2949,8 @@ function api_key_validate($key)
     // Set the url
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/validate-customers-key');
     // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Set to post
@@ -3011,7 +3014,8 @@ function getSurveyData($install_hash)
     // Initiate curl
     $ch = curl_init();
     // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Set the url
@@ -3037,7 +3041,8 @@ function updateSurveyData($install_hash, $post)
     // Set the url
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/deep/survey/' . $install_hash);
     // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Set to post
@@ -3063,7 +3068,8 @@ function rotator_data($query, $type)
     // Set the url
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/deep/rotator/' . $type . '/' . $query);
     // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Bounded: Setup › Redirector asks this as the user types, and an
@@ -3138,7 +3144,8 @@ function changelog_remote(): array
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/clickserver/currentversion/paid/changelogs.php');
     // Disable SSL verification (legacy endpoint).
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Bounded timeouts so a slow/offline endpoint can never hang the upgrade screen.
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
@@ -3182,7 +3189,8 @@ function callAutoCron($endpoint)
     // Set the url
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/autocron/' . $endpoint . '/' . $domain);
     // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Bound the wait so a slow/unreachable service can't hang the caller (e.g. install)
@@ -3216,7 +3224,8 @@ function registerDailyEmail($time, $timezone, $hash)
     // Set the url
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/' . $hash . '/' . $domain . '/' . $set_time);
     // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Bound the wait so a slow/unreachable service can't hang the caller (e.g. install)
@@ -3240,7 +3249,8 @@ function tagUserByNetwork($install_hash, $type, $network)
     // Set the url
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/tag/user/' . $install_hash . '/' . $type);
     // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Set to post
@@ -3271,7 +3281,8 @@ function getAllDniNetworks($install_hash)
     // Set the url
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $install_hash . '/networks/all');
     // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Execute
@@ -3293,7 +3304,8 @@ function authDniNetworks($hash, $network, $key, $affId)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/auth/' . $network);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3328,7 +3340,8 @@ function getDniOffers($hash, $network, $key, $affId, $offset, $limit, $sort_by, 
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/all/' . $offset . '/' . $limit);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3348,7 +3361,8 @@ function getDniOfferById($hash, $network, $key, $affId, $id)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/id/' . $id);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3368,7 +3382,8 @@ function requestDniOfferAccess($hash, $network, $key, $affId, $id, $type)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/' . $type . '/' . $id);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3388,7 +3403,8 @@ function submitDniOfferAnswers($hash, $network, $api_key, $affId, $id, $answers)
     $fields = http_build_query($fields);
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/answers/' . $id);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3410,7 +3426,8 @@ function setupDniOffer($hash, $network, $key, $affId, $currency, $id, $ddlci)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/setup/' . $id);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3454,7 +3471,8 @@ function setupDniOfferTrack($hash, $network, $key, $affId, $id, $ddlci = false)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, $url . $id);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3475,7 +3493,8 @@ function getForeignPayout($currency, $payout_currency, $payout)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/get-foreign-payout');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3497,7 +3516,8 @@ function validateCustomersApiKey($key)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/validate-customers-key');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3529,7 +3549,8 @@ function validateRevContentCredentials($id, $secret)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/premium-p202/validate-revcontent-credentials');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3555,7 +3576,8 @@ function pushToRevContent($id, $secret, $boost, $boost_id, array $ads)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/premium-p202/push-revcontent');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3579,7 +3601,8 @@ function pushToFacebook($api_key, $group, $ad_set_id, array $ads)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/premium-p202/facebook-ads/push-facebook/' . $api_key);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3595,7 +3618,8 @@ function getFacebookCampaignsAndAdSets($api_key)
 {
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/premium-p202/facebook-ads/get-ad-sets/' . $api_key);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
     curl_setopt($ch, CURLOPT_TIMEOUT, 60);
@@ -3793,7 +3817,8 @@ function getSetDashEmail($key)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/get-customers-email');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3911,19 +3936,10 @@ function  upgrade_config()
 
 function getSecureStatus(): bool
 {
-    $secure = false;
-    if (
-        (! empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-        || (! empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] == 'https')
-        || (! empty($_SERVER['HTTP_X_FORWARDED_SSL']) && $_SERVER['HTTP_X_FORWARDED_SSL'] == 'on')
-        || (isset($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443)
-        || (isset($_SERVER['HTTP_X_FORWARDED_PORT']) && $_SERVER['HTTP_X_FORWARDED_PORT'] == 443)
-        || (isset($_SERVER['REQUEST_SCHEME']) && $_SERVER['REQUEST_SCHEME'] == 'https')
-    ) {
-        $secure = true;
-    }
-
-    return $secure;
+    // One answer for the whole install, the one the session cookie's Secure
+    // flag is set from (202-config/request-https.php).
+    require_once __DIR__ . '/request-https.php';
+    return p202_request_is_https($_SERVER);
 }
 
 /**
