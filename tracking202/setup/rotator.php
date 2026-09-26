@@ -142,8 +142,12 @@ foreach (p202_setup_rows($db, "SELECT rr.* FROM 202_rotator_rules_redirects AS r
 	$redirectsByRule[(int) $redirect['rule_id']][] = $redirect;
 }
 
-// Destinations: the campaigns and landing pages the classic editor offered
-// (its landing-page list joins live campaigns, so it is the simple pages).
+// Destinations: this account's campaigns and landing pages. A simple page
+// is offered while its campaign is live; an advanced page belongs to no
+// campaign (aff_campaign_id 0, and no campaign row 0 exists), so an inner
+// join to the campaigns dropped every one of them — a rule that already
+// pointed at one rendered its <select> with nothing chosen, and the next
+// save repointed it (#164, #173).
 $campaignOptions = p202_setup_campaign_options($db, $uid);
 $campaignNames = [];
 foreach ($campaignOptions as $group) {
@@ -152,7 +156,11 @@ foreach ($campaignOptions as $group) {
 	}
 }
 $pageOptions = [];
-foreach (p202_setup_rows($db, "SELECT landing_page_id, landing_page_nickname, landing_page_type FROM 202_landing_pages JOIN 202_aff_campaigns USING (aff_campaign_id) WHERE 202_landing_pages.user_id = '" . $uid . "' AND COALESCE(aff_campaign_deleted,0) = 0 AND COALESCE(landing_page_deleted,0) = 0 ORDER BY landing_page_type, landing_page_nickname") as $page) {
+foreach (p202_setup_rows($db, "SELECT lp.landing_page_id, lp.landing_page_nickname, lp.landing_page_type FROM 202_landing_pages AS lp"
+	. " LEFT JOIN 202_aff_campaigns AS ac ON (ac.aff_campaign_id = lp.aff_campaign_id AND ac.user_id = lp.user_id)"
+	. " WHERE lp.user_id = '" . $uid . "' AND COALESCE(lp.landing_page_deleted,0) = 0"
+	. " AND (lp.landing_page_type = 1 OR (ac.aff_campaign_id IS NOT NULL AND COALESCE(ac.aff_campaign_deleted,0) = 0))"
+	. " ORDER BY lp.landing_page_type, lp.landing_page_nickname") as $page) {
 	$pageOptions[(string) $page['landing_page_id']] = (string) $page['landing_page_nickname'] . ((string) $page['landing_page_type'] === '1' ? ' (advanced)' : ' (simple)');
 }
 
