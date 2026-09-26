@@ -1,6 +1,6 @@
 # Measurement rewrite: app measurement (iOS + Android) and multi-touch attribution
 
-Status: **in progress.** PR 0 (legacy endpoints) and PR 1 (the conversion ledger) are built; the rest is proposal.
+Status: **in progress.** PR 0 (legacy endpoints), PR 1 (the conversion ledger), PR 2 (identity capture) and PR 9 (the MTA engine) are built; the rest is proposal.
 
 ## Scope
 
@@ -1390,8 +1390,9 @@ strangers, which is the failure being replaced.
 **Journey rule.** A journey is the clicks with the converting click's
 canonical `visitor_key`, within the model's lookback (default 30 days),
 **across all campaigns**. Crossing campaigns is the point: a journey limited to one
-campaign cannot tell models apart at the campaign level. Clicks flagged bot or
-filtered are excluded. A click with no `visitor_key` makes a one-touch journey,
+campaign cannot tell models apart at the campaign level. Clicks flagged bot
+are excluded (as built, filtered repeat-IP clicks are kept: §6.5). A click with
+no `visitor_key` makes a one-touch journey,
 labelled as such.
 
 **Honest limits, stated in the product and not discovered by users:**
@@ -1616,6 +1617,148 @@ The worker computes credits for every active model, the default included.
   `backfill-conversion-journeys.php` crons. Their tests go with them. Every
   deleted test is listed in the PR with the reason its subject no longer
   exists; no test is deleted merely because it fails.
+
+### 6.5 As built (PR 9)
+
+PR 9 built §6.3–6.4 as written except where this section says otherwise.
+The live pass is `tests/live/mta-engine.sh`; the integration tests are
+`tests/Attribution/{AttributionWorkerIntegrationTest, MergeRequeuesConversionsTest,
+JourneyLookbackTest, AttributionReportsIntegrationTest}`.
+
+**Where it differs from §6.2–6.4, and why:**
+
+- **Filtered clicks stay in journeys; bot clicks do not.** §6.2 says "clicks
+  flagged bot or filtered are excluded". Measured on a live instance:
+  Prosper202 sets `click_filtered` on *every* click from an IP the account
+  has seen in the last 24 hours (`FILTER::checkLastIps`), so a person's second
+  and third clicks in a day — the touches a journey is made of — are all
+  "filtered", and excluding them made every same-day journey one touch. The
+  flag cannot say why it was set; bots carry `click_bot` too, and strangers
+  never share a visitor key, which is the gate that keeps them out. So
+  journeys exclude `click_bot = 1` only, and the report's clicks and cost
+  count the same clicks.
+- **A merge re-queues every conversion of the merged person**, not only those
+  whose window overlaps a click of the other side. A superset: recomputing a
+  conversion whose journey did not change rewrites the same rows, the
+  quarantine cap bounds how many keys one person has, and after path
+  compression the two sides can no longer be told apart without a second
+  table. One transaction per merge: enqueue, then set `requeued_at`.
+- **Clicks after the converting click are never in its journey**, even when
+  they precede the conversion's arrival: the conversion happened through the
+  converting click. The converting click is always the last touch, and it is
+  inside every model's window whatever its age.
+- **The window is anchored on `conv_time`**: a model's lookback admits
+  touches with `click_time >= conv_time − lookback_days`.
+- **Model status is `active` / `inactive` / `invalid`** (§6.4 listed
+  `active`/`invalid`): a person can switch a model off without deleting it.
+  `invalid` is only ever set by the engine, with `status_reason`; an update
+  that validates a whole definition makes it active again. The default model
+  must be active and cannot be deleted or unset (409 / 422 say to make
+  another model the default first).
+- **`is_default` is 1 or NULL under `UNIQUE (user_id, is_default)`**, so the
+  database itself holds "at most one default"; `DefaultModel` (the plan's
+  `ensureDefaultModel`) makes it "exactly one". One statement serves every
+  path: `DefaultModel::SEED_ALL_SQL` in the 1.9.56 rung (followed by a check
+  that no account lacks a default before the rung advances) and
+  `DefaultModel::ensureFor()` in the installer, v3 user creation,
+  `user-management.php` and `MysqlUserRepository`. The worker creates it for
+  an account it meets without one (a path that could not), rather than
+  computing no credits forever.
+- **Lookback is a column** (`lookback_days`, 1–365, default 30), not a
+  weighting-config key. There is no per-model touch count to validate: the
+  25-touch cap is fixed and no model can ask for more.
+- **Credits carry `conv_time`** and have a second index `(model_id,
+  conv_time)`, so a report's date range is read from the index instead of
+  joining back to the ledger. **Journey meta carries `user_id`, `conv_time`,
+  `touches` and `identified`** for the same reason and for the fan-outs.
+  Only non-zero credits are stored.
+- **Revenue is split exactly.** Credit units are floored (with 1e-6 of a unit
+  of float tolerance) and the remainder goes to the last touch that has
+  credit; revenue per touch is `amount × credit` rounded half up, the
+  remainder again to the last credited touch, falling back to flooring when
+  rounding up would leave that touch negative. So 2/7 of $7 is $2.00000, not
+  the $1.99999 its eight-digit credit floors to, and every conversion's
+  credits sum to exactly 1 and its revenue to exactly its counted amount
+  (`CreditCalculatorTest`, 2,100+ assertions over every model, 1–25 touches
+  and edge amounts).
+- **A conversion's MTA value is its amount net of the reversals naming it.**
+  Reversal rows get no credits of their own; a sale reversed to nothing (or
+  below) does not count.
+- **Reasons.** `recorded`, `counted_state`, `identity_merge`,
+  `rebuild_journey` as planned, plus `model_changed` for a model change that
+  can be served from the stored journey. Correctness never rests on the
+  reason: the worker rebuilds unless the reason is `model_changed` *and* the
+  stored journey is at least as wide as the widest active model reads, and a
+  `model_changed` enqueue never overwrites a pending row's stronger reason.
+- **Outbox failure state.** `202_attribution_pending` gained `attempts`,
+  `last_error` and `retry_at` (a PR 1 table; nobody runs it yet). A row whose
+  processing throws is kept with the error and retried after 1 minute,
+  doubling to a day; the ledger's re-queue resets it. A database error
+  (`QueryException`: a missing table, a lost connection) stops the run and
+  charges no row, so fixing the engine drains the backlog on the next run.
+- **The worker runs from the minutely `202-cronjobs/index.php` as well as on
+  its own** (`202-cronjobs/attribution-worker.php`), under one MySQL named
+  lock, so the single documented crontab line is enough.
+- **Reports API paths.** `GET /attribution/reports/breakdown`,
+  `/attribution/reports/journeys`, `/attribution/conversions/{id}/journey`
+  and `/attribution/queue`. `/attribution/report` was taken by the SKAN
+  report until PR 3 moves it; the CLI command is `p202 attribution
+  breakdown` for the same reason. Without `model_id` the breakdown is
+  "effective": each conversion under its campaign's `attribution_model_id`
+  when that model is active and the account's, else the default — that is
+  where the per-campaign override is read. The campaign form's model field
+  lists the account's models and refuses an id that is not one of them.
+- **Permissions on v3.** `Auth::requirePermission()` checks the role
+  permissions the session pages check: `view_attribution_reports` for every
+  attribution read, `manage_attribution_models` for model writes, on top of
+  the key scope. A failed lookup is a 500, never a pass.
+- **Exports.** Both old export stacks are deleted (they exported the
+  snapshots, which are gone) and `202_attribution_exports` has its one final
+  column set; the pipeline, the SSRF-safe webhooks and their endpoints are
+  PR 10's, so this PR has no export endpoint.
+- **The dashboard** (`202-account/attribution.php`) is a v2-shell page that
+  says it is being rebuilt, lists the account's models and the worker's
+  backlog, and names the CLI and API reads. `tracking202/setup/attribution_models.php`
+  (the old model editor) redirects there, and its Setup tab is gone. The
+  Slim v2 app (`api/v2/app.php`, `index.php`, `.htaccess`) is deleted;
+  `api/v2/categories` and `api/v2/reports` are the older key-based API,
+  not the attribution app, and stay.
+- **Not done here:** the upgrade-equals-install test from a real 1.9.55
+  database (PR 12). Measured instead: a fresh install wound back to 1.9.56
+  with every MTA table dropped, climbed through the real upgrade page
+  (`tests/live/upgrade-csrf.sh` with `P202_PRIOR_VERSION=1.9.56`), ends with
+  every MTA table's `SHOW CREATE TABLE` identical to a fresh install's and
+  one default model per account. Agent-eval cases for MTA are PR 12's.
+
+**Deleted, with the reason each subject no longer exists:** the whole
+`202-config/Attribution/` v2 engine (repositories, services, strategies,
+snapshots, settings, the two export stacks, analytics) and
+`202-config/Validation/` (used only by the old model editor);
+`api/Attribution/Controller.php` and `api/v2/{app,index}.php`,
+`api/v2/.htaccess`; `202-account/attribution/` (the unlinked second
+dashboard), `202-account/attribution-export.php`,
+`202-account/ajax/system-checks.php` (only the old dashboard called it; it
+checked the two deleted crons); `202-js/attribution.js`,
+`202-js/attribution-dashboard.js`; `tracking202/setup/AttributionController.php`
+and its template; the crons `attribution-rebuild.php`,
+`attribution-export.php`, `backfill-conversion-journeys.php`,
+`purge-disabled-journeys.php`; both migration runners and their `.sql`,
+`documentation/sql/1.9.58-attribution-settings.sql`; the PHP CLI
+`attribution:snapshot:list`, `attribution:export:list`,
+`attribution:export:schedule` and the Go `attribution snapshot` / `export`
+commands; `p202ResolveAdvertiserId()` and `p202PersistLegacyJourney()` (their
+only callers were the inline hooks); `package.json` and
+`playwright.config.js` (their only spec was the old dashboard's). Tests
+deleted with their subjects: `tests/Attribution/{Api/AttributionApiTest,
+AssistedStrategyTest, AttributionJobRunnerTest, AttributionRepositoryTest,
+AttributionServiceExportTest, AttributionServiceTest,
+AttributionSettingsServiceTest, ConversionHydratorTest,
+Export/ExportProcessorTest, Export/MysqlExportRepositoryTest,
+LastTouchStrategyTest, ModelDefinitionValidationTest,
+MysqlConversionRepositoryTest, PositionBasedStrategyTest,
+TimeDecayStrategyTest, Support/RepositoryFakes}` and
+`tests/playwright/attribution-dashboard.spec.js` — each tested a class,
+page or endpoint that no longer exists; none was failing.
 
 ---
 
@@ -1915,7 +2058,7 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 | 6 | **Play Integrity** (opt-in modes) | 5 |
 | 7 | **Android SDK** (installs, events, customer id, integrity) | 5, 6 |
 | 8 | **iOS SDK:** header rename, `setCustomerId`, on-device goal evaluator on the shared vectors | 3, 4 |
-| 9 | **MTA engine:** schema rewrite and rungs, worker, models, credits, reports API; v2 and dead code deleted | 1, 2 |
+| 9 | **MTA engine:** schema rewrite and rungs, worker, models, credits, reports API; v2 and dead code deleted. **Built; `tests/live/mta-engine.sh`; decisions in §6.5.** | 1, 2 |
 | 10 | **MTA UI and exports:** dashboard on the v2 shell, comparison, journey metrics, SSRF-safe webhooks | 9 |
 | 11 | **Mobile Apps UI:** Android pages, link builder, goal editor and funnel, cross-platform report | 3–5 |
 | 12 | **Release gate:** upgrade-equals-install from a real 1.9.55 database, full live passes, agent-eval cases, docs and OpenAPI, and the whole-app browser pass on v2 | all, including U8 |

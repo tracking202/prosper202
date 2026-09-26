@@ -82,8 +82,7 @@ A separate PHP/Symfony Console CLI also ships at `bin/p202` (run `php bin/p202 l
 
 ### Features
 
-- [Advanced Attribution Engine Rollout](features/advanced-attribution-engine.md)
-- [Multi-Touch Journeys](features/multi-touch-journeys.md)
+- [Multi-touch Attribution Engine](features/advanced-attribution-engine.md)
 - [The Prosper202 UI Standard](features/ui-standard.md)
 
 ### Partnering With Us
@@ -97,6 +96,3 @@ A separate PHP/Symfony Console CLI also ships at `bin/p202` (run `php bin/p202 l
 - [Resources](tools--resources/00-resources.md)
 - [Common Network SubID Parameters](tools--resources/999-common-network-subid-parameters.md)
 
-### Runbooks
-
-- [Multi-touch Attribution QA Runbook](runbooks/multi-touch-qa.md) – outlines schema/toggle validation, purge/backfill procedures, and the hourly attribution maintenance cron.

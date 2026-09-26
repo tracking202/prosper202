@@ -486,19 +486,48 @@ try {
             $r->delete('/{id}/rules/{ruleId}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteRule((int)$ctx['id'], (int)$ctx['ruleId'])));
         });
 
-        // ── Attribution ──────────────────────────────────────────────────
-        $router->group('/attribution/models', function (Router $r) use ($crud, $idempotent, $queryParams, $payload) {
+        // ── Multi-touch attribution ──────────────────────────────────────
+        // Gated by the same role permissions as the session pages (plan
+        // §6.3: one permission check per operation on every surface):
+        // view_attribution_reports to read, manage_attribution_models to
+        // change a model. Scope enforcement (attribution:read/write) runs as
+        // well, centrally below.
+        $router->group('/attribution/models', function (Router $r) use ($crud, $idempotent, $queryParams, $payload, $auth, $db) {
             $cls = \Api\V3\Controllers\AttributionController::class;
+            $manage = static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'manage_attribution_models');
+            };
             $r->get('',        fn() => $crud($cls)->listModels($queryParams));
-            $r->post('',       fn() => ['_status' => 201] + $idempotent('attribution/models', $payload, fn() => $crud($cls)->createModel($payload)));
             $r->get('/{id}',   fn($ctx) => $crud($cls)->getModel((int)$ctx['id']));
-            $r->put('/{id}',   fn($ctx) => $crud($cls)->updateModel((int)$ctx['id'], $payload));
-            $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteModel((int)$ctx['id'])));
-
-            $r->get('/{id}/snapshots', fn($ctx) => $crud($cls)->listSnapshots((int)$ctx['id'], $queryParams));
-            $r->get('/{id}/exports',   fn($ctx) => $crud($cls)->listExports((int)$ctx['id']));
-            $r->post('/{id}/exports',  fn($ctx) => ['_status' => 201] + $idempotent('attribution/models/' . (int)$ctx['id'] . '/exports', $payload, fn() => $crud($cls)->scheduleExport((int)$ctx['id'], $payload)));
-        });
+            $r->post('',       function () use ($manage, $crud, $cls, $idempotent, $payload) {
+                $manage();
+                return ['_status' => 201] + $idempotent('attribution/models', $payload, fn() => $crud($cls)->createModel($payload));
+            });
+            $r->put('/{id}',   function ($ctx) use ($manage, $crud, $cls, $payload) {
+                $manage();
+                return $crud($cls)->updateModel((int)$ctx['id'], $payload);
+            });
+            $r->delete('/{id}', function ($ctx) use ($manage, $crud, $cls) {
+                $manage();
+                $crud($cls)->deleteModel((int)$ctx['id']);
+                return null; // 204
+            });
+        }, [
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'view_attribution_reports');
+            },
+        ]);
+        $router->group('/attribution', function (Router $r) use ($crud, $queryParams) {
+            $cls = \Api\V3\Controllers\AttributionController::class;
+            $r->get('/reports/breakdown',          fn() => $crud($cls)->breakdown($queryParams));
+            $r->get('/reports/journeys',           fn() => $crud($cls)->journeyMetrics($queryParams));
+            $r->get('/conversions/{id}/journey',   fn($ctx) => $crud($cls)->journey((int)$ctx['id']));
+            $r->get('/queue',                      fn() => $crud($cls)->queue($queryParams));
+        }, [
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'view_attribution_reports');
+            },
+        ]);
 
         // ── SKAdNetwork (SKAN) ───────────────────────────────────────────
         // Postbacks arrive through the public receiver
@@ -647,7 +676,7 @@ try {
                 'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart}',
                 'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}',
                 'rotators'      => '/rotators',
-                'attribution'   => '/attribution/{models|apps|conversion-values|postbacks|report|verify}',
+                'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|apps|conversion-values|postbacks|report|verify}',
                 'users'         => '/users',
                 'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics}',
                 'sync'          => '/sync/{plan|jobs|status|history|re-sync}',
@@ -663,9 +692,10 @@ try {
         // only ever dispatched to a handler registered here, and a DELETE with
         // dry_run set whose path has no preview is rejected — it can never fall
         // through to the real delete. (LTV deletes have no previews yet, so
-        // they reject.) Auth checks that live inside the main users handlers
-        // are replicated on their previews below; group middleware still runs
-        // from the main match before this router is consulted.
+        // they reject.) Auth checks that live inside a main DELETE handler
+        // are replicated on its preview below (PreviewAuthParityTest holds
+        // that); group middleware runs from the main match before this
+        // router is consulted, for a dry run and for a staged write alike.
         $previewRouter = new Router();
         foreach ($crudMap as $resource => $class) {
             $previewRouter->delete("/$resource/{id}", fn($ctx) => $crud($class)->deletePreview((int)$ctx['id']));
@@ -673,7 +703,13 @@ try {
         $previewRouter->delete('/conversions/{id}', fn($ctx) => $crud(\Api\V3\Controllers\ConversionsController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->delete('/rotators/{id}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->delete('/rotators/{id}/rules/{ruleId}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deleteRulePreview((int)$ctx['id'], (int)$ctx['ruleId']));
-        $previewRouter->delete('/attribution/models/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionController::class)->deleteModelPreview((int)$ctx['id']));
+        // The real DELETE checks manage_attribution_models inside its handler
+        // (the group middleware only asks for view_attribution_reports), so
+        // the preview repeats it, as the users previews repeat requireAdmin.
+        $previewRouter->delete('/attribution/models/{id}', function ($ctx) use ($crud, $auth, $db) {
+            $auth->requirePermission($db, 'manage_attribution_models');
+            return $crud(\Api\V3\Controllers\AttributionController::class)->deleteModelPreview((int)$ctx['id']);
+        });
         $previewRouter->delete('/attribution/apps/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionAppsController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->delete('/attribution/conversion-values/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionConversionValuesController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->group('/users', function (Router $r) use ($db, $auth) {
@@ -732,7 +768,6 @@ try {
         $r->post('', $stageable);
         $r->put('/{id}', $stageable);
         $r->delete('/{id}', $stageable);
-        $r->post('/{id}/exports', $stageable);
     });
     $stageableRouter->group('/attribution', function (Router $r) use ($stageable) {
         $r->post('/apps', $stageable);
@@ -879,6 +914,16 @@ try {
             throw new ValidationException('staged is not supported for this endpoint', [
                 'staged' => 'This write cannot be staged; remove staged to perform it directly.',
             ]);
+        }
+        // The real route's middleware (its role gate: e.g. the attribution
+        // routes' view_attribution_reports) runs before a proposal is
+        // recorded, exactly as it does before the write and before a dry
+        // run. Without it a key whose role may not read the area could
+        // stage a DELETE and read the record back from the preview
+        // embedded in the staged change. A refusal here is the route's own
+        // 403, not a proposal without a preview.
+        foreach ($match['middleware'] as $mw) {
+            $mw();
         }
         $stagePreview = null;
         if ($method === 'DELETE') {

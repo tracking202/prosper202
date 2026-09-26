@@ -68,9 +68,9 @@ class Application extends ConsoleApplication
         $this->add(new Commands\AttributionModelCreateCommand());
         $this->add(new Commands\AttributionModelUpdateCommand());
         $this->add(new Commands\AttributionModelDeleteCommand());
-        $this->add(new Commands\AttributionSnapshotListCommand());
-        $this->add(new Commands\AttributionExportListCommand());
-        $this->add(new Commands\AttributionExportScheduleCommand());
+        $this->add(new Commands\AttributionBreakdownCommand());
+        $this->add(new Commands\AttributionJourneyCommand());
+        $this->add(new Commands\AttributionQueueCommand());
 
         // --- Users ---
         $this->add(new Commands\UserListCommand());

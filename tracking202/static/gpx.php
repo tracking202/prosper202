@@ -1,9 +1,6 @@
 <?php
 declare(strict_types=1);
 
-use Prosper202\Attribution\AttributionServiceFactory;
-use Prosper202\Attribution\Repository\Mysql\ConversionJourneyRepository;
-
 //write out a transparent 1x1 gif
 header("content-type: image/gif"); 
 header('Content-Length: 43');
@@ -17,14 +14,11 @@ include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/static-endpoint-helpers.php');
 
-$settingsService = AttributionServiceFactory::createSettingsService();
-
 //get the aff_camapaign_id
 $mysql['user_id'] = 1;
 $mysql['click_id'] = 0;
 $mysql['cid'] = 0;
 $mysql['use_pixel_payout'] = 0;
-$advertiserId = null;
 
 //grab the cid (the campaign whose own cookie names the click)
 $campaignIdFromRequest = p202ParseClickId($_GET['cid'] ?? null) ?? 0;
@@ -91,7 +85,6 @@ if (is_numeric($mysql['click_id'])) {
 
                 $mysql['campaign_id'] = $db->real_escape_string((string) ($cpa_row['aff_campaign_id'] ?? ''));
                 $mysql['click_user_id'] = $db->real_escape_string((string) ($cpa_row['user_id'] ?? ''));
-                $advertiserId = p202ResolveAdvertiserId($db, (int) $mysql['campaign_id']);
                 $mysql['click_time'] = $db->real_escape_string((string) ($cpa_row['click_time'] ?? '0'));
 
 		$conv_time = time();
@@ -156,42 +149,6 @@ if (is_numeric($mysql['click_id'])) {
 			p202LinkConversionIdentity($db, (int) $mysql['click_id'], $_GET);
 		}
 
-                if ($conversionId > 0 && !$conversionResult['duplicate']) {
-                        $scope = [
-                                'user_id' => (int) $mysql['click_user_id'],
-                                'campaign_id' => (int) $mysql['campaign_id'],
-                        ];
-                        if ($advertiserId !== null) {
-                                $scope['advertiser_id'] = $advertiserId;
-                        }
-
-                        if ($settingsService->isMultiTouchEnabled($scope)) {
-                                try {
-                                        $journeyRepository = new ConversionJourneyRepository($db);
-                                        $journeyRepository->persistJourney(
-                                                conversionId: $conversionId,
-                                                userId: (int) $mysql['click_user_id'],
-                                                campaignId: (int) $mysql['campaign_id'],
-                                                conversionTime: (int) $mysql['conv_time'],
-                                                primaryClickId: (int) $mysql['click_id'],
-                                                primaryClickTime: (int) $mysql['click_time']
-                                        );
-                                } catch (Throwable $journeyError) {
-                                        error_log('Failed to persist conversion journey for conv_id ' . $conversionId . ': ' . $journeyError->getMessage());
-                                }
-                        }
-                }
-
-			// Rebuild attribution snapshots so the attribution page reflects changes immediately
-		try {
-			$jobRunner = AttributionServiceFactory::createJobRunner();
-			$userId = (int) $mysql['click_user_id'];
-			$endTime = time();
-			$startTime = $endTime - 86400;
-			$jobRunner->runForUser($userId, $startTime, $endTime);
-		} catch (Throwable $e) {
-			error_log('Attribution rebuild after gpx conversion failed: ' . $e->getMessage());
-		}
 	}
 }
 

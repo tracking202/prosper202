@@ -217,6 +217,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		// Only run pref_sql when creating a new user (not editing)
 		if (!$editing) {
 			$pref_result = _mysqli_query($pref_sql);
+
+			// Every account starts with its default attribution model (plan
+			// §6.4). This page writes the account without a transaction, so a
+			// failure here cannot undo it; the attribution worker creates the
+			// model the first time it meets an account that has none.
+			try {
+				\Prosper202\Attribution\DefaultModel::ensureFor(new \Prosper202\Database\Connection($db), (int) $user_id);
+			} catch (\Throwable $modelError) {
+				error_log('user-management: default attribution model for user ' . (int) $user_id . ' not created: ' . $modelError->getMessage());
+			}
 		}
 
 		$add_success = true;
@@ -285,12 +295,15 @@ if ($deleting == true) {
 $user_result_delete = _mysqli_query($user_sql_delete);
 
 	// Purge attribution data for the deleted user
+	// (The full user-deletion cascade is plan §7.2's, PR 3; these are the
+	// multi-touch attribution tables, in dependency order.)
 	$attributionCleanupQueries = [
-		"DELETE FROM 202_attribution_touchpoints WHERE snapshot_id IN (SELECT snapshot_id FROM 202_attribution_snapshots WHERE user_id = " . $mysql['user_id'] . ")",
-		"DELETE FROM 202_attribution_snapshots WHERE user_id = " . $mysql['user_id'],
-		"DELETE FROM 202_attribution_settings WHERE user_id = " . $mysql['user_id'],
-		"DELETE FROM 202_attribution_models WHERE user_id = " . $mysql['user_id'],
-		"DELETE FROM 202_attribution_audit WHERE user_id = " . $mysql['user_id']
+		"DELETE cr FROM 202_attribution_credits cr JOIN 202_attribution_models m ON m.model_id = cr.model_id WHERE m.user_id = " . (int) $mysql['user_id'],
+		"DELETE j FROM 202_attribution_journeys j JOIN 202_attribution_journey_meta jm ON jm.conv_id = j.conv_id WHERE jm.user_id = " . (int) $mysql['user_id'],
+		"DELETE FROM 202_attribution_journey_meta WHERE user_id = " . (int) $mysql['user_id'],
+		"DELETE FROM 202_attribution_exports WHERE user_id = " . (int) $mysql['user_id'],
+		"DELETE FROM 202_attribution_models WHERE user_id = " . (int) $mysql['user_id'],
+		"DELETE FROM 202_attribution_audit WHERE user_id = " . (int) $mysql['user_id']
 	];
 
 	foreach ($attributionCleanupQueries as $cleanupQuery) {

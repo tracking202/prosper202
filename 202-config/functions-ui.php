@@ -128,8 +128,7 @@ function p202_shell_assets(string $ui, array $context = []): array
     $loggedIn = (bool) ($context['logged_in'] ?? false);
 
     $isCampaignsSetup = $section === 'tracking202' && $sub === 'setup' && $page === 'aff_campaigns.php';
-    $isAttributionDashboard = $section === '202-account' && $sub === 'attribution.php';
-    $wantsCharts = $section === 'tracking202' || $isAttributionDashboard;
+    $wantsCharts = $section === 'tracking202';
 
     if ($ui === P202_UI_V2) {
         $css = [
@@ -204,11 +203,6 @@ function p202_shell_assets(string $ui, array $context = []): array
         }
     } elseif ($section === '202-account') {
         $jsPage[] = ['path' => '202-js/account.php'];
-        if ($isAttributionDashboard) {
-            $jsPage[] = ['asset' => 'highcharts.js'];
-            $jsPage[] = ['path' => '202-js/chart.theme.js'];
-            $jsPage[] = ['path' => '202-js/attribution.js'];
-        }
     }
     $jsPage[] = ['asset' => 'legacy.select2.js'];
     $jsPage[] = ['path' => '202-js/custom.php'];

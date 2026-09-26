@@ -422,6 +422,24 @@ function RunSecondsCronjob()
                 error_log("DataEngine processing failed: " . $e->getMessage());
             }
 
+            // Multi-touch attribution: drain the conversion outbox into
+            // journeys and credits (202-cronjobs/attribution-worker.php is
+            // the same run for deployments that schedule it on its own; the
+            // named lock keeps the two from overlapping). A failure here
+            // loses nothing — every pending row stays for the next run — so
+            // it is logged and the rest of the cron carries on.
+            try {
+                $attribution = \Prosper202\Attribution\AttributionWorker::runExclusive(
+                    new \Prosper202\Database\Connection($db),
+                    20
+                );
+                if ($attribution !== null && $attribution->processed() > 0) {
+                    echo 'Attribution: ' . htmlspecialchars($attribution->summary(), ENT_QUOTES) . '<br>';
+                }
+            } catch (\Throwable $e) {
+                error_log('Attribution worker failed: ' . $e->getMessage());
+            }
+
             echo 'Done<br>';
             ob_flush();
             flush();
