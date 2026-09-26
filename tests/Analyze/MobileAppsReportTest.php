@@ -506,4 +506,41 @@ final class MobileAppsReportTest extends TestCase
             }
         }
     }
+
+    /**
+     * The Postbacks tab lists only Apple's postbacks whatever the page's
+     * platform is, so the signature filter applies there on every platform;
+     * the report applies it on iOS only; the other tabs never. The filter
+     * used to be dropped whenever the platform was not iOS, which for an
+     * account with apps on both platforms (defaulting to "all") was always,
+     * on the one tab whose rows are all Apple's.
+     */
+    public function testTheSignatureFilterAppliesOnThePostbacksTabForEveryPlatform(): void
+    {
+        foreach (array_keys(MobileAppsReportController::PLATFORMS) as $platform) {
+            self::assertTrue(MobileAppsReportController::signatureApplies('postbacks', $platform), "postbacks, $platform");
+            self::assertSame($platform === 'ios', MobileAppsReportController::signatureApplies('report', $platform), "report, $platform");
+            foreach (['funnel', 'notifications', 'verify'] as $view) {
+                self::assertFalse(MobileAppsReportController::signatureApplies($view, $platform), "$view, $platform");
+            }
+        }
+    }
+
+    /**
+     * The three places that decide it ask the one question: the filter
+     * reader (which drops it, out loud, where it does not apply), the form
+     * that offers it, and the links that carry it. Asked separately, the
+     * form offered a filter the reader then discarded.
+     */
+    public function testTheReaderTheFormAndTheLinksAskTheSameQuestion(): void
+    {
+        $root = dirname(__DIR__, 2) . '/tracking202/analyze/';
+        $controller = (string) file_get_contents($root . 'MobileAppsReportController.php');
+        self::assertMatchesRegularExpression('/if \(\$signature !== \'\' && !self::signatureApplies\(\$view, \$platform\)\) \{\s*\$this->flashFilterDropped\(/', $controller);
+        self::assertStringContainsString('$this->readFilters($apps, $view)', $controller);
+        $template = (string) file_get_contents($root . 'templates/mobile_apps.php');
+        self::assertStringContainsString('<?php if ($C::signatureApplies($view, $platform)) { ?>', $template, 'the form');
+        self::assertStringContainsString('\'signature\' => $C::signatureApplies((string)$pick(\'view\', $view), $platform)', $template, 'the links');
+        self::assertSame(0, preg_match('/signature[^\n]*\$platform === \'ios\'|\$platform === \'ios\'[^\n]*signature/', $controller . $template), 'no second spelling of the rule');
+    }
 }

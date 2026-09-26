@@ -66,4 +66,5 @@ try {
 }
 
 echo 'attribution-exports: ' . $report['completed'] . ' completed, ' . $report['failed'] . ' failed, '
-    . $report['retrying'] . ' to retry, ' . $report['reclaimed'] . ' reclaimed from a stopped run' . "\n";
+    . $report['retrying'] . ' to retry, ' . $report['lost'] . ' taken by another run or deleted while running, '
+    . $report['reclaimed'] . ' reclaimed from a stopped run' . "\n";

@@ -15,7 +15,13 @@ use PHPUnit\Framework\TestCase;
  * $6. One function now serves both sides, and this test keeps it the only
  * one: outside CountedAmount, no attribution file names the `click_payout`
  * field of a row (an index, an array_column(), an interpolation). SQL may
- * still select the column, to hand the row to CountedAmount.
+ * still select the column, to hand the row to CountedAmount — but only as a
+ * bare select-list column (`click_payout,` or `x.click_payout FROM`). Any
+ * other SQL use is refused by line, because the scan cannot follow it: an
+ * alias (`click_payout AS gross`) or an expression (`SUM(click_payout)`)
+ * puts the recorded amount in the row under a name this scan never looks
+ * for, and a condition on it is a decision about the amount made outside
+ * CountedAmount.
  */
 final class ConversionAmountReadsThroughCountedAmountTest extends TestCase
 {
@@ -53,10 +59,28 @@ final class ConversionAmountReadsThroughCountedAmountTest extends TestCase
             };
             if ($name === 'click_payout') {
                 $lines[] = $line;
+            } elseif ($name !== null && self::sqlUseTheScanCannotFollow($name)) {
+                $lines[] = $line;
             }
         }
 
         return $lines;
+    }
+
+    /**
+     * True when a string names the click_payout column anywhere but as a
+     * bare select-list column: after SELECT or a comma, optionally
+     * table-qualified, and followed by a comma or FROM.
+     */
+    private static function sqlUseTheScanCannotFollow(string $text): bool
+    {
+        $all = preg_match_all('/(?<![A-Za-z0-9_$])click_payout(?![A-Za-z0-9_])/', $text);
+        if ($all === 0 || $all === false) {
+            return false;
+        }
+        $bare = preg_match_all('/(?:\bSELECT|,)\s*(?:[A-Za-z_][A-Za-z0-9_]*\.)?click_payout\s*(?:,|\bFROM\b)/i', $text);
+
+        return $bare !== $all;
     }
 
     public function testNoAttributionFileReadsTheRecordedAmountButCountedAmount(): void
@@ -90,6 +114,11 @@ final class ConversionAmountReadsThroughCountedAmountTest extends TestCase
             '<?php $a = "{$r[\'click_payout\']}";',
             '<?php $a = "$r[click_payout]";',
             '<?php $a = $r[\'click_payout\'] ?? 0;',
+            '<?php $s = \'SELECT cl.click_payout AS gross_amount FROM x\';',
+            '<?php $s = \'SELECT click_payout gross FROM x\';',
+            '<?php $s = "SELECT SUM(cl.click_payout) AS revenue FROM x";',
+            '<?php $s = \'SELECT conv_id FROM x WHERE click_payout > 0\';',
+            '<?php $s = \'SELECT conv_id, click_payout\' . \' AS gross FROM x\';',
         ];
         foreach ($reads as $src) {
             self::assertNotSame([], self::fieldReads($src), $src);
@@ -97,6 +126,8 @@ final class ConversionAmountReadsThroughCountedAmountTest extends TestCase
         $notReads = [
             '<?php $s = \'SELECT click_payout FROM 202_conversion_logs\';',
             '<?php $s = "SELECT cl.click_payout, cl.payable FROM x";',
+            '<?php $s = \'SELECT conv_id, click_payout FROM x\';',
+            "<?php \$s = 'SELECT jm.conv_id, cl.click_payout,\n cl.payable FROM x';",
             '<?php $a = $r[\'click_payouts\'];',
         ];
         foreach ($notReads as $src) {

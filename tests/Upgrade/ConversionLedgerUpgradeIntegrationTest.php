@@ -371,6 +371,11 @@ final class ConversionLedgerUpgradeIntegrationTest extends TestCase
             $columns[$row['Field']] = $row['Null'];
         }
         $this->assertSame('YES', $columns['app_registration_id'] ?? null, 'a campaign may name the Android app its links install');
+        $this->assertSame(
+            'app_registration_id',
+            $db->query("SHOW INDEX FROM 202_aff_campaigns WHERE Key_name = 'app_registration_id'")->fetch_assoc()['Column_name'] ?? null,
+            'indexed, as the installer declares it: the intake and a registration delete look campaigns up by it'
+        );
 
         $rung = (string)file_get_contents(dirname(__DIR__, 2) . '/202-config/functions-upgrade.php');
         $this->assertMatchesRegularExpression(

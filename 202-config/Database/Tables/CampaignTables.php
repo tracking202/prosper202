@@ -63,7 +63,8 @@ final class CampaignTables
                 KEY `idx_attribution_model` (`attribution_model_id`),
                 KEY `aff_campaign_name` (`aff_campaign_name`(5)),
                 KEY `aff_campaign_id_public` (`aff_campaign_id_public`),
-                KEY `aff_campaign_id` (`aff_campaign_id`,`aff_campaign_name`)
+                KEY `aff_campaign_id` (`aff_campaign_id`,`aff_campaign_name`),
+                KEY `app_registration_id` (`app_registration_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

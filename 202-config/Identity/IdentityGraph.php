@@ -138,7 +138,11 @@ final class IdentityGraph
             }
         }
 
-        // Signals seen for the first time now name this person.
+        // Signals seen for the first time now name this person. A concurrent
+        // link may have created one since the probe above found nothing (under
+        // READ COMMITTED the probe takes no gap lock): its duplicate key is a
+        // race, not an error, and the caller runs the link again to merge
+        // into the visitor the other transaction made (IdentityRaceException).
         foreach ($hashed as $id => $h) {
             if (isset($known[$id])) {
                 continue;
@@ -148,7 +152,18 @@ final class IdentityGraph
                  VALUES (?, ?, ?, ?, 0, NULL, ?)'
             );
             $this->conn->bind($stmt, 'issii', [$userId, $h['type'], $h['hash'], $target, $now]);
-            $this->conn->executeUpdate($stmt);
+            try {
+                $this->conn->executeUpdate($stmt);
+            } catch (\Throwable $e) {
+                if (Connection::isMysqlError($e, 1062, 'Duplicate entry')) {
+                    throw new IdentityRaceException(
+                        'identity: a ' . $h['type'] . ' signal of click ' . $clickId . ' was created by a concurrent link',
+                        0,
+                        $e
+                    );
+                }
+                throw $e;
+            }
         }
 
         $stmt = $this->conn->prepareWrite(
@@ -162,14 +177,40 @@ final class IdentityGraph
     }
 
     /**
-     * Every key that is, or is an alias of, the given canonical key: what a
-     * journey query matches 202_clicks_visitor.visitor_key against.
+     * Every visitor key of the person a key belongs to, whether the key is
+     * canonical or an alias: what a journey query matches
+     * 202_clicks_visitor.visitor_key against. Empty when the account has no
+     * visitor row for the key.
+     *
+     * The one reading of the alias structure outside this class's writers:
+     * merge() compresses paths, so a key is at most one hop from its
+     * canonical key and every alias points straight at it. The attribution
+     * worker calls this inside its transaction, so it reads the primary.
+     *
+     * @return list<int>
+     */
+    public function keysOfPerson(int $userId, int $key): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT alias_of FROM 202_identity_visitors WHERE visitor_key = ? AND user_id = ? LIMIT 1'
+        );
+        $this->conn->bind($stmt, 'ii', [$key, $userId]);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            return [];
+        }
+
+        return $this->keysOf($userId, $row['alias_of'] !== null ? (int) $row['alias_of'] : $key);
+    }
+
+    /**
+     * Every key that is, or is an alias of, the given canonical key.
      *
      * @return list<int>
      */
     public function keysOf(int $userId, int $canonicalKey): array
     {
-        $stmt = $this->conn->prepareRead(
+        $stmt = $this->conn->prepareWrite(
             'SELECT visitor_key FROM 202_identity_visitors WHERE user_id = ? AND (visitor_key = ? OR alias_of = ?) ORDER BY visitor_key'
         );
         $this->conn->bind($stmt, 'iii', [$userId, $canonicalKey, $canonicalKey]);

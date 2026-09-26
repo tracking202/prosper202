@@ -278,7 +278,9 @@ class UsersController
         // together; the account page deletes through the same class.
         try {
             (new \Prosper202\User\UserDataPurge($this->db))->deleteUser($id);
-        } catch (\RuntimeException $e) {
+        } catch (\RuntimeException | \InvalidArgumentException $e) {
+            // InvalidArgumentException: deleteUser()'s own check of the id,
+            // which changes nothing either.
             error_log('p202 users: ' . $e->getMessage());
             throw new DatabaseException('Delete failed; the user and their data are unchanged');
         }

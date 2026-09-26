@@ -292,7 +292,11 @@ public final class P202Attribution {
                 guard goals.pending.count < Self.maxPendingEvents else {
                     throw SDKError.pendingEventsFull
                 }
-                goals.pending.append(DeviceGoalState.Pending(event: event, conversionTypes: conversionTypes))
+                goals.pending.append(DeviceGoalState.Pending(
+                    event: event,
+                    conversionTypes: conversionTypes,
+                    reengagementGeneration: goals.currentReengagementGeneration
+                ))
                 goals.lastReceivedAt = now
                 goals.save(to: store)
                 return []
@@ -459,10 +463,32 @@ public final class P202Attribution {
         let waiting = goals.pending
         goals.pending = []
         for item in waiting {
+            guard let item = Self.withinLifecycle(item, generation: goals.currentReengagementGeneration) else {
+                continue
+            }
             updates += evaluate(item.event, conversionTypes: item.conversionTypes, schema: schema)
         }
         goals.save(to: store)
         return updates
+    }
+
+    /// A queued event as it still counts: scoped as it was logged, less the
+    /// re-engagement postback when a re-engagement lifecycle began after it
+    /// was logged — that postback belongs to the lifecycle the event came
+    /// from, which has ended, and crediting the event to the new one would
+    /// count a lifecycle-1 event in lifecycle 2. nil when nothing is left
+    /// (an event scoped to re-engagement alone).
+    static func withinLifecycle(_ item: DeviceGoalState.Pending, generation current: Int) -> DeviceGoalState.Pending? {
+        guard (item.reengagementGeneration ?? 0) != current, let types = item.conversionTypes, types.contains(.reengagement) else {
+            return item
+        }
+        let kept = types.filter { $0 != .reengagement }
+        guard !kept.isEmpty else {
+            return nil
+        }
+        var narrowed = item
+        narrowed.conversionTypes = kept
+        return narrowed
     }
 
     /// One event through the evaluator of each postback it is scoped to;
@@ -534,6 +560,9 @@ public final class P202Attribution {
     public func beginReengagement() {
         queue.sync {
             goals.setProgress(EvaluationState(), for: .reengagement)
+            // Events still waiting for a schema were logged in the lifecycle
+            // this one ends; the new generation keeps them out of it.
+            goals.reengagementGeneration = goals.currentReengagementGeneration + 1
             goals.save(to: store)
             lastReengagementFineValue = nil
             store.removeValue(forKey: LastFineValueStore.key(for: .reengagement))

@@ -152,6 +152,14 @@ function p202_overview_page_state(\Prosper202\Database\Connection $conn, int $us
     $decided = [];
     $fields = p202_report_pref_fields();
     foreach ($spec['defaults'] ?? [] as $name => $default) {
+        // A default names a stored filter column. The window is not one
+        // (it is three columns, set through the range picker), and a name
+        // that is not a filter has no column to fill: either would write a
+        // column p202_report_prefs_save() refuses, on a page's first visit.
+        // Refuse it here, by name, where the page's spec is wrong.
+        if (!isset($fields[$name]['column']) || !in_array($name, $names, true)) {
+            throw new InvalidArgumentException("p202_overview_page_state(): '$name' cannot have a default; defaults name a filter the page offers, and the window is not one");
+        }
         $column = $fields[$name]['column'];
         $current = $read['columns'][$column] ?? ($prefs[$column] ?? null);
         if ($read['errors'] === [] && ($current === null || $current === '' || $current === '0')) {
@@ -671,19 +679,26 @@ function p202_overview_metrics_table(array $data, array $options): string
  * offset for p202-overview.js, which reloads the fragment; the href is the
  * same offset in the page's own query string, so a page can be linked to.
  */
-function p202_overview_pagination(int $pages, int $offset, string $label = 'Report pages'): string
+function p202_overview_pagination(int $pages, int $offset, string $label = 'Report pages', string $view = ''): string
 {
+    // The href is a real navigation (middle-click, a new tab, no script):
+    // it carries the view the fragment was drawn under as the page's own
+    // filters, so the page it opens applies those rather than whatever the
+    // stored row says by then (ReportView). The view is exactly what
+    // p202_report_prefs_from_query() accepts, so the page reads it as a URL
+    // naming its filters.
+    $prefix = '?' . ($view !== '' ? htmlspecialchars($view, ENT_QUOTES, 'UTF-8') . '&amp;' : '');
     if ($pages <= 1) {
         return '';
     }
     $offset = max(0, min($offset, $pages - 1));
-    $item = static function (int $target, string $text, string $aria, bool $active = false, bool $disabled = false): string {
+    $item = static function (int $target, string $text, string $aria, bool $active = false, bool $disabled = false) use ($prefix): string {
         $classes = 'page-item' . ($active ? ' active' : '') . ($disabled ? ' disabled' : '');
         if ($disabled) {
             return '<li class="' . $classes . '"><span class="page-link" aria-hidden="true">' . $text . '</span></li>';
         }
         return '<li class="' . $classes . '"' . ($active ? ' aria-current="page"' : '') . '>'
-            . '<a class="page-link" href="?offset=' . $target . '" data-p202-offset="' . $target . '"' . ($aria !== '' ? ' aria-label="' . $aria . '"' : '') . '>' . $text . '</a></li>';
+            . '<a class="page-link" href="' . $prefix . 'offset=' . $target . '" data-p202-offset="' . $target . '"' . ($aria !== '' ? ' aria-label="' . $aria . '"' : '') . '>' . $text . '</a></li>';
     };
 
     $html = '<nav class="mt-3" aria-label="' . htmlspecialchars($label, ENT_QUOTES, 'UTF-8') . '"><ul class="pagination pagination-sm flex-wrap mb-0">';

@@ -387,6 +387,42 @@ has "$P" "data-rule-id=\"$RULE\"" "the editor reloads the saved rule"
 has "$P" 'value="US,GB"' "with its criterion's values"
 has "$P" 'value="https://mobile.example/"' "and its redirect"
 
+# An advanced landing page belongs to no campaign (aff_campaign_id 0). The
+# destination list inner-joined the campaigns, so it offered none of them: a
+# rule already pointing at one rendered its select with nothing chosen, and
+# the next save repointed it (#164, #173).
+say "rotators: a rule and a default on an advanced landing page"
+ADV_ARGS=(--data-urlencode "post_rules=1" --data-urlencode "rotator_id=$ROT" --data-urlencode "default_type=lp" --data-urlencode "defaults=$ALP"
+  --data-urlencode "data[0][rule_id]=$RULE" --data-urlencode "data[0][rule_name]=US mobile" --data-urlencode "data[0][status]=active" --data-urlencode "data[0][split]=false"
+  --data-urlencode "data[0][redirects][0][id]=none" --data-urlencode "data[0][redirects][0][type]=lp" --data-urlencode "data[0][redirects][0][value]=$ALP"
+  --data-urlencode "data[0][criteria][0][criteria_id]=$(Q "SELECT id FROM 202_rotator_rules_criteria WHERE rotator_id=$ROT")" --data-urlencode "data[0][criteria][0][type]=country" --data-urlencode "data[0][criteria][0][statement]=is" --data-urlencode "data[0][criteria][0][value]=US,GB")
+get "$SETUP/rotator.php?rotator_id=$ROT" "$P"; T=$(token_of "$P")
+ajax "$AJAX/rotator.php" "$OUT/r-adv.txt" --data-urlencode "token=$T" "${ADV_ARGS[@]}"
+has "$OUT/r-adv.txt" "DONE" "a rule and a default on the advanced landing page are accepted"
+eq "$(Q "SELECT CONCAT(IFNULL(default_lp,''),'|',IFNULL(default_campaign,'')) FROM 202_rotators WHERE id=$ROT")" "$ALP|" "the default is the advanced landing page"
+eq "$(Q "SELECT redirect_lp FROM 202_rotator_rules_redirects WHERE rule_id=$RULE")" "$ALP" "and so is the rule's redirect"
+get "$SETUP/rotator.php?rotator_id=$ROT" "$P"
+selected_lp() { # file select-marker label
+  if python3 - "$1" "$2" "$ALP" <<'PY'
+import re, sys
+html = open(sys.argv[1], encoding='utf-8', errors='replace').read()
+# The editor's blank rows live in <template>s; the saved rule is outside them.
+html = re.sub(r'<template\b.*?</template>', '', html, flags=re.S)
+marker, lp = sys.argv[2], sys.argv[3]
+found = 0
+for m in re.finditer(r'<select\b[^>]*' + marker + r'[^>]*>(.*?)</select>', html, re.S):
+    found += 1
+    chosen = re.findall(r'<option value="([^"]*)"[^>]*\bselected\b', m.group(1))
+    if chosen != [lp]:
+        sys.exit(2)
+sys.exit(0 if found else 1)
+PY
+  then ok "$3"; else bad "$3"; fi
+}
+selected_lp "$P" 'name="default_lp"' "the default's select shows the advanced landing page chosen"
+selected_lp "$P" 'data-rule-field="redirect_lp"' "the rule's redirect select shows it chosen"
+has "$P" "(advanced)" "and names it as an advanced page"
+
 # ─── Trackers ───────────────────────────────────────────────────────────
 say "trackers: generate, list, delete"
 P="$OUT/get_trackers.html"
@@ -423,6 +459,14 @@ has "$P" "data-tracker-id=\"$KID\"" "the list shows the redirector tracker"
 ajax "$AJAX/delete_tracker.php" "$OUT/k-del-csrf.txt" --data-urlencode "tracker_id=$KID"
 eq "$LAST_CODE" "403" "deleting a tracker without the token is answered 403"
 eq "$(Q "SELECT COUNT(*) FROM 202_trackers WHERE tracker_id=$KID")" "1" "and deletes nothing"
+# A delete that does not happen must not answer like one that did: the list
+# removes the row on a 200 (#173). Planted with a trigger that refuses it.
+mysql_q --delimiter='//' "$DB" -e "DROP TRIGGER IF EXISTS rv3_fail_tracker_delete// CREATE TRIGGER rv3_fail_tracker_delete BEFORE DELETE ON 202_trackers FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'planted by setup-pages.sh'; END//" || bad "the planted delete failure could not be created"
+ajax "$AJAX/delete_tracker.php" "$OUT/k-del-fail.txt" --data-urlencode "token=$T" --data-urlencode "tracker_id=$KID"
+mysql_q "$DB" -e "DROP TRIGGER IF EXISTS rv3_fail_tracker_delete"
+eq "$LAST_CODE" "500" "a tracker delete that fails is answered 500"
+has "$OUT/k-del-fail.txt" "The tracker could not be deleted." "in words"
+eq "$(Q "SELECT COUNT(*) FROM 202_trackers WHERE tracker_id=$KID")" "1" "and the tracker is still there"
 ajax "$AJAX/delete_tracker.php" "$OUT/k-del.txt" --data-urlencode "token=$T" --data-urlencode "tracker_id=$KID"
 eq "$(Q "SELECT COUNT(*) FROM 202_trackers WHERE tracker_id=$KID")" "0" "deleting with the token removes it"
 PUB=$(Q "SELECT tracker_id_public FROM 202_trackers WHERE landing_page_id=$LP")
@@ -456,6 +500,109 @@ has "$OUT/alc.html" "p202-code" "in the v2 code box"
 ajax "$AJAX/get_adv_landing_code.php" "$OUT/alc-bad.html" --data-urlencode "token=$T" --data-urlencode "landing_page_id=$ALP" --data-urlencode "counter=0" \
   --data-urlencode "offer_type1=campaign" --data-urlencode "aff_campaign_id_1=0" --data-urlencode "rotator_id_1=0"
 has "$OUT/alc-bad.html" "Please select an affiliate campaign or rotator" "no offer is refused in words"
+
+# ─── Another account's ids ──────────────────────────────────────────────
+# Rows another account owns, written straight to the tables. Every endpoint
+# that takes an id must refuse these by name and write nothing: the tracker
+# generator and the redirector's rule save took them as posted (#164, #173).
+say "another account's ids are refused"
+FOREIGN=$((OWNER + 1000))
+NOW=$(date +%s)
+Q "INSERT INTO 202_aff_networks (user_id, aff_network_name, aff_network_time) VALUES ($FOREIGN, 'Foreign Network', $NOW)"
+FNET=$(Q "SELECT aff_network_id FROM 202_aff_networks WHERE user_id=$FOREIGN")
+Q "INSERT INTO 202_aff_campaigns (user_id, aff_network_id, aff_campaign_id_public, aff_campaign_name, aff_campaign_url, aff_campaign_payout, aff_campaign_time, aff_campaign_foreign_payout) VALUES ($FOREIGN, $FNET, 99001, 'Foreign Secret Campaign', 'https://foreign.example/', 1.00, $NOW, 0)"
+FCAMP=$(Q "SELECT aff_campaign_id FROM 202_aff_campaigns WHERE user_id=$FOREIGN")
+Q "INSERT INTO 202_landing_pages (user_id, aff_campaign_id, landing_page_id_public, landing_page_nickname, landing_page_url, landing_page_type, landing_page_time) VALUES ($FOREIGN, 0, 99002, 'Foreign LP', 'https://foreign.example/lp', 1, $NOW)"
+FLP=$(Q "SELECT landing_page_id FROM 202_landing_pages WHERE user_id=$FOREIGN")
+Q "INSERT INTO 202_text_ads (user_id, aff_campaign_id, landing_page_id, text_ad_name, text_ad_headline, text_ad_description, text_ad_display_url, text_ad_time) VALUES ($FOREIGN, $FCAMP, 0, 'Foreign Ad', 'h', 'd', 'u', $NOW)"
+FAD=$(Q "SELECT text_ad_id FROM 202_text_ads WHERE user_id=$FOREIGN")
+Q "INSERT INTO 202_ppc_networks (user_id, ppc_network_name, ppc_network_time) VALUES ($FOREIGN, 'Foreign Source', $NOW)"
+FSRC=$(Q "SELECT ppc_network_id FROM 202_ppc_networks WHERE user_id=$FOREIGN")
+Q "INSERT INTO 202_ppc_accounts (user_id, ppc_network_id, ppc_account_name, ppc_account_time) VALUES ($FOREIGN, $FSRC, 'Foreign Account', $NOW)"
+FACC=$(Q "SELECT ppc_account_id FROM 202_ppc_accounts WHERE user_id=$FOREIGN")
+Q "INSERT INTO 202_rotators (public_id, user_id, name) VALUES (99003, $FOREIGN, 'Foreign Redirector')"
+FROT=$(Q "SELECT id FROM 202_rotators WHERE user_id=$FOREIGN")
+Q "INSERT INTO 202_rotator_rules (rotator_id, rule_name) VALUES ($FROT, 'Foreign Rule')"
+FRULE=$(Q "SELECT id FROM 202_rotator_rules WHERE rotator_id=$FROT")
+Q "INSERT INTO 202_rotator_rules_criteria (rotator_id, rule_id, type, statement, value) VALUES ($FROT, $FRULE, 'country', 'is', 'FR')"
+FCRIT=$(Q "SELECT id FROM 202_rotator_rules_criteria WHERE rotator_id=$FROT")
+Q "INSERT INTO 202_rotator_rules_redirects (rule_id, redirect_url, name) VALUES ($FRULE, 'https://foreign.example/r', 'Foreign')"
+FRED=$(Q "SELECT id FROM 202_rotator_rules_redirects WHERE rule_id=$FRULE")
+eq "$([ -n "$FCAMP" ] && [ -n "$FLP" ] && [ -n "$FAD" ] && [ -n "$FACC" ] && [ -n "$FRED" ] && [ -n "$FCRIT" ] && echo yes)" "yes" "the other account's rows are in place"
+
+get "$SETUP/get_trackers.php" "$P"; T=$(token_of "$P")
+TRACKERS=$(Q 'SELECT COUNT(*) FROM 202_trackers')
+foreign_link() { # label expected-sentence args...
+  local label="$1" sentence="$2"; shift 2
+  ajax "$AJAX/generate_tracking_link.php" "$OUT/k-foreign.html" --data-urlencode "token=$T" "$@"
+  has "$OUT/k-foreign.html" "$sentence" "a tracker naming another account's $label is refused by name"
+  hasnt "$OUT/k-foreign.html" "t202id=" "and answers with no link"
+  hasnt "$OUT/k-foreign.html" "Foreign" "or any of its names"
+}
+DL=(--data-urlencode "tracker_type=0" --data-urlencode "method_of_promotion=directlink" --data-urlencode "landing_page_id=0" --data-urlencode "click_cloaking=-1" --data-urlencode "cost_type=cpc" --data-urlencode "cpc_dollars=0" --data-urlencode "cpc_cents=10")
+foreign_link "campaign" "That campaign is not one of yours" "${DL[@]}" --data-urlencode "aff_network_id=$NET" --data-urlencode "aff_campaign_id=$FCAMP"
+foreign_link "category" "That campaign category is not one of yours" "${DL[@]}" --data-urlencode "aff_network_id=$FNET" --data-urlencode "aff_campaign_id=$CAMP"
+foreign_link "text ad" "That text ad is not one of yours" "${DL[@]}" --data-urlencode "aff_network_id=$NET" --data-urlencode "aff_campaign_id=$CAMP" --data-urlencode "text_ad_id=$FAD"
+foreign_link "traffic source account" "That traffic source account is not one of yours" "${DL[@]}" --data-urlencode "aff_network_id=$NET" --data-urlencode "aff_campaign_id=$CAMP" --data-urlencode "ppc_network_id=$SRC" --data-urlencode "ppc_account_id=$FACC"
+foreign_link "traffic source" "That traffic source is not one of yours" "${DL[@]}" --data-urlencode "aff_network_id=$NET" --data-urlencode "aff_campaign_id=$CAMP" --data-urlencode "ppc_network_id=$FSRC" --data-urlencode "ppc_account_id=$ACC"
+foreign_link "landing page" "That landing page is not one of yours" --data-urlencode "tracker_type=1" --data-urlencode "landing_page_id=$FLP" --data-urlencode "click_cloaking=-1" --data-urlencode "cost_type=cpc" --data-urlencode "cpc_dollars=0" --data-urlencode "cpc_cents=10"
+foreign_link "redirector" "That redirector is not one of yours" --data-urlencode "tracker_type=2" --data-urlencode "tracker_rotator=$FROT" --data-urlencode "cost_type=cpc" --data-urlencode "cpc_dollars=0" --data-urlencode "cpc_cents=10"
+eq "$(Q 'SELECT COUNT(*) FROM 202_trackers')" "$TRACKERS" "none of those wrote a tracker"
+eq "$(Q "SELECT COUNT(*) FROM 202_trackers WHERE aff_campaign_id=$FCAMP OR rotator_id=$FROT OR text_ad_id=$FAD OR ppc_account_id=$FACC OR landing_page_id=$FLP")" "0" "and nothing anywhere points at the other account's rows"
+# The same request with this account's own ids still makes a link, so the
+# refusals above are about ownership, not about the shape of the request.
+ajax "$AJAX/generate_tracking_link.php" "$OUT/k-own.html" --data-urlencode "token=$T" "${DL[@]}" --data-urlencode "aff_network_id=$NET" --data-urlencode "aff_campaign_id=$CAMP" --data-urlencode "ppc_network_id=$SRC" --data-urlencode "ppc_account_id=$ACC" --data-urlencode "text_ad_id=$AD"
+has "$OUT/k-own.html" "tracking202/redirect/dl.php?t202id=" "the same request with this account's ids makes its link"
+
+get "$SETUP/rotator.php?rotator_id=$ROT" "$P"; T=$(token_of "$P")
+BEFORE_R=$(Q "SELECT CONCAT(IFNULL(default_lp,''),'|',IFNULL(default_campaign,'')) FROM 202_rotators WHERE id=$ROT")
+foreign_rules() { # label args...
+  local label="$1"; shift
+  ajax "$AJAX/rotator.php" "$OUT/r-foreign.txt" --data-urlencode "token=$T" --data-urlencode "post_rules=1" --data-urlencode "rotator_id=$ROT" "$@"
+  has "$OUT/r-foreign.txt" "ERROR" "saving rules that name another account's $label is refused"
+}
+RULE_OK=(--data-urlencode "data[0][rule_name]=US mobile" --data-urlencode "data[0][status]=active" --data-urlencode "data[0][split]=false"
+  --data-urlencode "data[0][criteria][0][type]=country" --data-urlencode "data[0][criteria][0][statement]=is" --data-urlencode "data[0][criteria][0][value]=US,GB")
+foreign_rules "campaign as the default" --data-urlencode "default_type=campaign" --data-urlencode "defaults=$FCAMP" --data-urlencode "data[0][rule_id]=none" "${RULE_OK[@]}" \
+  --data-urlencode "data[0][criteria][0][criteria_id]=none" --data-urlencode "data[0][redirects][0][id]=none" --data-urlencode "data[0][redirects][0][type]=url" --data-urlencode "data[0][redirects][0][value]=https://x.example/"
+foreign_rules "landing page as a redirect" --data-urlencode "default_type=lp" --data-urlencode "defaults=$ALP" --data-urlencode "data[0][rule_id]=none" "${RULE_OK[@]}" \
+  --data-urlencode "data[0][criteria][0][criteria_id]=none" --data-urlencode "data[0][redirects][0][id]=none" --data-urlencode "data[0][redirects][0][type]=lp" --data-urlencode "data[0][redirects][0][value]=$FLP"
+foreign_rules "rule" --data-urlencode "default_type=lp" --data-urlencode "defaults=$ALP" --data-urlencode "data[0][rule_id]=$FRULE" "${RULE_OK[@]}" \
+  --data-urlencode "data[0][criteria][0][criteria_id]=none" --data-urlencode "data[0][redirects][0][id]=none" --data-urlencode "data[0][redirects][0][type]=url" --data-urlencode "data[0][redirects][0][value]=https://x.example/"
+foreign_rules "criterion" --data-urlencode "default_type=lp" --data-urlencode "defaults=$ALP" --data-urlencode "data[0][rule_id]=none" "${RULE_OK[@]}" \
+  --data-urlencode "data[0][criteria][0][criteria_id]=$FCRIT" --data-urlencode "data[0][redirects][0][id]=none" --data-urlencode "data[0][redirects][0][type]=url" --data-urlencode "data[0][redirects][0][value]=https://x.example/"
+foreign_rules "redirect" --data-urlencode "default_type=lp" --data-urlencode "defaults=$ALP" --data-urlencode "data[0][rule_id]=$RULE" "${RULE_OK[@]}" \
+  --data-urlencode "data[0][criteria][0][criteria_id]=none" --data-urlencode "data[0][redirects][0][id]=$FRED" --data-urlencode "data[0][redirects][0][type]=url" --data-urlencode "data[0][redirects][0][value]=https://x.example/"
+eq "$(Q "SELECT CONCAT(rotator_id,'|',rule_name) FROM 202_rotator_rules WHERE id=$FRULE")" "$FROT|Foreign Rule" "the other account's rule is where it was"
+eq "$(Q "SELECT CONCAT(rotator_id,'|',rule_id,'|',value) FROM 202_rotator_rules_criteria WHERE id=$FCRIT")" "$FROT|$FRULE|FR" "and so is its criterion"
+eq "$(Q "SELECT CONCAT(rule_id,'|',redirect_url) FROM 202_rotator_rules_redirects WHERE id=$FRED")" "$FRULE|https://foreign.example/r" "and its redirect"
+eq "$(Q "SELECT CONCAT(IFNULL(default_lp,''),'|',IFNULL(default_campaign,'')) FROM 202_rotators WHERE id=$ROT")" "$BEFORE_R" "and this redirector's default did not move"
+eq "$(Q "SELECT COUNT(*) FROM 202_rotator_rules WHERE rotator_id=$ROT")" "1" "nor did its rules"
+
+# Editing or copying another account's campaign opens the add form.
+get "$SETUP/aff_campaigns.php?edit_aff_campaign_id=$FCAMP" "$OUT/c-foreign-edit.html"
+has "$OUT/c-foreign-edit.html" '<h2 class="p202-panel__title">Add a campaign</h2>' "editing another account's campaign falls back to the add form"
+hasnt "$OUT/c-foreign-edit.html" "Foreign Secret Campaign" "and shows nothing of it"
+get "$SETUP/aff_campaigns.php?copy_aff_campaign_id=$FCAMP" "$OUT/c-foreign-copy.html"
+has "$OUT/c-foreign-copy.html" '<h2 class="p202-panel__title">Add a campaign</h2>' "copying it does too"
+hasnt "$OUT/c-foreign-copy.html" "Copy campaign" "rather than a copy panel"
+get "$SETUP/aff_campaigns.php?edit_aff_campaign_id=$CAMP" "$OUT/c-own-edit.html"
+has "$OUT/c-own-edit.html" '<h2 class="p202-panel__title">Edit campaign</h2>' "this account's own campaign still opens for editing"
+
+# The DNI offer browser: the branches that make the network act for the
+# account refuse a bare GET, and a POST without the token (#164).
+for branch in "request_offer_access&type=request" "setup_offer" ; do
+  get "$AJAX/dni_get_offers.php?$branch&dni=1&offer_id=5" "$OUT/dni-get.txt"
+  has "$OUT/dni-get.txt" "Invalid token" "a bare GET of ${branch%%&*} is refused"
+  eq "$(cat "$OUT/.code")" "403" "with a 403"
+  ajax "$AJAX/dni_get_offers.php?$branch&dni=1&offer_id=5" "$OUT/dni-post.txt" --data-urlencode "token=wrong"
+  eq "$LAST_CODE" "403" "a POST of ${branch%%&*} with a wrong token is answered 403"
+  ajax "$AJAX/dni_get_offers.php?$branch&dni=1&offer_id=5" "$OUT/dni-ok.txt" --data-urlencode "token=$T"
+  eq "$LAST_CODE" "200" "a POST of ${branch%%&*} with the token passes the guard (and finds no network 1 of this account's)"
+  hasnt "$OUT/dni-ok.txt" "Invalid token" "without the refusal"
+done
+ajax "$AJAX/dni_get_offers.php?submit_offer_questions&dni=1&offer_id=5" "$OUT/dni-q.txt" --data-urlencode "token=wrong"
+eq "$LAST_CODE" "403" "answering questions with a wrong token is answered 403"
 
 # ─── Clean-up: the deletes that depend on everything above ─────────────
 say "traffic sources: delete the account, then the source"

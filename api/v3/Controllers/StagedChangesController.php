@@ -85,8 +85,8 @@ final class StagedChangesController
      *   'bridge_config' -> lpo_bridge_config only
      * The broader forms were measured and rejected: '_key' also matches
      * export_keyword*, user_pref_keyword and user_keyword_searched_or_bidded;
-     * 'signature' also matches attribution_signature, signature_state and
-     * trusted; 'config' also matches config and weighting_config.
+     * 'signature' also matches attribution_signature and signature_state;
+     * 'config' also matches config and weighting_config.
      *
      * `bridge_config` is the odd one out and is here on different grounds:
      * the *name* is not a credential, but the value is a JSON document whose

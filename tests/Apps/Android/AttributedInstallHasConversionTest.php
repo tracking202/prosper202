@@ -192,7 +192,10 @@ final class AttributedInstallHasConversionTest extends TestCase
         $settler = (string) file_get_contents(dirname(__DIR__, 3) . '/api/v3/Apps/Android/PendingClickSettler.php');
         self::assertMatchesRegularExpression('/\$work = function \(\) use \(\$installRowId\): array \{.*->intake->settle\(.*\};\s*try \{\s*\$done = \$this->conn->transaction\(\$work\);/s', $settler);
         $verifier = (string) file_get_contents(dirname(__DIR__, 3) . '/api/v3/Apps/Android/Integrity/IntegrityVerifier.php');
-        self::assertMatchesRegularExpression('/\$work = function \(\) use \(\$installRowId, \$attempt, \$outcome\): array \{.*FOR UPDATE.*->intake->settle\(.*\};\s*try \{\s*\$done = \$this->conn->transaction\(\$work\);/s', $verifier);
+        // The row is locked by the read both reclassification paths share.
+        self::assertMatchesRegularExpression('/\$work = function \(\) use \(\$installRowId, \$attempt, \$outcome\): array \{.*LockedInstall::read\(\$this->conn, \$installRowId\).*->intake->settle\(.*\};\s*try \{\s*\$done = \$this->conn->transaction\(\$work\);/s', $verifier);
+        self::assertMatchesRegularExpression('/\$work = function \(\) use \(\$installRowId\): array \{.*LockedInstall::read\(\$this->conn, \$installRowId\).*->intake->settle\(/s', $settler);
+        self::assertMatchesRegularExpression('/WHERE i\.install_row_id = \? LIMIT 1 FOR UPDATE\'?$/', \Api\V3\Apps\Android\LockedInstall::SQL, 'and that read locks the install row');
     }
 
     public function testEveryRedirectFallbackEmptiesTheInstallToken(): void

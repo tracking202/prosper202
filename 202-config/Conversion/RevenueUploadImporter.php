@@ -40,6 +40,7 @@ final class RevenueUploadImporter
      * @return array{
      *     batch_id: int,
      *     lines: list<array{line: int, subid: string, amount: string, status: string, reason: string}>,
+     *         status is recorded, skipped, or header (line 1 when it holds no subid),
      *     totals: array<int, string>,
      *     recorded: int,
      *     skipped: int
@@ -69,11 +70,16 @@ final class RevenueUploadImporter
             $clickId = ClickId::parse($subid);
             if ($clickId === null) {
                 // The first line is the header row the column picker showed;
-                // it is expected not to hold a subid.
+                // it is expected not to hold a subid. It is still listed, as
+                // the header, so a file with no header whose first subid is
+                // malformed shows that line instead of losing it.
                 if ($lineNo > 1) {
                     $skipped++;
                     $lines[] = ['line' => $lineNo, 'subid' => $subid, 'amount' => $rawAmount, 'status' => 'skipped',
                         'reason' => 'not a subid (a click id is a whole number)'];
+                } else {
+                    $lines[] = ['line' => $lineNo, 'subid' => $subid, 'amount' => $rawAmount, 'status' => 'header',
+                        'reason' => 'read as the header row (not a subid)'];
                 }
                 continue;
             }

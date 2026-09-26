@@ -217,6 +217,10 @@ if (is_numeric($mysql['click_id'])) {
 			'user_agent'      => $_SERVER['HTTP_USER_AGENT'] ?? '',
 			'click_payout'    => $click_payout_for_log,
 			'event_name'      => $eventName,
+			// Without a transaction id a reloaded pixel cannot be told apart
+			// from a repeat, so it converts the click once; the writer checks
+			// click_lead under the click lock (as gpx.php does).
+			'once_per_click'  => p202ExtractTransactionId($_GET) === '',
 		],
 		(string) ($cvar_sql_row['click_cpa'] ?? ''),
 		$mysql['use_pixel_payout'] == 1,

@@ -16,7 +16,7 @@ use Prosper202\Database\Connection;
  * announce, so a conversion and its queued postback commit or roll back
  * together; a process killed after the commit leaves the row for the worker
  * rather than nothing, and a replayed install finds the row already queued
- * (UNIQUE (conv_id, pixel_id, destination, kind)) rather than queuing it
+ * (UNIQUE (conv_id, pixel_id, destination, kind, generation)) rather than queuing it
  * twice.
  *
  * What is queued: one `reached` row per destination — per URL — of each

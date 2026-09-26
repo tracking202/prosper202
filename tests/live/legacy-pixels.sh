@@ -1,7 +1,8 @@
 #!/bin/bash
 # Live pass for the legacy conversion endpoints: the per-campaign pixel
 # (tracking202/static/px.php), the per-campaign postback (pb.php) and the
-# ClickBank INS receiver (cb202.php). Until this change all three only flagged
+# ClickBank INS receiver (cb202.php), plus the id-less retry rule on the
+# global postback (gpb.php) and the universal pixel (upx.php). Until this change all three only flagged
 # the click; this pass proves each one now writes a 202_conversion_logs row
 # through the shared writer, with the gate, the scoping and the de-duplication
 # that come with it.
@@ -40,14 +41,15 @@ eq()   { if [ "$1" = "$2" ]; then ok "$3"; else bad "$3 (got '$1' want '$2')"; f
 USER_ID=$(Q "SELECT user_id FROM 202_users ORDER BY user_id LIMIT 1")
 [ -n "$USER_ID" ] || { echo "no user in $DB" >&2; exit 2; }
 NOW=$(date +%s)
-CLICK_A=910000001; CLICK_B=910000002; CLICK_C=910000003; CLICK_D=910000004; CLICK_E=910000005
+CLICK_A=910000001; CLICK_B=910000002; CLICK_C=910000003; CLICK_D=910000004; CLICK_E=910000005; CLICK_F=910000006; CLICK_G=910000007
 ACIP=987654321
 
 mysql_q "$DB" <<SQL
-DELETE FROM 202_attribution_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E));
-DELETE FROM 202_conversion_logs WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E);
-DELETE FROM 202_clicks      WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E);
-DELETE FROM 202_clicks_spy  WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E);
+DELETE FROM 202_attribution_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E,$CLICK_F,$CLICK_G));
+DELETE FROM 202_conversion_logs WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E,$CLICK_F,$CLICK_G);
+DELETE FROM 202_clicks      WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E,$CLICK_F,$CLICK_G);
+DELETE FROM 202_clicks_spy  WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E,$CLICK_F,$CLICK_G);
+DELETE FROM 202_clicks_tracking WHERE click_id IN ($CLICK_F,$CLICK_G);
 DELETE FROM 202_aff_campaigns WHERE aff_campaign_id_public IN ($ACIP, $((ACIP+1)));
 INSERT INTO 202_aff_campaigns (aff_campaign_id_public, user_id, aff_network_id, aff_campaign_name, aff_campaign_url, aff_campaign_payout, aff_campaign_time, aff_campaign_foreign_payout)
   VALUES ($ACIP, $USER_ID, 0, 'legacy-pixels pass', 'http://example.test/', 7.50, $NOW, 7.50),
@@ -62,13 +64,17 @@ INSERT INTO 202_clicks (click_id, user_id, aff_campaign_id, landing_page_id, ppc
          ($CLICK_B, $USER_ID, $CAMP,  0, 0, 0.10, 7.50, 0, 0, 0, 0, $((NOW-3600)), 0, 0),
          ($CLICK_C, $USER_ID, $OTHER, 0, 0, 0.10, 1.00, 0, 0, 0, 0, $((NOW-3600)), 0, 0),
          ($CLICK_D, $USER_ID, $CAMP,  0, 0, 0.10, 7.50, 0, 0, 0, 0, $((NOW-3600)), 0, 0),
-         ($CLICK_E, $((USER_ID+1000)), $CAMP, 0, 0, 0.10, 7.50, 0, 0, 0, 0, $((NOW-3600)), 0, 0);
+         ($CLICK_E, $((USER_ID+1000)), $CAMP, 0, 0, 0.10, 7.50, 0, 0, 0, 0, $((NOW-3600)), 0, 0),
+         ($CLICK_F, $USER_ID, $CAMP,  0, 0, 0.10, 7.50, 0, 0, 0, 0, $((NOW-3600)), 0, 0),
+         ($CLICK_G, $USER_ID, $CAMP,  0, 0, 0.10, 7.50, 0, 0, 0, 0, $((NOW-3600)), 0, 0);
 INSERT INTO 202_clicks_spy (click_id, user_id, aff_campaign_id, landing_page_id, ppc_account_id, click_cpc, click_payout, click_lead, click_filtered, click_bot, click_alp, click_time)
   SELECT click_id, user_id, aff_campaign_id, landing_page_id, ppc_account_id, click_cpc, click_payout, click_lead, click_filtered, click_bot, click_alp, click_time
-  FROM 202_clicks WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E);
+  FROM 202_clicks WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E,$CLICK_F,$CLICK_G);
+-- gpb.php and upx.php read the click through 202_clicks_tracking.
+INSERT INTO 202_clicks_tracking (click_id, c1_id, c2_id, c3_id, c4_id) VALUES ($CLICK_F, 0, 0, 0, 0), ($CLICK_G, 0, 0, 0, 0);
 SQL
 
-[ "$(Q "SELECT COUNT(*) FROM 202_clicks WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E)")" = 5 ] || { echo "seeding the clicks failed (a previous run left rows behind?)" >&2; exit 2; }
+[ "$(Q "SELECT COUNT(*) FROM 202_clicks WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E,$CLICK_F,$CLICK_G)")" = 7 ] || { echo "seeding the clicks failed (a previous run left rows behind?)" >&2; exit 2; }
 
 rows()   { Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id=$1 AND deleted=0"; }
 lead()   { Q "SELECT click_lead FROM 202_clicks WHERE click_id=$1"; }
@@ -135,6 +141,28 @@ eq "$(rows $CLICK_C)" 0 "and records nothing on the click it would have cast to"
 curl -sS -o /dev/null -b "tracking202subid=$CLICK_C.9" "$BASE/tracking202/static/px.php?acip=$((ACIP+1))"
 eq "$(rows $CLICK_C)" 0 "px refuses a fractional cookie (records nothing on the truncated click)"
 
+say "gpb.php: a retried global postback without a transaction id records one conversion"
+# gpb.php and upx.php called the writer without once_per_click, and a NULL
+# transaction id never collides on the UNIQUE key, so every id-less retry was
+# another conversion row (and another lot of revenue).
+eq "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/tracking202/static/gpb.php?subid=$CLICK_F")" 200 "the first id-less postback answers 200"
+eq "$(rows $CLICK_F)" 1 "one conversion row written"
+eq "$(lead $CLICK_F)" 1 "click flagged as a lead"
+eq "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/tracking202/static/gpb.php?subid=$CLICK_F")" 200 "the retry answers 200 too"
+eq "$(rows $CLICK_F)" 1 "the retry adds no row (one conversion per click without an id)"
+curl -sS -o /dev/null "$BASE/tracking202/static/gpb.php?subid=$CLICK_F&txid=GPB-2"
+eq "$(rows $CLICK_F)" 2 "a postback that carries a transaction id is still a second sale on the click"
+eq "$(txids $CLICK_F)" "-,GPB-2" "the id-less row and the GPB-2 row, nothing else"
+
+say "upx.php: a reloaded universal pixel without a transaction id records one conversion"
+curl -sS -o /dev/null "$BASE/tracking202/static/upx.php?subid=$CLICK_G"
+eq "$(rows $CLICK_G)" 1 "one conversion row written"
+eq "$(ptype $CLICK_G)" 3 "row carries pixel_type 3 (universal pixel)"
+curl -sS -o /dev/null "$BASE/tracking202/static/upx.php?subid=$CLICK_G"
+eq "$(rows $CLICK_G)" 1 "the reload adds no row"
+curl -sS -o /dev/null "$BASE/tracking202/static/upx.php?subid=$CLICK_G&txid=UPX-2"
+eq "$(rows $CLICK_G)" 2 "a pixel that carries a transaction id is still a second sale on the click"
+
 say "cb202.php: one row per ClickBank receipt, payout from the order total"
 CBKEY="livepasskey123"
 mysql_q "$DB" -e "UPDATE 202_users_pref SET cb_key='$CBKEY' WHERE user_id=1"
@@ -180,7 +208,7 @@ eq "$(rows $CLICK_D)" 2 "and it wrote nothing"
 
 say "server log"
 if [ -n "${P202_SERVER_LOG:-}" ] && [ -f "$P202_SERVER_LOG" ]; then
-  if grep -E 'PHP (Warning|Notice|Fatal|Deprecated)' "$P202_SERVER_LOG" | grep -E 'static/(px|pb|cb202)\.php|static-endpoint-helpers' > "$OUT/warn"; then
+  if grep -E 'PHP (Warning|Notice|Fatal|Deprecated)' "$P202_SERVER_LOG" | grep -E 'static/(px|pb|cb202|gpb|upx)\.php|static-endpoint-helpers' > "$OUT/warn"; then
     bad "PHP warnings from the legacy endpoints:"; sed 's/^/    | /' "$OUT/warn"
   else
     ok "no PHP warnings, notices or fatals from the legacy endpoints"
@@ -190,10 +218,11 @@ else
 fi
 
 mysql_q "$DB" <<SQL
-DELETE FROM 202_attribution_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E));
-DELETE FROM 202_conversion_logs WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E);
-DELETE FROM 202_clicks      WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E);
-DELETE FROM 202_clicks_spy  WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E);
+DELETE FROM 202_attribution_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E,$CLICK_F,$CLICK_G));
+DELETE FROM 202_conversion_logs WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E,$CLICK_F,$CLICK_G);
+DELETE FROM 202_clicks      WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E,$CLICK_F,$CLICK_G);
+DELETE FROM 202_clicks_spy  WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E,$CLICK_F,$CLICK_G);
+DELETE FROM 202_clicks_tracking WHERE click_id IN ($CLICK_F,$CLICK_G);
 DELETE FROM 202_aff_campaigns WHERE aff_campaign_id_public IN ($ACIP, $((ACIP+1)));
 SQL
 

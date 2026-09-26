@@ -115,7 +115,11 @@ re-engagement postback advances only that postback's counts, sums and
 progress — the two can reach different goals, and then each is sent its
 own value. The install postback's progress runs from the install; the
 re-engagement postback's from the last `beginReengagement()` (its value
-starts over too, as the postback does).
+starts over too, as the postback does). An event still waiting for the
+first schema counts toward the lifecycle it was logged in: one scoped to
+re-engagement and logged before a later `beginReengagement()` is not
+credited to the new lifecycle (one scoped to both still counts for the
+install postback).
 
 ## Customer id
 
