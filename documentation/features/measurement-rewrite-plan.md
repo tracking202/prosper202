@@ -1,6 +1,6 @@
 # Measurement rewrite: app measurement (iOS + Android) and multi-touch attribution
 
-Status: **built; release gate run (PR 12, §8.1).** Every PR in §8 — 0 through 11, with 1b and 4b — and Part E's UI migration (U1–U8) are built; PR 12 ran the release gate. One item is open for the release decision: the MTA reports miss their 2 s target at 1M conversions (§8.1).
+Status: **built; release gate run (PR 12, §8.1); the report rollup and loud cron jobs (PR 13, §8.2).** Every PR in §8 — 0 through 13, with 1b and 4b — and Part E's UI migration (U1–U8) are built; PR 12 ran the release gate and PR 13 closed the two code items it left open: every MTA breakdown is under its 2 s target at 1M conversions (0.1–1.25 s, from 30–70 s), and a cron job against a database that needs an upgrade exits 1 with the reason instead of 0 in silence. What is left for the release decision is in §8.1.
 
 ## Scope
 
@@ -3027,7 +3027,8 @@ This is where models differ:
 - **Performance:** grouped queries run over indexed credits for the requested
   range. An hourly rollup table is added only if measurement shows the query
   path is too slow (§7.3). A cache that is not needed is a cache that can be
-  wrong.
+  wrong. Measurement did (PR 12, §8.1); the rollup is built, and shown to
+  answer exactly what the full computation answers (PR 13, §8.2).
 
 **Model choice** per account, with a per-campaign override that is actually
 read (today `attribution_model_id` is written and never read). The account
@@ -3374,7 +3375,8 @@ JSON reads), and the PHP CLI `attribution:export:*`.
 
 **Not done here:** recurring export schedules; a retention policy for old
 export jobs and files; agent-eval cases for MTA (PR 12's, §8 — done, §8.1); the
-report performance target at 1M conversions (measured in PR 12: missed, §8.1).
+report performance target at 1M conversions (missed in PR 12, §8.1; met by the
+rollup of PR 13, §8.2).
 
 ---
 
@@ -3490,8 +3492,11 @@ about 15,000 a minute after, with the same journeys and credits.
 click dimensions. The target is under 2 s for 30 days at 1M conversions. If
 measurement misses it, the fix is an hourly rollup keyed on
 (model, dimension, hour), recomputed from credits for dirty hours only.
-**Measured (PR 12, §8.1): missed** — 31–72 s a breakdown at 1M conversions;
-the rollup is not built, and is the release decision's open item.
+**Measured (PR 12, §8.1): missed** — 31–72 s a breakdown at 1M conversions.
+**Built (PR 13, §8.2):** the rollup, per hour and per UTC day, maintained by
+the worker from marks every writer leaves in its own transaction; at 1M
+conversions every breakdown takes 0.10–1.25 s and answers the same bytes as
+the full computation. The journey metrics read is not rolled up (13.5 s).
 
 **Android intake and events.** p95 under 100 ms. There are no external calls
 on the request path: Integrity decoding and pixel firing are deferred. Goal
@@ -3719,6 +3724,7 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 | 9 | **MTA engine:** schema rewrite and rungs, worker, models, credits, reports API; v2 and dead code deleted. **Built; `tests/live/mta-engine.sh`; decisions in §6.5.** | 1, 2 |
 | 10 | **MTA UI and exports:** dashboard on the v2 shell, comparison, journey metrics, SSRF-safe webhooks. **Built; `tests/live/mta-ui.sh` (and `mta-engine.sh` re-run), `tests/browser/specs/mta-dashboard.spec.js`; decisions in §6.6.** | 9 |
 | 11 | **Mobile Apps UI:** Android pages, link builder, goal editor and funnel, cross-platform report. **Built; `tests/live/mobile-apps-ui.sh` (and the setup/analyze mobile-apps, android-intake, play-integrity, ios-sdk and app-core passes re-run), `tests/browser/specs/setup-mobile-apps.spec.js` and `analyze-mobile-apps.spec.js`, agent-eval `mobile-apps-ui-001`; decisions in §5.13.** | 3–5 |
+| 13 | **Report rollup and loud cron jobs:** the MTA breakdowns read a rollup the worker keeps (hourly and daily sums, marks in every writer's transaction, exact at every edge); cron jobs exit 1 with the reason against a database that needs an upgrade. **Built; `RollupMatchesFullComputationTest` (differential, randomized), `RollupWritersAreMarkedTest`, `CronEntryPointsFailLoudlyTest`, `tests/live/cron-needs-upgrade.sh`, the rollup section of `mta-engine.sh`; every breakdown under 2 s at 1M conversions. Decisions in §8.2.** | 12 |
 | 12 | **Release gate:** upgrade-equals-install from a real 1.9.55 database, full live passes, agent-eval cases, docs and OpenAPI, and the whole-app browser pass on v2. **Built; `tests/live/upgrade-equals-install.sh` (CI: `upgrade-equals-install.yml`), every integration suite in CI (`tests/run-integration-suites.sh`), agent-eval `mta-001`–`mta-003`, `RoutesAreDocumentedTest` and `DocumentationLinksTest`; four upgrade differences and a worker index fixed; the 1M report measurement misses its target. Decisions and the readiness summary in §8.1.** | all, including U8 |
 
 - PRs 1, 2 and 3 depend on no other measurement PR and can proceed in
@@ -4007,20 +4013,272 @@ are checked by `actionlint` and by running their scripts locally, not by a
 runner); the eval rubrics (no judge); CI's PHP 8.3 and MySQL 8.0 for
 anything but the upgrade comparison.
 
+**Re-run with PR 13 (§8.2),** on its tree, the same way (PHP 8.4 with the
+memcached extension CI loads, MariaDB 10.11, a partial `vendor/`):
+
+- **Live passes:** the 22 that exercise an instance — `cron-needs-upgrade.sh`
+  new, `mta-engine.sh` with its rollup section — in the same order on one
+  fresh seeded instance, then Play Integrity and android-intake again: 24
+  runs, 2,756 checks, none failed.
+- **Upgrade equals install:** 20 of 20 on MariaDB and on MySQL 8.0.46, 161
+  tables (the five rollup tables new).
+- **Agent evals:** on a second fresh instance, 21 cases, every deterministic
+  grader passing. Run first on the instance the live passes had just used,
+  three cases errored on the API's 429 rate limit, which those passes had
+  spent; not a product difference.
+- **Browser:** `mta-dashboard` (269 passed, 24 skipped) and `update-pages`
+  (287 passed, 20 skipped), with the CDN mirror, after the eval suite.
+- **PHPUnit,** one path per invocation: 31 unit directories, 2,781 tests
+  (`tests/Cli` with the Symfony autoloads the partial `vendor/` lacks), and
+  the 39 database integration suites, 449 tests, through
+  `tests/run-integration-suites.sh`; the differential test also on MySQL 8.
+- **PHPStan:** the same six `class.notFound` errors for `cli/` and nothing
+  else.
+
 Open for the release decision:
 
-1. **The MTA reports miss their target at 1M conversions** (31–72 s against
-   2 s). The rollup of §7.3 is the remedy and is not built. Only the
-   1M shape was measured; whether to ship before the rollup is the
-   decision.
-2. **A cron against a database that needs an upgrade exits 0 silently**
-   (`connect.php`'s redirect-and-`die()` on the command line). Pre-existing
-   and not a measurement-rewrite regression, but the attribution worker
-   inherits it (observed here): after a code deploy without the upgrade, it
-   looks like an idle worker.
+1. ~~**The MTA reports miss their target at 1M conversions** (31–72 s against
+   2 s).~~ **Closed by PR 13 (§8.2):** every breakdown 0.10–1.25 s at 1M
+   conversions, the same bytes as the full computation. Still over 2 s: the
+   journey metrics read (13.5 s), which is not rolled up. The rollup costs
+   storage (at 1M conversions 10.8M rows, about 1.5 GB beside the 2.3 GB it
+   sums) and a backfill after the upgrade (about 20 minutes of worker time
+   per million conversions, during which reports compute in full).
+2. ~~**A cron against a database that needs an upgrade exits 0 silently.**~~
+   **Closed by PR 13 (§8.2):** every job exits 1 with the reason.
 3. **`CLAUDE.md`'s "Two page shells" note is stale** since U8 removed the
    classic shell; it still describes `['ui' => 'v2']` and the Bootstrap 3
    stack.
+
+### 8.2 As built: the report rollup and loud cron jobs (PR 13)
+
+PR 13 closes the two items §8.1 left open for the release decision that are
+code: the MTA reports at 1M conversions, and cron jobs that exit 0 in silence
+against a database that needs an upgrade. The version stays 1.9.76 and no
+rung was added: the new tables are `AttributionTables` definitions, so the
+1.9.56 rung and the installer create them from the same DDL
+(`upgrade-equals-install.sh`: 20 of 20 on MariaDB 10.11 and on MySQL
+8.0.46, 161 tables identical where there were 156).
+
+**The rollup (§7.3's remedy, as built).** `202_attribution_rollup` holds, per
+account, what a breakdown sums, already summed: credits (Σ credit, Σ revenue
+by `conv_time`), cost (clicks, Σ `click_cpc` by `click_time`), assists
+(distinct conversions by `conv_time`) and totals, for every dimension, every
+model and the effective model, per hour and per UTC day. `AttributionRollup`
+maintains it from the attribution worker's run, under the worker's lock, with
+at least a quarter of the run's budget; `AttributionReports::breakdownAll()`
+reads it. Where it differs from §7.3's sketch, and why:
+
+- **Keyed on (account, part, dimension, model, grain, bucket, key)**, not
+  (model, dimension, hour): the cost and assist sums every row carries are
+  not per model, and the effective model is its own rows (model 0), summed
+  under the overrides and default recorded beside them.
+- **A day grain beside the hour.** An hour grain alone does not compress a
+  high-cardinality dimension: at 1M conversions the keyword breakdown has
+  about as many (keyword, hour) rows as credits. Whole UTC days inside a range
+  read one row per key per day; the hours at either end read hour rows; the
+  day dimension always reads hours, since it groups them by each hour's local
+  date.
+- **Names are not stored.** A campaign renamed after its hour was summed
+  would keep its old name. Every name table is joined on its primary key, so
+  the group's name is looked up when the report runs, and a key that was
+  NULL in every row it sums (no `clicks_advance` row, say) is kept apart from
+  a real 0 so it still has no name.
+- **Exact, not approximate, at every edge.** A plan splits the range into
+  hours the rollup serves and second ranges it does not: the part-hours at
+  either end, hours not summed yet, dirty hours, an hour that is not one
+  local date in the session's time zone (at +05:30 the hour that straddles
+  local midnight; a DST change inside an hour), and everything when a
+  changed click is unresolved or the effective rows were summed under other
+  overrides or another default. Each part is one statement: the rollup rows
+  `UNION ALL` the exact rows of the rest, summed by MySQL — so the decimals
+  and their formatting are MySQL's own — with a guard evaluated in the same
+  statement's snapshot. A failed guard (the rollup moved between the plan and
+  the read) plans again; three failures, or no hour to serve, run the full
+  computation unchanged.
+- **Marks, in the writer's transaction.** `Prosper202\Report\RollupDirty` is
+  the one way to say "these hours changed": the worker marks the old and new
+  hour of every journey and credit it rewrites (so retraction, replacement,
+  reversal, revival, a recompute after a model change and an identity merge
+  all mark through it); the CPC tools mark the range or the click's hours; a
+  rewritten click (a rotator re-click, a click leaving its landing page for
+  an offer, a tracking row added to a click that had none) is marked as a
+  click, which the rollup resolves into the click's hours and the conversion
+  hours of every journey holding it. A change to overrides or the default is
+  not marked by its writer: the reports compare the live overrides with the
+  recorded ones in every statement, and the rollup re-sums every hour when
+  they differ. It sits outside the engine's namespace, so click and
+  conversion paths write marks as they write the outbox
+  (`ConversionPathsDoNotCallTheEngineTest` holds).
+- **Hot paths stay free.** New clicks need no mark: their hour is summed only
+  once it has been over for `SEAL_SECONDS` (two hours). The redirects that
+  rewrite an existing click mark it only when its oldest row is more than
+  `HOT_PATH_SECONDS` (one hour) old, read in the statement they already run;
+  in exchange the rollup leaves dirty any hour whose journeys hold a click
+  younger than the seal (a conversion dated before its own click can), so no
+  clean hour can hold an unmarked rewrite. The rotator re-click marks always,
+  in a transaction with its REPLACEs.
+- **Deleting a model's credits deletes its rollup rows** in the same
+  transaction (a model with no credits sums to nothing), and a user deletion
+  deletes the rollup with the rest of the MTA state.
+
+**Correctness, shown before speed.** `RollupMatchesFullComputationTest`
+computes every breakdown twice — through the rollup, and with it switched
+off, which is the pre-PR 13 computation — and asserts the two identical,
+rows, names, sums, totals and order:
+
+- three randomized tenants (fixed seeds): sparse (7 conversions over two
+  years), medium (300 over 45 days) and dense (900 over 3 days), with 1–5
+  touch journeys, 5% bot clicks, click ids with two rows, a credit whose
+  click is gone, NULL, 0 and nameless dimension values, overrides to an
+  active and an inactive model, a second account in the same hours and the
+  newest hours unsummed; every dimension; effective, an explicit model, a
+  comparison and effective beside a comparison; ranges over everything, on
+  hour and UTC-day boundaries, one second either side of an hour, inside one
+  hour, across and beyond the summed frontier, and six random ones; the day
+  dimension under +00:00, +05:30, +05:45, -03:30 and +14:00, and on a server
+  with zone tables America/New_York and Australia/Lord_Howe (a 30-minute DST
+  shift);
+- changes after the rollup was summed, through the real writers, each
+  compared while its hours are dirty and again after they are re-summed, and
+  each first shown to change the full computation's answer (or the
+  comparison proves nothing): a retraction, a replacement, a partial
+  reversal, a revival, a conversion recorded for an old hour, a model's
+  config changed, a campaign override set, the default changed, one click
+  rewritten as a rotator re-click does, and a CPC range update; then a
+  conversion dated before its young click (its hour must stay dirty), that
+  young click's campaign rewritten without a mark, as a redirect may (shown
+  to change the answer), and a model switched off;
+- every comparison over summed hours also asserts the rollup served some.
+
+Run here on MariaDB 10.11 (no zone tables, so the five offsets) — 5 tests,
+4,203 assertions, and inside the 39-suite integration run — and on MySQL
+8.0.46 with zone tables loaded, so the two named zones as well: 5 tests,
+4,515 assertions; again there at `P202_ROLLUP_DIFF_SCALE=10` (3,000 and
+9,000 conversions per tenant; 5 tests, 4,515 assertions, 5 min 38 s). A
+separate pass on MySQL 8 rebuilt the rollup and compared 22 breakdowns under
+the server's default `ONLY_FULL_GROUP_BY` mode (the tests' session sets
+`STRICT_TRANS_TABLES` only): identical.
+
+Planted, each through the whole test, on the final tree (`plant.py` in the
+session's scratch; every plant confirmed to have landed and every file
+restored by hash):
+
+- an off-by-one-hour bucket (per-model credits summed into the next hour),
+  and the plan's first whole hour taken from the hour the range starts in —
+  both caught by the randomized tenants;
+- a stale bucket after a retraction (`clear()` not marking), and stale
+  buckets after any credit rewrite (`saveCredits()` not marking) — caught
+  at "a retraction" and at "a model's config changed", while dirty;
+- a time-zone shift (the day dimension's hours an hour late), hours that
+  straddle a local midnight treated as one date, and hours grouped by their
+  UTC date instead of the session's — caught at +05:30, -03:30 and UTC;
+- a changed click resolved to its own hours but not its journeys', the
+  effective rows summed without the per-campaign overrides, day rows summed
+  from 23 of their 24 hours, names dropped for some keys, an override change
+  recorded without marking the hours summed under the old one, and an hour
+  holding a young touch left clean — each caught;
+- dirty hours planned as clean, alone and with the guard's own dirty check
+  removed; the overrides check removed from the plan and from the guard —
+  caught (dirty hours alone: the guard refused every plan and the rollup
+  served nothing, which the served-hours assertion catches);
+- the overrides check removed from the plan alone — **not caught, and not
+  wrong**: the guard in the same statement refuses the effective rows, the
+  plan is made again and the full computation answers. It costs three
+  planning attempts while the overrides are out of step, nothing else.
+
+For the other two tests: `RollupWritersAreMarkedTest` caught a redirect's
+mark removed and a writer left unclassified.
+
+**At 1M conversions.** PR 12's dataset and harness, re-run on this tree
+(MariaDB 10.11, this sandbox): 1,000,000 conversions over 30 days, journeys
+of 1–4 touches, 2.5M clicks, 5,000 keywords, 200 countries, 50 campaigns, 10
+traffic sources, three models, 4.5M credit rows. Both modes read the same
+window, three runs each; "before" is the full computation
+(`new AttributionReports($conn, false)`), "after" the rollup. The answer of
+every case was hashed in both modes: identical in all eight cases (and again after the worker re-credited
+the newest 5,000 conversions and re-summed the four hours they touched: the
+eight answers changed, and changed identically in both modes).
+
+| Breakdown (30 days) | before: min / median / max | after: min / median / max | groups |
+|---|---|---|---|
+| campaign, effective (each conversion's model) | 36.2 / 36.4 / 37.2 s | 0.144 / 0.171 / 0.198 s | 50 |
+| traffic source, effective | 37.4 / 37.9 / 38.0 s | 0.133 / 0.136 / 0.136 s | 10 |
+| keyword, effective | 43.7 / 43.8 / 43.9 s | 0.757 / 0.843 / 0.973 s | 5,000 |
+| country, effective | 41.0 / 41.1 / 41.1 s | 0.173 / 0.180 / 0.182 s | 200 |
+| day, effective | 29.7 / 30.0 / 30.0 s | 0.152 / 0.153 / 0.159 s | 31 |
+| campaign, linear (2.5 credit rows a conversion) | 45.7 / 45.7 / 46.4 s | 0.104 / 0.106 / 0.110 s | 50 |
+| campaign, first touch beside last touch | 47.0 / 47.1 / 47.4 s | 0.097 / 0.098 / 0.107 s | 50 |
+| keyword, linear beside last touch | 68.5 / 69.5 / 70.2 s | 1.090 / 1.137 / 1.249 s | 5,000 |
+| journey metrics (not rolled up) | 13.4 s (one run) | 13.5 s (one run) | |
+
+Every breakdown is under the 2 s target; the slowest, keyword beside a
+comparison, is 1.25 s at worst. 717 of the window's 720 hours were read from
+the rollup (the newest three were not summed yet and were computed exactly,
+with the part-hours at the edges). What it costs, measured on the same
+database:
+
+- **Storage:** 10.8M rollup rows, the database 2.3 GB → 3.8 GB. The keyword
+  hours are most of it (5,000 keywords give about as many rows per hour as
+  credits); the day rows are what make keyword fast.
+- **Backfill:** summing the 718 sealed hours from nothing took 20 minutes
+  (about 45 s per day of data); the worker gives the rollup at least a
+  quarter of each run, so after the upgrade an account at this size is
+  summed within the first hours of cron, with reports computing in full
+  until then. Re-summing one hour takes 1.5 s, a day 42.5 s.
+- **The worker:** its marks add two statements per conversion. A backlog of
+  5,000 conversions was processed, and the four hours it dirtied re-summed,
+  in 32.2 s (5.8 s of it the re-sum): about 11,400 conversions a minute
+  against 15,000 before the marks, eleven times the 1,000 target.
+- **A change of overrides or default** re-sums every summed hour — about as
+  long as the backfill — and the reports compute in full meanwhile. A change
+  to one model's config re-credits every conversion through the worker and
+  re-sums the hours as it goes.
+
+**Cron jobs fail loudly.** `connect.php` answered every early stop the web's
+way, a page or a redirect and then `die()`: on the command line that is
+silence (or an HTML page) and exit status 0. Every stop now calls
+`p202_cli_fail()` first, which under the CLI writes the reason to stderr and
+exits 1 — for a database that needs an upgrade, "the database needs an
+upgrade: its schema is version X and this code is version Y. Nothing was run.
+Open 202-config/upgrade.php on the site (signed in) …" — and does nothing on
+the web, where the redirect is unchanged. The sweep over every entry point in
+`202-cronjobs/` (CLAUDE.md #5) found three more ways to fail quietly:
+
+- nine jobs bootstrapped with `include_once(str_repeat("../", 1) . …)`, a
+  path relative to the working directory: run by cron from anywhere but
+  `202-cronjobs/`, the include failed with a warning and the job died later on
+  an unrelated missing class (exit 255, measured), never reaching
+  `connect.php`'s checks. All bootstrap with
+  `require_once __DIR__ . '/../202-config/connect.php'`;
+- the minutely cron took its lock before bootstrapping, so a run stopped by
+  the upgrade check left `cron.lock` behind and the next ten minutes of runs
+  reported "already running". It bootstraps first;
+- `sync-worker.php` bootstraps the API, not `connect.php`, so it had no
+  version check at all; it makes the same check (`SchemaVersion::mismatch()`,
+  where an unreadable version is not "current") and exits 1.
+
+`CronEntryPointsFailLoudlyTest` holds all of it — every job requires
+`connect.php` by its own path and never includes; every `die`/`exit` and
+`_die()` in `connect.php` is preceded in its own block by an unconditional
+`p202_cli_fail()`, with no jump between; the lock follows the bootstrap;
+`sync-worker.php` checks before it works — and runs every job without an
+install, from another directory: each exits non-zero naming
+`202-config.php`. Planted: a job including `connect.php` relatively again; the upgrade stop's
+`p202_cli_fail()` replaced with a no-op, and made conditional; the
+missing-config stop's removed; `sync-worker.php`'s check removed; the lock
+taken before the bootstrap — six of six caught. `tests/live/cron-needs-upgrade.sh`
+winds a live instance's version back and runs every job: 77 checks, all passing, on the fresh instance: every job exits 1 naming both
+versions and the upgrade page with nothing on stdout, the outbox untouched,
+no lock left, the web still redirected, and the worker, the sync worker and
+the data engine job exit 0 once the version is back (the first run caught a
+PHP warning printed ahead of the reason — `$navigation[2]` read on a command
+line with no request path — now read with a default).
+
+**Not done here:** the journey metrics read (`GET
+/attribution/reports/journeys`, 13.5 s at 1M) is not rolled up — its
+recent-conversions list and time-to-convert buckets read rows the rollup does
+not keep; it is the one MTA read still over 2 s at 1M.
 
 ## 9. Decisions
 
