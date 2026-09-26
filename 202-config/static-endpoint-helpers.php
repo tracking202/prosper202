@@ -354,9 +354,14 @@ if (!function_exists('p202RecordConversion')) {
      * table) commit or roll back together. The dirty-hour cache write happens
      * after commit, only for a newly recorded conversion.
      *
-     * @param array<string,int|float|string> $log Conversion_logs column values.
+     * @param array<string,int|float|string|bool> $log Conversion_logs column values.
      *        Required keys: click_id, campaign_id, user_id, click_time, conv_time,
-     *        time_difference, ip, pixel_type, user_agent, click_payout.
+     *        time_difference, ip, pixel_type, user_agent, click_payout, and
+     *        once_per_click (bool). once_per_click has no default on purpose:
+     *        a NULL transaction id never collides on the UNIQUE key, so an
+     *        endpoint that forgot it double-recorded every id-less retry
+     *        (gpb.php and upx.php did). Every caller now says which it wants,
+     *        and one that says nothing is refused before any database work.
      * @param array{customer_ref?: string, customer_ref_type?: string} $customer
      *        LTV customer identity (see p202ExtractCustomer); [] = unlinked.
      * @param list<array<string,mixed>> $items Product line items for the
@@ -377,6 +382,11 @@ if (!function_exists('p202RecordConversion')) {
         $clickId = (int) ($log['click_id'] ?? 0);
         if ($clickId <= 0) {
             throw new \InvalidArgumentException('p202RecordConversion: click_id must be a positive integer');
+        }
+        if (!array_key_exists('once_per_click', $log) || !is_bool($log['once_per_click'])) {
+            throw new \InvalidArgumentException(
+                'p202RecordConversion: once_per_click must be given as a bool (true for an id-less hit that must convert a click once)'
+            );
         }
 
         // Delegate the transactional lock + idempotency + insert to the single
@@ -400,7 +410,7 @@ if (!function_exists('p202RecordConversion')) {
             'pixel_type'      => (int) ($log['pixel_type'] ?? 0),
             'user_agent'      => (string) ($log['user_agent'] ?? ''),
         ];
-        if (!empty($log['once_per_click'])) {
+        if ($log['once_per_click']) {
             // The one-conversion-per-click rule for id-less hits, enforced by
             // the writer under its click lock (see MysqlConversionRepository::record).
             $data['once_per_click'] = true;
