@@ -358,11 +358,18 @@ if (!empty($_GET['edit_aff_campaign_id'])) {
 						 AND    		`user_id`='" . $mysql['user_id'] . "'";
 
 	$aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
-	$aff_campaign_row = $aff_campaign_result->fetch_assoc() ?? [];
+	$aff_campaign_row = $aff_campaign_result->fetch_assoc();
+	if (!is_array($aff_campaign_row)) {
+		// Not this user's campaign, or gone: show the add form, as
+		// aff_networks.php does, rather than an "Edit campaign" panel with
+		// nothing in it (#164).
+		$editing = false;
+		$aff_campaign_row = [];
+	}
 
 	$selected['aff_network_id'] = $aff_campaign_row['aff_network_id'] ?? '';
 	$html = array_map(fn($value) => htmlentities((string)($value ?? ''), ENT_QUOTES, 'UTF-8'), $aff_campaign_row);
-	$html['aff_campaign_id'] = htmlentities((string)($_GET['edit_aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8');
+	$html['aff_campaign_id'] = $editing ? htmlentities((string)($_GET['edit_aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8') : '';
 }
 
 if (!empty($_GET['copy_aff_campaign_id'])) {
@@ -376,11 +383,16 @@ if (!empty($_GET['copy_aff_campaign_id'])) {
 						 AND    		`user_id`='" . $mysql['user_id'] . "'";
 
 	$aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
-	$aff_campaign_row = $aff_campaign_result->fetch_assoc() ?? [];
+	$aff_campaign_row = $aff_campaign_result->fetch_assoc();
+	if (!is_array($aff_campaign_row)) {
+		// Nothing of this user's to copy: the add form, not "Copy campaign".
+		$copying = false;
+		$aff_campaign_row = [];
+	}
 
 	$selected['aff_network_id'] = $aff_campaign_row['aff_network_id'] ?? '';
 	$html = array_map(fn($value) => htmlentities((string)($value ?? ''), ENT_QUOTES, 'UTF-8'), $aff_campaign_row);
-	$html['aff_campaign_id'] = htmlentities((string)($_GET['copy_aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8');
+	$html['aff_campaign_id'] = $copying ? htmlentities((string)($_GET['copy_aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8') : '';
 	$html['aff_campaign_name'] = ($html['aff_campaign_name'] ?? '') . " (Copy)"; //append (Copy) to the campaign name so the user knows its a copy
 	// Clear attribution model ID so user can choose for the copied campaign
 	$html['attribution_model_id'] = ''; 

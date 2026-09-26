@@ -20,9 +20,10 @@ use Tests\Support\FakeMysqliConnection;
  *    none (such a key is full access, as the API grants it), and a probe
  *    that cannot tell throws rather than guessing (CLAUDE.md #11).
  *
- * tests/live/account-pages.sh and the account browser pass drive the page;
- * the failure cases were also driven live by renaming the column each one
- * depends on.
+ * tests/live/account-pages.sh and the account browser pass drive the page.
+ * The failure cases are driven here, through the fake mysqli, and nowhere
+ * live: no live pass renames or drops the column (an earlier version of
+ * this docblock said one did, and #165's review found no such step).
  */
 final class AccountProfileAndKeysTest extends TestCase
 {

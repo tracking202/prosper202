@@ -149,3 +149,68 @@ function p202_setup_config_replace(string $path, string $content): bool
     }
     return true;
 }
+
+/**
+ * Whether the 202-config.php already here belongs to a finished install.
+ *
+ * Until U7 the wizard rewrote 202-config.php for anyone who posted to it, on
+ * a running install too: one unauthenticated POST naming another database
+ * server pointed the whole install at it. The wizard is for an install that
+ * has no working configuration yet, so it now refuses when the file exists
+ * and its database answers with an account in it. It answers "locked" when
+ * it cannot tell — settings it cannot read, a configuration it cannot
+ * connect with, or a query that fails — because a question it cannot answer
+ * must not open the door (error pattern #11): editing 202-config.php on the
+ * server always works. The one "unlocked" answer for an existing file is a
+ * database that answers and has no account in it: configured, never
+ * installed, so the wizard may redo it.
+ *
+ * Lives here, not in setup-config.php, so each of those answers is executed
+ * by tests/Install/SetupConfigLockedTest (#169).
+ *
+ * @param (callable(string, string, string, string): (mysqli|false|null))|null $connect
+ *   opens the probe connection; mysqli_connect() when null
+ */
+function p202_setup_config_locked(bool $configExists, ?string $host, ?string $user, ?string $pass, ?string $name, ?callable $connect = null): bool
+{
+    if (!$configExists) {
+        return false;
+    }
+    if ($host === null || $host === '' || $user === null || $name === null || $name === '') {
+        return true;
+    }
+    $connect ??= static function (string $host, string $user, string $pass, string $name): mysqli|false {
+        mysqli_report(MYSQLI_REPORT_OFF);
+        return @mysqli_connect($host, $user, $pass, $name);
+    };
+    try {
+        $probe = $connect($host, $user, (string) $pass, $name);
+    } catch (Throwable) {
+        return true;
+    }
+    if (!$probe instanceof mysqli) {
+        return true;
+    }
+    try {
+        $tables = $probe->query("SHOW TABLES LIKE '202\\_users'");
+        if (!$tables instanceof mysqli_result) {
+            return true;
+        }
+        $hasUsersTable = $tables->fetch_assoc() !== null;
+        $tables->free();
+        if (!$hasUsersTable) {
+            return false; // configured, never installed: the wizard may redo it
+        }
+        $count = $probe->query('SELECT COUNT(*) AS cnt FROM 202_users');
+        if (!$count instanceof mysqli_result) {
+            return true;
+        }
+        $row = $count->fetch_assoc();
+        $count->free();
+        return !is_array($row) || !isset($row['cnt']) || (int) $row['cnt'] > 0;
+    } catch (Throwable) {
+        return true;
+    } finally {
+        $probe->close();
+    }
+}

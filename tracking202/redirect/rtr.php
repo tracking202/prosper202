@@ -791,6 +791,13 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 			$db,
 			"SELECT identity_signals FROM 202_aff_campaigns WHERE aff_campaign_id='" . $mysql['aff_campaign_id'] . "'"
 		);
+		// `?? '0'` turns a NULL setting into capture off. Today it never sees
+		// one: the column is NOT NULL DEFAULT '1' (CampaignTables). dl.php
+		// passes NULL through to campaignAllows(), which reads it as ON,
+		// because there NULL means "no campaign" (a LEFT JOIN miss). If the
+		// column is ever made nullable, this line and dl.php's must change
+		// together, or a campaign's NULL captures on one redirect path and
+		// not on the other.
 		$rtrCampaignAllows = is_array($rtrCampaignRow)
 			&& \Prosper202\Identity\RequestSignals::campaignAllows($rtrCampaignRow['identity_signals'] ?? '0');
 	}

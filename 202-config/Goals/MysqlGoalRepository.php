@@ -34,7 +34,11 @@ final class MysqlGoalRepository
              VALUES (?, ?, ?, ?, 1, NULL, ?, ?)'
         );
         $this->conn->bind($stmt, 'isisii', [$userId, $scope->value, $scopeId, $definition->name, $now, $now]);
-        $goalId = $this->conn->executeInsert($stmt);
+        try {
+            $goalId = $this->conn->executeInsert($stmt);
+        } catch (\Throwable $e) {
+            throw self::nameConflictOr($e, $scope, $definition->name);
+        }
         if ($goalId <= 0) {
             throw new GoalEngineException('the goal insert returned no id', GoalEngineException::INTEGRITY);
         }
@@ -62,11 +66,46 @@ final class MysqlGoalRepository
             'UPDATE 202_goals SET name = ?, current_version = ?, updated_at = ? WHERE goal_id = ? AND user_id = ?'
         );
         $this->conn->bind($stmt, 'siiii', [$definition->name, $next, $now, $goalId, $userId]);
-        if ($this->conn->executeUpdate($stmt) !== 1) {
+        try {
+            $updated = $this->conn->executeUpdate($stmt);
+        } catch (\Throwable $e) {
+            throw self::nameConflictOr($e, GoalScope::fromStored((string) $goal['scope']), $definition->name);
+        }
+        if ($updated !== 1) {
             throw new GoalEngineException('goal ' . $goalId . ': its current version was not advanced', GoalEngineException::INTEGRITY);
         }
 
         return ['version' => $next, 'created' => true];
+    }
+
+    /**
+     * A write that collided with another live goal's name, as the CONFLICT
+     * it is; anything else, unchanged.
+     *
+     * nameTaken() is a plain read, so two concurrent creates (or a create
+     * and a rename) of one name both pass it; the `live_name` UNIQUE key is
+     * what refuses the second. The key is named in the match so no other
+     * duplicate is ever reported as a name clash. 202_goals has no other
+     * unique key a write here can hit, but the message is the one fact that
+     * says which key it was, so it is read rather than assumed.
+     */
+    private static function nameConflictOr(\Throwable $e, GoalScope $scope, string $name): \Throwable
+    {
+        if (!Connection::isMysqlError($e, 1062, 'Duplicate entry')) {
+            return $e;
+        }
+        for ($current = $e; $current !== null; $current = $current->getPrevious()) {
+            if (preg_match("/for key '(?:[^']*\\.)?live_name'(?: \\[errno 1062\\])?$/", $current->getMessage()) === 1) {
+                return new GoalEngineException(
+                    'A goal named "' . $name . '" already exists for this ' . $scope->value . '; goal names are unique per owner.',
+                    GoalEngineException::CONFLICT,
+                    [],
+                    $e
+                );
+            }
+        }
+
+        return $e;
     }
 
     private function insertVersion(int $goalId, int $version, GoalDefinition $definition, int $now): void

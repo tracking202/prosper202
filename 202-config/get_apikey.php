@@ -51,7 +51,9 @@ if ($html['user_api'] == '') {
 				var json = {};
 				try { json = JSON.parse(response); } catch (e) { json = {}; }
 				if (json.msg === 'Key valid') {
-					document.cookie = 'user_api=' + encodeURIComponent(key) + '; path=' + <?php echo json_encode(get_absolute_url() . '202-config/'); ?> + '; SameSite=Lax';
+					// Secure whenever the page is on HTTPS (as the browser sees it, so
+					// behind a TLS-terminating proxy too): the key is a credential.
+					document.cookie = 'user_api=' + encodeURIComponent(key) + '; path=' + <?php echo json_encode(get_absolute_url() . '202-config/'); ?> + '; SameSite=Lax' + (window.location.protocol === 'https:' ? '; Secure' : '');
 					document.location.href = 'install.php';
 				} else {
 					document.getElementById('getapikey-error').textContent = 'This API key is not valid. Fetch it again from my.tracking202.com.';

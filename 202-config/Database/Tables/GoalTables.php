@@ -18,6 +18,12 @@ use Prosper202\Database\Schema\TableRegistry;
  *   built-in install goal every Android registration has (plan §5.5), one
  *   per registration by UNIQUE (user, scope, scope_id, builtin) — NULLs are
  *   distinct, so operator goals are unconstrained by it.
+ *   A live goal's name is unique per owner, and the database enforces it:
+ *   `live_name` is the name while the goal is live and NULL once archived
+ *   (a UNIQUE key admits any number of NULLs), so an archived goal frees
+ *   its name while two concurrent creates of one live name cannot both
+ *   commit. MysqlGoalRepository turns that duplicate into a CONFLICT; the
+ *   nameTaken() read before it is only there to answer early and by name.
  * - 202_goal_versions: every definition a goal has had. A version is
  *   immutable; an edit adds one. `effective_at` is when it started to apply:
  *   an event is evaluated under the version current at its own received_at.
@@ -75,8 +81,10 @@ final class GoalTables
                 `archived_at` int(10) unsigned DEFAULT NULL,
                 `created_at` int(10) unsigned NOT NULL,
                 `updated_at` int(10) unsigned NOT NULL,
+                `live_name` varchar(100) GENERATED ALWAYS AS (IF(`archived_at` IS NULL, `name`, NULL)) STORED,
                 PRIMARY KEY (`goal_id`),
                 UNIQUE KEY `scope_builtin` (`user_id`,`scope`,`scope_id`,`builtin`),
+                UNIQUE KEY `live_name` (`user_id`,`scope`,`scope_id`,`live_name`),
                 KEY `user_scope` (`user_id`,`scope`,`scope_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Goals: named, versioned outcomes owned by a campaign, an app registration or the account'"
         );

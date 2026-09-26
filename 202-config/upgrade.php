@@ -124,7 +124,7 @@ if (!empty($version_error)) {
     }
 
     //only show install setup, if it, of course, isn't installed already.
-    info_top();
+    info_top(['title' => 'Upgrade - Prosper202 ClickServer']);
 
     // Initialize upgrade result variables for display
     $error = $error ?? false;

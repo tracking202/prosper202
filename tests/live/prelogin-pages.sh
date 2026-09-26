@@ -20,6 +20,8 @@ BASE=${P202_BASE:-http://127.0.0.1:8097}
 DB=${P202_DB:-p202_test}
 DB_USER=${P202_DB_USER:-root}
 DB_PASS=${P202_DB_PASS:-}
+DB_HOST=${P202_DB_HOST:-}
+DB_PORT=${P202_DB_PORT:-}
 P202_USER=${P202_USER:-evalci}
 P202_PASS=${P202_PASS:-}
 SERVER_LOG=${P202_SERVER_LOG:-}
@@ -35,6 +37,8 @@ p202_require_scratch_db "$DB" || exit 2
 
 MYSQL_ARGS=(-u "$DB_USER")
 [ -n "$DB_PASS" ] && MYSQL_ARGS+=("-p$DB_PASS")
+[ -n "$DB_HOST" ] && MYSQL_ARGS+=(-h "$DB_HOST" --protocol=TCP)
+[ -n "$DB_PORT" ] && MYSQL_ARGS+=(-P "$DB_PORT")
 mysql_q() { mysql "${MYSQL_ARGS[@]}" "$@"; }
 Q() { mysql_q -N "$DB" -e "$1"; }
 
@@ -75,6 +79,8 @@ standalone() { # FILE PAGE — the page rendered on the standalone v2 shell, cle
   fi
 }
 
+# A connection failure must not read as "no such user" below.
+mysql_q "$DB" -e 'SELECT 1' > /dev/null || { echo "cannot reach database $DB (P202_DB_HOST/P202_DB_PORT)" >&2; exit 2; }
 USER_ID=$(Q "SELECT user_id FROM 202_users WHERE user_name='$P202_USER'")
 [ -n "$USER_ID" ] || { echo "no user $P202_USER in $DB" >&2; exit 2; }
 EMAIL=$(Q "SELECT user_email FROM 202_users WHERE user_id=$USER_ID")
