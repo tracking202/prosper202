@@ -25,6 +25,20 @@ if ($click_id === null) {
 	p202RespondJsonError(404, 'Missing or malformed subid');
 }
 
+// An event (plan §2.2), on a click of this campaign: stored and evaluated
+// by the campaign's goals. A campaign without goals records its plain
+// conversion below, as always, with the event's name kept on the row.
+try {
+	$webEvent = p202RecordWebEvent($db, $click_id, $_GET, ['campaign_id' => (int) $aff_campaign_row['aff_campaign_id'], 'browser' => false]);
+} catch (\Throwable $webEventError) {
+	error_log('pb: event recording failed for click ' . $click_id . ': ' . $webEventError->getMessage());
+	p202RespondJsonError(500, 'Failed to record event');
+}
+if ($webEvent !== null && $webEvent['status'] !== 'no_goals') {
+	p202RespondWebEvent($webEvent, 'pb');
+	exit;
+}
+
 try {
 	// campaign_id: the postback names a campaign, and only a click on that
 	// campaign may convert for it — the scope the old click update applied
@@ -37,6 +51,7 @@ try {
 		'ip'             => p202ClientIp($_SERVER),
 		'user_agent'     => (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''),
 		'source'         => \Prosper202\Conversion\Ledger\ConversionSource::LEGACY_PIXEL->value,
+		'event_name'     => $webEvent['event_name'] ?? null,
 	] + p202ExtractReversal($_GET));
 } catch (\Prosper202\Conversion\Ledger\ReversalException $reversalError) {
 	// Said to the sender in its own words: which transaction, and for a

@@ -46,7 +46,59 @@ if (!empty($_GET['copy_aff_campaign_id'])) {
 	$copying = true;
 }
 
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+// The Goals panel's two forms (add or edit a goal, archive one) post here
+// with goal_action; they are the campaign's goals, not the campaign, so the
+// campaign handler below never sees them. Every write goes through the REST
+// controller (_includes/campaign_goals.php).
+require_once __DIR__ . '/_includes/campaign_goals.php';
+$goalPost = $_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['goal_action']);
+$goalErrors = [];
+if ($goalPost) {
+	$goalCampaignId = (int) ($_GET['edit_aff_campaign_id'] ?? 0);
+	$goalAction = (string) $_POST['goal_action'];
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+		$goalErrors['goal'] = 'Invalid or expired form token. Please reload the page and try again.';
+	} else {
+		$goalOwnerStmt = $db->prepare('SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id = ? AND user_id = ? AND aff_campaign_deleted = 0 LIMIT 1');
+		$goalOwner = null;
+		if ($goalOwnerStmt !== false) {
+			$goalSessionUser = (int) $_SESSION['user_id'];
+			$goalOwnerStmt->bind_param('ii', $goalCampaignId, $goalSessionUser);
+			if (!$goalOwnerStmt->execute()) {
+				$goalOwnerStmt->close();
+				throw new \RuntimeException('aff_campaigns: the campaign owner lookup failed');
+			}
+			$goalOwnerResult = $goalOwnerStmt->get_result();
+			if ($goalOwnerResult === false) {
+				$goalOwnerStmt->close();
+				throw new \RuntimeException('aff_campaigns: the campaign owner lookup returned no result');
+			}
+			$goalOwner = $goalOwnerResult->fetch_assoc();
+			$goalOwnerStmt->close();
+		} else {
+			throw new \RuntimeException('aff_campaigns: the campaign owner lookup could not be prepared');
+		}
+		if ($goalOwner === null) {
+			$goalErrors['goal'] = 'Goals belong to a campaign of yours: open the campaign to edit its goals.';
+		} elseif ($goalAction === 'save') {
+			$goalErrors = p202_goal_save($db, (int) $_SESSION['user_id'], $goalCampaignId, p202_goal_form_values(null, $_POST));
+		} elseif ($goalAction === 'archive') {
+			$goalRefusal = p202_goal_archive($db, (int) $_SESSION['user_id'], $goalCampaignId, (string) ($_POST['goal_id'] ?? ''));
+			if ($goalRefusal !== null) {
+				$goalErrors['goal'] = $goalRefusal;
+			}
+		} else {
+			$goalErrors['goal'] = 'Unknown goal action.';
+		}
+	}
+	if ($goalErrors === []) {
+		header('location: ' . get_absolute_url() . 'tracking202/setup/aff_campaigns.php?edit_aff_campaign_id=' . $goalCampaignId
+			. '&' . ($goalAction === 'archive' ? 'goal_archived' : 'goal_saved') . '=1#campaign-goals');
+		exit;
+	}
+}
+
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost) {
 
 	// Require a valid session token for this state-changing request.
 	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
@@ -74,6 +126,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$error['aff_campaign_url'] = '';
 		}
 		$error['aff_campaign_url'] .= '<div class="error">Your Landing Page URL must start with http:// or https://</div>';
+	}
+
+	// What a click that converts more than once is worth: its latest
+	// conversion (the default, and every campaign's behaviour before the
+	// ledger) or all of them added up (a funnel of goals).
+	// A post without the field (an older form, a script) leaves the stored
+	// mode alone rather than resetting an accumulating campaign.
+	$payoutMode = array_key_exists('payout_mode', $_POST) ? (string) $_POST['payout_mode'] : null;
+	if ($payoutMode !== null && !in_array($payoutMode, ['replace', 'accumulate'], true)) {
+		$error['payout_mode'] = '<div class="error">Choose keep the latest or add them up.</div>';
 	}
 
 	$aff_campaign_payout = trim((string) $_POST['aff_campaign_payout']);
@@ -150,6 +212,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 													  `aff_campaign_payout`='" . $mysql['aff_campaign_payout'] . "',
 													  `aff_campaign_cloaking`='" . $mysql['aff_campaign_cloaking'] . "',
 													  `attribution_model_id`=" . ($mysql['attribution_model_id'] ? "'" . (int)$mysql['attribution_model_id'] . "'" : 'NULL') . ",
+													  " . ($payoutMode === null ? '' : "`payout_mode`='" . ($payoutMode === 'accumulate' ? 'accumulate' : 'replace') . "',") . "
 													  `aff_campaign_time`='" . $mysql['aff_campaign_time'] . "'";
 
 		if ($editing == true) {
@@ -324,7 +387,7 @@ if (!empty($_GET['copy_aff_campaign_id'])) {
 }
 
 //this will override the edit, if posting and edit fail
-if (($_SERVER['REQUEST_METHOD'] == 'POST') and (!isset($add_success) || $add_success != true)) {
+if (($_SERVER['REQUEST_METHOD'] == 'POST') and !$goalPost and (!isset($add_success) || $add_success != true)) {
 
 	if (isset($_POST['aff_network_id'])) {
 		$selected['aff_network_id'] = $_POST['aff_network_id'];
@@ -363,7 +426,7 @@ foreach ($categoryRows as $category) {
 
 // What the form shows: what was just refused, the campaign being edited or
 // copied, or a blank campaign.
-$posted = $_SERVER['REQUEST_METHOD'] == 'POST';
+$posted = $_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost;
 $source = $posted ? $_POST : (is_array($aff_campaign_row) ? $aff_campaign_row : []);
 $field = static fn (string $name): string => (string) ($source[$name] ?? '');
 $values = [
@@ -380,6 +443,7 @@ $values = [
 	'aff_campaign_cloaking' => $field('aff_campaign_cloaking') === '1' ? '1' : '0',
 	// A copy chooses its own model, as the classic page did.
 	'attribution_model_id' => !$posted && $copying ? '' : $field('attribution_model_id'),
+	'payout_mode' => $field('payout_mode') === 'accumulate' ? 'accumulate' : 'replace',
 ];
 if ($values['aff_network_id'] === '' && count($categories) === 1) {
 	// One category: a campaign can only go in it, so it is chosen.
@@ -427,9 +491,11 @@ echo p202_setup_query_flashes([
 	'added' => 'Campaign added. Get its tracking link from Get Links.',
 	'saved' => 'Campaign saved.',
 	'deleted' => 'Campaign removed. Its clicks and conversions keep their history.',
+	'goal_saved' => 'Goal saved. It evaluates events received from now on.',
+	'goal_archived' => 'Goal archived. Its outcomes and conversions keep their history.',
 ], $_GET);
 if ($error) {
-	echo p202_setup_error_flashes($error, ['aff_network_id', 'aff_campaign_name', 'aff_campaign_url', 'aff_campaign_payout', 'aff_campaign_url_2', 'aff_campaign_url_3', 'aff_campaign_url_4', 'aff_campaign_url_5']);
+	echo p202_setup_error_flashes($error, ['aff_network_id', 'aff_campaign_name', 'aff_campaign_url', 'aff_campaign_payout', 'aff_campaign_url_2', 'aff_campaign_url_3', 'aff_campaign_url_4', 'aff_campaign_url_5', 'payout_mode']);
 }
 ?>
 
@@ -466,6 +532,33 @@ if ($error) {
 				</form>
 			</div>
 		</section>
+		<?php
+		// The campaign's goals, once it exists: edited through their own
+		// forms under the campaign's (_includes/campaign_goals_panel.php).
+		if ($editing && $editId > 0 && is_array($aff_campaign_row) && $aff_campaign_row !== []) {
+			$goalList = p202_goal_list($db, (int) $_SESSION['user_id'], $editId);
+			$editGoal = null;
+			if (!$goalPost && !empty($_GET['edit_goal_id'])) {
+				foreach ($goalList['own'] as $g) {
+					if ((string) $g['goal_id'] === (string) $_GET['edit_goal_id'] && $g['archived_at'] === null && is_array($g['definition']) && p202_goal_form_fits($g['definition'])) {
+						$editGoal = $g;
+					}
+				}
+			}
+			$goalFormValues = p202_goal_form_values($editGoal, $goalPost && ($_POST['goal_action'] ?? '') === 'save' ? $_POST : null);
+			$goalPanel = [
+				'campaign_id' => $editId,
+				'self' => $self,
+				'token' => $token,
+				'goals' => $goalList,
+				'form' => $goalFormValues,
+				'errors' => $goalErrors,
+				'editing' => $goalFormValues['goal_id'] !== '',
+				'payout_mode' => (string) ($aff_campaign_row['payout_mode'] ?? 'replace'),
+			];
+			include __DIR__ . '/_includes/campaign_goals_panel.php';
+		}
+		?>
 		<?php } ?>
 	</div>
 

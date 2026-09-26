@@ -129,6 +129,8 @@ tags:
     description: App measurement — the app registry (iOS and Android), Apple's SKAdNetwork and AdAttributionKit postback receivers, SKAN encodings, the report, and the runtime schema
   - name: Goals
     description: Goals — versioned, data-only definitions of what counts as a conversion, owned by a campaign, an app registration or the account; the campaigns that pay for them; their outcomes; validation, evaluation and re-evaluation
+  - name: Events
+    description: Web events — what a click went on to do, reported by click id and evaluated by its campaign's goals (also `event=` on pixels and postbacks, and `p202.track()` on landing pages)
 
 paths:
   # ─── System ──────────────────────────────────────────────────────────
@@ -2191,7 +2193,10 @@ paths:
         reaches — are retired (`superseded_reason: reevaluation`), their
         conversions superseded or deleted (recomputing the click's value),
         newly reached ones written, and the stored progress of exactly those
-        goals replaced. Stageable.
+        goals replaced. An outcome — the goal's or a dependent's — that the
+        subject had not reached before is announced to the campaign's
+        traffic source like any newly reached one; one written in place of
+        a retired outcome is not (`notifications` per subject). Stageable.
       operationId: applyGoalReevaluation
       requestBody:
         content:
@@ -2211,6 +2216,70 @@ paths:
                 $ref: "#/components/schemas/GoalReevaluationResponse"
         "404":
           $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /events:
+    post:
+      tags: [Events]
+      summary: Report a click's events (evaluated by its campaign's goals)
+      description: |
+        Stores the events on the click and evaluates the click's campaign
+        goals in one transaction (plan §2.2). A goal an event reaches writes
+        an outcome and, through the conversion ledger, a conversion
+        (`source: goal`); for a payable goal the campaign notifies for, the
+        click's traffic source is sent its server-to-server postback with
+        `[[p202_goal]]`, `[[p202_goal_id]]` and `[[p202_goal_value]]` filled
+        (`notifications`). An event on its own records nothing: on a
+        campaign with no live goals the events are stored (`goals_evaluated:
+        false`, with a `note`), and a goal added later applies to them
+        through `POST /goals/{id}/reevaluation`.
+
+        Every event names its own `event_id`: an id already stored with the
+        same content is a duplicate (listed in `duplicates`, nothing
+        written), and with different content the whole request is a `409`.
+        An event without `occurred_at` is timed by the server, so a retry
+        later is still a duplicate. An event that sorts before a stored one
+        replays the click (`replayed: true`); an outcome that moves to it is
+        written as a replacement and is never announced to the traffic
+        source again (`notify: suppressed`).
+
+        `revenue` is trusted here (an API key is the operator's own
+        statement), so a goal valued from the event's amount pays it.
+        `received_at` and `revenue_trusted` are the server's and are refused
+        in the body. The body is strict (an unknown field is a `422` naming
+        it) and `click_id` is read raw (`"1e3"` or `1.5` is refused, never
+        cast). `201` when an event was stored, `200` when every event was a
+        duplicate. Honors `Idempotency-Key`; stageable (`staged=1`). Scope
+        area `events`.
+      operationId: sendEvents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EventsRequest"
+      responses:
+        "200":
+          description: Every event was a duplicate; nothing was written
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventsResponse"
+        "201":
+          description: Events stored and evaluated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventsResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: An event id already names a different event on this click
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -5442,6 +5511,79 @@ components:
                   unchanged: {type: integer}
             totals: {type: object}
             next_after: {type: integer, nullable: true}
+
+    EventsRequest:
+      type: object
+      required: [click_id, events]
+      additionalProperties: false
+      properties:
+        click_id: {type: integer, minimum: 1, description: "The click (GET /clicks)"}
+        events:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/WebEvent"
+
+    WebEvent:
+      type: object
+      required: [event_id, name]
+      additionalProperties: false
+      properties:
+        event_id: {type: string, maxLength: 128, pattern: '^[\x21-\x3F\x41-\x7E][\x21-\x7E]{0,127}$', description: "Your id for the event, unique within the click; not starting with @ (the server's own ids)"}
+        name: {type: string, pattern: '^[A-Za-z0-9_][A-Za-z0-9_.:\-]{0,63}$'}
+        occurred_at: {type: integer, description: "Unix seconds; default now. Clamped to the time it arrived, so a clock cannot move an event into a window"}
+        properties:
+          type: object
+          maxProperties: 32
+          additionalProperties:
+            oneOf: [{type: string, maxLength: 255}, {type: number}, {type: boolean}]
+        revenue: {type: number, nullable: true, description: "What it was worth; a goal valued from_property pays it"}
+        transaction_id: {type: string, maxLength: 255, nullable: true, description: "The network's id, kept on the conversion a goal writes"}
+
+    EventsResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            click_id: {type: integer}
+            campaign_id: {type: integer}
+            accepted: {type: array, items: {type: string}}
+            duplicates: {type: array, items: {type: string}}
+            replayed: {type: boolean}
+            goals_evaluated: {type: boolean, description: "Whether the click's campaign has a live goal"}
+            outcomes_written: {type: integer}
+            outcomes_retired: {type: integer}
+            outcomes:
+              type: array
+              items:
+                type: object
+                properties:
+                  goal_id: {type: integer}
+                  version: {type: integer}
+                  n: {type: integer}
+                  event_id: {type: string}
+                  outcome_id: {type: integer}
+                  conversion_id: {type: integer, nullable: true}
+                  payable: {type: boolean}
+                  amount: {type: string, nullable: true}
+                  notify: {type: string, enum: [reached, suppressed, "off", none], description: "reached: announced to the traffic source; suppressed: a replacement, never announced twice; off: the campaign does not notify for this goal; none: not payable"}
+            notifications:
+              type: array
+              items:
+                type: object
+                properties:
+                  goal_id: {type: integer}
+                  n: {type: integer}
+                  outcome_id: {type: integer}
+                  kind: {type: string}
+                  status: {type: string, enum: [sent, failed, not_sent, no_pixels, browser_only]}
+                  reason: {type: string, nullable: true}
+                  server_calls: {type: integer}
+                  server_failures: {type: integer}
+            note: {type: string, description: "Present when goals_evaluated is false"}
+        idempotent_replay: {type: boolean}
 
     AppPostback:
       type: object

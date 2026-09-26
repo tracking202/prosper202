@@ -133,6 +133,11 @@ if ($lpip !== '') {
 
 $baseUrl = $strProtocol . '://' . getTrackingDomain() . get_absolute_url();
 $lpip_js = json_encode((string) ($_GET['lpip'] ?? ''));
+// p202_beacon=0: a page that only reports events (a thank-you page on the
+// same site as the landing page) loads the script without recording its own
+// view as a click, so p202.track() ties its events to the visitor's landing
+// page click rather than to a new one.
+$p202SendsBeacon = (string) ($_GET['p202_beacon'] ?? '1') !== '0';
 ?>
 
 (function() {
@@ -364,14 +369,102 @@ function p202SendBeacon() {
 		js202a.src = parts.join("&");
 		js202a.async = true;
 		js202a.id = "recjs";
+		// The pageview's click exists once record.php has answered: events
+		// tracked before then wait for it (p202.track below).
+		js202a.onload = p202BeaconDone;
+		js202a.onerror = p202BeaconDone;
 		(document.head || document.getElementsByTagName("script")[0].parentNode).appendChild(js202a);
+	} else {
+		p202BeaconDone();
 	}
 }
+
+// --- Events: p202.track(name, props, options) (plan §2.2) ---
+// Reports what the visitor did — `p202.track('signup')`,
+// `p202.track('purchase', {plan: 'pro'}, {revenue: 49})` — as an event on
+// the visitor's click, which the campaign's goals then evaluate. The click
+// is found by this site's visitor id (p202lpid), so nothing is sent without
+// one: no consent, or a campaign with identity capture off, tracks nothing.
+// Each call gets a random event id (or options.id), and a retry of the same
+// call resends it, so an event is never counted twice. A revenue sent from a
+// page is stored and reported, never paid. Returns a Promise of the event
+// id ('' when nothing was sent); never throws.
+var p202EventUrl = "<?php echo $baseUrl; ?>tracking202/static/event.php";
+var p202BeaconFinished = <?php echo json_encode(!$p202SendsBeacon); ?>;
+var p202EventQueue = [];
+function p202BeaconDone() {
+	if (p202BeaconFinished) { return; }
+	p202BeaconFinished = true;
+	var queued = p202EventQueue;
+	p202EventQueue = [];
+	for (var q = 0; q < queued.length; q++) { queued[q](); }
+}
+// A beacon that never answers must not hold events forever.
+setTimeout(p202BeaconDone, 10000);
+
+function p202NewEventId() {
+	try {
+		var bytes = new Uint8Array(16);
+		window.crypto.getRandomValues(bytes);
+		var hex = '';
+		for (var i = 0; i < bytes.length; i++) { hex += ('0' + bytes[i].toString(16)).slice(-2); }
+		return 'js-' + hex;
+	} catch (e) {
+		return 'js-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+	}
+}
+
+function p202SendEvent(body) {
+	if (window.fetch) {
+		return window.fetch(p202EventUrl, {
+			method: 'POST', body: body, keepalive: true, mode: 'cors', credentials: 'omit',
+			headers: {'Content-Type': 'application/x-www-form-urlencoded'}
+		}).then(function(r) { return r.status === 202; }, function() { return false; });
+	}
+	if (navigator.sendBeacon) {
+		return Promise.resolve(navigator.sendBeacon(p202EventUrl, new Blob([body], {type: 'application/x-www-form-urlencoded'})));
+	}
+	return Promise.resolve(false);
+}
+
+window.p202.track = function(name, props, options) {
+	try {
+		if (typeof name !== 'string' || name === '' || !p202ConsentGiven()) { return Promise.resolve(''); }
+		options = options || {};
+		var id = (typeof options.id === 'string' && options.id !== '') ? options.id : p202NewEventId();
+		var send = function() {
+			var lpid = p202Lpid();
+			if (!lpid) { return Promise.resolve(''); }
+			var body = 'lpip=' + t202Enc(<?php echo $lpip_js; ?>) + '&p202lpid=' + t202Enc(lpid)
+				+ '&event_id=' + t202Enc(id) + '&name=' + t202Enc(name);
+			if (props && typeof props === 'object') { body += '&props=' + t202Enc(JSON.stringify(props)); }
+			if (typeof options.revenue === 'number' && isFinite(options.revenue)) { body += '&revenue=' + t202Enc(String(options.revenue)); }
+			return p202SendEvent(body).then(function(sent) { return sent ? id : ''; });
+		};
+		if (p202BeaconFinished) { return send(); }
+		return new Promise(function(resolve) {
+			p202EventQueue.push(function() { send().then(resolve, function() { resolve(''); }); });
+		});
+	} catch (e) {
+		return Promise.resolve('');
+	}
+};
+// Calls made before this script loaded: `window.p202 = {q: [['track', 'signup']]}`.
+if (Object.prototype.toString.call(window.p202.q) === '[object Array]') {
+	var p202Early = window.p202.q;
+	window.p202.q = [];
+	for (var e = 0; e < p202Early.length; e++) {
+		if (p202Early[e] && p202Early[e][0] === 'track') { window.p202.track(p202Early[e][1], p202Early[e][2], p202Early[e][3]); }
+	}
+}
+
+<?php if ($p202SendsBeacon) { ?>
 if (document.readyState === 'loading') {
 	document.addEventListener('DOMContentLoaded', p202SendBeacon);
 } else {
 	setTimeout(p202SendBeacon, 0);
 }
+<?php } ?>
 
 // --- Dynamic content replacement ---
 (function() {

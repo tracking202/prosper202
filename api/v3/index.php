@@ -548,6 +548,14 @@ try {
             $r->post('/{id}/reevaluation', fn($ctx) => $crud($cls)->reevaluate($id($ctx), $payload));
         });
 
+        // ── Events (plan §2.2) ──────────────────────────────────────────
+        // A web campaign's events, keyed by click_id, evaluated by its
+        // goals. Not wrapped in the 201 of a create: an all-duplicate retry
+        // answers 200, and the controller says which. Idempotency-Key is
+        // honored as for every write; each event's own id already makes a
+        // retry safe.
+        $router->post('/events', fn() => $idempotent('events', $payload, fn() => $crud(\Api\V3\Controllers\EventsController::class)->create($payload)));
+
         // ── Users (admin-gated writes, self-or-admin for reads) ──────────
         $router->group('/users', function (Router $r) use ($db, $auth, $idempotent, $payload) {
             $make = fn() => new \Api\V3\Controllers\UsersController($db);
@@ -663,6 +671,7 @@ try {
                 'attribution'   => '/attribution/models',
                 'apps'          => '/apps/{id|skan-encodings|postbacks|report|verify|schema}',
                 'goals'         => '/goals/{id|validate|evaluate}',
+                'events'        => '/events',
                 'users'         => '/users',
                 'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics}',
                 'sync'          => '/sync/{plan|jobs|status|history|re-sync}',
@@ -771,6 +780,9 @@ try {
         $r->delete('/{id}/campaigns/{campaignId}', $stageable);
         $r->post('/{id}/reevaluation', $stageable);
     });
+    // An event is a write like a conversion: stageable, and applied through
+    // the real route (received at apply time).
+    $stageableRouter->post('/events', $stageable);
     $stageableRouter->group('/users', function (Router $r) use ($stageable) {
         $r->post('', $stageable);
         $r->put('/{id}', $stageable);

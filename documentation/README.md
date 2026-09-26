@@ -44,6 +44,7 @@
 - [App measurement: registry and Apple postbacks (SKAdNetwork, AdAttributionKit)](api/19-app-measurement.md)
 - [App SDK wire contract](api/21-app-sdk-contract.md)
 - [Goals: definitions, versions, campaign payouts, evaluation](api/22-goals.md)
+- [Web events: `event=` on pixels and postbacks, `POST /events`, `p202.track()`, traffic-source notification](api/23-events.md)
 - [Forecast Events](api/18-forecast-events.md)
 - [Users](api/14-users.md)
 - [System](api/15-system.md)

@@ -2192,77 +2192,15 @@ function foreach_memcache_mysql_fetch_assoc($arg1, $arg2 = null, $allowCaching =
 
 function replaceTokens($url, $tokens = [], $fillblanks = 0)
 {
-    $tokens = array_map(rawurlencode202(...), $tokens);
-
-    if (isset($tokens['c1']) || $fillblanks)
-        $url = preg_replace('/\[\[c1\]\]/i', (string) $tokens['c1'], (string) $url);
-    if (isset($tokens['c2']) || $fillblanks)
-        $url = preg_replace('/\[\[c2\]\]/i', (string) $tokens['c2'], (string) $url);
-    if (isset($tokens['c3']) || $fillblanks)
-        $url = preg_replace('/\[\[c3\]\]/i', (string) $tokens['c3'], (string) $url);
-    if (isset($tokens['c4']) || $fillblanks)
-        $url = preg_replace('/\[\[c4\]\]/i', (string) $tokens['c4'], (string) $url);
-    if (isset($tokens['t202pubid']) || $fillblanks)
-        $url = preg_replace('/\[\[t202pubid\]\]/i', (string) $tokens['t202pubid'], (string) $url);
-    if (isset($tokens['gclid']) || $fillblanks)
-        $url = preg_replace('/\[\[gclid\]\]/i', (string) $tokens['gclid'], (string) $url);
-    if (isset($tokens['msclkid']) || $fillblanks)
-        $url = preg_replace('/\[\[msclkid\]\]/i', (string) $tokens['msclkid'], (string) $url);
-    if (isset($tokens['fbclid']) || $fillblanks)
-        $url = preg_replace('/\[\[fbclid\]\]/i', (string) $tokens['fbclid'], (string) $url);
-    if (isset($tokens['utm_source']) || $fillblanks)
-        $url = preg_replace('/\[\[utm_source\]\]/i', (string) $tokens['utm_source'], (string) $url);
-    if (isset($tokens['utm_medium']) || $fillblanks)
-        $url = preg_replace('/\[\[utm_medium\]\]/i', (string) $tokens['utm_medium'], (string) $url);
-    if (isset($tokens['utm_campaign']) || $fillblanks)
-        $url = preg_replace('/\[\[utm_campaign\]\]/i', (string) $tokens['utm_campaign'], (string) $url);
-    if (isset($tokens['utm_term']) || $fillblanks)
-        $url = preg_replace('/\[\[utm_term\]\]/i', (string) $tokens['utm_term'], (string) $url);
-    if (isset($tokens['utm_content']) || $fillblanks)
-        $url = preg_replace('/\[\[utm_content\]\]/i', (string) $tokens['utm_content'], (string) $url);
-    if (isset($tokens['subid']) || $fillblanks)
-        $url = preg_replace('/\[\[subid\]\]/i', (string) $tokens['subid'], (string) $url);
-    if (isset($tokens['t202kw']) || $fillblanks)
-        $url = preg_replace('/\[\[t202kw\]\]/i', (string) $tokens['t202kw'], (string) $url);
-    if (isset($tokens['payout']) || $fillblanks)
-        $url = preg_replace('/\[\[payout\]\]/i', (string) $tokens['payout'], (string) $url);
-    if (isset($tokens['random']) || $fillblanks)
-        $url = preg_replace('/\[\[random\]\]/i', (string) $tokens['random'], (string) $url);
-    if (isset($tokens['cpc']) || $fillblanks)
-        $url = preg_replace('/\[\[cpc\]\]/i', (string) $tokens['cpc'], (string) $url);
-    if (isset($tokens['cpc2']) || $fillblanks)
-        $url = preg_replace('/\[\[cpc2\]\]/i', (string) $tokens['cpc2'], (string) $url);
-    if (isset($tokens['cpa']) || $fillblanks)
-        $url = preg_replace('/\[\[cpa\]\]/i', (string) $tokens['cpa'], (string) $url);
-    if (isset($tokens['timestamp']) || $fillblanks)
-        $url = preg_replace('/\[\[timestamp\]\]/i', (string) $tokens['timestamp'], (string) $url);
-    if (isset($tokens['country']) || $fillblanks)
-        $url = preg_replace('/\[\[country\]\]/i', (string) $tokens['country'], (string) $url);
-    if (isset($tokens['country_code']) || $fillblanks)
-        $url = preg_replace('/\[\[country_code\]\]/i', (string) $tokens['country_code'], (string) $url);
-    if (isset($tokens['region']) || $fillblanks)
-        $url = preg_replace('/\[\[region\]\]/i', (string) $tokens['region'], (string) $url);
-    if (isset($tokens['city']) || $fillblanks)
-        $url = preg_replace('/\[\[city\]\]/i', (string) $tokens['city'], (string) $url);
-    if (isset($tokens['referer']) || $fillblanks) {
-        $url = preg_replace('/\[\[referer\]\]/i', (string) $tokens['referer'], (string) $url);
-        $url = preg_replace('/\[\[referrer\]\]/i', (string) $tokens['referer'], (string) $url);
-    }
-    if (isset($tokens['sourceid']) || $fillblanks)
-        $url = preg_replace('/\[\[sourceid\]\]/i', (string) $tokens['sourceid'], (string) $url);
-    if (isset($tokens['transactionid']) || $fillblanks)
-        $url = preg_replace('/\[\[(transactionid|t202txid)\]\]/i', (string) $tokens['transactionid'], (string) $url);
-    return $url;
+    // One implementation for the tracker's URLs and the traffic-source
+    // pixels alike, so a path that never loads this file (POST /events,
+    // the goal notifier) replaces tokens exactly as the tracker does.
+    return \Prosper202\Conversion\TrafficSourcePixels::replaceTokens($url, is_array($tokens) ? $tokens : [], $fillblanks ? 1 : 0);
 }
 
 function rawurlencode202($token)
 {
-    if (isset($token)) {
-        $token = str_replace('%40', '@', rawurlencode((string)$token));
-        return $token;
-    } else {
-        return NULL;
-    }
+    return \Prosper202\Conversion\TrafficSourcePixels::encode($token);
 }
 
 function getGeoData($ip)

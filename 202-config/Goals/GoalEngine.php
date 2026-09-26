@@ -85,6 +85,8 @@ final class GoalEngine
         ?MysqlConversionRepository $conversions = null,
         /** @var (callable(): int)|null */
         private $clock = null,
+        /** Told about written outcomes after each commit (plan §5.5 "notify traffic source"). */
+        private ?OutcomeNotifier $notifier = null,
     ) {
         $this->goals = $goals ?? new MysqlGoalRepository($conn);
         $this->conversions = $conversions ?? new MysqlConversionRepository($conn);
@@ -147,8 +149,12 @@ final class GoalEngine
      * (EVENT_CONFLICT), and so is the whole batch. A subject holds at most
      * MAX_EVENTS_PER_SUBJECT events (EVENT_CAP).
      *
+     * `outcomes` lists every outcome written (see OutcomeNotifier for the
+     * shape and `kind`); `notifications` is what the notifier did with them
+     * after the commit ([] without a notifier).
+     *
      * @param list<GoalEvent> $events
-     * @return array{accepted: list<string>, duplicates: list<string>, replayed: bool, outcomes_written: int, outcomes_retired: int}
+     * @return array{accepted: list<string>, duplicates: list<string>, replayed: bool, outcomes_written: int, outcomes_retired: int, outcomes: list<array<string, mixed>>, notifications: list<array<string, mixed>>}
      */
     public function ingest(int $userId, GoalSubject $subject, array $events): array
     {
@@ -161,19 +167,21 @@ final class GoalEngine
             }
             $done = $this->conn->transaction($work);
         }
-        $this->afterCommit($userId, $done['post']);
+        $result = $done['result'];
+        $result['outcomes'] = $done['post']['notices'];
+        $result['notifications'] = $this->afterCommit($userId, $subject, $done['post']);
 
-        return $done['result'];
+        return $result;
     }
 
     /**
      * @param list<GoalEvent> $events
-     * @return array{result: array{accepted: list<string>, duplicates: list<string>, replayed: bool, outcomes_written: int, outcomes_retired: int}, post: array{ledger: list<array<string, mixed>>, clicks: array<int, true>}}
+     * @return array{result: array{accepted: list<string>, duplicates: list<string>, replayed: bool, outcomes_written: int, outcomes_retired: int}, post: array{ledger: list<array<string, mixed>>, clicks: array<int, true>, notices: list<array<string, mixed>>}}
      */
     private function ingestLocked(int $userId, GoalSubject $subject, array $events): array
     {
         $now = $this->now();
-        $post = ['ledger' => [], 'clicks' => []];
+        $post = ['ledger' => [], 'clicks' => [], 'notices' => []];
         $row = $this->lockSubject($userId, $subject, $now);
         $subject = $subject->withRebases(self::decodeRebases($row));
 
@@ -198,7 +206,11 @@ final class GoalEngine
         foreach ($byId as $id => $event) {
             $id = (string) $id;
             if (isset($stored[$id])) {
-                if ($stored[$id] !== $event->fingerprint()) {
+                // A time the intake's clock supplied is not part of what the
+                // reporter said: a retry a second later is the same event,
+                // so it is compared at the stored time.
+                $compared = $event->clockedByServer ? $event->withOccurredAt($stored[$id]['occurred_at']) : $event;
+                if ($stored[$id]['fingerprint'] !== $compared->fingerprint()) {
                     throw new GoalEngineException(
                         'Event id "' . $id . '" was already recorded for this ' . $subject->type . ' with different content; '
                         . 'an event id names one event. Send a new event id for a different event.',
@@ -359,8 +371,7 @@ final class GoalEngine
                     }
                     $done = $this->conn->transaction($work);
                 }
-                $this->afterCommit($userId, $done['post']);
-                $subjects[] = $done['summary'];
+                $subjects[] = $done['summary'] + ['notifications' => $this->afterCommit($userId, $subject, $done['post'])];
             } else {
                 $subjects[] = $this->reevaluationPlanFor($userId, $subject, $goalId, $version, null)['summary'];
             }
@@ -391,11 +402,11 @@ final class GoalEngine
         ];
     }
 
-    /** @return array{summary: array<string, mixed>, post: array{ledger: list<array<string, mixed>>, clicks: array<int, true>}} */
+    /** @return array{summary: array<string, mixed>, post: array{ledger: list<array<string, mixed>>, clicks: array<int, true>, notices: list<array<string, mixed>>}} */
     private function reevaluateLocked(int $userId, GoalSubject $subject, int $goalId, int $version): array
     {
         $now = $this->now();
-        $post = ['ledger' => [], 'clicks' => []];
+        $post = ['ledger' => [], 'clicks' => [], 'notices' => []];
         $row = $this->lockSubject($userId, $subject, $now);
         $rebases = self::decodeRebases($row);
         $rebases[$goalId] = $version;
@@ -634,8 +645,28 @@ final class GoalEngine
      * retire the replaced ones (and supersede or delete theirs).
      *
      * @param array{keep: array<string, array<string, mixed>>, write: list<Outcome>, retire: list<array{0: array<string, mixed>, 1: string|null}>} $plan
+     * Each written outcome is also noted in $post['notices'] with the
+     * notification decision (OutcomeNotifier). A written outcome is a
+     * `replacement`, never announced as newly reached, when it takes the
+     * place of a retired one, or when its reaching event reached the same
+     * goal in an outcome this plan retires: a replay that shifts n moves an
+     * already-announced event to a new n ($5, $10 and a late $1 become $1,
+     * $5, $10), and announcing the "new" third outcome would tell the
+     * network about the $10 a second time.
+     *
+     * Plan §5.7: what a network knows is per (subject, goal, n), not per
+     * row. A revived outcome keeps its conversion, whose `reached` went out
+     * when it was first written, and this path sends no retraction, so the
+     * network still holds it: never announced again (decision 1). And a
+     * new row for an n that any earlier row of the goal — retired rows and
+     * every version included, not only the one this plan retires — may have
+     * been announced for is a replacement too (decision 2,
+     * announcedBefore()): at the third step of a funnel whose prerequisite
+     * matched, stopped matching and matched again, the prerequisite's new
+     * version would otherwise be sent a second time.
+     *
      * @param list<GoalEvent> $events
-     * @param array{ledger: list<array<string, mixed>>, clicks: array<int, true>} $post
+     * @param array{ledger: list<array<string, mixed>>, clicks: array<int, true>, notices: list<array<string, mixed>>} $post
      * @return array{written: int, retired: int}
      */
     private function execute(int $userId, GoalSubject $subject, array $plan, array $events, SupersededReason $reason, int $now, array &$post): array
@@ -650,13 +681,29 @@ final class GoalEngine
         foreach ($plan['keep'] as $key => $row) {
             $ids[$key] = ['outcome_id' => (int) $row['outcome_id'], 'conversion_id' => $row['conversion_id'] !== null ? (int) $row['conversion_id'] : null];
         }
+        // The outcomes written in place of a retired one: a traffic source
+        // may already have been told about the one they replace.
+        $replacing = [];
+        $retiredEvents = [];
+        foreach ($plan['retire'] as [$stored, $replacementKey]) {
+            if ($replacementKey !== null) {
+                $replacing[$replacementKey] = true;
+            }
+            $retiredEvents[(int) $stored['goal_id'] . "\0" . (string) $stored['event_id']] = true;
+        }
         foreach ($plan['write'] as $o) {
             $event = $eventsById[$o->eventId] ?? null;
             if ($event === null && $o->eventId !== GoalEvent::INSTALL_EVENT_ID) {
                 // The reaching event is stored but was not handed in: load it.
                 $event = $this->loadEvent($subject, $o->eventId);
             }
-            $ids[$o->goalId . ':' . $o->version . ':' . $o->n] = $this->writeOutcome($userId, $subject, $o, $terms[$o->goalId] ?? null, $event, $now, $post);
+            $key = $o->goalId . ':' . $o->version . ':' . $o->n;
+            $term = $terms[$o->goalId] ?? null;
+            $written = $this->writeOutcome($userId, $subject, $o, $term, $event, $now, $post);
+            $ids[$key] = ['outcome_id' => $written['outcome_id'], 'conversion_id' => $written['conversion_id']];
+            $announced = isset($replacing[$key]) || isset($retiredEvents[$o->goalId . "\0" . $o->eventId]) || $written['revived']
+                || $this->announcedBefore($userId, $subject, $o, $written['outcome_id']);
+            $post['notices'][] = self::notice($o, $written, $term, $subject, $announced);
         }
 
         $ledger = new MysqlConversionLedger($this->conn);
@@ -703,8 +750,8 @@ final class GoalEngine
      * Write one outcome row and, when the subject has a click, its ledger row.
      *
      * @param array<string, mixed>|null $term the campaign_goals row for this goal
-     * @param array{ledger: list<array<string, mixed>>, clicks: array<int, true>} $post
-     * @return array{outcome_id: int, conversion_id: int|null}
+     * @param array{ledger: list<array<string, mixed>>, clicks: array<int, true>, notices: list<array<string, mixed>>} $post
+     * @return array{outcome_id: int, conversion_id: int|null, revived: bool, conversion_new: bool, payable: bool, amount_units: int|null, transaction_id: string|null, dedupe_key: string|null}
      */
     private function writeOutcome(int $userId, GoalSubject $subject, Outcome $o, ?array $term, ?GoalEvent $event, int $now, array &$post): array
     {
@@ -766,7 +813,10 @@ final class GoalEngine
                 }
             }
 
-            return ['outcome_id' => (int) $existing['outcome_id'], 'conversion_id' => $convId];
+            return [
+                'outcome_id' => (int) $existing['outcome_id'], 'conversion_id' => $convId, 'revived' => true, 'conversion_new' => false,
+                'payable' => $payable, 'amount_units' => $amountUnits, 'transaction_id' => $event?->transactionId, 'dedupe_key' => null,
+            ];
         }
 
         $insert = $this->conn->prepareWrite(
@@ -786,6 +836,8 @@ final class GoalEngine
         }
 
         $convId = null;
+        $conversionNew = false;
+        $dedupeKey = null;
         if ($subject->clickId !== null) {
             $data = [
                 'click_id' => $subject->clickId,
@@ -813,13 +865,81 @@ final class GoalEngine
             }
             if (!$recorded['duplicate']) {
                 $post['ledger'][] = $recorded;
+                $conversionNew = true;
             }
+            $dedupeKey = isset($recorded['dedupeKey']) ? (string) $recorded['dedupeKey'] : null;
             $link = $this->conn->prepareWrite('UPDATE 202_goal_outcomes SET conversion_id = ? WHERE outcome_id = ?');
             $this->conn->bind($link, 'ii', [$convId, $outcomeId]);
             $this->conn->executeUpdate($link);
         }
 
-        return ['outcome_id' => $outcomeId, 'conversion_id' => $convId];
+        return [
+            'outcome_id' => $outcomeId, 'conversion_id' => $convId, 'revived' => false, 'conversion_new' => $conversionNew,
+            'payable' => $payable, 'amount_units' => $amountUnits, 'transaction_id' => $event?->transactionId, 'dedupe_key' => $dedupeKey,
+        ];
+    }
+
+    /**
+     * Whether an earlier row for this outcome's (subject, goal, n) — any
+     * version, retired or not — may have been announced: a payable row on
+     * the ledger. This path keeps no record of what it sent (PR 5's outbox
+     * does), so "may have been" is the test, in the direction that never
+     * tells a network the same outcome twice; a row that was never payable
+     * was never sent (OutcomeNotifier: `none`).
+     */
+    private function announcedBefore(int $userId, GoalSubject $subject, Outcome $o, int $outcomeId): bool
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT outcome_id FROM 202_goal_outcomes
+             WHERE user_id = ? AND subject_type = ? AND subject_id = ? AND goal_id = ? AND n = ? AND outcome_id <> ?
+               AND payable = 1 AND conversion_id IS NOT NULL
+             LIMIT 1'
+        );
+        $this->conn->bind($stmt, 'isiiii', [$userId, $subject->type, $subject->id, $o->goalId, $o->n, $outcomeId]);
+
+        return $this->conn->fetchOne($stmt) !== null;
+    }
+
+    /**
+     * What a written outcome is, for the notifier (see OutcomeNotifier for
+     * the kinds). Decided here, inside the transaction that knows which
+     * rows are replacements, so no caller can announce a replacement as a
+     * newly reached outcome.
+     *
+     * @param array{outcome_id: int, conversion_id: int|null, revived: bool, conversion_new: bool, payable: bool, amount_units: int|null, transaction_id: string|null, dedupe_key: string|null} $written
+     * @param array<string, mixed>|null $term
+     * @return array<string, mixed>
+     */
+    private static function notice(Outcome $o, array $written, ?array $term, GoalSubject $subject, bool $replacement): array
+    {
+        $kind = 'none';
+        $reason = null;
+        if ($written['payable']) {
+            if ($term === null || (int) ($term['notify_traffic_source'] ?? 0) !== 1) {
+                $kind = 'off';
+            } elseif ($subject->clickId === null) {
+                [$kind, $reason] = ['suppressed', 'no_click'];
+            } elseif ($replacement || !$written['conversion_new']) {
+                [$kind, $reason] = ['suppressed', 'replacement'];
+            } else {
+                $kind = 'reached';
+            }
+        }
+
+        return [
+            'goal_id' => $o->goalId,
+            'version' => $o->version,
+            'n' => $o->n,
+            'event_id' => $o->eventId,
+            'outcome_id' => $written['outcome_id'],
+            'conversion_id' => $written['conversion_id'],
+            'payable' => $written['payable'],
+            'amount' => $written['amount_units'] === null ? null : Amount::fromUnits($written['amount_units']),
+            'transaction_id' => $written['transaction_id'],
+            'dedupe_key' => $written['dedupe_key'],
+            'kind' => $kind,
+            'reason' => $reason,
+        ];
     }
 
     /**
@@ -857,9 +977,16 @@ final class GoalEngine
     }
 
     /**
-     * @param array{ledger: list<array<string, mixed>>, clicks: array<int, true>} $post
+     * The committed transaction's follow-ups: report rows, bridge events,
+     * then the notifier. Nothing here may make the write look failed — it
+     * has committed — so a notifier that throws is logged and its notices
+     * are reported as `failed` (CLAUDE.md #13: a caller must not retry a
+     * write because its announcement failed).
+     *
+     * @param array{ledger: list<array<string, mixed>>, clicks: array<int, true>, notices: list<array<string, mixed>>} $post
+     * @return list<array<string, mixed>> what the notifier did
      */
-    private function afterCommit(int $userId, array $post): void
+    private function afterCommit(int $userId, GoalSubject $subject, array $post): array
     {
         foreach ($post['ledger'] as $recorded) {
             $this->conversions->afterRecordInTransaction($userId, $recorded);
@@ -867,6 +994,19 @@ final class GoalEngine
         }
         foreach (array_keys($post['clicks']) as $clickId) {
             $this->conversions->refreshClickReport($clickId);
+        }
+        if ($this->notifier === null || $post['notices'] === []) {
+            return [];
+        }
+        try {
+            return $this->notifier->notify($userId, $subject, $post['notices']);
+        } catch (Throwable $e) {
+            error_log('p202 goals: notifying the traffic source for ' . $subject->type . ' ' . $subject->id . ' failed: ' . $e->getMessage());
+
+            return array_map(static fn (array $n): array => [
+                'goal_id' => $n['goal_id'], 'n' => $n['n'], 'outcome_id' => $n['outcome_id'], 'kind' => $n['kind'],
+                'status' => $n['kind'] === 'reached' ? 'failed' : 'not_sent',
+            ], $post['notices']);
         }
     }
 
@@ -939,7 +1079,7 @@ final class GoalEngine
 
     /**
      * @param list<string> $eventIds
-     * @return array<string, string> event id => fingerprint
+     * @return array<string, array{fingerprint: string, occurred_at: int}> event id => its stored identity
      */
     private function storedFingerprints(GoalSubject $subject, array $eventIds): array
     {
@@ -950,11 +1090,11 @@ final class GoalEngine
         foreach (array_chunk($eventIds, 500) as $chunk) {
             $marks = implode(',', array_fill(0, count($chunk), '?'));
             $stmt = $this->conn->prepareWrite(
-                "SELECT event_id, fingerprint FROM 202_goal_events WHERE subject_type = ? AND subject_id = ? AND event_id IN ($marks)"
+                "SELECT event_id, fingerprint, occurred_at FROM 202_goal_events WHERE subject_type = ? AND subject_id = ? AND event_id IN ($marks)"
             );
             $this->conn->bind($stmt, 'si' . str_repeat('s', count($chunk)), [$subject->type, $subject->id, ...$chunk]);
             foreach ($this->conn->fetchAll($stmt) as $row) {
-                $out[(string) $row['event_id']] = (string) $row['fingerprint'];
+                $out[(string) $row['event_id']] = ['fingerprint' => (string) $row['fingerprint'], 'occurred_at' => (int) $row['occurred_at']];
             }
         }
 

@@ -154,6 +154,23 @@ $mysql['conv_time'] = $conv_time;
 //
 // Atomic + idempotent: locks the click, dedupes on its ledger key, and
 // writes the row and the click's recomputed value in one transaction.
+// An event (plan §2.2): `event=` names what happened, and the click's goals
+// decide what it is worth — stored and evaluated by the goal engine, which
+// records what the goals reach and tells the traffic source itself. A
+// campaign without goals records its plain conversion below, as it always
+// has, with the event's name kept on the row.
+try {
+	$webEvent = p202RecordWebEvent($db, (int) $mysql['click_id'], $_GET, ['browser' => false]);
+} catch (\Throwable $webEventError) {
+	error_log('gpb: event recording failed for click ' . $mysql['click_id'] . ': ' . $webEventError->getMessage());
+	p202RespondJsonError(500, 'Failed to record event');
+}
+if ($webEvent !== null && $webEvent['status'] !== 'no_goals') {
+	p202RespondWebEvent($webEvent, 'gpb');
+	exit;
+}
+$eventName = $webEvent['event_name'] ?? null;
+
 $reversal = p202ExtractReversal($_GET);
 try {
 	$conversionResult = p202RecordConversion(
@@ -172,6 +189,7 @@ try {
 			'source'          => \Prosper202\Conversion\Ledger\ConversionSource::POSTBACK->value,
 			'reversal'        => $reversal['reversal'],
 			'reversal_ref'    => $reversal['reversal_ref'],
+			'event_name'      => $eventName,
 			// Without a transaction id a retried postback cannot be told apart
 			// from a repeat, so it converts the click once; the writer checks
 			// click_lead under the click lock (as gpx.php does). A reversal

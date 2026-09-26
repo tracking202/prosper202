@@ -189,6 +189,22 @@ if (is_numeric($mysql['click_id'])) {
 		? (string) ($_GET['amount'] ?? '0')
 		: (string) ($cvar_sql_row['click_payout'] ?? '0');
 
+	// An event (plan §2.2): stored on the click and evaluated by its goals,
+	// which record what they reach and tell the traffic source; the
+	// browser pixels of that notification are this response. A campaign
+	// without goals records its plain conversion below, as always.
+	try {
+		$webEvent = p202RecordWebEvent($db, $clickId, $_GET, ['browser' => true]);
+	} catch (\Throwable $webEventError) {
+		error_log('upx: event recording failed for click ' . $clickId . ': ' . $webEventError->getMessage());
+		p202RespondJsonError(500, 'Failed to record event');
+	}
+	if ($webEvent !== null && $webEvent['status'] !== 'no_goals') {
+		p202RespondWebEvent($webEvent, 'upx', true);
+		exit;
+	}
+	$eventName = $webEvent['event_name'] ?? null;
+
 	// Atomic + idempotent: locks the click, dedupes on transaction id, and
 	// applies the click update and conversion_logs insert in one transaction.
 	$conversionResult = ['conv_id' => 0, 'duplicate' => false];
@@ -206,6 +222,7 @@ if (is_numeric($mysql['click_id'])) {
 			'pixel_type'      => 3,
 			'user_agent'      => $_SERVER['HTTP_USER_AGENT'] ?? '',
 			'click_payout'    => $click_payout_for_log,
+			'event_name'      => $eventName,
 			// Without a transaction id a reloaded pixel cannot be told apart
 			// from a repeat, so it converts the click once; the writer checks
 			// click_lead under the click lock (as gpx.php does).
