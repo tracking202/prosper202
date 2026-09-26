@@ -72,7 +72,13 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
         self::assertStringContainsString('BEFORE', $stdout, "the runner did not reach the call:\n$all");
         self::assertStringNotContainsString('UNREACHED', $stdout, 'record_mysql_error() must end the request');
         self::assertSame(0, $exit, "the error page exits cleanly:\n$all");
-        self::assertStringContainsString('A database error has occured', $stdout, "the error page is shown:\n$all");
+        // The page as U8 renders it in both definitions: the danger flash,
+        // its sentence inside the flash's own body, not merely somewhere.
+        self::assertMatchesRegularExpression(
+            '~<div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><strong>A database error has occurred, and it has been recorded\.</strong>~',
+            $stdout,
+            "the error page is shown:\n$all"
+        );
         // The database's own words, not a blank: proves the connection that
         // failed is the one read.
         self::assertMatchesRegularExpression(
