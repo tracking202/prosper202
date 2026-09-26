@@ -4182,7 +4182,9 @@ class UPGRADE
             // Apple signal source's postbacks and SKAN encodings; the
             // conversion ledger — the provenance and dedupe columns on
             // 202_conversion_logs, its MTA outbox and upload batches, and the
-            // campaigns' payout mode; and the identity graph. The DDL is the
+            // campaigns' payout mode; the identity graph; and the goals
+            // engine (definitions, campaign payouts, events, progress and
+            // outcomes). The DDL is the
             // installer's own definitions, so this block cannot drift from
             // them.
             //
@@ -4192,7 +4194,8 @@ class UPGRADE
             $measurement_ok = _upgrade_measurement_tables(array_merge(
                 \Prosper202\Database\Tables\AppTables::getDefinitions(),
                 \Prosper202\Database\Tables\ConversionTables::getDefinitions(),
-                \Prosper202\Database\Tables\IdentityTables::getDefinitions()
+                \Prosper202\Database\Tables\IdentityTables::getDefinitions(),
+                \Prosper202\Database\Tables\GoalTables::getDefinitions()
             ));
 
             if ($measurement_ok) {

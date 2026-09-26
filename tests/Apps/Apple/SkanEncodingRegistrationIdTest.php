@@ -29,11 +29,19 @@ final class SkanEncodingRegistrationIdTest extends TestCase
     /** The encoding create()/update() operate on in these tests: a fine one. */
     private const CURRENT_ROW = [
         'encoding_id' => 5, 'registration_id' => 0, 'fine_value' => 10, 'coarse_value' => null,
-        'event_name' => 'purchase', 'revenue' => '1.00000', 'user_id' => 1,
+        'goal_id' => 9, 'revenue_override' => null, 'user_id' => 1,
     ];
 
-    /** The caller's own iOS registration, as the ownership lookup returns it. */
-    private const MY_IOS_REGISTRATION = ['FROM 202_app_registrations WHERE registration_id = ? AND user_id = ?' => [['platform' => 'ios']]];
+    /**
+     * The caller's own iOS registration, as the ownership lookup returns it,
+     * and goal 9: a live account goal that is a plain event goal, which any
+     * encoding scope may name.
+     */
+    private const MY_IOS_REGISTRATION = [
+        'FROM 202_app_registrations WHERE registration_id = ? AND user_id = ?' => [['platform' => 'ios']],
+        'FROM 202_goals g' => [['scope' => 'account', 'scope_id' => 0, 'archived_at' => null,
+            'definition' => '{"name":"purchase","trigger":{"event":"purchase","where":[]},"threshold":{"count":1},"after":[],"within":null,"repeat":{"mode":"once"},"value":{"type":"none"}}']],
+    ];
 
     /**
      * @dataProvider malformedRegistrationIds
@@ -42,7 +50,7 @@ final class SkanEncodingRegistrationIdTest extends TestCase
     {
         $ctrl = new AppSkanEncodingsController($this->capturingDb(), 1);
         try {
-            $ctrl->create(['registration_id' => $appId, 'fine_value' => 10, 'event_name' => 'purchase']);
+            $ctrl->create(['registration_id' => $appId, 'fine_value' => 10, 'goal_id' => 9]);
             $this->fail('Expected a ValidationException for registration_id ' . var_export($appId, true));
         } catch (ValidationException $e) {
             $this->assertArrayHasKey('registration_id', $e->getFieldErrors());
@@ -64,7 +72,7 @@ final class SkanEncodingRegistrationIdTest extends TestCase
         ]);
         $ctrl = new AppSkanEncodingsController($db, 1);
         try {
-            $ctrl->update(5, ['registration_id' => $appId, 'event_name' => 'renamed']);
+            $ctrl->update(5, ['registration_id' => $appId, 'goal_id' => 9]);
             $this->fail('Expected a ValidationException for registration_id ' . var_export($appId, true));
         } catch (ValidationException $e) {
             $this->assertArrayHasKey('registration_id', $e->getFieldErrors());
@@ -105,7 +113,7 @@ final class SkanEncodingRegistrationIdTest extends TestCase
     {
         $ctrl = new AppSkanEncodingsController($this->capturingDb(self::MY_IOS_REGISTRATION), 1);
         try {
-            $ctrl->create(['registration_id' => $appId, 'fine_value' => 10, 'event_name' => 'purchase']);
+            $ctrl->create(['registration_id' => $appId, 'fine_value' => 10, 'goal_id' => 9]);
         } catch (ValidationException $e) {
             $this->fail('A usable registration_id must not be refused: ' . $e->getMessage());
         } catch (\Throwable) {
@@ -165,7 +173,7 @@ final class SkanEncodingRegistrationIdTest extends TestCase
     {
         $ctrl = new AppSkanEncodingsController($this->capturingDb($lookup), 1);
         try {
-            $ctrl->create(['registration_id' => 7, 'fine_value' => 10, 'event_name' => 'purchase']);
+            $ctrl->create(['registration_id' => 7, 'fine_value' => 10, 'goal_id' => 9]);
             $this->fail('registration 7 was accepted');
         } catch (ValidationException $e) {
             $this->assertStringContainsString($because, $e->getFieldErrors()['registration_id'] ?? '');

@@ -13,6 +13,13 @@ use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\HttpException;
+use Prosper202\Conversion\Ledger\Amount;
+use Prosper202\Database\Connection;
+use Prosper202\Goals\GoalDefinition;
+use Prosper202\Goals\GoalEngineException;
+use Prosper202\Goals\GoalScope;
+use Prosper202\Goals\InvalidGoalDefinition;
+use Prosper202\Goals\PlainGoals;
 use Tracking202\Apps\RegisteredApps;
 
 require_once __DIR__ . '/_base/SetupController.php';
@@ -43,6 +50,7 @@ class MobileAppsController extends SetupController
     private AppSkanEncodingsController $rules;
     private AppPostbacksController $postbacks;
     private UsersController $users;
+    private PlainGoals $plainGoals;
 
     /** @var list<array{kind: string, text: string}> */
     private array $flashes = [];
@@ -66,6 +74,7 @@ class MobileAppsController extends SetupController
         $this->rules = new AppSkanEncodingsController($db, $userId);
         $this->postbacks = new AppPostbacksController($db, $userId);
         $this->users = new UsersController($db);
+        $this->plainGoals = new PlainGoals(new Connection($db));
     }
 
     /** Reading the list needs Setup (the base class); changing anything needs the models permission. */
@@ -321,17 +330,32 @@ class MobileAppsController extends SetupController
      * The kind is a radio because the API accepts exactly one of fine or
      * coarse; changing an existing rule's kind sends the explicit null for
      * the other one in the same request, which is what the API requires.
+     *
+     * The form asks for an event and a revenue, which is what an operator
+     * knows; an encoding names a goal (plan §4.5), so the event becomes the
+     * app's plain goal for it (found, or created — PlainGoals) and the
+     * revenue the encoding's revenue_override. The goal and the rule are
+     * written in one transaction: a rule the API refuses leaves no goal
+     * behind. The API's field errors come back under the fields this form
+     * has (goal_id → Event, revenue_override → Revenue).
      */
     private function saveRule(): void
     {
         $appRowId = (int)($_POST['registration_id'] ?? 0);
         $ruleId = (int)($_POST['rule_id'] ?? 0);
         $kind = (string)($_POST['kind'] ?? 'fine');
+        $eventName = trim((string)($_POST['event_name'] ?? ''));
+        $revenue = trim((string)($_POST['revenue'] ?? ''));
+
+        if ($revenue !== '' && GoalDefinition::amountUnits($revenue) === null) {
+            throw new ValidationException('Validation failed', [
+                'revenue' => 'Enter an amount of 0 or more, with at most 5 decimal places (for example 4.99).',
+            ]);
+        }
 
         $payload = [
             'registration_id' => $appRowId,
-            'event_name' => trim((string)($_POST['event_name'] ?? '')),
-            'revenue' => (string)($_POST['revenue'] ?? '0'),
+            'revenue_override' => $revenue === '' ? null : $revenue,
             'fine_value' => null,
             'coarse_value' => null,
         ];
@@ -345,12 +369,63 @@ class MobileAppsController extends SetupController
             }
         }
 
-        if ($ruleId > 0) {
-            $this->rules->update($ruleId, $payload);
-        } else {
-            $this->rules->create($payload);
-        }
+        $this->inTransaction(function () use ($appRowId, $ruleId, $eventName, $payload): void {
+            $payload['goal_id'] = $this->goalForEvent($appRowId, $eventName);
+            try {
+                if ($ruleId > 0) {
+                    $this->rules->update($ruleId, $payload);
+                } else {
+                    $this->rules->create($payload);
+                }
+            } catch (ValidationException $e) {
+                $errors = [];
+                foreach ($e->getFieldErrors() as $field => $message) {
+                    $errors[['goal_id' => 'event_name', 'revenue_override' => 'revenue'][$field] ?? $field] = $message;
+                }
+                throw new ValidationException($e->getMessage(), $errors, $e);
+            }
+        });
         $this->redirect('tracking202/setup/mobile_apps.php?app=' . $appRowId . '&rule=1');
+    }
+
+    /** The app's plain goal for an event, as a field error on the form's Event field when it cannot be. */
+    private function goalForEvent(int $appRowId, string $eventName): int
+    {
+        if ($eventName === '') {
+            throw new ValidationException('Validation failed', ['event_name' => 'Enter the event this value means, as your app logs it (for example purchase).']);
+        }
+        try {
+            return $this->plainGoals->forEvent($this->getUserId(), GoalScope::REGISTRATION, $appRowId, $eventName, time());
+        } catch (InvalidGoalDefinition) {
+            throw new ValidationException('Validation failed', [
+                'event_name' => 'An event name is 1-64 letters, digits, _ . : or -, starting with a letter, digit or _ (for example level_up).',
+            ]);
+        } catch (GoalEngineException $e) {
+            throw $e->reason === GoalEngineException::NOT_FOUND
+                ? new NotFoundException($e->getMessage(), $e)
+                : new ConflictException($e->getMessage(), [], $e);
+        }
+    }
+
+    /**
+     * Run a write that spans the goal and the rule in one transaction.
+     *
+     * @param callable(): void $work
+     */
+    private function inTransaction(callable $work): void
+    {
+        if (!$this->db->begin_transaction()) {
+            throw new \RuntimeException('Could not start a transaction for the rule.');
+        }
+        try {
+            $work();
+            if (!$this->db->commit()) {
+                throw new \RuntimeException('Could not commit the rule.');
+            }
+        } catch (\Throwable $e) {
+            $this->db->rollback();
+            throw $e;
+        }
     }
 
     private function removeRule(): void
@@ -368,17 +443,27 @@ class MobileAppsController extends SetupController
     {
         $appRowId = (int)($_POST['registration_id'] ?? 0);
         $starter = [
-            ['fine_value' => 1,  'coarse_value' => null,     'event_name' => 'install',       'revenue' => 0],
-            ['fine_value' => 10, 'coarse_value' => null,     'event_name' => 'trial_started', 'revenue' => 0],
-            ['fine_value' => 40, 'coarse_value' => null,     'event_name' => 'purchase',      'revenue' => 0],
-            ['fine_value' => null, 'coarse_value' => 'low',    'event_name' => 'install',       'revenue' => 0],
-            ['fine_value' => null, 'coarse_value' => 'medium', 'event_name' => 'trial_started', 'revenue' => 0],
-            ['fine_value' => null, 'coarse_value' => 'high',   'event_name' => 'purchase',      'revenue' => 0],
+            ['fine_value' => 1,  'coarse_value' => null,     'event' => 'install'],
+            ['fine_value' => 10, 'coarse_value' => null,     'event' => 'trial_started'],
+            ['fine_value' => 40, 'coarse_value' => null,     'event' => 'purchase'],
+            ['fine_value' => null, 'coarse_value' => 'low',    'event' => 'install'],
+            ['fine_value' => null, 'coarse_value' => 'medium', 'event' => 'trial_started'],
+            ['fine_value' => null, 'coarse_value' => 'high',   'event' => 'purchase'],
         ];
         $added = 0;
         foreach ($starter as $rule) {
             try {
-                $this->rules->create($rule + ['registration_id' => $appRowId]);
+                // Each rule with its goal, or neither: a value already mapped
+                // keeps its rule, and the goal it would have named is not
+                // created for nothing.
+                $this->inTransaction(function () use ($rule, $appRowId): void {
+                    $this->rules->create([
+                        'registration_id' => $appRowId,
+                        'fine_value' => $rule['fine_value'],
+                        'coarse_value' => $rule['coarse_value'],
+                        'goal_id' => $this->goalForEvent($appRowId, $rule['event']),
+                    ]);
+                });
                 $added++;
             } catch (ConflictException) {
                 // A value already mapped keeps the rule it has: the starter
@@ -609,6 +694,18 @@ class MobileAppsController extends SetupController
         // Belt and braces: the filter is the API's, this keeps the page
         // honest if a later change widens it.
         $rows = array_values(array_filter($rows, static fn (array $r): bool => (int)($r['registration_id'] ?? 0) === $registrationId));
+        // What each rule means, in the form's own terms: the event its goal
+        // waits for (else the goal's name) and what a decoded postback is
+        // worth (the rule's override, else the goal's fixed value, else 0).
+        $goals = $this->plainGoals->describe($this->getUserId(), array_map(static fn (array $r): int => (int)$r['goal_id'], $rows));
+        foreach ($rows as &$row) {
+            $goal = $goals[(int)$row['goal_id']] ?? null;
+            $row['event_name'] = $goal['event'] ?? ($goal['name'] ?? ('goal ' . (int)$row['goal_id']));
+            $row['revenue'] = $row['revenue_override'] !== null
+                ? (string)$row['revenue_override']
+                : Amount::fromUnits($goal['fixed_units'] ?? 0);
+        }
+        unset($row);
         // Fine values in numeric order, then the three coarse buckets in
         // their own order. Spelled as a map rather than array_search(...) ?: 0,
         // which returns 0 both for 'low' (index 0) and for no match at all —

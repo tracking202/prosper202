@@ -147,7 +147,7 @@ func TestAppEncodingCreateDemandsExactlyOneValueKind(t *testing.T) {
 	writeTestConfig(t, tmp, "http://127.0.0.1:0", "test-key")
 
 	// Neither kind.
-	_, _, err := executeCommand("app", "encoding", "create", "--event-name", "purchase")
+	_, _, err := executeCommand("app", "encoding", "create", "--goal-id", "12")
 	if err == nil {
 		t.Fatal("expected a validation error for a rule with no value")
 	}
@@ -156,16 +156,16 @@ func TestAppEncodingCreateDemandsExactlyOneValueKind(t *testing.T) {
 		t.Errorf("hint should name the flags, got %q", hint)
 	}
 
-	// No event name.
+	// No goal.
 	_, _, err = executeCommand("app", "encoding", "create", "--fine-value", "10")
-	if err == nil || !strings.Contains(err.Error(), "--event-name") {
-		t.Fatalf("expected the missing --event-name to be named, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "--goal-id") {
+		t.Fatalf("expected the missing --goal-id to be named, got %v", err)
 	}
 	assertValidationError(t, err)
 
 	// Both kinds.
 	_, _, err = executeCommand("app", "encoding", "create",
-		"--event-name", "purchase", "--fine-value", "10", "--coarse-value", "high")
+		"--goal-id", "12", "--fine-value", "10", "--coarse-value", "high")
 	if err == nil {
 		t.Fatal("expected a validation error for a rule with both values")
 	}
@@ -286,7 +286,7 @@ func TestAppEncodingNamesTheCommandForARefusedRegistration(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	_, _, err := executeCommand("app", "encoding", "create", "--registration-id", "9", "--fine-value", "1", "--event-name", "install")
+	_, _, err := executeCommand("app", "encoding", "create", "--registration-id", "9", "--fine-value", "1", "--goal-id", "12")
 	if err == nil {
 		t.Fatal("expected the server's 422 to surface")
 	}

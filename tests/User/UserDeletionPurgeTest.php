@@ -107,6 +107,27 @@ final class UserDeletionPurgeTest extends TestCase
         $this->assertSame('202_users', end($cascade)['resource'], 'the soft delete is last, as it runs');
     }
 
+    public function testThePurgeDeletesEveryGoalTable(): void
+    {
+        $tables = array_map(static fn ($definition): string => $definition->tableName, \Prosper202\Database\Tables\GoalTables::getDefinitions());
+        sort($tables);
+        $purged = [];
+        foreach (\Prosper202\User\UserDataPurge::GOAL_STATEMENTS as $sql) {
+            $this->assertSame(1, preg_match('/^DELETE (?:\w+ )?FROM (\w+)/', $sql, $m), $sql);
+            $purged[] = $m[1];
+        }
+        sort($purged);
+        $this->assertSame($tables, $purged, 'a goal table with no purge statement outlives the user who owned its rows');
+
+        $byTable = [];
+        foreach (\Prosper202\User\UserDataPurge::cascade(42) as $entry) {
+            $byTable[$entry['resource']] = $entry['action'];
+        }
+        foreach ($tables as $table) {
+            $this->assertSame('delete', $byTable[$table] ?? null, $table . ': the preview names it');
+        }
+    }
+
     public function testThePurgeHasADecisionForEveryAppTable(): void
     {
         $tables = array_map(static fn ($definition): string => $definition->tableName, AppTables::getDefinitions());

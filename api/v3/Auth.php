@@ -141,6 +141,7 @@ final readonly class Auth
         'rotators',
         'attribution',
         'apps',
+        'goals',
         'users',
         'system',
         'sync',

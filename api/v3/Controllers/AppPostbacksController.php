@@ -473,6 +473,8 @@ class AppPostbacksController
             $groupsOut[$key]['decoded'] += $count;
             $revenue = (float)$rule['revenue'] * $count;
             $groupsOut[$key]['decoded_revenue'] = round($groupsOut[$key]['decoded_revenue'] + $revenue, 5);
+            // Keyed by the goal's name: decoded postbacks report "reached
+            // level 3" in the vocabulary every other surface uses (§5.5).
             $eventName = (string)$rule['event_name'];
             if (!isset($groupsOut[$key]['events'][$eventName])) {
                 $groupsOut[$key]['events'][$eventName] = ['count' => 0, 'revenue' => 0.0];
@@ -1087,13 +1089,21 @@ class AppPostbacksController
 
     /**
      * The user's SKAN encodings, indexed by registration for resolution.
+     * Each decodes to its goal's name, worth the encoding's revenue_override
+     * when it has one (tiered decoding), else the goal's own fixed value,
+     * else nothing. A goal is named by its CURRENT version: the report is a
+     * reading of what the operator calls the outcome today.
      *
      * @return array{fine: array<int, array<int, array{event_name: string, revenue: string}>>,
      *               coarse: array<int, array<string, array{event_name: string, revenue: string}>>}
      */
     private function encodings(): array
     {
-        $sql = 'SELECT registration_id, fine_value, coarse_value, event_name, revenue FROM 202_app_skan_encodings WHERE user_id = ?';
+        $sql = 'SELECT e.encoding_id, e.registration_id, e.fine_value, e.coarse_value, e.goal_id, e.revenue_override, g.name, v.definition
+                FROM 202_app_skan_encodings e
+                LEFT JOIN 202_goals g ON g.goal_id = e.goal_id AND g.user_id = e.user_id
+                LEFT JOIN 202_goal_versions v ON v.goal_id = g.goal_id AND v.version = g.current_version
+                WHERE e.user_id = ?';
         $stmt = $this->prepare($sql);
         $this->bind($stmt, 'i', $this->userId);
         $this->execute($stmt, 'Encodings query failed');
@@ -1102,7 +1112,15 @@ class AppPostbacksController
         $encodings = ['fine' => [], 'coarse' => []];
         while ($row = $result->fetch_assoc()) {
             $registrationId = (int)$row['registration_id'];
-            $encoding = ['event_name' => (string)$row['event_name'], 'revenue' => (string)$row['revenue']];
+            if ($row['name'] === null) {
+                // The goal is gone (it cannot be archived or deleted while an
+                // encoding names it, so this is damage): say so, and let the
+                // value count as undecoded rather than as some other goal.
+                error_log('p202 app report: SKAN encoding ' . (int)$row['encoding_id'] . ' names goal ' . (int)$row['goal_id'] . ', which does not exist');
+                continue;
+            }
+            $revenue = $row['revenue_override'] !== null ? (string)$row['revenue_override'] : self::fixedValueOf($row['definition']);
+            $encoding = ['event_name' => (string)$row['name'], 'revenue' => $revenue];
             if ($row['fine_value'] !== null) {
                 $encodings['fine'][$registrationId][(int)$row['fine_value']] = $encoding;
             } elseif ($row['coarse_value'] !== null) {
@@ -1111,6 +1129,23 @@ class AppPostbacksController
         }
         $stmt->close();
         return $encodings;
+    }
+
+    /** A goal's fixed value as a decimal string, or '0' when it has none. */
+    private static function fixedValueOf(mixed $definitionJson): string
+    {
+        if (!is_string($definitionJson)) {
+            return '0';
+        }
+        try {
+            $definition = \Prosper202\Goals\GoalDefinition::fromJson($definitionJson);
+        } catch (\Prosper202\Goals\InvalidGoalDefinition) {
+            return '0';
+        }
+
+        return $definition->valueType === 'fixed' && $definition->valueUnits !== null
+            ? \Prosper202\Conversion\Ledger\Amount::fromUnits($definition->valueUnits)
+            : '0';
     }
 
     /**

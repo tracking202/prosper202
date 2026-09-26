@@ -1,6 +1,6 @@
 # Measurement rewrite: app measurement (iOS + Android) and multi-touch attribution
 
-Status: **in progress.** PR 0 (legacy endpoints), PR 1 (the conversion ledger), PR 2 (identity capture) and PR 3 (the app core reshape) are built; the rest is proposal.
+Status: **in progress.** PR 0 (legacy endpoints), PR 1 (the conversion ledger), PR 2 (identity capture), PR 3 (the app core reshape) and PR 4 (the goals engine) are built; the rest is proposal.
 
 ## Scope
 
@@ -1124,7 +1124,9 @@ because the same app is often sold under different deals.
     the new version's row for the same `(subject, goal)` where one exists,
     and **soft-deleted** (`softDelete()`, which recomputes the click total
     under the click lock) where the new version reaches nothing for the
-    subject; a row cannot be superseded by a row that does not exist.
+    subject; a row cannot be superseded by a row that does not exist. The
+    deletion carries `superseded_reason = 'reevaluation'` so a later
+    revival can tell it from an operator's (§5.7).
 
   Every read of `202_goal_outcomes` — the funnel, the app report, the
   per-subject breakdown, the CLI — filters `superseded_at IS NULL` through
@@ -1344,6 +1346,164 @@ without changing anything here.
 - Meta referrer decryption: AES-256-GCM with the per-app key.
 - Huawei, Samsung and Xiaomi stores. Huawei reports milliseconds.
 - Deferred deep links, and `assetlinks.json`.
+
+### 5.7 As built: decisions (PR 4)
+
+What PR 4 settled, where it stops short of §2.2, §4.5 and §5.5, and which PR
+picks up the rest. The engine is `Prosper202\Goals` (`GoalDefinition`,
+`GoalEvaluator`, `GoalEngine`, `MysqlGoalRepository`, `PlainGoals`); the API
+is `GoalsController`; the CLI is `p202 goal …`.
+
+- **Owners (scopes).** A goal belongs to a campaign, an app registration or
+  the account. `after` may only name goals of the same scope, and names are
+  unique per owner. A campaign evaluates its own goals from the start, and
+  the goals it attaches from another scope from the moment they were
+  attached (`starts_at`); a prerequisite starts when the goal that needs it
+  does.
+- **Versions.** `202_goal_versions` keeps every definition; a version is
+  immutable and an edit adds one. An event is evaluated under the version
+  whose `effective_at` is at or before its `received_at`, so an edit starts
+  the goal afresh for later arrivals and never re-decides the past on its
+  own. `POST /goals/{id}/reevaluation` is the explicit way to apply the
+  current version to past events. It rebases each subject (the `rebases`
+  column on `202_goal_subjects`) and retires the older versions' outcomes
+  with reason `reevaluation`, superseding their ledger rows where there is
+  a replacement and soft-deleting them where there is none. It handles at
+  most 1000 subjects per call (`GoalEngine::MAX_SUBJECTS_PER_CALL`), and
+  the preview says how many subjects it would touch. It re-decides the
+  goal together with its dependents (every goal whose `after` chain leads
+  to it, any version's `after` counting): their outcomes were evaluated
+  against the goal's, so a prerequisite that stops matching retires the
+  outcomes reached behind it and one that starts matching writes the ones
+  waiting on it, and the progress of exactly those goals is replaced with
+  them (`ReevaluationReconcilesDependentsTest`). Dependents never add
+  subjects, so the cap is unchanged; a dependent version the evaluator
+  disables as `invalid_definition` or `prerequisite_missing` is left as
+  it is.
+- **Archive, not delete.** `DELETE /goals/{id}` archives: versions,
+  outcomes and their conversions are kept, and archive time ends the goal's
+  span (`ends_at`), so a replay sees what the incremental evaluation saw.
+  It is refused while an SKAN encoding names the goal or another goal waits
+  for it in `after`. Deleting a registration archives its goals.
+- **Order and replay.** Events are ordered by (`min(occurred_at,
+  received_at)`, `received_at`, `event_id` byte order). An in-order event is
+  evaluated incrementally from stored progress. An event that sorts earlier
+  than the newest stored one replays the subject from its stored events
+  under the per-subject lock row. Outcomes that moved are superseded with
+  reason `replay`, never duplicated. A replay does not retire outcomes it
+  does not recompute, which is why detaching a goal keeps the conversions
+  it already recorded.
+- **Evaluator.** Goals run in topological order (Kahn's algorithm, lowest
+  id first); a goal on an `after` cycle is disabled with its reason, as is
+  one whose stored version cannot be parsed (§7.1). A window with no anchor
+  makes the outcome ineligible (`no_click` / `no_install`), never payable.
+  Sums are computed in integer units of 0.00001. The install pseudo-event's
+  id is `@install`.
+- **Bounded cost per event.** A sum threshold with `repeat: each` requires
+  `max` (a sum can jump past many multiples in one event; a count cannot,
+  so a count's `each` may stay unbounded). A stored definition without it
+  is `invalid_definition`. The number of n an event reaches is computed
+  (`floor(sum / gte)`, capped), never searched for. A summand outside
+  ±999999.99999 does not count; event `revenue` outside it is refused at
+  intake by name; the running sum is held between −10^15 units and
+  `cap × gte`, so it never leaves a 64-bit integer. `POST /goals/evaluate`
+  answers at most 10,000 outcomes (`EvaluationTooLarge` → `422 events`).
+  `SumBoundsTest` pins what the vectors cannot hold. A reconciliation
+  reads at most 100,000 live outcomes of a subject
+  (`GoalEngine::MAX_LIVE_OUTCOMES_PER_SUBJECT`) and refuses the subject
+  past that rather than reconciling a truncated read.
+- **Payability** (`GoalEngine::payability`). A goal the campaign does not
+  pay for is tracked at its own value, with note `not_payable_on_campaign`.
+  A campaign payout overrides the goal's value. A `fixed` value pays, and
+  `none` is tracked with no value. `from_property` pays only when the
+  event's revenue is trusted. An untrusted value is kept and not paid
+  (`untrusted_value`). Under `payout_mode = replace`, the click takes its
+  newest counted row, so a replayed outcome's replacement row becomes the
+  click's value, which is the intended reading.
+- **One writer.** Goal outcomes reach the ledger only through
+  `MysqlConversionRepository` (its in-transaction variants), with
+  `DedupeKey::goal()` keys and `ConversionSource::GOAL`. Every read of
+  outcomes goes through `MysqlGoalRepository::liveOutcomes()`.
+  `GoalWritersTest` pins both.
+- **SKAN encodings name goals.** `202_app_skan_encodings` has `goal_id` and
+  an optional `revenue_override` in place of `event_name` and `revenue`.
+  Until the on-device evaluator ships (PR 8), an encoding can only name a
+  *plain event* goal (one event, no `where`, count 1, no `after`, no
+  `within`, repeat once) of its registration or of the account. A goal an
+  encoding names cannot be edited out of that shape. Setup › Mobile Apps
+  still asks for an event name and turns it into a plain goal through
+  `PlainGoals`, in the same transaction as the encoding.
+- **Reads that are POSTs.** `/goals/validate` and `/goals/evaluate` compute
+  and write nothing, so they take read scope, are exempt from staging, and
+  the Go CLI never stamps them as staged (`readOnlyPost`).
+- **Vectors.** `tests/fixtures/app-sdk-contract/goals/` holds
+  `evaluator.json` and `definitions.json`, plus a `README.md` that is the
+  format's specification. PHP runs them through `GoalVectorsTest`; the
+  Swift evaluator (PR 8) runs the same files.
+- **Deferred.**
+  - The encoding versioning with the 35-day horizon (§5.5) goes to PR 8,
+    with the evaluator that needs it.
+  - `notify_traffic_source` is stored on campaign goals but nothing fires
+    yet. The notification outbox goes to PR 5 (installs) and 4b (web
+    events).
+  - Install subjects, `app_registration_id` on outcomes, the install
+    goal's ledger rows and `trust_client_revenue` go to PR 5.
+    `GoalSubject` and the evaluator already model an install subject, but
+    no intake produces one.
+  - There is no HTTP event intake yet (PRs 4b and 5). The live pass
+    drives the engine through `tests/live/goals-ingest.php`.
+  - There are no PHP CLI (`bin/p202`) goal commands, matching PR 3; the
+    Go CLI is the CLI.
+- **Revival restores the ledger row, whichever retirement happened.** A
+  retired outcome that a reconciliation returns to (the same goal, version,
+  n and event — the outcome's UNIQUE key names the event) is revived, not
+  written twice. The path is real: a prerequisite that matches, stops
+  matching and matches again retires its dependent with no replacement
+  (row deleted) and then revives it, and until this was fixed the revived
+  dependent was live and unpaid (`RevivalRestoresTheLedgerTest`, and the
+  last re-evaluation section of `tests/live/goals.sh`). Both retirements
+  and the revival go through the ledger's writer, in the engine's
+  transaction: `MysqlConversionRepository::retireGoalRowInTransaction()`
+  soft-deletes and marks the row with the engine's reason in one
+  statement, and `reviveGoalRowInTransaction()` restores it by state —
+  engine-superseded: the mark is lifted; engine-deleted (deleted, marked,
+  no `superseded_by`): undeleted and unmarked; deleted without the mark
+  (an operator's DELETE or a subid clear): left deleted, because the engine
+  restores what it retired, never what someone else removed; already
+  counting: untouched. Either way the click is recomputed and the row
+  queued for MTA. The row must be the outcome's own (its click and
+  `DedupeKey::goal()` key); a link to any other row is refused as
+  `integrity` and the subject's transaction rolls back, so a revival never
+  pays for an outcome the row does not record. A second live row for the
+  key cannot exist — UNIQUE `(click_id, dedupe_key)` counts deleted rows.
+  A revived row keeps the value it was recorded at (a campaign payout
+  edited in between does not re-price it, as it re-prices no other
+  conversion). Under `payout_mode = replace` "latest" stays insertion
+  order: a revived row keeps its `conv_id`, so it is the click's value only
+  when no newer counted row exists — at the third step of the scenario
+  above, on a replace campaign, the prerequisite's new row is.
+- **LTV follows the row.** Deleting a linked conversion voids its revenue
+  event (`void:conv:<id>`); a revival posts it again as a new event of the
+  original's type and amount keyed `reinstate:conv:<id>:<g>`, and the next
+  deletion voids that with `void:conv:<id>:<g>`, so every cycle compensates
+  exactly once and the reconcile jobs' order count (purchases minus
+  `void:` adjustments) still agrees with the cache. `reinstate:` is a
+  reserved idempotency prefix.
+- **Notifications for revived and re-written outcomes (for 4b and 5).**
+  Decided here, built with the outbox. A traffic source's knowledge is per
+  `(subject, goal, n)`, not per row: (1) a *revived* row keeps its
+  `conv_id`, so its `reached` key `(conv_id, pixel, kind)` already exists
+  and it is never announced again; if its retirement queued a
+  `retraction` that is still pending, the retraction is cancelled; if the
+  retraction was delivered, the revival queues a `correction` (previous
+  value 0), sent only to a pixel with a correction URL and otherwise
+  stored `suppressed`, as every correction is. (2) "An outcome the old version never reached" means no
+  row for that `(subject, goal, n)` was ever announced, retired rows
+  included — so at the third step of the scenario above, the prerequisite's
+  new-version row, written for an `n` whose earlier row was announced and
+  then retired, is a `correction`, not a fresh `reached`. Keying the rule
+  on the immediate predecessor alone would re-announce it, and a network
+  would count the same outcome twice.
 
 ---
 
@@ -2020,7 +2180,7 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 | 1b | **Breakdown reads:** `GET /clicks/{id}/conversions` and `p202 click conversions <id>`, `/conversions` filters, the click-history breakdown view, Group Overview's Goal/source level, and the Transaction ID level fixed to sum rows | 1, 4 (for goal names); U2 |
 | 2 | **Identity capture:** `p202vid`, LP first-party id (in `landing.php`, with `p202.consent()`), signed `cust` on clicks and conversions, `202_identity_*`, `202_clicks_visitor`, consent switch and per-campaign `identity_signals`. **Built; `tests/live/identity-graph.sh`, `tests/browser/specs/identity-landing.spec.js`.** | — |
 | 3 | **App core reshape** (§4): registry, `AppIdentity`, token rename, verdicts, `PublicIntake`, retention, user-deletion purge, `/apps` and `p202 app` renames, legacy guard deleted. **Built; `tests/live/app-core.sh` (with `setup-mobile-apps.sh`, `analyze-mobile-apps.sh` and both mobile-apps browser specs ported). Decisions in §4.7.** | — |
-| 4 | **Goals engine** (core): definitions, validation, versioning, server evaluator keyed by subject (click or install), cross-language vectors, campaign goal payouts, SKAN encodings pointing at goals, `/goals` API and `p202 goal …` | 1, 3 |
+| 4 | **Goals engine** (core): definitions, validation, versioning, server evaluator keyed by subject (click or install), cross-language vectors, campaign goal payouts, SKAN encodings pointing at goals, `/goals` API and `p202 goal …`. **Built; `tests/live/goals.sh` (with `app-core.sh`, `conversion-ledger.sh`, `setup-mobile-apps.sh`, `analyze-mobile-apps.sh` re-run and both mobile-apps browser specs), vectors in `tests/fixtures/app-sdk-contract/goals/`. Decisions in §5.7.** | 1, 3 |
 | 4b | **Web events:** `event=` on pixels and postbacks, `POST /events`, `p202.js` `track()`, the web campaign goal editor, the Transactions ID docs pointing to goals | 2, 4 |
 | 5 | **Android intake:** install token, `MatchState`, installs and events endpoints, conversions through goals, traffic-source notify, pending-click cron | 1, 3, 4 |
 | 6 | **Play Integrity** (opt-in modes) | 5 |

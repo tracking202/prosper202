@@ -439,6 +439,16 @@ func (c *Client) requireFeature(flag, flagName, remedy string) error {
 	}
 }
 
+// readOnlyPost lists the POST endpoints that compute over their body and
+// store nothing — reads that arrive as POST because the payload is their
+// input. There is no proposal to record for them, so --staged never stamps
+// them (the server would answer "staged is not supported").
+var readOnlyPost = map[string]bool{
+	"apps/verify":    true, // a postback's signature
+	"goals/validate": true, // a goal definition
+	"goals/evaluate": true, // definitions against events
+}
+
 func (c *Client) do(method, path string, params map[string]string, body interface{}) ([]byte, error) {
 	return c.doWithHeaders(method, path, params, body, nil)
 }
@@ -449,11 +459,10 @@ func (c *Client) doWithHeaders(method, path string, params map[string]string, bo
 	if stagedMode &&
 		(method == "POST" || method == "PUT" || method == "PATCH" || method == "DELETE") &&
 		!strings.HasPrefix(strings.TrimLeft(path, "/"), "staged-changes") &&
-		// apps/verify computes over the submitted payload and stores
-		// nothing — a read that arrives as POST because the postback JSON
-		// is its input. There is no proposal to record; stamping staged=1
-		// would only earn the server's "staged is not supported" rejection.
-		strings.TrimLeft(path, "/") != "apps/verify" &&
+		// Reads that arrive as POST (readOnlyPost) record no proposal;
+		// stamping staged=1 would only earn the server's "staged is not
+		// supported" rejection.
+		!readOnlyPost[strings.TrimLeft(path, "/")] &&
 		params["dry_run"] == "" {
 		// A dry-run preview is a read; staging it would be rejected by the
 		// server's mutual-exclusion check, so an explicit --dry-run wins

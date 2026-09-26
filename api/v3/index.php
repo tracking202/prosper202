@@ -523,6 +523,31 @@ try {
             $r->post('/{id}/app-token/rotate', fn($ctx) => $crud($apps)->rotateAppToken((int)$ctx['id']));
         });
 
+        // ── Goals (plan §2.2, §5.5) ─────────────────────────────────────
+        // Definitions and versions, the campaigns that pay for them, their
+        // outcomes, and the two computations (validate, evaluate) that write
+        // nothing. The literal paths come before /goals/{id}.
+        $router->group('/goals', function (Router $r) use ($crud, $idempotent, $queryParams, $payload) {
+            $cls = \Api\V3\Controllers\GoalsController::class;
+            $id = static fn(array $ctx, string $key = 'id'): int => \Api\V3\Controllers\GoalsController::pathId($ctx[$key]);
+
+            $r->get('',               fn() => $crud($cls)->list($queryParams));
+            $r->post('',              fn() => ['_status' => 201] + $idempotent('goals', $payload, fn() => $crud($cls)->create($payload)));
+            $r->post('/validate',     fn() => $crud($cls)->validate($payload));
+            $r->post('/evaluate',     fn() => $crud($cls)->evaluate($payload));
+            $r->get('/{id}',          fn($ctx) => $crud($cls)->get($id($ctx)));
+            $r->put('/{id}',          fn($ctx) => $crud($cls)->update($id($ctx), $payload));
+            $r->delete('/{id}',       fn($ctx) => tap($crud($cls), fn($c) => $c->delete($id($ctx))));
+            $r->get('/{id}/versions', fn($ctx) => $crud($cls)->versions($id($ctx)));
+            $r->get('/{id}/versions/{version}', fn($ctx) => $crud($cls)->version($id($ctx), $id($ctx, 'version')));
+            $r->get('/{id}/outcomes', fn($ctx) => $crud($cls)->outcomes($id($ctx), $queryParams));
+            $r->get('/{id}/campaigns', fn($ctx) => $crud($cls)->campaigns($id($ctx)));
+            $r->put('/{id}/campaigns/{campaignId}', fn($ctx) => $crud($cls)->attachCampaign($id($ctx), $id($ctx, 'campaignId'), $payload));
+            $r->delete('/{id}/campaigns/{campaignId}', fn($ctx) => tap($crud($cls), fn($c) => $c->detachCampaign($id($ctx), $id($ctx, 'campaignId'))));
+            $r->get('/{id}/reevaluation',  fn($ctx) => $crud($cls)->reevaluationPreview($id($ctx), $queryParams));
+            $r->post('/{id}/reevaluation', fn($ctx) => $crud($cls)->reevaluate($id($ctx), $payload));
+        });
+
         // ── Users (admin-gated writes, self-or-admin for reads) ──────────
         $router->group('/users', function (Router $r) use ($db, $auth, $idempotent, $payload) {
             $make = fn() => new \Api\V3\Controllers\UsersController($db);
@@ -637,6 +662,7 @@ try {
                 'rotators'      => '/rotators',
                 'attribution'   => '/attribution/models',
                 'apps'          => '/apps/{id|skan-encodings|postbacks|report|verify|schema}',
+                'goals'         => '/goals/{id|validate|evaluate}',
                 'users'         => '/users',
                 'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics}',
                 'sync'          => '/sync/{plan|jobs|status|history|re-sync}',
@@ -665,6 +691,11 @@ try {
         $previewRouter->delete('/attribution/models/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionController::class)->deleteModelPreview((int)$ctx['id']));
         $previewRouter->delete('/apps/skan-encodings/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AppSkanEncodingsController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->delete('/apps/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AppRegistrationsController::class)->deletePreview((int)$ctx['id']));
+        $previewRouter->delete('/goals/{id}', fn($ctx) => $crud(\Api\V3\Controllers\GoalsController::class)->deletePreview(\Api\V3\Controllers\GoalsController::pathId($ctx['id'])));
+        $previewRouter->delete('/goals/{id}/campaigns/{campaignId}', fn($ctx) => $crud(\Api\V3\Controllers\GoalsController::class)->detachCampaignPreview(
+            \Api\V3\Controllers\GoalsController::pathId($ctx['id']),
+            \Api\V3\Controllers\GoalsController::pathId($ctx['campaignId'])
+        ));
         $previewRouter->group('/users', function (Router $r) use ($db, $auth) {
             $make = fn() => new \Api\V3\Controllers\UsersController($db);
             $r->delete('/{id}', function ($ctx) use ($auth, $make) {
@@ -731,6 +762,14 @@ try {
         $r->put('/{id}', $stageable);
         $r->delete('/{id}', $stageable);
         $r->post('/{id}/app-token/rotate', $stageable);
+    });
+    $stageableRouter->group('/goals', function (Router $r) use ($stageable) {
+        $r->post('', $stageable);
+        $r->put('/{id}', $stageable);
+        $r->delete('/{id}', $stageable);
+        $r->put('/{id}/campaigns/{campaignId}', $stageable);
+        $r->delete('/{id}/campaigns/{campaignId}', $stageable);
+        $r->post('/{id}/reevaluation', $stageable);
     });
     $stageableRouter->group('/users', function (Router $r) use ($stageable) {
         $r->post('', $stageable);
@@ -835,6 +874,13 @@ try {
             // override: verify?staged=1 stays a read, so a read-scoped key
             // reaches the staging branch's "staged is not supported here"
             // 422 instead of a baffling 403 about stage scope.
+            $scopeAction = 'read';
+        }
+        if ($method === 'POST' && ($path === '/goals/validate' || $path === '/goals/evaluate')) {
+            // Validating a definition and evaluating definitions against
+            // events compute over the body and store nothing: reads that
+            // arrive as POST because the definitions are their input. After
+            // the staged override for the same reason as /apps/verify.
             $scopeAction = 'read';
         }
         if ($method === 'POST' && preg_match('#^/staged-changes/[^/]+/discard$#', $path) === 1) {

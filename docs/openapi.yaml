@@ -127,6 +127,8 @@ tags:
     description: User, role, API key, and preference management
   - name: Apps
     description: App measurement — the app registry (iOS and Android), Apple's SKAdNetwork and AdAttributionKit postback receivers, SKAN encodings, the report, and the runtime schema
+  - name: Goals
+    description: Goals — versioned, data-only definitions of what counts as a conversion, owned by a campaign, an app registration or the account; the campaigns that pay for them; their outcomes; validation, evaluation and re-evaluation
 
 paths:
   # ─── System ──────────────────────────────────────────────────────────
@@ -1779,6 +1781,439 @@ paths:
                   data:
                     $ref: "#/components/schemas/AttributionExport"
 
+  # ─── Goals ───────────────────────────────────────────────────────────
+
+  /goals:
+    get:
+      tags: [Goals]
+      summary: List goals
+      description: Live goals by default. Filter by owner with `campaign_id`, `registration_id` or `scope=account`.
+      operationId: listGoals
+      parameters:
+        - {name: campaign_id, in: query, schema: {type: integer}, description: "Only this campaign's own goals"}
+        - {name: registration_id, in: query, schema: {type: integer}, description: "Only this app registration's goals"}
+        - {name: scope, in: query, schema: {type: string, enum: [campaign, registration, account]}}
+        - {name: scope_id, in: query, schema: {type: integer}}
+        - {name: include_archived, in: query, schema: {type: string, enum: ["0", "1"]}}
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Paginated goals
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GoalListResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    post:
+      tags: [Goals]
+      summary: Create a goal (version 1)
+      description: |
+        The body is strict: an unknown field is a `422` naming it, and ids
+        and amounts are read raw (`"1e3"` or `1.5` for an id is refused, not
+        cast). The definition's format is in
+        `documentation/api/22-goals.md`; every error names its path
+        (`definition.threshold.count`). A campaign goal is payable on its
+        campaign by default when its value is not `none` (`payable: false`
+        tracks it only; `payout` overrides the value there). Goal names are
+        unique per owner (`409`). `after` names live goals of the same owner
+        only. Honors `Idempotency-Key`.
+      operationId: createGoal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GoalCreate"
+      responses:
+        "201":
+          description: Goal created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GoalResponse"
+        "409":
+          description: A goal of this name already exists for this owner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /goals/validate:
+    post:
+      tags: [Goals]
+      summary: Validate a definition without saving it
+      description: A read (`goals:read` suffices; never staged). Answers the canonical form, or `422` with every error by path.
+      operationId: validateGoal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [definition]
+              properties:
+                definition:
+                  $ref: "#/components/schemas/GoalDefinition"
+                goal_id:
+                  type: integer
+                  description: The goal's own id, so `after` may not name it
+      responses:
+        "200":
+          description: The definition is valid
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      valid: {type: boolean}
+                      definition: {$ref: "#/components/schemas/GoalDefinition"}
+                      plain_event: {type: boolean, description: "Whether an SKAN encoding may name it"}
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /goals/evaluate:
+    post:
+      tags: [Goals]
+      summary: Evaluate definitions against events, writing nothing
+      description: |
+        The evaluator vectors' format (`tests/fixtures/app-sdk-contract/goals/README.md`):
+        `{goals, subject, events}` in, `{outcomes, disabled, progress}` out. A
+        goal may be `{goal_id, definition}` (one version effective from 0) or
+        `{goal_id, versions, starts_at?, ends_at?}`. At most 50 goals and
+        1000 events, and an answer of at most 10,000 outcomes: an evaluation
+        that reaches more is refused (`422`, field `events`) as soon as it
+        passes the budget. An event's `revenue` is at most ±999999.99999
+        (`422` naming `events[i].revenue`). A read (`goals:read` suffices;
+        never staged).
+      operationId: evaluateGoals
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [goals, subject, events]
+              properties:
+                goals: {type: array, items: {type: object}}
+                subject: {type: object}
+                events: {type: array, items: {type: object}}
+      responses:
+        "200":
+          description: The evaluation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      outcomes: {type: array, items: {$ref: "#/components/schemas/GoalEvaluatedOutcome"}}
+                      disabled: {type: array, items: {type: object}}
+                      progress: {type: array, items: {type: object}}
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /goals/{id}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Goals]
+      summary: Get a goal
+      description: The current definition, the campaigns paying for it and its live outcome count.
+      operationId: getGoal
+      responses:
+        "200":
+          description: The goal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GoalResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Goals]
+      summary: Edit a goal (a new version)
+      description: |
+        `{"definition": …}` — the whole new definition. A definition whose
+        canonical form differs from the current one is a new version
+        (`version_created: true`), effective from now: events received from
+        now on are evaluated under it, and conversions already recorded keep
+        the version that produced them until a re-evaluation. An archived
+        goal is a `409`; a goal an SKAN encoding names must stay a plain
+        event goal (`422`).
+      operationId: updateGoal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [definition]
+              properties:
+                definition:
+                  $ref: "#/components/schemas/GoalDefinition"
+      responses:
+        "200":
+          description: The goal, with `version_created`
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GoalResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The goal is archived, or its name is taken
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
+      tags: [Goals]
+      summary: Archive a goal
+      description: |
+        Archives: the goal evaluates nothing received from now on and keeps
+        its versions, outcomes and conversions. `409` (with
+        `details.skan_encodings` / `details.dependents`) while an SKAN
+        encoding or another live goal's `after` names it. Archiving an
+        archived goal is a no-op.
+      operationId: deleteGoal
+      responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`)
+        "204":
+          description: Archived
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Something still names the goal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /goals/{id}/versions:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Goals]
+      summary: List a goal's versions
+      operationId: listGoalVersions
+      responses:
+        "200":
+          description: Every version, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {type: array, items: {$ref: "#/components/schemas/GoalVersion"}}
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /goals/{id}/versions/{version}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+      - {name: version, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [Goals]
+      summary: Get one version of a goal
+      operationId: getGoalVersion
+      responses:
+        "200":
+          description: The version
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/GoalVersion"}
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /goals/{id}/outcomes:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Goals]
+      summary: List a goal's live outcomes
+      description: Every time a click (or install) reached the goal. Outcomes retired by a replay or a re-evaluation are never listed.
+      operationId: listGoalOutcomes
+      parameters:
+        - {name: subject_type, in: query, schema: {type: string, enum: [click, install]}}
+        - {name: subject_id, in: query, schema: {type: integer}}
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Paginated outcomes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {type: array, items: {$ref: "#/components/schemas/GoalOutcome"}}
+                  pagination: {$ref: "#/components/schemas/Pagination"}
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /goals/{id}/campaigns:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Goals]
+      summary: List the campaigns paying for a goal
+      operationId: listGoalCampaigns
+      responses:
+        "200":
+          description: The campaign terms
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {type: array, items: {$ref: "#/components/schemas/GoalCampaignTerm"}}
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /goals/{id}/campaigns/{campaignId}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+      - {name: campaignId, in: path, required: true, schema: {type: integer}}
+    put:
+      tags: [Goals]
+      summary: Make a campaign pay for a goal, or change its terms
+      description: |
+        `payout` (null = the goal's own value) and `notify_traffic_source`
+        (default true). A campaign's own goal attaches only to that campaign;
+        registration and account goals attach to any of the caller's
+        campaigns, and are evaluated for its clicks from the moment they are
+        attached. Stageable.
+      operationId: setGoalCampaign
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                payout: {type: string, nullable: true, description: "Decimal amount, at most 5 places"}
+                notify_traffic_source: {type: boolean}
+      responses:
+        "200":
+          description: The campaign term
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/GoalCampaignTerm"}
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The goal is archived
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
+      tags: [Goals]
+      summary: Stop a campaign paying for a goal
+      description: Its outcomes on that campaign are tracked, not paid, from now on; conversions already recorded are kept.
+      operationId: removeGoalCampaign
+      responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`)
+        "204":
+          description: Removed
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /goals/{id}/reevaluation:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Goals]
+      summary: Preview a re-evaluation
+      description: |
+        Per click that has events on the campaigns the goal applies to: the
+        outcome rows that would be retired and written under `version`
+        (default the current one), and what happens to each retired row's
+        conversion (`supersede` by the new row, or `delete` where the new
+        version no longer reaches the goal). The goal is re-decided with its
+        dependents — every goal of the click's set whose `after` names it,
+        directly or through another dependent — because their outcomes were
+        evaluated against the goal's: `goals` lists them, and their retired
+        and written rows are in the same lists and totals, each naming its
+        `goal_id`. Dependents never add clicks: the selection and its cap
+        are the goal's own. A dependent's version that cannot be evaluated
+        (invalid definition, missing prerequisite) is left as it is.
+        Changes nothing. At most `limit` (default 100, max 1000) clicks
+        after `after`; `next_after` continues.
+      operationId: previewGoalReevaluation
+      parameters:
+        - {name: version, in: query, schema: {type: integer}}
+        - {name: limit, in: query, schema: {type: integer, default: 100, maximum: 1000}}
+        - {name: after, in: query, schema: {type: integer}}
+      responses:
+        "200":
+          description: The plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GoalReevaluationResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    post:
+      tags: [Goals]
+      summary: Apply a re-evaluation
+      description: |
+        The same selection as the preview, applied one click per
+        transaction: each click is rebased onto the version (later events
+        and replays keep evaluating the goal under it), outcomes of older
+        versions — and dependents' outcomes the new evaluation no longer
+        reaches — are retired (`superseded_reason: reevaluation`), their
+        conversions superseded or deleted (recomputing the click's value),
+        newly reached ones written, and the stored progress of exactly those
+        goals replaced. Stageable.
+      operationId: applyGoalReevaluation
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                version: {type: integer}
+                limit: {type: integer, maximum: 1000}
+                after: {type: integer}
+      responses:
+        "200":
+          description: What was done
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GoalReevaluationResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   # ─── Users ───────────────────────────────────────────────────────────
 
   /users:
@@ -2425,12 +2860,19 @@ paths:
       summary: Create a SKAN encoding
       description: |
         An encoding maps exactly one fine value (0–63) **or** one coarse
-        value (`low`/`medium`/`high`) to an event name and revenue.
-        `registration_id` names one of the caller's own iOS registrations, or
-        is `0` for the account-wide set that a registration's own encodings
-        override. Any other value is `422`: an encoding for an app nobody
-        registered would decode nothing. The same rows drive the report's
-        decode and the schema served to devices. Honors `Idempotency-Key`.
+        value (`low`/`medium`/`high`) to a goal (`goal_id`), with an
+        optional `revenue_override` for tiered decoding; without one a
+        decoded postback is worth the goal's fixed value. `registration_id`
+        names one of the caller's own iOS registrations, or is `0` for the
+        account-wide set that a registration's own encodings override. Any
+        other value is `422`: an encoding for an app nobody registered would
+        decode nothing. The goal must be live, the caller's, owned by that
+        registration or by the account (an account-wide encoding names an
+        account goal), and — until the on-device evaluator ships — a plain
+        event goal, because the iOS SDK encodes by event name. The old
+        fields `event_name` and `revenue` are refused by name. The same rows
+        drive the report's decode (by the goal's name) and the schema served
+        to devices (by the goal's event). Honors `Idempotency-Key`.
       operationId: createAppSkanEncoding
       requestBody:
         required: true
@@ -4751,11 +5193,13 @@ components:
           type: string
           nullable: true
           enum: [low, medium, high, null]
-        event_name:
+        goal_id:
+          type: integer
+          description: The goal this value means (`GET /goals`)
+        revenue_override:
           type: string
-        revenue:
-          type: string
-          description: Decimal string (5 places), e.g. `"49.99000"`
+          nullable: true
+          description: Decimal string (5 places), e.g. `"49.99000"`; null = the goal's own value
         user_id:
           type: integer
         version:
@@ -4765,7 +5209,7 @@ components:
 
     AppSkanEncodingCreate:
       type: object
-      required: [event_name]
+      required: [goal_id]
       description: Set `fine_value` (0–63) or `coarse_value` — one of them, not both and not neither (`422` otherwise).
       properties:
         registration_id:
@@ -4779,14 +5223,15 @@ components:
         coarse_value:
           type: string
           enum: [low, medium, high]
-        event_name:
-          type: string
-          maxLength: 255
-        revenue:
+        goal_id:
+          type: integer
+          description: A live plain event goal of that registration, or of the account (`GET /goals`)
+        revenue_override:
           type: number
+          nullable: true
           minimum: 0
-          default: 0
-          description: Revenue attributed per decoded postback
+          maximum: 999999.99999
+          description: Revenue per decoded postback instead of the goal's own value (at most 5 decimal places)
 
     AppSkanEncodingUpdate:
       type: object
@@ -4794,7 +5239,8 @@ components:
         An absent field is kept. An explicit `null` on `fine_value` or
         `coarse_value` clears it, and must arrive together with the
         replacement value of the other kind so the encoding still maps
-        exactly one value.
+        exactly one value. `revenue_override: null` goes back to the goal's
+        own value; `goal_id` cannot be null.
       properties:
         registration_id:
           type: integer
@@ -4807,11 +5253,11 @@ components:
           type: string
           nullable: true
           enum: [low, medium, high, null]
-        event_name:
-          type: string
-          maxLength: 255
-        revenue:
+        goal_id:
+          type: integer
+        revenue_override:
           type: number
+          nullable: true
           minimum: 0
 
     AppSkanEncodingResponse:
@@ -4829,6 +5275,173 @@ components:
             $ref: "#/components/schemas/AppSkanEncoding"
         pagination:
           $ref: "#/components/schemas/Pagination"
+
+    GoalDefinition:
+      type: object
+      description: |
+        Data, never code. Strict at every level (an unknown key is an error)
+        and typed (nothing is cast). Full format:
+        `documentation/api/22-goals.md`.
+      required: [name, trigger]
+      properties:
+        name: {type: string, maxLength: 100}
+        trigger:
+          type: object
+          description: '`{"event": "<name>", "where": [predicates]}` or `{"install": true}`'
+        threshold:
+          type: object
+          description: '`{"count": N}` or `{"sum": {"prop": "<prop>", "gte": <amount>}}`. A summed value outside ±999999.99999 does not count.'
+        after:
+          type: array
+          items: {type: integer}
+          maxItems: 5
+        within:
+          type: object
+          nullable: true
+          description: '`{"days": N, "from": "install" | "click"}`'
+        repeat:
+          type: object
+          description: '`{"mode": "once"}` or `{"mode": "each", "max": N}` (N 1-10000). `max` is required with a `sum` threshold (`definition.repeat.max`): one event can cross many multiples of a sum; a `count` may repeat without it.'
+        value:
+          type: object
+          description: '`{"type": "fixed", "amount": "4.00"}`, `{"type": "from_property", "prop": "$revenue"}` or `{"type": "none"}`'
+
+    GoalCreate:
+      type: object
+      required: [scope, definition]
+      properties:
+        scope: {type: string, enum: [campaign, registration, account]}
+        scope_id: {type: integer, description: "The campaign or registration; omitted (or 0) for the account"}
+        definition: {$ref: "#/components/schemas/GoalDefinition"}
+        payable: {type: boolean, description: "Campaign goals only; default true unless the value is none"}
+        payout: {type: string, nullable: true, description: "Campaign goals only: overrides the goal's value on its campaign"}
+        notify_traffic_source: {type: boolean, description: "Campaign goals only; default true"}
+
+    Goal:
+      type: object
+      properties:
+        goal_id: {type: integer}
+        scope: {type: string, enum: [campaign, registration, account]}
+        scope_id: {type: integer}
+        name: {type: string}
+        current_version: {type: integer}
+        definition: {$ref: "#/components/schemas/GoalDefinition"}
+        definition_valid: {type: boolean}
+        effective_at: {type: integer}
+        archived_at: {type: integer, nullable: true}
+        created_at: {type: integer}
+        updated_at: {type: integer}
+        campaigns: {type: array, items: {$ref: "#/components/schemas/GoalCampaignTerm"}}
+        live_outcomes: {type: integer}
+        version_created: {type: boolean, description: "PUT only"}
+
+    GoalResponse:
+      type: object
+      properties:
+        data: {$ref: "#/components/schemas/Goal"}
+
+    GoalListResponse:
+      type: object
+      properties:
+        data: {type: array, items: {$ref: "#/components/schemas/Goal"}}
+        pagination: {$ref: "#/components/schemas/Pagination"}
+
+    GoalVersion:
+      type: object
+      properties:
+        goal_id: {type: integer}
+        version: {type: integer}
+        definition: {$ref: "#/components/schemas/GoalDefinition"}
+        effective_at: {type: integer, description: "Events received from then on are evaluated under it"}
+        created_at: {type: integer}
+
+    GoalCampaignTerm:
+      type: object
+      properties:
+        campaign_id: {type: integer}
+        goal_id: {type: integer}
+        campaign_name: {type: string, nullable: true}
+        payout_mode: {type: string, nullable: true, enum: [replace, accumulate, null]}
+        payout: {type: string, nullable: true}
+        notify_traffic_source: {type: boolean}
+        created_at: {type: integer}
+        updated_at: {type: integer}
+
+    GoalEvaluatedOutcome:
+      type: object
+      properties:
+        goal_id: {type: integer}
+        version: {type: integer}
+        n: {type: integer}
+        event_id: {type: string}
+        reached_at: {type: integer}
+        value: {type: string, nullable: true}
+        value_source: {type: string, enum: [fixed, property, none]}
+        value_note: {type: string, nullable: true}
+        ineligible_reason: {type: string, nullable: true, enum: [no_click, no_install, null]}
+
+    GoalOutcome:
+      type: object
+      properties:
+        outcome_id: {type: integer}
+        subject_type: {type: string, enum: [click, install]}
+        subject_id: {type: integer}
+        goal_id: {type: integer}
+        version: {type: integer}
+        n: {type: integer}
+        event_id: {type: string}
+        reached_at: {type: integer}
+        value: {type: string, nullable: true}
+        value_source: {type: string, description: "fixed, property, none, or payout (the campaign's)"}
+        value_note: {type: string, nullable: true, description: "missing, not_a_number, negative, out_of_range, untrusted_value, not_payable_on_campaign"}
+        ineligible_reason: {type: string, nullable: true}
+        payable: {type: boolean}
+        campaign_id: {type: integer, nullable: true}
+        conversion_id: {type: integer, nullable: true}
+
+    GoalReevaluationResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            goal_id: {type: integer}
+            version: {type: integer}
+            applied: {type: boolean}
+            goals:
+              type: array
+              items: {type: integer}
+              description: Every goal re-decided on at least one of these clicks (the goal and its dependents)
+            subjects:
+              type: array
+              items:
+                type: object
+                properties:
+                  subject_type: {type: string}
+                  subject_id: {type: integer}
+                  goals:
+                    type: array
+                    items: {type: integer}
+                    description: The goal and its dependents in this click's goal set, ascending
+                  retire:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        outcome_id: {type: integer}
+                        goal_id: {type: integer}
+                        version: {type: integer}
+                        n: {type: integer}
+                        event_id: {type: string}
+                        conversion_id: {type: integer, nullable: true}
+                        replaced_by:
+                          nullable: true
+                          description: The replacing outcome's id, `"new"` when it is written by this re-evaluation, or null
+                        ledger: {type: string, nullable: true, enum: [supersede, delete, null]}
+                  write: {type: array, items: {$ref: "#/components/schemas/GoalEvaluatedOutcome"}}
+                  unchanged: {type: integer}
+            totals: {type: object}
+            next_after: {type: integer, nullable: true}
 
     AppPostback:
       type: object

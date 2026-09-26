@@ -181,6 +181,16 @@ final class TableRegistry
     public const string APP_POSTBACKS = '202_app_postbacks';
     public const string APP_SKAN_ENCODINGS = '202_app_skan_encodings';
 
+    // Goals engine (GoalTables): definitions and their versions, campaign
+    // payouts, and per-subject events, progress and outcomes
+    public const string GOALS = '202_goals';
+    public const string GOAL_VERSIONS = '202_goal_versions';
+    public const string CAMPAIGN_GOALS = '202_campaign_goals';
+    public const string GOAL_SUBJECTS = '202_goal_subjects';
+    public const string GOAL_EVENTS = '202_goal_events';
+    public const string GOAL_PROGRESS = '202_goal_progress';
+    public const string GOAL_OUTCOMES = '202_goal_outcomes';
+
     // Data engine tables
     public const string DATAENGINE = '202_dataengine';
     public const string DATAENGINE_JOB = '202_dataengine_job';

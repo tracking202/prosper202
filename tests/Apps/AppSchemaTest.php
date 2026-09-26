@@ -19,9 +19,29 @@ final class AppSchemaTest extends TestCase
 {
     private const TOKEN = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
-    /** @param array<int, array<string, mixed>> $rules */
+    /**
+     * An encoding names a goal (plan §4.5); the fixtures below still say
+     * which event a value means, so each is turned into the row the encode
+     * query returns — the encoding joined to a live plain event goal on that
+     * event. A fixture that sets `definition` (or `archived_at`) itself is
+     * passed as given.
+     *
+     * @param array<int, array<string, mixed>> $rules
+     */
     private function controller(array $rules, bool $tokenKnown = true, string $platform = 'ios'): AppSchemaController
     {
+        foreach ($rules as $i => $rule) {
+            if (array_key_exists('event_name', $rule)) {
+                $event = $rule['event_name'];
+                unset($rule['event_name']);
+                $rules[$i] = $rule + [
+                    'encoding_id' => $i + 1,
+                    'goal_id' => 100 + $i,
+                    'archived_at' => null,
+                    'definition' => \Prosper202\Goals\GoalDefinition::parse(['name' => $event, 'trigger' => ['event' => $event]])->toJson(),
+                ];
+            }
+        }
         $db = $this->createMysqliMock([
             'FROM 202_app_registrations WHERE app_token' => $tokenKnown
                 ? [[
@@ -106,6 +126,23 @@ final class AppSchemaTest extends TestCase
             )
         );
         $this->assertSame('"' . $data['schema_version'] . '"', $result['etag']);
+    }
+
+    public function testAnEncodingWhoseGoalIsNotAPlainLiveEventGoalIsNotServed(): void
+    {
+        // The SDK encodes by event name; a goal it cannot act on must not
+        // set a value for the wrong event. The write path refuses these, so
+        // this is damage, and the document leaves it out.
+        $rules = [
+            ['registration_id' => 3, 'fine_value' => 1, 'coarse_value' => null, 'event_name' => 'purchase'],
+            ['encoding_id' => 8, 'goal_id' => 8, 'registration_id' => 3, 'fine_value' => 2, 'coarse_value' => null, 'archived_at' => 1,
+                'definition' => \Prosper202\Goals\GoalDefinition::parse(['name' => 'gone', 'trigger' => ['event' => 'gone']])->toJson()],
+            ['encoding_id' => 9, 'goal_id' => 9, 'registration_id' => 3, 'fine_value' => 3, 'coarse_value' => null, 'archived_at' => null,
+                'definition' => \Prosper202\Goals\GoalDefinition::parse(['name' => 'L3', 'trigger' => ['event' => 'level', 'where' => [['prop' => 'level', 'op' => 'gte', 'value' => 3]]]])->toJson()],
+            ['encoding_id' => 10, 'goal_id' => 10, 'registration_id' => 3, 'fine_value' => 4, 'coarse_value' => null, 'archived_at' => null, 'definition' => null],
+        ];
+        $result = $this->controller($rules)->publicSchema(self::TOKEN, null);
+        $this->assertSame(['purchase'], array_keys((array)$result['body']['data']['events']));
     }
 
     public function testSchemaRevealsNoRevenue(): void

@@ -28,7 +28,7 @@ NOW=$(date -u +%s)
 DAY=86400
 TODAY=$(( NOW / DAY * DAY ))
 
-mysql_q "$DB" -e "TRUNCATE 202_app_postbacks; TRUNCATE 202_app_registrations; TRUNCATE 202_app_skan_encodings;"
+mysql_q "$DB" -e "TRUNCATE 202_app_postbacks; TRUNCATE 202_app_registrations; TRUNCATE 202_app_skan_encodings; TRUNCATE 202_goals; TRUNCATE 202_goal_versions;"
 
 mysql_q "$DB" <<SQL
 INSERT INTO 202_app_registrations (user_id, platform, app_key, app_name, notes, accept_test_signals, app_token, created_at, updated_at) VALUES
@@ -36,12 +36,24 @@ INSERT INTO 202_app_registrations (user_id, platform, app_key, app_name, notes, 
  (1, 'ios', '990077002', 'Acme Racer',  '', 0, REPEAT('b2', 32), $NOW, $NOW),
  (1, 'ios', '990077003', 'Acme, Notes "Pro"', '', 0, REPEAT('c3', 32), $NOW, $NOW);
 
-INSERT INTO 202_app_skan_encodings (user_id, registration_id, fine_value, coarse_value, event_name, revenue, created_at, updated_at)
- SELECT 1, r.registration_id, v.fine_value, v.coarse_value, v.event_name, v.revenue, $NOW, $NOW
+-- An encoding names a goal (plan §4.5): one plain event goal per event, owned
+-- by the app, and the rule's revenue as the encoding's revenue_override.
+INSERT INTO 202_goals (user_id, scope, scope_id, name, current_version, archived_at, created_at, updated_at)
+ SELECT 1, 'registration', r.registration_id, v.event_name, 1, NULL, $NOW, $NOW
+   FROM (SELECT '990077001' AS app_key, 'purchase' AS event_name
+         UNION ALL SELECT '990077001', 'subscribe'
+         UNION ALL SELECT '990077002', 'big_spender') v
+   JOIN 202_app_registrations r ON r.platform = 'ios' AND r.app_key = v.app_key;
+INSERT INTO 202_goal_versions (goal_id, version, definition, effective_at, created_at)
+ SELECT goal_id, 1, CONCAT('{"name":"', name, '","trigger":{"event":"', name, '","where":[]},"threshold":{"count":1},"after":[],"within":null,"repeat":{"mode":"once"},"value":{"type":"none"}}'), $NOW, $NOW
+   FROM 202_goals;
+INSERT INTO 202_app_skan_encodings (user_id, registration_id, fine_value, coarse_value, goal_id, revenue_override, created_at, updated_at)
+ SELECT 1, r.registration_id, v.fine_value, v.coarse_value, g.goal_id, v.revenue, $NOW, $NOW
    FROM (SELECT '990077001' AS app_key, 3 AS fine_value, NULL AS coarse_value, 'purchase' AS event_name, 4.99000 AS revenue
          UNION ALL SELECT '990077001', 5, NULL, 'subscribe', 9.99000
          UNION ALL SELECT '990077002', NULL, 'high', 'big_spender', 25.00000) v
-   JOIN 202_app_registrations r ON r.platform = 'ios' AND r.app_key = v.app_key;
+   JOIN 202_app_registrations r ON r.platform = 'ios' AND r.app_key = v.app_key
+   JOIN 202_goals g ON g.scope = 'registration' AND g.scope_id = r.registration_id AND g.name = v.event_name;
 SQL
 
 # day, protocol, version, network, app, source, campaign, fine, coarse, seq, type, redownload, win, country, sigstate, trusted

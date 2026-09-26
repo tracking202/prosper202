@@ -25,8 +25,10 @@ use Prosper202\Database\Schema\TableRegistry;
  * the forensic record of what the postback named.
  *
  * 202_app_skan_encodings says which 6-bit fine or low/medium/high coarse
- * conversion value means which event, and what it is worth, per
- * registration; registration_id = 0 is the account-wide set. It can never
+ * conversion value means which goal was reached (202_goals, plan §4.5), per
+ * registration; registration_id = 0 is the account-wide set. What the goal
+ * is worth comes from the goal; `revenue_override` keeps tiered decoding
+ * (two values meaning one goal at two prices). registration_id can never
  * be a real registration (AUTO_INCREMENT starts at 1) and is NOT NULL on
  * purpose: UNIQUE admits any number of NULLs, so a NULL "account-wide"
  * would let duplicate account-wide rules in.
@@ -135,15 +137,16 @@ final class AppTables
                 `registration_id` int(10) unsigned NOT NULL DEFAULT '0',
                 `fine_value` tinyint(3) unsigned DEFAULT NULL,
                 `coarse_value` varchar(6) DEFAULT NULL,
-                `event_name` varchar(255) NOT NULL,
-                `revenue` decimal(11,5) NOT NULL DEFAULT '0.00000',
+                `goal_id` int(10) unsigned NOT NULL,
+                `revenue_override` decimal(11,5) DEFAULT NULL,
                 `created_at` int(10) unsigned NOT NULL,
                 `updated_at` int(10) unsigned NOT NULL,
                 PRIMARY KEY (`encoding_id`),
                 UNIQUE KEY `user_registration_fine` (`user_id`,`registration_id`,`fine_value`),
                 UNIQUE KEY `user_registration_coarse` (`user_id`,`registration_id`,`coarse_value`),
-                KEY `registration_id` (`registration_id`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='SKAdNetwork/AdAttributionKit conversion values: which value means which event, per registration (0 = account-wide)'"
+                KEY `registration_id` (`registration_id`),
+                KEY `goal_id` (`goal_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='SKAdNetwork/AdAttributionKit conversion values: which value means which goal was reached, per registration (0 = account-wide)'"
         );
     }
 }

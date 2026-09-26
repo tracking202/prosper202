@@ -1,0 +1,993 @@
+{
+  "description": "Goal definition validation vectors (plan §5.5). `valid` is the contract every implementation must agree on; for a valid definition `canonical` is the form the server stores (every key, defaults written out, amounts as decimal strings); for an invalid one `errors` lists the paths the PHP validator names (an SDK only needs to refuse the definition as a whole).",
+  "format_version": 1,
+  "cases": [
+    {
+      "name": "the smallest definition, with its defaults written out",
+      "definition": {
+        "name": "Signup",
+        "trigger": {
+          "event": "signup"
+        }
+      },
+      "valid": true,
+      "canonical": {
+        "name": "Signup",
+        "trigger": {
+          "event": "signup",
+          "where": []
+        },
+        "threshold": {
+          "count": 1
+        },
+        "after": [],
+        "within": null,
+        "repeat": {
+          "mode": "once"
+        },
+        "value": {
+          "type": "none"
+        }
+      }
+    },
+    {
+      "name": "the plan's example",
+      "definition": {
+        "name": "Reached level 3",
+        "trigger": {
+          "event": "level_reached",
+          "where": [
+            {
+              "prop": "level",
+              "op": "gte",
+              "value": 3
+            }
+          ]
+        },
+        "threshold": {
+          "count": 1
+        },
+        "after": [
+          12
+        ],
+        "within": {
+          "days": 7,
+          "from": "install"
+        },
+        "repeat": {
+          "mode": "once"
+        },
+        "value": {
+          "type": "fixed",
+          "amount": 4.0
+        }
+      },
+      "valid": true,
+      "canonical": {
+        "name": "Reached level 3",
+        "trigger": {
+          "event": "level_reached",
+          "where": [
+            {
+              "prop": "level",
+              "op": "gte",
+              "value": 3
+            }
+          ]
+        },
+        "threshold": {
+          "count": 1
+        },
+        "after": [
+          12
+        ],
+        "within": {
+          "days": 7,
+          "from": "install"
+        },
+        "repeat": {
+          "mode": "once"
+        },
+        "value": {
+          "type": "fixed",
+          "amount": "4.00"
+        }
+      }
+    },
+    {
+      "name": "amounts are written as decimal strings",
+      "definition": {
+        "name": "Spend",
+        "trigger": {
+          "event": "buy"
+        },
+        "threshold": {
+          "sum": {
+            "prop": "$revenue",
+            "gte": 20
+          }
+        },
+        "value": {
+          "type": "fixed",
+          "amount": "0.12345"
+        }
+      },
+      "valid": true,
+      "canonical": {
+        "name": "Spend",
+        "trigger": {
+          "event": "buy",
+          "where": []
+        },
+        "threshold": {
+          "sum": {
+            "prop": "$revenue",
+            "gte": "20.00"
+          }
+        },
+        "after": [],
+        "within": null,
+        "repeat": {
+          "mode": "once"
+        },
+        "value": {
+          "type": "fixed",
+          "amount": "0.12345"
+        }
+      }
+    },
+    {
+      "name": "from_property defaults to the revenue field",
+      "definition": {
+        "name": "Rev",
+        "trigger": {
+          "event": "buy"
+        },
+        "value": {
+          "type": "from_property"
+        },
+        "repeat": {
+          "mode": "each",
+          "max": 12
+        }
+      },
+      "valid": true,
+      "canonical": {
+        "name": "Rev",
+        "trigger": {
+          "event": "buy",
+          "where": []
+        },
+        "threshold": {
+          "count": 1
+        },
+        "after": [],
+        "within": null,
+        "repeat": {
+          "mode": "each",
+          "max": 12
+        },
+        "value": {
+          "type": "from_property",
+          "prop": "$revenue"
+        }
+      }
+    },
+    {
+      "name": "an install goal",
+      "definition": {
+        "name": "Install",
+        "trigger": {
+          "install": true
+        },
+        "value": {
+          "type": "fixed",
+          "amount": 1
+        }
+      },
+      "valid": true,
+      "canonical": {
+        "name": "Install",
+        "trigger": {
+          "install": true
+        },
+        "threshold": {
+          "count": 1
+        },
+        "after": [],
+        "within": null,
+        "repeat": {
+          "mode": "once"
+        },
+        "value": {
+          "type": "fixed",
+          "amount": "1.00"
+        }
+      }
+    },
+    {
+      "name": "the name is trimmed",
+      "definition": {
+        "name": "  Signup ",
+        "trigger": {
+          "event": "signup"
+        }
+      },
+      "valid": true,
+      "canonical": {
+        "name": "Signup",
+        "trigger": {
+          "event": "signup",
+          "where": []
+        },
+        "threshold": {
+          "count": 1
+        },
+        "after": [],
+        "within": null,
+        "repeat": {
+          "mode": "once"
+        },
+        "value": {
+          "type": "none"
+        }
+      }
+    },
+    {
+      "name": "not an object",
+      "definition": [
+        "name"
+      ],
+      "valid": false,
+      "errors": [
+        "definition"
+      ]
+    },
+    {
+      "name": "name missing",
+      "definition": {
+        "trigger": {
+          "event": "a"
+        }
+      },
+      "valid": false,
+      "errors": [
+        "name"
+      ]
+    },
+    {
+      "name": "name blank",
+      "definition": {
+        "name": "   ",
+        "trigger": {
+          "event": "a"
+        }
+      },
+      "valid": false,
+      "errors": [
+        "name"
+      ]
+    },
+    {
+      "name": "name too long",
+      "definition": {
+        "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "trigger": {
+          "event": "a"
+        }
+      },
+      "valid": false,
+      "errors": [
+        "name"
+      ]
+    },
+    {
+      "name": "trigger missing",
+      "definition": {
+        "name": "A"
+      },
+      "valid": false,
+      "errors": [
+        "trigger"
+      ]
+    },
+    {
+      "name": "unknown top-level field",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "treshold": {
+          "count": 2
+        }
+      },
+      "valid": false,
+      "errors": [
+        "treshold"
+      ]
+    },
+    {
+      "name": "event name with a space",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "level up"
+        }
+      },
+      "valid": false,
+      "errors": [
+        "trigger.event"
+      ]
+    },
+    {
+      "name": "event name too long",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }
+      },
+      "valid": false,
+      "errors": [
+        "trigger.event"
+      ]
+    },
+    {
+      "name": "install must be true",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "install": false
+        }
+      },
+      "valid": false,
+      "errors": [
+        "trigger.install"
+      ]
+    },
+    {
+      "name": "an install trigger takes no other fields",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "install": true,
+          "event": "a"
+        }
+      },
+      "valid": false,
+      "errors": [
+        "trigger.event"
+      ]
+    },
+    {
+      "name": "count as a string is refused, not cast",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "threshold": {
+          "count": "3"
+        }
+      },
+      "valid": false,
+      "errors": [
+        "threshold.count"
+      ]
+    },
+    {
+      "name": "count as 3.0 is refused",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "threshold": {
+          "count": 3.0
+        }
+      },
+      "valid": false,
+      "errors": [
+        "threshold.count"
+      ]
+    },
+    {
+      "name": "count zero",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "threshold": {
+          "count": 0
+        }
+      },
+      "valid": false,
+      "errors": [
+        "threshold.count"
+      ]
+    },
+    {
+      "name": "count and sum together",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "threshold": {
+          "count": 1,
+          "sum": {
+            "prop": "x",
+            "gte": 1
+          }
+        }
+      },
+      "valid": false,
+      "errors": [
+        "threshold"
+      ]
+    },
+    {
+      "name": "sum needs gte above 0",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "threshold": {
+          "sum": {
+            "prop": "x",
+            "gte": 0
+          }
+        }
+      },
+      "valid": false,
+      "errors": [
+        "threshold.sum.gte"
+      ]
+    },
+    {
+      "name": "a property name must be a name",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a",
+          "where": [
+            {
+              "prop": "1x",
+              "op": "eq",
+              "value": 1
+            }
+          ]
+        }
+      },
+      "valid": false,
+      "errors": [
+        "trigger.where[0].prop"
+      ]
+    },
+    {
+      "name": "an unknown operator",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a",
+          "where": [
+            {
+              "prop": "x",
+              "op": "contains",
+              "value": "y"
+            }
+          ]
+        }
+      },
+      "valid": false,
+      "errors": [
+        "trigger.where[0].op"
+      ]
+    },
+    {
+      "name": "a comparator needs a number",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a",
+          "where": [
+            {
+              "prop": "x",
+              "op": "gt",
+              "value": "3"
+            }
+          ]
+        }
+      },
+      "valid": false,
+      "errors": [
+        "trigger.where[0].value"
+      ]
+    },
+    {
+      "name": "exists takes no value",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a",
+          "where": [
+            {
+              "prop": "x",
+              "op": "exists",
+              "value": true
+            }
+          ]
+        }
+      },
+      "valid": false,
+      "errors": [
+        "trigger.where[0].value"
+      ]
+    },
+    {
+      "name": "in needs a non-empty list",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a",
+          "where": [
+            {
+              "prop": "x",
+              "op": "in",
+              "value": []
+            }
+          ]
+        }
+      },
+      "valid": false,
+      "errors": [
+        "trigger.where[0].value"
+      ]
+    },
+    {
+      "name": "at most 20 predicates",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a",
+          "where": [
+            {
+              "prop": "x",
+              "op": "exists"
+            },
+            {
+              "prop": "x",
+              "op": "exists"
+            },
+            {
+              "prop": "x",
+              "op": "exists"
+            },
+            {
+              "prop": "x",
+              "op": "exists"
+            },
+            {
+              "prop": "x",
+              "op": "exists"
+            },
+            {
+              "prop": "x",
+              "op": "exists"
+            },
+            {
+              "prop": "x",
+              "op": "exists"
+            },
+            {
+              "prop": "x",
+              "op": "exists"
+            },
+            {
+              "prop": "x",
+              "op": "exists"
+            },
+            {
+              "prop": "x",
+              "op": "exists"
+            },
+            {
+              "prop": "x",
+              "op": "exists"
+            },
+            {
+              "prop": "x",
+              "op": "exists"
+            },
+            {
+              "prop": "x",
+              "op": "exists"
+            },
+            {
+              "prop": "x",
+              "op": "exists"
+            },
+            {
+              "prop": "x",
+              "op": "exists"
+            },
+            {
+              "prop": "x",
+              "op": "exists"
+            },
+            {
+              "prop": "x",
+              "op": "exists"
+            },
+            {
+              "prop": "x",
+              "op": "exists"
+            },
+            {
+              "prop": "x",
+              "op": "exists"
+            },
+            {
+              "prop": "x",
+              "op": "exists"
+            },
+            {
+              "prop": "x",
+              "op": "exists"
+            }
+          ]
+        }
+      },
+      "valid": false,
+      "errors": [
+        "trigger.where"
+      ]
+    },
+    {
+      "name": "at most 5 prerequisites",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "after": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "valid": false,
+      "errors": [
+        "after"
+      ]
+    },
+    {
+      "name": "a prerequisite named twice",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "after": [
+          1,
+          1
+        ]
+      },
+      "valid": false,
+      "errors": [
+        "after[1]"
+      ]
+    },
+    {
+      "name": "a prerequisite that is not an id",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "after": [
+          "1"
+        ]
+      },
+      "valid": false,
+      "errors": [
+        "after[0]"
+      ]
+    },
+    {
+      "name": "a window needs days and an anchor",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "within": {
+          "days": 7,
+          "from": "first_open"
+        }
+      },
+      "valid": false,
+      "errors": [
+        "within.from"
+      ]
+    },
+    {
+      "name": "a window of zero days",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "within": {
+          "days": 0,
+          "from": "click"
+        }
+      },
+      "valid": false,
+      "errors": [
+        "within.days"
+      ]
+    },
+    {
+      "name": "max applies to each only",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "repeat": {
+          "mode": "once",
+          "max": 2
+        }
+      },
+      "valid": false,
+      "errors": [
+        "repeat.max"
+      ]
+    },
+    {
+      "name": "a negative amount",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "value": {
+          "type": "fixed",
+          "amount": -1
+        }
+      },
+      "valid": false,
+      "errors": [
+        "value.amount"
+      ]
+    },
+    {
+      "name": "more than five decimal places",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "value": {
+          "type": "fixed",
+          "amount": "1.123456"
+        }
+      },
+      "valid": false,
+      "errors": [
+        "value.amount"
+      ]
+    },
+    {
+      "name": "too large for the ledger",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "value": {
+          "type": "fixed",
+          "amount": 1000000
+        }
+      },
+      "valid": false,
+      "errors": [
+        "value.amount"
+      ]
+    },
+    {
+      "name": "an unknown value type",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "value": {
+          "type": "percent"
+        }
+      },
+      "valid": false,
+      "errors": [
+        "value.type"
+      ]
+    },
+    {
+      "name": "an install trigger reached twice",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "install": true
+        },
+        "repeat": {
+          "mode": "each"
+        }
+      },
+      "valid": false,
+      "errors": [
+        "repeat"
+      ]
+    },
+    {
+      "name": "an install carries no revenue",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "install": true
+        },
+        "value": {
+          "type": "from_property"
+        }
+      },
+      "valid": false,
+      "errors": [
+        "value.type"
+      ]
+    },
+    {
+      "name": "every error is reported",
+      "definition": {
+        "name": "",
+        "trigger": {
+          "event": "a b"
+        },
+        "threshold": {
+          "count": -1
+        }
+      },
+      "valid": false,
+      "errors": [
+        "name",
+        "threshold.count",
+        "trigger.event"
+      ]
+    },
+    {
+      "name": "a sum that repeats each time needs a max",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "threshold": {
+          "sum": {
+            "prop": "x",
+            "gte": 1
+          }
+        },
+        "repeat": {
+          "mode": "each"
+        }
+      },
+      "valid": false,
+      "errors": [
+        "repeat.max"
+      ]
+    },
+    {
+      "name": "a sum that repeats each time with a max",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "threshold": {
+          "sum": {
+            "prop": "x",
+            "gte": "0.01"
+          }
+        },
+        "repeat": {
+          "mode": "each",
+          "max": 10000
+        }
+      },
+      "valid": true,
+      "canonical": {
+        "name": "A",
+        "trigger": {
+          "event": "a",
+          "where": []
+        },
+        "threshold": {
+          "sum": {
+            "prop": "x",
+            "gte": "0.01"
+          }
+        },
+        "after": [],
+        "within": null,
+        "repeat": {
+          "mode": "each",
+          "max": 10000
+        },
+        "value": {
+          "type": "none"
+        }
+      }
+    },
+    {
+      "name": "a count that repeats each time needs no max",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "threshold": {
+          "count": 2
+        },
+        "repeat": {
+          "mode": "each"
+        }
+      },
+      "valid": true,
+      "canonical": {
+        "name": "A",
+        "trigger": {
+          "event": "a",
+          "where": []
+        },
+        "threshold": {
+          "count": 2
+        },
+        "after": [],
+        "within": null,
+        "repeat": {
+          "mode": "each"
+        },
+        "value": {
+          "type": "none"
+        }
+      }
+    },
+    {
+      "name": "a repeating sum's max is bounded like any other",
+      "definition": {
+        "name": "A",
+        "trigger": {
+          "event": "a"
+        },
+        "threshold": {
+          "sum": {
+            "prop": "x",
+            "gte": 1
+          }
+        },
+        "repeat": {
+          "mode": "each",
+          "max": 10001
+        }
+      },
+      "valid": false,
+      "errors": [
+        "repeat.max"
+      ]
+    }
+  ]
+}
