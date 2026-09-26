@@ -467,11 +467,17 @@ if (!function_exists('p202RecordConversion')) {
      *
      * @param array<string,int|float|string|bool> $log Conversion_logs column values.
      *        Required keys: click_id, campaign_id, user_id, click_time, conv_time,
-     *        time_difference, ip, pixel_type, user_agent. Optional: source (a
-     *        ConversionSource value; defaults from pixel_type), reversal and
-     *        reversal_ref (see p202ExtractReversal), once_per_click.
-     *        click_payout is read only when $usePixelPayout: without an
-     *        explicit amount the writer applies the campaign's default.
+     *        time_difference, ip, pixel_type, user_agent, and once_per_click
+     *        (bool). Optional: source (a ConversionSource value; defaults
+     *        from pixel_type), reversal and reversal_ref (see
+     *        p202ExtractReversal). click_payout is read only when
+     *        $usePixelPayout: without an explicit amount the writer applies
+     *        the campaign's default.
+     *        once_per_click has no default on purpose: without an id a
+     *        retry cannot be told from a repeat, so an endpoint that forgot
+     *        it double-recorded every id-less retry (gpb.php and upx.php
+     *        did). Every caller now says which it wants, and one that says
+     *        nothing is refused before any database work.
      * @param array{customer_ref?: string, customer_ref_type?: string} $customer
      *        LTV customer identity (see p202ExtractCustomer); [] = unlinked.
      * @param list<array<string,mixed>> $items Product line items for the
@@ -498,6 +504,11 @@ if (!function_exists('p202RecordConversion')) {
         $clickId = (int) ($log['click_id'] ?? 0);
         if ($clickId <= 0) {
             throw new \InvalidArgumentException('p202RecordConversion: click_id must be a positive integer');
+        }
+        if (!array_key_exists('once_per_click', $log) || !is_bool($log['once_per_click'])) {
+            throw new \InvalidArgumentException(
+                'p202RecordConversion: once_per_click must be given as a bool (true for an id-less hit that must convert a click once)'
+            );
         }
 
         // Delegate the transactional lock + idempotency + insert to the single
@@ -541,7 +552,7 @@ if (!function_exists('p202RecordConversion')) {
         if (isset($log['reversal_ref']) && (string) $log['reversal_ref'] !== '') {
             $data['reversal_ref'] = (string) $log['reversal_ref'];
         }
-        if (!empty($log['once_per_click'])) {
+        if ($log['once_per_click']) {
             // The one-conversion-per-click rule for id-less hits, enforced by
             // the writer under its click lock (see MysqlConversionRepository::record).
             $data['once_per_click'] = true;
