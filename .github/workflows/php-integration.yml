@@ -85,6 +85,19 @@ jobs:
             --group integration \
             tests/Conversion/ConversionIdempotencyIntegrationTest.php \
             --verbose --no-coverage
+          # record_mysql_error() in both of its definitions, called with the
+          # connection alone, the connection and the statement, and the
+          # statement alone, against a real failed query.
+          vendor/bin/phpunit --configuration phpunit.ci.xml \
+            --group integration \
+            tests/Config/RecordMysqlErrorIntegrationTest.php \
+            --verbose --no-coverage
+          # Two processes linking one brand-new signal at once, at READ
+          # COMMITTED and REPEATABLE READ: both clicks must end on one visitor.
+          vendor/bin/phpunit --configuration phpunit.ci.xml \
+            --group integration \
+            tests/Identity/IdentityRaceIntegrationTest.php \
+            --verbose --no-coverage
           # The postback receiver's dedupe is a UNIQUE index over a hash of the
           # whole body: only a real server shows it collapsing a byte-identical
           # retry while a forgery and the genuine postback both land.
@@ -134,6 +147,18 @@ jobs:
           vendor/bin/phpunit --configuration phpunit.ci.xml \
             --group integration \
             tests/Apps/Android/Integrity/IntegritySettingsIntegrationTest.php \
+            --verbose --no-coverage
+          # The user delete against the attribution worker (each waits for
+          # the other on the user row; the race is run with a second process)
+          # and a model delete against its running export — lock semantics
+          # only a real server has.
+          vendor/bin/phpunit --configuration phpunit.ci.xml \
+            --group integration \
+            tests/Attribution/UserDeletionPurgesAttributionTest.php \
+            --verbose --no-coverage
+          vendor/bin/phpunit --configuration phpunit.ci.xml \
+            --group integration \
+            tests/Attribution/AttributionExportsIntegrationTest.php \
             --verbose --no-coverage
           # Checks the SQL the v3 API ships against the schema it ships, by
           # preparing every statically-known statement on a real server. It

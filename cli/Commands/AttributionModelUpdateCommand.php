@@ -84,7 +84,7 @@ class AttributionModelUpdateCommand extends BaseCommand
         }
         $lookback = $input->getOption('lookback_days');
         if ($lookback !== null) {
-            if (preg_match('/^[1-9][0-9]{0,2}$/D', (string) $lookback) !== 1) {
+            if (preg_match('/^[1-9][0-9]{0,2}$/D', (string) $lookback) !== 1 || (int) $lookback > 365) {
                 return 'Invalid --lookback_days: a whole number of days from 1 to 365';
             }
             $body['lookback_days'] = (int) $lookback;

@@ -24,6 +24,7 @@ final class MysqlClickRepository implements ClickRepositoryInterface
             'INSERT INTO 202_clicks_counter SET click_id = DEFAULT'
         );
         $clickId = $this->conn->executeInsert($stmt);
+        RecordedClicks::note($clickId);
 
         return $clickId;
     }
@@ -49,6 +50,7 @@ final class MysqlClickRepository implements ClickRepositoryInterface
                     'INSERT INTO 202_clicks_counter SET click_id = DEFAULT'
                 );
                 $clickId = $this->conn->executeInsert($stmt);
+                RecordedClicks::note($clickId);
             }
 
             // 2. 202_clicks — core click data

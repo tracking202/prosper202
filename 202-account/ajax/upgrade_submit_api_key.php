@@ -5,7 +5,14 @@ include_once(str_repeat("../", 2).'202-config/connect.php');
 AUTH::require_user(); 
 
 if (isset($_POST['api_key'])) {
-	if ($_POST['token'] != $_SESSION['token']) { $error['token'] = 'You must use our forms to submit data.';  }
+	// The session token, compared as every other Account write compares it
+	// (it was `!=`), and nothing else runs without it.
+	$error = [];
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+		http_response_code(403);
+		echo json_encode(['error' => true, 'msg' => 'You must use our forms to submit data.']);
+		die();
+	}
 	$mysql['p202_customer_api_key'] = $db->real_escape_string((string)$_POST['api_key']);
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 	$validate = validateCustomersApiKey($mysql['p202_customer_api_key']);
@@ -13,10 +20,14 @@ if (isset($_POST['api_key'])) {
 		$error['p202_customer_api_key_invalid'] = "API key is not valid. Check your key and try again!";
 	}
 	if (!$error) {
-		$db->query("UPDATE 202_users SET p202_customer_api_key = '".$mysql['p202_customer_api_key']."' WHERE user_id = '".$mysql['user_id']."'");
-		$msg = ['error' => false, 'msg' => 'Valid'];
+		if ($db->query("UPDATE 202_users SET p202_customer_api_key = '".$mysql['p202_customer_api_key']."' WHERE user_id = '".$mysql['user_id']."'")) {
+			$msg = ['error' => false, 'msg' => 'Valid'];
+		} else {
+			error_log('upgrade_submit_api_key.php: the key was not saved: ' . $db->error);
+			$msg = ['error' => true, 'msg' => 'The key is valid but could not be saved. Try again.'];
+		}
 	} else {
-		$msg = ['error' => true, 'msg' => $error['token'] . $error['p202_customer_api_key_invalid']];
+		$msg = ['error' => true, 'msg' => implode(' ', $error)];
 	}
 
 	echo json_encode($msg);

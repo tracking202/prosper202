@@ -142,7 +142,7 @@ if (isset($_GET['delete_aff_network_id'])) {
 								`aff_network_time`='" . $mysql['aff_network_time'] . "'
 						WHERE   `user_id`='" . $mysql['user_id'] . "'
 						AND     `aff_network_id`='" . $mysql['aff_network_id'] . "'";
-		if ($delete_result = $db->query($delete_sql) or record_mysql_error($delete_result)) {
+		if ($delete_result = $db->query($delete_sql) or record_mysql_error($db, $delete_sql)) {
 			$delete_success = true;
 
 			// Landing Page Optimizer (segments-v2 G10): mirror the save-path

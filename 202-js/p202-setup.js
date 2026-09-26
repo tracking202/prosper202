@@ -527,8 +527,11 @@
             });
         });
 
-        function offerRequest(query, done) {
-            jq.get(url + '?' + query, null, null, 'html').done(function (answer) {
+        // A read is a GET; an action the network takes on the account's
+        // behalf (asking for access) is a POST, which the shell's prefilter
+        // gives the session token that dni_get_offers.php asks for.
+        function offerRequest(query, done, act) {
+            (act ? jq.post(url + '?' + query, {}, null, 'html') : jq.get(url + '?' + query, null, null, 'html')).done(function (answer) {
                 // The server answers JSON on its own errors and markup otherwise.
                 try {
                     JSON.parse(answer);
@@ -567,7 +570,7 @@
                     return;
                 }
                 jq(button).parents().eq(1).html(html);
-            });
+            }, true);
         });
         jq(modal).on('submit', 'form[name="offersQuestionsForm"]', function (event) {
             event.preventDefault();
@@ -586,8 +589,8 @@
             var button = this;
             var offer = button.getAttribute('data-offer-id');
             button.disabled = true;
-            jq.getJSON(url + '?setup_offer&ddlci=' + encodeURIComponent(modal.getAttribute('data-ddlci') || '') + '&dni=' + encodeURIComponent(state.dni)
-                + '&offer_id=' + encodeURIComponent(offer)).done(function (data) {
+            jq.post(url + '?setup_offer&ddlci=' + encodeURIComponent(modal.getAttribute('data-ddlci') || '') + '&dni=' + encodeURIComponent(state.dni)
+                + '&offer_id=' + encodeURIComponent(offer), {}, null, 'json').done(function (data) {
                 var set = function (selector, value) {
                     var field = document.querySelector(selector);
                     if (field && value !== undefined && value !== null) {

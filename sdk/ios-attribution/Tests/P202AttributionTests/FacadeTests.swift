@@ -262,6 +262,83 @@ final class FacadeTests: XCTestCase {
         XCTAssertEqual(LastFineValueStore.load(from: h.store, for: .install), 50, "the install postback is untouched")
     }
 
+    /// Once, then count 2, on one event (fine 30, then 50).
+    private static let firstAndSecondPurchase = TestSchema.document(
+        goals: [
+            TestSchema.goal(1, #"{"name":"First purchase","trigger":{"event":"purchase"}}"#),
+            TestSchema.goal(2, #"{"name":"Second purchase","trigger":{"event":"purchase"},"threshold":{"count":2}}"#),
+        ],
+        encodings: [
+            #"{"goal_id":1,"fine_value":30,"coarse_value":null}"#,
+            #"{"goal_id":2,"fine_value":50,"coarse_value":null}"#,
+        ]
+    )
+
+    func testAnEventScopedToBothPostbacksThatReachesTwoValuesSendsTwoUpdates() throws {
+        // The install postback has had its first purchase; the re-engagement
+        // postback starts a lifecycle. One purchase scoped to both is then
+        // the install postback's SECOND purchase and the re-engagement
+        // postback's FIRST: two values, so two framework calls, each scoped
+        // to its own postback, each written to its own history.
+        let h = try Harness(body: Self.firstAndSecondPurchase, test: self)
+        XCTAssertEqual(try h.sdk.logEvent("purchase")?.fineValue, 30)
+        h.sdk.beginReengagement()
+        h.submitted = []
+
+        let returned = try XCTUnwrap(try h.sdk.logEvent("purchase", conversionTypes: [.install, .reengagement]))
+
+        XCTAssertEqual(h.submitted, [
+            ConversionUpdate(fineValue: 50, coarseValue: nil, usedFineFallback: false, conversionTypes: [.install]),
+            ConversionUpdate(fineValue: 30, coarseValue: nil, usedFineFallback: false, conversionTypes: [.reengagement]),
+        ], "one update per postback, each with its own value, neither scoped to both")
+        XCTAssertEqual(returned, h.submitted[0], "logEvent returns the install postback's")
+        XCTAssertEqual(LastFineValueStore.load(from: h.store, for: .install), 50)
+        XCTAssertEqual(LastFineValueStore.load(from: h.store, for: .reengagement), 30, "each slot holds its own postback's value")
+        // And each postback's progress moved on its own: the next purchase
+        // is the re-engagement postback's second, while the install
+        // postback has nothing left to reach.
+        h.submitted = []
+        XCTAssertEqual(try h.sdk.logEvent("purchase", conversionTypes: [.install, .reengagement])?.fineValue, 50)
+        XCTAssertEqual(h.submitted, [ConversionUpdate(fineValue: 50, coarseValue: nil, usedFineFallback: false, conversionTypes: [.reengagement])])
+    }
+
+    func testAnEventQueuedBeforeANewReengagementCountsOnlyTowardItsOwnLifecycle() throws {
+        // Offline: no schema yet, so events queue. Opened from a
+        // re-engagement ad (event A, re-engagement), then from a second one
+        // before the first fetch completes. When the schema arrives, event
+        // A belongs to the lifecycle that ended: it must not be the new
+        // lifecycle's first purchase.
+        let h = try Harness(body: nil, test: self)
+        XCTAssertNil(try h.sdk.logEvent("purchase", conversionTypes: [.reengagement]), "queued: no schema yet")
+        XCTAssertNil(try h.sdk.logEvent("purchase", conversionTypes: [.install, .reengagement]), "queued, scoped to both")
+        h.sdk.beginReengagement()
+        XCTAssertNil(try h.sdk.logEvent("purchase", conversionTypes: [.reengagement]), "queued in the new lifecycle")
+
+        h.submitted = []
+        _ = try h.sdk.finishRefresh(requestToken: "token-a", data: Self.firstAndSecondPurchase, response: httpResponse(status: 200), error: nil).get()
+        let flushed = h.submitted
+        XCTAssertFalse(flushed.isEmpty, "the schema's arrival evaluated the queue")
+
+        // The install postback: the install, then the one install-scoped
+        // event (the both-scoped one) — its first purchase.
+        // The re-engagement postback: only the event logged in its own
+        // lifecycle — its first purchase, not its second.
+        XCTAssertEqual(flushed.filter { $0.includesReengagement }.map(\.fineValue), [30], "the new lifecycle saw one purchase")
+        XCTAssertEqual(flushed.filter { $0.includesInstall }.last?.fineValue, 30, "the install postback kept its event")
+        XCTAssertEqual(try h.sdk.logEvent("purchase", conversionTypes: [.reengagement])?.fineValue, 50, "the next is the new lifecycle's second")
+    }
+
+    func testAQueuedEventFromTheCurrentLifecycleIsCreditedWhole() throws {
+        let item = DeviceGoalState.Pending(event: .install(at: 1), conversionTypes: [.install, .reengagement], reengagementGeneration: 2)
+        XCTAssertEqual(P202Attribution.withinLifecycle(item, generation: 2), item)
+        XCTAssertEqual(P202Attribution.withinLifecycle(item, generation: 3)?.conversionTypes, [.install])
+        let reOnly = DeviceGoalState.Pending(event: .install(at: 1), conversionTypes: [.reengagement], reengagementGeneration: nil)
+        XCTAssertEqual(P202Attribution.withinLifecycle(reOnly, generation: 0), reOnly, "stored before lifecycles were counted: lifecycle 0")
+        XCTAssertNil(P202Attribution.withinLifecycle(reOnly, generation: 1))
+        let installOnly = DeviceGoalState.Pending(event: .install(at: 1), conversionTypes: nil, reengagementGeneration: 0)
+        XCTAssertEqual(P202Attribution.withinLifecycle(installOnly, generation: 5), installOnly, "an install-postback event is never narrowed")
+    }
+
     func testAGoalStateStoredBeforeReengagementHadItsOwnStillLoads() throws {
         let store = InMemoryStore()
         store.set(Data(#"{"installAt":1000,"installEvaluated":true,"lastReceivedAt":1000,"state":{"progress":{},"reached":[]},"pending":[]}"#.utf8), forKey: DeviceGoalState.key)

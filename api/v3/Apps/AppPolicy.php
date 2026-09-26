@@ -61,12 +61,12 @@ final class AppPolicy
      * is a whole number of days from 1 to MAX_WINDOW_DAYS, as an integer or
      * its canonical digits; anything else is 0.
      */
-    public static function fromRow(mixed $row): self
+    public static function fromRow(mixed $row, string $prefix = ''): self
     {
-        if (!is_array($row) || !array_key_exists('accept_test_signals', $row)) {
+        if (!is_array($row) || !array_key_exists($prefix . 'accept_test_signals', $row)) {
             return self::untrusting();
         }
-        $window = $row['attribution_window_days'] ?? null;
+        $window = $row[$prefix . 'attribution_window_days'] ?? null;
         if (is_string($window) && preg_match('/^[1-9][0-9]{0,2}$/D', $window) === 1) {
             $window = (int) $window;
         }
@@ -75,13 +75,26 @@ final class AppPolicy
         }
 
         return new self(
-            self::flag($row['accept_test_signals']),
+            self::flag($row[$prefix . 'accept_test_signals']),
             $window,
-            self::flag($row['trust_client_revenue'] ?? null),
+            self::flag($row[$prefix . 'trust_client_revenue'] ?? null),
             // A row read without the column is not a row whose mode is off.
-            IntegrityMode::fromStored($row['integrity_mode'] ?? null),
+            IntegrityMode::fromStored($row[$prefix . 'integrity_mode'] ?? null),
         );
     }
+
+    /**
+     * The registration's policy columns under REGISTRATION_PREFIX, for a
+     * query that reads them beside another table's row. 202_app_installs
+     * has its own `integrity_mode` (the install's arrival-time snapshot), so
+     * `SELECT i.*, r.…` leaves `integrity_mode` naming the INSTALL's: a
+     * policy built from that row reads the snapshot as the registration's
+     * live mode, silently (both share one domain). Aliased, every policy
+     * column is the registration's and no install column can shadow one.
+     */
+    public const REGISTRATION_PREFIX = 'reg_';
+    public const REGISTRATION_COLUMNS = 'r.accept_test_signals AS reg_accept_test_signals, r.attribution_window_days AS reg_attribution_window_days, '
+        . 'r.trust_client_revenue AS reg_trust_client_revenue, r.integrity_mode AS reg_integrity_mode';
 
     /** A policy from a boolean already decided elsewhere (the registration write path). */
     public static function withTestSignals(bool $accept): self

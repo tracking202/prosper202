@@ -28,13 +28,26 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 $store = new ReportPrefsStore($db);
 $userId = (int) $_SESSION['user_id'];
 $input = ReportFilterInput::fromQuery($_GET, []);
-$errors = $input->errors;
+// This page reads the window and nothing else. A `page` or `order` that
+// does not parse (a stray one on a pasted link) is not the window's
+// problem: it neither holds the range back nor is blamed for it, as in
+// AnalyzeReportController::handleRequest().
+$errors = array_diff_key($input->errors, ['page' => true, 'order' => true]);
 if ($input->speaks && $errors === []) {
     $errors = $store->save($userId, [], $input->window);
 }
 
 $time = grab_timeframe();
 $window = AnalyzeReportController::windowOf($time);
+
+// What this page shows is its view: the partials ltv.js loads and the
+// download each draw it (ltv.js sends it with every request under
+// tracking202/ajax/, and each installs it with p202_report_view_begin()),
+// so a second tab storing another window meanwhile changes neither
+// (ReportView), exactly as for the other Analyze reports.
+require_once $rootPath . '/202-config/functions-report-prefs.php';
+$view = p202_report_view_query([], [], $window);
+p202_report_view_from_request([\Prosper202\DataEngine\ReportView::PARAM => $view], $userId);
 $rangeSpec = ['range' => $window['range'], 'from' => $window['from'], 'to' => $window['to']];
 if (isset($errors['range'])) {
     $rangeSpec['error'] = $errors['range'];
@@ -67,7 +80,7 @@ template_top('Customer Lifetime Value', ['ui' => 'v2']);
     'note' => 'The range selects customers by when they were first seen. It is shared with your other reports.',
 ]); ?>
 
-<div id="m-content" data-ltv-page="<?php echo $e($self); ?>" data-ltv-ajax="<?php echo $e($base . '/tracking202/ajax/'); ?>" aria-busy="true" aria-live="polite">
+<div id="m-content" data-ltv-page="<?php echo $e($self); ?>" data-ltv-ajax="<?php echo $e($base . '/tracking202/ajax/'); ?>" data-ltv-view="<?php echo $e($view); ?>" aria-busy="true" aria-live="polite">
     <div class="p202-skeleton mb-3" style="height: 5.5rem"></div>
     <div class="p202-skeleton" style="height: 18rem"></div>
 </div>

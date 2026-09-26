@@ -178,6 +178,63 @@ final class GoalEngine
         if ($row === null) {
             throw new GoalEngineException('Install ' . $installRowId . ' not found', GoalEngineException::NOT_FOUND);
         }
+
+        return self::installSubjectFrom($installRowId, $row);
+    }
+
+    /**
+     * The subject as it is NOW, for a write that is about to take its lock.
+     *
+     * A caller builds its subject before the transaction (InstallEventsIntake
+     * with installSubject(), reevaluate() one per subject id), and what an
+     * install subject carries — its click and campaign — is its credit,
+     * which a live policy change (accept_test_signals, rejudged by
+     * InstallIntake under the install row's lock) can flip in between. A
+     * subject read before the lock would then write an outcome with no
+     * ledger row for an install that is now credited (a conversion lost for
+     * good: the recredit already ran), or a paid row for one that no longer
+     * is. So an install subject is read again here: its install row locked
+     * FOR UPDATE first — the lock order every install path takes (install
+     * row, then the subject's lock row, then the click inside the ledger
+     * writer) — and a locking read returns the latest committed row, never
+     * a snapshot older than the lock. A rejudge that has not committed is
+     * waited for; one that has is seen. A click subject's click and
+     * campaign never change, so it is returned as given.
+     */
+    private function current(int $userId, GoalSubject $subject): GoalSubject
+    {
+        if ($subject->type !== GoalSubject::INSTALL) {
+            return $subject;
+        }
+        $stmt = $this->conn->prepareWrite(
+            'SELECT install_row_id, registration_id, match_state, trusted, click_id, install_begin_server_at, received_at
+             FROM 202_app_installs WHERE install_row_id = ? AND user_id = ? LIMIT 1 FOR UPDATE'
+        );
+        $this->conn->bind($stmt, 'ii', [$subject->id, $userId]);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            throw new GoalEngineException('Install ' . $subject->id . ' not found', GoalEngineException::NOT_FOUND);
+        }
+        $row['click_time'] = null;
+        $row['aff_campaign_id'] = null;
+        if ($row['click_id'] !== null) {
+            // A click's time and campaign are never rewritten, so a plain
+            // read of them is current; only the install's credit moves.
+            $click = $this->conn->prepareWrite('SELECT click_time, aff_campaign_id FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1');
+            $this->conn->bind($click, 'ii', [(int) $row['click_id'], $userId]);
+            $clickRow = $this->conn->fetchOne($click);
+            if ($clickRow !== null) {
+                $row['click_time'] = $clickRow['click_time'];
+                $row['aff_campaign_id'] = $clickRow['aff_campaign_id'];
+            }
+        }
+
+        return self::installSubjectFrom($subject->id, $row);
+    }
+
+    /** @param array<string, mixed> $row an install row with its click's click_time and aff_campaign_id (null without one) */
+    private static function installSubjectFrom(int $installRowId, array $row): GoalSubject
+    {
         $credited = (string) $row['match_state'] === 'attributed' && $row['trusted'] !== null && (int) $row['trusted'] === 1;
         if ($credited && ($row['click_id'] === null || $row['click_time'] === null)) {
             throw new GoalEngineException('install ' . $installRowId . ' is attributed but its click is gone', GoalEngineException::INTEGRITY);
@@ -313,6 +370,7 @@ final class GoalEngine
     {
         $now = $this->now();
         $post = ['ledger' => [], 'clicks' => [], 'notices' => []];
+        $subject = $this->current($userId, $subject);
         $row = $this->lockSubject($userId, $subject, $now);
         $subject = $subject->withRebases(self::decodeRebases($row));
 
@@ -590,6 +648,7 @@ final class GoalEngine
     {
         $now = $this->now();
         $post = ['ledger' => [], 'clicks' => [], 'notices' => []];
+        $subject = $this->current($userId, $subject);
         $row = $this->lockSubject($userId, $subject, $now);
         $rebases = self::decodeRebases($row);
         $rebases[$goalId] = $version;

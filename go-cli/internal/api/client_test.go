@@ -479,3 +479,37 @@ func TestHintFor(t *testing.T) {
 		t.Error("nil should produce no hint")
 	}
 }
+
+// The public app routes are selected by the app's token; the account's API
+// key must not travel with it (it is a credential those routes never read).
+func TestAppTokenRequestsCarryNoAPIKey(t *testing.T) {
+	var auth []string
+	var token []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = append(auth, r.Header.Get("Authorization"))
+		token = append(token, r.Header.Get("X-P202-App-Token"))
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":{}}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	if _, err := c.PostWithHeaders("apps/installs", map[string]string{"a": "b"}, map[string]string{AppTokenHeader: "tok"}); err != nil {
+		t.Fatalf("PostWithHeaders: %v", err)
+	}
+	if _, err := c.GetWithHeaders("apps/schema", nil, map[string]string{AppTokenHeader: "tok"}); err != nil {
+		t.Fatalf("GetWithHeaders: %v", err)
+	}
+	if _, err := c.Post("campaigns", map[string]string{"a": "b"}); err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	if auth[0] != "" || auth[1] != "" {
+		t.Errorf("an app-token request sent Authorization %q / %q; want none", auth[0], auth[1])
+	}
+	if token[0] != "tok" || token[1] != "tok" {
+		t.Errorf("app token = %q / %q, want tok", token[0], token[1])
+	}
+	if auth[2] != "Bearer test-api-key-1234" {
+		t.Errorf("an ordinary request lost its API key: Authorization = %q", auth[2])
+	}
+}

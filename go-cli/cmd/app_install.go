@@ -286,7 +286,7 @@ var appInstallSimulateCmd = &cobra.Command{
 			"test":            test,
 			"integrity_token": nil,
 		}
-		data, err := c.PostWithHeaders("apps/installs", body, map[string]string{"X-P202-App-Token": app.Data.AppToken})
+		data, err := c.PostWithHeaders("apps/installs", body, map[string]string{api.AppTokenHeader: app.Data.AppToken})
 		if err != nil {
 			return err
 		}
