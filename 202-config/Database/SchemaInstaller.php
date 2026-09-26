@@ -12,6 +12,7 @@ use Prosper202\Database\Tables\ClickTables;
 use Prosper202\Database\Tables\TrackingTables;
 use Prosper202\Database\Tables\CampaignTables;
 use Prosper202\Database\Tables\AttributionTables;
+use Prosper202\Database\Tables\ConversionTables;
 use Prosper202\Database\Tables\LtvTables;
 use Prosper202\Database\Tables\RotatorTables;
 use Prosper202\Database\Tables\AdNetworkTables;
@@ -54,6 +55,7 @@ final class SchemaInstaller
             $this->createClickTables();
             $this->createTrackingTables();
             $this->createCampaignTables();
+            $this->createConversionTables();
             $this->createAttributionTables();
             $this->createLtvTables();
             $this->createRotatorTables();
@@ -120,6 +122,14 @@ final class SchemaInstaller
     public function createCampaignTables(): void
     {
         $this->createTablesFromDefinitions(CampaignTables::getDefinitions());
+    }
+
+    /**
+     * Create the conversion ledger, its MTA outbox and upload batches.
+     */
+    public function createConversionTables(): void
+    {
+        $this->createTablesFromDefinitions(ConversionTables::getDefinitions());
     }
 
     /**

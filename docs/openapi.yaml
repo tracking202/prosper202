@@ -1114,8 +1114,22 @@ paths:
       summary: Create a conversion
       description: |
         Records a conversion for an existing click. The click must exist and
-        belong to the authenticated user. Updates the click record with
-        `click_lead = 1` and the new payout amount.
+        belong to the authenticated user. The conversion is a row in the
+        click's conversion ledger; the click's lead flag and value are then
+        derived from all of its rows under the campaign's payout mode
+        (`replace`: the latest conversion is the value; `accumulate`: the
+        conversions add up).
+
+        A repeated `transaction_id` on the same click is the same conversion
+        (the existing one is returned). With no `transaction_id`, an
+        `accumulate` campaign records one plain conversion per click, and a
+        `replace` campaign records a row each time.
+
+        `status: "reversed"` with the `transaction_id` of an earlier
+        conversion records a reversal that nets against it (a $3 sale
+        reversed is $0). A sale can be reversed once: a second reversal with a
+        different `reversal_id` is a 422 naming the first, and a reversal of a
+        transaction id the click does not have is a 404.
       operationId: createConversion
       requestBody:
         required: true
@@ -3858,13 +3872,27 @@ components:
           description: Click ID to attribute the conversion to
         payout:
           type: number
-          description: Payout amount (defaults to click's existing payout)
+          description: |
+            Payout amount. Must be a number (a string that is not one is a
+            422). When omitted: the click's current value in a `replace`
+            campaign, the campaign payout in an `accumulate` campaign. For a
+            reversal, the amount reversed (default: all of the sale).
         transaction_id:
           type: string
-          description: External transaction ID for deduplication
+          description: |
+            The network's or merchant's id for this conversion: kept on the
+            row for reconciliation, and a repeat on the same click is the
+            same conversion. For a reversal, the id of the sale it reverses.
         conv_time:
           type: integer
           description: Conversion timestamp (defaults to current time)
+        status:
+          type: string
+          enum: [reversed]
+          description: Record a reversal of the conversion named by `transaction_id`.
+        reversal_id:
+          type: string
+          description: The network's id for the reversal. Without one, a sale can be reversed once.
 
     ConversionResponse:
       type: object

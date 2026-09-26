@@ -5,7 +5,14 @@ declare(strict_types=1);
 namespace Prosper202\Conversion;
 
 use Prosper202\Bridge\EventBridge;
+use Prosper202\Conversion\Ledger\Amount;
+use Prosper202\Conversion\Ledger\ConversionSource;
+use Prosper202\Conversion\Ledger\DedupeKey;
+use Prosper202\Conversion\Ledger\MysqlConversionLedger;
+use Prosper202\Conversion\Ledger\PayoutMode;
+use Prosper202\Conversion\Ledger\ReversalException;
 use Prosper202\Database\Connection;
+use Prosper202\DataEngine\ClickRollupSql;
 use Prosper202\Ltv\MysqlCustomerRepository;
 use RuntimeException;
 use Throwable;
@@ -83,9 +90,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
 
     public function create(int $userId, array $data): int
     {
-        $result = $this->record($userId, $data, function (int $clickId, float $payout) use ($userId): void {
-            $this->applyStandardClickUpdate($clickId, $payout, $userId);
-        });
+        $data['source'] ??= ConversionSource::API->value;
+        $result = $this->record($userId, $data);
 
         if (!$result['clickFound']) {
             throw new ClickNotFoundException('Click not found or not owned by user');
@@ -96,30 +102,53 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
 
     /**
      * Single owner of the transactional conversion write used by every ingestion
-     * path (V3 API and the legacy static postback/pixel endpoints).
+     * path (the V3 API, the static pixel and postback endpoints, both uploads).
      *
      * In one transaction it: locks the source click (SELECT ... FOR UPDATE) so
-     * concurrent/retried postbacks serialise; de-duplicates on transaction_id
-     * (matching the UNIQUE (click_id, transaction_id) key, which ignores
-     * `deleted`); inserts the conversion_logs row; and runs an optional
-     * caller-supplied click-side update inside the same transaction so the click
-     * flag and the audit row commit or roll back together.
+     * concurrent and retried requests serialise; carries a pre-ledger click's
+     * value into the ledger (MysqlConversionLedger::ensureManaged); decides the
+     * row's dedupe key and answers a replay as a duplicate; inserts the ledger
+     * row; runs the caller's click-side update (CPA cost, the filtered flag —
+     * never the lead or the payout); recomputes the click's value from its
+     * rows; and queues the conversion for MTA in the same transaction.
      *
      * @param array<string, mixed> $data Requires click_id. Optional:
-     *        transaction_id, payout, conv_time, campaign_id, click_time,
+     *        payout (an explicit amount; when absent the amount is the
+     *        campaign's default — the click's current value in replace mode,
+     *        the campaign payout in accumulate mode, because an accumulating
+     *        click's cached value is a running total),
+     *        transaction_id (the network's id; kept on the row for
+     *        reconciliation and deduplicated as tx:<id>),
+     *        dedupe_key (a source-built key from DedupeKey — uploads and goals
+     *        pass their own; when absent the key is derived from the
+     *        transaction id and the payout mode),
+     *        source (a ConversionSource value; default api), source_ref,
+     *        event_name, payable (default true),
+     *        reversal (true = this reverses the earlier row carrying the same
+     *        transaction_id; a negative explicit payout with a transaction id
+     *        on file is a reversal too), reversal_ref (the network's reversal
+     *        id, default "1"),
      *        once_per_click (true = record only while the click is not yet a
-     *        lead; checked under the click lock, so two concurrent id-less
-     *        requests cannot both record — the caller's own pre-lock read of
-     *        click_lead is a fast path, never the guard), and the
-     *        legacy columns time_difference, ip, pixel_type, user_agent (only
-     *        written when present, so the V3 insert keeps its historical shape).
-     *        LTV keys (all optional): customer_id (known internal id),
-     *        customer_ref + customer_ref_type (external identity — resolved or
-     *        created via 202_customer_aliases), customer_crm (CRM fields applied
-     *        when the customer is first created), items (product line items for
-     *        the revenue ledger event).
+     *        lead; checked under the click lock),
+     *        once_per_click_unkeyed (true = the same check, applied only when
+     *        the row's ledger key does not already make it once per click:
+     *        an accumulating plain conversion is keyed "conversion" and is
+     *        owed once even on a click that is a lead through keyed sales;
+     *        a replace-mode id-less row is keyed by its own id and would
+     *        otherwise be recorded again on every retry),
+     *        skip_ltv (do not write a revenue event), skip_bridge (do not emit
+     *        conversion.recorded) — both for rows that are not new sales, such
+     *        as upload lines,
+     *        conv_time, campaign_id, click_time, and the legacy columns
+     *        time_difference, ip, pixel_type, user_agent.
+     *        LTV keys (all optional): customer_id, customer_ref +
+     *        customer_ref_type, customer_crm, items.
      * @param (callable(int $clickId, float $payout): void)|null $clickSideUpdate
-     * @return array{convId: int, duplicate: bool, clickFound: bool, customerId: int|null, campaignId?: int, clickTime?: int, payout?: float}
+     *        Runs inside the transaction after the insert. It must not write
+     *        click_lead or click_payout (ClickValueWritersTest enforces it):
+     *        the recompute that follows owns both.
+     * @return array{convId: int, duplicate: bool, clickFound: bool, customerId: int|null, dedupeKey?: string, reversesConvId?: int|null, campaignId?: int, clickTime?: int, payout?: float}
+     * @throws ReversalException when a reversal names no row, or a different reversal of that row is on file
      */
     public function record(int $userId, array $data, ?callable $clickSideUpdate = null): array
     {
@@ -129,11 +158,20 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         }
 
         // Trim centrally so a blank/whitespace-only id is treated as absent
-        // (stored NULL, no dedup) across every ingestion path.
+        // (stored NULL) across every ingestion path.
         $rawTransactionId = trim((string) ($data['transaction_id'] ?? ''));
         $transactionId = $rawTransactionId !== '' ? $rawTransactionId : null;
         $convTime = (int) ($data['conv_time'] ?? time());
-        $payoutOverride = isset($data['payout']) ? (float) $data['payout'] : null;
+        $explicitPayout = null;
+        if (array_key_exists('payout', $data) && $data['payout'] !== null && $data['payout'] !== '') {
+            $rawPayout = $data['payout'];
+            if (!is_int($rawPayout) && !is_float($rawPayout) && !is_string($rawPayout)) {
+                throw new RuntimeException('payout must be a number');
+            }
+            // Throws on anything that is not a decimal number: an amount that
+            // cannot be read must never be recorded as 0.
+            $explicitPayout = Amount::toUnits($rawPayout);
+        }
         // The ip column is varchar(45): exactly one address fits, a forwarding
         // chain does not, and an over-long value fails the INSERT under strict
         // sql_mode and rolls the conversion back. Whatever a caller hands in,
@@ -142,8 +180,17 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         $ip = trim((string) ($data['ip'] ?? ''));
         $data['ip'] = $ip !== '' && filter_var($ip, FILTER_VALIDATE_IP) !== false ? $ip : '';
 
-        $work = function () use ($userId, $clickId, $transactionId, $convTime, $payoutOverride, $data, $clickSideUpdate): array {
-            // Lock the source click so concurrent/retried postbacks serialise here.
+        $source = ConversionSource::tryFrom((string) ($data['source'] ?? ConversionSource::API->value));
+        if ($source === null) {
+            throw new RuntimeException('source "' . (string) $data['source'] . '" is not a ledger source');
+        }
+        $payable = !array_key_exists('payable', $data) || (bool) $data['payable'];
+        $wantsReversal = !empty($data['reversal']);
+
+        $ledger = new MysqlConversionLedger($this->conn);
+
+        $work = function () use ($userId, $clickId, $transactionId, $convTime, $explicitPayout, $data, $clickSideUpdate, $source, $payable, $wantsReversal, $ledger): array {
+            // Lock the source click so concurrent/retried requests serialise here.
             $clickStmt = $this->conn->prepareWrite(
                 'SELECT click_id, aff_campaign_id, click_payout, click_time, click_lead FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE'
             );
@@ -154,50 +201,131 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                 return ['convId' => 0, 'duplicate' => false, 'clickFound' => false, 'customerId' => null];
             }
 
-            // Idempotency: a transaction_id already recorded for this click is a
-            // replay/retry. The lookup ignores `deleted` so it matches the UNIQUE
-            // (click_id, transaction_id) key and never collides on insert.
-            if ($transactionId !== null) {
-                $dupStmt = $this->conn->prepareWrite(
-                    'SELECT conv_id, customer_id FROM 202_conversion_logs WHERE click_id = ? AND transaction_id = ? LIMIT 1'
+            $clickCampaignId = (int) $click['aff_campaign_id'];
+            $terms = $ledger->campaignTerms($clickCampaignId);
+
+            // A reversal names the row it reverses by that row's transaction
+            // id. It is its own row with its own key (never tx:<id>, which the
+            // original holds), so a replay of the same reversal is a
+            // duplicate and a second, different reversal of one sale is
+            // refused rather than netting the sale twice.
+            $reverses = null;
+            if ($transactionId !== null && ($wantsReversal || ($explicitPayout !== null && $explicitPayout < 0))) {
+                $targetStmt = $this->conn->prepareWrite(
+                    'SELECT conv_id, click_payout, deleted FROM 202_conversion_logs
+                     WHERE click_id = ? AND transaction_id = ? AND reverses_conv_id IS NULL
+                     ORDER BY conv_id LIMIT 1'
                 );
-                $this->conn->bind($dupStmt, 'is', [$clickId, $transactionId]);
-                $dup = $this->conn->fetchOne($dupStmt);
-                if ($dup !== null) {
-                    return [
-                        'convId' => (int) $dup['conv_id'],
-                        'duplicate' => true,
-                        'clickFound' => true,
-                        'customerId' => $dup['customer_id'] !== null ? (int) $dup['customer_id'] : null,
-                    ];
+                $this->conn->bind($targetStmt, 'is', [$clickId, $transactionId]);
+                $target = $this->conn->fetchOne($targetStmt);
+                if ($target !== null && (int) $target['deleted'] === 0) {
+                    $reverses = $target;
+                } elseif ($wantsReversal) {
+                    throw new ReversalException(
+                        'There is no conversion with transaction id "' . $transactionId . '" on click ' . $clickId
+                        . ' to reverse' . ($target !== null ? ' (it was deleted)' : '') . '.',
+                        ReversalException::NO_TARGET
+                    );
+                }
+            } elseif ($wantsReversal) {
+                throw new ReversalException(
+                    'A reversal needs the transaction id of the conversion it reverses.',
+                    ReversalException::NO_TARGET
+                );
+            }
+
+            $keyedByOwnRow = false;
+            if ($reverses !== null) {
+                $reversalRef = trim((string) ($data['reversal_ref'] ?? ''));
+                $dedupeKey = DedupeKey::reversal((int) $reverses['conv_id'], $reversalRef !== '' ? $reversalRef : '1');
+            } elseif (isset($data['dedupe_key']) && $data['dedupe_key'] !== '') {
+                $dedupeKey = (string) $data['dedupe_key'];
+            } elseif ($transactionId !== null) {
+                $dedupeKey = DedupeKey::transaction($transactionId);
+            } elseif ($terms['mode'] === PayoutMode::ACCUMULATE && $payable) {
+                // With no id of its own an accumulating row would double the
+                // money on every retry, so it is the campaign's one plain
+                // conversion: once per click.
+                $dedupeKey = DedupeKey::plainConversion();
+            } else {
+                $dedupeKey = DedupeKey::rowPlaceholder();
+                $keyedByOwnRow = true;
+            }
+            if (strlen($dedupeKey) > DedupeKey::MAX_LENGTH) {
+                throw new RuntimeException('dedupe key is longer than ' . DedupeKey::MAX_LENGTH . ' bytes');
+            }
+
+            // Idempotency: a key already on this click is a replay. The lookup
+            // ignores `deleted` so it matches UNIQUE (click_id, dedupe_key)
+            // and never collides on insert.
+            $dupStmt = $this->conn->prepareWrite(
+                'SELECT conv_id, customer_id FROM 202_conversion_logs WHERE click_id = ? AND dedupe_key = ? LIMIT 1'
+            );
+            $this->conn->bind($dupStmt, 'is', [$clickId, $dedupeKey]);
+            $dup = $this->conn->fetchOne($dupStmt);
+            if ($dup !== null) {
+                return [
+                    'convId' => (int) $dup['conv_id'],
+                    'duplicate' => true,
+                    'clickFound' => true,
+                    'customerId' => $dup['customer_id'] !== null ? (int) $dup['customer_id'] : null,
+                    'dedupeKey' => $dedupeKey,
+                ];
+            }
+
+            if ($reverses !== null) {
+                $otherStmt = $this->conn->prepareWrite(
+                    'SELECT conv_id, dedupe_key FROM 202_conversion_logs
+                     WHERE click_id = ? AND reverses_conv_id = ? AND deleted = 0 ORDER BY conv_id LIMIT 1'
+                );
+                $this->conn->bind($otherStmt, 'ii', [$clickId, (int) $reverses['conv_id']]);
+                $other = $this->conn->fetchOne($otherStmt);
+                if ($other !== null) {
+                    throw new ReversalException(
+                        'Conversion ' . (int) $reverses['conv_id'] . ' (transaction id "' . $transactionId
+                        . '") was already reversed by conversion ' . (int) $other['conv_id']
+                        . ' (' . (string) $other['dedupe_key'] . '); a sale can be reversed once.',
+                        ReversalException::CONFLICT
+                    );
                 }
             }
 
             // One conversion per click for id-less pixels and postbacks. This
             // is the authoritative check: it reads click_lead from the row
             // locked FOR UPDATE above, so a second id-less request waits on
-            // the first's commit and then sees click_lead = 1. A NULL
-            // transaction id never collides on the UNIQUE key, so without this
-            // the two would both insert.
-            if (!empty($data['once_per_click']) && (int) ($click['click_lead'] ?? 0) === 1) {
+            // the first's commit and then sees click_lead = 1.
+            $oncePerClick = !empty($data['once_per_click'])
+                || (!empty($data['once_per_click_unkeyed']) && $keyedByOwnRow);
+            if ($oncePerClick && (int) ($click['click_lead'] ?? 0) === 1) {
                 return ['convId' => 0, 'duplicate' => true, 'clickFound' => true, 'customerId' => null];
             }
 
-            $payout = $payoutOverride ?? (float) ($click['click_payout'] ?? 0);
-            $campaignId = isset($data['campaign_id']) ? (int) $data['campaign_id'] : (int) $click['aff_campaign_id'];
+            // A click converted before the ledger holds its value only in its
+            // cache; carry it into the ledger before this row changes it.
+            $ledger->ensureManaged($click, $userId);
+
+            if ($reverses !== null) {
+                $amountUnits = -abs($explicitPayout ?? Amount::toUnits((string) $reverses['click_payout']));
+            } elseif ($explicitPayout !== null) {
+                $amountUnits = $explicitPayout;
+            } elseif ($terms['mode'] === PayoutMode::ACCUMULATE) {
+                $amountUnits = Amount::toUnits($terms['default_payout']);
+            } else {
+                $amountUnits = Amount::toUnits((string) ($click['click_payout'] ?? '0'));
+            }
+            $payout = (float) Amount::fromUnits($amountUnits);
+            $campaignId = isset($data['campaign_id']) ? (int) $data['campaign_id'] : $clickCampaignId;
             $clickTime = isset($data['click_time']) ? (int) $data['click_time'] : (int) ($click['click_time'] ?? 0);
 
             // LTV: resolve the customer AFTER the click lock and dedup guard
             // (lock ordering: click → customer → ledger → line items) so replays
             // never double-count. A conversion with no identity signal records
             // unlinked, exactly as before the LTV feature.
-            $customerId = $this->resolveCustomer($userId, $clickId, $data, $convTime);
+            $customerId = empty($data['skip_ltv']) ? $this->resolveCustomer($userId, $clickId, $data, $convTime) : null;
 
-            // Base column set is exactly the historical V3 insert; the NOT-NULL
-            // legacy columns are always appended below (with defaults when absent).
             $columns = ['click_id', 'transaction_id', 'campaign_id', 'click_payout', 'user_id', 'click_time', 'conv_time'];
-            $types = 'isidiii';
-            $values = [$clickId, $transactionId, $campaignId, $payout, $userId, $clickTime, $convTime];
+            $types = 'isisiii';
+            $values = [$clickId, $transactionId, $campaignId, Amount::fromUnits($amountUnits), $userId, $clickTime, $convTime];
 
             if ($customerId !== null) {
                 $columns[] = 'customer_id';
@@ -210,9 +338,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             // that don't (the V3 API) would otherwise omit them entirely, and the
             // INSERT then fails under STRICT sql_mode with "Field doesn't have a
             // default value" — silently dropping the conversion. Always include them,
-            // using the caller's value when supplied and a sensible default otherwise,
-            // so every ingestion path writes a valid row. time_difference is the
-            // click->conversion gap in seconds.
+            // using the caller's value when supplied and a sensible default otherwise.
             $legacyDefaults = [
                 'time_difference' => (string) max(0, $convTime - $clickTime),
                 'ip' => '',
@@ -226,27 +352,55 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                 $values[] = $type === 'i' ? (int) $value : (string) $value;
             }
 
+            // Provenance: what produced this row and what it is linked to.
+            $sourceRef = isset($data['source_ref']) && $data['source_ref'] !== '' ? (string) $data['source_ref'] : null;
+            if ($reverses !== null) {
+                $sourceRef = 'conv:' . (int) $reverses['conv_id'];
+            }
+            $eventName = isset($data['event_name']) && $data['event_name'] !== '' ? (string) $data['event_name'] : null;
+            array_push($columns, 'source', 'source_ref', 'event_name', 'payable', 'reverses_conv_id', 'dedupe_key');
+            $types .= 'sssiis';
+            array_push(
+                $values,
+                $source->value,
+                $sourceRef,
+                $eventName,
+                $payable ? 1 : 0,
+                $reverses !== null ? (int) $reverses['conv_id'] : null,
+                $dedupeKey
+            );
+
             $placeholders = rtrim(str_repeat('?, ', count($values)), ', ');
             $stmt = $this->conn->prepareWrite(
                 'INSERT INTO 202_conversion_logs (' . implode(', ', $columns) . ', deleted) VALUES (' . $placeholders . ', 0)'
             );
             $this->conn->bind($stmt, $types, $values);
             $convId = $this->conn->executeInsert($stmt);
+            if ($convId <= 0) {
+                throw new RuntimeException('conversion insert for click ' . $clickId . ' returned no id');
+            }
+
+            if (str_starts_with($dedupeKey, 'row-pending:')) {
+                $dedupeKey = DedupeKey::row($convId);
+                $keyStmt = $this->conn->prepareWrite(
+                    'UPDATE 202_conversion_logs SET dedupe_key = ? WHERE conv_id = ?'
+                );
+                $this->conn->bind($keyStmt, 'si', [$dedupeKey, $convId]);
+                if ($this->conn->executeUpdate($keyStmt) !== 1) {
+                    throw new RuntimeException('conversion ' . $convId . ': its dedupe key was not written');
+                }
+            }
 
             // LTV: append the purchase to the revenue ledger (source of truth),
             // bump the customer's cached rollups, attach product line items, and
-            // cache the customer on the click so later conversions on the same
-            // subid resolve without an identity signal. All inside this
-            // transaction: the conversion and its ledger event commit together.
+            // cache the customer on the click. All inside this transaction.
             if ($customerId !== null) {
                 $currency = $this->customers->accountCurrency($userId);
-                // A negative payout is a correction (some networks push
-                // reversals through the same pixel/postback). Ledger it as an
+                // A negative payout is a correction. Ledger it as an
                 // adjustment: recording it as a "purchase" would bump
                 // order_count while draining revenue, corrupting LTV/AOV.
-                // The conversion row itself still records exactly as before.
                 $eventType = $payout < 0 ? 'adjustment' : 'purchase';
-                $ledger = $this->customers->insertRevenueEvent($userId, $customerId, [
+                $ledgerEvent = $this->customers->insertRevenueEvent($userId, $customerId, [
                     'event_type' => $eventType,
                     'amount' => $payout,
                     'currency' => $currency,
@@ -257,11 +411,11 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                     'transaction_id' => $transactionId,
                 ], $convTime);
 
-                if ($ledger['inserted']) {
+                if ($ledgerEvent['inserted']) {
                     $this->customers->applyEventToRollups($userId, $customerId, $eventType, $payout, $convTime, $convTime);
                     $items = $data['items'] ?? [];
                     if (is_array($items) && $items !== []) {
-                        $this->customers->insertLineItems($userId, $ledger['eventId'], $items, $currency, $convTime, $payout);
+                        $this->customers->insertLineItems($userId, $ledgerEvent['eventId'], $items, $currency, $convTime, $payout);
                     }
                 }
 
@@ -272,8 +426,13 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                 $clickSideUpdate($clickId, $payout);
             }
 
+            $ledger->recompute($clickId, $clickCampaignId);
+            $ledger->enqueue(array_values(array_filter([$convId, $reverses !== null ? (int) $reverses['conv_id'] : null])), 'recorded');
+
             return [
                 'convId' => $convId, 'duplicate' => false, 'clickFound' => true, 'customerId' => $customerId,
+                'dedupeKey' => $dedupeKey,
+                'reversesConvId' => $reverses !== null ? (int) $reverses['conv_id'] : null,
                 // threaded out for the post-commit bridge emit (closure locals)
                 'campaignId' => $campaignId, 'clickTime' => $clickTime, 'payout' => $payout,
             ];
@@ -291,17 +450,19 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $result = $this->conn->transaction($work);
         }
 
-        // Landing Page Optimizer bridge: post-commit, NEW conversions only (duplicates and
-        // missing clicks never emit). Living here — the single transactional
-        // writer — means every ingestion path (legacy postback/pixel helpers
-        // AND the V3 API) emits identically (review finding). EventBridge
-        // swallows its own failures, so a bridge hiccup never breaks recording.
         if ($result['clickFound'] && !$result['duplicate']) {
+            $this->refreshReportRollup($clickId);
+        }
+
+        // Landing Page Optimizer bridge: post-commit, NEW conversions only (duplicates and
+        // missing clicks never emit). EventBridge swallows its own failures, so a
+        // bridge hiccup never breaks recording.
+        if ($result['clickFound'] && !$result['duplicate'] && empty($data['skip_bridge'])) {
             EventBridge::emit($this->conn, $userId, 'conversion.recorded', [
                 'idempotency_key' => $clickId . ':' . ($transactionId !== null
                     ? $transactionId
-                    // blank txids are stored as distinct NULL rows (no dedupe):
-                    // key by conversion row id so consumers never collapse them
+                    // blank txids are stored as distinct rows: key by
+                    // conversion row id so consumers never collapse them
                     : 'conv:' . $result['convId']),
                 'click_id'        => $clickId,
                 'transaction_id'  => $transactionId !== null ? $transactionId : '',
@@ -363,16 +524,6 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         return Connection::isRetryableLockError($e);
     }
 
-    private function applyStandardClickUpdate(int $clickId, float $payout, int $userId): void
-    {
-        $stmt = $this->conn->prepareWrite(
-            'UPDATE 202_clicks SET click_lead = 1, click_payout = ? WHERE click_id = ? AND user_id = ?'
-        );
-        $this->conn->bind($stmt, 'dii', [$payout, $clickId, $userId]);
-        // executeUpdate() runs the checked execute and closes the statement.
-        $this->conn->executeUpdate($stmt);
-    }
-
     /**
      * Soft-delete a conversion AND void its revenue ledger event, in one
      * transaction, so LTV totals and the conversion report cannot diverge.
@@ -384,10 +535,32 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      */
     public function softDelete(int $id, int $userId): void
     {
-        $work = function () use ($id, $userId): void {
+        $ledger = new MysqlConversionLedger($this->conn);
+
+        $work = function () use ($id, $userId, $ledger): ?int {
+            // Lock order is click, then conversion, on every path that writes
+            // both (record() locks the click first), so find the click before
+            // taking any lock.
+            $findStmt = $this->conn->prepareWrite(
+                'SELECT click_id FROM 202_conversion_logs WHERE conv_id = ? AND user_id = ? LIMIT 1'
+            );
+            $this->conn->bind($findStmt, 'ii', [$id, $userId]);
+            $found = $this->conn->fetchOne($findStmt);
+            if ($found === null) {
+                return null;
+            }
+            $clickId = (int) $found['click_id'];
+
+            $clickStmt = $this->conn->prepareWrite(
+                'SELECT click_id, aff_campaign_id, click_payout, click_time, click_lead FROM 202_clicks
+                 WHERE click_id = ? LIMIT 1 FOR UPDATE'
+            );
+            $this->conn->bind($clickStmt, 'i', [$clickId]);
+            $click = $this->conn->fetchOne($clickStmt);
+
             // Lock the conversion row so concurrent deletes serialize here.
             $convStmt = $this->conn->prepareWrite(
-                'SELECT conv_id, customer_id, deleted FROM 202_conversion_logs
+                'SELECT conv_id, customer_id, deleted, reverses_conv_id FROM 202_conversion_logs
                  WHERE conv_id = ? AND user_id = ? LIMIT 1 FOR UPDATE'
             );
             $this->conn->bind($convStmt, 'ii', [$id, $userId]);
@@ -395,7 +568,13 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             if ($conv === null || (int) $conv['deleted'] === 1) {
                 // Missing or already deleted: nothing to do (matches the
                 // historical silent-no-op semantics of this method).
-                return;
+                return null;
+            }
+
+            if ($click !== null) {
+                // A pre-ledger click keeps the value only its cache knows;
+                // carry it in first so deleting an old row cannot zero it.
+                $ledger->ensureManaged($click, $userId);
             }
 
             $stmt = $this->conn->prepareWrite(
@@ -404,64 +583,207 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $this->conn->bind($stmt, 'ii', [$id, $userId]);
             $this->conn->executeUpdate($stmt);
 
-            $customerId = $conv['customer_id'] !== null ? (int) $conv['customer_id'] : 0;
-            if ($customerId <= 0) {
-                return; // unlinked conversion — no ledger event to void
+            // What counts changes for this row, for the reversals that name
+            // it (they stop netting), and for the row it reverses (it nets
+            // no more).
+            $affected = [$id];
+            if ($conv['reverses_conv_id'] !== null) {
+                $affected[] = (int) $conv['reverses_conv_id'];
             }
-
-            $eventStmt = $this->conn->prepareWrite(
-                'SELECT event_id, amount, currency, event_type, occurred_at
-                 FROM 202_revenue_events WHERE conv_id = ? LIMIT 1'
+            $revStmt = $this->conn->prepareWrite(
+                'SELECT conv_id FROM 202_conversion_logs WHERE click_id = ? AND reverses_conv_id = ?'
             );
-            $this->conn->bind($eventStmt, 'i', [$id]);
-            $event = $this->conn->fetchOne($eventStmt);
-            if ($event === null) {
-                return; // conversion predates the ledger — nothing to void
+            $this->conn->bind($revStmt, 'ii', [$clickId, $id]);
+            foreach ($this->conn->fetchAll($revStmt) as $rev) {
+                $affected[] = (int) $rev['conv_id'];
             }
 
-            $now = time();
-            // Only an order-type event may subtract an order — a voided
-            // negative-payout conversion was ledgered as an adjustment and
-            // never bumped order_count. The external_ref PREFIX encodes this
-            // for the reconcile jobs ('void:' counts -1 order, 'void-nc:'
-            // does not); the idempotency key stays identical either way so a
-            // repeated delete can never double-void.
-            $voidedAnOrder = in_array((string) $event['event_type'], MysqlCustomerRepository::ORDER_EVENT_TYPES, true);
-            $void = $this->customers->insertRevenueEvent($userId, $customerId, [
-                'event_type' => 'adjustment',
-                'amount' => -(float) $event['amount'],
-                'currency' => (string) $event['currency'],
-                'occurred_at' => $now,
-                'source' => 'conversion',
-                'external_ref' => ($voidedAnOrder ? 'void:conv:' : 'void-nc:conv:') . $id,
-                'idempotency_key' => 'void:conv:' . $id,
-            ], $now);
-
-            if ($void['inserted']) {
-                $this->customers->adjustRollups($userId, $customerId, $voidedAnOrder ? -1 : 0, -(float) $event['amount'], 0.0, $now, $now);
-
-                // Mirror the sale's line items negated (amount AND quantity)
-                // onto the void event so product revenue/unit reports net the
-                // deleted conversion out, exactly like the customer totals do.
-                $itemsStmt = $this->conn->prepareWrite(
-                    'INSERT INTO 202_revenue_line_items
-                        (user_id, event_id, product_id, sku, product_name, quantity, unit_price, amount, created_at)
-                     SELECT user_id, ?, product_id, sku, product_name, -quantity, unit_price, -amount, ?
-                     FROM 202_revenue_line_items WHERE event_id = ?'
-                );
-                $this->conn->bind($itemsStmt, 'iii', [$void['eventId'], $now, (int) $event['event_id']]);
-                $this->conn->execute($itemsStmt);
-                $itemsStmt->close();
+            if ($click !== null) {
+                $ledger->recompute($clickId, (int) $click['aff_campaign_id']);
             }
+            $ledger->enqueue($affected, 'counted_state');
+
+            $this->voidRevenueEvent($id, $conv['customer_id'] !== null ? (int) $conv['customer_id'] : 0, $userId);
+
+            return $clickId;
         };
 
         try {
-            $this->conn->transaction($work);
+            $touched = $this->conn->transaction($work);
         } catch (Throwable $e) {
             if (!self::isRetryableLockError($e)) {
                 throw $e;
             }
-            $this->conn->transaction($work);
+            $touched = $this->conn->transaction($work);
         }
+        if ($touched !== null) {
+            $this->refreshReportRollup($touched);
+        }
+    }
+
+    /**
+     * Refresh the click's row in 202_dataengine, the table every report
+     * reads, after a committed change to its value. The ledger updates
+     * 202_clicks inside the transaction; without this the reports kept the
+     * old figures until something else happened to re-roll the click, and a
+     * conversion recorded through the API, the revenue upload or the subid
+     * pages never reached them at all (only the pixel helpers re-rolled).
+     *
+     * Post-commit and best-effort: the write has landed, so a failure here
+     * must not read as a failed write (CLAUDE.md #13). It is logged with the
+     * click id, and the next change to the click re-rolls it.
+     */
+    private function refreshReportRollup(int $clickId): void
+    {
+        try {
+            $stmt = $this->conn->prepareWrite(ClickRollupSql::insertSelect(
+                '202_dataengine',
+                '2c.click_id=' . $clickId,
+                updateLandingPageId: true
+            ));
+            $this->conn->executeUpdate($stmt);
+        } catch (Throwable $e) {
+            error_log('conversion ledger: click ' . $clickId . ' changed but its report row was not refreshed: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Void a deleted conversion's revenue event: a compensating 'adjustment'
+     * with a deterministic idempotency key ('void:conv:{id}'), so repeated
+     * deletes compensate exactly once and the ledger stays append-only. Runs
+     * inside the caller's transaction.
+     */
+    private function voidRevenueEvent(int $id, int $customerId, int $userId): void
+    {
+        if ($customerId <= 0) {
+            return; // unlinked conversion — no ledger event to void
+        }
+
+        $eventStmt = $this->conn->prepareWrite(
+            'SELECT event_id, amount, currency, event_type, occurred_at
+             FROM 202_revenue_events WHERE conv_id = ? LIMIT 1'
+        );
+        $this->conn->bind($eventStmt, 'i', [$id]);
+        $event = $this->conn->fetchOne($eventStmt);
+        if ($event === null) {
+            return; // conversion predates the ledger — nothing to void
+        }
+
+        $now = time();
+        // Only an order-type event may subtract an order — a voided
+        // negative-payout conversion was ledgered as an adjustment and
+        // never bumped order_count. The external_ref PREFIX encodes this
+        // for the reconcile jobs ('void:' counts -1 order, 'void-nc:'
+        // does not); the idempotency key stays identical either way so a
+        // repeated delete can never double-void.
+        $voidedAnOrder = in_array((string) $event['event_type'], MysqlCustomerRepository::ORDER_EVENT_TYPES, true);
+        $void = $this->customers->insertRevenueEvent($userId, $customerId, [
+            'event_type' => 'adjustment',
+            'amount' => -(float) $event['amount'],
+            'currency' => (string) $event['currency'],
+            'occurred_at' => $now,
+            'source' => 'conversion',
+            'external_ref' => ($voidedAnOrder ? 'void:conv:' : 'void-nc:conv:') . $id,
+            'idempotency_key' => 'void:conv:' . $id,
+        ], $now);
+
+        if ($void['inserted']) {
+            $this->customers->adjustRollups($userId, $customerId, $voidedAnOrder ? -1 : 0, -(float) $event['amount'], 0.0, $now, $now);
+
+            // Mirror the sale's line items negated (amount AND quantity)
+            // onto the void event so product revenue/unit reports net the
+            // deleted conversion out, exactly like the customer totals do.
+            $itemsStmt = $this->conn->prepareWrite(
+                'INSERT INTO 202_revenue_line_items
+                    (user_id, event_id, product_id, sku, product_name, quantity, unit_price, amount, created_at)
+                 SELECT user_id, ?, product_id, sku, product_name, -quantity, unit_price, -amount, ?
+                 FROM 202_revenue_line_items WHERE event_id = ?'
+            );
+            $this->conn->bind($itemsStmt, 'iii', [$void['eventId'], $now, (int) $event['event_id']]);
+            $this->conn->execute($itemsStmt);
+            $itemsStmt->close();
+        }
+    }
+
+    /**
+     * Clear the conversions of the given clicks: the "delete subids" and
+     * "clear subids" pages.
+     *
+     * Those pages used to set click_lead = 0 and leave every conversion row
+     * in place, so the rows and the click disagreed from then on. Now each
+     * click is cleared the way the ledger clears anything: under the click's
+     * lock, a pre-ledger value is first carried in as its baseline row, every
+     * live row is soft-deleted (and its revenue event voided, as softDelete()
+     * does), and the click's value is recomputed from what is left — nothing,
+     * so it is no longer a lead. One transaction per click, so a failure
+     * part-way through a large clear leaves every click either cleared or
+     * untouched, never half of one.
+     *
+     * @param list<int> $clickIds
+     * @return int How many of the clicks belonged to the account and were cleared.
+     */
+    public function clearClicks(int $userId, array $clickIds): int
+    {
+        $ledger = new MysqlConversionLedger($this->conn);
+        $cleared = 0;
+
+        foreach (array_unique($clickIds) as $clickId) {
+            $clickId = (int) $clickId;
+            if ($clickId <= 0) {
+                continue;
+            }
+            $work = function () use ($clickId, $userId, $ledger): bool {
+                $clickStmt = $this->conn->prepareWrite(
+                    'SELECT click_id, aff_campaign_id, click_payout, click_time, click_lead FROM 202_clicks
+                     WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE'
+                );
+                $this->conn->bind($clickStmt, 'ii', [$clickId, $userId]);
+                $click = $this->conn->fetchOne($clickStmt);
+                if ($click === null) {
+                    return false;
+                }
+
+                $ledger->ensureManaged($click, $userId);
+
+                $rowsStmt = $this->conn->prepareWrite(
+                    'SELECT conv_id, customer_id FROM 202_conversion_logs
+                     WHERE click_id = ? AND user_id = ? AND deleted = 0 FOR UPDATE'
+                );
+                $this->conn->bind($rowsStmt, 'ii', [$clickId, $userId]);
+                $rows = $this->conn->fetchAll($rowsStmt);
+
+                $deleted = [];
+                foreach ($rows as $row) {
+                    $convId = (int) $row['conv_id'];
+                    $del = $this->conn->prepareWrite('UPDATE 202_conversion_logs SET deleted = 1 WHERE conv_id = ?');
+                    $this->conn->bind($del, 'i', [$convId]);
+                    $this->conn->executeUpdate($del);
+                    $this->voidRevenueEvent($convId, $row['customer_id'] !== null ? (int) $row['customer_id'] : 0, $userId);
+                    $deleted[] = $convId;
+                }
+
+                $ledger->recompute($clickId, (int) $click['aff_campaign_id']);
+                if ($deleted !== []) {
+                    $ledger->enqueue($deleted, 'counted_state');
+                }
+
+                return true;
+            };
+
+            try {
+                $ok = $this->conn->transaction($work);
+            } catch (Throwable $e) {
+                if (!self::isRetryableLockError($e)) {
+                    throw $e;
+                }
+                $ok = $this->conn->transaction($work);
+            }
+            if ($ok) {
+                $cleared++;
+                $this->refreshReportRollup($clickId);
+            }
+        }
+
+        return $cleared;
     }
 }

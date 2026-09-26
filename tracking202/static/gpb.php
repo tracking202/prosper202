@@ -18,47 +18,22 @@ $mysql['use_pixel_payout'] = 0;
 $mysql['cid'] = 0;
 $mysql['click_id'] = 0;
 
-//first grab the subid
-if(array_key_exists('subid',$_GET) && is_numeric($_GET['subid'])) {
-	$mysql['click_id']= $db->real_escape_string((string)$_GET['subid']);
-} elseif(array_key_exists('sid',$_GET) && is_numeric($_GET['sid'])) {
-	$mysql['click_id']= $db->real_escape_string((string)$_GET['sid']);
-} else {
+// The click: an exact positive integer from subid (or sid), or a 404.
+// is_numeric() plus a cast used to turn "123.9" into click 123, and a
+// subid of 0 fell back to "the last click from this IP" — for a
+// server-to-server postback, the network's own server.
+$parsedClickId = p202ParseClickId($_GET['subid'] ?? null) ?? p202ParseClickId($_GET['sid'] ?? null);
+if ($parsedClickId === null) {
 	p202RespondJsonError(404, 'SubID not found');
 }
+$mysql['click_id'] = (string) $parsedClickId;
 
-if (!$mysql['click_id']) {
-	//ok grab the last click from this ip_id
-	$mysql['ip_address'] = $db->real_escape_string((string)($_SERVER['REMOTE_ADDR'] ?? ''));
-	$daysago = time() - 2592000; // 30 days ago
-	$click_sql1 = "	SELECT 	202_clicks.click_id
-					FROM 		202_clicks
-					LEFT JOIN	202_clicks_advance USING (click_id)
-					LEFT JOIN 	202_ips USING (ip_id) 
-					WHERE 	202_ips.ip_address='".$mysql['ip_address']."'
-					AND		202_clicks.user_id='".$mysql['user_id']."'  
-					AND		202_clicks.click_time >= '".$daysago."'
-					ORDER BY 	202_clicks.click_id DESC 
-					LIMIT 		1";
-
-	$click_result1 = $db->query($click_sql1) or record_mysql_error($click_sql1);
-	$click_row1 = $click_result1->fetch_assoc();
-
-	$mysql['click_id'] = $db->real_escape_string((string)($click_row1['click_id'] ?? ''));
-	$mysql['ppc_account_id'] = $db->real_escape_string((string)($click_row1['ppc_account_id'] ?? ''));
-
-} else {
-	$click_sql1 = "	SELECT 	ppc_account_id
-					FROM 	202_clicks
-					WHERE 	click_id='".$mysql['click_id']."'";
-	$click_result1 = $db->query($click_sql1) or record_mysql_error($click_sql1);
-	$click_row1 = $click_result1->fetch_assoc();
-	$mysql['ppc_account_id'] = $db->real_escape_string((string)($click_row1['ppc_account_id'] ?? ''));				
-}
-
-if(!$mysql['click_id']){
-    p202RespondJsonError(404, 'SubID not found');
-}
+$click_sql1 = "	SELECT 	ppc_account_id
+				FROM 	202_clicks
+				WHERE 	click_id='".$mysql['click_id']."'";
+$click_result1 = $db->query($click_sql1) or record_mysql_error($click_sql1);
+$click_row1 = $click_result1->fetch_assoc();
+$mysql['ppc_account_id'] = $db->real_escape_string((string)($click_row1['ppc_account_id'] ?? ''));
 
 
 
@@ -163,161 +138,111 @@ $tokens = [
     "referer" => $mysql['referer']
 ];
 
-$account_id_sql="SELECT 202_clicks.ppc_account_id
-				 FROM 202_clicks 
-				 WHERE click_id={$mysql['click_id']}";
+$conv_time = time();
+$click_time_raw = (int) ($cvar_sql_row['click_time'] ?? 0);
+$click_time_to_date = new DateTime(date('Y-m-d H:i:s', $click_time_raw));
+$conv_time_to_date = new DateTime(date('Y-m-d H:i:s', $conv_time));
+$diff = $click_time_to_date->diff($conv_time_to_date);
+$time_difference = $diff->d.' days, '.$diff->h.' hours, '.$diff->i.' min and '.$diff->s.' sec';
+$mysql['conv_time'] = $conv_time;
 
-$account_id_result = $db->query($account_id_sql);
-$account_id_row = $account_id_result->fetch_assoc();
-$mysql['ppc_account_id'] = $db->real_escape_string((string)($account_id_row['ppc_account_id'] ?? ''));
+// Record first, then tell the traffic source. The pixel used to fire before
+// the conversion was recorded, so a retried postback notified the network
+// again, a failed write notified it of a conversion this install never
+// kept, and no transaction id was available to send. Now the network hears
+// about exactly the conversions that were newly recorded, each with its id.
+//
+// Atomic + idempotent: locks the click, dedupes on its ledger key, and
+// writes the row and the click's recomputed value in one transaction.
+$reversal = p202ExtractReversal($_GET);
+try {
+	$conversionResult = p202RecordConversion(
+		$db,
+		[
+			'click_id'        => (int) $mysql['click_id'],
+			'campaign_id'     => (string) ($cvar_sql_row['aff_campaign_id'] ?? '0'),
+			'user_id'         => (string) ($cvar_sql_row['user_id'] ?? '0'),
+			'click_time'      => $click_time_raw,
+			'conv_time'       => $conv_time,
+			'time_difference' => $time_difference,
+			'ip'              => p202ClientIp($_SERVER),
+			'pixel_type'      => 2,
+			'user_agent'      => $_SERVER['HTTP_USER_AGENT'] ?? '',
+			'click_payout'    => ($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '0') : '',
+			'source'          => \Prosper202\Conversion\Ledger\ConversionSource::POSTBACK->value,
+			'reversal'        => $reversal['reversal'],
+			'reversal_ref'    => $reversal['reversal_ref'],
+			// Without a transaction id a retried postback cannot be told apart
+			// from a repeat, so it converts the click once; the writer checks
+			// click_lead under the click lock (as gpx.php does). A reversal
+			// always names its sale's transaction id.
+			'once_per_click'  => p202ExtractTransactionId($_GET) === '',
+		],
+		(string) ($cvar_sql_row['click_cpa'] ?? ''),
+		$mysql['use_pixel_payout'] == 1,
+		($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '') : '',
+		p202ExtractTransactionId($_GET),
+		p202ExtractCustomer($_GET),
+		p202ExtractItems($_GET)
+	);
+} catch (\Prosper202\Conversion\Ledger\ReversalException $reversalError) {
+	p202RespondJsonError(
+		$reversalError->kind === \Prosper202\Conversion\Ledger\ReversalException::CONFLICT ? 422 : 404,
+		$reversalError->getMessage()
+	);
+} catch (\Throwable $conversionError) {
+	// A non-2xx, so a sender that retries only failures does not treat an
+	// unrecorded conversion as accepted and drop it for good.
+	error_log('gpb: conversion recording failed for click ' . $mysql['click_id'] . ': ' . $conversionError->getMessage());
+	p202RespondJsonError(500, 'Failed to record conversion');
+}
+$conversionId = $conversionResult['conv_id'];
+$newlyRecorded = $conversionId > 0 && !$conversionResult['duplicate'];
 
-if($mysql['ppc_account_id']){
-	$pixel_sql='SELECT 202_ppc_account_pixels.pixel_code,202_ppc_account_pixels.pixel_type_id FROM 202_ppc_account_pixels WHERE 202_ppc_account_pixels.ppc_account_id='.$mysql['ppc_account_id'];
-	
-	$pixel_result = $db->query($pixel_sql);
-
-	$pixel_result_row = $pixel_result->fetch_assoc();
-	$mysql['pixel_type_id'] = $db->real_escape_string((string)($pixel_result_row['pixel_type_id'] ?? ''));
-	if ($mysql['pixel_type_id'] == 5) {
-		$mysql['pixel_code'] = stripslashes((string) $pixel_result_row['pixel_code']);
-	}else{
-		$mysql['pixel_code'] = $db->real_escape_string((string)($pixel_result_row['pixel_code'] ?? ''));
+// A reversal nets an earlier sale; announcing it to the traffic source as a
+// conversion would tell the network about a sale that was taken back.
+if ($newlyRecorded && $conversionResult['reverses_conv_id'] === 0 && $mysql['ppc_account_id']) {
+	$tokens['transactionid'] = $conversionResult['transaction_id'] !== ''
+		? $conversionResult['transaction_id']
+		: $conversionResult['dedupe_key'];
+	// This conversion's amount, not the click's cached total, which in an
+	// accumulating campaign is the sum of every conversion so far.
+	$tokens['payout'] = $conversionResult['payout'];
+	$fired = p202FireTrafficSourcePixels($db, (int) $mysql['ppc_account_id'], $tokens);
+	if (array_intersect($fired['types'], [1, 2, 3, 4]) !== []) {
+		header('HTTP/1.1 202 Accepted', true, 202);
 	}
-
-	//get the list of pixel urls
-    if($mysql['pixel_type_id'] != 5) $pixel_urls = explode(' ',(string) $mysql['pixel_code']);
-   
-	switch ($mysql['pixel_type_id']) {
-		case 1:
-			header('HTTP/1.1 202 Accepted', true, 202);
-			foreach($pixel_urls as $pixel_url){
-			  if(!empty($pixel_url)) {
-			    $pixel_url=replaceTokens($pixel_url,$tokens);
-			    echo "<img src='{$pixel_url}' height='0' width='0' style='display:none' />\n";
-			  }
-			}
-
-			break;
-		case 2:
-			header('HTTP/1.1 202 Accepted', true, 202);
-	        foreach($pixel_urls as $pixel_url){
-			  if(!empty($pixel_url)) {
-			    $pixel_url=replaceTokens($pixel_url,$tokens);
-			    echo "<iframe src='{$pixel_url}' height='0' width='0'></iframe>\n";
-			  }
-			}
-
-			break;
-		case 3:
-			header('HTTP/1.1 202 Accepted', true, 202);
-	        foreach($pixel_urls as $pixel_url){
-			  if(!empty($pixel_url)) {
-			   $pixel_url=replaceTokens($pixel_url,$tokens);
-			   echo "<script async src='{$pixel_url}'></script>\n";
-			  }
-			}
-
-			break;
-			case 4:
-        	foreach($pixel_urls as $pixel_url){
-			  if(!empty($pixel_url)) {
-			    $pixel_url=replaceTokens($pixel_url,$tokens);
-			    getUrl($pixel_url, 'GET', 10, [], [], P202_POSTBACK_USER_AGENT, 5);
-			  }
-			}
-			header('HTTP/1.1 202 Accepted', true, 202);
-			header('Content-Type: application/json');
-			$response = ['error' => false, 'code' => 202, 'msg' => 'Postback successful'];
-			print_r(json_encode($response));
-			break;
-
-		case 5:
-			echo $mysql['pixel_code'];
-
-			break;
-
+	echo $fired['markup'];
+	if (in_array(4, $fired['types'], true)) {
+		header('Content-Type: application/json');
+		echo json_encode(['error' => false, 'code' => 202, 'msg' => 'Postback successful']);
 	}
 }
 
-if (is_numeric($mysql['click_id'])) {
+$advertiserId = p202ResolveAdvertiserId($db, (int) $mysql['campaign_id']);
 
-	$conv_time = time();
-	$click_time_raw = (int) ($cvar_sql_row['click_time'] ?? 0);
-	$click_time_to_date = new DateTime(date('Y-m-d H:i:s', $click_time_raw));
-	$conv_time_to_date = new DateTime(date('Y-m-d H:i:s', $conv_time));
-	$diff = $click_time_to_date->diff($conv_time_to_date);
-	$time_difference = $diff->d.' days, '.$diff->h.' hours, '.$diff->i.' min and '.$diff->s.' sec';
-	$mysql['conv_time'] = $conv_time;
-
-			if (array_key_exists('amount', $_GET) && is_numeric($_GET['amount'])) {
-				$mysql['use_pixel_payout'] = 1;
-				$mysql['click_payout'] = $db->real_escape_string((string)$_GET['amount']);
-			}
-
-		// payout to record: pixel amount override if present, otherwise the click's own payout
-		$click_payout_for_log = ($mysql['use_pixel_payout'] == 1)
-			? (string) ($_GET['amount'] ?? '0')
-			: (string) ($cvar_sql_row['click_payout'] ?? '0');
-
-		// Atomic + idempotent: locks the click, dedupes on transaction id, and
-		// applies the click update and conversion_logs insert in one transaction.
-		$conversionResult = ['conv_id' => 0, 'duplicate' => false];
-		try {
-		$conversionResult = p202RecordConversion(
-			$db,
-			[
-				'click_id'        => (int) $mysql['click_id'],
-				'campaign_id'     => (string) ($cvar_sql_row['aff_campaign_id'] ?? '0'),
-				'user_id'         => (string) ($cvar_sql_row['user_id'] ?? '0'),
-				'click_time'      => $click_time_raw,
-				'conv_time'       => $conv_time,
-				'time_difference' => $time_difference,
-				'ip'              => p202ClientIp($_SERVER),
-				'pixel_type'      => 2,
-				'user_agent'      => $_SERVER['HTTP_USER_AGENT'] ?? '',
-				'click_payout'    => $click_payout_for_log,
-				// Without a transaction id a retried postback cannot be told apart
-				// from a repeat, so it converts the click once; the writer checks
-				// click_lead under the click lock (as gpx.php does).
-				'once_per_click'  => p202ExtractTransactionId($_GET) === '',
-			],
-			(string) ($cvar_sql_row['click_cpa'] ?? ''),
-			$mysql['use_pixel_payout'] == 1,
-			($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '') : '',
-			p202ExtractTransactionId($_GET),
-			p202ExtractCustomer($_GET),
-			p202ExtractItems($_GET)
-		);
-		} catch (\Throwable $conversionError) {
-			error_log('gpb: conversion recording failed for click ' . $mysql['click_id'] . ': ' . $conversionError->getMessage());
-		}
-		$conversionId = $conversionResult['conv_id'];
-	        $advertiserId = p202ResolveAdvertiserId($db, (int) $mysql['campaign_id']);
-
-        if ($conversionId > 0 && !$conversionResult['duplicate']) {
-                $scope = [
-                        'user_id' => (int) $mysql['click_user_id'],
-                        'campaign_id' => (int) $mysql['campaign_id'],
-                ];
-                if ($advertiserId !== null) {
-                        $scope['advertiser_id'] = $advertiserId;
-                }
-
-                if ($settingsService->isMultiTouchEnabled($scope)) {
-                        try {
-                                $journeyRepository = new ConversionJourneyRepository($db);
-                                $journeyRepository->persistJourney(
-                                        conversionId: $conversionId,
-                                        userId: (int) $mysql['click_user_id'],
-                                        campaignId: (int) $mysql['campaign_id'],
-                                        conversionTime: (int) $mysql['conv_time'],
-                                        primaryClickId: (int) $mysql['click_id'],
-                                        primaryClickTime: (int) $mysql['click_time']
-                                );
-                        } catch (Throwable $journeyError) {
-                                error_log('Failed to persist conversion journey for conv_id ' . $conversionId . ': ' . $journeyError->getMessage());
-                        }
-                }
-        }
-					
+if ($newlyRecorded) {
+	$scope = [
+		'user_id' => (int) $mysql['click_user_id'],
+		'campaign_id' => (int) $mysql['campaign_id'],
+	];
+	if ($advertiserId !== null) {
+		$scope['advertiser_id'] = $advertiserId;
 	}
+
+	if ($settingsService->isMultiTouchEnabled($scope)) {
+		try {
+			$journeyRepository = new ConversionJourneyRepository($db);
+			$journeyRepository->persistJourney(
+				conversionId: $conversionId,
+				userId: (int) $mysql['click_user_id'],
+				campaignId: (int) $mysql['campaign_id'],
+				conversionTime: (int) $mysql['conv_time'],
+				primaryClickId: (int) $mysql['click_id'],
+				primaryClickTime: (int) $mysql['click_time']
+			);
+		} catch (Throwable $journeyError) {
+			error_log('Failed to persist conversion journey for conv_id ' . $conversionId . ': ' . $journeyError->getMessage());
+		}
+	}
+}
