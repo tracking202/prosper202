@@ -37,6 +37,11 @@ class AttributionBreakdownCommand extends BaseCommand
                 $params[$opt] = (string) $v;
             }
         }
+        if (isset($params['limit'])
+            && (preg_match('/^[1-9][0-9]{0,3}$/D', $params['limit']) !== 1 || (int) $params['limit'] > 1000)) {
+            $output->writeln('<error>Invalid --limit: a whole number of rows from 1 to 1000</error>');
+            return Command::FAILURE;
+        }
         $result = $this->client()->get('attribution/reports/breakdown', $params);
         $this->render($output, $result, $input);
         return Command::SUCCESS;

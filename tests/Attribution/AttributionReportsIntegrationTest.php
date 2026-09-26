@@ -125,6 +125,24 @@ final class AttributionReportsIntegrationTest extends TestCase
         self::assertSame('12.00000', $rows['1']['attributed_revenue']);
     }
 
+    public function testAModelOfAnotherAccountReadsNothingEvenWithoutTheCallersCheck(): void
+    {
+        // The controller refuses another account's model id before it asks;
+        // the report query holds the same line on its own, so a future
+        // caller that skips the check cannot read account 1's credits as
+        // account 2.
+        $this->scenario();
+        $reports = new \Prosper202\Attribution\AttributionReports($this->conn);
+        $own = $reports->breakdown(1, $this->first, null, $this->defaultModelId(), 'campaign', 0, time() + 60, 100);
+        self::assertSame('15.00000', (string) $own['totals']['attributed_revenue'], 'the owner reads the model');
+        $stranger = $reports->breakdown(2, $this->first, $this->defaultModelId(), $this->defaultModelId(), 'campaign', 0, time() + 60, 100);
+        self::assertSame(0.0, (float) $stranger['totals']['attributed_revenue'], 'another account reads no credits under it');
+        self::assertSame(0.0, (float) $stranger['totals']['compare_attributed_revenue'], 'nor under a compared model');
+        foreach ($stranger['rows'] as $row) {
+            self::assertSame(0.0, (float) $row['attributed_revenue'], json_encode($row));
+        }
+    }
+
     public function testTheComparisonPutsTwoModelsSideBySide(): void
     {
         $this->scenario();

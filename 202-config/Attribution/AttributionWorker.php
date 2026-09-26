@@ -40,11 +40,14 @@ use Throwable;
  * immediately rather than after a backoff they did not earn.
  *
  * Overlap protection is the caller's (runExclusive takes a MySQL named
- * lock): one worker at a time per database.
+ * lock): one worker at a time per database. Named locks are server-wide,
+ * so the name carries the database (see lockName()): two installs sharing
+ * one server do not serialize against each other.
  */
 final class AttributionWorker
 {
-    public const LOCK_NAME = 'p202_attribution_worker';
+    /** The lock name's prefix; the database's SHA-1 completes it (lockName()). */
+    public const LOCK_PREFIX = 'p202_attribution_worker:';
     /** The journey lookback never goes below the default model lookback. */
     public const MIN_JOURNEY_LOOKBACK_DAYS = ModelConfig::DEFAULT_LOOKBACK_DAYS;
     public const REASON_RECORDED = 'recorded';
@@ -72,28 +75,64 @@ final class AttributionWorker
 
     /**
      * Run under the worker lock. Returns null when another worker holds it.
+     *
+     * When the run throws, that exception is what the caller sees: a
+     * RELEASE_LOCK that fails too (the usual case when the connection died
+     * under the run) is dropped, since the lock goes with the session and
+     * the release error would only hide the cause.
+     *
+     * @param (callable(): int)|null $clock
      */
-    public static function runExclusive(Connection $conn, int $timeBudgetSeconds = 50, int $batchSize = 200): ?WorkerReport
+    public static function runExclusive(Connection $conn, int $timeBudgetSeconds = 50, int $batchSize = 200, ?callable $clock = null): ?WorkerReport
     {
-        $got = $conn->fetchOne(self::lockStatement($conn, 'SELECT GET_LOCK(?, 0) AS got'));
+        $name = self::lockName($conn);
+        $got = $conn->fetchOne(self::lockStatement($conn, 'SELECT GET_LOCK(?, 0) AS got', $name));
         if ($got === null || $got['got'] === null) {
-            throw new \RuntimeException('GET_LOCK failed for ' . self::LOCK_NAME);
+            throw new \RuntimeException('GET_LOCK failed for ' . $name);
         }
         if ((int) $got['got'] !== 1) {
             return null;
         }
+        $failure = null;
         try {
-            return (new self($conn))->run($timeBudgetSeconds, $batchSize);
+            return (new self($conn, $clock))->run($timeBudgetSeconds, $batchSize);
+        } catch (\Throwable $e) {
+            $failure = $e;
+            throw $e;
         } finally {
-            $conn->fetchOne(self::lockStatement($conn, 'SELECT RELEASE_LOCK(?) AS released'));
+            try {
+                $conn->fetchOne(self::lockStatement($conn, 'SELECT RELEASE_LOCK(?) AS released', $name));
+            } catch (\Throwable $releaseError) {
+                if ($failure === null) {
+                    throw $releaseError;
+                }
+            }
         }
     }
 
+    /**
+     * The worker lock's name for the connection's database. GET_LOCK names
+     * are server-wide and at most 64 characters; a database name can be 64
+     * on its own, so the name carries the database's SHA-1 rather than the
+     * name itself (a truncation would let two databases share a lock). No
+     * database selected is an error, not a shared default lock.
+     */
+    public static function lockName(Connection $conn): string
+    {
+        $row = $conn->fetchOne($conn->prepareWrite('SELECT DATABASE() AS db'));
+        $db = $row['db'] ?? null;
+        if (!is_string($db) || $db === '') {
+            throw new \RuntimeException('The attribution worker needs a selected database to name its lock.');
+        }
+
+        return self::LOCK_PREFIX . sha1($db);
+    }
+
     /** @return \mysqli_stmt */
-    private static function lockStatement(Connection $conn, string $sql)
+    private static function lockStatement(Connection $conn, string $sql, string $name)
     {
         $stmt = $conn->prepareWrite($sql);
-        $conn->bind($stmt, 's', [self::LOCK_NAME]);
+        $conn->bind($stmt, 's', [$name]);
 
         return $stmt;
     }
@@ -103,8 +142,11 @@ final class AttributionWorker
         $report = new WorkerReport();
         $deadline = ($this->clock)() + max(1, $timeBudgetSeconds);
 
-        $report->mergesRequeued = $this->requeueMerges();
-        $report->modelsFannedOut = $this->fanOutModelRecomputes();
+        // Both fan-outs stop at the deadline too (after at least one unit,
+        // so a backlog still drains): the budget bounds how long a run
+        // holds the lock, not only how long it spends on the queue.
+        $report->mergesRequeued = $this->requeueMerges(100, $deadline);
+        $report->modelsFannedOut = $this->fanOutModelRecomputes(10, $deadline);
 
         while (($this->clock)() < $deadline) {
             $batch = $this->claim($batchSize);
@@ -140,7 +182,7 @@ final class AttributionWorker
      * person's conversion count is bounded by the quarantine cap on how many
      * keys one signal can join, so the superset is cheap and cannot miss.
      */
-    public function requeueMerges(int $limit = 100): int
+    public function requeueMerges(int $limit = 100, ?int $deadline = null): int
     {
         $stmt = $this->conn->prepareWrite(
             'SELECT merge_id, user_id, into_key FROM 202_identity_merges WHERE requeued_at IS NULL ORDER BY merge_id LIMIT ?'
@@ -163,6 +205,9 @@ final class AttributionWorker
                 $this->conn->executeUpdate($upd);
             });
             $done++;
+            if ($deadline !== null && ($this->clock)() >= $deadline) {
+                break;
+            }
         }
 
         return $done;
@@ -192,7 +237,7 @@ final class AttributionWorker
      * Fan a model change out over the account's attributed conversions,
      * one batch per model per run, from the model's cursor.
      */
-    public function fanOutModelRecomputes(int $limit = 10): int
+    public function fanOutModelRecomputes(int $limit = 10, ?int $deadline = null): int
     {
         $stmt = $this->conn->prepareWrite(
             'SELECT model_id, user_id, recompute_requested_at, recompute_cursor
@@ -202,6 +247,7 @@ final class AttributionWorker
         $this->conn->bind($stmt, 'i', [$limit]);
         $requests = $this->conn->fetchAll($stmt);
 
+        $done = 0;
         foreach ($requests as $req) {
             $this->conn->transaction(function () use ($req): void {
                 $userId = (int) $req['user_id'];
@@ -247,9 +293,13 @@ final class AttributionWorker
                 }
                 $this->conn->executeUpdate($upd);
             });
+            $done++;
+            if ($deadline !== null && ($this->clock)() >= $deadline) {
+                break;
+            }
         }
 
-        return count($requests);
+        return $done;
     }
 
     /**
@@ -442,7 +492,9 @@ final class AttributionWorker
         $amount = Amount::toUnits((string) $row['click_payout']);
 
         $stmt = $this->conn->prepareWrite(
-            'SELECT click_payout FROM 202_conversion_logs WHERE reverses_conv_id = ? AND deleted = 0'
+            // The rows ClickValueCalculator nets: a reversal counts only when
+            // it is payable and not deleted, like every other ledger row.
+            'SELECT click_payout FROM 202_conversion_logs WHERE reverses_conv_id = ? AND deleted = 0 AND payable = 1'
         );
         $this->conn->bind($stmt, 'i', [(int) $row['conv_id']]);
         $reversals = $this->conn->fetchAll($stmt);

@@ -692,9 +692,10 @@ try {
         // only ever dispatched to a handler registered here, and a DELETE with
         // dry_run set whose path has no preview is rejected — it can never fall
         // through to the real delete. (LTV deletes have no previews yet, so
-        // they reject.) Auth checks that live inside the main users handlers
-        // are replicated on their previews below; group middleware still runs
-        // from the main match before this router is consulted.
+        // they reject.) Auth checks that live inside a main DELETE handler
+        // are replicated on its preview below (PreviewAuthParityTest holds
+        // that); group middleware runs from the main match before this
+        // router is consulted, for a dry run and for a staged write alike.
         $previewRouter = new Router();
         foreach ($crudMap as $resource => $class) {
             $previewRouter->delete("/$resource/{id}", fn($ctx) => $crud($class)->deletePreview((int)$ctx['id']));
@@ -702,7 +703,13 @@ try {
         $previewRouter->delete('/conversions/{id}', fn($ctx) => $crud(\Api\V3\Controllers\ConversionsController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->delete('/rotators/{id}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->delete('/rotators/{id}/rules/{ruleId}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deleteRulePreview((int)$ctx['id'], (int)$ctx['ruleId']));
-        $previewRouter->delete('/attribution/models/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionController::class)->deleteModelPreview((int)$ctx['id']));
+        // The real DELETE checks manage_attribution_models inside its handler
+        // (the group middleware only asks for view_attribution_reports), so
+        // the preview repeats it, as the users previews repeat requireAdmin.
+        $previewRouter->delete('/attribution/models/{id}', function ($ctx) use ($crud, $auth, $db) {
+            $auth->requirePermission($db, 'manage_attribution_models');
+            return $crud(\Api\V3\Controllers\AttributionController::class)->deleteModelPreview((int)$ctx['id']);
+        });
         $previewRouter->delete('/attribution/apps/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionAppsController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->delete('/attribution/conversion-values/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionConversionValuesController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->group('/users', function (Router $r) use ($db, $auth) {
@@ -907,6 +914,16 @@ try {
             throw new ValidationException('staged is not supported for this endpoint', [
                 'staged' => 'This write cannot be staged; remove staged to perform it directly.',
             ]);
+        }
+        // The real route's middleware (its role gate: e.g. the attribution
+        // routes' view_attribution_reports) runs before a proposal is
+        // recorded, exactly as it does before the write and before a dry
+        // run. Without it a key whose role may not read the area could
+        // stage a DELETE and read the record back from the preview
+        // embedded in the staged change. A refusal here is the route's own
+        // 403, not a proposal without a preview.
+        foreach ($match['middleware'] as $mw) {
+            $mw();
         }
         $stagePreview = null;
         if ($method === 'DELETE') {
