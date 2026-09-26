@@ -459,6 +459,14 @@ has "$P" "data-tracker-id=\"$KID\"" "the list shows the redirector tracker"
 ajax "$AJAX/delete_tracker.php" "$OUT/k-del-csrf.txt" --data-urlencode "tracker_id=$KID"
 eq "$LAST_CODE" "403" "deleting a tracker without the token is answered 403"
 eq "$(Q "SELECT COUNT(*) FROM 202_trackers WHERE tracker_id=$KID")" "1" "and deletes nothing"
+# A delete that does not happen must not answer like one that did: the list
+# removes the row on a 200 (#173). Planted with a trigger that refuses it.
+mysql_q --delimiter='//' "$DB" -e "DROP TRIGGER IF EXISTS rv3_fail_tracker_delete// CREATE TRIGGER rv3_fail_tracker_delete BEFORE DELETE ON 202_trackers FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'planted by setup-pages.sh'; END//" || bad "the planted delete failure could not be created"
+ajax "$AJAX/delete_tracker.php" "$OUT/k-del-fail.txt" --data-urlencode "token=$T" --data-urlencode "tracker_id=$KID"
+mysql_q "$DB" -e "DROP TRIGGER IF EXISTS rv3_fail_tracker_delete"
+eq "$LAST_CODE" "500" "a tracker delete that fails is answered 500"
+has "$OUT/k-del-fail.txt" "The tracker could not be deleted." "in words"
+eq "$(Q "SELECT COUNT(*) FROM 202_trackers WHERE tracker_id=$KID")" "1" "and the tracker is still there"
 ajax "$AJAX/delete_tracker.php" "$OUT/k-del.txt" --data-urlencode "token=$T" --data-urlencode "tracker_id=$KID"
 eq "$(Q "SELECT COUNT(*) FROM 202_trackers WHERE tracker_id=$KID")" "0" "deleting with the token removes it"
 PUB=$(Q "SELECT tracker_id_public FROM 202_trackers WHERE landing_page_id=$LP")
