@@ -299,6 +299,19 @@ final class RollupMatchesFullComputationTest extends TestCase
         $step('a retraction', fn () => $this->ledger->softDelete($convs[9], 1));
         $step('a replacement', fn () => $this->convert(14, '99', 'T14b', $clicks[14] + 7_200));
         $step('a partial reversal', fn () => $this->ledger->record(1, ['click_id' => 20, 'source' => 'postback', 'transaction_id' => 'T20', 'payout' => '-4']));
+        // A non-payable reversal nets nothing, as the ledger says (the click
+        // keeps its value; CountedAmount reads payable = 1 reversals only):
+        // the reports must not move, from the rollup or the full computation.
+        $before = $this->fullComputation($window, $first, $linear);
+        $nonPayable = $this->ledger->record(1, ['click_id' => 26, 'source' => 'postback', 'transaction_id' => 'T26', 'payout' => '-5', 'payable' => false]);
+        self::assertGreaterThan(0, $nonPayable['convId']);
+        self::assertSame('0', (string) self::scalar("SELECT payable FROM 202_conversion_logs WHERE conv_id = {$nonPayable['convId']} AND reverses_conv_id = {$convs[26]}"), 'the row is a non-payable reversal of T26');
+        $processOutbox();
+        self::assertSame($before, $this->fullComputation($window, $first, $linear), 'a non-payable reversal changes no report');
+        $this->compareAll('a non-payable reversal (dirty)', $window, $first, $linear, false);
+        (new AttributionRollup($this->conn))->run(60);
+        $this->compareAll('a non-payable reversal (summed again)', $window, $first, $linear, true);
+        self::assertSame($before, $this->fullComputation($window, $first, $linear), 'nor after the rollup sums the hour again');
         $step('a revival', function () use ($convs): void {
             self::$db->query('UPDATE 202_conversion_logs SET deleted = 0 WHERE conv_id = ' . $convs[9]);
             (new MysqlConversionLedger($this->conn))->enqueue([$convs[9]], 'counted_state');
