@@ -308,6 +308,11 @@ final class ConversionLedgerIntegrationTest extends TestCase
         self::assertSame('4.00000', $this->clickState(101)['payout']);
         $reasons = array_column(array_filter($first['lines'], static fn ($l) => $l['status'] === 'skipped'), 'reason', 'line');
         self::assertSame([5 => 'no click with this subid in your account', 6 => 'the commission is not a number'], $reasons);
+        self::assertSame(
+            ['line' => 1, 'subid' => 'subid', 'amount' => 'amount', 'status' => 'header', 'reason' => 'read as the header row (not a subid)'],
+            $first['lines'][0],
+            'line 1 is listed as the header it was read as, not dropped'
+        );
 
         $second = $importer->import(1, 'b.csv', $csv("subid,amount\n100,5\n"), 0, 1);
         self::assertSame(1, $second['recorded']);
@@ -320,6 +325,56 @@ final class ConversionLedgerIntegrationTest extends TestCase
         $again = $importer->import(1, 'b.csv', $csv("subid,amount\n100,5\n"), 0, 1);
         self::assertSame('5.00000', $this->clickState(100)['payout']);
         self::assertSame(1, $again['recorded'], 'a new batch: its own lines, its own keys');
+    }
+
+    /**
+     * The legacy endpoints' id-less rule (gpb.php, upx.php, gpx.php and the
+     * per-campaign pixel and postback, through p202RecordConversion): a
+     * retry cannot be told from a repeat, so the click converts once. In a
+     * replace campaign the row is keyed by its own id, so the click's lead
+     * flag is the guard; in an accumulate campaign the key "conversion" is,
+     * and the one plain conversion is still owed on a click that is a lead
+     * through keyed sales.
+     */
+    public function testAnIdlessRetryRecordsOnceInEitherMode(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7);
+        $idless = ['payout' => '4', 'once_per_click_unkeyed' => true];
+
+        $first = $this->record(100, $idless);
+        $retry = $this->record(100, $idless);
+        self::assertFalse($first['duplicate']);
+        self::assertTrue($retry['duplicate'], 'replace: the retry is refused on the lead click');
+        self::assertCount(1, $this->rows(100));
+
+        $this->campaign(8, 'accumulate', '4.00');
+        $this->click(200, 8);
+        $this->record(200, ['payout' => '5', 'transaction_id' => 'A1']);
+        $plain = $this->record(200, ['once_per_click_unkeyed' => true]);
+        $again = $this->record(200, ['once_per_click_unkeyed' => true]);
+        self::assertFalse($plain['duplicate'], 'accumulate: the plain conversion is owed on a lead click');
+        self::assertTrue($again['duplicate'], 'and happens once');
+        self::assertSame(['tx:A1', 'conversion'], array_column($this->rows(200), 'dedupe_key'));
+        self::assertSame('9.00000', $this->clickState(200)['payout']);
+    }
+
+    public function testAHeaderlessFileStillListsItsFirstLine(): void
+    {
+        $this->campaign(7);
+        $this->click(101, 7);
+        $h = fopen('php://memory', 'r+');
+        fwrite($h, "101.5,7\n101,4\n");
+        rewind($h);
+
+        $import = (new RevenueUploadImporter(new Connection(self::$db), $this->repo))->import(1, 'c.csv', $h, 0, 1);
+
+        self::assertSame(1, $import['recorded']);
+        self::assertSame(
+            ['line' => 1, 'subid' => '101.5', 'amount' => '7', 'status' => 'header', 'reason' => 'read as the header row (not a subid)'],
+            $import['lines'][0],
+            'a malformed first subid in a file with no header is listed, not lost'
+        );
     }
 
     public function testClearingASubidDeletesItsRowsAndItsLead(): void
@@ -385,6 +440,35 @@ final class ConversionLedgerIntegrationTest extends TestCase
         self::assertSame([(string) $a['convId'], (string) $b['convId']], array_column($pending, 'conv_id'));
         self::assertSame('counted_state', $pending[0]['reason'], 'A was queued again when B superseded it');
         self::assertSame('2', (string) $pending[0]['enqueue_seq']);
+
+        // A reversal carries no supersession of its own: it stops netting
+        // when a later sale supersedes the sale it reverses, and starts again
+        // when that sale counts again. Both flips are counted-state changes
+        // and must reach the outbox like any other.
+        $this->click(101, 7);
+        $sale = $this->record(101, ['payout' => '5', 'transaction_id' => 'S-1']);
+        $rev = $this->record(101, ['transaction_id' => 'S-1', 'reversal' => true]);
+        self::$db->query('DELETE FROM 202_attribution_pending');
+
+        $later = $this->record(101, ['payout' => '10', 'transaction_id' => 'S-2']);
+        self::assertSame(['lead' => 1, 'payout' => '10.00000', 'spy_payout' => '10.00'], $this->clickState(101), 'S-2 replaced S-1 and its reversal');
+        $pending = self::$db->query('SELECT conv_id, reason FROM 202_attribution_pending ORDER BY conv_id')->fetch_all(MYSQLI_ASSOC);
+        self::assertSame(
+            [(string) $sale['convId'], (string) $rev['convId'], (string) $later['convId']],
+            array_column($pending, 'conv_id'),
+            'the superseded sale, the reversal that stopped netting, and the new sale are all queued'
+        );
+        self::assertSame('counted_state', $pending[1]['reason'], 'the reversal is queued as a counted-state change');
+
+        self::$db->query('DELETE FROM 202_attribution_pending');
+        $this->repo->softDelete((int) $later['convId'], 1);
+        self::assertSame(['lead' => 1, 'payout' => '0.00000', 'spy_payout' => '0.00'], $this->clickState(101), 'S-1 counts again, net of its reversal');
+        $pending = self::$db->query('SELECT conv_id FROM 202_attribution_pending ORDER BY conv_id')->fetch_all(MYSQLI_ASSOC);
+        self::assertSame(
+            [(string) $sale['convId'], (string) $rev['convId'], (string) $later['convId']],
+            array_column($pending, 'conv_id'),
+            'deleting S-2 queues it, the sale that counts again, and the reversal that nets again'
+        );
     }
 
     public function testAFailedInsertLeavesNeitherARowNorAChangedClick(): void
