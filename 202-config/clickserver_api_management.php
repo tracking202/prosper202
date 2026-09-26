@@ -74,25 +74,17 @@ function p202_clickserver_switch_refusal(bool $tokenOk, bool $permitted, string 
 	return [404, 'That domain is not activated with this account\'s key.'];
 }
 
-/** The account's own ClickServer API key, or '' when it has none. A read that fails is an error (#1). */
+/**
+ * The account's own ClickServer API key, or '' when it has none. Read from
+ * the primary through Connection, which throws on a failed prepare, execute
+ * or fetch: a read that fails is an error, not "no key" (#1).
+ */
 function p202_clickserver_stored_key(mysqli $db, int $userId): string
 {
-	$stmt = $db->prepare('SELECT `clickserver_api_key` FROM `202_users` WHERE `user_id` = ?');
-	if ($stmt === false) {
-		throw new RuntimeException('Could not read the ClickServer key: ' . $db->error);
-	}
-	$stmt->bind_param('i', $userId);
-	if (!$stmt->execute()) {
-		$stmt->close();
-		throw new RuntimeException('Could not read the ClickServer key: ' . $db->error);
-	}
-	$result = $stmt->get_result();
-	if ($result === false) {
-		$stmt->close();
-		throw new RuntimeException('Could not read the ClickServer key: ' . $db->error);
-	}
-	$row = $result->fetch_assoc();
-	$stmt->close();
+	$conn = new \Prosper202\Database\Connection($db);
+	$stmt = $conn->prepareWrite('SELECT `clickserver_api_key` FROM `202_users` WHERE `user_id` = ?');
+	$conn->bind($stmt, 'i', [$userId]);
+	$row = $conn->fetchOne($stmt);
 	return (string) ($row['clickserver_api_key'] ?? '');
 }
 
