@@ -327,6 +327,38 @@ final class ConversionLedgerIntegrationTest extends TestCase
         self::assertSame(1, $again['recorded'], 'a new batch: its own lines, its own keys');
     }
 
+    /**
+     * The legacy endpoints' id-less rule (gpb.php, upx.php, gpx.php and the
+     * per-campaign pixel and postback, through p202RecordConversion): a
+     * retry cannot be told from a repeat, so the click converts once. In a
+     * replace campaign the row is keyed by its own id, so the click's lead
+     * flag is the guard; in an accumulate campaign the key "conversion" is,
+     * and the one plain conversion is still owed on a click that is a lead
+     * through keyed sales.
+     */
+    public function testAnIdlessRetryRecordsOnceInEitherMode(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7);
+        $idless = ['payout' => '4', 'once_per_click_unkeyed' => true];
+
+        $first = $this->record(100, $idless);
+        $retry = $this->record(100, $idless);
+        self::assertFalse($first['duplicate']);
+        self::assertTrue($retry['duplicate'], 'replace: the retry is refused on the lead click');
+        self::assertCount(1, $this->rows(100));
+
+        $this->campaign(8, 'accumulate', '4.00');
+        $this->click(200, 8);
+        $this->record(200, ['payout' => '5', 'transaction_id' => 'A1']);
+        $plain = $this->record(200, ['once_per_click_unkeyed' => true]);
+        $again = $this->record(200, ['once_per_click_unkeyed' => true]);
+        self::assertFalse($plain['duplicate'], 'accumulate: the plain conversion is owed on a lead click');
+        self::assertTrue($again['duplicate'], 'and happens once');
+        self::assertSame(['tx:A1', 'conversion'], array_column($this->rows(200), 'dedupe_key'));
+        self::assertSame('9.00000', $this->clickState(200)['payout']);
+    }
+
     public function testAHeaderlessFileStillListsItsFirstLine(): void
     {
         $this->campaign(7);

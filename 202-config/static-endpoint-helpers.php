@@ -555,7 +555,11 @@ if (!function_exists('p202RecordConversion')) {
         if ($log['once_per_click']) {
             // The one-conversion-per-click rule for id-less hits, enforced by
             // the writer under its click lock (see MysqlConversionRepository::record).
-            $data['once_per_click'] = true;
+            // Unkeyed: an accumulate campaign's id-less row is already its
+            // one plain conversion by its ledger key, owed once even on a
+            // click that is a lead through keyed sales; a replace-mode one is
+            // keyed by its own row, so the click's lead flag is the guard.
+            $data['once_per_click_unkeyed'] = true;
         }
 
         // LTV: customer identity + product line items ride the same
