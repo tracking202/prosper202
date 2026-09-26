@@ -51,21 +51,26 @@ final class LedgerExplainer
                 $verdicts[$row->convId] = ['counted' => false, 'reason' => NotCountedReason::UNPAID, 'superseded_reason' => null, 'superseded_by' => null];
                 continue;
             }
-            if ($row->isReversal()) {
-                $verdicts[$row->convId] = ['counted' => false, 'reason' => NotCountedReason::NOT_NETTED, 'superseded_reason' => null, 'superseded_by' => null];
-                continue;
-            }
+            // In the docblock's order: a row that was superseded is reported
+            // as superseded even when it is also a reversal — the reason it
+            // was replaced is the one that explains it, and a reversal
+            // checked first hid that behind not_netted.
             if ($row->hasFixedSupersession()) {
                 $verdicts[$row->convId] = ['counted' => false, 'reason' => NotCountedReason::SUPERSEDED, 'superseded_reason' => $row->supersededReason, 'superseded_by' => $row->supersededBy];
                 continue;
             }
             $derived = $value->derivedSupersessions[$row->convId] ?? null;
-            if ($derived === null) {
-                throw new LedgerIntegrityException(
-                    'conversion ' . $row->convId . ' is payable and live but neither counts nor is superseded; the ledger rules have no reason for it'
-                );
+            if ($derived !== null) {
+                $verdicts[$row->convId] = ['counted' => false, 'reason' => NotCountedReason::SUPERSEDED, 'superseded_reason' => $derived['reason'], 'superseded_by' => $derived['by']];
+                continue;
             }
-            $verdicts[$row->convId] = ['counted' => false, 'reason' => NotCountedReason::SUPERSEDED, 'superseded_reason' => $derived['reason'], 'superseded_by' => $derived['by']];
+            if ($row->isReversal()) {
+                $verdicts[$row->convId] = ['counted' => false, 'reason' => NotCountedReason::NOT_NETTED, 'superseded_reason' => null, 'superseded_by' => null];
+                continue;
+            }
+            throw new LedgerIntegrityException(
+                'conversion ' . $row->convId . ' is payable and live but neither counts nor is superseded; the ledger rules have no reason for it'
+            );
         }
 
         return ['value' => $value, 'rows' => $verdicts];

@@ -55,6 +55,7 @@ final class UniqueKeyCollationTest extends TestCase
         '202_users.user_name' => 'sign-in names are case-insensitive by design',
         '202_companies.normalized_name' => 'normalized for matching by design',
         '202_companies.domain' => 'DNS names are case-insensitive',
+        '202_goals.live_name' => 'a live goal\'s name is unique per owner regardless of case, as nameTaken() compares it',
         // Random or service-issued ids where a case twin is not a real
         // input: folding loses entropy a brute force could not use.
         '202_sessions.session_id' => 'a random PHP session id',

@@ -29,8 +29,17 @@ use Api\V3\Support\ResponseSanitizer;
  * visible beside them: `organic`, `refuted_count`, `unvouched_count`,
  * `test_count`, `pending`, and the full `match_states` and
  * `integrity_states` breakdowns. An explicit `trusted=` filter recomputes
- * the goal figures over exactly that class, as the iOS report's
- * `signature=` does (`meta.trusted: as-filtered`).
+ * the headline figures — `installs` included — over exactly that class, as
+ * the iOS report's `signature=` does (`meta.trusted: as-filtered`).
+ *
+ * `installs` has one definition in every grouping: the number of distinct
+ * installs, of the class the figures count, in the row. For the install
+ * groupings (day, registration, platform, campaign, match-state,
+ * integrity-state) the rows partition the installs, so their `installs`
+ * sum to the totals'; for `goal`, a row's installs are those of that
+ * class that reached the goal, each counted once however often it reached
+ * it, so no row exceeds the totals'. InstallReportIntegrationTest holds
+ * all of it on one dataset under every trust filter.
  *
  * `revenue` is what the campaigns were credited: the value of payable
  * outcomes, the ledger's view. A goal reached but not paid on the
@@ -73,7 +82,9 @@ final class InstallReport
      */
     private const METRICS = [
         'received' => 'COUNT(*)',
-        'installs' => 'SUM(CASE WHEN i.trusted = 1 THEN 1 ELSE 0 END)',
+        // Counted under the report's trust gate (metricList()): trusted by
+        // default, the filtered class under trusted=.
+        'installs' => 'SUM(CASE WHEN {gate} THEN 1 ELSE 0 END)',
         'organic' => "SUM(CASE WHEN i.match_state = 'organic' THEN 1 ELSE 0 END)",
         'pending' => "SUM(CASE WHEN i.match_state IN ('pending_click', 'pending_integrity') THEN 1 ELSE 0 END)",
         'trusted_count' => 'SUM(CASE WHEN i.trusted = 1 THEN 1 ELSE 0 END)',
@@ -131,7 +142,7 @@ final class InstallReport
         $mode = self::GROUP_MODES[$groupBy];
         $expr = $mode['expr'];
         $order = $mode['kind'] === 'day' ? 'grp DESC' : 'received DESC, grp';
-        $sql = 'SELECT ' . $expr . ' AS grp, ' . self::metricList()
+        $sql = 'SELECT ' . $expr . ' AS grp, ' . self::metricList($gate)
             . ' FROM 202_app_installs i ' . self::CLICK_JOIN
             . ' WHERE ' . implode(' AND ', $where)
             . ' GROUP BY grp ORDER BY ' . $order . ' LIMIT ?';
@@ -277,7 +288,7 @@ final class InstallReport
     {
         $whereSql = implode(' AND ', $where);
         $rows = $this->fetchAll(
-            'SELECT ' . self::metricList() . ' FROM 202_app_installs i ' . self::CLICK_JOIN . ' WHERE ' . $whereSql,
+            'SELECT ' . self::metricList($gate) . ' FROM 202_app_installs i ' . self::CLICK_JOIN . ' WHERE ' . $whereSql,
             $types,
             $binds
         );
@@ -446,11 +457,11 @@ final class InstallReport
         return [['(' . implode(' OR ', $parts) . ')'], $binds, str_repeat($type, count($binds))];
     }
 
-    private static function metricList(): string
+    private static function metricList(string $gate): string
     {
         $parts = [];
         foreach (self::METRICS as $alias => $expression) {
-            $parts[] = $expression . ' AS ' . $alias;
+            $parts[] = str_replace('{gate}', $gate, $expression) . ' AS ' . $alias;
         }
         return implode(', ', $parts);
     }

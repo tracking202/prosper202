@@ -133,35 +133,45 @@ final class ExportStore
         }
     }
 
-    public function complete(int $exportId, ?int $webhookStatus, int $now): void
+    /**
+     * The three transitions out of `running` below are conditional on the
+     * job still being running, which is this runner's ownership of it: a
+     * job reclaimed as stale by another run, or deleted with its account or
+     * model, matches no row. Each says whether it landed, so the runner can
+     * tell "done" from "no longer mine" instead of reporting both as done.
+     */
+    public function complete(int $exportId, ?int $webhookStatus, int $now): bool
     {
         $stmt = $this->conn->prepareWrite(
             "UPDATE 202_attribution_exports SET status = 'completed', webhook_status_code = ?, last_error = NULL, completed_at = ?, updated_at = ?
              WHERE export_id = ? AND status = 'running'"
         );
         $this->conn->bind($stmt, 'iiii', [$webhookStatus, $now, $now, $exportId]);
-        $this->conn->executeUpdate($stmt);
+
+        return $this->conn->executeUpdate($stmt) === 1;
     }
 
     /** Back to pending, to be tried again from $retryAt. */
-    public function deferRetry(int $exportId, string $error, ?int $webhookStatus, int $retryAt, int $now): void
+    public function deferRetry(int $exportId, string $error, ?int $webhookStatus, int $retryAt, int $now): bool
     {
         $stmt = $this->conn->prepareWrite(
             "UPDATE 202_attribution_exports SET status = 'pending', last_error = ?, webhook_status_code = ?, queued_at = ?, updated_at = ?
              WHERE export_id = ? AND status = 'running'"
         );
         $this->conn->bind($stmt, 'siiii', [mb_substr($error, 0, 2000), $webhookStatus, $retryAt, $now, $exportId]);
-        $this->conn->executeUpdate($stmt);
+
+        return $this->conn->executeUpdate($stmt) === 1;
     }
 
-    public function fail(int $exportId, string $error, ?int $webhookStatus, int $now): void
+    public function fail(int $exportId, string $error, ?int $webhookStatus, int $now): bool
     {
         $stmt = $this->conn->prepareWrite(
             "UPDATE 202_attribution_exports SET status = 'failed', last_error = ?, webhook_status_code = ?, completed_at = ?, updated_at = ?
              WHERE export_id = ? AND status = 'running'"
         );
         $this->conn->bind($stmt, 'siiii', [mb_substr($error, 0, 2000), $webhookStatus, $now, $now, $exportId]);
-        $this->conn->executeUpdate($stmt);
+
+        return $this->conn->executeUpdate($stmt) === 1;
     }
 
     /** A failed job, queued again from now with its attempts reset. False when it is not failed. */
@@ -185,6 +195,36 @@ final class ExportStore
         $this->conn->bind($stmt, 'ii', [$userId, $exportId]);
 
         return $this->conn->executeUpdate($stmt) === 1;
+    }
+
+    /**
+     * Lock a model's export rows (as the model or the comparison) for the
+     * transaction that is about to delete them, and return the ids of those
+     * a runner holds.
+     *
+     * The lock is what makes a model delete and the export runner agree: a
+     * runner's claim (an UPDATE of a pending row) waits for the delete to
+     * commit and then matches nothing, and a job it already holds is seen
+     * here as `running`, which the delete refuses — as DELETE of a single
+     * running export does — rather than pulling the row out from under the
+     * file the runner is writing.
+     *
+     * @return list<int>
+     */
+    public function lockForModelDelete(int $userId, int $modelId): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT export_id, status FROM 202_attribution_exports WHERE user_id = ? AND (model_id = ? OR compare_model_id = ?) FOR UPDATE'
+        );
+        $this->conn->bind($stmt, 'iii', [$userId, $modelId, $modelId]);
+        $running = [];
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            if ((string) $row['status'] === 'running') {
+                $running[] = (int) $row['export_id'];
+            }
+        }
+
+        return $running;
     }
 
     /**

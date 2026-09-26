@@ -5,6 +5,16 @@ require_once(substr(__DIR__, 0,-17) . '/202-config/functions-report-prefs.php');
 
 AUTH::require_user();
 
+// This writes which report every page opens with. Like its siblings
+// (charts.php, clear_subids.php), it takes the session token or nothing:
+// without it, any page the user visits could post here and rewrite the
+// filters their reports are drawn under. The classic calendar's form
+// carries the token (display_calendar()).
+if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+	http_response_code(403);
+	die('Invalid token');
+}
+
 //set the timezone for the user, for entering their dates.
 AUTH::set_timezone($_SESSION['user_timezone']);
 

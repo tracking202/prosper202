@@ -347,4 +347,50 @@ final class AccountPostRequiresTokenTest extends TestCase
         $this->assertGreaterThanOrEqual(15, $forms, 'far fewer POST forms than the Account pages render; the scan is broken');
         $this->assertSame([], $problems, implode("\n", $problems));
     }
+
+    /**
+     * Account › ClickServers' switches post to
+     * 202-config/clickserver_api_management.php, outside 202-account/ and so
+     * outside the scan above. It checked login and the token, and nothing
+     * else: not the access_to_clickservers permission the page requires, and
+     * not whose key or domain it was handed — the posted api_key was used as
+     * sent (#165, #173). The decision is a pure function, so it is executed
+     * here for each refusal and for the one request it lets through.
+     */
+    public function testTheClickServerSwitchChecksTokenPermissionKeyAndDomain(): void
+    {
+        require_once self::root() . '/202-config/clickserver_api_management.php';
+        $mine = static fn (string $key): array => $key === 'my-key'
+            ? [['clickserver' => ['domain' => 'mine.example', 'status' => '1']]]
+            : [['clickserver' => ['domain' => 'theirs.example', 'status' => '1']]];
+        $cases = [
+            'no token' => [[false, true, 'my-key', 'mine.example', 'deactivate'], 403],
+            'no permission' => [[true, false, 'my-key', 'mine.example', 'deactivate'], 403],
+            'an unknown method' => [[true, true, 'my-key', 'mine.example', 'drop'], 400],
+            'no key on file' => [[true, true, '', 'mine.example', 'deactivate'], 409],
+            'another account\'s domain' => [[true, true, 'my-key', 'theirs.example', 'deactivate'], 404],
+            'no domain' => [[true, true, 'my-key', '', 'deactivate'], 400],
+        ];
+        foreach ($cases as $name => [$args, $status]) {
+            $refusal = p202_clickserver_switch_refusal(...[...$args, $mine]);
+            $this->assertIsArray($refusal, "$name is refused");
+            $this->assertSame($status, $refusal[0], "$name is answered $status");
+            $this->assertNotSame('', $refusal[1], "$name says why");
+        }
+        $this->assertNull(p202_clickserver_switch_refusal(true, true, 'my-key', 'mine.example', 'deactivate', $mine), 'this account\'s own domain goes ahead');
+        $this->assertSame(502, p202_clickserver_switch_refusal(true, true, 'my-key', 'mine.example', 'activate', static fn (): mixed => null)[0] ?? null,
+            'a licence service that cannot answer is not "your domain"');
+
+        // And the endpoint decides with the stored key, the session token and
+        // the permission, and acts with the stored key: a posted api_key is
+        // never read.
+        $source = (string) file_get_contents(self::root() . '/202-config/clickserver_api_management.php');
+        $code = (string) preg_replace('/\s+/', '', implode('', array_map(static fn (\PhpToken $t): string => $t->is([T_COMMENT, T_DOC_COMMENT]) ? '' : $t->text, \PhpToken::tokenize($source))));
+        $this->assertStringNotContainsString("\$_POST['api_key']", $code, 'the posted key is not read');
+        $this->assertStringContainsString("\$storedKey=p202_clickserver_stored_key(\$db,(int)(\$_SESSION['user_id']??0));\$refusal=p202_clickserver_switch_refusal(hash_equals((string)(\$_SESSION['token']??''),(string)(\$_POST['token']??'')),isset(\$userObj)&&is_object(\$userObj)&&\$userObj->hasPermission('access_to_clickservers'),\$storedKey,", $code,
+            'the endpoint decides with the session token, the permission and the stored key');
+        $this->assertStringContainsString("if(\$refusal!==null){http_response_code(\$refusal[0]);echo\$refusal[1];return;}if(clickserver_api_domain_act_deact(\$storedKey,", $code,
+            'a refusal ends the request before the switch, which uses the stored key');
+        $this->assertSame(1, substr_count($code, 'clickserver_api_domain_act_deact(') - substr_count($code, 'functionclickserver_api_domain_act_deact('), 'one switch call');
+    }
 }

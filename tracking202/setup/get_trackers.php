@@ -31,7 +31,7 @@ if ($showEdit) {
 	// campaign join is empty for it; before U4 the deleted-campaign filter
 	// above excluded exactly those links, and they could not be edited.
 
-	$edit_tracker_result = $db->query($edit_tracker_sql) or record_mysql_error($edit_tracker_sql);
+	$edit_tracker_result = $db->query($edit_tracker_sql) or record_mysql_error($db, $edit_tracker_sql);
 	$edit_tracker_row = $edit_tracker_result->fetch_assoc() ?? [];
 
 	if ($edit_tracker_row === []) {

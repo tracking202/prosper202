@@ -294,9 +294,9 @@ final class AppReportController
 
     private static function androidNotes(): string
     {
-        return 'installs are trusted (attributed) installs; organic, refuted_count, unvouched_count, test_count, pending and the match_states / integrity_states breakdowns count every install beside them'
+        return 'installs are distinct trusted (attributed) installs; organic, refuted_count, unvouched_count, test_count, pending and the match_states / integrity_states breakdowns count every install beside them'
             . '; figures are by install (a cohort): a goal an install reached counts in the group of its install, however much later it was reached'
-            . '; events, goals_reached and revenue count the goals trusted installs reached (trusted= recomputes them over that class)'
+            . '; events, goals_reached and revenue count the goals trusted installs reached (trusted= recomputes installs and these over that class)'
             . '; revenue is the value of payable outcomes, what the campaigns were credited'
             . '; group_by=goal counts distinct installs per goal (installs, and each trust class) and orders busiest first — sort by after for a funnel';
     }

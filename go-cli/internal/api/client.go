@@ -20,6 +20,10 @@ const maxResponseSize = 10 << 20 // 10 MB
 // Download refuses a larger body rather than returning a short file.
 const maxDownloadSize = 64 << 20 // 64 MB
 
+// OpDownloadTooLarge marks a download refused because the body exceeded
+// maxDownloadSize.
+const OpDownloadTooLarge = "download_too_large"
+
 // stagedMode, when set (the root --staged flag), stamps staged=1 onto every
 // mutating request so the server records the write as a proposal (a staged
 // change with a server-issued id) instead of executing it. The
@@ -169,6 +173,9 @@ func HintFor(err error) string {
 	}
 	var reqErr *RequestError
 	if errors.As(err, &reqErr) {
+		if reqErr.Op == OpDownloadTooLarge {
+			return "Nothing was written. Create a smaller export (a shorter --time-from/--time-to range, or a coarser --group-by such as campaign) and download that one."
+		}
 		switch reqErr.Kind {
 		case "network":
 			return "Check the server URL (`p202 config get`) and that the instance is reachable; run `p202 config test` to verify the connection."
@@ -374,6 +381,10 @@ func (c *Client) Post(path string, body interface{}) ([]byte, error) {
 	return c.do("POST", path, nil, body)
 }
 
+// AppTokenHeader carries an app registration's token to the public app
+// routes; a request that sends it sends no API key.
+const AppTokenHeader = "X-P202-App-Token"
+
 // PostWithHeaders is Post with extra request headers — for the public app
 // intake, which is selected by X-P202-App-Token rather than the API key.
 func (c *Client) PostWithHeaders(path string, body interface{}, headers map[string]string) ([]byte, error) {
@@ -520,7 +531,18 @@ func (c *Client) doLimited(method, path string, params map[string]string, body i
 		return nil, &RequestError{Kind: "validation", Op: "create_request", Err: err}
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	// The public app routes (the install intake, the schema) are selected
+	// by the app's own token and never read the API key: sending it there
+	// hands the account's credential to a route that does not need it.
+	appRoute := false
+	for name := range headers {
+		if http.CanonicalHeaderKey(name) == http.CanonicalHeaderKey(AppTokenHeader) {
+			appRoute = true
+		}
+	}
+	if !appRoute {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "p202-cli/2.0 (Go)")
@@ -550,7 +572,10 @@ func (c *Client) doLimited(method, path string, params map[string]string, body i
 		return nil, parseAPIError(resp.StatusCode, respBody)
 	}
 	if strict && int64(len(respBody)) > limit {
-		return nil, &RequestError{Kind: "network", Op: "read_response", Err: fmt.Errorf("the file is larger than %d bytes, the most this client downloads", limit)}
+		// Not a network failure: the server answered in full and the file
+		// is simply bigger than this client takes. The fix is a smaller
+		// file, which HintFor names.
+		return nil, &RequestError{Kind: "validation", Op: OpDownloadTooLarge, Err: fmt.Errorf("the file is larger than %d MB, the most this client downloads", limit>>20)}
 	}
 
 	return respBody, nil

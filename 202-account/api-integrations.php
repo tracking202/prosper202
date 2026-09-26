@@ -417,8 +417,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			// Only the network this user owned: the classic query retired
 			// the affiliate network of whatever id it was handed.
 			$sql = "UPDATE 202_aff_networks SET aff_network_deleted = '1', aff_network_time = '" . time() . "' WHERE dni_network_id = '" . $mysql['deleteDniNetworkId'] . "' AND user_id = '" . $mysql['user_id'] . "'";
-			$db->query($sql);
-			p202_account_flash('ok', 'The network is removed. Its offers stay in your campaigns; they stop updating.');
+			if ($db->query($sql)) {
+				p202_account_flash('ok', 'The network is removed. Its offers stay in your campaigns; they stop updating.');
+			} else {
+				// The integration is gone; its category could not be retired.
+				error_log('api-integrations.php: the DNI category was not retired: ' . $db->error);
+				p202_account_flash('warn', 'The network is removed, but its campaign category could not be retired. If it is still listed under Setup › Campaign Categories, remove it there.');
+			}
 		} elseif (!$dniDeleted) {
 			p202_account_flash('bad', 'The network could not be removed; try again.');
 		} else {
@@ -465,14 +470,31 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 						$sql .= ", affiliateId = '" . $mysql['dniAffiliateId'] . "'";
 					}
 
-					if ($db->query($sql)) {
-						$sql = "INSERT INTO 202_aff_networks SET dni_network_id = '" . $db->insert_id . "', user_id = '" . $mysql['user_id'] . "', aff_network_name = '" . $mysql['dniNetworkName'] . " (DNI)" . "', aff_network_time = '" . time() . "'";
-						$db->query($sql);
+					// The integration and its campaign category land together:
+					// the category's first query was checked and the second was
+					// not, so a failure left an integration with no category
+					// while the page said "configured" (#165, #1).
+					$dniSaved = false;
+					try {
+						(new \Prosper202\Database\Connection($db))->transaction(static function () use ($db, $sql, $mysql): void {
+							if (!$db->query($sql)) {
+								throw new RuntimeException('the network: ' . $db->error);
+							}
+							$categorySql = "INSERT INTO 202_aff_networks SET dni_network_id = '" . (int) $db->insert_id . "', user_id = '" . $mysql['user_id'] . "', aff_network_name = '" . $mysql['dniNetworkName'] . " (DNI)" . "', aff_network_time = '" . time() . "'";
+							if (!$db->query($categorySql)) {
+								throw new RuntimeException('its category: ' . $db->error);
+							}
+						});
+						$dniSaved = true;
+					} catch (Throwable $failed) {
+						error_log('api-integrations.php: a DNI network was not saved: ' . $failed->getMessage());
+					}
+					if ($dniSaved) {
 						tagUserByNetwork($user_row['install_hash'], 'affiliate-networks', $dniNetworkName[0]);
 						p202_account_flash('ok', $dniNetworkName[0] . ' network configured. API processing can take up to 5 minutes.');
 						p202_account_redirect('202-account/api-integrations.php#dni');
 					}
-					$error['dni_network'] = 'The network could not be saved; try again.';
+					$error['dni_network'] = 'The network could not be saved, and nothing was added; try again.';
 				} else if (isset($_POST['editing_dni_network_id']) && !empty($_POST['editing_dni_network_id'])) {
 					$mysql['editing_dni_network_id'] = $db->real_escape_string((string)$_POST['editing_dni_network_id']);
 					$sql = "UPDATE 202_dni_networks SET networkId = '" . $mysql['dniNetworkId'] . "', name = '" . $mysql['dniNetworkName'] . "', type = '" . $mysql['dniNetworkType'] . "', apiKey = '" . $mysql['dniApikey'] . "', time = '" . time() . "'";
@@ -483,13 +505,37 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 					$sql .= " WHERE id = '" . $mysql['editing_dni_network_id'] . "' AND user_id = '" . $mysql['user_id'] . "'";
 
-					if ($db->query($sql)) {
-						$sql = "UPDATE 202_aff_networks SET aff_network_name = '" . $mysql['dniNetworkName'] . " (DNI)" . "', aff_network_time = '" . time() . "' WHERE dni_network_id = '" . $mysql['editing_dni_network_id'] . "' AND user_id = '" . $mysql['user_id'] . "'";
-						$db->query($sql);
+					// The edit names a network of this account's or changes
+					// nothing: it flashed "updated" on a no-op for an id that is
+					// not there. `time` always changes, so a row that exists is
+					// always an affected row.
+					$dniFound = true;
+					$dniSaved = false;
+					try {
+						(new \Prosper202\Database\Connection($db))->transaction(static function () use ($db, $sql, $mysql, &$dniFound): void {
+							if (!$db->query($sql)) {
+								throw new RuntimeException('the network: ' . $db->error);
+							}
+							if ($db->affected_rows < 1) {
+								$dniFound = false;
+								return;
+							}
+							$categorySql = "UPDATE 202_aff_networks SET aff_network_name = '" . $mysql['dniNetworkName'] . " (DNI)" . "', aff_network_time = '" . time() . "' WHERE dni_network_id = '" . $mysql['editing_dni_network_id'] . "' AND user_id = '" . $mysql['user_id'] . "'";
+							if (!$db->query($categorySql)) {
+								throw new RuntimeException('its category: ' . $db->error);
+							}
+						});
+						$dniSaved = $dniFound;
+					} catch (Throwable $failed) {
+						error_log('api-integrations.php: a DNI network was not updated: ' . $failed->getMessage());
+					}
+					if ($dniSaved) {
 						p202_account_flash('ok', 'DNI network updated. API processing can take up to 5 minutes.');
 						p202_account_redirect('202-account/api-integrations.php#dni');
 					}
-					$error['dni_network'] = 'The network could not be saved; try again.';
+					$error['dni_network'] = $dniFound
+						? 'The network could not be saved, and nothing changed; try again.'
+						: 'That network was not found; nothing was changed.';
 				}
 			}
 		}
@@ -518,6 +564,17 @@ if ($dni_result) {
 	}
 }
 
+// The networks still importing, for the progress poller's inline script.
+// Network-supplied strings can be invalid UTF-8, which made json_encode()
+// return false and the script read `var processing = ;` (#165, #1): they are
+// substituted, and an encoding that still fails is said on the page.
+$dniProcessingJson = json_encode($dniProcesing, JSON_NUMERIC_CHECK | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_INVALID_UTF8_SUBSTITUTE);
+if ($dniProcessingJson === false) {
+	error_log('api-integrations.php: the DNI progress data could not be encoded: ' . json_last_error_msg());
+	$dniProcessingJson = '{"networks":[]}';
+	$dniProgressUnavailable = true;
+}
+
 $e = static fn (mixed $v): string => htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
 $self = get_absolute_url() . '202-account/api-integrations.php';
 $base = get_absolute_url();
@@ -542,6 +599,9 @@ $endpoint = static function (string $label, string $url) use ($e): string {
 $trackingBase = $strProtocol . getTrackingDomain() . get_absolute_url();
 
 $flashExtra = [];
+if (!empty($dniProgressUnavailable)) {
+	$flashExtra[] = ['kind' => 'warn', 'text' => 'The import progress of your DNI networks cannot be shown just now; reload the page to see it.'];
+}
 if (isset($_GET['lpo']) && $_GET['lpo'] === 'connected') {
 	$flashExtra[] = ['kind' => 'ok', 'text' => 'Landing Page Optimizer connected.'];
 }
@@ -930,7 +990,7 @@ template_top('API Integrations');
 		});
 
 		/* Networks still importing their offers: poll their progress. */
-		var processing = <?php echo json_encode($dniProcesing, JSON_NUMERIC_CHECK | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
+		var processing = <?php echo $dniProcessingJson; ?>;
 		if (!processing.networks || processing.networks.length === 0) { return; }
 		var base = <?php echo json_encode($base . '202-account/ajax/dni.php'); ?>;
 		var poll = function () {

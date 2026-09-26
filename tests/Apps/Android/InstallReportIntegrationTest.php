@@ -161,9 +161,44 @@ final class InstallReportIntegrationTest extends TestCase
         $r = self::jsonRound($this->report(['platform' => 'android', 'group_by' => 'platform', 'trusted' => 'unvouched']));
         self::assertSame('as-filtered', $r['meta']['trusted']);
         $g = $r['data']['groups'][0];
-        self::assertSame([1, 0, 1, 2], [$g['received'], $g['installs'], $g['unvouched_count'], $g['goals_reached']],
-            'the organic install: its install goal and Tutorial (Level 3 is campaign 30\'s, and an organic install has no campaign)');
+        self::assertSame([1, 1, 1, 2], [$g['received'], $g['installs'], $g['unvouched_count'], $g['goals_reached']],
+            'the organic install, counted as the class the filter selected: its install goal and Tutorial (Level 3 is campaign 30\'s, and an organic install has no campaign)');
         self::assertEqualsWithDelta(0.0, $g['revenue'], 0.00001, 'nothing an organic install reaches is paid');
+    }
+
+    /**
+     * `installs` means one thing in every grouping: distinct installs of the
+     * class the figures count. The install groupings partition the installs,
+     * so their rows sum to the totals'; the goal rows count the installs of
+     * that class that reached each goal, once each, so none exceeds them.
+     * The goal grouping counted the filtered class while every other
+     * grouping counted trusted installs whatever the filter said (#180).
+     */
+    public function testInstallsMeanTheSameInEveryGroupingUnderEveryTrustFilter(): void
+    {
+        $this->seed();
+        $expected = ['' => 2, 'trusted' => 2, 'refuted' => 1, 'unvouched' => 1];
+        foreach ($expected as $trusted => $count) {
+            $params = ['platform' => 'android'] + ($trusted !== '' ? ['trusted' => $trusted] : []);
+            $totals = null;
+            foreach (['day', 'registration', 'platform', 'campaign', 'match-state', 'integrity-state'] as $groupBy) {
+                $r = self::jsonRound($this->report($params + ['group_by' => $groupBy]))['data'];
+                $totals = $totals ?? $r['totals']['installs'];
+                self::assertSame($totals, $r['totals']['installs'], "trusted=$trusted: the totals do not depend on the grouping ($groupBy)");
+                self::assertSame($totals, array_sum(array_column($r['groups'], 'installs')), "trusted=$trusted: the $groupBy rows sum to the totals");
+            }
+            self::assertSame($count, $totals, "trusted=$trusted: installs is the class the figures count");
+
+            $goals = self::jsonRound($this->report($params + ['group_by' => 'goal']))['data'];
+            self::assertSame($totals, $goals['totals']['installs'], "trusted=$trusted: goal grouping, same totals");
+            foreach ($goals['groups'] as $row) {
+                self::assertLessThanOrEqual($totals, $row['installs'], "trusted=$trusted: goal " . $row['goal_name'] . ' counts no install twice');
+            }
+            $install = array_values(array_filter($goals['groups'], static fn (array $row): bool => $row['builtin'] === 'install'));
+            // Every install of a class that reached anything reached the
+            // install goal first; the forged (refuted) one reached nothing.
+            self::assertSame($trusted === 'refuted' ? [] : [$count], array_column($install, 'installs'), "trusted=$trusted: the install goal's row");
+        }
     }
 
     public function testBothPlatformsTogether(): void

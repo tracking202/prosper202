@@ -245,7 +245,7 @@ class MobileAppsReportController
         $mobileReport = [
             'view' => $view,
             'self' => rtrim(get_absolute_url(), '/') . '/tracking202/analyze/mobile_apps.php',
-            'filters' => $this->readFilters($apps),
+            'filters' => $this->readFilters($apps, $view),
             'apps' => $apps,
             'platforms' => self::PLATFORMS,
             'ranges' => self::RANGES,
@@ -295,7 +295,7 @@ class MobileAppsReportController
      * @param list<array<string, mixed>> $apps
      * @return array<string, mixed>
      */
-    private function readFilters(array $apps): array
+    private function readFilters(array $apps, string $view): array
     {
         $window = self::resolveWindow(
             isset($_GET['range']) ? (string)$_GET['range'] : null,
@@ -355,8 +355,8 @@ class MobileAppsReportController
                 . implode(', ', SignatureState::values()) . '.');
             $signature = '';
         }
-        if ($signature !== '' && $platform !== 'ios') {
-            $this->flashFilterDropped('The signature filter was ignored: it filters Apple\'s postbacks, so it applies to the iOS report only.');
+        if ($signature !== '' && !self::signatureApplies($view, $platform)) {
+            $this->flashFilterDropped('The signature filter was ignored: it filters Apple\'s postbacks, so it applies to the Postbacks tab and the iOS report only.');
             $signature = '';
         }
         $trusted = strtolower(trim((string)($_GET['trusted'] ?? '')));
@@ -387,6 +387,23 @@ class MobileAppsReportController
             'trusted' => $trusted,
             'status' => $status,
         ];
+    }
+
+    /**
+     * Whether the signature filter means anything on a view.
+     *
+     * It filters Apple's postbacks by their signature state. The Postbacks
+     * tab lists only Apple's postbacks, whatever platform the page is set to
+     * (the setting is shared by every tab, and an account with apps on both
+     * platforms defaults to both), so the filter applies there always; the
+     * report applies it only when it is the iOS report. Anywhere else it is
+     * dropped and said to be (readFilters()), never silently. The form, the
+     * links and readFilters() all ask this one question, so a filter the
+     * form offers is never one the page then throws away.
+     */
+    public static function signatureApplies(string $view, string $platform): bool
+    {
+        return $view === 'postbacks' || ($view === 'report' && $platform === 'ios');
     }
 
     /**

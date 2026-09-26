@@ -52,7 +52,9 @@ final class CountedAmount
         }
         $amount = Amount::toUnits((string) $row['click_payout']);
 
-        $sql = 'SELECT click_payout FROM 202_conversion_logs WHERE reverses_conv_id = ? AND deleted = 0';
+        // The rows ClickValueCalculator nets: a reversal counts only when it
+        // is payable and not deleted, like every other ledger row.
+        $sql = 'SELECT click_payout FROM 202_conversion_logs WHERE reverses_conv_id = ? AND deleted = 0 AND payable = 1';
         $stmt = $primary ? $conn->prepareWrite($sql) : $conn->prepareRead($sql);
         $conn->bind($stmt, 'i', [(int) $row['conv_id']]);
         $reversals = $conn->fetchAll($stmt);

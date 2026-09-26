@@ -76,6 +76,59 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 		die("ERROR");
 	}
 
+	// Every id the payload names must be this user's, and every saved
+	// rule, redirect and criterion it names must hang off THIS redirector:
+	// the writes below address them by id alone, so a guessed id from
+	// another account would be re-parented or repointed (#164, #173).
+	// Checked for the whole payload before anything is written.
+	$rotatorOwnsRule = [];
+	$refuse = static function (): never {
+		die("ERROR");
+	};
+	$destinationOwned = static function (string $type, $value) use ($db, $mysql, $refuse): void {
+		if ($type !== 'campaign' && $type !== 'lp') {
+			return;
+		}
+		if (!is_string($value) || preg_match('/^[1-9]\d{0,9}$/D', $value) !== 1) {
+			$refuse();
+		}
+		$sql = $type === 'campaign'
+			? "SELECT 1 FROM 202_aff_campaigns WHERE aff_campaign_id = ? AND user_id = ? AND COALESCE(aff_campaign_deleted, 0) = 0 LIMIT 1"
+			: "SELECT 1 FROM 202_landing_pages WHERE landing_page_id = ? AND user_id = ? AND COALESCE(landing_page_deleted, 0) = 0 LIMIT 1";
+		if (!p202_rotator_row_exists($db, $sql, [(int) $value, (int) $mysql['user_id']])) {
+			$refuse();
+		}
+	};
+	$destinationOwned((string) $_POST['default_type'], $_POST['defaults']);
+	foreach ($_POST['data'] as $rule) {
+		if (!is_array($rule) || !is_array($rule['redirects'] ?? null) || !is_array($rule['criteria'] ?? null)) {
+			$refuse();
+		}
+		$savedRule = null;
+		if ((string) ($rule['rule_id'] ?? '') !== 'none') {
+			$savedRule = (int) $rule['rule_id'];
+			if (!p202_rotator_row_exists($db, "SELECT 1 FROM 202_rotator_rules WHERE id = ? AND rotator_id = ? LIMIT 1", [$savedRule, (int) $rotator_id])) {
+				$refuse();
+			}
+		}
+		foreach ($rule['redirects'] as $redirect) {
+			$destinationOwned((string) ($redirect['type'] ?? ''), $redirect['value'] ?? null);
+			if ((string) ($redirect['id'] ?? '') !== 'none') {
+				// A saved redirect belongs to the saved rule it is posted under.
+				if ($savedRule === null || !p202_rotator_row_exists($db, "SELECT 1 FROM 202_rotator_rules_redirects WHERE id = ? AND rule_id = ? LIMIT 1", [(int) $redirect['id'], $savedRule])) {
+					$refuse();
+				}
+			}
+		}
+		foreach ($rule['criteria'] as $criteria) {
+			if ((string) ($criteria['criteria_id'] ?? '') !== 'none') {
+				if (!p202_rotator_row_exists($db, "SELECT 1 FROM 202_rotator_rules_criteria WHERE id = ? AND rotator_id = ? LIMIT 1", [(int) $criteria['criteria_id'], (int) $rotator_id])) {
+					$refuse();
+				}
+			}
+		}
+	}
+
 	$rotator_sql = "SELECT 
 					2ro.name,
 					2ro.default_campaign,
@@ -508,4 +561,20 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 		echo "DONE";
 	}
 
+}
+
+/**
+ * Whether `$sql` (integer placeholders only) finds a row, read from the
+ * primary. A statement that cannot run is an error, not "no row" (CLAUDE.md
+ * #1): Connection throws on a failed prepare, execute or get_result, so a
+ * failure never reads as a refusal it did not decide.
+ *
+ * @param list<int> $ids
+ */
+function p202_rotator_row_exists(mysqli $db, string $sql, array $ids): bool
+{
+	$conn = new \Prosper202\Database\Connection($db);
+	$stmt = $conn->prepareWrite($sql);
+	$conn->bind($stmt, str_repeat('i', count($ids)), $ids);
+	return $conn->fetchOne($stmt) !== null;
 }

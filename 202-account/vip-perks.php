@@ -55,8 +55,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 			$response = updateSurveyData($install_hash, $answers);
 			if (is_array($response) && !empty($response['updated'])) {
 				$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-				$db->query("UPDATE 202_users SET modal_status='1', vip_perks_status='0' WHERE user_id='" . $mysql['user_id'] . "'");
 				p202_account_flash('ok', 'Thank you. Your VIP Perks profile is saved.');
+				// The answers are with the VIP Perks service; this only stops
+				// the reminder. Say so when it did not land, rather than
+				// reporting a success the next page load contradicts (#1).
+				if (!$db->query("UPDATE 202_users SET modal_status='1', vip_perks_status='0' WHERE user_id='" . $mysql['user_id'] . "'")) {
+					error_log('vip-perks.php: the reminder state was not saved: ' . $db->error);
+					p202_account_flash('warn', 'The VIP Perks reminder could not be switched off, so it may appear again. Your answers are saved.');
+				}
 				p202_account_redirect('202-account/vip-perks.php');
 			}
 			$pageFlashes[] = ['kind' => 'bad', 'text' => 'The VIP Perks service did not accept the answers. Nothing was saved; try again.'];

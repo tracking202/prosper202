@@ -7,6 +7,14 @@ include_once(str_repeat("../", 1) . '202-config/class-dataengine.php');
 
 AUTH::require_user();
 
+// Replacing the install's files is an administrator's act: the same
+// permission as Settings (administration.php), not merely being signed in
+// (#165).
+if (!isset($userObj) || !$userObj->hasPermission('access_to_settings')) {
+	header('location: ' . get_absolute_url() . '202-account/');
+	exit;
+}
+
 // On managed deployments (Coolify, or any Docker image built from git) the
 // 1-click upgrade would write into the ephemeral container filesystem and be
 // silently reverted on the next redeploy — refuse before touching anything.
@@ -91,29 +99,13 @@ if (($_POST['start_upgrade'] ?? '') === '1' && hash_equals((string) ($_SESSION['
 							} else {
 								$contents = zip_entry_read($zip_entry, zip_entry_filesize($zip_entry));
 
-								// Validate and confine the file path before writing it.
-								$targetFile = resolve_update_target_path($basePath, $thisFileName);
+								// Confined to the install, and never through a symlink.
+								$targetFile = resolve_update_write_path($basePath, $thisFileName);
 								if ($targetFile === false) {
-									$installlog .= "Skipped invalid update file path: /" . $thisFileName . "\n";
+									$installlog .= "Skipped unsafe update file path: /" . $thisFileName . "\n";
 									continue;
 								}
-
-								// Never write through a symlink or to a resolved path outside the base.
-								if (file_exists($targetFile)) {
-									$status = "updated";
-									if (is_link($targetFile)) {
-										$installlog .= "Skipped symlink during update: /" . $thisFileName . "\n";
-										continue;
-									}
-									$resolvedFilePath = realpath($targetFile);
-									$resolvedBase = rtrim($basePath, DIRECTORY_SEPARATOR);
-									if ($resolvedFilePath === false || ($resolvedFilePath !== $resolvedBase && strpos($resolvedFilePath, $resolvedBase . DIRECTORY_SEPARATOR) !== 0)) {
-										$installlog .= "Skipped unsafe update file path: /" . $thisFileName . "\n";
-										continue;
-									}
-								} else {
-									$status = "created";
-								}
+								$status = file_exists($targetFile) ? "updated" : "created";
 
 								if ($updateThis = @fopen($targetFile, 'wb')) {
 									fwrite($updateThis, $contents);
