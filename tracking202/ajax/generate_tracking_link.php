@@ -86,6 +86,9 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 		'tracker_rotator' => ['202_rotators', 'id', null, 'That redirector'],
 	];
 	$ownedRows = [];
+	// Read from the primary; Connection throws on a failed prepare, execute
+	// or fetch, so a failure is an error page, never "not yours" (#1).
+	$ownedConn = new \Prosper202\Database\Connection($db);
 	foreach ($owned as $field => [$table, $column, $deletedColumn, $what]) {
 		$raw = $_POST[$field] ?? '';
 		if (!is_string($raw)) {
@@ -99,24 +102,9 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 		}
 		$ownedSql = 'SELECT * FROM `' . $table . '` WHERE `' . $column . '` = ? AND `user_id` = ?'
 			. ($deletedColumn !== null ? ' AND COALESCE(`' . $deletedColumn . '`, 0) = 0' : '') . ' LIMIT 1';
-		$ownedStmt = $db->prepare($ownedSql);
-		if ($ownedStmt === false) {
-			record_mysql_error($db, $ownedSql);
-		}
-		$ownedId = (int) $raw;
-		$ownedUser = (int) $_SESSION['user_id'];
-		$ownedStmt->bind_param('ii', $ownedId, $ownedUser);
-		if (!$ownedStmt->execute()) {
-			$ownedStmt->close();
-			record_mysql_error($db, $ownedSql);
-		}
-		$ownedResult = $ownedStmt->get_result();
-		if ($ownedResult === false) {
-			$ownedStmt->close();
-			record_mysql_error($db, $ownedSql);
-		}
-		$ownedRow = $ownedResult->fetch_assoc();
-		$ownedStmt->close();
+		$ownedStmt = $ownedConn->prepareWrite($ownedSql);
+		$ownedConn->bind($ownedStmt, 'ii', [(int) $raw, (int) $_SESSION['user_id']]);
+		$ownedRow = $ownedConn->fetchOne($ownedStmt);
 		if ($ownedRow === null) {
 			die(p202_flash('bad', $what . ' is not one of yours, or it was removed.'));
 		}
