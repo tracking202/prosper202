@@ -413,16 +413,34 @@ class AppRegistrationsController extends Controller
         // The policy withdrawal, the unlinking and the row delete commit
         // together: a registration gone with its trusted development rows
         // still trusted would leave nothing to withdraw them from.
+        //
+        // The change records are written after the commit, not inside it. A
+        // recordChange() failure inside would roll the cascade back and still
+        // surface as WriteCommittedException ("landed, never retry"), so a
+        // staged apply would be marked interrupted for a delete that never
+        // happened (CLAUDE.md #13).
         $this->unlinkedCampaigns = [];
-        $this->transaction(function () use ($id): void {
-            parent::delete($id);
-        });
-        // The campaigns beforeDelete() unlinked changed too; the change feed
-        // hears it after the commit, never for a delete that rolled back.
         try {
-            (new CampaignsController($this->db, $this->userId))->recordLinkChanges($this->unlinkedCampaigns);
-        } catch (\Throwable $e) {
-            throw new \Api\V3\Exception\WriteCommittedException('app registration', $e);
+            $deleted = $this->transaction(fn (): array => $this->deleteRecord($id));
+            // Both records are attempted, whichever fails: each is about a
+            // write that has landed.
+            $failure = null;
+            try {
+                $this->recordDeleted($deleted);
+            } catch (\Api\V3\Exception\WriteCommittedException $e) {
+                $failure = $e;
+            }
+            // The campaigns beforeDelete() unlinked changed too; the change
+            // feed hears it after the commit, never for a delete that rolled
+            // back.
+            try {
+                (new CampaignsController($this->db, $this->userId))->recordLinkChanges($this->unlinkedCampaigns);
+            } catch (\Throwable $e) {
+                $failure ??= new \Api\V3\Exception\WriteCommittedException('app registration', $e);
+            }
+            if ($failure !== null) {
+                throw $failure;
+            }
         } finally {
             $this->unlinkedCampaigns = [];
         }

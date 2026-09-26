@@ -125,16 +125,27 @@ final class MysqlConversionLedger
     /**
      * Recompute the click's lead flag and value from its rows and write them,
      * with every derived supersession, to the ledger and to the click and
-     * spy tables. Rows whose counted state changed are queued for MTA.
+     * spy tables. Rows whose counted state changed are queued for MTA —
+     * reversals included, though a reversal carries no supersession of its
+     * own: it stops netting when its sale is superseded, and starts again
+     * when the sale counts again, without any column of its own changing.
      */
     public function recompute(int $clickId, int $campaignId): ClickValue
     {
         $terms = $this->campaignTerms($campaignId);
         $rows = $this->loadRows($clickId);
 
+        $countedBefore = ClickValueCalculator::countedAsStored($rows);
         $value = ClickValueCalculator::calculate($rows, $terms['mode']);
 
+        // Every row whose counted state flips, whether or not its own
+        // supersession column changes (a reversal's never does).
         $changed = [];
+        foreach (array_keys($countedBefore + $value->counted) as $convId) {
+            if (isset($countedBefore[$convId]) !== isset($value->counted[$convId])) {
+                $changed[] = (int) $convId;
+            }
+        }
         foreach ($rows as $row) {
             if ($row->hasFixedSupersession()) {
                 continue;

@@ -123,6 +123,65 @@ final class ClickValueCalculator
             $value += $row->amountUnits;
         }
         $lead = $counted !== [];
+        foreach (self::nettingReversals($rows, $reversals, $counted) as $reversal) {
+            $counted[$reversal->convId] = true;
+            $value += $reversal->amountUnits;
+        }
+
+        ksort($counted);
+        ksort($superseded);
+
+        return new ClickValue($lead, $lead ? $value : null, $superseded, $counted);
+    }
+
+    /**
+     * The rows that count according to the supersession state as it is
+     * stored, before a recompute rewrites it: the counted set the last
+     * recompute left behind, by the same rules 1, 4 and 5 (a stored
+     * supersession of either kind takes a row out, as the recompute that
+     * wrote it decided).
+     *
+     * A reversal's counted state is never stored — it follows its target —
+     * so the recompute compares this with ClickValue::$counted to find the
+     * reversals whose state flipped, which no supersession diff can see.
+     *
+     * @param list<LedgerRow> $rows
+     * @return array<int, true>
+     */
+    public static function countedAsStored(array $rows): array
+    {
+        $counted = [];
+        $reversals = [];
+        foreach ($rows as $row) {
+            if ($row->deleted || !$row->payable) {
+                continue;
+            }
+            if ($row->isReversal()) {
+                $reversals[] = $row;
+                continue;
+            }
+            if ($row->supersededReason === null) {
+                $counted[$row->convId] = true;
+            }
+        }
+        foreach (self::nettingReversals($rows, $reversals, $counted) as $reversal) {
+            $counted[$reversal->convId] = true;
+        }
+        ksort($counted);
+
+        return $counted;
+    }
+
+    /**
+     * Rule 4: the reversals that net, given the non-reversal rows that count.
+     *
+     * @param list<LedgerRow> $rows
+     * @param list<LedgerRow> $reversals Live, payable reversal rows.
+     * @param array<int, true> $counted Counted non-reversal rows.
+     * @return list<LedgerRow>
+     */
+    private static function nettingReversals(array $rows, array $reversals, array $counted): array
+    {
         $byId = [];
         $baselineCounts = false;
         foreach ($rows as $row) {
@@ -131,20 +190,17 @@ final class ClickValueCalculator
                 $baselineCounts = true;
             }
         }
+        $netting = [];
         foreach ($reversals as $reversal) {
             $target = $byId[(int) $reversal->reversesConvId] ?? null;
             $nets = isset($counted[(int) $reversal->reversesConvId])
                 || ($baselineCounts && $target !== null && !$target->deleted
                     && $target->supersededReason === SupersededReason::PRE_LEDGER);
             if ($nets) {
-                $counted[$reversal->convId] = true;
-                $value += $reversal->amountUnits;
+                $netting[] = $reversal;
             }
         }
 
-        ksort($counted);
-        ksort($superseded);
-
-        return new ClickValue($lead, $lead ? $value : null, $superseded, $counted);
+        return $netting;
     }
 }
