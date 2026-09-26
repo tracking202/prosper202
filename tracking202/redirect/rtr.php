@@ -608,6 +608,7 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 
 //now gather the info for the advance click insert
 $click_id = $db->insert_id;
+\Prosper202\Click\RecordedClicks::note((int) $click_id);
 $mysql['click_id'] = $db->real_escape_string((string)$click_id); 
 }
 $mysql['click_alp'] = 0;

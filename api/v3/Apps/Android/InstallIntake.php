@@ -141,6 +141,14 @@ final class InstallIntake
                     return $this->replay($stored, $payload);
                 }
             }
+            if (Connection::isRetryableLockError($e)) {
+                // Lost the lock twice in a row: nothing was written (the
+                // transaction rolled back), so the SDK's retry is safe and
+                // is told to make it, rather than read a bare 500.
+                error_log('p202 android intake: install ' . $payload->installUuid . ' lost a lock twice; answered 503: ' . $e->getMessage());
+
+                return self::error(503, 'The server is busy with this install; retry shortly.', [], ['Retry-After' => '5']);
+            }
             throw $e;
         }
 

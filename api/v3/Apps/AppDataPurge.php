@@ -57,7 +57,12 @@ final class AppDataPurge
     {
     }
 
-    public function purgeUser(int $userId): void
+    /**
+     * @return array<int, list<int>> the campaigns the purge unlinked, by
+     *         owner, for the caller to put in the change feed once it has
+     *         committed (CampaignsController::recordLinkChanges())
+     */
+    public function purgeUser(int $userId): array
     {
         if ($userId < 1) {
             // user_id 0 is "unclaimed": purging it would delete or release
@@ -89,6 +94,17 @@ final class AppDataPurge
         // them (AppRegistrationsController::beforeDelete()). Matched by the
         // registration's owner, not the campaign's, so no campaign is left
         // naming a registration this purge removes.
+        $stmt = $this->prepare(
+            'SELECT aff_campaign_id, user_id FROM 202_aff_campaigns
+             WHERE app_registration_id IN (SELECT registration_id FROM 202_app_registrations WHERE user_id = ?) FOR UPDATE'
+        );
+        $this->bind($stmt, 'i', $userId);
+        $this->execute($stmt, 'Linked campaign lookup failed');
+        $unlinked = [];
+        foreach ($this->result($stmt)->fetch_all(MYSQLI_ASSOC) as $row) {
+            $unlinked[(int) $row['user_id']][] = (int) $row['aff_campaign_id'];
+        }
+        $stmt->close();
         $this->run(
             'UPDATE 202_aff_campaigns SET app_registration_id = NULL
              WHERE app_registration_id IN (SELECT registration_id FROM 202_app_registrations WHERE user_id = ?)',
@@ -96,6 +112,8 @@ final class AppDataPurge
             $userId
         );
         $this->run('DELETE FROM 202_app_registrations WHERE user_id = ?', 'i', $userId);
+
+        return $unlinked;
     }
 
     private function run(string $sql, string $types, mixed ...$values): void
