@@ -2670,8 +2670,9 @@ correction URLs are `Prosper202\Notifications\CorrectionUrls`.
   its install's day and campaign. `revenue` is the value of live (not
   superseded), payable outcomes — what the campaign decided to pay — not
   the click's payout, which a web goal or another app could share.
-  `installs` are trusted; the other trust classes are counted beside them,
-  and `trusted=` recomputes the goal figures over one class
+  `installs` are distinct trusted installs, in every grouping alike; the
+  other trust classes are counted beside them, and `trusted=` recomputes
+  `installs` and the goal figures over one class
   (`meta.trusted: as-filtered`), as the iOS `signature` filter does.
 - **Combined figures are only the shared ones.** With `platform=all` the
   totals are `{ios, android, combined}`, and `combined` adds installs, goals
