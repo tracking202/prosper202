@@ -32,6 +32,8 @@ use Prosper202\Attribution\ExportFiles;
  *    unclaimed, the campaigns linked to the registrations unlinked;
  *  - the traffic-source notification outbox rows of the user's conversions
  *    are deleted (PR 5): a deleted account's queued postbacks never go out;
+ *    and the correction URLs set on its traffic sources' pixels (PR 11) go
+ *    with them;
  *  - the goals engine (PR 4) is deleted: goals and their versions, campaign
  *    payouts, and every subject's events, progress and outcomes — the
  *    ledger rows the outcomes wrote stay, with the clicks;
@@ -135,9 +137,10 @@ final class UserDataPurge
         'DELETE FROM 202_conversion_uploads WHERE user_id = ?',
     ];
 
-    /** Queued traffic-source postbacks: a deleted account's never go out. */
+    /** Queued traffic-source postbacks, and where corrections to them would go: a deleted account's never go out. */
     private const NOTIFICATION_STATEMENTS = [
         'DELETE FROM 202_notification_pending WHERE user_id = ?',
+        'DELETE FROM 202_notification_correction_urls WHERE user_id = ?',
     ];
 
     /** Taken first in the delete's transaction: see deleteUser(). */
