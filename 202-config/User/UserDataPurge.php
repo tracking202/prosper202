@@ -169,7 +169,7 @@ final class UserDataPurge
             foreach (array_merge(self::ACCESS_STATEMENTS, self::NOTIFICATION_STATEMENTS, self::MTA_STATEMENTS, self::IDENTITY_STATEMENTS, self::GOAL_STATEMENTS) as $sql) {
                 $this->run($sql, $userId);
             }
-            (new AppDataPurge($this->db))->purgeUser($userId);
+            $unlinked = (new AppDataPurge($this->db))->purgeUser($userId);
             $this->run('UPDATE 202_users SET user_deleted = 1 WHERE user_id = ?', $userId);
             if (!$this->db->commit()) {
                 throw new \RuntimeException('Could not commit the user deletion');
@@ -177,6 +177,19 @@ final class UserDataPurge
         } catch (\Throwable $e) {
             $this->db->rollback();
             throw new \RuntimeException('User ' . $userId . ' was not deleted: ' . $e->getMessage(), 0, $e);
+        }
+
+        // The campaigns the purge unlinked from the deleted registrations
+        // go in the change feed, after the commit. The user IS deleted by
+        // now, so a feed that cannot be written is logged by name rather
+        // than thrown as "not deleted" (CLAUDE.md #13).
+        foreach ($unlinked as $ownerId => $campaignIds) {
+            try {
+                (new \Api\V3\Controllers\CampaignsController($this->db, $ownerId))->recordLinkChanges($campaignIds);
+            } catch (\Throwable $e) {
+                error_log('p202 user delete: user ' . $userId . ' was deleted, but the change feed did not record the unlink of campaigns '
+                    . implode(', ', $campaignIds) . ': ' . $e->getMessage());
+            }
         }
 
         // The files go only once the rows that named them are gone for good:

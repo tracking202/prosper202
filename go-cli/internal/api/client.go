@@ -381,6 +381,10 @@ func (c *Client) Post(path string, body interface{}) ([]byte, error) {
 	return c.do("POST", path, nil, body)
 }
 
+// AppTokenHeader carries an app registration's token to the public app
+// routes; a request that sends it sends no API key.
+const AppTokenHeader = "X-P202-App-Token"
+
 // PostWithHeaders is Post with extra request headers — for the public app
 // intake, which is selected by X-P202-App-Token rather than the API key.
 func (c *Client) PostWithHeaders(path string, body interface{}, headers map[string]string) ([]byte, error) {
@@ -527,7 +531,18 @@ func (c *Client) doLimited(method, path string, params map[string]string, body i
 		return nil, &RequestError{Kind: "validation", Op: "create_request", Err: err}
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	// The public app routes (the install intake, the schema) are selected
+	// by the app's own token and never read the API key: sending it there
+	// hands the account's credential to a route that does not need it.
+	appRoute := false
+	for name := range headers {
+		if http.CanonicalHeaderKey(name) == http.CanonicalHeaderKey(AppTokenHeader) {
+			appRoute = true
+		}
+	}
+	if !appRoute {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "p202-cli/2.0 (Go)")

@@ -202,6 +202,13 @@ final class GoalEngineIntegrationTest extends TestCase
         $this->goals->create(1, \Prosper202\Goals\GoalScope::REGISTRATION, 9, \Prosper202\Goals\GoalDefinition::parse(
             ['name' => 'Level', 'trigger' => ['event' => 'level'], 'value' => ['type' => 'fixed', 'amount' => 1]]
         ), $this->clock);
+        // The organic install itself: the engine reads an install subject's
+        // credit from its row under the row's lock (GoalEngine::current()).
+        self::$db->query('DELETE FROM 202_app_installs WHERE install_row_id = 55');
+        self::fixture("INSERT INTO 202_app_installs SET install_row_id = 55, user_id = 1, registration_id = 9,
+            install_uuid = '55555555-5555-4555-8555-555555555555', body_hash = '" . str_repeat('0', 64) . "', store = 'google_play',
+            match_state = 'organic', match_reason = 'no p202 token', referrer_status = 'ok', install_begin_server_at = " . self::T . ',
+            received_at = ' . self::T);
         $subject = new \Prosper202\Goals\GoalSubject('install', 55, null, self::T, [], null, null, 9);
         $this->clock += 10;
         $result = $this->engine->ingest(1, $subject, [new \Prosper202\Goals\GoalEvent('l', 'level', self::T + 5, $this->clock, [], null, false, null)]);

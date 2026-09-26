@@ -181,6 +181,30 @@ final class GoalNameUniquenessIntegrationTest extends TestCase
         $this->assertSame($goalId, $b->forEvent(1, GoalScope::CAMPAIGN, 5, 'purchase', $this->clock));
     }
 
+    public function testAnOperatorGoalNamedInstallDoesNotBlockTheBuiltInInstallGoal(): void
+    {
+        self::fixture("INSERT INTO 202_app_registrations SET registration_id=7, user_id=1, platform='android', app_key='com.example.seven',
+            app_name='Seven', app_token='" . str_repeat('7', 64) . "', created_at=1, updated_at=1");
+        // An operator goal that already holds the name the built-in goal is
+        // given. The built-in goal's identity is `builtin`: its insert must
+        // meet only scope_builtin, never this goal's live name, or the
+        // ON DUPLICATE KEY swallows it and every install of the
+        // registration fails its read-back.
+        $operator = $this->goals->create(1, GoalScope::REGISTRATION, 7, self::plain(
+            (string) MysqlGoalRepository::BUILTIN_INSTALL_DEFINITION['name'],
+            'opened'
+        ), $this->clock);
+
+        $builtin = $this->goals->ensureBuiltinInstallGoal(1, 7, $this->clock);
+
+        $this->assertNotSame($operator, $builtin);
+        $this->assertSame(
+            MysqlGoalRepository::BUILTIN_INSTALL,
+            self::$db->query('SELECT builtin FROM 202_goals WHERE goal_id = ' . $builtin)->fetch_row()[0]
+        );
+        $this->assertSame($builtin, $this->goals->ensureBuiltinInstallGoal(1, 7, $this->clock), 'and it stays the one built-in goal');
+    }
+
     public function testAnArchivedGoalFreesItsName(): void
     {
         $this->campaign(5);

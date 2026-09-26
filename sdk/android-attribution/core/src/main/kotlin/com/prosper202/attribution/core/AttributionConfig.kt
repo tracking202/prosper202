@@ -45,6 +45,13 @@ class AttributionConfig private constructor(
             osVersion: String? = null,
             test: Boolean = false,
         ): AttributionConfig {
+            // Every string here reaches a request, and appVersion/osVersion
+            // the canonical install body: an unpaired surrogate would make
+            // every sendInstall() throw, so it is refused where it enters.
+            for ((field, value) in listOf("endpoint" to endpoint, "appVersion" to appVersion, "osVersion" to osVersion)) {
+                val at = if (value == null) -1 else unpairedSurrogateAt(value)
+                require(at < 0) { "$field must be valid Unicode text: it holds an unpaired UTF-16 surrogate at index $at" }
+            }
             val uri = try {
                 URI(endpoint)
             } catch (e: URISyntaxException) {

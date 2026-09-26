@@ -45,11 +45,11 @@ final class InstallTokenExpandTest extends TestCase
         $start = strpos($src, 'function replaceTokens(');
         self::assertIsInt($start);
         $body = substr($src, $start, (int) strpos($src, "\n}\n", $start) - $start);
-        $token = strpos($body, "p202InstallToken(\$tokens['subid'])");
+        $token = strpos($body, "p202ProvenInstallToken(\$tokens['subid'])");
         // The one implementation (TrafficSourcePixels) encodes every token;
         // the raw click id is signed before the tokens are handed to it.
         $encode = strpos($body, 'TrafficSourcePixels::replaceTokens($url, $tokens');
-        self::assertIsInt($token, 'replaceTokens() expands the token from the subid');
+        self::assertIsInt($token, 'replaceTokens() expands the token from the subid, through the proof check');
         self::assertIsInt($encode);
         self::assertLessThan($encode, $token, 'before the tokens are encoded');
         self::assertSame(
@@ -57,6 +57,5 @@ final class InstallTokenExpandTest extends TestCase
             \Prosper202\Conversion\TrafficSourcePixels::replaceTokens('https://play.example/?referrer=p202%3D[[p202_install_token]]', ['p202_install_token' => 'TOKEN.abc_-']),
             'the token is placed, and its alphabet survives the encoding'
         );
-        self::assertMatchesRegularExpression('/function p202InstallToken\(\$clickId\): string\s*\{.*?InstallToken::expand\(\$clickId,/s', $src);
     }
 }

@@ -17,13 +17,18 @@ use Prosper202\Database\Schema\TableRegistry;
  *   names a goal the system made rather than the operator: 'install', the
  *   built-in install goal every Android registration has (plan §5.5), one
  *   per registration by UNIQUE (user, scope, scope_id, builtin) — NULLs are
- *   distinct, so operator goals are unconstrained by it.
- *   A live goal's name is unique per owner, and the database enforces it:
- *   `live_name` is the name while the goal is live and NULL once archived
- *   (a UNIQUE key admits any number of NULLs), so an archived goal frees
- *   its name while two concurrent creates of one live name cannot both
- *   commit. MysqlGoalRepository turns that duplicate into a CONFLICT; the
- *   nameTaken() read before it is only there to answer early and by name.
+ *   distinct, so operator goals are unconstrained by it. A live operator
+ *   goal's name is unique per owner, and the database enforces it:
+ *   `live_name` is the name while an operator goal is live and NULL once
+ *   archived (a UNIQUE key admits any number of NULLs), so an archived goal
+ *   frees its name while two concurrent creates of one live name cannot
+ *   both commit. MysqlGoalRepository turns that duplicate into a CONFLICT;
+ *   the nameTaken() read before it is only there to answer early and by
+ *   name. A built-in goal's `live_name` is NULL too: its identity is
+ *   `builtin`, and its INSERT ... ON DUPLICATE KEY must only ever meet
+ *   scope_builtin — an operator goal already named "install" meeting it on
+ *   `live_name` instead would swallow the insert, and the read-back by
+ *   `builtin` would find nothing on every install of the registration.
  * - 202_goal_versions: every definition a goal has had. A version is
  *   immutable; an edit adds one. `effective_at` is when it started to apply:
  *   an event is evaluated under the version current at its own received_at.
@@ -81,7 +86,7 @@ final class GoalTables
                 `archived_at` int(10) unsigned DEFAULT NULL,
                 `created_at` int(10) unsigned NOT NULL,
                 `updated_at` int(10) unsigned NOT NULL,
-                `live_name` varchar(100) GENERATED ALWAYS AS (IF(`archived_at` IS NULL, `name`, NULL)) STORED,
+                `live_name` varchar(100) GENERATED ALWAYS AS (IF(`archived_at` IS NULL AND `builtin` IS NULL, `name`, NULL)) STORED,
                 PRIMARY KEY (`goal_id`),
                 UNIQUE KEY `scope_builtin` (`user_id`,`scope`,`scope_id`,`builtin`),
                 UNIQUE KEY `live_name` (`user_id`,`scope`,`scope_id`,`live_name`),

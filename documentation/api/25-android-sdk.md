@@ -99,6 +99,12 @@ in development rather than as a refused request days later:
 | revenue | a finite number, in the account's currency (no currency field) |
 | transactionId | 1–255 bytes, not blank |
 
+A string value, a `transactionId` and a customer id must also be valid
+Unicode text: a Kotlin/Java `String` can hold an unpaired UTF-16 surrogate
+(a string cut in the middle of an emoji, an encoding bug upstream), which
+no server can store, and the SDK refuses it by name where you pass it
+rather than accept something it could never send.
+
 The SDK gives each event a random `event_id` (the server's idempotency key),
 stamps `occurred_at` from the device clock but never earlier than the event
 before it, and queues it durably. Events are sent once the install has been
@@ -132,7 +138,8 @@ cust_sig = hex(HMAC-SHA256(linking_key, "<type>:<id>"))
 Get the key with `p202 user identity-key get <user_id>`; keep it on your
 server. The SDK trims the id and lower-cases an email digest exactly as the
 server does (the shared vectors `tests/fixtures/app-sdk-contract/customer-id.json`
-pin it), checks the signature's shape, and throws
+pin it), checks the signature's shape and that the id is valid Unicode
+text (no unpaired UTF-16 surrogate), and throws
 `InvalidCustomerIdException` otherwise. The id is kept across launches and
 sent once — with the install when it was set before the first launch's
 install was built, otherwise on the next events request (on its own if

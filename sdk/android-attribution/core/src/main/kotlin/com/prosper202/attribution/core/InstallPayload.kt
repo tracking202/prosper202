@@ -247,6 +247,8 @@ internal object CustomerClaim {
         val id = raw["id"]
         if (id !is JsonValue.Str || utf8Length(id.value) > CustomerId.MAX_ID_BYTES) {
             e["$path.id"] = "is required: a string of up to ${CustomerId.MAX_ID_BYTES} bytes"
+        } else if (unpairedSurrogateAt(id.value) >= 0) {
+            e["$path.id"] = "must be valid Unicode text: it holds an unpaired UTF-16 surrogate at index ${unpairedSurrogateAt(id.value)}"
         } else if (typeName != null && CustomerId.canonical(id.value, typeName) == null) {
             e["$path.id"] = "is not a customer id of type $typeName"
         }

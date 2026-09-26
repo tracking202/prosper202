@@ -66,6 +66,14 @@ class CustomerId private constructor(
         @JvmOverloads
         @Throws(InvalidCustomerIdException::class)
         fun of(id: String, signature: String, type: Type = Type.CUSTOM): CustomerId {
+            // Refused here, where the app hands it over: an unpaired
+            // surrogate is not Unicode, so no server can store it and the
+            // canonical install body (Json.canonical) cannot be computed —
+            // accepted, it would stop every sendInstall() from then on.
+            val unpaired = unpairedSurrogateAt(id)
+            if (unpaired >= 0) {
+                throw InvalidCustomerIdException("id", "must be valid Unicode text: it holds an unpaired UTF-16 surrogate at index $unpaired")
+            }
             val value = canonicalValue(id, type)
                 ?: throw InvalidCustomerIdException(
                     "id",
@@ -111,6 +119,7 @@ class CustomerId private constructor(
         }
 
         private fun canonicalValue(raw: String, type: Type): String? {
+            if (unpairedSurrogateAt(raw) >= 0) return null
             var value = phpTrim(raw)
             if (value.isEmpty()) return null
             if (type == Type.EMAIL_MD5 || type == Type.EMAIL_SHA256) {
@@ -143,3 +152,28 @@ internal fun asciiLower(s: String): String {
 }
 
 internal fun utf8Length(s: String): Int = s.toByteArray(Charsets.UTF_8).size
+
+/**
+ * The index of the first UTF-16 surrogate in [s] that is not half of a
+ * pair, or -1 when [s] is well-formed Unicode. A Kotlin/Java String can hold
+ * one (a string sliced mid-pair, a byte-level encoding bug upstream); UTF-8
+ * cannot encode it, PHP's json_decode refuses its escape, and
+ * Json.canonical() throws on it. Every string the app hands the SDK is
+ * checked with this where it enters, so none reaches a body.
+ */
+internal fun unpairedSurrogateAt(s: String): Int {
+    var i = 0
+    while (i < s.length) {
+        val c = s[i]
+        if (Character.isHighSurrogate(c)) {
+            if (i + 1 < s.length && Character.isLowSurrogate(s[i + 1])) {
+                i += 2
+                continue
+            }
+            return i
+        }
+        if (Character.isLowSurrogate(c)) return i
+        i++
+    }
+    return -1
+}
