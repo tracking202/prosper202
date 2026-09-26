@@ -20,7 +20,11 @@
 #   - an identity merge (a signed customer id arriving with a later
 #     conversion) re-attributes the conversion it joins;
 #   - the minutely cron (202-cronjobs/index.php) drains the outbox too;
-#   - bad input is refused by name, and the default model cannot be deleted.
+#   - bad input is refused by name, and the default model cannot be deleted;
+#   - a staged or dry-run DELETE runs the route's role checks: a key whose
+#     role may not read attribution is refused 403 and reads nothing back,
+#     one that may read but not manage stages without a preview, and the
+#     admin's key still stages with one.
 #
 # Truncates the identity and attribution tables and seeds its own campaigns
 # and trackers (ids 950001-950301), so it needs a scratch database. Run from
@@ -83,6 +87,13 @@ TRUNCATE 202_attribution_credits; TRUNCATE 202_attribution_journeys; TRUNCATE 20
 TRUNCATE 202_identity_visitors; TRUNCATE 202_identity_signals; TRUNCATE 202_identity_observations;
 TRUNCATE 202_identity_merges; TRUNCATE 202_clicks_visitor;
 SQL
+  local u
+  for u in mta-pass-limited mta-pass-viewer; do
+    local uid
+    uid=$(Q "SELECT user_id FROM 202_users WHERE user_name='$u'")
+    [ -n "$uid" ] && Q "DELETE FROM 202_attribution_models WHERE user_id=$uid; DELETE FROM 202_user_role WHERE user_id=$uid; DELETE FROM 202_users_pref WHERE user_id=$uid; DELETE FROM 202_api_keys WHERE user_id=$uid; DELETE FROM 202_users WHERE user_id=$uid"
+  done
+  return 0
 }
 # The isolation step drops a table; whatever happens, put it back.
 CREDITS_DDL=$(mysql_q -N "$DB" -e "SHOW CREATE TABLE 202_attribution_credits" | cut -f2-)
@@ -261,6 +272,47 @@ eq "$(api -o /dev/null -w '%{http_code}' -X PUT -d '{"status":"inactive"}' "$BAS
 eq "$(Q "SELECT COUNT(*) FROM 202_attribution_credits WHERE model_id=$FIRST")" 0 "and its credits go with it"
 eq "$(api -o /dev/null -w '%{http_code}' "$BASE/api/v3/attribution/reports/breakdown?model_id=$FIRST")" 409 "a report on it says why it has none"
 eq "$(api -o /dev/null -w '%{http_code}' "$BASE/api/v3/attribution/reports/breakdown?group_by=campaign&typo=1")" 422 "an unknown report parameter is refused"
+
+say "a staged or dry-run delete runs the route's role checks first"
+# Two more accounts: role 4 (campaign optimizer) has no attribution
+# permission at all; role 3 (campaign manager) may read attribution but not
+# manage models. Each gets its own model, with a config worth not leaking.
+mkuser() { # $1 name, $2 role -> "user_id key"
+  local uid key
+  uid=$(api -X POST -d "{\"user_name\":\"$1\",\"user_email\":\"$1@example.test\",\"user_pass\":\"$1-pass-1\"}" "$BASE/api/v3/users" | js 'd["data"]["user_id"]')
+  api -X POST -d "{\"role_id\":$2}" "$BASE/api/v3/users/$uid/roles" > /dev/null
+  key=$(api -X POST -d '{}' "$BASE/api/v3/users/$uid/api-keys" | js 'd["data"]["api_key"]')
+  Q "SET SESSION sql_mode=''; INSERT INTO 202_attribution_models SET user_id=$uid, model_name='Secret decay', model_slug='secret-decay', model_type='time_decay',
+     weighting_config='{\"half_life_hours\":777}', lookback_days=30, status='active', is_default=NULL, created_at=$NOW, updated_at=$NOW"
+  echo "$uid $key"
+}
+read -r LIM_ID LIM_KEY <<< "$(mkuser mta-pass-limited 4)"
+read -r VIEW_ID VIEW_KEY <<< "$(mkuser mta-pass-viewer 3)"
+[[ "$LIM_KEY" =~ ^[0-9a-f]{16,}$ ]] && [[ "$VIEW_KEY" =~ ^[0-9a-f]{16,}$ ]] && ok "two role-limited accounts with keys" || bad "could not make the accounts: '$LIM_KEY' '$VIEW_KEY'"
+LIM_MODEL=$(Q "SELECT model_id FROM 202_attribution_models WHERE user_id=$LIM_ID AND model_slug='secret-decay'")
+VIEW_MODEL=$(Q "SELECT model_id FROM 202_attribution_models WHERE user_id=$VIEW_ID AND model_slug='secret-decay'")
+as() { local k=$1; shift; curl -s -H "Authorization: Bearer $k" -H 'Content-Type: application/json' "$@"; }
+
+eq "$(as "$LIM_KEY" -o /dev/null -w '%{http_code}' "$BASE/api/v3/attribution/models/$LIM_MODEL")" 403 "no attribution role: its own model is refused to a GET"
+code=$(as "$LIM_KEY" -o "$OUT/st-lim.json" -w '%{http_code}' -X DELETE "$BASE/api/v3/attribution/models/$LIM_MODEL?staged=1")
+eq "$code" 403 "and to a staged DELETE"
+grep -q "does not have the 'view_attribution_reports' permission" "$OUT/st-lim.json" && ok "refused by the route's own role check" || bad "refusal: $(cat "$OUT/st-lim.json")"
+grep -q '777' "$OUT/st-lim.json" && bad "the refusal carries the model's config" || ok "and nothing of the model comes back"
+eq "$(as "$LIM_KEY" -o /dev/null -w '%{http_code}' -X POST -d '{"model_name":"X","model_type":"linear"}' "$BASE/api/v3/attribution/models?staged=1")" 403 "a staged create is refused the same way"
+eq "$(as "$LIM_KEY" -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/v3/attribution/models/$LIM_MODEL?dry_run=1")" 403 "and a dry run"
+eq "$(as "$LIM_KEY" "$BASE/api/v3/staged-changes" | js 'len(d["data"])')" 0 "no proposal was recorded"
+
+eq "$(as "$VIEW_KEY" -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/v3/attribution/models/$VIEW_MODEL?dry_run=1")" 403 "read-but-not-manage: the dry run asks for manage_attribution_models, as the delete does"
+code=$(as "$VIEW_KEY" -o "$OUT/st-view.json" -w '%{http_code}' -X DELETE "$BASE/api/v3/attribution/models/$VIEW_MODEL?staged=1")
+eq "$code" 202 "it may still propose the delete for someone who can apply it"
+eq "$(js 'd["data"]["preview"]' < "$OUT/st-view.json")" None "without the preview its role could not have built"
+
+code=$(api -o "$OUT/st-admin.json" -w '%{http_code}' -X DELETE "$BASE/api/v3/attribution/models/$LINEAR?staged=1")
+eq "$code" 202 "the admin's key still stages a model delete"
+eq "$(js 'str(d["data"]["preview"]["record"]["model_id"])' < "$OUT/st-admin.json" 2>/dev/null)" "$LINEAR" "with the preview of the model it would remove"
+CHG=$(js 'd["data"]["change_id"]' < "$OUT/st-admin.json" 2>/dev/null)
+eq "$(api -o /dev/null -w '%{http_code}' -X POST "$BASE/api/v3/staged-changes/$CHG/discard")" 200 "and the proposal is discarded"
+eq "$(Q "SELECT COUNT(*) FROM 202_attribution_models WHERE model_id=$LINEAR")" 1 "nothing was deleted"
 
 say "journey metrics"
 api "$BASE/api/v3/attribution/reports/journeys" > "$OUT/jm.json"

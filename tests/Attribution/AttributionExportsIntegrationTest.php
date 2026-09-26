@@ -37,6 +37,8 @@ final class AttributionExportsIntegrationTest extends TestCase
     private int $now;
     /** @var list<array{options: array<int, mixed>}> */
     private array $deliveries = [];
+    /** Runs while a webhook is being delivered (another run's move, in a test). */
+    private ?\Closure $onDeliver = null;
     /** @var list<array{status?: int, error?: string|null}> */
     private array $answers = [];
 
@@ -55,17 +57,21 @@ final class AttributionExportsIntegrationTest extends TestCase
         return new AttributionController(self::$db, 1);
     }
 
-    private function runner(): ExportRunner
+    /** @param (callable(): int)|null $clock */
+    private function runner(?callable $clock = null): ExportRunner
     {
         $guard = new WebhookGuard(static fn (string $host): array => ['hooks.example.com' => ['93.184.216.34'], 'rebind.example.com' => ['10.0.0.9']][$host] ?? [], '');
         $sender = new WebhookSender($guard, function (array $options): array {
             $this->deliveries[] = ['options' => $options];
+            if ($this->onDeliver !== null) {
+                ($this->onDeliver)();
+            }
             $answer = array_shift($this->answers) ?? ['status' => 200];
 
             return $answer + ['status' => 200, 'error' => null, 'primary_ip' => '93.184.216.34', 'location' => null, 'body' => ''];
         });
 
-        return new ExportRunner($this->conn, new ExportFiles(self::$dir), $sender, fn (): int => $this->now);
+        return new ExportRunner($this->conn, new ExportFiles(self::$dir), $sender, $clock ?? fn (): int => $this->now);
     }
 
     /** One person over two campaigns converting for $12; a stranger converting for $3. */
@@ -239,7 +245,7 @@ final class AttributionExportsIntegrationTest extends TestCase
         $good = $this->api()->createExport([])['data']['export_id'];
 
         $report = $this->runner()->run(10);
-        self::assertSame(['completed' => 1, 'failed' => 3, 'retrying' => 0, 'reclaimed' => 0], $report);
+        self::assertSame(['completed' => 1, 'failed' => 3, 'retrying' => 0, 'lost' => 0, 'reclaimed' => 0], $report);
         self::assertStringContainsString('"planet", which is not a report dimension', (string) self::row($bad)['last_error']);
         self::assertStringContainsString('Model 999999 no longer exists', (string) self::row($gone)['last_error']);
         self::assertStringContainsString('starts after it ends', (string) self::row($backwards)['last_error']);
@@ -282,6 +288,74 @@ final class AttributionExportsIntegrationTest extends TestCase
         self::assertSame(1, $report['reclaimed']);
         self::assertSame(1, $report['completed']);
         self::assertSame('2', (string) self::row($id)['attempts']);
+    }
+
+    public function testAJobTakenFromUnderTheRunIsReportedLostNotCompleted(): void
+    {
+        // While this run delivers the webhook, the job stops being its own:
+        // another run reclaimed it as stale and put it back to pending.
+        $this->scenario();
+        $id = (int) $this->api()->createExport(['webhook_url' => 'https://93.184.216.34/p202'])['data']['export_id'];
+        self::assertTrue((new ExportStore($this->conn))->claim($id, $this->now));
+        $this->onDeliver = function () use ($id): void {
+            self::$db->query("UPDATE 202_attribution_exports SET status = 'pending', queued_at = " . ($this->now + 3600) . " WHERE export_id = $id");
+            $this->onDeliver = null;
+        };
+        $this->answers = [['status' => 200]];
+
+        self::assertSame('lost', $this->runner()->runClaimed($id), 'a job this run no longer owns is not reported completed');
+        self::assertCount(1, $this->deliveries, 'the delivery happened; only the ending was refused');
+        self::assertSame('pending', self::row($id)['status'], 'and the other run\'s state stands');
+        self::assertNull(self::row($id)['completed_at']);
+    }
+
+    public function testAJobDeletedWhileRunningLeavesNoFileBehind(): void
+    {
+        // The account (or the model) is deleted while the job runs: the rows
+        // go (user-management deletes them whatever their status), and the
+        // file this run writes afterwards is named by nothing.
+        $this->scenario();
+        $id = (int) $this->api()->createExport([])['data']['export_id'];
+        $store = new ExportStore($this->conn);
+        self::assertTrue($store->claim($id, $this->now));
+        $filesBefore = self::files();
+        $deleted = false;
+        $clock = function () use ($id, &$deleted): int {
+            if (!$deleted) {
+                $deleted = true;
+                self::$db->query("DELETE FROM 202_attribution_exports WHERE export_id = $id");
+            }
+            return $this->now;
+        };
+
+        self::assertSame('lost', $this->runner($clock)->runClaimed($id));
+        self::assertTrue($deleted, 'the row was deleted under the run');
+        self::assertSame($filesBefore, self::files(), 'no file of the deleted job is left on disk');
+    }
+
+    public function testARetryReplacesItsFileAndKeepsNoOther(): void
+    {
+        $this->scenario();
+        $id = (int) $this->api()->createExport(['webhook_url' => 'https://93.184.216.34/p202'])['data']['export_id'];
+        $filesBefore = self::files();
+        $this->answers = [['status' => 503]];
+        self::assertSame(1, $this->runner()->run(10)['retrying']);
+        $first = (string) self::row($id)['file_path'];
+        $this->now += 61;
+        $this->answers = [['status' => 200]];
+        self::assertSame(1, $this->runner()->run(10)['completed']);
+        $second = (string) self::row($id)['file_path'];
+        self::assertNotSame($first, $second);
+        self::assertSame([$second], array_values(array_diff(self::files(), $filesBefore)), 'the retry\'s file is the only one it left');
+    }
+
+    /** @return list<string> the export directory's file names */
+    private static function files(): array
+    {
+        $names = array_map('basename', glob(self::$dir . '/*.csv') ?: []);
+        sort($names);
+
+        return $names;
     }
 
     public function testDeletingAnExportOrItsModelRemovesTheFile(): void

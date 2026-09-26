@@ -269,6 +269,11 @@ when that model is active, otherwise the account default.`,
 				}
 				return validationError("invalid --%s %q: a positive whole number", flag, v).WithHint("%s", hint)
 			}
+			if flag == "limit" {
+				if n, err := strconv.Atoi(v); err != nil || n > 1000 {
+					return validationError("invalid --limit %q; 1 to 1000", v).WithHint("Pass a row count from 1 to 1000.")
+				}
+			}
 			params[param] = v
 		}
 		if params["model_id"] != "" && params["model_id"] == params["compare_model_id"] {

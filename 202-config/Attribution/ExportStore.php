@@ -133,35 +133,45 @@ final class ExportStore
         }
     }
 
-    public function complete(int $exportId, ?int $webhookStatus, int $now): void
+    /**
+     * The three transitions out of `running` below are conditional on the
+     * job still being running, which is this runner's ownership of it: a
+     * job reclaimed as stale by another run, or deleted with its account or
+     * model, matches no row. Each says whether it landed, so the runner can
+     * tell "done" from "no longer mine" instead of reporting both as done.
+     */
+    public function complete(int $exportId, ?int $webhookStatus, int $now): bool
     {
         $stmt = $this->conn->prepareWrite(
             "UPDATE 202_attribution_exports SET status = 'completed', webhook_status_code = ?, last_error = NULL, completed_at = ?, updated_at = ?
              WHERE export_id = ? AND status = 'running'"
         );
         $this->conn->bind($stmt, 'iiii', [$webhookStatus, $now, $now, $exportId]);
-        $this->conn->executeUpdate($stmt);
+
+        return $this->conn->executeUpdate($stmt) === 1;
     }
 
     /** Back to pending, to be tried again from $retryAt. */
-    public function deferRetry(int $exportId, string $error, ?int $webhookStatus, int $retryAt, int $now): void
+    public function deferRetry(int $exportId, string $error, ?int $webhookStatus, int $retryAt, int $now): bool
     {
         $stmt = $this->conn->prepareWrite(
             "UPDATE 202_attribution_exports SET status = 'pending', last_error = ?, webhook_status_code = ?, queued_at = ?, updated_at = ?
              WHERE export_id = ? AND status = 'running'"
         );
         $this->conn->bind($stmt, 'siiii', [mb_substr($error, 0, 2000), $webhookStatus, $retryAt, $now, $exportId]);
-        $this->conn->executeUpdate($stmt);
+
+        return $this->conn->executeUpdate($stmt) === 1;
     }
 
-    public function fail(int $exportId, string $error, ?int $webhookStatus, int $now): void
+    public function fail(int $exportId, string $error, ?int $webhookStatus, int $now): bool
     {
         $stmt = $this->conn->prepareWrite(
             "UPDATE 202_attribution_exports SET status = 'failed', last_error = ?, webhook_status_code = ?, completed_at = ?, updated_at = ?
              WHERE export_id = ? AND status = 'running'"
         );
         $this->conn->bind($stmt, 'siiii', [mb_substr($error, 0, 2000), $webhookStatus, $now, $now, $exportId]);
-        $this->conn->executeUpdate($stmt);
+
+        return $this->conn->executeUpdate($stmt) === 1;
     }
 
     /** A failed job, queued again from now with its attempts reset. False when it is not failed. */

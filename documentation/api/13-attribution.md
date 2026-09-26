@@ -8,7 +8,12 @@ endpoints manage the models and read what it computed.
 
 Reads need the `view_attribution_reports` role permission and writes
 `manage_attribution_models` (the same permissions the session pages check),
-on top of the key's `attribution:read` / `attribution:write` scope.
+on top of the key's `attribution:read` / `attribution:write` scope. A
+delete's `?dry_run=1` preview asks for what the delete asks for
+(`manage_attribution_models`), and `?staged=1` runs the same role checks
+before it records anything: a key without `view_attribution_reports` is
+refused `403` there too, so the preview a staged change embeds is never a
+way around a read the role does not allow.
 
 ## Endpoints
 
