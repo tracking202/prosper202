@@ -22,7 +22,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	if (isset($_POST['skip']) && $_POST['skip'] == true) {
 		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 		$sql = "UPDATE 202_users SET modal_status='1' WHERE user_id='".$mysql['user_id']."'";
-		$result = $db->query($sql);
+		if (!$db->query($sql)) {
+			// Skipping is only this flag; if it did not land, say so (#1).
+			error_log('ajax/survey.php: the skip was not saved: ' . $db->error);
+			http_response_code(500);
+			echo 'The survey could not be skipped just now. Try again.';
+		}
 		die();
 	}
 
@@ -40,7 +45,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	if ($wasUpdated) {
 		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 		$sql = "UPDATE 202_users SET modal_status='1', vip_perks_status='0' WHERE user_id='".$mysql['user_id']."'";
-		$result = $db->query($sql);
+		if (!$db->query($sql)) {
+			// The answers are with the VIP Perks service; only the reminder
+			// state failed. The survey shows again rather than claiming done.
+			error_log('ajax/survey.php: the reminder state was not saved: ' . $db->error);
+			http_response_code(500);
+			echo 'Your answers are saved, but the survey could not be closed. Reload the page.';
+		}
 	} else {
 		echo 'An unexpected error occurred. Try again!';
 	}

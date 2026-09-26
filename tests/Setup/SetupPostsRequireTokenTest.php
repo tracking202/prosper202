@@ -152,4 +152,110 @@ final class SetupPostsRequireTokenTest extends TestCase
         }
         self::assertSame([], $unguarded, 'these endpoints a Setup page posts to do not compare the session token');
     }
+
+    /**
+     * "The file compares the token" is not "every branch that acts does"
+     * (#21). dni_get_offers.php compared it in one of its five branches, so
+     * the check above stayed green while request_offer_access and
+     * setup_offer made my.tracking202.com act for the account on a bare GET
+     * (#164). So this reads the file branch by branch: every top-level
+     * branch that calls a DNI function other than the two readers opens
+     * with p202_dni_require_token(), and that function is exactly a POST
+     * check plus the session-token comparison, ending the request when
+     * either fails. The acting functions are derived from the calls, and
+     * the set is pinned, so a new one has to be classified here.
+     */
+    public function testEveryDniBranchThatActsRequiresAPostWithTheToken(): void
+    {
+        $file = 'tracking202/ajax/dni_get_offers.php';
+        $source = (string) file_get_contents(self::root() . '/' . $file);
+        $readers = ['getDniOffers', 'getDniOfferById'];
+
+        preg_match_all('/\b(\w*Dni\w*)\(/', $source, $calls);
+        $acting = array_values(array_unique(array_diff($calls[1], $readers, ['p202_dni_require_token', 'p202_dni_row', 'p202_dni_token_param'])));
+        sort($acting);
+        self::assertSame(['requestDniOfferAccess', 'setupDniOffer', 'submitDniOfferAnswers'], $acting,
+            'the DNI calls that make the network act; a new one must be classified as a reader or an action here');
+
+        // Top-level `if (…) {` branches, each bounded at its own brace.
+        $tokens = \PhpToken::tokenize($source);
+        $branches = [];
+        $depth = 0;
+        foreach ($tokens as $i => $token) {
+            if ($token->text === '{') {
+                $depth++;
+            } elseif ($token->text === '}') {
+                $depth--;
+            } elseif ($depth === 0 && $token->is(T_IF)) {
+                $j = $i + 1;
+                $paren = 0;
+                for (; $j < count($tokens); $j++) {
+                    $paren += match ($tokens[$j]->text) { '(' => 1, ')' => -1, default => 0 };
+                    if ($paren === 0 && $tokens[$j]->text === ')') {
+                        break;
+                    }
+                }
+                $open = $j + 1;
+                while ($tokens[$open]->is(T_WHITESPACE)) {
+                    $open++;
+                }
+                self::assertSame('{', $tokens[$open]->text, "$file: a top-level branch at line {$token->line} has braces");
+                $level = 0;
+                $body = '';
+                for ($k = $open; $k < count($tokens); $k++) {
+                    $level += match ($tokens[$k]->text) { '{' => 1, '}' => -1, default => 0 };
+                    $body .= $tokens[$k]->text;
+                    if ($level === 0) {
+                        break;
+                    }
+                }
+                $branches[] = ['line' => $token->line, 'body' => $body];
+            }
+        }
+        $acts = 0;
+        foreach ($branches as $branch) {
+            $callsHere = preg_match_all('/\b(' . implode('|', $acting) . ')\(/', $branch['body']);
+            if ($callsHere === 0) {
+                continue;
+            }
+            $acts++;
+            $code = '';
+            foreach (\PhpToken::tokenize('<?php ' . $branch['body']) as $t) {
+                if (!$t->is([T_COMMENT, T_DOC_COMMENT, T_WHITESPACE, T_OPEN_TAG])) {
+                    $code .= $t->text;
+                }
+            }
+            self::assertStringStartsWith('{p202_dni_require_token();', $code, "$file:{$branch['line']}: a branch that makes the network act opens with the token requirement");
+        }
+        self::assertSame(3, $acts, 'every acting branch was found');
+
+        // The requirement itself: POST, the session token, or the request ends.
+        self::assertSame(1, preg_match('/function p202_dni_require_token\(\): void\s*\{(.*?)\n\}/s', $source, $fn), 'the requirement is a function of the file');
+        $squeezed = (string) preg_replace('/\s+/', '', $fn[1]);
+        self::assertSame(
+            "if((\$_SERVER['REQUEST_METHOD']??'')!=='POST'||!hash_equals((string)(\$_SESSION['token']??''),(string)(\$_POST['token']??''))){http_response_code(403);die('Invalidtoken,pleasereloadthepageandtryagain.');}",
+            $squeezed,
+            'p202_dni_require_token() is exactly a POST check and the session-token comparison, and ends the request'
+        );
+        self::assertSame(1, substr_count($source, 'function p202_dni_require_token('), 'declared once');
+
+        // And the page asks for those actions with a POST, which the shell's
+        // prefilter gives the token.
+        $js = (string) file_get_contents(self::root() . '/202-js/p202-setup.js');
+        $at = strpos($js, "offerRequest('request_offer_access&");
+        self::assertNotFalse($at, 'the page asks for access');
+        $depth = 0;
+        $call = '';
+        for ($i = $at + strlen('offerRequest'); $i < strlen($js); $i++) {
+            $depth += match ($js[$i]) { '(' => 1, ')' => -1, default => 0 };
+            $call .= $js[$i];
+            if ($depth === 0) {
+                break;
+            }
+        }
+        self::assertStringEndsWith(', true)', $call, 'asking for access is an action: offerRequest(…, true)');
+        self::assertStringContainsString("(act ? jq.post(url + '?' + query, {}, null, 'html') : jq.get(", $js, 'and an action is posted');
+        self::assertSame(1, preg_match("/jq\.post\(url \+ '\?setup_offer&/", $js), 'setting an offer up is posted');
+        self::assertSame(1, preg_match("/jq\.post\(url \+ '\?submit_offer_questions&/", $js), 'answering questions is posted');
+    }
 }
