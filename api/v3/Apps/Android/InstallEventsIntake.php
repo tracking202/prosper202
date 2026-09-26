@@ -139,6 +139,15 @@ final class InstallEventsIntake
                 GoalEngineException::EVENT_CAP => InstallIntake::error(422, $e->getMessage()),
                 default => throw $e,
             };
+        } catch (\Throwable $e) {
+            if (!\Prosper202\Database\Connection::isRetryableLockError($e)) {
+                throw $e;
+            }
+            // The engine retried once and lost the lock again; the batch
+            // rolled back, so the SDK's retry is safe and is told to make it.
+            error_log('p202 android events: install ' . $installUuid . ' lost a lock twice; answered 503: ' . $e->getMessage());
+
+            return InstallIntake::error(503, 'The server is busy with this install; retry shortly.', [], ['Retry-After' => '5']);
         }
 
         return ['status' => 200, 'body' => ['data' => [
