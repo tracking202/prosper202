@@ -254,6 +254,18 @@ has "$OUT/p.html" "p202-pill--warn" "a development signature wears the warn pill
 hasnt "$OUT/p.html" 'aria-label="Pages"' "no pager for one page of rows"
 get "?view=postbacks&registration_id=$RACER" "$OUT/p-f.html"
 saystext "$OUT/p-f.html" "3 rows in this range" "postbacks view honours the app filter"
+# The tab lists only Apple's postbacks whatever the platform is set to, so
+# the signature filter holds on every platform (#180: it was dropped unless
+# the platform was ios, and an account with Android apps too defaults to all).
+for pf in all android ios; do
+  get "?view=postbacks&platform=$pf&signature=invalid" "$OUT/p-sig-$pf.html"
+  hasnt "$OUT/p-sig-$pf.html" "signature filter was ignored" "platform=$pf: the Postbacks tab keeps signature=invalid"
+  saystext "$OUT/p-sig-$pf.html" "1 row in this range" "platform=$pf: and lists the one invalid postback"
+  grep -qE 'view=postbacks[^"]*signature=invalid' "$OUT/p-sig-$pf.html" && ok "platform=$pf: its links carry it" || bad "platform=$pf: its links carry it"
+done
+# Where it cannot apply it is refused out loud, not silently.
+get "?view=funnel&signature=invalid" "$OUT/fn-sig.html"
+has "$OUT/fn-sig.html" "signature filter was ignored: it filters Apple&#039;s postbacks, so it applies to the Postbacks tab and the iOS report only." "the funnel says it ignored the signature filter"
 
 say "verify view"
 get "?view=verify" "$OUT/v.html"

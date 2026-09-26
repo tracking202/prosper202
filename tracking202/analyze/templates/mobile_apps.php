@@ -96,7 +96,7 @@ $link = static function (array $changes) use ($self, $filters, $view, $customRan
         'from' => $custom ? $pick('from', $filters['from']) : null,
         'to' => $custom ? $pick('to', $filters['to']) : null,
         'registration_id' => $pick('registration_id', $filters['registration_id']),
-        'signature' => $platform === 'ios' ? $pick('signature', $filters['signature']) : null,
+        'signature' => $C::signatureApplies((string)$pick('view', $view), $platform) ? $pick('signature', $filters['signature']) : null,
         'trusted' => $platform === 'android' ? $pick('trusted', $filters['trusted']) : null,
         'status' => $pick('status', $filters['status']),
         'page' => $changes['page'] ?? null,
@@ -250,7 +250,7 @@ template_top('Analyze Mobile Apps', ['ui' => 'v2']);
                 <?php } ?>
             </select>
 
-            <?php if (($view === 'report' && $platform === 'ios') || $view === 'postbacks') { ?>
+            <?php if ($C::signatureApplies($view, $platform)) { ?>
                 <label class="form-label mb-0" for="signature">Signature</label>
                 <select class="form-select form-select-sm w-auto" id="signature" name="signature">
                     <option value="">Any</option>
