@@ -234,7 +234,8 @@ final class AppRegistryIntegrationTest extends TestCase
         $id = (int) $this->apps()->create(['app_key' => '525463029', 'app_name' => 'A', 'accept_test_signals' => 1])['data']['registration_id'];
         $dev = $this->postback(525463029, 0, null, 'development', null);
         $this->apps()->update($id, ['app_name' => 'A again']); // re-runs the claim
-        (new AppSkanEncodingsController(self::$db, self::OWNER))->create(['registration_id' => $id, 'fine_value' => 1, 'event_name' => 'install']);
+        $install = self::plainGoal(self::OWNER, 'install');
+        (new AppSkanEncodingsController(self::$db, self::OWNER))->create(['registration_id' => $id, 'fine_value' => 1, 'goal_id' => $install]);
         $this->assertSame(['user_id' => self::OWNER, 'registration_id' => $id, 'trusted' => 1], $this->postbackRow($dev));
 
         self::$db->query('DROP TRIGGER IF EXISTS p202_test_refuse_registration_delete');
