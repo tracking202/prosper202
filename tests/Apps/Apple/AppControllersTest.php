@@ -341,24 +341,35 @@ final class AppControllersTest extends TestCase
             static fn(array $s): bool => preg_match('/^(UPDATE|DELETE)/', ltrim($s['sql'])) === 1
         ));
         $sql = array_map(static fn(array $s): string => $s['sql'], $writes);
-        $this->assertCount(7, $writes, implode("\n", $sql));
+        $this->assertCount(10, $writes, implode("\n", $sql));
         $this->assertStringContainsString('UPDATE 202_app_postbacks SET trusted = NULL', $sql[0]);
         $this->assertStringContainsString('signature_state = ?', $sql[0]);
         $this->assertSame([7, 1, 'development'], $writes[0]['values'], 'this registration, this owner, test signals only');
         $this->assertStringContainsString('UPDATE 202_app_postbacks SET registration_id = NULL', $sql[1]);
+        // Installs still waiting for a Play Integrity verdict are settled
+        // (never paid) before the credential that could decode them goes,
+        // in the same transaction.
+        $this->assertStringContainsString("UPDATE 202_app_installs SET match_state = 'integrity_unverified'", $sql[2]);
+        $this->assertSame([7, 1], array_slice($writes[2]['values'], 2), 'this registration\'s held installs, this owner');
+        $this->assertStringContainsString("UPDATE 202_app_installs SET integrity_state = 'error'", $sql[3]);
+        $this->assertSame([7, 1], array_slice($writes[3]['values'], 1), 'this registration\'s queue, this owner');
         // Installs still waiting for their click can never settle once the
         // registration is gone: settled (never paid) in the same transaction.
-        $this->assertStringContainsString("UPDATE 202_app_installs SET match_state = 'bad_token'", $sql[2]);
-        $this->assertSame([7, 1], array_slice($writes[2]['values'], 2), 'this registration\'s pending clicks, this owner');
-        $this->assertStringContainsString('DELETE FROM 202_app_skan_encodings', $sql[3]);
+        $this->assertStringContainsString("UPDATE 202_app_installs SET match_state = 'bad_token'", $sql[4]);
+        $this->assertSame([7, 1], array_slice($writes[4]['values'], 2), 'this registration\'s pending clicks, this owner');
+        // The Play Integrity credential is deleted with it: nothing may sign
+        // with the operator's service account for an app no longer registered.
+        $this->assertStringContainsString('DELETE FROM 202_app_integrity_credentials', $sql[5]);
+        $this->assertSame([7, 1], $writes[5]['values'], 'this registration\'s credential, this owner');
+        $this->assertStringContainsString('DELETE FROM 202_app_skan_encodings', $sql[6]);
         // Its campaigns are unlinked, or re-registering the app (a new id)
         // would find them linked to a registration that no longer exists.
-        $this->assertStringContainsString('UPDATE 202_aff_campaigns SET app_registration_id = NULL WHERE app_registration_id = ? AND user_id = ?', $sql[4]);
-        $this->assertSame([7, 1], $writes[4]['values'], 'this registration\'s campaigns, this owner');
+        $this->assertStringContainsString('UPDATE 202_aff_campaigns SET app_registration_id = NULL WHERE app_registration_id = ? AND user_id = ?', $sql[7]);
+        $this->assertSame([7, 1], $writes[7]['values'], 'this registration\'s campaigns, this owner');
         // The app's goals are archived with it, their history kept.
-        $this->assertStringContainsString('UPDATE 202_goals SET archived_at = ?', $sql[5]);
-        $this->assertSame([7, 1], array_slice($writes[5]['values'], 2), 'this registration\'s goals, this owner');
-        $this->assertStringContainsString('DELETE FROM 202_app_registrations', $sql[6]);
+        $this->assertStringContainsString('UPDATE 202_goals SET archived_at = ?', $sql[8]);
+        $this->assertSame([7, 1], array_slice($writes[8]['values'], 2), 'this registration\'s goals, this owner');
+        $this->assertStringContainsString('DELETE FROM 202_app_registrations', $sql[9]);
     }
 
     public function testTheStoredPlatformIsCanonicalWhateverCaseWasSent(): void

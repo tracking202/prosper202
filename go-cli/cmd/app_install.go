@@ -35,7 +35,8 @@ var appInstallFilterDefs = []struct {
 	param string
 	help  string
 }{
-	{"match-state", "match_state", "Only this state: attributed, organic, third_party, unavailable, pending_click, bad_token, foreign_click, implausible, outside_window, duplicate_click, pending_integrity"},
+	{"match-state", "match_state", "Only this state: attributed, organic, third_party, unavailable, pending_click, bad_token, foreign_click, implausible, outside_window, duplicate_click, pending_integrity, integrity_failed, integrity_unverified"},
+	{"integrity-state", "integrity_state", "Only this Play Integrity state: not_requested, received, missing, pending, valid, invalid, error, skipped"},
 	{"trusted", "trusted", "Only this trust class: trusted, refuted or unvouched"},
 	{"test", "test", "1 = only test installs, 0 = only real ones"},
 	{"click-id", "click_id", "Only installs attributed or matched to this click"},
@@ -46,7 +47,12 @@ var appInstallFilterDefs = []struct {
 var matchStates = map[string]bool{
 	"attributed": true, "organic": true, "third_party": true, "unavailable": true, "pending_click": true,
 	"bad_token": true, "foreign_click": true, "implausible": true, "outside_window": true, "duplicate_click": true,
-	"pending_integrity": true,
+	"pending_integrity": true, "integrity_failed": true, "integrity_unverified": true,
+}
+
+var integrityStates = map[string]bool{
+	"not_requested": true, "received": true, "missing": true, "pending": true,
+	"valid": true, "invalid": true, "error": true, "skipped": true,
 }
 
 var positiveID = regexp.MustCompile(`^[1-9][0-9]{0,18}$`)
@@ -72,7 +78,10 @@ func collectInstallFilters(cmd *cobra.Command) (map[string]string, error) {
 		params[def.param] = v
 	}
 	if v, ok := params["match_state"]; ok && !matchStates[v] {
-		return nil, validationError("--match-state must be one of: attributed, organic, third_party, unavailable, pending_click, bad_token, foreign_click, implausible, outside_window, duplicate_click, pending_integrity; got %q", v)
+		return nil, validationError("--match-state must be one of: attributed, organic, third_party, unavailable, pending_click, bad_token, foreign_click, implausible, outside_window, duplicate_click, pending_integrity, integrity_failed, integrity_unverified; got %q", v)
+	}
+	if v, ok := params["integrity_state"]; ok && !integrityStates[v] {
+		return nil, validationError("--integrity-state must be one of: not_requested, received, missing, pending, valid, invalid, error, skipped; got %q", v)
 	}
 	if v, ok := params["trusted"]; ok && v != "trusted" && v != "refuted" && v != "unvouched" {
 		return nil, validationError("--trusted must be one of: trusted, refuted, unvouched; got %q", v)

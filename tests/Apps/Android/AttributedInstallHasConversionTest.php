@@ -21,9 +21,16 @@ use Tests\Support\SqlLiteralText;
  *    credited install whose install goal wrote no conversion; and settle()
  *    is called only from inside a transaction: the intake's record() (run
  *    by `$this->conn->transaction($work)`) and the settler's $work.
- *    The one other match_state write is OrphanedPendingClicks' retirement
- *    of a pending click whose registration is gone: pending_click to the
- *    constant bad_token (refuted), never touching click or conversion.
+ *    The Play Integrity worker settles through the same method, in its own
+ *    transaction, and its other writes touch only the integrity_* columns.
+ *    settle() applies the `require` gate before it writes anything, so no
+ *    caller can attribute an install whose verdict has not passed. The one
+ *    other match_state write is UnverifiableInstalls' retirement of an
+ *    install whose registration is gone: pending_integrity to the constant
+ *    integrity_unverified, never touching trust, click or conversion.
+ *    The third is OrphanedPendingClicks' retirement of a pending click
+ *    whose registration is gone: pending_click to the constant bad_token
+ *    (refuted), never touching click or conversion.
  *    The trust bit alone is re-judged when the registration's test-signal
  *    policy changes (InstallIntake::rejudgeTestInstalls()), and that moves
  *    the install's outcomes and conversion in the same transaction.
@@ -36,6 +43,8 @@ final class AttributedInstallHasConversionTest extends TestCase
     private const WRITERS = [
         'api/v3/Apps/Android/InstallIntake.php' => ['insert', 'update'],
         'api/v3/Apps/Android/InstallEventsIntake.php' => ['update'],
+        'api/v3/Apps/Android/Integrity/IntegrityVerifier.php' => ['update'],
+        'api/v3/Apps/Android/Integrity/UnverifiableInstalls.php' => ['update'],
         'api/v3/Apps/Android/OrphanedPendingClicks.php' => ['update'],
         'api/v3/Apps/AppDataPurge.php' => ['delete'],
     ];
@@ -93,6 +102,29 @@ final class AttributedInstallHasConversionTest extends TestCase
         preg_match_all('/UPDATE\s+202_app_installs\s+SET\s+([^;]*?)\s+WHERE/i', $tree['api/v3/Apps/Android/InstallEventsIntake.php'], $m);
         self::assertSame(['has_events = 1'], $m[1]);
 
+        // The integrity worker writes its own columns directly; the match
+        // state, trust, click and conversion move only through settle().
+        preg_match_all('/UPDATE\s+202_app_installs\s+SET\s+([^;]*?)\s+WHERE/i', $tree['api/v3/Apps/Android/Integrity/IntegrityVerifier.php'], $m);
+        self::assertCount(3, $m[1], 'the claim, the retry note and the verdict');
+        foreach ($m[1] as $set) {
+            preg_match_all('/(?:^|,)\s*([a-z_]+)\s*=/', $set, $columns);
+            foreach ($columns[1] as $column) {
+                self::assertStringStartsWith('integrity_', $column, 'the integrity worker sets ' . $column . ' directly: ' . $set);
+            }
+        }
+
+        // Installs whose registration is gone are retired by two constant
+        // transitions, each from the pending state it ends: the held install
+        // becomes integrity_unverified (never attributed, so nothing to
+        // convert), the queued verdict `error`. Trust, click and conversion
+        // are never written, so this writer cannot make anything payable.
+        self::assertSame(2, preg_match_all('/\bUPDATE\b/i', $tree['api/v3/Apps/Android/Integrity/UnverifiableInstalls.php']), 'the retirement writes two statements');
+        preg_match_all('/UPDATE\s+202_app_installs\s+SET\s+([^;]*?)\s+WHERE\s+([^;]*?)\s+AND\s+\?/i', $tree['api/v3/Apps/Android/Integrity/UnverifiableInstalls.php'], $m, PREG_SET_ORDER);
+        self::assertSame([
+            ["match_state = 'integrity_unverified', match_reason = ?, settled_at = ?", "match_state = 'pending_integrity'"],
+            ["integrity_state = 'error', integrity_reason = ?, integrity_next_at = NULL", "integrity_state = 'pending'"],
+        ], array_map(static fn (array $s): array => [preg_replace('/\s+/', ' ', $s[1]), preg_replace('/\s+/', ' ', $s[2])], $m));
+
         // Pending clicks whose registration is gone are retired by one
         // constant transition, from the pending state it ends, to a refuted
         // state; click and conversion are never written, so this writer
@@ -129,6 +161,12 @@ final class AttributedInstallHasConversionTest extends TestCase
         self::assertIsInt($refuse);
         self::assertIsInt($link);
         self::assertTrue($update < $evaluate && $evaluate < $refuse && $refuse < $link, 'settle() writes the state, evaluates, refuses a missing conversion, links it');
+        // The require gate: the first statement of settle(), before the state is written.
+        self::assertMatchesRegularExpression(
+            '/^function settle\([^)]*\): array\s*\{\s*if \(\$state === MatchState::ATTRIBUTED\) \{\s*\[\$state, \$reason, \$clickId\] = \$this->integrityGate\(\$rowId, \$reason, \(int\) \$clickId\);\s*\}/',
+            $settle,
+            'settle() passes every attributed install through the Play Integrity gate before writing its state'
+        );
         self::assertMatchesRegularExpression('/install_conversion_id\'\] === null\) \{\s*throw new/', $settle);
 
         // Its callers, and the transaction each runs in.
@@ -143,6 +181,7 @@ final class AttributedInstallHasConversionTest extends TestCase
         ksort($callers);
         self::assertSame([
             'api/v3/Apps/Android/InstallIntake.php' => 1,
+            'api/v3/Apps/Android/Integrity/IntegrityVerifier.php' => 1,
             'api/v3/Apps/Android/PendingClickSettler.php' => 1,
         ], $callers);
         $record = substr($intake, (int) strpos($intake, 'private function record('));
@@ -152,6 +191,11 @@ final class AttributedInstallHasConversionTest extends TestCase
         self::assertStringContainsString('$this->conn->transaction($work)', $intake);
         $settler = (string) file_get_contents(dirname(__DIR__, 3) . '/api/v3/Apps/Android/PendingClickSettler.php');
         self::assertMatchesRegularExpression('/\$work = function \(\) use \(\$installRowId\): array \{.*->intake->settle\(.*\};\s*try \{\s*\$done = \$this->conn->transaction\(\$work\);/s', $settler);
+        $verifier = (string) file_get_contents(dirname(__DIR__, 3) . '/api/v3/Apps/Android/Integrity/IntegrityVerifier.php');
+        // The row is locked by the read both reclassification paths share.
+        self::assertMatchesRegularExpression('/\$work = function \(\) use \(\$installRowId, \$attempt, \$outcome\): array \{.*LockedInstall::read\(\$this->conn, \$installRowId\).*->intake->settle\(.*\};\s*try \{\s*\$done = \$this->conn->transaction\(\$work\);/s', $verifier);
+        self::assertMatchesRegularExpression('/\$work = function \(\) use \(\$installRowId\): array \{.*LockedInstall::read\(\$this->conn, \$installRowId\).*->intake->settle\(/s', $settler);
+        self::assertMatchesRegularExpression('/WHERE i\.install_row_id = \? LIMIT 1 FOR UPDATE\'?$/', \Api\V3\Apps\Android\LockedInstall::SQL, 'and that read locks the install row');
     }
 
     public function testEveryRedirectFallbackEmptiesTheInstallToken(): void

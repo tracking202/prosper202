@@ -9,7 +9,8 @@ report and in multi-touch attribution.
 
 This guide covers the server side: the store link, the intake the SDK
 calls, how an install is classified, what it pays, events after the
-install, traffic-source postbacks, and the operator's reads. The wire
+install, traffic-source postbacks, the operator's reads, and Play
+Integrity (§9). The wire
 contract the SDK is built against is
 [21-app-sdk-contract.md](21-app-sdk-contract.md); goals are
 [22-goals.md](22-goals.md); the app registry is
@@ -94,7 +95,9 @@ anything fails, so the SDK's retry is safe):
 | `implausible` | refuted | Google's timestamps contradict the click: the install began before the store click (click injection); Google saw the store click more than 2 minutes before your click or more than 30 minutes after it (click spamming); or Play gave no server timestamps |
 | `outside_window` | unvouched | Later than the registration's `attribution_window_days` (default 7) |
 | `duplicate_click` | unvouched | The click already has an attributed install |
-| `pending_integrity` | unvouched | Reserved for Play Integrity (a later release); nothing produces it yet |
+| `pending_integrity` | unvouched | The install would be attributed, and the app requires Play Integrity: it waits for its verdict (§9) |
+| `integrity_failed` | refuted | It would be attributed, but its Play Integrity verdict failed the policy, Google could not decode its token, or another install already verified that token |
+| `integrity_unverified` | unvouched | It would be attributed, but the app requires Play Integrity and there is no verdict: no token was sent, or none could be decoded within 24 hours. Recorded, never paid |
 
 Every install carries a `match_reason` sentence. A **test** install (a debug
 build's `test: true`) is classified the same way and counts — is trusted,
@@ -200,13 +203,164 @@ Refuted installs are pruned after 90 days and unvouched, settled installs
 without events after 180 (`P202_APP_RETENTION_DAYS_INSTALLS_REFUTED`,
 `…_INSTALLS_UNVOUCHED`; `202-cronjobs/app-retention.php`). Trusted installs,
 pending ones and installs with events are kept. Deleting a user deletes
-their installs and their queued postbacks; deleting a registration keeps
-its installs (their conversions stay on the ledger) but no token reaches
-them any more. An install still `pending_click` when its registration is
-deleted can never be settled, so the delete settles it as the 24-hour
-deadline would: `bad_token`, never paid, pruned with the refuted installs
-(the settler does the same for one whose registration disappeared any
-other way). Both unlink the campaigns linked to the deleted registration
+their installs, their queued postbacks and their Play Integrity
+credentials; deleting a registration keeps its installs (their conversions
+stay on the ledger) but no token reaches them any more, and deletes its
+credential. Installs of that registration still waiting for a Play
+Integrity verdict can then never get one, so the delete settles them in the
+same transaction: `integrity_state` becomes `error` and a held
+`pending_integrity` install `integrity_unverified` — recorded, never paid,
+with a reason naming the deletion. An install still `pending_click` can
+never be settled either, so the delete settles it as the 24-hour deadline
+would: `bad_token`, never paid, pruned with the refuted installs. The
+verifier and the pending-click settler do the same for installs whose
+registration disappeared any other way. Both unlink the campaigns linked to the deleted registration
 (`app_registration_id` back to `null`), so registering the app again and
 linking the campaign to the new registration is all it takes to attribute
 its clicks again.
+
+## 9. Play Integrity
+
+Play Integrity is the one control that tells a real copy of your app on a
+real device from a script replaying harvested referrers. It needs your own
+Google Cloud project, so it is **opt-in per registration**, with three
+modes (`integrity_mode`):
+
+| Mode | The SDK | The server |
+| ---- | ------- | ---------- |
+| `off` (default) | requests no token | keeps a token it is sent (`integrity: received`), decodes nothing |
+| `observe` | requests a token for every install | decodes it and records the verdict; attribution, payouts and postbacks are unaffected |
+| `require` | the same | an install that would be attributed waits as `pending_integrity`, and is attributed — paid, sent to MTA, its postback queued — only once its verdict passes |
+
+### Setting it up
+
+1. In Play Console, link the app to a Google Cloud project and enable the
+   Play Integrity API for it. Note the project **number**.
+2. In that project, create a service account and a JSON key for it.
+3. Give Prosper202 the key and the project number, then pick the mode:
+
+```
+p202 app integrity credential set 3 --file service-account.json
+p202 app update 3 --integrity-mode observe --integrity-cloud-project-number 123456789012
+p202 app integrity status 3
+```
+
+(`PUT /apps/{id}/integrity-credential` with `{"credential": <the key
+file>}`, then `PUT /apps/{id}` with `integrity_mode`; `bin/p202` has
+`app:integrity:credential:set`, `app:integrity:mode`,
+`app:integrity:status` and `app:integrity:credential:clear`.)
+
+- The credential must come first: `observe` and `require` are refused
+  without one, so an app is created `off`.
+- `observe` and `require` also need the Cloud project **number** — the SDK
+  requests its tokens for that project, and without it no install could
+  carry one. Send it with the mode, as above, or set it earlier; a mode is
+  refused (`422` on `integrity_cloud_project_number`) while none is stored.
+  The number can be replaced but not cleared: `null` is refused, in every
+  mode. To stop Play Integrity, set the mode to `off`.
+- The credential cannot be cleared (`409`) while the mode is `observe` or
+  `require`, **nor while any install is still waiting for a verdict**:
+  each install keeps the mode it arrived under, so switching `require` off
+  does not release the ones already waiting, and without the credential
+  they would end `integrity_unverified` — valid installs never paid. The
+  refusal says how many are waiting; each is settled within 24 hours of
+  arriving (`p202 app integrity status 3` shows
+  `installs.by_integrity_state.pending`). Rotating it (setting it again) is
+  always allowed.
+- These rules hold under concurrency too: a mode write, a credential set
+  or clear, and a registration delete all take the registration's row
+  lock for their check and their write, so two requests that overlap are
+  decided one after the other — a clear that races a switch to `observe`
+  either lands first (and the switch is refused) or sees `observe` (and is
+  refused), and a credential set that races a delete never leaves a key
+  stored for an app that no longer exists.
+- The key is stored **encrypted** (AES-256-GCM under an installation key in
+  `202_deployment_secrets`, bound to the registration), and no response,
+  CLI output or error message ever contains it — the status shows the
+  account's email and key id. Setting it again rotates it. The credential
+  routes cannot be staged: a staged change would store the key and show it
+  to reviewers. The encryption key lives in the same database, so this
+  protects the key from anything that reads the credential table alone (an
+  export, a query, an API row), not from someone holding a full dump.
+- A `token_uri` other than `https://oauth2.googleapis.com/token` is refused:
+  the server sends its signed assertion only to Google's pinned endpoints.
+- Start with `observe`: `p202 app install list 3 --integrity-state invalid`
+  shows what `require` would have refused, and why, before any money
+  depends on it.
+
+### What the SDK sends
+
+The schema document tells the SDK to request a **standard** token with
+`requestHash` = the SHA-256 of the install body's canonical form (the same
+bytes the server fingerprints for replays), so the token is bound to that
+install and cannot be moved onto another. The contract is in
+[21-app-sdk-contract.md](21-app-sdk-contract.md#play-integrity-binding-the-token-to-the-install).
+
+### How a verdict is judged
+
+`202-cronjobs/app-installs.php` decodes tokens through Google's
+`decodeIntegrityToken`, off the request path. A verdict is **valid** only
+when every check passes; the first that fails is recorded as the reason:
+
+| Check | Fails as |
+| ----- | -------- |
+| The token was requested by this app's package (and Google recognised that package) | `wrong_package` |
+| Its `requestHash` is this install's | `request_hash` |
+| It was issued at most 10 minutes before the install arrived, and not more than 2 minutes after | `stale`, `future` |
+| `appRecognitionVerdict` is `PLAY_RECOGNIZED` | `app_not_recognized` |
+| The device meets device integrity (`MEETS_DEVICE_INTEGRITY` or `MEETS_STRONG_INTEGRITY`; basic or virtual alone does not) | `device_integrity` |
+| The licensing verdict is not `UNLICENSED` (`UNEVALUATED` or none passes) | `unlicensed` |
+
+A token Google refuses to decode is `invalid`, and so is a token another
+install of the app already verified (a replay: refused without spending a
+decode). An install refuted on its referrer alone (`bad_token`, …) is not
+decoded (`skipped`), so forged installs cannot spend your quota.
+
+### Retries, quota and outages
+
+Google being unreachable, slow (10-second timeout), out of quota (`429`),
+refusing the service account, or not yet linked to the app is **retried**:
+after 1 minute, doubling to at most an hour, for 24 hours. Then the verdict
+is `error`, and under `require` the install is `integrity_unverified` —
+recorded, unvouched, never paid. Nothing is ever waved through. The
+install's `integrity_reason` says what the last attempt met.
+
+The 24 hours are counted from when the install arrived, whatever the
+worker's timing: an install already past them when the worker reaches it
+(the cron was stopped, or a backlog) is not decoded at all, and a passing
+verdict that comes back after them is kept on the install for the record
+but not accepted. An attempt that fails inside the server (not at Google)
+counts as an attempt too, so at 24 hours or 24 attempts the install is
+retired like any other rather than tried for ever.
+
+Google's default quota is 10,000 decodes per app per day;
+`GET /apps/{id}/integrity` shows how many tokens Google decoded since UTC
+midnight beside it.
+
+### What `require` does to money
+
+- Nothing is paid, sent to MTA or announced to the traffic source while an
+  install waits: its conversion and postback are written in the same
+  transaction as the passing verdict, so a traffic source never hears about
+  an install that is then refused, and nothing is ever un-paid.
+- Its events wait (`503`, the SDK retries) and are evaluated once it
+  settles; a refuted one's events are refused (`409`).
+- Two installs waiting on one click: the first whose verdict passes gets
+  the click; the other becomes `duplicate_click`.
+- Each install keeps the mode it arrived under. Switching `require` off does
+  not release installs already waiting (they still settle on their verdict),
+  and switching it on does not re-judge installs already attributed.
+- `observe` never changes attribution or money, whatever the verdicts say.
+
+### Reading verdicts
+
+| Method | Path | CLI |
+| ------ | ---- | --- |
+| `GET` | `/apps/{id}/integrity` | `p202 app integrity status <id>` |
+| `GET` | `/apps/{id}/installs?integrity_state=invalid` | `p202 app install list <id> --integrity-state invalid` |
+| `GET` | `/apps/{id}/installs/{install_uuid}` | `p202 app install get <id> <uuid>` |
+
+Each install carries `integrity_mode` (as it arrived), `integrity_state`,
+`integrity_reason`, `integrity_attempts`, `integrity_next_at`,
+`integrity_checked_at` and `integrity_verdict` — what the policy read from
+Google's verdict (never the token).

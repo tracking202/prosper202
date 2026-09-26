@@ -180,7 +180,7 @@ final class InstallClassificationTest extends TestCase
         self::assertSame([
             'attributed' => 1, 'organic' => null, 'third_party' => null, 'unavailable' => null, 'pending_click' => null,
             'bad_token' => 0, 'foreign_click' => 0, 'implausible' => 0, 'outside_window' => null, 'duplicate_click' => null,
-            'pending_integrity' => null,
+            'pending_integrity' => null, 'integrity_failed' => 0, 'integrity_unverified' => null,
         ], $bits);
         $accepting = AppPolicy::fromRow(['accept_test_signals' => 1]);
         $refusing = AppPolicy::fromRow(['accept_test_signals' => 0]);

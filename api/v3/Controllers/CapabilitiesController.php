@@ -94,6 +94,15 @@ class CapabilitiesController
                         'match_states' => \Api\V3\Apps\Android\MatchState::values(),
                         'max_events_per_request' => \Api\V3\Apps\Android\InstallEventsIntake::MAX_EVENTS,
                     ],
+                    // Play Integrity, opt-in per Android registration
+                    // (integrity_mode), decoded by 202-cronjobs/app-installs.php
+                    // with the credential set at /apps/{id}/integrity-credential.
+                    'play_integrity' => [
+                        'modes' => \Api\V3\Apps\Android\Integrity\IntegrityMode::values(),
+                        'states' => \Api\V3\Apps\Android\Integrity\IntegrityState::values(),
+                        'token_type' => 'standard',
+                        'request_hash' => 'sha256_hex_of_canonical_install_body',
+                    ],
                     // Goals: versioned, data-only definitions owned by a
                     // campaign, an app registration or the account, and
                     // evaluated per subject by one specification whose

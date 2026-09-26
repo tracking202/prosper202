@@ -4,9 +4,6 @@ declare(strict_types=1);
 
 namespace Api\V3\Apps\Android;
 
-use Api\V3\Apps\AppIdentity;
-use Api\V3\Apps\AppPolicy;
-use Api\V3\Apps\AppRegistration;
 use Prosper202\Database\Connection;
 use Prosper202\Goals\GoalEngine;
 use Prosper202\Goals\MysqlGoalRepository;
@@ -94,22 +91,11 @@ final class PendingClickSettler
     public function settleOne(int $installRowId): ?MatchState
     {
         $work = function () use ($installRowId): array {
-            $lock = $this->conn->prepareWrite(
-                'SELECT i.*, r.platform, r.app_key, r.accept_test_signals, r.attribution_window_days, r.trust_client_revenue
-                 FROM 202_app_installs i JOIN 202_app_registrations r ON r.registration_id = i.registration_id
-                 WHERE i.install_row_id = ? LIMIT 1 FOR UPDATE'
-            );
-            $this->conn->bind($lock, 'i', [$installRowId]);
-            $row = $this->conn->fetchOne($lock);
+            $row = LockedInstall::read($this->conn, $installRowId);
             if ($row === null || (string) $row['match_state'] !== MatchState::PENDING_CLICK->value) {
                 return ['state' => null, 'post' => ['ledger' => [], 'clicks' => []], 'user' => 0];
             }
-            $registration = new AppRegistration(
-                (int) $row['registration_id'],
-                (int) $row['user_id'],
-                AppIdentity::fromKey((string) $row['platform'], (string) $row['app_key']),
-                AppPolicy::fromRow($row),
-            );
+            $registration = LockedInstall::registration($row);
             // The stored body is the one the intake validated; re-reading it
             // gives the classifier the same payload the intake had.
             $payload = InstallPayload::fromDecoded(json_decode((string) $row['raw_payload'], true, 16, JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING));
@@ -130,9 +116,11 @@ final class PendingClickSettler
             if ($classified['state'] === MatchState::PENDING_CLICK) {
                 return ['state' => MatchState::PENDING_CLICK, 'post' => ['ledger' => [], 'clicks' => []], 'user' => 0];
             }
-            $post = $this->intake->settle($registration, (int) $row['is_test'] === 1, $installRowId, $classified['state'], $classified['reason'], $classified['click_id'], $now);
+            $settled = $this->intake->settle($registration, (int) $row['is_test'] === 1, $installRowId, $classified['state'], $classified['reason'], $classified['click_id'], $now);
 
-            return ['state' => $classified['state'], 'post' => $post, 'user' => $registration->userId];
+            // The state written, not the one classified: under Play Integrity's
+            // require an attributable install may be held (pending_integrity).
+            return ['state' => $settled['state'], 'post' => $settled['post'], 'user' => $registration->userId];
         };
         try {
             $done = $this->conn->transaction($work);
