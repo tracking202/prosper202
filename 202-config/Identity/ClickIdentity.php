@@ -21,13 +21,15 @@ use Prosper202\Database\Connection;
  * Attach (attach / attachCustomer) runs in its own transaction, after the
  * click's transaction has committed. Identity is an enrichment: a failure to
  * link must never cost the click or the conversion it rides on, so it is
- * retried once on a lock error and otherwise logged with the click id, and
- * the click stays a one-touch journey.
+ * retried on a lock error or a concurrent link's race to create the same
+ * signal (IdentityRaceException), and otherwise logged with the click id,
+ * and the click stays a one-touch journey.
  */
 final class ClickIdentity
 {
     private const CUSTOMER_KEYS = ['cust', 'customer_ref', 'cust_type', 'customer_ref_type', 'cust_sig'];
-    private const ATTEMPTS = 2;
+    /** A race or a deadlock costs one attempt; a third racer can cost a second. */
+    private const ATTEMPTS = 3;
 
     /**
      * @param list<IdentitySignal> $signals
@@ -141,7 +143,8 @@ final class ClickIdentity
                     return (new IdentityGraph($conn, $keys))->attachClick($userId, $clickId, $clickTime, $signals);
                 });
             } catch (\Throwable $e) {
-                if ($attempt < self::ATTEMPTS && Connection::isRetryableLockError($e)) {
+                if ($attempt < self::ATTEMPTS
+                    && ($e instanceof IdentityRaceException || Connection::isRetryableLockError($e))) {
                     continue;
                 }
                 error_log('identity: click ' . $clickId . ' was stored but not linked: ' . $e->getMessage());
