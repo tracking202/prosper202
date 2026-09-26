@@ -473,6 +473,53 @@ final class IntegrityIntegrationTest extends TestCase
         self::assertSame([], $this->decoded);
     }
 
+    /**
+     * The settlement and the credential delete commit with the registration
+     * row, or not at all: with the row's DELETE refused, the queue is still
+     * waiting and the credential is still there to give its verdicts. And
+     * the change record follows the commit: with it failing, the delete and
+     * its settlement have landed and the error says so.
+     */
+    public function testTheSettlementCommitsWithTheRegistrationDeleteAndItsRecordFollowsTheCommit(): void
+    {
+        $this->mode('require');
+        $this->click(100);
+        $this->install($this->tokenBody(self::U1, 100, 'tok-held'));
+        self::assertSame(1, self::rows('202_app_integrity_credentials', 'registration_id = 5'));
+
+        self::$db->query('DROP TRIGGER IF EXISTS p202_test_refuse_registration_delete');
+        self::$db->query("CREATE TRIGGER p202_test_refuse_registration_delete BEFORE DELETE ON 202_app_registrations
+            FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'refused by the test'");
+        try {
+            (new AppRegistrationsController(self::$db, 1))->delete(5);
+            self::fail('a delete whose row write failed reported success');
+        } catch (\Throwable $e) {
+            self::assertNotInstanceOf(\Api\V3\Exception\WriteCommittedException::class, $e, 'nothing committed');
+        } finally {
+            self::$db->query('DROP TRIGGER IF EXISTS p202_test_refuse_registration_delete');
+        }
+        self::assertSame(['pending_integrity', 'pending'], [self::installRow(self::U1)['match_state'], self::installRow(self::U1)['integrity_state']],
+            'the settlement was rolled back with the row delete');
+        self::assertSame(1, self::rows('202_app_integrity_credentials', 'registration_id = 5'), 'and so was the credential delete');
+
+        $failingRecord = new class (self::$db, 1) extends AppRegistrationsController {
+            #[\Override]
+            protected function recordChange(string $operation, array $record): void
+            {
+                throw new \RuntimeException('the change log is unavailable');
+            }
+        };
+        try {
+            $failingRecord->delete(5);
+            self::fail('a failed change record was not reported');
+        } catch (\Api\V3\Exception\WriteCommittedException) {
+            $this->addToAssertionCount(1);
+        }
+        self::assertSame(0, self::rows('202_app_registrations', 'registration_id = 5'), 'the delete it reported as committed is committed');
+        self::assertSame(0, self::rows('202_app_integrity_credentials', 'registration_id = 5'));
+        self::assertSame(['integrity_unverified', 'error'], [self::installRow(self::U1)['match_state'], self::installRow(self::U1)['integrity_state']]);
+    }
+
     public function testRowsTheWorkerCannotProcessNeverStarveAnotherApp(): void
     {
         // Registration 5's queue is orphaned the way a registration deleted
