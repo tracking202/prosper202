@@ -1,0 +1,47 @@
+name: Android SDK
+
+# The Android SDK's platform-free core (sdk/android-attribution/core: the
+# install token, the install and events bodies and their canonical form,
+# the customer id, the queue and retry rules, the transport) and its tests,
+# including every cross-language vector in tests/fixtures/app-sdk-contract/
+# that the PHP suite also runs. The Android library module is left out
+# (-Pp202.android=false): it needs AGP and an Android SDK, and nothing in it
+# is decided anywhere but the core. The env-gated LiveServerTest skips itself
+# here, as it does on any machine that does not set P202_LIVE_BASE
+# (tests/live/android-sdk.sh sets it).
+
+on:
+  push:
+    paths:
+      - 'sdk/android-attribution/**'
+      - 'tests/fixtures/app-sdk-contract/**'
+      - '.github/workflows/android-sdk.yml'
+  pull_request:
+    paths:
+      - 'sdk/android-attribution/**'
+      - 'tests/fixtures/app-sdk-contract/**'
+      - '.github/workflows/android-sdk.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Core and contract vectors (JVM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'   # the version the SDK is developed against
+
+      - name: Test
+        run: gradle -p sdk/android-attribution --no-daemon -Pp202.android=false :core:test

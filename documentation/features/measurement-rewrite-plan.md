@@ -1951,6 +1951,181 @@ operator surface is `AppIntegrityController`; the guide is
   key; a real decode against Google, which needs an operator's Cloud project
   and a Play-distributed build.
 
+### 5.12 As built: decisions (PR 7)
+
+(Numbered 5.12: PR 6's decisions are §5.11. PR 7 was built on PR 5 while
+PR 6 was built in parallel, then PR 6 was merged in and the SDK wired to it;
+the Play Integrity bullet below is that wiring.)
+
+What PR 7 settled, where it departs from §4.3 and §5.6, and what it leaves.
+The SDK is `sdk/android-attribution/`: `core/` (package
+`com.prosper202.attribution.core`: `Json`, `InstallToken`, `InstallPayload`,
+`EventPayload`, `CustomerId`, `AttributionConfig`, `AttributionEngine`,
+`Answers`, and the platform seams in `Platform.kt`), `android/`
+(`P202Attribution`, `PlayInstallReferrerSource`) and the optional
+`integrity/` (`PlayIntegrityProvider`). The guide is
+`documentation/api/24-android-sdk.md`.
+
+- **Two modules, one of them platform-free.** Everything that decides
+  anything — the token, the bodies, the canonical form, the queue, the
+  retry rules, the transport (`HttpURLConnection`), the store format — is
+  plain Kotlin that runs on Android from API 21 and on the JVM; the Android
+  module is the facade, Play's referrer client, the storage directory and
+  device facts. The core's tests run in CI on a JDK
+  (`.github/workflows/android-sdk.yml`, `-Pp202.android=false`); the
+  Android module is built only where an Android SDK is found.
+- **No dependency but the referrer client** (§5.6). So no WorkManager, no
+  androidx lifecycle and no JSON library: the core has its own strict JSON
+  parser and two writers — the wire's, and the canonical one, which is
+  PHP's `json_encode` byte for byte (keys by UTF-8 bytes, control
+  characters as lower-case `\u00xx`, U+2028/2029 escaped; `JsonTest`
+  holds PHP's executed output) and refuses a fractional number rather than
+  guess PHP's float spelling. Work runs on one daemon thread; retries are
+  timers on it, and the next attempt's time is persisted, so a relaunch
+  resumes the schedule. Events flush 5 s after the first unsent one, at
+  once when a batch of 100 fills, and when the last activity stops.
+- **The install is built once and persisted** (§5.2's replay check), in one
+  JSON file in `noBackupFilesDir` — which is what "excluded from Auto
+  Backup" (§5.6) becomes without asking the app to edit its backup rules;
+  device-to-device transfer skips it too. An unreadable file is moved
+  aside, never read as empty. `install_uuid` survives a token change: a
+  rotated token is the same install.
+- **The referrer is read up to three times.** Play's transient answers
+  (`service_unavailable`, `service_disconnected`, and a client that never
+  calls back within 60 s) are read again after 10 s and 60 s; the third is
+  reported as it is (`unavailable`). Permanent errors are reported at once.
+- **Answers follow `responses.json`**, run as vectors: 429 and 5xx retried
+  (30 s doubling to 6 h, jitter in [½, 1], `Retry-After` honoured), every
+  other status terminal. Two additions the contract does not name: a 2xx
+  that is not `{"data": …}` (a captive portal) and a lost connection are
+  retried. A refused install is tied to the endpoint and token it was
+  refused under, and a build with another token or endpoint re-arms it with
+  the same body. For events: a `400` naming `events[i]` drops those events
+  and sends the rest; `413` halves the batch; `409` with a `match` (a
+  refuted install) and `422` (the 10,000-event cap) stop events for good;
+  `404` holds the queue until another endpoint or token. Every other
+  refusal must cost the queue something — the named events, else the whole
+  batch, and a customer claim that rode a request refused without naming
+  anything else — because a request resent unchanged at once is a tight
+  loop; `AttributionEngineTest` plants both loops.
+- **`logEvent` refuses what the server would.** The builder runs the
+  server's whole-body validation (`EventPayload.validateBody`, every
+  `events-requests.json` case) on a one-event body and throws
+  `InvalidEventException` naming each field. The queue holds at most 500;
+  past that the *newest* are dropped and reported, so a funnel's first
+  steps are never the ones lost. `occurred_at` never goes backwards (iOS's
+  rule). Event ids are random UUIDs.
+- **Device facts are not allowed to cost the install.** A version string
+  the server would refuse (a control character, over its column) is sent
+  as `null` and logged; everything else in the body comes from Play or the
+  SDK and is valid by construction (`InstallPayload.build` asserts it).
+- **The customer id reaches the server — which PR 5 did not accept.**
+  §4.3 put `customer` on the install and event bodies; PR 5's intake
+  refused any unknown field, so PR 7 adds it on the server
+  (`CustomerClaim`, `InstallCustomerLink`): `{id, type, signature}` — `type`
+  added, as PR 8 did, because the signature covers `"<type>:<id>"` —
+  validated strictly (`400` naming `customer.<field>`), and, after the
+  commit and only for an attributed, trusted install, verified under the
+  account's linking key and linked to the install's click through
+  `ClickIdentity::attachToStoredClick` (the campaign's `identity_signals`
+  still decides). The answer names the outcome (`linked`, `unverified`,
+  `no_click`, `not_linked`); a replay links again (idempotent), and the
+  pending-click settler links a body's claim when the install settles. An
+  events body may carry the customer **alone** (no `events`), so an app
+  that logs no events can still send it; `{"events": []}` is still `400`.
+  The SDK sends the claim on the install body when it was set before the
+  body was built, otherwise once on the events route, and again when it
+  changes; a server that predates the field (`400` naming only `customer`)
+  gets the install without it. `customer-id.json` is PR 8's file,
+  byte-identical, with its PHP test, so the two branches merge cleanly;
+  the new install and events cases were computed with Python's `hmac` and
+  `json`.
+  **Not done:** an unverified id is kept only in the install's
+  `raw_payload`; nothing writes an LTV alias from the app path.
+- **No agent-eval case.** Nothing here is operated through `p202` or the
+  REST API by an agent: the SDK runs inside an app, and the operator's side
+  (`p202 app install simulate`/`list`) is PR 5's, whose case android-001
+  stands. The customer claim's server side is covered by the live pass and
+  `InstallCustomerLinkIntegrationTest`.
+- **The schema document is read once per process**, before the first
+  attempt to send the install (not for events): it is where the
+  registration says whether to request a Play Integrity token. A document
+  that cannot be read now (network, `429`, `5xx`) holds the install back
+  like its own failure would; one refused for good (`4xx`) or silent about
+  integrity means no token, and the install's own answer says what is
+  wrong. Batch size stays the contract's 100.
+- **No goal evaluator.** Android goals are evaluated on the server (§4.3),
+  so the Kotlin SDK runs the `android/`, `customer-id.json` and
+  `app-identity.json` (Android keys) vectors, not `goals/`. The
+  "Kotlin (Android SDK)" row of `goals/README.md` (and the sentence in
+  `evaluator.json`'s description) is therefore stale; it is left for the
+  merge with PR 8, which edits the adjacent row, so the two branches do not
+  conflict — delete it then.
+- **Verification.** `ContractVectorsTest` (every vector above),
+  `AttributionEngineTest` (virtual time: one install, same bytes on every
+  retry, backoff across a relaunch, refusal and re-arm, batching under
+  both caps, the queue bound, refuted installs, both customer routes, the
+  schema-gated integrity request, holding back for Play and a waiting
+  install's events, the file store), `JsonTest`. `tests/live/android-sdk.sh`
+  runs the real engine (`LiveServerTest`) against an instance and reads
+  the database back: attributed install, events paying level 3, the phone's
+  click joining a web click's person through `setCustomerId`, a relaunch
+  that sends nothing, an organic and a forged install, the stored body
+  replayed (duplicate) and changed (409), and Play Integrity under
+  `require` against PR 6's fake Google (below). Server side:
+  `InstallCustomerLinkIntegrationTest` and the integrity worker's customer
+  test. The Android and integrity modules were type-checked against the
+  `android-34` platform stubs and installreferrer 2.2's, integrity 1.6.0's
+  and play-services-tasks/basement's classes as plain Kotlin (warnings as
+  errors); they were not assembled with AGP (the disk had no room for it),
+  not linted, and not run on a device or emulator.
+- **Play Integrity, as PR 6 built the server (§5.11).** When the schema
+  document's `integrity` block says `request_token: true` with
+  `token_type: standard`, `request_hash:
+  sha256_hex_of_canonical_install_body` and a `cloud_project_number` (a
+  decimal string on the wire, parsed to the `long` Play takes), every
+  attempt to send the install asks the `IntegrityProvider` for a **fresh**
+  token with `requestHash` = `InstallAttempt.requestHash`, the install's
+  fingerprint — the `android/integrity.json` vectors pin that hash for
+  every body, and the live pass proves the binding end to end: the fake
+  Google signs the hash the SDK bound, and the server's own policy accepts
+  it only because it equals the stored `body_hash` (planted: binding the
+  wire bytes instead ends `integrity_failed`). A block naming another
+  token type or binding, or no project, is not requested against: a token
+  bound some other way would be refuted as another install's, where no
+  token is only unvouched. The provider is asked only then (under `off` it
+  is never called).
+  - **The Android provider is an optional module**, `integrity/`
+    (`com.prosper202:integrity`, `PlayIntegrityProvider`, depending on
+    `com.google.android.play:integrity:1.6.0`), so an app that does not use
+    Play Integrity keeps the base SDK's single dependency (§5.6). It
+    prepares the standard token provider once per process and Cloud project,
+    requests with the body's hash, re-prepares once on
+    `INTEGRITY_TOKEN_PROVIDER_INVALID`, and sorts Play's error codes:
+    network, server, quota, transient and binding errors are retryable.
+  - **A retryable failure holds the install back** — no token under
+    `require` means `integrity_unverified`, never paid, which is worth a
+    wait — for at most `MAX_INTEGRITY_ATTEMPTS` (3) asks on the install's
+    backoff, then it goes without; any other failure sends it without a
+    token at once. A registration that asks for tokens from an app that
+    configured no provider gets the install without one and a Logcat
+    warning.
+  - **Waiting installs keep their events.** `pending_integrity` (like
+    `pending_click`) answers events `503` with `Retry-After`; they stay
+    queued and go when it settles. `integrity_failed` is refuted: its events
+    are `409`, and the SDK drops them and stops. `integrity_unverified` is
+    unvouched, and its events are evaluated as an organic install's.
+  - **The customer id links when the verdict passes.** PR 6's worker
+    settles a waiting install; it now links the claim its body carried,
+    after its commit, as the intake and the pending-click settler do
+    (`IntegrityIntegrationTest::testAWaitingInstallsCustomerLinksOnlyWhenItsVerdictPasses`).
+  - **Not done:** the provider has not requested a real token — that needs
+    a Play-distributed build of an app linked to a Cloud project, a device,
+    and Google; the JVM tests hand the engine a provider, and the Android
+    code was only type-checked against the `integrity` 1.6.0 and
+    play-services-tasks classes. Play Integrity's remediation dialogs
+    (`showDialog`) are not offered.
+
 ---
 
 # Part C: the MTA rewrite
@@ -2636,7 +2811,7 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 | 4b | **Web events:** `event=` on pixels and postbacks, `POST /events`, `p202.js` `track()`, the web campaign goal editor, the Transactions ID docs pointing to goals | 2, 4 |
 | 5 | **Android intake:** install token, `MatchState`, installs and events endpoints, conversions through goals, traffic-source notify, pending-click cron. **Built; `tests/live/android-intake.sh` (with `goals.sh`, `app-core.sh`, `conversion-ledger.sh`, `legacy-pixels.sh` re-run), vectors in `tests/fixtures/app-sdk-contract/android/`, agent-eval case android-001. Decisions in §5.10.** | 1, 3, 4 |
 | 6 | **Play Integrity** (opt-in modes). **Built; `tests/live/play-integrity.sh` against a local TLS fake of Google (with `android-intake.sh`, `goals.sh`, `app-core.sh`, `conversion-ledger.sh` re-run), vectors in `tests/fixtures/app-sdk-contract/android/integrity.json`. Decisions in §5.11. No request has been made to Google itself.** | 5 |
-| 7 | **Android SDK** (installs, events, customer id, integrity) | 5, 6 |
+| 7 | **Android SDK** (installs, events, customer id, integrity). **Built; `sdk/android-attribution/` (a JVM core with every `android/` — `integrity.json` included —, `customer-id.json` and Android `app-identity.json` vector; the Android module; the optional Play Integrity module), the server's `customer` claim on both intake bodies, `tests/live/android-sdk.sh` (the SDK's engine against an instance, Play Integrity under `require` against PR 6's fake Google). Decisions in §5.12.** | 5, 6 |
 | 8 | **iOS SDK:** header rename, `setCustomerId`, on-device goal evaluator on the shared vectors | 3, 4 |
 | 9 | **MTA engine:** schema rewrite and rungs, worker, models, credits, reports API; v2 and dead code deleted | 1, 2 |
 | 10 | **MTA UI and exports:** dashboard on the v2 shell, comparison, journey metrics, SSRF-safe webhooks | 9 |

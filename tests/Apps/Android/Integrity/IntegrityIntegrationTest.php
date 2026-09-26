@@ -194,6 +194,32 @@ final class IntegrityIntegrationTest extends TestCase
         self::assertCount(1, self::ledger(100));
     }
 
+    public function testAWaitingInstallsCustomerLinksOnlyWhenItsVerdictPasses(): void
+    {
+        self::$db->query('TRUNCATE TABLE 202_clicks_visitor');
+        $key = (new \Prosper202\Identity\IdentityKeys(new Connection(self::$db)))->forUser(1)['link'];
+        $signature = \Prosper202\Identity\CustomerId::sign($key, 'custom:u-829');
+        $customer = ['id' => 'u-829', 'type' => 'custom', 'signature' => $signature];
+        $this->mode('require');
+        $this->click(100);
+        $this->click(101);
+        $good = $this->tokenBody(self::U1, 100, 'tok-good', ['customer' => $customer]);
+        $bad = $this->tokenBody(self::U2, 101, 'tok-bad', ['customer' => $customer]);
+        foreach ([$good, $bad] as $body) {
+            $data = $this->install($body)['body']['data'];
+            $said = [$data['match'], $data['customer']];
+            self::assertSame(['pending_integrity', 'no_click'], $said, 'nothing is linked while it waits');
+        }
+        $this->answers['tok-good'] = [$this->verdict($good, [], $this->clock - 20)];
+        $noDevice = ['deviceIntegrity' => ['deviceRecognitionVerdict' => []]];
+        $this->answers['tok-bad'] = [$this->verdict($bad, $noDevice, $this->clock - 20)];
+        $this->run1();
+        $states = [self::installRow(self::U1)['match_state'], self::installRow(self::U2)['match_state']];
+        self::assertSame(['attributed', 'integrity_failed'], $states);
+        self::assertSame(1, self::rows('202_clicks_visitor', 'click_id = 100'), 'the passing install links its click');
+        self::assertSame(0, self::rows('202_clicks_visitor', 'click_id = 101'), 'the failing one links nothing');
+    }
+
     /** @return array<string, array{\Closure, string}> */
     public static function failingVerdicts(): array
     {

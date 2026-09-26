@@ -23,6 +23,9 @@ use Api\V3\Exception\ValidationException;
  *   test           bool (default false)
  *   integrity_token  a Play Integrity token or null — stored for the
  *                  verdict worker (PR 6), never judged here
+ *   customer       null or {id, type, signature}: a customer id the
+ *                  operator's server signed (CustomerClaim), known when
+ *                  the body was built; linked after commit
  *
  * `fingerprint()` is the SHA-256 of the canonical body — keys sorted at
  * every level, no insignificant whitespace, integrity_token excluded — so
@@ -35,7 +38,10 @@ final class InstallPayload
     /** Play's InstallReferrerResponse codes, lower-cased. */
     public const REFERRER_STATUSES = ['ok', 'feature_not_supported', 'service_unavailable', 'developer_error', 'service_disconnected', 'permission_error'];
     private const UUID = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/D';
-    private const TOP = ['install_uuid', 'app_key', 'store', 'referrer', 'first_open_at', 'app_version', 'sdk_version', 'os_version', 'test', 'integrity_token'];
+    private const TOP = [
+        'install_uuid', 'app_key', 'store', 'referrer', 'first_open_at', 'app_version', 'sdk_version', 'os_version', 'test',
+        'integrity_token', 'customer',
+    ];
     private const REFERRER = [
         'status', 'install_referrer', 'referrer_click_timestamp_seconds', 'install_begin_timestamp_seconds',
         'referrer_click_timestamp_server_seconds', 'install_begin_timestamp_server_seconds', 'install_version', 'google_play_instant',
@@ -63,6 +69,7 @@ final class InstallPayload
         public readonly ?string $osVersion,
         public readonly bool $test,
         public readonly ?string $integrityToken,
+        public readonly ?CustomerClaim $customer,
         private readonly array $body,
     ) {
     }
@@ -106,6 +113,8 @@ final class InstallPayload
         if ($integrity !== null && (!is_string($integrity) || $integrity === '' || strlen($integrity) > self::MAX_INTEGRITY_TOKEN)) {
             $e['integrity_token'] = 'must be null or a Play Integrity token of up to ' . self::MAX_INTEGRITY_TOKEN . ' bytes';
         }
+
+        $customer = CustomerClaim::fromWire($body['customer'] ?? null, 'customer', $e);
 
         $referrer = $body['referrer'] ?? null;
         $status = null;
@@ -178,6 +187,7 @@ final class InstallPayload
             $osVersion,
             $test === true,
             $integrity,
+            $customer,
             $body,
         );
     }
