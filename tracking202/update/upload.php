@@ -195,6 +195,14 @@ switch ($case) {
 					     </tr>", (int) $key, htmlspecialchars((string) $total, ENT_QUOTES));
 			}
 			echo '</table>';
+			foreach ($import['lines'] as $l) {
+				if ($l['status'] === 'header') {
+					// Said out loud: a file with no header row whose first
+					// subid is malformed would otherwise lose that line.
+					printf('<small>Line %d was read as the header row (subid column: &ldquo;%s&rdquo;) and not recorded.</small><br/>',
+						(int) $l['line'], htmlspecialchars($l['subid'], ENT_QUOTES));
+				}
+			}
 			$skippedLines = array_filter($import['lines'], static fn (array $l): bool => $l['status'] === 'skipped');
 			if ($skippedLines !== []) {
 				echo '<small>Lines not recorded:</small><table class="table table-bordered"><tr><th>LINE</th><th>SUBID</th><th>COMMISSION</th><th>WHY</th></tr>';
