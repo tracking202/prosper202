@@ -424,10 +424,18 @@ if (!function_exists('_upgrade_conversion_ledger')) {
             error_log('Prosper202 upgrade: could not read the columns of 202_aff_campaigns; the ledger step will retry.');
             return false;
         }
-        if (!array_key_exists('payout_mode', $campaignColumns)
-            && _upgrade_query("ALTER TABLE `202_aff_campaigns` ADD COLUMN `payout_mode` enum('replace','accumulate') NOT NULL DEFAULT 'replace'") === false) {
-            error_log('Prosper202 upgrade: failed to add 202_aff_campaigns.payout_mode; the ledger step will retry.');
-            return false;
+        // The campaign settings the measurement rewrite adds, in the order
+        // CampaignTables declares them: how a click's conversions roll up,
+        // and whether the campaign's clicks carry identity signals.
+        $campaignAdds = [
+            ['payout_mode', "ALTER TABLE `202_aff_campaigns` ADD COLUMN `payout_mode` enum('replace','accumulate') NOT NULL DEFAULT 'replace'"],
+            ['identity_signals', "ALTER TABLE `202_aff_campaigns` ADD COLUMN `identity_signals` tinyint(1) NOT NULL DEFAULT '1'"],
+        ];
+        foreach ($campaignAdds as [$column, $ddl]) {
+            if (!array_key_exists($column, $campaignColumns) && _upgrade_query($ddl) === false) {
+                error_log('Prosper202 upgrade: failed to add 202_aff_campaigns.' . $column . '; the ledger step will retry.');
+                return false;
+            }
         }
 
         return true;
@@ -4393,9 +4401,9 @@ class UPGRADE
             // AdAttributionKit): the postback store, the app registry and the
             // conversion-value rules; and the conversion ledger — the
             // provenance and dedupe columns on 202_conversion_logs, its MTA
-            // outbox and upload batches, and the campaigns' payout mode. The
-            // DDL is the installer's own definitions, so this block cannot
-            // drift from them.
+            // outbox and upload batches, and the campaigns' payout mode; and
+            // the identity graph. The DDL is the installer's own definitions,
+            // so this block cannot drift from them.
             //
             // It reconciles as well as creates: CREATE IF NOT EXISTS is a
             // no-op against a table already present in an older shape. Folded
@@ -4407,7 +4415,8 @@ class UPGRADE
             // refuses the block.
             $attribution_ok = _upgrade_attribution_tables(array_merge(
                 \Prosper202\Database\Tables\AttributionPostbackTables::getDefinitions(),
-                \Prosper202\Database\Tables\ConversionTables::getDefinitions()
+                \Prosper202\Database\Tables\ConversionTables::getDefinitions(),
+                \Prosper202\Database\Tables\IdentityTables::getDefinitions()
             ));
 
             if ($attribution_ok) {

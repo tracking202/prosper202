@@ -13,6 +13,7 @@ use Prosper202\Database\Tables\TrackingTables;
 use Prosper202\Database\Tables\CampaignTables;
 use Prosper202\Database\Tables\AttributionTables;
 use Prosper202\Database\Tables\ConversionTables;
+use Prosper202\Database\Tables\IdentityTables;
 use Prosper202\Database\Tables\LtvTables;
 use Prosper202\Database\Tables\RotatorTables;
 use Prosper202\Database\Tables\AdNetworkTables;
@@ -56,6 +57,7 @@ final class SchemaInstaller
             $this->createTrackingTables();
             $this->createCampaignTables();
             $this->createConversionTables();
+            $this->createIdentityTables();
             $this->createAttributionTables();
             $this->createLtvTables();
             $this->createRotatorTables();
@@ -130,6 +132,14 @@ final class SchemaInstaller
     public function createConversionTables(): void
     {
         $this->createTablesFromDefinitions(ConversionTables::getDefinitions());
+    }
+
+    /**
+     * Create the identity graph's tables.
+     */
+    public function createIdentityTables(): void
+    {
+        $this->createTablesFromDefinitions(IdentityTables::getDefinitions());
     }
 
     /**

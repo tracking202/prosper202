@@ -2445,7 +2445,21 @@ function setOutboundCookie($outbound_site_url)
     }
 }
 
-function getPrePopVars($vars)
+/**
+ * The query string a redirect passes on to its destination: every incoming
+ * parameter except the tracker's own.
+ *
+ * Identity parameters are the tracker's too, with one distinction. The
+ * landing page's first-party id (p202lpid) never leaves. The customer id (every
+ * alias and its type), the operator's signature of it and the consent flag go
+ * on only to the operator's own landing page ($toOwnLandingPage), whose
+ * landing.php reads them from its URL to personalise the page and to honour
+ * the refusal. An offer is a third party: a customer id is personal data the
+ * operator gave this tracker, and it is not forwarded there.
+ *
+ * @param array<string, mixed> $vars
+ */
+function getPrePopVars($vars, bool $toOwnLandingPage = false)
 {
     $urlvars = '';
     $stoplist = [
@@ -2458,6 +2472,7 @@ function getPrePopVars($vars)
         't202id',
         't202b',
         't202ctx', // Landing Page Optimizer context token: minted fresh per click, never re-passed
+        'p202lpid',
         't202ref',
         't202pubid',
         'acip',
@@ -2474,6 +2489,9 @@ function getPrePopVars($vars)
         'utm_term',
         'utm_content'
     ];
+    if (!$toOwnLandingPage) {
+        array_push($stoplist, 'cust', 'customer_ref', 'cust_type', 'customer_ref_type', 'cust_sig', 'p202_consent');
+    }
 
     foreach ($vars as $key => $value) {
         if (! in_array($key, $stoplist)) {
@@ -2791,7 +2809,9 @@ function getTrackingDomain(): string
     $tracking_domain_result = _mysqli_query($db, $tracking_domain_sql); //($user_sql);
     $tracking_domain_row = $tracking_domain_result->fetch_assoc();
     if (isset($tracking_domain_row['user_tracking_domain']) && strlen((string) $tracking_domain_row['user_tracking_domain']) > 0) {
-        $tracking_domain = $tracking_domain_row['user_tracking_domain'];
+        // host[:port] only: a stored full URL doubled the scheme in every
+        // link built from it (see TrackingDomain).
+        $tracking_domain = \Prosper202\Click\TrackingDomain::normalize((string) $tracking_domain_row['user_tracking_domain']) ?: $tracking_domain;
     }
     return $tracking_domain;
 }

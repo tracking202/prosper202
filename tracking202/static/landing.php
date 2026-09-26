@@ -97,6 +97,40 @@ if ($cv_sql !== '') {
     }
 }
 
+// Whether this page's campaign lets identity signals be captured: the same
+// campaign record.php will use (a simple landing page's own campaign; an
+// advanced page's tracker's campaign, when there is one). The script must not
+// read, mint or send the page's visitor id for a campaign that has capture
+// off: an id sent from here could still link the visitor through another
+// campaign later. A setting that cannot be read turns capture off (CLAUDE.md
+// #11); a page with no campaign at all leaves it on, as record.php does.
+$p202CampaignCapture = false;
+if ($lpip !== '') {
+    try {
+        $identityConn = \Prosper202\Repository\LookupRepositoryFactory::connection($db);
+        $identityStmt = $identityConn->prepareRead(
+            'SELECT lp.landing_page_type, lpc.identity_signals AS lp_setting, trc.identity_signals AS tracker_setting, tr.aff_campaign_id AS tracker_campaign
+             FROM 202_landing_pages AS lp
+             LEFT JOIN 202_aff_campaigns AS lpc ON lpc.aff_campaign_id = lp.aff_campaign_id
+             LEFT JOIN 202_trackers AS tr ON tr.tracker_id_public = ?
+             LEFT JOIN 202_aff_campaigns AS trc ON trc.aff_campaign_id = tr.aff_campaign_id
+             WHERE lp.landing_page_id_public = ? LIMIT 1'
+        );
+        $identityConn->bind($identityStmt, 'ss', [(string) $t202id, (string) $lpip]);
+        $identityRow = $identityConn->fetchOne($identityStmt);
+        if ($identityRow !== null) {
+            $p202CampaignCapture = (int) $identityRow['landing_page_type'] === 1
+                ? \Prosper202\Identity\RequestSignals::campaignAllows(
+                    $identityRow['tracker_campaign'] === null ? null : $identityRow['tracker_setting']
+                )
+                : \Prosper202\Identity\RequestSignals::campaignAllows($identityRow['lp_setting'] ?? '0');
+        }
+    } catch (\Throwable $identityError) {
+        error_log('landing.php: could not read the campaign identity setting for lpip ' . $lpip . ': ' . $identityError->getMessage());
+        $p202CampaignCapture = false;
+    }
+}
+
 $baseUrl = $strProtocol . '://' . getTrackingDomain() . get_absolute_url();
 $lpip_js = json_encode((string) ($_GET['lpip'] ?? ''));
 ?>
@@ -158,8 +192,99 @@ var utm_term = t202GetVar('utm_term');
 var utm_content = t202GetVar('utm_content');
 var utm_campaign = t202GetVar('utm_campaign');
 
+// --- First-party identity (plan §6.2) ---
+// The landing page's own visitor id (p202lpid): 128 random bits kept in this
+// site's localStorage, sent with the pageview and added to links into the
+// tracker, so clicks through this site's pages link to one visitor even when
+// the tracking domain's cookie is blocked. It is never a fingerprint.
+// Consent is one switch: p202.consent(false) — or ?p202_consent=0 on the
+// URL — deletes the id and tells the tracker to capture nothing.
+var P202_LPID_KEY = 'p202lpid';
+var P202_CONSENT_KEY = 'p202_consent';
+var p202TrackerHost = <?php echo json_encode((string) parse_url($baseUrl, PHP_URL_HOST)); ?>;
+// Off when this page's campaign has identity capture off: no id is read,
+// minted or sent, and links into the tracker are left alone.
+var p202CampaignCapture = <?php echo json_encode($p202CampaignCapture); ?>;
+
+function p202Store(op, key, value) {
+	try {
+		if (op === 'get') { return window.localStorage.getItem(key); }
+		if (op === 'set') { window.localStorage.setItem(key, value); }
+		if (op === 'del') { window.localStorage.removeItem(key); }
+	} catch (e) { /* storage blocked: no id, nothing linked */ }
+	return null;
+}
+
+function p202ConsentGiven() {
+	return p202Store('get', P202_CONSENT_KEY) !== '0';
+}
+
+function p202Lpid() {
+	if (!p202CampaignCapture || !p202ConsentGiven()) { return ''; }
+	var id = p202Store('get', P202_LPID_KEY);
+	if (id && /^[0-9a-f]{32}$/.test(id)) { return id; }
+	try {
+		var bytes = new Uint8Array(16);
+		window.crypto.getRandomValues(bytes);
+		id = '';
+		for (var i = 0; i < bytes.length; i++) { id += ('0' + bytes[i].toString(16)).slice(-2); }
+	} catch (e) { return ''; }
+	p202Store('set', P202_LPID_KEY, id);
+	return p202Store('get', P202_LPID_KEY) === id ? id : '';
+}
+
+// A refusal given before this script runs: ?p202_consent=0 on the page URL,
+// or `window.p202 = {consent: false}` set by the page's consent tool ahead of
+// the snippet.
+if (t202GetVar(P202_CONSENT_KEY) === '0' || (window.p202 && window.p202.consent === false)) {
+	p202Store('set', P202_CONSENT_KEY, '0');
+	p202Store('del', P202_LPID_KEY);
+}
+
+window.p202 = (window.p202 && typeof window.p202 === 'object') ? window.p202 : {};
+window.p202.consent = function(given) {
+	if (given === false) {
+		p202Store('set', P202_CONSENT_KEY, '0');
+		p202Store('del', P202_LPID_KEY);
+	} else if (given === true) {
+		p202Store('del', P202_CONSENT_KEY);
+	}
+	return p202ConsentGiven();
+};
+window.p202.lpid = p202Lpid;
+
+// Links into the tracker carry the id (or the refusal) when they are
+// followed, so a later click through this page joins the same visitor.
+function p202DecorateLink(a) {
+	try {
+		if (!a || !a.href || a.hostname !== p202TrackerHost) { return; }
+		var url = new URL(a.href);
+		url.searchParams.delete('p202lpid');
+		url.searchParams.delete(P202_CONSENT_KEY);
+		if (!p202ConsentGiven()) {
+			url.searchParams.set(P202_CONSENT_KEY, '0');
+		} else if (p202CampaignCapture) {
+			var id = p202Lpid();
+			if (id) { url.searchParams.set('p202lpid', id); }
+		}
+		a.href = url.toString();
+	} catch (e) { /* a link we cannot parse is followed as it is */ }
+}
+function p202OnFollow(ev) {
+	var el = ev.target;
+	while (el && el.tagName !== 'A') { el = el.parentElement; }
+	p202DecorateLink(el);
+}
+document.addEventListener('mousedown', p202OnFollow, true);
+document.addEventListener('click', p202OnFollow, true);
+document.addEventListener('keydown', function(ev) { if (ev.key === 'Enter') { p202OnFollow(ev); } }, true);
+
 // --- Tracking beacon ---
-(function() {
+// Sent once the page's own scripts have run, not while this one is still
+// executing: a consent tool that calls p202.consent(false) in a script after
+// this snippet must be able to stop the very first pageview's id, which is
+// the one it exists to stop.
+function p202SendBeacon() {
 	var lpip = <?php echo $lpip_js; ?>;
 	var t202id = t202GetVar('t202id');
 	var t202ref = t202GetVar('t202ref');
@@ -206,6 +331,10 @@ var utm_campaign = t202GetVar('utm_campaign');
 		// first pageview — without this the ref never reaches record.php.
 		"cust=" + t202Enc(t202GetVar('cust') || t202GetVar('customer_ref')),
 		"cust_type=" + t202Enc(t202GetVar('cust_type') || t202GetVar('customer_ref_type')),
+		// The operator's signature of that customer id: only a signed id
+		// links clicks across devices (an unsigned one keeps its LTV role).
+		"cust_sig=" + t202Enc(t202GetVar('cust_sig')),
+
 		// Personalization: report the token's DIGEST cookie (h:sha256) so the
 		// tracker can VALIDATE it — repeat pageviews within a visit reuse a
 		// usable token, while a dead one (expired unredeemed / past replay)
@@ -219,6 +348,14 @@ var utm_campaign = t202GetVar('utm_campaign');
 	for (var i = 0; i < customVarNames.length; i++) {
 		parts.push(customVarNames[i] + "=" + t202Enc(customVarValues[i]));
 	}
+	// First-party identity: the refusal, or this site's visitor id when the
+	// campaign captures identity (nothing at all when it does not).
+	if (!p202ConsentGiven()) {
+		parts.push("p202_consent=0");
+	} else {
+		var p202Id = p202Lpid();
+		if (p202Id) { parts.push("p202lpid=" + t202Enc(p202Id)); }
+	}
 
 	// Inject record.php as script — its response calls createCookie() to set tracking cookies
 	// Guard prevents double-firing when landing.php is embedded more than once (SPA, duplicate snippet)
@@ -229,7 +366,12 @@ var utm_campaign = t202GetVar('utm_campaign');
 		js202a.id = "recjs";
 		(document.head || document.getElementsByTagName("script")[0].parentNode).appendChild(js202a);
 	}
-})();
+}
+if (document.readyState === 'loading') {
+	document.addEventListener('DOMContentLoaded', p202SendBeacon);
+} else {
+	setTimeout(p202SendBeacon, 0);
+}
 
 // --- Dynamic content replacement ---
 (function() {

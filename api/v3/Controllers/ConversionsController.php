@@ -199,6 +199,17 @@ class ConversionsController
             throw new DatabaseException('Failed to create conversion: ' . $e->getMessage(), $e);
         }
 
+        // A customer_ref on an authenticated request is the operator's own
+        // statement, so it links the click into the identity graph without
+        // the cust_sig a public pixel needs (plan §6.2). Best-effort and
+        // after the commit: ClickIdentity logs a failure and never throws.
+        if (isset($data['customer_ref']) && empty($data['reversal'])) {
+            \Prosper202\Identity\ClickIdentity::trustedCustomer(
+                $data['customer_ref'],
+                $data['customer_ref_type'] ?? null
+            )->attachToStoredClick(new \Prosper202\Database\Connection($this->db), $clickId);
+        }
+
         // The repository's transaction has committed, so the conversion
         // exists. Reading it back is the only step left, and its failure must
         // not read as a failed create.

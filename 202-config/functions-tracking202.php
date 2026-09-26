@@ -1292,7 +1292,9 @@ function getTrackingDomain(): string
         if (isset($tracking_domain_row['user_tracking_domain']) && 
             is_string($tracking_domain_row['user_tracking_domain']) && 
             strlen($tracking_domain_row['user_tracking_domain']) > 0) {
-            $tracking_domain = $tracking_domain_row['user_tracking_domain'];
+            // host[:port] only: a stored full URL doubled the scheme in every
+            // link built from it (see TrackingDomain).
+            $tracking_domain = \Prosper202\Click\TrackingDomain::normalize((string) $tracking_domain_row['user_tracking_domain']) ?: $tracking_domain;
         }
     }
     

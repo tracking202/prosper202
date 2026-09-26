@@ -92,6 +92,12 @@ jobs:
             --group integration \
             tests/Config/RecordMysqlErrorIntegrationTest.php \
             --verbose --no-coverage
+          # Two processes linking one brand-new signal at once, at READ
+          # COMMITTED and REPEATABLE READ: both clicks must end on one visitor.
+          vendor/bin/phpunit --configuration phpunit.ci.xml \
+            --group integration \
+            tests/Identity/IdentityRaceIntegrationTest.php \
+            --verbose --no-coverage
           # The postback receiver's dedupe is a UNIQUE index over a hash of the
           # whole body: only a real server shows it collapsing a byte-identical
           # retry while a forgery and the genuine postback both land.

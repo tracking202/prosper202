@@ -746,6 +746,24 @@ The full API key is displayed only once at creation time. Store it securely.
 
 `rotate` creates a replacement key and can optionally delete the old key and update local CLI config.
 
+### Identity linking key
+
+```bash
+p202 user identity-key get 1          # the key your server signs customer ids with
+p202 user identity-key rotate 1       # asks first; --force skips the prompt
+```
+
+A `cust` on a tracking link, pixel or postback joins a person's journeys across
+browsers and devices only when it carries `cust_sig`, computed on your own server:
+
+```
+cust_sig = hex(HMAC-SHA256(linking_key, "<cust_type>:<cust>"))
+```
+
+`cust_type` defaults to `custom`; `email_md5` and `email_sha256` digests are signed
+in lower case. Rotating the key stops every signature made with the old one from
+linking; clicks already linked stay linked.
+
 ### Preferences
 
 ```bash

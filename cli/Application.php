@@ -84,6 +84,8 @@ class Application extends ConsoleApplication
         $this->add(new Commands\UserApiKeyListCommand());
         $this->add(new Commands\UserApiKeyCreateCommand());
         $this->add(new Commands\UserApiKeyDeleteCommand());
+        $this->add(new Commands\UserIdentityKeyGetCommand());
+        $this->add(new Commands\UserIdentityKeyRotateCommand());
         $this->add(new Commands\UserPreferencesGetCommand());
         $this->add(new Commands\UserPreferencesUpdateCommand());
 
@@ -115,6 +117,8 @@ class Application extends ConsoleApplication
                     'aff_network_id' => 'Affiliate network ID',
                     'aff_campaign_cloaking' => 'Enable cloaking (0|1)',
                     'aff_campaign_rotate' => 'Enable URL rotation (0|1)',
+                    'payout_mode' => 'How conversions set a click\'s value (replace|accumulate)',
+                    'identity_signals' => 'Link clicks into multi-touch journeys (1|0)',
                 ],
                 'required' => ['aff_campaign_name', 'aff_campaign_url'],
                 'listParams' => ['filter[aff_network_id]' => 'Filter by affiliate network'],

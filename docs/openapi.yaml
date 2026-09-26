@@ -2058,6 +2058,64 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /users/{id}/identity-key:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Users]
+      summary: Get the identity linking key
+      description: >-
+        Self or admin, with a key that can write users (`*`, `write` or
+        `users:write`): holding the key is the power to link identities, so
+        a read-only or propose-only key is refused with 403. The key the
+        account's own server signs customer ids
+        with, so a `cust` on a public pixel, postback or tracking link joins
+        a person's journeys only when it carries `cust_sig`:
+        `cust_sig = hex(HMAC-SHA256(linking_key, "<cust_type>:<cust>"))`.
+        `cust_type` is the LTV alias vocabulary and defaults to `custom`;
+        `email_md5` and `email_sha256` digests are signed in lower case. An
+        unsigned or wrongly signed `cust` keeps its LTV role and links
+        nothing. Minted on first read.
+      operationId: getIdentityKey
+      responses:
+        "200":
+          description: The linking key
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/IdentityKey"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /users/{id}/identity-key/rotate:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    post:
+      tags: [Users]
+      summary: Rotate the identity linking key
+      description: >-
+        Self or admin. Replaces the linking key and returns the new one.
+        Every `cust_sig` computed with the old key stops linking at once;
+        clicks already linked stay linked. Can be staged (`?staged=1`).
+      operationId: rotateIdentityKey
+      responses:
+        "200":
+          description: The new linking key
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/IdentityKey"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /users/{id}/preferences:
     parameters:
       - $ref: "#/components/parameters/resourceId"
@@ -3197,6 +3255,22 @@ components:
           type: integer
         aff_campaign_rotate:
           type: integer
+        payout_mode:
+          type: string
+          enum: [replace, accumulate]
+          description: >-
+            How a click's conversions set its value. `replace` (default): the
+            latest conversion's payout. `accumulate`: the sum of every
+            conversion's payout (repeat purchases, subscriptions).
+        identity_signals:
+          type: string
+          enum: ["0", "1"]
+          description: >-
+            "1" (default): this campaign's clicks carry first-party identity
+            signals — the tracking domain's p202vid cookie, the landing page's
+            p202lpid, and customer ids signed with the account's linking key —
+            so multi-touch attribution can join them into one journey. "0":
+            none are read or set, and every click is its own journey.
         aff_campaign_time:
           type: integer
           readOnly: true
@@ -3211,6 +3285,23 @@ components:
         user_id:
           type: integer
           readOnly: true
+
+    IdentityKey:
+      type: object
+      properties:
+        linking_key:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: 32 bytes, hex. A signing secret; keep it on your server.
+        algorithm:
+          type: string
+          example: HMAC-SHA256
+        signs:
+          type: string
+          description: What the signature covers.
+        parameter:
+          type: string
+          description: Where the signature goes.
 
     CampaignCreate:
       type: object
@@ -3247,6 +3338,22 @@ components:
           type: integer
         aff_campaign_rotate:
           type: integer
+        payout_mode:
+          type: string
+          enum: [replace, accumulate]
+          description: >-
+            How a click's conversions set its value. `replace` (default): the
+            latest conversion's payout. `accumulate`: the sum of every
+            conversion's payout (repeat purchases, subscriptions).
+        identity_signals:
+          type: string
+          enum: ["0", "1"]
+          description: >-
+            "1" (default): this campaign's clicks carry first-party identity
+            signals — the tracking domain's p202vid cookie, the landing page's
+            p202lpid, and customer ids signed with the account's linking key —
+            so multi-touch attribution can join them into one journey. "0":
+            none are read or set, and every click is its own journey.
 
     CampaignUpdate:
       type: object
@@ -3282,6 +3389,22 @@ components:
           type: integer
         aff_campaign_rotate:
           type: integer
+        payout_mode:
+          type: string
+          enum: [replace, accumulate]
+          description: >-
+            How a click's conversions set its value. `replace` (default): the
+            latest conversion's payout. `accumulate`: the sum of every
+            conversion's payout (repeat purchases, subscriptions).
+        identity_signals:
+          type: string
+          enum: ["0", "1"]
+          description: >-
+            "1" (default): this campaign's clicks carry first-party identity
+            signals — the tracking domain's p202vid cookie, the landing page's
+            p202lpid, and customer ids signed with the account's linking key —
+            so multi-touch attribution can join them into one journey. "0":
+            none are read or set, and every click is its own journey.
 
     CampaignResponse:
       type: object

@@ -627,6 +627,31 @@ if (!function_exists('p202ParseClickId')) {
     }
 }
 
+if (!function_exists('p202LinkConversionIdentity')) {
+    /**
+     * Link the converting click to the signed customer id the conversion
+     * request carries (cust + cust_sig, plan §6.2): the join that makes a
+     * purchase on a phone and an earlier click on a laptop one journey.
+     *
+     * Runs after the conversion is recorded, in its own transaction, and
+     * never fails the request: identity is an enrichment, and a sender that
+     * got a 500 here would retry a conversion that was already stored. An
+     * unsigned or wrongly signed id links nothing (ClickIdentity logs only
+     * real failures). Returns the click's visitor key, or null.
+     *
+     * @param array<string, mixed> $get
+     */
+    function p202LinkConversionIdentity(mysqli $db, int $clickId, array $get): ?int
+    {
+        $identity = \Prosper202\Identity\ClickIdentity::customerOnly($get);
+        if ($identity->isEmpty() || $clickId <= 0) {
+            return null;
+        }
+
+        return $identity->attachToStoredClick(\Prosper202\Repository\LookupRepositoryFactory::connection($db), $clickId);
+    }
+}
+
 if (!function_exists('p202ClientIp')) {
     /**
      * The client address to store on a conversion row: one valid IP, or ''.
