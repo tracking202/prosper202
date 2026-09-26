@@ -1,30 +1,35 @@
 <?php
+
 declare(strict_types=1);
-include_once(substr(__DIR__, 0,-21) . '/202-config/connect.php');
+
+/**
+ * Overview › Rotator Breakdown: each rotator, its rules and its default, over the window.
+ *
+ * On the v2 shell: the filters are one GET form whose values are applied to
+ * the user's report preferences as the page loads, and the report is drawn
+ * into the panel from tracking202/ajax/sort_rotator.php, which reads them.
+ * 202-config/functions-ui-overview.php holds the recipe every page in this
+ * family follows.
+ */
+
+include_once dirname(__DIR__, 2) . '/202-config/connect.php';
 
 AUTH::require_user();
+AUTH::set_timezone($_SESSION['user_timezone']);
 
+require_once dirname(__DIR__, 2) . '/202-config/functions-ui-overview.php';
 
-//set the timezone for the user, for entering their dates.
-	AUTH::set_timezone($_SESSION['user_timezone']);
+$base = get_absolute_url();
 
-//show the template
-template_top('Redirectors Breakdown Overview'); ?>
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<h6>Redirectors Breakdown Overview</h6>
-		<small>The breakdown overview allows you to see your redirector's stats per day, per hour, or an interval that you set.</small>
-	</div>
-</div>                                      
-
-<?php display_calendar(get_absolute_url().'tracking202/ajax/sort_rotator.php', true, false, true, false, true, true, true); ?> 
-    
-<script type="text/javascript">
-   loadContent('<?php echo get_absolute_url();?>tracking202/ajax/sort_rotator.php',null);
-</script>
-
-
-
-
-<?php  template_bottom();
-	
+p202_overview_run([
+    'shell' => ['ui' => 'v2'],
+    'id' => 'rotator-breakdown',
+    'page_title' => 'Redirectors Breakdown Overview',
+    'title' => 'Rotator breakdown',
+    'desc' => 'Each rotator, its rules and its default redirect, over the window you choose.',
+    'icon' => 'bi-shuffle',
+    'action' => $base . 'tracking202/overview/rotator-breakdown.php',
+    'fragment' => $base . 'tracking202/ajax/sort_rotator.php',
+    'panel' => 'Rotators',
+    'names' => ['user_pref_show', 'user_cpc_or_cpv'],
+]);

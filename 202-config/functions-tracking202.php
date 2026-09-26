@@ -137,6 +137,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
     $user_sql = "SELECT * FROM 202_users_pref WHERE user_id=" . $userId;
     $user_result = _mysqli_query($user_sql);
     $user_row = ($user_result instanceof mysqli_result) ? ($user_result->fetch_assoc() ?? []) : [];
+    $user_row = \Prosper202\DataEngine\ReportView::apply($user_row, $userId);
 
     $html['user_pref_aff_network_id'] = htmlentities((string) ($user_row['user_pref_aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
     $html['user_pref_aff_campaign_id'] = htmlentities((string) ($user_row['user_pref_aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8');
@@ -247,6 +248,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                         class="fui-search"></span> Refine your search: </span>
                 <form id="user_prefs" onsubmit="return false;"
                     class="form-inline text-right" role="form">
+                    <input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
                     <div class="row">
                         <div class="col-xs-12">
                             <label for="from">Start date: </label>
@@ -1103,7 +1105,7 @@ function tracking202_report_canary_config(string $reportType, string $legacyPage
         // bootstrap, silently dropping the user's saved campaign/text-ad/landing-page filters.
         record_mysql_error($sql);
     }
-    $prefs = $result->fetch_assoc() ?? [];
+    $prefs = \Prosper202\DataEngine\ReportView::apply($result->fetch_assoc() ?? [], $_SESSION['user_id'] ?? null);
 
     return [
         'enabled' => $enabled,
@@ -1165,6 +1167,7 @@ function grab_timeframe($unused = null): array
     $user_sql = "SELECT user_pref_time_predefined, user_pref_time_from, user_pref_time_to FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
     $user_result = _mysqli_query($user_sql);; // ($user_sql);
     $user_row = ($user_result instanceof mysqli_result) ? ($user_result->fetch_assoc() ?? []) : [];
+    $user_row = \Prosper202\DataEngine\ReportView::apply($user_row, $_SESSION['user_id'] ?? null);
     $pref_time = $user_row['user_pref_time_predefined'] ?? '';
 
     $time = [
@@ -1329,6 +1332,7 @@ function query(
     $user_sql = "SELECT * FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
     $user_result = _mysqli_query($user_sql); // ($user_sql);
     $user_row = ($user_result instanceof mysqli_result) ? ($user_result->fetch_assoc() ?? []) : [];
+    $user_row = \Prosper202\DataEngine\ReportView::apply($user_row, $_SESSION['user_id'] ?? null);
 
     // Apply sane defaults when optional arguments are omitted
     if ($db_table === null) {

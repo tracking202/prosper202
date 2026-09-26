@@ -1,8 +1,19 @@
 <?php
 declare(strict_types=1);
 include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php');
+require_once(substr(__DIR__, 0,-17) . '/202-config/functions-report-prefs.php');
 
 AUTH::require_user();
+
+// This writes which report every page opens with. Like its siblings
+// (charts.php, clear_subids.php), it takes the session token or nothing:
+// without it, any page the user visits could post here and rewrite the
+// filters their reports are drawn under. The classic calendar's form
+// carries the token (display_calendar()).
+if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+	http_response_code(403);
+	die('Invalid token');
+}
 
 //set the timezone for the user, for entering their dates.
 AUTH::set_timezone($_SESSION['user_timezone']);
@@ -64,29 +75,24 @@ if (isset($_POST['user_pref_time_predefined']) && $_POST['user_pref_time_predefi
     
 } else { 
 	
-	$from = isset($_POST['from']) ? explode('/', (string) $_POST['from']) : ['', '', '']; 
-    $from_month = isset($from[0]) ? trim($from[0]) : '';
-	$from_day = isset($from[1]) ? trim($from[1]) : '';
-	$from_year = isset($from[2]) ? trim($from[2]) : '';
-
-    $to = isset($_POST['to']) ? explode('/', (string) $_POST['to']) : ['', '', '']; 
-    $to_month = isset($to[0]) ? trim($to[0]) : '';
-    $to_day = isset($to[1]) ? trim($to[1]) : '';
-    $to_year = isset($to[2]) ? trim($to[2]) : '';
-    
-    
-    //if from or to, validate, and if validated, set it accordingly
-	if (($from_month != '' && $from_day != '' && $from_year != '') and (checkdate((int)$from_month, (int)$from_day, (int)$from_year) == false)) {
-		$error['date'] = '<div class="error">Wrong date format, you must use the following military time format:   <strong>mm/dd/yyyy - hh:mms</strong></div>';     
-	} else if ($from_month != '' && $from_day != '' && $from_year != '') {
-		$clean['user_pref_time_from'] = mktime(0,00,0,(int)$from_month,(int)$from_day,(int)$from_year);
-	}                                                                                                                    
-	
-	if (($to_month != '' && $to_day != '' && $to_year != '') and (checkdate((int)$to_month, (int)$to_day, (int)$to_year) == false)) {
-		$error['date'] = '<div class="error">Wrong date format, you must use the following military time format:   <strong>mm/dd/yyyy - hh:mm</strong></div>';      
-	} else if ($to_month != '' && $to_day != '' && $to_year != '') {
-		$clean['user_pref_time_to'] = mktime(23,59,59,(int)$to_month,(int)$to_day,(int)$to_year);  
-    }     
+	// Either shape a report form submits: the classic calendar's mm/dd/yyyy
+	// (and the mm/dd/yy its presets fill in) or the v2 range picker's
+	// YYYY-MM-DD. One reader for both, in functions-report-prefs.php, so the
+	// two kinds of page cannot disagree about what a date says. A value that
+	// is present and does not parse is refused with the sentence below; the
+	// old reader silently dropped one that was missing a part.
+	foreach (['from' => [0, 0, 0], 'to' => [23, 59, 59]] as $which => [$hour, $minute, $second]) {
+		$raw = isset($_POST[$which]) ? trim((string) $_POST[$which]) : '';
+		if ($raw === '') {
+			continue;
+		}
+		$day = p202_report_parse_date($raw);
+		if ($day === null) {
+			$error['date'] = '<div class="error">Wrong date format, you must use the following format:   <strong>mm/dd/yyyy</strong> or <strong>yyyy-mm-dd</strong></div>';
+			continue;
+		}
+		$clean['user_pref_time_' . $which] = mktime($hour, $minute, $second, $day['month'], $day['day'], $day['year']);
+	}
 }
 
 echo ($error['date'] ?? '') . ($error['user_pref_time_predefined'] ?? '') .  ($error['user_pref_limit'] ?? '') . ($error['user_pref_show'] ?? '');    

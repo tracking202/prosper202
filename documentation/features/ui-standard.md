@@ -283,3 +283,33 @@ page that builds its own head, with `p202_asset_tag('<id>', $base)`.
 5. Account pages and login.
 6. The classic shell, Bootstrap 3, Flat UI Pro, jQuery 1.11 and the old CSS
    layers are deleted, and the structural tests apply to the whole tree.
+
+<!-- U2: Overview, Visitors, Spy -->
+## Classic reports on v2: the URL applied to the stored filters
+
+The classic reports' fragments, downloads and data engine read their filters
+from `202_users_pref`, not from the request. A report page moved to v2 keeps
+them there rather than rewriting every reader: its filter bar is one GET form,
+and the page applies the query string to that row as it loads
+(`p202_overview_page_state()` in `202-config/functions-ui-overview.php`, over
+`202-config/functions-report-prefs.php`), then draws its fragment into the
+report panel (`202-js/p202-overview.js`). So the URL wins (rule 8), the stored
+row is the first-visit default, and a download agrees with the page. Two rules
+hold it together: a request writes only the columns it names, and a value that
+does not parse is refused under its field with nothing written — the report is
+not drawn under filters it does not match. Dates are read by one function,
+`p202_report_parse_date()`, which `set_user_prefs.php` uses too, so the classic
+calendar's `mm/dd/yyyy` and the picker's `YYYY-MM-DD` mean the same day.
+Overview, Visitors and Spy are built this way; the fragments they load are
+listed in `NoLegacyBootstrapClassesTest::V2_SHARED`.
+
+The stored row is one per user, and a second tab writes it. So the row is only
+the default: every request a page makes after it renders — the fragment, a
+page link, a Spy poll, a download — carries the page's view in a `view`
+parameter (`p202_report_view_query()` / `p202_report_view_url()`), and that
+request installs it with `p202_report_view_begin()`. Every reader of the row
+passes it through `Prosper202\DataEngine\ReportView::apply()`, which lays
+the view over it in memory for that request; nothing is written. A request
+with no view reads the stored row, as before; one whose view does not read
+answers 400 with the reason. `tests/Report/ReportViewReadersTest` holds every
+reader and every handed-off URL to this.
