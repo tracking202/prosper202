@@ -36,6 +36,13 @@ if (!function_exists('p202ApplyConversionClickSide')) {
         $conn = new \Prosper202\Database\Connection($db);
 
         $ok = true;
+        if ($setCost) {
+            // The report rollup sums click_cpc by the click's hour; mark it in
+            // this same transaction (AttributionRollup rule 2). A failure
+            // here is the caller's to roll back, not a best-effort skip: an
+            // unmarked cost change would be read from a stale hour for good.
+            \Prosper202\Report\RollupDirty::clickCost($conn, $clickId);
+        }
         foreach (['202_clicks', '202_clicks_spy'] as $table) {
             $sql = $table === '202_clicks'
                 ? ($setCost

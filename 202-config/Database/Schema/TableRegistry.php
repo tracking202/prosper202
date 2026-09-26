@@ -93,6 +93,11 @@ final class TableRegistry
     public const string ATTRIBUTION_CREDITS = '202_attribution_credits';
     public const string ATTRIBUTION_AUDIT = '202_attribution_audit';
     public const string ATTRIBUTION_EXPORTS = '202_attribution_exports';
+    public const string ATTRIBUTION_ROLLUP = '202_attribution_rollup';
+    public const string ATTRIBUTION_ROLLUP_STATE = '202_attribution_rollup_state';
+    public const string ATTRIBUTION_ROLLUP_OVERRIDES = '202_attribution_rollup_overrides';
+    public const string ATTRIBUTION_ROLLUP_DIRTY = '202_attribution_rollup_dirty';
+    public const string ATTRIBUTION_ROLLUP_DIRTY_CLICKS = '202_attribution_rollup_dirty_clicks';
     public const string CONVERSION_LOGS = '202_conversion_logs';
 
     // Conversion ledger (ConversionTables)

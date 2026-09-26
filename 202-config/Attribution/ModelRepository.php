@@ -240,10 +240,22 @@ final class ModelRepository
         $this->conn->executeUpdate($stmt);
     }
 
+    /**
+     * The model's credits, and its rows in the report rollup with them: a
+     * model with no credits sums to nothing in every hour, so the rollup is
+     * exact without them rather than dirty. Recomputing the model later
+     * rewrites its credits through the worker, which marks each hour.
+     */
     private function deleteCredits(int $modelId): void
     {
         $stmt = $this->conn->prepareWrite('DELETE FROM 202_attribution_credits WHERE model_id = ?');
         $this->conn->bind($stmt, 'i', [$modelId]);
+        $this->conn->executeUpdate($stmt);
+        $stmt = $this->conn->prepareWrite(
+            'DELETE r FROM 202_attribution_rollup r JOIN 202_attribution_models m ON m.model_id = r.model_id AND m.user_id = r.user_id
+             WHERE r.model_id = ? AND r.part IN (?, ?)'
+        );
+        $this->conn->bind($stmt, 'iii', [$modelId, AttributionRollup::PART_CREDITS, AttributionRollup::PART_TOTALS]);
         $this->conn->executeUpdate($stmt);
     }
 }

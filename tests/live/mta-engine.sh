@@ -21,6 +21,9 @@
 #     conversion) re-attributes the conversion it joins;
 #   - the minutely cron (202-cronjobs/index.php) drains the outbox too;
 #   - bad input is refused by name, and the default model cannot be deleted.
+#   - the report rollup (PR 13): the pass's rows aged into summed hours read
+#     the same bytes before and after the worker sums them, and a
+#     conversion deleted afterwards leaves the summed report, not a stale one.
 #
 # Truncates the identity and attribution tables and seeds its own campaigns
 # and trackers (ids 950001-950301), so it needs a scratch database. Run from
@@ -82,6 +85,10 @@ DELETE FROM 202_last_ips WHERE ip_id IN (SELECT ip_id FROM 202_ips WHERE ip_addr
 TRUNCATE 202_attribution_credits; TRUNCATE 202_attribution_journeys; TRUNCATE 202_attribution_journey_meta;
 TRUNCATE 202_identity_visitors; TRUNCATE 202_identity_signals; TRUNCATE 202_identity_observations;
 TRUNCATE 202_identity_merges; TRUNCATE 202_clicks_visitor;
+-- The deletes above bypass the writers' rollup marks, so the report
+-- rollup is reset with them: the worker sums it again from what is left.
+TRUNCATE 202_attribution_rollup; TRUNCATE 202_attribution_rollup_state; TRUNCATE 202_attribution_rollup_overrides;
+TRUNCATE 202_attribution_rollup_dirty; TRUNCATE 202_attribution_rollup_dirty_clicks;
 SQL
 }
 # The isolation step drops a table; whatever happens, put it back.
@@ -266,6 +273,64 @@ say "journey metrics"
 api "$BASE/api/v3/attribution/reports/journeys" > "$OUT/jm.json"
 eq "$(js 'd["data"]["conversions"]' < "$OUT/jm.json")" "$(Q "SELECT COUNT(*) FROM 202_attribution_journey_meta WHERE user_id=$USER_ID")" "every attributed conversion is counted"
 [ "$(js 'd["data"]["one_touch_by_browser"][0]["browser"]' < "$OUT/jm.json")" != "" ] && ok "with the one-touch share by browser" || bad "no browser breakdown"
+
+say "the report rollup: summed hours read the same as the full computation (PR 13)"
+# Everything above happened in the last minutes, and the rollup only sums an
+# hour two hours after it ended. So the pass ages its own rows three days (an
+# unmarked write, which is why the rollup is reset with it), reads the
+# breakdowns before the rollup has summed them — the full computation — and
+# again after the worker has, and the two answers must be the same bytes.
+AGE=259200
+mysql_q "$DB" <<SQL
+UPDATE 202_clicks SET click_time = click_time - $AGE WHERE aff_campaign_id IN ($CAMPS);
+UPDATE 202_clicks_spy SET click_time = click_time - $AGE WHERE aff_campaign_id IN ($CAMPS);
+UPDATE 202_attribution_credits cr JOIN 202_conversion_logs cl ON cl.conv_id = cr.conv_id SET cr.conv_time = cr.conv_time - $AGE WHERE cl.campaign_id IN ($CAMPS);
+UPDATE 202_attribution_journey_meta jm JOIN 202_conversion_logs cl ON cl.conv_id = jm.conv_id SET jm.conv_time = jm.conv_time - $AGE WHERE cl.campaign_id IN ($CAMPS);
+UPDATE 202_attribution_journeys j JOIN 202_conversion_logs cl ON cl.conv_id = j.conv_id SET j.click_time = j.click_time - $AGE WHERE cl.campaign_id IN ($CAMPS);
+UPDATE 202_conversion_logs SET conv_time = conv_time - $AGE, click_time = click_time - $AGE WHERE campaign_id IN ($CAMPS);
+TRUNCATE 202_attribution_rollup; TRUNCATE 202_attribution_rollup_state; TRUNCATE 202_attribution_rollup_overrides;
+TRUNCATE 202_attribution_rollup_dirty; TRUNCATE 202_attribution_rollup_dirty_clicks;
+SQL
+# Mid-hour edges, so the edges are computed exactly around summed hours.
+RFROM=$((NOW - AGE - 2 * 86400 + 1234)); RTO=$((NOW - AGE + 86400 - 777))
+rb() { # $1 label, rest = query; the whole response
+  api "$BASE/api/v3/attribution/reports/breakdown?time_from=$RFROM&time_to=$RTO&limit=1000&$2" > "$OUT/rollup-$1.json"
+}
+VIEWS="campaign:group_by=campaign keyword:group_by=keyword country:group_by=country day:group_by=day linear:group_by=campaign&model_id=$LINEAR compare:group_by=traffic_source&model_id=$LINEAR&compare_model_id=$DEFAULT"
+for v in $VIEWS; do rb "full-${v%%:*}" "${v#*:}"; done
+eq "$(js 'd["totals"]["attributed_revenue"]' < "$OUT/rollup-full-campaign.json")" "$(Q "SELECT SUM(cr.revenue) FROM 202_attribution_credits cr WHERE cr.model_id=$DEFAULT AND cr.conv_time BETWEEN $RFROM AND $RTO")" "before the rollup: the report is the credits in the range"
+eq "$(worker)" 0 "the worker runs, and sums the sealed hours"
+grep -q 'rollup: [1-9][0-9]* hour(s) summed' "$OUT/worker.out" && ok "and says so: $(grep -o 'rollup: [^;]*' "$OUT/worker.out" | head -1)" || bad "worker output: $(cat "$OUT/worker.out")"
+HOUR_LO=$(( (RFROM + 3599) / 3600 )); HOUR_HI=$(( (RTO + 1) / 3600 - 1 ))
+[ "$(Q "SELECT COUNT(*) FROM 202_attribution_rollup WHERE user_id=$USER_ID AND grain=0 AND bucket BETWEEN $HOUR_LO AND $HOUR_HI")" -gt 0 ] && ok "the aged hours are in the rollup" || bad "no rollup rows for the aged hours"
+eq "$(Q "SELECT COUNT(*) FROM 202_attribution_rollup_dirty WHERE user_id=$USER_ID AND hour_from <= $HOUR_HI AND hour_to >= $HOUR_LO")" 0 "and none of them is dirty"
+for v in $VIEWS; do
+  rb "rolled-${v%%:*}" "${v#*:}"
+  if cmp -s "$OUT/rollup-full-${v%%:*}.json" "$OUT/rollup-rolled-${v%%:*}.json"; then ok "${v%%:*}: the same bytes from the rollup"; else bad "${v%%:*}: the rollup answered differently: $(diff <(python3 -m json.tool "$OUT/rollup-full-${v%%:*}.json") <(python3 -m json.tool "$OUT/rollup-rolled-${v%%:*}.json") | head -5)"; fi
+done
+# "The same bytes" is also what a report that silently fell back to the full
+# computation would answer. So the rollup's own rows are spoiled on purpose:
+# the answer must move (the rows are what was read), a dirty mark must send
+# those hours back to the exact answer, and the worker's re-sum must keep it.
+Q "UPDATE 202_attribution_rollup SET revenue = revenue + 1000 WHERE user_id=$USER_ID AND part=1 AND dim=1 AND model_id=0"
+rb spoiled "group_by=campaign"
+if cmp -s "$OUT/rollup-full-campaign.json" "$OUT/rollup-spoiled.json"; then bad "a spoiled rollup row did not move the report: it was not read"; else ok "a spoiled rollup row moves the report: the rows are what was read"; fi
+Q "INSERT INTO 202_attribution_rollup_dirty (user_id, hour_from, hour_to) VALUES ($USER_ID, $HOUR_LO, $HOUR_HI)"
+rb spoiled-dirty "group_by=campaign"
+cmp -s "$OUT/rollup-full-campaign.json" "$OUT/rollup-spoiled-dirty.json" && ok "marked dirty, those hours are computed exactly again" || bad "a dirty hour was read from the rollup"
+worker >/dev/null
+rb resummed "group_by=campaign"
+cmp -s "$OUT/rollup-full-campaign.json" "$OUT/rollup-resummed.json" && ok "and the worker's re-sum puts the rows right" || bad "the re-summed rollup answered differently"
+# A change through the API after the hours were summed: the rollup must not
+# answer from the stale hour. The $7 conversion on campaign two goes.
+BEFORE2=$(js "next((r['attributed_revenue'] for r in d['data'] if r['key']=='$CAMP2'), '0')" < "$OUT/rollup-rolled-campaign.json")
+eq "$(api -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/v3/conversions/$CONV_I")" 204 "a summed conversion is deleted over the API"
+worker >/dev/null
+eq "$(Q "SELECT COUNT(*) FROM 202_attribution_rollup_dirty WHERE user_id=$USER_ID AND hour_from <= $HOUR_HI AND hour_to >= $HOUR_LO")" 0 "the worker re-summed the hour it made dirty"
+rb after-delete "group_by=campaign"
+AFTER2=$(js "next((r['attributed_revenue'] for r in d['data'] if r['key']=='$CAMP2'), '0')" < "$OUT/rollup-after-delete.json")
+eq "$(python3 -c "from decimal import Decimal as D; print(D('$BEFORE2') - D('$AFTER2'))")" 7.00000 "campaign two's attributed revenue drops by the \$7, from the rollup"
+eq "$(js 'd["totals"]["attributed_revenue"]' < "$OUT/rollup-after-delete.json")" "$(Q "SELECT SUM(cr.revenue) FROM 202_attribution_credits cr WHERE cr.model_id=$DEFAULT AND cr.conv_time BETWEEN $RFROM AND $RTO")" "and the totals are the credits left"
 
 if [ -n "${P202_SERVER_LOG:-}" ] && [ -f "$P202_SERVER_LOG" ]; then
   if grep -E 'PHP (Warning|Notice|Fatal|Deprecated)' "$P202_SERVER_LOG" | grep -v 'mta-pass-ignore' > "$OUT/warn"; then

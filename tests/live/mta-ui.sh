@@ -126,6 +126,10 @@ DELETE FROM 202_trackers WHERE tracker_id_public IN ($T1, $T2, $T3, $T4);
 DELETE FROM 202_aff_campaigns WHERE aff_campaign_id IN ($CAMPS);
 DELETE FROM 202_attribution_exports WHERE user_id = $USER_ID;
 DELETE FROM 202_last_ips WHERE ip_id IN (SELECT ip_id FROM 202_ips WHERE ip_address LIKE '198.51.100.%');
+-- The deletes above bypass the writers' rollup marks, so the report
+-- rollup is reset with them: the worker sums it again from what is left.
+TRUNCATE 202_attribution_rollup; TRUNCATE 202_attribution_rollup_state; TRUNCATE 202_attribution_rollup_overrides;
+TRUNCATE 202_attribution_rollup_dirty; TRUNCATE 202_attribution_rollup_dirty_clicks;
 SQL
   # Models this pass made; the default goes back to the one it found.
   [ -n "${ORIG_DEFAULT:-}" ] && Q "UPDATE 202_attribution_models SET is_default = NULL WHERE user_id=$USER_ID; UPDATE 202_attribution_models SET is_default = 1, status='active' WHERE model_id=$ORIG_DEFAULT"

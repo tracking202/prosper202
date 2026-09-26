@@ -66,6 +66,13 @@ final class UserDataPurge
         'DELETE FROM 202_attribution_exports WHERE user_id = ?',
         'DELETE FROM 202_attribution_models WHERE user_id = ?',
         'DELETE FROM 202_attribution_audit WHERE user_id = ?',
+        // The report rollup (PR 13): sums of the rows above, and the marks
+        // and overrides it keeps beside them.
+        'DELETE FROM 202_attribution_rollup WHERE user_id = ?',
+        'DELETE FROM 202_attribution_rollup_dirty WHERE user_id = ?',
+        'DELETE FROM 202_attribution_rollup_dirty_clicks WHERE user_id = ?',
+        'DELETE FROM 202_attribution_rollup_overrides WHERE user_id = ?',
+        'DELETE FROM 202_attribution_rollup_state WHERE user_id = ?',
     ];
 
     /** The identity graph's per-user rows; observations first, while the clicks still name the user. */

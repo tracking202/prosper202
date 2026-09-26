@@ -10,6 +10,7 @@ final class WorkerReport
     public int $mergesRequeued = 0;
     public int $modelsFannedOut = 0;
     public int $remaining = 0;
+    public ?RollupReport $rollup = null;
     /** @var array<string, int> outcome => count */
     public array $outcomes = [];
 
@@ -32,12 +33,13 @@ final class WorkerReport
         }
 
         return sprintf(
-            'processed %d (%s); merges re-queued %d; model changes fanned out %d; still due %d',
+            'processed %d (%s); merges re-queued %d; model changes fanned out %d; still due %d%s',
             $this->processed(),
             $parts === [] ? 'none' : implode(', ', $parts),
             $this->mergesRequeued,
             $this->modelsFannedOut,
-            $this->remaining
+            $this->remaining,
+            $this->rollup !== null ? '; ' . $this->rollup->summary() : ''
         );
     }
 }

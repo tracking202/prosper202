@@ -31,6 +31,11 @@ final class AttributionTables
             self::attributionCredits(),
             self::attributionAudit(),
             self::attributionExports(),
+            self::attributionRollup(),
+            self::attributionRollupState(),
+            self::attributionRollupOverrides(),
+            self::attributionRollupDirty(),
+            self::attributionRollupDirtyClicks(),
         ];
     }
 
@@ -202,6 +207,132 @@ final class AttributionTables
                 PRIMARY KEY (`export_id`),
                 KEY `user_status` (`user_id`,`status`),
                 KEY `status_queued` (`status`,`queued_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * The report rollup (plan §7.3, PR 13): what AttributionReports sums,
+     * pre-summed per account, part, dimension, model and time bucket, so a
+     * breakdown reads thousands of rows instead of joining millions.
+     *
+     * - part: 1 credits (Σ credit, Σ revenue, by conv_time), 2 cost (clicks,
+     *   Σ click_cpc, by click_time), 3 assists (distinct conversions, by
+     *   conv_time), 4 totals (distinct conversions, Σ credit, Σ revenue);
+     * - dim: AttributionRollup::DIMENSION_CODES; 0 for totals;
+     * - model_id: the model the credits are under, 0 for "each
+     *   conversion's effective model" and for the parts no model shapes;
+     * - grain 0 is an hour (bucket = unix time DIV 3600), grain 1 a UTC day
+     *   (bucket = DIV 86400) summed from its 24 hours;
+     * - key_null/dim_key: the dimension value, with a NULL value (no
+     *   clicks_advance row, say) kept apart from a real 0 so the report can
+     *   still tell whether a group had a name to look up.
+     *
+     * Names are not stored: a campaign renamed after its hour was summed
+     * would otherwise keep its old name. The rows are only ever read for
+     * hours AttributionRollup says are built and clean.
+     */
+    public static function attributionRollup(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::ATTRIBUTION_ROLLUP,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ATTRIBUTION_ROLLUP . "` (
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `part` tinyint(3) unsigned NOT NULL,
+                `dim` tinyint(3) unsigned NOT NULL,
+                `model_id` bigint(20) unsigned NOT NULL,
+                `grain` tinyint(3) unsigned NOT NULL,
+                `bucket` int(10) unsigned NOT NULL,
+                `key_null` tinyint(1) unsigned NOT NULL,
+                `dim_key` bigint(20) unsigned NOT NULL,
+                `n` bigint(20) unsigned NOT NULL,
+                `credit` decimal(30,8) NOT NULL,
+                `revenue` decimal(30,5) NOT NULL,
+                `cost` decimal(30,5) NOT NULL,
+                PRIMARY KEY (`user_id`,`part`,`dim`,`model_id`,`grain`,`bucket`,`key_null`,`dim_key`),
+                KEY `user_bucket` (`user_id`,`grain`,`bucket`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * One row per account the rollup covers: every hour below
+     * built_through_hour has been summed (an hour with no data has no
+     * rows), and default_model_id is the default the effective rows were
+     * summed under.
+     */
+    public static function attributionRollupState(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::ATTRIBUTION_ROLLUP_STATE,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ATTRIBUTION_ROLLUP_STATE . "` (
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `built_through_hour` int(10) unsigned NOT NULL DEFAULT '0',
+                `default_model_id` bigint(20) unsigned DEFAULT NULL,
+                `updated_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * The per-campaign model overrides the effective rows were summed under:
+     * every campaign whose attribution_model_id names an active model of the
+     * account. A report compares this with the live overrides and reads the
+     * effective rows only when the two sets are equal.
+     */
+    public static function attributionRollupOverrides(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::ATTRIBUTION_ROLLUP_OVERRIDES,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ATTRIBUTION_ROLLUP_OVERRIDES . "` (
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `campaign_id` int(10) unsigned NOT NULL,
+                `model_id` bigint(20) unsigned NOT NULL,
+                PRIMARY KEY (`user_id`,`campaign_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * Hours whose sums are stale: a range of hours an account's data
+     * changed in, written in the same transaction as the change (the
+     * worker's credit rewrites, a CPC update, the rollup's own resolution
+     * of a changed click). A report computes a dirty hour exactly; the
+     * rollup re-sums it and deletes the row.
+     */
+    public static function attributionRollupDirty(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::ATTRIBUTION_ROLLUP_DIRTY,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ATTRIBUTION_ROLLUP_DIRTY . "` (
+                `dirty_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `hour_from` int(10) unsigned NOT NULL,
+                `hour_to` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`dirty_id`),
+                KEY `user_hour` (`user_id`,`hour_from`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * Clicks changed after the fact (a rotator re-click rewriting its click,
+     * a CPC set on one click). A click's change reaches the hours of every
+     * conversion whose journey holds it, which the writer does not look up:
+     * the rollup resolves the click into dirty hours, and until it has, the
+     * account's reports are computed exactly.
+     */
+    public static function attributionRollupDirtyClicks(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::ATTRIBUTION_ROLLUP_DIRTY_CLICKS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ATTRIBUTION_ROLLUP_DIRTY_CLICKS . "` (
+                `dirty_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `click_id` bigint(20) unsigned NOT NULL,
+                PRIMARY KEY (`dirty_id`),
+                KEY `user_id` (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

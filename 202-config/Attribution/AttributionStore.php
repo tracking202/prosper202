@@ -6,6 +6,7 @@ namespace Prosper202\Attribution;
 
 use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Database\Connection;
+use Prosper202\Report\RollupDirty;
 
 /**
  * The worker's writes: a conversion's journey, its build metadata and its
@@ -13,6 +14,10 @@ use Prosper202\Database\Connection;
  * transaction, and each one rewrites (delete, then insert) rather than
  * appends, so processing a conversion twice leaves exactly what processing
  * it once does.
+ *
+ * Every write first marks the report rollup's hours it changes — the hour
+ * the conversion's stored rows sit in and the hour of the ones replacing
+ * them — in the same transaction (RollupDirty; AttributionRollup rule 2).
  */
 final class AttributionStore
 {
@@ -22,6 +27,7 @@ final class AttributionStore
 
     public function saveJourney(int $convId, int $userId, int $convTime, Journey $journey): void
     {
+        RollupDirty::conversion($this->conn, $convId, $userId, $convTime);
         $this->deleteFrom('202_attribution_journeys', $convId);
 
         $rows = [];
@@ -87,8 +93,9 @@ final class AttributionStore
      *
      * @param array<int, list<Credit>> $creditsByModel model_id => credits
      */
-    public function saveCredits(int $convId, int $convTime, array $creditsByModel): void
+    public function saveCredits(int $convId, int $userId, int $convTime, array $creditsByModel): void
     {
+        RollupDirty::conversion($this->conn, $convId, $userId, $convTime);
         $this->deleteFrom('202_attribution_credits', $convId);
 
         $rows = [];
@@ -113,6 +120,7 @@ final class AttributionStore
     /** Remove everything the engine holds for a conversion that no longer counts. */
     public function clear(int $convId): void
     {
+        RollupDirty::conversion($this->conn, $convId);
         foreach (['202_attribution_credits', '202_attribution_journeys', '202_attribution_journey_meta'] as $table) {
             $this->deleteFrom($table, $convId);
         }
