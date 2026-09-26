@@ -3,15 +3,21 @@
 use Tracking202\Data\StaticFilterOptionsProvider;
 use UAParser\Parser;
 
+require_once __DIR__ . '/mysql-error-args.php';
+
 // This function will return true, if a user is logged in correctly, and false, if they are not.
 function record_mysql_error($dbOrSql, $sql = null): never
 {
-    if ($sql === null) {
-        $sql = (string) $dbOrSql;
+    // ($db), ($sql) and ($db, $sql) are all in use; see p202MysqlErrorArgs().
+    [$db, $sql] = p202MysqlErrorArgs($dbOrSql, $sql);
+    if (!$db instanceof \mysqli) {
         $database = DB::getInstance();
         $db = $database->getConnection();
-    } else {
-        $db = $dbOrSql;
+    }
+    if (!$db instanceof \mysqli) {
+        error_log('Database connection unavailable - SQL: ' . $sql);
+        echo 'Database error. The webmaster has been notified.';
+        die();
     }
 
     global $server_row;

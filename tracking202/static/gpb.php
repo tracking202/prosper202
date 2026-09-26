@@ -172,6 +172,11 @@ try {
 			'source'          => \Prosper202\Conversion\Ledger\ConversionSource::POSTBACK->value,
 			'reversal'        => $reversal['reversal'],
 			'reversal_ref'    => $reversal['reversal_ref'],
+			// Without a transaction id a retried postback cannot be told apart
+			// from a repeat, so it converts the click once; the writer checks
+			// click_lead under the click lock (as gpx.php does). A reversal
+			// always names its sale's transaction id.
+			'once_per_click'  => p202ExtractTransactionId($_GET) === '',
 		],
 		(string) ($cvar_sql_row['click_cpa'] ?? ''),
 		$mysql['use_pixel_payout'] == 1,
