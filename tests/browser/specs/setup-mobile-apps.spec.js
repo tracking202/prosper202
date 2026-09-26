@@ -40,6 +40,7 @@ module.exports = {
     db.truncate([
       '202_app_registrations',
       '202_app_skan_encodings',
+      '202_app_skan_encoding_history',
       '202_app_postbacks',
       '202_goals',
       '202_goal_versions',

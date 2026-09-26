@@ -17,7 +17,9 @@ final readonly class Auth
         /** @var string[] lower-cased role names */
         private array $roles,
         /** @var string[] lower-cased api key scopes */
-        private array $scopes = ['*']
+        private array $scopes = ['*'],
+        /** The key's ledger reference (SourceRef::apiKey()): a digest, never the key. */
+        private string $apiKeyRef = ''
     )
     {
     }
@@ -69,10 +71,10 @@ final readonly class Auth
 
         $scopes = self::parseScopes((string)($row['scope'] ?? ''));
 
-        return self::loadRoles((int)$row['user_id'], $db, $scopes);
+        return self::loadRoles((int)$row['user_id'], $db, $scopes, \Prosper202\Conversion\Ledger\SourceRef::apiKey($apiKey));
     }
 
-    private static function loadRoles(int $userId, \mysqli $db, array $scopes = ['*']): self
+    private static function loadRoles(int $userId, \mysqli $db, array $scopes = ['*'], string $apiKeyRef = ''): self
     {
         $roles = [];
         $stmt = $db->prepare(
@@ -101,12 +103,22 @@ final readonly class Auth
         }
         $stmt->close();
 
-        return new self($userId, $roles, $scopes);
+        return new self($userId, $roles, $scopes, $apiKeyRef);
     }
 
     public function userId(): int
     {
         return $this->userId;
+    }
+
+    /**
+     * What a conversion written with this key records as its source_ref
+     * (SourceRef::apiKey()): a truncated digest of the key, so the
+     * breakdown can name the key without anyone reading it back.
+     */
+    public function apiKeyRef(): string
+    {
+        return $this->apiKeyRef;
     }
 
     /** @return string[] */
@@ -312,6 +324,48 @@ final readonly class Auth
     {
         if (!$this->isAdmin()) {
             throw new AuthException('Admin access required.', 403);
+        }
+    }
+
+    /**
+     * Require one of the legacy role permissions (202_permissions) — the
+     * same check the session pages make through User::hasPermission, so an
+     * operation is gated identically on every surface (error pattern #5).
+     * The attribution routes use view_attribution_reports for reads and
+     * manage_attribution_models for writes.
+     *
+     * A failed lookup is not "no permission" (error pattern #11): it is a
+     * 500, never a 403 that reads as the user's fault, and never a pass.
+     */
+    public function requirePermission(\mysqli $db, string $permission): void
+    {
+        $stmt = $db->prepare(
+            'SELECT 1 FROM 202_user_role ur
+             JOIN 202_role_permission rp ON rp.role_id = ur.role_id
+             JOIN 202_permissions p ON p.permission_id = rp.permission_id
+             WHERE ur.user_id = ? AND p.permission_description = ? LIMIT 1'
+        );
+        if (!$stmt) {
+            throw new AuthException('Authorization unavailable', 500);
+        }
+        self::bind($stmt, 'is', $this->userId, $permission);
+        if (!self::execute($stmt)) {
+            $stmt->close();
+            throw new AuthException('Authorization unavailable', 500);
+        }
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            throw new AuthException('Authorization unavailable', 500);
+        }
+        $granted = $result->fetch_row() !== null;
+        $stmt->close();
+
+        if (!$granted) {
+            throw new AuthException(
+                "This account's role does not have the '" . $permission . "' permission.",
+                403
+            );
         }
     }
 

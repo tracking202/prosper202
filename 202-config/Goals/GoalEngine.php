@@ -12,6 +12,8 @@ use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\Ledger\SupersededReason;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
+use Prosper202\Notifications\NotificationOutbox;
+use Prosper202\Notifications\OutcomeNotificationSink;
 use Throwable;
 
 /**
@@ -60,6 +62,31 @@ use Throwable;
  *   value is stored on the row but not credited (payable 0), and an
  *   unreadable one is tracked with its note;
  * - an ineligible outcome (no_click / no_install) is never payable.
+ *
+ * The built-in install goal (202_goals.builtin = 'install', one per Android
+ * registration) is the one exception to the ledger key and the terms: its
+ * row IS the intake's install conversion (plan §5.2 step 5) — key
+ * `install`, source app_install, pixel_type 4 — so the engine never writes a
+ * second `goal:` row for the install, and UNIQUE (click_id, dedupe_key)
+ * makes one install conversion per click a database fact. It pays when the
+ * campaign lists no goals at all (the default: a campaign that has
+ * configured no payable goals pays on install) or lists the install goal,
+ * at the listed payout or else the campaign's default payout
+ * (installPayability()).
+ *
+ * Payable outcomes with "notify traffic source" on queue their traffic
+ * source's server-to-server postbacks in the notification outbox, in the
+ * same transaction as the ledger row (NotificationOutbox) — web clicks
+ * (PR 4b) and app installs (PR 5) alike; the worker sends them with
+ * retries. A retired or replaced row tells the outbox, which cancels what
+ * has not gone out and records what cannot be recalled. A traffic source's
+ * knowledge is per (subject, goal, n) (plan §5.7): a revived row tells the
+ * outbox (onRevived()), which never announces it twice, and a new row for
+ * an n some earlier row was announced for — retired rows and every version
+ * included — or for an event a replay moved to another n is a correction,
+ * not a fresh `reached` (onAnnouncedBefore(), execute()). The notifier
+ * handed to the constructor is told after the commit, for what only the
+ * request can do: render browser pixels into its response, and report.
  */
 final class GoalEngine
 {
@@ -78,6 +105,9 @@ final class GoalEngine
 
     private MysqlGoalRepository $goals;
     private MysqlConversionRepository $conversions;
+    private OutcomeNotificationSink $outbox;
+    /** @var array<int, array{name: string, builtin: string|null}> goal id => what writeOutcome needs; goals never change either */
+    private array $goalMeta = [];
 
     public function __construct(
         private Connection $conn,
@@ -87,9 +117,11 @@ final class GoalEngine
         private $clock = null,
         /** Told about written outcomes after each commit (plan §5.5 "notify traffic source"). */
         private ?OutcomeNotifier $notifier = null,
+        ?OutcomeNotificationSink $outbox = null,
     ) {
         $this->goals = $goals ?? new MysqlGoalRepository($conn);
         $this->conversions = $conversions ?? new MysqlConversionRepository($conn);
+        $this->outbox = $outbox ?? new NotificationOutbox($conn, $clock);
     }
 
     private function now(): int
@@ -124,19 +156,169 @@ final class GoalEngine
     }
 
     /**
+     * The install subject for an Android install of this user (plan §2.2):
+     * its time is the `install` anchor — Google's server install-begin time,
+     * or its receipt when Play gave none — and it has a click (the `click`
+     * anchor, where its ledger rows go, whose campaign's payouts apply) only
+     * when the install is attributed AND trusted. Any other install is
+     * evaluated for the funnel with no click, so it can reach goals but
+     * never pay or notify.
+     */
+    public function installSubject(int $userId, int $installRowId): GoalSubject
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT i.install_row_id, i.registration_id, i.match_state, i.trusted, i.click_id, i.install_begin_server_at, i.received_at,
+                    c.click_time, c.aff_campaign_id
+             FROM 202_app_installs i
+             LEFT JOIN 202_clicks c ON c.click_id = i.click_id AND c.user_id = i.user_id
+             WHERE i.install_row_id = ? AND i.user_id = ? LIMIT 1'
+        );
+        $this->conn->bind($stmt, 'ii', [$installRowId, $userId]);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            throw new GoalEngineException('Install ' . $installRowId . ' not found', GoalEngineException::NOT_FOUND);
+        }
+
+        return self::installSubjectFrom($installRowId, $row);
+    }
+
+    /**
+     * The subject as it is NOW, for a write that is about to take its lock.
+     *
+     * A caller builds its subject before the transaction (InstallEventsIntake
+     * with installSubject(), reevaluate() one per subject id), and what an
+     * install subject carries — its click and campaign — is its credit,
+     * which a live policy change (accept_test_signals, rejudged by
+     * InstallIntake under the install row's lock) can flip in between. A
+     * subject read before the lock would then write an outcome with no
+     * ledger row for an install that is now credited (a conversion lost for
+     * good: the recredit already ran), or a paid row for one that no longer
+     * is. So an install subject is read again here: its install row locked
+     * FOR UPDATE first — the lock order every install path takes (install
+     * row, then the subject's lock row, then the click inside the ledger
+     * writer) — and a locking read returns the latest committed row, never
+     * a snapshot older than the lock. A rejudge that has not committed is
+     * waited for; one that has is seen. A click subject's click and
+     * campaign never change, so it is returned as given.
+     */
+    private function current(int $userId, GoalSubject $subject): GoalSubject
+    {
+        if ($subject->type !== GoalSubject::INSTALL) {
+            return $subject;
+        }
+        $stmt = $this->conn->prepareWrite(
+            'SELECT install_row_id, registration_id, match_state, trusted, click_id, install_begin_server_at, received_at
+             FROM 202_app_installs WHERE install_row_id = ? AND user_id = ? LIMIT 1 FOR UPDATE'
+        );
+        $this->conn->bind($stmt, 'ii', [$subject->id, $userId]);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            throw new GoalEngineException('Install ' . $subject->id . ' not found', GoalEngineException::NOT_FOUND);
+        }
+        $row['click_time'] = null;
+        $row['aff_campaign_id'] = null;
+        if ($row['click_id'] !== null) {
+            // A click's time and campaign are never rewritten, so a plain
+            // read of them is current; only the install's credit moves.
+            $click = $this->conn->prepareWrite('SELECT click_time, aff_campaign_id FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1');
+            $this->conn->bind($click, 'ii', [(int) $row['click_id'], $userId]);
+            $clickRow = $this->conn->fetchOne($click);
+            if ($clickRow !== null) {
+                $row['click_time'] = $clickRow['click_time'];
+                $row['aff_campaign_id'] = $clickRow['aff_campaign_id'];
+            }
+        }
+
+        return self::installSubjectFrom($subject->id, $row);
+    }
+
+    /** @param array<string, mixed> $row an install row with its click's click_time and aff_campaign_id (null without one) */
+    private static function installSubjectFrom(int $installRowId, array $row): GoalSubject
+    {
+        $credited = (string) $row['match_state'] === 'attributed' && $row['trusted'] !== null && (int) $row['trusted'] === 1;
+        if ($credited && ($row['click_id'] === null || $row['click_time'] === null)) {
+            throw new GoalEngineException('install ' . $installRowId . ' is attributed but its click is gone', GoalEngineException::INTEGRITY);
+        }
+        $installAt = $row['install_begin_server_at'] !== null ? (int) $row['install_begin_server_at'] : (int) $row['received_at'];
+
+        return new GoalSubject(
+            GoalSubject::INSTALL,
+            (int) $row['install_row_id'],
+            $credited ? (int) $row['click_time'] : null,
+            $installAt,
+            [],
+            $credited ? (int) $row['click_id'] : null,
+            $credited ? (int) $row['aff_campaign_id'] : null,
+            (int) $row['registration_id'],
+        );
+    }
+
+    /**
      * The goal set a subject evaluates. A click subject evaluates its
-     * campaign's; an install subject (PR 5) adds its registration's and the
-     * account's, which is where this grows.
+     * campaign's; an install subject its registration's and the account's,
+     * plus its click's campaign's when it has one.
      *
      * @return list<GoalSpec>
      */
     public function specsFor(int $userId, GoalSubject $subject): array
     {
+        if ($subject->type === GoalSubject::INSTALL) {
+            if ($subject->registrationId === null) {
+                throw new GoalEngineException('install subject ' . $subject->id . ' has no registration', GoalEngineException::INTEGRITY);
+            }
+
+            return $this->goals->specsForInstall($userId, $subject->registrationId, $subject->campaignId);
+        }
         if ($subject->campaignId === null) {
             return [];
         }
 
         return $this->goals->specsForCampaign($userId, $subject->campaignId);
+    }
+
+    /**
+     * Evaluate an install subject from its stored events (none, when the
+     * intake calls this) — the install itself is the first event — inside a
+     * transaction the CALLER holds: the intake and the pending-click settler
+     * write the install row, its outcomes, the install conversion and the
+     * notification outbox rows in one commit (plan §5.2 step 3). The caller
+     * hands the returned `post` to finishCommitted() after its commit.
+     *
+     * Lock order: the caller's install row, then this subject's lock row,
+     * then the click (inside the ledger writer) — the order every install
+     * path takes.
+     *
+     * @return array{post: array{ledger: list<array<string, mixed>>, clicks: array<int, true>}, install_conversion_id: int|null, outcomes_written: int}
+     */
+    public function evaluateInstallInTransaction(int $userId, GoalSubject $subject): array
+    {
+        if ($subject->type !== GoalSubject::INSTALL) {
+            throw new \InvalidArgumentException('evaluateInstallInTransaction() evaluates an install subject');
+        }
+        $now = $this->now();
+        $post = ['ledger' => [], 'clicks' => []];
+        $row = $this->lockSubject($userId, $subject, $now);
+        $subject = $subject->withRebases(self::decodeRebases($row));
+        $events = $this->loadEvents($subject);
+        $specs = $this->specsFor($userId, $subject);
+        $evaluation = GoalEvaluator::evaluateAll($specs, $subject, $events);
+        $plan = $this->plan($userId, $subject, $evaluation->outcomes, null, false);
+        $counts = $this->execute($userId, $subject, $plan, $events, SupersededReason::REPLAY, $now, $post);
+        $this->replaceProgress($userId, $subject, $evaluation->state);
+
+        $installConversion = null;
+        foreach ($specs as $spec) {
+            if ($spec->builtin !== MysqlGoalRepository::BUILTIN_INSTALL) {
+                continue;
+            }
+            foreach ($this->goals->liveOutcomes($userId, ['subject_type' => $subject->type, 'subject_id' => $subject->id, 'goal_id' => $spec->goalId], 10) as $outcome) {
+                if ($outcome['conversion_id'] !== null) {
+                    $installConversion = (int) $outcome['conversion_id'];
+                }
+            }
+        }
+
+        return ['post' => $post, 'install_conversion_id' => $installConversion, 'outcomes_written' => $counts['written']];
     }
 
     // ─── Ingest ─────────────────────────────────────────────────────
@@ -153,12 +335,18 @@ final class GoalEngine
      * shape and `kind`); `notifications` is what the notifier did with them
      * after the commit ([] without a notifier).
      *
+     * $onStored, when given, runs inside the same transaction once at least
+     * one new event has been stored, with the accepted event ids: a caller's
+     * own bookkeeping about "this subject has events" then commits with the
+     * events or not at all, never ahead of a batch the engine refuses.
+     *
      * @param list<GoalEvent> $events
+     * @param (callable(list<string>): void)|null $onStored
      * @return array{accepted: list<string>, duplicates: list<string>, replayed: bool, outcomes_written: int, outcomes_retired: int, outcomes: list<array<string, mixed>>, notifications: list<array<string, mixed>>}
      */
-    public function ingest(int $userId, GoalSubject $subject, array $events): array
+    public function ingest(int $userId, GoalSubject $subject, array $events, ?callable $onStored = null): array
     {
-        $work = fn (): array => $this->ingestLocked($userId, $subject, $events);
+        $work = fn (): array => $this->ingestLocked($userId, $subject, $events, $onStored);
         try {
             $done = $this->conn->transaction($work);
         } catch (Throwable $e) {
@@ -178,10 +366,11 @@ final class GoalEngine
      * @param list<GoalEvent> $events
      * @return array{result: array{accepted: list<string>, duplicates: list<string>, replayed: bool, outcomes_written: int, outcomes_retired: int}, post: array{ledger: list<array<string, mixed>>, clicks: array<int, true>, notices: list<array<string, mixed>>}}
      */
-    private function ingestLocked(int $userId, GoalSubject $subject, array $events): array
+    private function ingestLocked(int $userId, GoalSubject $subject, array $events, ?callable $onStored = null): array
     {
         $now = $this->now();
         $post = ['ledger' => [], 'clicks' => [], 'notices' => []];
+        $subject = $this->current($userId, $subject);
         $row = $this->lockSubject($userId, $subject, $now);
         $subject = $subject->withRebases(self::decodeRebases($row));
 
@@ -241,6 +430,9 @@ final class GoalEngine
             $this->insertEvent($userId, $subject, $event);
             $result['accepted'][] = $event->eventId;
         }
+        if ($onStored !== null) {
+            $onStored($result['accepted']);
+        }
 
         $last = self::lastEvent($row);
         $replay = $last !== null && GoalEvent::compare($new[0], $last) < 0;
@@ -292,10 +484,16 @@ final class GoalEngine
      * onto the version, so later events and replays keep evaluating the
      * goal under it.
      *
-     * Subjects are the clicks that have events, on the campaigns the goal
-     * applies to (its own campaign and those that attach it), in click id
-     * order after $after, at most $limit per call; `next_after` continues.
-     * Install subjects join with PR 5.
+     * Subjects of one type per call ($subjectType), in id order after
+     * $after, at most $limit per call; `next_after` continues:
+     * - click: the clicks that have events, on the campaigns the goal
+     *   applies to (its own campaign and those that attach it);
+     * - install: the installs the goal applies to — every install of its
+     *   registration (a registration goal), of the account (an account
+     *   goal), or whose click is on a campaign it applies to.
+     * The default is install for a registration or account goal and click
+     * for a campaign goal. The built-in install goal has one version and is
+     * never re-evaluated.
      *
      * Per subject, the goal is re-decided together with its dependents: the
      * goals of the subject's set whose `after` names it, directly or through
@@ -312,11 +510,22 @@ final class GoalEngine
      *
      * @return array<string, mixed>
      */
-    public function reevaluate(int $userId, int $goalId, ?int $version, bool $apply, int $limit = 100, int $after = 0): array
+    public function reevaluate(int $userId, int $goalId, ?int $version, bool $apply, int $limit = 100, int $after = 0, ?string $subjectType = null): array
     {
         $goal = $this->goals->find($userId, $goalId);
         if ($goal === null) {
             throw new GoalEngineException('Goal ' . $goalId . ' not found', GoalEngineException::NOT_FOUND);
+        }
+        if (($goal['builtin'] ?? null) !== null) {
+            throw new GoalEngineException(
+                'Goal ' . $goalId . ' is the built-in ' . (string) $goal['builtin'] . ' goal: it has one definition, so there is nothing to re-evaluate.',
+                GoalEngineException::INVALID
+            );
+        }
+        $scope = GoalScope::fromStored($goal['scope']);
+        $subjectType ??= $scope === GoalScope::CAMPAIGN ? GoalSubject::CLICK : GoalSubject::INSTALL;
+        if ($subjectType !== GoalSubject::CLICK && $subjectType !== GoalSubject::INSTALL) {
+            throw new GoalEngineException('subject_type must be click or install', GoalEngineException::INVALID, ['subject_type' => 'must be click or install']);
         }
         $version ??= (int) $goal['current_version'];
         $versionRow = $this->goals->version($goalId, $version);
@@ -344,7 +553,36 @@ final class GoalEngine
         $campaigns = array_values(array_unique($campaigns));
 
         $subjectIds = [];
-        if ($campaigns !== []) {
+        if ($subjectType === GoalSubject::INSTALL) {
+            // Installs join through their own registration, the account, or
+            // the campaign of their click.
+            $where = [];
+            $types = '';
+            $binds = [];
+            if ($scope === GoalScope::REGISTRATION) {
+                $where[] = 'i.registration_id = ?';
+                $types .= 'i';
+                $binds[] = (int) $goal['scope_id'];
+            } elseif ($scope === GoalScope::ACCOUNT) {
+                $where[] = '1 = 1';
+            }
+            if ($campaigns !== []) {
+                $where[] = 'c.aff_campaign_id IN (' . implode(',', array_fill(0, count($campaigns), '?')) . ')';
+                $types .= str_repeat('i', count($campaigns));
+                array_push($binds, ...$campaigns);
+            }
+            if ($where !== []) {
+                $stmt = $this->conn->prepareWrite(
+                    "SELECT s.subject_id FROM 202_goal_subjects s
+                     JOIN 202_app_installs i ON i.install_row_id = s.subject_id AND i.user_id = s.user_id
+                     LEFT JOIN 202_clicks c ON c.click_id = i.click_id
+                     WHERE s.subject_type = 'install' AND s.user_id = ? AND s.subject_id > ? AND (" . implode(' OR ', $where) . ')
+                     ORDER BY s.subject_id LIMIT ?'
+                );
+                $this->conn->bind($stmt, 'ii' . $types . 'i', [$userId, $after, ...$binds, $limit + 1]);
+                $subjectIds = array_map(static fn (array $r): int => (int) $r['subject_id'], $this->conn->fetchAll($stmt));
+            }
+        } elseif ($campaigns !== []) {
             $marks = implode(',', array_fill(0, count($campaigns), '?'));
             $stmt = $this->conn->prepareWrite(
                 "SELECT s.subject_id FROM 202_goal_subjects s JOIN 202_clicks c ON c.click_id = s.subject_id
@@ -359,8 +597,10 @@ final class GoalEngine
         $subjectIds = array_slice($subjectIds, 0, $limit);
 
         $subjects = [];
-        foreach ($subjectIds as $clickId) {
-            $subject = $this->clickSubject($userId, $clickId);
+        foreach ($subjectIds as $subjectId) {
+            $subject = $subjectType === GoalSubject::INSTALL
+                ? $this->installSubject($userId, $subjectId)
+                : $this->clickSubject($userId, $subjectId);
             if ($apply) {
                 $work = fn (): array => $this->reevaluateLocked($userId, $subject, $goalId, $version);
                 try {
@@ -388,6 +628,7 @@ final class GoalEngine
         return [
             'goal_id' => $goalId,
             'version' => $version,
+            'subject_type' => $subjectType,
             'applied' => $apply,
             'goals' => array_values($reDecided),
             'subjects' => $subjects,
@@ -407,6 +648,7 @@ final class GoalEngine
     {
         $now = $this->now();
         $post = ['ledger' => [], 'clicks' => [], 'notices' => []];
+        $subject = $this->current($userId, $subject);
         $row = $this->lockSubject($userId, $subject, $now);
         $rebases = self::decodeRebases($row);
         $rebases[$goalId] = $version;
@@ -646,24 +888,30 @@ final class GoalEngine
      *
      * @param array{keep: array<string, array<string, mixed>>, write: list<Outcome>, retire: list<array{0: array<string, mixed>, 1: string|null}>} $plan
      * Each written outcome is also noted in $post['notices'] with the
-     * notification decision (OutcomeNotifier). A written outcome is a
-     * `replacement`, never announced as newly reached, when it takes the
-     * place of a retired one, or when its reaching event reached the same
-     * goal in an outcome this plan retires: a replay that shifts n moves an
-     * already-announced event to a new n ($5, $10 and a late $1 become $1,
-     * $5, $10), and announcing the "new" third outcome would tell the
-     * network about the $10 a second time.
-     *
-     * Plan §5.7: what a network knows is per (subject, goal, n), not per
-     * row. A revived outcome keeps its conversion, whose `reached` went out
-     * when it was first written, and this path sends no retraction, so the
-     * network still holds it: never announced again (decision 1). And a
-     * new row for an n that any earlier row of the goal — retired rows and
-     * every version included, not only the one this plan retires — may have
-     * been announced for is a replacement too (decision 2,
-     * announcedBefore()): at the third step of a funnel whose prerequisite
-     * matched, stopped matching and matched again, the prerequisite's new
-     * version would otherwise be sent a second time.
+     * notification decision (OutcomeNotifier), made once the retirements
+     * have run, from what the notification outbox then holds. A traffic
+     * source hears about an outcome once (plan §5.8, §5.10):
+     * - a written outcome that takes the place of a retired one (same goal,
+     *   version and n) is announced only if the retired one never was —
+     *   its pending postback is cancelled and the replacement's goes out
+     *   instead; one that went out cannot be recalled, so the replacement's
+     *   is cancelled and a correction recorded (onReplaced());
+     * - a written outcome whose reaching event reached the same goal in an
+     *   outcome this plan retires is withheld when that one was announced: a
+     *   replay that shifts n moves an already-announced event to a new n ($5,
+     *   $10 and a late $1 become $1, $5, $10), and announcing the "new" third
+     *   outcome would tell the network about the $10 a second time;
+     * - a written outcome for an n that any earlier row of the goal — retired
+     *   rows and every version included — was announced for is withheld
+     *   where that one was heard and recorded as a correction (plan §5.7
+     *   (2): at the third step of a funnel whose prerequisite matched,
+     *   stopped matching and matched again, the prerequisite's new version
+     *   would otherwise be announced twice). These two are one call,
+     *   onAnnouncedBefore();
+     * - a revived outcome keeps its conversion and is never announced again:
+     *   the outbox cancels its unsent retraction, or records a correction
+     *   where the retraction went out (onRevived(), plan §5.7 (1)); a
+     *   duplicate ledger row is never announced again either.
      *
      * @param list<GoalEvent> $events
      * @param array{ledger: list<array<string, mixed>>, clicks: array<int, true>, notices: list<array<string, mixed>>} $post
@@ -681,16 +929,18 @@ final class GoalEngine
         foreach ($plan['keep'] as $key => $row) {
             $ids[$key] = ['outcome_id' => (int) $row['outcome_id'], 'conversion_id' => $row['conversion_id'] !== null ? (int) $row['conversion_id'] : null];
         }
-        // The outcomes written in place of a retired one: a traffic source
-        // may already have been told about the one they replace.
+        // The outcomes written in place of a retired one, and the ledger
+        // rows of retired outcomes by (goal, reaching event): a traffic
+        // source may already have been told about them.
         $replacing = [];
         $retiredEvents = [];
         foreach ($plan['retire'] as [$stored, $replacementKey]) {
             if ($replacementKey !== null) {
                 $replacing[$replacementKey] = true;
             }
-            $retiredEvents[(int) $stored['goal_id'] . "\0" . (string) $stored['event_id']] = true;
+            $retiredEvents[(int) $stored['goal_id'] . "\0" . (string) $stored['event_id']][] = $stored['conversion_id'] !== null ? (int) $stored['conversion_id'] : null;
         }
+        $writtenAll = [];
         foreach ($plan['write'] as $o) {
             $event = $eventsById[$o->eventId] ?? null;
             if ($event === null && $o->eventId !== GoalEvent::INSTALL_EVENT_ID) {
@@ -701,9 +951,7 @@ final class GoalEngine
             $term = $terms[$o->goalId] ?? null;
             $written = $this->writeOutcome($userId, $subject, $o, $term, $event, $now, $post);
             $ids[$key] = ['outcome_id' => $written['outcome_id'], 'conversion_id' => $written['conversion_id']];
-            $announced = isset($replacing[$key]) || isset($retiredEvents[$o->goalId . "\0" . $o->eventId]) || $written['revived']
-                || $this->announcedBefore($userId, $subject, $o, $written['outcome_id']);
-            $post['notices'][] = self::notice($o, $written, $term, $subject, $announced);
+            $writtenAll[] = [$o, $written, $key];
         }
 
         $ledger = new MysqlConversionLedger($this->conn);
@@ -721,6 +969,10 @@ final class GoalEngine
                 continue;
             }
             $convId = (int) $stored['conversion_id'];
+            // The traffic source hears about an outcome once (plan §5.5):
+            // what has not gone out is cancelled, what has is recorded as
+            // a correction or retraction that cannot be recalled.
+            $this->outbox->onReplaced($userId, $convId, $replacement['conversion_id'] ?? null);
             if ($replacement !== null && $replacement['conversion_id'] !== null) {
                 $ledger->supersedeGoalRow($convId, $replacement['conversion_id'], $reason);
                 if ($subject->clickId !== null) {
@@ -743,6 +995,32 @@ final class GoalEngine
             }
         }
 
+        // Run after the retirements, so the outbox sees what onReplaced()
+        // just recorded and does not record it twice. What a network may
+        // have heard for a new row (plan §5.7 (2)): every other row of its
+        // (subject, goal, n) — retired ones and every version included, not
+        // only the one this plan retires — and the retired rows its event
+        // had reached the goal in (a replay that shifted n).
+        foreach ($writtenAll as [$o, $written, $key]) {
+            $prior = $retiredEvents[$o->goalId . "\0" . $o->eventId] ?? [];
+            $history = [];
+            if ($written['conversion_id'] !== null && $written['conversion_new']) {
+                $history = $this->rowsForN($userId, $subject, $o, $written['conversion_id']);
+                $priorConvs = array_values(array_unique(array_merge(
+                    array_filter($prior, static fn (?int $c): bool => $c !== null && $c !== $written['conversion_id']),
+                    array_keys($history)
+                )));
+                if ($priorConvs !== []) {
+                    $this->outbox->onAnnouncedBefore($userId, $written['conversion_id'], $priorConvs);
+                }
+            }
+            // Without a record in the outbox (browser pixels only), the
+            // structural answer: it follows a retired row, its event moved,
+            // or an earlier row for its n was payable and may have been sent.
+            $follows = isset($replacing[$key]) || $prior !== [] || in_array(true, $history, true);
+            $post['notices'][] = $this->notice($o, $written, $subject, $follows);
+        }
+
         return ['written' => count($plan['write']), 'retired' => count($plan['retire'])];
     }
 
@@ -751,11 +1029,14 @@ final class GoalEngine
      *
      * @param array<string, mixed>|null $term the campaign_goals row for this goal
      * @param array{ledger: list<array<string, mixed>>, clicks: array<int, true>, notices: list<array<string, mixed>>} $post
-     * @return array{outcome_id: int, conversion_id: int|null, revived: bool, conversion_new: bool, payable: bool, amount_units: int|null, transaction_id: string|null, dedupe_key: string|null}
+     * @return array{outcome_id: int, conversion_id: int|null, revived: bool, conversion_new: bool, payable: bool, amount_units: int|null, transaction_id: string|null, dedupe_key: string|null, notify: bool}
      */
     private function writeOutcome(int $userId, GoalSubject $subject, Outcome $o, ?array $term, ?GoalEvent $event, int $now, array &$post): array
     {
-        [$payable, $amountUnits, $source, $note] = self::payability($o, $term, $event);
+        $v = $this->valuation($subject, $o, $term, $event);
+        $payable = $v['payable'];
+        $amountUnits = $v['units'];
+        $notify = $v['notify'];
 
         // A retired row for exactly this outcome is revived rather than
         // duplicated: the UNIQUE key names the event, and a re-evaluation
@@ -773,36 +1054,33 @@ final class GoalEngine
                     GoalEngineException::INTEGRITY
                 );
             }
+            $outcomeId = (int) $existing['outcome_id'];
             $revive = $this->conn->prepareWrite(
                 'UPDATE 202_goal_outcomes SET superseded_by = NULL, superseded_reason = NULL, superseded_at = NULL
                  WHERE outcome_id = ? AND superseded_at IS NOT NULL'
             );
-            $this->conn->bind($revive, 'i', [(int) $existing['outcome_id']]);
+            $this->conn->bind($revive, 'i', [$outcomeId]);
             if ($this->conn->executeUpdate($revive) !== 1) {
-                throw new GoalEngineException('outcome ' . (int) $existing['outcome_id'] . ' could not be revived', GoalEngineException::INTEGRITY);
+                throw new GoalEngineException('outcome ' . $outcomeId . ' could not be revived', GoalEngineException::INTEGRITY);
             }
             // Its ledger row comes back the way it went: a superseded row is
             // un-superseded, one the engine deleted (a retirement with no
             // replacement) is undeleted, and one an operator deleted stays
             // deleted. A row that is not this outcome's is refused.
             $convId = $existing['conversion_id'] !== null ? (int) $existing['conversion_id'] : null;
-            if ($convId !== null) {
-                if ($subject->clickId === null) {
-                    throw new GoalEngineException(
-                        'outcome ' . (int) $existing['outcome_id'] . ' names conversion ' . $convId . ' but its ' . $subject->type . ' has no click',
-                        GoalEngineException::INTEGRITY
-                    );
-                }
+            $conversionNew = false;
+            $dedupeKey = null;
+            if ($convId !== null && $subject->clickId !== null) {
                 try {
                     $changed = $this->conversions->reviveGoalRowInTransaction(
                         $convId,
                         $userId,
                         $subject->clickId,
-                        DedupeKey::goal($o->goalId, $o->version, $o->n, $o->eventId)
+                        self::dedupeKeyFor($o, $v['install'])
                     );
                 } catch (LedgerIntegrityException $e) {
                     throw new GoalEngineException(
-                        'outcome ' . (int) $existing['outcome_id'] . ' cannot be revived: ' . $e->getMessage(),
+                        'outcome ' . $outcomeId . ' cannot be revived: ' . $e->getMessage(),
                         GoalEngineException::INTEGRITY,
                         [],
                         $e
@@ -810,25 +1088,45 @@ final class GoalEngine
                 }
                 if ($changed !== null) {
                     $post['clicks'][$changed] = true;
+                    // The row counts again under its own conv_id (plan §5.7
+                    // (1)): the outbox never re-announces it, and settles a
+                    // retraction its retirement queued. A row left deleted
+                    // (an operator's) stays retracted.
+                    $this->outbox->onRevived($userId, $convId);
                 }
+            } elseif ($convId !== null || $subject->clickId !== null) {
+                // The subject's credit changed while this outcome was retired
+                // (an install's trust, under a live registration policy —
+                // recreditInstallInTransaction()): revived, it is bound the
+                // way the subject is now. Retired with a ledger row and
+                // revived without a click, the row stays retired as its
+                // retirement left it (the outbox heard then); retired without
+                // one and revived with a click, it gains the row a first
+                // write would have made.
+                if ($convId !== null) {
+                    $convId = null;
+                } else {
+                    [$convId, $conversionNew, $dedupeKey] = $this->attachLedgerRow($userId, $subject, $o, $event, $v, $outcomeId, $post);
+                }
+                $this->restate($outcomeId, $subject, $v, $convId);
             }
 
             return [
-                'outcome_id' => (int) $existing['outcome_id'], 'conversion_id' => $convId, 'revived' => true, 'conversion_new' => false,
-                'payable' => $payable, 'amount_units' => $amountUnits, 'transaction_id' => $event?->transactionId, 'dedupe_key' => null,
+                'outcome_id' => $outcomeId, 'conversion_id' => $convId, 'revived' => true, 'conversion_new' => $conversionNew,
+                'payable' => $payable, 'amount_units' => $amountUnits, 'transaction_id' => $event?->transactionId, 'dedupe_key' => $dedupeKey, 'notify' => $notify,
             ];
         }
 
         $insert = $this->conn->prepareWrite(
             'INSERT INTO 202_goal_outcomes
                 (user_id, subject_type, subject_id, goal_id, goal_version, n, event_id, reached_at, value, value_source,
-                 value_note, ineligible_reason, payable, campaign_id, conversion_id, superseded_by, superseded_reason, superseded_at, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?)'
+                 value_note, ineligible_reason, payable, campaign_id, app_registration_id, conversion_id, superseded_by, superseded_reason, superseded_at, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?)'
         );
-        $this->conn->bind($insert, 'isiiiisissssiii', [
+        $this->conn->bind($insert, 'isiiiisissssiiii', [
             $userId, $subject->type, $subject->id, $o->goalId, $o->version, $o->n, $o->eventId, $o->reachedAt,
             $amountUnits === null ? null : Amount::fromUnits($amountUnits),
-            $source, $note, $o->ineligibleReason, $payable ? 1 : 0, $subject->campaignId, $now,
+            $v['source'], $v['note'], $o->ineligibleReason, $payable ? 1 : 0, $subject->campaignId, $subject->registrationId, $now,
         ]);
         $outcomeId = $this->conn->executeInsert($insert);
         if ($outcomeId <= 0) {
@@ -839,87 +1137,395 @@ final class GoalEngine
         $conversionNew = false;
         $dedupeKey = null;
         if ($subject->clickId !== null) {
-            $data = [
-                'click_id' => $subject->clickId,
-                'source' => ConversionSource::GOAL->value,
-                'source_ref' => 'goal:' . $o->goalId . ':' . $o->version,
-                'event_name' => $event?->name,
-                'payable' => $payable,
-                'payout' => Amount::fromUnits($payable ? (int) $amountUnits : ($amountUnits ?? 0)),
-                'dedupe_key' => DedupeKey::goal($o->goalId, $o->version, $o->n, $o->eventId),
-                'conv_time' => $o->reachedAt,
-                // A tracked outcome is not a sale: no revenue event, no bridge.
-                'skip_ltv' => !$payable,
-                'skip_bridge' => !$payable,
-            ];
-            if ($event?->transactionId !== null) {
-                $data['transaction_id'] = $event->transactionId;
-            }
-            $recorded = $this->conversions->recordInTransaction($userId, $data);
-            if (!$recorded['clickFound']) {
-                throw new GoalEngineException('click ' . $subject->clickId . ' is gone; its outcome cannot be recorded', GoalEngineException::INTEGRITY);
-            }
-            $convId = (int) $recorded['convId'];
-            if ($convId <= 0) {
-                throw new GoalEngineException('the ledger returned no conversion for outcome ' . $outcomeId, GoalEngineException::INTEGRITY);
-            }
-            if (!$recorded['duplicate']) {
-                $post['ledger'][] = $recorded;
-                $conversionNew = true;
-            }
-            $dedupeKey = isset($recorded['dedupeKey']) ? (string) $recorded['dedupeKey'] : null;
-            $link = $this->conn->prepareWrite('UPDATE 202_goal_outcomes SET conversion_id = ? WHERE outcome_id = ?');
-            $this->conn->bind($link, 'ii', [$convId, $outcomeId]);
-            $this->conn->executeUpdate($link);
+            [$convId, $conversionNew, $dedupeKey] = $this->recordLedgerRow($userId, $subject, $o, $event, $v, $outcomeId, $post);
         }
 
         return [
             'outcome_id' => $outcomeId, 'conversion_id' => $convId, 'revived' => false, 'conversion_new' => $conversionNew,
-            'payable' => $payable, 'amount_units' => $amountUnits, 'transaction_id' => $event?->transactionId, 'dedupe_key' => $dedupeKey,
+            'payable' => $payable, 'amount_units' => $amountUnits, 'transaction_id' => $event?->transactionId, 'dedupe_key' => $dedupeKey, 'notify' => $notify,
         ];
     }
 
     /**
-     * Whether an earlier row for this outcome's (subject, goal, n) — any
-     * version, retired or not — may have been announced: a payable row on
-     * the ledger. This path keeps no record of what it sent (PR 5's outbox
-     * does), so "may have been" is the test, in the direction that never
-     * tells a network the same outcome twice; a row that was never payable
-     * was never sent (OutcomeNotifier: `none`).
+     * What an outcome is worth on this subject, and whether it pays and
+     * notifies: the install goal by its campaign's install terms, any other
+     * goal by the campaign's term for it (none without a click).
+     *
+     * @param array<string, mixed>|null $term
+     * @return array{payable: bool, units: int|null, source: string, note: string|null, notify: bool, install: bool, name: string}
      */
-    private function announcedBefore(int $userId, GoalSubject $subject, Outcome $o, int $outcomeId): bool
+    private function valuation(GoalSubject $subject, Outcome $o, ?array $term, ?GoalEvent $event): array
+    {
+        $meta = $this->goalMeta($o->goalId);
+        $isInstallGoal = $meta['builtin'] === MysqlGoalRepository::BUILTIN_INSTALL;
+        $notify = $term !== null && (int) $term['notify_traffic_source'] === 1;
+        if ($isInstallGoal) {
+            $campaignTerms = $subject->campaignId !== null ? $this->goals->campaignTerms($subject->campaignId) : [];
+            $defaultPayout = $subject->campaignId !== null
+                ? (new MysqlConversionLedger($this->conn))->campaignTerms($subject->campaignId)['default_payout']
+                : '0';
+            [$payable, $amountUnits, $source, $note] = self::installPayability($o, $subject->campaignId, $campaignTerms, $term, $defaultPayout);
+            // A campaign that lists no goals pays on install and notifies by
+            // default, like a payable goal attached with no options.
+            $notify = $term !== null ? (int) $term['notify_traffic_source'] === 1 : $campaignTerms === [];
+        } else {
+            [$payable, $amountUnits, $source, $note] = self::payability($o, $term, $event);
+        }
+
+        return [
+            'payable' => $payable, 'units' => $amountUnits, 'source' => $source, 'note' => $note,
+            'notify' => $notify, 'install' => $isInstallGoal, 'name' => $meta['name'],
+        ];
+    }
+
+    private static function dedupeKeyFor(Outcome $o, bool $isInstallGoal): string
+    {
+        return $isInstallGoal ? DedupeKey::install() : DedupeKey::goal($o->goalId, $o->version, $o->n, $o->eventId);
+    }
+
+    /**
+     * Write an outcome's ledger row on the subject's click, link it, and
+     * queue its notification — the first write of the row.
+     *
+     * @param array{payable: bool, units: int|null, source: string, note: string|null, notify: bool, install: bool, name: string} $v
+     * @param array{ledger: list<array<string, mixed>>, clicks: array<int, true>, notices: list<array<string, mixed>>} $post
+     * @return array{0: int, 1: bool, 2: string|null} the conversion id, whether the row is new, and its dedupe key
+     */
+    private function recordLedgerRow(int $userId, GoalSubject $subject, Outcome $o, ?GoalEvent $event, array $v, int $outcomeId, array &$post): array
+    {
+        if ($subject->clickId === null) {
+            throw new \LogicException('a ledger row is written only on a click');
+        }
+        $payable = $v['payable'];
+        $amountUnits = $v['units'];
+        $isInstallGoal = $v['install'];
+        $data = [
+            'click_id' => $subject->clickId,
+            'source' => ConversionSource::GOAL->value,
+            'source_ref' => \Prosper202\Conversion\Ledger\SourceRef::goal($o->goalId, $o->version),
+            'event_name' => $event?->name,
+            'payable' => $payable,
+            'payout' => Amount::fromUnits($payable ? (int) $amountUnits : ($amountUnits ?? 0)),
+            'dedupe_key' => self::dedupeKeyFor($o, false),
+            'conv_time' => $o->reachedAt,
+            // A tracked outcome is not a sale: no revenue event, no bridge.
+            'skip_ltv' => !$payable,
+            'skip_bridge' => !$payable,
+        ];
+        if ($isInstallGoal) {
+            // The install conversion itself (plan §5.2 step 5): one per
+            // click by its key, pixel_type 4, at Google's install time.
+            $data['source'] = ConversionSource::APP_INSTALL->value;
+            $data['source_ref'] = 'install:' . $subject->id;
+            $data['event_name'] = 'install';
+            $data['dedupe_key'] = DedupeKey::install();
+            $data['pixel_type'] = 4;
+        }
+        if ($event?->transactionId !== null) {
+            $data['transaction_id'] = $event->transactionId;
+        }
+        $recorded = $this->conversions->recordInTransaction($userId, $data);
+        if (!$recorded['clickFound']) {
+            throw new GoalEngineException('click ' . $subject->clickId . ' is gone; its outcome cannot be recorded', GoalEngineException::INTEGRITY);
+        }
+        $convId = (int) $recorded['convId'];
+        if ($convId <= 0) {
+            throw new GoalEngineException('the ledger returned no conversion for outcome ' . $outcomeId, GoalEngineException::INTEGRITY);
+        }
+        $conversionNew = false;
+        if (!$recorded['duplicate']) {
+            $post['ledger'][] = $recorded;
+            $conversionNew = true;
+        } elseif ($isInstallGoal) {
+            // Another install already holds this click's install row: the
+            // intake classifies that as duplicate_click under the click
+            // lock, so reaching here means two writers disagreed.
+            throw new GoalEngineException('click ' . $subject->clickId . ' already has an install conversion (' . $convId . ')', GoalEngineException::INTEGRITY);
+        }
+        $dedupeKey = isset($recorded['dedupeKey']) ? (string) $recorded['dedupeKey'] : null;
+        $link = $this->conn->prepareWrite('UPDATE 202_goal_outcomes SET conversion_id = ? WHERE outcome_id = ?');
+        $this->conn->bind($link, 'ii', [$convId, $outcomeId]);
+        $this->conn->executeUpdate($link);
+
+        // Every subject with a click — a web click (PR 4b) or an app
+        // install (PR 5) — announces through the outbox, in this
+        // transaction. execute() then decides whether a replay's rows
+        // stand (onReplaced, onAnnouncedBefore).
+        if (!$recorded['duplicate'] && $payable && $v['notify']) {
+            $this->outbox->queueReached(
+                $userId,
+                $convId,
+                $subject->clickId,
+                $isInstallGoal ? 'install' : $v['name'],
+                Amount::fromUnits((int) $amountUnits),
+                (string) ($recorded['dedupeKey'] ?? $data['dedupe_key']),
+                $event?->transactionId,
+                $o->goalId,
+            );
+        }
+
+        return [$convId, $conversionNew, $dedupeKey];
+    }
+
+    /**
+     * Give an outcome that has no ledger row the row it has on the
+     * subject's click: the one a withdrawn credit retired, revived (the
+     * outbox settles the retraction that retirement queued and never
+     * re-announces it), or, when this click never had one, a first write.
+     *
+     * @param array{payable: bool, units: int|null, source: string, note: string|null, notify: bool, install: bool, name: string} $v
+     * @param array{ledger: list<array<string, mixed>>, clicks: array<int, true>, notices: list<array<string, mixed>>} $post
+     * @return array{0: int, 1: bool, 2: string|null} the conversion id, whether the row is new, and its dedupe key
+     */
+    private function attachLedgerRow(int $userId, GoalSubject $subject, Outcome $o, ?GoalEvent $event, array $v, int $outcomeId, array &$post): array
+    {
+        if ($subject->clickId === null) {
+            throw new \LogicException('a ledger row is attached only on a click');
+        }
+        $key = self::dedupeKeyFor($o, $v['install']);
+        // UNIQUE (click_id, dedupe_key) ignores `deleted`: a retired row
+        // still holds the slot, so it is found here and never written twice.
+        $stmt = $this->conn->prepareWrite('SELECT conv_id FROM 202_conversion_logs WHERE click_id = ? AND dedupe_key = ? AND user_id = ? LIMIT 1');
+        $this->conn->bind($stmt, 'isi', [$subject->clickId, $key, $userId]);
+        $found = $this->conn->fetchOne($stmt);
+        if ($found === null) {
+            return $this->recordLedgerRow($userId, $subject, $o, $event, $v, $outcomeId, $post);
+        }
+        $convId = (int) $found['conv_id'];
+        try {
+            $changed = $this->conversions->reviveGoalRowInTransaction($convId, $userId, $subject->clickId, $key);
+        } catch (LedgerIntegrityException $e) {
+            throw new GoalEngineException(
+                'outcome ' . $outcomeId . ' cannot take conversion ' . $convId . ': ' . $e->getMessage(),
+                GoalEngineException::INTEGRITY,
+                [],
+                $e
+            );
+        }
+        if ($changed !== null) {
+            $post['clicks'][$changed] = true;
+            $this->outbox->onRevived($userId, $convId);
+        }
+        $link = $this->conn->prepareWrite('UPDATE 202_goal_outcomes SET conversion_id = ? WHERE outcome_id = ?');
+        $this->conn->bind($link, 'ii', [$convId, $outcomeId]);
+        $this->conn->executeUpdate($link);
+
+        return [$convId, false, $key];
+    }
+
+    /**
+     * Rewrite what an outcome row says about its credit: its campaign, its
+     * value and payability as valuation() decides them now, and the ledger
+     * row it names.
+     *
+     * @param array{payable: bool, units: int|null, source: string, note: string|null, notify: bool, install: bool, name: string} $v
+     */
+    private function restate(int $outcomeId, GoalSubject $subject, array $v, ?int $convId): void
     {
         $stmt = $this->conn->prepareWrite(
-            'SELECT outcome_id FROM 202_goal_outcomes
-             WHERE user_id = ? AND subject_type = ? AND subject_id = ? AND goal_id = ? AND n = ? AND outcome_id <> ?
-               AND payable = 1 AND conversion_id IS NOT NULL
-             LIMIT 1'
+            'UPDATE 202_goal_outcomes SET conversion_id = ?, campaign_id = ?, payable = ?, value = ?, value_source = ?, value_note = ?
+             WHERE outcome_id = ?'
         );
-        $this->conn->bind($stmt, 'isiiii', [$userId, $subject->type, $subject->id, $o->goalId, $o->n, $outcomeId]);
+        $this->conn->bind($stmt, 'iiisssi', [
+            $convId, $subject->campaignId, $v['payable'] ? 1 : 0,
+            $v['units'] === null ? null : Amount::fromUnits($v['units']), $v['source'], $v['note'], $outcomeId,
+        ]);
+        $this->conn->executeUpdate($stmt);
+    }
 
-        return $this->conn->fetchOne($stmt) !== null;
+    /**
+     * Re-decide an install's credit after its trust changed under a live
+     * registration policy (accept_test_signals). Only a trusted, attributed
+     * install lends its click to its outcomes (installSubject()), so a trust
+     * bit flipped on a stored install moves what it reached onto or off its
+     * click. Runs in the caller's transaction, which has already written the
+     * new bit and holds the install row.
+     *
+     * - Credit withdrawn: each live outcome's ledger row is retired as a
+     *   re-evaluation retires one (a notification not yet sent is
+     *   cancelled, one that went out is followed by a retraction), and the
+     *   outcome stays live for the funnel, valued as a click-less outcome.
+     *   Outcomes of goals the install reached only through its click's
+     *   campaign are retired with their rows.
+     * - Credit granted: each live outcome gains its row on the click — the
+     *   one a withdrawal retired, revived, or a first write, paid and
+     *   notified as one — and the click's campaign goals are evaluated.
+     *
+     * Idempotent: an outcome already bound as the subject's credit says is
+     * left as it is.
+     *
+     * @return array{post: array{ledger: list<array<string, mixed>>, clicks: array<int, true>, notices: list<array<string, mixed>>}, install_conversion_id: int|null}
+     */
+    public function recreditInstallInTransaction(int $userId, int $installRowId): array
+    {
+        $now = $this->now();
+        $post = ['ledger' => [], 'clicks' => [], 'notices' => []];
+        $subject = $this->installSubject($userId, $installRowId);
+        $row = $this->lockSubject($userId, $subject, $now);
+        $subject = $subject->withRebases(self::decodeRebases($row));
+        $events = $this->loadEvents($subject);
+        $specs = $this->specsFor($userId, $subject);
+        $evaluation = GoalEvaluator::evaluateAll($specs, $subject, $events);
+        $plan = $this->plan($userId, $subject, $evaluation->outcomes, null, false);
+        if ($subject->clickId === null) {
+            $inSet = array_map(static fn (GoalSpec $s): int => $s->goalId, $specs);
+            $campaignOnly = array_values(array_diff($this->clickCampaignGoals($userId, $subject, $installRowId), $inSet));
+            if ($campaignOnly !== []) {
+                $gone = $this->plan($userId, $subject, [], $campaignOnly, true);
+                $plan['retire'] = [...$plan['retire'], ...$gone['retire']];
+            }
+        }
+
+        $recomputed = [];
+        foreach ($evaluation->outcomes as $o) {
+            $recomputed[$o->goalId . ':' . $o->version . ':' . $o->n] = $o;
+        }
+        $eventsById = [];
+        foreach ($events as $event) {
+            $eventsById[$event->eventId] = $event;
+        }
+        $terms = $subject->campaignId !== null ? $this->goals->campaignTerms($subject->campaignId) : [];
+        foreach ($plan['keep'] as $key => $stored) {
+            $o = $recomputed[$key];
+            $event = $eventsById[$o->eventId] ?? null;
+            $convId = $stored['conversion_id'] !== null ? (int) $stored['conversion_id'] : null;
+            if ($subject->clickId === null) {
+                if ($convId === null) {
+                    continue;
+                }
+                $this->outbox->onReplaced($userId, $convId, null);
+                try {
+                    $changed = $this->conversions->retireGoalRowInTransaction($convId, $userId, SupersededReason::REEVALUATION);
+                } catch (LedgerIntegrityException $e) {
+                    throw new GoalEngineException(
+                        'outcome ' . (int) $stored['outcome_id'] . '\'s conversion ' . $convId . ' cannot be retired: ' . $e->getMessage(),
+                        GoalEngineException::INTEGRITY,
+                        [],
+                        $e
+                    );
+                }
+                if ($changed !== null) {
+                    $post['clicks'][$changed] = true;
+                }
+                $this->restate((int) $stored['outcome_id'], $subject, $this->valuation($subject, $o, null, $event), null);
+                continue;
+            }
+            if ($convId !== null) {
+                continue;
+            }
+            $v = $this->valuation($subject, $o, $terms[$o->goalId] ?? null, $event);
+            [$convId, $new] = $this->attachLedgerRow($userId, $subject, $o, $event, $v, (int) $stored['outcome_id'], $post);
+            $this->restate((int) $stored['outcome_id'], $subject, $v, $convId);
+            if ($new) {
+                // Plan §5.7 (2): a row for an n an earlier row was announced
+                // for is a correction there, not a second `reached`.
+                $prior = array_keys($this->rowsForN($userId, $subject, $o, $convId));
+                if ($prior !== []) {
+                    $this->outbox->onAnnouncedBefore($userId, $convId, $prior);
+                }
+            }
+        }
+        $this->execute($userId, $subject, $plan, $events, SupersededReason::REEVALUATION, $now, $post);
+        $this->replaceProgress($userId, $subject, $evaluation->state);
+
+        $installConversion = null;
+        foreach ($specs as $spec) {
+            if ($spec->builtin !== MysqlGoalRepository::BUILTIN_INSTALL) {
+                continue;
+            }
+            foreach ($this->goals->liveOutcomes($userId, ['subject_type' => $subject->type, 'subject_id' => $subject->id, 'goal_id' => $spec->goalId], 10) as $outcome) {
+                if ($outcome['conversion_id'] !== null) {
+                    $installConversion = (int) $outcome['conversion_id'];
+                }
+            }
+        }
+
+        return ['post' => $post, 'install_conversion_id' => $installConversion];
+    }
+
+    /**
+     * The goals an install evaluates only because of its click's campaign:
+     * the campaign's goal set minus the registration's and the account's.
+     *
+     * @return list<int>
+     */
+    private function clickCampaignGoals(int $userId, GoalSubject $subject, int $installRowId): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT c.aff_campaign_id FROM 202_app_installs i
+             JOIN 202_clicks c ON c.click_id = i.click_id AND c.user_id = i.user_id
+             WHERE i.install_row_id = ? AND i.user_id = ? LIMIT 1'
+        );
+        $this->conn->bind($stmt, 'ii', [$installRowId, $userId]);
+        $click = $this->conn->fetchOne($stmt);
+        if ($click === null || $subject->registrationId === null) {
+            return [];
+        }
+
+        return array_values(array_unique(array_map(
+            static fn (GoalSpec $s): int => $s->goalId,
+            $this->goals->specsForInstall($userId, $subject->registrationId, (int) $click['aff_campaign_id'])
+        )));
+    }
+
+    /**
+     * The ledger rows of every other outcome ever written for this
+     * outcome's (subject, goal, n) — retired ones and every version
+     * included, since what a network was told outlives the row that told
+     * it (plan §5.7 (2)) — each with whether it was payable (a row that
+     * never paid was never announced).
+     *
+     * @return array<int, bool> conversion id => payable
+     */
+    private function rowsForN(int $userId, GoalSubject $subject, Outcome $o, int $convId): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT conversion_id, payable FROM 202_goal_outcomes
+             WHERE user_id = ? AND subject_type = ? AND subject_id = ? AND goal_id = ? AND n = ? AND conversion_id IS NOT NULL AND conversion_id <> ?
+             ORDER BY outcome_id'
+        );
+        $this->conn->bind($stmt, 'isiiii', [$userId, $subject->type, $subject->id, $o->goalId, $o->n, $convId]);
+        $out = [];
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $out[(int) $row['conversion_id']] = ($out[(int) $row['conversion_id']] ?? false) || (int) $row['payable'] === 1;
+        }
+
+        return $out;
     }
 
     /**
      * What a written outcome is, for the notifier (see OutcomeNotifier for
-     * the kinds). Decided here, inside the transaction that knows which
-     * rows are replacements, so no caller can announce a replacement as a
-     * newly reached outcome.
+     * the kinds). Decided in the transaction that knows which rows are
+     * replacements, after the outbox has settled them, so no caller can
+     * announce a replacement as a newly reached outcome.
      *
-     * @param array{outcome_id: int, conversion_id: int|null, revived: bool, conversion_new: bool, payable: bool, amount_units: int|null, transaction_id: string|null, dedupe_key: string|null} $written
-     * @param array<string, mixed>|null $term
+     * With server-to-server postbacks queued, the outbox is the record:
+     * `reached` when a queued, sent or failed row stands for this
+     * conversion, `suppressed` (replacement) when every one was cancelled.
+     * With none queued (no traffic source, or only browser pixels) the
+     * decision is structural: a written outcome that follows a retired one
+     * ($follows) is a replacement.
+     *
+     * @param array{outcome_id: int, conversion_id: int|null, revived: bool, conversion_new: bool, payable: bool, amount_units: int|null, transaction_id: string|null, dedupe_key: string|null, notify: bool} $written
      * @return array<string, mixed>
      */
-    private static function notice(Outcome $o, array $written, ?array $term, GoalSubject $subject, bool $replacement): array
+    private function notice(Outcome $o, array $written, GoalSubject $subject, bool $follows): array
     {
         $kind = 'none';
         $reason = null;
+        $queued = 0;
         if ($written['payable']) {
-            if ($term === null || (int) ($term['notify_traffic_source'] ?? 0) !== 1) {
+            $state = $written['conversion_id'] !== null ? $this->outbox->reachedState($written['conversion_id']) : ['total' => 0, 'live' => 0, 'pending' => 0];
+            if (!$written['notify']) {
                 $kind = 'off';
             } elseif ($subject->clickId === null) {
                 [$kind, $reason] = ['suppressed', 'no_click'];
-            } elseif ($replacement || !$written['conversion_new']) {
+            } elseif ($written['revived'] || !$written['conversion_new']) {
+                [$kind, $reason] = ['suppressed', 'replacement'];
+            } elseif ($state['total'] > 0) {
+                [$kind, $reason] = $state['live'] > 0 ? ['reached', null] : ['suppressed', 'replacement'];
+                $queued = $state['pending'];
+            } elseif ($follows) {
                 [$kind, $reason] = ['suppressed', 'replacement'];
             } else {
                 $kind = 'reached';
@@ -939,6 +1545,7 @@ final class GoalEngine
             'dedupe_key' => $written['dedupe_key'],
             'kind' => $kind,
             'reason' => $reason,
+            'queued' => $queued,
         ];
     }
 
@@ -977,6 +1584,83 @@ final class GoalEngine
     }
 
     /**
+     * What the built-in install goal's outcome pays on the click's campaign
+     * (plan §5.5, §9 decision 1):
+     * - the campaign lists no goals at all: payable, at its default payout;
+     * - the campaign lists the install goal: payable, at the listed payout
+     *   or, when none is listed, the default payout;
+     * - the campaign lists other goals but not this one: tracked, not paid
+     *   (`not_payable_on_campaign`) — turning install off is a campaign
+     *   setting, not a global one.
+     *
+     * @param array<int, array<string, mixed>> $campaignTerms the campaign's campaign_goals rows by goal id
+     * @param array<string, mixed>|null $term this goal's row among them
+     * @return array{0: bool, 1: int|null, 2: string, 3: string|null}
+     */
+    public static function installPayability(Outcome $o, ?int $campaignId, array $campaignTerms, ?array $term, string $defaultPayout): array
+    {
+        if (!$o->isEligible()) {
+            return [false, null, 'install', $o->valueNote];
+        }
+        if ($campaignId === null) {
+            // No click, so no campaign to pay: the funnel counts the install.
+            return [false, null, 'install', null];
+        }
+        if ($term !== null && $term['payout'] !== null && $term['payout'] !== '') {
+            return [true, Amount::toUnits((string) $term['payout']), 'payout', null];
+        }
+        if ($term !== null || $campaignTerms === []) {
+            return [true, Amount::toUnits($defaultPayout), 'campaign_default', null];
+        }
+
+        return [false, Amount::toUnits($defaultPayout), 'campaign_default', 'not_payable_on_campaign'];
+    }
+
+    /** @return array{name: string, builtin: string|null} */
+    private function goalMeta(int $goalId): array
+    {
+        if (!isset($this->goalMeta[$goalId])) {
+            $stmt = $this->conn->prepareWrite('SELECT name, builtin FROM 202_goals WHERE goal_id = ? LIMIT 1');
+            $this->conn->bind($stmt, 'i', [$goalId]);
+            $row = $this->conn->fetchOne($stmt);
+            if ($row === null) {
+                throw new GoalEngineException('goal ' . $goalId . ' is gone; its outcome cannot be recorded', GoalEngineException::INTEGRITY);
+            }
+            $this->goalMeta[$goalId] = ['name' => (string) $row['name'], 'builtin' => $row['builtin'] !== null ? (string) $row['builtin'] : null];
+        }
+
+        return $this->goalMeta[$goalId];
+    }
+
+    /**
+     * What follows a commit that included recordInTransaction() rows: the
+     * report rows and the bridge events. Public for the callers that hold
+     * the transaction themselves (the Android intake and its settler).
+     *
+     * @param array{ledger: list<array<string, mixed>>, clicks: array<int, true>} $post
+     */
+    public function finishCommitted(int $userId, array $post): void
+    {
+        $this->finishLedger($userId, $post);
+    }
+
+    /**
+     * The report rows and bridge events of a committed transaction.
+     *
+     * @param array{ledger: list<array<string, mixed>>, clicks: array<int, true>} $post
+     */
+    private function finishLedger(int $userId, array $post): void
+    {
+        foreach ($post['ledger'] as $recorded) {
+            $this->conversions->afterRecordInTransaction($userId, $recorded);
+            unset($post['clicks'][(int) $recorded['_prepared']['clickId']]);
+        }
+        foreach (array_keys($post['clicks']) as $clickId) {
+            $this->conversions->refreshClickReport($clickId);
+        }
+    }
+
+    /**
      * The committed transaction's follow-ups: report rows, bridge events,
      * then the notifier. Nothing here may make the write look failed — it
      * has committed — so a notifier that throws is logged and its notices
@@ -988,13 +1672,7 @@ final class GoalEngine
      */
     private function afterCommit(int $userId, GoalSubject $subject, array $post): array
     {
-        foreach ($post['ledger'] as $recorded) {
-            $this->conversions->afterRecordInTransaction($userId, $recorded);
-            unset($post['clicks'][(int) $recorded['_prepared']['clickId']]);
-        }
-        foreach (array_keys($post['clicks']) as $clickId) {
-            $this->conversions->refreshClickReport($clickId);
-        }
+        $this->finishLedger($userId, $post);
         if ($this->notifier === null || $post['notices'] === []) {
             return [];
         }

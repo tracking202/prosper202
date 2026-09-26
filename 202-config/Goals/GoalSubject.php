@@ -34,6 +34,8 @@ final class GoalSubject
         public readonly ?int $clickId = null,
         /** The campaign of that click: whose payouts apply. */
         public readonly ?int $campaignId = null,
+        /** An install subject's app registration: whose goals it evaluates. */
+        public readonly ?int $registrationId = null,
     ) {
         if ($type !== self::CLICK && $type !== self::INSTALL) {
             throw new \InvalidArgumentException('subject type must be click or install, got "' . $type . '"');
@@ -46,6 +48,6 @@ final class GoalSubject
     /** @param array<int, int> $rebases */
     public function withRebases(array $rebases): self
     {
-        return new self($this->type, $this->id, $this->clickAt, $this->installAt, $rebases, $this->clickId, $this->campaignId);
+        return new self($this->type, $this->id, $this->clickAt, $this->installAt, $rebases, $this->clickId, $this->campaignId, $this->registrationId);
     }
 }

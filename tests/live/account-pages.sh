@@ -300,7 +300,7 @@ drop_probe_users() {
   local ids
   ids=$(Q "SELECT GROUP_CONCAT(user_id) FROM 202_users WHERE user_name IN ('u6_live_user','u6_live_other','u6_live_norole')")
   [ -z "$ids" ] || [ "$ids" = "NULL" ] && return
-  mysql_q "$DB" -e "DELETE FROM 202_user_role WHERE user_id IN ($ids); DELETE FROM 202_users_pref WHERE user_id IN ($ids); DELETE FROM 202_users WHERE user_id IN ($ids)"
+  mysql_q "$DB" -e "DELETE FROM 202_attribution_models WHERE user_id IN ($ids); DELETE FROM 202_user_role WHERE user_id IN ($ids); DELETE FROM 202_users_pref WHERE user_id IN ($ids); DELETE FROM 202_users WHERE user_id IN ($ids)"
 }
 drop_probe_users
 get "202-account/user-management.php" "$OUT/um.html"
@@ -331,6 +331,7 @@ NEWUSER=$(Q "SELECT user_id FROM 202_users WHERE user_name='u6_live_user' AND us
 eq "$(Q "SELECT CONCAT_WS('|', user_fname, user_lname, user_email, user_active) FROM 202_users WHERE user_id=${NEWUSER:-0}")" "Live|User|u6-live@example.test|1" "the row carries every field"
 eq "$(Q "SELECT role_id FROM 202_user_role WHERE user_id=${NEWUSER:-0}")" "4" "role 4 stored"
 eq "$(Q "SELECT COUNT(*) FROM 202_users_pref WHERE user_id=${NEWUSER:-0}")" "1" "a preferences row was created"
+eq "$(Q "SELECT COUNT(*) FROM 202_attribution_models WHERE user_id=${NEWUSER:-0} AND is_default=1")" "1" "and its default attribution model, in the same save"
 HASH_NEW=$(Q "SELECT user_pass FROM 202_users WHERE user_id=${NEWUSER:-0}")
 if [[ "$HASH_NEW" == \$2y\$* ]]; then ok "the password is stored as a bcrypt hash"; else bad "password hash shape: ${HASH_NEW:0:7}"; fi
 
@@ -363,6 +364,16 @@ submit "$OUT/um.html" user_fname "202-account/user-management.php" "$OUT/um-noro
   user_password=LivePass-1 user_password2=LivePass-1 user_role=5
 clear_fail rv3_fail_role
 has "$OUT/um-norole.html" 'The user could not be created, and nothing was added. Try again.' "a create whose role write fails says so"
+eq "$(Q "SELECT COUNT(*) FROM 202_users WHERE user_name='u6_live_norole'")" "0" "and leaves no user row behind"
+# The default attribution model is part of the same save: with its write
+# failing, nobody is added either.
+fail_writes rv3_fail_model 202_attribution_models INSERT "1 = 1"
+get "202-account/user-management.php" "$OUT/um.html"
+submit "$OUT/um.html" user_fname "202-account/user-management.php" "$OUT/um-nomodel.html" \
+  user_fname=No user_lname=Model user_email=u6-norole@example.test user_name=u6_live_norole \
+  user_password=LivePass-1 user_password2=LivePass-1 user_role=5
+clear_fail rv3_fail_model
+has "$OUT/um-nomodel.html" 'The user could not be created, and nothing was added. Try again.' "a create whose default model fails says so"
 eq "$(Q "SELECT COUNT(*) FROM 202_users WHERE user_name='u6_live_norole'")" "0" "and leaves no user row behind"
 # And an edit whose role write fails keeps the user as it was.
 fail_writes rv3_fail_role 202_user_role INSERT "1 = 1"

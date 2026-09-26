@@ -13,13 +13,22 @@ use Prosper202\Database\Schema\TableRegistry;
  *
  * - 202_goals: one row per goal, owned by a campaign, an app registration or
  *   the account (the scope every app of the account shares). The name and
- *   current version mirror the current definition for listing. A live
+ *   current version mirror the current definition for listing. `builtin`
+ *   names a goal the system made rather than the operator: 'install', the
+ *   built-in install goal every Android registration has (plan §5.5), one
+ *   per registration by UNIQUE (user, scope, scope_id, builtin) — NULLs are
+ *   distinct, so operator goals are unconstrained by it. A live operator
  *   goal's name is unique per owner, and the database enforces it:
- *   `live_name` is the name while the goal is live and NULL once archived
- *   (a UNIQUE key admits any number of NULLs), so an archived goal frees
- *   its name while two concurrent creates of one live name cannot both
- *   commit. MysqlGoalRepository turns that duplicate into a CONFLICT; the
- *   nameTaken() read before it is only there to answer early and by name.
+ *   `live_name` is the name while an operator goal is live and NULL once
+ *   archived (a UNIQUE key admits any number of NULLs), so an archived goal
+ *   frees its name while two concurrent creates of one live name cannot
+ *   both commit. MysqlGoalRepository turns that duplicate into a CONFLICT;
+ *   the nameTaken() read before it is only there to answer early and by
+ *   name. A built-in goal's `live_name` is NULL too: its identity is
+ *   `builtin`, and its INSERT ... ON DUPLICATE KEY must only ever meet
+ *   scope_builtin — an operator goal already named "install" meeting it on
+ *   `live_name` instead would swallow the insert, and the read-back by
+ *   `builtin` would find nothing on every install of the registration.
  * - 202_goal_versions: every definition a goal has had. A version is
  *   immutable; an edit adds one. `effective_at` is when it started to apply:
  *   an event is evaluated under the version current at its own received_at.
@@ -34,7 +43,9 @@ use Prosper202\Database\Schema\TableRegistry;
  *   rather than silently dropped.
  * - 202_goal_progress: the evaluator's per-(subject, goal, version) state.
  * - 202_goal_outcomes: every time a goal was reached, whether or not the
- *   subject has a click; the funnel's source. Retired rows keep
+ *   subject has a click; the funnel's source. `app_registration_id` names the
+ *   app an install subject belongs to, so the app report can group outcomes
+ *   without joining through the installs. Retired rows keep
  *   superseded_at, and every read goes through
  *   MysqlGoalRepository::liveOutcomes().
  *
@@ -71,11 +82,13 @@ final class GoalTables
                 `scope_id` int(10) unsigned NOT NULL DEFAULT '0',
                 `name` varchar(100) NOT NULL,
                 `current_version` int(10) unsigned NOT NULL,
+                `builtin` varchar(16) DEFAULT NULL,
                 `archived_at` int(10) unsigned DEFAULT NULL,
                 `created_at` int(10) unsigned NOT NULL,
                 `updated_at` int(10) unsigned NOT NULL,
-                `live_name` varchar(100) GENERATED ALWAYS AS (IF(`archived_at` IS NULL, `name`, NULL)) STORED,
+                `live_name` varchar(100) GENERATED ALWAYS AS (IF(`archived_at` IS NULL AND `builtin` IS NULL, `name`, NULL)) STORED,
                 PRIMARY KEY (`goal_id`),
+                UNIQUE KEY `scope_builtin` (`user_id`,`scope`,`scope_id`,`builtin`),
                 UNIQUE KEY `live_name` (`user_id`,`scope`,`scope_id`,`live_name`),
                 KEY `user_scope` (`user_id`,`scope`,`scope_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Goals: named, versioned outcomes owned by a campaign, an app registration or the account'"
@@ -203,6 +216,7 @@ final class GoalTables
                 `ineligible_reason` varchar(16) DEFAULT NULL,
                 `payable` tinyint(1) unsigned NOT NULL DEFAULT '0',
                 `campaign_id` mediumint(8) unsigned DEFAULT NULL,
+                `app_registration_id` int(10) unsigned DEFAULT NULL,
                 `conversion_id` int(11) unsigned DEFAULT NULL,
                 `superseded_by` bigint(20) unsigned DEFAULT NULL,
                 `superseded_reason` varchar(16) DEFAULT NULL,
@@ -213,6 +227,7 @@ final class GoalTables
                 KEY `goal_live` (`goal_id`,`superseded_at`),
                 KEY `subject` (`subject_type`,`subject_id`),
                 KEY `user_id` (`user_id`),
+                KEY `registration_goal` (`app_registration_id`,`goal_id`),
                 KEY `conversion_id` (`conversion_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Every time a goal was reached by a subject; retired rows keep superseded_at'"
         );

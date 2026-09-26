@@ -33,10 +33,54 @@ use Prosper202\Database\Schema\TableRegistry;
  * purpose: UNIQUE admits any number of NULLs, so a NULL "account-wide"
  * would let duplicate account-wide rules in.
  *
+ * An encoding is versioned (plan §5.5): a device applies the document it
+ * fetched, and a postback arrives up to 48 days later (the 35-day conversion
+ * windows, Apple's delivery delay, and the SDK's 7-day bound on the age of
+ * the document it encodes with; SkanEncodingTimeline), so the report has to
+ * decode with every meaning a value had inside that horizon.
+ * 202_app_skan_encodings holds each encoding's CURRENT meaning, in force
+ * since `effective_at`; every edit and every delete first copies the meaning
+ * it replaces into 202_app_skan_encoding_history with the time it stopped
+ * applying (`retired_at`). The history is never edited and never deleted
+ * except by the user purge. An `(effective_at, retired_at)` pair is a
+ * half-open span, so a meaning replaced in the same second as it began
+ * applied at no instant. A history row also keeps the App Store id of the
+ * registration it belonged to (`app_id`, 0 for the account-wide set): the
+ * report decodes by app, because deleting a registration unlinks its
+ * postbacks and registering the app again gives it a new registration id,
+ * and both must still reach what the old encodings meant.
+ *
  * `app_key` is compared byte for byte (utf8mb4_bin): Android application
  * ids are case-sensitive, so com.Example.app and com.example.app are two
  * apps, and the table default collation would fold them into one UNIQUE
  * slot (CLAUDE.md #17).
+ *
+ * 202_app_installs is the Android signal source's store (plan §5.2–§5.4):
+ * one row per install an SDK reported, idempotent on (registration_id,
+ * install_uuid), with the referrer it carried, the MatchState it was
+ * classified into and the `trusted` bit that state is worth. An attributed,
+ * trusted row names its click and the ledger row of the built-in install
+ * goal (`conversion_id`). `install_uuid` is ascii_bin: the intake accepts
+ * only the canonical lower-case form, and a case-folding collation would
+ * let two spellings of one id share a slot. `body_hash` is the fingerprint
+ * of the body that created the row, so a replay of the same id with other
+ * content is told from a retry (CLAUDE.md #15).
+ *
+ * Play Integrity (plan §5.6, §5.11): `integrity_mode` on an install is the
+ * registration's mode *when the install arrived* — a later change of mode
+ * never re-judges an install already received — and the `integrity_*`
+ * columns are the verdict worker's queue and its result: the state, why,
+ * the attempt count and next attempt, when Google last answered, a summary
+ * of the decoded verdict (never the token), and the SHA-256 of the token,
+ * so a token already owned by a verified install is refused as a replay
+ * without spending quota.
+ *
+ * 202_app_integrity_credentials holds the operator's Google service
+ * account for a registration, AES-256-GCM encrypted under an installation
+ * key (202_deployment_secrets) with the registration bound in as associated
+ * data, so a ciphertext copied onto another registration does not decrypt.
+ * Only the account's email, key id and project are stored in the clear, to
+ * be shown; the private key never leaves the ciphertext except to sign.
  */
 final class AppTables
 {
@@ -51,6 +95,9 @@ final class AppTables
             self::appRegistrations(),
             self::appPostbacks(),
             self::appSkanEncodings(),
+            self::appSkanEncodingHistory(),
+            self::appInstalls(),
+            self::appIntegrityCredentials(),
         ];
     }
 
@@ -66,6 +113,10 @@ final class AppTables
                 `app_name` varchar(255) NOT NULL,
                 `notes` varchar(500) DEFAULT NULL,
                 `accept_test_signals` tinyint(1) unsigned NOT NULL DEFAULT '0',
+                `attribution_window_days` smallint(5) unsigned NOT NULL DEFAULT '7',
+                `trust_client_revenue` tinyint(1) unsigned NOT NULL DEFAULT '0',
+                `integrity_mode` varchar(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'off',
+                `integrity_cloud_project_number` bigint(20) unsigned DEFAULT NULL,
                 `app_token` varchar(64) NOT NULL,
                 `created_at` int(10) unsigned NOT NULL,
                 `updated_at` int(10) unsigned NOT NULL,
@@ -139,6 +190,7 @@ final class AppTables
                 `coarse_value` varchar(6) DEFAULT NULL,
                 `goal_id` int(10) unsigned NOT NULL,
                 `revenue_override` decimal(11,5) DEFAULT NULL,
+                `effective_at` int(10) unsigned NOT NULL,
                 `created_at` int(10) unsigned NOT NULL,
                 `updated_at` int(10) unsigned NOT NULL,
                 PRIMARY KEY (`encoding_id`),
@@ -147,6 +199,110 @@ final class AppTables
                 KEY `registration_id` (`registration_id`),
                 KEY `goal_id` (`goal_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='SKAdNetwork/AdAttributionKit conversion values: which value means which goal was reached, per registration (0 = account-wide)'"
+        );
+    }
+
+    public static function appSkanEncodingHistory(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::APP_SKAN_ENCODING_HISTORY,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::APP_SKAN_ENCODING_HISTORY . "` (
+                `history_id` int(10) unsigned NOT NULL AUTO_INCREMENT,
+                `encoding_id` int(10) unsigned NOT NULL,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `registration_id` int(10) unsigned NOT NULL DEFAULT '0',
+                `app_id` bigint(20) unsigned DEFAULT NULL,
+                `fine_value` tinyint(3) unsigned DEFAULT NULL,
+                `coarse_value` varchar(6) DEFAULT NULL,
+                `goal_id` int(10) unsigned NOT NULL,
+                `revenue_override` decimal(11,5) DEFAULT NULL,
+                `effective_at` int(10) unsigned NOT NULL,
+                `retired_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`history_id`),
+                KEY `user_retired` (`user_id`,`retired_at`),
+                KEY `encoding_id` (`encoding_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='What each SKAN encoding meant before an edit or delete, and until when (decoded, by app, within the 48-day postback horizon)'"
+        );
+    }
+
+    public static function appInstalls(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::APP_INSTALLS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::APP_INSTALLS . "` (
+                `install_row_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `registration_id` int(10) unsigned NOT NULL,
+                `install_uuid` char(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `body_hash` char(64) NOT NULL,
+                `store` varchar(16) NOT NULL,
+                `click_id` bigint(20) unsigned DEFAULT NULL,
+                `conversion_id` int(11) unsigned DEFAULT NULL,
+                `match_state` varchar(20) NOT NULL,
+                `match_reason` varchar(255) NOT NULL,
+                `trusted` tinyint(1) unsigned DEFAULT NULL,
+                `is_test` tinyint(1) unsigned NOT NULL DEFAULT '0',
+                `has_events` tinyint(1) unsigned NOT NULL DEFAULT '0',
+                `referrer_status` varchar(24) NOT NULL,
+                `referrer_raw` varchar(2048) DEFAULT NULL,
+                `referrer_truncated` tinyint(1) unsigned NOT NULL DEFAULT '0',
+                `utm_source` varchar(255) DEFAULT NULL,
+                `utm_medium` varchar(255) DEFAULT NULL,
+                `utm_campaign` varchar(255) DEFAULT NULL,
+                `utm_term` varchar(255) DEFAULT NULL,
+                `utm_content` varchar(255) DEFAULT NULL,
+                `gclid` varchar(255) DEFAULT NULL,
+                `referrer_click_at` int(10) unsigned DEFAULT NULL,
+                `install_begin_at` int(10) unsigned DEFAULT NULL,
+                `referrer_click_server_at` int(10) unsigned DEFAULT NULL,
+                `install_begin_server_at` int(10) unsigned DEFAULT NULL,
+                `install_version` varchar(64) DEFAULT NULL,
+                `google_play_instant` tinyint(1) unsigned DEFAULT NULL,
+                `app_version` varchar(64) DEFAULT NULL,
+                `sdk_version` varchar(32) DEFAULT NULL,
+                `os_version` varchar(32) DEFAULT NULL,
+                `integrity_mode` varchar(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'off',
+                `integrity_state` varchar(16) NOT NULL DEFAULT 'not_requested',
+                `integrity_reason` varchar(255) DEFAULT NULL,
+                `integrity_token_hash` char(64) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+                `integrity_attempts` tinyint(3) unsigned NOT NULL DEFAULT '0',
+                `integrity_next_at` int(10) unsigned DEFAULT NULL,
+                `integrity_checked_at` int(10) unsigned DEFAULT NULL,
+                `integrity_verdict` varchar(1024) DEFAULT NULL,
+                `first_open_at` int(10) unsigned DEFAULT NULL,
+                `received_at` int(10) unsigned NOT NULL,
+                `settled_at` int(10) unsigned DEFAULT NULL,
+                `raw_payload` text NOT NULL,
+                `remote_ip` varchar(45) NOT NULL DEFAULT '',
+                PRIMARY KEY (`install_row_id`),
+                UNIQUE KEY `registration_install` (`registration_id`,`install_uuid`),
+                KEY `click_state` (`click_id`,`match_state`),
+                KEY `user_received` (`user_id`,`received_at`),
+                KEY `registration_received` (`registration_id`,`received_at`),
+                KEY `state_received` (`match_state`,`received_at`),
+                KEY `trusted_received` (`trusted`,`received_at`),
+                KEY `integrity_due` (`integrity_state`,`integrity_next_at`),
+                KEY `registration_integrity_token` (`registration_id`,`integrity_token_hash`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Android installs reported by the SDK: the Play referrer, its MatchState and trust'"
+        );
+    }
+
+    public static function appIntegrityCredentials(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::APP_INTEGRITY_CREDENTIALS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::APP_INTEGRITY_CREDENTIALS . "` (
+                `registration_id` int(10) unsigned NOT NULL,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `client_email` varchar(255) NOT NULL,
+                `private_key_id` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `project_id` varchar(64) DEFAULT NULL,
+                `ciphertext` text CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `created_at` int(10) unsigned NOT NULL,
+                `updated_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`registration_id`),
+                KEY `user_id` (`user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Play Integrity service-account credentials, one per Android registration, encrypted at rest'"
         );
     }
 }

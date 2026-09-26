@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
+use Api\V3\Apps\Apple\SkanEncodingRules;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
@@ -147,6 +148,7 @@ final class GoalsController
                 'ineligible_reason' => $r['ineligible_reason'],
                 'payable' => (int) $r['payable'] === 1,
                 'campaign_id' => $r['campaign_id'] !== null ? (int) $r['campaign_id'] : null,
+                'app_registration_id' => $r['app_registration_id'] !== null ? (int) $r['app_registration_id'] : null,
                 'conversion_id' => $r['conversion_id'] !== null ? (int) $r['conversion_id'] : null,
             ], $rows),
             'pagination' => ['total' => $total, 'limit' => $limit, 'offset' => $offset],
@@ -239,18 +241,12 @@ final class GoalsController
                 if ($goal['archived_at'] !== null) {
                     throw new ConflictException('Goal ' . $id . ' is archived; archived goals are kept for their history and cannot be edited.');
                 }
+                self::refuseBuiltin($goal, 'edited');
                 $scope = GoalScope::fromStored($goal['scope']);
                 $scopeId = (int) $goal['scope_id'];
                 $this->assertNameFree($scope, $scopeId, $definition->name, $id);
                 $this->assertPrerequisites($scope, $scopeId, $definition, $id);
-                $encodings = $this->encodingsNaming($id);
-                if ($encodings !== [] && !$definition->isPlainEvent()) {
-                    throw new ValidationException('An SKAN encoding names this goal', [
-                        'definition' => 'SKAN encodings ' . implode(', ', $encodings) . ' name this goal, and until the on-device evaluator '
-                            . 'ships an encoded goal must stay a plain event goal (one event, no where, count 1, no after, no within, '
-                            . 'repeat once). Point the encodings at another goal first (PUT /apps/skan-encodings/{id}).',
-                    ]);
-                }
+                $this->assertEncodedGoalsStayReachable($id, $definition);
 
                 return $this->goals->addVersion($this->userId, $id, $definition, time());
             });
@@ -272,6 +268,7 @@ final class GoalsController
                 if ($goal['archived_at'] !== null) {
                     return;
                 }
+                self::refuseBuiltin($goal, 'archived');
                 $blocked = $this->blockers($id);
                 if ($blocked['skan_encodings'] !== [] || $blocked['dependents'] !== []) {
                     throw new ConflictException($this->blockerMessage($id, $blocked), $blocked);
@@ -499,7 +496,7 @@ final class GoalsController
     /** @param array<string, mixed> $params */
     public function reevaluationPreview(int $id, array $params): array
     {
-        self::onlyKeys($params, ['version', 'limit', 'after'], 'query');
+        self::onlyKeys($params, ['version', 'limit', 'after', 'subject_type'], 'query');
 
         return ['data' => $this->reevaluation($id, $params, false)];
     }
@@ -507,7 +504,7 @@ final class GoalsController
     /** @param array<string, mixed> $payload */
     public function reevaluate(int $id, array $payload): array
     {
-        self::onlyKeys($payload, ['version', 'limit', 'after'], 'body');
+        self::onlyKeys($payload, ['version', 'limit', 'after', 'subject_type'], 'body');
 
         return ['data' => $this->reevaluation($id, $payload, true)];
     }
@@ -522,13 +519,20 @@ final class GoalsController
             throw new ValidationException('Invalid limit', ['limit' => 'at most ' . GoalEngine::MAX_SUBJECTS_PER_CALL . ' subjects per call']);
         }
         $after = array_key_exists('after', $input) ? self::id($input['after'], 'after', allowZero: true) : 0;
+        $subjectType = null;
+        if (array_key_exists('subject_type', $input)) {
+            if (!in_array($input['subject_type'], [GoalSubject::CLICK, GoalSubject::INSTALL], true)) {
+                throw new ValidationException('Invalid subject_type', ['subject_type' => 'must be click or install (default: click for a campaign goal, install otherwise)']);
+            }
+            $subjectType = (string) $input['subject_type'];
+        }
 
         // An outcome the old version never reached is new to the traffic
         // source and is announced like any other; a replacement is not
         // (GoalEngine decides which is which).
         $engine = new GoalEngine($this->conn, $this->goals, null, null, new \Prosper202\Goals\TrafficSourceNotifier($this->conn, false));
 
-        return $this->guard(fn () => $engine->reevaluate($this->userId, $id, $version, $apply, $limit, $after));
+        return $this->guard(fn () => $engine->reevaluate($this->userId, $id, $version, $apply, $limit, $after, $subjectType));
     }
 
     // ─── Checks ─────────────────────────────────────────────────────
@@ -615,6 +619,31 @@ final class GoalsController
         }
     }
 
+    /**
+     * An SKAN encoding names a goal the iOS SDK evaluates on the device, so
+     * an edit must leave every encoded goal reachable there: the goal
+     * itself, and every goal waiting for it through `after`
+     * (SkanEncodingRules — the same question the encoding writer asks).
+     */
+    private function assertEncodedGoalsStayReachable(int $id, GoalDefinition $definition): void
+    {
+        $rules = new SkanEncodingRules($this->conn->writeConnection(), $this->userId);
+        foreach ([$id, ...$rules->dependentsOf($id)] as $goalId) {
+            $encodings = $this->encodingsNaming($goalId);
+            if ($encodings === []) {
+                continue;
+            }
+            $why = $rules->deviceUnreachable($goalId, [$id => $definition]);
+            if ($why !== null) {
+                throw new ValidationException('An SKAN encoding depends on this goal', [
+                    'definition' => 'SKAN encodings ' . implode(', ', $encodings) . ' name goal ' . $goalId
+                        . ($goalId === $id ? '' : ', which waits for this one') . ', and the edit would leave it unreachable on a device: '
+                        . $why . ' Point the encodings at another goal first (PUT /apps/skan-encodings/{id}).',
+                ]);
+            }
+        }
+    }
+
     /** @return list<int> */
     private function encodingsNaming(int $goalId): array
     {
@@ -672,6 +701,7 @@ final class GoalsController
             'scope_id' => (int) $row['scope_id'],
             'name' => (string) $row['name'],
             'current_version' => (int) $row['current_version'],
+            'builtin' => $row['builtin'] !== null ? (string) $row['builtin'] : null,
             'definition' => $definition,
             'definition_valid' => $valid,
             'effective_at' => $current['effective_at'] ?? null,
@@ -768,6 +798,22 @@ final class GoalsController
             throw $e;
         } catch (\Prosper202\Database\Exceptions\QueryException $e) {
             throw self::logged(new DatabaseException('Goal query failed', $e), $e);
+        }
+    }
+
+    /**
+     * The built-in install goal is the system's, not the operator's: it has
+     * one fixed definition and lives as long as its registration. What an
+     * operator decides about it is per campaign (attach it with a payout, or
+     * list other goals and leave it off).
+     *
+     * @param array<string, mixed> $goal
+     */
+    private static function refuseBuiltin(array $goal, string $verb): void
+    {
+        if (($goal['builtin'] ?? null) !== null) {
+            throw new ConflictException('Goal ' . (int) $goal['goal_id'] . ' is the built-in ' . (string) $goal['builtin']
+                . ' goal and cannot be ' . $verb . '; attach it to a campaign (PUT /goals/{id}/campaigns/{campaign_id}) to set what an install pays there.');
         }
     }
 

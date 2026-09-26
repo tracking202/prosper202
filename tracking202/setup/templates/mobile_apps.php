@@ -502,7 +502,10 @@ if (!$canManage) {
 
             <h3 class="p202-panel__title mt-4">Swift package: P202Attribution</h3>
             <?php
-            $swift = "let attribution = P202Attribution(\n    endpoint: URL(string: \"{$origin}\")!,\n    schemaToken: \"" . ($token === '' ? '' : mb_substr($token, 0, 4) . '…' . mb_substr($token, -4)) . "\")\nattribution.logEvent(\"purchase\")";
+            // The SDK's real API (sdk/ios-attribution/README.md): configure
+            // once at launch, then log events for the goals to evaluate on
+            // the device.
+            $swift = "P202Attribution.shared.configure(\n    endpoint: URL(string: \"{$origin}\")!,\n    appToken: \"" . ($token === '' ? '' : mb_substr($token, 0, 4) . '…' . mb_substr($token, -4)) . "\"\n)\ntry P202Attribution.shared.logEvent(\"purchase\")";
             ?>
             <div class="p202-code">
                 <pre class="p202-code__value mb-0"><?php echo $e($swift); ?></pre>

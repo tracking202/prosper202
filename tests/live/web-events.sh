@@ -13,7 +13,9 @@
 #     conversion it always did (with the name on the row), and a pixel
 #     without `event=` on a goal campaign is still a plain conversion;
 #   - traffic-source notification: each payable goal the campaign notifies
-#     for is sent once, as a server-to-server postback with [[p202_goal]],
+#     for is queued in the notification outbox with its conversion and sent
+#     once by the worker (202-cronjobs/app-installs.php, run from this
+#     checkout), as a server-to-server postback with [[p202_goal]],
 #     [[p202_goal_value]] and [[transactionid]] filled (read back from the
 #     instance's own request log), a goal that does not notify is not sent,
 #     a duplicate and a replay's replacement rows are never sent again, and
@@ -27,6 +29,9 @@
 #
 # The browser half of p202.track() — the real script on a real page — is
 # tests/browser/specs/web-events.spec.js.
+#
+# Runs 202-cronjobs/app-installs.php from this checkout (P202_PHP, default
+# php), so the checkout's 202-config.php must name the instance's database.
 #
 # Environment: P202_BASE, P202_DB, P202_DB_USER/P202_DB_PASS, P202_API_KEY
 # (the instance's admin key), P202_USER/P202_PASS (its login, for the goal
@@ -64,6 +69,7 @@ mysql_q() { mysql "${MYSQL_ARGS[@]}" "$@"; }
 Q() { mysql_q -N "$DB" -e "$1"; }
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+PHP=${P202_PHP:-php}
 OUT=$(mktemp -d)
 PASS=0; FAIL=0
 say()  { printf '\n\033[1m== %s\033[0m\n' "$1"; }
@@ -88,6 +94,8 @@ value() { Q "SELECT CONCAT(click_lead, '/', click_payout) FROM 202_clicks WHERE 
 rows()  { Q "SELECT GROUP_CONCAT(CONCAT(source, ':', COALESCE(event_name,'-'), ':', click_payout, ':', payable, ':', IF(superseded_by IS NULL, 'live', 'sup')) ORDER BY conv_id SEPARATOR ' ') FROM 202_conversion_logs WHERE click_id=$1 AND deleted=0"; }
 events(){ Q "SELECT COUNT(*) FROM 202_goal_events WHERE subject_type='click' AND subject_id=$1"; }
 live()  { Q "SELECT COUNT(*) FROM 202_goal_outcomes WHERE subject_type='click' AND subject_id=$1 AND superseded_at IS NULL"; }
+# deliver — run the notification worker, as cron would: what is queued goes out.
+deliver() { (cd "$ROOT" && "$PHP" 202-cronjobs/app-installs.php) >> "$OUT/deliver.txt" 2>&1 || bad "202-cronjobs/app-installs.php failed: $(tail -2 "$OUT/deliver.txt")"; }
 # notified GOAL-NAME — how many traffic-source postbacks this pass's sink got for that goal so far.
 notified() { grep -c "GET /tracking202/static/index.html?p202sink=$RUN&g=$1&" "$SERVER_LOG"; }
 
@@ -96,14 +104,15 @@ OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE api_key='$P202_API_KEY'")
 RUN=$(date +%s)$RANDOM
 NOW=$(date +%s)
 T=$((NOW - 3600))
-PPC=960900
+PPC=960900; PPC2=960901
 ACIP_G=960100; ACIP_N=960101; ACIP_R=960102; LP_PUBLIC=960200
 C_GPB=960001; C_GPX=960002; C_UPX=960003; C_PB=960004; C_PX=960005; C_BAD=960006; C_PLAIN=960007
-C_LEG=960008; C_LEG2=960009; C_API=960010; C_APIN=960011; C_STAGE=960012; C_REPLAY=960013; C_OTHER=960014; C_CLI=960015
-CLICKS="$C_GPB,$C_GPX,$C_UPX,$C_PB,$C_PX,$C_BAD,$C_PLAIN,$C_LEG,$C_LEG2,$C_API,$C_APIN,$C_STAGE,$C_REPLAY,$C_OTHER,$C_CLI"
+C_LEG=960008; C_LEG2=960009; C_API=960010; C_APIN=960011; C_STAGE=960012; C_REPLAY=960013; C_OTHER=960014; C_CLI=960015; C_TWO=960016
+CLICKS="$C_GPB,$C_GPX,$C_UPX,$C_PB,$C_PX,$C_BAD,$C_PLAIN,$C_LEG,$C_LEG2,$C_API,$C_APIN,$C_STAGE,$C_REPLAY,$C_OTHER,$C_CLI,$C_TWO"
 
 cleanup() {
   mysql_q "$DB" <<SQL
+DELETE FROM 202_notification_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICKS));
 DELETE FROM 202_attribution_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICKS) OR campaign_id IN (SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public IN ($ACIP_G, $ACIP_N, $ACIP_R)));
 DELETE FROM 202_conversion_logs WHERE click_id IN ($CLICKS) OR campaign_id IN (SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public IN ($ACIP_G, $ACIP_N, $ACIP_R));
 DELETE FROM 202_dataengine WHERE click_id IN ($CLICKS);
@@ -113,7 +122,7 @@ DELETE FROM 202_clicks WHERE click_id IN ($CLICKS);
 DELETE FROM 202_clicks_spy WHERE click_id IN ($CLICKS);
 DELETE FROM 202_clicks_tracking WHERE click_id IN ($CLICKS);
 DELETE FROM 202_landing_pages WHERE landing_page_id_public = $LP_PUBLIC;
-DELETE FROM 202_ppc_account_pixels WHERE ppc_account_id = $PPC;
+DELETE FROM 202_ppc_account_pixels WHERE ppc_account_id IN ($PPC, $PPC2);
 DELETE FROM 202_aff_campaigns WHERE aff_campaign_id_public IN ($ACIP_G, $ACIP_N, $ACIP_R);
 DELETE FROM 202_aff_networks WHERE aff_network_name = 'web events pass';
 TRUNCATE 202_goals; TRUNCATE 202_goal_versions; TRUNCATE 202_campaign_goals; TRUNCATE 202_goal_subjects;
@@ -144,10 +153,10 @@ seed_click() { # id campaign
       VALUES ($1, $OWNER, $2, 0, $PPC, 0.10, 0, 0, 0, 0, 0, $T);
     INSERT INTO 202_clicks_tracking (click_id, c1_id, c2_id, c3_id, c4_id) VALUES ($1, 0, 0, 0, 0);"
 }
-for c in $C_GPB $C_GPX $C_UPX $C_PB $C_PX $C_BAD $C_PLAIN $C_API $C_STAGE $C_REPLAY $C_CLI; do seed_click "$c" "$CAMP_G"; done
+for c in $C_GPB $C_GPX $C_UPX $C_PB $C_PX $C_BAD $C_PLAIN $C_API $C_STAGE $C_REPLAY $C_CLI $C_TWO; do seed_click "$c" "$CAMP_G"; done
 for c in $C_LEG $C_LEG2 $C_APIN; do seed_click "$c" "$CAMP_N"; done
 seed_click $C_OTHER "$CAMP_R"
-[ "$(Q "SELECT COUNT(*) FROM 202_clicks WHERE click_id IN ($CLICKS)")" = 15 ] || { echo "seeding clicks failed" >&2; exit 2; }
+[ "$(Q "SELECT COUNT(*) FROM 202_clicks WHERE click_id IN ($CLICKS)")" = 16 ] || { echo "seeding clicks failed" >&2; exit 2; }
 
 # The traffic source: a server-to-server postback addressed to this instance
 # (read back from its request log) and an image pixel (read back from the
@@ -176,8 +185,12 @@ eq "$(value $C_GPB)" "1/1.00000" "the click is a lead worth the goal"
 eq "$(Q "SELECT CONCAT(event_id, ':', revenue_trusted) FROM 202_goal_events WHERE subject_id=$C_GPB")" "@once:signup:1" \
    "the event is stored under a derived id (no event_id or transaction id was sent)"
 eq "$(Q "SELECT dedupe_key FROM 202_conversion_logs WHERE click_id=$C_GPB")" "goal:$G_SIGNUP:1:1:@once:signup" "keyed by goal, version, n and event"
-eq "$(field "d['notifications'][0]['status']")" sent "the traffic source is told"
-eq "$(notified Signup)" 1 "once, by server-to-server postback"
+eq "$(field "[d['notifications'][0]['status'], d['notifications'][0]['queued']]")" '["queued", 1]' "the traffic source's postback is queued"
+eq "$(Q "SELECT CONCAT(kind, '/', status) FROM 202_notification_pending WHERE conv_id=(SELECT conv_id FROM 202_conversion_logs WHERE click_id=$C_GPB)")" "reached/pending" \
+   "in the notification outbox, committed with the conversion"
+eq "$(notified Signup)" 0 "the request itself sends nothing"
+deliver
+eq "$(notified Signup)" 1 "the worker tells the traffic source, once, by server-to-server postback"
 grep "p202sink=$RUN&g=Signup&" "$SERVER_LOG" | tail -1 > "$OUT/sink"
 has "$OUT/sink" "gid=$G_SIGNUP&v=1.00&p=1.00&tx=goal%3A$G_SIGNUP%3A1%3A1%3A@once%3Asignup&s=$C_GPB" \
    "with the goal, its value, the row's key as the transaction id, and the subid"
@@ -186,6 +199,7 @@ sleep 1 # a network's retry comes later: the server's clock has moved on
 eq "$(hit "/tracking202/static/gpb.php?subid=$C_GPB&event=signup")" 200 "the same postback again, a second later"
 eq "$(field "[d['msg'], d['duplicate']]")" '["Event already recorded", true]' "is a duplicate"
 eq "$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id=$C_GPB")" 1 "writes nothing"
+deliver
 eq "$(notified Signup)" 1 "and tells the traffic source nothing again"
 
 eq "$(hit "/tracking202/static/gpb.php?subid=$C_GPB&event=purchase&amount=12.5&txid=ORD-1&event_props=%7B%22plan%22%3A%22pro%22%7D")" 200 \
@@ -194,6 +208,7 @@ eq "$(Q "SELECT CONCAT(event_id, '|', transaction_id, '|', revenue, '|', propert
    '@tx:ORD-1|ORD-1|12.5|{"plan":"pro"}' "is stored under its transaction id, with its revenue and properties"
 eq "$(value $C_GPB)" "1/13.50000" "the postback's amount pays the purchase goal: 1 + 12.50 accumulated"
 eq "$(Q "SELECT transaction_id FROM 202_conversion_logs WHERE click_id=$C_GPB AND click_payout=12.5")" ORD-1 "the ledger row keeps the network's id"
+deliver
 grep "p202sink=$RUN&g=Purchase&" "$SERVER_LOG" | tail -1 > "$OUT/sink"
 has "$OUT/sink" "v=12.50&p=12.50&tx=ORD-1&" "the traffic source hears the purchase with the network's own id"
 
@@ -205,6 +220,7 @@ sleep 1
 code=$(curl -s -o "$OUT/gif" -w '%{http_code}' "$BASE/tracking202/static/gpx.php?subid=$C_GPX&event=upsell")
 eq "$code" 200 "gpx with event=upsell still answers its image"
 eq "$(rows $C_GPX)" "goal:purchase:5.00000:1:live goal:upsell:4.00000:1:live" "the upsell waits for the purchase and pays 4"
+deliver
 eq "$(notified Upsell)" 0 "a goal the campaign does not notify for is not sent"
 
 eq "$(hit "/tracking202/static/upx.php?subid=$C_UPX&event=signup")" 200 "upx with event=signup"
@@ -281,15 +297,38 @@ eq "$(field "[d['data']['goals_evaluated'], 'reevaluation' in d['data']['note']]
 eq "$(events $C_APIN)$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id=$C_APIN")" 10 "one event, no conversion"
 
 say "a replay's replacement rows are never announced again"
+deliver # what earlier steps queued goes out first, so the count below is this step's
 before=$(notified Purchase)
 api POST /events "{\"click_id\":$C_REPLAY,\"events\":[{\"event_id\":\"r2\",\"name\":\"purchase\",\"revenue\":10,\"occurred_at\":$((NOW - 60))}]}" > /dev/null
+deliver
 eq "$(notified Purchase)" "$((before + 1))" "the first purchase is announced"
 eq "$(api POST /events "{\"click_id\":$C_REPLAY,\"events\":[{\"event_id\":\"r1\",\"name\":\"purchase\",\"revenue\":1,\"occurred_at\":$((NOW - 600))}]}")" 201 \
    "an earlier purchase arrives late"
 eq "$(field "[d['data']['replayed'], [o['notify'] for o in d['data']['outcomes']]]")" '[true, ["suppressed"]]' \
    "the replay moves the outcome to it, and marks the replacement suppressed"
+deliver
 eq "$(notified Purchase)" "$((before + 1))" "so the network is not told a second time"
+eq "$(Q "SELECT GROUP_CONCAT(CONCAT(n.kind, ':', n.status) ORDER BY n.notification_id) FROM 202_notification_pending n JOIN 202_conversion_logs c ON c.conv_id = n.conv_id WHERE c.click_id=$C_REPLAY")" \
+   "reached:sent,reached:cancelled,correction:suppressed" "its postback is cancelled, and the correction no pixel can carry is recorded"
 eq "$(rows $C_REPLAY)" "goal:purchase:10.00000:1:sup goal:purchase:1.00000:1:live" "the ledger supersedes the moved row"
+
+say "a server pixel with two URLs: one row per URL, a refusing one retried alone"
+# PR 5's per-destination outbox on a web goal: the second URL answers 404,
+# which the worker retries; the first accepted and must never hear it again.
+mysql_q "$DB" -e "UPDATE 202_clicks SET ppc_account_id = $PPC2 WHERE click_id = $C_TWO; UPDATE 202_clicks_spy SET ppc_account_id = $PPC2 WHERE click_id = $C_TWO;
+  INSERT INTO 202_ppc_account_pixels (ppc_account_id, pixel_code, pixel_type_id) VALUES
+  ($PPC2, '$BASE/tracking202/static/index.html?p202two=$RUN&v=[[p202_goal_value]]&s=[[subid]] $BASE/api/v3/p202-refuses-$RUN?v=[[p202_goal_value]]&s=[[subid]]', 4);"
+two_rows() { Q "SELECT GROUP_CONCAT(CONCAT_WS('/', destination, kind, status, attempts) ORDER BY destination) FROM 202_notification_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id=$C_TWO)"; }
+eq "$(hit "/tracking202/static/gpb.php?subid=$C_TWO&event=signup")" 200 "a signup on a click whose traffic source's pixel holds two URLs"
+eq "$(field "[d['notifications'][0]['status'], d['notifications'][0]['queued']]")" '["queued", 2]' "queues one postback per URL"
+deliver
+eq "$(two_rows)" "0/reached/sent/1,1/reached/pending/1" "the worker sends the first; the refusing second waits to retry"
+Q "UPDATE 202_notification_pending SET next_attempt_at = 0 WHERE status = 'pending' AND attempts > 0 AND conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id=$C_TWO)"
+deliver
+eq "$(two_rows)" "0/reached/sent/1,1/reached/pending/2" "the next run retries the refusing URL, and only it"
+eq "$(grep -c "GET /tracking202/static/index.html?p202two=$RUN&v=1.00&s=$C_TWO" "$SERVER_LOG")" 1 "the accepting URL heard the signup exactly once"
+eq "$(grep -c "GET /api/v3/p202-refuses-$RUN?v=1.00&s=$C_TWO" "$SERVER_LOG")" 2 "the refusing URL was asked twice"
+Q "UPDATE 202_notification_pending SET status = 'cancelled' WHERE status = 'pending' AND conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id=$C_TWO)"
 
 say "events is its own scope area; POST /events is stageable"
 mint() {

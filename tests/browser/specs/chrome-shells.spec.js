@@ -31,16 +31,19 @@ const path = require('path');
 const checks = require('../lib/checks');
 
 const PAIRS = [
-  // The Analyze pair went with U3: every Analyze page is on v2 now, so the
-  // family has no classic page to hold the strip against. The strip shape
-  // comes back when a family that uses it (Overview, Update) has a page on
-  // each shell; until then the Setup grid and the account pair are measured.
-  // Attribution Models is the one Setup page U4 left classic (the MTA rewrite
-  // replaces it); every other Setup page is on v2 now.
-  { name: 'setup', classic: '/tracking202/setup/attribution_models.php', v2: '/tracking202/setup/mobile_apps.php' },
-  // U6 moved help.php to v2; the attribution dashboard is the Account page
-  // that stays classic until the MTA rewrite replaces it.
-  { name: 'account', classic: '/202-account/attribution.php', v2: '/202-account/help.php' },
+  // The Analyze pair went with U3, and the Setup and Account pairs with the
+  // MTA rewrite: their classic pages were the old attribution model editor
+  // (now a redirect to the dashboard) and the attribution dashboard (rebuilt
+  // on v2 in PR 10), so neither family has a classic page left. The report
+  // strip is what is left to hold across shells: Update is still classic and
+  // Overview is v2, and both draw the one strip (tracking202/_config/
+  // sub-menu.php) under the same section tabs.
+  // U5 then moved Update to v2 (the MTA branch, built without U5, had
+  // chosen it as the classic half), and U7 the pre-login and feed pages, so
+  // with every family combined no page renders the classic shell: there is
+  // nothing left to hold the chrome against. The scenarios say so rather
+  // than pass on nothing; a pair goes back here if a classic page returns,
+  // and U8 deletes the classic shell and this spec with it.
 ];
 
 const WIDTHS = [1280, 390];
@@ -59,6 +62,10 @@ function scenariosFor(scheme) {
     name: 'The chrome matches across shells at ' + width + 'px, ' + scheme,
     async run(ctx) {
       const { withSession, config, expect } = ctx;
+      if (PAIRS.length === 0) {
+        expect.skip('chrome across shells', 'no page is left on the classic shell (U5, U7, PR 10); nothing to compare');
+        return;
+      }
       await withSession({ viewport: { width, height: 900 }, colorScheme: scheme }, async ({ app, ui, page, session }) => {
         for (const pair of PAIRS) {
           expect.section(pair.name + ' at ' + width + 'px, ' + scheme);
@@ -83,6 +90,7 @@ function scenariosFor(scheme) {
           checks.chromeMatches({ expect }, measured.classic, measured.v2, {
             label: pair.name,
             paint: scheme === 'light',
+            labelsDiffer: pair.labelsDiffer || [],
           });
         }
       });

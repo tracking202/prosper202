@@ -8,28 +8,47 @@ use Prosper202\Database\Schema\SchemaDefinition;
 use Prosper202\Database\Schema\TableRegistry;
 
 /**
- * Attribution and conversion table definitions.
+ * Multi-touch attribution (plan §6.3–6.4): models, the journey each
+ * conversion was built from, and the credit every model gives each touch.
+ *
+ * The conversion ledger and its outbox (202_attribution_pending) are
+ * ConversionTables; the identity graph a journey is read from is
+ * IdentityTables. Nothing here is written on the conversion path: the
+ * attribution worker (Prosper202\Attribution\AttributionWorker) owns every
+ * row below except the models, which the API writes.
  */
 final class AttributionTables
 {
     /**
-     * Get all attribution-related table definitions.
-     *
      * @return array<SchemaDefinition>
      */
     public static function getDefinitions(): array
     {
         return [
             self::attributionModels(),
-            self::attributionSnapshots(),
-            self::attributionTouchpoints(),
-            self::attributionSettings(),
+            self::attributionJourneys(),
+            self::attributionJourneyMeta(),
+            self::attributionCredits(),
             self::attributionAudit(),
             self::attributionExports(),
-            self::conversionTouchpoints(),
         ];
     }
 
+    /**
+     * One row per model an account defined.
+     *
+     * - model_type is the enum Prosper202\Attribution\ModelType, and nothing
+     *   else: the column refuses any other value.
+     * - weighting_config is JSON validated by ModelConfig on write and on
+     *   load; a stored config that fails is marked status='invalid' with the
+     *   reason, and that model alone stops computing.
+     * - is_default is 1 or NULL, never 0, so UNIQUE (user_id, is_default)
+     *   holds at most one default per account while any number of rows are
+     *   not the default.
+     * - recompute_requested_at / recompute_cursor: a change to what the model
+     *   computes asks the worker to re-derive its credits, which it fans out
+     *   in batches from the cursor.
+     */
     public static function attributionModels(): SchemaDefinition
     {
         return SchemaBuilder::fromRawSql(
@@ -39,85 +58,94 @@ final class AttributionTables
                 `user_id` mediumint(8) unsigned NOT NULL,
                 `model_name` varchar(255) NOT NULL,
                 `model_slug` varchar(191) NOT NULL,
-                `model_type` varchar(50) NOT NULL,
-                `weighting_config` longtext,
-                `is_active` tinyint(1) NOT NULL DEFAULT '1',
-                `is_default` tinyint(1) NOT NULL DEFAULT '0',
+                `model_type` enum('last_touch','first_touch','linear','time_decay','position_based') NOT NULL,
+                `weighting_config` text NOT NULL,
+                `lookback_days` smallint(5) unsigned NOT NULL DEFAULT '30',
+                `status` enum('active','inactive','invalid') NOT NULL DEFAULT 'active',
+                `status_reason` varchar(255) DEFAULT NULL,
+                `is_default` tinyint(1) unsigned DEFAULT NULL,
+                `recompute_requested_at` int(10) unsigned DEFAULT NULL,
+                `recompute_cursor` int(11) unsigned NOT NULL DEFAULT '0',
                 `created_at` int(10) unsigned NOT NULL,
                 `updated_at` int(10) unsigned NOT NULL,
                 PRIMARY KEY (`model_id`),
                 UNIQUE KEY `model_slug_user` (`user_id`,`model_slug`),
-                KEY `user_default` (`user_id`,`is_default`)
+                UNIQUE KEY `one_default` (`user_id`,`is_default`),
+                KEY `recompute` (`recompute_requested_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }
 
-    public static function attributionSnapshots(): SchemaDefinition
+    /**
+     * The touches a conversion's credit was computed from, oldest first; the
+     * converting click is always the last position. Built once per
+     * conversion (not per model) at the journey lookback, and rewritten with
+     * the credits in one transaction.
+     */
+    public static function attributionJourneys(): SchemaDefinition
     {
         return SchemaBuilder::fromRawSql(
-            TableRegistry::ATTRIBUTION_SNAPSHOTS,
-            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ATTRIBUTION_SNAPSHOTS . "` (
-                `snapshot_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-                `model_id` bigint(20) unsigned NOT NULL,
-                `user_id` mediumint(8) unsigned NOT NULL,
-                `scope_type` varchar(50) NOT NULL,
-                `scope_id` bigint(20) unsigned DEFAULT NULL,
-                `date_hour` int(10) unsigned NOT NULL,
-                `lookback_start` int(10) unsigned NOT NULL,
-                `lookback_end` int(10) unsigned NOT NULL,
-                `attributed_clicks` int(10) unsigned NOT NULL DEFAULT '0',
-                `attributed_conversions` int(10) unsigned NOT NULL DEFAULT '0',
-                `attributed_revenue` decimal(12,4) NOT NULL DEFAULT '0.0000',
-                `attributed_cost` decimal(12,4) NOT NULL DEFAULT '0.0000',
-                `created_at` int(10) unsigned NOT NULL,
-                PRIMARY KEY (`snapshot_id`),
-                KEY `model_hour_scope` (`model_id`,`date_hour`,`scope_type`,`scope_id`),
-                KEY `user_hour` (`user_id`,`date_hour`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
-        );
-    }
-
-    public static function attributionTouchpoints(): SchemaDefinition
-    {
-        return SchemaBuilder::fromRawSql(
-            TableRegistry::ATTRIBUTION_TOUCHPOINTS,
-            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ATTRIBUTION_TOUCHPOINTS . "` (
-                `touchpoint_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-                `snapshot_id` bigint(20) unsigned NOT NULL,
+            TableRegistry::ATTRIBUTION_JOURNEYS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ATTRIBUTION_JOURNEYS . "` (
                 `conv_id` int(11) unsigned NOT NULL,
+                `position` smallint(5) unsigned NOT NULL,
                 `click_id` bigint(20) unsigned NOT NULL,
-                `position` smallint(5) unsigned NOT NULL DEFAULT '0',
-                `credit` decimal(10,5) NOT NULL DEFAULT '0.00000',
-                `weight` decimal(10,5) NOT NULL DEFAULT '0.00000',
-                `created_at` int(10) unsigned NOT NULL,
-                PRIMARY KEY (`touchpoint_id`),
-                KEY `snapshot_conv` (`snapshot_id`,`conv_id`),
-                KEY `click_lookup` (`click_id`)
+                `click_time` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`conv_id`,`position`),
+                KEY `click_id` (`click_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }
 
-    public static function attributionSettings(): SchemaDefinition
+    /**
+     * What each stored journey was built under: the lookback it covers (a
+     * model reading wider than this forces a rebuild), whether the touch cap
+     * cut it, and whether the converting click had a visitor key at all (a
+     * click without one is a one-touch journey by construction, and the
+     * reports say so).
+     */
+    public static function attributionJourneyMeta(): SchemaDefinition
     {
         return SchemaBuilder::fromRawSql(
-            TableRegistry::ATTRIBUTION_SETTINGS,
-            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ATTRIBUTION_SETTINGS . "` (
-                `setting_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            TableRegistry::ATTRIBUTION_JOURNEY_META,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ATTRIBUTION_JOURNEY_META . "` (
+                `conv_id` int(11) unsigned NOT NULL,
                 `user_id` mediumint(8) unsigned NOT NULL,
-                `scope_type` varchar(50) NOT NULL,
-                `scope_id` bigint(20) unsigned DEFAULT NULL,
+                `conv_time` int(10) unsigned NOT NULL,
+                `touches` smallint(5) unsigned NOT NULL,
+                `built_lookback_days` smallint(5) unsigned NOT NULL,
+                `built_at` int(10) unsigned NOT NULL,
+                `truncated` tinyint(1) unsigned NOT NULL DEFAULT '0',
+                `identified` tinyint(1) unsigned NOT NULL DEFAULT '0',
+                PRIMARY KEY (`conv_id`),
+                KEY `user_conv_time` (`user_id`,`conv_time`),
+                KEY `user_lookback` (`user_id`,`built_lookback_days`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * Per-conversion, per-model credit. A conversion's credits under one
+     * model sum to exactly 1 and its revenue sums to exactly the
+     * conversion's counted amount; the rounding remainder goes to the last
+     * touch. conv_time is carried so a report reads a date range from the
+     * index instead of joining back to the ledger for it.
+     */
+    public static function attributionCredits(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::ATTRIBUTION_CREDITS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ATTRIBUTION_CREDITS . "` (
+                `conv_id` int(11) unsigned NOT NULL,
                 `model_id` bigint(20) unsigned NOT NULL,
-                `multi_touch_enabled` tinyint(1) unsigned NOT NULL DEFAULT '1',
-                `multi_touch_enabled_at` int(10) unsigned DEFAULT NULL,
-                `multi_touch_disabled_at` int(10) unsigned DEFAULT NULL,
-                `effective_at` int(10) unsigned NOT NULL,
-                `created_at` int(10) unsigned NOT NULL,
-                `updated_at` int(10) unsigned NOT NULL,
-                PRIMARY KEY (`setting_id`),
-                UNIQUE KEY `user_scope` (`user_id`,`scope_type`,`scope_id`),
-                UNIQUE KEY `user_scope_model` (`user_id`,`scope_type`,`scope_id`,`model_id`),
-                UNIQUE KEY `user_scope_multi_touch` (`user_id`,`scope_type`,`scope_id`,`multi_touch_enabled`),
-                KEY `model_lookup` (`model_id`)
+                `click_id` bigint(20) unsigned NOT NULL,
+                `position` smallint(5) unsigned NOT NULL,
+                `credit` decimal(9,8) NOT NULL,
+                `revenue` decimal(11,5) NOT NULL,
+                `conv_time` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`conv_id`,`model_id`,`click_id`),
+                KEY `model_click` (`model_id`,`click_id`),
+                KEY `model_conv_time` (`model_id`,`conv_time`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }
@@ -141,6 +169,11 @@ final class AttributionTables
         );
     }
 
+    /**
+     * Export jobs: one column set (the 1.9.56 and 1.9.58 rungs used to define
+     * two that disagreed). The pipeline that fills and sends them is PR 10;
+     * the shape is fixed here so the schema is final in one release.
+     */
     public static function attributionExports(): SchemaDefinition
     {
         return SchemaBuilder::fromRawSql(
@@ -148,51 +181,27 @@ final class AttributionTables
             "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ATTRIBUTION_EXPORTS . "` (
                 `export_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
                 `user_id` mediumint(8) unsigned NOT NULL,
-                `model_id` int(11) unsigned NOT NULL,
-                `scope_type` varchar(32) NOT NULL,
-                `scope_id` bigint(20) unsigned DEFAULT NULL,
-                `start_hour` int(10) unsigned NOT NULL,
-                `end_hour` int(10) unsigned NOT NULL,
-                `requested_format` varchar(16) NOT NULL DEFAULT 'csv',
-                `status` varchar(20) NOT NULL DEFAULT 'pending',
-                `options` longtext DEFAULT NULL,
-                `webhook_url` varchar(500) DEFAULT NULL,
-                `webhook_secret` varchar(255) DEFAULT NULL,
-                `webhook_headers` text DEFAULT NULL,
+                `model_id` bigint(20) unsigned NOT NULL,
+                `compare_model_id` bigint(20) unsigned DEFAULT NULL,
+                `group_by` varchar(32) NOT NULL,
+                `range_start` int(10) unsigned NOT NULL,
+                `range_end` int(10) unsigned NOT NULL,
+                `status` enum('pending','running','completed','failed') NOT NULL DEFAULT 'pending',
                 `file_path` varchar(500) DEFAULT NULL,
                 `rows_exported` int(11) unsigned DEFAULT NULL,
+                `webhook_url` varchar(500) DEFAULT NULL,
+                `webhook_secret` varchar(255) DEFAULT NULL,
+                `webhook_status_code` smallint(5) unsigned DEFAULT NULL,
+                `attempts` tinyint(3) unsigned NOT NULL DEFAULT '0',
+                `last_error` text DEFAULT NULL,
                 `queued_at` int(10) unsigned NOT NULL,
                 `started_at` int(10) unsigned DEFAULT NULL,
                 `completed_at` int(10) unsigned DEFAULT NULL,
-                `failed_at` int(10) unsigned DEFAULT NULL,
-                `last_error` text DEFAULT NULL,
-                `webhook_attempted_at` int(10) unsigned DEFAULT NULL,
-                `webhook_status_code` int(11) DEFAULT NULL,
-                `webhook_response_body` mediumtext DEFAULT NULL,
                 `created_at` int(10) unsigned NOT NULL,
                 `updated_at` int(10) unsigned NOT NULL,
                 PRIMARY KEY (`export_id`),
-                KEY `model_status` (`model_id`,`status`),
                 KEY `user_status` (`user_id`,`status`),
-                KEY `queued_at` (`queued_at`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
-        );
-    }
-
-    public static function conversionTouchpoints(): SchemaDefinition
-    {
-        return SchemaBuilder::fromRawSql(
-            TableRegistry::CONVERSION_TOUCHPOINTS,
-            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::CONVERSION_TOUCHPOINTS . "` (
-                `touchpoint_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-                `conv_id` int(11) unsigned NOT NULL,
-                `click_id` bigint(20) unsigned NOT NULL,
-                `click_time` int(10) unsigned NOT NULL,
-                `position` smallint(5) unsigned NOT NULL DEFAULT '0',
-                `created_at` int(10) unsigned NOT NULL,
-                PRIMARY KEY (`touchpoint_id`),
-                KEY `conv_id` (`conv_id`),
-                KEY `click_lookup` (`click_id`)
+                KEY `status_queued` (`status`,`queued_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

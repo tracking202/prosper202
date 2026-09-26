@@ -15,7 +15,7 @@
 
 set -uo pipefail
 
-ALL_TIERS="syntax phpstan phpcs unit go golangci schema patterns actionlint swift"
+ALL_TIERS="syntax phpstan phpcs unit go golangci schema patterns actionlint swift kotlin"
 
 usage() {
     cat <<'EOF'
@@ -31,7 +31,7 @@ Usage: verify.sh [options]
   --list           list tier names
   -h, --help       this message
 
-Tiers: syntax phpstan phpcs unit go golangci schema patterns actionlint swift
+Tiers: syntax phpstan phpcs unit go golangci schema patterns actionlint swift kotlin
 
 Tiers 8 (live end-to-end) and 9 (agent eval) are deliberately not scripted.
 They need a running instance and a decision about what to exercise. See
@@ -238,6 +238,11 @@ reason_for() {
         swift)
             [ -d sdk/ios-attribution ] || { echo "sdk/ios-attribution/ not in this tree"; return; }
             have swift || { echo "swift not installed (on Linux the swift.org toolchain tarball for your distro runs with no extra packages; see references/sandbox-recovery.md)"; return; }
+            ;;
+        kotlin)
+            [ -d sdk/android-attribution ] || { echo "sdk/android-attribution/ not in this tree"; return; }
+            have java || { echo "no JDK (java) on PATH; the SDK's core needs only a JDK 17+"; return; }
+            have "${P202_GRADLE:-gradle}" || { echo "gradle not on PATH (set P202_GRADLE, or install Gradle 8.14 from services.gradle.org)"; return; }
             ;;
     esac
     echo ""
@@ -910,6 +915,27 @@ run_swift() {
     ( cd sdk/ios-attribution && swift build && swift test )
 }
 
+# Mirrors the Android SDK job: the platform-free core and every
+# cross-language vector it runs. Selected for changes under
+# sdk/android-attribution/ and tests/fixtures/app-sdk-contract/ (a vector
+# edit is a change to what the Kotlin suite asserts). Gradle exits 0 when
+# no test ran, so the tier counts the results and fails below a floor.
+MIN_KOTLIN_TESTS=30
+run_kotlin() {
+    local results=sdk/android-attribution/core/build/test-results/test
+    rm -rf "$results"
+    "${P202_GRADLE:-gradle}" -p sdk/android-attribution --no-daemon -q -Pp202.android=false :core:test || return 1
+    local ran
+    ran=$(cat "$results"/*.xml 2>/dev/null | grep -o '<testsuite [^>]*' \
+        | sed -E 's/.* tests="([0-9]+)" skipped="([0-9]+)".*/\1 \2/' | awk '{n += $1 - $2} END {print n + 0}')
+    if [ "$ran" -lt "$MIN_KOTLIN_TESTS" ]; then
+        FAIL_NOTE="Gradle exited 0 but $ran tests ran (expected >= $MIN_KOTLIN_TESTS); the suite did not run"
+        return 1
+    fi
+    PASS_NOTE="$ran tests ran"
+    return 0
+}
+
 # ------------------------------------------------- tiers from the diff
 
 tiers_from_diff() {
@@ -942,6 +968,7 @@ tiers_from_diff() {
     echo "$files" | grep -qE '^(202-config/(Database|migrations)/|tests/Schema/|api/v3/)' && tiers="$tiers schema"
     echo "$files" | grep -qE '^\.github/workflows/.*\.ya?ml$' && tiers="$tiers actionlint"
     echo "$files" | grep -q '^sdk/ios-attribution/'         && tiers="$tiers swift"
+    echo "$files" | grep -qE '^(sdk/android-attribution/|tests/fixtures/app-sdk-contract/)' && tiers="$tiers kotlin"
     echo "$files" | grep -q '\.sql$'                    && tiers="$tiers schema"
     echo "$tiers" | tr ' ' '\n' | awk 'NF' | sort -u | tr '\n' ' '
 }

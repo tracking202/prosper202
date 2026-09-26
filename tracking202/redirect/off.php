@@ -80,6 +80,8 @@ if ($usedCachedRedirect == true) {
         if ($getUrl) {
             
             $new_url = str_replace("[[subid]]", "p202", $getUrl);
+            // No click is recorded: the install token expands empty (plan §5.1).
+            $new_url = str_ireplace('[[p202_install_token]]', '', $new_url);
             
             // c1 sring replace for cached redirect
             if (isset($_GET['c1']) && $_GET['c1'] != '') {
@@ -251,7 +253,8 @@ if (!$info_row || !isset($info_row['click_id'])) {
         $getUrl = $memcache->get(md5('ac_' . $acip . systemHash()));
         if ($getUrl) {
             $urlvars = getPrePopVars($urlvarslist);
-            $new_url = setPrePopVars($urlvars, str_replace('[[subid]]', 'p202', $getUrl), false);
+            // No click is recorded: the install token expands empty (plan §5.1).
+            $new_url = setPrePopVars($urlvars, str_ireplace('[[p202_install_token]]', '', str_replace('[[subid]]', 'p202', $getUrl)), false);
             p202NoStore();
             header('location: ' . $new_url);
             die();

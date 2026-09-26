@@ -45,7 +45,7 @@ CLICK_A=910000001; CLICK_B=910000002; CLICK_C=910000003; CLICK_D=910000004; CLIC
 ACIP=987654321
 
 mysql_q "$DB" <<SQL
-DELETE FROM 202_conversion_touchpoints WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E,$CLICK_F,$CLICK_G));
+DELETE FROM 202_attribution_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E,$CLICK_F,$CLICK_G));
 DELETE FROM 202_conversion_logs WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E,$CLICK_F,$CLICK_G);
 DELETE FROM 202_clicks      WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E,$CLICK_F,$CLICK_G);
 DELETE FROM 202_clicks_spy  WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E,$CLICK_F,$CLICK_G);
@@ -91,10 +91,10 @@ eq "$(ptype $CLICK_A)" 1 "row carries pixel_type 1 (image pixel)"
 eq "$(payout $CLICK_A)" 7.50000 "click payout kept at the campaign payout (pixel carries no amount)"
 curl -sS -o /dev/null -b "tracking202subid=$CLICK_A" "$BASE/tracking202/static/px.php?acip=$ACIP"
 eq "$(rows $CLICK_A)" 1 "a second fire of the same pixel adds no row (one conversion per click without an id)"
-# The journey is the account's clicks on the campaign in the last 30 days: A, B,
-# D, F and G here (C is another campaign, E another account). Asserting the
-# exact count proves the legacy endpoint persists a journey the way gpx/gpb/upx do.
-eq "$(Q "SELECT COUNT(*) FROM 202_conversion_touchpoints WHERE conv_id=(SELECT MIN(conv_id) FROM 202_conversion_logs WHERE click_id=$CLICK_A)")" 5 "a multi-touch journey is persisted for the conversion"
+# Multi-touch attribution is the worker's (tests/live/mta-engine.sh): the
+# endpoint's whole part is the outbox row, written in the conversion's own
+# transaction like every other path's.
+eq "$(Q "SELECT COUNT(*) FROM 202_attribution_pending WHERE conv_id=(SELECT MIN(conv_id) FROM 202_conversion_logs WHERE click_id=$CLICK_A)")" 1 "the conversion is queued for attribution"
 
 say "px.php: a cookie naming another account's click does not convert for this campaign"
 # CLICK_E is a real click owned by a different user_id. A cookie can name any
@@ -218,7 +218,7 @@ else
 fi
 
 mysql_q "$DB" <<SQL
-DELETE FROM 202_conversion_touchpoints WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E,$CLICK_F,$CLICK_G));
+DELETE FROM 202_attribution_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E,$CLICK_F,$CLICK_G));
 DELETE FROM 202_conversion_logs WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E,$CLICK_F,$CLICK_G);
 DELETE FROM 202_clicks      WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E,$CLICK_F,$CLICK_G);
 DELETE FROM 202_clicks_spy  WHERE click_id IN ($CLICK_A,$CLICK_B,$CLICK_C,$CLICK_D,$CLICK_E,$CLICK_F,$CLICK_G);

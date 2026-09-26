@@ -47,7 +47,7 @@ eq()   { if [ "$1" = "$2" ]; then ok "$3"; else bad "$3 (got '$1' want '$2')"; f
 msgs() { grep -oE '<div class="p202-flash__body">[^<]*|<div class="invalid-feedback[^"]*">[^<]*' "$1" \
            | sed -E 's/<[^>]*>//' | sed 's/^/    | /'; }
 
-mysql_q "$DB" -e "TRUNCATE 202_app_registrations; TRUNCATE 202_app_skan_encodings; TRUNCATE 202_app_postbacks; TRUNCATE 202_goals; TRUNCATE 202_goal_versions;"
+mysql_q "$DB" -e "TRUNCATE 202_app_registrations; TRUNCATE 202_app_skan_encodings; TRUNCATE 202_app_skan_encoding_history; TRUNCATE 202_app_postbacks; TRUNCATE 202_goals; TRUNCATE 202_goal_versions;"
 
 say "login"
 curl -sS -c "$JAR" -b "$JAR" "$BASE/202-login.php" -o "$OUT/login.html"

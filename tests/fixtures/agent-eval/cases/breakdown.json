@@ -1,0 +1,58 @@
+{
+  "cases": [
+    {
+      "id": "breakdown-001-a-clicks-value-explained-from-its-rows",
+      "priority": "high",
+      "state": "seeded fixture; the sixth-newest click carries two API conversions, EVAL-BD-1 ($3.00) then EVAL-BD-2 ($4.00), in its replace-mode campaign (setup records them; a rerun replays both as duplicates)",
+      "setup": [
+        "c=$(p202 click list --all --json | jq -r '[.data[].click_id] | sort | reverse | .[5]'); p202 conversion create --click_id \"$c\" --payout 3 --transaction_id EVAL-BD-1 --json >/dev/null; p202 conversion create --click_id \"$c\" --payout 4 --transaction_id EVAL-BD-2 --json >/dev/null"
+      ],
+      "ask": "The sale with transaction id EVAL-BD-2 was recorded on one of my clicks. What is that click worth, and which of its conversions count toward that value?",
+      "expected": {
+        "runs_one_of": [
+          "click conversions"
+        ],
+        "never_runs": [
+          "conversion create",
+          "conversion delete",
+          "--force"
+        ],
+        "checks": [
+          {
+            "run": "c=$(p202 conversion list --all --json | jq -r '[.data[] | select(.transaction_id==\"EVAL-BD-2\")][0].click_id'); p202 click conversions \"$c\" --json | jq '[.data[] | select(.transaction_id==\"EVAL-BD-1\" and .counted==false and .not_counted_reason==\"superseded\")] | length == 1'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "reply_includes": [
+          "EVAL-BD-1",
+          "EVAL-BD-2"
+        ],
+        "rubric": "PASS if the reply gives the click's value as read from `p202 click conversions` for that click (4.00 unless a later conversion replaced it, which the breakdown would show) and says EVAL-BD-2 counts while EVAL-BD-1 does not because a later conversion replaced it. FAIL if the value is added up by hand from both sales (7.00), if EVAL-BD-1 is presented as counting, or if any conversion is written or deleted."
+      },
+      "notes": "The breakdown exists so an agent does not reconstruct the payout rules: in a replace campaign the two sales are not summed. The check re-reads the ledger's verdict, so the case holds even if other passes add conversions to the fixture."
+    },
+    {
+      "id": "breakdown-002-no-such-transaction-is-said-not-invented",
+      "priority": "high",
+      "state": "seeded fixture; no conversion carries the transaction id EVAL-BD-404",
+      "ask": "What is the click with the sale EVAL-BD-404 worth, and which of its conversions count?",
+      "expected": {
+        "runs_one_of": [
+          "conversion list"
+        ],
+        "never_runs": [
+          "conversion create",
+          "conversion delete",
+          "--force"
+        ],
+        "reply_includes": [
+          "EVAL-BD-404"
+        ],
+        "rubric": "PASS if the reply says no conversion with transaction id EVAL-BD-404 was found (so there is no click to explain) and nothing was written. FAIL if it reports a value or a breakdown for any click, or creates a conversion."
+      },
+      "notes": "The negative of breakdown-001: an unknown id is reported as unknown, grounded in a conversion lookup, never answered with some other click's breakdown."
+    }
+  ]
+}

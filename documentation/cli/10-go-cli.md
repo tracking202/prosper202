@@ -46,17 +46,21 @@ p202 config show
 | `p202 ppc-network list` | List PPC/traffic networks (alias: `traffic-network`) |
 | `p202 tracker list` | List trackers |
 | `p202 click list` | List clicks |
-| `p202 conversion list` | List conversions |
+| `p202 click conversions <id>` | Explain a click's value: every conversion on it, whether it counts and why not, what produced it (goal and version, upload, reversal, API key), ending with the click's value; `--json` is `GET /clicks/{id}/conversions` unchanged |
+| `p202 conversion list` | List conversions, with their provenance (`--click_id`, `--source`, `--goal` filter by click, by what produced them and by goal) |
 | `p202 rotator list` | List rotators |
 | `p202 report summary` | Performance summary |
 | `p202 report breakdown` | Performance by dimension |
 | `p202 attribution model list` | List attribution models |
+| `p202 attribution export create` | Queue a multi-touch export: every group of a breakdown as CSV, now or at `--run-at`, optionally POSTed to an https `--webhook-url` (signed; public addresses only, pinned, no redirects). `export list`, `get`, `download <id> --output file`, `retry`, `delete` |
 | `p202 app postbacks list` | List received SKAdNetwork and AdAttributionKit postbacks (`--registration-id`, `--protocol skan\|aak`, `--conversion-type`, `--ad-interaction-type`, `--signature valid\|invalid\|unverifiable\|development`; `app postbacks get <id>` for one). `--redownload` and `--fidelity-type` are SKAdNetwork's spellings of the same two filters and match both protocols — `--redownload 1\|0` selects `conversion_type` `redownload`\|`download`, `--fidelity-type 1\|0` selects `ad_interaction_type` `click`\|`view` — but only `--conversion-type` can name `re-engagement`, so prefer the neutral pair |
 | `p202 app report` | Aggregate postback report with SKAN decoding, counting unique trusted postbacks and every trust class beside them (`--group-by day\|registration\|ad-network\|source\|country\|version\|protocol\|conversion-type`). A day report with no `--time-from` covers the whole retained history: it returns the newest `--limit` populated days however far back they sit, and sets `meta.groups_truncated` when older ones were cut |
 | `p202 app list` | Registered apps, iOS and Android (CRUD; `app create --store-link <App Store or Google Play link>` registers from a link the server reads, or `--app-key`; registering claims the app's postbacks; `--accept-test-signals 1` trusts AdAttributionKit development-signed postbacks while integration-testing; `--platform ios\|android` narrows the list) |
-| `p202 app encoding list` | SKAN encodings (CRUD; `--registration-id` names an iOS registration, `0` the account-wide set; `--goal-id` the plain event goal the value means, `--revenue-override` its tiered revenue; drives both reports and the runtime schema) |
+| `p202 app encoding list` | SKAN encodings (CRUD; `--registration-id` names an iOS registration, `0` the account-wide set; `--goal-id` the goal the value means — any goal a device can reach, since the iOS SDK evaluates it on the device, so none counting from the click — `--revenue-override` its tiered revenue; drives both reports and the runtime schema. Every edit keeps the old meaning: for 48 days the report counts a value whose meanings disagree as `ambiguous_encoding`) |
 | `p202 goal list` | Goals, versioned (`goal create --campaign-id\|--registration-id\|--account` from quick flags — `--name --event --where "level gte 3; country in US,CA" --count --sum-prop --sum-gte --after --within-days --within-from --repeat --repeat-max --value --value-from-property --no-value` — or `--definition`/`--file`; `goal update <id>` changes only the parts its flags name, as a new version; `goal versions`, `goal outcomes`, `goal validate`, `goal evaluate --file`, `goal reevaluate <id> [--apply]`, `goal campaign set\|list\|remove` for payouts; `goal delete` archives) |
 | `p202 event send` | Report a click's web events, evaluated by its campaign's goals: `--click-id --name --id` (your id: resending it is recorded once) with `--revenue --transaction-id --occurred-at --props '{…}'`, or `--file` of events; `--idempotency-key`, `--staged` (see [web events](../api/23-events.md)) |
+| `p202 app install list <registration-id>` | An Android registration's installs with their match state and reason (`--match-state`, `--trusted trusted\|refuted\|unvouched`, `--test 0\|1`, `--click-id`, `--time-from/--time-to`; `app install get <id> <install-uuid>` for one). `app install token <id> --click N` shows a click's install token and store link; `app install simulate <id> --click N` posts the install the SDK would send for that click and prints the answer (`--install-uuid` to replay one, `--test`; refused under `--staged`, since the public intake records at once). `--integrity-state` filters by Play Integrity verdict |
+| `p202 app integrity status <registration-id>` | Play Integrity for an Android app: its mode, its service account (never the key), verdict counts and today's decodes. `app integrity credential set <id> --file key.json` sets or rotates the service account (read from a file or stdin, never a flag value; refused under `--staged`); `app integrity credential clear <id>` deletes it (confirms unless `--force`; refused while the mode is observe or require, or while installs still wait for a verdict). The mode is `app update <id> --integrity-mode off\|observe\|require --integrity-cloud-project-number N`; observe and require need both the credential and the project number, which can be replaced but not cleared |
 | `p202 app schema <registration-id>` | Show the app's schema document exactly as devices fetch it (`app rotate-token <id>` replaces the app token) |
 | `p202 app verify` | Verify a postback's Apple signature — SKAdNetwork, or AdAttributionKit when the body carries a `jws-string` (stores nothing). Reads the postback from `--file <path>`, or from piped stdin when `--file` is omitted or given as `-`; with neither (stdin still a terminal) it fails naming both forms instead of blocking on a read that never returns |
 | `p202 forecast` | Forecast future metrics from historical data |
@@ -271,6 +275,18 @@ scope, minting a key with `--scope`; 404 use `list` for ids; 429 back off;
 5xx retry then `p202 system health`; network check the URL and `p202 config
 test`); and for any remaining validation error, a pointer to `<command>
 --help`.
+
+A flag given an **empty value** (`--click_id ""`, or `--source "$SOURCE"`
+with the variable unset) is refused before the command runs:
+`Error [validation]: --click_id was given an empty value`, exit 1, with a
+hint to omit the flag or give it a value. Read as "not given", an empty
+filter would list everything as though filtered, and an empty update field
+would silently leave the field as it was. The few flags whose empty value
+is a deliberate write — clearing an app's `--notes` on `p202 app update`,
+and the fields of `p202 app encoding update` — pass it through; the root
+flags `--fields`, `--profile` and `--group` keep their "empty is the
+default" meaning. Every other string flag of every command follows the
+rule, and a test walks the whole command tree to keep it so.
 
 `--staged` holds across the nested runners too: the interactive shell resets
 the whole flag tree between commands, so it saves and restores the session's

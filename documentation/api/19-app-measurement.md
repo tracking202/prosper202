@@ -9,10 +9,9 @@
 - **Apple's signal source** — SKAdNetwork and AdAttributionKit postbacks,
   the rest of this guide.
 
-Android install tracking arrives on the same registry (its intake is
-`POST /apps/installs`); until then an Android registration is a
-registration with nothing to receive. The SDK wire contract is
-[21-app-sdk-contract.md](21-app-sdk-contract.md).
+Android installs arrive on the same registry, through the SDK's
+`POST /apps/installs` — see [24-android-installs.md](24-android-installs.md).
+The SDK wire contract is [21-app-sdk-contract.md](21-app-sdk-contract.md).
 
 Prosper202 can act as the measurement endpoint for Apple's two
 privacy-preserving attribution frameworks for iOS app campaigns:
@@ -179,6 +178,9 @@ dropped with a line saying so, and the rest of the report is still shown.
 | `POST` | `/apps/{id}/app-token/rotate` | Mint a new app token; the old one stops working |
 | `GET/POST` | `/apps/skan-encodings`, `/apps/skan-encodings/{id}` | SKAN encodings (CRUD; `PUT`/`DELETE` on `/{id}`) |
 | `GET` | `/apps/schema` | Public, selected by the `X-P202-App-Token` header: the document an app build fetches at runtime |
+| `POST` | `/apps/installs`, `/apps/installs/{install_uuid}/events` | Public, by app token: the Android SDK's intake ([24-android-installs.md](24-android-installs.md)) |
+| `GET` | `/apps/{id}/installs`, `/apps/{id}/installs/{install_uuid}` | An Android registration's installs, with their match state |
+| `GET` | `/apps/{id}/install-token?click_id=N` | The install token and store link for one click (a read) |
 
 All `/apps` API routes require the `apps` scope area (`apps:read` for reads,
 `apps:write` for writes; `POST /apps/verify` counts as a read — it computes
@@ -443,7 +445,9 @@ therefore excludes).
 | `platform` | `ios`/`android` | No | Read from the key or the link; a value contradicting the link is `422` |
 | `app_name` | string | Yes | Display name for reports (max 255) |
 | `notes` | string | No | Free-form notes (max 500) |
-| `accept_test_signals` | `0`/`1` | No | `1` = test signals count as trusted for this app: postbacks signed with Apple's AdAttributionKit **development** keys (and, with the Android intake, installs the SDK marks `test`). Default `0` stores them flagged and counts them nowhere. Turn it on while integration-testing your own build, and off again before trusting the numbers: any phone in Developer Mode can mint a development-signed postback naming any App Store id. SKAdNetwork has no development key, so this never affects SKAdNetwork rows. |
+| `attribution_window_days` | integer | No | Android: days after its click an install may begin and still be attributed (1–365, default 7) |
+| `trust_client_revenue` | `0`/`1` | No | Android: `1` lets a revenue the app reports be paid by a goal valued from it; default `0` stores it, never credits it |
+| `accept_test_signals` | `0`/`1` | No | `1` = test signals count as trusted for this app: postbacks signed with Apple's AdAttributionKit **development** keys, and installs the Android SDK marks `test`. Default `0` stores them flagged and counts them nowhere. Turn it on while integration-testing your own build, and off again before trusting the numbers: any phone in Developer Mode can mint a development-signed postback naming any App Store id. SKAdNetwork has no development key, so this never affects SKAdNetwork rows. |
 
 The response carries `registration_id`, `platform`, `app_key` and the
 `app_token`. `(platform, app_key)` can be registered by exactly one user
@@ -469,7 +473,8 @@ rows.
 
 **Deleting a user** purges their app data in the same transaction as the
 delete itself, whether it is done from Account › User Management or with
-`DELETE /api/v3/users/{id}`: their registrations and encodings are deleted —
+`DELETE /api/v3/users/{id}`: their registrations, encodings, Android installs
+and queued traffic-source postbacks are deleted —
 freeing each `(platform, app_key)` for someone else to register — and their
 postbacks are **released** (`user_id` 0, `registration_id` `NULL`, and a
 development row's trust withdrawn) rather than deleted, because a postback
@@ -484,30 +489,76 @@ registers the app within it claims them.
 | `registration_id` | integer | No | The iOS registration this encoding applies to; `0` (default) = account-wide |
 | `fine_value` | integer | One of | Fine conversion value 0–63 |
 | `coarse_value` | string | One of | `low`, `medium`, or `high` |
-| `goal_id` | integer | Yes | The [goal](22-goals.md) the value means: a live plain event goal of that registration, or an account goal |
+| `goal_id` | integer | Yes | The [goal](22-goals.md) the value means: a live goal of that registration, or an account goal, that a device can reach (below) |
 | `revenue_override` | number | No | Revenue per decoded postback instead of the goal's own fixed value (tiered decoding; `null` = the goal's value) |
+| `effective_at` | integer | Read-only | Unix time the encoding's current meaning started to apply; every create and update sets it |
 
 An encoding says which value means which **goal** was reached; what reaching
 it is worth is the goal's (plan §4.5), unless the encoding overrides it. An
-account-wide encoding (`registration_id` 0) names an account goal. Until the
-on-device evaluator ships, the goal must be a *plain event goal* — one event,
-no conditions, count 1, no `after`, no window, repeat once — because the iOS
-SDK sets a conversion value by event name; the goal cannot be edited out of
-that shape, or archived, while an encoding names it. The old fields
-`event_name` and `revenue` are refused by name. The schema document encodes
-by each goal's trigger event, and the report decodes to each goal's name.
+account-wide encoding (`registration_id` 0) names an account goal. The iOS
+SDK evaluates goals **on the device** (Apple's postback carries only the
+value, so nothing else could decide which value to set), so an encoding can
+name any goal — predicates, counts, sums, `after` funnels, install windows,
+repeats — with one exception: a goal that counts `within` `"from":
+"click"`, or waits in `after` for one that does, is refused with a `422` on
+`goal_id`. SKAdNetwork never tells an app which click it came from, so on a
+device such a goal is always ineligible (`no_click`) and the value would
+never be set. A goal an encoding depends on (directly or through `after`)
+cannot be edited into that shape, or archived. The old fields `event_name`
+and `revenue` are refused by name. The report decodes to each goal's name.
 Setup › Mobile Apps still asks for an event and a revenue: it finds (or
 creates) the app's plain goal for the event and stores the revenue as the
-override.
+override; any other goal can be encoded through the API or
+`p202 app encoding create --goal-id`.
+
+**Encodings are versioned, and an edit is ambiguous for 48 days.** A device
+sets a value with the schema document it holds, so an encoding changed today
+is still being applied by devices that hold the old document, and the
+postback arrives long after the document was fetched. The horizon is the
+longest that can be:
+
+- **35 days** — the third conversion window closes on day 35 after the
+  install (or re-engagement);
+- **6 days** — Apple sends each postback after a random delay: 24–48 hours
+  after the first window ends, 24–144 hours after the second and third
+  (SKAdNetwork 4 and AdAttributionKit, Apple's *Receiving postbacks in
+  multiple conversion windows*);
+- **7 days** — the iOS SDK encodes only with a document fetched in the last
+  7 days (`P202Attribution.maxSchemaAge`); an event logged while it holds an
+  older one waits for a fresh one, so a device offline since before an edit
+  cannot keep setting the old meaning's value indefinitely.
+
+Every update and delete first keeps the meaning it replaces, with the time
+it stopped applying, and the report decodes each postback under every
+meaning its value had in the 48 days before it arrived:
+
+- one meaning — the postback decodes to it;
+- two that disagree (another goal, or another `revenue_override`) — it is
+  counted as `ambiguous_encoding` and credited to neither;
+- none — the first meaning the value was given after the postback arrived
+  decodes it, so encodings added once postbacks are already arriving still
+  read them; a value never given one is `undecoded`.
+
+So after an edit the report is exact again 48 days later (Setup › Mobile
+Apps says so when you save one). Re-saving the same goal and override is not
+an edit, and deleting an encoding keeps decoding the postbacks that were set
+under it for those 48 days. A postback Apple delivers later than its
+documented delay can still decode under a later meaning.
+
+Meanings are kept **by app** (its App Store id), not by registration id:
+deleting a registration unlinks its postbacks, and registering the app again
+gives it a new id, but both the unlinked postbacks and the ones the new
+registration claims keep decoding under what the app's own encodings meant
+before the delete — never falling through to the account-wide set.
 
 Each encoding maps exactly one fine **or** one coarse value (`422`
 otherwise; duplicate mappings return `409`). A non-zero `registration_id`
 must be one of your own **iOS** registrations — anything else is a `422` on
 that field — because an encoding for an app nobody registered would decode
-nothing. Resolution order at decode time: the claiming registration's fine
-encoding → the account-wide (`registration_id = 0`) fine encoding; coarse
-values resolve the same way; a postback no registration claims decodes
-through the account-wide set only. A fine value with no encoding stays
+nothing. Resolution order at decode time: the fine encoding of the
+postback's app (the registration for its App Store id, including what a
+deleted registration of that app encoded) → the account-wide
+(`registration_id = 0`) fine encoding; coarse values resolve the same way. A fine value with no encoding stays
 *undecoded* — it never falls back to a coarse one.
 
 To switch an encoding between kinds, send the clear and the replacement in
@@ -534,20 +585,30 @@ The token travels **only** as that header — a `?token=` query parameter is
 rejected-by-omission (the endpoint never reads it), because query strings
 land in access logs, proxies, and browser history.
 
-which serves, for an iOS registration, the ENCODE view of the same
-encodings the reports decode with:
+which serves, for an iOS registration, the goals its encodings name and
+the ENCODE view of the same encodings the reports decode with:
 
 ```json
 {"data": {"platform": "ios", "app_key": "525463029", "app_id": 525463029, "schema_version": "d6eefc…",
-  "events": {"purchase": {"fine_value": 63, "coarse_value": "high"},
-             "signup":   {"fine_value": 5,  "coarse_value": null}},
+  "goals": [{"goal_id": 7, "starts_at": 0, "ends_at": null,
+             "versions": [{"version": 1, "effective_at": 1725600000,
+                           "definition": {"name": "Reached level 3",
+                             "trigger": {"event": "level_reached", "where": [{"prop": "level", "op": "gte", "value": 3}]},
+                             "threshold": {"count": 1}, "after": [], "within": null, "repeat": {"mode": "once"}}}]}],
+  "encodings": [{"goal_id": 7, "fine_value": 40, "coarse_value": "high"}],
   "generated_at": 1725690000}}
 ```
 
-Edit the encodings and every installed build picks the change up on its
-next fetch — no App Store resubmission. An Android registration's document
-carries its `platform` and `app_key` and no `events` (SKAN values mean
-nothing there). The endpoint is unauthenticated by design (an app binary
+`goals` is an **evaluation-only** view: every goal an encoding names, every
+goal it waits for in `after`, every version with the time it took effect,
+and each definition with its `value` removed. The SDK evaluates them on the
+device against the events the app logs, and sets the value `encodings` gives
+the goals an event reaches (the highest, when one event reaches several).
+
+Edit the goals or the encodings and every installed build picks the change
+up on its next fetch — no App Store resubmission. An Android registration's
+document carries its `platform` and `app_key` and no goals or encodings
+(Android goals are evaluated on the server). The endpoint is unauthenticated by design (an app binary
 cannot hold an API key); the token selects the registration and the
 document deliberately excludes revenue amounts. **The token is an
 identifier, not a secret**: it ships inside every copy of the app, so anyone
@@ -560,17 +621,25 @@ cut off from the next release on. The endpoint supports `If-None-Match`
 (304 until an encoding changes, `ETag` = `schema_version`), answers `405`
 to anything but GET, and is rate-limited per peer address (300/min).
 Precedence mirrors decoding — a registration's own encodings beat the
-account-wide ones — and when several values decode to one event, the
-highest is served, so encode and decode stay two views of one set.
+account-wide ones, per goal and per kind, and an account-wide value the
+registration has given its own meaning is not served for the account goal
+(the report would read it as the registration's) — and when several values
+name one goal, the highest is served, so encode and decode stay two views
+of one set.
 
 The repository ships **P202Attribution** ([`sdk/ios-attribution/`](../../sdk/ios-attribution/)),
 a small dependency-free Swift helper that fetches and caches this document
-(offline-safe, ETag-aware, token-keyed cache) and maps
-`P202Attribution.shared.logEvent("purchase")` to the right
-`SKAdNetwork.updatePostbackConversionValue` and AdAttributionKit
-`Postback.updateConversionValue` calls — unmapped events are deliberate
-no-ops, and `logEvent(_:conversionTypes:)` scopes an update to
-AdAttributionKit's re-engagement postback. Verify what devices will receive
+(offline-safe, ETag-aware, token-keyed cache), evaluates the goals on the
+device with the same evaluator the server runs (both are held to the
+vectors in `tests/fixtures/app-sdk-contract/goals/`), and turns
+`try P202Attribution.shared.logEvent("level_reached", properties: ["level": .int(3)])`
+into the right `SKAdNetwork.updatePostbackConversionValue` and
+AdAttributionKit `Postback.updateConversionValue` calls — an event that
+reaches no encoded goal is a deliberate no-op, and
+`logEvent(_:properties:revenue:conversionTypes:)` scopes an update to
+AdAttributionKit's re-engagement postback. `setCustomerId(_:signature:type:)`
+records a customer id your server signed (see the
+[SDK contract](21-app-sdk-contract.md)). Verify what devices will receive
 with `p202 app schema <registration-id>`, which performs the
 same request the helper makes. The `NSAdvertisingAttributionReportEndpoint`
 and `AttributionCopyEndpoint` lines in `Info.plist` still ship with the app
@@ -598,7 +667,10 @@ default 100). Days are UTC, listed oldest first. Each group reports:
 - Conversion-value decoding: `measurable` (unique winning postbacks
   carrying a value, across all three conversion windows — so it can exceed
   `installs`, which counts first-window postbacks only), `decoded`,
-  `undecoded` (value present, no matching encoding),
+  `undecoded` (value present, no matching encoding), `ambiguous_encoding`
+  (the value's encoding changed within the 48 days before the postback
+  arrived and its meanings disagree — credited to no goal; see SKAN
+  encodings above),
   `null_conversion_values` (value withheld by Apple's privacy tier),
   `decoded_revenue`, and `events` (per-event counts and revenue)
 

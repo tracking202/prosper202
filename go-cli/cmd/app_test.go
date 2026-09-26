@@ -336,7 +336,9 @@ func TestAppSchemaFetchesTheDeviceFacingDocumentByHeaderToken(t *testing.T) {
 			schemaHeaderToken = r.Header.Get("X-P202-App-Token")
 			schemaRawQuery = r.URL.RawQuery
 			w.WriteHeader(200)
-			w.Write([]byte(`{"data":{"app_id":525463029,"schema_version":"v1","events":{"purchase":{"fine_value":63,"coarse_value":"high"}}}}`))
+			w.Write([]byte(`{"data":{"platform":"ios","app_key":"525463029","app_id":525463029,"schema_version":"v1",` +
+				`"goals":[{"goal_id":4,"starts_at":0,"ends_at":null,"versions":[{"version":1,"effective_at":1,"definition":{"name":"Purchase","trigger":{"event":"purchase","where":[]}}}]}],` +
+				`"encodings":[{"goal_id":4,"fine_value":63,"coarse_value":"high"}]}}`))
 		default:
 			t.Errorf("unexpected request %s", r.URL.Path)
 			w.WriteHeader(404)
@@ -360,7 +362,7 @@ func TestAppSchemaFetchesTheDeviceFacingDocumentByHeaderToken(t *testing.T) {
 	if strings.Contains(schemaRawQuery, "token") {
 		t.Errorf("the token must not appear in the query string, got %q", schemaRawQuery)
 	}
-	if !strings.Contains(stdout, `"schema_version"`) || !strings.Contains(stdout, "purchase") {
+	if !strings.Contains(stdout, `"schema_version"`) || !strings.Contains(stdout, "purchase") || !strings.Contains(stdout, `"encodings"`) {
 		t.Errorf("stdout should render the device-facing document, got:\n%s", stdout)
 	}
 }
@@ -856,67 +858,5 @@ func TestAppSchemaSeparatesAnUnreadableResponseFromAMissingToken(t *testing.T) {
 	}
 	if hint := hintFor(err); !strings.Contains(hint, "config show") {
 		t.Errorf("hint = %q, want it to point at the configured URL", hint)
-	}
-}
-
-// The attribution model/snapshot/export commands in attribution.go had no
-// test of their own and no test file; their error paths are asserted here
-// rather than in a new file. Each writes a config first, so what is being
-// asserted is the flag check and not a missing-config error (the commands
-// build their client before validating, so an empty HOME would answer with
-// the config error instead).
-
-func TestAttributionModelCommandsReportTheirErrorContract(t *testing.T) {
-	tmp := t.TempDir()
-	setTestHome(t, tmp)
-	writeTestConfig(t, tmp, "http://127.0.0.1:0", "test-key")
-
-	for _, tc := range []struct {
-		name    string
-		args    []string
-		message string
-		hint    string
-	}{
-		{
-			"create without a name",
-			[]string{"attribution", "model", "create"},
-			"required flag --model_name is missing", "",
-		},
-		{
-			"create without a type",
-			[]string{"attribution", "model", "create", "--model_name", "Linear"},
-			"required flag --model_type is missing", "",
-		},
-		{
-			"create with unparseable weighting config",
-			[]string{"attribution", "model", "create", "--model_name", "L", "--model_type", "linear", "--weighting_config", "{"},
-			"invalid --weighting_config JSON", "--weighting_config",
-		},
-		{
-			"update with no fields",
-			[]string{"attribution", "model", "update", "1"},
-			"no fields specified; pass at least one flag to update", "",
-		},
-		{
-			"update with unparseable weighting config",
-			[]string{"attribution", "model", "update", "1", "--weighting_config", "nope"},
-			"invalid --weighting_config JSON", "--weighting_config",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := executeCommand(tc.args...)
-			if err == nil {
-				t.Fatalf("expected a validation error for %v", tc.args)
-			}
-			if !strings.Contains(err.Error(), tc.message) {
-				t.Errorf("message = %q, want it to contain %q", err.Error(), tc.message)
-			}
-			assertValidationError(t, err)
-			if tc.hint != "" {
-				if hint := hintFor(err); !strings.Contains(hint, tc.hint) {
-					t.Errorf("hint = %q, want it to contain %q", hint, tc.hint)
-				}
-			}
-		})
 	}
 }

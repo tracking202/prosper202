@@ -88,17 +88,21 @@ final class TableRegistry
 
     // Attribution tables
     public const string ATTRIBUTION_MODELS = '202_attribution_models';
-    public const string ATTRIBUTION_SNAPSHOTS = '202_attribution_snapshots';
-    public const string ATTRIBUTION_TOUCHPOINTS = '202_attribution_touchpoints';
-    public const string ATTRIBUTION_SETTINGS = '202_attribution_settings';
+    public const string ATTRIBUTION_JOURNEYS = '202_attribution_journeys';
+    public const string ATTRIBUTION_JOURNEY_META = '202_attribution_journey_meta';
+    public const string ATTRIBUTION_CREDITS = '202_attribution_credits';
     public const string ATTRIBUTION_AUDIT = '202_attribution_audit';
     public const string ATTRIBUTION_EXPORTS = '202_attribution_exports';
     public const string CONVERSION_LOGS = '202_conversion_logs';
-    public const string CONVERSION_TOUCHPOINTS = '202_conversion_touchpoints';
 
     // Conversion ledger (ConversionTables)
     public const string ATTRIBUTION_PENDING = '202_attribution_pending';
     public const string CONVERSION_UPLOADS = '202_conversion_uploads';
+    public const string NOTIFICATION_PENDING = '202_notification_pending';
+
+    // Deployment-wide secrets (SecretTables): owned by the installation, not
+    // by any user
+    public const string DEPLOYMENT_SECRETS = '202_deployment_secrets';
 
     // Identity graph (IdentityTables)
     public const string IDENTITY_KEYS = '202_identity_keys';
@@ -180,6 +184,11 @@ final class TableRegistry
     public const string APP_REGISTRATIONS = '202_app_registrations';
     public const string APP_POSTBACKS = '202_app_postbacks';
     public const string APP_SKAN_ENCODINGS = '202_app_skan_encodings';
+    public const string APP_SKAN_ENCODING_HISTORY = '202_app_skan_encoding_history';
+    // and the Android signal source's installs
+    public const string APP_INSTALLS = '202_app_installs';
+    // and the Play Integrity service-account credentials (PR 6)
+    public const string APP_INTEGRITY_CREDENTIALS = '202_app_integrity_credentials';
 
     // Goals engine (GoalTables): definitions and their versions, campaign
     // payouts, and per-subject events, progress and outcomes

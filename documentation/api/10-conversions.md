@@ -20,10 +20,23 @@ List, inspect, manually create, and delete conversions.
 | `campaign_id` | integer | — | Filter by campaign |
 | `time_from` | integer | — | Unix timestamp start |
 | `time_to` | integer | — | Unix timestamp end |
+| `click_id` | integer | — | Only this click's conversions |
+| `source` | string | — | Only conversions this source produced (`pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `app_install`, `goal`, `legacy_baseline`) |
+| `goal` | integer | — | Only this goal's outcomes, under every version of it |
+
+A filter value that cannot be read — `click_id=7x`, an unknown `source`, a
+`goal` that is not a positive id — is a `422` naming the field, never
+ignored. Deleted conversions are not listed; `GET /clicks/{id}/conversions`
+shows them, with whether each row counts toward the click.
 
 ## Response Fields
 
-`conv_id`, `click_id`, `transaction_id`, `campaign_id`, `click_payout`, `user_id`, `click_time`, `conv_time`, `deleted`, `aff_campaign_name`.
+`conv_id`, `click_id`, `transaction_id`, `campaign_id`, `click_payout`, `user_id`, `click_time`, `conv_time`, `deleted`, `aff_campaign_name`, and the row's provenance in the ledger: `source`, `source_ref` (`goal:<id>:<version>`, `batch:<upload>`, `conv:<the conversion a reversal reverses>`, `apikey:<digest of the key that wrote it>`), `event_name`, `payable`, `reverses_conv_id`, `superseded_by`, `superseded_reason`, and for a goal row its `goal_id` and `goal_version`.
+
+A conversion created through this API records `source: "api"` and names the
+key that wrote it in `source_ref` as a truncated SHA-256 digest of the key, so
+the click breakdown can say which key it was without anyone reading the key
+back.
 
 ## Create Conversion
 

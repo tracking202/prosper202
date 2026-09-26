@@ -18,6 +18,14 @@ use Prosper202\Database\Schema\TableRegistry;
  * Column order matters to one reader: the upgrade appends the ledger columns
  * to a table that already exists, so they are declared after customer_id in
  * the order _upgrade_conversion_ledger() adds them.
+ *
+ * transaction_id and dedupe_key are utf8mb4_bin. They are identities a
+ * network or a source chose, and UNIQUE (click_id, dedupe_key) is what makes
+ * a retry a duplicate: under the table's case-insensitive collation `tx:A-1`
+ * and `tx:a-1` on one click were one key, so a second, different sale was
+ * answered as a replay of the first (CLAUDE.md #17: the key must be
+ * injective), and a reversal naming one transaction id could net the other.
+ * The upgrade converges an existing table to the same collations.
  */
 final class ConversionTables
 {
@@ -30,6 +38,7 @@ final class ConversionTables
             self::conversionLogs(),
             self::attributionPending(),
             self::conversionUploads(),
+            self::notificationPending(),
         ];
     }
 
@@ -40,7 +49,7 @@ final class ConversionTables
             "CREATE TABLE IF NOT EXISTS `" . TableRegistry::CONVERSION_LOGS . "` (
                 `conv_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
                 `click_id` bigint(20) unsigned NOT NULL,
-                `transaction_id` varchar(255) DEFAULT NULL,
+                `transaction_id` varchar(255) COLLATE utf8mb4_bin DEFAULT NULL,
                 `campaign_id` mediumint(8) unsigned NOT NULL,
                 `click_payout` decimal(11,5) NOT NULL,
                 `user_id` mediumint(8) unsigned NOT NULL,
@@ -59,7 +68,7 @@ final class ConversionTables
                 `reverses_conv_id` int(11) unsigned DEFAULT NULL,
                 `superseded_by` int(11) unsigned DEFAULT NULL,
                 `superseded_reason` varchar(16) DEFAULT NULL,
-                `dedupe_key` varchar(320) NOT NULL,
+                `dedupe_key` varchar(320) COLLATE utf8mb4_bin NOT NULL,
                 PRIMARY KEY (`conv_id`),
                 UNIQUE KEY `uniq_click_dedupe` (`click_id`,`dedupe_key`),
                 KEY `click_transaction` (`click_id`,`transaction_id`),
@@ -79,6 +88,11 @@ final class ConversionTables
      *
      * enqueue_seq increments on every re-queue of a pending row, so a worker
      * that processed a row deletes it only if nothing re-queued it meanwhile.
+     *
+     * attempts / last_error / retry_at belong to the worker: a row whose
+     * processing failed is kept with the error and retried after a backoff,
+     * so one malformed conversion delays only itself, never the queue behind
+     * it. A re-queue resets them — the change may be what fixes it.
      */
     public static function attributionPending(): SchemaDefinition
     {
@@ -89,8 +103,12 @@ final class ConversionTables
                 `enqueued_at` int(10) unsigned NOT NULL,
                 `reason` varchar(32) NOT NULL,
                 `enqueue_seq` int(10) unsigned NOT NULL DEFAULT '1',
+                `attempts` smallint(5) unsigned NOT NULL DEFAULT '0',
+                `last_error` varchar(255) DEFAULT NULL,
+                `retry_at` int(10) unsigned NOT NULL DEFAULT '0',
                 PRIMARY KEY (`conv_id`),
-                KEY `enqueued_at` (`enqueued_at`)
+                KEY `enqueued_at` (`enqueued_at`),
+                KEY `due` (`retry_at`,`enqueued_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }
@@ -115,6 +133,65 @@ final class ConversionTables
                 PRIMARY KEY (`batch_id`),
                 KEY `user_uploaded` (`user_id`,`uploaded_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * The traffic-source notification outbox (plan §5.2 step 6, §5.5).
+     *
+     * A row is written in the same transaction as the ledger row it
+     * announces, so a process killed between the commit and the send leaves
+     * the row for the worker (202-cronjobs/app-installs.php) instead of
+     * nothing. UNIQUE (conv_id, pixel_id, destination, kind, generation)
+     * makes a retried request unable to queue the same notification twice.
+     *
+     * - destination: the URL's 0-based position in its pixel's code. A
+     *   pixel may hold several space-separated URLs; each is its own row,
+     *   with its own attempts, backoff and status, so a failure at one
+     *   endpoint never resends to another that already accepted it;
+     *
+     * - kind: reached (the first row for an outcome), correction (a
+     *   replacement whose predecessor was already sent, a new row for an
+     *   outcome an earlier row announced, or a revived row whose retraction
+     *   was delivered), retraction (an outcome retired with no replacement
+     *   after its reached was sent);
+     * - generation: 0 for a reached; the count of earlier rows of the same
+     *   kind for the conversion at the destination for a correction or
+     *   retraction, so a row retired, revived and retired again records
+     *   each step (plan §5.7);
+     * - status: pending, sent, failed (attempts exhausted), cancelled (a
+     *   pending reached whose outcome was replaced before it went out, or a
+     *   retraction whose outcome was revived before it went out) and
+     *   suppressed (a correction or retraction no correction URL can carry;
+     *   `last_error` says why);
+     * - url is resolved when the row is queued, with the tokens of the row
+     *   it announces, so what is sent is what was decided in the
+     *   transaction.
+     */
+    public static function notificationPending(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::NOTIFICATION_PENDING,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::NOTIFICATION_PENDING . "` (
+                `notification_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `conv_id` int(11) unsigned NOT NULL,
+                `pixel_id` mediumint(8) unsigned NOT NULL,
+                `destination` smallint(5) unsigned NOT NULL DEFAULT '0',
+                `kind` varchar(16) NOT NULL,
+                `generation` smallint(5) unsigned NOT NULL DEFAULT '0',
+                `status` varchar(16) NOT NULL,
+                `url` text NOT NULL,
+                `attempts` smallint(5) unsigned NOT NULL DEFAULT '0',
+                `next_attempt_at` int(10) unsigned NOT NULL,
+                `last_error` varchar(255) DEFAULT NULL,
+                `created_at` int(10) unsigned NOT NULL,
+                `sent_at` int(10) unsigned DEFAULT NULL,
+                PRIMARY KEY (`notification_id`),
+                UNIQUE KEY `conv_destination_kind` (`conv_id`,`pixel_id`,`destination`,`kind`,`generation`),
+                KEY `status_next` (`status`,`next_attempt_at`),
+                KEY `user_id` (`user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Traffic-source notifications queued with the conversions they announce'"
         );
     }
 }

@@ -713,13 +713,14 @@ var goalEvaluateCmd = &cobra.Command{
 
 var goalReevaluateCmd = &cobra.Command{
 	Use:   "reevaluate <id>",
-	Short: "Re-evaluate past clicks under a goal version (preview; --apply to apply)",
-	Long: "Without --apply, shows per click the outcomes that would be retired and written, and\n" +
-		"what happens to their conversions (superseded by the new row, or deleted when the\n" +
-		"version no longer reaches the goal). Goals that wait on this one (their definition's after,\n" +
-		"directly or through another) are re-decided with it: listed in goals, each row names its goal_id.\n" +
-		"With --apply, does it, one click per transaction.\n" +
-		"At most --limit clicks per call; pass the answer's next_after as --after to continue.",
+	Short: "Re-evaluate past clicks or installs under a goal version (preview; --apply to apply)",
+	Long: "Without --apply, shows per subject (a click, or an Android install with --subject-type\n" +
+		"install) the outcomes that would be retired and written, and what happens to their\n" +
+		"conversions (superseded by the new row, or deleted when the version no longer reaches\n" +
+		"the goal). Goals that wait on this one (their definition's after, directly or through\n" +
+		"another) are re-decided with it: listed in goals, each row names its goal_id.\n" +
+		"With --apply, does it, one subject per transaction. At most --limit subjects per call;\n" +
+		"pass the answer's next_after as --after to continue.",
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		params := map[string]string{}
@@ -731,6 +732,11 @@ var goalReevaluateCmd = &cobra.Command{
 				}
 				params[f] = v
 			}
+		}
+		subjectType, _ := cmd.Flags().GetString("subject-type")
+		if subjectType != "" && subjectType != "click" && subjectType != "install" {
+			return validationError("--subject-type must be one of: click, install; got %q", subjectType).
+				WithHint("click re-evaluates a campaign goal's clicks; install re-evaluates Android installs (the default for registration and account goals).")
 		}
 		apply, _ := cmd.Flags().GetBool("apply")
 		c, err := api.NewFromConfig()
@@ -744,8 +750,14 @@ var goalReevaluateCmd = &cobra.Command{
 				n, _ := strconv.Atoi(v)
 				body[k] = n
 			}
+			if subjectType != "" {
+				body["subject_type"] = subjectType
+			}
 			data, err = c.Post("goals/"+args[0]+"/reevaluation", body)
 		} else {
+			if subjectType != "" {
+				params["subject_type"] = subjectType
+			}
 			data, err = c.Get("goals/"+args[0]+"/reevaluation", params)
 		}
 		if err != nil {
@@ -871,6 +883,7 @@ func init() {
 	goalReevaluateCmd.Flags().String("limit", "", "Clicks per call (default 100, at most 1000)")
 	goalReevaluateCmd.Flags().String("after", "", "Continue after this click id (the previous answer's next_after)")
 	goalReevaluateCmd.Flags().Bool("apply", false, "Apply the re-evaluation (without it: preview only)")
+	goalReevaluateCmd.Flags().String("subject-type", "", "click or install (default: click for a campaign goal, install for a registration or account goal)")
 
 	registerSingleDeleteFlags(goalCampaignRemoveCmd)
 	goalCampaignCmd.AddCommand(goalCampaignListCmd, goalCampaignSetCmd, goalCampaignRemoveCmd)

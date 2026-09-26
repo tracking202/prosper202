@@ -122,6 +122,45 @@ final class UserManagementSaveTest extends TestCase
         self::assertFalse($db->commitCalled);
     }
 
+    public function testACreatesFirstRowsAreWrittenInsideItsTransactionAndAFailureThereLeavesNothing(): void
+    {
+        $db = new FakeMysqliConnection();
+        $db->whenQueryContainsReturnRows('LAST_INSERT_ID()', [['id' => 41]]);
+        $seen = [];
+        p202_account_save_user(new Connection($db), null, self::USER, 3, static function (int $id) use (&$seen, $db): void {
+            $seen[] = [$id, $db->commitCalled];
+        });
+        self::assertSame([[41, false]], $seen, 'run once, with the new id, before the commit');
+        self::assertTrue($db->commitCalled);
+
+        $db = new FakeMysqliConnection();
+        $db->whenQueryContainsReturnRows('LAST_INSERT_ID()', [['id' => 41]]);
+        try {
+            p202_account_save_user(new Connection($db), null, self::USER, 3, static function (int $id): void {
+                throw new \RuntimeException('no default model');
+            });
+            self::fail('a failed first row was reported as saved');
+        } catch (\RuntimeException $expected) {
+        }
+        self::assertTrue($db->rollbackCalled, 'the account was rolled back with it');
+        self::assertFalse($db->commitCalled);
+
+        $db = new FakeMysqliConnection();
+        $db->whenQueryContainsReturnRows('FOR UPDATE', [['user_id' => 9]]);
+        $called = false;
+        p202_account_save_user(new Connection($db), 9, self::USER, 4, static function () use (&$called): void {
+            $called = true;
+        });
+        self::assertFalse($called, 'an edit makes no first rows');
+    }
+
+    public function testThePageMakesTheDefaultModelInsideTheSave(): void
+    {
+        $page = (string) file_get_contents(dirname(__DIR__, 2) . '/202-account/user-management.php');
+        self::assertMatchesRegularExpression('/p202_account_save_user\([^;]*DefaultModel::ensureFor\(/s', $page,
+            'a new account\'s default attribution model is written by the save\'s own transaction');
+    }
+
     public function testThePageSavesThroughItAndNothingElse(): void
     {
         $page = (string) file_get_contents(dirname(__DIR__, 2) . '/202-account/user-management.php');

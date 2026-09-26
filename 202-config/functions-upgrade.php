@@ -137,7 +137,7 @@ if (!function_exists('_upgrade_conversion_ledger_columns')) {
             ['reverses_conv_id', '`reverses_conv_id` int(11) unsigned DEFAULT NULL'],
             ['superseded_by', '`superseded_by` int(11) unsigned DEFAULT NULL'],
             ['superseded_reason', '`superseded_reason` varchar(16) DEFAULT NULL'],
-            ['dedupe_key', '`dedupe_key` varchar(320) DEFAULT NULL'],
+            ['dedupe_key', '`dedupe_key` varchar(320) COLLATE utf8mb4_bin DEFAULT NULL'],
         ];
     }
 }
@@ -187,7 +187,8 @@ if (!function_exists('_upgrade_conversion_ledger')) {
      *
      *   1. add each missing ledger column (dedupe_key nullable);
      *   2. backfill the rows that have no dedupe key;
-     *   3. make dedupe_key NOT NULL;
+     *   3. make dedupe_key NOT NULL; make transaction_id and dedupe_key
+     *      binary-collated (exact, case-sensitive comparison);
      *   4. add KEY click_transaction and UNIQUE uniq_click_dedupe, then drop
      *      the old UNIQUE (click_id, transaction_id) — a reversal carries the
      *      transaction id of the row it reverses, so the id cannot stay
@@ -224,8 +225,35 @@ if (!function_exists('_upgrade_conversion_ledger')) {
         }
 
         if (($columns['dedupe_key'] ?? 'YES') === 'YES') {
-            if (_upgrade_query('ALTER TABLE `202_conversion_logs` MODIFY `dedupe_key` varchar(320) NOT NULL') === false) {
+            if (_upgrade_query('ALTER TABLE `202_conversion_logs` MODIFY `dedupe_key` varchar(320) COLLATE utf8mb4_bin NOT NULL') === false) {
                 error_log('Prosper202 upgrade: failed to make 202_conversion_logs.dedupe_key NOT NULL; the ledger step will retry.');
+                return false;
+            }
+        }
+
+        // The ledger's keys compare byte for byte (ConversionTables):
+        // under the table's case-insensitive collation, tx:A-1 and tx:a-1
+        // on one click were one key, so the second sale was answered as a
+        // duplicate of the first, and a reversal naming one transaction id
+        // could net the other. transaction_id is the column every
+        // pre-ledger table already has; dedupe_key is binary from the ADD
+        // above, and is checked too so a table from any earlier run of this
+        // step converges. Making a column binary only makes more values
+        // distinct, so no existing unique key can fail on it.
+        $collations = _upgrade_conversion_ledger_probe('SHOW FULL COLUMNS FROM `202_conversion_logs`', 'Field', 'Collation');
+        if ($collations === null) {
+            error_log('Prosper202 upgrade: could not read the collations of 202_conversion_logs; the ledger step will retry.');
+            return false;
+        }
+        foreach ([
+            'transaction_id' => '`transaction_id` varchar(255) COLLATE utf8mb4_bin DEFAULT NULL',
+            'dedupe_key' => '`dedupe_key` varchar(320) COLLATE utf8mb4_bin NOT NULL',
+        ] as $column => $ddl) {
+            if (($collations[$column] ?? '') === 'utf8mb4_bin') {
+                continue;
+            }
+            if (_upgrade_query('ALTER TABLE `202_conversion_logs` MODIFY ' . $ddl) === false) {
+                error_log('Prosper202 upgrade: failed to make 202_conversion_logs.' . $column . ' compare exactly; the ledger step will retry.');
                 return false;
             }
         }
@@ -258,16 +286,30 @@ if (!function_exists('_upgrade_conversion_ledger')) {
         }
         // The campaign settings the measurement rewrite adds, in the order
         // CampaignTables declares them: how a click's conversions roll up,
-        // and whether the campaign's clicks carry identity signals.
+        // whether the campaign's clicks carry identity signals, and the
+        // Android app its store links install.
         $campaignAdds = [
             ['payout_mode', "ALTER TABLE `202_aff_campaigns` ADD COLUMN `payout_mode` enum('replace','accumulate') NOT NULL DEFAULT 'replace'"],
             ['identity_signals', "ALTER TABLE `202_aff_campaigns` ADD COLUMN `identity_signals` tinyint(1) NOT NULL DEFAULT '1'"],
+            ['app_registration_id', "ALTER TABLE `202_aff_campaigns` ADD COLUMN `app_registration_id` int(10) unsigned DEFAULT NULL"],
         ];
         foreach ($campaignAdds as [$column, $ddl]) {
             if (!array_key_exists($column, $campaignColumns) && _upgrade_query($ddl) === false) {
                 error_log('Prosper202 upgrade: failed to add 202_aff_campaigns.' . $column . '; the ledger step will retry.');
                 return false;
             }
+        }
+        // The install intake finds a click's campaign link by it, and a
+        // registration delete unlinks by it.
+        $campaignIndexes = _upgrade_conversion_ledger_probe('SHOW INDEX FROM `202_aff_campaigns`', 'Key_name', 'Column_name');
+        if ($campaignIndexes === null) {
+            error_log('Prosper202 upgrade: could not read the indexes of 202_aff_campaigns; the ledger step will retry.');
+            return false;
+        }
+        if (!array_key_exists('app_registration_id', $campaignIndexes)
+            && _upgrade_query('ALTER TABLE `202_aff_campaigns` ADD KEY `app_registration_id` (`app_registration_id`)') === false) {
+            error_log('Prosper202 upgrade: failed to index 202_aff_campaigns.app_registration_id; the ledger step will retry.');
+            return false;
         }
 
         return true;
@@ -352,6 +394,22 @@ if (!function_exists('_upgrade_measurement_tables')) {
             }
             if (!$reconciler->reconcile($definition)) {
                 $ok = false;
+            }
+        }
+
+        // The Android install-token key (plan §5.1), minted by the same
+        // idempotent statement the installer runs, once its table exists.
+        // An existing key is never replaced: links already in circulation
+        // keep verifying.
+        if ($ok) {
+            foreach ($definitions as $definition) {
+                if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::DEPLOYMENT_SECRETS) {
+                    if (_upgrade_query(\Api\V3\Apps\Android\InstallTokenKey::mintStatement()) === false) {
+                        $ok = false;
+                        error_log('Prosper202 upgrade: failed to mint the Android install-token key');
+                    }
+                    break;
+                }
             }
         }
 
@@ -3109,329 +3167,95 @@ class UPGRADE
 
         if ($prosper202_version == '1.9.56') {
 
-            $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_models` (
-              `model_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-              `user_id` mediumint(8) unsigned NOT NULL,
-              `model_name` varchar(255) NOT NULL,
-              `model_slug` varchar(191) NOT NULL,
-              `model_type` varchar(50) NOT NULL,
-              `weighting_config` longtext,
-              `is_active` tinyint(1) NOT NULL DEFAULT '1',
-              `is_default` tinyint(1) NOT NULL DEFAULT '0',
-              `created_at` int(10) unsigned NOT NULL,
-              `updated_at` int(10) unsigned NOT NULL,
-              PRIMARY KEY (`model_id`),
-              UNIQUE KEY `model_slug_user` (`user_id`,`model_slug`),
-              KEY `user_default` (`user_id`,`is_default`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _upgrade_query($sql);
+            // Multi-touch attribution (measurement-rewrite plan §6.4): every
+            // MTA table from the installer's own definitions, the two
+            // attribution permissions, the campaigns' per-campaign model
+            // override, and one default last-touch model for every account —
+            // the statement the installer and user creation run too
+            // (DefaultModel). No install has ever run this rung (none exists
+            // above 1.9.55), so it was rewritten in place rather than
+            // repaired; the 1.9.57 and 1.9.58 rungs keep only their version
+            // advance. The version moves only when every step succeeded, so a
+            // partial failure re-enters this block on the next run.
+            $mta_ok = true;
+            foreach (\Prosper202\Database\Tables\AttributionTables::getDefinitions() as $mta_definition) {
+                if (_upgrade_query($mta_definition->createStatement) === false) {
+                    $mta_ok = false;
+                }
+            }
 
-            $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_snapshots` (
-              `snapshot_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-              `model_id` bigint(20) unsigned NOT NULL,
-              `user_id` mediumint(8) unsigned NOT NULL,
-              `scope_type` varchar(50) NOT NULL,
-              `scope_id` bigint(20) unsigned DEFAULT NULL,
-              `date_hour` int(10) unsigned NOT NULL,
-              `lookback_start` int(10) unsigned NOT NULL,
-              `lookback_end` int(10) unsigned NOT NULL,
-              `attributed_clicks` int(10) unsigned NOT NULL DEFAULT '0',
-              `attributed_conversions` int(10) unsigned NOT NULL DEFAULT '0',
-              `attributed_revenue` decimal(12,4) NOT NULL DEFAULT '0.0000',
-              `attributed_cost` decimal(12,4) NOT NULL DEFAULT '0.0000',
-              `created_at` int(10) unsigned NOT NULL,
-              PRIMARY KEY (`snapshot_id`),
-              KEY `model_hour_scope` (`model_id`,`date_hour`,`scope_type`,`scope_id`),
-              KEY `user_hour` (`user_id`,`date_hour`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _upgrade_query($sql);
-
-            $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_touchpoints` (
-              `touchpoint_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-              `snapshot_id` bigint(20) unsigned NOT NULL,
-              `conv_id` int(11) unsigned NOT NULL,
-              `click_id` bigint(20) unsigned NOT NULL,
-              `position` smallint(5) unsigned NOT NULL DEFAULT '0',
-              `credit` decimal(10,5) NOT NULL DEFAULT '0.00000',
-              `weight` decimal(10,5) NOT NULL DEFAULT '0.00000',
-              `created_at` int(10) unsigned NOT NULL,
-              PRIMARY KEY (`touchpoint_id`),
-              KEY `snapshot_conv` (`snapshot_id`,`conv_id`),
-              KEY `click_lookup` (`click_id`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _upgrade_query($sql);
-
-            $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_settings` (
-              `setting_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-              `user_id` mediumint(8) unsigned NOT NULL,
-              `scope_type` varchar(50) NOT NULL,
-              `scope_id` bigint(20) unsigned DEFAULT NULL,
-              `model_id` bigint(20) unsigned NOT NULL,
-              `effective_at` int(10) unsigned NOT NULL,
-              `created_at` int(10) unsigned NOT NULL,
-              `updated_at` int(10) unsigned NOT NULL,
-              PRIMARY KEY (`setting_id`),
-              UNIQUE KEY `user_scope` (`user_id`,`scope_type`,`scope_id`),
-              KEY `model_lookup` (`model_id`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _upgrade_query($sql);
-
-            $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_audit` (
-              `audit_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-              `user_id` mediumint(8) unsigned NOT NULL,
-              `model_id` bigint(20) unsigned DEFAULT NULL,
-              `action` varchar(50) NOT NULL,
-              `metadata` longtext,
-              `created_at` int(10) unsigned NOT NULL,
-              PRIMARY KEY (`audit_id`),
-              KEY `user_lookup` (`user_id`),
-              KEY `model_lookup` (`model_id`),
-              KEY `action_lookup` (`action`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _upgrade_query($sql);
-
-            $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_exports` (
-              `export_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-              `user_id` mediumint(8) unsigned NOT NULL,
-              `model_id` int(11) unsigned NOT NULL,
-              `scope_type` varchar(32) NOT NULL,
-              `scope_id` bigint(20) unsigned DEFAULT NULL,
-              `start_hour` int(10) unsigned NOT NULL,
-              `end_hour` int(10) unsigned NOT NULL,
-              `requested_format` varchar(16) NOT NULL DEFAULT 'csv',
-              `status` varchar(20) NOT NULL DEFAULT 'pending',
-              `options` longtext DEFAULT NULL,
-              `webhook_url` varchar(500) DEFAULT NULL,
-              `webhook_secret` varchar(255) DEFAULT NULL,
-              `webhook_headers` text DEFAULT NULL,
-              `file_path` varchar(500) DEFAULT NULL,
-              `rows_exported` int(11) unsigned DEFAULT NULL,
-              `queued_at` int(10) unsigned NOT NULL,
-              `started_at` int(10) unsigned DEFAULT NULL,
-              `completed_at` int(10) unsigned DEFAULT NULL,
-              `failed_at` int(10) unsigned DEFAULT NULL,
-              `last_error` text DEFAULT NULL,
-              `webhook_attempted_at` int(10) unsigned DEFAULT NULL,
-              `webhook_status_code` int(11) DEFAULT NULL,
-              `webhook_response_body` mediumtext DEFAULT NULL,
-              `created_at` int(10) unsigned NOT NULL,
-              `updated_at` int(10) unsigned NOT NULL,
-              PRIMARY KEY (`export_id`),
-              KEY `model_status` (`model_id`,`status`),
-              KEY `user_status` (`user_id`,`status`),
-              KEY `queued_at` (`queued_at`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _upgrade_query($sql);
-
-            $sql = "INSERT IGNORE INTO `202_permissions` (`permission_id`, `permission_description`) VALUES
+            if (_upgrade_query("INSERT IGNORE INTO `202_permissions` (`permission_id`, `permission_description`) VALUES
                     (22, 'view_attribution_reports'),
-                    (23, 'manage_attribution_models');";
-            $result = _upgrade_query($sql);
-
-            $sql = "INSERT IGNORE INTO `202_role_permission` (`role_id`, `permission_id`) VALUES
-                    (1, 22),
-                    (1, 23),
-                    (2, 22),
-                    (2, 23),
-                    (3, 22);";
-            $result = _upgrade_query($sql);
-
-            // Add attribution model reference to campaigns table (check if column exists first)
-            $sql = "SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.COLUMNS
-                    WHERE TABLE_SCHEMA = DATABASE()
-                    AND TABLE_NAME = '202_aff_campaigns'
-                    AND COLUMN_NAME = 'attribution_model_id'";
-            $result = _upgrade_query($sql);
-            $row = mysqli_fetch_assoc($result);
-
-            if ($row['count'] == 0) {
-                $sql = "ALTER TABLE `202_aff_campaigns`
-                        ADD COLUMN `attribution_model_id` int(11) DEFAULT NULL
-                        AFTER `aff_campaign_cloaking`";
-                $result = _upgrade_query($sql);
+                    (23, 'manage_attribution_models')") === false) {
+                $mta_ok = false;
+            }
+            if (_upgrade_query("INSERT IGNORE INTO `202_role_permission` (`role_id`, `permission_id`) VALUES
+                    (1, 22), (1, 23), (2, 22), (2, 23), (3, 22)") === false) {
+                $mta_ok = false;
             }
 
-            // Create index for attribution model lookups (check if index exists first)
-            $sql = "SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.STATISTICS
-                    WHERE TABLE_SCHEMA = DATABASE()
-                    AND TABLE_NAME = '202_aff_campaigns'
-                    AND INDEX_NAME = 'idx_attribution_model'";
-            $result = _upgrade_query($sql);
-            $row = mysqli_fetch_assoc($result);
-
-            if ($row['count'] == 0) {
-                $sql = "ALTER TABLE `202_aff_campaigns`
-                        ADD INDEX `idx_attribution_model` (`attribution_model_id`)";
-                $result = _upgrade_query($sql);
+            // The per-campaign model override. A failed probe is not "the
+            // column is missing" (error pattern #11): it fails the rung.
+            $check = _upgrade_query("SHOW COLUMNS FROM `202_aff_campaigns` LIKE 'attribution_model_id'");
+            if (!($check instanceof mysqli_result)) {
+                $mta_ok = false;
+            } elseif ($check->num_rows === 0 && _upgrade_query(
+                "ALTER TABLE `202_aff_campaigns` ADD COLUMN `attribution_model_id` int(11) DEFAULT NULL AFTER `aff_campaign_cloaking`"
+            ) === false) {
+                $mta_ok = false;
+            }
+            $check = _upgrade_query("SHOW INDEX FROM `202_aff_campaigns` WHERE Key_name = 'idx_attribution_model'");
+            if (!($check instanceof mysqli_result)) {
+                $mta_ok = false;
+            } elseif ($check->num_rows === 0 && _upgrade_query(
+                "ALTER TABLE `202_aff_campaigns` ADD INDEX `idx_attribution_model` (`attribution_model_id`)"
+            ) === false) {
+                $mta_ok = false;
             }
 
-            // Create default "Last Touch" attribution model for existing users
-            $sql = "INSERT IGNORE INTO `202_attribution_models` (
-                        `user_id`,
-                        `model_name`,
-                        `model_slug`,
-                        `model_type`,
-                        `weighting_config`,
-                        `is_active`,
-                        `is_default`,
-                        `created_at`,
-                        `updated_at`
-                    )
-                    SELECT
-                        `user_id`,
-                        'Last Touch Attribution' as model_name,
-                        'last-touch-default' as model_slug,
-                        'last_touch' as model_type,
-                        NULL as weighting_config,
-                        1 as is_active,
-                        1 as is_default,
-                        UNIX_TIMESTAMP() as created_at,
-                        UNIX_TIMESTAMP() as updated_at
-                    FROM `202_users`
-                    WHERE `user_id` > 0";
-            $result = _upgrade_query($sql);
+            // One default model per account, then prove it: an account left
+            // without one would have no credits and empty reports.
+            if ($mta_ok && _upgrade_query(\Prosper202\Attribution\DefaultModel::SEED_ALL_SQL) === false) {
+                $mta_ok = false;
+            }
+            if ($mta_ok) {
+                $check = _upgrade_query(\Prosper202\Attribution\DefaultModel::MISSING_SQL);
+                $missing = $check instanceof mysqli_result ? $check->fetch_assoc() : null;
+                if (!is_array($missing) || (int) $missing['missing'] !== 0) {
+                    error_log('Prosper202 upgrade: '
+                        . (is_array($missing) ? (int) $missing['missing'] . ' account(s) still have no' : 'could not check whether every account has a')
+                        . ' default attribution model.');
+                    $mta_ok = false;
+                }
+            }
 
-            $sql = "UPDATE 202_version SET version='1.9.56'";
-            $result = _upgrade_query($sql);
-
-            $prosper202_version = '1.9.56';
-        }
-
-        if ($prosper202_version == '1.9.56') {
-
-            $sql = "CREATE TABLE IF NOT EXISTS `202_conversion_touchpoints` (
-              `touchpoint_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-              `conv_id` int(11) unsigned NOT NULL,
-              `click_id` bigint(20) unsigned NOT NULL,
-              `click_time` int(10) unsigned NOT NULL,
-              `position` smallint(5) unsigned NOT NULL DEFAULT '0',
-              `created_at` int(10) unsigned NOT NULL,
-              PRIMARY KEY (`touchpoint_id`),
-              KEY `conv_id` (`conv_id`),
-              KEY `click_lookup` (`click_id`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _upgrade_query($sql);
-
-            $sql = "UPDATE 202_version SET version='1.9.57'";
-            $result = _upgrade_query($sql);
-
-            $prosper202_version = '1.9.57';
+            if ($mta_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.57'") !== false) {
+                    $prosper202_version = '1.9.57';
+                } else {
+                    error_log('Prosper202 upgrade: created the attribution schema but failed to persist version 1.9.57; leaving version at 1.9.56 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: attribution schema incomplete; leaving version at 1.9.56 so the next run retries.');
+            }
         }
 
         if ($prosper202_version == '1.9.57') {
 
-            $database = DB::getInstance();
-            $connection = $database->getConnection();
-
-            if ($connection instanceof \mysqli) {
-                $connection->begin_transaction();
-
-                try {
-                    $columnChecks = [
-                        'multi_touch_enabled' => "ALTER TABLE `202_attribution_settings` ADD COLUMN `multi_touch_enabled` TINYINT(1) UNSIGNED NOT NULL DEFAULT '1' AFTER `model_id`",
-                        'multi_touch_enabled_at' => "ALTER TABLE `202_attribution_settings` ADD COLUMN `multi_touch_enabled_at` INT(10) UNSIGNED NULL DEFAULT NULL AFTER `multi_touch_enabled`",
-                        'multi_touch_disabled_at' => "ALTER TABLE `202_attribution_settings` ADD COLUMN `multi_touch_disabled_at` INT(10) UNSIGNED NULL DEFAULT NULL AFTER `multi_touch_enabled_at`",
-                    ];
-
-                    foreach ($columnChecks as $column => $alterSql) {
-                        $columnResult = $connection->query("SHOW COLUMNS FROM `202_attribution_settings` LIKE '" . $connection->real_escape_string($column) . "'");
-                        if ($columnResult instanceof \mysqli_result && $columnResult->num_rows > 0) {
-                            $columnResult->free();
-                            continue;
-                        }
-
-                        if ($columnResult instanceof \mysqli_result) {
-                            $columnResult->free();
-                        }
-
-                        if ($connection->query($alterSql) === false) {
-                            throw new \RuntimeException('Failed to alter 202_attribution_settings: ' . $connection->error);
-                        }
-                    }
-
-                    $indexChecks = [
-                        'user_scope_model' => "ALTER TABLE `202_attribution_settings` ADD UNIQUE KEY `user_scope_model` (`user_id`,`scope_type`,`scope_id`,`model_id`)",
-                        'user_scope_multi_touch' => "ALTER TABLE `202_attribution_settings` ADD UNIQUE KEY `user_scope_multi_touch` (`user_id`,`scope_type`,`scope_id`,`multi_touch_enabled`)"
-                    ];
-
-                    foreach ($indexChecks as $index => $alterSql) {
-                        $indexResult = $connection->query("SHOW INDEX FROM `202_attribution_settings` WHERE Key_name = '" . $connection->real_escape_string($index) . "'");
-                        if ($indexResult instanceof \mysqli_result && $indexResult->num_rows > 0) {
-                            $indexResult->free();
-                            continue;
-                        }
-
-                        if ($indexResult instanceof \mysqli_result) {
-                            $indexResult->free();
-                        }
-
-                        if ($connection->query($alterSql) === false) {
-                            throw new \RuntimeException('Failed to add index ' . $index . ' to 202_attribution_settings: ' . $connection->error);
-                        }
-                    }
-
-                    $seedSql = "UPDATE `202_attribution_settings`
-                        SET multi_touch_enabled = COALESCE(multi_touch_enabled, 1),
-                            multi_touch_enabled_at = CASE
-                                WHEN multi_touch_enabled = 1 AND multi_touch_enabled_at IS NULL THEN created_at
-                                ELSE multi_touch_enabled_at
-                            END,
-                            multi_touch_disabled_at = CASE
-                                WHEN multi_touch_enabled = 0 AND multi_touch_disabled_at IS NULL THEN updated_at
-                                ELSE multi_touch_disabled_at
-                            END";
-
-                    if ($connection->query($seedSql) === false) {
-                        throw new \RuntimeException('Failed to seed attribution setting toggles: ' . $connection->error);
-                    }
-
-                    $connection->commit();
-                } catch (\Throwable $upgradeException) {
-                    $connection->rollback();
-                    throw $upgradeException;
-                }
+            // Its multi-touch settings DDL went with the settings table (plan
+            // §6.4): the outbox made the toggle it served unnecessary.
+            if (_upgrade_query("UPDATE 202_version SET version='1.9.58'") !== false) {
+                $prosper202_version = '1.9.58';
             }
-
-            $sql = "UPDATE 202_version SET version='1.9.58'";
-            $result = _upgrade_query($sql);
-
-            $prosper202_version = '1.9.58';
         }
 
         if ($prosper202_version == '1.9.58') {
 
-            $sql = "CREATE TABLE IF NOT EXISTS `202_attribution_exports` (
-              `export_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-              `user_id` mediumint(8) unsigned NOT NULL,
-              `model_id` bigint(20) unsigned NOT NULL,
-              `scope_type` varchar(50) NOT NULL,
-              `scope_id` bigint(20) unsigned DEFAULT NULL,
-              `start_hour` int(10) unsigned NOT NULL,
-              `end_hour` int(10) unsigned NOT NULL,
-              `format` varchar(10) NOT NULL,
-              `status` varchar(20) NOT NULL,
-              `file_path` varchar(255) DEFAULT NULL,
-              `download_token` varchar(64) DEFAULT NULL,
-              `webhook_url` varchar(255) DEFAULT NULL,
-              `webhook_method` varchar(10) DEFAULT NULL,
-              `webhook_headers` text DEFAULT NULL,
-              `webhook_status_code` smallint(5) unsigned DEFAULT NULL,
-              `webhook_response_body` text DEFAULT NULL,
-              `last_attempted_at` int(10) unsigned DEFAULT NULL,
-              `completed_at` int(10) unsigned DEFAULT NULL,
-              `error_message` text DEFAULT NULL,
-              `created_at` int(10) unsigned NOT NULL,
-              `updated_at` int(10) unsigned NOT NULL,
-              PRIMARY KEY (`export_id`),
-              KEY `user_status` (`user_id`,`status`),
-              KEY `model_status` (`model_id`,`status`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
-            $result = _upgrade_query($sql);
-
-            $sql = "UPDATE 202_version SET version='1.9.59'";
-            $result = _upgrade_query($sql);
-
-            $prosper202_version = '1.9.59';
+            // Its second, conflicting 202_attribution_exports DDL is gone; the
+            // 1.9.56 rung creates the one definition (plan §6.4).
+            if (_upgrade_query("UPDATE 202_version SET version='1.9.59'") !== false) {
+                $prosper202_version = '1.9.59';
+            }
         }
 
         if ($prosper202_version == '1.9.59') {
@@ -4184,7 +4008,8 @@ class UPGRADE
             // 202_conversion_logs, its MTA outbox and upload batches, and the
             // campaigns' payout mode; the identity graph; and the goals
             // engine (definitions, campaign payouts, events, progress and
-            // outcomes). The DDL is the
+            // outcomes); the Android installs, the notification outbox, and
+            // the install-token key with the table that holds it. The DDL is the
             // installer's own definitions, so this block cannot drift from
             // them.
             //
@@ -4195,7 +4020,8 @@ class UPGRADE
                 \Prosper202\Database\Tables\AppTables::getDefinitions(),
                 \Prosper202\Database\Tables\ConversionTables::getDefinitions(),
                 \Prosper202\Database\Tables\IdentityTables::getDefinitions(),
-                \Prosper202\Database\Tables\GoalTables::getDefinitions()
+                \Prosper202\Database\Tables\GoalTables::getDefinitions(),
+                \Prosper202\Database\Tables\SecretTables::getDefinitions()
             ));
 
             if ($measurement_ok) {

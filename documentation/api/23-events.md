@@ -100,8 +100,8 @@ stored, `200` when every event was a duplicate:
   "replayed": false, "goals_evaluated": true, "outcomes_written": 1, "outcomes_retired": 0,
   "outcomes": [{"goal_id": 12, "version": 1, "n": 1, "event_id": "ORD-1001", "outcome_id": 40,
                 "conversion_id": 911, "payable": true, "amount": "49.00000", "notify": "reached"}],
-  "notifications": [{"goal_id": 12, "n": 1, "outcome_id": 40, "kind": "reached", "status": "sent",
-                     "server_calls": 1, "server_failures": 0}]
+  "notifications": [{"goal_id": 12, "n": 1, "outcome_id": 40, "kind": "reached", "status": "queued",
+                     "queued": 1, "browser_pixels": 0, "browser_skipped": 0}]
 }}
 ```
 
@@ -168,8 +168,8 @@ origin may post; no cookie is read.
 
 A goal a campaign pays for has a **Tell the traffic source** setting
 (`notify_traffic_source`, on by default). When such a goal is reached, the
-click's traffic source is sent its pixels — the same sender a plain
-conversion's postback uses — with these tokens filled:
+click's traffic source is sent its pixels, with the same tokens a plain
+conversion's postback fills and these as well:
 
 | Token | |
 |---|---|
@@ -179,20 +179,36 @@ conversion's postback uses — with these tokens filled:
 | `[[payout]]` | The same amount |
 | `[[transactionid]]` / `[[t202txid]]` | The event's transaction id, or the conversion's ledger key when it had none |
 
+**Server-to-server postbacks go through the notification outbox**, the one
+path for web and app goals (the Android installs guide,
+[24-android-installs.md](24-android-installs.md), describes it from the
+app side). The request that records the goal queues the postback in the
+same transaction as the conversion (`202_notification_pending`), and the
+worker — `202-cronjobs/app-installs.php`, and the web cron
+`202-cronjobs/index.php` every minute — sends it: a failure is retried with
+backoff (1 minute doubling, at most 6 hours) and marked `failed` after 8
+attempts, and never undoes the recorded conversion. A pixel whose code
+holds several space-separated URLs queues one row per URL, each retried on
+its own, so a URL that refuses is asked again without resending to one
+that accepted. The response reports `status: queued` with the number of
+rows waiting (`queued`). Image, iframe
+and script pixels cannot wait for a worker: they are returned to a browser
+where one asked (the universal pixel's answer, `status: rendered`), and
+counted as `browser_only` elsewhere.
+
 A traffic source is told about an outcome **once**. A duplicate is never
-sent again, and an outcome that a replay (a late, earlier event) or a
-re-evaluation writes in place of an earlier one is never sent as a new one
-(`notify: suppressed`): a postback that was delivered cannot be recalled.
-The same holds when a late event shifts the count — purchases of $5 and $10
+sent again. An outcome that a replay (a late, earlier event) or a
+re-evaluation writes in place of an earlier one is announced only if the
+earlier one never went out: its queued postback is cancelled and the
+replacement's is sent instead. Once one has gone out it cannot be recalled,
+so the replacement is not sent (`notify: suppressed`) and a correction is
+recorded, unsent, in the outbox (no pixel has a correction URL yet). The
+same holds when a late event shifts the count — purchases of $5 and $10
 followed by a late $1 that happened first become $1, $5 and $10, and the
-$10 purchase, now the third, is not announced a second time. Correction
-postbacks for such changes come with the notification outbox.
-A goal that is not paid (tracked only) sends nothing. Server-to-server
-postbacks go out on every path; image, iframe and script pixels are
-returned to a browser where one asked (the universal pixel's answer), and
-counted as `browser_only` elsewhere. Delivery is immediate and best-effort,
-as for a plain conversion's postback: a failure is logged and reported in
-`notifications`, and never undoes the recorded conversion.
+$10 purchase, now the third, is not announced a second time. Each rule is
+decided per URL: a URL that had not yet been sent the earlier outcome
+hears the one that stands, once, while one that had is told nothing more.
+A goal that is not paid (tracked only) sends nothing.
 
 ## Setup › Campaigns
 

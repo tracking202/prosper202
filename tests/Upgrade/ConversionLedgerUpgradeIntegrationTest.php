@@ -168,6 +168,61 @@ final class ConversionLedgerUpgradeIntegrationTest extends TestCase
         $this->assertTrue($reconciler->reconcile(ConversionTables::conversionLogs()));
         $this->assertSame([], $reconciler->getApplied(), 'the upgraded table already has every column and key the installer declares');
         $this->assertSame([], $reconciler->getUnreconciled());
+
+        // The reconciler compares names and nullability, not types or
+        // collations; install == upgrade needs the whole column. A table
+        // created from the installer's definition, under another name, is
+        // what a fresh install has.
+        $db->query('DROP TABLE IF EXISTS 202_conversion_logs_fresh');
+        $fresh = str_replace('`202_conversion_logs`', '`202_conversion_logs_fresh`', ConversionTables::conversionLogs()->createStatement);
+        $this->assertTrue($db->query($fresh), 'the installer definition creates');
+        // By name: the pre-ledger rungs appended transaction_id and
+        // click_payout where the installer declares them earlier, an order
+        // no reader depends on.
+        $columns = static function (string $table) use ($db): array {
+            $out = [];
+            foreach ($db->query('SHOW FULL COLUMNS FROM ' . $table)->fetch_all(MYSQLI_ASSOC) as $c) {
+                $out[$c['Field']] = [$c['Field'], $c['Type'], $c['Collation'], $c['Null'], $c['Default']];
+            }
+            ksort($out);
+
+            return $out;
+        };
+        $upgraded = $columns('202_conversion_logs');
+        $installed = $columns('202_conversion_logs_fresh');
+        $db->query('DROP TABLE 202_conversion_logs_fresh');
+        $this->assertSame($installed, $upgraded, 'every column, its type, collation, nullability and default, as a fresh install has it');
+        $byName = array_map(static fn (array $c): ?string => $c[2], $upgraded);
+        $this->assertSame('utf8mb4_bin', $byName['dedupe_key'], 'the dedupe key compares exactly');
+        $this->assertSame('utf8mb4_bin', $byName['transaction_id'], 'so does the transaction id a reversal is found by');
+    }
+
+    /**
+     * A pre-ledger table's transaction_id is case-insensitive, and so is a
+     * dedupe_key an earlier run of this step added; the step makes both
+     * exact, and afterwards two sales whose ids differ only in case are two
+     * rows on one click.
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testTheStepMakesTheKeysCompareExactly(): void
+    {
+        $db = $this->preLedgerDatabase();
+        // An earlier run that added dedupe_key under the table collation.
+        $db->query('ALTER TABLE 202_conversion_logs ADD COLUMN dedupe_key varchar(320) DEFAULT NULL');
+
+        $this->assertTrue(_upgrade_conversion_ledger());
+
+        $collation = array_column($db->query('SHOW FULL COLUMNS FROM 202_conversion_logs')->fetch_all(MYSQLI_ASSOC), 'Collation', 'Field');
+        $this->assertSame('utf8mb4_bin', $collation['dedupe_key']);
+        $this->assertSame('utf8mb4_bin', $collation['transaction_id']);
+
+        foreach (['tx:CASE-1', 'tx:case-1'] as $key) {
+            $this->assertTrue($db->query("INSERT INTO 202_conversion_logs (click_id, campaign_id, user_id, click_time, conv_time, time_difference, ip,
+                pixel_type, user_agent, transaction_id, click_payout, deleted, source, dedupe_key)
+                VALUES (9, 7, 1, 1, 2, '', '', 2, '', '" . substr($key, 3) . "', 5, 0, 'postback', '$key')"), $key . ' is its own key');
+        }
     }
 
     /**
@@ -280,6 +335,68 @@ final class ConversionLedgerUpgradeIntegrationTest extends TestCase
             '/_upgrade_measurement_tables\(array_merge\([^;]*GoalTables::getDefinitions\(\)[^;]*\)\);/s',
             $rung,
             'the 1.9.75 rung creates the goal tables'
+        );
+    }
+
+    /**
+     * The Android install-token key (plan §5.1) is minted by the rung, once:
+     * a second run keeps the key, so links already in circulation keep
+     * verifying. The installer mints it with the same statement; the fresh
+     * path is asserted in InstallIntakeIntegrationTest and by the live pass,
+     * which installs an instance and signs a click with it.
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testTheRungMintsTheInstallTokenKeyOnceAndLinksCampaignsToApps(): void
+    {
+        $db = $this->preLedgerDatabase();
+        $db->query('DROP TABLE IF EXISTS 202_deployment_secrets');
+        $this->assertTrue(_upgrade_measurement_tables(array_merge(
+            \Prosper202\Database\Tables\AppTables::getDefinitions(),
+            \Prosper202\Database\Tables\ConversionTables::getDefinitions(),
+            \Prosper202\Database\Tables\IdentityTables::getDefinitions(),
+            \Prosper202\Database\Tables\GoalTables::getDefinitions(),
+            \Prosper202\Database\Tables\SecretTables::getDefinitions()
+        )));
+        $first = \Api\V3\Apps\Android\InstallTokenKey::load($db);
+        $this->assertIsString($first, 'the rung mints the key');
+        $this->assertSame(32, strlen($first));
+        $this->assertTrue(_upgrade_measurement_tables(\Prosper202\Database\Tables\SecretTables::getDefinitions()));
+        $this->assertSame($first, \Api\V3\Apps\Android\InstallTokenKey::load($db), 'a second run never replaces the key');
+
+        $columns = [];
+        $result = $db->query('SHOW COLUMNS FROM 202_aff_campaigns');
+        while ($row = $result->fetch_assoc()) {
+            $columns[$row['Field']] = $row['Null'];
+        }
+        $this->assertSame('YES', $columns['app_registration_id'] ?? null, 'a campaign may name the Android app its links install');
+        $this->assertSame(
+            'app_registration_id',
+            $db->query("SHOW INDEX FROM 202_aff_campaigns WHERE Key_name = 'app_registration_id'")->fetch_assoc()['Column_name'] ?? null,
+            'indexed, as the installer declares it: the intake and a registration delete look campaigns up by it'
+        );
+
+        $rung = (string)file_get_contents(dirname(__DIR__, 2) . '/202-config/functions-upgrade.php');
+        $this->assertMatchesRegularExpression(
+            '/_upgrade_measurement_tables\(array_merge\([^;]*SecretTables::getDefinitions\(\)[^;]*\)\);/s',
+            $rung,
+            'the 1.9.75 rung creates the secrets table (and so mints the key)'
+        );
+        // Code only, and the very next statement after the version seed: a
+        // commented-out call, or one in a branch somewhere below, is not a
+        // mint that runs whenever the install does.
+        $install = '';
+        foreach (token_get_all((string)file_get_contents(dirname(__DIR__, 2) . '/202-config/functions-install.php')) as $token) {
+            if (is_array($token) && ($token[0] === T_COMMENT || $token[0] === T_DOC_COMMENT)) {
+                continue;
+            }
+            $install .= is_array($token) ? $token[1] : $token;
+        }
+        $this->assertMatchesRegularExpression(
+            '/\$seeder->seedVersion\(\$php_version\);\s*\\\\Api\\\\V3\\\\Apps\\\\Android\\\\InstallTokenKey::ensure\(\$db\);/',
+            $install,
+            'a fresh install never runs a rung, so the installer mints the key itself, right after seeding the version'
         );
     }
 

@@ -243,6 +243,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			}
 			$stmt->close();
 
+			// The account's default attribution model, in the same
+			// transaction as the account: the same statement the upgrade
+			// rung and user creation run (plan §6.4), so a fresh install
+			// and an upgraded one start with the same model.
+			\Prosper202\Attribution\DefaultModel::ensureFor(new \Prosper202\Database\Connection($db), $user_id);
+
 			if ($user_created) {
 				// Default dashboard chart for the new account, keyed on the committed
 				// $user_id. A rolled-back retry consumes the AUTO_INCREMENT id, so the

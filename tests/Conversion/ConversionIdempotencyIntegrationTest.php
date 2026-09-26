@@ -86,6 +86,17 @@ final class ConversionIdempotencyIntegrationTest extends TestCase
         self::$db->query('TRUNCATE TABLE 202_conversion_logs');
         self::$db->query('TRUNCATE TABLE 202_clicks');
         self::$db->query('TRUNCATE TABLE 202_clicks_spy');
+        // Campaign 7, which every click here belongs to, in the mode these
+        // cases are written for: replace, where an id-less conversion is
+        // never deduplicated. Another suite on the same database (the goals
+        // tests make campaign 7 accumulate) must not decide it: in
+        // accumulate mode an id-less payable row is the campaign's one plain
+        // conversion per click, and the repeat case reads as a duplicate.
+        self::$db->query('DELETE FROM 202_aff_campaigns WHERE aff_campaign_id = 7');
+        if (self::$db->query("INSERT INTO 202_aff_campaigns SET aff_campaign_id = 7, user_id = 1, aff_network_id = 1, aff_campaign_name = 'c7',
+                aff_campaign_url = 'http://x', aff_campaign_payout = 10, aff_campaign_time = 1, aff_campaign_foreign_payout = 10, payout_mode = 'replace'") !== true) {
+            self::fail('campaign 7 fixture: ' . self::$db->error);
+        }
     }
 
     private function insertClick(int $clickId, float $payout = 10.0, int $campaignId = 7): void

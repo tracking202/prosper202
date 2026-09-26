@@ -64,6 +64,45 @@ $queryParams = $_GET;
 $headers     = getallheaders() ?: [];
 RequestContext::setHeaders($headers);
 
+// ─── The Android intake (pre-auth) ────────────────────────────────────
+// POST /apps/installs and POST /apps/installs/{install_uuid}/events are
+// what the Android SDK calls: an app binary holds no API key, so the
+// registration is selected by the X-P202-App-Token header (plan §5.2,
+// §5.5). They are routed before the general body read because they read
+// their own, bounded one, and through PublicIntake's shared plumbing: the
+// method check and a declared body over the cap refused first, then the
+// soft rate limit keyed on the TCP peer, never on a header the sender
+// chooses (CLAUDE.md #16). GET /apps/installs is the reachability probe.
+if ($path === '/apps/installs' || preg_match('#^/apps/installs/([^/]+)/events$#D', $path, $androidEventsMatch) === 1) {
+    $androidEvents = isset($androidEventsMatch[1]);
+    $androidCap = $androidEvents ? \Api\V3\Apps\Android\InstallEventsIntake::MAX_BODY_BYTES : \Api\V3\Apps\Android\InstallIntake::MAX_BODY_BYTES;
+    $androidMethod = \Api\V3\Apps\PublicIntake::preflight($androidCap, $androidEvents ? ['POST'] : ['GET', 'POST']);
+    \Api\V3\Apps\PublicIntake::rateLimit($androidEvents ? 'app-install-events' : 'app-installs', $androidEvents ? 600 : 120, 60);
+    try {
+        if ($androidMethod === 'GET' || $androidMethod === 'HEAD') {
+            // The reachability probe the SDK and the Setup page call.
+            $androidResult = ['status' => 200, 'body' => ['data' => ['status' => 'ready']]];
+        } else {
+            $androidBody = \Api\V3\Apps\PublicIntake::readBody($androidCap);
+            $androidToken = RequestContext::header(\Api\V3\Apps\AppToken::HEADER_LOOKUP);
+            $androidResult = $androidEvents
+                ? (new \Api\V3\Apps\Android\InstallEventsIntake($db))->receive($androidToken, $androidEventsMatch[1], $androidBody)
+                : (new \Api\V3\Apps\Android\InstallIntake($db))->receive($androidToken, $androidBody, (string) ($_SERVER['REMOTE_ADDR'] ?? ''));
+        }
+    } catch (\Throwable $androidError) {
+        // Nothing was committed (every write is one transaction that rolled
+        // back), so a 5xx is the truthful answer and the SDK's retry is safe.
+        error_log('p202 android intake: ' . $androidError->getMessage());
+        Bootstrap::errorResponse('The install could not be recorded; retry later', 500);
+        exit;
+    }
+    foreach ($androidResult['headers'] ?? [] as $androidHeader => $androidValue) {
+        header($androidHeader . ': ' . $androidValue);
+    }
+    Bootstrap::jsonResponse($androidResult['body'], $androidResult['status']);
+    exit;
+}
+
 $payload = [];
 if (in_array($method, ['POST', 'PUT', 'PATCH'])) {
     $raw = file_get_contents('php://input', false, null, 0, 1_048_576); // 1 MB limit
@@ -166,6 +205,7 @@ try {
     $auth = Auth::fromRequest($headers, $db);
     $userId = $auth->userId();
     RequestContext::setActorUserId($userId);
+    RequestContext::setApiKeyRef($auth->apiKeyRef());
 
     // Lightweight fixed-window rate limits for high-impact operations.
     $stateStore = new ServerStateStore();
@@ -315,6 +355,13 @@ try {
         // ── Clicks (read-only) ───────────────────────────────────────────
         $router->get('/clicks', fn() => $crud(\Api\V3\Controllers\ClicksController::class)->list($queryParams));
         $router->get('/clicks/{id}', fn($ctx) => $crud(\Api\V3\Controllers\ClicksController::class)->get((int)$ctx['id']));
+        // A click's conversions, each with whether it counts toward the
+        // click's value. It is the clicks area by path and shows conversion
+        // rows, so a key needs read scope on both.
+        $router->get('/clicks/{id}/conversions', function ($ctx) use ($crud, $auth) {
+            $auth->requireScope('conversions:read');
+            return $crud(\Api\V3\Controllers\ClicksController::class)->conversions((int)$ctx['id']);
+        });
 
         // ── Conversions ──────────────────────────────────────────────────
         $router->group('/conversions', function (Router $r) use ($crud, $idempotent, $queryParams, $payload) {
@@ -474,19 +521,66 @@ try {
             $r->delete('/{id}/rules/{ruleId}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteRule((int)$ctx['id'], (int)$ctx['ruleId'])));
         });
 
-        // ── Attribution ──────────────────────────────────────────────────
-        $router->group('/attribution/models', function (Router $r) use ($crud, $idempotent, $queryParams, $payload) {
+        // ── Multi-touch attribution ──────────────────────────────────────
+        // Gated by the same role permissions as the session pages (plan
+        // §6.3: one permission check per operation on every surface):
+        // view_attribution_reports to read, manage_attribution_models to
+        // change a model. Scope enforcement (attribution:read/write) runs as
+        // well, centrally below.
+        $router->group('/attribution/models', function (Router $r) use ($crud, $idempotent, $queryParams, $payload, $auth, $db) {
             $cls = \Api\V3\Controllers\AttributionController::class;
+            $manage = static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'manage_attribution_models');
+            };
             $r->get('',        fn() => $crud($cls)->listModels($queryParams));
-            $r->post('',       fn() => ['_status' => 201] + $idempotent('attribution/models', $payload, fn() => $crud($cls)->createModel($payload)));
             $r->get('/{id}',   fn($ctx) => $crud($cls)->getModel((int)$ctx['id']));
-            $r->put('/{id}',   fn($ctx) => $crud($cls)->updateModel((int)$ctx['id'], $payload));
-            $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteModel((int)$ctx['id'])));
-
-            $r->get('/{id}/snapshots', fn($ctx) => $crud($cls)->listSnapshots((int)$ctx['id'], $queryParams));
-            $r->get('/{id}/exports',   fn($ctx) => $crud($cls)->listExports((int)$ctx['id']));
-            $r->post('/{id}/exports',  fn($ctx) => ['_status' => 201] + $idempotent('attribution/models/' . (int)$ctx['id'] . '/exports', $payload, fn() => $crud($cls)->scheduleExport((int)$ctx['id'], $payload)));
-        });
+            $r->post('',       function () use ($manage, $crud, $cls, $idempotent, $payload) {
+                $manage();
+                return ['_status' => 201] + $idempotent('attribution/models', $payload, fn() => $crud($cls)->createModel($payload));
+            });
+            $r->put('/{id}',   function ($ctx) use ($manage, $crud, $cls, $payload) {
+                $manage();
+                return $crud($cls)->updateModel((int)$ctx['id'], $payload);
+            });
+            $r->delete('/{id}', function ($ctx) use ($manage, $crud, $cls) {
+                $manage();
+                $crud($cls)->deleteModel((int)$ctx['id']);
+                return null; // 204
+            });
+        }, [
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'view_attribution_reports');
+            },
+        ]);
+        $router->group('/attribution', function (Router $r) use ($crud, $queryParams) {
+            $cls = \Api\V3\Controllers\AttributionController::class;
+            $r->get('/reports/breakdown',          fn() => $crud($cls)->breakdown($queryParams));
+            $r->get('/reports/journeys',           fn() => $crud($cls)->journeyMetrics($queryParams));
+            $r->get('/conversions/{id}/journey',   fn($ctx) => $crud($cls)->journey((int)$ctx['id']));
+            $r->get('/queue',                      fn() => $crud($cls)->queue($queryParams));
+        }, [
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'view_attribution_reports');
+            },
+        ]);
+        // Exports (plan §6.3): a breakdown written to CSV by the export
+        // runner, downloadable and optionally sent to an SSRF-checked
+        // webhook. Reading the account's reports is what an export does, so
+        // view_attribution_reports gates every route, the same permission
+        // the dashboard's Exports tab asks for.
+        $router->group('/attribution/exports', function (Router $r) use ($crud, $idempotent, $queryParams, $payload) {
+            $cls = \Api\V3\Controllers\AttributionController::class;
+            $r->get('',                fn() => $crud($cls)->listExports($queryParams));
+            $r->get('/{id}',           fn($ctx) => $crud($cls)->getExport((int)$ctx['id']));
+            $r->get('/{id}/download',  fn($ctx) => $crud($cls)->downloadExport((int)$ctx['id']));
+            $r->post('',               fn() => ['_status' => 201] + $idempotent('attribution/exports', $payload, fn() => $crud($cls)->createExport($payload)));
+            $r->post('/{id}/retry',    fn($ctx) => $crud($cls)->retryExport((int)$ctx['id']));
+            $r->delete('/{id}',        fn($ctx) => tap($crud($cls), fn($c) => $c->deleteExport((int)$ctx['id'])));
+        }, [
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'view_attribution_reports');
+            },
+        ]);
 
         // ── App measurement ──────────────────────────────────────────────
         // The registry (both platforms), the Apple source's SKAN encodings,
@@ -509,6 +603,23 @@ try {
             $r->get('/postbacks/{id}', fn($ctx) => $crud($postbacks)->get((int)$ctx['id']));
             $r->get('/report',         fn() => $crud($postbacks)->report($queryParams));
             $r->post('/verify',        fn() => $crud($postbacks)->verify($payload));
+
+            // An Android registration's installs, written only by the
+            // public intake (POST /apps/installs, routed before auth), and
+            // the install token for one of the caller's clicks: all reads.
+            $installs = \Api\V3\Controllers\AppInstallsController::class;
+            $r->get('/{id}/installs',        fn($ctx) => $crud($installs)->list((int)$ctx['id'], $queryParams));
+            $r->get('/{id}/installs/{uuid}', fn($ctx) => $crud($installs)->get((int)$ctx['id'], (string)$ctx['uuid']));
+            $r->get('/{id}/install-token',   fn($ctx) => $crud($installs)->installToken((int)$ctx['id'], $queryParams));
+
+            // Play Integrity (plan §5.6, §5.11): the status read, and the
+            // service-account credential — set/rotate and clear. Neither
+            // write is stageable: its body is a private key, which a staged
+            // change would store and show to reviewers.
+            $integrity = \Api\V3\Controllers\AppIntegrityController::class;
+            $r->get('/{id}/integrity',               fn($ctx) => $crud($integrity)->status((int)$ctx['id']));
+            $r->put('/{id}/integrity-credential',    fn($ctx) => $crud($integrity)->setCredential((int)$ctx['id'], $payload));
+            $r->delete('/{id}/integrity-credential', fn($ctx) => $crud($integrity)->clearCredential((int)$ctx['id']));
 
             $r->get('',            fn() => $crud($apps)->list($queryParams));
             // Deliberately NOT wrapped in $idempotent, for the same reason
@@ -668,8 +779,8 @@ try {
                 'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart}',
                 'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}',
                 'rotators'      => '/rotators',
-                'attribution'   => '/attribution/models',
-                'apps'          => '/apps/{id|skan-encodings|postbacks|report|verify|schema}',
+                'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|exports}',
+                'apps'          => '/apps/{id|skan-encodings|postbacks|report|verify|schema|installs}[/installs|/install-token|/integrity|/integrity-credential]',
                 'goals'         => '/goals/{id|validate|evaluate}',
                 'events'        => '/events',
                 'users'         => '/users',
@@ -687,9 +798,10 @@ try {
         // only ever dispatched to a handler registered here, and a DELETE with
         // dry_run set whose path has no preview is rejected — it can never fall
         // through to the real delete. (LTV deletes have no previews yet, so
-        // they reject.) Auth checks that live inside the main users handlers
-        // are replicated on their previews below; group middleware still runs
-        // from the main match before this router is consulted.
+        // they reject.) Auth checks that live inside a main DELETE handler
+        // are replicated on its preview below (PreviewAuthParityTest holds
+        // that); group middleware runs from the main match before this
+        // router is consulted, for a dry run and for a staged write alike.
         $previewRouter = new Router();
         foreach ($crudMap as $resource => $class) {
             $previewRouter->delete("/$resource/{id}", fn($ctx) => $crud($class)->deletePreview((int)$ctx['id']));
@@ -697,7 +809,14 @@ try {
         $previewRouter->delete('/conversions/{id}', fn($ctx) => $crud(\Api\V3\Controllers\ConversionsController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->delete('/rotators/{id}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->delete('/rotators/{id}/rules/{ruleId}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deleteRulePreview((int)$ctx['id'], (int)$ctx['ruleId']));
-        $previewRouter->delete('/attribution/models/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionController::class)->deleteModelPreview((int)$ctx['id']));
+        // The real DELETE checks manage_attribution_models inside its handler
+        // (the group middleware only asks for view_attribution_reports), so
+        // the preview repeats it, as the users previews repeat requireAdmin.
+        $previewRouter->delete('/attribution/models/{id}', function ($ctx) use ($crud, $auth, $db) {
+            $auth->requirePermission($db, 'manage_attribution_models');
+            return $crud(\Api\V3\Controllers\AttributionController::class)->deleteModelPreview((int)$ctx['id']);
+        });
+        $previewRouter->delete('/attribution/exports/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionController::class)->deleteExportPreview((int)$ctx['id']));
         $previewRouter->delete('/apps/skan-encodings/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AppSkanEncodingsController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->delete('/apps/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AppRegistrationsController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->delete('/goals/{id}', fn($ctx) => $crud(\Api\V3\Controllers\GoalsController::class)->deletePreview(\Api\V3\Controllers\GoalsController::pathId($ctx['id'])));
@@ -761,7 +880,11 @@ try {
         $r->post('', $stageable);
         $r->put('/{id}', $stageable);
         $r->delete('/{id}', $stageable);
-        $r->post('/{id}/exports', $stageable);
+    });
+    $stageableRouter->group('/attribution/exports', function (Router $r) use ($stageable) {
+        $r->post('', $stageable);
+        $r->post('/{id}/retry', $stageable);
+        $r->delete('/{id}', $stageable);
     });
     $stageableRouter->group('/apps', function (Router $r) use ($stageable) {
         $r->post('/skan-encodings', $stageable);
@@ -927,6 +1050,16 @@ try {
                 'staged' => 'This write cannot be staged; remove staged to perform it directly.',
             ]);
         }
+        // The real route's middleware (its role gate: e.g. the attribution
+        // routes' view_attribution_reports) runs before a proposal is
+        // recorded, exactly as it does before the write and before a dry
+        // run. Without it a key whose role may not read the area could
+        // stage a DELETE and read the record back from the preview
+        // embedded in the staged change. A refusal here is the route's own
+        // 403, not a proposal without a preview.
+        foreach ($match['middleware'] as $mw) {
+            $mw();
+        }
         $stagePreview = null;
         if ($method === 'DELETE') {
             $previewMatch = $previewRouter->match('DELETE', $path);
@@ -978,6 +1111,18 @@ try {
     if ($response === null) {
         // DELETE — 204 No Content
         http_response_code(204);
+    } elseif (isset($response['_file']) && is_array($response['_file'])) {
+        // A file download (an attribution export): the bytes, not JSON.
+        // The filename is built by the controller from fixed parts; it is
+        // still reduced to a safe set here because it reaches a header.
+        $file = $response['_file'];
+        $filename = preg_replace('/[^A-Za-z0-9._-]+/', '-', (string) ($file['filename'] ?? 'download')) ?? 'download';
+        http_response_code(200);
+        header('Content-Type: ' . (string) ($file['content_type'] ?? 'application/octet-stream'));
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Content-Length: ' . strlen((string) $file['body']));
+        header('Cache-Control: no-store');
+        echo (string) $file['body'];
     } else {
         $status = $response['_status'] ?? 200;
         unset($response['_status']);

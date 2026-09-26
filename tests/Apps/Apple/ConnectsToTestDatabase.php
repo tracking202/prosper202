@@ -78,6 +78,7 @@ trait ConnectsToTestDatabase
         self::$db->query('TRUNCATE TABLE 202_app_postbacks');
         self::$db->query('TRUNCATE TABLE 202_app_registrations');
         self::$db->query('TRUNCATE TABLE 202_app_skan_encodings');
+        self::$db->query('TRUNCATE TABLE 202_app_skan_encoding_history');
         return self::$db;
     }
 }

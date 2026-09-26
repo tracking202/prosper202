@@ -31,8 +31,6 @@ final class UncheckedExecuteTest extends TestCase
      */
     private const KNOWN_UNCHECKED = [
         '202-login.php',
-        'api/v2/app.php',
-        '202-config/Attribution/AttributionIntegrationService.php',
     ];
 
     /** @return array<string, int> file (repo-relative) => count of bare execute() calls */

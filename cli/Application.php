@@ -28,6 +28,7 @@ class Application extends ConsoleApplication
         // --- Clicks ---
         $this->add(new Commands\ClickListCommand());
         $this->add(new Commands\ClickGetCommand());
+        $this->add(new Commands\ClickConversionsCommand());
 
         // --- Conversions ---
         $this->add(new Commands\ConversionListCommand());
@@ -69,9 +70,15 @@ class Application extends ConsoleApplication
         $this->add(new Commands\AttributionModelCreateCommand());
         $this->add(new Commands\AttributionModelUpdateCommand());
         $this->add(new Commands\AttributionModelDeleteCommand());
-        $this->add(new Commands\AttributionSnapshotListCommand());
+        $this->add(new Commands\AttributionBreakdownCommand());
+        $this->add(new Commands\AttributionJourneyCommand());
+        $this->add(new Commands\AttributionQueueCommand());
         $this->add(new Commands\AttributionExportListCommand());
-        $this->add(new Commands\AttributionExportScheduleCommand());
+        $this->add(new Commands\AttributionExportGetCommand());
+        $this->add(new Commands\AttributionExportCreateCommand());
+        $this->add(new Commands\AttributionExportDownloadCommand());
+        $this->add(new Commands\AttributionExportRetryCommand());
+        $this->add(new Commands\AttributionExportDeleteCommand());
 
         // --- Users ---
         $this->add(new Commands\UserListCommand());
@@ -89,6 +96,16 @@ class Application extends ConsoleApplication
         $this->add(new Commands\UserIdentityKeyRotateCommand());
         $this->add(new Commands\UserPreferencesGetCommand());
         $this->add(new Commands\UserPreferencesUpdateCommand());
+
+        // --- App measurement (Android installs; registrations are managed with the Go CLI's `p202 app`) ---
+        $this->add(new Commands\AppInstallListCommand());
+        $this->add(new Commands\AppInstallGetCommand());
+        $this->add(new Commands\AppInstallTokenCommand());
+        // Play Integrity: the status, the mode, and the service-account credential.
+        $this->add(new Commands\AppIntegrityStatusCommand());
+        $this->add(new Commands\AppIntegrityModeCommand());
+        $this->add(new Commands\AppIntegrityCredentialSetCommand());
+        $this->add(new Commands\AppIntegrityCredentialClearCommand());
 
         // --- System ---
         $this->add(new Commands\SystemHealthCommand());

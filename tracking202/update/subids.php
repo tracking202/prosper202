@@ -5,7 +5,6 @@ include_once(substr(__DIR__, 0, -19) . '/202-config/connect.php');
 include_once(substr(__DIR__, 0, -19) . '/202-config/class-dataengine-slim.php');
 require_once __DIR__ . '/_includes/update_ui.php';
 
-use Prosper202\Attribution\AttributionServiceFactory;
 use Prosper202\Click\ClickId;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\MysqlConversionRepository;
@@ -85,16 +84,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$marked++;
 				$de->setDirtyHour((string) $clickId);
 			}
-		}
-
-		// Rebuild attribution snapshots so the attribution page reflects changes immediately
-		try {
-			$jobRunner = AttributionServiceFactory::createJobRunner();
-			$endTime = time();
-			$startTime = $endTime - 86400;
-			$jobRunner->runForUser($userId, $startTime, $endTime);
-		} catch (Throwable $e) {
-			error_log('Attribution rebuild after subid upload failed: ' . $e->getMessage());
 		}
 
 		$success = true;

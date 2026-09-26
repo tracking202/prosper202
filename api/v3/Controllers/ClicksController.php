@@ -152,6 +152,33 @@ class ClicksController
         return ['data' => $row];
     }
 
+    /**
+     * GET /clicks/{id}/conversions: every conversion row of the click, with
+     * whether it counts toward the click's value and why not when it does
+     * not, and the click's value from its rows beside the figure the
+     * reports show (ClickBreakdown). All rows, deleted and superseded ones
+     * included, oldest first; a click's rows are few, so it is not paged.
+     */
+    public function conversions(int $id): array
+    {
+        $conn = new \Prosper202\Database\Connection($this->db);
+        try {
+            $breakdown = (new \Prosper202\Conversion\Ledger\ClickBreakdown($conn))->forClick($id, $this->userId);
+        } catch (\Prosper202\Conversion\Ledger\LedgerIntegrityException $e) {
+            // A row the ledger cannot read (an unknown source, a corrupt
+            // amount) makes the click's value unexplainable: say which row,
+            // never serve a breakdown that silently leaves it out.
+            throw new \Api\V3\HttpException('The click\'s conversions cannot be explained: ' . $e->getMessage(), 500, $e);
+        } catch (\Prosper202\Database\Exceptions\QueryException $e) {
+            throw new DatabaseException('Reading the click\'s conversions failed', $e);
+        }
+        if ($breakdown === null) {
+            throw new NotFoundException('Click not found');
+        }
+
+        return ['data' => $breakdown['rows'], 'click' => $breakdown['click']];
+    }
+
     private function prepare(string $sql): \mysqli_stmt
     {
         $stmt = $this->db->prepare($sql);

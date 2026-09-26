@@ -422,6 +422,54 @@ function RunSecondsCronjob()
                 error_log("DataEngine processing failed: " . $e->getMessage());
             }
 
+            // Multi-touch attribution: drain the conversion outbox into
+            // journeys and credits (202-cronjobs/attribution-worker.php is
+            // the same run for deployments that schedule it on its own; the
+            // named lock keeps the two from overlapping). A failure here
+            // loses nothing — every pending row stays for the next run — so
+            // it is logged and the rest of the cron carries on.
+            try {
+                $attribution = \Prosper202\Attribution\AttributionWorker::runExclusive(
+                    new \Prosper202\Database\Connection($db),
+                    20
+                );
+                if ($attribution !== null && $attribution->processed() > 0) {
+                    echo 'Attribution: ' . htmlspecialchars($attribution->summary(), ENT_QUOTES) . '<br>';
+                }
+            } catch (\Throwable $e) {
+                error_log('Attribution worker failed: ' . $e->getMessage());
+            }
+
+            // Attribution exports whose time has come (202-cronjobs/
+            // attribution-exports.php is the same run on its own). A job's
+            // failure is recorded on its row; only a database error lands
+            // here, and every job it did not reach is still pending.
+            try {
+                $exports = (new \Prosper202\Attribution\ExportRunner(new \Prosper202\Database\Connection($db)))->run(15);
+                if ($exports['completed'] + $exports['failed'] + $exports['retrying'] + $exports['lost'] > 0) {
+                    echo 'Attribution exports: ' . (int) $exports['completed'] . ' completed, ' . (int) $exports['failed'] . ' failed'
+                        . ($exports['lost'] > 0 ? ', ' . (int) $exports['lost'] . ' taken by another run or deleted' : '') . '<br>';
+                }
+            } catch (\Throwable $e) {
+                error_log('Attribution export runner failed: ' . $e->getMessage());
+            }
+
+            // Traffic-source postbacks for goal outcomes, web and app alike
+            // (plan §5.8, §5.10), queued in the notification outbox with the
+            // conversions they announce. 202-cronjobs/app-installs.php sends
+            // them too; each row is claimed by a compare-and-set on its
+            // attempt count, so two senders never send one row. A send's
+            // failure is recorded on its row and retried with backoff.
+            try {
+                $notifications = (new \Prosper202\Notifications\NotificationOutbox(new \Prosper202\Database\Connection($db)))->sendDue(200);
+                if ($notifications['sent'] + $notifications['failed'] + $notifications['retrying'] > 0) {
+                    echo 'Traffic-source notifications: ' . (int) $notifications['sent'] . ' sent, ' . (int) $notifications['retrying'] . ' retrying, '
+                        . (int) $notifications['failed'] . ' failed<br>';
+                }
+            } catch (\Throwable $e) {
+                error_log('Notification outbox failed: ' . $e->getMessage());
+            }
+
             echo 'Done<br>';
             ob_flush();
             flush();

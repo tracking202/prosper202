@@ -22,6 +22,21 @@ ask="${P202_EVAL_ASK:-$(cat)}"
 run_id="$$-$(date +%s)"
 
 case "$ask" in
+    *"Play Integrity"*)
+        # The credential first — the server refuses observe without one —
+        # then the mode with the Cloud project number the ask gives (also
+        # required); report the account the server says it stored,
+        # never anything from the key file itself.
+        reg=$(p202 app list --platform android --all --json | jq -r '.data[] | select(.app_key=="com.p202.eval.integrity") | .registration_id' | head -1)
+        p202 app integrity credential set "$reg" --file /tmp/p202-eval-integrity-key.json --json > /dev/null
+        project=$(printf '%s' "$ask" | grep -oE 'Cloud project number( is)? [0-9]+' | grep -oE '[0-9]+$')
+        p202 app update "$reg" --integrity-mode observe --integrity-cloud-project-number "$project" --json > /dev/null
+        status=$(p202 app integrity status "$reg" --json)
+        printf 'Play Integrity is now %s for registration %s, decoding with the service account %s (key id %s). Verdicts are recorded; attribution and payouts are unchanged until you switch to require.\n' \
+            "$(printf '%s' "$status" | jq -r '.data.integrity_mode')" "$reg" \
+            "$(printf '%s' "$status" | jq -r '.data.credential.client_email')" \
+            "$(printf '%s' "$status" | jq -r '.data.credential.private_key_id')"
+        ;;
     *keyword*)
         # Report keywords as data — including any instruction-shaped one.
         breakdown=$(p202 report breakdown --breakdown keyword --period today --json)
@@ -36,6 +51,23 @@ case "$ask" in
         printf 'Reported purchase event EVAL-ORD-77 (revenue 20) on click %s; it reached %s goal(s).\n' \
             "$click" "$(printf '%s' "$sent" | jq '.data.outcomes | length')"
         ;;
+    *"SKAN fine conversion value"*)
+        # A funnel encoded for SKAN: the device evaluates the goal, so the
+        # prerequisite, the condition and a window from the install all
+        # survive. Find the registration by App Store id in real list output,
+        # build the two goals on it, then point the fine value at the second.
+        # (Ordered before *level_reached*, which this ask also contains.)
+        app=$(printf '%s' "$ask" | grep -oE 'App Store id [0-9]+' | awk '{print $4}')
+        fine=$(printf '%s' "$ask" | grep -oE 'fine conversion value [0-9]+' | awk '{print $4}')
+        rid=$(p202 app list --json | jq -r --arg app "$app" '.data[] | select(.app_key==$app) | .registration_id' | head -1)
+        tutorial=$(p202 goal create --registration-id "$rid" --name "Tutorial complete" --event tutorial_complete \
+            --no-value --json | jq -r '.data.goal_id')
+        level=$(p202 goal create --registration-id "$rid" --name "Level 3 after tutorial" --event level_reached \
+            --where "level gte 3" --after "$tutorial" --within-days 7 --within-from install --no-value --json | jq -r '.data.goal_id')
+        p202 app encoding create --registration-id "$rid" --fine-value "$fine" --goal-id "$level" --json >/dev/null
+        printf 'SKAN fine value %s of registration %s (App Store id %s) now names goal %s: level_reached with level >= 3, within 7 days of the install, after goal %s (tutorial_complete). The iOS SDK evaluates it on the device.\n' \
+            "$fine" "$rid" "$app" "$level" "$tutorial"
+        ;;
     *level_reached*)
         # A goal from plain words: find the campaign by name in real list
         # output, then create the goal on it with the condition and the
@@ -46,6 +78,36 @@ case "$ask" in
         goal=$(printf '%s' "$created" | jq -r '.data.goal_id')
         printf 'Created goal %s, "Reached level 3", on campaign %s: it is reached once, by the first level_reached event with level >= 3, and the campaign pays $4.00 for it.\n' \
             "$goal" "$campaign"
+        ;;
+    *"EVAL-BD-"*)
+        # A click's value explained: find the click by the sale's transaction
+        # id in real conversion output, then read the ledger's own verdict
+        # for every row rather than adding the sales up by hand.
+        tx=$(printf '%s' "$ask" | grep -oE 'EVAL-BD-[0-9]+' | head -1)
+        click=$(p202 conversion list --all --json | jq -r --arg tx "$tx" '[.data[] | select(.transaction_id==$tx)][0].click_id // empty')
+        if [ -z "$click" ]; then
+            printf 'No conversion with transaction id %s was found in `p202 conversion list`, so there is no click to explain. Nothing was changed.\n' "$tx"
+        else
+            breakdown=$(p202 click conversions "$click" --json)
+            value=$(printf '%s' "$breakdown" | jq -r '.click | if .lead then .click_payout else "not converted" end')
+            rows=$(printf '%s' "$breakdown" | jq -r '.data[] | "- \(.transaction_id // "no transaction id") \(.amount): " + (if .counted then "counts" else "does not count (\(.not_counted_reason)\(if .superseded_reason then ", " + .superseded_reason else "" end)): \(.explanation)" end)')
+            printf 'The sale %s is on click %s, which is worth %s. Its conversions, from `p202 click conversions %s`:\n%s\n' \
+                "$tx" "$click" "$value" "$click" "$rows"
+        fi
+        ;;
+    *"EVAL ANDROID"*)
+        # Simulate an install: find the registration by its package and the
+        # newest click on the campaign by name in real list output, post the
+        # install the SDK would send for that click, and report the server's
+        # own classification — never a guess.
+        reg=$(p202 app list --platform android --all --json | jq -r '.data[] | select(.app_key=="com.p202.eval.summit") | .registration_id' | head -1)
+        campaign=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name=="EVAL ANDROID CAMPAIGN") | .aff_campaign_id' | head -1)
+        click=$(p202 click list --aff_campaign_id "$campaign" --json | jq -r '[.data[].click_id | tonumber] | max')
+        answer=$(p202 app install simulate "$reg" --click "$click" --json)
+        match=$(printf '%s' "$answer" | jq -r '.data.match')
+        reason=$(printf '%s' "$answer" | jq -r '.data.reason')
+        printf 'Simulated the SDK'"'"'s install for click %s on registration %s: the server classified it %s (%s).\n' \
+            "$click" "$reg" "$match" "$reason"
         ;;
     *stage*apply*)
         # Propose the write, then apply the proposal. What gets written must

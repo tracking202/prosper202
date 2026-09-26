@@ -46,7 +46,7 @@ class CapabilitiesController
                     'api_key_scopes' => $this->apiKeyScopesEnabled(),
                     // Idempotency-Key honored on single POST creates across
                     // the operator surface (CRUD entities, conversions,
-                    // rotators + rules, attribution models + exports, users).
+                    // rotators + rules, attribution models, users).
                     // LTV write endpoints keep their own upsert/dedup
                     // semantics; API-key creation is excluded (secret
                     // responses are never stored for replay).
@@ -83,6 +83,26 @@ class CapabilitiesController
                     // header, so changes need no store resubmission.
                     'app_platforms' => \Api\V3\Apps\AppIdentity::PLATFORMS,
                     'app_postbacks' => \Api\V3\Apps\Apple\Protocols::NAMES,
+                    // The Android intake: the SDK's POST /apps/installs and
+                    // /apps/installs/{install_uuid}/events (pre-auth, by app
+                    // token), the states an install is classified into, and
+                    // the operator's reads under /apps/{id}/installs and
+                    // /apps/{id}/install-token. Store links carry the click
+                    // as [[p202_install_token]].
+                    'app_installs' => [
+                        'stores' => \Api\V3\Apps\Android\InstallPayload::STORES,
+                        'match_states' => \Api\V3\Apps\Android\MatchState::values(),
+                        'max_events_per_request' => \Api\V3\Apps\Android\InstallEventsIntake::MAX_EVENTS,
+                    ],
+                    // Play Integrity, opt-in per Android registration
+                    // (integrity_mode), decoded by 202-cronjobs/app-installs.php
+                    // with the credential set at /apps/{id}/integrity-credential.
+                    'play_integrity' => [
+                        'modes' => \Api\V3\Apps\Android\Integrity\IntegrityMode::values(),
+                        'states' => \Api\V3\Apps\Android\Integrity\IntegrityState::values(),
+                        'token_type' => 'standard',
+                        'request_hash' => 'sha256_hex_of_canonical_install_body',
+                    ],
                     // Goals: versioned, data-only definitions owned by a
                     // campaign, an app registration or the account, and
                     // evaluated per subject by one specification whose
@@ -103,6 +123,17 @@ class CapabilitiesController
                         'max_per_subject' => \Prosper202\Goals\GoalEngine::MAX_EVENTS_PER_SUBJECT,
                         'max_properties' => \Prosper202\Goals\GoalEvent::MAX_PROPERTIES,
                         'goal_tokens' => ['[[p202_goal]]', '[[p202_goal_id]]', '[[p202_goal_value]]'],
+                    ],
+                    // The conversion ledger's reads: GET
+                    // /clicks/{id}/conversions explains a click's value row
+                    // by row, and GET /conversions filters by click, source
+                    // and goal and returns every row's provenance. `sources`
+                    // is what the source filter accepts; `not_counted` the
+                    // reasons a row can be left out of its click's value.
+                    'conversion_ledger' => [
+                        'sources' => array_map(static fn (\Prosper202\Conversion\Ledger\ConversionSource $s): string => $s->value, \Prosper202\Conversion\Ledger\ConversionSource::cases()),
+                        'not_counted' => array_map(static fn (\Prosper202\Conversion\Ledger\NotCountedReason $r): string => $r->value, \Prosper202\Conversion\Ledger\NotCountedReason::cases()),
+                        'click_breakdown' => true,
                     ],
                 ],
                 'limits' => [
@@ -158,6 +189,8 @@ class CapabilitiesController
             'apps' => ['bulk_upsert' => false] + $base,
             'app-skan-encodings' => ['bulk_upsert' => false] + $base,
             'app-postbacks' => ['list' => true, 'get' => true, 'create' => false, 'update' => false, 'delete' => false, 'bulk_upsert' => false],
+            // Written only by the SDK through the public intake.
+            'app-installs' => ['list' => true, 'get' => true, 'create' => false, 'update' => false, 'delete' => false, 'bulk_upsert' => false],
             // DELETE archives: the goal keeps its versions and outcomes.
             'goals' => ['bulk_upsert' => false] + $base,
         ];

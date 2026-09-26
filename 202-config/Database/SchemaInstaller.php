@@ -20,6 +20,7 @@ use Prosper202\Database\Tables\AdNetworkTables;
 use Prosper202\Database\Tables\MiscTables;
 use Prosper202\Database\Tables\AppTables;
 use Prosper202\Database\Tables\GoalTables;
+use Prosper202\Database\Tables\SecretTables;
 use Prosper202\Database\Tables\SyncTables;
 use Prosper202\Database\Exceptions\SchemaInstallException;
 
@@ -65,6 +66,7 @@ final class SchemaInstaller
             $this->createAdNetworkTables();
             $this->createAppTables();
             $this->createGoalTables();
+            $this->createSecretTables();
             $this->createMiscTables();
             $this->setCollations();
         } catch (SchemaInstallException $e) {
@@ -191,6 +193,15 @@ final class SchemaInstaller
     public function createGoalTables(): void
     {
         $this->createTablesFromDefinitions(GoalTables::getDefinitions());
+    }
+
+    /**
+     * Create the installation-wide secrets table (the Android install-token
+     * key lives there; INSTALL::install_databases() mints it).
+     */
+    public function createSecretTables(): void
+    {
+        $this->createTablesFromDefinitions(SecretTables::getDefinitions());
     }
 
     /**

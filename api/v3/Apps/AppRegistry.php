@@ -20,7 +20,7 @@ final class AppRegistry
 {
     use MysqliStatements;
 
-    private const COLUMNS = 'registration_id, user_id, platform, app_key, accept_test_signals';
+    private const COLUMNS = 'registration_id, user_id, platform, app_key, accept_test_signals, attribution_window_days, trust_client_revenue, integrity_mode, integrity_cloud_project_number';
 
     public function __construct(private readonly \mysqli $db)
     {
@@ -69,6 +69,7 @@ final class AppRegistry
             // surfaces it instead of serving a different app's data.
             AppIdentity::fromKey((string)$row['platform'], (string)$row['app_key']),
             AppPolicy::fromRow($row),
+            ($row['integrity_cloud_project_number'] ?? null) === null ? null : (string)$row['integrity_cloud_project_number'],
         );
     }
 }

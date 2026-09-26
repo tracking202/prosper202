@@ -113,6 +113,9 @@ if ($usedCachedRedirect == true) {
 		if ($getUrl) {
 
 			$new_url = str_replace("[[subid]]", "p202", $getUrl);
+			// No click is recorded while MySQL is down: nothing to sign, so
+			// the install token expands empty (plan §5.1).
+			$new_url = str_ireplace('[[p202_install_token]]', '', $new_url);
 
 			//c1 string replace for cached redirect
 			if (isset($_GET['c1']) && $_GET['c1'] != '') {

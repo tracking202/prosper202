@@ -42,7 +42,6 @@ final class ShellIsolationTest extends TestCase
         '202-css/design-system.css',
         '202-js/custom.php',
         '202-js/account.php',
-        '202-js/attribution.js',
     ];
 
     private const CHROME = [
@@ -68,7 +67,6 @@ final class ShellIsolationTest extends TestCase
         '202-js/chart.theme.js',
         '202-js/custom.php',
         '202-js/account.php',
-        '202-js/attribution.js',
         '202-js/dni.search.offers.tablesorter.php',
     ];
 

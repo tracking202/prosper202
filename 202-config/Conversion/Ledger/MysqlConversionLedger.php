@@ -257,7 +257,8 @@ final class MysqlConversionLedger
      * caller's transaction, so a conversion and its pending row commit or
      * roll back together. Re-queuing a row that is already pending bumps its
      * sequence number, which is how the worker knows the row changed again
-     * while it was being processed and must not be deleted.
+     * while it was being processed and must not be deleted. It also clears
+     * the worker's failure state: the change may be what fixes the row.
      *
      * @param list<int> $convIds
      */
@@ -269,7 +270,7 @@ final class MysqlConversionLedger
                 'INSERT INTO 202_attribution_pending (conv_id, enqueued_at, reason, enqueue_seq)
                  VALUES (?, ?, ?, 1)
                  ON DUPLICATE KEY UPDATE enqueued_at = VALUES(enqueued_at), reason = VALUES(reason),
-                    enqueue_seq = enqueue_seq + 1'
+                    enqueue_seq = enqueue_seq + 1, attempts = 0, last_error = NULL, retry_at = 0'
             );
             $this->conn->bind($stmt, 'iis', [(int) $convId, $now, $reason]);
             $this->conn->executeUpdate($stmt);

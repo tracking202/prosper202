@@ -189,7 +189,9 @@ $_SERVER['HTTP_X_FORWARDED_FOR'] = match (true) {
     !empty($_SERVER['HTTP_X_SUCURI_CLIENTIP']) => $_SERVER['HTTP_X_SUCURI_CLIENTIP'],
     !empty($_SERVER['HTTP_X_REAL_IP']) => $_SERVER['HTTP_X_REAL_IP'],
     !empty($_SERVER['HTTP_CLIENT_IP']) => $_SERVER['HTTP_CLIENT_IP'],
-    !empty($_SERVER['HTTP_X_FORWARDED_FOR']) && ($_SERVER['SERVER_ADDR'] != $_SERVER['HTTP_X_FORWARDED_FOR']) => $_SERVER['HTTP_X_FORWARDED_FOR'],
+    // SERVER_ADDR is absent under some SAPIs (php -S): an undefined-key
+    // warning on every forwarded request, and no address to compare with.
+    !empty($_SERVER['HTTP_X_FORWARDED_FOR']) && (($_SERVER['SERVER_ADDR'] ?? '') != $_SERVER['HTTP_X_FORWARDED_FOR']) => $_SERVER['HTTP_X_FORWARDED_FOR'],
     default => $_SERVER['REMOTE_ADDR'],
 };
 
@@ -698,6 +700,26 @@ function setClickIdCookie($click_id, $campaign_id = 0)
 
         setcookie('tracking202subid', (string) $click_id,  ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
         setcookie('tracking202subid_a_' . $campaign_id, (string) $click_id,   ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
+
+        // The install-token proof (InstallTokenGrant): set only by the
+        // request that allocated the click, so a later lp.php can sign the
+        // click the visitor really has and no other. httponly, unlike the
+        // click cookies above: no script needs it, and none may set it.
+        // A missing or unreadable key sets nothing; the redirect then
+        // expands the token empty, which credits no one.
+        if (\Prosper202\Click\RecordedClicks::has($click_id)) {
+            try {
+                $installKey = p202InstallTokenKey();
+            } catch (\Throwable) {
+                $installKey = null;
+            }
+            if (is_string($installKey) && strlen($installKey) === 32) {
+                $proof = \Api\V3\Apps\Android\InstallToken::forClick((int) $click_id, $installKey);
+                $proofCookie = \Api\V3\Apps\Android\InstallTokenGrant::PROOF_COOKIE;
+                setcookie($proofCookie, $proof, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => true, 'samesite' => 'None']);
+                setcookie($proofCookie . '_a_' . $campaign_id, $proof, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => true, 'samesite' => 'None']);
+            }
+        }
     }
 }
 
@@ -2190,12 +2212,80 @@ function foreach_memcache_mysql_fetch_assoc($arg1, $arg2 = null, $allowCaching =
     }
 }
 
+/**
+ * The installation's install-token key: 32 bytes, null when none was minted.
+ * Read once per process, and kept only when it was read: a missing or
+ * unreadable key is asked for again next time, never cached as "none".
+ *
+ * @throws \RuntimeException when there is no database or the read fails
+ */
+function p202InstallTokenKey(): ?string
+{
+    static $key = null;
+    if ($key === null) {
+        $db = $GLOBALS['db'] ?? null;
+        if (!($db instanceof mysqli) && class_exists('DB')) {
+            $db = DB::getInstance()->getConnection();
+        }
+        if (!($db instanceof mysqli)) {
+            throw new \RuntimeException('no database connection');
+        }
+        $key = \Api\V3\Apps\Android\InstallTokenKey::load($db);
+    }
+
+    return $key;
+}
+
+/**
+ * `[[p202_install_token]]` for a click (plan §5.1): the click id signed with
+ * the installation's install-token key, `<click_id>.<mac>`, which a Google
+ * Play store link carries in `referrer=p202%3D[[p202_install_token]]` to the
+ * Android intake — but only for a click this request allocated, or one whose
+ * token the visitor already holds in the httponly proof cookie the recording
+ * request set (setClickIdCookie()).
+ *
+ * lp.php, lpc.php, off.php, offrtr.php and the pixel endpoints take their
+ * click id from a cookie or a query parameter the requester chooses, and
+ * click ids are sequential, so signing that value would sign any click an
+ * attacker names — and pay its install to the attacker (CLAUDE.md #16). See
+ * Api\V3\Apps\Android\InstallTokenGrant.
+ *
+ * Expands EMPTY — never to the bare click id — for such a click, when the
+ * click id is not a canonical positive integer (the fallback redirect's
+ * "p202", a cloaked placeholder), or when the key is missing or unreadable:
+ * the install is then recorded unattributed rather than attributable to a
+ * guessable click (CLAUDE.md #11, #16).
+ */
+function p202ProvenInstallToken($clickId): string
+{
+    return \Api\V3\Apps\Android\InstallTokenGrant::forRequest(
+        $clickId,
+        \Prosper202\Click\RecordedClicks::has($clickId),
+        $_COOKIE,
+        'p202InstallTokenKey'
+    );
+}
+
 function replaceTokens($url, $tokens = [], $fillblanks = 0)
 {
+    // The install token is computed from the RAW click id, through the
+    // proof check (p202ProvenInstallToken), only when the
+    // URL asks for it, and handed to the one implementation as a token of
+    // its own. Its alphabet (digits, ".", base64url) is unchanged by the
+    // encoding there. (PR 5; the replacement itself is TrafficSourcePixels'.)
+    $tokens = is_array($tokens) ? $tokens : [];
+    if (!isset($tokens['p202_install_token']) && stripos((string) $url, '[[p202_install_token]]') !== false) {
+        if (isset($tokens['subid'])) {
+            $tokens['p202_install_token'] = p202ProvenInstallToken($tokens['subid']);
+        } elseif ($fillblanks) {
+            $tokens['p202_install_token'] = '';
+        }
+    }
+
     // One implementation for the tracker's URLs and the traffic-source
     // pixels alike, so a path that never loads this file (POST /events,
     // the goal notifier) replaces tokens exactly as the tracker does.
-    return \Prosper202\Conversion\TrafficSourcePixels::replaceTokens($url, is_array($tokens) ? $tokens : [], $fillblanks ? 1 : 0);
+    return \Prosper202\Conversion\TrafficSourcePixels::replaceTokens($url, $tokens, $fillblanks ? 1 : 0);
 }
 
 function rawurlencode202($token)
@@ -3115,7 +3205,8 @@ function getClickId(): string
 
     //now gather the info for the advance click insert
     $click_id = $db->insert_id;
-    return $db->real_escape_string($click_id);
+    \Prosper202\Click\RecordedClicks::note((int) $click_id);
+    return $db->real_escape_string((string) $click_id);
 }
 
 function getClickIdPublic($click_id)
@@ -3445,6 +3536,10 @@ function processCacheRedirect(): void
             if ($getUrl) {
 
                 $new_url = str_replace("[[subid]]", "p202", $getUrl);
+                // No click is recorded while MySQL is down, so there is no
+                // click to sign: the install token expands empty (plan §5.1),
+                // never to a value an install could be credited through.
+                $new_url = str_ireplace('[[p202_install_token]]', '', $new_url);
 
                 // t202pubid string replace for cached redirect
                 if (isset($_GET['t202pubid']) && $_GET['t202pubid'] != '') {

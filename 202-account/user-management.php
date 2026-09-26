@@ -290,7 +290,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$saved = false;
 		$gone = false;
 		try {
-			p202_account_save_user(new \Prosper202\Database\Connection($db), $editing === true ? (int) $mysql['form_user_id'] : null, $userSet, (int) $mysql['user_role']);
+			// Every account starts with its default attribution model (plan
+			// §6.4), written in the account's own transaction so a new user
+			// never commits without one.
+			$conn = new \Prosper202\Database\Connection($db);
+			p202_account_save_user($conn, $editing === true ? (int) $mysql['form_user_id'] : null, $userSet, (int) $mysql['user_role'],
+				static fn (int $newUserId): int => \Prosper202\Attribution\DefaultModel::ensureFor($conn, $newUserId));
 			$saved = true;
 		} catch (DomainException $missing) {
 			$gone = true;

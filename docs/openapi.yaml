@@ -122,7 +122,7 @@ tags:
   - name: Rotators
     description: Traffic rotator and rule management
   - name: Attribution
-    description: Attribution models, snapshots, and exports
+    description: Multi-touch attribution — models, credit reports over visitor journeys, and the worker's queue
   - name: Users
     description: User, role, API key, and preference management
   - name: Apps
@@ -1087,6 +1087,53 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /clicks/{id}/conversions:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Clicks]
+      summary: Explain a click's value, conversion by conversion
+      description: |
+        Every conversion row of the click, oldest first — counted, unpaid,
+        superseded, deleted and reversals alike — with its amount, what
+        produced it (`source`) and what that is (`linked_to`: a goal and
+        version, a revenue upload, the conversion a reversal nets, or the
+        API key that wrote it, named by when it was created and never by its
+        value), its transaction id and time, and whether it counts toward the
+        click's value (`counted`), with the reason when it does not
+        (`not_counted_reason`: `deleted`, `unpaid`, `superseded` with its
+        `superseded_reason`, or `not_netted` for a reversal whose sale does
+        not count) and a sentence saying so (`explanation`). No stored row
+        is a duplicate: a repeat of a conversion is answered as one and never
+        stored.
+
+        `click` holds the value the reports show (`click_payout`, `lead`)
+        beside the value the counted rows add up to (`ledger_value`), and
+        `matches_click` says whether they agree. A click that converted
+        before the conversion ledger and has had no conversion since is
+        `ledger_state: pre_ledger`: its value is its own figure until its
+        next conversion carries it in as a `legacy_baseline` row, and it
+        matches by definition.
+
+        Needs read scope on both `clicks` and `conversions`. Not paged: a
+        click's rows are all returned.
+      operationId: getClickConversions
+      responses:
+        "200":
+          description: The click's conversions and its value
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClickConversionsResponse"
+        "403":
+          description: The key lacks `clicks:read` or `conversions:read`.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          description: |
+            A row of the click cannot be read by the ledger (an unknown
+            source, an amount that is not a number); the message names it.
+
   # ─── Conversions ─────────────────────────────────────────────────────
 
   /conversions:
@@ -1109,6 +1156,29 @@ paths:
           in: query
           schema:
             type: integer
+        - name: click_id
+          in: query
+          description: |
+            Only this click's conversions. `GET /clicks/{id}/conversions`
+            also says which of them count toward the click and why not.
+          schema:
+            type: integer
+            minimum: 1
+        - name: source
+          in: query
+          description: Only conversions this source produced.
+          schema:
+            $ref: "#/components/schemas/ConversionSource"
+        - name: goal
+          in: query
+          description: Only this goal's outcomes, under every version of it.
+          schema:
+            type: integer
+            minimum: 1
+      description: |
+        Live (not deleted) conversions, newest first, with their provenance.
+        A filter value that cannot be read (`click_id=7x`, an unknown
+        `source`) is a 422 naming the field, never ignored.
       responses:
         "200":
           description: Paginated conversion list
@@ -1116,6 +1186,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ConversionListResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
     post:
       tags: [Conversions]
       summary: Create a conversion
@@ -1603,37 +1675,41 @@ paths:
           $ref: "#/components/responses/NotFound"
 
   # ─── Attribution ─────────────────────────────────────────────────────
+  # Multi-touch attribution. Reads need the view_attribution_reports role
+  # permission and model writes manage_attribution_models, on top of the
+  # attribution:read / attribution:write key scope.
 
   /attribution/models:
     get:
       tags: [Attribution]
       summary: List attribution models
+      description: Every account has exactly one default model (a last-touch model is created with the account). Credits are computed for every active model.
       operationId: listAttributionModels
       parameters:
-        - $ref: "#/components/parameters/limit"
-        - $ref: "#/components/parameters/offset"
         - name: type
           in: query
           description: Filter by model type
           schema:
-            type: string
-            enum:
-              - first_touch
-              - last_touch
-              - linear
-              - time_decay
-              - position_based
-              - algorithmic
+            $ref: "#/components/schemas/AttributionModelType"
       responses:
         "200":
-          description: Paginated model list
+          description: The account's models
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/AttributionModelListResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
     post:
       tags: [Attribution]
       summary: Create an attribution model
+      description: >-
+        The attribution worker computes the new model's credits for existing
+        conversions from their stored journeys (`recompute_pending` is true
+        until it has). A lookback wider than a stored journey rebuilds that
+        journey from the identity graph first. Honors `Idempotency-Key`.
       operationId: createAttributionModel
       requestBody:
         required: true
@@ -1648,6 +1724,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AttributionModelResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: A model with the same name (slug) exists; the details name it.
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -1670,6 +1750,12 @@ paths:
     put:
       tags: [Attribution]
       summary: Update an attribution model
+      description: >-
+        Partial update. Changing model_type without sending weighting_config
+        resets the config to the new type's defaults. A model cannot stop
+        being the default (make another one the default instead), and the
+        default cannot be deactivated. A change to what the model computes
+        queues its recompute; deactivating it removes its credits.
       operationId: updateAttributionModel
       requestBody:
         required: true
@@ -1686,6 +1772,8 @@ paths:
                 $ref: "#/components/schemas/AttributionModelResponse"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: The new name collides with another model's.
         "422":
           $ref: "#/components/responses/ValidationError"
     delete:
@@ -1693,7 +1781,12 @@ paths:
         - $ref: "#/components/parameters/dryRun"
       tags: [Attribution]
       summary: Delete an attribution model
-      description: Cascading hard delete. Removes all touchpoints, snapshots, and exports for this model.
+      description: >-
+        Hard delete of the model, its credits and its export jobs; campaigns
+        that named it fall back to the account default. The default model
+        cannot be deleted (409), nor a model one of whose export jobs is
+        running (409, naming the jobs in `details.running_exports`; retry once they
+        finish).
       operationId: deleteAttributionModel
       responses:
         "200":
@@ -1702,57 +1795,152 @@ paths:
           description: Model deleted
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: The model is the account default.
 
-  /attribution/models/{id}/snapshots:
-    parameters:
-      - $ref: "#/components/parameters/resourceId"
+  /attribution/reports/breakdown:
     get:
       tags: [Attribution]
-      summary: List snapshots for a model
-      operationId: listAttributionSnapshots
+      summary: Attributed conversions, revenue, cost and ROI by a click dimension
+      description: >-
+        Credits for conversions whose conv_time is in range, grouped by a
+        dimension of the credited clicks; clicks and cost from the
+        dimension's own clicks whose click_time is in range; assisted
+        conversions (journeys where the dimension had a touch before the
+        converting click). Money values are exact decimal strings. Without
+        model_id the report is "effective": each conversion under its
+        campaign's model override when that model is active, otherwise the
+        account default. Unknown parameters are refused.
+      operationId: attributionBreakdown
       parameters:
-        - name: scope_type
+        - name: group_by
           in: query
-          description: Filter by scope
           schema:
-            type: string
-            enum: [global, campaign, landing_page]
+            $ref: "#/components/schemas/AttributionDimension"
+        - name: model_id
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+        - name: compare_model_id
+          in: query
+          description: A second model, returned side by side as compare_* columns.
+          schema:
+            type: integer
+            minimum: 1
+        - $ref: "#/components/parameters/attributionPeriod"
+        - $ref: "#/components/parameters/attributionTimeFrom"
+        - $ref: "#/components/parameters/attributionTimeTo"
         - name: limit
           in: query
           schema:
             type: integer
-            default: 500
+            minimum: 1
             maximum: 1000
-        - name: offset
-          in: query
-          schema:
-            type: integer
-            default: 0
+            default: 100
       responses:
         "200":
-          description: Paginated snapshot list
+          description: One row per dimension value, sorted by attributed revenue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionBreakdownResponse"
+        "409":
+          description: The model named is inactive or invalid and has no credits; the message gives the reason.
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /attribution/reports/journeys:
+    get:
+      tags: [Attribution]
+      summary: Journey metrics
+      description: Length distribution, time to convert, truncated and unidentified journeys, and the one-touch share by the converting click's browser, for conversions in range.
+      operationId: attributionJourneyMetrics
+      parameters:
+        - $ref: "#/components/parameters/attributionPeriod"
+        - $ref: "#/components/parameters/attributionTimeFrom"
+        - $ref: "#/components/parameters/attributionTimeTo"
+      responses:
+        "200":
+          description: Journey metrics
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   data:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/AttributionSnapshot"
-                  pagination:
-                    $ref: "#/components/schemas/Pagination"
+                    $ref: "#/components/schemas/AttributionJourneyMetrics"
+                  meta:
+                    type: object
 
-  /attribution/models/{id}/exports:
+  /attribution/conversions/{id}/journey:
     parameters:
       - $ref: "#/components/parameters/resourceId"
     get:
       tags: [Attribution]
-      summary: List exports for a model
-      operationId: listAttributionExports
+      summary: One conversion's journey explained
+      description: The touches (oldest first, converting click last), the identity signals each click carried, every model's credit per touch, and the conversion's place in the worker's queue if it is waiting.
+      operationId: attributionConversionJourney
       responses:
         "200":
-          description: Export list
+          description: The journey
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AttributionConversionJourney"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /attribution/queue:
+    get:
+      tags: [Attribution]
+      summary: The attribution worker's backlog
+      description: Conversions waiting to be attributed, failing ones with their last error and retry time, and identity merges and model changes not yet fanned out.
+      operationId: attributionQueue
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+      responses:
+        "200":
+          description: The backlog
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AttributionQueue"
+
+  /attribution/exports:
+    get:
+      tags: [Attribution]
+      summary: List attribution exports
+      description: The account's export jobs, newest first. Needs view_attribution_reports.
+      operationId: listAttributionExports
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, running, completed, failed]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: Export jobs
           content:
             application/json:
               schema:
@@ -1762,19 +1950,35 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/AttributionExport"
+        "422":
+          $ref: "#/components/responses/ValidationError"
     post:
       tags: [Attribution]
-      summary: Schedule an export
-      operationId: scheduleAttributionExport
+      summary: Queue an attribution export
+      description: >-
+        Queues a breakdown to be written as CSV by the export runner (the
+        minutely cron), now or at run_at, with every group (no row limit; more
+        than 50,000 groups fails the job with the reason). With webhook_url,
+        the runner also POSTs the file there, signed: X-P202-Signature is
+        sha256=<hex HMAC-SHA256 of "<X-P202-Timestamp>.<body>"> under the
+        export's secret, which this response carries once. Webhook URLs must
+        be https and every address the host resolves to must be public
+        (private, loopback, link-local, metadata, documentation, multicast and
+        reserved ranges are refused, IPv4 carried in IPv6 included); the
+        check runs here and again at send time, the connection is pinned to
+        the checked address, and redirects are not followed. Ids and times
+        are JSON numbers; a string is refused, not cast. Needs
+        view_attribution_reports. Honors `Idempotency-Key`.
+      operationId: createAttributionExport
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AttributionExportCreate"
+              $ref: "#/components/schemas/AttributionExportInput"
       responses:
         "201":
-          description: Export scheduled
+          description: Queued. data.webhook_secret is present only here, only when the export has a webhook.
           content:
             application/json:
               schema:
@@ -1782,6 +1986,95 @@ paths:
                 properties:
                   data:
                     $ref: "#/components/schemas/AttributionExport"
+        "409":
+          description: The model named is inactive or invalid, or the account has no default model.
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /attribution/exports/{id}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Attribution]
+      summary: Get an attribution export
+      operationId: getAttributionExport
+      responses:
+        "200":
+          description: The export job
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AttributionExport"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
+      tags: [Attribution]
+      summary: Delete an attribution export and its file
+      description: Refused (409) while the export is running.
+      operationId: deleteAttributionExport
+      responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
+        "204":
+          description: Export and file deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The export is running.
+
+  /attribution/exports/{id}/download:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Attribution]
+      summary: Download an export's CSV
+      description: >-
+        The file the runner wrote: key, name, clicks, cost,
+        attributed_conversions, attributed_revenue, roi, assisted_conversions,
+        and compare_attributed_conversions, compare_attributed_revenue,
+        compare_roi with a comparison model. Money and credit are exact
+        decimals; a text cell starting with =, +, - or @ is prefixed with an
+        apostrophe so a spreadsheet does not run it.
+      operationId: downloadAttributionExport
+      responses:
+        "200":
+          description: The CSV
+          content:
+            text/csv:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: No file yet (the export has not run), or the file is no longer on disk.
+
+  /attribution/exports/{id}/retry:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    post:
+      tags: [Attribution]
+      summary: Queue a failed export again
+      description: Resets its attempts; only a failed export can be retried (409 otherwise).
+      operationId: retryAttributionExport
+      responses:
+        "200":
+          description: Queued again
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AttributionExport"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The export is not failed.
 
   # ─── Goals ───────────────────────────────────────────────────────────
 
@@ -1876,7 +2169,7 @@ paths:
                     properties:
                       valid: {type: boolean}
                       definition: {$ref: "#/components/schemas/GoalDefinition"}
-                      plain_event: {type: boolean, description: "Whether an SKAN encoding may name it"}
+                      plain_event: {type: boolean, description: "One event, no conditions, count 1, no after, no window, repeat once: the goal Setup › Mobile Apps makes from an event name"}
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -1949,8 +2242,10 @@ paths:
         (`version_created: true`), effective from now: events received from
         now on are evaluated under it, and conversions already recorded keep
         the version that produced them until a re-evaluation. An archived
-        goal is a `409`; a goal an SKAN encoding names must stay a plain
-        event goal (`422`).
+        goal is a `409`. A goal an SKAN encoding names, or one an encoded
+        goal waits for in `after`, cannot be made to count `within` from the
+        click (`422`): the iOS SDK evaluates encoded goals on the device,
+        which has no click.
       operationId: updateGoal
       requestBody:
         required: true
@@ -2152,25 +2447,31 @@ paths:
       tags: [Goals]
       summary: Preview a re-evaluation
       description: |
-        Per click that has events on the campaigns the goal applies to: the
-        outcome rows that would be retired and written under `version`
+        Per subject of one `subject_type` — a click that has events on the
+        campaigns the goal applies to, or (`install`) an Android install of
+        the goal's registration, of the account, or on those campaigns —
+        the outcome rows that would be retired and written under `version`
         (default the current one), and what happens to each retired row's
         conversion (`supersede` by the new row, or `delete` where the new
         version no longer reaches the goal). The goal is re-decided with its
-        dependents — every goal of the click's set whose `after` names it,
+        dependents — every goal of the subject's set whose `after` names it,
         directly or through another dependent — because their outcomes were
         evaluated against the goal's: `goals` lists them, and their retired
         and written rows are in the same lists and totals, each naming its
-        `goal_id`. Dependents never add clicks: the selection and its cap
+        `goal_id`. Dependents never add subjects: the selection and its cap
         are the goal's own. A dependent's version that cannot be evaluated
         (invalid definition, missing prerequisite) is left as it is.
-        Changes nothing. At most `limit` (default 100, max 1000) clicks
-        after `after`; `next_after` continues.
+        Changes nothing. At most `limit` (default 100, max 1000) subjects
+        after `after`; `next_after` continues. `subject_type` defaults to
+        `click` for a campaign goal and `install` for a registration or
+        account goal. The built-in install goal is never re-evaluated
+        (`422`).
       operationId: previewGoalReevaluation
       parameters:
         - {name: version, in: query, schema: {type: integer}}
         - {name: limit, in: query, schema: {type: integer, default: 100, maximum: 1000}}
         - {name: after, in: query, schema: {type: integer}}
+        - {name: subject_type, in: query, schema: {type: string, enum: [click, install]}}
       responses:
         "200":
           description: The plan
@@ -2194,9 +2495,10 @@ paths:
         conversions superseded or deleted (recomputing the click's value),
         newly reached ones written, and the stored progress of exactly those
         goals replaced. An outcome — the goal's or a dependent's — that the
-        subject had not reached before is announced to the campaign's
-        traffic source like any newly reached one; one written in place of
-        a retired outcome is not (`notifications` per subject). Stageable.
+        old version never reached is announced to the campaign's traffic
+        source like any newly reached one; one written in place of a retired
+        outcome is announced only if the retired one never went out
+        (`notifications` per subject). Stageable.
       operationId: applyGoalReevaluation
       requestBody:
         content:
@@ -2207,6 +2509,7 @@ paths:
                 version: {type: integer}
                 limit: {type: integer, maximum: 1000}
                 after: {type: integer}
+                subject_type: {type: string, enum: [click, install]}
       responses:
         "200":
           description: What was done
@@ -2228,9 +2531,10 @@ paths:
         goals in one transaction (plan §2.2). A goal an event reaches writes
         an outcome and, through the conversion ledger, a conversion
         (`source: goal`); for a payable goal the campaign notifies for, the
-        click's traffic source is sent its server-to-server postback with
-        `[[p202_goal]]`, `[[p202_goal_id]]` and `[[p202_goal_value]]` filled
-        (`notifications`). An event on its own records nothing: on a
+        click's traffic source's server-to-server postback, with
+        `[[p202_goal]]`, `[[p202_goal_id]]` and `[[p202_goal_value]]` filled,
+        is queued in the notification outbox in the same transaction and
+        sent by the worker with retries (`notifications`). An event on its own records nothing: on a
         campaign with no live goals the events are stored (`goals_evaluated:
         false`, with a `note`), and a goal added later applies to them
         through `POST /goals/{id}/reevaluation`.
@@ -2846,7 +3150,12 @@ paths:
         `app_key` or `store_link` naming the same app is accepted and changes
         nothing; naming a different app is `422` — register it separately.
         Toggling `accept_test_signals` re-judges the stored test signals
-        too: the policy is live, not a receipt-time snapshot.
+        too: the policy is live, not a receipt-time snapshot. For an Android
+        app that includes the stored test installs: one that becomes trusted
+        gains its conversions (written, or restored when an earlier change
+        retired them) and notifies its traffic source; one that stops being
+        trusted has its conversions retired (an unsent notification
+        cancelled, a sent one retracted) and stays in the funnel.
       operationId: updateApp
       requestBody:
         required: true
@@ -2875,8 +3184,12 @@ paths:
         with the rest: postbacks it had claimed keep their owner but are
         unlinked (`registration_id` becomes `null`), and the test-signal
         trust it granted is withdrawn. Registering the app again re-links
-        the owner's unlinked rows. The dry-run preview lists the cascade and
-        omits the app token.
+        the owner's unlinked rows. Android installs are kept, and those still
+        waiting for a Play Integrity verdict are settled in the same
+        transaction — `integrity_state` `error`, and a held
+        `pending_integrity` install `integrity_unverified` (never paid) —
+        since the credential is deleted with the registration. The dry-run
+        preview lists the cascade and omits the app token.
       operationId: deleteApp
       responses:
         "200":
@@ -2908,6 +3221,202 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /apps/{id}/installs:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Apps]
+      summary: List an Android registration's installs
+      description: |
+        Installs the SDK reported for this registration, newest first, each
+        with its `match_state`, the `match_reason` sentence and its trust
+        (`1` trusted, `0` refuted, `null` unvouched). Written only by the
+        public intake (`POST /apps/installs`). Referrer fields and versions
+        come from an open endpoint, so strings are sanitized at
+        serialization; the raw body is never served. Unknown filters and
+        malformed values are `422`.
+      operationId: listAppInstalls
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/installMatchState"
+        - {name: integrity_state, in: query, description: "Only installs whose Play Integrity verdict stands here", schema: {type: string, enum: [not_requested, received, missing, pending, valid, invalid, error, skipped]}}
+        - {name: trusted, in: query, schema: {type: string, enum: [trusted, refuted, unvouched, "1", "0"]}}
+        - {name: test, in: query, schema: {type: string, enum: ["0", "1"]}}
+        - {name: click_id, in: query, schema: {type: integer}}
+        - $ref: "#/components/parameters/timeFrom"
+        - $ref: "#/components/parameters/timeTo"
+      responses:
+        "200":
+          description: Paginated installs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppInstallListResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /apps/{id}/installs/{install_uuid}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+      - {name: install_uuid, in: path, required: true, schema: {type: string, format: uuid}}
+    get:
+      tags: [Apps]
+      summary: Get one install
+      operationId: getAppInstall
+      responses:
+        "200":
+          description: The install
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppInstallResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /apps/{id}/install-token:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Apps]
+      summary: The install token and store link for one click
+      description: |
+        `[[p202_install_token]]` for one of the caller's clicks — exactly
+        what the redirect writes into a store link — and the Google Play link
+        that carries it (`…&referrer=p202%3D<token>`). A read: nothing is
+        stored. The click must be the caller's, and its campaign must not be
+        linked to another registration (`422`). `503` when the installation
+        has no install-token key (run the upgrade, which mints it).
+      operationId: getAppInstallToken
+      parameters:
+        - {name: click_id, in: query, required: true, schema: {type: integer}}
+      responses:
+        "200":
+          description: The token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppInstallTokenResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          description: No install-token key
+
+  /apps/{id}/integrity:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Apps]
+      summary: Play Integrity status for an Android registration
+      description: |
+        The registration's `integrity_mode` and cloud project number, its
+        service-account credential (the account's email, key id and project
+        only — never the key), where its installs' verdicts stand
+        (`by_integrity_state`, and the installs held or refused by `require`
+        in `by_match_state`), the tokens Google decoded since UTC midnight
+        against its default quota of 10,000 a day, and the verdict policy's
+        constants. An iOS registration is `422`.
+      operationId: getAppIntegrity
+      responses:
+        "200":
+          description: The status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppIntegrityStatusResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /apps/{id}/integrity-credential:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    put:
+      tags: [Apps]
+      summary: Set or rotate the Play Integrity service account
+      description: |
+        `{"credential": <the service-account key file's JSON object>}` —
+        the JSON Google Cloud downloads for a key of a service account that
+        can call the Play Integrity API for this app (the Cloud project
+        linked to the app in Play Console). Validated strictly: `type`
+        `service_account`, `client_email`, `private_key_id`, an RSA
+        `private_key` of at least 2048 bits, and a `token_uri`, when present,
+        of exactly `https://oauth2.googleapis.com/token` (the only endpoint
+        the server sends its signed assertion to). Only the email, key id,
+        project and the AES-256-GCM-encrypted key are stored; nothing in any
+        response carries the key. A second PUT replaces the first (rotation):
+        the next decode signs with the new key. Not stageable (`?staged=1`
+        is refused): a staged change would store the key and show it to
+        reviewers. Answers the `GET /apps/{id}/integrity` document.
+      operationId: setAppIntegrityCredential
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [credential]
+              additionalProperties: false
+              properties:
+                credential:
+                  type: object
+                  description: The service-account key file, as a JSON object (not a string)
+      responses:
+        "200":
+          description: Stored; the status document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppIntegrityStatusResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags: [Apps]
+      summary: Clear the Play Integrity service account
+      description: |
+        Deletes the credential. Refused (`409`) while `integrity_mode` is
+        `observe` or `require` (switch the mode to `off` first), and while
+        any install of the registration is still waiting for a verdict
+        (`installs.by_integrity_state.pending` in `GET /apps/{id}/integrity`):
+        each install keeps the mode it arrived under, so installs held under
+        `require` would otherwise end `integrity_unverified`. The message
+        says how many are waiting; each is settled within 24 hours of
+        arriving. PUT a new credential to rotate at any time. Answers a body
+        saying whether there was one to delete. Not stageable.
+      operationId: clearAppIntegrityCredential
+      responses:
+        "200":
+          description: Cleared (or there was none)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      registration_id: {type: integer}
+                      credential: {type: object, nullable: true, enum: [null]}
+                      cleared: {type: boolean}
+                      message: {type: string}
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The mode is observe or require (switch it to off first), or installs are still waiting for a verdict (wait for the worker to settle them)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /apps/skan-encodings:
     get:
       tags: [Apps]
@@ -2937,11 +3446,20 @@ paths:
         other value is `422`: an encoding for an app nobody registered would
         decode nothing. The goal must be live, the caller's, owned by that
         registration or by the account (an account-wide encoding names an
-        account goal), and — until the on-device evaluator ships — a plain
-        event goal, because the iOS SDK encodes by event name. The old
-        fields `event_name` and `revenue` are refused by name. The same rows
-        drive the report's decode (by the goal's name) and the schema served
-        to devices (by the goal's event). Honors `Idempotency-Key`.
+        account goal), and one a device can reach: the iOS SDK evaluates
+        the goal on the device, which never learns its click, so a goal that
+        counts `within` from the click — or waits in `after` for one that
+        does — is `422`. The old fields `event_name` and `revenue` are
+        refused by name. The same rows drive the report's decode (by the
+        goal's name) and the schema served to devices (the goal and the
+        values). Every update and delete keeps the meaning it replaces: a
+        device may apply the schema it fetched before the edit for as long
+        as a postback takes to arrive, so for 48 days (35 of conversion
+        windows, up to 6 of Apple's delivery delay, and the SDK's 7-day
+        limit on the age of the document it encodes with) the report counts
+        a value whose meanings disagree as `ambiguous_encoding`.
+        `effective_at` says since when the current meaning applies. Honors
+        `Idempotency-Key`.
       operationId: createAppSkanEncoding
       requestBody:
         required: true
@@ -3100,11 +3618,16 @@ paths:
       summary: Aggregate postback report with SKAN decoding
       description: |
         Groups postbacks by `group_by` and decodes winning postbacks'
-        conversion values through the caller's SKAN encodings (the claiming
-        registration's own over the account-wide ones, `registration_id = 0`;
-        a postback no registration claims decodes through the account-wide
-        set only; a fine value with no encoding stays undecoded and never
-        falls back to a coarse one). Days are UTC, oldest first.
+        conversion values through the caller's SKAN encodings (those of the
+        postback's app, by App Store id — a deleted registration's included,
+        so re-registering an app keeps what it encoded — over the
+        account-wide ones, `registration_id = 0`; a fine value with no
+        encoding stays undecoded and never falls back to a coarse one). A
+        postback decodes under every meaning its value had in the 48 days
+        before it arrived: one meaning decodes
+        it, two that disagree make it `ambiguous_encoding` (credited to no
+        goal), and none leaves it to the first meaning given afterwards, or
+        undecoded. Days are UTC, oldest first.
 
         **Trust default:** the receiver is public, so without an explicit
         `signature` filter every headline metric — installs, losses,
@@ -3238,10 +3761,14 @@ paths:
         string, which access logs would capture). The token is an identifier,
         not a secret — it ships inside every copy of the app.
 
-        Platform-shaped: an iOS registration gets the ENCODE view of its
-        SKAN encodings (`events`, always a JSON object, even when empty); an
-        Android registration gets its identity (and, with the Android intake,
-        its SDK settings). Revenue is never served. `ETag` equals
+        Platform-shaped: an iOS registration gets an evaluation-only view of
+        the goals its SKAN encodings name (with every prerequisite, every
+        version, and no `value`) and the encodings themselves, per goal —
+        the SDK evaluates the goals on the device and sets the value of the
+        goals an event reaches. Both are always JSON lists. An Android
+        registration gets its identity, `integrity_mode` and the SDK
+        settings (`sdk`): its goals are evaluated on the server, so the SDK
+        reports every event. Revenue is never served. `ETag` equals
         `schema_version` and changes exactly when the document's behaviour
         changes; `If-None-Match` answers `304`. Methods other than GET are
         `405`. Rate-limited per peer address.
@@ -3291,6 +3818,169 @@ paths:
           $ref: "#/components/responses/AppRateLimited"
         "405":
           description: Only GET is served
+
+  /apps/installs:
+    get:
+      tags: [Apps]
+      summary: Android intake reachability probe
+      description: Answers `ready`, so the SDK and the operator can check the URL. Rate-limited per peer address.
+      operationId: probeAppInstalls
+      security: []
+      responses:
+        "200":
+          description: Ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      status: {type: string, enum: [ready]}
+        "429":
+          $ref: "#/components/responses/AppRateLimited"
+    post:
+      tags: [Apps]
+      summary: Report an Android install (the SDK)
+      description: |
+        What the Android SDK sends once, on first launch, with the Google Play
+        install referrer. No API key: the registration is selected by the
+        `X-P202-App-Token` header. The body is validated strictly (a number
+        sent as a string, an unknown field or a non-canonical
+        `install_uuid` is `400` naming the field) and capped at 16 KB (`413`);
+        `app_key` must be the token's app (`422` naming both).
+
+        The install is classified into a `match` state (plan §5.3):
+        `attributed` (the referrer's `p202` token verifies under this
+        installation's key, the click is the owner's, the campaign is not
+        linked to another app, Google's server timestamps sit after the click
+        and inside `attribution_window_days`), `organic`, `third_party`,
+        `unavailable`, `pending_click` (settled by
+        `202-cronjobs/app-installs.php`), `bad_token`, `foreign_click`,
+        `implausible`, `outside_window`, `duplicate_click`, or — when the
+        registration's `integrity_mode` is `require` and the install would be
+        attributed — `pending_integrity` until the verdict worker decodes its
+        Play Integrity token, then `attributed`, `integrity_failed` (refuted)
+        or `integrity_unverified` (no token, or no verdict within 24 hours;
+        unvouched, never paid). `integrity` says where the verdict stands
+        (`not_requested`/`received` under `off`; `missing`/`pending` under
+        `observe` and `require`). Under `observe` the verdict is recorded and
+        changes nothing.
+
+        Everything durable commits in one transaction: the install row, its
+        classification, the built-in install goal's outcome and — for an
+        attributed, trusted install — its conversion on the click (key
+        `install`, `pixel_type` 4, at Google's install time; one per click),
+        the MTA outbox row and the traffic-source notification. A failure
+        answers `5xx` with nothing stored, so the retry is safe. A replay of
+        the same body answers `200` with `duplicate: true` and the stored
+        state; the same `install_uuid` with other content is `409`. The
+        answer never carries the click, the conversion or any money.
+        A `customer` (a signed customer id) is linked to the install's click
+        after the commit, and the answer's `customer` says whether it was.
+        Rate-limited per peer address.
+      operationId: reportAppInstall
+      security: []
+      parameters:
+        - name: X-P202-App-Token
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppInstallRequest"
+      responses:
+        "200":
+          description: Recorded, or a replay of a recorded install
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppInstallReceiptResponse"
+        "400":
+          description: Missing or malformed token, or an invalid body (field_errors)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Unknown app token
+        "405":
+          description: Only GET and POST are served
+        "409":
+          description: The install_uuid was reported with different content
+        "413":
+          description: Body over 16 KB
+        "422":
+          description: The body's app_key is not the token's app, or the token is an iOS app's
+        "429":
+          $ref: "#/components/responses/AppRateLimited"
+        "503":
+          description: The database, or the key that verifies install tokens, is unavailable; retry later
+
+  /apps/installs/{install_uuid}/events:
+    parameters:
+      - {name: install_uuid, in: path, required: true, schema: {type: string, format: uuid}}
+    post:
+      tags: [Apps]
+      summary: Report an installed app's events (the SDK)
+      description: |
+        Events an installed app reports (`logEvent`), 1-100 per request, for
+        the goal engine: stored idempotently on (install, `event_id`) and
+        evaluated in event-time order against the install's goals — its
+        registration's, the account's and, when it is attributed, its
+        click's campaign's. What an event pays is the goals' and campaign's
+        decision; a revenue the app reports is paid only under the
+        registration's `trust_client_revenue`. The server stamps
+        `received_at` and revenue trust; a device that sends either is `400`.
+        Events for a pending install answer `503` with `Retry-After` (they
+        are evaluated once it settles); for a refuted one (`bad_token`,
+        `foreign_click`, `implausible`) `409`; for an unknown one `404`. A
+        reused `event_id` with other content is `409`; the 10,001st event of
+        an install is `422`. A body may carry a `customer` (a signed customer
+        id) beside its events, or alone; it is linked to the install's click
+        after the events commit. Rate-limited per peer address.
+      operationId: reportAppInstallEvents
+      security: []
+      parameters:
+        - name: X-P202-App-Token
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppInstallEventsRequest"
+      responses:
+        "200":
+          description: Stored (accepted) or already stored (duplicates)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppInstallEventsReceiptResponse"
+        "400":
+          description: Missing or malformed token, or an invalid body (field_errors)
+        "404":
+          description: Unknown app token, or an install this app never reported
+        "409":
+          description: The install was refuted, or an event_id was reused with other content
+        "413":
+          description: Body over 64 KB
+        "422":
+          description: The install holds 10,000 events, or the token is an iOS app's
+        "429":
+          $ref: "#/components/responses/AppRateLimited"
+        "503":
+          description: The install is still pending; retry after Retry-After
 
   /.well-known/skadnetwork/report-attribution/:
     servers:
@@ -3477,6 +4167,25 @@ components:
       required: true
       schema:
         type: integer
+    attributionPeriod:
+      name: period
+      in: query
+      description: A named range; exclusive with time_from/time_to. Without either, the last 30 days.
+      schema:
+        type: string
+        enum: [today, yesterday, last7, last30, last90]
+    attributionTimeFrom:
+      name: time_from
+      in: query
+      description: Range start, unix seconds.
+      schema:
+        type: integer
+    attributionTimeTo:
+      name: time_to
+      in: query
+      description: Range end, unix seconds.
+      schema:
+        type: integer
     limit:
       name: limit
       in: query
@@ -3650,6 +4359,13 @@ components:
       schema:
         type: string
         enum: [low, medium, high]
+    installMatchState:
+      name: match_state
+      in: query
+      description: Only installs in this state
+      schema:
+        type: string
+        enum: [attributed, organic, third_party, unavailable, pending_click, bad_token, foreign_click, implausible, outside_window, duplicate_click, pending_integrity, integrity_failed, integrity_unverified]
     postbackSignature:
       name: signature
       in: query
@@ -3823,6 +4539,14 @@ components:
             p202lpid, and customer ids signed with the account's linking key —
             so multi-touch attribution can join them into one journey. "0":
             none are read or set, and every click is its own journey.
+        app_registration_id:
+          type: integer
+          nullable: true
+          description: >-
+            The Android app registration this campaign's store links install
+            (`GET /apps`; null or 0 unlinks). An install of another app on one
+            of its clicks is `foreign_click`. Read raw: `"1e0"` or `1.5` is
+            `422`, never cast, and an iOS registration is refused.
         aff_campaign_time:
           type: integer
           readOnly: true
@@ -4537,6 +5261,157 @@ components:
           type: integer
         aff_campaign_name:
           type: string
+        source:
+          $ref: "#/components/schemas/ConversionSource"
+        source_ref:
+          type: string
+          nullable: true
+          description: |
+            What produced the row, as a reference: `goal:<goal id>:<version>`,
+            `batch:<upload id>`, `conv:<the conversion a reversal reverses>`,
+            or `apikey:<digest>` (a truncated SHA-256 of the key that wrote
+            it through this API). `GET /clicks/{id}/conversions` resolves it.
+        event_name:
+          type: string
+          nullable: true
+          description: The event that reached the goal, or a postback's `event=`.
+        payable:
+          type: boolean
+          description: False for a tracked outcome that is not paid.
+        reverses_conv_id:
+          type: integer
+          nullable: true
+        superseded_by:
+          type: integer
+          nullable: true
+        superseded_reason:
+          type: string
+          nullable: true
+          enum: [replace, batch, pre_ledger, replay, reevaluation, null]
+        goal_id:
+          type: integer
+          nullable: true
+          description: The goal of a goal row (from `source_ref`), else null.
+        goal_version:
+          type: integer
+          nullable: true
+
+    ConversionSource:
+      type: string
+      description: What produced a ledger row.
+      enum: [pixel, postback, universal_pixel, api, subid_upload, revenue_upload, legacy_pixel, clickbank, app_install, goal, legacy_baseline]
+
+    ClickConversion:
+      type: object
+      description: One conversion row of a click, and whether it counts toward the click's value.
+      properties:
+        conv_id:
+          type: integer
+        click_id:
+          type: integer
+        amount:
+          type: string
+          description: The row's amount, exact to five decimals (negative for a reversal).
+          example: "5.00000"
+        payable:
+          type: boolean
+        deleted:
+          type: boolean
+        counted:
+          type: boolean
+          description: Whether the amount is part of the click's value.
+        not_counted_reason:
+          type: string
+          nullable: true
+          enum: [deleted, unpaid, superseded, not_netted, null]
+        superseded_reason:
+          type: string
+          nullable: true
+          enum: [replace, batch, pre_ledger, replay, reevaluation, null]
+        superseded_by:
+          type: integer
+          nullable: true
+          description: The row that replaced this one, when there is one.
+        explanation:
+          type: string
+          nullable: true
+          description: The reason as a sentence; null when the row counts.
+        source:
+          $ref: "#/components/schemas/ConversionSource"
+        source_label:
+          type: string
+        source_ref:
+          type: string
+          nullable: true
+        linked_to:
+          type: object
+          nullable: true
+          description: |
+            `source_ref` resolved within the click's account. `type` is
+            `goal` (`goal_id`, `goal_version`, `name`, `archived`),
+            `upload_batch` (`batch_id`, `file_name`, `uploaded_at`),
+            `conversion` (`conv_id`), `api_key` (`key_digest`,
+            `key_created_at`, `revoked`) or `unknown`; `label` names it in
+            words.
+          properties:
+            type:
+              type: string
+              enum: [goal, upload_batch, conversion, api_key, unknown]
+            label:
+              type: string
+          additionalProperties: true
+        event_name:
+          type: string
+          nullable: true
+        transaction_id:
+          type: string
+          nullable: true
+        reverses_conv_id:
+          type: integer
+          nullable: true
+        conv_time:
+          type: integer
+
+    ClickConversionsResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClickConversion"
+        click:
+          type: object
+          properties:
+            click_id:
+              type: integer
+            campaign_id:
+              type: integer
+            campaign_name:
+              type: string
+              nullable: true
+            payout_mode:
+              type: string
+              enum: [replace, accumulate]
+            lead:
+              type: boolean
+              description: The lead flag the reports show.
+            click_payout:
+              type: string
+              description: The value the reports show.
+            ledger_state:
+              type: string
+              enum: [ledger, pre_ledger]
+            ledger_value:
+              type: string
+              nullable: true
+              description: What the counted rows add up to; null when none counts.
+            matches_click:
+              type: boolean
+              description: Whether the reports' value is what the counted rows add up to.
+            rows:
+              type: integer
+            counted_rows:
+              type: integer
 
     ConversionCreate:
       type: object
@@ -4785,33 +5660,77 @@ components:
 
     # ── Attribution ────────────────────────────────────────────────────
 
+    AttributionModelType:
+      type: string
+      description: The engine's model enum; nothing else is accepted anywhere.
+      enum:
+        - last_touch
+        - first_touch
+        - linear
+        - time_decay
+        - position_based
+
+    AttributionDimension:
+      type: string
+      default: campaign
+      enum:
+        - campaign
+        - traffic_source
+        - landing_page
+        - keyword
+        - c1
+        - c2
+        - c3
+        - c4
+        - country
+        - device
+        - day
+
+    AttributionWeightingConfig:
+      type: object
+      description: >-
+        A JSON object (never a string). time_decay takes half_life_hours
+        (0 < h <= 8760, default 48); position_based takes first_weight and
+        last_weight (each 0–1, together at most 1, defaults 0.4/0.4; with two
+        touches the ends renormalise); the other types take no keys. Unknown
+        keys and non-numbers are refused.
+      properties:
+        half_life_hours:
+          type: number
+        first_weight:
+          type: number
+        last_weight:
+          type: number
+      additionalProperties: false
+
     AttributionModel:
       type: object
       properties:
         model_id:
-          type: integer
-        user_id:
           type: integer
         model_name:
           type: string
         model_slug:
           type: string
         model_type:
-          type: string
-          enum:
-            - first_touch
-            - last_touch
-            - linear
-            - time_decay
-            - position_based
-            - algorithmic
+          $ref: "#/components/schemas/AttributionModelType"
         weighting_config:
+          $ref: "#/components/schemas/AttributionWeightingConfig"
+        lookback_days:
+          type: integer
+          description: Days before a conversion whose clicks can earn credit; the converting click always can.
+        status:
           type: string
-          description: JSON string containing model-specific configuration
-        is_active:
-          type: integer
+          enum: [active, inactive, invalid]
+          description: invalid is set by the engine when a stored definition fails validation; status_reason says why.
+        status_reason:
+          type: string
+          nullable: true
         is_default:
-          type: integer
+          type: boolean
+        recompute_pending:
+          type: boolean
+          description: The worker has not yet recomputed this model's credits after its last change.
         created_at:
           type: integer
         updated_at:
@@ -4824,50 +5743,42 @@ components:
         model_name:
           type: string
         model_type:
-          type: string
-          enum:
-            - first_touch
-            - last_touch
-            - linear
-            - time_decay
-            - position_based
-            - algorithmic
+          $ref: "#/components/schemas/AttributionModelType"
         weighting_config:
-          oneOf:
-            - type: string
-            - type: object
-          description: JSON config or object (auto-encoded)
-        is_active:
+          $ref: "#/components/schemas/AttributionWeightingConfig"
+        lookback_days:
           type: integer
-          default: 1
+          minimum: 1
+          maximum: 365
+          default: 30
+        status:
+          type: string
+          enum: [active, inactive]
+          default: active
         is_default:
-          type: integer
-          default: 0
+          type: boolean
+          default: false
 
     AttributionModelUpdate:
       type: object
+      additionalProperties: false
       properties:
         model_name:
           type: string
-        model_slug:
-          type: string
         model_type:
-          type: string
-          enum:
-            - first_touch
-            - last_touch
-            - linear
-            - time_decay
-            - position_based
-            - algorithmic
+          $ref: "#/components/schemas/AttributionModelType"
         weighting_config:
-          oneOf:
-            - type: string
-            - type: object
-        is_active:
+          $ref: "#/components/schemas/AttributionWeightingConfig"
+        lookback_days:
           type: integer
+          minimum: 1
+          maximum: 365
+        status:
+          type: string
+          enum: [active, inactive]
         is_default:
-          type: integer
+          type: boolean
+          description: Only true is accepted on a model that is already the default.
 
     AttributionModelResponse:
       type: object
@@ -4882,53 +5793,160 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AttributionModel"
-        pagination:
-          $ref: "#/components/schemas/Pagination"
 
-    AttributionSnapshot:
+    AttributionBreakdownRow:
       type: object
       properties:
-        snapshot_id:
+        key:
+          type: string
+          description: The dimension value (an id, or YYYY-MM-DD for day); "0" when the click has none.
+        name:
+          type: string
+          nullable: true
+        clicks:
           type: integer
+        cost:
+          type: string
+          description: Sum of the dimension's own click costs in range.
+        attributed_conversions:
+          type: string
+          description: Sum of credit (8 decimal places).
+        attributed_revenue:
+          type: string
+          description: Sum of credited revenue (5 decimal places).
+        roi:
+          type: number
+          nullable: true
+        assisted_conversions:
+          type: integer
+        compare_attributed_conversions:
+          type: string
+        compare_attributed_revenue:
+          type: string
+        compare_roi:
+          type: number
+          nullable: true
+
+    AttributionBreakdownResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttributionBreakdownRow"
+        totals:
+          type: object
+          properties:
+            conversions:
+              type: integer
+            attributed_conversions:
+              type: string
+            attributed_revenue:
+              type: string
+            compare_attributed_conversions:
+              type: string
+            compare_attributed_revenue:
+              type: string
+        meta:
+          type: object
+          properties:
+            group_by:
+              type: string
+            time_from:
+              type: integer
+            time_to:
+              type: integer
+            model:
+              type: object
+              description: The model read, or {mode:"effective", default_model_id} when none was named.
+            compare_model:
+              type: object
+              nullable: true
+            groups:
+              type: integer
+              description: How many groups the report has; more than limit means data holds the top `limit` by attributed revenue.
+            limit:
+              type: integer
+
+    AttributionExportInput:
+      type: object
+      additionalProperties: false
+      properties:
+        group_by:
+          $ref: "#/components/schemas/AttributionDimension"
         model_id:
           type: integer
-        user_id:
+          minimum: 1
+          description: Default the account default model, stored as its id so the job reads a fixed model.
+        compare_model_id:
           type: integer
-        scope_type:
+          minimum: 1
+        period:
           type: string
-        scope_id:
+          enum: [today, yesterday, last7, last30, last90]
+        time_from:
           type: integer
-        date_hour:
+          description: Unix seconds; with time_to, instead of period. Default the last 30 days.
+        time_to:
           type: integer
-        attributed_revenue:
-          type: number
-        attributed_cost:
-          type: number
+        run_at:
+          type: integer
+          description: Unix seconds, at most a year ahead; a past time means as soon as possible. Default now.
+        webhook_url:
+          type: string
+          maxLength: 500
+          description: https://host[:port][/path], spelled plainly (no user info, fragment or backslash); the host a DNS name or a canonical IP address that is public.
+        webhook_secret:
+          type: string
+          minLength: 16
+          maxLength: 255
+          description: Printable ASCII, no spaces. Generated (64 hex characters) when a webhook is given without one.
 
     AttributionExport:
       type: object
       properties:
         export_id:
           type: integer
-        user_id:
-          type: integer
         model_id:
           type: integer
-        scope_type:
+        compare_model_id:
+          type: integer
+          nullable: true
+        group_by:
           type: string
-        scope_id:
+        time_from:
           type: integer
-        start_hour:
+        time_to:
           type: integer
-        end_hour:
-          type: integer
-        requested_format:
-          type: string
-          enum: [csv, json]
         status:
           type: string
-          enum: [queued, processing, completed, failed]
-        queued_at:
+          enum: [pending, running, completed, failed]
+        rows_exported:
+          type: integer
+          nullable: true
+        file_ready:
+          type: boolean
+        download_path:
+          type: string
+          nullable: true
+        webhook_url:
+          type: string
+          nullable: true
+        webhook_signed:
+          type: boolean
+        webhook_secret:
+          type: string
+          description: Only in the create response.
+        webhook_status_code:
+          type: integer
+          nullable: true
+        attempts:
+          type: integer
+          description: Runs so far; a retryable webhook failure (no connection, timeout, 5xx, 408, 429) is retried after 1 and then 2 minutes, 3 runs in all.
+        last_error:
+          type: string
+          nullable: true
+        run_at:
           type: integer
         started_at:
           type: integer
@@ -4936,40 +5954,218 @@ components:
         completed_at:
           type: integer
           nullable: true
-        file_path:
-          type: string
-          nullable: true
-        webhook_url:
-          type: string
-          nullable: true
         created_at:
           type: integer
-        updated_at:
-          type: integer
 
-    AttributionExportCreate:
+    AttributionJourneyMetrics:
       type: object
       properties:
-        scope_type:
-          type: string
-          default: global
-          enum: [global, campaign, landing_page]
-        scope_id:
+        conversions:
           type: integer
-          default: 0
-        start_hour:
+        one_touch:
           type: integer
-          description: Start timestamp (defaults to 0)
-        end_hour:
+        one_touch_share:
+          type: number
+        truncated:
           type: integer
-          description: End timestamp (defaults to current time)
-        format:
+          description: Journeys the 25-touch cap cut.
+        unidentified:
+          type: integer
+          description: Converting clicks with no visitor key (one touch by construction).
+        average_touches:
+          type: number
+        length_distribution:
+          type: array
+          items:
+            type: object
+            properties:
+              touches:
+                type: integer
+              conversions:
+                type: integer
+        time_to_convert:
+          type: object
+          additionalProperties:
+            type: integer
+        one_touch_by_browser:
+          type: array
+          items:
+            type: object
+            properties:
+              browser:
+                type: string
+              conversions:
+                type: integer
+              one_touch:
+                type: integer
+              one_touch_share:
+                type: number
+        recent_conversions:
+          type: array
+          description: The newest 25 attributed conversions in range, the entry points of a journey drill-down.
+          items:
+            type: object
+            properties:
+              conv_id:
+                type: integer
+              conv_time:
+                type: integer
+              touches:
+                type: integer
+              identified:
+                type: boolean
+              truncated:
+                type: boolean
+              amount:
+                type: string
+                description: What the conversion counts for in attribution, the amount its credits sum to - its recorded amount net of the reversals naming it.
+              recorded_amount:
+                type: string
+                description: The conversion's own recorded amount, before reversals.
+              counted:
+                type: boolean
+              campaign_name:
+                type: string
+                nullable: true
+
+    AttributionConversionJourney:
+      type: object
+      properties:
+        conv_id:
+          type: integer
+        click_id:
+          type: integer
+        amount:
           type: string
-          default: csv
-          enum: [csv, json]
-        webhook_url:
+          description: |
+            What the conversion counts for in attribution, and so what each
+            model's revenue column sums to: the recorded amount net of the
+            reversals naming it (a $10 sale reversed by $4 is 6.00000), or
+            0.00000 when it does not count.
+        recorded_amount:
           type: string
-          description: URL to POST export delivery notification
+          description: The conversion's own recorded amount, before reversals (negative for a reversal row).
+        counted:
+          type: boolean
+          description: false when the conversion counts for nothing - not payable, superseded, deleted, itself a reversal, or reversed in full.
+        conv_time:
+          type: integer
+        journey:
+          type: object
+          nullable: true
+          description: null when the conversion does not count (not payable, superseded, deleted or fully reversed) or has not been processed yet.
+          properties:
+            touches:
+              type: integer
+            built_lookback_days:
+              type: integer
+            built_at:
+              type: integer
+            truncated:
+              type: boolean
+            identified:
+              type: boolean
+        touches:
+          type: array
+          items:
+            type: object
+            properties:
+              position:
+                type: integer
+              click_id:
+                type: integer
+              click_time:
+                type: integer
+              campaign_id:
+                type: integer
+                nullable: true
+              campaign_name:
+                type: string
+                nullable: true
+              ppc_account_id:
+                type: integer
+                nullable: true
+              ppc_account_name:
+                type: string
+                nullable: true
+              signals:
+                type: array
+                items:
+                  type: string
+                  enum: [vid, lpid, cust]
+        credits:
+          type: array
+          items:
+            type: object
+            properties:
+              model_id:
+                type: integer
+              model_name:
+                type: string
+              model_type:
+                $ref: "#/components/schemas/AttributionModelType"
+              touches:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    position:
+                      type: integer
+                    click_id:
+                      type: integer
+                    credit:
+                      type: string
+                    revenue:
+                      type: string
+        pending:
+          type: object
+          nullable: true
+          properties:
+            reason:
+              type: string
+            enqueued_at:
+              type: integer
+            attempts:
+              type: integer
+            last_error:
+              type: string
+              nullable: true
+            retry_at:
+              type: integer
+
+    AttributionQueue:
+      type: object
+      properties:
+        pending:
+          type: integer
+        oldest_enqueued_at:
+          type: integer
+          nullable: true
+        failing:
+          type: integer
+        merges_awaiting_requeue:
+          type: integer
+        models_awaiting_recompute:
+          type: integer
+        rows:
+          type: array
+          items:
+            type: object
+            properties:
+              conv_id:
+                type: integer
+              reason:
+                type: string
+                enum: [recorded, counted_state, identity_merge, rebuild_journey, model_changed]
+              enqueued_at:
+                type: integer
+              attempts:
+                type: integer
+              last_error:
+                type: string
+                nullable: true
+              retry_at:
+                type: integer
 
     # ── Users ──────────────────────────────────────────────────────────
 
@@ -5155,6 +6351,45 @@ components:
             flagged and count nowhere. SKAdNetwork has no development key, so
             this never affects SKAdNetwork rows. A live policy: changing it
             re-judges the stored rows.
+        attribution_window_days:
+          type: integer
+          minimum: 1
+          maximum: 365
+          default: 7
+          description: >-
+            Android: how many days after its click an install may begin (on
+            Google's clock) and still be attributed to it; later is
+            `outside_window`.
+        trust_client_revenue:
+          type: integer
+          enum: [0, 1]
+          default: 0
+          description: >-
+            Android: 1 = a revenue value the app reports with an event may be
+            paid by a goal valued `from_property`. 0 (default) = it is stored
+            and reported but never credited — the app token is public.
+        integrity_mode:
+          type: string
+          enum: ["off", observe, require]
+          default: "off"
+          description: >-
+            Android: Play Integrity. `off` keeps a token the SDK sends and
+            decodes nothing; `observe` decodes every token and records the
+            verdict, changing nothing; `require` holds an install that would
+            be attributed (`pending_integrity`) until its verdict passes, and
+            attributes, pays and notifies only then. `observe` and `require`
+            need the credential first (`PUT /apps/{id}/integrity-credential`)
+            and a Cloud project number, so a registration is created `off`.
+            Each install keeps the mode it arrived under.
+        integrity_cloud_project_number:
+          type: integer
+          format: int64
+          nullable: true
+          description: >-
+            Android: the Google Cloud project NUMBER standard integrity tokens
+            are requested for; published in the schema document for the SDK.
+            Required for `observe` and `require`. Replaced, never cleared: an
+            update sending `null` is `422`.
         app_token:
           type: string
           pattern: "^[0-9a-f]{64}$"
@@ -5210,6 +6445,23 @@ components:
           enum: [0, 1]
           default: 0
           description: Trust test signals for this app (see `AppRegistration`)
+        attribution_window_days:
+          type: integer
+          minimum: 1
+          maximum: 365
+          description: Android only (see `AppRegistration`); read raw, so `7.0` or `"07"` is `422`, never rounded
+        trust_client_revenue:
+          type: integer
+          enum: [0, 1]
+          description: Android only (see `AppRegistration`)
+        integrity_mode:
+          type: string
+          enum: ["off"]
+          description: Android only; only `off` at create — set the credential, then switch the mode with an update (`422` otherwise)
+        integrity_cloud_project_number:
+          type: integer
+          format: int64
+          description: Android only (see `AppRegistration`)
 
     AppRegistrationUpdate:
       type: object
@@ -5227,6 +6479,29 @@ components:
           type: integer
           enum: [0, 1]
           description: Trust test signals for this app (see `AppRegistration`)
+        attribution_window_days:
+          type: integer
+          minimum: 1
+          maximum: 365
+          description: Android only (see `AppRegistration`)
+        trust_client_revenue:
+          type: integer
+          enum: [0, 1]
+          description: Android only (see `AppRegistration`)
+        integrity_mode:
+          type: string
+          enum: ["off", observe, require]
+          description: >-
+            Android only (see `AppRegistration`); `observe`/`require` is `422`
+            without a stored credential, or without a Cloud project number
+            sent in the same request or already stored
+        integrity_cloud_project_number:
+          type: integer
+          format: int64
+          description: >-
+            Android only (see `AppRegistration`); digits, as a JSON integer or
+            string. `null` is `422`: the number can be replaced, not cleared
+            (set `integrity_mode` to `off` to stop Play Integrity)
 
     AppRegistrationResponse:
       type: object
@@ -5269,6 +6544,10 @@ components:
           type: string
           nullable: true
           description: Decimal string (5 places), e.g. `"49.99000"`; null = the goal's own value
+        effective_at:
+          type: integer
+          readOnly: true
+          description: Unix time the current meaning started to apply (set by every create and update). After an update the report is exact again 48 days later.
         user_id:
           type: integer
         version:
@@ -5294,7 +6573,7 @@ components:
           enum: [low, medium, high]
         goal_id:
           type: integer
-          description: A live plain event goal of that registration, or of the account (`GET /goals`)
+          description: A live goal of that registration, or of the account (`GET /goals`), that a device can reach — not one counting `within` from the click, nor one waiting in `after` for such a goal
         revenue_override:
           type: number
           nullable: true
@@ -5394,6 +6673,16 @@ components:
         scope_id: {type: integer}
         name: {type: string}
         current_version: {type: integer}
+        builtin:
+          type: string
+          nullable: true
+          enum: [install, null]
+          description: >-
+            `install` for the built-in install goal every Android registration
+            has (triggered by the install, reached once, no value of its own:
+            a campaign pays its default payout for it unless it lists goals
+            without it, or a payout of its own). It cannot be edited or
+            archived. `null` for an operator's goal.
         definition: {$ref: "#/components/schemas/GoalDefinition"}
         definition_valid: {type: boolean}
         effective_at: {type: integer}
@@ -5466,6 +6755,7 @@ components:
         ineligible_reason: {type: string, nullable: true}
         payable: {type: boolean}
         campaign_id: {type: integer, nullable: true}
+        app_registration_id: {type: integer, nullable: true, description: "An install subject's app registration"}
         conversion_id: {type: integer, nullable: true}
 
     GoalReevaluationResponse:
@@ -5476,11 +6766,12 @@ components:
           properties:
             goal_id: {type: integer}
             version: {type: integer}
+            subject_type: {type: string, enum: [click, install]}
             applied: {type: boolean}
             goals:
               type: array
               items: {type: integer}
-              description: Every goal re-decided on at least one of these clicks (the goal and its dependents)
+              description: Every goal re-decided on at least one of these subjects (the goal and its dependents)
             subjects:
               type: array
               items:
@@ -5568,7 +6859,7 @@ components:
                   conversion_id: {type: integer, nullable: true}
                   payable: {type: boolean}
                   amount: {type: string, nullable: true}
-                  notify: {type: string, enum: [reached, suppressed, "off", none], description: "reached: announced to the traffic source; suppressed: a replacement, never announced twice; off: the campaign does not notify for this goal; none: not payable"}
+                  notify: {type: string, enum: [reached, suppressed, "off", none], description: "reached: announced to the traffic source (its server postbacks queued in the notification outbox); suppressed: a replacement of an outcome already announced, never announced twice; off: the campaign does not notify for this goal; none: not payable"}
             notifications:
               type: array
               items:
@@ -5578,10 +6869,11 @@ components:
                   n: {type: integer}
                   outcome_id: {type: integer}
                   kind: {type: string}
-                  status: {type: string, enum: [sent, failed, not_sent, no_pixels, browser_only]}
+                  status: {type: string, enum: [queued, rendered, failed, not_sent, no_pixels, browser_only], description: "queued: the server-to-server postbacks are in the notification outbox, which the worker sends with retries; rendered: browser pixels were returned to the browser that asked"}
                   reason: {type: string, nullable: true}
-                  server_calls: {type: integer}
-                  server_failures: {type: integer}
+                  queued: {type: integer, description: "Server-to-server postbacks waiting in the notification outbox"}
+                  browser_pixels: {type: integer}
+                  browser_skipped: {type: integer}
             note: {type: string, description: "Present when goals_evaluated is false"}
         idempotent_replay: {type: boolean}
 
@@ -5725,6 +7017,342 @@ components:
         data:
           $ref: "#/components/schemas/AppPostbackDetail"
 
+    AppInstall:
+      type: object
+      description: One Android install as the SDK reported it and the intake classified it.
+      properties:
+        install_row_id:
+          type: integer
+        registration_id:
+          type: integer
+        install_uuid:
+          type: string
+          format: uuid
+        store:
+          type: string
+          enum: [google_play]
+        click_id:
+          type: integer
+          nullable: true
+          description: The click the verified token named (attributed installs; null otherwise)
+        conversion_id:
+          type: integer
+          nullable: true
+          description: The install conversion on the click — set for every attributed, trusted install
+        match_state:
+          type: string
+          enum: [attributed, organic, third_party, unavailable, pending_click, bad_token, foreign_click, implausible, outside_window, duplicate_click, pending_integrity, integrity_failed, integrity_unverified]
+        match_reason:
+          type: string
+          description: Why, as one sentence
+        trusted:
+          type: integer
+          nullable: true
+          enum: [0, 1, null]
+          description: 1 trusted, 0 refuted, null unvouched
+        is_test:
+          type: boolean
+        referrer_status:
+          type: string
+          enum: [ok, feature_not_supported, service_unavailable, developer_error, service_disconnected, permission_error]
+        referrer_raw:
+          type: string
+          nullable: true
+          description: Play's install referrer, kept to 2048 bytes
+        referrer_truncated:
+          type: boolean
+        utm_source:
+          type: string
+          nullable: true
+        utm_medium:
+          type: string
+          nullable: true
+        utm_campaign:
+          type: string
+          nullable: true
+        utm_term:
+          type: string
+          nullable: true
+        utm_content:
+          type: string
+          nullable: true
+        gclid:
+          type: string
+          nullable: true
+        referrer_click_at:
+          type: integer
+          nullable: true
+          description: The device's clock
+        install_begin_at:
+          type: integer
+          nullable: true
+          description: The device's clock
+        referrer_click_server_at:
+          type: integer
+          nullable: true
+          description: Google's clock
+        install_begin_server_at:
+          type: integer
+          nullable: true
+          description: Google's clock — the install conversion's time
+        install_version:
+          type: string
+          nullable: true
+        google_play_instant:
+          type: boolean
+          nullable: true
+        app_version:
+          type: string
+          nullable: true
+        sdk_version:
+          type: string
+          nullable: true
+        os_version:
+          type: string
+          nullable: true
+        integrity_mode:
+          type: string
+          enum: ["off", observe, require]
+          description: The registration's Play Integrity mode when the install arrived; it governs the install for good
+        integrity_state:
+          type: string
+          enum: [not_requested, received, missing, pending, valid, invalid, error, skipped]
+          description: >-
+            Where the Play Integrity verdict stands: `not_requested` /
+            `received` (mode off, no token / a token kept undecoded),
+            `missing` (observe/require, no token), `pending` (queued for the
+            worker), `valid`, `invalid` (fails the policy, undecodable, or a
+            token another install already verified), `error` (no verdict
+            within 24 hours), `skipped` (refuted on its referrer; not decoded)
+        integrity_reason:
+          type: string
+          nullable: true
+          description: Why, as a sentence; while pending, the last attempt's error
+        integrity_attempts:
+          type: integer
+        integrity_next_at:
+          type: integer
+          nullable: true
+          description: When the worker next tries, while pending
+        integrity_checked_at:
+          type: integer
+          nullable: true
+          description: When Google last answered with a verdict
+        integrity_verdict:
+          type: object
+          nullable: true
+          description: >-
+            What the policy read from Google's verdict — `code` (`valid` or
+            the first failed check: `wrong_package`, `request_hash`, `stale`,
+            `future`, `app_not_recognized`, `device_integrity`, `unlicensed`,
+            `malformed`, `undecodable`, `replayed_token`), `package`,
+            `app_recognition`, `device`, `licensing`, `issued_at`,
+            `version_code`. Never the token.
+        first_open_at:
+          type: integer
+          nullable: true
+        received_at:
+          type: integer
+        settled_at:
+          type: integer
+          nullable: true
+          description: When the state became final; null while pending
+        remote_ip:
+          type: string
+
+    AppInstallResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/AppInstall"
+
+    AppInstallListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/AppInstall"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    AppIntegrityStatusResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            registration_id: {type: integer}
+            app_key: {type: string}
+            integrity_mode: {type: string, enum: ["off", observe, require]}
+            integrity_cloud_project_number: {type: string, nullable: true}
+            credential:
+              type: object
+              nullable: true
+              description: Never the key
+              properties:
+                client_email: {type: string}
+                private_key_id: {type: string}
+                project_id: {type: string, nullable: true}
+                created_at: {type: integer}
+                updated_at: {type: integer}
+            installs:
+              type: object
+              properties:
+                by_integrity_state:
+                  type: object
+                  additionalProperties: {type: integer}
+                  description: "Every integrity_state, with its count"
+                by_match_state:
+                  type: object
+                  properties:
+                    pending_integrity: {type: integer}
+                    integrity_failed: {type: integer}
+                    integrity_unverified: {type: integer}
+            usage:
+              type: object
+              properties:
+                decoded_since_utc_midnight: {type: integer}
+                default_daily_quota: {type: integer, example: 10000}
+            policy:
+              type: object
+              description: The verdict policy's constants (documentation/api/24-android-installs.md §9)
+
+    AppInstallTokenResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            registration_id: {type: integer}
+            click_id: {type: integer}
+            click_time: {type: integer}
+            install_token: {type: string, pattern: "^[1-9][0-9]*\\.[A-Za-z0-9_-]{16}$"}
+            referrer: {type: string, example: p202=1042.3MVffxqa2WX3CV49}
+            store_url: {type: string}
+
+    AppInstallRequest:
+      type: object
+      required: [install_uuid, app_key, store, referrer]
+      additionalProperties: false
+      description: >-
+        Vectors: tests/fixtures/app-sdk-contract/android/install-requests.json.
+        Every timestamp is a JSON integer (unix seconds); a string or a float is 400.
+      properties:
+        install_uuid:
+          type: string
+          pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          description: The SDK's per-install id, lower-case; minted once and persisted with the body
+        app_key:
+          type: string
+        store:
+          type: string
+          enum: [google_play]
+        referrer:
+          type: object
+          additionalProperties: false
+          required: [status]
+          properties:
+            status:
+              type: string
+              enum: [ok, feature_not_supported, service_unavailable, developer_error, service_disconnected, permission_error]
+            install_referrer: {type: string, description: "Required when status is ok (\"\" for none)"}
+            referrer_click_timestamp_seconds: {type: integer}
+            install_begin_timestamp_seconds: {type: integer}
+            referrer_click_timestamp_server_seconds: {type: integer}
+            install_begin_timestamp_server_seconds: {type: integer}
+            install_version: {type: string, nullable: true}
+            google_play_instant: {type: boolean, nullable: true}
+        first_open_at: {type: integer, nullable: true}
+        app_version: {type: string, nullable: true, maxLength: 64}
+        sdk_version: {type: string, nullable: true, maxLength: 32}
+        os_version: {type: string, nullable: true, maxLength: 32}
+        test: {type: boolean, default: false}
+        integrity_token: {type: string, nullable: true, maxLength: 8192, description: "A STANDARD Play Integrity token requested with requestHash = the lower-case hex SHA-256 of this body's canonical form (integrity_token excluded); decoded off the request path when the registration's integrity_mode is observe or require"}
+        customer:
+          $ref: "#/components/schemas/AppCustomerClaim"
+
+    AppCustomerClaim:
+      type: object
+      nullable: true
+      additionalProperties: false
+      required: [id, signature]
+      description: >-
+        A customer id the operator's own server signed (the SDKs'
+        setCustomerId; documentation/features/visitor-identity.md). After the
+        request commits it links the install's click to the customer — only
+        for an attributed, trusted install, and only when the signature
+        verifies under the account's linking key. Vectors:
+        tests/fixtures/app-sdk-contract/customer-id.json.
+      properties:
+        id: {type: string, maxLength: 255, description: "Trimmed; an email digest folds to lower case and must be hex of its length"}
+        type: {type: string, nullable: true, enum: [custom, email_md5, email_sha256, esp_id, merchant_id, subid], description: "Absent or null means custom"}
+        signature: {type: string, pattern: "^[0-9a-fA-F]{64}$", description: "cust_sig: hex(HMAC-SHA256(linking key, \"<type>:<id>\"))"}
+
+    AppCustomerLinkStatus:
+      type: string
+      enum: [linked, unverified, no_click, not_linked]
+      description: >-
+        Present when the request carried a customer: linked; unverified (the
+        signature is not the operator's); no_click (the install proved no
+        click to link — organic, pending, refuted or untrusted); not_linked
+        (the campaign's identity capture is off, or linking failed and was
+        logged).
+
+    AppInstallReceiptResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            install_uuid: {type: string}
+            match: {type: string, enum: [attributed, organic, third_party, unavailable, pending_click, bad_token, foreign_click, implausible, outside_window, duplicate_click, pending_integrity, integrity_failed, integrity_unverified]}
+            reason: {type: string}
+            trusted: {type: integer, nullable: true, enum: [0, 1, null]}
+            test: {type: boolean}
+            integrity: {type: string, enum: [not_requested, received, missing, pending, valid, invalid, error, skipped]}
+            duplicate: {type: boolean}
+            customer:
+              $ref: "#/components/schemas/AppCustomerLinkStatus"
+
+    AppInstallEventsRequest:
+      type: object
+      additionalProperties: false
+      description: >-
+        Vectors: tests/fixtures/app-sdk-contract/android/events-requests.json.
+        `events` may be left out only when `customer` is present (a customer
+        id on its own); when present it holds 1-100 events.
+      properties:
+        customer:
+          $ref: "#/components/schemas/AppCustomerClaim"
+        events:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [event_id, name, occurred_at]
+            properties:
+              event_id: {type: string, maxLength: 128, description: "Unique within the install; not starting with @"}
+              name: {type: string, maxLength: 64}
+              occurred_at: {type: integer, description: "The device's clock; an event is ordered by min(occurred_at, received_at)"}
+              properties: {type: object, maxProperties: 32, additionalProperties: {oneOf: [{type: string, maxLength: 255}, {type: number}, {type: boolean}]}}
+              revenue: {type: number, nullable: true}
+              transaction_id: {type: string, nullable: true, maxLength: 255}
+
+    AppInstallEventsReceiptResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            install_uuid: {type: string}
+            accepted: {type: array, items: {type: string}}
+            duplicates: {type: array, items: {type: string}}
+            customer:
+              $ref: "#/components/schemas/AppCustomerLinkStatus"
+
     AppPostbackListResponse:
       type: object
       properties:
@@ -5819,6 +7447,9 @@ components:
         undecoded:
           type: integer
           description: Value present but no matching encoding
+        ambiguous_encoding:
+          type: integer
+          description: Value whose encoding changed within the 48 days before the postback arrived, with meanings that disagree (another goal or revenue override); credited to no goal
         null_conversion_values:
           type: integer
           description: Value withheld by Apple's privacy tier
@@ -6017,15 +7648,64 @@ components:
             app_id:
               type: integer
               description: iOS only — the App Store id as a number
+            integrity_mode:
+              type: string
+              enum: ["off", observe, require]
+              description: Android only — the registration's Play Integrity mode
+            integrity:
+              type: object
+              description: Android only — what the SDK requests
+              properties:
+                request_token: {type: boolean, description: "true under observe and require (never without cloud_project_number): request a token and send it as integrity_token"}
+                token_type: {type: string, enum: [standard]}
+                cloud_project_number: {type: string, nullable: true, description: "The Google Cloud project number to request for (a string: it can exceed 2^53)"}
+                request_hash: {type: string, enum: [sha256_hex_of_canonical_install_body]}
+            sdk:
+              type: object
+              description: Android only — how the SDK talks to the intake
+              properties:
+                installs_path: {type: string, example: /api/v3/apps/installs}
+                events_path: {type: string, example: "/api/v3/apps/installs/{install_uuid}/events"}
+                max_events_per_request: {type: integer, example: 100}
             schema_version:
               type: string
-              description: Content hash of the mapping; also the ETag (unquoted)
-            events:
-              type: object
-              description: iOS only — event name → values to set when the app reports that event; always an object
-              additionalProperties:
+              description: Content hash of the document; also the ETag (unquoted)
+            goals:
+              type: array
+              description: iOS only — every goal an encoding names and every goal those wait for in `after`, as an evaluation-only view (definitions without `value`); ordered by goal id
+              items:
                 type: object
                 properties:
+                  goal_id:
+                    type: integer
+                  starts_at:
+                    type: integer
+                    description: Events received before this are not evaluated under the goal
+                  ends_at:
+                    type: integer
+                    nullable: true
+                    description: Events received at or after this are not (the goal was archived then)
+                  versions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        version:
+                          type: integer
+                        effective_at:
+                          type: integer
+                          description: An event is evaluated under the newest version effective when it was received
+                        definition:
+                          type: object
+                          description: The stored goal definition without `value` (see GoalDefinition)
+            encodings:
+              type: array
+              description: iOS only — per goal, the values to set when a device reaches it; ordered by goal id
+              items:
+                type: object
+                properties:
+                  goal_id:
+                    type: integer
                   fine_value:
                     type: integer
                     nullable: true
