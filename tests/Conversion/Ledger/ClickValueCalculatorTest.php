@@ -205,6 +205,43 @@ final class ClickValueCalculatorTest extends TestCase
         self::assertSame('5.00000', self::value($rows, PayoutMode::REPLACE));
     }
 
+    /**
+     * countedAsStored() is the "before" the recompute diffs against to find
+     * reversals whose counted state flipped. On a state the last recompute
+     * wrote, it must agree with calculate() exactly.
+     */
+    public function testCountedAsStoredAgreesWithCalculateOnAStateItWrote(): void
+    {
+        $cases = [
+            'sale and its reversal' => [[self::row(1, '5'), self::row(2, '-5', ['reverses' => 1])], PayoutMode::REPLACE],
+            'superseded sale, reversal, later sale' => [[
+                self::row(1, '5', ['reason' => SupersededReason::REPLACE, 'by' => 3]),
+                self::row(2, '-5', ['reverses' => 1]),
+                self::row(3, '10'),
+            ], PayoutMode::REPLACE],
+            'accumulate with a deleted row' => [[self::row(1, '5'), self::row(2, '3', ['deleted' => true]), self::row(3, '-5', ['reverses' => 1])], PayoutMode::ACCUMULATE],
+            'pre-ledger sale reversed against the baseline' => [[
+                self::row(1, '5', ['reason' => SupersededReason::PRE_LEDGER, 'by' => 3]),
+                self::row(2, '-5', ['reverses' => 1]),
+                self::row(3, '5', ['source' => ConversionSource::LEGACY_BASELINE]),
+            ], PayoutMode::REPLACE],
+        ];
+        foreach ($cases as $name => [$rows, $mode]) {
+            self::assertSame(ClickValueCalculator::calculate($rows, $mode)->counted, ClickValueCalculator::countedAsStored($rows), $name);
+        }
+    }
+
+    public function testAReversalStopsCountingWhenALaterSaleSupersedesItsSale(): void
+    {
+        // As stored before the recompute: sale 1 counts, 2 reverses it, 3 is new.
+        $rows = [self::row(1, '5'), self::row(2, '-5', ['reverses' => 1]), self::row(3, '10')];
+        $before = ClickValueCalculator::countedAsStored($rows);
+        $after = ClickValueCalculator::calculate($rows, PayoutMode::REPLACE)->counted;
+
+        self::assertArrayHasKey(2, $before, 'the reversal netted before');
+        self::assertArrayNotHasKey(2, $after, 'and does not once 3 supersedes its sale');
+    }
+
     public function testAPreLedgerClickWithOnlyItsOldRowsIsNotALead(): void
     {
         // Cleared before the upgrade: old rows survive, marked pre_ledger;

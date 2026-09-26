@@ -113,11 +113,15 @@ final class SkanEncodingHistoryWritersTest extends TestCase
         // The hooks run before the base Controller's writes, which is what
         // makes a retire in the hook a retire before the write.
         $base = (string) file_get_contents(self::ROOT . '/api/v3/Controller.php');
+        // delete() is recordDeleted(deleteRecord($id)) since #167: the hook
+        // and the write live in deleteRecord(), and delete() must reach it.
+        self::assertSame(1, preg_match('/    public function delete\(int\|string \$id.*?\n    \}\n/s', $base, $d), 'delete');
+        self::assertStringContainsString('$this->deleteRecord($id)', $d[0], 'Controller::delete() runs deleteRecord()');
         foreach ([
-            'update' => ['$this->beforeUpdate(', "'UPDATE %s SET %s WHERE %s'"],
-            'delete' => ['$this->beforeDelete(', "'DELETE FROM %s WHERE %s'"],
-        ] as $method => [$hook, $write]) {
-            self::assertSame(1, preg_match('/    public function ' . $method . '\(int\|string \$id.*?\n    \}\n/s', $base, $m), $method);
+            'update' => ['$this->beforeUpdate(', "'UPDATE %s SET %s WHERE %s'", 'public function update'],
+            'deleteRecord' => ['$this->beforeDelete(', "'DELETE FROM %s WHERE %s'", 'protected function deleteRecord'],
+        ] as $method => [$hook, $write, $signature]) {
+            self::assertSame(1, preg_match('/    ' . preg_quote($signature, '/') . '\(int\|string \$id.*?\n    \}\n/s', $base, $m), $method);
             $h = strpos($m[0], $hook);
             $w = strpos($m[0], $write);
             self::assertIsInt($h, $method . ' calls ' . $hook);
