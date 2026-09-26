@@ -238,6 +238,39 @@ module.exports = {
     },
 
     {
+      name: 'A second tab\'s window does not change the one on screen, and a stray sort is not the range\'s fault',
+      async run(ctx) {
+        const { app, ui, db, expect } = ctx;
+        // A pasted link with a page and a sort this page does not read: the
+        // range still applies, and nothing blames it for the others.
+        await app.goto(PAGE + '?range=last7&order=not-a-column&page=x');
+        await viewLoaded(ui);
+        const pageText = await ui.page.evaluate(() => document.body.textContent);
+        expect.notOk(pageText.includes('The range was not applied'), 'a stray sort or page is not reported as a range error');
+        expect.eq(db.value('SELECT user_pref_time_predefined FROM 202_users_pref WHERE user_id=1'), 'last7', 'and the range is stored');
+        const shown = await tile(ui, 'Customers');
+        expect.ok(Number(shown) > 0 && Number(shown) < CUSTOMERS, 'the last seven days are a part of the customers', String(shown));
+
+        // Another tab stores another window.
+        db.write("UPDATE 202_users_pref SET user_pref_time_predefined='last30', user_pref_time_from=NULL, user_pref_time_to=NULL WHERE user_id=1");
+        await clickAndLoad(ui, '#m-content .p202-tabs .nav-link:has-text("Subscriptions")');
+        await clickAndLoad(ui, '#m-content .p202-tabs .nav-link:has-text("Report")');
+        expect.eq(await tile(ui, 'Customers'), shown, 'the report this tab loads next still draws the window on screen, not the one stored since');
+        const hrefs = await ui.page.$$eval('#m-content .p202-tabs .nav-link', (links) => links.map((a) => new URL(a.href).searchParams.get('range')));
+        expect.eq([...new Set(hrefs)], ['last7'], 'and its tabs still say that window');
+
+        const download = await ui.page.$eval('#m-content a[href*="ltv_download.php"]', (a) => a.href);
+        expect.eq(new URLSearchParams(new URL(download).searchParams.get('view') || '').get('range'), 'last7', 'the download link carries the view');
+        const rows = await ui.page.evaluate(async (url) => {
+          const body = await (await fetch(url, { credentials: 'same-origin' })).text();
+          return (body.match(/<tr>/g) || []).length - 1;
+        }, download);
+        expect.eq(String(rows), shown, 'and exports the customers on screen');
+        db.write("UPDATE 202_users_pref SET user_pref_time_predefined='last30', user_pref_time_from=NULL, user_pref_time_to=NULL WHERE user_id=1");
+      },
+    },
+
+    {
       name: 'The merge picker is a modal that leaves nothing behind',
       async run(ctx) {
         const { app, ui, expect } = ctx;
