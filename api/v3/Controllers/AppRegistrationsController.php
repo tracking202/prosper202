@@ -222,9 +222,14 @@ class AppRegistrationsController extends Controller
         // The policy withdrawal, the unlinking and the row delete commit
         // together: a registration gone with its trusted development rows
         // still trusted would leave nothing to withdraw them from.
-        $this->transaction(function () use ($id): void {
-            parent::delete($id);
-        });
+        //
+        // The change record is written after the commit, not inside it. A
+        // recordChange() failure inside would roll the cascade back and still
+        // surface as WriteCommittedException ("landed, never retry"), so a
+        // staged apply would be marked interrupted for a delete that never
+        // happened (CLAUDE.md #13).
+        $deleted = $this->transaction(fn (): array => $this->deleteRecord($id));
+        $this->recordDeleted($deleted);
     }
 
     #[\Override]

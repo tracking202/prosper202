@@ -5,6 +5,12 @@ include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
 
 AUTH::require_user();
 
+// Draw the window ltv.php drew, not whatever the stored one says by now: a
+// second tab may have stored another (ReportView). ltv.js sends the view
+// with every request under tracking202/ajax/.
+require_once(substr(__DIR__, 0, -17) . '/202-config/functions-report-prefs.php');
+$reportView = p202_report_view_begin();
+
 //set the timezone for the user, for entering their dates.
 AUTH::set_timezone($_SESSION['user_timezone']);
 
@@ -119,7 +125,7 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
 <?php echo p202_ltv_card_close(); ?>
 
 <!-- LTV by acquisition dimension / product / company -->
-<?php echo p202_ltv_card_open('LTV by', '', '<a href="' . $esc(get_absolute_url()) . 'tracking202/analyze/ltv_download.php" target="_blank">'
+<?php echo p202_ltv_card_open('LTV by', '', '<a href="' . $esc(p202_report_view_url(get_absolute_url() . 'tracking202/analyze/ltv_download.php', $reportView)) . '" target="_blank">'
     . '<i class="bi bi-download"></i> Export customers</a>'); ?>
     <div class="p202-toolbar p202-panel__filter" style="padding-top: 4px;">
         <?php echo p202_ltv_chips('ltv-by-select', $allowedDimensions, $by, 'ltvLoad(0);'); ?>

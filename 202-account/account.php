@@ -158,8 +158,12 @@ if (!empty($_GET['customers_api_key'])) {
 		$keyErrors['p202_customer_api_key'] = 'API key is not valid. Check your key and try again!';
 	}
 	if (!$keyErrors) {
-		$db->query("UPDATE 202_users SET p202_customer_api_key = '" . $mysql['p202_customer_api_key'] . "' WHERE user_id = '" . $mysql['user_id'] . "'");
-		$change_p202_customer_api_key = true;
+		if ($db->query("UPDATE 202_users SET p202_customer_api_key = '" . $mysql['p202_customer_api_key'] . "' WHERE user_id = '" . $mysql['user_id'] . "'")) {
+			$change_p202_customer_api_key = true;
+		} else {
+			error_log('account.php: the customer API key was not saved: ' . $db->error);
+			$keyErrors['p202_customer_api_key'] = 'The key is valid but could not be saved; try again.';
+		}
 	}
 }
 
@@ -171,7 +175,11 @@ if (!empty($_GET['remove_user_stats202_app_key'])) {
 	}
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$sql = "UPDATE 202_users SET user_stats202_app_key='' WHERE user_id='" . $mysql['user_id'] . "'";
-	$result = $db->query($sql);
+	if (!$db->query($sql)) {
+		error_log('account.php: the Stats202 app key was not removed: ' . $db->error);
+		p202_account_flash('bad', 'The Stats202 App Key could not be removed; try again.');
+		p202_account_redirect('202-account/account.php');
+	}
 	$_SESSION['user_stats202_app_key'] = '';
 	header('location: ' . get_absolute_url() . '202-account/account.php');
 	die();
@@ -185,7 +193,11 @@ if (!empty($_GET['remove_user_api_key'])) {
 	}
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$sql = "UPDATE 202_users SET user_api_key='' WHERE user_id='" . $mysql['user_id'] . "'";
-	$result = $db->query($sql);
+	if (!$db->query($sql)) {
+		error_log('account.php: the Tracking202 API key was not removed: ' . $db->error);
+		p202_account_flash('bad', 'The Tracking202 API key could not be removed; try again.');
+		p202_account_redirect('202-account/account.php');
+	}
 	$_SESSION['user_api_key'] = '';
 	$_SESSION['user_cirrus_link'] = '';
 	header('location: ' . get_absolute_url() . '202-account/account.php');
@@ -466,50 +478,27 @@ if (!empty($_POST['update_account_currency']) && $_POST['update_account_currency
 	if (!in_array($postedCurrency, \Api\V3\Controllers\UsersController::SUPPORTED_CURRENCIES, true)) {
 		$keyErrors['account_currency'] = 'Choose a currency from the list.';
 	} else {
-		$mysql['account_currency'] = $db->real_escape_string($postedCurrency);
-		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-		$user_sql = "
-					UPDATE
-						`202_users_pref`
-					SET
-						`user_account_currency`='" . $mysql['account_currency'] . "'
-					WHERE
-						`user_id`='" . $mysql['user_id'] . "'
-				";
-		$currencySaved = (bool)$db->query($user_sql);
-
-		// Only recompute campaign payouts when the currency change was accepted and saved
-		// above; otherwise an invalid/forged request would still rewrite every
-		// campaign's payout.
-		if ($currencySaved && ($user_row['user_account_currency'] ?? '') != $postedCurrency) {
-			// scope to the acting user's own campaigns
-			$sql = "SELECT aff_campaign_id, aff_campaign_payout, aff_campaign_currency, aff_campaign_foreign_payout FROM 202_aff_campaigns WHERE aff_campaign_deleted = 0 AND user_id = '" . $mysql['user_id'] . "'";
-			$result = $db->query($sql);
-			if ($result && $result->num_rows > 0) {
-				while ($row = $result->fetch_assoc()) {
-
-					$mysql['aff_campaign_id'] = $db->real_escape_string((string)$row['aff_campaign_id']);
-
-					if ($row['aff_campaign_foreign_payout'] == '0.00') {
-						$payout = getForeignPayout($postedCurrency, $row['aff_campaign_currency'], $row['aff_campaign_payout']);
-						$db->query("UPDATE 202_aff_campaigns SET aff_campaign_foreign_payout = '" . $row['aff_campaign_payout'] . "', aff_campaign_payout = '" . $payout['exchange_payout'] . "' WHERE aff_campaign_id = '" . $mysql['aff_campaign_id'] . "' AND user_id = '" . $mysql['user_id'] . "'");
-					} else {
-						if ($postedCurrency == $row['aff_campaign_currency']) {
-							$db->query("UPDATE 202_aff_campaigns SET aff_campaign_payout = '" . $row['aff_campaign_foreign_payout'] . "', aff_campaign_foreign_payout = '0.00' WHERE aff_campaign_id = '" . $mysql['aff_campaign_id'] . "' AND user_id = '" . $mysql['user_id'] . "'");
-						} else {
-							$payout = getForeignPayout($postedCurrency, $row['aff_campaign_currency'], $row['aff_campaign_foreign_payout']);
-							$db->query("UPDATE 202_aff_campaigns SET aff_campaign_payout = '" . $payout['exchange_payout'] . "' WHERE aff_campaign_id = '" . $mysql['aff_campaign_id'] . "' AND user_id = '" . $mysql['user_id'] . "'");
-						}
-					}
-				}
-			}
+		// The currency and every campaign it re-prices land together
+		// (the helper in functions-account-ui.php says why and how).
+		$currencySaved = false;
+		try {
+			p202_account_save_currency(
+				new \Prosper202\Database\Connection($db),
+				(int) $_SESSION['user_id'],
+				$postedCurrency,
+				(string) ($user_row['user_account_currency'] ?? ''),
+				static fn (string $campaignCurrency, string $payout): mixed => getForeignPayout($postedCurrency, $campaignCurrency, $payout)
+			);
+			$currencySaved = true;
+		} catch (Throwable $failed) {
+			error_log('account.php: the account currency was not saved: ' . $failed->getMessage());
 		}
 
 		if ($currencySaved) {
 			p202_account_flash('ok', 'Account currency saved.');
 			p202_account_redirect('202-account/account.php#currency');
 		}
-		$pageFlashes[] = ['kind' => 'bad', 'text' => 'The account currency could not be saved; try again.'];
+		$pageFlashes[] = ['kind' => 'bad', 'text' => 'The account currency could not be saved, and no campaign was re-priced; try again.'];
 	}
 }
 
@@ -578,12 +567,18 @@ if (!empty($_POST['change_user_api_key']) && $_POST['change_user_api_key'] == '1
 								WHERE  	`user_id`='" . $mysql['user_id'] . "'";
 			$user_result = $db->query($user_sql);
 
-			//set the  session's user_api_key
-			$_SESSION['user_api_key'] = $_POST['user_api_key'];
-			$_SESSION['user_cirrus_link'] = $_POST['user_api_key'];
+			// Only a write that landed changes the session and says so: the
+			// session key is the one used against Tracking202 from here on,
+			// and a flash saying "updated" over an unchanged row is #1.
+			if ($user_result) {
+				$_SESSION['user_api_key'] = $_POST['user_api_key'];
+				$_SESSION['user_cirrus_link'] = $_POST['user_api_key'];
 
-			p202_account_flash('ok', 'You have updated your Tracking202 API Key.');
-			p202_account_redirect('202-account/account.php');
+				p202_account_flash('ok', 'You have updated your Tracking202 API Key.');
+				p202_account_redirect('202-account/account.php');
+			}
+			error_log('account.php: the Tracking202 API key was not saved: ' . $db->error);
+			$pageFlashes[] = ['kind' => 'bad', 'text' => 'The Tracking202 API key could not be saved; try again.'];
 		}
 	}
 }
@@ -614,11 +609,14 @@ if (!empty($_POST['change_user_stats202_app_key']) && $_POST['change_user_stats2
 								WHERE  	`user_id`='" . $mysql['user_id'] . "'";
 			$user_result = $db->query($user_sql);
 
-			//set the  session's user_api_key
-			$_SESSION['user_stats202_app_key'] = $_POST['user_stats202_app_key'];
+			if ($user_result) {
+				$_SESSION['user_stats202_app_key'] = $_POST['user_stats202_app_key'];
 
-			p202_account_flash('ok', 'You have updated your Stats202 App Key.');
-			p202_account_redirect('202-account/account.php');
+				p202_account_flash('ok', 'You have updated your Stats202 App Key.');
+				p202_account_redirect('202-account/account.php');
+			}
+			error_log('account.php: the Stats202 app key was not saved: ' . $db->error);
+			$pageFlashes[] = ['kind' => 'bad', 'text' => 'The Stats202 App Key could not be saved; try again.'];
 		}
 	}
 }

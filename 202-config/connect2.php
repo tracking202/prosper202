@@ -8,6 +8,7 @@ if (!file_exists(__DIR__ . '/version.php')) {
     die('Critical: Version file missing');
 }
 require_once(__DIR__ . '/version.php');
+require_once(__DIR__ . '/mysql-error-args.php');
 
 $_GET = array_change_key_case($_GET, CASE_LOWER);
 //fix for nginx with no server name set
@@ -2469,11 +2470,10 @@ function record_mysql_error($dbOrSql, $sql = null): never
 {
     global $server_row, $ip_address; // Add global $ip_address
 
-    if ($sql === null) {
-        $sql = (string) $dbOrSql;
+    // ($db), ($sql) and ($db, $sql) are all in use; see p202MysqlErrorArgs().
+    [$db, $sql] = p202MysqlErrorArgs($dbOrSql, $sql);
+    if (!$db instanceof \mysqli) {
         $db = $GLOBALS['db'] ?? null;
-    } else {
-        $db = $dbOrSql;
     }
 
     if (!$db instanceof \mysqli) {
@@ -3827,7 +3827,8 @@ function getForeignPayout($currency, $payout_currency, $payout)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/get-foreign-payout');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
