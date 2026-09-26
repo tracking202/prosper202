@@ -378,7 +378,13 @@ final class MysqlCustomerRepository
              ON DUPLICATE KEY UPDATE customer_id = IF(customer_id IS NULL, VALUES(customer_id), customer_id)'
         );
         $this->conn->bind($stmt, 'ii', [$clickId, $customerId]);
-        $this->conn->executeUpdate($stmt);
+        if ($this->conn->executeUpdate($stmt) === 1) {
+            // 1 is a new row: a click that had no tracking row now has c1–c4
+            // of 0, which the attribution report rollup groups apart from no
+            // row at all. Marked in the caller's transaction (AttributionRollup
+            // rule 2); an update (2) changes only customer_id, which no sum reads.
+            \Prosper202\Report\RollupDirty::clickOfAnyAccount($this->conn, $clickId);
+        }
     }
 
     /**

@@ -13,7 +13,7 @@ use Throwable;
  * ledger writes, and turns each conversion into a journey and one set of
  * credits per active model.
  *
- * One run does three things, in this order:
+ * One run does four things, in this order:
  *
  * 1. Identity merges. Every merge with requeued_at NULL re-queues the
  *    conversions on the merged person's clicks (reason `identity_merge`),
@@ -29,6 +29,11 @@ use Throwable;
  *    and deletes the pending row only if its enqueue_seq is still the one
  *    that was read — a row re-queued while it was being processed stays
  *    queued and is processed again.
+ * 4. The report rollup (AttributionRollup): the hours the outbox just made
+ *    dirty are re-summed and newly sealed hours summed. It gets whatever
+ *    the outbox left of the budget and at least a quarter of it, so a
+ *    backlog never starves the reports (which compute unsummed hours
+ *    exactly meanwhile) and the rollup never starves the backlog.
  *
  * Failure isolation. An exception from one conversion (a ledger row the
  * integrity checks refuse, an amount out of range) is recorded on that
@@ -142,7 +147,9 @@ final class AttributionWorker
     public function run(int $timeBudgetSeconds = 50, int $batchSize = 200): WorkerReport
     {
         $report = new WorkerReport();
-        $deadline = ($this->clock)() + max(1, $timeBudgetSeconds);
+        $budget = max(1, $timeBudgetSeconds);
+        $finish = ($this->clock)() + $budget;
+        $deadline = $finish - intdiv($budget, 4);
 
         // Both fan-outs stop at the deadline too (after at least one unit,
         // so a backlog still drains): the budget bounds how long a run
@@ -170,6 +177,7 @@ final class AttributionWorker
         }
 
         $report->remaining = $this->dueCount();
+        $report->rollup = (new AttributionRollup($this->conn, $this->clock))->run(max(1, $finish - ($this->clock)()));
 
         return $report;
     }
@@ -505,7 +513,7 @@ final class AttributionWorker
         foreach ($models as $model) {
             $credits[$model->id] = CreditCalculator::credits($model, $journey, $convTime, $amount);
         }
-        $this->store->saveCredits($convId, $convTime, $credits);
+        $this->store->saveCredits($convId, $userId, $convTime, $credits);
 
         return 'credited';
     }

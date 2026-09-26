@@ -616,6 +616,19 @@ $mysql['click_alp'] = 0;
 $mysql['rotator_id'] = $db->real_escape_string((string)$rotator_id); 
 $mysql['user_id'] = $db->real_escape_string((string)$user_id);
 
+// A rotator re-click (lpr) rewrites the click it found above rather than
+// recording a new one: the REPLACEs below give that click another row, its
+// keyword and its c1-c4. The attribution report rollup has summed that click
+// into its hours and into the hours of any conversion whose journey holds
+// it, so the rewrite and the mark that sends those hours back to exact go in
+// one transaction (AttributionRollup rule 2). A new click needs no mark: its
+// hour is not summed yet.
+$rtrRewritesClick = isset($_GET['lpr']) && $_GET['lpr'] != '';
+if ($rtrRewritesClick) {
+	$db->begin_transaction() or record_mysql_error($db);
+	\Prosper202\Report\RollupDirty::click(new \Prosper202\Database\Connection($db), (int) $mysql['user_id'], (int) $mysql['click_id']);
+}
+
 //ok we have the main data, now insert this row
 $click_sql = "REPLACE INTO   202_clicks
 			  SET           	click_id='".$mysql['click_id']."',
@@ -674,6 +687,10 @@ $click_sql = "
 		c3_id = '".$mysql['c3_id']."',
 		c4_id = '".$mysql['c4_id']."'";
 $click_result = $db->query($click_sql) or record_mysql_error($db);
+
+if ($rtrRewritesClick) {
+	$db->commit() or record_mysql_error($db);
+}
 
 $click_sql = "
 	REPLACE INTO

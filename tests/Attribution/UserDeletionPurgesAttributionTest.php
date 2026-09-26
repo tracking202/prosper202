@@ -60,6 +60,11 @@ final class UserDeletionPurgesAttributionTest extends TestCase
             '202_attribution_audit' => 'SELECT COUNT(*) FROM 202_attribution_audit WHERE user_id = %d',
             '202_attribution_exports' => 'SELECT COUNT(*) FROM 202_attribution_exports WHERE user_id = %d',
             '202_attribution_pending' => 'SELECT COUNT(*) FROM 202_attribution_pending p JOIN 202_conversion_logs c ON c.conv_id = p.conv_id WHERE c.user_id = %d',
+            '202_attribution_rollup' => 'SELECT COUNT(*) FROM 202_attribution_rollup WHERE user_id = %d',
+            '202_attribution_rollup_state' => 'SELECT COUNT(*) FROM 202_attribution_rollup_state WHERE user_id = %d',
+            '202_attribution_rollup_overrides' => 'SELECT COUNT(*) FROM 202_attribution_rollup_overrides WHERE user_id = %d',
+            '202_attribution_rollup_dirty' => 'SELECT COUNT(*) FROM 202_attribution_rollup_dirty WHERE user_id = %d',
+            '202_attribution_rollup_dirty_clicks' => 'SELECT COUNT(*) FROM 202_attribution_rollup_dirty_clicks WHERE user_id = %d',
         ];
     }
 
@@ -110,6 +115,11 @@ final class UserDeletionPurgesAttributionTest extends TestCase
         $this->convert(102, '10.00', 'T-1', 3_000);
         $this->work();
         $this->convert(101, '4.00', 'T-2', 3_500); // left in the outbox
+        // The worker's run summed the report rollup (its rows and state);
+        // the marks and overrides it keeps are made directly.
+        self::fixture('INSERT INTO 202_attribution_rollup_overrides SET user_id=1, campaign_id=10, model_id=' . $this->defaultModelId());
+        self::fixture('INSERT INTO 202_attribution_rollup_dirty SET user_id=1, hour_from=0, hour_to=0');
+        self::fixture('INSERT INTO 202_attribution_rollup_dirty_clicks SET user_id=1, click_id=101');
         self::fixture("INSERT INTO 202_attribution_audit SET user_id=1, model_id=NULL, action='test', metadata='{}', created_at=1");
         $ownerFile = $this->export(1, $this->defaultModelId(), 1);
 
@@ -122,6 +132,11 @@ final class UserDeletionPurgesAttributionTest extends TestCase
         self::fixture("INSERT INTO 202_attribution_journey_meta SET conv_id=9001, user_id=" . self::OTHER . ", conv_time=2, touches=1, built_lookback_days=30, built_at=2");
         self::fixture("INSERT INTO 202_attribution_credits SET conv_id=9001, model_id=$otherModel, click_id=9001, position=0, credit=1, revenue=5, conv_time=2");
         self::fixture("INSERT INTO 202_attribution_audit SET user_id=" . self::OTHER . ", model_id=NULL, action='test', metadata='{}', created_at=1");
+        self::fixture('INSERT INTO 202_attribution_rollup SET user_id=' . self::OTHER . ", part=4, dim=0, model_id=$otherModel, grain=0, bucket=0, key_null=0, dim_key=0, n=1, credit=1, revenue=5, cost=0");
+        self::fixture('INSERT INTO 202_attribution_rollup_state SET user_id=' . self::OTHER . ", built_through_hour=1, default_model_id=$otherModel, updated_at=1");
+        self::fixture('INSERT INTO 202_attribution_rollup_overrides SET user_id=' . self::OTHER . ", campaign_id=99, model_id=$otherModel");
+        self::fixture('INSERT INTO 202_attribution_rollup_dirty SET user_id=' . self::OTHER . ', hour_from=0, hour_to=0');
+        self::fixture('INSERT INTO 202_attribution_rollup_dirty_clicks SET user_id=' . self::OTHER . ', click_id=9001');
         $otherFile = $this->export(self::OTHER, $otherModel, 2);
 
         return ['owner' => $ownerFile, 'other' => $otherFile];

@@ -49,6 +49,12 @@ module.exports = {
   async reset(db) {
     db.write("DELETE cr FROM 202_attribution_credits cr JOIN 202_attribution_models m ON m.model_id = cr.model_id WHERE m.model_name LIKE 'Spec %'");
     db.write("DELETE FROM 202_attribution_models WHERE model_name LIKE 'Spec %'");
+    // The deletes above bypass the writers' rollup marks: reset the report
+    // rollup with them, and the worker sums it again from what is left.
+    for (const t of ['202_attribution_rollup', '202_attribution_rollup_state', '202_attribution_rollup_overrides',
+      '202_attribution_rollup_dirty', '202_attribution_rollup_dirty_clicks']) {
+      db.write('TRUNCATE ' + t);
+    }
   },
 
   async setup(ctx) {

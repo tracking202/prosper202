@@ -96,6 +96,9 @@ if ($isApply || $isPreview) {
 					$conn->bind($dirty, 'iiiiiiiii', [(int) $values['ppc_account_id'], (int) $values['aff_campaign_id'], $userId, (int) $values['from_time'], (int) $values['to_time'],
 						(int) $values['aff_network_id'], (int) $values['text_ad_id'], (int) $values['landing_page_id'], (int) $values['ppc_network_id']]);
 					$conn->executeUpdate($dirty);
+					// And the attribution report rollup, which sums click_cpc by
+					// hour, for the same range (AttributionRollup rule 2).
+					\Prosper202\Report\RollupDirty::timeRange($conn, $userId, (int) $values['from_time'], (int) $values['to_time']);
 					return null;
 				});
 			}

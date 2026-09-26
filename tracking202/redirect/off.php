@@ -218,6 +218,7 @@ $info_sql = "
 	SELECT
 		2c.click_id,
 		2c.user_id,
+		(SELECT MIN(fc.click_time) FROM 202_clicks AS fc WHERE fc.click_id = 2cr.click_id) AS first_click_time,
 		click_filtered,
 		landing_page_id,
 		click_cloaking,
@@ -300,9 +301,21 @@ $update_sql = "
 		2c.click_id='" . $mysql['click_id'] . "'
 		AND 2c.click_lead = 0
 ";
+// A click leaving its landing page for an offer takes the offer's
+// campaign. When the click is old enough for the attribution report
+// rollup to have summed it, the rewrite and its mark are one transaction
+// (RollupDirty::hotPathRewriteNeedsMark; AttributionRollup rule 2).
+$rollupMark = \Prosper202\Report\RollupDirty::hotPathRewriteNeedsMark($info_row['first_click_time'] ?? null);
+if ($rollupMark) {
+	$db->begin_transaction() or record_mysql_error($db);
+	\Prosper202\Report\RollupDirty::click(new \Prosper202\Database\Connection($db), (int) ($info_row['user_id'] ?? 0), (int) $mysql['click_id']);
+}
 // this function delays the sql, because UPDATING is very very slow
 //delay_sql($db, $update_sql);
 $click_result = $db->query($update_sql) or record_mysql_error($db);
+if ($rollupMark) {
+	$db->commit() or record_mysql_error($db);
+}
 
 $mysql['click_out'] = 1;
 

@@ -21,8 +21,22 @@ attribution worker (every minute; MySQL named lock, one at a time)
    2. model edits → re-queue the account's attributed conversions (rebuild_journey / model_changed)
    3. outbox      → per conversion, one transaction:
                      counted? → journey (stored or rebuilt) → credits for every active model
+                     mark the report rollup's hours the rows sit in dirty
                      delete the pending row only if its enqueue_seq is unchanged
+   4. rollup      → resolve changed clicks into dirty hours, re-sum dirty hours,
+                     sum hours that sealed (ended more than two hours ago)
+
+report (GET /attribution/reports/breakdown, the dashboard, exports)
+   └─ one statement per part: the rollup's summed, clean hours
+        UNION ALL the exact rows of everything else (range edges, dirty or
+        unsummed hours), guarded in the same snapshot; the full computation
+        when the rollup can serve none of it
 ```
+
+A cron job run against a database that needs an upgrade stops before doing
+anything, writes the reason (both versions and the page that upgrades it) to
+stderr and exits 1; on the web the same request still redirects to
+`202-config/upgrade.php`.
 
 Nothing on the conversion path knows the engine exists: a broken engine
 (worker not running, a table missing, a model with an invalid config) only
@@ -40,7 +54,9 @@ lets the outbox grow, and the backlog is processed once it is fixed.
 | `CreditCalculator` | Pure: credits in 1e-8 units summing to exactly 1, revenue in 1e-5 units summing to exactly the amount |
 | `AttributionStore` | Rewrites a conversion's journey, journey meta and credits |
 | `AttributionWorker` | The run described above |
-| `AttributionReports` | The reads behind the reports API |
+| `AttributionReports` | The reads behind the reports API; a breakdown reads the rollup where it can, and the full computation (`new AttributionReports($conn, false)`) is the reference it is tested against |
+| `AttributionRollup` | Sums the report rollup: hours as they seal, dirty hours again, changed clicks into hours, overrides kept in step |
+| `Prosper202\Report\RollupDirty` | The marks a writer of summed data leaves in its own transaction — outside the engine's namespace, so click and conversion paths write them the way they write the outbox |
 
 ## Tables
 
@@ -53,6 +69,11 @@ lets the outbox grow, and the backlog is processed once it is fixed.
 | `202_attribution_pending` | The outbox (conversion schema): `reason`, `enqueue_seq`, and the worker's `attempts`, `last_error`, `retry_at` |
 | `202_attribution_audit` | Model changes |
 | `202_attribution_exports` | Export jobs (the pipeline arrives with the rebuilt dashboard) |
+| `202_attribution_rollup` | The report rollup: `(user, part, dimension, model, grain, bucket, key)` → sums; hours and UTC days; no names (looked up when read) |
+| `202_attribution_rollup_state` | Per account: `built_through_hour` (every hour below it is summed) and the default the effective rows were summed under |
+| `202_attribution_rollup_overrides` | The per-campaign model overrides the effective rows were summed under |
+| `202_attribution_rollup_dirty` | Hour ranges whose sums are stale; a report computes them exactly |
+| `202_attribution_rollup_dirty_clicks` | Clicks rewritten after the fact, until the rollup turns them into hours; the account's reports are exact meanwhile |
 
 ## Failure handling
 
@@ -66,6 +87,12 @@ lets the outbox grow, and the backlog is processed once it is fixed.
   engine's failure.
 - A stored model definition that no longer validates is marked
   `invalid` with the reason; the other models keep computing.
+- The report rollup never answers differently from the full computation: an
+  hour it has not summed, or that a change has made dirty, is computed
+  exactly in the same statement. What changes is speed: after a campaign's
+  model override or the account default changes, every summed hour is
+  re-summed (minutes at a million conversions), and the reports compute in
+  full meanwhile.
 
 ## Honest limits
 

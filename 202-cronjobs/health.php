@@ -9,8 +9,8 @@
 declare(strict_types=1);
 
 // Require authentication for health endpoint
-include_once(str_repeat("../", 1) . '202-config/connect.php');
-include_once(str_repeat("../", 1) . '202-config/functions-auth.php');
+require_once __DIR__ . '/../202-config/connect.php';
+require_once __DIR__ . '/../202-config/functions-auth.php';
 
 // connect.php already starts the session on the non-AJAX path; guard against a duplicate start.
 if (session_status() !== PHP_SESSION_ACTIVE) {

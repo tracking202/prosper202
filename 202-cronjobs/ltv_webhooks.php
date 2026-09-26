@@ -25,7 +25,7 @@ declare(strict_types=1);
 
 error_reporting(E_ALL);
 
-include_once(str_repeat("../", 1) . '202-config/connect.php');
+require_once __DIR__ . '/../202-config/connect.php';
 
 use Prosper202\Database\Connection;
 use Prosper202\Ltv\MysqlWebhookRepository;
