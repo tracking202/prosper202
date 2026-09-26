@@ -33,6 +33,23 @@ use Prosper202\Database\Schema\TableRegistry;
  * purpose: UNIQUE admits any number of NULLs, so a NULL "account-wide"
  * would let duplicate account-wide rules in.
  *
+ * An encoding is versioned (plan §5.5): a device applies the document it
+ * fetched, and a postback arrives up to 48 days later (the 35-day conversion
+ * windows, Apple's delivery delay, and the SDK's 7-day bound on the age of
+ * the document it encodes with; SkanEncodingTimeline), so the report has to
+ * decode with every meaning a value had inside that horizon.
+ * 202_app_skan_encodings holds each encoding's CURRENT meaning, in force
+ * since `effective_at`; every edit and every delete first copies the meaning
+ * it replaces into 202_app_skan_encoding_history with the time it stopped
+ * applying (`retired_at`). The history is never edited and never deleted
+ * except by the user purge. An `(effective_at, retired_at)` pair is a
+ * half-open span, so a meaning replaced in the same second as it began
+ * applied at no instant. A history row also keeps the App Store id of the
+ * registration it belonged to (`app_id`, 0 for the account-wide set): the
+ * report decodes by app, because deleting a registration unlinks its
+ * postbacks and registering the app again gives it a new registration id,
+ * and both must still reach what the old encodings meant.
+ *
  * `app_key` is compared byte for byte (utf8mb4_bin): Android application
  * ids are case-sensitive, so com.Example.app and com.example.app are two
  * apps, and the table default collation would fold them into one UNIQUE
@@ -51,6 +68,7 @@ final class AppTables
             self::appRegistrations(),
             self::appPostbacks(),
             self::appSkanEncodings(),
+            self::appSkanEncodingHistory(),
         ];
     }
 
@@ -139,6 +157,7 @@ final class AppTables
                 `coarse_value` varchar(6) DEFAULT NULL,
                 `goal_id` int(10) unsigned NOT NULL,
                 `revenue_override` decimal(11,5) DEFAULT NULL,
+                `effective_at` int(10) unsigned NOT NULL,
                 `created_at` int(10) unsigned NOT NULL,
                 `updated_at` int(10) unsigned NOT NULL,
                 PRIMARY KEY (`encoding_id`),
@@ -147,6 +166,29 @@ final class AppTables
                 KEY `registration_id` (`registration_id`),
                 KEY `goal_id` (`goal_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='SKAdNetwork/AdAttributionKit conversion values: which value means which goal was reached, per registration (0 = account-wide)'"
+        );
+    }
+
+    public static function appSkanEncodingHistory(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::APP_SKAN_ENCODING_HISTORY,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::APP_SKAN_ENCODING_HISTORY . "` (
+                `history_id` int(10) unsigned NOT NULL AUTO_INCREMENT,
+                `encoding_id` int(10) unsigned NOT NULL,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `registration_id` int(10) unsigned NOT NULL DEFAULT '0',
+                `app_id` bigint(20) unsigned DEFAULT NULL,
+                `fine_value` tinyint(3) unsigned DEFAULT NULL,
+                `coarse_value` varchar(6) DEFAULT NULL,
+                `goal_id` int(10) unsigned NOT NULL,
+                `revenue_override` decimal(11,5) DEFAULT NULL,
+                `effective_at` int(10) unsigned NOT NULL,
+                `retired_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`history_id`),
+                KEY `user_retired` (`user_id`,`retired_at`),
+                KEY `encoding_id` (`encoding_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='What each SKAN encoding meant before an edit or delete, and until when (decoded, by app, within the 48-day postback horizon)'"
         );
     }
 }

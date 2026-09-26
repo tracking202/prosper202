@@ -39,6 +39,7 @@ final class AppDataPurge
     public const TABLE_ACTIONS = [
         '202_app_postbacks' => 'release',
         '202_app_skan_encodings' => 'delete',
+        '202_app_skan_encoding_history' => 'delete',
         '202_app_registrations' => 'delete',
     ];
 
@@ -67,6 +68,7 @@ final class AppDataPurge
             $userId
         );
         $this->run('DELETE FROM 202_app_skan_encodings WHERE user_id = ?', 'i', $userId);
+        $this->run('DELETE FROM 202_app_skan_encoding_history WHERE user_id = ?', 'i', $userId);
         $this->run('DELETE FROM 202_app_registrations WHERE user_id = ?', 'i', $userId);
     }
 

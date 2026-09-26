@@ -1245,12 +1245,15 @@ Android.
   the row is decoded under both versions; where they agree it counts, and
   where they disagree it is reported as `ambiguous_encoding` and credited to
   neither. The UI says so when an encoding is edited: the report is exact
-  again 35 days later.
+  again 35 days later. **As built the horizon is 48 days** — the windows,
+  Apple's delivery delay and the SDK's bound on the age of its document
+  (§5.8).
 - One evaluator specification, with cross-language vectors in
   `tests/fixtures/app-sdk-contract/goals/`, is run by the PHP and Swift test
   suites, so the two evaluators cannot drift.
 - Until the Swift evaluator lands, iOS encodings can name a goal whose trigger
-  is a plain event, which is exactly today's behaviour.
+  is a plain event, which is exactly today's behaviour. (Landed in PR 8; an
+  encoding now names any goal a device can reach, §5.8.)
 
 ### 5.6 UI, report, testing, SDK
 
@@ -1441,7 +1444,7 @@ is `GoalsController`; the CLI is `p202 goal …`.
   format's specification. PHP runs them through `GoalVectorsTest`; the
   Swift evaluator (PR 8) runs the same files.
 - **Deferred.**
-  - The encoding versioning with the 35-day horizon (§5.5) goes to PR 8,
+  - The encoding versioning with the postback horizon (§5.5) goes to PR 8 (built, §5.8; 48 days as built),
     with the evaluator that needs it.
   - `notify_traffic_source` is stored on campaign goals but nothing fires
     yet. The notification outbox goes to PR 5 (installs) and 4b (web
@@ -1504,6 +1507,219 @@ is `GoalsController`; the CLI is `p202 goal …`.
   then retired, is a `correction`, not a fresh `reached`. Keying the rule
   on the immediate predecessor alone would re-announce it, and a network
   would count the same outcome twice.
+
+### 5.8 As built: decisions (PR 8)
+
+What PR 8 settled for the iOS SDK (`sdk/ios-attribution/`), the server
+side it needed, and the PR 4 deferrals it picked up (§5.7: encoding
+versions with the postback horizon — 48 days as built, below; relaxing "an
+encoding names a plain goal").
+
+- **The Swift API.** `configure(endpoint:appToken:)` (the `schemaToken`
+  parameter is gone; the header was renamed in PR 3). `logEvent(_:properties:revenue:conversionTypes:)`
+  now **throws**: an event the server's rules would refuse (name, more than
+  32 properties, a property name, a string over 255 bytes, a non-finite
+  number) is `EventError` and records nothing, rather than a silent no-op
+  (CLAUDE.md #4); logging before `configure` is `SDKError.notConfigured`.
+  An event that reaches no encoded goal still returns nil. Nothing had
+  shipped the old signature (§7.5), so there is no compatibility shim.
+- **One evaluator specification, three implementations.**
+  `GoalDefinition.swift` and `GoalEvaluator.swift` are ports of the PHP
+  classes, run against `definitions.json` (valid, error paths and the
+  canonical form) and `evaluator.json` (whole, and one event at a time from
+  a state stored and read back as the device keeps it). JSON is parsed by
+  the SDK's own `JSONValue`, which keeps an integer apart from a fraction
+  as `json_decode()` does (`3` is a count, `3.0` is not; Foundation's
+  decoders cannot tell), reads `{}`/`[]` and `{"0":…}` the way PHP's
+  `array_is_list()` does, and trims and folds exactly the ASCII PHP's
+  `trim()`/`strtolower()` touch. Fourteen planted evaluator defects (window
+  end, clock choice, typed equality, `in`, ineligible prerequisites, tie
+  order, version by event clock, repeat cap, a cast count, rounding, rebase,
+  the parser's int/float, a blank name, a numeric-string comparator) each
+  fail the Swift vector suite. PR 4's later bounds on sums (rules 6, 8 and
+  9 of the vectors README: a repeating sum needs `max`, a summand counts
+  only within ±999999.99999, the sum is held in an `Int64` between −10^15
+  units and cap × gte, and the total reached is computed) were ported
+  when PR 8 took that fix in; fourteen planted defects in them each fail
+  the Swift suite — two of them (a floor at zero, and an unsaturated add
+  on a damaged stored state that traps the host app) only through
+  Swift-side tests added with the port, since the shared vectors never
+  take a sum below zero and back. Searching n one at a time instead of computing the total
+  gives the same answers by construction and is the one plant no vector
+  can see, so the code computes it and says why.
+- **The device is an install subject with no click.** Its install time is
+  the first `configure` on the device (persisted, token-independent like
+  the last fine value); SKAdNetwork never says which ad the app came from,
+  so there is no `click_at`, and a goal windowed `from: click` is
+  ineligible there (`no_click`), as for an organic install on the server.
+  There are no rebases on a device (re-evaluation is a server operation).
+- **Incremental evaluation from stored state, never re-ordered.** Each
+  event is evaluated with `continueFrom()` against the persisted
+  `EvaluationState`; its `received_at` (and `occurred_at`) is the device
+  clock but never earlier than the last event's, so a clock set back cannot
+  sort an event before one already folded in — the condition under which
+  incremental equals whole evaluation (the property the second vector run
+  checks). An event is evaluated under the schema the device holds when it
+  is logged: a new goal version reaching the device later does not
+  re-decide past events (the server does not either, §5.7).
+- **Events wait for the first schema.** Before any schema has arrived
+  (first launch, offline) events are queued — the install first, then up to
+  100 events — and evaluated with their own times when it does; the 101st
+  throws `pendingEventsFull` (keeping the earliest, which belong to the
+  first conversion window).
+- **What is set.** Only eligible outcomes count. When one event reaches
+  several encoded goals, the highest fine and the highest coarse value
+  among their encodings are set (the encode side's existing tie-break).
+  Coarse-only encodings keep the last fine value, per postback, as before.
+- **The schema document (iOS).** `events` (event name → values) is
+  replaced by `goals` — every goal an encoding names plus every
+  prerequisite its versions name (`specsWithPrerequisites()`, the server's
+  own evaluation set), every version with its `effective_at`, `starts_at`
+  / `ends_at`, and each definition **without `value`** — and `encodings`,
+  per goal, the fine/coarse value. Both are lists. The SDK refuses a
+  document that is not an iOS app's (platform, a canonical App Store key
+  by the `keys` vectors of `app-identity.json`, `app_id` agreeing) or whose
+  encodings/goal ids it cannot read; a definition it cannot parse disables
+  that version, as on the server.
+- **A shadowing bug fixed on the encode side.** Per goal and per kind the
+  registration's own encodings beat the account-wide ones — and an
+  account-wide value the registration has given its own meaning is not
+  served at all, because the report decodes that value through the
+  registration's encoding. The pre-PR 8 per-event map served it, so a
+  device could set a value the report then read as another event.
+- **Which goals an encoding may name.** Any live goal of the registration
+  or the account that a device can reach: everything the evaluator
+  supports, except a goal counting `within` `from: click`, or one waiting
+  in `after` (transitively) for such a goal — refused with a 422 on
+  `goal_id` naming the goal (`SkanEncodingRules`). The same rule guards
+  goal edits: a goal an encoding names, or one an encoded goal waits for,
+  cannot be edited into a click window. A goal no encoding depends on is
+  not held to it. `plain_event` stays in `/goals/validate` as information
+  (Setup › Mobile Apps still makes plain goals from event names).
+- **Encoding versions.** `202_app_skan_encodings` keeps each encoding's
+  current meaning with a read-only `effective_at`; every update and delete
+  first copies the meaning it replaces into `202_app_skan_encoding_history`
+  with `retired_at` (`SkanEncodingHistory`, one `INSERT … SELECT`), and so
+  does deleting a registration (which removes its encodings). The history
+  is deleted only by the user purge (`AppDataPurge`), and
+  `SkanEncodingHistoryWritersTest` holds the writer list. No transaction
+  wraps the copy and the replace — the Setup page already runs them inside
+  its own, and `begin_transaction()` inside one would commit it (#13) —
+  so the copy runs first: a replace that then fails leaves the same meaning
+  twice, which decodes as once. **Known limitation:** two concurrent
+  updates of one encoding can lose the intermediate meaning's (sub-second)
+  span.
+- **Meanings are kept by app, not by registration id.** Each history row
+  also records the App Store id of its registration (`app_id`, 0 for the
+  account-wide set), read by the same `INSERT … SELECT` from the
+  registration; the report keys current encodings by their registration's
+  app and every postback by its own `app_id`. Keyed by registration id (as
+  first built), deleting a registration broke both halves: its postbacks
+  lose their `registration_id` while the history was saved under that id,
+  so they decoded through the account-wide set; registering the app again
+  claims them under a new id, which still could not reach the history — a
+  trial the app had encoded was credited as whatever the account-wide set
+  said (Codex, PR 8 review). An app is also what a device's document
+  belongs to, so this is the key the question was always about. A
+  registration-scoped meaning whose app cannot be read (no iOS
+  registration behind a current encoding, a NULL `app_id` in the history)
+  is logged and matches no postback rather than counting as account-wide
+  (CLAUDE.md #11). The sweep for other paths: the user purge deletes the
+  history with the user's encodings and hands the postbacks to user 0, so
+  nothing of the old owner's should decode them for anyone; the claim is
+  the only other writer of `registration_id`, and nothing else reads the
+  history.
+- **The horizon: 48 days.** A postback received at R decodes under every
+  meaning its value had at any instant of [R − 48 days, R], resolved as
+  before (the app's own over the account-wide; fine never falls back to
+  coarse). One meaning (goal and revenue override) decodes it; two that
+  disagree count as `ambiguous_encoding`, credited to no goal; none — the
+  value had no meaning inside the horizon — takes the first meaning given
+  after R, so encodings added once postbacks arrive still read them (the
+  report's behaviour before versions; without it every new app's first
+  postbacks would be undecoded) and a value never given one is undecoded.
+  The horizon is the longest a document the device used can predate the
+  postback's arrival, three terms (`SkanEncodingTimeline::HORIZON_DAYS`):
+  - **35 days** of conversion windows (`CONVERSION_WINDOW_DAYS`): the third
+    closes on day 35 after the install or re-engagement.
+  - **6 days** of delivery delay (`DELIVERY_DELAY_DAYS`). SKAdNetwork 4
+    and AdAttributionKit send the first postback 24–48 hours after the
+    first window ends and the second and third 24–144 hours after theirs
+    end (Apple developer documentation, *Receiving postbacks in multiple
+    conversion windows*; AdAttributionKit keeps the same windows and
+    delays). The plan's first figure, 35 days, left this out: a device on
+    the pre-edit document that set the value on day 35 had its postback
+    delivered up to day 41, past the old horizon, and it was credited to
+    the new meaning instead of being counted ambiguous (Codex, PR 8
+    review).
+  - **7 days** of schema age (`SCHEMA_MAX_AGE_DAYS`), enforced in the SDK
+    rather than assumed. The SDK used its cached document for as long as
+    it had one — a device offline since before an edit kept setting the
+    old meaning's values, with no bound at all. For an install postback
+    the document cannot predate the install (the cache lives in the app's
+    container, which an uninstall removes), but a re-engagement's windows
+    start whenever the user comes back. So `P202Attribution.maxSchemaAge`
+    (7 days since the last successful fetch or 304, not configurable
+    because the server's horizon is built from it) is the oldest document
+    the SDK encodes with: an event logged while it holds only an older one
+    waits in the pending queue (as before the first schema, up to 100) and
+    is encoded with the next document that arrives; a relaunch does not
+    flush with the stale one either. A fetch time in the device's future
+    (the clock set back since) counts as unknown age, so not usable. The
+    opportunistic refresh interval is capped at half the age, so an online
+    device never ages out between two attempts. The cost, deliberate: a
+    build whose app token was rotated can no longer fetch, so its events
+    stop setting values 7 days after its last fetch (the SDK contract doc
+    says so), and every edit is ambiguous for 48 days rather than 35.
+    `SkanEncodingTimelineTest` reads the Swift constant, so the two cannot
+    drift apart. Why 7: long enough that a device offline for a weekend or
+    a trip still encodes, short enough that the ambiguity after an edit
+    grows by a week rather than a month.
+  - **Known limitations.** A postback Apple delivers later than its
+    documented delay (if a device offline at delivery time sends it later)
+    can decode under a later meaning; the horizon is the documented bound,
+    not a guarantee against a device that breaks it. And a coarse-only
+    update re-sends the postback's last fine value (so the fine value is
+    not downgraded): for the install postback that value was chosen after
+    the install, inside the bound, but for AdAttributionKit's re-engagement
+    postback it may have been chosen during an earlier re-engagement, under
+    a document older than the horizon.
+- **The report groups by decode segment, not by postback.** Rows are
+  grouped by `INTERVAL(received_at, breakpoints…)` — the effective and
+  retired times and each plus the horizon, where some decode can change —
+  and each segment is decoded once. `SkanEncodingTimelineTest` shows the
+  segment decode equals decoding every postback at its own time on random
+  dense timelines (the performance fix returns the same answer, §7.3).
+  `ambiguous_encoding` is per group; `data.totals` has no decode columns,
+  as before. Analyze › Mobile Apps does not show the new count yet (its app
+  view is PR 11); the API, the CLI (which renders it) and the notes do.
+- **Saying so.** Setup › Mobile Apps warns on a rule edit, with the date
+  the report is exact again (48 days on), naming the 7 days a device keeps
+  its document and the 41 a postback can take; a delete says the value
+  keeps decoding for 48 days. The API returns `effective_at` on every
+  encoding.
+- **`setCustomerId(_:signature:type:)`.** Validates and canonicalises the id
+  exactly as `CustomerId::canonical()` does and the signature's shape (64
+  hex, either case), throws `P202CustomerId.Invalid` otherwise, persists it
+  (token-independent) until `clearCustomerId()`, and exposes the wire
+  object `customer: {id, type, signature}` — `type` added to the plan's
+  `{id, signature}` because the signature covers `"<type>:<id>"` and the
+  server cannot verify without it. New vectors,
+  `tests/fixtures/app-sdk-contract/customer-id.json` (signatures computed
+  with Python's `hmac`), run by `CustomerIdVectorsTest` (PHP) and the Swift
+  suite. **No iOS request carries it yet:** SKAN is the iOS signal and the
+  schema fetch is a GET that must not carry a person's id, so it rides the
+  first iOS body route when one exists; nothing in §8 adds one.
+- **Verification.** The Swift toolchain (swift.org 6.0.3 for Ubuntu 24.04)
+  runs the SDK suite on Linux; StoreKit/AdAttributionKit calls compile out
+  there, so the framework hand-off itself is exercised only by the pure
+  `adAttributionKitDelivery` decision, as before. `tests/live/ios-sdk.sh`
+  runs every vector through the running server's `/goals/validate` and
+  `/goals/evaluate`, the encoding rules, the document, `p202 app schema`,
+  the Swift SDK's live suite against the instance (a funnel reaching the
+  encoded value), the versioned report (before / inside / after the horizon
+  and after a delete), the Setup page's warning, and a registration deleted
+  and made again whose postbacks keep decoding under its own encodings.
 
 ---
 
@@ -2185,7 +2401,7 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 | 5 | **Android intake:** install token, `MatchState`, installs and events endpoints, conversions through goals, traffic-source notify, pending-click cron | 1, 3, 4 |
 | 6 | **Play Integrity** (opt-in modes) | 5 |
 | 7 | **Android SDK** (installs, events, customer id, integrity) | 5, 6 |
-| 8 | **iOS SDK:** header rename, `setCustomerId`, on-device goal evaluator on the shared vectors | 3, 4 |
+| 8 | **iOS SDK:** header rename, `setCustomerId`, on-device goal evaluator on the shared vectors. **Built; `tests/live/ios-sdk.sh` (the Swift SDK's live suite against the instance included; `app-core.sh`, `goals.sh`, `setup-mobile-apps.sh`, `analyze-mobile-apps.sh` re-run), Swift vectors in `GoalVectorsTests`, encoding versions with the 48-day horizon, kept by app. Decisions in §5.8.** | 3, 4 |
 | 9 | **MTA engine:** schema rewrite and rungs, worker, models, credits, reports API; v2 and dead code deleted | 1, 2 |
 | 10 | **MTA UI and exports:** dashboard on the v2 shell, comparison, journey metrics, SSRF-safe webhooks | 9 |
 | 11 | **Mobile Apps UI:** Android pages, link builder, goal editor and funnel, cross-platform report | 3–5 |

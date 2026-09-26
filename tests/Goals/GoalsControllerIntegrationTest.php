@@ -143,7 +143,7 @@ final class GoalsControllerIntegrationTest extends TestCase
         $this->api()->detachCampaign($app, 8);
     }
 
-    public function testAnSkanEncodingNamesAPlainGoalOfItsRegistrationOrTheAccount(): void
+    public function testAnSkanEncodingNamesADeviceReachableGoalOfItsRegistrationOrTheAccount(): void
     {
         $this->registration(3);
         $this->registration(4);
@@ -151,7 +151,15 @@ final class GoalsControllerIntegrationTest extends TestCase
         $mine = $this->api()->create(['scope' => 'registration', 'scope_id' => 3, 'definition' => ['name' => 'purchase', 'trigger' => ['event' => 'purchase']]])['data']['goal_id'];
         $theirs = $this->api()->create(['scope' => 'registration', 'scope_id' => 4, 'definition' => ['name' => 'purchase', 'trigger' => ['event' => 'purchase']]])['data']['goal_id'];
         $account = $this->api()->create(['scope' => 'account', 'definition' => ['name' => 'whale', 'trigger' => ['event' => 'whale'], 'value' => ['type' => 'fixed', 'amount' => 20]]])['data']['goal_id'];
-        $fancy = $this->api()->create(['scope' => 'registration', 'scope_id' => 3, 'definition' => ['name' => 'Level 3', 'trigger' => ['event' => 'level', 'where' => [['prop' => 'level', 'op' => 'gte', 'value' => 3]]]]])['data']['goal_id'];
+        // Any goal the device can evaluate (PR 8): predicates, counts, an
+        // `after` chain, an install window.
+        $tutorial = $this->api()->create(['scope' => 'registration', 'scope_id' => 3, 'definition' => ['name' => 'Tutorial', 'trigger' => ['event' => 'tutorial']]])['data']['goal_id'];
+        $fancy = $this->api()->create(['scope' => 'registration', 'scope_id' => 3, 'definition' => ['name' => 'Level 3', 'trigger' => ['event' => 'level', 'where' => [['prop' => 'level', 'op' => 'gte', 'value' => 3]]],
+            'threshold' => ['count' => 2], 'after' => [$tutorial], 'within' => ['days' => 7, 'from' => 'install']]])['data']['goal_id'];
+        // What a device can never reach: a click window (SKAdNetwork never
+        // says which click), directly or through `after`.
+        $fromClick = $this->api()->create(['scope' => 'registration', 'scope_id' => 3, 'definition' => ['name' => 'Fast', 'trigger' => ['event' => 'buy'], 'within' => ['days' => 1, 'from' => 'click']]])['data']['goal_id'];
+        $afterClick = $this->api()->create(['scope' => 'registration', 'scope_id' => 3, 'definition' => ['name' => 'Then', 'trigger' => ['event' => 'then'], 'after' => [$fromClick]]])['data']['goal_id'];
 
         $enc = $encodings->create(['registration_id' => 3, 'fine_value' => 3, 'goal_id' => $mine, 'revenue_override' => '4.99'])['data'];
         self::assertSame($mine, (int) $enc['goal_id']);
@@ -160,14 +168,25 @@ final class GoalsControllerIntegrationTest extends TestCase
 
         self::assertArrayHasKey('goal_id', self::fieldErrors(fn () => $encodings->create(['registration_id' => 3, 'fine_value' => 5, 'goal_id' => $theirs])), 'another app\'s goal');
         self::assertArrayHasKey('goal_id', self::fieldErrors(fn () => $encodings->create(['registration_id' => 0, 'fine_value' => 5, 'goal_id' => $mine])), 'an account-wide encoding names an account goal');
-        self::assertArrayHasKey('goal_id', self::fieldErrors(fn () => $encodings->create(['registration_id' => 3, 'fine_value' => 5, 'goal_id' => $fancy])), 'not a plain event goal');
+        $fancyEncoding = $encodings->create(['registration_id' => 3, 'fine_value' => 20, 'goal_id' => $fancy])['data'];
+        self::assertSame($fancy, (int) $fancyEncoding['goal_id'], 'a funnel goal can be encoded now that the device evaluates it');
+        self::assertStringContainsString('from the click', self::fieldErrors(fn () => $encodings->create(['registration_id' => 3, 'fine_value' => 5, 'goal_id' => $fromClick]))['goal_id'] ?? '');
+        self::assertStringContainsString('waits for goal ' . $fromClick, self::fieldErrors(fn () => $encodings->create(['registration_id' => 3, 'fine_value' => 5, 'goal_id' => $afterClick]))['goal_id'] ?? '');
+        self::assertArrayHasKey('goal_id', self::fieldErrors(fn () => $encodings->update((int) $enc['encoding_id'], ['goal_id' => $fromClick])), 'and not by an update either');
         self::assertArrayHasKey('goal_id', self::fieldErrors(fn () => $encodings->create(['registration_id' => 3, 'fine_value' => 5, 'goal_id' => (string) $mine . '.0'])), 'refused raw, not cast');
         self::assertArrayHasKey('event_name', self::fieldErrors(fn () => $encodings->create(['registration_id' => 3, 'fine_value' => 5, 'event_name' => 'purchase', 'revenue' => 1])),
             'the old shape is refused by name');
         self::assertArrayHasKey('revenue_override', self::fieldErrors(fn () => $encodings->create(['registration_id' => 3, 'fine_value' => 5, 'goal_id' => $mine, 'revenue_override' => '1.234567'])));
 
-        // The goal it names cannot stop being plain, or be archived, under it.
-        self::assertArrayHasKey('definition', self::fieldErrors(fn () => $this->api()->update($mine, ['definition' => ['name' => 'purchase', 'trigger' => ['event' => 'purchase'], 'threshold' => ['count' => 2]]])));
+        // The goal it names can become anything a device still reaches...
+        $this->api()->update($mine, ['definition' => ['name' => 'purchase', 'trigger' => ['event' => 'purchase'], 'threshold' => ['count' => 2]]]);
+        // ...but not something it cannot, and neither can a goal it waits for.
+        self::assertStringContainsString('from the click', self::fieldErrors(fn () => $this->api()->update($mine, ['definition' => ['name' => 'purchase', 'trigger' => ['event' => 'purchase'], 'within' => ['days' => 3, 'from' => 'click']]]))['definition'] ?? '');
+        $why = self::fieldErrors(fn () => $this->api()->update($tutorial, ['definition' => ['name' => 'Tutorial', 'trigger' => ['event' => 'tutorial'], 'within' => ['days' => 3, 'from' => 'click']]]))['definition'] ?? '';
+        self::assertStringContainsString('name goal ' . $fancy . ', which waits for this one', $why);
+        self::assertStringContainsString('SKAN encodings ' . $fancyEncoding['encoding_id'], $why);
+        // A goal no encoding depends on is not held to it.
+        $this->api()->update($afterClick, ['definition' => ['name' => 'Then', 'trigger' => ['event' => 'then'], 'within' => ['days' => 2, 'from' => 'click']]]);
         try {
             $this->api()->delete($mine);
             self::fail('archived a goal an encoding names');

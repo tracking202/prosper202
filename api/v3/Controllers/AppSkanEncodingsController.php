@@ -9,9 +9,10 @@ use Api\V3\Controller;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Apps\Apple\SkanEncodingHistory;
+use Api\V3\Apps\Apple\SkanEncodingRules;
 use Prosper202\Goals\GoalDefinition;
 use Prosper202\Goals\GoalScope;
-use Prosper202\Goals\InvalidGoalDefinition;
 
 /**
  * SKAN encodings: which conversion value means which goal was reached
@@ -32,8 +33,21 @@ use Prosper202\Goals\InvalidGoalDefinition;
  * Android, and an encoding for an app nobody registered would decode
  * nothing until someone did. Its goal must be the caller's, live, and owned
  * by that registration or by the account (an account-wide encoding names an
- * account goal); and until the on-device evaluator ships (PR 8) the goal
- * must be a plain event goal, because the iOS SDK encodes by event name.
+ * account goal). The iOS SDK evaluates the goal itself, on the device
+ * (plan §5.5), so any goal will do — except one that, or whose `after`
+ * chain, counts from the click: SKAdNetwork never tells an app which click
+ * it came from, so on a device such a goal is never reached (no_click) and
+ * its value would never be set. SkanEncodingRules::deviceUnreachable()
+ * says which; GoalsController asks the same question before an edit.
+ *
+ * Encodings are versioned (SkanEncodingTimeline): a device may still apply
+ * the document it fetched before an edit for as long as a postback can take
+ * to arrive, so every update and delete first copies the meaning it
+ * replaces into 202_app_skan_encoding_history, and the row's `effective_at`
+ * says since when its current meaning applies. The report decodes a
+ * postback under every meaning inside the horizon (48 days:
+ * SkanEncodingTimeline::HORIZON_DAYS) and reports a disagreement as
+ * ambiguous_encoding.
  */
 class AppSkanEncodingsController extends Controller
 {
@@ -55,6 +69,9 @@ class AppSkanEncodingsController extends Controller
             'coarse_value'     => ['type' => 's', 'max_length' => 6, 'allowed' => ['low', 'medium', 'high']],
             'goal_id'          => ['type' => 'i', 'required' => true],
             'revenue_override' => ['type' => 'd'],
+            // Since when the current meaning applies; set on every write,
+            // never by the caller (assertRawBody() refuses it).
+            'effective_at'     => ['type' => 'i', 'readonly' => true],
         ];
     }
 
@@ -138,6 +155,7 @@ class AppSkanEncodingsController extends Controller
         $this->assertNoDuplicateEncoding($payload);
         $now = time();
         return [
+            'effective_at' => ['type' => 'i', 'value' => $now],
             'created_at' => ['type' => 'i', 'value' => $now],
             'updated_at' => ['type' => 'i', 'value' => $now],
         ];
@@ -212,8 +230,16 @@ class AppSkanEncodingsController extends Controller
         }
         $this->assertNoDuplicateEncoding($effective, excludeId: (int)$id);
 
+        // Last, once the update is known to be valid: keep the meaning it
+        // replaces. If the UPDATE then fails, the history holds a copy of a
+        // meaning that is still current — the same meaning twice, which
+        // decodes exactly as once.
+        $now = time();
+        (new SkanEncodingHistory($this->db))->retireEncoding($this->userId, (int)$id, $now);
+
         $extras = [
-            'updated_at' => ['type' => 'i', 'value' => time()],
+            'effective_at' => ['type' => 'i', 'value' => $now],
+            'updated_at' => ['type' => 'i', 'value' => $now],
         ];
         if (isset($this->pendingClears['fine_value'])) {
             $extras['fine_value'] = ['type' => 'i', 'value' => null];
@@ -225,6 +251,14 @@ class AppSkanEncodingsController extends Controller
             $extras['revenue_override'] = ['type' => 'd', 'value' => null];
         }
         return $extras;
+    }
+
+    #[\Override]
+    protected function beforeDelete(int|string $id): void
+    {
+        // A deleted encoding stays in the history: a postback set under it
+        // can still arrive for the length of the horizon.
+        (new SkanEncodingHistory($this->db))->retireEncoding($this->userId, (int)$id, time());
     }
 
     /**
@@ -261,8 +295,8 @@ class AppSkanEncodingsController extends Controller
     /**
      * The goal is the caller's, live, owned by the encoding's registration
      * or by the account (and by the account when the encoding is
-     * account-wide), and a plain event goal. Answered as a 422 on goal_id:
-     * it is the value that is wrong.
+     * account-wide), and one a device can reach. Answered as a 422 on
+     * goal_id: it is the value that is wrong.
      */
     private function assertGoalFits(int $goalId, int $registrationId): void
     {
@@ -298,16 +332,9 @@ class AppSkanEncodingsController extends Controller
                     : 'An account-wide encoding (registration_id 0) names an account goal; goal ' . $goalId . ' belongs to a ' . $scope . '.',
             ]);
         }
-        try {
-            $definition = GoalDefinition::fromJson((string)$goal['definition'], $goalId);
-        } catch (InvalidGoalDefinition) {
-            throw new ValidationException('Invalid goal_id', ['goal_id' => 'Goal ' . $goalId . '\'s current definition is invalid; fix the goal first.']);
-        }
-        if (!$definition->isPlainEvent()) {
-            throw new ValidationException('Invalid goal_id', [
-                'goal_id' => 'Goal ' . $goalId . ' is not a plain event goal (one event, no where, count 1, no after, no within, repeat once). '
-                    . 'Until the on-device evaluator ships, the iOS SDK sets a conversion value by event name, so an encoding can name only such a goal.',
-            ]);
+        $why = (new SkanEncodingRules($this->db, $this->userId))->deviceUnreachable($goalId);
+        if ($why !== null) {
+            throw new ValidationException('Invalid goal_id', ['goal_id' => $why]);
         }
     }
 

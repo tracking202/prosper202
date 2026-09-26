@@ -118,6 +118,7 @@ module.exports = {
     db.truncate([
       '202_app_registrations',
       '202_app_skan_encodings',
+      '202_app_skan_encoding_history',
       '202_app_postbacks',
       '202_goals',
       '202_goal_versions',
@@ -138,8 +139,8 @@ module.exports = {
       + 'SELECT goal_id, 1, \'{"name":"purchase","trigger":{"event":"purchase","where":[]},"threshold":{"count":1},'
       + '"after":[],"within":null,"repeat":{"mode":"once"},"value":{"type":"none"}}\', ' + now + ', ' + now + ' FROM 202_goals');
     db.write('INSERT INTO 202_app_skan_encodings '
-      + '(user_id, registration_id, fine_value, coarse_value, goal_id, revenue_override, created_at, updated_at) '
-      + 'SELECT 1, g.scope_id, 3, NULL, g.goal_id, 4.99000, ' + now + ', ' + now
+      + '(user_id, registration_id, fine_value, coarse_value, goal_id, revenue_override, effective_at, created_at, updated_at) '
+      + 'SELECT 1, g.scope_id, 3, NULL, g.goal_id, 4.99000, ' + now + ', ' + now + ', ' + now
       + " FROM 202_goals g WHERE g.name = 'purchase'");
 
     // Today, so every preset from Today upwards has something; and eight days

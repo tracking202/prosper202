@@ -1874,7 +1874,7 @@ paths:
                     properties:
                       valid: {type: boolean}
                       definition: {$ref: "#/components/schemas/GoalDefinition"}
-                      plain_event: {type: boolean, description: "Whether an SKAN encoding may name it"}
+                      plain_event: {type: boolean, description: "One event, no conditions, count 1, no after, no window, repeat once: the goal Setup › Mobile Apps makes from an event name"}
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -1947,8 +1947,10 @@ paths:
         (`version_created: true`), effective from now: events received from
         now on are evaluated under it, and conversions already recorded keep
         the version that produced them until a re-evaluation. An archived
-        goal is a `409`; a goal an SKAN encoding names must stay a plain
-        event goal (`422`).
+        goal is a `409`. A goal an SKAN encoding names, or one an encoded
+        goal waits for in `after`, cannot be made to count `within` from the
+        click (`422`): the iOS SDK evaluates encoded goals on the device,
+        which has no click.
       operationId: updateGoal
       requestBody:
         required: true
@@ -2868,11 +2870,20 @@ paths:
         other value is `422`: an encoding for an app nobody registered would
         decode nothing. The goal must be live, the caller's, owned by that
         registration or by the account (an account-wide encoding names an
-        account goal), and — until the on-device evaluator ships — a plain
-        event goal, because the iOS SDK encodes by event name. The old
-        fields `event_name` and `revenue` are refused by name. The same rows
-        drive the report's decode (by the goal's name) and the schema served
-        to devices (by the goal's event). Honors `Idempotency-Key`.
+        account goal), and one a device can reach: the iOS SDK evaluates
+        the goal on the device, which never learns its click, so a goal that
+        counts `within` from the click — or waits in `after` for one that
+        does — is `422`. The old fields `event_name` and `revenue` are
+        refused by name. The same rows drive the report's decode (by the
+        goal's name) and the schema served to devices (the goal and the
+        values). Every update and delete keeps the meaning it replaces: a
+        device may apply the schema it fetched before the edit for as long
+        as a postback takes to arrive, so for 48 days (35 of conversion
+        windows, up to 6 of Apple's delivery delay, and the SDK's 7-day
+        limit on the age of the document it encodes with) the report counts
+        a value whose meanings disagree as `ambiguous_encoding`.
+        `effective_at` says since when the current meaning applies. Honors
+        `Idempotency-Key`.
       operationId: createAppSkanEncoding
       requestBody:
         required: true
@@ -3031,11 +3042,16 @@ paths:
       summary: Aggregate postback report with SKAN decoding
       description: |
         Groups postbacks by `group_by` and decodes winning postbacks'
-        conversion values through the caller's SKAN encodings (the claiming
-        registration's own over the account-wide ones, `registration_id = 0`;
-        a postback no registration claims decodes through the account-wide
-        set only; a fine value with no encoding stays undecoded and never
-        falls back to a coarse one). Days are UTC, oldest first.
+        conversion values through the caller's SKAN encodings (those of the
+        postback's app, by App Store id — a deleted registration's included,
+        so re-registering an app keeps what it encoded — over the
+        account-wide ones, `registration_id = 0`; a fine value with no
+        encoding stays undecoded and never falls back to a coarse one). A
+        postback decodes under every meaning its value had in the 48 days
+        before it arrived: one meaning decodes
+        it, two that disagree make it `ambiguous_encoding` (credited to no
+        goal), and none leaves it to the first meaning given afterwards, or
+        undecoded. Days are UTC, oldest first.
 
         **Trust default:** the receiver is public, so without an explicit
         `signature` filter every headline metric — installs, losses,
@@ -3169,10 +3185,13 @@ paths:
         string, which access logs would capture). The token is an identifier,
         not a secret — it ships inside every copy of the app.
 
-        Platform-shaped: an iOS registration gets the ENCODE view of its
-        SKAN encodings (`events`, always a JSON object, even when empty); an
-        Android registration gets its identity (and, with the Android intake,
-        its SDK settings). Revenue is never served. `ETag` equals
+        Platform-shaped: an iOS registration gets an evaluation-only view of
+        the goals its SKAN encodings name (with every prerequisite, every
+        version, and no `value`) and the encodings themselves, per goal —
+        the SDK evaluates the goals on the device and sets the value of the
+        goals an event reaches. Both are always JSON lists. An Android
+        registration gets its identity (and, with the Android intake, its
+        SDK settings). Revenue is never served. `ETag` equals
         `schema_version` and changes exactly when the document's behaviour
         changes; `If-None-Match` answers `304`. Methods other than GET are
         `405`. Rate-limited per peer address.
@@ -5200,6 +5219,10 @@ components:
           type: string
           nullable: true
           description: Decimal string (5 places), e.g. `"49.99000"`; null = the goal's own value
+        effective_at:
+          type: integer
+          readOnly: true
+          description: Unix time the current meaning started to apply (set by every create and update). After an update the report is exact again 48 days later.
         user_id:
           type: integer
         version:
@@ -5225,7 +5248,7 @@ components:
           enum: [low, medium, high]
         goal_id:
           type: integer
-          description: A live plain event goal of that registration, or of the account (`GET /goals`)
+          description: A live goal of that registration, or of the account (`GET /goals`), that a device can reach — not one counting `within` from the click, nor one waiting in `after` for such a goal
         revenue_override:
           type: number
           nullable: true
@@ -5677,6 +5700,9 @@ components:
         undecoded:
           type: integer
           description: Value present but no matching encoding
+        ambiguous_encoding:
+          type: integer
+          description: Value whose encoding changed within the 48 days before the postback arrived, with meanings that disagree (another goal or revenue override); credited to no goal
         null_conversion_values:
           type: integer
           description: Value withheld by Apple's privacy tier
@@ -5877,13 +5903,43 @@ components:
               description: iOS only — the App Store id as a number
             schema_version:
               type: string
-              description: Content hash of the mapping; also the ETag (unquoted)
-            events:
-              type: object
-              description: iOS only — event name → values to set when the app reports that event; always an object
-              additionalProperties:
+              description: Content hash of the document; also the ETag (unquoted)
+            goals:
+              type: array
+              description: iOS only — every goal an encoding names and every goal those wait for in `after`, as an evaluation-only view (definitions without `value`); ordered by goal id
+              items:
                 type: object
                 properties:
+                  goal_id:
+                    type: integer
+                  starts_at:
+                    type: integer
+                    description: Events received before this are not evaluated under the goal
+                  ends_at:
+                    type: integer
+                    nullable: true
+                    description: Events received at or after this are not (the goal was archived then)
+                  versions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        version:
+                          type: integer
+                        effective_at:
+                          type: integer
+                          description: An event is evaluated under the newest version effective when it was received
+                        definition:
+                          type: object
+                          description: The stored goal definition without `value` (see GoalDefinition)
+            encodings:
+              type: array
+              description: iOS only — per goal, the values to set when a device reaches it; ordered by goal id
+              items:
+                type: object
+                properties:
+                  goal_id:
+                    type: integer
                   fine_value:
                     type: integer
                     nullable: true

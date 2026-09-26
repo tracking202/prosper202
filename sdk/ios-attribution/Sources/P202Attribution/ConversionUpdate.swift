@@ -112,32 +112,45 @@ public struct ConversionUpdate: Equatable, Sendable {
         )
     }
 
-    /// Resolve an event name against the schema. Returns nil for an event
-    /// the schema does not map — the caller must treat that as a no-op, not
-    /// an update: sending anything for an unmapped event would overwrite a
-    /// meaningful value with a guess.
+    /// What to set for the goals one event reached, or nil when none of
+    /// them has an encoding — the caller must treat that as a no-op, not an
+    /// update: sending anything else would overwrite a meaningful value
+    /// with a guess.
+    ///
+    /// Only eligible outcomes count (an outcome recorded as `no_click` was
+    /// not reached). When an event reaches several encoded goals, the
+    /// highest fine value and the highest coarse value among them win — the
+    /// SKAN reading of a higher value as the more valuable outcome, and the
+    /// tie-break the server's encode side has always used.
     public static func resolve(
-        event: String,
+        outcomes: [GoalOutcome],
         in schema: P202AttributionSchema,
         lastFineValue: Int?
     ) -> ConversionUpdate? {
-        guard let mapping = schema.events[event] else {
+        var fine: Int?
+        var coarse: P202AttributionSchema.CoarseValue?
+        var mapped = false
+        for outcome in outcomes where outcome.isEligible {
+            guard let mapping = schema.encodings[outcome.goalId] else {
+                continue
+            }
+            mapped = true
+            if let f = mapping.fineValue, fine == nil || f > fine! {
+                fine = f
+            }
+            if let c = mapping.coarseValue, coarse == nil || c.rank > coarse!.rank {
+                coarse = c
+            }
+        }
+        guard mapped else {
             return nil
         }
-        if let fine = mapping.fineValue {
-            return ConversionUpdate(
-                fineValue: clamp(fine),
-                coarseValue: mapping.coarseValue,
-                usedFineFallback: false
-            )
+        if let fine {
+            return ConversionUpdate(fineValue: clamp(fine), coarseValue: coarse, usedFineFallback: false)
         }
-        // Coarse-only mapping: keep whatever fine value was last reported
-        // so the coarse update cannot regress it.
-        return ConversionUpdate(
-            fineValue: clamp(lastFineValue ?? 0),
-            coarseValue: mapping.coarseValue,
-            usedFineFallback: true
-        )
+        // Coarse-only: keep whatever fine value was last reported so the
+        // coarse update cannot regress it.
+        return ConversionUpdate(fineValue: clamp(lastFineValue ?? 0), coarseValue: coarse, usedFineFallback: true)
     }
 
     /// Fine values are 6 bits in both frameworks; the server validates its
