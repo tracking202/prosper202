@@ -77,6 +77,7 @@ bad()  { FAIL=$((FAIL+1)); printf '  \033[31mFAIL\033[0m %s\n' "$1"; }
 eq()   { if [ "$1" = "$2" ]; then ok "$3"; else bad "$3 (got '$1' want '$2')"; fi; }
 has()  { if grep -qF -- "$2" "$1"; then ok "$3"; else bad "$3"; fi; }
 hasnt(){ if grep -qF -- "$2" "$1"; then bad "$3"; else ok "$3"; fi; }
+ne()   { if [ "$1" != "$2" ]; then ok "$3"; else bad "$3 (both '$1')"; fi; }
 
 # api METHOD PATH [JSON-BODY] — as the operator; body in $OUT/body, status printed.
 api() {
@@ -150,6 +151,7 @@ DELETE FROM 202_clicks WHERE aff_campaign_id IN (SELECT aff_campaign_id FROM 202
 DELETE FROM 202_trackers WHERE aff_campaign_id IN (SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_name LIKE 'android-pass%');
 DELETE FROM 202_ppc_account_pixels WHERE ppc_account_id IN (SELECT ppc_account_id FROM 202_ppc_accounts WHERE ppc_account_name = 'android-pass');
 DELETE FROM 202_ppc_accounts WHERE ppc_account_name = 'android-pass';
+DELETE FROM 202_landing_pages WHERE landing_page_nickname = 'android-pass-lp';
 DELETE FROM 202_aff_campaigns WHERE aff_campaign_name LIKE 'android-pass%';
 TRUNCATE 202_goals; TRUNCATE 202_goal_versions; TRUNCATE 202_campaign_goals; TRUNCATE 202_goal_subjects;
 TRUNCATE 202_goal_events; TRUNCATE 202_goal_progress; TRUNCATE 202_goal_outcomes;
@@ -230,6 +232,61 @@ eq "$(api GET "/apps/$R/install-token?click_id=$C1")" 200 "the operator's instal
 eq "$(field "d['data']['install_token']")" "$TOK1" "is the token the redirect signed (one key)"
 eq "$(api GET "/apps/$R/install-token?click_id=$C1.0")" 422 "a click id is read raw"
 eq "$(api GET "/apps/$R/install-token?click_id=99999999")" 404 "and must be the caller's click"
+
+# ─────────────────────────────────────────────────────────────────────
+say "the landing-page path signs the visitor's own click, never one a cookie only names"
+# lp.php takes its click id from tracking202subid_a_<campaign>, a cookie any
+# client can set. A token is only granted for the click this browser was
+# given a proof for (the httponly tracking202itok cookies record.php sets
+# beside the click cookie), so a forged click cookie names $C1 and gets an
+# empty token (CLAUDE.md #16). Cookies are sent by hand: the tracker sets
+# them Secure, and this pass speaks plain http.
+LP_PUBLIC=$((RANDOM * 1000 + RANDOM % 1000 + 5000000))
+Q "INSERT INTO 202_landing_pages SET user_id=$OWNER, landing_page_id_public=$LP_PUBLIC, aff_campaign_id=$CAMP,
+   landing_page_nickname='android-pass-lp', landing_page_url='http://lp.example/', landing_page_time=UNIX_TIMESTAMP(), landing_page_type=0"
+# cookie_of HEADERS NAME — the value a Set-Cookie line gives NAME ('' if none).
+cookie_of() {
+    python3 -c "
+import sys
+for l in open(sys.argv[1]):
+    if l.lower().startswith('set-cookie:'):
+        kv = l.split(':', 1)[1].strip().split(';', 1)[0]
+        k, _, v = kv.partition('=')
+        if k == sys.argv[2]:
+            print(v)
+            break" "$1" "$2"
+}
+# lp HEADERS COOKIE — the landing page's outbound click, as a browser sends it.
+lp() {
+    curl -s -o /dev/null -D "$1" -A "$UA" -H "Cookie: $2" -H 'Referer: http://lp.example/' \
+        "$BASE/tracking202/redirect/lp.php?lpip=$LP_PUBLIC"
+}
+before=$(Q "SELECT COALESCE(MAX(click_id),0) FROM 202_clicks")
+curl -s -o /dev/null -D "$OUT/hlp" -A "$UA" -H 'Referer: http://lp.example/' "$BASE/tracking202/static/record.php?lpip=$LP_PUBLIC"
+CL=$(Q "SELECT COALESCE(MAX(click_id),0) FROM 202_clicks")
+ne "$CL" "$before" "the landing page's beacon recorded a click ($CL)"
+eq "$(cookie_of "$OUT/hlp" "tracking202subid_a_$CAMP")" "$CL" "and set the click cookie"
+PROOF=$(cookie_of "$OUT/hlp" "tracking202itok_a_$CAMP")
+eq "$(printf '%s' "$PROOF" | grep -cE "^$CL\.[A-Za-z0-9_-]{16}$")" 1 "beside it, the proof: that click's token"
+grep -i "^set-cookie: tracking202itok_a_$CAMP=" "$OUT/hlp" | grep -qi 'httponly' && ok "httponly: no script reads or writes it" || bad "the proof cookie is not httponly"
+eq "$(cookie_of "$OUT/hlp" tracking202itok)" "$PROOF" "and the general proof beside the general click cookie"
+
+lp "$OUT/hlp1" "tracking202subid_a_$CAMP=$CL; tracking202itok_a_$CAMP=$PROOF"
+eq "$(referrer_of "$OUT/hlp1")" "p202=$PROOF" "the visitor's own click: lp.php signs it into the store link"
+eq "$(api GET "/apps/$R/install-token?click_id=$CL")" 200 "the operator's read of that click's token"
+eq "$(field "d['data']['install_token']")" "$PROOF" "is the token lp.php wrote"
+
+lp "$OUT/hlp2" "tracking202subid_a_$CAMP=$C1"
+eq "$(referrer_of "$OUT/hlp2")" "p202=" "a forged click cookie naming another visitor's click ($C1): the token is empty"
+hasnt "$OUT/hlp2" "p202%3D$C1." "and no token for $C1 anywhere in the answer"
+hasnt "$OUT/hlp2" "$TOK1" "not the token dl.php gave that click's visitor"
+lp "$OUT/hlp3" "tracking202subid_a_$CAMP=$C1; tracking202itok_a_$CAMP=$PROOF; tracking202itok=$PROOF"
+eq "$(referrer_of "$OUT/hlp3")" "p202=" "with this browser's own proof beside it: still empty (a proof names its own click)"
+FORGED="$C1.$(printf 'A%.0s' $(seq 16))"
+lp "$OUT/hlp4" "tracking202subid_a_$CAMP=$C1; tracking202itok_a_$CAMP=$FORGED"
+eq "$(referrer_of "$OUT/hlp4")" "p202=" "with a proof for $C1 whose signature is guessed: empty"
+lp "$OUT/hlp5" "tracking202subid_a_$CAMP=$C1; tracking202subid=$C1"
+eq "$(referrer_of "$OUT/hlp5")" "p202=" "every click cookie forged, no proof: empty"
 
 # ─────────────────────────────────────────────────────────────────────
 say "an attributed install is the install goal's conversion on its click"

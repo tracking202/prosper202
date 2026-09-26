@@ -45,11 +45,10 @@ final class InstallTokenExpandTest extends TestCase
         $start = strpos($src, 'function replaceTokens(');
         self::assertIsInt($start);
         $body = substr($src, $start, (int) strpos($src, "\n}\n", $start) - $start);
-        $token = strpos($body, "p202InstallToken(\$tokens['subid'])");
+        $token = strpos($body, "p202ProvenInstallToken(\$tokens['subid'])");
         $encode = strpos($body, 'array_map(rawurlencode202(...), $tokens)');
-        self::assertIsInt($token, 'replaceTokens() expands the token from the subid');
+        self::assertIsInt($token, 'replaceTokens() expands the token from the subid, through the proof check');
         self::assertIsInt($encode);
         self::assertLessThan($encode, $token, 'before the tokens are encoded');
-        self::assertMatchesRegularExpression('/function p202InstallToken\(\$clickId\): string\s*\{.*?InstallToken::expand\(\$clickId,/s', $src);
     }
 }
