@@ -323,6 +323,34 @@ function info_top(): void
 		return $targetPath;
 	}
 
+	/**
+	 * Where an update may write a file from its archive, or false: the entry
+	 * confined by resolve_update_target_path() (no `..`, no absolute path,
+	 * its directory resolving inside the base), and the file itself never a
+	 * symlink — an existing one or a dangling one, which file_exists() calls
+	 * absent and fopen() would follow — nor a path that resolves outside.
+	 *
+	 * One implementation for the three places an update writes files
+	 * (auto-upgrade.php, auto-upgrade-premium.php, and the auto-update
+	 * here): the first had none of the realpath and symlink checks, and the
+	 * other two checked a symlink only when the file existed (#165, #173).
+	 */
+	function resolve_update_write_path(string $basePath, string $entryName)
+	{
+		$candidate = resolve_update_target_path($basePath, $entryName);
+		if ($candidate === false || is_link($candidate)) {
+			return false;
+		}
+		if (file_exists($candidate)) {
+			$resolvedFilePath = realpath($candidate);
+			$resolvedBase = rtrim($basePath, DIRECTORY_SEPARATOR);
+			if ($resolvedFilePath === false || strpos($resolvedFilePath, $resolvedBase . DIRECTORY_SEPARATOR) !== 0) {
+				return false;
+			}
+		}
+		return $candidate;
+	}
+
 
 	/**
 	 * True when this install is a managed, immutable deployment (Coolify, or any
@@ -477,24 +505,11 @@ function info_top(): void
 														continue;
 													}
 													$file_ext = pathinfo($thisFileName, PATHINFO_EXTENSION);
-													$targetFile = resolve_update_target_path($basePath, $thisFileName);
+													// Confined, and never through a symlink.
+													$targetFile = resolve_update_write_path($basePath, $thisFileName);
 													if ($targetFile === false) {
-														$log .= 'Skipped invalid update file path: ' . $thisFileName . '. ';
+														$log .= 'Skipped unsafe update file path: ' . $thisFileName . '. ';
 														continue;
-													}
-
-													// Prevent writing through symlinks or outside the base path
-													if (file_exists($targetFile)) {
-														if (is_link($targetFile)) {
-															$log .= 'Skipped symlink during update: ' . $thisFileName . '. ';
-															continue;
-														}
-														$resolvedFilePath = realpath($targetFile);
-														$resolvedBase = rtrim($basePath, DIRECTORY_SEPARATOR);
-														if ($resolvedFilePath === false || ($resolvedFilePath !== $resolvedBase && strpos($resolvedFilePath, $resolvedBase . DIRECTORY_SEPARATOR) !== 0)) {
-															$log .= 'Skipped unsafe update file path: ' . $thisFileName . '. ';
-															continue;
-														}
 													}
 
 													if ($updateThis = @fopen($targetFile, 'wb')) {
