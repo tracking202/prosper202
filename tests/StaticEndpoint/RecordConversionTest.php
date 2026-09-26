@@ -50,6 +50,38 @@ final class RecordConversionTest extends TestCase
         }
     }
 
+    /**
+     * once_per_click has no default: gpb.php and upx.php omitted it and
+     * double-recorded every id-less retry. A caller that says nothing, or
+     * says something that is not a bool, is refused before any DB work.
+     *
+     * @dataProvider oncePerClickNotStated
+     */
+    public function testOncePerClickMustBeStatedAsABool(array $extra): void
+    {
+        $db = new FakeRecordMysqli();
+        $log = ['click_id' => 5, 'campaign_id' => '1', 'user_id' => '1'] + $extra;
+
+        try {
+            p202RecordConversion($db, $log, '', false, '', '');
+            self::fail('Expected InvalidArgumentException');
+        } catch (InvalidArgumentException $e) {
+            self::assertStringContainsString('once_per_click', $e->getMessage());
+            self::assertSame([], $db->queries, 'No query/connection work should happen when once_per_click is not stated');
+        }
+    }
+
+    /** @return array<string, array{array<string, mixed>}> */
+    public static function oncePerClickNotStated(): array
+    {
+        return [
+            'absent' => [[]],
+            'null' => [['once_per_click' => null]],
+            'int 1' => [['once_per_click' => 1]],
+            'string' => [['once_per_click' => '1']],
+        ];
+    }
+
     // --- p202ExtractTransactionId (pure) ---
 
     public function testExtractTransactionIdReadsCommonKeys(): void
