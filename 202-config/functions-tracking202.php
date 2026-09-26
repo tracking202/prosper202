@@ -242,6 +242,7 @@ function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limi
                         class="fui-search"></span> Refine your search: </span>
                 <form id="user_prefs" onsubmit="return false;"
                     class="form-inline text-right" role="form">
+                    <input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
                     <div class="row">
                         <div class="col-xs-12">
                             <label for="from">Start date: </label>
