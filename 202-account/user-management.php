@@ -258,63 +258,53 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	if (!$error) {
 
-		// Only hash password if it's set (for new users or when changing password)
+		// Every column this form writes, with the values as typed (bound, not
+		// escaped into the SQL). A password is set when creating, or when
+		// editing and a new one was typed.
+		$userSet = [
+			'user_fname' => trim((string)($_POST['user_fname'] ?? '')),
+			'user_lname' => trim((string)($_POST['user_lname'] ?? '')),
+			'user_email' => trim((string)($_POST['user_email'] ?? '')),
+			'user_name' => trim((string)($_POST['user_name'] ?? '')),
+			'user_time_register' => (int) $user_row2['user_time_register'],
+			'user_timezone' => (string) $user_row2['user_timezone'],
+		];
 		if (isset($mysql['user_password'])) {
 			$hasher = function_exists('hash_user_pass') ? 'hash_user_pass' : 'salt_user_pass';
-			$mysql['user_pass'] = $db->real_escape_string($hasher($mysql['user_password']));
+			$userSet['user_pass'] = (string) $hasher($mysql['user_password']);
 		}
-		$user_hash = ''; // Default empty value
-
-		if ($editing === true) {
-			$user_sql  = " UPDATE 202_users SET";
-		} else {
-			$user_sql = "INSERT INTO `202_users` SET";
-		}
-
-		$user_sql .= " `user_fname`='" . $mysql['user_fname'] . "',
-								  `user_lname`='" . $mysql['user_lname'] . "',
-								  `user_email`='" . $mysql['user_email'] . "',
-								  `user_name`='" . $mysql['user_name'] . "',
-								  `user_time_register`='" . $user_row2['user_time_register'] . "',
-								  `user_timezone`='" . $user_row2['user_timezone'] . "',";
 		if ($editing !== true) {
-			$user_sql .= "`user_pass`='" . $mysql['user_pass'] . "',";
-
-			$user_sql .= "`install_hash`='" . $user_row2['install_hash'] . "',
-					`user_hash`='" . $user_hash . "',
-				    `modal_status`='" . $user_row2['modal_status'] . "',
-					`vip_perks_status`='" . $user_row2['vip_perks_status'] . "',";
-
+			$userSet['install_hash'] = (string) $user_row2['install_hash'];
+			$userSet['user_hash'] = '';
+			// Integer columns that may hold NULL: copied as they are.
+			$userSet['modal_status'] = $user_row2['modal_status'] === null ? null : (int) $user_row2['modal_status'];
+			$userSet['vip_perks_status'] = $user_row2['vip_perks_status'] === null ? null : (int) $user_row2['vip_perks_status'];
 			if (function_exists('random_bytes')) {
-				$user_public_publisher_id = createId(5);
-				$user_sql .= "`user_public_publisher_id`= '" . $user_public_publisher_id . "', ";
+				$userSet['user_public_publisher_id'] = (string) createId(5);
 			}
-		} elseif ($editing === true && isset($mysql['user_pass'])) {
-			// When editing, only update password if a new one was provided
-			$user_sql .= "`user_pass`='" . $mysql['user_pass'] . "',";
 		}
-		$user_sql .= "`user_active`='" . $mysql['user_active'] . "'";
+		$userSet['user_active'] = (int) $mysql['user_active'];
 
+		// The user row, its role and (for a new user) its preferences land
+		// together or not at all (see the helper in functions-account-ui.php).
 		$saved = false;
-		if ($editing == true) {
-			$user_sql  .= " WHERE user_id='" . $mysql['form_user_id'] . "'";
-			$saved = (bool)_mysqli_query($user_sql);
-			$role_sql = "UPDATE 202_user_role SET role_id = '" . $mysql['user_role'] . "' WHERE user_id = '" . $mysql['form_user_id'] . "'";
-			$saved = $saved && (bool)_mysqli_query($role_sql);
-		} else {
-			$saved = (bool)_mysqli_query($user_sql);
-			if ($saved) {
-				$user_id = $db->insert_id;
-				$role_sql = "INSERT INTO 202_user_role SET user_id = '" . $user_id . "', role_id = '" . $mysql['user_role'] . "'";
-				$pref_sql = "INSERT INTO 202_users_pref SET user_id = '" . $user_id . "'";
-				$saved = (bool)_mysqli_query($role_sql) && (bool)_mysqli_query($pref_sql);
-			}
+		$gone = false;
+		try {
+			p202_account_save_user(new \Prosper202\Database\Connection($db), $editing === true ? (int) $mysql['form_user_id'] : null, $userSet, (int) $mysql['user_role']);
+			$saved = true;
+		} catch (DomainException $missing) {
+			$gone = true;
+		} catch (Throwable $failed) {
+			error_log('user-management.php: the user was not saved: ' . $failed->getMessage());
 		}
 
 		if (!$saved) {
-			$error['save'] = $editing
-				? 'The changes could not be saved in full. Open the user again and check what was kept.'
-				: 'The user could not be created in full. Check the list, then try again.';
+			// Nothing was kept: the writes were one transaction.
+			$error['save'] = $gone
+				? 'That user is not there any more. Open the list to see who is.'
+				: ($editing
+					? 'The changes could not be saved, and nothing about the user changed. Try again.'
+					: 'The user could not be created, and nothing was added. Try again.');
 		} else {
 			$role = $roleName((string)$_POST['user_role']);
 			if ($slack) {

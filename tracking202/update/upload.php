@@ -184,6 +184,13 @@ switch ($case) {
 
 		p202_upload_top();
 		echo p202_flash('ok', 'Your report has been uploaded: '.(int) $import['recorded'].' line(s) recorded'.($import['skipped'] > 0 ? ', '.(int) $import['skipped'].' skipped (listed below)' : '').'.');
+		foreach ($import['lines'] as $l) {
+			if ($l['status'] === 'header') {
+				// Said out loud: a file with no header row whose first
+				// subid is malformed would otherwise lose that line.
+				echo p202_flash('info', sprintf('Line %d was read as the header row (subid column: “%s”) and not recorded.', (int) $l['line'], (string) $l['subid']));
+			}
+		}
 		?>
 		<div class="row g-4">
 			<div class="col-12<?php echo $skippedRows !== [] ? ' col-lg-6' : ''; ?>">

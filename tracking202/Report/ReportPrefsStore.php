@@ -122,9 +122,14 @@ final class ReportPrefsStore
                 [$ty, $tm, $td] = $window['to'];
                 // In the user's timezone, which the page set before calling,
                 // exactly as set_user_prefs.php stores a custom window.
+                $from = mktime(0, 0, 0, $fm, $fd, $fy);
+                $to = mktime(23, 59, 59, $tm, $td, $ty);
+                if ($from === false || $to === false) {
+                    throw new RuntimeException('The custom window\'s days could not be turned into times.');
+                }
                 $set['user_pref_time_predefined'] = '';
-                $set['user_pref_time_from'] = (string) mktime(0, 0, 0, $fm, $fd, $fy);
-                $set['user_pref_time_to'] = (string) mktime(23, 59, 59, $tm, $td, $ty);
+                $set['user_pref_time_from'] = $from;
+                $set['user_pref_time_to'] = $to;
             } else {
                 $set['user_pref_time_predefined'] = $window['range'];
                 $set['user_pref_time_from'] = null;
@@ -141,9 +146,10 @@ final class ReportPrefsStore
         }
         try {
             $stmt = $this->conn->prepareWrite("UPDATE 202_users_pref SET $assignments WHERE user_id = ?");
-            $params = array_values($set);
-            $params[] = (string) $userId;
-            $this->conn->bind($stmt, str_repeat('s', count($params)), $params);
+            [$types, $params] = self::bindingsFor($set);
+            $types .= 'i';
+            $params[] = $userId;
+            $this->conn->bind($stmt, $types, $params);
             $this->conn->executeUpdate($stmt);
 
             $stored = $this->loadStored($userId);
@@ -176,6 +182,38 @@ final class ReportPrefsStore
             throw $e;
         }
         return [];
+    }
+
+    /**
+     * Each value bound as the type of the column it is stored in (CLAUDE.md
+     * #7): the id filters, the row limit and the window's two times are
+     * integer columns, everything else is text. A null is bound as NULL
+     * whatever its type.
+     *
+     * @param array<string, string|int|null> $set  column => value
+     * @return array{0: string, 1: list<string|int|null>}
+     */
+    public static function bindingsFor(array $set): array
+    {
+        $integers = ['user_pref_limit', 'user_pref_time_from', 'user_pref_time_to'];
+        foreach (ReportFilterInput::ID_FIELDS as $field) {
+            $integers[] = ReportFilterInput::COLUMNS[$field];
+        }
+        $types = '';
+        $params = [];
+        foreach ($set as $column => $value) {
+            if (in_array($column, $integers, true)) {
+                if ($value !== null && !is_int($value) && preg_match('/^\d{1,10}$/D', (string) $value) !== 1) {
+                    throw new \InvalidArgumentException("ReportPrefsStore: '$column' holds a number, not '" . (string) $value . "'");
+                }
+                $types .= 'i';
+                $params[] = $value === null ? null : (int) $value;
+            } else {
+                $types .= 's';
+                $params[] = $value === null ? null : (string) $value;
+            }
+        }
+        return [$types, $params];
     }
 
     /**

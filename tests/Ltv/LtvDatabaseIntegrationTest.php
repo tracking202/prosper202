@@ -111,6 +111,7 @@ final class LtvDatabaseIntegrationTest extends TestCase
             'time_difference' => '0 days, 0 hours, 1 min and 40 sec',
             'ip' => '203.0.113.9', 'pixel_type' => 3,
             'user_agent' => 'LtvIntegrationTest/1.0', 'click_payout' => '10.0',
+            'once_per_click' => false,
         ];
     }
 
