@@ -14,12 +14,12 @@ import AdAttributionKit
 ///
 /// The app ships once with the server URL and its app's schema token; from
 /// then on, what each event encodes to is edited in Prosper202
-/// (`/attribution/conversion-values`) and picked up at runtime — no App Store
+/// (`/apps/skan-encodings`) and picked up at runtime — no App Store
 /// resubmission. Usage:
 ///
 ///     P202Attribution.shared.configure(
 ///         endpoint: URL(string: "https://your-domain.com")!,
-///         schemaToken: "<from POST /attribution/apps>"
+///         schemaToken: "<the app_token from POST /apps>"
 ///     )
 ///     ...
 ///     P202Attribution.shared.logEvent("purchase")
@@ -129,7 +129,7 @@ public final class P202Attribution {
         return queue.sync { cache.schema }
     }
 
-    /// Report an event by the name it carries in `/attribution/conversion-values`.
+    /// Report an event by the name it carries in `/apps/skan-encodings`.
     /// Returns the update that was handed to the frameworks, or nil when the
     /// schema does not map the event (a deliberate no-op) or no schema is
     /// available yet. The return value exists for the app's own logging.
@@ -230,7 +230,7 @@ public final class P202Attribution {
             refreshInFlight = true
             var req = URLRequest(url: Self.schemaURL(endpoint: config.endpoint))
             req.httpMethod = "GET"
-            req.setValue(config.schemaToken, forHTTPHeaderField: "X-P202-Schema-Token")
+            req.setValue(config.schemaToken, forHTTPHeaderField: "X-P202-App-Token")
             if let etag = cache.etag {
                 req.setValue(etag, forHTTPHeaderField: "If-None-Match")
             }
@@ -309,7 +309,7 @@ public final class P202Attribution {
         return endpoint
             .appendingPathComponent("api")
             .appendingPathComponent("v3")
-            .appendingPathComponent("attribution")
+            .appendingPathComponent("apps")
             .appendingPathComponent("schema")
     }
 

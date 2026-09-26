@@ -147,7 +147,7 @@ services:
   # Without the retention job here, aged postbacks on a Coolify deploy would be
   # left to the receiver's 1-in-100 opportunistic pass, which only fires while
   # new postbacks are arriving. Its windows are the shipped defaults; override
-  # them with P202_ATTRIBUTION_RETENTION_DAYS_* in the environment below, since
+  # them with P202_APP_RETENTION_DAYS_* in the environment below, since
   # this is the process that prunes.
   attribution-cron:
     image: prosper202-web-coolify
@@ -178,7 +178,7 @@ services:
           now=$$(date +%s)
           if [ $$((now - last_hourly)) -ge 3600 ]; then
             php 202-cronjobs/attribution-rebuild.php || true
-            php 202-cronjobs/attribution-retention.php || true
+            php 202-cronjobs/app-retention.php || true
             last_hourly=$$now
           fi
           sleep 60

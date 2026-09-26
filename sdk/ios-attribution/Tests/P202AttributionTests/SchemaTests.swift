@@ -32,6 +32,6 @@ final class SchemaTests: XCTestCase {
 
     func testSchemaURLIsTheDocumentedPath() {
         let url = P202Attribution.schemaURL(endpoint: URL(string: "https://tracker.example.com")!)
-        XCTAssertEqual(url.absoluteString, "https://tracker.example.com/api/v3/attribution/schema")
+        XCTAssertEqual(url.absoluteString, "https://tracker.example.com/api/v3/apps/schema")
     }
 }

@@ -3,11 +3,11 @@
 A small, dependency-free Swift helper that lets an iOS app take its
 conversion-value mapping from your Prosper202 server at runtime and report
 it to both of Apple's attribution frameworks. Change what the values mean
-in Prosper202 (`p202 attribution cv …` or `/attribution/conversion-values`)
+in Prosper202 (`p202 app encoding …` or `/apps/skan-encodings`)
 and shipped builds pick it up — **no App Store resubmission**.
 
-The server builds the document this helper fetches (`GET /api/v3/attribution/schema`)
-and the decode step in `/attribution/report` from the same rules, so what the app
+The server builds the document this helper fetches (`GET /api/v3/apps/schema`)
+and the decode step in `/apps/report` from the same encodings, so what the app
 encodes and what your reports decode can never drift.
 
 ## What still ships with the app (once)
@@ -31,11 +31,13 @@ Two things cannot be remote-configured, by iOS design:
    (`/.well-known/skadnetwork/report-attribution/` and
    `/.well-known/appattribution/report-attribution/`); Prosper202 serves both.
 
-2. This helper plus the app's **schema token** — minted when you register
-   the app (`p202 attribution app create …`; shown by `p202 attribution app get <id>`).
-   The token grants read access to the conversion-value mapping only.
-   If a shipped token leaks, `p202 attribution app rotate-token <id>` invalidates
-   it; builds carrying the old token stop fetching until updated.
+2. This helper plus the app's **app token** — minted when you register
+   the app (`p202 app create --store-link …`; shown by `p202 app get <id>`).
+   The helper sends it in the `X-P202-App-Token` header. It identifies the
+   app rather than protecting anything (it ships in every copy of the app),
+   and reads the conversion-value mapping only. `p202 app rotate-token <id>`
+   replaces it; builds carrying the old token stop fetching until updated.
+   (The Swift parameter is still called `schemaToken`; it is the same value.)
 
 ## Install
 
@@ -54,7 +56,7 @@ import P202Attribution
 // At launch:
 P202Attribution.shared.configure(
     endpoint: URL(string: "https://your-domain.com")!,
-    schemaToken: "<schema_token from p202 attribution app get>"
+    schemaToken: "<app_token from p202 app get>"
 )
 
 // Wherever conversions happen — names must match your rules' event_name:
@@ -77,7 +79,7 @@ mapped fine value (0–63) and coarse value to both frameworks:
 Apple's guidance for an app that cannot know which framework its ad
 networks integrate is to call both; the system ignores whichever has no
 pending postback. Verify what devices will receive with
-`p202 attribution schema <app-registration-id>` — it performs the same
+`p202 app schema <registration-id>` — it performs the same
 request this helper makes.
 
 `conversionTypes` scopes an update to AdAttributionKit's install and/or
@@ -115,9 +117,9 @@ postback's value.
   it names does not exist there.
 - **Development-signed AdAttributionKit postbacks** (the ones a phone in
   Developer Mode generates) are stored by Prosper202 flagged `development`
-  and count nowhere until you turn on `accept_development_postbacks` for
-  the app registration (`p202 attribution app update <id>
-  --accept-development-postbacks 1`) — do that while integration-testing,
+  and count nowhere until you turn on `accept_test_signals` for
+  the app registration (`p202 app update <id>
+  --accept-test-signals 1`) — do that while integration-testing,
   and turn it off again before trusting the numbers.
 
 ## Testing
@@ -128,6 +130,6 @@ suite exercises the real fetch contract against a live Prosper202 instance:
 
 ```bash
 P202ATTRIBUTION_LIVE_ENDPOINT=http://127.0.0.1:8000 \
-P202ATTRIBUTION_LIVE_TOKEN=<schema token> \
+P202ATTRIBUTION_LIVE_TOKEN=<app token> \
 swift test --filter LiveServerIntegrationTests
 ```

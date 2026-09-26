@@ -140,6 +140,7 @@ final readonly class Auth
         'ltv',
         'rotators',
         'attribution',
+        'apps',
         'users',
         'system',
         'sync',

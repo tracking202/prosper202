@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 namespace Tracking202\Analyze;
 
-use Api\V3\Controllers\AttributionAppsController;
-use Api\V3\Controllers\AttributionPostbacksController;
-use Api\V3\Attribution\SignatureState;
+use Api\V3\Controllers\AppRegistrationsController;
+use Api\V3\Controllers\AppPostbacksController;
+use Api\V3\Apps\Apple\SignatureState;
 use Api\V3\Controllers\UsersController;
 use Api\V3\Exception\ValidationException;
 use Api\V3\HttpException;
-use Tracking202\Attribution\RegisteredApps;
+use Tracking202\Apps\RegisteredApps;
 
 /**
  * Analyze › Mobile Apps: what the SKAdNetwork and AdAttributionKit postbacks
@@ -20,7 +20,7 @@ use Tracking202\Attribution\RegisteredApps;
  *
  *  - Report, the grouped totals, in whichever dimension answers the question
  *    (day, app, ad network, source, country, version, protocol, conversion
- *    type). This is /attribution/report, rendered.
+ *    type). This is /apps/report, rendered.
  *  - Postbacks, the individual rows behind those totals, for the moment a
  *    total looks wrong and the question becomes "which ones".
  *  - Verify, a scratch pad for checking that a captured postback's signature
@@ -51,7 +51,7 @@ class MobileAppsReportController
      */
     public const GROUPINGS = [
         'day'             => 'Day',
-        'app'             => 'App',
+        'registration'    => 'App',
         'ad-network'      => 'Ad network',
         'source'          => 'Source',
         'country'         => 'Country',
@@ -72,7 +72,7 @@ class MobileAppsReportController
      */
     public static function groupKeys(): array
     {
-        return AttributionPostbacksController::groupKeys();
+        return AppPostbacksController::groupKeys();
     }
 
     /**
@@ -156,8 +156,8 @@ class MobileAppsReportController
     private bool $filterDropped = false;
 
     private int $userId;
-    private AttributionPostbacksController $postbacks;
-    private AttributionAppsController $apps;
+    private AppPostbacksController $postbacks;
+    private AppRegistrationsController $apps;
     private UsersController $users;
 
     /** @var list<array{kind: string, text: string}> */
@@ -174,8 +174,8 @@ class MobileAppsReportController
         }
 
         $this->userId = (int)$_SESSION['user_own_id'];
-        $this->postbacks = new AttributionPostbacksController($db, $this->userId);
-        $this->apps = new AttributionAppsController($db, $this->userId);
+        $this->postbacks = new AppPostbacksController($db, $this->userId);
+        $this->apps = new AppRegistrationsController($db, $this->userId);
         $this->users = new UsersController($db);
     }
 
@@ -268,12 +268,12 @@ class MobileAppsReportController
 
         // Round-tripped rather than pattern-matched: '0012' and a number too
         // big for an integer both match /^\d+$/ and then reach the API as a
-        // different app id than the one typed, or as a 422 that would replace
-        // the whole report with an error message.
-        $appId = trim((string)($_GET['app_id'] ?? ''));
-        if ($appId !== '' && ($appId !== (string)(int)$appId || (int)$appId <= 0)) {
-            $this->flashFilterDropped('The app filter was ignored: an App Store id is a whole number.');
-            $appId = '';
+        // different registration than the one typed, or as a 422 that would
+        // replace the whole report with an error message.
+        $registrationId = trim((string)($_GET['registration_id'] ?? ''));
+        if ($registrationId !== '' && ($registrationId !== (string)(int)$registrationId || (int)$registrationId <= 0)) {
+            $this->flashFilterDropped('The app filter was ignored: an app is chosen by its registration number, a whole number.');
+            $registrationId = '';
         }
 
         // The states the column really holds, from the enum that defines
@@ -298,7 +298,7 @@ class MobileAppsReportController
             'time_from' => $timeFrom,
             'time_to' => $timeTo,
             'group_by' => $groupBy,
-            'app_id' => $appId,
+            'registration_id' => $registrationId,
             'signature' => $signature,
         ];
     }
@@ -451,7 +451,7 @@ class MobileAppsReportController
     private function apiFilters(array $filters): array
     {
         $params = [];
-        foreach (['app_id', 'signature'] as $key) {
+        foreach (['registration_id', 'signature'] as $key) {
             if ($filters[$key] !== '') {
                 $params[$key] = $filters[$key];
             }
@@ -513,7 +513,7 @@ class MobileAppsReportController
             'report' => [
                 'groups' => $groups,
                 'truncated' => $truncated,
-                'trusted' => (string)($answer['meta']['trusted'] ?? 'verified-only'),
+                'trusted' => (string)($answer['meta']['trusted'] ?? 'trusted-only'),
                 'notes' => (string)($answer['meta']['notes'] ?? ''),
             ],
             'totals' => $totals,
@@ -721,14 +721,14 @@ class MobileAppsReportController
         if ($registered['truncated']) {
             // A menu cannot offer what it does not list, so an app past the
             // ceiling reads as unregistered rather than unlisted. The filter
-            // has no free-text entry, but app_id in the address does work —
+            // has no free-text entry, but registration_id in the address does work —
             // the template renders an option for a value it was not given,
             // labelled "not in your list" — so name the escape hatch that
             // exists rather than a control that does not.
             $of = $registered['total'] === null ? '' : ' of ' . $registered['total'];
             $this->flash('warn', 'The App filter lists the first ' . count($registered['apps']) . $of
                 . ' registered apps, by name. To report on one that is not listed,'
-                . " add app_id=<App Store id> to this page's address.");
+                . " add registration_id=<the app's number on Setup › Mobile Apps> to this page's address.");
         }
 
         return $registered['apps'];
@@ -769,8 +769,7 @@ class MobileAppsReportController
 
         $rows = [[
             $label, 'Postbacks', 'Installs', 'Re-downloads', 'Re-engagements', 'Losses',
-            'Revenue', 'Signature verified', 'Signature invalid', 'Signature unverifiable',
-            'Signature development',
+            'Revenue', 'Trusted', 'Refuted', 'Unvouched', 'Development-signed',
         ]];
         foreach ($mobileReport['report']['groups'] as $group) {
             $rows[] = [
@@ -783,10 +782,10 @@ class MobileAppsReportController
                 // The bare number, not dollar_format's rendering: a
                 // spreadsheet should get something it can add up.
                 round(self::groupRevenue($group), 5),
-                (int)($group['signature_valid_count'] ?? 0),
-                (int)($group['signature_invalid_count'] ?? 0),
-                (int)($group['signature_unverified_count'] ?? 0),
-                (int)($group['signature_development_count'] ?? 0),
+                (int)($group['trusted_count'] ?? 0),
+                (int)($group['refuted_count'] ?? 0),
+                (int)($group['unvouched_count'] ?? 0),
+                (int)($group['test_count'] ?? 0),
             ];
         }
         if ($mobileReport['report']['truncated']) {
@@ -911,7 +910,7 @@ class MobileAppsReportController
         if ($parts === []) {
             return '';
         }
-        if ($groupBy === 'app' && count($parts) > 1) {
+        if ($groupBy === 'registration' && count($parts) > 1) {
             return $parts[0] . ' (' . $parts[1] . ')';
         }
 
@@ -935,11 +934,18 @@ class MobileAppsReportController
      */
     public static function groupLabelParts(array $group, string $groupBy): array
     {
-        if ($groupBy === 'app') {
+        if ($groupBy === 'registration') {
+            // The name, qualified by the app's own id (its App Store id),
+            // which is what an operator recognises; a registration since
+            // deleted keeps only its number.
             $name = trim((string)($group['app_name'] ?? ''));
-            $id = (string)(int)($group['app_id'] ?? 0);
+            $key = trim((string)($group['app_key'] ?? ''));
+            if ($key === '') {
+                $id = $group['registration_id'] ?? null;
+                return $id === null ? [] : ['registration ' . (int)$id];
+            }
 
-            return $name === '' ? [$id] : [$name, $id];
+            return $name === '' ? [$key] : [$name, $key];
         }
 
         if ($groupBy === 'source') {

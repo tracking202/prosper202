@@ -39,8 +39,8 @@ DB_PASS=${P202_DB_PASS:-}
 DB_HOST=${P202_DB_HOST:-}
 DB_PORT=${P202_DB_PORT:-}
 # The rung to wind back to. Any version below the code version works — the
-# ladder climbs from wherever it starts — and 1.9.75 is the one RELEASING.md
-# names for the attribution tables.
+# ladder climbs from wherever it starts — and 1.9.75 is the rung that creates
+# the measurement tables.
 PRIOR=${P202_PRIOR_VERSION:-1.9.75}
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

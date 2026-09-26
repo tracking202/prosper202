@@ -7,7 +7,7 @@
 # a child, and the browser pass runs it on its own. The names match
 # tests/browser (see its README): one instance can serve every pass.
 #
-# P202_DB must be a SCRATCH database — this TRUNCATEs the attribution tables,
+# P202_DB must be a SCRATCH database — this TRUNCATEs the app tables,
 # and the guard below refuses a name that does not read as disposable, which
 # is the protection tests/browser/lib/db.js applies.
 DB=${P202_DB:-p202_test}
@@ -28,21 +28,23 @@ NOW=$(date -u +%s)
 DAY=86400
 TODAY=$(( NOW / DAY * DAY ))
 
-mysql_q "$DB" -e "TRUNCATE 202_attribution_postbacks; TRUNCATE 202_attribution_apps; TRUNCATE 202_attribution_conversion_values;"
+mysql_q "$DB" -e "TRUNCATE 202_app_postbacks; TRUNCATE 202_app_registrations; TRUNCATE 202_app_skan_encodings;"
 
 mysql_q "$DB" <<SQL
-INSERT INTO 202_attribution_apps (user_id, app_id, app_name, platform, notes, accept_development_postbacks, schema_token, created_at, updated_at) VALUES
- (1, 990077001, 'Acme Puzzle', 'ios', '', 1, 'tok-puzzle-0000000000000000000001', $NOW, $NOW),
- (1, 990077002, 'Acme Racer',  'ios', '', 0, 'tok-racer-00000000000000000000001', $NOW, $NOW),
- (1, 990077003, 'Acme, Notes "Pro"', 'ios', '', 0, 'tok-notes-00000000000000000000001', $NOW, $NOW);
+INSERT INTO 202_app_registrations (user_id, platform, app_key, app_name, notes, accept_test_signals, app_token, created_at, updated_at) VALUES
+ (1, 'ios', '990077001', 'Acme Puzzle', '', 1, REPEAT('a1', 32), $NOW, $NOW),
+ (1, 'ios', '990077002', 'Acme Racer',  '', 0, REPEAT('b2', 32), $NOW, $NOW),
+ (1, 'ios', '990077003', 'Acme, Notes "Pro"', '', 0, REPEAT('c3', 32), $NOW, $NOW);
 
-INSERT INTO 202_attribution_conversion_values (user_id, app_id, fine_value, coarse_value, event_name, revenue, created_at, updated_at) VALUES
- (1, 990077001, 3, NULL, 'purchase',  4.99000, $NOW, $NOW),
- (1, 990077001, 5, NULL, 'subscribe', 9.99000, $NOW, $NOW),
- (1, 990077002, NULL, 'high', 'big_spender', 25.00000, $NOW, $NOW);
+INSERT INTO 202_app_skan_encodings (user_id, registration_id, fine_value, coarse_value, event_name, revenue, created_at, updated_at)
+ SELECT 1, r.registration_id, v.fine_value, v.coarse_value, v.event_name, v.revenue, $NOW, $NOW
+   FROM (SELECT '990077001' AS app_key, 3 AS fine_value, NULL AS coarse_value, 'purchase' AS event_name, 4.99000 AS revenue
+         UNION ALL SELECT '990077001', 5, NULL, 'subscribe', 9.99000
+         UNION ALL SELECT '990077002', NULL, 'high', 'big_spender', 25.00000) v
+   JOIN 202_app_registrations r ON r.platform = 'ios' AND r.app_key = v.app_key;
 SQL
 
-# day, protocol, version, network, app, source, campaign, fine, coarse, seq, type, redownload, win, country, sigstate, sigvalid
+# day, protocol, version, network, app, source, campaign, fine, coarse, seq, type, redownload, win, country, sigstate, trusted
 rows=(
  "0 skadnetwork 4.0 acme.skadnetwork 990077001 12 . 3 . 0 download 0 1 US valid 1"
  "0 skadnetwork 4.0 acme.skadnetwork 990077001 12 . 5 . 0 download 0 1 US valid 1"
@@ -65,19 +67,19 @@ for r in "${rows[@]}"; do
   q() { [ "$1" = "." ] && echo NULL || echo "'$1'"; }
   ts=$(( TODAY - d * DAY + 3600 + i * 97 ))
   i=$((i+1))
-  mysql_q "$DB" -e "INSERT INTO 202_attribution_postbacks
-    (user_id, received_at, protocol, version, ad_network_id, transaction_id, app_id,
+  mysql_q "$DB" -e "INSERT INTO 202_app_postbacks
+    (user_id, registration_id, received_at, protocol, version, ad_network_id, transaction_id, app_id,
      source_identifier, campaign_id, conversion_value, coarse_conversion_value,
      postback_sequence_index, conversion_type, redownload, did_win, country_code,
-     attribution_signature, signature_state, signature_valid, dedupe_hash, raw_payload,
+     attribution_signature, signature_state, trusted, dedupe_hash, raw_payload,
      remote_ip, created_at)
-    VALUES (1, $ts, '$proto', '$ver', '$net', 'txn-$i', $app,
+    VALUES (1, (SELECT registration_id FROM 202_app_registrations WHERE platform = 'ios' AND app_key = '$app'), $ts, '$proto', '$ver', '$net', 'txn-$i', $app,
      $(q $src), $(n $camp), $(n $fine), $(q $coarse),
      $seq, '$type', $redl, $win, $(q $cc),
      'sig-$i', '$state', $(n $valid), SHA1('row-$i'), '{\"seeded\":$i}',
      '198.51.100.$i', $ts);"
 done
 
-mysql_q -N "$DB" -e "SELECT CONCAT('seeded postbacks: ', COUNT(*)) FROM 202_attribution_postbacks;
-  SELECT CONCAT('  ', signature_state, ' = ', COUNT(*), ' (trust bit ', IFNULL(signature_valid, 'NULL'), ')')
-    FROM 202_attribution_postbacks GROUP BY signature_state, signature_valid;"
+mysql_q -N "$DB" -e "SELECT CONCAT('seeded postbacks: ', COUNT(*), ', linked to a registration: ', SUM(registration_id IS NOT NULL)) FROM 202_app_postbacks;
+  SELECT CONCAT('  ', signature_state, ' = ', COUNT(*), ' (trusted ', IFNULL(trusted, 'NULL'), ')')
+    FROM 202_app_postbacks GROUP BY signature_state, trusted;"

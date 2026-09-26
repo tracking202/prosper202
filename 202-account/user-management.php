@@ -281,26 +281,16 @@ if ($deleting == true) {
 		die();
 	}
 
-	$user_sql_delete = "UPDATE 202_users SET user_deleted = '1' WHERE user_id = " . $mysql['user_id'];
-$user_result_delete = _mysqli_query($user_sql_delete);
-
-	// Purge attribution data for the deleted user
-	$attributionCleanupQueries = [
-		"DELETE FROM 202_attribution_touchpoints WHERE snapshot_id IN (SELECT snapshot_id FROM 202_attribution_snapshots WHERE user_id = " . $mysql['user_id'] . ")",
-		"DELETE FROM 202_attribution_snapshots WHERE user_id = " . $mysql['user_id'],
-		"DELETE FROM 202_attribution_settings WHERE user_id = " . $mysql['user_id'],
-		"DELETE FROM 202_attribution_models WHERE user_id = " . $mysql['user_id'],
-		"DELETE FROM 202_attribution_audit WHERE user_id = " . $mysql['user_id']
-	];
-
-	foreach ($attributionCleanupQueries as $cleanupQuery) {
-		try {
-			$db->query($cleanupQuery);
-		} catch (mysqli_sql_exception $exception) {
-			if (function_exists('prosper_log')) {
-				prosper_log('attribution_cleanup', $exception->getMessage());
-			}
-		}
+	// The soft delete and the purge of the data that must not outlive the
+	// user (MTA state, the identity graph, app registrations) commit
+	// together, through the class DELETE /api/v3/users/{id} uses too.
+	try {
+		(new \Prosper202\User\UserDataPurge($db))->deleteUser((int) $mysql['user_id']);
+	} catch (\Throwable $exception) {
+		error_log('user-management: ' . $exception->getMessage());
+		http_response_code(500);
+		echo 'The user could not be deleted, and nothing was changed. The error log has the reason.';
+		exit;
 	}
 
 	if ($slack) {

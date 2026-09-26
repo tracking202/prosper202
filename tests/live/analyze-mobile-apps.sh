@@ -5,7 +5,7 @@
 # somewhere other than the machine it was written on. The names match
 # tests/browser (see its README): one instance can serve both passes.
 #
-# P202_DB must be a SCRATCH database. This pass TRUNCATEs the attribution
+# P202_DB must be a SCRATCH database. This pass TRUNCATEs the app
 # tables and rewrites the account currency; the guard below refuses a name
 # that does not read as disposable, which is the same protection
 # tests/browser/lib/db.js applies.
@@ -78,6 +78,10 @@ if ! bash "$(dirname "${BASH_SOURCE[0]}")/seed-mobile-apps.sh" > /dev/null; then
     exit 2
 fi
 
+# The registrations the seeder made, by the App Store id each one is.
+reg_of() { Q "SELECT registration_id FROM 202_app_registrations WHERE platform='ios' AND app_key='$1'"; }
+PUZZLE=$(reg_of 990077001); RACER=$(reg_of 990077002)
+
 say "login"
 curl -sS -c "$JAR" -b "$JAR" "$BASE/202-login.php" -o "$OUT/login.html"
 LT=$(grep -oE 'name="token" value="[^"]+"' "$OUT/login.html" | head -1 | sed 's/.*value="//; s/"//')
@@ -86,6 +90,10 @@ curl -sS -c "$JAR" -b "$JAR" -L "$BASE/202-login.php" \
   --data-urlencode "user_pass=$P202_PASS" -o "$OUT/pl.html"
 curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/" -o "$OUT/home.html"
 hasnt "$OUT/home.html" 'name="user_pass"' "session established"
+# ...and a login page that FAILED to render has no password field either (a
+# fatal before the form passed the line above), so ask for what only a
+# signed-in page carries.
+has "$OUT/home.html" '202-account/signout.php' "the signed-in chrome offers a sign-out"
 
 get() { curl -sS -b "$JAR" -c "$JAR" -L "$PAGE$1" -o "$2" -w '%{http_code}' > "$OUT/.code"; }
 
@@ -104,11 +112,11 @@ grep -qE '<li class="active"><a href="[^"]*analyze/mobile_apps\.php"' "$OUT/r.ht
   && ok "sub-menu marks it current" || bad "sub-menu marks it current"
 
 say "report numbers match the database"
-eq "$(tile $OUT/r.html Postbacks)"       "$(Q 'SELECT COUNT(*) FROM 202_attribution_postbacks')" "Postbacks tile = row count"
-eq "$(tile $OUT/r.html Installs)"        "$(Q "SELECT COUNT(*) FROM 202_attribution_postbacks WHERE signature_valid=1 AND conversion_type='download' AND did_win=1 AND COALESCE(postback_sequence_index,0)=0")" "Installs tile"
-eq "$(tile $OUT/r.html Re-downloads)"    "$(Q "SELECT COUNT(*) FROM 202_attribution_postbacks WHERE signature_valid=1 AND conversion_type='redownload' AND did_win=1 AND COALESCE(postback_sequence_index,0)=0")" "Re-downloads tile"
-eq "$(tile $OUT/r.html Re-engagements)"  "$(Q "SELECT COUNT(*) FROM 202_attribution_postbacks WHERE signature_valid=1 AND conversion_type='re-engagement' AND did_win=1 AND COALESCE(postback_sequence_index,0)=0")" "Re-engagements tile"
-eq "$(tile $OUT/r.html Losses)"          "$(Q 'SELECT COUNT(*) FROM 202_attribution_postbacks WHERE signature_valid=1 AND did_win=0')" "Losses tile"
+eq "$(tile $OUT/r.html Postbacks)"       "$(Q 'SELECT COUNT(*) FROM 202_app_postbacks')" "Postbacks tile = row count"
+eq "$(tile $OUT/r.html Installs)"        "$(Q "SELECT COUNT(*) FROM 202_app_postbacks WHERE trusted=1 AND conversion_type='download' AND did_win=1 AND COALESCE(postback_sequence_index,0)=0")" "Installs tile"
+eq "$(tile $OUT/r.html Re-downloads)"    "$(Q "SELECT COUNT(*) FROM 202_app_postbacks WHERE trusted=1 AND conversion_type='redownload' AND did_win=1 AND COALESCE(postback_sequence_index,0)=0")" "Re-downloads tile"
+eq "$(tile $OUT/r.html Re-engagements)"  "$(Q "SELECT COUNT(*) FROM 202_app_postbacks WHERE trusted=1 AND conversion_type='re-engagement' AND did_win=1 AND COALESCE(postback_sequence_index,0)=0")" "Re-engagements tile"
+eq "$(tile $OUT/r.html Losses)"          "$(Q 'SELECT COUNT(*) FROM 202_app_postbacks WHERE trusted=1 AND did_win=0')" "Losses tile"
 has "$OUT/r.html" "Totals for report"    "totals row"
 grep -qE 'p202-tile__value">\$' "$OUT/r.html" && ok "revenue tile carries a currency symbol" || bad "revenue tile carries a currency symbol"
 has "$OUT/r.html" "signature-verified postbacks only" "verified-only explainer shown"
@@ -118,13 +126,16 @@ clean "$OUT/r.html" | grep -qE 'subscribe +[0-9]' && ok "subscribe event listed"
 clean "$OUT/r.html" | grep -qE 'big_spender +[0-9]' && ok "big_spender event listed" || bad "big_spender event listed"
 
 say "every grouping renders and the first column changes"
-for g in day app ad-network source country protocol version conversion-type; do
+for g in day registration ad-network source country protocol version conversion-type; do
   get "?group_by=$g" "$OUT/g-$g.html"
   hasnt "$OUT/g-$g.html" "Fatal error" "group_by=$g: no fatal"
   eq "$(tile $OUT/g-$g.html Postbacks)" "11" "group_by=$g: totals still 11"
   printf '    %-16s first column: %s\n' "$g" "$(firstcol $OUT/g-$g.html | paste -sd'|' -)"
 done
-firstcol "$OUT/g-app.html" | grep -q "Acme Puzzle" && ok "app grouping names the app" || bad "app grouping names the app"
+firstcol "$OUT/g-registration.html" | grep -q "Acme Puzzle" && ok "app grouping names the app" || bad "app grouping names the app"
+get "?group_by=app" "$OUT/g-old.html"
+tr -d '\n' < "$OUT/g-old.html" | grep -q 'p202-pill p202-pill--accent" *href="[^"]*">Day<' \
+  && ok "the retired group_by=app falls back to Day like any unknown grouping" || bad "the retired group_by=app falls back to Day"
 firstcol "$OUT/g-protocol.html" | grep -q "adattributionkit" && ok "protocol grouping lists adattributionkit" || bad "protocol grouping lists adattributionkit"
 firstcol "$OUT/g-country.html" | grep -q "US" && ok "country grouping lists US" || bad "country grouping lists US"
 firstcol "$OUT/g-country.html" | grep -q "not given" && ok "a null country reads 'not given'" || bad "a null country reads 'not given'"
@@ -167,9 +178,9 @@ msgs "$OUT/cbad.html"
 has "$OUT/cbad.html" "not in YYYY-MM-DD form" "malformed date warned"
 
 say "app and signature filters"
-get "?app_id=990077002" "$OUT/f-app.html"
-eq "$(tile $OUT/f-app.html Postbacks)" "$(Q 'SELECT COUNT(*) FROM 202_attribution_postbacks WHERE app_id=990077002')" "app filter narrows"
-get "?app_id=abc" "$OUT/f-appbad.html"
+get "?registration_id=$RACER" "$OUT/f-app.html"
+eq "$(tile $OUT/f-app.html Postbacks)" "$(Q "SELECT COUNT(*) FROM 202_app_postbacks WHERE registration_id=$RACER")" "app filter narrows, by registration"
+get "?registration_id=abc" "$OUT/f-appbad.html"
 msgs "$OUT/f-appbad.html"
 has "$OUT/f-appbad.html" "app filter was ignored" "junk app id warned and dropped"
 eq "$(tile $OUT/f-appbad.html Postbacks)" "11" "junk app id still shows the report"
@@ -177,26 +188,27 @@ for s in valid invalid unverifiable development; do
   get "?signature=$s" "$OUT/f-$s.html"
   printf '    signature=%-13s postbacks=%s\n' "$s" "$(tile $OUT/f-$s.html Postbacks)"
 done
-eq "$(tile $OUT/f-valid.html Postbacks)" "9" "signature=valid (trust bit 1) = 9"
-eq "$(tile $OUT/f-invalid.html Postbacks)" "1" "signature=invalid (trust bit 0) = 1"
-eq "$(tile $OUT/f-unverifiable.html Postbacks)" "1" "signature=unverifiable (trust bit NULL) = 1"
+eq "$(tile $OUT/f-valid.html Postbacks)" "9" "signature=valid (trusted) = 9"
+eq "$(tile $OUT/f-invalid.html Postbacks)" "1" "signature=invalid (refuted) = 1"
+eq "$(tile $OUT/f-unverifiable.html Postbacks)" "1" "signature=unverifiable (unvouched) = 1"
 eq "$(tile $OUT/f-development.html Postbacks)" "1" "signature=development (by state) = 1"
 get "?signature=nope" "$OUT/f-sigbad.html"
 msgs "$OUT/f-sigbad.html"
 has "$OUT/f-sigbad.html" "signature filter was ignored" "junk signature warned and dropped"
 
 say "filters survive a tab or grouping change"
-get "?app_id=990077002&signature=valid&group_by=country" "$OUT/keep.html"
+get "?registration_id=$RACER&signature=valid&group_by=country" "$OUT/keep.html"
 grep -oE 'href="[^"]*mobile_apps\.php\?[^"]*view=postbacks[^"]*"' "$OUT/keep.html" | head -1 | sed 's/^/    /'
-grep -qE 'view=postbacks[^"]*app_id=990077002' "$OUT/keep.html" && ok "Postbacks tab keeps app_id" || bad "Postbacks tab keeps app_id"
+grep -qE "view=postbacks[^\"]*registration_id=$RACER" "$OUT/keep.html" && ok "Postbacks tab keeps registration_id" || bad "Postbacks tab keeps registration_id"
 grep -qE 'view=postbacks[^"]*signature=valid' "$OUT/keep.html" && ok "Postbacks tab keeps signature" || bad "Postbacks tab keeps signature"
 
 say "CSV download"
-CSVHDR=$(curl -sS -b "$JAR" -c "$JAR" -D - -o "$OUT/out.csv" "$PAGE?view=report&group_by=app&download=csv")
+CSVHDR=$(curl -sS -b "$JAR" -c "$JAR" -D - -o "$OUT/out.csv" "$PAGE?view=report&group_by=registration&download=csv")
 printf '%s' "$CSVHDR" | grep -i "content-type\|content-disposition" | sed 's/^/    /'
 printf '%s' "$CSVHDR" | grep -qi "content-type: text/csv" && ok "CSV content type" || bad "CSV content type"
-printf '%s' "$CSVHDR" | grep -qi 'filename="mobile-apps-app-' && ok "CSV filename names the grouping and window" || bad "CSV filename"
+printf '%s' "$CSVHDR" | grep -qi 'filename="mobile-apps-registration-' && ok "CSV filename names the grouping and window" || bad "CSV filename"
 head -1 "$OUT/out.csv" | grep -q "^App,Postbacks,Installs" && ok "CSV header row" || bad "CSV header row"
+head -1 "$OUT/out.csv" | tr -d '\r' | grep -q ",Trusted,Refuted,Unvouched,Development-signed$" && ok "CSV names the trust classes" || bad "CSV names the trust classes"
 eq "$(tail -n +2 $OUT/out.csv | wc -l)" "3" "CSV has one row per app"
 grep -q '"Acme, Notes ""Pro"" (990077003)"' "$OUT/out.csv" && ok "a comma and a quote in a name stay one field" || bad "a comma and a quote in a name stay one field"
 # RFC 4180, not PHP's private backslash escape: a field holding \" must still
@@ -240,7 +252,7 @@ has "$OUT/p.html" "p202-pill--good" "a valid signature wears the good pill"
 has "$OUT/p.html" "p202-pill--bad" "an invalid signature wears the bad pill"
 has "$OUT/p.html" "p202-pill--warn" "a development signature wears the warn pill"
 hasnt "$OUT/p.html" 'aria-label="Pages"' "no pager for one page of rows"
-get "?view=postbacks&app_id=990077002" "$OUT/p-f.html"
+get "?view=postbacks&registration_id=$RACER" "$OUT/p-f.html"
 saystext "$OUT/p-f.html" "3 rows in this range" "postbacks view honours the app filter"
 
 say "verify view"
@@ -310,23 +322,23 @@ get "?view=postbacks&range=custom&from=2020-01-01&to=2020-01-02" "$OUT/e2.html"
 has "$OUT/e2.html" "No postbacks in this range" "postbacks empty state"
 
 say "money reads as money in the table, not just the tiles"
-get "?group_by=app" "$OUT/m.html"
+get "?group_by=registration" "$OUT/m.html"
 clean "$OUT/m.html" | grep -qE '\$[0-9]+\.[0-9]{2}' && ok "a table cell carries a formatted amount" || bad "a table cell carries a formatted amount"
 # A bare decimal in a numeric cell or a tile is money rendered without its
 # symbol; nothing else on this page is written to two places.
 eq "$(tr -d '\n' < $OUT/m.html | grep -oE '(class="num"|p202-tile__value")>[0-9]+\.[0-9]{2}<' | wc -l)" \
    "0" "no amount renders bare"
 mysql_q "$DB" -e "UPDATE 202_users_pref SET user_account_currency='EUR' WHERE user_id=1"
-get "?group_by=app" "$OUT/m-eur.html"
+get "?group_by=registration" "$OUT/m-eur.html"
 clean "$OUT/m-eur.html" | grep -qE '€[0-9]' && ok "the account currency is what is shown" || bad "the account currency is what is shown"
 mysql_q "$DB" -e "UPDATE 202_users_pref SET user_account_currency='USD' WHERE user_id=1"
 
 say "pagination"
-mysql_q "$DB" -e "INSERT INTO 202_attribution_postbacks
-  (user_id, received_at, protocol, version, ad_network_id, transaction_id, app_id,
-   conversion_type, did_win, attribution_signature, signature_state, signature_valid,
+mysql_q "$DB" -e "INSERT INTO 202_app_postbacks
+  (user_id, registration_id, received_at, protocol, version, ad_network_id, transaction_id, app_id,
+   conversion_type, did_win, attribution_signature, signature_state, trusted,
    dedupe_hash, raw_payload, remote_ip, created_at)
-  SELECT 1, UNIX_TIMESTAMP() - (n * 60), 'skadnetwork', '4.0', 'bulk.skadnetwork',
+  SELECT 1, $PUZZLE, UNIX_TIMESTAMP() - (n * 60), 'skadnetwork', '4.0', 'bulk.skadnetwork',
          CONCAT('bulk-', n), 990077001, 'download', 1, 'sig', 'valid', 1,
          SHA1(CONCAT('bulk-', n)), '{}', '203.0.113.1', UNIX_TIMESTAMP()
   FROM (SELECT a.N + b.N * 10 AS n FROM
@@ -334,7 +346,7 @@ mysql_q "$DB" -e "INSERT INTO 202_attribution_postbacks
          UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) a,
         (SELECT 0 AS N UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4
          UNION SELECT 5 UNION SELECT 6) b) nums WHERE n < 60"
-TOTAL=$(Q 'SELECT COUNT(*) FROM 202_attribution_postbacks')
+TOTAL=$(Q 'SELECT COUNT(*) FROM 202_app_postbacks')
 get "?view=postbacks" "$OUT/pg1.html"
 saystext "$OUT/pg1.html" "$TOTAL rows in this range" "count sentence says $TOTAL"
 eq "$(tr -d '\n' < $OUT/pg1.html | grep -oE '<tbody>.*</tbody>' | grep -o '<tr>' | wc -l)" "50" "page 1 holds 50 rows"
@@ -355,7 +367,7 @@ hasnt "$OUT/pg99.html" "No postbacks in this range" "a page past the end does no
 has "$OUT/pg99.html" "so this is the last one" "it says there is no such page and shows the last"
 eq "$(tr -d '\n' < $OUT/pg99.html | grep -oE '<tbody>.*</tbody>' | grep -o '<tr>' | wc -l)" \
    "$((TOTAL - 50))" "and serves the last page's rows"
-mysql_q "$DB" -e "DELETE FROM 202_attribution_postbacks WHERE ad_network_id='bulk.skadnetwork'"
+mysql_q "$DB" -e "DELETE FROM 202_app_postbacks WHERE ad_network_id='bulk.skadnetwork'"
 
 say "the page is behind view_attribution_reports"
 ROLE=$(Q 'SELECT role_id FROM 202_user_role WHERE user_id=1 LIMIT 1')

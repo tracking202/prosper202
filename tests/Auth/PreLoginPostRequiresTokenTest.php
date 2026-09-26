@@ -15,7 +15,7 @@ use PHPUnit\Framework\TestCase;
  * request is the only thing between a cross-site form and the work the page
  * does, because there is no user session to require yet. install.php and
  * 202-login.php made the check; upgrade.php did not, and the repair
- * RELEASING.md gives for a stranded branch deployment — wind 202_version back
+ * RELEASING.md used to give for a stranded branch deployment — wind 202_version back
  * and open that page — is exactly when the gap was open.
  * tests/live/upgrade-csrf.sh proves the upgrader over HTTP against a running
  * instance, locally and in the Agent Evals job; this is the part that runs
@@ -1361,7 +1361,7 @@ final class PreLoginPostRequiresTokenTest extends TestCase
      * in its statement, so not the body of a braceless `if` or of an `else`?
      *
      * A return, exit or throw above the statement is not read here, unlike
-     * in AttributionUpgradeStepTest's twin of this: there the invariant is
+     * in UpgradeLadderTest's twin of this: there the invariant is
      * that the statement runs, and a jump above it is a path on which it
      * does not; here it is that the work never runs unguarded, and a jump
      * above the guard leaves the block without the work — the safe

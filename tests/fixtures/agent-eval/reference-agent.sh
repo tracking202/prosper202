@@ -119,11 +119,11 @@ case "$ask" in
         app=$(printf '%s' "$ask" | grep -oE 'App Store id [0-9]+' | awk '{print $4}')
         name=$(printf '%s' "$ask" | sed -n 's/.*call it \(.*\) — and since.*/\1/p')
         [ -n "$name" ] || name="Eval AAK App"
-        p202 attribution app create --app-id "$app" --app-name "$name" --accept-development-postbacks 1 --json >/dev/null
+        p202 app create --app-key "$app" --app-name "$name" --accept-test-signals 1 --json >/dev/null
         since=$(( $(date +%s) - 240 ))
-        report=$(p202 attribution report --group-by protocol --app-id "$app" --time-from "$since" --json)
+        report=$(p202 app report --group-by protocol --app-id "$app" --time-from "$since" --json)
         reengagements=$(printf '%s' "$report" | jq -r '([.data[] | select(.protocol == "adattributionkit")][0] // {}) | .reengagements // 0')
-        printf 'Registered App Store id %s as "%s" with accept_development_postbacks on, so postbacks signed with Apple'"'"'s AdAttributionKit development keys are trusted for this app while you integration-test (turn it off again before trusting production numbers). The report trusts %s AdAttributionKit re-engagement(s) for it from the last few minutes, per `p202 attribution report --group-by protocol --time-from`; re-engagements are counted separately from installs.\n' \
+        printf 'Registered App Store id %s as "%s" with accept_test_signals on, so postbacks signed with Apple'"'"'s AdAttributionKit development keys are trusted for this app while you integration-test (turn it off again before trusting production numbers). The report trusts %s AdAttributionKit re-engagement(s) for it from the last few minutes, per `p202 app report --group-by protocol --time-from`; re-engagements are counted separately from installs.\n' \
             "$app" "$name" "$reengagements"
         ;;
     *[Rr]egister*"App Store id"*)
@@ -133,10 +133,10 @@ case "$ask" in
         app=$(printf '%s' "$ask" | grep -oE 'App Store id [0-9]+' | awk '{print $4}')
         name=$(printf '%s' "$ask" | sed -n 's/.*call it \(.*\) — for SKAN.*/\1/p')
         [ -n "$name" ] || name="Eval SKAN App"
-        p202 attribution app create --app-id "$app" --app-name "$name" --json >/dev/null
+        p202 app create --app-key "$app" --app-name "$name" --json >/dev/null
         since=$(( $(date +%s) - 240 ))
-        recent=$(p202 attribution postbacks list --app-id "$app" --time-from "$since" --json | jq -r '.pagination.total')
-        printf 'Registered App Store id %s as "%s"; registering claims the postbacks the receiver had already stored for it. %s SKAN postbacks arrived for it in the last few minutes, per `p202 attribution postbacks list --time-from`.\n' \
+        recent=$(p202 app postbacks list --app-id "$app" --time-from "$since" --json | jq -r '.pagination.total')
+        printf 'Registered App Store id %s as "%s"; registering claims the postbacks the receiver had already stored for it. %s SKAN postbacks arrived for it in the last few minutes, per `p202 app postbacks list --time-from`.\n' \
             "$app" "$name" "$recent"
         ;;
     *"signature-verified"*)
@@ -144,11 +144,11 @@ case "$ask" in
         # postbacks whose Apple signature checks out, and the per-group
         # signature counts show what was excluded. Read them, never guess.
         app=$(printf '%s' "$ask" | grep -oE 'app [0-9]+' | awk '{print $2}')
-        report=$(p202 attribution report --group-by app --app-id "$app" --json)
-        group=$(printf '%s' "$report" | jq -c --argjson app "$app" '[.data[] | select(.app_id == $app)][0] // {}')
+        report=$(p202 app report --group-by registration --app-id "$app" --json)
+        group=$(printf '%s' "$report" | jq -c --arg app "$app" '[.data[] | select(.platform == "ios" and .app_key == $app)][0] // {}')
         installs=$(printf '%s' "$group" | jq -r '.installs // 0')
-        valid=$(printf '%s' "$group" | jq -r '.signature_valid_count // 0')
-        invalid=$(printf '%s' "$group" | jq -r '.signature_invalid_count // 0')
+        valid=$(printf '%s' "$group" | jq -r '.trusted_count // 0')
+        invalid=$(printf '%s' "$group" | jq -r '.refuted_count // 0')
         trusted=$(printf '%s' "$report" | jq -r '.meta.trusted // "unknown"')
         printf 'App %s has %s signature-verified SKAN installs. The report counts only postbacks whose Apple signature verifies (meta.trusted: %s): %s of its stored postbacks verify and %s do not, so those are excluded from the install count.\n' \
             "$app" "$installs" "$trusted" "$valid" "$invalid"

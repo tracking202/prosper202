@@ -1,0 +1,80 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Api\V3\Apps;
+
+use Api\V3\Support\MysqliStatements;
+
+/**
+ * What deleting a user does to their app measurement data (plan §4.6).
+ *
+ * Every 202_app_* row the user owns is deleted, with one named exception:
+ * their 202_app_postbacks rows are RELEASED — user_id set to 0 and
+ * registration_id to NULL — because a postback is Apple's record that an
+ * install happened, not the user's data. Released rows are unclaimed, so
+ * the 30-day unclaimed retention window prunes them, and a new owner who
+ * registers the same app within it claims them.
+ *
+ * Deleting the registrations is what frees their global (platform, app_key)
+ * slots: before this purge existed, a deleted user's registration kept its
+ * UNIQUE slot forever and nobody could register that app again.
+ *
+ * A released row keeps its trusted bit only where the verifier alone
+ * decided it; a development-signed row the user's policy had made trusted
+ * goes back to unvouched, because the policy that vouched for it is gone.
+ *
+ * Runs inside the caller's transaction (UserDataPurge); every statement
+ * throws on failure so the caller rolls back rather than half-purging.
+ */
+final class AppDataPurge
+{
+    use MysqliStatements;
+
+    /**
+     * Every app table and what the purge does to it. A structural test holds
+     * this list equal to the 202_app_* tables AppTables defines, so a table
+     * added there without a decision here fails the build.
+     */
+    public const TABLE_ACTIONS = [
+        '202_app_postbacks' => 'release',
+        '202_app_skan_encodings' => 'delete',
+        '202_app_registrations' => 'delete',
+    ];
+
+    public function __construct(private readonly \mysqli $db)
+    {
+    }
+
+    public function purgeUser(int $userId): void
+    {
+        if ($userId < 1) {
+            // user_id 0 is "unclaimed": purging it would delete or release
+            // every stranger's postback at once.
+            throw new \InvalidArgumentException('A user id to purge is positive');
+        }
+
+        $development = Apple\SignatureState::DEVELOPMENT->value;
+        $this->run(
+            'UPDATE 202_app_postbacks SET trusted = NULL WHERE user_id = ? AND signature_state = ?',
+            'is',
+            $userId,
+            $development
+        );
+        $this->run(
+            'UPDATE 202_app_postbacks SET user_id = 0, registration_id = NULL WHERE user_id = ?',
+            'i',
+            $userId
+        );
+        $this->run('DELETE FROM 202_app_skan_encodings WHERE user_id = ?', 'i', $userId);
+        $this->run('DELETE FROM 202_app_registrations WHERE user_id = ?', 'i', $userId);
+    }
+
+    private function run(string $sql, string $types, mixed ...$values): void
+    {
+        $stmt = $this->prepare($sql);
+        $this->bind($stmt, $types, ...$values);
+        $this->execute($stmt, 'App data purge failed: ' . $sql);
+        $stmt->close();
+    }
+}

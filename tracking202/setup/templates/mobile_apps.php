@@ -123,9 +123,9 @@ if (!$canManage) {
                         <form method="post" action="<?php echo $e($self); ?>">
                             <?php echo $mobileApps['csrf']; ?>
                             <input type="hidden" name="action" value="update">
-                            <input type="hidden" name="attribution_app_id" value="<?php echo (int)$editing['attribution_app_id']; ?>">
+                            <input type="hidden" name="registration_id" value="<?php echo (int)$editing['registration_id']; ?>">
                             <p class="p202-decided">
-                                <?php echo $e($editing['app_name']); ?> · <?php echo $e($platformLabel($editing['platform'] ?? 'ios')); ?> · App Store ID <?php echo (int)$editing['app_id']; ?>
+                                <?php echo $e($editing['app_name']); ?> · <?php echo $e($platformLabel($editing['platform'] ?? 'ios')); ?> · App Store ID <?php echo $e($editing['app_key']); ?>
                             </p>
                             <div class="mb-3">
                                 <label class="form-label" for="app_name">App name</label>
@@ -138,8 +138,8 @@ if (!$canManage) {
                                 <?php echo $fieldError('notes'); ?>
                             </div>
                             <div class="form-check mb-3">
-                                <input class="form-check-input" type="checkbox" id="accept_development_postbacks" name="accept_development_postbacks" value="1" <?php echo (int)($editing['accept_development_postbacks'] ?? 0) === 1 ? 'checked' : ''; ?>>
-                                <label class="form-check-label" for="accept_development_postbacks">
+                                <input class="form-check-input" type="checkbox" id="accept_test_signals" name="accept_test_signals" value="1" <?php echo (int)($editing['accept_test_signals'] ?? 0) === 1 ? 'checked' : ''; ?>>
+                                <label class="form-check-label" for="accept_test_signals">
                                     Accept development postbacks
                                     <span class="d-block form-text">Counts postbacks signed with Apple's development key for this app. Anyone in Developer Mode can mint those, so leave it off outside testing.</span>
                                 </label>
@@ -164,7 +164,7 @@ if (!$canManage) {
 
                             <?php if (!empty($form['needs_name'])) { ?>
                                 <p class="p202-decided">
-                                    Read as App Store ID <?php echo (int)$form['derived_app_id']; ?> · <?php echo $e($platformLabel($form['derived_platform'])); ?>
+                                    Read as App Store ID <?php echo $e($form['derived_app_key']); ?> · <?php echo $e($platformLabel($form['derived_platform'])); ?>
                                 </p>
                                 <div class="mb-3">
                                     <label class="form-label" for="app_name">App name</label>
@@ -173,32 +173,20 @@ if (!$canManage) {
                                 </div>
                             <?php } ?>
 
-                            <details class="p202-disclosure" data-p202-remember="setup-mobile-apps-advanced" <?php echo ($form['notes'] ?? '') !== '' || isset($form['accept_development_postbacks']) ? 'open' : ''; ?>>
-                                <summary>Advanced <span class="p202-disclosure__hint">notes, development postbacks, platform</span></summary>
+                            <details class="p202-disclosure" data-p202-remember="setup-mobile-apps-advanced" <?php echo ($form['notes'] ?? '') !== '' || isset($form['accept_test_signals']) ? 'open' : ''; ?>>
+                                <summary>Advanced <span class="p202-disclosure__hint">notes, development postbacks</span></summary>
                                 <div class="p202-disclosure__body">
                                     <div class="mb-3">
                                         <label class="form-label" for="notes">Notes</label>
                                         <input class="form-control" type="text" id="notes" name="notes" value="<?php echo $e($form['notes'] ?? ''); ?>" maxlength="500">
                                     </div>
                                     <div class="form-check mb-3">
-                                        <input class="form-check-input" type="checkbox" id="accept_development_postbacks" name="accept_development_postbacks" value="1" <?php echo isset($form['accept_development_postbacks']) ? 'checked' : ''; ?>>
-                                        <label class="form-check-label" for="accept_development_postbacks">
+                                        <input class="form-check-input" type="checkbox" id="accept_test_signals" name="accept_test_signals" value="1" <?php echo isset($form['accept_test_signals']) ? 'checked' : ''; ?>>
+                                        <label class="form-check-label" for="accept_test_signals">
                                             Accept development postbacks while testing
                                             <span class="d-block form-text">Off by default: a development signature proves only that some device was in Developer Mode, not that the install was real.</span>
                                         </label>
                                     </div>
-                                    <fieldset>
-                                        <legend class="form-label">Platform</legend>
-                                        <div class="form-check">
-                                            <input class="form-check-input" type="radio" name="platform" id="platform_ios" value="ios" checked>
-                                            <label class="form-check-label" for="platform_ios">iOS · App Store</label>
-                                        </div>
-                                        <div class="form-check">
-                                            <input class="form-check-input" type="radio" name="platform" id="platform_android" value="android" disabled>
-                                            <label class="form-check-label text-body-secondary" for="platform_android">Android · Google Play <span class="p202-pill">not supported yet</span></label>
-                                        </div>
-                                        <?php echo $fieldError('platform'); ?>
-                                    </fieldset>
                                 </div>
                             </details>
 
@@ -227,7 +215,7 @@ if (!$canManage) {
                             <li class="p202-list__item"><span class="p202-list__name">Both receivers answer over HTTPS</span><span class="p202-list__meta" data-receiver-summary role="status" aria-live="polite">checking…</span></li>
                             <li class="p202-list__item"><span class="p202-list__name">Register the app you advertise</span><span class="p202-list__meta"><?php echo $e($appCount['checklist']); ?></span></li>
                             <li class="p202-list__item"><span class="p202-list__name">Add conversion-value rules so postbacks decode to events and revenue</span><span class="p202-list__meta">open an app below</span></li>
-                            <li class="p202-list__item"><span class="p202-list__name">Add the Info.plist keys and configure the SDK with the schema token</span><span class="p202-list__meta">on the app page</span></li>
+                            <li class="p202-list__item"><span class="p202-list__name">Add the Info.plist keys and configure the SDK with the app token</span><span class="p202-list__meta">on the app page</span></li>
                         </ol>
                     </div>
                 </section>
@@ -247,15 +235,15 @@ if (!$canManage) {
                     <?php } else { ?>
                         <ul class="p202-list">
                             <?php foreach ($mobileApps['apps'] as $row) {
-                                $rowId = (int)$row['attribution_app_id'];
+                                $rowId = (int)$row['registration_id'];
                                 $nudge = $mobileApps['nudges'][$rowId] ?? 0; ?>
                                 <li class="p202-list__item">
                                     <span class="p202-list__name">
                                         <a href="<?php echo $e($self . '?app=' . $rowId); ?>"><?php echo $e($row['app_name']); ?></a>
                                     </span>
                                     <span class="p202-list__meta">
-                                        <?php echo $e($platformLabel($row['platform'] ?? 'ios')); ?> · <?php echo (int)$row['app_id']; ?>
-                                        <?php if ((int)($row['accept_development_postbacks'] ?? 0) === 1) { ?>
+                                        <?php echo $e($platformLabel($row['platform'] ?? 'ios')); ?> · <?php echo $e($row['app_key']); ?>
+                                        <?php if ((int)($row['accept_test_signals'] ?? 0) === 1) { ?>
                                             <span class="p202-pill p202-pill--warn">dev postbacks on</span>
                                         <?php } ?>
                                     </span>
@@ -266,7 +254,7 @@ if (!$canManage) {
                                             <form method="post" action="<?php echo $e($self); ?>" class="d-inline" data-p202-confirm="Remove this registration? Postbacks it already claimed keep their owner. Development trust is withdrawn.">
                                                 <?php echo $mobileApps['csrf']; ?>
                                                 <input type="hidden" name="action" value="remove">
-                                                <input type="hidden" name="attribution_app_id" value="<?php echo $rowId; ?>">
+                                                <input type="hidden" name="registration_id" value="<?php echo $rowId; ?>">
                                                 <button class="p202-list__action p202-list__action--danger" type="submit">remove</button>
                                             </form>
                                         <?php } ?>
@@ -276,7 +264,7 @@ if (!$canManage) {
                                             <form method="post" action="<?php echo $e($self); ?>" class="alert alert-warning p202-flash mb-0">
                                                 <?php echo $mobileApps['csrf']; ?>
                                                 <input type="hidden" name="action" value="accept_dev">
-                                                <input type="hidden" name="attribution_app_id" value="<?php echo $rowId; ?>">
+                                                <input type="hidden" name="registration_id" value="<?php echo $rowId; ?>">
                                                 <input type="hidden" name="accept" value="1">
                                                 <i class="bi bi-exclamation-triangle"></i>
                                                 <div class="p202-flash__body">
@@ -297,9 +285,8 @@ if (!$canManage) {
 
 <?php } else {
     // ── App detail ──────────────────────────────────────────────────
-    $rowId = (int)$app['attribution_app_id'];
-    $appStoreId = (int)$app['app_id'];
-    $token = (string)($app['schema_token'] ?? '');
+    $rowId = (int)$app['registration_id'];
+    $token = (string)($app['app_token'] ?? '');
     $masked = $token === '' ? '' : mb_substr($token, 0, 4) . str_repeat('•', max(0, mb_strlen($token) - 8)) . mb_substr($token, -4);
     /*
      * Which rule the form is editing. The link carries ?rule_edit=N, but the
@@ -313,14 +300,14 @@ if (!$canManage) {
     $editingRuleId = (int)($_GET['rule_edit'] ?? $mobileApps['form']['rule_id'] ?? 0);
     $editRule = null;
     foreach ($mobileApps['rules'] as $candidate) {
-        if ($editingRuleId > 0 && (int)($candidate['rule_id'] ?? 0) === $editingRuleId) {
+        if ($editingRuleId > 0 && (int)($candidate['encoding_id'] ?? 0) === $editingRuleId) {
             $editRule = $candidate;
         }
     }
     ?>
     <p class="p202-decided">
         <a href="<?php echo $e($self); ?>">Your apps</a> › <?php echo $e($app['app_name']); ?> ·
-        <?php echo $e($platformLabel($app['platform'] ?? 'ios')); ?> · App Store ID <?php echo $appStoreId; ?>
+        <?php echo $e($platformLabel($app['platform'] ?? 'ios')); ?> · App Store ID <?php echo $e($app['app_key']); ?>
         <?php if ($canManage) { ?> · <a href="<?php echo $e($self . '?edit=' . $rowId); ?>">change</a><?php } ?>
     </p>
 
@@ -341,8 +328,7 @@ if (!$canManage) {
                             <form method="post" action="<?php echo $e($self); ?>">
                                 <?php echo $mobileApps['csrf']; ?>
                                 <input type="hidden" name="action" value="starter_schema">
-                                <input type="hidden" name="attribution_app_id" value="<?php echo $rowId; ?>">
-                                <input type="hidden" name="app_id" value="<?php echo $appStoreId; ?>">
+                                <input type="hidden" name="registration_id" value="<?php echo $rowId; ?>">
                                 <button class="btn btn-primary btn-sm" type="submit">Use starter schema</button>
                             </form>
                         </div>
@@ -361,12 +347,12 @@ if (!$canManage) {
                                 <td class="num"><?php echo $e($money($rule['revenue'])); ?></td>
                                 <?php if ($canManage) { ?>
                                     <td class="num">
-                                        <a class="p202-list__action" href="<?php echo $e($self . '?app=' . $rowId . '&rule_edit=' . (int)$rule['rule_id']); ?>">edit</a>
+                                        <a class="p202-list__action" href="<?php echo $e($self . '?app=' . $rowId . '&rule_edit=' . (int)$rule['encoding_id']); ?>">edit</a>
                                         <form method="post" action="<?php echo $e($self); ?>" class="d-inline" data-p202-confirm="Remove this rule? Reports decode from the current rules every time they are run, so postbacks already received stop showing this event and its revenue too.">
                                             <?php echo $mobileApps['csrf']; ?>
                                             <input type="hidden" name="action" value="rule_remove">
-                                            <input type="hidden" name="attribution_app_id" value="<?php echo $rowId; ?>">
-                                            <input type="hidden" name="rule_id" value="<?php echo (int)$rule['rule_id']; ?>">
+                                            <input type="hidden" name="registration_id" value="<?php echo $rowId; ?>">
+                                            <input type="hidden" name="rule_id" value="<?php echo (int)$rule['encoding_id']; ?>">
                                             <button class="p202-list__action p202-list__action--danger" type="submit">remove</button>
                                         </form>
                                     </td>
@@ -399,9 +385,8 @@ if (!$canManage) {
                 <form method="post" action="<?php echo $e($self); ?>" class="p202-section">
                     <?php echo $mobileApps['csrf']; ?>
                     <input type="hidden" name="action" value="rule_save">
-                    <input type="hidden" name="attribution_app_id" value="<?php echo $rowId; ?>">
-                    <input type="hidden" name="app_id" value="<?php echo $appStoreId; ?>">
-                    <?php if ($editRule !== null) { ?><input type="hidden" name="rule_id" value="<?php echo (int)$editRule['rule_id']; ?>"><?php } ?>
+                    <input type="hidden" name="registration_id" value="<?php echo $rowId; ?>">
+                    <?php if ($editRule !== null) { ?><input type="hidden" name="rule_id" value="<?php echo (int)$editRule['encoding_id']; ?>"><?php } ?>
                     <div class="row g-3 align-items-end">
                         <div class="col-12 col-md-3">
                             <span class="form-label d-block">Kind</span>
@@ -484,21 +469,21 @@ if (!$canManage) {
 
     <section class="p202-panel">
         <div class="p202-panel__head">
-            <h2 class="p202-panel__title">Schema token &amp; SDK</h2>
-            <p class="p202-panel__sub">Devices fetch this app's conversion values with the token.</p>
+            <h2 class="p202-panel__title">App token &amp; SDK</h2>
+            <p class="p202-panel__sub">Devices fetch this app's conversion values with the token. It ships inside the app, so it identifies the app rather than protecting anything.</p>
         </div>
         <div class="p202-panel__body">
             <div class="p202-code">
-                <span class="p202-code__value p202-code__value--masked" id="schema-token"
+                <span class="p202-code__value p202-code__value--masked" id="app-token"
                       data-p202-value="<?php echo $e($token); ?>"
                       data-p202-masked="<?php echo $e($masked); ?>"><?php echo $e($masked); ?></span>
-                <button type="button" class="btn btn-sm btn-outline-secondary" data-p202-reveal="#schema-token">Reveal</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-p202-reveal="#app-token">Reveal</button>
                 <button type="button" class="btn btn-sm btn-outline-secondary p202-copy" data-p202-copy="<?php echo $e($token); ?>">Copy</button>
                 <?php if ($canManage) { ?>
-                    <form method="post" action="<?php echo $e($self); ?>" class="d-inline" data-p202-confirm="Replace this schema token? The old token stops working immediately. Apps keep their last cached schema until they fetch with the new one.">
+                    <form method="post" action="<?php echo $e($self); ?>" class="d-inline" data-p202-confirm="Replace this app token? The old token stops working immediately. Apps keep their last cached schema until they fetch with the new one.">
                         <?php echo $mobileApps['csrf']; ?>
                         <input type="hidden" name="action" value="rotate_token">
-                        <input type="hidden" name="attribution_app_id" value="<?php echo $rowId; ?>">
+                        <input type="hidden" name="registration_id" value="<?php echo $rowId; ?>">
                         <button class="btn btn-sm btn-outline-danger" type="submit">Rotate…</button>
                     </form>
                 <?php } ?>

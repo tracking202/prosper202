@@ -242,7 +242,7 @@ final class MobileAppsReportTest extends TestCase
         // The point of the accessor: a rename upstream must move this, not
         // leave a stale local table resolving to an empty first column.
         self::assertSame(
-            \Api\V3\Controllers\AttributionPostbacksController::groupKeys(),
+            \Api\V3\Controllers\AppPostbacksController::groupKeys(),
             MobileAppsReportController::groupKeys()
         );
     }
@@ -381,7 +381,7 @@ final class MobileAppsReportTest extends TestCase
         // would be a pill that answers 422 and replaces the report with an
         // error. The API's own list is private, so read the sentence it puts
         // in the 422.
-        $controller = new \ReflectionClass(\Api\V3\Controllers\AttributionPostbacksController::class);
+        $controller = new \ReflectionClass(\Api\V3\Controllers\AppPostbacksController::class);
         $modes = array_keys($controller->getConstant('GROUP_MODES'));
         foreach (array_keys(MobileAppsReportController::GROUPINGS) as $grouping) {
             self::assertContains($grouping, $modes, "the API accepts group_by=$grouping");

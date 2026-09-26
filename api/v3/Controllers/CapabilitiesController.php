@@ -69,19 +69,20 @@ class CapabilitiesController
                     // current state and the applier's credentials. The
                     // `stage` scope action mints propose-only keys.
                     'staged_writes' => true,
-                    // Platform-signed attribution postbacks, one entry per
-                    // protocol the receiver verifies and stores. Apple's
-                    // SKAdNetwork arrives at
+                    // App measurement. `app_platforms` is what the registry
+                    // (/apps) accepts a registration for. `app_postbacks` is
+                    // one entry per platform-signed postback protocol the
+                    // receiver verifies and stores: Apple's SKAdNetwork at
                     // /.well-known/skadnetwork/report-attribution/ and
                     // AdAttributionKit at
-                    // /.well-known/appattribution/report-attribution/; every
-                    // protocol is served (with signature state and
-                    // conversion-value decoding) under /attribution, and each
-                    // registered app's conversion-value mapping is served to
-                    // its build at runtime via GET /attribution/schema (gated
-                    // by the app's rotatable schema token), so mapping changes
-                    // need no App Store resubmission.
-                    'attribution_postbacks' => \Api\V3\Attribution\Protocols::NAMES,
+                    // /.well-known/appattribution/report-attribution/, served
+                    // (with signature state and SKAN decoding) under
+                    // /apps/postbacks and /apps/report. Each registration's
+                    // document is served to its build at runtime via
+                    // GET /apps/schema, selected by the X-P202-App-Token
+                    // header, so changes need no store resubmission.
+                    'app_platforms' => \Api\V3\Apps\AppIdentity::PLATFORMS,
+                    'app_postbacks' => \Api\V3\Apps\Apple\Protocols::NAMES,
                 ],
                 'limits' => [
                     'max_bulk_rows' => $this->maxBulkRows(),
@@ -133,9 +134,9 @@ class CapabilitiesController
             'text-ads' => $base,
             'forecast-events' => $base,
             'trackers' => $base,
-            'attribution-apps' => ['bulk_upsert' => false] + $base,
-            'attribution-conversion-values' => ['bulk_upsert' => false] + $base,
-            'attribution-postbacks' => ['list' => true, 'get' => true, 'create' => false, 'update' => false, 'delete' => false, 'bulk_upsert' => false],
+            'apps' => ['bulk_upsert' => false] + $base,
+            'app-skan-encodings' => ['bulk_upsert' => false] + $base,
+            'app-postbacks' => ['list' => true, 'get' => true, 'create' => false, 'update' => false, 'delete' => false, 'bulk_upsert' => false],
         ];
     }
 
