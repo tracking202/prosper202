@@ -171,4 +171,15 @@ HTML;
         self::assertGreaterThan(8, $calls, 'the scan found the standalone pages');
         self::assertSame([], $bare, 'info_top() without a title');
     }
+
+    /**
+     * The license key the installer reads travels in a cookie the page sets
+     * in script; on HTTPS it is Secure (#173), as every session cookie is.
+     */
+    public function testTheLicenseKeyCookieIsSecureOnHttps(): void
+    {
+        $page = (string) file_get_contents(dirname(__DIR__, 2) . '/202-config/get_apikey.php');
+        self::assertSame(1, substr_count($page, "document.cookie = 'user_api='"), 'one place sets it');
+        self::assertStringContainsString("+ '; SameSite=Lax' + (window.location.protocol === 'https:' ? '; Secure' : '');", $page);
+    }
 }
