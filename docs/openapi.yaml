@@ -1085,6 +1085,53 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /clicks/{id}/conversions:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Clicks]
+      summary: Explain a click's value, conversion by conversion
+      description: |
+        Every conversion row of the click, oldest first — counted, unpaid,
+        superseded, deleted and reversals alike — with its amount, what
+        produced it (`source`) and what that is (`linked_to`: a goal and
+        version, a revenue upload, the conversion a reversal nets, or the
+        API key that wrote it, named by when it was created and never by its
+        value), its transaction id and time, and whether it counts toward the
+        click's value (`counted`), with the reason when it does not
+        (`not_counted_reason`: `deleted`, `unpaid`, `superseded` with its
+        `superseded_reason`, or `not_netted` for a reversal whose sale does
+        not count) and a sentence saying so (`explanation`). No stored row
+        is a duplicate: a repeat of a conversion is answered as one and never
+        stored.
+
+        `click` holds the value the reports show (`click_payout`, `lead`)
+        beside the value the counted rows add up to (`ledger_value`), and
+        `matches_click` says whether they agree. A click that converted
+        before the conversion ledger and has had no conversion since is
+        `ledger_state: pre_ledger`: its value is its own figure until its
+        next conversion carries it in as a `legacy_baseline` row, and it
+        matches by definition.
+
+        Needs read scope on both `clicks` and `conversions`. Not paged: a
+        click's rows are all returned.
+      operationId: getClickConversions
+      responses:
+        "200":
+          description: The click's conversions and its value
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClickConversionsResponse"
+        "403":
+          description: The key lacks `clicks:read` or `conversions:read`.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          description: |
+            A row of the click cannot be read by the ledger (an unknown
+            source, an amount that is not a number); the message names it.
+
   # ─── Conversions ─────────────────────────────────────────────────────
 
   /conversions:
@@ -1107,6 +1154,29 @@ paths:
           in: query
           schema:
             type: integer
+        - name: click_id
+          in: query
+          description: |
+            Only this click's conversions. `GET /clicks/{id}/conversions`
+            also says which of them count toward the click and why not.
+          schema:
+            type: integer
+            minimum: 1
+        - name: source
+          in: query
+          description: Only conversions this source produced.
+          schema:
+            $ref: "#/components/schemas/ConversionSource"
+        - name: goal
+          in: query
+          description: Only this goal's outcomes, under every version of it.
+          schema:
+            type: integer
+            minimum: 1
+      description: |
+        Live (not deleted) conversions, newest first, with their provenance.
+        A filter value that cannot be read (`click_id=7x`, an unknown
+        `source`) is a 422 naming the field, never ignored.
       responses:
         "200":
           description: Paginated conversion list
@@ -1114,6 +1184,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ConversionListResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
     post:
       tags: [Conversions]
       summary: Create a conversion
@@ -4468,6 +4540,157 @@ components:
           type: integer
         aff_campaign_name:
           type: string
+        source:
+          $ref: "#/components/schemas/ConversionSource"
+        source_ref:
+          type: string
+          nullable: true
+          description: |
+            What produced the row, as a reference: `goal:<goal id>:<version>`,
+            `batch:<upload id>`, `conv:<the conversion a reversal reverses>`,
+            or `apikey:<digest>` (a truncated SHA-256 of the key that wrote
+            it through this API). `GET /clicks/{id}/conversions` resolves it.
+        event_name:
+          type: string
+          nullable: true
+          description: The event that reached the goal, or a postback's `event=`.
+        payable:
+          type: boolean
+          description: False for a tracked outcome that is not paid.
+        reverses_conv_id:
+          type: integer
+          nullable: true
+        superseded_by:
+          type: integer
+          nullable: true
+        superseded_reason:
+          type: string
+          nullable: true
+          enum: [replace, batch, pre_ledger, replay, reevaluation, null]
+        goal_id:
+          type: integer
+          nullable: true
+          description: The goal of a goal row (from `source_ref`), else null.
+        goal_version:
+          type: integer
+          nullable: true
+
+    ConversionSource:
+      type: string
+      description: What produced a ledger row.
+      enum: [pixel, postback, universal_pixel, api, subid_upload, revenue_upload, legacy_pixel, clickbank, app_install, goal, legacy_baseline]
+
+    ClickConversion:
+      type: object
+      description: One conversion row of a click, and whether it counts toward the click's value.
+      properties:
+        conv_id:
+          type: integer
+        click_id:
+          type: integer
+        amount:
+          type: string
+          description: The row's amount, exact to five decimals (negative for a reversal).
+          example: "5.00000"
+        payable:
+          type: boolean
+        deleted:
+          type: boolean
+        counted:
+          type: boolean
+          description: Whether the amount is part of the click's value.
+        not_counted_reason:
+          type: string
+          nullable: true
+          enum: [deleted, unpaid, superseded, not_netted, null]
+        superseded_reason:
+          type: string
+          nullable: true
+          enum: [replace, batch, pre_ledger, replay, reevaluation, null]
+        superseded_by:
+          type: integer
+          nullable: true
+          description: The row that replaced this one, when there is one.
+        explanation:
+          type: string
+          nullable: true
+          description: The reason as a sentence; null when the row counts.
+        source:
+          $ref: "#/components/schemas/ConversionSource"
+        source_label:
+          type: string
+        source_ref:
+          type: string
+          nullable: true
+        linked_to:
+          type: object
+          nullable: true
+          description: |
+            `source_ref` resolved within the click's account. `type` is
+            `goal` (`goal_id`, `goal_version`, `name`, `archived`),
+            `upload_batch` (`batch_id`, `file_name`, `uploaded_at`),
+            `conversion` (`conv_id`), `api_key` (`key_digest`,
+            `key_created_at`, `revoked`) or `unknown`; `label` names it in
+            words.
+          properties:
+            type:
+              type: string
+              enum: [goal, upload_batch, conversion, api_key, unknown]
+            label:
+              type: string
+          additionalProperties: true
+        event_name:
+          type: string
+          nullable: true
+        transaction_id:
+          type: string
+          nullable: true
+        reverses_conv_id:
+          type: integer
+          nullable: true
+        conv_time:
+          type: integer
+
+    ClickConversionsResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClickConversion"
+        click:
+          type: object
+          properties:
+            click_id:
+              type: integer
+            campaign_id:
+              type: integer
+            campaign_name:
+              type: string
+              nullable: true
+            payout_mode:
+              type: string
+              enum: [replace, accumulate]
+            lead:
+              type: boolean
+              description: The lead flag the reports show.
+            click_payout:
+              type: string
+              description: The value the reports show.
+            ledger_state:
+              type: string
+              enum: [ledger, pre_ledger]
+            ledger_value:
+              type: string
+              nullable: true
+              description: What the counted rows add up to; null when none counts.
+            matches_click:
+              type: boolean
+              description: Whether the reports' value is what the counted rows add up to.
+            rows:
+              type: integer
+            counted_rows:
+              type: integer
 
     ConversionCreate:
       type: object

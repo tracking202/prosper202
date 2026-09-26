@@ -364,6 +364,23 @@ p202 click list --all
 p202 click get 12345
 ```
 
+### Explain a click's value
+
+```bash
+p202 click conversions 12345
+p202 --json click conversions 12345
+```
+
+Every conversion recorded on the click — counted, unpaid, superseded, deleted
+and reversals alike — with its amount, whether it counts toward the click's
+value (and the reason when it does not: `deleted`, `unpaid`, `superseded
+(replace|batch|pre_ledger|replay|reevaluation)`, `not_netted`), its source,
+what that is (a goal and version, an upload, the sale a reversal nets, the API
+key that wrote it), its transaction id and event. The table ends with the
+click's value and says so if the counted rows do not add up to it. `--json`
+prints the API's answer unchanged (`GET /clicks/{id}/conversions`). The PHP
+CLI's `click:conversions <id>` prints the same.
+
 ## Conversions
 
 ### List conversions
@@ -371,6 +388,8 @@ p202 click get 12345
 ```bash
 p202 conversion list
 p202 conversion list --campaign_id 3 --time_from 1700000000
+p202 conversion list --click_id 12345
+p202 conversion list --source goal --goal 7
 p202 conversion list --all
 ```
 
@@ -381,7 +400,15 @@ p202 conversion list --all
 | `--campaign_id` |         | Filter by campaign     |
 | `--time_from`   |         | Start timestamp (unix) |
 | `--time_to`     |         | End timestamp (unix)   |
+| `--click_id`    |         | Only this click's conversions |
+| `--source`      |         | Only this source's: `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `app_install`, `goal`, `legacy_baseline` |
+| `--goal`        |         | Only this goal's outcomes (every version) |
 | `--all`         | false   | Fetch all rows across pages |
+
+Each row carries its provenance: `source`, `source_ref`, `event_name`,
+`payable`, `reverses_conv_id`, `superseded_by`, `superseded_reason`, and a
+goal row's `goal_id` and `goal_version`. A filter value that is not one of
+these is refused before any request, with the command that finds a right one.
 
 ### Get a conversion
 

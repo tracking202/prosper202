@@ -14,6 +14,7 @@ final class RequestContext
     private static array $headers = [];
     private static int $actorUserId = 0;
     private static string $resolvedApiVersion = 'v3';
+    private static string $apiKeyRef = '';
 
     private function __construct()
     {
@@ -58,6 +59,17 @@ final class RequestContext
         return self::$actorUserId;
     }
 
+    /** The authenticated key's ledger reference (Auth::apiKeyRef()), '' before authentication. */
+    public static function setApiKeyRef(string $ref): void
+    {
+        self::$apiKeyRef = $ref;
+    }
+
+    public static function apiKeyRef(): string
+    {
+        return self::$apiKeyRef;
+    }
+
     public static function setResolvedApiVersion(string $version): void
     {
         self::$resolvedApiVersion = $version;
@@ -74,5 +86,6 @@ final class RequestContext
         self::$headers = [];
         self::$actorUserId = 0;
         self::$resolvedApiVersion = 'v3';
+        self::$apiKeyRef = '';
     }
 }

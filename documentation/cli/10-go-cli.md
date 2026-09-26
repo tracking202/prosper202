@@ -46,7 +46,8 @@ p202 config show
 | `p202 ppc-network list` | List PPC/traffic networks (alias: `traffic-network`) |
 | `p202 tracker list` | List trackers |
 | `p202 click list` | List clicks |
-| `p202 conversion list` | List conversions |
+| `p202 click conversions <id>` | Explain a click's value: every conversion on it, whether it counts and why not, what produced it (goal and version, upload, reversal, API key), ending with the click's value; `--json` is `GET /clicks/{id}/conversions` unchanged |
+| `p202 conversion list` | List conversions, with their provenance (`--click_id`, `--source`, `--goal` filter by click, by what produced them and by goal) |
 | `p202 rotator list` | List rotators |
 | `p202 report summary` | Performance summary |
 | `p202 report breakdown` | Performance by dimension |
@@ -270,6 +271,18 @@ scope, minting a key with `--scope`; 404 use `list` for ids; 429 back off;
 5xx retry then `p202 system health`; network check the URL and `p202 config
 test`); and for any remaining validation error, a pointer to `<command>
 --help`.
+
+A flag given an **empty value** (`--click_id ""`, or `--source "$SOURCE"`
+with the variable unset) is refused before the command runs:
+`Error [validation]: --click_id was given an empty value`, exit 1, with a
+hint to omit the flag or give it a value. Read as "not given", an empty
+filter would list everything as though filtered, and an empty update field
+would silently leave the field as it was. The few flags whose empty value
+is a deliberate write — clearing an app's `--notes` on `p202 app update`,
+and the fields of `p202 app encoding update` — pass it through; the root
+flags `--fields`, `--profile` and `--group` keep their "empty is the
+default" meaning. Every other string flag of every command follows the
+rule, and a test walks the whole command tree to keep it so.
 
 `--staged` holds across the nested runners too: the interactive shell resets
 the whole flag tree between commands, so it saves and restores the session's

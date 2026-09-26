@@ -9,9 +9,10 @@ declare(strict_types=1);
  *   $html      (array, may contain prior values)
  *   $tr_attrs  (string, extra attributes for the <tr> tag)
  * Included by click_history.php inside a while loop for both full and
- * incremental renders. Every row carries data-click-id and data-click-time,
- * which 202-js/p202-overview.js uses to put new Spy rows on top without
- * repeating one it already shows.
+ * incremental renders. A click with conversion rows gets a button that opens
+ * their breakdown (data-p202-breakdown). Every row carries data-click-id and
+ * data-click-time, which 202-js/p202-overview.js uses to put new Spy rows on
+ * top without repeating one it already shows.
  */
 
 $html['referer'] = htmlentities(safe_url((string)($click_row['referer'] ?? '')), ENT_QUOTES, 'UTF-8');
@@ -105,6 +106,11 @@ $geoTip = $html['country_name'] . ' (' . $html['country_code'] . '), ' . $html['
 								<span class="p202-pill p202-pill--good" title="This click converted into a lead / sale">Lead</span>
 							<?php } else { ?>
 								<span class="p202-pill p202-pill--accent" title="A real (unfiltered) click">Real</span>
+							<?php } ?>
+							<?php $conversionRows = (int) ($click_row['conversion_rows'] ?? 0); ?>
+							<?php if ($conversionRows > 0) { ?>
+								<?php $conversionLabel = $conversionRows === 1 ? '1 conversion' : $conversionRows . ' conversions'; ?>
+								<button type="button" class="btn btn-link btn-sm p-0 ms-1 align-baseline text-nowrap" data-p202-breakdown="<?php echo htmlspecialchars(get_absolute_url() . 'tracking202/ajax/click_conversions.php?click_id=' . (int) $click_row['click_id'], ENT_QUOTES, 'UTF-8'); ?>" data-p202-breakdown-title="<?php echo 'Conversions on click ' . $html['click_id']; ?>" aria-label="<?php echo $conversionLabel . ' on click ' . $html['click_id']; ?>"><?php echo $conversionLabel; ?></button>
 							<?php } ?>
 						</td>
 						<td class="text-nowrap"><?php echo $html['ip_address']; ?></td>

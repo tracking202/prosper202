@@ -33,3 +33,26 @@ Once you've set all your specific filters, click set preference and it should up
 ## Pagination
 
 Prosper now supports pagination if your reporting is extensively long.
+
+## Grouping by conversion: Transaction ID and Goal / source
+
+Two of the groupings split a click by its conversions rather than by where
+the click came from:
+
+- **Transaction ID** gives each transaction id its own row, with the sum of
+  that transaction's conversions. A click with three transactions shows three
+  amounts that add up to the click's income. A reversal sits under the id of
+  the sale it reverses, so a reversed sale nets to $0.00.
+- **Goal / source** gives each goal its own row (every version of it
+  together) and every other conversion a row by what produced it: Postback,
+  Pixel, API, Revenue upload and so on. Tracked goals that are not paid add
+  nothing, so they have no row.
+
+Only conversions that count toward the click's value are added: a conversion a
+later one replaced, a deleted one, and an unpaid one are left out, exactly as
+they are left out of the click. A click's clicks, click-throughs, leads and
+cost sit on the row of its latest counted conversion, so every group still
+adds up to the one above it and the report's totals are what they are without
+these groupings. Clicks that never converted share one row, **[Not
+converted]**. To see every conversion of one click, counted or not, open it
+from its row in Visitors or Spy.

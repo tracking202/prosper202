@@ -12,6 +12,7 @@ use Prosper202\Conversion\Ledger\LedgerIntegrityException;
 use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\Ledger\PayoutMode;
 use Prosper202\Conversion\Ledger\ReversalException;
+use Prosper202\Conversion\Ledger\SourceRef;
 use Prosper202\Conversion\Ledger\SupersededReason;
 use Prosper202\Database\Connection;
 use Prosper202\DataEngine\ClickRollupSql;
@@ -461,7 +462,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         // Provenance: what produced this row and what it is linked to.
         $sourceRef = isset($data['source_ref']) && $data['source_ref'] !== '' ? (string) $data['source_ref'] : null;
         if ($reverses !== null) {
-            $sourceRef = 'conv:' . (int) $reverses['conv_id'];
+            $sourceRef = SourceRef::conversion((int) $reverses['conv_id']);
         }
         $eventName = isset($data['event_name']) && $data['event_name'] !== '' ? (string) $data['event_name'] : null;
         array_push($columns, 'source', 'source_ref', 'event_name', 'payable', 'reverses_conv_id', 'dedupe_key');
