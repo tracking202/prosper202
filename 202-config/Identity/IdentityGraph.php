@@ -138,7 +138,11 @@ final class IdentityGraph
             }
         }
 
-        // Signals seen for the first time now name this person.
+        // Signals seen for the first time now name this person. A concurrent
+        // link may have created one since the probe above found nothing (under
+        // READ COMMITTED the probe takes no gap lock): its duplicate key is a
+        // race, not an error, and the caller runs the link again to merge
+        // into the visitor the other transaction made (IdentityRaceException).
         foreach ($hashed as $id => $h) {
             if (isset($known[$id])) {
                 continue;
@@ -148,7 +152,18 @@ final class IdentityGraph
                  VALUES (?, ?, ?, ?, 0, NULL, ?)'
             );
             $this->conn->bind($stmt, 'issii', [$userId, $h['type'], $h['hash'], $target, $now]);
-            $this->conn->executeUpdate($stmt);
+            try {
+                $this->conn->executeUpdate($stmt);
+            } catch (\Throwable $e) {
+                if (Connection::isMysqlError($e, 1062, 'Duplicate entry')) {
+                    throw new IdentityRaceException(
+                        'identity: a ' . $h['type'] . ' signal of click ' . $clickId . ' was created by a concurrent link',
+                        0,
+                        $e
+                    );
+                }
+                throw $e;
+            }
         }
 
         $stmt = $this->conn->prepareWrite(
