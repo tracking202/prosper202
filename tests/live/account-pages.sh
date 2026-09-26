@@ -51,6 +51,11 @@ bad()  { FAIL=$((FAIL+1)); printf '  \033[31mFAIL\033[0m %s\n' "$1"; }
 has()  { if grep -qF -- "$2" "$1"; then ok "$3"; else bad "$3"; fi; }
 hasnt(){ if grep -qF -- "$2" "$1"; then bad "$3"; else ok "$3"; fi; }
 eq()   { if [ "$1" = "$2" ]; then ok "$3"; else bad "$3 (got '$1' want '$2')"; fi; }
+skip() { printf '  \033[33mSKIP\033[0m %s\n' "$1"; }
+# Make one kind of write fail, the way a lost connection or a deadlock would:
+# a trigger that refuses it. fail_writes NAME TABLE EVENT CONDITION; clear_fail NAME.
+fail_writes() { mysql_q --delimiter='//' "$DB" -e "DROP TRIGGER IF EXISTS $1// CREATE TRIGGER $1 BEFORE $3 ON $2 FOR EACH ROW BEGIN IF $4 THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'planted by account-pages.sh'; END IF; END//" || bad "the planted failure $1 could not be created"; }
+clear_fail() { mysql_q "$DB" -e "DROP TRIGGER IF EXISTS $1"; }
 msgs() { grep -oE '<div class="p202-flash__body">[^<]*|<div class="invalid-feedback[^"]*">[^<]*' "$1" \
            | sed -E 's/<[^>]*>//' | sed 's/^/    | /'; }
 
@@ -180,9 +185,40 @@ get "202-account/account.php" "$OUT/account.html"
 submit "$OUT/account.html" update_account_currency "202-account/account.php" "$OUT/c-eur.html" account_currency=EUR
 has "$OUT/c-eur.html" 'Account currency saved.' "EUR saves"
 eq "$(Q "SELECT user_account_currency FROM 202_users_pref WHERE user_id=$OWNER")" "EUR" "stored as EUR"
+# The currency and its re-pricing are one transaction: a refused write is
+# said, and nothing is stored (#165).
+fail_writes rv3_fail_currency 202_users_pref UPDATE "NEW.user_account_currency <> OLD.user_account_currency"
+get "202-account/account.php" "$OUT/account.html"
+submit "$OUT/account.html" update_account_currency "202-account/account.php" "$OUT/c-fail.html" account_currency=GBP
+clear_fail rv3_fail_currency
+has "$OUT/c-fail.html" 'The account currency could not be saved, and no campaign was re-priced; try again.' "a currency write that fails says so"
+hasnt "$OUT/c-fail.html" 'Account currency saved.' "and does not say saved"
+eq "$(Q "SELECT user_account_currency FROM 202_users_pref WHERE user_id=$OWNER")" "EUR" "still EUR"
 
 # ─────────────────────────────────────────────────────────────────────
 say "API keys: create, refuse, revoke"
+# (before the keys) The Tracking202 API key change reports only a write that
+# landed (#165, #173): it flashed "updated" and set the session key over an
+# unchanged row.
+KEY_BEFORE=$(Q "SELECT IFNULL(user_api_key,'') FROM 202_users WHERE user_id=$OWNER")
+fail_writes rv3_fail_key 202_users UPDATE "NOT (NEW.user_api_key <=> OLD.user_api_key)"
+get "202-account/account.php" "$OUT/account.html"
+if grep -q 'name="change_user_api_key"' "$OUT/account.html"; then
+  submit "$OUT/account.html" change_user_api_key "202-account/account.php" "$OUT/k-fail.html" user_api_key=0123456789abcdef0123456789abcdef
+  clear_fail rv3_fail_key
+  if grep -qF 'This API Key appears invalid.' "$OUT/k-fail.html"; then
+    skip "the key service refused the probe key, so the write was not reached"
+  else
+    has "$OUT/k-fail.html" 'The Tracking202 API key could not be saved; try again.' "a key write that fails says so"
+    hasnt "$OUT/k-fail.html" 'You have updated your Tracking202 API Key.' "and does not say updated"
+    eq "$(Q "SELECT IFNULL(user_api_key,'') FROM 202_users WHERE user_id=$OWNER")" "$KEY_BEFORE" "the stored key is unchanged"
+    get "202-account/account.php" "$OUT/k-after.html"
+    hasnt "$OUT/k-after.html" '0123456789abcdef0123456789abcdef' "and the session does not carry the key that was not saved"
+  fi
+else
+  clear_fail rv3_fail_key
+  skip "this install's account page offers no Tracking202 API key form"
+fi
 KEYS_BEFORE=$(Q "SELECT COUNT(*) FROM 202_api_keys WHERE user_id=$OWNER")
 get "202-account/account.php" "$OUT/account.html"
 submit "$OUT/account.html" add_rest_api_key "202-account/account.php" "$OUT/k-bad.html" token=forged
@@ -262,7 +298,7 @@ has "$OUT/pw-back.html" 'Your password is changed.' "and it changes back"
 say "users: add, refuse, edit and change the role, remove"
 drop_probe_users() {
   local ids
-  ids=$(Q "SELECT GROUP_CONCAT(user_id) FROM 202_users WHERE user_name IN ('u6_live_user','u6_live_other')")
+  ids=$(Q "SELECT GROUP_CONCAT(user_id) FROM 202_users WHERE user_name IN ('u6_live_user','u6_live_other','u6_live_norole')")
   [ -z "$ids" ] || [ "$ids" = "NULL" ] && return
   mysql_q "$DB" -e "DELETE FROM 202_user_role WHERE user_id IN ($ids); DELETE FROM 202_users_pref WHERE user_id IN ($ids); DELETE FROM 202_users WHERE user_id IN ($ids)"
 }
@@ -304,6 +340,38 @@ submit "$OUT/um.html" user_fname "202-account/user-management.php" "$OUT/um-dup.
   user_password=LivePass-1 user_password2=LivePass-1 user_role=5
 has "$OUT/um-dup.html" 'The username you entered already exists.' "a taken username is refused"
 eq "$(Q "SELECT COUNT(*) FROM 202_users WHERE user_name='u6_live_user'")" "1" "still one"
+
+# A rename onto another user's username is refused (#165: only create was
+# tested, so a revert of the edit-time check stayed green).
+get "202-account/user-management.php" "$OUT/um.html"
+submit "$OUT/um.html" user_fname "202-account/user-management.php" "$OUT/um-other.html" \
+  user_fname=Other user_lname=Person user_email=u6-other@example.test user_name=u6_live_other \
+  user_password=LivePass-1 user_password2=LivePass-1 user_role=5
+OTHER=$(Q "SELECT user_id FROM 202_users WHERE user_name='u6_live_other' AND user_deleted=0")
+eq "$([ -n "$OTHER" ] && echo yes)" "yes" "a second user is added"
+get "202-account/user-management.php?edit_user_id=$OTHER" "$OUT/um-edit-other.html"
+submit "$OUT/um-edit-other.html" user_fname "202-account/user-management.php?edit_user_id=$OTHER" "$OUT/um-rename.html" user_name=u6_live_user
+has "$OUT/um-rename.html" 'The username you entered already exists.' "renaming it onto the first user's name is refused"
+eq "$(Q "SELECT user_name FROM 202_users WHERE user_id=$OTHER")" "u6_live_other" "its name is unchanged"
+
+# A user, its role and its preferences land together (#165, #173): with the
+# role write failing, nobody is added.
+fail_writes rv3_fail_role 202_user_role INSERT "1 = 1"
+get "202-account/user-management.php" "$OUT/um.html"
+submit "$OUT/um.html" user_fname "202-account/user-management.php" "$OUT/um-norole.html" \
+  user_fname=No user_lname=Role user_email=u6-norole@example.test user_name=u6_live_norole \
+  user_password=LivePass-1 user_password2=LivePass-1 user_role=5
+clear_fail rv3_fail_role
+has "$OUT/um-norole.html" 'The user could not be created, and nothing was added. Try again.' "a create whose role write fails says so"
+eq "$(Q "SELECT COUNT(*) FROM 202_users WHERE user_name='u6_live_norole'")" "0" "and leaves no user row behind"
+# And an edit whose role write fails keeps the user as it was.
+fail_writes rv3_fail_role 202_user_role INSERT "1 = 1"
+get "202-account/user-management.php?edit_user_id=$OTHER" "$OUT/um-edit-other.html"
+submit "$OUT/um-edit-other.html" user_fname "202-account/user-management.php?edit_user_id=$OTHER" "$OUT/um-edit-norole.html" user_lname=Changed user_role=4
+clear_fail rv3_fail_role
+has "$OUT/um-edit-norole.html" 'The changes could not be saved, and nothing about the user changed. Try again.' "an edit whose role write fails says so"
+eq "$(Q "SELECT user_lname FROM 202_users WHERE user_id=$OTHER")" "Person" "the user row is as it was"
+eq "$(Q "SELECT GROUP_CONCAT(role_id) FROM 202_user_role WHERE user_id=$OTHER")" "5" "and keeps its one role"
 
 get "202-account/user-management.php?edit_user_id=$NEWUSER" "$OUT/um-edit.html"
 has "$OUT/um-edit.html" 'value="u6-live@example.test"' "the edit form opens with the user in it"
@@ -435,6 +503,36 @@ case "$CODE" in
 esac
 CODE=$(curl -sS -b "$JAR" -c "$JAR" -o "$OUT/ad-back.html" -w '%{http_code}' "$BASE/202-account/administration.php")
 eq "$CODE" "200" "with it back, the page answers"
+
+say "the 1-click upgrade pages ask for access_to_settings too"
+mysql_q "$DB" -e "DELETE FROM 202_role_permission WHERE role_id=$ROLE AND permission_id=$PERM"
+for page in auto-upgrade.php auto-upgrade-premium.php; do
+  CODE=$(curl -sS -b "$JAR" -c "$JAR" -o /dev/null -w '%{http_code} %{redirect_url}' "$BASE/202-account/$page")
+  case "$CODE" in
+    "302 "*202-account/) ok "$page without it redirects home ($CODE)" ;;
+    *) bad "$page without access_to_settings: $CODE" ;;
+  esac
+done
+mysql_q "$DB" -e "INSERT IGNORE INTO 202_role_permission (role_id, permission_id) VALUES ($ROLE, $PERM)"
+
+say "the ClickServer switch asks for the permission, and uses this account's own key"
+get "202-account/api-integrations.php" "$OUT/ai.html"
+TOK=$(python3 "$HERE/form-body.py" "$OUT/ai.html" change_ipqs_api_key | tr '&' '\n' | grep '^token=' | cut -d= -f2-)
+CS="$BASE/202-config/clickserver_api_management.php"
+CODE=$(curl -sS -b "$JAR" -c "$JAR" -o "$OUT/cs-tok.txt" -w '%{http_code}' --data "clickserver_id=victim.example&method=deactivate&token=forged" "$CS")
+eq "$CODE" "403" "a forged token: 403"
+CSPERM=$(Q "SELECT permission_id FROM 202_permissions WHERE permission_description='access_to_clickservers'")
+mysql_q "$DB" -e "DELETE FROM 202_role_permission WHERE role_id=$ROLE AND permission_id=$CSPERM"
+CODE=$(curl -sS -b "$JAR" -c "$JAR" -o "$OUT/cs-perm.txt" -w '%{http_code}' --data "clickserver_id=victim.example&method=deactivate&token=$TOK" "$CS")
+mysql_q "$DB" -e "INSERT IGNORE INTO 202_role_permission (role_id, permission_id) VALUES ($ROLE, $CSPERM)"
+eq "$CODE" "403" "without access_to_clickservers: 403"
+has "$OUT/cs-perm.txt" 'You do not have access to ClickServers.' "with the refusal's sentence"
+CSKEY=$(Q "SELECT IFNULL(clickserver_api_key,'') FROM 202_users WHERE user_id=$OWNER")
+mysql_q "$DB" -e "UPDATE 202_users SET clickserver_api_key='' WHERE user_id=$OWNER"
+CODE=$(curl -sS -b "$JAR" -c "$JAR" -o "$OUT/cs-key.txt" -w '%{http_code}' --data "clickserver_id=victim.example&method=deactivate&token=$TOK&api_key=$(printf 'someone-elses-key' | base64)" "$CS")
+mysql_q "$DB" -e "UPDATE 202_users SET clickserver_api_key='$CSKEY' WHERE user_id=$OWNER"
+eq "$CODE" "409" "with no key of its own, a posted key is not used: 409"
+has "$OUT/cs-key.txt" 'There is no ClickServer API key on file for this account.' "and it says so"
 
 # ─────────────────────────────────────────────────────────────────────
 say "VIP Perks: a bad token is refused before anything leaves this install"
