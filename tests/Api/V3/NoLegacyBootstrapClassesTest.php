@@ -76,6 +76,15 @@ final class NoLegacyBootstrapClassesTest extends TestCase
         '202-js/p202-ui.js',
     ];
 
+    /**
+     * Markup that only v2 pages render but that does not itself pass
+     * 'ui' => 'v2', so the page scan below would never select it: the shared
+     * partials every migrated report family calls.
+     */
+    private const V2_SHARED = [
+        '202-config/functions-ui-partials.php',
+    ];
+
     private const CHROME_STYLESHEET = '202-css/p202-chrome.css';
 
     private const SKIP_DIRS = ['vendor', 'node_modules', 'tests', '.git', '202-config/temp', '202-config/data', '202-config/geo'];
@@ -96,7 +105,7 @@ final class NoLegacyBootstrapClassesTest extends TestCase
     {
         $root = dirname(__DIR__, 3);
         $banned = array_fill_keys($this->bannedClasses($root), true);
-        $files = self::CHROME;
+        $files = array_merge(self::CHROME, self::V2_SHARED);
         foreach ($this->v2Pages($root) as $page) {
             $files[] = $page;
         }

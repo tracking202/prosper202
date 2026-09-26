@@ -21,6 +21,13 @@
  *   [data-bs-toggle="tooltip"]    Bootstrap tooltips and popovers, initialised
  *   [data-bs-toggle="popover"]    here so pages never have to
  *   details[data-p202-remember]   keeps a disclosure's open state per browser
+ *   table[data-p202-sort]         a sortable table (p202_data_table()), wired
+ *                                 to tablesort.js; the header says the order
+ *                                 in aria-sort after every sort
+ *
+ * The v2 shell loads this deferred, after tablesort.js, so it runs once the
+ * document is parsed; init() still waits for DOMContentLoaded when it has not
+ * fired, so the file is safe to load either way.
  */
 (function () {
     'use strict';
@@ -243,10 +250,75 @@
         });
     }
 
+    /* Sortable tables. tablesort.js marks the header it sorted by with
+       `sort-down` or `sort-up`. Both of its comparisons — text and the
+       number sort appended to the vendored build — order high to low, and
+       `sort-down` reverses that, so `sort-down` is ascending (A to Z, 0 to
+       9) and `sort-up` descending, on every column. That reads backwards
+       and was first written the other way round for numbers, from a reading
+       of the minified comparator; tests/browser/specs/ui-kit-partials
+       .spec.js reads the rows after each click and caught it, and holds this
+       mapping to the order actually on screen. */
+    function sortDirection(th) {
+        if (th.classList.contains('sort-down')) {
+            return 'ascending';
+        }
+        return th.classList.contains('sort-up') ? 'descending' : null;
+    }
+
+    function initSortable(root) {
+        if (!window.Tablesort) {
+            return;
+        }
+        Array.prototype.forEach.call((root || document).querySelectorAll('table[data-p202-sort]'), function (table) {
+            if (table.getAttribute('data-p202-sort-ready') === '1' || !table.tHead || !table.tHead.rows.length) {
+                return;
+            }
+            table.setAttribute('data-p202-sort-ready', '1');
+            table.addEventListener('afterSort', function () {
+                var cells = table.tHead.rows[table.tHead.rows.length - 1].cells;
+                Array.prototype.forEach.call(cells, function (th) {
+                    var direction = sortDirection(th);
+                    if (direction) {
+                        th.setAttribute('aria-sort', direction);
+                    } else {
+                        th.removeAttribute('aria-sort');
+                    }
+                });
+            });
+            var sorter = new window.Tablesort(table);
+            seedSortState(table, sorter);
+        });
+    }
+
+    /* A table the server delivered in order says so with aria-sort on that
+       column's header (p202_data_table()'s `sorted`). Tablesort does not read
+       it: with no class on the header, its first click sorts ascending (see
+       sortDirection()), so a column already ascending would "sort" into the
+       order it was in and the click would look dead. So the order is handed
+       to tablesort in its own terms — the header's class, and the instance's
+       `current`, which its click handler reads to clear the previous
+       column's class — without re-sorting rows the server already ordered.
+       Its `sort-default` class is not used for this: that re-sorts on load,
+       with a comparator that need not agree with the server's. */
+    function seedSortState(table, sorter) {
+        var cells = table.tHead.rows[table.tHead.rows.length - 1].cells;
+        Array.prototype.forEach.call(cells, function (th) {
+            var direction = th.getAttribute('aria-sort');
+            if (th.classList.contains('no-sort') || (direction !== 'ascending' && direction !== 'descending')) {
+                return;
+            }
+            th.classList.remove('sort-up', 'sort-down');
+            th.classList.add(direction === 'ascending' ? 'sort-down' : 'sort-up');
+            sorter.current = th;
+        });
+    }
+
     /* Prepare a subtree: pages call p202ui.init(root) after inserting markup. */
     function init(root) {
         restoreDisclosures(root);
         initBootstrapHints(root);
+        initSortable(root);
         Array.prototype.forEach.call((root || document).querySelectorAll('[data-p202-range]'), function (select) {
             syncRange(select);
         });
