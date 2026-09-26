@@ -106,7 +106,11 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      * flag and the audit row commit or roll back together.
      *
      * @param array<string, mixed> $data Requires click_id. Optional:
-     *        transaction_id, payout, conv_time, campaign_id, click_time, and the
+     *        transaction_id, payout, conv_time, campaign_id, click_time,
+     *        once_per_click (true = record only while the click is not yet a
+     *        lead; checked under the click lock, so two concurrent id-less
+     *        requests cannot both record — the caller's own pre-lock read of
+     *        click_lead is a fast path, never the guard), and the
      *        legacy columns time_difference, ip, pixel_type, user_agent (only
      *        written when present, so the V3 insert keeps its historical shape).
      *        LTV keys (all optional): customer_id (known internal id),
@@ -130,11 +134,18 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         $transactionId = $rawTransactionId !== '' ? $rawTransactionId : null;
         $convTime = (int) ($data['conv_time'] ?? time());
         $payoutOverride = isset($data['payout']) ? (float) $data['payout'] : null;
+        // The ip column is varchar(45): exactly one address fits, a forwarding
+        // chain does not, and an over-long value fails the INSERT under strict
+        // sql_mode and rolls the conversion back. Whatever a caller hands in,
+        // the row gets one valid address or nothing (p202ClientIp() picks the
+        // address at the endpoints; this is the writer's own floor).
+        $ip = trim((string) ($data['ip'] ?? ''));
+        $data['ip'] = $ip !== '' && filter_var($ip, FILTER_VALIDATE_IP) !== false ? $ip : '';
 
         $work = function () use ($userId, $clickId, $transactionId, $convTime, $payoutOverride, $data, $clickSideUpdate): array {
             // Lock the source click so concurrent/retried postbacks serialise here.
             $clickStmt = $this->conn->prepareWrite(
-                'SELECT click_id, aff_campaign_id, click_payout, click_time FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE'
+                'SELECT click_id, aff_campaign_id, click_payout, click_time, click_lead FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE'
             );
             $this->conn->bind($clickStmt, 'ii', [$clickId, $userId]);
             $click = $this->conn->fetchOne($clickStmt);
@@ -160,6 +171,16 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                         'customerId' => $dup['customer_id'] !== null ? (int) $dup['customer_id'] : null,
                     ];
                 }
+            }
+
+            // One conversion per click for id-less pixels and postbacks. This
+            // is the authoritative check: it reads click_lead from the row
+            // locked FOR UPDATE above, so a second id-less request waits on
+            // the first's commit and then sees click_lead = 1. A NULL
+            // transaction id never collides on the UNIQUE key, so without this
+            // the two would both insert.
+            if (!empty($data['once_per_click']) && (int) ($click['click_lead'] ?? 0) === 1) {
+                return ['convId' => 0, 'duplicate' => true, 'clickFound' => true, 'customerId' => null];
             }
 
             $payout = $payoutOverride ?? (float) ($click['click_payout'] ?? 0);

@@ -170,13 +170,19 @@ generated it.
 - **Nothing is called a "sub-conversion" or "sub-subid".** Nothing rolls rows
   up into the click. The click's income is one value that the latest
   conversion overwrites (§5.5).
-- **Several paths write no row at all**, so their amounts can never be
+- **Several paths wrote no row at all**, so their amounts could never be
   broken down:
   - the revenue CSV upload (`tracking202/update/upload.php:128-165`) sums per
-    subid within a file and writes only the total;
-  - the legacy `px.php` / `pb.php` pixels only flag the click;
-  - the ClickBank endpoint (`cb202.php`) overwrites `click_payout` with the
-    order total.
+    subid within a file and writes only the total. **Still open; PR 1.**
+  - the legacy `px.php` / `pb.php` pixels only flagged the click, and the
+    ClickBank endpoint (`cb202.php`) overwrote `click_payout` with the order
+    total. **Done (PR 0, 2026-09-25):** all three now record through
+    `p202RecordLegacyConversion()` in `202-config/static-endpoint-helpers.php`,
+    with the gpx one-conversion-per-click gate when no id is present, pb's
+    campaign scope and px's owner check applied before any write, and the
+    ClickBank receipt as the transaction id so repeated INS deliveries
+    de-duplicate and two sales are two rows. `tests/live/legacy-pixels.sh`
+    drives all three against a running instance.
 - **A row cannot say what produced it.** `pixel_type` distinguishes only
   pixel (1), postback (2), universal pixel (3) and "other" (0). The V3 API
   and the manual subid upload are told apart only by an empty user agent
@@ -192,12 +198,11 @@ generated it.
 **The design: `202_conversion_logs` becomes the ledger, and the click total
 becomes a cache of it.**
 
-1. **Every path writes a row.** This includes the three that write none today:
-   - the CSV upload writes one row per CSV line, tagged with its upload batch;
-   - `px.php` / `pb.php` write a row each;
-   - ClickBank writes one row per receipt, with the receipt as the
-     transaction id (`source = clickbank`). Its duplicate notifications then
-     dedupe for free, as they do not today.
+1. **Every path writes a row.** `px.php`, `pb.php` and ClickBank do since
+   PR 0 (one row per receipt, the receipt as the transaction id, so duplicate
+   INS deliveries de-duplicate). PR 1 adds the last one: the CSV upload writes
+   one row per CSV line, tagged with its upload batch, and gives the PR 0 rows
+   their `source` value (`legacy_pixel`, `clickbank`).
 2. **Provenance columns** on every row:
 
    | Column | Values |
@@ -1839,7 +1844,8 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 
 | # | PR | Depends on |
 |---|---|---|
-| 1 | **Conversion ledger** (§2.1): provenance columns; every path writes rows (CSV upload, `px`/`pb`, ClickBank included); click value derived from rows under `payout_mode`; outbox row in `record()`; `ConversionTables` split out; `gpb.php` pixel-firing logic extracted to one function | — |
+| 0 | **Legacy endpoints record conversions** (§2.1): `px.php`, `pb.php` and `cb202.php` through the shared writer; `tests/live/legacy-pixels.sh`. **Merged first, alone.** | — |
+| 1 | **Conversion ledger** (§2.1): provenance columns; the CSV upload writes rows (the last path that does not); click value derived from rows under `payout_mode`; outbox row in `record()`; `ConversionTables` split out; `gpb.php` pixel-firing logic extracted to one function | — |
 | 1b | **Breakdown reads:** `GET /clicks/{id}/conversions` and `p202 click conversions <id>`, `/conversions` filters, the click-history breakdown view, Group Overview's Goal/source level, and the Transaction ID level fixed to sum rows | 1, 4 (for goal names); U2 |
 | 2 | **Identity capture:** `p202vid`, LP first-party id and `p202.js`, `cust` on clicks, `202_identity_*`, `202_clicks_visitor`, consent switch | — |
 | 3 | **App core reshape** (§4): registry, `AppIdentity`, token rename, verdicts, `PublicIntake`, retention, user-deletion purge, `/apps` and `p202 app` renames, legacy guard deleted | — |
@@ -1883,13 +1889,12 @@ in the first release by construction.
 | 10 | Goals on web campaigns | Goals are core: the subject is the click (web) or the install (app), and events come from pixel/postback `event=`, `POST /events` and `p202.js` | §2.2 |
 | 11 | The app's two looks | Migrate the whole app to the v2 shell in this release (Part E, PRs U1–U8), then delete the classic shell and legacy assets | §10 |
 
-**Still to confirm, one item.** Decision 9 has the legacy pixels
-(`px.php`, `pb.php`), ClickBank and the revenue CSV upload **start writing
-conversion rows**. Today they change the click and leave no trace. After the
-upgrade those conversions appear in conversion lists, the API, MTA and the
-breakdown. Income per click in `replace` mode is unchanged. Without this, a
-click whose value came from one of those paths cannot be broken down, so the
-plan assumes yes.
+**Confirmed (2026-09-25) and partly done.** Decision 9 has the legacy
+pixels (`px.php`, `pb.php`), ClickBank and the revenue CSV upload **write
+conversion rows**. The three endpoints do, as PR 0 (see §2.1); the CSV upload
+follows in PR 1. From the upgrade on, those conversions appear in conversion
+lists, the API, MTA and the breakdown. Income per click in `replace` mode is
+unchanged.
 
 ---
 

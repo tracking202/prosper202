@@ -117,6 +117,42 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         self::assertSame('', $bound[10], 'user_agent defaults to empty string');
     }
 
+    /**
+     * The ip column is varchar(45). A forwarding chain, or anything that is
+     * not one address, is bound as '' so the INSERT can never fail on it under
+     * strict sql_mode and roll the conversion back.
+     *
+     * @dataProvider ipValuesTheWriterBounds
+     */
+    public function testRecordBindsOneValidAddressOrNothingAsTheIp(string $given, string $bound): void
+    {
+        $write = new InsertReportingFakeMysqliConnection(7);
+        $write->whenQueryContainsReturnRows(
+            'FROM 202_clicks WHERE click_id = ?',
+            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000]]
+        );
+        $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
+
+        $repo->record(1, ['click_id' => 10, 'transaction_id' => 'TX-1', 'ip' => $given]);
+
+        $insertStmts = $write->statementsContaining('INSERT INTO 202_conversion_logs');
+        self::assertCount(1, $insertStmts);
+        self::assertSame($bound, $insertStmts[0]->boundValues[8]);
+    }
+
+    /** @return iterable<string, array{string, string}> */
+    public static function ipValuesTheWriterBounds(): iterable
+    {
+        yield 'one IPv4' => ['198.51.100.7', '198.51.100.7'];
+        yield 'one IPv6, trimmed' => [' 2001:db8::1 ', '2001:db8::1'];
+        yield 'a forwarding chain longer than 45 chars' => [
+            '2001:db8:85a3:8d3:1319:8a2e:370:7348, 2001:db8:85a3:8d3:1319:8a2e:370:7349',
+            '',
+        ];
+        yield 'garbage' => [str_repeat('x', 60), ''];
+        yield 'empty' => ['', ''];
+    }
+
     public function testCreateUpdatesClickLeadFlag(): void
     {
         $write = new FakeMysqliConnection();
@@ -318,6 +354,64 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         self::assertSame(0, $result['total']);
         self::assertCount(0, $write->statements);
     }
+
+    // --- once_per_click: the id-less gate, enforced under the click lock ---
+
+    public function testOncePerClickRefusesAClickThatIsAlreadyALead(): void
+    {
+        // The row comes back from the SELECT ... FOR UPDATE with click_lead = 1:
+        // another id-less request converted this click first. The writer
+        // answers "duplicate" and prepares no INSERT, whatever the caller read
+        // before it took the lock.
+        $write = new FakeMysqliConnection();
+        $write->whenQueryContainsReturnRows(
+            'FROM 202_clicks WHERE click_id = ?',
+            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 1]]
+        );
+        [$repo] = $this->buildRepo($write);
+
+        $result = $repo->record(1, ['click_id' => 10, 'once_per_click' => true]);
+
+        self::assertTrue($result['duplicate']);
+        self::assertTrue($result['clickFound']);
+        self::assertSame(0, $result['convId']);
+        self::assertSame([], $write->statementsContaining('INSERT INTO 202_conversion_logs'));
+        self::assertTrue($write->rollbackCalled || $write->commitCalled, 'the transaction is closed either way');
+    }
+
+    public function testOncePerClickRecordsWhileTheClickIsNotYetALead(): void
+    {
+        $write = new InsertReportingFakeMysqliConnection(7);
+        $write->whenQueryContainsReturnRows(
+            'FROM 202_clicks WHERE click_id = ?',
+            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
+        );
+        $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
+
+        $result = $repo->record(1, ['click_id' => 10, 'once_per_click' => true]);
+
+        self::assertFalse($result['duplicate']);
+        self::assertSame(7, $result['convId']);
+        self::assertCount(1, $write->statementsContaining('INSERT INTO 202_conversion_logs'));
+    }
+
+    public function testWithoutOncePerClickALeadClickStillRecords(): void
+    {
+        // The gate is opt-in: a conversion carrying a transaction id (a repeat
+        // purchase on the same click) records exactly as before.
+        $write = new InsertReportingFakeMysqliConnection(8);
+        $write->whenQueryContainsReturnRows(
+            'FROM 202_clicks WHERE click_id = ?',
+            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 1]]
+        );
+        $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
+
+        $result = $repo->record(1, ['click_id' => 10, 'transaction_id' => 'TX-2']);
+
+        self::assertFalse($result['duplicate']);
+        self::assertSame(8, $result['convId']);
+    }
+
 }
 
 /**
@@ -473,11 +567,9 @@ final class InsertReportingFakeStatement
     #[\ReturnTypeWillChange]
     public function get_result(): \mysqli_result|false
     {
-        if ($this->rows === null) {
-            return false;
-        }
-
-        return new InsertReportingFakeResult($this->rows);
+        // An unconfigured SELECT is an empty result set, as on a real server;
+        // false would now be read by Connection as a fetch failure.
+        return new InsertReportingFakeResult($this->rows ?? []);
     }
 
     public function close(): bool
