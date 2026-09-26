@@ -4,9 +4,7 @@ declare(strict_types=1);
 
 namespace Api\V3\Apps\Android\Integrity;
 
-use Api\V3\Apps\AppIdentity;
-use Api\V3\Apps\AppPolicy;
-use Api\V3\Apps\AppRegistration;
+use Api\V3\Apps\Android\LockedInstall;
 use Api\V3\Apps\Android\InstallClassifier;
 use Api\V3\Apps\Android\InstallIntake;
 use Api\V3\Apps\Android\InstallPayload;
@@ -310,13 +308,7 @@ final class IntegrityVerifier
     {
         $work = function () use ($installRowId, $attempt, $outcome): array {
             $none = ['state' => null, 'post' => ['ledger' => [], 'clicks' => []], 'user' => 0];
-            $lock = $this->conn->prepareWrite(
-                'SELECT i.*, r.platform, r.app_key, r.accept_test_signals, r.attribution_window_days, r.trust_client_revenue
-                 FROM 202_app_installs i JOIN 202_app_registrations r ON r.registration_id = i.registration_id
-                 WHERE i.install_row_id = ? LIMIT 1 FOR UPDATE'
-            );
-            $this->conn->bind($lock, 'i', [$installRowId]);
-            $row = $this->conn->fetchOne($lock);
+            $row = LockedInstall::read($this->conn, $installRowId);
             if ($row === null || (string) $row['integrity_state'] !== IntegrityState::PENDING->value || (int) $row['integrity_attempts'] !== $attempt) {
                 return $none; // another worker's claim superseded ours
             }
@@ -347,12 +339,7 @@ final class IntegrityVerifier
                 // observe, or an install that never waited: the verdict is recorded, nothing else moves.
                 return ['state' => $outcome['state'], 'post' => $none['post'], 'user' => 0];
             }
-            $registration = new AppRegistration(
-                (int) $row['registration_id'],
-                (int) $row['user_id'],
-                AppIdentity::fromKey((string) $row['platform'], (string) $row['app_key']),
-                AppPolicy::fromRow($row),
-            );
+            $registration = LockedInstall::registration($row);
             // Re-classified from the stored body under the click's lock, as
             // the intake would now: another install may have taken the click
             // meanwhile (duplicate_click). settle()'s gate reads the verdict
