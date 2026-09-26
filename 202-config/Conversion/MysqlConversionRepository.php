@@ -130,6 +130,12 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      *        id, default "1"),
      *        once_per_click (true = record only while the click is not yet a
      *        lead; checked under the click lock),
+     *        once_per_click_unkeyed (true = the same check, applied only when
+     *        the row's ledger key does not already make it once per click:
+     *        an accumulating plain conversion is keyed "conversion" and is
+     *        owed once even on a click that is a lead through keyed sales;
+     *        a replace-mode id-less row is keyed by its own id and would
+     *        otherwise be recorded again on every retry),
      *        skip_ltv (do not write a revenue event), skip_bridge (do not emit
      *        conversion.recorded) — both for rows that are not new sales, such
      *        as upload lines,
@@ -228,6 +234,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                 );
             }
 
+            $keyedByOwnRow = false;
             if ($reverses !== null) {
                 $reversalRef = trim((string) ($data['reversal_ref'] ?? ''));
                 $dedupeKey = DedupeKey::reversal((int) $reverses['conv_id'], $reversalRef !== '' ? $reversalRef : '1');
@@ -242,6 +249,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                 $dedupeKey = DedupeKey::plainConversion();
             } else {
                 $dedupeKey = DedupeKey::rowPlaceholder();
+                $keyedByOwnRow = true;
             }
             if (strlen($dedupeKey) > DedupeKey::MAX_LENGTH) {
                 throw new RuntimeException('dedupe key is longer than ' . DedupeKey::MAX_LENGTH . ' bytes');
@@ -286,7 +294,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             // is the authoritative check: it reads click_lead from the row
             // locked FOR UPDATE above, so a second id-less request waits on
             // the first's commit and then sees click_lead = 1.
-            if (!empty($data['once_per_click']) && (int) ($click['click_lead'] ?? 0) === 1) {
+            $oncePerClick = !empty($data['once_per_click'])
+                || (!empty($data['once_per_click_unkeyed']) && $keyedByOwnRow);
+            if ($oncePerClick && (int) ($click['click_lead'] ?? 0) === 1) {
                 return ['convId' => 0, 'duplicate' => true, 'clickFound' => true, 'customerId' => null];
             }
 

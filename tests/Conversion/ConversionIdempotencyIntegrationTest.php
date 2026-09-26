@@ -108,6 +108,7 @@ final class ConversionIdempotencyIntegrationTest extends TestCase
             'pixel_type'      => 3,
             'user_agent'      => 'IntegrationTest/1.0',
             'click_payout'    => (string) $payout,
+            'once_per_click'  => false,
         ];
     }
 
@@ -158,6 +159,29 @@ final class ConversionIdempotencyIntegrationTest extends TestCase
 
         $res = self::$db->query("SELECT COUNT(*) AS c FROM 202_conversion_logs WHERE click_id=1001 AND transaction_id IS NULL");
         self::assertSame(2, (int) $res->fetch_assoc()['c'], 'Empty transaction ids must be stored as NULL');
+    }
+
+    /**
+     * gpb.php and upx.php used to call the writer without once_per_click, so
+     * a retried id-less postback or a reloaded universal pixel recorded a
+     * second conversion (a NULL transaction id never collides on the UNIQUE
+     * key). With the flag the second hit finds the click already a lead under
+     * its lock and records nothing.
+     */
+    public function testOncePerClickRecordsOneIdlessConversion(): void
+    {
+        $this->insertClick(1005);
+        $log = $this->log(1005);
+        $log['once_per_click'] = true;
+
+        $first = p202RecordConversion(self::$db, $log, '', true, '10.0', '');
+        $retry = p202RecordConversion(self::$db, $log, '', true, '10.0', '');
+
+        self::assertFalse($first['duplicate']);
+        self::assertGreaterThan(0, $first['conv_id']);
+        self::assertTrue($retry['duplicate'], 'the retry is reported as a duplicate');
+        self::assertSame(0, $retry['conv_id']);
+        self::assertSame(1, $this->conversionCount(1005), 'an id-less retry must not record a second conversion');
     }
 
     public function testUniqueKeyRejectsADuplicateLedgerKeyAtDbLevel(): void
