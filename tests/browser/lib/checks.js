@@ -280,7 +280,230 @@ async function tablesScrollThemselves(ctx) {
   ctx.expect.ok(contained, 'wide tables scroll inside their own box');
 }
 
+/**
+ * The chrome, measured, so the two shells can be compared.
+ *
+ * The header, section tabs, sub-menu and footer are one set of markup styled
+ * by 202-css/p202-chrome.css on both shells — but each shell brings its own
+ * <body>, and anything the chrome leaves to inherit comes out at two sizes.
+ * That is the one way the two can drift apart that no source test can see:
+ * the Analyze strip was 37px tall on a classic page and 43px on a v2 one
+ * because it inherited Flat UI Pro's line height of 1 on one and Bootstrap
+ * 5's 1.5 on the other, and the account toggle was a pixel taller on classic
+ * because Bootstrap 5's reboot centres an <svg> that Bootstrap 3 leaves on
+ * the baseline.
+ *
+ * Each part lists every element it matches, in order, with its box and the
+ * computed properties that decide how it reads. The account menu is opened
+ * for the measurement and closed afterwards, so its items are measured too.
+ *
+ * `scrolls` marks items inside a list that scrolls sideways: their x depends
+ * on which entry is current, which differs between the two pages by design.
+ * `afterContent` marks parts below the page content, whose y depends on it.
+ */
+const CHROME_PARTS = [
+  { sel: '.p202c-header' },
+  { sel: '.p202c-header__inner' },
+  { sel: '.p202c-brand' },
+  { sel: '.p202c-nav' },
+  { sel: '.p202c-nav__link' },
+  { sel: '.p202c-nav__link .p202c-icon' },
+  { sel: '.p202c-account' },
+  { sel: '.p202c-menu__toggle' },
+  { sel: '.p202c-menu__toggle > *' },
+  { sel: '.p202c-menu__list a' },
+  { sel: '.p202c-tabs' },
+  { sel: '.p202c-tabs__list > li > a', scrolls: true },
+  { sel: '.p202c-strip' },
+  { sel: '.p202c-strip__list' },
+  { sel: '.p202c-strip__list > li > a', scrolls: true },
+  { sel: '.p202c-subnav' },
+  { sel: '.p202c-subnav__link' },
+  { sel: '.p202c-footer', afterContent: true },
+];
+
+const CHROME_TYPE = ['font-family', 'font-size', 'font-weight', 'line-height', 'letter-spacing',
+  'padding', 'margin', 'border-radius', 'border-top-width', 'display'];
+const CHROME_PAINT = ['color', 'background-color', 'border-top-color'];
+
+async function chromeGeometry(ui) {
+  const page = ui.page;
+  // Lato is a web font; a box measured before it lands is the fallback's.
+  await page.evaluate(() => (document.fonts ? document.fonts.ready.then(() => true) : true));
+  // The pointer stays where the last page left it, so whatever is under it
+  // now is painted in its hover state — the account toggle, usually, since
+  // that is what the previous measurement clicked. Park it on the page
+  // margin and let every transition finish before reading a colour.
+  await page.mouse.move(0, 0);
+  const still = async (describe) => ui.untilInPage(
+    // Only the chrome's own: a page may run an endless one (the kit's
+    // skeleton shimmers for as long as it is open).
+    () => !document.getAnimations || document.getAnimations().every((animation) => {
+      const target = animation.effect && animation.effect.target;
+      return !(target && target.closest
+        && target.closest('.p202c-header, .p202c-tabs, .p202c-strip, .p202c-subnav, .p202c-footer'));
+    }),
+    undefined, { describe });
+  await still('the chrome to stop transitioning');
+
+  const measure = (only) => page.evaluate(({ parts, type, paint, only }) => {
+    const out = {};
+    for (const part of parts) {
+      if (only && !only.includes(part.sel)) { continue; }
+      out[part.sel] = Array.from(document.querySelectorAll(part.sel)).map((el) => {
+        const box = el.getBoundingClientRect();
+        const style = getComputedStyle(el);
+        const read = (props) => {
+          const values = {};
+          props.forEach((prop) => { values[prop] = style.getPropertyValue(prop); });
+          return values;
+        };
+        // "Current" differs between two different pages by design: the
+        // current tab, sub-menu entry or nav link is painted differently.
+        const current = el.matches('.is-active, [aria-current="page"], .active > *, .is-active *, .active *')
+          || el.classList.contains('active');
+        return {
+          text: (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 32),
+          // Document coordinates: a page that focuses a field on load
+          // scrolls, and the chrome has not moved when it does.
+          x: box.x + window.scrollX, y: box.y + window.scrollY, w: box.width, h: box.height,
+          type: read(type),
+          paint: read(paint),
+          current,
+        };
+      });
+    }
+    return out;
+  }, { parts: CHROME_PARTS, type: CHROME_TYPE, paint: CHROME_PAINT, only });
+
+  // Everything but the menu's items, with the menu shut: an open menu paints
+  // its toggle in the hover colours.
+  const parts = await measure(null);
+  const toggle = await page.$('.p202c-menu__toggle');
+  if (toggle) {
+    await toggle.click();
+    await ui.untilInPage(() => {
+      const menu = document.querySelector('details.p202c-menu');
+      return menu !== null && menu.open;
+    }, undefined, { describe: 'the account menu to open' });
+    await page.mouse.move(0, 0);
+    await still('the account menu to stop transitioning');
+    Object.assign(parts, await measure(['.p202c-menu__list a']));
+    await page.keyboard.press('Escape');
+    await ui.untilInPage(() => {
+      const menu = document.querySelector('details.p202c-menu');
+      return menu === null || !menu.open;
+    }, undefined, { describe: 'the account menu to close' });
+  }
+  return parts;
+}
+
+/**
+ * Two measurements of the chrome render the same.
+ *
+ * One claim per part, so a failure names the part and lists what differs
+ * rather than reporting one opaque "the chrome differs". Positions and sizes
+ * match to a pixel (sub-pixel layout rounds differently between two
+ * documents); type and spacing match exactly. Colours are compared only
+ * when `paint` is set — the classic shell has no dark theme, so in dark mode
+ * the two are meant to differ — and never for the current entry, which is a
+ * different entry on two different pages.
+ *
+ * @param {{expect: import('./report').Expect}} ctx
+ * @param {object} a  chromeGeometry() of the first page
+ * @param {object} b  chromeGeometry() of the second page
+ * @param {{label?: string, paint?: boolean}} [options]
+ */
+function chromeMatches(ctx, a, b, options = {}) {
+  const { expect } = ctx;
+  const label = options.label ? options.label + ': ' : '';
+  const near = (p, q) => Math.abs(p - q) <= 1;
+  let compared = 0;
+  for (const part of CHROME_PARTS) {
+    const left = a[part.sel] || [];
+    const right = b[part.sel] || [];
+    if (left.length === 0 && right.length === 0) { continue; }
+    compared++;
+    const diffs = [];
+    if (left.length !== right.length) {
+      diffs.push('count ' + left.length + ' vs ' + right.length);
+    }
+    for (let i = 0; i < Math.min(left.length, right.length); i++) {
+      const p = left[i];
+      const q = right[i];
+      const where = '[' + i + ' ' + JSON.stringify(p.text) + '] ';
+      const keys = ['w', 'h'];
+      if (!part.scrolls) { keys.push('x'); }
+      if (!part.afterContent) { keys.push('y'); }
+      keys.forEach((key) => {
+        if (!near(p[key], q[key])) { diffs.push(where + key + ' ' + Math.round(p[key]) + ' vs ' + Math.round(q[key])); }
+      });
+      // The current entry is bold and coloured on purpose, and is a
+      // different entry on two different pages; only its box is compared.
+      const current = p.current || q.current;
+      Object.keys(p.type).forEach((prop) => {
+        if (current && prop === 'font-weight') { return; }
+        if (p.type[prop] !== q.type[prop]) { diffs.push(where + prop + ' ' + p.type[prop] + ' vs ' + q.type[prop]); }
+      });
+      if (options.paint && !current) {
+        Object.keys(p.paint).forEach((prop) => {
+          if (p.paint[prop] !== q.paint[prop]) { diffs.push(where + prop + ' ' + p.paint[prop] + ' vs ' + q.paint[prop]); }
+        });
+      }
+    }
+    expect.ok(diffs.length === 0, label + part.sel + ' renders the same on both shells', diffs.slice(0, 4).join('; '));
+  }
+  expect.ok(compared > 0, label + 'there was chrome to compare');
+}
+
+/* U4: Setup ---------------------------------------------------------------
+ * The Setup pages on the v2 shell, one entry each: the page, the sub-menu
+ * entry that marks it current, and the classes it uses only as script hooks
+ * (legitimately unstyled). `pageBaseline` runs every check the standard asks
+ * of a v2 page against one entry, so a spec walks the list rather than
+ * repeating the checks per page.
+ */
+const LEGACY_SAMPLE = ['col-xs-12', 'col-xs-6', 'col-md-offset-4', 'panel', 'panel-body', 'panel-heading', 'well',
+  'form-horizontal', 'form-group', 'control-label', 'input-sm', 'btn-default', 'btn-xs', 'btn-block', 'help-block',
+  'glyphicon', 'label', 'pull-right', 'sr-only', 'input-group-addon', 'radio', 'checkbox'];
+
+const SETUP_PAGES = [
+  { path: '/tracking202/setup/ppc_accounts.php', menu: 'Traffic Sources' },
+  { path: '/tracking202/setup/aff_networks.php', menu: 'Categories' },
+  { path: '/tracking202/setup/aff_campaigns.php', menu: 'Campaigns' },
+  { path: '/tracking202/setup/landing_pages.php', menu: 'Landing Pages' },
+  { path: '/tracking202/setup/text_ads.php', menu: 'Text Ads' },
+  { path: '/tracking202/setup/rotator.php', menu: 'Redirector' },
+  { path: '/tracking202/setup/get_simple_landing_code.php', menu: 'Get LP Code' },
+  { path: '/tracking202/setup/get_adv_landing_code.php', menu: 'Get LP Code' },
+  { path: '/tracking202/setup/get_dynamic_smart_component_code.php', menu: null },
+  { path: '/tracking202/setup/get_trackers.php', menu: 'Get Links' },
+  { path: '/tracking202/setup/get_postback.php', menu: 'Postback/Pixel' },
+];
+
+/**
+ * Everything the standard asks of a v2 page, for one SETUP_PAGES entry:
+ * the baseline, no legacy class in the live DOM, every component class
+ * styled, no flex container eating its spaces, and the page's own sub-menu
+ * entry current and on screen. The caller has navigated to the page.
+ */
+async function pageBaseline(ctx, entry) {
+  const { app, expect } = ctx;
+  await baseline(ctx);
+  await noLegacyClasses(ctx, LEGACY_SAMPLE);
+  await componentClassesAreStyled(ctx, entry.scriptOnly || []);
+  await flexContainersKeepTheirSpaces(ctx);
+  if (entry.menu) {
+    expect.eq(await app.currentSubMenuItem(), entry.menu, 'the sub-menu marks ' + entry.menu + ' as current');
+    await currentSubMenuItemIsVisible(ctx);
+  }
+}
+
 module.exports = {
+  SETUP_PAGES,
+  pageBaseline,
+  chromeGeometry,
+  chromeMatches,
   baseline,
   noLegacyClasses,
   componentClassesAreStyled,
@@ -290,3 +513,308 @@ module.exports = {
   darkThemeApplies,
   tablesScrollThemselves,
 };
+
+/* U6: Account ----------------------------------------------------------- */
+
+/**
+ * The Account family on the v2 shell: one baseline entry per page. `path` is
+ * where it lives; `scriptOnly` names classes the page uses only as script
+ * hooks (legitimately unstyled); `banned` adds Bootstrap 3 names the page
+ * used to carry, so the live DOM is checked for the ones it really had.
+ */
+const ACCOUNT_PAGES = [
+  { name: 'Home', path: '/202-account/' },
+  { name: 'Personal settings', path: '/202-account/account.php' },
+  { name: 'Users', path: '/202-account/user-management.php' },
+  { name: 'API integrations', path: '/202-account/api-integrations.php', banned: ['label-primary', 'label-important', 'glyphicon'] },
+  { name: 'Settings', path: '/202-account/administration.php', banned: ['label-important', 'radio-inline', 'pull-right'] },
+  { name: 'Help', path: '/202-account/help.php' },
+  { name: 'Document', path: '/202-account/docs.php?doc=ui-standard' },
+  { name: 'VIP Perks', path: '/202-account/vip-perks.php', banned: ['radio-inline'] },
+  { name: 'ClickServers', path: '/202-account/clickservers.php' },
+  { name: 'Safe mode', path: '/202-account/disable-safe-mode.php', banned: ['big-alert'] },
+  { name: 'API key required', path: '/202-account/api-key-required.php', banned: ['big-alert'] },
+  { name: 'App key required', path: '/202-account/app-key-required.php', banned: ['big-alert'] },
+  { name: '1-click upgrade', path: '/202-account/auto-upgrade.php' },
+  { name: 'Premium upgrade', path: '/202-account/auto-upgrade-premium.php' },
+];
+
+/** What every Account page was built on before U6: the classic grid and panels. */
+const ACCOUNT_CLASSIC_CLASSES = ['col-xs-4', 'col-xs-8', 'col-xs-12', 'panel', 'panel-body', 'panel-default',
+  'form-horizontal', 'control-label', 'input-sm', 'btn-p202', 'account_left', 'form_seperator', 'infotext'];
+
+/**
+ * One Account page's baseline, at whatever viewport the session has: the
+ * shell and its scripts, the component layer, the chrome, and no classic
+ * class left in the live DOM.
+ */
+async function accountPageBaseline(ctx, page) {
+  const { app, expect } = ctx;
+  expect.section(page.name + ' (' + page.path + ')');
+  await app.goto(page.path);
+  await baseline(ctx);
+  await componentClassesAreStyled(ctx, page.scriptOnly || []);
+  await flexContainersKeepTheirSpaces(ctx);
+  await currentSubMenuItemIsVisible(ctx);
+  await noLegacyClasses(ctx, ACCOUNT_CLASSIC_CLASSES.concat(page.banned || []));
+  await tablesScrollThemselves(ctx);
+}
+
+module.exports.ACCOUNT_PAGES = ACCOUNT_PAGES;
+module.exports.accountPageBaseline = accountPageBaseline;
+
+/* U3: Analyze */
+
+/**
+ * The Analyze report pages on the v2 shell, one entry each: where it is, the
+ * sub-menu label that reaches it, and the heading it opens with. A page added
+ * to the family is a line here, and every pass that walks the list covers it.
+ */
+const ANALYZE_REPORT_PAGES = [
+  { path: '/tracking202/analyze/keywords.php', menu: 'Keywords', heading: 'Keywords' },
+  { path: '/tracking202/analyze/text_ads.php', menu: 'Text Ads', heading: 'Text Ads' },
+  { path: '/tracking202/analyze/referers.php', menu: 'Referers', heading: 'Referers' },
+  { path: '/tracking202/analyze/ips.php', menu: 'IPs', heading: 'IP Addresses' },
+  { path: '/tracking202/analyze/countries.php', menu: 'Countries', heading: 'Countries' },
+  { path: '/tracking202/analyze/regions.php', menu: 'Regions', heading: 'Regions' },
+  { path: '/tracking202/analyze/cities.php', menu: 'Cities', heading: 'Cities' },
+  { path: '/tracking202/analyze/isp.php', menu: 'ISP/Carrier', heading: 'ISPs and Carriers' },
+  { path: '/tracking202/analyze/landing_pages.php', menu: 'Landing Pages', heading: 'Landing Pages' },
+  { path: '/tracking202/analyze/devices.php', menu: 'Devices', heading: 'Devices' },
+  { path: '/tracking202/analyze/browsers.php', menu: 'Browsers', heading: 'Browsers' },
+  { path: '/tracking202/analyze/platforms.php', menu: 'Platforms', heading: 'Platforms' },
+  { path: '/tracking202/analyze/variables.php', menu: 'Custom Variables', heading: 'Custom Variables' },
+];
+
+/** Bootstrap 3 classes a migrated page most often keeps by accident. */
+const LIKELY_LEFTOVERS = ['col-xs-12', 'col-xs-6', 'panel', 'panel-body', 'well', 'form-horizontal', 'input-sm', 'label', 'pull-right'];
+
+/**
+ * Everything the standard asks of any v2 page, for the page on screen: the
+ * shell and no errors, every component class styled, no flex container
+ * eating its spaces, the current sub-menu entry in view, no Bootstrap 3
+ * class in the live DOM, and wide tables scrolling in their own box. One
+ * call per page, at whatever width and theme the caller is at.
+ *
+ * @param {{scriptOnly?: string[]}} [options] classes this page uses only as
+ *   script hooks
+ */
+async function v2PageBaseline(ctx, options = {}) {
+  await baseline(ctx);
+  await componentClassesAreStyled(ctx, options.scriptOnly || []);
+  await flexContainersKeepTheirSpaces(ctx);
+  await currentSubMenuItemIsVisible(ctx);
+  await noLegacyClasses(ctx, LIKELY_LEFTOVERS);
+  await tablesScrollThemselves(ctx);
+}
+
+module.exports.ANALYZE_REPORT_PAGES = ANALYZE_REPORT_PAGES;
+module.exports.v2PageBaseline = v2PageBaseline;
+/* U2: Overview, Visitors, Spy */
+
+/**
+ * The pages of the Overview, Visitors and Spy family on the v2 shell, one
+ * baseline entry each: where the page is, what its sub-menu entry is called
+ * (null where the section has no sub-menu), and the element that says its
+ * report panel has drawn. specs/overview-visitors-spy.spec.js runs
+ * overviewPageBaseline() over every entry, light and dark, at 1280px and
+ * 390px; adding a page to the family is a line here.
+ */
+const OVERVIEW_FAMILY_PAGES = [
+  { path: '/tracking202/overview/', subMenu: 'Campaign Overview', report: '#overview-report' },
+  { path: '/tracking202/overview/breakdown.php', subMenu: 'Breakdown Analysis', report: '#breakdown-report' },
+  { path: '/tracking202/overview/day-parting.php', subMenu: 'Day Parting', report: '#day-parting-report' },
+  { path: '/tracking202/overview/week-parting.php', subMenu: 'Week Parting', report: '#week-parting-report' },
+  { path: '/tracking202/overview/group-overview.php', subMenu: 'Group Overview', report: '#group-overview-report' },
+  { path: '/tracking202/overview/rotator-breakdown.php', subMenu: null, report: '#rotator-breakdown-report' },
+  { path: '/tracking202/visitors/', subMenu: null, report: '#visitors-report' },
+  { path: '/tracking202/spy/', subMenu: null, report: '#spy-report' },
+];
+
+/**
+ * Wait for a report panel drawn by 202-js/p202-overview.js: its fragment has
+ * answered (aria-busy is false) and the skeleton is gone. A panel that
+ * failed says so in a flash, which the caller's assertions then see.
+ */
+async function overviewReportDrawn(ui, selector) {
+  await ui.untilInPage((sel) => {
+    const panel = document.querySelector(sel);
+    return panel !== null && panel.getAttribute('aria-busy') === 'false' && !panel.querySelector('.p202-skeleton');
+  }, selector, { describe: 'the report in ' + selector + ' to be drawn' });
+}
+
+/**
+ * Everything the standard asks of one page of the family, on the page the
+ * session is already on: shell, no errors, no legacy class, every class
+ * styled, no flex container eating spaces, the current sub-menu entry on
+ * screen, wide tables scrolling themselves — and, in dark mode, the page
+ * actually dark.
+ */
+async function overviewPageBaseline(ctx, entry, options = {}) {
+  await overviewReportDrawn(ctx.ui, entry.report);
+  const failed = await ctx.ui.exists(entry.report + ' > .alert-danger');
+  ctx.expect.notOk(failed, 'the report panel drew its fragment', failed ? await ctx.ui.text(entry.report) : '');
+  await baseline(ctx);
+  await componentClassesAreStyled(ctx);
+  await flexContainersKeepTheirSpaces(ctx);
+  await noLegacyClasses(ctx, ['col-xs-6', 'col-xs-12', 'panel', 'panel-body', 'label', 'label-info', 'label-primary', 'input-sm', 'btn-xs', 'btn-default', 'form-group', 'pull-right']);
+  await tablesScrollThemselves(ctx);
+  if (entry.subMenu !== null) {
+    await currentSubMenuItemIsVisible(ctx);
+  }
+  if (options.dark) {
+    await darkThemeApplies(ctx);
+  }
+}
+
+module.exports.OVERVIEW_FAMILY_PAGES = OVERVIEW_FAMILY_PAGES;
+module.exports.overviewReportDrawn = overviewReportDrawn;
+module.exports.overviewPageBaseline = overviewPageBaseline;
+
+/* U5: Update */
+
+/**
+ * The Update pages on the v2 shell, one baseline entry each: where the page
+ * is, the sub-menu entry that marks it current, and the heading it opens
+ * with. specs/update-pages.spec.js runs updatePageBaseline() over every
+ * entry, light and dark, at 1280px and 390px; adding a page is a line here.
+ */
+const UPDATE_PAGES = [
+  { path: '/tracking202/update/subids.php', menu: 'Update Subids', heading: 'Update subids' },
+  { path: '/tracking202/update/cpc.php', menu: 'Update CPC', heading: 'Update CPC' },
+  { path: '/tracking202/update/clear-subids.php', menu: 'Reset Campaign Subids', heading: 'Reset campaign subids' },
+  { path: '/tracking202/update/delete-subids.php', menu: 'Delete Subids', heading: 'Delete subids' },
+  { path: '/tracking202/update/upload.php', menu: 'Upload Revenue Reports', heading: 'Upload revenue reports' },
+];
+
+/** What the Update pages were built on before U5. */
+const UPDATE_CLASSIC_CLASSES = ['col-xs-4', 'col-xs-6', 'col-xs-8', 'col-xs-12', 'form-horizontal', 'form-group', 'control-label',
+  'input-sm', 'btn-p202', 'btn-block', 'form_seperator', 'panel', 'panel-body', 'panel-default', 'pull-right', 'input-group-addon',
+  'help-block', 'radio', 'fileinput', 'btn-file', 'table-bordered', 'infotext'];
+
+/**
+ * One Update page's baseline, at whatever viewport and theme the session
+ * has: it navigates, then checks the shell, the page's heading and sub-menu
+ * entry, every component class styled, no flex container eating its spaces,
+ * no classic class left in the live DOM, and wide tables scrolling in their
+ * own box — and, in dark mode, that the page is actually dark.
+ */
+async function updatePageBaseline(ctx, entry, options = {}) {
+  const { app, ui, expect } = ctx;
+  expect.section(entry.menu + ' (' + entry.path + ')');
+  await app.goto(entry.path);
+  await baseline(ctx);
+  expect.eq(await ui.text('h1.p202-page-header__title'), entry.heading, 'the page opens with its header');
+  expect.eq(await app.currentSubMenuItem(), entry.menu, 'the sub-menu marks ' + entry.menu + ' as current');
+  await currentSubMenuItemIsVisible(ctx);
+  await componentClassesAreStyled(ctx, entry.scriptOnly || []);
+  await flexContainersKeepTheirSpaces(ctx);
+  await noLegacyClasses(ctx, UPDATE_CLASSIC_CLASSES);
+  await tablesScrollThemselves(ctx);
+  if (options.dark) {
+    await darkThemeApplies(ctx);
+  }
+}
+
+module.exports.UPDATE_PAGES = UPDATE_PAGES;
+module.exports.updatePageBaseline = updatePageBaseline;
+
+/* U7: Standalone and pre-login */
+
+/**
+ * The pages a signed-out visitor reaches, on the standalone v2 shell
+ * (info_top()): where each is, and the heading its card opens with — a
+ * card title, or the heading of a _die() message. There is no chrome and no
+ * sub-menu on these pages. specs/prelogin-pages.spec.js runs
+ * standalonePageBaseline() over every entry, light and dark, at 1280px and
+ * 390px, in a session that has not signed in.
+ */
+const STANDALONE_PAGES = [
+  { path: '/202-login.php', heading: 'Sign in' },
+  { path: '/202-lost-pass.php', heading: 'Reset your password' },
+  { path: '/202-pass-reset.php?key=unknown', heading: 'This reset link does not work' },
+  { path: '/202-404.php', heading: 'Page not found' },
+  { path: '/api-key-required.php', heading: 'Your license key is missing or expired' },
+  { path: '/202-config/requirements.php', heading: 'Already Installed' },
+  { path: '/202-config/setup-config.php', heading: 'Prosper202 is already set up' },
+];
+
+/** The signed-in sections that left the classic shell with U7. */
+const FEED_SECTION_PAGES = [
+  { path: '/202-tv/', heading: 'TV202' },
+  { path: '/202-resources/', heading: 'Hot deals & discounts' },
+  { path: '/202-appstore/', heading: 'App Store' },
+];
+
+/** What the standalone pages were built on before U7: Bootstrap 3 and Flat UI's sign-in form. */
+const STANDALONE_CLASSIC_CLASSES = ['col-xs-4', 'col-xs-7', 'col-xs-8', 'col-xs-12', 'form-signin', 'form-horizontal', 'form-group',
+  'control-label', 'input-sm', 'btn-p202', 'btn-block', 'login_tooltip', 'infotext', 'has-error',
+  'label', 'label-primary', 'label-important', 'media', 'media-left', 'panel', 'panel-default', 'tile', 'tile-title'];
+
+/**
+ * One standalone page's baseline, at whatever viewport and theme the session
+ * has: it navigates, then checks the shell, the heading, every component
+ * class styled, no flex container eating its spaces, no classic class in the
+ * live DOM, wide tables in their own box, and that the column — not the
+ * wallpaper link behind it — takes a click in its middle.
+ */
+async function standalonePageBaseline(ctx, entry, options = {}) {
+  const { app, ui, expect } = ctx;
+  expect.section(entry.path);
+  await app.goto(entry.path);
+  await baseline(ctx);
+  const heading = await ui.page.evaluate(() => {
+    const el = document.querySelector('.p202-standalone__title, .p202-standalone__message h6');
+    return el ? el.textContent.trim() : '';
+  });
+  expect.eq(heading, entry.heading, 'the card opens with its heading');
+  expect.ok(await ui.exists('body.p202-standalone .p202-standalone__column'), 'the page is one standalone column');
+  const hit = await ui.page.evaluate(() => {
+    const card = document.querySelector('.p202-standalone__card');
+    if (!card) { return 'no card'; }
+    // The middle of the part of the card on screen, and a point either side
+    // of it: sampling only near the top (as this did) passed an overlay that
+    // left the title clickable and covered the rest (#169). elementFromPoint
+    // answers nothing outside the viewport, so the span is clipped to it.
+    const box = card.getBoundingClientRect();
+    const top = Math.max(box.top, 0);
+    const bottom = Math.min(box.bottom, window.innerHeight);
+    if (bottom <= top) { return 'off screen'; }
+    for (const at of [0.25, 0.5, 0.75]) {
+      const el = document.elementFromPoint(box.left + box.width / 2, top + (bottom - top) * at);
+      if (!el || !el.closest('.p202-standalone__card')) {
+        return (el ? el.tagName.toLowerCase() + '.' + el.className : 'nothing') + ' at ' + Math.round(at * 100) + '%';
+      }
+    }
+    return 'card';
+  });
+  expect.eq(hit, 'card', 'the card takes a click in its middle, not the wallpaper behind it');
+  await componentClassesAreStyled(ctx, entry.scriptOnly || []);
+  await flexContainersKeepTheirSpaces(ctx);
+  await noLegacyClasses(ctx, STANDALONE_CLASSIC_CLASSES);
+  await tablesScrollThemselves(ctx);
+  if (options.dark) {
+    await darkThemeApplies(ctx);
+  }
+}
+
+/** A signed-in section page's baseline: v2 shell, header, components, no classic class. */
+async function feedSectionBaseline(ctx, entry, options = {}) {
+  const { app, ui, expect } = ctx;
+  expect.section(entry.path);
+  await app.goto(entry.path);
+  await baseline(ctx);
+  expect.eq(await ui.text('h1.p202-page-header__title'), entry.heading, 'the page opens with its header');
+  await componentClassesAreStyled(ctx);
+  await flexContainersKeepTheirSpaces(ctx);
+  await noLegacyClasses(ctx, STANDALONE_CLASSIC_CLASSES);
+  await tablesScrollThemselves(ctx);
+  if (options.dark) {
+    await darkThemeApplies(ctx);
+  }
+}
+
+module.exports.STANDALONE_PAGES = STANDALONE_PAGES;
+module.exports.FEED_SECTION_PAGES = FEED_SECTION_PAGES;
+module.exports.standalonePageBaseline = standalonePageBaseline;
+module.exports.feedSectionBaseline = feedSectionBaseline;

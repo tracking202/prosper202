@@ -112,7 +112,7 @@ $(function() {
         var btn = $(this).button('loading');
         var offer_id = $(this).data('offer-id');
         var type = $(this).data('type');
-        $.get('/tracking202/ajax/dni_get_offers.php?request_offer_access&dni='+dni+'&offer_id='+offer_id+'&type='+type+'', function(data) {
+        $.post('/tracking202/ajax/dni_get_offers.php?request_offer_access&dni='+dni+'&offer_id='+offer_id+'&type='+type+'', function(data) {
           //console.log(data);
           try {
               // If there is error in back-end, do nothing
@@ -148,7 +148,7 @@ $(function() {
         e.stopImmediatePropagation();
         var btn = $(this).button('loading');
         var offer_id = $(this).data('offer-id');
-        $.get('/tracking202/ajax/dni_get_offers.php?setup_offer&dni='+dni+'&offer_id='+offer_id, function(data) {
+        $.post('/tracking202/ajax/dni_get_offers.php?setup_offer&dni='+dni+'&offer_id='+offer_id, function(data) {
           $('#aff_network_id').val(data['aff_network_id']);
           $('#aff_campaign_name').val(data.name);
           $('#aff_campaign_url').val(data.trk_url);

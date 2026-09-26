@@ -1,23 +1,35 @@
 <?php
+
 declare(strict_types=1);
-include_once(substr(__DIR__, 0,-21) . '/202-config/connect.php');
+
+/**
+ * Overview › Week Parting: which days of the week perform.
+ *
+ * On the v2 shell: the filters are one GET form whose values are applied to
+ * the user's report preferences as the page loads, and the report is drawn
+ * into the panel from tracking202/ajax/sort_weekly.php, which reads them.
+ * 202-config/functions-ui-overview.php holds the recipe every page in this
+ * family follows.
+ */
+
+include_once dirname(__DIR__, 2) . '/202-config/connect.php';
 
 AUTH::require_user();
+AUTH::set_timezone($_SESSION['user_timezone']);
 
-//show the template
-template_top('Hourly Overview');  ?>
+require_once dirname(__DIR__, 2) . '/202-config/functions-ui-overview.php';
 
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<h6>Week Parting</h6>
-		<small>Here you can see what day of the week performs best.</small>
-	</div>
-</div>
+$base = get_absolute_url();
 
-<?php display_calendar(get_absolute_url().'tracking202/ajax/sort_weekly.php', true, true, true, false, true, true); ?>    
-
-<script type="text/javascript">
-   loadContent('<?php echo get_absolute_url();?>tracking202/ajax/sort_weekly.php',null);
-</script>
-
-<?php template_bottom();
+p202_overview_run([
+    'shell' => ['ui' => 'v2'],
+    'id' => 'week-parting',
+    'page_title' => 'Week Parting',
+    'title' => 'Week parting',
+    'desc' => 'Which days of the week perform best, added up across the window you choose.',
+    'icon' => 'bi-calendar-week',
+    'action' => $base . 'tracking202/overview/week-parting.php',
+    'fragment' => $base . 'tracking202/ajax/sort_weekly.php',
+    'panel' => 'By day of the week',
+    'names' => [...P202_OVERVIEW_CLICK_FILTERS, 'user_cpc_or_cpv'],
+]);

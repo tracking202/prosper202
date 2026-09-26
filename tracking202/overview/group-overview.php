@@ -1,21 +1,40 @@
-<?php include_once(substr(dirname(__FILE__), 0, -21) . '/202-config/connect.php');
-include_once(substr(dirname(__FILE__), 0, -21) . '/202-config/ReportSummaryForm.class.php');
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Overview › Group Overview: the traffic grouped by up to four dimensions.
+ *
+ * On the v2 shell: the filters are one GET form whose values are applied to
+ * the user's report preferences as the page loads, and the report is drawn
+ * into the panel from tracking202/ajax/group_overview.php, which reads them.
+ * 202-config/functions-ui-overview.php holds the recipe every page in this
+ * family follows.
+ */
+
+include_once dirname(__DIR__, 2) . '/202-config/connect.php';
+
 AUTH::require_user();
+AUTH::set_timezone($_SESSION['user_timezone']);
 
-//show the template
-template_top('Group Overview', NULL, NULL, NULL);   ?>
+require_once dirname(__DIR__, 2) . '/202-config/functions-ui-overview.php';
 
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<h6>Group Overview Screen</h6>
-		<small>The group overview screen gives you a quick glance at all of your traffic across all dimensions.</small>
-	</div>
-</div>
+$base = get_absolute_url();
 
-<?php display_calendar(get_absolute_url() . 'tracking202/ajax/group_overview.php', true, true, true, false, true, true, true, true);    ?>
-
-<script type="text/javascript">
-	loadContent('<?php echo get_absolute_url(); ?>tracking202/ajax/group_overview.php', null);
-</script>
-
-<?php template_bottom();
+p202_overview_run([
+    'shell' => ['ui' => 'v2'],
+    'id' => 'group-overview',
+    'page_title' => 'Group Overview',
+    'title' => 'Group overview',
+    'desc' => 'All of your traffic grouped by up to four dimensions, one inside the other.',
+    'icon' => 'bi-diagram-3',
+    'action' => $base . 'tracking202/overview/group-overview.php',
+    'fragment' => $base . 'tracking202/ajax/group_overview.php',
+    'panel' => 'Grouped report',
+    'names' => ['group_1', 'group_2', ...P202_OVERVIEW_CLICK_FILTERS, 'user_cpc_or_cpv', 'group_3', 'group_4'],
+    'common' => ['group_1', 'group_2'],
+    // With no grouping stored the report is empty, although the classic
+    // menu showed "Traffic Source" over it. Store what the menu shows.
+    'defaults' => ['group_1' => P202_OVERVIEW_GROUP_TRAFFIC_SOURCE],
+    'download' => $base . 'tracking202/overview/group_overview_download.php',
+]);

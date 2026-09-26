@@ -31,7 +31,7 @@ pieces Bootstrap does not have. Each is a thin class on Bootstrap primitives:
 | `.p202-panel` | A titled card with a count pill, an aside slot and a body. |
 | `.p202-tile` | A KPI tile: uppercase label, tabular number, sub-line; `is-good`, `is-bad`, `is-muted`. |
 | `.p202-pill` | A status pill: neutral, `--accent`, `--good`, `--warn`, `--bad`. Status, or — as an `<a>` — a switch between readings of one table, which is how the report's groupings work without JavaScript. |
-| `.p202-table` | The report table inside `.p202-table-wrap`: uppercase headers, `.num` columns, `.p202-table__totals` row. |
+| `.p202-table` | The report table inside `.p202-table-wrap`: uppercase headers, `.num` columns, `.p202-table__totals` row. A sortable column's header is a `.p202-sort` button; its arrow follows `aria-sort`. |
 | `.p202-list` | The side-panel list: `__item`, `__name`, `__actions`, `__children`, `is-active`. |
 | `.p202-empty` | An empty state: icon, title, one sentence, one action. |
 | `.p202-code` / `.p202-copy` | A read-only code box with a Copy button that says "Copied". |
@@ -86,7 +86,11 @@ user can still reach every setting. Concretely:
    `202_users_pref` (`user_pref_time_predefined`, and a column per
    dimension), and a page that reads it must still yield to the URL wherever
    the URL speaks. Analyze › Mobile Apps is URL-only so far — it defaults to
-   Last 30 Days rather than to anything stored. An open "Advanced" disclosure
+   Last 30 Days rather than to anything stored. The other Analyze reports
+   (U3) take their filters from the URL and write them to that row before
+   they run, because their downloads and the classic pages read them there:
+   a URL that names any filter speaks for all of them, and one that names
+   none shows the stored default. An open "Advanced" disclosure
    persists per browser, in `localStorage`, because it is a convenience
    rather than a setting. Never put anything in browser storage that another
    account sharing the browser must not see.
@@ -134,6 +138,79 @@ allowed. It reads class attributes wherever they are written — plain markup,
 inside a PHP string, with escaped quotes — and the ways a script names a class:
 `classList.add`, `className =`, jQuery's `addClass`, and selector strings.
 
+## Page scripts on v2: deferred, and DOM work waits for the document
+
+The v2 shell prints its page scripts (`js_page` in `p202_shell_assets()`:
+Highcharts, `chart.theme.js`, `tablesort.js`, `p202-ui.js`, `p202-chrome.js`)
+in `<head>` with `defer`, so they run after the body is parsed, in the order
+listed, before `DOMContentLoaded`. jQuery and Bootstrap (`js_head`) still
+block, because inline scripts in a page call them as they are parsed. The
+classic shell is unchanged. `p202_shell_defers_page_scripts()` is the policy
+and `tests/Api/V3/UiPartialsTest` pins it.
+
+**The porting rule.** A script moved to a v2 page does its DOM work under
+`DOMContentLoaded` (or later), never as it is parsed. An inline script in the
+page that needs a `js_page` library — `Highcharts`, `Tablesort`,
+`window.p202ui` — calls it from a `DOMContentLoaded` handler, because at parse
+time the deferred library has not run yet:
+
+```js
+document.addEventListener('DOMContentLoaded', function () {
+    Highcharts.chart('chart', { /* ... */ });
+});
+```
+
+A script that forgets throws at load, and the browser pass's
+"no JavaScript errors on this page" check (`checks.baseline`) is what catches it.
+
+## One replacement per legacy job
+
+The classic shell carries a plugin for each of these; the v2 shell carries
+one answer each, decided in U1 of the migration and not re-decided per page.
+
+| Job | On v2 | Why |
+|---|---|---|
+| Date pickers (jQuery UI datepicker) | Native `<input type="date">`, through `p202_date_range()` | Every supported browser has one, it is keyboard- and screen-reader-accessible, and it follows the theme. It submits ISO `YYYY-MM-DD` whatever the reader's locale displays; the classic calendar posted `mm/dd/yyyy`, so a page moving to it reads the new shape. |
+| Tag inputs and typeahead (tokenfield, typeahead.js, Bloodhound) | `<datalist>` on a plain text input (the filter bar's `suggest` type). No library. | Every tag input in the inventory stores a comma-separated string or one value: the rotator's rule values (`getTokensList(',')`), the device list, the subid tokens, the network-name lookup. Nothing needs chips to work, only suggestions. The rotator's suggestions come from `tracking202/ajax/rotator.php?autocomplete=…`, and since U4 they fill a datalist through a small first-party hook in `p202-ui.js`, not a plugin: `input[data-p202-suggest-url="…%QUERY…"]` looks up the part after the last comma and offers each answer with the values already typed kept in front. A page that turns out to need real chips makes the case then, against this table. |
+| Sortable tables (tablesorter and its widgets) | `tablesort.js` (already pinned in `assets.php`, loaded by the v2 shell), through `p202_data_table(..., ['sortable' => true])` | 3 KB, no jQuery, already the classic report fragments' sorter. Client-side sorting is honest only when every row is on the page, so it is opt-in; a paginated or truncated table sorts on the server, by link. |
+| Validation (jquery-validate) | Native constraint validation (`required`, `type`, `min`/`max`, `pattern`) plus the server's own sentence under the field (`.is-invalid` + `.invalid-feedback`) | The server validates anyway and its sentence is the one that must be shown (principle: errors in the API's own words). Forms do not set `novalidate` and do not use `.was-validated`, which paints every valid field green. |
+| Select boxes (select2) | Native `<select>`, with `<optgroup>`s for a two-level list. No searchable-select library. | The long lists are campaigns (grouped by category, which one `<optgroup>`ed select replaces two dependent ones with), countries (a native select finds by typing) and ISP/region/city, which are unbounded and install-wide — too long for any select, searchable or not. Those become a `suggest` field over the values the account's data has. One pinned library would bring its own dark theme and focus handling to keep in step; nothing in the inventory needs it. |
+
+Any library added later is an entry in `202-config/assets.php` with the SHA-384
+of its bytes, vendored under `202-js/vendor/`, never loaded from a CDN.
+
+## Shared partials for report pages
+
+`202-config/functions-ui-partials.php` (loaded with `functions-ui.php`) renders
+the pieces every report family repeats. They are pure functions — no globals,
+no session, no database — that return markup; a page gathers values and
+option lists and calls them. The kit renders each in every state.
+
+- `p202_date_range(array $spec): string` — the preset `<select>` and two date
+  inputs, with the behaviour Analyze › Mobile Apps shipped: the dates are
+  submitted only for a custom window, and typing one chooses Custom Date.
+  Presets default to `p202_report_ranges()`, the classic calendar's keys
+  (`today` … `alltime`), so both kinds of report mean the same window by the
+  same name; `P202_RANGE_CUSTOM` is `'custom'`.
+- `p202_report_filters(array $values, array $lists = [], ?array $include = null): array`
+  — the classic reports' filter vocabulary as specs, under the names
+  `display_calendar()` posts and `set_user_prefs.php` reads (`ppc_network_id`,
+  `aff_campaign_id`, `user_pref_show`, …), so the query string and the stored
+  per-user defaults map one to one. Traffic source, campaign and which clicks
+  to count are the common case; the rest are Advanced.
+- `p202_report_filter_bar(array $bar): string` — one GET form: range, common
+  filters, one Apply, optional Reset, and an Advanced disclosure. A filter
+  value the list no longer has is kept as its own option rather than shown as
+  "All"; an Advanced filter that is set opens the disclosure, is counted in
+  its summary, and is not folded away by a remembered "closed".
+- `p202_data_table(array $columns, array $rows, array $options = []): string`
+  — the `.p202-table` with right-aligned numbers, a totals row that stays
+  last, the empty state in place of an empty table, `aria-sort` for the order
+  the server delivered, and opt-in client-side sorting whose header buttons
+  are keyboard-reachable. A table that is not sortable in place may give a
+  column an `href`: its heading becomes a link that reloads the report sorted
+  by that column on the server, the way a paginated report sorts (U3).
+
 ## The chrome is framework-neutral
 
 The header, the Prosper202 CS section tabs, the sub-menu (the Setup button grid
@@ -152,7 +229,15 @@ script. `202-js/p202-chrome.js` closes it on outside clicks and Escape, scrolls
 the current tab and sub-menu item into view whenever the strip does not fit
 (which is a question about the strip, not the window — the Analyze strip
 overflows a 1280px desktop), and wires the theme switch on v2 pages. It is
-loaded in `<head>`, so everything it does runs from `DOMContentLoaded`.
+loaded in `<head>` (deferred on v2, blocking on classic), so everything it
+does runs from `DOMContentLoaded`.
+
+The chrome states its own font size and line height rather than inheriting
+them, because the two shells' `<body>` disagree (Flat UI Pro 18px/1,
+Bootstrap 5 15px/1.5). `tests/browser/specs/chrome-shells.spec.js` measures
+the chrome on a classic and a v2 page of the same family — at 1280px and
+390px, light and dark — and fails on any difference in a box, a font or,
+in light, a colour.
 
 A page family can be styled without touching the chrome: `template_top()` puts
 the shell, the section and the sub-section on `<body>` as
@@ -204,3 +289,114 @@ page that builds its own head, with `p202_asset_tag('<id>', $base)`.
 5. Account pages and login.
 6. The classic shell, Bootstrap 3, Flat UI Pro, jQuery 1.11 and the old CSS
    layers are deleted, and the structural tests apply to the whole tree.
+
+<!-- U2: Overview, Visitors, Spy -->
+## Classic reports on v2: the URL applied to the stored filters
+
+The classic reports' fragments, downloads and data engine read their filters
+from `202_users_pref`, not from the request. A report page moved to v2 keeps
+them there rather than rewriting every reader: its filter bar is one GET form,
+and the page applies the query string to that row as it loads
+(`p202_overview_page_state()` in `202-config/functions-ui-overview.php`, over
+`202-config/functions-report-prefs.php`), then draws its fragment into the
+report panel (`202-js/p202-overview.js`). So the URL wins (rule 8), the stored
+row is the first-visit default, and a download agrees with the page. Two rules
+hold it together: a request writes only the columns it names, and a value that
+does not parse is refused under its field with nothing written — the report is
+not drawn under filters it does not match. Dates are read by one function,
+`p202_report_parse_date()`, which `set_user_prefs.php` uses too, so the classic
+calendar's `mm/dd/yyyy` and the picker's `YYYY-MM-DD` mean the same day.
+Overview, Visitors and Spy are built this way; the fragments they load are
+listed in `NoLegacyBootstrapClassesTest::V2_SHARED`.
+
+The stored row is one per user, and a second tab writes it. So the row is only
+the default: every request a page makes after it renders — the fragment, a
+page link, a Spy poll, a download — carries the page's view in a `view`
+parameter (`p202_report_view_query()` / `p202_report_view_url()`), and that
+request installs it with `p202_report_view_begin()`. Every reader of the row
+passes it through `Prosper202\DataEngine\ReportView::apply()`, which lays
+the view over it in memory for that request; nothing is written. A request
+with no view reads the stored row, as before; one whose view does not read
+answers 400 with the reason. `tests/Report/ReportViewReadersTest` holds every
+reader and every handed-off URL to this.
+
+<!-- U5: Update -->
+## A wide write is checked before it is made
+
+Some writes change many rows at once and cannot be undone: Update CPC sets
+the cost of every click a selection names. Such a page is two steps on one
+page, never an AJAX fragment. The selection is a GET form (so what is about
+to change is a link that can be sent, rule 8) whose answer is a panel saying
+what will change and how many rows that is, counted with the same clause the
+write runs; the write is a POST from that panel that carries the session
+token and repeats the selection in hidden fields, which the server reads and
+checks again, ownership included, rather than trusting. Once the panel offers
+the write, it is the page's one primary button and the check becomes a
+secondary one. A value the server cannot read is refused under its field; it
+never falls back to "every campaign" (error pattern #11).
+
+The number on the button is a promise: "Update 4 clicks" never changes a
+fifth. A selection whose window includes today keeps gaining rows between
+the check and the confirm, so the confirm form also carries the count the
+check showed and the highest row id it counted. The write is bounded by that
+id (rows recorded since are left alone, and the result says so), and it runs
+only if the bounded selection still counts the same, counted again under a
+lock in the write's own transaction. When it does not (a row edited into the
+selection, or recorded late below the boundary), nothing is written and the
+page shows the check again with both numbers and the new count to confirm. A
+confirm that does not carry the count is refused the same way, never read as
+"no limit".
+
+The Update pages answer a write in place with what it did (what was marked,
+what was skipped and why) rather than redirecting, because the answer is a
+report and each write is safe to send twice. Their destructive forms confirm
+through `form[data-p202-confirm]`, saying what is kept.
+
+<!-- U7: Standalone and pre-login -->
+## Pages before a login: the standalone shell
+
+Sign in, the password reset, the license-key page, the 404, the install path
+(setup wizard, server check, license key, installer, upgrader) and every
+`_die()` message render through `info_top()` and `info_bottom()`, which since
+U7 are the v2 shell without chrome: the assets `p202_shell_assets()` gives a
+signed-out v2 page, one centred column (`.p202-standalone__column`, `--wide`
+for the installer's forms and tables) over the partner wallpaper, and
+Bootstrap cards in it opened with `p202_standalone_card($title, $line)`.
+There is no navigation because there is nothing to navigate to yet, and the
+theme follows the saved or system choice with no switch. The Google
+Publisher Tag loads only on the sign-in page, which has its slot
+(`info_top(['ads' => true])`). A `_die()` message is its caller's markup —
+a heading and a sentence — shown in a card; write it without classes.
+
+The pre-login forms carry the session token exactly as
+`PreLoginPostRequiresTokenTest` reads it (a hidden input whose value is one
+echo of the escaped `$_SESSION['token']`, inside the form, at the form's PHP
+depth); the setup wizard, which runs before `connect.php` can, mints the same
+token itself (`p202_standalone_wizard_token()`), in a session whose cookie
+takes its Secure flag from the same answer every other page's does,
+`p202_request_is_https()` (`202-config/request-https.php`, which reads a
+TLS-terminating proxy's headers); `SessionCookieSecureTest` holds every
+session start to it.
+
+On an installed instance the wizard is locked: it will not show or rewrite
+the database settings. The one thing that passes the lock is the update of a
+`202-config.php` from a release before the `DB` class
+(`setup-config.php?step=1.1`, offered on the lock page when the file is in
+that format), and it is built so that passing it wins nothing: it opens only
+while the file is in the legacy format, read narrowly
+(`p202_setup_config_is_legacy()`: plain settings, no code), it takes no
+setting from the request and shows none — every value is carried over
+unchanged, so it cannot point the install at another database, replica or
+cache — its POST carries the session token, the carried settings must
+connect before anything is written, and the file is replaced in one rename.
+Changing a setting stays an edit on the server.
+
+## A feed is read into rows, never printed
+
+TV202, Hot Deals and the App Store show feeds from my.tracking202.com. A
+page reads its feed into plain rows (`202-config/functions-feeds-ui.php`) and
+renders the rows with the component layer: a link survives only as a web
+address, a video only as a YouTube embed (in a `.ratio.ratio-16x9` frame, so
+it fits a phone), and every text is escaped by the page. A feed that does not
+answer gives an empty state that says so, with one Try again.
+

@@ -6,6 +6,7 @@ use Prosper202\DataEngine\ClickRollupSql;
 use Prosper202\DataEngine\GroupedReportDefinition;
 use Prosper202\DataEngine\GroupedReportRegistry;
 use Prosper202\DataEngine\HtmlReportFormatter;
+use Prosper202\DataEngine\ReportView;
 use Prosper202\DataEngine\MetricsSql;
 use Prosper202\DataEngine\ReportTotals;
 use Prosper202\DataEngine\SortOrder;
@@ -228,7 +229,7 @@ class DataEngine
         }
         // Fix #2: a missing pref row (brand-new account) should degrade
         // gracefully, not 500.  Build filters from an empty row → all defaults.
-        $user_row = $user_result->fetch_assoc() ?: [];
+        $user_row = ReportView::apply($user_result->fetch_assoc() ?: [], $_SESSION['user_id']);
 
         // Stored prefs are still attacker-influenced input: escape the free
         // text value before it is interpolated into a LIKE clause.
@@ -262,7 +263,7 @@ class DataEngine
             throw new Exception('Unable to load user report preferences');
         }
         // Fix #2: no pref row (brand-new account) → degrade to default ('all').
-        $user_row = $user_result->fetch_assoc() ?: [];
+        $user_row = ReportView::apply($user_result->fetch_assoc() ?: [], $_SESSION['user_id']);
 
         return UserPrefFilters::showFilter((string) ($user_row['user_pref_show'] ?? 'all'));
     }
@@ -426,10 +427,17 @@ class DataEngine
     {
         $filters = $this->getFilters();
 
+        // The group itself breaks ties in the sort. Every sort key is a
+        // metric, and metrics tie all the time (every keyword with no leads
+        // ties on the default sort), so without it MySQL returns tied rows
+        // in whatever order the plan produces — a different order on two
+        // runs of the same query, which moved rows between pages of a
+        // paginated report (one row on two pages, another on none) and made
+        // two downloads of the same report disagree.
         $sql = 'SELECT ' . $definition->labelSelect . ',' . MetricsSql::GROUPED_SELECT
             . $this->groupedReportFrom($definition, (string) $clickFrom, (string) $clickTo, $filters)
             . ' group by ' . $definition->groupBy
-            . $this->sortOrder()
+            . $this->sortOrder() . ', ' . $definition->groupBy
             . $filters['limit'];
 
         $data = $this->collectRows($sql, $cpv);
@@ -1844,7 +1852,7 @@ class UserPrefs
 
         $user_row = $user_result->fetch_assoc();
         if ($user_row) {
-            self::$userPref = $user_row;
+            self::$userPref = ReportView::apply($user_row, $_SESSION['user_id']);
         }
     }
 

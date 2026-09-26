@@ -106,10 +106,15 @@ if (!empty($_GET['edit_aff_network_id'])) {
 						 AND    		`user_id`='" . $mysql['user_id'] . "'";
 	$aff_network_result = $db->query($aff_network_sql) or record_mysql_error($aff_network_sql);
 	$aff_network_row = $aff_network_result->fetch_assoc();
+	if (!is_array($aff_network_row)) {
+		// Not this user's category, or gone: show the add form rather than
+		// a fatal from array_map(null).
+		$editing = false;
+		$aff_network_row = [];
+	}
 
-	$html = array_map(htmlentities(...), $aff_network_row);
+	$html = array_map(fn($value) => htmlentities((string) ($value ?? ''), ENT_QUOTES, 'UTF-8'), $aff_network_row);
 	$html['aff_network_id'] = htmlentities((string)($_GET['edit_aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-	$autocomplete_aff_network_name =  $html['aff_network_name'];
 }
 
 //this will override the edit, if posting and edit fail
@@ -153,558 +158,124 @@ if (isset($_GET['delete_aff_network_id'])) {
 	}
 }
 
-template_top('Campaign Category Setup');
+// Post-redirect-get: a saved or removed category answers with a redirect, so
+// a reload cannot submit the form (or the remove link) a second time.
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && $add_success == true) {
+	header('location: ' . get_absolute_url() . 'tracking202/setup/aff_networks.php?' . ($editing ? 'saved=1' : 'added=1'));
+	exit;
+}
+if ($delete_success == true) {
+	header('location: ' . get_absolute_url() . 'tracking202/setup/aff_networks.php?deleted=1');
+	exit;
+}
+
+require_once __DIR__ . '/_includes/setup_ui.php';
+
+$base = get_absolute_url();
+$self = $base . 'tracking202/setup/aff_networks.php';
+$canRemove = $userObj->hasPermission("remove_campaign_category");
+$categories = p202_setup_rows($db, "SELECT * FROM `202_aff_networks` WHERE `user_id`='" . $db->real_escape_string((string)$_SESSION['user_id']) . "' AND `aff_network_deleted`='0' ORDER BY `aff_network_name` ASC");
+// What the form shows: the row being edited, or what was just refused.
+$formName = $_SERVER['REQUEST_METHOD'] == 'POST'
+	? (string) ($_POST['aff_network_name'] ?? '')
+	: (string) ($aff_network_row['aff_network_name'] ?? '');
+$editId = $editing ? (int) ($_GET['edit_aff_network_id'] ?? 0) : 0;
+
+template_top('Campaign Category Setup', ['ui' => 'v2']);
 ?>
 
-<!-- Page Header - Design System -->
-<div class="row" style="margin-bottom: 28px;">
-	<div class="col-xs-12">
-		<div class="setup-page-header">
-			<div class="setup-page-header__icon">
-				<span class="glyphicon glyphicon-th-large"></span>
+<div class="p202-page-header p202-page-header--accent">
+	<div class="p202-page-header__icon"><i class="bi bi-grid"></i></div>
+	<div class="p202-page-header__text">
+		<h1 class="p202-page-header__title">Campaign Categories</h1>
+		<p class="p202-page-header__desc">Group your campaigns: by affiliate network, by niche, or however you report on them.</p>
+	</div>
+</div>
+
+<?php
+echo p202_setup_query_flashes([
+	'added' => 'Category added. Add its campaigns next.',
+	'saved' => 'Category renamed.',
+	'deleted' => 'Category removed. Its campaigns keep their history.',
+], $_GET);
+if ($error) {
+	echo p202_setup_error_flashes($error, ['aff_network_name']);
+}
+?>
+
+<div class="row g-4">
+	<div class="col-12 col-lg-6">
+		<section class="p202-panel" id="category-form">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title"><?php echo $editing ? 'Rename category' : 'Add a category'; ?></h2>
+				<p class="p202-panel__sub"><?php echo $editing ? 'Campaigns in it keep their place.' : 'For example the network you promote, or a niche like Mobile.'; ?></p>
 			</div>
-			<div class="setup-page-header__text">
-				<h1 class="setup-page-header__title">Campaign Categories</h1>
-				<p class="setup-page-header__subtitle">Organize your campaigns by category - create groups like affiliate networks, niches, or campaign types</p>
-			</div>
-		</div>
-	</div>
-</div>
-
-<?php if ($error) { ?>
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<div class="alert alert-danger">
-			<i class="fa fa-exclamation-circle"></i> There were errors with your submission. <?php echo $error['token'] ?? ''; ?>
-		</div>
-	</div>
-</div>
-<?php } ?>
-
-<?php if ($add_success == true) { ?>
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<div class="alert alert-success">
-			<i class="fa fa-check-circle"></i>
-			<?php if ($editing == true) { ?>
-				Your submission was successful. You have successfully edited the category.
-			<?php } else { ?>
-				Your submission was successful. You have successfully added a category to your account.
-			<?php } ?>
-		</div>
-	</div>
-</div>
-<?php } ?>
-
-<?php if ($delete_success == true) { ?>
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<div class="alert alert-success">
-			<i class="fa fa-check-circle"></i> You have successfully deleted a category from your account.
-		</div>
-	</div>
-</div>
-<?php } ?>
-
-<div class="row form_seperator" style="margin-bottom:15px;">
-	<div class="col-xs-12"></div>
-</div>
-
-<div class="row">
-		<div class="col-md-6 col-sm-12">
-			<div class="panel panel-default">
-			<div class="panel-heading">Add Campaign Category</div>
-			<div class="panel-body">
-				<span class="infotext">What Campaign Categories do you want to use? Some examples include Commission Junction or Mobile etc.</span>
-
-				<form method="post" action="<?php echo $_SERVER['REDIRECT_URL'] ?? ''; ?>" class="setup-form" role="form">
-					<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
-					<div class="form-group <?php if (isset($error['aff_network_name'])) echo "has-error"; ?>">
-						<label for="aff_network_name">Category Name</label>
-						<input type="text" class="form-control" id="aff_network_name" name="aff_network_name" placeholder="Enter category name..." value="<?php echo $html['aff_network_name'] ?? ''; ?>">
+			<div class="p202-panel__body">
+				<form method="post" action="<?php echo p202_setup_e($self . ($editing ? '?edit_aff_network_id=' . $editId : '')); ?>">
+					<?php echo p202_setup_token_field((string) ($_SESSION['token'] ?? '')); ?>
+					<div class="mb-3">
+						<label class="form-label" for="aff_network_name">Category name</label>
+						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'aff_network_name'); ?>" id="aff_network_name" name="aff_network_name" value="<?php echo p202_setup_e($formName); ?>" maxlength="255" required<?php echo $categories === [] || $editing ? ' autofocus' : ''; ?>>
+						<?php echo p202_setup_feedback($error, 'aff_network_name'); ?>
 					</div>
-					<div class="setup-form-actions">
-						<button type="submit" class="btn btn-p202" <?php if ($network_editing != true) { echo 'id="addCategory"'; } ?>><?php echo ($network_editing == true) ? 'Save Changes' : 'Add Category'; ?></button>
-						<?php if ($editing == true) { ?>
-							<a href="<?php echo get_absolute_url(); ?>tracking202/setup/aff_networks.php" class="btn btn-secondary">Cancel</a>
+					<div class="p202-form-actions">
+						<?php if ($editing) { ?>
+							<a class="btn btn-link" href="<?php echo p202_setup_e($self); ?>">Cancel</a>
+							<button type="submit" class="btn btn-primary">Save changes</button>
+						<?php } else { ?>
+							<button type="submit" class="btn btn-primary" id="addCategory">Add category</button>
 						<?php } ?>
 					</div>
 				</form>
 			</div>
-		</div>
+		</section>
 	</div>
-		<div class="col-md-6 col-sm-12">
-			<div class="panel panel-default setup-side-panel">
-			<div class="panel-heading">My Campaign Categories</div>
-			<div class="panel-body">
-				<div id="networkList">
-					<input class="form-control fuzzy-search" placeholder="Filter categories...">
-					<ul class="list">
-						<?php
-						$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-						$aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `user_id`='" . $mysql['user_id'] . "' AND `aff_network_deleted`='0' ORDER BY `aff_network_name` ASC";
 
-						$aff_network_result = $db->query($aff_network_sql) or record_mysql_error($aff_network_sql);
-						if ($aff_network_result->num_rows == 0) {
-						?>
-						<li class="empty-state">No categories added yet</li>
-						<?php
-						}
-
-						while ($aff_network_row = $aff_network_result->fetch_array(MYSQLI_ASSOC)) {
-							$html['aff_network_name'] = htmlentities((string)($aff_network_row['aff_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-							$html['aff_network_id'] = htmlentities((string)($aff_network_row['aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-							$html['network_logo'] = '';
-
-							if (!empty($aff_network_row['dni_network_id']))
-								$html['network_logo'] = '<img src="/202-img/favicon.gif" width=16>&nbsp;&nbsp;';
-
-							if ($userObj->hasPermission("remove_campaign_category")) {
-								printf('<li>%s<span class="filter_network_name">%s</span> <a href="?edit_aff_network_id=%s" class="list-action">edit</a> <a href="?delete_aff_network_id=%s&delete_aff_network_name=%s&token=%s" class="list-action list-action-danger" onclick="return confirmAlert(\'Are You Sure You Want To Delete This Campaign Category?\');">remove</a></li>',
-									$html['network_logo'],
-									$html['aff_network_name'],
-									$html['aff_network_id'],
-									$html['aff_network_id'],
-									$html['aff_network_name'],
-									rawurlencode((string) ($_SESSION['token'] ?? '')));
-							} else {
-								printf('<li>%s<span class="filter_network_name">%s</span> <a href="?edit_aff_network_id=%s" class="list-action">edit</a></li>',
-									$html['network_logo'],
-									$html['aff_network_name'],
-									$html['aff_network_id']);
-							}
-						}
-						?>
-					</ul>
-				</div>
+	<div class="col-12 col-lg-6">
+		<section class="p202-panel">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">Your categories</h2>
+				<span class="p202-pill p202-pill--accent"><?php echo count($categories) . ' ' . (count($categories) === 1 ? 'category' : 'categories'); ?></span>
+				<?php if (count($categories) > 5) { ?>
+					<div class="p202-panel__aside"><?php echo p202_setup_list_filter('category-list', 'Filter categories…'); ?></div>
+				<?php } ?>
 			</div>
-		</div>
+			<div class="p202-panel__body">
+				<?php if ($categories === []) { ?>
+					<div class="p202-empty">
+						<i class="bi bi-grid p202-empty__icon"></i>
+						<strong class="p202-empty__title">No categories yet</strong>
+						<div>A category holds campaigns. Name your first one, then add its campaigns.</div>
+						<div class="p202-empty__action"><a class="btn btn-secondary btn-sm" href="#aff_network_name">Name your first category</a></div>
+					</div>
+				<?php } else { ?>
+					<ul class="p202-list" id="category-list">
+						<?php foreach ($categories as $category) {
+							$id = (int) $category['aff_network_id'];
+							$name = (string) $category['aff_network_name']; ?>
+							<li class="p202-list__item<?php echo $editId === $id ? ' is-active' : ''; ?>" data-p202-filter-text="<?php echo p202_setup_e($name); ?>">
+								<span class="p202-list__name"><?php echo p202_setup_e($name); ?></span>
+								<?php if (!empty($category['dni_network_id'])) { ?>
+									<span class="p202-pill">network integration</span>
+								<?php } ?>
+								<span class="p202-list__actions">
+									<a class="p202-list__action" href="<?php echo p202_setup_e($self . '?edit_aff_network_id=' . $id); ?>">edit</a>
+									<?php if ($canRemove) {
+										echo p202_setup_remove_form($self, [
+											'delete_aff_network_id' => $id,
+											'delete_aff_network_name' => $name,
+											'token' => (string) ($_SESSION['token'] ?? ''),
+										], 'Remove the category "' . $name . '"? Its campaigns keep their clicks and history.');
+									} ?>
+								</span>
+							</li>
+						<?php } ?>
+					</ul>
+				<?php } ?>
+			</div>
+		</section>
 	</div>
 </div>
-<script type="text/javascript">
-	$(document).ready(function() {
-		autocomplete_names('aff_network_name', 'affiliate-networks');
-		<?php if (!empty($_GET['edit_aff_network_id'])) { ?>
-			$("#aff_network_name").tokenfield("setTokens", <?php print_r(json_encode(['value' => $autocomplete_aff_network_name, 'label' => $autocomplete_aff_network_name])) ?>);
-		<?php } ?>
 
-		var networkOptions = {
-			valueNames: ['filter_network_name'],
-			plugins: [
-				ListFuzzySearch()
-			]
-		};
-
-		var networkList = new List('networkList', networkOptions);
-	});
-</script>
-
-<style>
-/* ===========================================
-   CAMPAIGN CATEGORIES - Modern Design System
-   =========================================== */
-
-/* Header Section */
-.setup-page-header {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 24px;
-    background: #2f6fdd;
-    border-radius: 12px;
-    color: #fff;
-    box-shadow: 0 4px 15px rgba(47, 111, 221, 0.2);
-}
-
-.setup-page-header__icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 56px;
-    height: 56px;
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 12px;
-    flex-shrink: 0;
-    transition: background 0.3s ease;
-}
-
-.setup-page-header__icon .glyphicon {
-    font-size: 24px;
-    color: #fff;
-}
-
-.setup-page-header__text {
-    flex: 1;
-}
-
-.setup-page-header__title {
-    margin: 0 0 4px 0;
-    font-size: 24px;
-    font-weight: 600;
-    color: #fff;
-}
-
-.setup-page-header__subtitle {
-    margin: 0;
-    font-size: 14px;
-    color: rgba(255, 255, 255, 0.9);
-    font-weight: 400;
-}
-
-/* Form Styling */
-.form-inline {
-    display: flex;
-    gap: 8px;
-    align-items: flex-end;
-    flex-wrap: wrap;
-}
-
-.form-group {
-    flex: 1;
-    min-width: 280px;
-    margin-bottom: 0;
-}
-
-.form-group.has-error .form-control {
-    border-color: #c9372c;
-    background-color: #fdecec;
-}
-
-.form-control {
-    border: 1px solid #c9cdd3;
-    border-radius: 8px;
-    padding: 10px 12px;
-    font-size: 14px;
-    transition: all 0.3s ease;
-    background-color: #fff;
-}
-
-.form-control:focus {
-    border-color: #2f6fdd;
-    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1);
-    outline: none;
-}
-
-.form-control::placeholder {
-    color: #8a919b;
-}
-
-.input-sm {
-    padding: 8px 10px;
-    font-size: 13px;
-    height: 34px;
-}
-
-/* Button Styling */
-.btn {
-    border: none;
-    border-radius: 8px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    padding: 10px 16px;
-    font-size: 14px;
-}
-
-.btn-xs {
-    padding: 6px 12px;
-    font-size: 12px;
-    height: 32px;
-}
-
-.btn-p202 {
-    background: #2f6fdd;
-    color: #fff;
-    border: 1px solid #2861c4;
-}
-
-.btn-p202:hover {
-    background: #2861c4;
-    box-shadow: 0 4px 12px rgba(47, 111, 221, 0.3);
-    transform: none;
-}
-
-.btn-p202:active {
-    transform: translateY(0);
-    box-shadow: 0 2px 6px rgba(47, 111, 221, 0.2);
-}
-
-.btn-danger {
-    background: #c9372c;
-    color: #fff;
-    border: 1px solid #c9372c;
-}
-
-.btn-danger:hover {
-    background: #c9372c;
-    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
-    transform: none;
-}
-
-.btn-danger:active {
-    transform: translateY(0);
-    box-shadow: 0 2px 6px rgba(239, 68, 68, 0.2);
-}
-
-/* Panel Styling */
-.panel {
-    border: 1px solid #e7e8ea;
-    border-radius: 12px;
-    overflow: hidden;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-    background-color: #fff;
-    margin-bottom: 20px;
-}
-
-.panel-default {
-    border-color: #e7e8ea;
-}
-
-.panel-heading {
-    background: #fafbfc;
-    border-bottom: 1px solid #e7e8ea;
-    padding: 16px 20px;
-    font-weight: 600;
-    font-size: 15px;
-    color: #1f2328;
-}
-
-.panel-body {
-    padding: 20px;
-}
-
-/* Setup Form */
-.setup-form {
-    margin-top: 16px;
-}
-
-.setup-form .form-group {
-    margin-bottom: 16px;
-}
-
-.setup-form .form-group label {
-    display: block;
-    font-weight: 600;
-    font-size: 13px;
-    color: #374151;
-    margin-bottom: 6px;
-}
-
-.setup-form-actions {
-    display: flex;
-    gap: 10px;
-    margin-top: 20px;
-}
-
-/* Network List Styling */
-#networkList ul.list {
-    list-style: none;
-    padding: 0;
-    margin: 12px 0 0 0;
-}
-
-#networkList ul.list li {
-    padding: 12px 14px;
-    border: 1px solid #e7e8ea;
-    border-radius: 8px;
-    margin-bottom: 8px;
-    font-size: 14px;
-    color: #374151;
-    background: #fff;
-    transition: all 0.2s ease;
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-}
-
-#networkList ul.list li:hover {
-    border-color: #bcd4f6;
-    background: #fafbfc;
-}
-
-#networkList ul.list li:last-child {
-    margin-bottom: 0;
-}
-
-#networkList .filter_network_name {
-    font-weight: 500;
-    flex: 1;
-    min-width: 120px;
-}
-
-#networkList .list-action {
-    color: #2f6fdd;
-    text-decoration: none;
-    font-weight: 500;
-    font-size: 13px;
-    padding: 4px 10px;
-    border-radius: 4px;
-    transition: all 0.2s ease;
-    margin-left: 4px;
-}
-
-#networkList .list-action:hover {
-    background-color: #eaf2fc;
-    color: #2861c4;
-}
-
-#networkList .list-action-danger {
-    color: #c9372c;
-}
-
-#networkList .list-action-danger:hover {
-    background-color: #fdecec;
-    color: #b02a20;
-}
-
-#networkList .empty-state {
-    text-align: center;
-    padding: 24px;
-    color: #9ca3af;
-    border-style: dashed;
-}
-
-/* Alert Styles */
-.alert {
-    border-radius: 8px;
-    padding: 12px 16px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 14px;
-    margin-bottom: 20px;
-}
-
-.alert-success {
-    background: #e7f5ec;
-    border: 1px solid #e7f5ec;
-    color: #1d6c3a;
-}
-
-.alert-danger {
-    background: #fdecec;
-    border: 1px solid #c9372c;
-    color: #b02a20;
-}
-
-.alert .fa {
-    font-size: 16px;
-    flex-shrink: 0;
-}
-
-/* Form Separator */
-.form_seperator {
-    border-bottom: 2px solid #e7e8ea;
-    margin: 20px 0 !important;
-}
-
-/* Info Text */
-.infotext {
-    display: block;
-    color: #6b7280;
-    font-size: 13px;
-    margin-bottom: 12px;
-    line-height: 1.5;
-}
-
-small strong {
-    color: #1f2328;
-    font-size: 14px;
-}
-
-/* Secondary Button */
-.btn-secondary {
-    background: #f0f1f2;
-    color: #374151;
-    border: 1px solid #e7e8ea;
-}
-
-.btn-secondary:hover {
-    background: #e7e8ea;
-    color: #1f2328;
-}
-
-/* Fuzzy Search Input */
-.fuzzy-search {
-    border: 1px solid #e7e8ea !important;
-    border-radius: 8px !important;
-    padding: 10px 14px !important;
-    font-size: 14px;
-    width: 100%;
-}
-
-.fuzzy-search:focus {
-    border-color: #2f6fdd !important;
-    box-shadow: 0 0 0 3px rgba(47, 111, 221, 0.1) !important;
-    outline: none;
-}
-
-/* Responsive Design */
-@media (max-width: 992px) {
-    .form-inline {
-        flex-direction: column;
-        align-items: stretch;
-    }
-
-    .form-group {
-        min-width: 100%;
-    }
-
-    .btn {
-        width: 100%;
-    }
-}
-
-@media (max-width: 768px) {
-    .setup-page-header {
-        flex-direction: column;
-        text-align: center;
-        padding: 20px 16px;
-        gap: 12px;
-    }
-
-    .setup-page-header__icon {
-        width: 48px;
-        height: 48px;
-    }
-
-    .setup-page-header__icon .glyphicon {
-        font-size: 20px;
-    }
-
-    .setup-page-header__title {
-        font-size: 20px;
-    }
-
-    .setup-page-header__subtitle {
-        font-size: 13px;
-    }
-
-    .form-inline {
-        gap: 10px;
-    }
-
-    .btn-xs {
-        font-size: 11px;
-        padding: 5px 10px;
-        height: 30px;
-    }
-
-    .panel-body .list li {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-
-    .panel-body .list li a {
-        margin-left: 0;
-        margin-top: 8px;
-    }
-}
-</style>
-
+<?php echo p202_setup_script_tag($base); ?>
 <?php template_bottom(); ?>

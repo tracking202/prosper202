@@ -82,6 +82,11 @@ module.exports = {
     db.truncate(['202_app_postbacks']);
   },
 
+  // Optional. Set it when reset() replaces the shared fixture (the
+  // agent-eval seed other specs assert against) with data of its own: the
+  // runner then runs this spec after every spec that does not.
+  replacesFixture: false,
+
   // Optional. Signs in, seeds, whatever the whole spec needs once.
   async setup(ctx) {
     await ctx.app.login();
@@ -126,6 +131,12 @@ wave gets them for one line each:
 - `atWidths(ctx, [400, 1280], body)` — run a body at several widths
 - `darkThemeApplies(ctx)` — the painted colours, not the declared ones
 - `tablesScrollThemselves(ctx)`
+- `chromeGeometry(ui)` and `chromeMatches(ctx, a, b, {paint})` — the header,
+  tabs, sub-menu, account menu and footer measured on one page and compared
+  with another. `specs/chrome-shells.spec.js` uses them to hold a classic page
+  and a v2 page of the same family to the same chrome, at 1280px and 390px,
+  light and dark, and writes `chrome-<pair>-<width>-<scheme>-<shell>.png` for
+  a reader. It needs no seeded data and truncates nothing.
 
 ## Two rules for anything added here
 
