@@ -44,7 +44,11 @@ final class EventsController
 
     private Connection $conn;
 
-    public function __construct(private readonly \mysqli $db, private readonly int $userId)
+    /**
+     * @param (callable(): int)|null $clock the request's time, read once per
+     *        request (tests pass one; the router does not)
+     */
+    public function __construct(private readonly \mysqli $db, private readonly int $userId, private $clock = null)
     {
         $this->conn = new Connection($db);
     }
@@ -62,7 +66,11 @@ final class EventsController
             throw new ValidationException('Invalid events', ['events' => 'must be a list of 1-' . self::MAX_EVENTS . ' events: {"event_id", "name", "occurred_at"?, "properties"?, "revenue"?, "transaction_id"?}']);
         }
 
-        $now = time();
+        // One reading of the clock for the whole request: the events are
+        // received at it, and whether the campaign's goals evaluate them is
+        // decided at it. A second read could land past a goal's end and
+        // answer goals_evaluated: false beside the outcomes it wrote.
+        $now = $this->clock !== null ? (int) ($this->clock)() : time();
         $events = [];
         $errors = [];
         foreach ($raw as $i => $e) {
@@ -105,9 +113,9 @@ final class EventsController
 
         $notifier = new TrafficSourceNotifier($this->conn, false);
         $engine = new GoalEngine($this->conn, null, null, null, $notifier);
-        $result = $this->guard(function () use ($engine, $clickId, $events): array {
+        $result = $this->guard(function () use ($engine, $clickId, $events, $now): array {
             $subject = $engine->clickSubject($this->userId, $clickId);
-            $evaluates = (new WebEvents($this->conn))->campaignEvaluatesGoals($this->userId, (int) $subject->campaignId, time());
+            $evaluates = (new WebEvents($this->conn))->campaignEvaluatesGoals($this->userId, (int) $subject->campaignId, $now);
 
             return ['evaluates' => $evaluates, 'campaign_id' => (int) $subject->campaignId] + $engine->ingest($this->userId, $subject, $events);
         });

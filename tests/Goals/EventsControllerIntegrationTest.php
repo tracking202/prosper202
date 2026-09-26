@@ -84,6 +84,32 @@ final class EventsControllerIntegrationTest extends TestCase
         $this->api()->create(['click_id' => 100, 'events' => [['event_id' => 'b1', 'name' => 'buy', 'revenue' => 21, 'transaction_id' => 'T-1']]]);
     }
 
+    /**
+     * The request reads its clock once: the events are received at that
+     * time and the campaign's goals are judged live at that time. With a
+     * second read, a goal ending between the two answered
+     * goals_evaluated: false beside the outcome it had just written.
+     */
+    public function testTheEventsAndTheGoalsAnswerAreJudgedAtOneTime(): void
+    {
+        $this->campaign(7, 'accumulate');
+        $this->click(100, 7);
+        $goal = $this->goal(7, ['name' => 'Buy', 'trigger' => ['event' => 'buy']]);
+        $t = 1_800_000_000;
+        // The goal ends between the request's first clock read and a later one.
+        self::fixture("UPDATE 202_goals SET archived_at = " . ($t + 500) . " WHERE goal_id = $goal");
+        $reads = 0;
+        $clock = function () use (&$reads, $t): int {
+            return $t + 1000 * $reads++;
+        };
+
+        $out = (new EventsController(self::$db, 1, $clock))->create(['click_id' => 100, 'events' => [['event_id' => 'b1', 'name' => 'buy']]]);
+
+        self::assertSame(1, $reads, 'one clock read per request');
+        self::assertSame(1, $out['data']['outcomes_written'], 'the goal was live when the event arrived');
+        self::assertTrue($out['data']['goals_evaluated'], 'and the answer says so, judged at the same time');
+    }
+
     public function testAnotherAccountsClickIsNotFound(): void
     {
         $this->campaign(7);

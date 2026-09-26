@@ -42,7 +42,7 @@ if (!function_exists('p202ResolveAdvertiserId')) {
 }
 
 if (!function_exists('p202RespondJsonError')) {
-    function p202RespondJsonError(int $code, string $message): void
+    function p202RespondJsonError(int $code, string $message): never
     {
         http_response_code($code);
         header('Content-Type: application/json');
