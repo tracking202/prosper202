@@ -43,8 +43,8 @@ use Prosper202\Database\Connection;
  * is itself a replacement whose predecessor had gone out, which its
  * `correction` row records) it cannot be recalled, so the replacement's
  * `reached` for that destination — and only that one — is cancelled and a
- * `correction` — or, with no replacement, a `retraction` — is recorded as
- * `suppressed`, because no pixel has a correction URL to carry it yet. An
+ * `correction` — or, with no replacement, a `retraction` — is recorded
+ * (amend(), below). An
  * event a replay moved to another n is announced once per destination too
  * (onAnnouncedBefore(), below). The full table is in plan §5.10.
  *
@@ -63,8 +63,11 @@ use Prosper202\Database\Connection;
  *   `correction` there, not a fresh `reached` (onAnnouncedBefore()).
  * Every correction and retraction follows one rule (amend()): sent to the
  * destination's correction URL when it has one, stored `suppressed` with the
- * reason otherwise. No destination has one until they can be configured
- * (PR 11); the resolver is a constructor seam. `generation` numbers the
+ * reason otherwise. The correction URLs are the operator's, set per server
+ * pixel on Setup › Traffic Sources (CorrectionUrls: one per pixel URL,
+ * matched by position, only while the pixel's owner set it); that is the
+ * resolver every outbox gets unless a test hands it another, so production
+ * can never be built with one that answers "none" for everything. `generation` numbers the
  * corrections and retractions of one conversion at one destination, so a
  * row retired, revived and retired again records each step instead of the
  * second retraction being swallowed by the first one's key.
@@ -94,12 +97,12 @@ final class NotificationOutbox implements OutcomeNotificationSink
      * @param (callable(string): bool)|null $fetch
      * @param (callable(int, int): ?string)|null $correctionUrl a destination's
      *        correction URL (pixel id, destination), or null where it has
-     *        none; by default none has one (configuring them is PR 11's)
+     *        none; by default the configured ones (CorrectionUrls::resolver())
      */
     public function __construct(private Connection $conn, private $clock = null, ?callable $fetch = null, ?callable $correctionUrl = null)
     {
         $this->fetch = $fetch ?? PostbackSender::fetch(...);
-        $this->correctionUrl = $correctionUrl ?? static fn (int $pixelId, int $destination): ?string => null;
+        $this->correctionUrl = $correctionUrl ?? CorrectionUrls::resolver($conn);
     }
 
     private function now(): int

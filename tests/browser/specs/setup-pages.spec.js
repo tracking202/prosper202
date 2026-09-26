@@ -21,7 +21,7 @@ const SETUP = '/tracking202/setup/';
 const SETUP_TABLES = [
   '202_aff_networks', '202_aff_campaigns', '202_ppc_networks', '202_ppc_accounts', '202_ppc_account_pixels',
   '202_ppc_network_variables', '202_landing_pages', '202_text_ads', '202_rotators', '202_rotator_rules',
-  '202_rotator_rules_criteria', '202_rotator_rules_redirects', '202_trackers',
+  '202_rotator_rules_criteria', '202_rotator_rules_redirects', '202_trackers', '202_notification_correction_urls',
 ];
 
 /** Click a control guarded by a confirm, accept it, and wait for a condition rather than a navigation. */
@@ -137,6 +137,37 @@ module.exports = {
         expect.eq(db.count('202_ppc_accounts', "ppc_account_name='eval-account-1'"), 1, 'the account is stored');
         expect.eq(db.value("SELECT pixel_code FROM 202_ppc_account_pixels"), 'https://pixel.example/p.gif', 'with its pixel');
         await shot('traffic-sources');
+      },
+    },
+
+    {
+      name: 'Traffic sources: a postback pixel\'s correction URLs, one per pixel URL',
+      async run(ctx) {
+        const { app, ui, db, expect } = ctx;
+        const account = db.value("SELECT ppc_account_id FROM 202_ppc_accounts WHERE ppc_account_name='eval-account-1'");
+        await app.goto(SETUP + 'ppc_accounts.php?edit_ppc_account_id=' + account);
+        if (await app.disclosureOpen('#account-form details') === false) {
+          await app.openDisclosure('#account-form details');
+        }
+        await ui.select('#pixel-type-0', '4');
+        await ui.fill({
+          '#pixel-code-0': 'https://pb.example/a?t=[[subid]] https://pb.example/b?t=[[subid]]',
+          '#pixel-correction-0': 'https://pb.example/c https://pb.example/d https://pb.example/e',
+        });
+        await app.submit('#account-form button[type="submit"]');
+        expect.match(await app.messages(), /matched by position/, 'three correction URLs for a two-URL pixel are refused, saying why');
+        expect.eq(await ui.value('#pixel-correction-0'), 'https://pb.example/c https://pb.example/d https://pb.example/e', 'keeping what was typed');
+        expect.eq(db.count('202_notification_correction_urls'), 0, 'and storing none');
+
+        if (await app.disclosureOpen('#account-form details') === false) {
+          await app.openDisclosure('#account-form details');
+        }
+        await ui.fill({ '#pixel-correction-0': 'https://pb.example/c?v=[[p202_goal_value]] https://pb.example/d' });
+        await app.submit('#account-form button[type="submit"]');
+        expect.eq(db.value('SELECT correction_url FROM 202_notification_correction_urls'), 'https://pb.example/c?v=[[p202_goal_value]] https://pb.example/d',
+          'one per pixel URL is stored against the pixel');
+        await app.goto(SETUP + 'ppc_accounts.php?edit_ppc_account_id=' + account);
+        expect.eq(await ui.value('#pixel-correction-0'), 'https://pb.example/c?v=[[p202_goal_value]] https://pb.example/d', 'and shown when the account is edited again');
       },
     },
 

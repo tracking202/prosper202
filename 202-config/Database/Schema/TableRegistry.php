@@ -99,6 +99,7 @@ final class TableRegistry
     public const string ATTRIBUTION_PENDING = '202_attribution_pending';
     public const string CONVERSION_UPLOADS = '202_conversion_uploads';
     public const string NOTIFICATION_PENDING = '202_notification_pending';
+    public const string NOTIFICATION_CORRECTION_URLS = '202_notification_correction_urls';
 
     // Deployment-wide secrets (SecretTables): owned by the installation, not
     // by any user

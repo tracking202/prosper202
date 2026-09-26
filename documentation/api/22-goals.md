@@ -28,7 +28,12 @@ Writes are stageable (`?staged=1`); creates honor `Idempotency-Key`.
 
 Events reach goals from pixels and postbacks (`event=`), `POST /events` and
 `p202.track()` on landing pages — see [web events](23-events.md) — and a
-campaign's own goals are edited on its Setup › Campaigns page too.
+campaign's own goals are edited on its Setup › Campaigns page too. An app's
+goals are edited on its Setup › Mobile Apps page with the same form, where
+a window counts from the install and **After** makes a funnel step; a goal
+that form cannot show whole (a second condition, a running sum, a window
+from the other subject) is listed with its `p202 goal update` command
+instead of being rewritten.
 
 ## Owners
 

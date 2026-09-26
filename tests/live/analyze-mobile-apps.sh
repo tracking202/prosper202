@@ -120,7 +120,7 @@ eq "$(tile $OUT/r.html Losses)"          "$(Q 'SELECT COUNT(*) FROM 202_app_post
 has "$OUT/r.html" "Totals for report"    "totals row"
 grep -qE 'p202-tile__value">\$' "$OUT/r.html" && ok "revenue tile carries a currency symbol" || bad "revenue tile carries a currency symbol"
 has "$OUT/r.html" "signature-verified postbacks only" "verified-only explainer shown"
-has "$OUT/r.html" "Decoded events" "decoded events panel"
+has "$OUT/r.html" "Decoded goals" "decoded goals panel (conversion values read as the goals they name)"
 clean "$OUT/r.html" | grep -qE 'purchase +[0-9]' && ok "purchase event listed" || bad "purchase event listed"
 clean "$OUT/r.html" | grep -qE 'subscribe +[0-9]' && ok "subscribe event listed" || bad "subscribe event listed"
 clean "$OUT/r.html" | grep -qE 'big_spender +[0-9]' && ok "big_spender event listed" || bad "big_spender event listed"
@@ -206,7 +206,7 @@ say "CSV download"
 CSVHDR=$(curl -sS -b "$JAR" -c "$JAR" -D - -o "$OUT/out.csv" "$PAGE?view=report&group_by=registration&download=csv")
 printf '%s' "$CSVHDR" | grep -i "content-type\|content-disposition" | sed 's/^/    /'
 printf '%s' "$CSVHDR" | grep -qi "content-type: text/csv" && ok "CSV content type" || bad "CSV content type"
-printf '%s' "$CSVHDR" | grep -qi 'filename="mobile-apps-registration-' && ok "CSV filename names the grouping and window" || bad "CSV filename"
+printf '%s' "$CSVHDR" | grep -qi 'filename="mobile-apps-ios-registration-' && ok "CSV filename names the platform, grouping and window" || bad "CSV filename"
 head -1 "$OUT/out.csv" | grep -q "^App,Postbacks,Installs" && ok "CSV header row" || bad "CSV header row"
 head -1 "$OUT/out.csv" | tr -d '\r' | grep -q ",Trusted,Refuted,Unvouched,Development-signed$" && ok "CSV names the trust classes" || bad "CSV names the trust classes"
 eq "$(tail -n +2 $OUT/out.csv | wc -l)" "3" "CSV has one row per app"
@@ -214,7 +214,7 @@ grep -q '"Acme, Notes ""Pro"" (990077003)"' "$OUT/out.csv" && ok "a comma and a 
 # RFC 4180, not PHP's private backslash escape: a field holding \" must still
 # reparse as one field for Excel and for str_getcsv with escape "".
 eq "$(python3 -c "import csv,sys;print(max(len(r) for r in csv.reader(open(sys.argv[1])) if r))" "$OUT/out.csv")" \
-   "11" "no row parses as more columns than the header has"
+   "13" "no row parses as more columns than the header has (13, Decoded and Ambiguous encoding among them)"
 grep -qE "^'?=" "$OUT/out.csv" && ok "a formula-shaped label is neutralised" || ok "no formula-shaped label in this data"
 # csv, not split-on-comma: one app name here contains a comma and a quote.
 eq "$(python3 -c "import csv,sys;print(sum(int(r[1]) for r in list(csv.reader(open(sys.argv[1])))[1:]))" "$OUT/out.csv")" \
@@ -254,6 +254,18 @@ has "$OUT/p.html" "p202-pill--warn" "a development signature wears the warn pill
 hasnt "$OUT/p.html" 'aria-label="Pages"' "no pager for one page of rows"
 get "?view=postbacks&registration_id=$RACER" "$OUT/p-f.html"
 saystext "$OUT/p-f.html" "3 rows in this range" "postbacks view honours the app filter"
+# The tab lists only Apple's postbacks whatever the platform is set to, so
+# the signature filter holds on every platform (#180: it was dropped unless
+# the platform was ios, and an account with Android apps too defaults to all).
+for pf in all android ios; do
+  get "?view=postbacks&platform=$pf&signature=invalid" "$OUT/p-sig-$pf.html"
+  hasnt "$OUT/p-sig-$pf.html" "signature filter was ignored" "platform=$pf: the Postbacks tab keeps signature=invalid"
+  saystext "$OUT/p-sig-$pf.html" "1 row in this range" "platform=$pf: and lists the one invalid postback"
+  grep -qE 'view=postbacks[^"]*signature=invalid' "$OUT/p-sig-$pf.html" && ok "platform=$pf: its links carry it" || bad "platform=$pf: its links carry it"
+done
+# Where it cannot apply it is refused out loud, not silently.
+get "?view=funnel&signature=invalid" "$OUT/fn-sig.html"
+has "$OUT/fn-sig.html" "signature filter was ignored: it filters Apple&#039;s postbacks, so it applies to the Postbacks tab and the iOS report only." "the funnel says it ignored the signature filter"
 
 say "verify view"
 get "?view=verify" "$OUT/v.html"

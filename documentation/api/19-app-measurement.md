@@ -40,14 +40,38 @@ uses) or one of Apple's two development keys, which store as `development`
 **Prosper202 CS › Setup › Mobile Apps** does everything this guide describes
 through the API, for people who would rather not use it.
 
-Paste the app's App Store link into the one field on that page. The App Store
-id, the platform and the app's name are read from the link, and the
-registration is one click; what was derived is then shown at the top of the
-app's page with a **change** link, so nothing is assumed silently. If the name
-cannot be looked up, the form comes back asking for that one field rather than
-registering the app under a placeholder.
+Paste the app's App Store or Google Play link into the one field on that
+page (a bare App Store id or package name works too). The platform and the
+app's id come from the link, and its name and icon from the store (Apple's
+lookup service, or the Play listing), so the registration is one click; what
+was derived is then shown at the top of the app's page with a **change**
+link, so nothing is assumed silently. If the store does not answer, the form
+comes back asking for the name alone rather than registering the app under a
+placeholder; an icon the store does not give is simply not shown. Icons are
+fetched only from Apple's and Google's image hosts, at most 40 KB, checked
+to be an image, and stored with the registration.
 
-The page also:
+Each app's page has, for both platforms:
+
+- **Settings** — name and notes, with the test-signal policy under a closed
+  Advanced; for Android also `attribution_window_days` and
+  `trust_client_revenue`.
+- **Store link** — the link a campaign advertising the app should send its
+  clicks to (Android: the Play link with `[[p202_install_token]]` in its
+  referrer, which the redirect fills per click), with Copy, and a builder:
+  choose the campaign, see whether it is ready, and one confirmed click sets
+  its offer URL — and, for Android, links the campaign to the app. iOS
+  campaigns are not linked: Apple's postback names the app, not the click.
+  The API is `GET /apps/{id}/store-link?campaign_id=`; the CLI, `p202 app
+  link <id> --campaign-id N [--apply]`.
+- **Goals** — the app's goals (and, under a disclosure, the account's), in
+  funnel order, with the same form Setup › Campaigns uses. An app goal's
+  window counts from the install, and a funnel step is its **After** goal.
+  A goal the form cannot show without losing part of it (a second condition,
+  a running sum, a window from the click) is listed with the `p202 goal
+  update` command that edits it, rather than rewritten here.
+
+For iOS apps the page also:
 
 - fetches both receiver URLs **from your browser** and reports what came back,
   with the exact origin to paste into `Info.plist`. An install whose URL is not
@@ -57,7 +81,10 @@ The page also:
   `localhost` or behind a VPN answers you and not Apple;
 - offers a starter conversion-value schema (install, trial, purchase on fine
   values 1, 10 and 40 and the three coarse buckets) when an app has no rules,
-  and edits rules one at a time afterwards;
+  and edits rules one at a time afterwards — a value names one of the app's
+  goals from a menu, or an event by name. Editing a value warns, where the
+  edit is made, until when a postback carrying it is reported as
+  `ambiguous_encoding` (the horizon below);
 - shows the app token masked, with Reveal, Copy and Rotate, and fills the
   `Info.plist` keys and the Swift snippet in with this install's URL;
 - lists the newest ten postbacks the app has received, whatever their
@@ -66,10 +93,12 @@ The page also:
   postbacks have arrived for an app that does not trust them, the app's row
   says so and accepts them in one click.
 
-The page manages iOS registrations. A Google Play link pasted there is named
-back as an Android app and pointed at `p202 app create --store-link` or
-`POST /api/v3/apps`, which register it; the Android page arrives with Android
-install tracking.
+For Android apps the page also shows the SDK's intake URL and the app
+token (masked, with Reveal, Copy and Rotate), the newest installs with their
+match state, and **Play Integrity**: the service account (pasted or chosen
+as the key file; never shown back, not even when refused), then the mode and
+the Cloud project number, in that order, with the API's refusals under the
+fields ([24-android-installs.md](24-android-installs.md#9-play-integrity)).
 
 Everything on that page goes through the same v3 controllers as the API and
 the CLI, so the validation and the error sentences are identical. Registering
@@ -78,20 +107,40 @@ an app there is the same write as `POST /api/v3/apps`.
 ## Reading the report in the web interface
 
 **Prosper202 CS › Analyze › Mobile Apps** is `GET /apps/report`,
-`GET /apps/postbacks` and `POST /apps/verify` rendered, as three
-tabs over one set of filters:
+`GET /apps/postbacks`, `GET /apps/notifications` and `POST /apps/verify`
+rendered, as tabs over one set of filters. A platform picker chooses iOS,
+Android or both; left alone, the page decides from the apps you have (the
+app the filter names, else the one platform you use, else both). The Funnel
+and Postbacks sent tabs are offered once the account has an Android app.
 
-- **Report** — the totals, and the same numbers grouped by day, app, ad
-  network, source, country, protocol, version or conversion type. Six tiles
-  head it (postbacks, installs, re-downloads, re-engagements, losses, decoded
-  revenue), and below the table a **Decoded events** panel adds up the named
-  events the SKAN encodings produced. When the range holds postbacks
+- **Report** — the totals, and the same numbers grouped by day, app or
+  platform on any platform; by ad network, source, country, protocol,
+  version or conversion type on iOS; by campaign, match state, integrity
+  state or goal on Android. With both platforms the tiles give each
+  platform's figures and a combined one made only of what means the same on
+  both (installs, goals reached, revenue), and a line says how the two
+  differ (Apple's postbacks are delayed and aggregate; Android installs are
+  immediate and per install). iOS: six tiles (postbacks, installs,
+  re-downloads, re-engagements, losses, decoded revenue), an **Ambiguous**
+  column for postbacks whose value meant two things inside the horizon, and
+  a **Decoded goals** panel. Android: installs, organic, goals reached,
+  revenue (payable outcomes) and refuted, with breakdowns of how installs
+  were matched and what Play Integrity said, and the goals the installs
+  reached.
+- **Funnel** (Android) — an app's goals in order of their `after`, each with
+  the trusted installs that reached it in the window, its share of the
+  first step and of the step it waits for, the unvouched installs beside it,
+  and what it paid. Installs are counted by install (a cohort): a goal
+  reached later counts in its install's window.
+- **Postbacks sent** (Android) — the traffic-source postbacks the installs'
+  goals queued, one row per pixel URL, with a count per status (pending,
+  sent, failed, cancelled, suppressed), the attempts and the last error. When the range holds postbacks
   that are not trusted, a line says so and gives the count for each trust
   class, because installs, losses and revenue count trusted
   postbacks only unless the signature filter says otherwise — the same
   `meta.trusted` the API reports. **Download to CSV** takes the grouped table
   as it stands, with revenue as a bare number a spreadsheet can add up.
-- **Postbacks** — the individual rows behind those totals, fifty to a page,
+- **iOS postbacks** — the individual rows behind those totals, fifty to a page,
   for the moment a total looks wrong and the question becomes which ones. Each
   row carries its transaction id, so a disagreement about one postback can be
   taken to the ad network that claims it, and its conversion window, because
@@ -172,7 +221,9 @@ dropped with a line saying so, and the rest of the report is still shown.
 | `POST` | `/.well-known/appattribution/report-attribution/` | Public AdAttributionKit postback-copy receiver (no auth — devices POST here) |
 | `GET` | `/apps/postbacks` | List received postbacks (filters below, paginated) |
 | `GET` | `/apps/postbacks/{id}` | One postback, including its attribution signature |
-| `GET` | `/apps/report` | Aggregate report with SKAN decoding |
+| `GET` | `/apps/report` | Aggregate report: iOS postbacks with SKAN decoding (the default), Android installs (`platform=android`) or both (`platform=all`) |
+| `GET` | `/apps/notifications` | The traffic-source postbacks app installs' goals queued, with a count per status |
+| `GET` | `/apps/{id}/store-link?campaign_id=N` | The store link a campaign should send clicks to, and whether that campaign is ready |
 | `POST` | `/apps/verify` | Verify a postback payload's signature without storing it |
 | `GET/POST` | `/apps`, `/apps/{id}` | App registry, both platforms (CRUD; `PUT`/`DELETE` on `/{id}`) |
 | `POST` | `/apps/{id}/app-token/rotate` | Mint a new app token; the old one stops working |
@@ -647,7 +698,32 @@ and `AttributionCopyEndpoint` lines in `Info.plist` still ship with the app
 
 ## Report
 
-`GET /apps/report?group_by=day|registration|ad-network|source|country|version|protocol|conversion-type`
+`GET /apps/report` takes `platform`: `ios` (the default — what the report
+meant before Android installs existed, so a request that never names one
+reads what it always read), `android`, or `all`. Every answer names its
+`platform` in `data` and `meta`, and every row carries `platform` beside
+`installs`, the trust-class counts, `goals_reached`, `revenue` and
+`events`. With `platform=all`, `data.totals` is `{ios, android, combined}`,
+where `combined` adds only the metrics that mean the same on both, and
+`group_by=platform` gives one row per platform, zeros included. A grouping
+or filter one platform lacks, asked of another, is a `422` naming the
+platform to ask for; `limit` applies per platform.
+
+**Android** (`platform=android`): `group_by=day|registration|platform|campaign|match-state|integrity-state|goal`,
+filters `registration_id(s)`, `time_from`/`time_to`, `match_state`,
+`integrity_state`, `trusted` (`trusted`, `refuted`, `unvouched`), `test`,
+`aff_campaign_id`. Figures are by install (a cohort: a goal counts in its
+install's group however much later it was reached). `installs` are trusted
+(attributed) installs; `received`, `organic`, `pending`, the trust-class
+counts and the `match_states` / `integrity_states` breakdowns count every
+install. `goals_reached`, `events` and `revenue` are the goals trusted
+installs reached (with `trusted=` they are recomputed over that class,
+`meta.trusted: as-filtered`); `revenue` is the value of payable outcomes,
+live ones only. `group_by=goal` is the funnel: one row per goal, the
+distinct installs that reached it per trust class, its `after` and owner.
+
+**iOS** (the default):
+`GET /apps/report?group_by=day|registration|platform|ad-network|source|country|version|protocol|conversion-type`
 with the same filters as the postback list, plus `limit` (max groups,
 default 100). Days are UTC, listed oldest first. Each group reports:
 

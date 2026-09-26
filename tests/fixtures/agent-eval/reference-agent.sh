@@ -22,6 +22,23 @@ ask="${P202_EVAL_ASK:-$(cat)}"
 run_id="$$-$(date +%s)"
 
 case "$ask" in
+    *"EVAL LINKS"*)
+        # Register the app from its package (the platform follows from it),
+        # let the server point the campaign at the store link and link it to
+        # the app (`app link --apply`), then hand back the TRACKER's link:
+        # the redirect is what fills [[p202_install_token]] per click, so the
+        # store link itself is never the one to give out.
+        name=$(printf '%s' "$ask" | grep -oE 'call it [A-Z0-9 ]+[A-Z0-9]' | sed 's/^call it //')
+        p202 app create --store-link com.p202.eval.links --app-name "$name" --json > /dev/null
+        reg=$(p202 app list --platform android --all --json | jq -r '.data[] | select(.app_key=="com.p202.eval.links") | .registration_id' | head -1)
+        campaign=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name=="EVAL LINKS CAMPAIGN") | .aff_campaign_id' | head -1)
+        link=$(p202 app link "$reg" --campaign-id "$campaign" --apply --json)
+        pub=$(p202 tracker create --aff-campaign-id="$campaign" --json | jq -r '.data.tracker_id_public')
+        url=$(p202 config show --json | jq -r '.url')
+        printf 'Registered %s as Android app %s (registration %s). Campaign %s now sends its clicks to %s and is linked to the app (ready: %s). Your tracking link: %s/tracking202/redirect/dl.php?t202id=%s\n' \
+            "$name" com.p202.eval.links "$reg" "$campaign" \
+            "$(printf '%s' "$link" | jq -r '.data.store_link')" "$(printf '%s' "$link" | jq -r '.data.campaign.ready')" "$url" "$pub"
+        ;;
     *"Play Integrity"*)
         # The credential first — the server refuses observe without one —
         # then the mode with the Cloud project number the ask gives (also

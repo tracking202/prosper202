@@ -601,8 +601,15 @@ try {
 
             $r->get('/postbacks',      fn() => $crud($postbacks)->list($queryParams));
             $r->get('/postbacks/{id}', fn($ctx) => $crud($postbacks)->get((int)$ctx['id']));
-            $r->get('/report',         fn() => $crud($postbacks)->report($queryParams));
+            // Both platforms: Apple's postbacks and Android's installs
+            // (AppReportController picks, and refuses a one-platform
+            // grouping or filter without that platform).
+            $r->get('/report',         fn() => $crud(\Api\V3\Controllers\AppReportController::class)->report($queryParams));
             $r->post('/verify',        fn() => $crud($postbacks)->verify($payload));
+
+            // The traffic-source postbacks app installs' goals queued, with
+            // where each stands (sent, failed, pending, …): a read.
+            $r->get('/notifications', fn() => $crud(\Api\V3\Controllers\AppNotificationsController::class)->list($queryParams));
 
             // An Android registration's installs, written only by the
             // public intake (POST /apps/installs, routed before auth), and
@@ -611,6 +618,11 @@ try {
             $r->get('/{id}/installs',        fn($ctx) => $crud($installs)->list((int)$ctx['id'], $queryParams));
             $r->get('/{id}/installs/{uuid}', fn($ctx) => $crud($installs)->get((int)$ctx['id'], (string)$ctx['uuid']));
             $r->get('/{id}/install-token',   fn($ctx) => $crud($installs)->installToken((int)$ctx['id'], $queryParams));
+
+            // The link builder's read: the store link a campaign should send
+            // its clicks to, and whether campaign_id already does (a read;
+            // applying it is PUT /campaigns/{id}).
+            $r->get('/{id}/store-link', fn($ctx) => $crud(\Api\V3\Controllers\AppLinksController::class)->storeLink((int)$ctx['id'], $queryParams));
 
             // Play Integrity (plan §5.6, §5.11): the status read, and the
             // service-account credential — set/rotate and clear. Neither
@@ -780,7 +792,7 @@ try {
                 'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}',
                 'rotators'      => '/rotators',
                 'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|exports}',
-                'apps'          => '/apps/{id|skan-encodings|postbacks|report|verify|schema|installs}[/installs|/install-token|/integrity|/integrity-credential]',
+                'apps'          => '/apps/{id|skan-encodings|postbacks|report|notifications|verify|schema|installs}[/installs|/install-token|/store-link|/integrity|/integrity-credential]',
                 'goals'         => '/goals/{id|validate|evaluate}',
                 'events'        => '/events',
                 'users'         => '/users',

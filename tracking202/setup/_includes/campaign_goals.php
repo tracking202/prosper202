@@ -52,19 +52,25 @@ const P202_GOAL_VALUE_TYPES = [
  * the form filled from it, built back into a definition, is the same
  * canonical definition, compared strictly (types, order, every field).
  * Anything the form has no field for — a second condition, "in", a sum, a
- * window from the install — fails the comparison without being listed
+ * window from the other subject — fails the comparison without being listed
  * here, so a new shape is refused until the form learns it.
  *
+ * The form has one window, counted from the owner's subject: the click for a
+ * campaign's goal, the install for an app's (Setup › Mobile Apps, PR 11). A
+ * window from the other one is a goal the form cannot show, and is edited
+ * with `p202 goal update` instead of being rewritten here.
+ *
  * @param array<string, mixed> $def the stored (canonical) definition
+ * @param 'click'|'install' $windowFrom what the form's window counts from
  */
-function p202_goal_form_fits(array $def): bool
+function p202_goal_form_fits(array $def, string $windowFrom = 'click'): bool
 {
     try {
         $stored = GoalDefinition::parse($def)->toArray();
     } catch (InvalidGoalDefinition) {
         return false;
     }
-    $built = p202_goal_definition_from_form(p202_goal_definition_form_values($def));
+    $built = p202_goal_definition_from_form(p202_goal_definition_form_values($def), $windowFrom);
     if ($built['errors'] !== []) {
         return false;
     }
@@ -225,9 +231,10 @@ function p202_goal_definition_form_values(array $def): array
  * GoalDefinition's to judge, through the controller.
  *
  * @param array<string, string> $v
+ * @param 'click'|'install' $windowFrom what the form's window counts from (p202_goal_form_fits())
  * @return array{definition: array<string, mixed>, errors: array<string, string>}
  */
-function p202_goal_definition_from_form(array $v): array
+function p202_goal_definition_from_form(array $v, string $windowFrom = 'click'): array
 {
     $errors = [];
     $int = static function (string $raw, string $field, string $sentence, int $max) use (&$errors): ?int {
@@ -254,7 +261,7 @@ function p202_goal_definition_from_form(array $v): array
     $within = null;
     if ($v['goal_within_days'] !== '') {
         $days = $int($v['goal_within_days'], 'goal_within_days', 'Within: a whole number of days from 1 to 3650, or empty for no limit.', GoalDefinition::MAX_DAYS);
-        $within = $days === null ? null : ['days' => $days, 'from' => 'click'];
+        $within = $days === null ? null : ['days' => $days, 'from' => $windowFrom];
     }
     $after = [];
     if ($v['goal_after'] !== '') {

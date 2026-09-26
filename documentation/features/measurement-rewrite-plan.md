@@ -2629,6 +2629,134 @@ The SDK is `sdk/android-attribution/`: `core/` (package
     play-services-tasks classes. Play Integrity's remediation dialogs
     (`showDialog`) are not offered.
 
+### 5.13 As built: decisions (PR 11)
+
+(Numbered 5.13 because §5.12 is PR 7's.)
+
+What PR 11 settled, where it departs from the rows above, and what is left.
+The pages are `tracking202/setup/MobileAppsController.php` and
+`tracking202/analyze/MobileAppsReportController.php` with their templates
+and partials; the API is `AppReportController` (over
+`AppPostbacksController::report()` and `Apps\Android\InstallReport`),
+`AppNotificationsController`, `AppLinksController` and `Apps\StoreLink`;
+correction URLs are `Prosper202\Notifications\CorrectionUrls`.
+
+- **The pages were already v2.** Both Mobile Apps pages were built on the
+  v2 shell for iOS; PR 11 rewrote them for two platforms rather than
+  migrating them, and split them into partials (`templates/mobile_apps/`)
+  that `NoLegacyBootstrapClassesTest`, `ComponentClassIsConsumedTest` and
+  `SetupPostsRequireTokenTest` all read.
+- **The app decides.** A store link gives the platform and id; the store
+  gives the name and icon (Apple's lookup service, the Play listing's
+  `og:title`/`og:image`); only a name the store would not give is asked
+  for. Icons are fetched only from `*.mzstatic.com` and
+  `play-lh.googleusercontent.com` over https, no redirects, at most 40 KB,
+  checked by magic bytes, and stored as a `data:` URI in
+  `202_app_registrations.app_icon` — no file store, and no page hotlinks a
+  store (which would tell it who looks at the page). A test instance points
+  both lookups at a fake store with `P202_APP_STORE_LOOKUP_ORIGIN`, honoured
+  only for a loopback origin.
+- **`GET /apps/report` without `platform` is iOS.** The first cut made the
+  omitted platform mean both, with a 422 for every iOS-only grouping or
+  filter asked without `platform=ios`. The agent-eval suite caught what that
+  does to existing clients: the reference agent's `app report --group-by
+  protocol --app-id` stopped working, and every saved query's totals
+  changed shape. Omitted is now `ios` — what the report meant before
+  Android existed — `all` asks for both, and every answer names its
+  `platform`. The page never omits it: it decides from the apps (the one the
+  filter names, else the one platform the account uses, else both).
+- **Android is by install, and revenue is payable outcomes.** The Android
+  report groups installs (a cohort): a goal reached a week later counts in
+  its install's day and campaign. `revenue` is the value of live (not
+  superseded), payable outcomes — what the campaign decided to pay — not
+  the click's payout, which a web goal or another app could share.
+  `installs` are distinct trusted installs, in every grouping alike; the
+  other trust classes are counted beside them, and `trusted=` recomputes
+  `installs` and the goal figures over one class
+  (`meta.trusted: as-filtered`), as the iOS `signature` filter does.
+- **Combined figures are only the shared ones.** With `platform=all` the
+  totals are `{ios, android, combined}`, and `combined` adds installs, goals
+  reached and revenue only: Apple's postbacks are delayed, aggregate and
+  privacy-thresholded, so a combined "postbacks" or "organic" would add
+  unlike things. `limit` applies per platform.
+- **iOS apps have no funnel.** A SKAN postback carries at most one decoded
+  value per window, not a per-install sequence of goals, so there is no
+  funnel to draw from it. The Funnel and Postbacks sent tabs appear once the
+  account has an Android app; their URLs still answer without one. A funnel
+  step's second share is of the goal it waits for (`after`; the smallest of
+  several, since all must be reached; the install for a goal that waits for
+  nothing), not of the row above it — two goals at one depth are siblings.
+- **Country is iOS only.** Apple's postback carries a country; an install
+  row does not, and the click's country is a different fact (where the ad
+  was clicked, not where the app was installed), so Android is not grouped
+  by it rather than grouped by a proxy.
+- **Filters are the URL's.** The report's filters live in its own query
+  string, never in `202_users_pref`, so another tab cannot change them
+  and there is no ReportView to hand on; `ReportViewReadersTest::testTheMobileAppsReportReadsNoStoredFilter`
+  holds the page and its partials to that, and the CSV is the page itself
+  under the same URL.
+- **The horizon is the constant.** The brief said 48 days; this branch
+  started on a 35-day constant and, after merging the stack, has PR 8's 48
+  (conversion window 35 + delivery delay 6 + schema age 7, keyed by App
+  Store id). Every page sentence renders `SkanEncodingTimeline`'s constants
+  and the date they give, never a literal, so the number cannot drift from
+  the decode.
+- **The goal editor is 4b's form, told what its window counts from.**
+  `p202_goal_form_fits()` and `p202_goal_definition_from_form()` take
+  `click` or `install`; the round-trip test (4b's, after the merge) then
+  refuses a click-window goal on an app page as a goal the form cannot show,
+  which is listed with its `p202 goal update` command.
+- **The link builder.** `GET /apps/{id}/store-link?campaign_id=` says what
+  the campaign's offer URL should be and what is missing; `--apply` (and the
+  page's confirmed button) writes it through the campaigns controller.
+  Android needs both the token in the referrer and the campaign link;
+  iOS needs the store link only — Apple's postback names the app and the
+  ad network, never the click, so a campaign-app link would claim a
+  precision that is not there.
+- **Correction URLs are per pixel, positional per destination.** They live
+  in `202_notification_correction_urls` (one row per server pixel, owner
+  guarded on every upsert, pruned when the traffic-source form deletes a
+  pixel, created on install and on the 1.9.75 rung). After the merge the
+  outbox tracks one row per URL of a pixel's code, so a correction URL field
+  holds one URL per pixel URL, in order; destination N's correction goes to
+  the Nth correction URL, a destination without one is `suppressed` with the
+  reason, and more correction URLs than the code has are refused. The field
+  is always shown: a per-row show-when cannot read a repeated
+  `pixel_type_id[]`, and a disabled field would drop out of the positional
+  array and shift every correction after it onto the wrong pixel.
+- **One correction mechanism: the outbox's resolver is CorrectionUrls.**
+  PR 4's revival rule gave `NotificationOutbox` one helper for every
+  correction and retraction (`amend()`, which also numbers them by
+  `generation`) and a constructor seam for the destination's URL whose
+  default answered "none". That default is now
+  `CorrectionUrls::resolver()`: the pixel's stored correction URLs, split
+  as its code is, taken at the destination's position, and counted only
+  while the row's user owns the pixel through its traffic-source account.
+  Every construction without an explicit resolver — `GoalEngine`, the
+  `app-installs` worker — therefore uses the operator's configuration; a
+  resolver that says "none" exists only where a test passes one. This
+  branch's own correction path (a second URL builder beside `amend()`) was
+  removed in the merge, and with it its token names: a correction URL takes
+  `amend()`'s tokens — `[[p202_goal_value]]` / `[[payout]]` (the value the
+  network should now hold, `0.00` for a retraction),
+  `[[p202_previous_value]]`, `[[p202_conv_id]]`, `[[p202_original_conv_id]]`,
+  `[[p202_notification]]`, `[[subid]]`, `[[transactionid]]`,
+  `[[timestamp]]`, `[[random]]` — filled there rather than added to the
+  tracker's token list, where every pixel would blank them.
+- **No Kotlin snippet.** The Android page shows the intake URL and the app
+  token, not code; PR 7's SDK (`sdk/android-attribution`, now merged) has
+  its own guide (`25-android-sdk.md`), and the snippet on this page is
+  left for a follow-up.
+- **The PHP CLI's `--postback_version`.** `--version` is Symfony's own
+  option; `app:report` shipped a `--version` filter that made the command
+  refuse to start, found only by running it.
+  `CommandOptionsDoNotShadowTheApplicationTest` now merges every command's
+  definition the way a run does.
+- **Deferred.** The Kotlin snippet on the Android page; Android grouping by the click's
+  country, if it is wanted as what it is; a correction URL per destination
+  edited as separate fields rather than one positional field; icons for apps
+  registered through the API or CLI (only the page looks them up).
+
 ---
 
 # Part C: the MTA rewrite
@@ -3584,7 +3712,7 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 | 8 | **iOS SDK:** header rename, `setCustomerId`, on-device goal evaluator on the shared vectors. **Built; `tests/live/ios-sdk.sh` (the Swift SDK's live suite against the instance included; `app-core.sh`, `goals.sh`, `setup-mobile-apps.sh`, `analyze-mobile-apps.sh` re-run), Swift vectors in `GoalVectorsTests`, encoding versions with the 48-day horizon, kept by app. Decisions in §5.9.** | 3, 4 |
 | 9 | **MTA engine:** schema rewrite and rungs, worker, models, credits, reports API; v2 and dead code deleted. **Built; `tests/live/mta-engine.sh`; decisions in §6.5.** | 1, 2 |
 | 10 | **MTA UI and exports:** dashboard on the v2 shell, comparison, journey metrics, SSRF-safe webhooks. **Built; `tests/live/mta-ui.sh` (and `mta-engine.sh` re-run), `tests/browser/specs/mta-dashboard.spec.js`; decisions in §6.6.** | 9 |
-| 11 | **Mobile Apps UI:** Android pages, link builder, goal editor and funnel, cross-platform report | 3–5 |
+| 11 | **Mobile Apps UI:** Android pages, link builder, goal editor and funnel, cross-platform report. **Built; `tests/live/mobile-apps-ui.sh` (and the setup/analyze mobile-apps, android-intake, play-integrity, ios-sdk and app-core passes re-run), `tests/browser/specs/setup-mobile-apps.spec.js` and `analyze-mobile-apps.spec.js`, agent-eval `mobile-apps-ui-001`; decisions in §5.13.** | 3–5 |
 | 12 | **Release gate:** upgrade-equals-install from a real 1.9.55 database, full live passes, agent-eval cases, docs and OpenAPI, and the whole-app browser pass on v2 | all, including U8 |
 
 - PRs 1, 2 and 3 depend on no other measurement PR and can proceed in

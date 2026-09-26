@@ -480,74 +480,6 @@ var appPostbacksListCmd = &cobra.Command{
 var appPostbacksGetCmd = newAppGetCmd("apps/postbacks",
 	"Get one postback, including its attribution signature")
 
-// ── Report ──────────────────────────────────────────────────────────
-
-var appReportCmd = &cobra.Command{
-	Use:   "report",
-	Short: "Aggregate postback report with SKAN decoding",
-	Long: "Groups postbacks by day (UTC), registration, ad-network, source, country, version,\n" +
-		"protocol, or conversion-type and decodes winning postbacks' conversion values through\n" +
-		"the encodings in `p202 app encoding`. Every metric counts unique postbacks, so a replay\n" +
-		"counts once, and counts trusted postbacks only unless --signature picks a class;\n" +
-		"trusted_count, refuted_count, unvouched_count and test_count show every class beside them.\n" +
-		"installs = winning first-window downloads; redownloads and re-engagements\n" +
-		"(AdAttributionKit) are reported beside them.",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		params := collectAppFilters(cmd)
-		groupBy, _ := cmd.Flags().GetString("group-by")
-		if groupBy != "" {
-			params["group_by"] = groupBy
-		}
-		limit, err := pagingFlagValue(cmd, "limit")
-		if err != nil {
-			return err
-		}
-		if limit != "" {
-			params["limit"] = limit
-		}
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
-		data, err := c.Get("apps/report", params)
-		if err != nil {
-			return err
-		}
-		render(reshapeAppReport(data))
-		return nil
-	},
-}
-
-// reshapeAppReport lifts data.groups to the top-level data array — the shape
-// every list command renders — moving group_by into meta. Applied in every
-// output mode so --json and the table agree on structure. Anything
-// unexpected is passed through untouched.
-func reshapeAppReport(data []byte) []byte {
-	var envelope struct {
-		Data struct {
-			GroupBy string            `json:"group_by"`
-			Groups  []json.RawMessage `json:"groups"`
-		} `json:"data"`
-		Meta map[string]interface{} `json:"meta"`
-	}
-	if err := json.Unmarshal(data, &envelope); err != nil || envelope.Data.Groups == nil {
-		return data
-	}
-	meta := envelope.Meta
-	if meta == nil {
-		meta = map[string]interface{}{}
-	}
-	meta["group_by"] = envelope.Data.GroupBy
-	reshaped, err := json.Marshal(map[string]interface{}{
-		"data": envelope.Data.Groups,
-		"meta": meta,
-	})
-	if err != nil {
-		return data
-	}
-	return reshaped
-}
-
 // ── Verify ──────────────────────────────────────────────────────────
 
 var appVerifyCmd = &cobra.Command{
@@ -772,9 +704,7 @@ func init() {
 	registerAppFilterFlags(appPostbacksListCmd)
 	appPostbacksCmd.AddCommand(appPostbacksListCmd, appPostbacksGetCmd)
 
-	appReportCmd.Flags().String("group-by", "day", "Group results by: day, registration, ad-network, source, country, version, protocol, conversion-type")
-	appReportCmd.Flags().StringP("limit", "l", "", "Max groups to return (default 100)")
-	registerAppFilterFlags(appReportCmd)
+	registerAppReportFlags(appReportCmd)
 
 	appVerifyCmd.Flags().StringP("file", "f", "", "Path to the postback JSON (default: read piped stdin)")
 

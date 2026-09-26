@@ -5,10 +5,17 @@ declare(strict_types=1);
 namespace Tracking202\Setup;
 
 use Api\V3\Apps\AppIdentity;
+use Api\V3\Apps\Android\Integrity\IntegrityMode;
+use Api\V3\Apps\StoreLink;
+use Api\V3\Controllers\AppIntegrityController;
+use Api\V3\Controllers\AppInstallsController;
+use Api\V3\Controllers\AppLinksController;
 use Api\V3\Controllers\AppRegistrationsController;
 use Api\V3\Apps\Apple\SkanEncodingTimeline;
 use Api\V3\Controllers\AppSkanEncodingsController;
 use Api\V3\Controllers\AppPostbacksController;
+use Api\V3\Controllers\AppReportController;
+use Api\V3\Controllers\CampaignsController;
 use Api\V3\Controllers\UsersController;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\NotFoundException;
@@ -21,14 +28,19 @@ use Prosper202\Goals\GoalEngineException;
 use Prosper202\Goals\GoalScope;
 use Prosper202\Goals\InvalidGoalDefinition;
 use Prosper202\Goals\PlainGoals;
+use Tracking202\Apps\AppIcons;
 use Tracking202\Apps\RegisteredApps;
+use Tracking202\Apps\StoreListing;
 
 require_once __DIR__ . '/_base/SetupController.php';
 require_once __DIR__ . '/../../202-config/functions-install-helpers.php';
+require_once __DIR__ . '/_includes/app_goals.php';
 
 /**
- * Setup › Mobile Apps: register the apps you advertise, decode their
- * SKAdNetwork and AdAttributionKit conversion values, and connect the SDK.
+ * Setup › Mobile Apps: register the apps you advertise — iOS and Android —
+ * and set each one up: its settings, its goals and funnel, the SKAN
+ * conversion values an iOS app reports, Play Integrity for an Android app,
+ * and the store link its campaigns send clicks to (plan §5.6, PR 11).
  *
  * Every write goes through the v3 controllers in-process, so this page, the
  * REST API and the CLI enforce the same rules and answer with the same
@@ -37,14 +49,17 @@ require_once __DIR__ . '/../../202-config/functions-install-helpers.php';
  * session's user id directly.
  *
  * Post-redirect-get throughout, with CSRF from the base controller. The page
- * is the first on the v2 shell (Bootstrap 5.3 + the component layer), so its
- * markup carries no Bootstrap 3 or Flat UI class; NoLegacyBootstrapClassesTest
+ * is on the v2 shell (Bootstrap 5.3 + the component layer), so its markup
+ * carries no Bootstrap 3 or Flat UI class; NoLegacyBootstrapClassesTest
  * fails the build if one appears.
  */
 class MobileAppsController extends SetupController
 {
     /** The write permission, shared with attribution models. */
     private const MANAGE_PERMISSION = 'manage_attribution_models';
+
+    /** How many campaigns the link builder offers, newest first. */
+    private const LINK_BUILDER_CAMPAIGNS = 200;
 
     private \mysqli $db;
     private AppRegistrationsController $apps;
@@ -59,6 +74,8 @@ class MobileAppsController extends SetupController
     private array $fieldErrors = [];
     /** @var array<string, mixed> what the form should show again after a failed submit */
     private array $formState = [];
+    /** Which form on the app page a failed submit came from, so the page opens there. */
+    private string $failedForm = '';
 
     /** @var array<string, mixed>|null the app being viewed, when ?app=ID */
     private ?array $currentApp = null;
@@ -119,15 +136,21 @@ class MobileAppsController extends SetupController
 
         try {
             match ($action) {
-                'register'       => $this->registerApp(),
-                'update'         => $this->updateApp(),
-                'remove'         => $this->removeApp(),
-                'accept_dev'     => $this->setDevelopmentTrust(),
-                'rule_save'      => $this->saveRule(),
-                'rule_remove'    => $this->removeRule(),
-                'starter_schema' => $this->applyStarterSchema(),
-                'rotate_token'   => $this->rotateToken(),
-                default          => throw new \InvalidArgumentException('Unknown action.'),
+                'register'             => $this->registerApp(),
+                'update'               => $this->updateApp(),
+                'remove'               => $this->removeApp(),
+                'accept_dev'           => $this->setDevelopmentTrust(),
+                'rule_save'            => $this->saveRule(),
+                'rule_remove'          => $this->removeRule(),
+                'starter_schema'       => $this->applyStarterSchema(),
+                'rotate_token'         => $this->rotateToken(),
+                'integrity_mode'       => $this->setIntegrityMode(),
+                'integrity_credential' => $this->setIntegrityCredential(),
+                'integrity_clear'      => $this->clearIntegrityCredential(),
+                'goal_save'            => $this->saveGoal(),
+                'goal_archive'         => $this->archiveGoal(),
+                'link_apply'           => $this->applyLink(),
+                default                => throw new \InvalidArgumentException('Unknown action.'),
             };
         } catch (ValidationException $e) {
             // The API's per-field sentences, shown under the fields they name.
@@ -135,14 +158,28 @@ class MobileAppsController extends SetupController
             if ($this->fieldErrors === []) {
                 $this->flash('bad', $e->getMessage());
             }
-            $this->formState = $_POST;
+            $this->keepForm($action);
             $this->restoreContext($action);
         } catch (HttpException $e) {
             // 409 duplicate, 404, and the rest: the API's own message.
             $this->flash('bad', $e->getMessage());
-            $this->formState = $_POST;
+            $this->keepForm($action);
             $this->restoreContext($action);
         }
+    }
+
+    /**
+     * What the failed form showed, to show it again — never the service
+     * account key: a page that echoed a refused private key back into the
+     * form would put it in the HTML, the browser's form cache and any
+     * screenshot of the error.
+     */
+    private function keepForm(string $action): void
+    {
+        $posted = $_POST;
+        unset($posted['credential'], $posted['csrf_token']);
+        $this->formState = $posted;
+        $this->failedForm = $action;
     }
 
     /**
@@ -174,9 +211,9 @@ class MobileAppsController extends SetupController
             return;
         }
 
-        // 'update' is submitted from the edit form, so that is the form the
-        // error belongs under; everything else is on the app's own page.
-        if ($action === 'update') {
+        // 'update' from the list's edit form goes back there; the app page's
+        // own settings form says so with return_to.
+        if ($action === 'update' && (string)($_POST['return_to'] ?? '') !== 'app') {
             $this->editingApp = $app;
             return;
         }
@@ -200,23 +237,29 @@ class MobileAppsController extends SetupController
         $this->handleGet();
     }
 
+    private function postedId(): int
+    {
+        return (int)($_POST['registration_id'] ?? 0);
+    }
+
     // ─── Apps ────────────────────────────────────────────────────────
 
     /**
-     * Register from one field: an App Store link or a bare id.
+     * Register from one field: an App Store or Google Play link, a bare App
+     * Store id or a package name.
      *
-     * The id, the platform and (when the store answers) the name are derived
-     * rather than asked for. What was derived is reported back in the success
-     * flash, so nothing is silently assumed. If the name cannot be derived
-     * the form comes back with a name field rather than registering the app
-     * under a placeholder.
+     * The platform, the key and (when the store answers) the name and icon
+     * are derived rather than asked for. What was derived is shown on the
+     * app's page, so nothing is silently assumed. If the name cannot be
+     * derived the form comes back with a name field rather than registering
+     * the app under a placeholder.
      */
     private function registerApp(): void
     {
         $reference = trim((string)($_POST['app_reference'] ?? ''));
         if ($reference === '') {
             throw new ValidationException('Validation failed', [
-                'app_reference' => 'Paste the app\'s App Store link, or its numeric App Store id.',
+                'app_reference' => 'Paste the app\'s App Store or Google Play link (or its App Store id or package name).',
             ]);
         }
         // AppIdentity is the one reader of store links, shared with the API's
@@ -227,16 +270,6 @@ class MobileAppsController extends SetupController
         } catch (ValidationException $e) {
             throw new ValidationException('Validation failed', [
                 'app_reference' => $e->getFieldErrors()['store_link'] ?? $e->getMessage(),
-            ]);
-        }
-        if ($identity->platform !== AppIdentity::IOS) {
-            // The registry takes Android apps (POST /api/v3/apps, p202 app
-            // create --store-link); this page's app view — SKAN values, the
-            // Info.plist keys, the Swift snippet — is iOS's, and the Android
-            // page arrives with Android install tracking.
-            throw new ValidationException('Validation failed', [
-                'app_reference' => 'That is a Google Play app (' . $identity->appKey . '). This page manages iOS apps; '
-                    . 'register an Android app with `p202 app create --store-link` or POST /api/v3/apps.',
             ]);
         }
 
@@ -258,8 +291,11 @@ class MobileAppsController extends SetupController
         }
 
         $name = trim((string)($_POST['app_name'] ?? ''));
+        $icon = null;
         if ($name === '') {
-            $name = $this->lookUpAppName($identity->appleAppId(), $identity->slug);
+            $listing = (new StoreListing())->lookUp($identity);
+            $name = $listing['name'];
+            $icon = $listing['icon'];
         }
         if ($name === '') {
             // Everything except the name was derived; ask only for that.
@@ -268,7 +304,8 @@ class MobileAppsController extends SetupController
                 'derived_platform' => $identity->platform,
                 'needs_name' => true,
             ];
-            $this->fieldErrors['app_name'] = 'The App Store did not answer, so the name could not be looked up. Type it once and it is saved with the registration.';
+            $store = $identity->platform === AppIdentity::IOS ? 'The App Store' : 'Google Play';
+            $this->fieldErrors['app_name'] = $store . ' did not answer, so the name could not be looked up. Type it once and it is saved with the registration.';
             return;
         }
 
@@ -280,37 +317,64 @@ class MobileAppsController extends SetupController
             'accept_test_signals' => isset($_POST['accept_test_signals']) ? 1 : 0,
         ];
         $created = $this->apps->create($payload)['data'];
+        $registrationId = (int)$created['registration_id'];
+
+        if ($icon !== null) {
+            // Best effort, after the registration committed: an icon is not
+            // worth failing a registration over, and the page shows the
+            // platform's own mark without one.
+            try {
+                (new AppIcons(new Connection($this->db)))->store($this->getUserId(), $registrationId, $icon);
+            } catch (\Throwable $e) {
+                error_log('Mobile Apps setup: the icon of registration ' . $registrationId . ' was not stored: ' . $e->getMessage());
+            }
+        }
 
         $this->sendSlackNotification('mobile_app_registered', [
             'app' => $name,
             'app_id' => $identity->appKey,
         ]);
-        $this->redirect('tracking202/setup/mobile_apps.php?app=' . (int)$created['registration_id'] . '&registered=1');
+        $this->redirect('tracking202/setup/mobile_apps.php?app=' . $registrationId . '&registered=1');
     }
 
+    /**
+     * Save an app's settings: its name and notes, test signals, and for an
+     * Android app the attribution window and whether client revenue may be
+     * paid. The Android fields are sent as typed (the API reads them raw and
+     * refuses `07` or `1.5` by name); a blank window is not sent, so the
+     * stored one stands.
+     */
     private function updateApp(): void
     {
-        $id = (int)($_POST['registration_id'] ?? 0);
+        $id = $this->postedId();
         $payload = [
             'app_name' => trim((string)($_POST['app_name'] ?? '')),
             'notes' => trim((string)($_POST['notes'] ?? '')),
             'accept_test_signals' => isset($_POST['accept_test_signals']) ? 1 : 0,
         ];
+        if ((string)($_POST['platform'] ?? '') === AppIdentity::ANDROID) {
+            $window = trim((string)($_POST['attribution_window_days'] ?? ''));
+            if ($window !== '') {
+                $payload['attribution_window_days'] = $window;
+            }
+            $payload['trust_client_revenue'] = isset($_POST['trust_client_revenue']) ? 1 : 0;
+        }
         $this->apps->update($id, $payload);
-        $this->redirect('tracking202/setup/mobile_apps.php?saved=1');
+        $this->redirect((string)($_POST['return_to'] ?? '') === 'app'
+            ? 'tracking202/setup/mobile_apps.php?app=' . $id . '&saved=1'
+            : 'tracking202/setup/mobile_apps.php?saved=1');
     }
 
     private function removeApp(): void
     {
-        $id = (int)($_POST['registration_id'] ?? 0);
-        $this->apps->delete($id);
+        $this->apps->delete($this->postedId());
         $this->redirect('tracking202/setup/mobile_apps.php?removed=1');
     }
 
     /** The nudge's one click, and the Advanced toggle, are the same write. */
     private function setDevelopmentTrust(): void
     {
-        $id = (int)($_POST['registration_id'] ?? 0);
+        $id = $this->postedId();
         $accept = (string)($_POST['accept'] ?? '0') === '1';
         $this->apps->update($id, ['accept_test_signals' => $accept ? 1 : 0]);
         $this->redirect('tracking202/setup/mobile_apps.php?app=' . $id . '&dev=' . ($accept ? '1' : '0'));
@@ -318,9 +382,134 @@ class MobileAppsController extends SetupController
 
     private function rotateToken(): void
     {
-        $id = (int)($_POST['registration_id'] ?? 0);
+        $id = $this->postedId();
         $this->apps->rotateAppToken($id);
         $this->redirect('tracking202/setup/mobile_apps.php?app=' . $id . '&rotated=1');
+    }
+
+    // ─── Play Integrity (Android) ────────────────────────────────────
+
+    /**
+     * The mode and the Cloud project number, in one write, as the API takes
+     * them: observe and require need a credential stored first and a
+     * project number (sent here, or already stored), and the number is
+     * replaced, never cleared — so a blank field is not sent.
+     */
+    private function setIntegrityMode(): void
+    {
+        $id = $this->postedId();
+        $payload = ['integrity_mode' => (string)($_POST['integrity_mode'] ?? '')];
+        $number = trim((string)($_POST['integrity_cloud_project_number'] ?? ''));
+        if ($number !== '') {
+            $payload['integrity_cloud_project_number'] = $number;
+        }
+        $this->apps->update($id, $payload);
+        $this->redirect('tracking202/setup/mobile_apps.php?app=' . $id . '&integrity=mode#integrity');
+    }
+
+    /**
+     * Set or rotate the service account, from the key file's JSON pasted or
+     * uploaded. Malformed JSON is refused by name (error pattern #4), never
+     * sent as an empty object the API would then describe as a bad key.
+     */
+    private function setIntegrityCredential(): void
+    {
+        $id = $this->postedId();
+        $raw = trim((string)($_POST['credential'] ?? ''));
+        $upload = $_FILES['credential_file'] ?? null;
+        if ($raw === '' && is_array($upload) && ($upload['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_OK) {
+            if ((int)($upload['size'] ?? 0) > 65536) {
+                throw new ValidationException('Validation failed', ['credential' => 'A service-account key file is a few kilobytes; this one is over 64 KB.']);
+            }
+            $read = @file_get_contents((string)$upload['tmp_name']);
+            if ($read === false) {
+                throw new ValidationException('Validation failed', ['credential' => 'The uploaded key file could not be read.']);
+            }
+            $raw = trim($read);
+        }
+        if ($raw === '') {
+            throw new ValidationException('Validation failed', ['credential' => 'Paste the service account\'s JSON key file, or choose the file.']);
+        }
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            throw new ValidationException('Validation failed', ['credential' => json_last_error() === JSON_ERROR_NONE
+                ? 'That is JSON but not an object: paste the whole key file, braces included.'
+                : 'That is not JSON (' . json_last_error_msg() . '): paste the key file exactly as Google gave it.']);
+        }
+        try {
+            (new AppIntegrityController($this->db, $this->getUserId()))->setCredential($id, ['credential' => $decoded]);
+        } catch (ValidationException $e) {
+            // The credential's own field errors (credential.private_key, …)
+            // under the one field the form has.
+            throw new ValidationException($e->getMessage(), ['credential' => implode(' ', array_map(
+                static fn (string $field, string $why): string => $field . ': ' . $why,
+                array_keys($e->getFieldErrors()),
+                array_map('strval', array_values($e->getFieldErrors()))
+            )) ?: $e->getMessage()], $e);
+        }
+        $this->redirect('tracking202/setup/mobile_apps.php?app=' . $id . '&integrity=credential#integrity');
+    }
+
+    private function clearIntegrityCredential(): void
+    {
+        $id = $this->postedId();
+        (new AppIntegrityController($this->db, $this->getUserId()))->clearCredential($id);
+        $this->redirect('tracking202/setup/mobile_apps.php?app=' . $id . '&integrity=cleared#integrity');
+    }
+
+    // ─── Goals ───────────────────────────────────────────────────────
+
+    private function saveGoal(): void
+    {
+        $id = $this->postedId();
+        $this->assertOwnApp($id);
+        $errors = p202_app_goal_save($this->db, $this->getUserId(), $id, p202_goal_form_values(null, $_POST));
+        if ($errors === []) {
+            $this->redirect('tracking202/setup/mobile_apps.php?app=' . $id . '&goal_saved=1#goals');
+        }
+        $this->fieldErrors = $errors;
+        $this->keepForm('goal_save');
+        $this->restoreContext('goal_save');
+    }
+
+    private function archiveGoal(): void
+    {
+        $id = $this->postedId();
+        $this->assertOwnApp($id);
+        $refusal = p202_app_goal_archive($this->db, $this->getUserId(), $id, (string)($_POST['goal_id'] ?? ''));
+        if ($refusal === null) {
+            $this->redirect('tracking202/setup/mobile_apps.php?app=' . $id . '&goal_archived=1#goals');
+        }
+        $this->flash('bad', $refusal);
+        $this->restoreContext('goal_archive');
+    }
+
+    /** The registration is the user's, or a 404 in the API's words. */
+    private function assertOwnApp(int $id): void
+    {
+        $this->apps->get($id);
+    }
+
+    // ─── Link builder ────────────────────────────────────────────────
+
+    /**
+     * Make a campaign send its clicks to this app's store link: what the
+     * link builder's read says to apply, applied through PUT /campaigns —
+     * the same round trip as `p202 app link --apply`.
+     */
+    private function applyLink(): void
+    {
+        $id = $this->postedId();
+        $campaign = trim((string)($_POST['campaign_id'] ?? ''));
+        if (preg_match('/^[1-9][0-9]*$/D', $campaign) !== 1) {
+            throw new ValidationException('Validation failed', ['campaign_id' => 'Choose the campaign that advertises this app.']);
+        }
+        $state = (new AppLinksController($this->db, $this->getUserId()))->storeLink($id, ['campaign_id' => $campaign])['data']['campaign'];
+        $change = (array)$state['apply'];
+        if ($change !== []) {
+            (new CampaignsController($this->db, $this->getUserId()))->update((int)$campaign, $change);
+        }
+        $this->redirect('tracking202/setup/mobile_apps.php?app=' . $id . '&link_campaign=' . (int)$campaign . '&linked=' . ($change === [] ? 'already' : '1') . '#link-builder');
     }
 
     // ─── Conversion values ───────────────────────────────────────────
@@ -332,20 +521,23 @@ class MobileAppsController extends SetupController
      * coarse; changing an existing rule's kind sends the explicit null for
      * the other one in the same request, which is what the API requires.
      *
-     * The form asks for an event and a revenue, which is what an operator
-     * knows; an encoding names a goal (plan §4.5), so the event becomes the
-     * app's plain goal for it (found, or created — PlainGoals) and the
-     * revenue the encoding's revenue_override. The goal and the rule are
-     * written in one transaction: a rule the API refuses leaves no goal
-     * behind. The API's field errors come back under the fields this form
-     * has (goal_id → Event, revenue_override → Revenue).
+     * A value means a goal (plan §4.5; PR 8: any goal a device can reach).
+     * The form offers the app's and the account's goals by name, and — for
+     * what an operator usually knows — an event and a revenue instead: the
+     * event becomes the app's plain goal for it (found, or created —
+     * PlainGoals) and the revenue the encoding's revenue_override. The goal
+     * and the rule are written in one transaction: a rule the API refuses
+     * leaves no goal behind. The API's field errors come back under the
+     * fields this form has (goal_id → Goal or Event, revenue_override →
+     * Revenue).
      */
     private function saveRule(): void
     {
-        $appRowId = (int)($_POST['registration_id'] ?? 0);
+        $appRowId = $this->postedId();
         $ruleId = (int)($_POST['rule_id'] ?? 0);
         $kind = (string)($_POST['kind'] ?? 'fine');
         $eventName = trim((string)($_POST['event_name'] ?? ''));
+        $goalChoice = trim((string)($_POST['goal_choice'] ?? ''));
         $revenue = trim((string)($_POST['revenue'] ?? ''));
 
         if ($revenue !== '' && GoalDefinition::amountUnits($revenue) === null) {
@@ -370,8 +562,17 @@ class MobileAppsController extends SetupController
             }
         }
 
-        $this->inTransaction(function () use ($appRowId, $ruleId, $eventName, $payload): void {
-            $payload['goal_id'] = $this->goalForEvent($appRowId, $eventName);
+        $this->inTransaction(function () use ($appRowId, $ruleId, $eventName, $goalChoice, $payload): void {
+            $goalField = 'event_name';
+            if ($goalChoice !== '' && $goalChoice !== 'event') {
+                if (preg_match('/^[1-9][0-9]*$/D', $goalChoice) !== 1) {
+                    throw new ValidationException('Validation failed', ['goal_choice' => 'Choose one of the goals listed, or a new event.']);
+                }
+                $payload['goal_id'] = (int)$goalChoice;
+                $goalField = 'goal_choice';
+            } else {
+                $payload['goal_id'] = $this->goalForEvent($appRowId, $eventName);
+            }
             try {
                 if ($ruleId > 0) {
                     $this->rules->update($ruleId, $payload);
@@ -381,7 +582,7 @@ class MobileAppsController extends SetupController
             } catch (ValidationException $e) {
                 $errors = [];
                 foreach ($e->getFieldErrors() as $field => $message) {
-                    $errors[['goal_id' => 'event_name', 'revenue_override' => 'revenue'][$field] ?? $field] = $message;
+                    $errors[['goal_id' => $goalField, 'revenue_override' => 'revenue'][$field] ?? $field] = $message;
                 }
                 throw new ValidationException($e->getMessage(), $errors, $e);
             }
@@ -393,7 +594,7 @@ class MobileAppsController extends SetupController
     private function goalForEvent(int $appRowId, string $eventName): int
     {
         if ($eventName === '') {
-            throw new ValidationException('Validation failed', ['event_name' => 'Enter the event this value means, as your app logs it (for example purchase).']);
+            throw new ValidationException('Validation failed', ['event_name' => 'Enter the event this value means, as your app logs it (for example purchase), or choose a goal.']);
         }
         try {
             return $this->plainGoals->forEvent($this->getUserId(), GoalScope::REGISTRATION, $appRowId, $eventName, time());
@@ -431,7 +632,7 @@ class MobileAppsController extends SetupController
 
     private function removeRule(): void
     {
-        $appRowId = (int)($_POST['registration_id'] ?? 0);
+        $appRowId = $this->postedId();
         $this->rules->delete((int)($_POST['rule_id'] ?? 0));
         $this->redirect('tracking202/setup/mobile_apps.php?app=' . $appRowId . '&rule_removed=1');
     }
@@ -442,7 +643,7 @@ class MobileAppsController extends SetupController
      */
     private function applyStarterSchema(): void
     {
-        $appRowId = (int)($_POST['registration_id'] ?? 0);
+        $appRowId = $this->postedId();
         $starter = [
             ['fine_value' => 1,  'coarse_value' => null,     'event' => 'install'],
             ['fine_value' => 10, 'coarse_value' => null,     'event' => 'trial_started'],
@@ -522,42 +723,6 @@ class MobileAppsController extends SetupController
         ];
     }
 
-    /**
-     * The app's name, without asking for it: the App Store lookup service
-     * first, then the slug the link already carried.
-     *
-     * Best effort by design. The store is a third party on the far side of a
-     * short timeout, and a name is not worth failing a registration over, so
-     * every failure falls through to the slug and then to the caller, which
-     * shows the field.
-     */
-    private function lookUpAppName(int $appId, string $slug): string
-    {
-        $name = '';
-        if (function_exists('curl_init')) {
-            $ch = curl_init('https://itunes.apple.com/lookup?id=' . $appId);
-            curl_setopt_array($ch, [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_CONNECTTIMEOUT => 2,
-                CURLOPT_TIMEOUT => 4,
-                CURLOPT_USERAGENT => 'Prosper202',
-            ]);
-            $body = curl_exec($ch);
-            $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-            curl_close($ch);
-            if (is_string($body) && $status === 200) {
-                $decoded = json_decode($body, true);
-                if (is_array($decoded) && !empty($decoded['results'][0]['trackName'])) {
-                    $name = trim((string)$decoded['results'][0]['trackName']);
-                }
-            }
-        }
-        if ($name === '' && $slug !== '') {
-            $name = ucwords(str_replace('-', ' ', $slug));
-        }
-        return mb_substr($name, 0, 255);
-    }
-
     // ─── Rendering ───────────────────────────────────────────────────
 
     private function flash(string $kind, string $text): void
@@ -580,10 +745,6 @@ class MobileAppsController extends SetupController
 
     protected function render(): void
     {
-        foreach ($this->flashesFromQuery() as $flash) {
-            $this->flashes[] = $flash;
-        }
-
         // The count pill in the "Your apps" panel says whether the list was
         // cut, rather than a flash at the top of the page: the fact belongs
         // beside the list it is about, and an account large enough to hit the
@@ -593,9 +754,9 @@ class MobileAppsController extends SetupController
         $view = [
             'canManage' => $this->canManage(),
             'csrf' => $this->renderCsrfField(),
-            'flashes' => $this->flashes,
             'fieldErrors' => $this->fieldErrors,
             'form' => $this->formState,
+            'failedForm' => $this->failedForm,
             'baseUrl' => rtrim(get_absolute_url(), '/') . '/',
             // The absolute install URL. Apple is handed this origin and the
             // page prints it for copying, so a path alone will not do;
@@ -609,24 +770,48 @@ class MobileAppsController extends SetupController
             'appsTruncated' => $registered['truncated'],
             'app' => $this->currentApp,
             'editing' => $this->editingApp,
+            'icons' => $this->icons(array_merge(
+                array_map(static fn (array $a): int => (int)$a['registration_id'], $registered['apps']),
+                $this->currentApp === null ? [] : [(int)$this->currentApp['registration_id']]
+            )),
         ];
+        foreach ($this->flashesFromQuery($this->currentApp) as $flash) {
+            $this->flashes[] = $flash;
+        }
         if ($this->currentApp !== null) {
-            $view['rules'] = $this->rulesFor((int)$this->currentApp['registration_id']);
-            $view['defaultRules'] = $this->rulesFor(0);
-            $view['recent'] = $this->recentPostbacks((int)$this->currentApp['registration_id']);
+            $rowId = (int)$this->currentApp['registration_id'];
+            $isIos = (string)$this->currentApp['platform'] === AppIdentity::IOS;
+            $view['goals'] = $this->goalsFor($rowId);
+            $view['link'] = $this->linkBuilder($rowId);
+            if ($isIos) {
+                $view['rules'] = $this->rulesFor($rowId);
+                $view['defaultRules'] = $this->rulesFor(0);
+                $view['recent'] = $this->recentPostbacks($rowId);
+            } else {
+                $view['integrity'] = $this->integrityStatus($rowId);
+                $view['recentInstalls'] = $this->recentInstalls($rowId);
+                $view['funnel'] = $this->funnelCounts($rowId);
+            }
         }
         $view['nudges'] = $this->developmentNudges($view['apps']);
+        $view['flashes'] = $this->flashes;
 
         $mobileApps = $view;
         require __DIR__ . '/templates/mobile_apps.php';
     }
 
-    /** @return list<array{kind: string, text: string}> */
-    private function flashesFromQuery(): array
+    /**
+     * @param array<string, mixed>|null $app the app being shown, which some sentences depend on
+     * @return list<array{kind: string, text: string}>
+     */
+    private function flashesFromQuery(?array $app): array
     {
+        $android = $app !== null && (string)$app['platform'] === AppIdentity::ANDROID;
         $out = [];
         if (isset($_GET['registered'])) {
-            $out[] = ['kind' => 'ok', 'text' => 'App registered. Its postbacks are claimed from now on, and any already received were claimed too.'];
+            $out[] = ['kind' => 'ok', 'text' => $android
+                ? 'App registered, with its built-in install goal. Next: point a campaign at its store link below, and build the app with the SDK and its app token.'
+                : 'App registered. Its postbacks are claimed from now on, and any already received were claimed too.'];
         }
         if (isset($_GET['already'])) {
             $out[] = ['kind' => 'ok', 'text' => 'You had already registered this app. Here it is.'];
@@ -642,8 +827,8 @@ class MobileAppsController extends SetupController
         }
         if (isset($_GET['dev'])) {
             $out[] = ['kind' => 'ok', 'text' => (string)$_GET['dev'] === '1'
-                ? 'Development-signed postbacks are now trusted for this app, including the ones already received.'
-                : 'Development-signed postbacks are untrusted again for this app, including the ones already received.'];
+                ? ($android ? 'Test installs now count for this app.' : 'Development-signed postbacks are now trusted for this app, including the ones already received.')
+                : ($android ? 'Test installs no longer count for this app.' : 'Development-signed postbacks are untrusted again for this app, including the ones already received.')];
         }
         if (isset($_GET['rule'])) {
             // An edit changes what a value means while devices still hold the
@@ -666,6 +851,26 @@ class MobileAppsController extends SetupController
             $out[] = ['kind' => $added > 0 ? 'ok' : 'warn', 'text' => $added > 0
                 ? $added . ' starter ' . ($added === 1 ? 'rule' : 'rules') . ' added. Edit them to match what your app reports.'
                 : 'Every starter value is already mapped, so nothing was changed.'];
+        }
+        if (isset($_GET['goal_saved'])) {
+            $out[] = ['kind' => 'ok', 'text' => 'Goal saved. It evaluates events received from now on.'];
+        }
+        if (isset($_GET['goal_archived'])) {
+            $out[] = ['kind' => 'ok', 'text' => 'Goal archived. Its outcomes keep their history; it stops evaluating new events.'];
+        }
+        if (isset($_GET['integrity'])) {
+            $out[] = ['kind' => 'ok', 'text' => match ((string)$_GET['integrity']) {
+                'credential' => 'Service account saved. Its key is stored encrypted and is never shown again.',
+                'cleared' => 'Service account deleted.',
+                default => 'Play Integrity setting saved. Installs already received keep the mode they arrived under.',
+            }];
+        }
+        if (isset($_GET['linked'])) {
+            $out[] = ['kind' => 'ok', 'text' => (string)$_GET['linked'] === 'already'
+                ? 'That campaign already sends its clicks to this app\'s store link. Nothing was changed.'
+                : ($android
+                    ? 'Campaign updated: its offer URL is the store link with the install token, and it is linked to this app.'
+                    : 'Campaign updated: its offer URL is the App Store link.')];
         }
         return $out;
     }
@@ -690,11 +895,133 @@ class MobileAppsController extends SetupController
      * about which apps exist; a read failure keeps propagating to the page's
      * own handler, which is what turns it into a redirect.
      *
-     * @return array{apps: list<array<string, mixed>>, total: int, truncated: bool}
+     * @return array{apps: list<array<string, mixed>>, total: int|null, truncated: bool}
      */
     private function listApps(): array
     {
         return RegisteredApps::read($this->apps);
+    }
+
+    /**
+     * @param list<int> $ids
+     * @return array<int, string>
+     */
+    private function icons(array $ids): array
+    {
+        try {
+            return (new AppIcons(new Connection($this->db)))->forApps($this->getUserId(), $ids);
+        } catch (\Throwable $e) {
+            // An icon is decoration: the platform's own mark stands in.
+            error_log('Mobile Apps setup: icons could not be read: ' . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
+     * The app's goals and the account's, for the goals panel and the value
+     * editor's goal menu, or null when they could not be read — said on the
+     * page rather than shown as "no goals" (error pattern #11).
+     *
+     * @return array{own: list<array<string, mixed>>, account: list<array<string, mixed>>}|null
+     */
+    private function goalsFor(int $registrationId): ?array
+    {
+        try {
+            return p202_app_goal_list($this->db, $this->getUserId(), $registrationId);
+        } catch (HttpException $e) {
+            error_log('Mobile Apps setup: goals of registration ' . $registrationId . ' could not be read: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * How many installs reached each of the app's goals (trusted, and the
+     * unvouched beside them), from the report's funnel reading; null when it
+     * could not be read.
+     *
+     * @return array<int, array{installs: int, unvouched: int}>|null
+     */
+    private function funnelCounts(int $registrationId): ?array
+    {
+        try {
+            $answer = (new AppReportController($this->db, $this->getUserId()))->report([
+                'platform' => 'android', 'group_by' => 'goal', 'registration_id' => (string)$registrationId, 'limit' => '500',
+            ]);
+        } catch (HttpException $e) {
+            error_log('Mobile Apps setup: the funnel of registration ' . $registrationId . ' could not be read: ' . $e->getMessage());
+            return null;
+        }
+        $out = [];
+        foreach ($answer['data']['groups'] as $group) {
+            $out[(int)$group['goal_id']] = ['installs' => (int)$group['installs'], 'unvouched' => (int)$group['unvouched_count']];
+        }
+        return $out;
+    }
+
+    /**
+     * The link builder: the app's store link, the user's campaigns to point
+     * at it, and — for the one chosen (?link_campaign=) — whether it already
+     * does. Null parts are said on the page, never shown as empty lists.
+     *
+     * @return array<string, mixed>
+     */
+    private function linkBuilder(int $registrationId): array
+    {
+        $links = new AppLinksController($this->db, $this->getUserId());
+        $chosen = (string)($this->formState['campaign_id'] ?? ($_GET['link_campaign'] ?? ''));
+        $chosen = preg_match('/^[1-9][0-9]*$/D', $chosen) === 1 ? $chosen : '';
+        $out = ['store' => null, 'campaign' => null, 'campaigns' => null, 'chosen' => $chosen];
+        try {
+            $store = $links->storeLink($registrationId, $chosen === '' ? [] : ['campaign_id' => $chosen])['data'];
+            $out['store'] = $store;
+            $out['campaign'] = $store['campaign'] ?? null;
+        } catch (NotFoundException) {
+            // The chosen campaign is gone (or never was the user's): the
+            // builder still shows the link, and the menu offers the rest.
+            try {
+                $out['store'] = $links->storeLink($registrationId, [])['data'];
+            } catch (HttpException $e) {
+                error_log('Mobile Apps setup: the store link of registration ' . $registrationId . ' could not be read: ' . $e->getMessage());
+            }
+            $out['chosen'] = '';
+        } catch (HttpException $e) {
+            error_log('Mobile Apps setup: the store link of registration ' . $registrationId . ' could not be read: ' . $e->getMessage());
+        }
+        try {
+            $rows = (new CampaignsController($this->db, $this->getUserId()))->list(['limit' => self::LINK_BUILDER_CAMPAIGNS])['data'] ?? [];
+            usort($rows, static fn (array $a, array $b): int => (int)$b['aff_campaign_id'] <=> (int)$a['aff_campaign_id']);
+            $out['campaigns'] = $rows;
+        } catch (HttpException $e) {
+            error_log('Mobile Apps setup: campaigns could not be read for the link builder: ' . $e->getMessage());
+        }
+        return $out;
+    }
+
+    /** @return array<string, mixed>|null */
+    private function integrityStatus(int $registrationId): ?array
+    {
+        try {
+            return (new AppIntegrityController($this->db, $this->getUserId()))->status($registrationId)['data'];
+        } catch (HttpException $e) {
+            error_log('Mobile Apps setup: Play Integrity status of registration ' . $registrationId . ' could not be read: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * The newest installs of an Android app, or null when they could not be
+     * read (kept apart from "none yet" for recentPostbacks()'s reason).
+     *
+     * @return list<array<string, mixed>>|null
+     */
+    private function recentInstalls(int $registrationId): ?array
+    {
+        try {
+            return (new AppInstallsController($this->db, $this->getUserId()))->list($registrationId, ['limit' => '10'])['data'] ?? [];
+        } catch (HttpException $e) {
+            error_log('Mobile Apps setup: could not read installs for registration ' . $registrationId . ': ' . $e->getMessage());
+            return null;
+        }
     }
 
     /** @return list<array<string, mixed>> */
@@ -712,6 +1039,7 @@ class MobileAppsController extends SetupController
         foreach ($rows as &$row) {
             $goal = $goals[(int)$row['goal_id']] ?? null;
             $row['event_name'] = $goal['event'] ?? ($goal['name'] ?? ('goal ' . (int)$row['goal_id']));
+            $row['goal_name'] = $goal['name'] ?? ('goal ' . (int)$row['goal_id']);
             $row['revenue'] = $row['revenue_override'] !== null
                 ? (string)$row['revenue_override']
                 : Amount::fromUnits($goal['fixed_units'] ?? 0);
@@ -778,7 +1106,8 @@ class MobileAppsController extends SetupController
     {
         $waiting = [];
         foreach ($apps as $app) {
-            if ((int)($app['accept_test_signals'] ?? 0) !== 1) {
+            // Postbacks are Apple's, so only iOS apps can have them waiting.
+            if ((string)($app['platform'] ?? '') === AppIdentity::IOS && (int)($app['accept_test_signals'] ?? 0) !== 1) {
                 $waiting[(int)$app['registration_id']] = true;
             }
         }
@@ -828,5 +1157,17 @@ class MobileAppsController extends SetupController
         }
 
         return $nudges;
+    }
+
+    /** The Play Integrity modes, in the order the menu offers them. */
+    public static function integrityModes(): array
+    {
+        return IntegrityMode::values();
+    }
+
+    /** The store link template for a registration, for places that have no builder read. */
+    public static function storeLink(string $platform, string $appKey): string
+    {
+        return StoreLink::template($platform, $appKey);
     }
 }

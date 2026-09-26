@@ -109,7 +109,7 @@ trait AndroidDatabase
             '202_conversion_logs', '202_clicks', '202_clicks_spy', '202_aff_campaigns', '202_attribution_pending', '202_dataengine',
             '202_goals', '202_goal_versions', '202_campaign_goals', '202_goal_subjects', '202_goal_events', '202_goal_progress',
             '202_goal_outcomes', '202_app_registrations', '202_app_installs', '202_notification_pending', '202_ppc_account_pixels',
-            '202_app_integrity_credentials',
+            '202_app_integrity_credentials', '202_notification_correction_urls',
         ] as $t) {
             self::$db->query('TRUNCATE TABLE ' . $t);
         }
@@ -121,6 +121,10 @@ trait AndroidDatabase
         self::fixture("INSERT INTO 202_app_registrations SET registration_id=6, user_id=2, platform='android', app_key='com.other.app',
             app_name='Other', accept_test_signals=0, attribution_window_days=7, trust_client_revenue=0, app_token='" . self::OTHER_TOKEN . "', created_at=1, updated_at=1");
         $this->campaign(30, 5);
+        // The traffic-source account the pixels hang off, user 1's: a
+        // correction URL counts only while its user owns the pixel
+        // (CorrectionUrls::resolver()).
+        self::fixture("REPLACE INTO 202_ppc_accounts SET ppc_account_id=70, user_id=1, ppc_network_id=1, ppc_account_name='fixture', ppc_account_time=1");
         self::fixture("INSERT INTO 202_ppc_account_pixels SET pixel_id=90, ppc_account_id=70, pixel_type_id=4,
             pixel_code='https://ts.example/pb?sub=[[subid]]&goal=[[p202_goal]]&v=[[p202_goal_value]]&tx=[[transactionid]]&p=[[payout]]'");
         // A browser (image) pixel on the same account: the page fires it,
@@ -252,7 +256,7 @@ trait AndroidDatabase
     /** @return list<array<string, mixed>> */
     private static function outbox(): array
     {
-        return self::$db->query('SELECT conv_id, pixel_id, kind, status, url, attempts, last_error FROM 202_notification_pending ORDER BY notification_id')->fetch_all(MYSQLI_ASSOC);
+        return self::$db->query('SELECT conv_id, pixel_id, destination, kind, status, url, attempts, last_error FROM 202_notification_pending ORDER BY notification_id')->fetch_all(MYSQLI_ASSOC);
     }
 
     private static function rows(string $table, string $where = '1=1'): int

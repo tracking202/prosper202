@@ -41,9 +41,19 @@ https://play.google.com/store/apps/details?id=com.example.app&referrer=p202%3D[[
   cached fallback also expands it empty.
 - Link the campaign to the app: `app_registration_id` on the campaign
   (`PUT /campaigns/{id}` or `p202 campaign update <id>
-  --app_registration_id <registration>`). An install of another app on one
+  --app_registration_id <registration>`). `p202 app link <id> --campaign-id
+  N --apply` (or the link builder on Setup › Mobile Apps) does both steps at
+  once — the store link as the offer URL, and the link — and `GET
+  /apps/{id}/store-link?campaign_id=N` says whether a campaign is ready and,
+  when it is not, what is missing and the update that would fix it. An install of another app on one
   of its clicks is then `foreign_click`. An unlinked campaign accepts any
   of your apps.
+- URL rotation counts: with `aff_campaign_rotate` on, a click can land on
+  any offer URL in rotation (`aff_campaign_url_2` … `_5`, the non-empty
+  ones), so the campaign is ready only when each of them is the app's link
+  carrying the token. When one is not, the fix the builder applies turns
+  rotation off (`aff_campaign_rotate: 0`) and keeps the alternates stored;
+  turning rotation back on reads as not ready again until they are fixed.
 - Passthrough parameters are appended at the top level of the Play URL,
   where Play ignores them: they never reach the app.
 - `GET /apps/{id}/install-token?click_id=N` (`p202 app install token <id>
@@ -178,8 +188,31 @@ outcome **once**, decided per URL: if a late event moves an outcome to
 another event and its postback to a URL has not been attempted, it is
 cancelled and the replacement's goes to that URL instead; if it has been
 attempted (sent, retrying or failed), nothing more is sent there and a
-`correction` is recorded as `suppressed` (no pixel has a correction URL
-yet). Other URLs are unaffected by that decision.
+`correction` — or, when the outcome was retired with no replacement, a
+`retraction` — is recorded. Other URLs are unaffected by that decision.
+
+A correction goes out only where the network can take one: **Setup ›
+Traffic Sources** gives each server postback pixel an optional **Correction
+URL**, off by default. Like the pixel code it is space-separated URLs,
+matched to the code's URLs by position — the correction for the pixel's
+second URL goes to the second correction URL, never to another endpoint's —
+and more correction URLs than the code has are refused. A URL with no
+correction URL at its position records the correction `suppressed`, with
+the reason. The correction URL takes `[[p202_goal_value]]` and
+`[[payout]]` (the value the network should now hold; `0.00` for a
+retraction), `[[p202_previous_value]]` (what was announced),
+`[[p202_conv_id]]` (the conversion this is about),
+`[[p202_original_conv_id]]` (the one that announced it),
+`[[p202_notification]]` (`correction` or `retraction`), `[[subid]]`,
+`[[transactionid]]` / `[[t202txid]]`, `[[timestamp]]` and `[[random]]`, and
+is queued, retried and sent like any postback.
+
+`GET /apps/notifications` (`p202 app notifications`, `bin/p202
+app:notifications`; filters `registration_id`, `status`, `kind`,
+`time_from`, `time_to`) lists what app installs' goals queued, one row per
+URL with its `destination`, and `meta.summary` counts every status under the
+same filters except `status`. Analyze › Mobile Apps › Postbacks sent is the
+same read.
 
 What a network knows is decided per goal and `n`, not per conversion. A
 goal re-evaluation that retires an outcome and a later one that brings the
@@ -219,7 +252,10 @@ pending ones and installs with events are kept. Deleting a user deletes
 their installs, their queued postbacks and their Play Integrity
 credentials; deleting a registration keeps its installs (their conversions
 stay on the ledger) but no token reaches them any more, and deletes its
-credential. Installs of that registration still waiting for a Play
+credential. Both unlink the campaigns linked to the deleted registration
+(`app_registration_id` back to `null`), so registering the app again and
+linking the campaign to the new registration is all it takes to attribute
+its clicks again. Installs of that registration still waiting for a Play
 Integrity verdict can then never get one, so the delete settles them in the
 same transaction: `integrity_state` becomes `error` and a held
 `pending_integrity` install `integrity_unverified` — recorded, never paid,
@@ -227,10 +263,7 @@ with a reason naming the deletion. An install still `pending_click` can
 never be settled either, so the delete settles it as the 24-hour deadline
 would: `bad_token`, never paid, pruned with the refuted installs. The
 verifier and the pending-click settler do the same for installs whose
-registration disappeared any other way. Both unlink the campaigns linked to the deleted registration
-(`app_registration_id` back to `null`), so registering the app again and
-linking the campaign to the new registration is all it takes to attribute
-its clicks again.
+registration disappeared any other way.
 
 ## 9. Play Integrity
 

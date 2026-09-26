@@ -144,6 +144,23 @@ final class NoLegacyBootstrapClassesTest extends TestCase
         'tracking202/ajax/sort_rotator.php',
         'tracking202/ajax/click_history.php',
         'tracking202/ajax/click_history_row.php',
+        // PR 11: Mobile Apps. The partials the two v2 pages render their
+        // panels and views through (the pages pass 'ui' => 'v2' and are
+        // found by the page scan; these do not), and the campaign goal
+        // panel the app goal form shares its helpers with.
+        'tracking202/setup/templates/mobile_apps/_settings.php',
+        'tracking202/setup/templates/mobile_apps/_goals.php',
+        'tracking202/setup/templates/mobile_apps/_link_builder.php',
+        'tracking202/setup/templates/mobile_apps/_integrity.php',
+        'tracking202/setup/templates/mobile_apps/_ios_values.php',
+        'tracking202/setup/templates/mobile_apps/_ios_sdk.php',
+        'tracking202/setup/templates/mobile_apps/_android_sdk.php',
+        'tracking202/setup/_includes/campaign_goals_panel.php',
+        'tracking202/analyze/templates/mobile_apps/_report.php',
+        'tracking202/analyze/templates/mobile_apps/_funnel.php',
+        'tracking202/analyze/templates/mobile_apps/_notifications.php',
+        'tracking202/analyze/templates/mobile_apps/_postbacks.php',
+        'tracking202/analyze/templates/mobile_apps/_verify.php',
     ];
 
     private const CHROME_STYLESHEET = '202-css/p202-chrome.css';

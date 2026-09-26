@@ -39,6 +39,7 @@ final class ConversionTables
             self::attributionPending(),
             self::conversionUploads(),
             self::notificationPending(),
+            self::notificationCorrectionUrls(),
         ];
     }
 
@@ -192,6 +193,38 @@ final class ConversionTables
                 KEY `status_next` (`status`,`next_attempt_at`),
                 KEY `user_id` (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Traffic-source notifications queued with the conversions they announce'"
+        );
+    }
+
+    /**
+     * Where a traffic source takes corrections (plan §5.5, PR 11): one URL
+     * per server-to-server pixel (202_ppc_account_pixels, type 4).
+     *
+     * A postback that went out cannot be recalled, so when an outcome it
+     * announced is replaced or retired the outbox records a `correction` or
+     * `retraction`. With no row here (most networks have no endpoint for
+     * one, so this is off by default) that record stays `suppressed`; with
+     * one, it is queued to this URL like any postback, with
+     * [[p202_goal_value]] (the new value), [[p202_previous_value]],
+     * [[p202_original_conv_id]] and [[p202_notification_kind]] filled.
+     *
+     * Keyed by the pixel rather than a column on it: 202_ppc_account_pixels
+     * is an old table, and its rows are rewritten by the traffic source
+     * form, which knows nothing of corrections.
+     */
+    public static function notificationCorrectionUrls(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::NOTIFICATION_CORRECTION_URLS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::NOTIFICATION_CORRECTION_URLS . "` (
+                `pixel_id` mediumint(8) unsigned NOT NULL,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `correction_url` text NOT NULL,
+                `created_at` int(10) unsigned NOT NULL,
+                `updated_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`pixel_id`),
+                KEY `user_id` (`user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='The correction URL of a traffic source postback pixel'"
         );
     }
 }

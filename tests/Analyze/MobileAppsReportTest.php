@@ -400,4 +400,147 @@ final class MobileAppsReportTest extends TestCase
             self::assertSame(self::DAY - 1, $resolved['to'] % self::DAY, "ends at 23:59:59 UTC: $range");
         }
     }
+
+    /**
+     * Each platform's pills are groupings the cross-platform report answers
+     * for that platform (AppReportController), and each platform offers
+     * every grouping the API has for it — a pill the API refuses would be a
+     * 422 in place of the report, and one the page leaves out a dimension
+     * nobody can reach from here.
+     */
+    public function testEachPlatformOffersExactlyTheGroupingsTheApiAnswersForIt(): void
+    {
+        $api = \Api\V3\Controllers\AppReportController::class;
+        $expect = [
+            'all' => $api::SHARED_GROUPINGS,
+            'ios' => array_values(array_diff([...$api::SHARED_GROUPINGS, ...$api::IOS_GROUPINGS], ['platform'])),
+            'android' => array_values(array_diff([...$api::SHARED_GROUPINGS, ...$api::ANDROID_GROUPINGS], ['platform'])),
+        ];
+        foreach ($expect as $platform => $groupings) {
+            self::assertEqualsCanonicalizing($groupings, array_keys(MobileAppsReportController::groupingsFor($platform)), "the $platform report's pills");
+        }
+        self::assertSame(array_keys(MobileAppsReportController::PLATFORMS), ['all', ...$api::PLATFORMS]);
+    }
+
+    /** @return iterable<string, array{0: string|null, 1: list<string>, 2: string, 3: string}> */
+    public static function platformDefaults(): iterable
+    {
+        yield 'asked, and known' => ['android', ['ios', 'android'], '', 'android'];
+        yield 'only iOS apps' => [null, ['ios', 'ios'], '', 'ios'];
+        yield 'only Android apps' => [null, ['android'], '', 'android'];
+        yield 'both platforms' => [null, ['ios', 'android'], '', 'all'];
+        yield 'no apps yet' => [null, [], '', 'all'];
+        yield 'an app filter names its platform' => [null, ['ios', 'android'], '2', 'android'];
+        yield 'an unknown one falls back to the default' => ['windows', ['ios'], '', 'ios'];
+    }
+
+    /**
+     * @dataProvider platformDefaults
+     * @param list<string> $platforms
+     */
+    public function testTheAppDecidesThePlatformWhenTheUrlDoesNot(?string $asked, array $platforms, string $registration, string $expected): void
+    {
+        $apps = [];
+        foreach ($platforms as $i => $platform) {
+            $apps[] = ['registration_id' => $i + 1, 'platform' => $platform];
+        }
+        $resolved = MobileAppsReportController::resolvePlatform($asked, $apps, $registration);
+        self::assertSame($expected, $resolved['platform']);
+        self::assertSame($asked === 'windows' ? 1 : 0, count($resolved['notes']), 'an unusable platform is said, a derived one is not');
+    }
+
+    public function testTheFunnelIsInAfterOrderWithSharesOfTheFirstAndPreviousStep(): void
+    {
+        $goals = [
+            ['goal_id' => 9, 'name' => 'Purchase', 'builtin' => null, 'archived_at' => null, 'definition' => ['after' => [7]]],
+            ['goal_id' => 7, 'name' => 'Tutorial', 'builtin' => null, 'archived_at' => null, 'definition' => ['after' => [3]]],
+            ['goal_id' => 3, 'name' => 'install', 'builtin' => 'install', 'archived_at' => null, 'definition' => []],
+            ['goal_id' => 5, 'name' => 'Share', 'builtin' => null, 'archived_at' => null, 'definition' => []],
+            ['goal_id' => 4, 'name' => 'Old', 'builtin' => null, 'archived_at' => 1, 'definition' => []],
+        ];
+        $reached = [3 => ['installs' => 40, 'unvouched_count' => 5], 7 => ['installs' => 10], 9 => ['installs' => 4, 'revenue' => 16.0, 'goals_reached' => 4]];
+        $steps = MobileAppsReportController::funnelSteps($goals, $reached);
+        self::assertSame(['install', 'Share', 'Tutorial', 'Purchase'], array_column($steps, 'name'), 'install first, then by depth of after, ties by id; archived goals are not steps');
+        self::assertSame([1.0, 0.0, 0.25, 0.1], array_column($steps, 'of_first'));
+        self::assertSame([null, 0.0, 0.25, 0.4], array_column($steps, 'of_previous'),
+            'each share is of the goal the step waits for — the install for Share and Tutorial, Tutorial for Purchase — not of the row above it');
+        self::assertSame([5, 16.0], [$steps[0]['unvouched'], $steps[3]['revenue']]);
+    }
+
+    public function testAStepAfterSeveralGoalsIsAShareOfTheSmallestAndOfNothingIsNoShare(): void
+    {
+        $steps = MobileAppsReportController::funnelSteps([
+            ['goal_id' => 1, 'name' => 'install', 'builtin' => 'install', 'archived_at' => null, 'definition' => []],
+            ['goal_id' => 2, 'name' => 'A', 'builtin' => null, 'archived_at' => null, 'definition' => []],
+            ['goal_id' => 3, 'name' => 'B', 'builtin' => null, 'archived_at' => null, 'definition' => []],
+            ['goal_id' => 4, 'name' => 'Both', 'builtin' => null, 'archived_at' => null, 'definition' => ['after' => [2, 3]]],
+            ['goal_id' => 5, 'name' => 'After nothing reached', 'builtin' => null, 'archived_at' => null, 'definition' => ['after' => [6]]],
+            ['goal_id' => 6, 'name' => 'Never', 'builtin' => null, 'archived_at' => null, 'definition' => []],
+        ], [1 => ['installs' => 20], 2 => ['installs' => 10], 3 => ['installs' => 5], 4 => ['installs' => 2]]);
+        $by = array_column($steps, 'of_previous', 'name');
+        self::assertSame(0.4, $by['Both'], 'after A and B: of the 5 that reached the smaller');
+        self::assertNull($by['After nothing reached'], 'a share of zero installs is no share, not a division');
+        self::assertNull($by['install'], 'the install follows nothing');
+    }
+
+    public function testACycleCannotHangTheFunnel(): void
+    {
+        $steps = MobileAppsReportController::funnelSteps([
+            ['goal_id' => 1, 'name' => 'A', 'builtin' => null, 'archived_at' => null, 'definition' => ['after' => [2]]],
+            ['goal_id' => 2, 'name' => 'B', 'builtin' => null, 'archived_at' => null, 'definition' => ['after' => [1]]],
+        ], []);
+        self::assertCount(2, $steps);
+        self::assertNull($steps[0]['of_first'], 'nothing reached the first step, so no share is claimed');
+    }
+
+    public function testEveryCsvColumnIsAFieldTheReportSends(): void
+    {
+        $api = [
+            'ios' => [...\Api\V3\Controllers\AppPostbacksController::metricKeys(), 'decoded', 'ambiguous_encoding', 'revenue'],
+            'android' => ['received', 'installs', 'organic', 'pending', 'refuted_count', 'unvouched_count', 'test_count', 'goals_reached', 'revenue'],
+            'all' => ['platform', 'installs', 'goals_reached', 'revenue', 'trusted_count', 'refuted_count', 'unvouched_count', 'test_count'],
+        ];
+        foreach ($api as $platform => $fields) {
+            foreach (MobileAppsReportController::csvColumns($platform) as $header => $field) {
+                self::assertContains($field, $fields, "$platform CSV column $header reads a field the rows carry");
+            }
+        }
+    }
+
+    /**
+     * The Postbacks tab lists only Apple's postbacks whatever the page's
+     * platform is, so the signature filter applies there on every platform;
+     * the report applies it on iOS only; the other tabs never. The filter
+     * used to be dropped whenever the platform was not iOS, which for an
+     * account with apps on both platforms (defaulting to "all") was always,
+     * on the one tab whose rows are all Apple's.
+     */
+    public function testTheSignatureFilterAppliesOnThePostbacksTabForEveryPlatform(): void
+    {
+        foreach (array_keys(MobileAppsReportController::PLATFORMS) as $platform) {
+            self::assertTrue(MobileAppsReportController::signatureApplies('postbacks', $platform), "postbacks, $platform");
+            self::assertSame($platform === 'ios', MobileAppsReportController::signatureApplies('report', $platform), "report, $platform");
+            foreach (['funnel', 'notifications', 'verify'] as $view) {
+                self::assertFalse(MobileAppsReportController::signatureApplies($view, $platform), "$view, $platform");
+            }
+        }
+    }
+
+    /**
+     * The three places that decide it ask the one question: the filter
+     * reader (which drops it, out loud, where it does not apply), the form
+     * that offers it, and the links that carry it. Asked separately, the
+     * form offered a filter the reader then discarded.
+     */
+    public function testTheReaderTheFormAndTheLinksAskTheSameQuestion(): void
+    {
+        $root = dirname(__DIR__, 2) . '/tracking202/analyze/';
+        $controller = (string) file_get_contents($root . 'MobileAppsReportController.php');
+        self::assertMatchesRegularExpression('/if \(\$signature !== \'\' && !self::signatureApplies\(\$view, \$platform\)\) \{\s*\$this->flashFilterDropped\(/', $controller);
+        self::assertStringContainsString('$this->readFilters($apps, $view)', $controller);
+        $template = (string) file_get_contents($root . 'templates/mobile_apps.php');
+        self::assertStringContainsString('<?php if ($C::signatureApplies($view, $platform)) { ?>', $template, 'the form');
+        self::assertStringContainsString('\'signature\' => $C::signatureApplies((string)$pick(\'view\', $view), $platform)', $template, 'the links');
+        self::assertSame(0, preg_match('/signature[^\n]*\$platform === \'ios\'|\$platform === \'ios\'[^\n]*signature/', $controller . $template), 'no second spelling of the rule');
+    }
 }

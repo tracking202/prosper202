@@ -101,6 +101,9 @@ class Application extends ConsoleApplication
         $this->add(new Commands\AppInstallListCommand());
         $this->add(new Commands\AppInstallGetCommand());
         $this->add(new Commands\AppInstallTokenCommand());
+        $this->add(new Commands\AppReportCommand());
+        $this->add(new Commands\AppNotificationsCommand());
+        $this->add(new Commands\AppLinkCommand());
         // Play Integrity: the status, the mode, and the service-account credential.
         $this->add(new Commands\AppIntegrityStatusCommand());
         $this->add(new Commands\AppIntegrityModeCommand());
