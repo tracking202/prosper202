@@ -43,7 +43,7 @@ class CampaignsController extends Controller
         ];
     }
 
-    /** The validated link a create is carrying to beforeCreate(), when it sent one. */
+    /** The validated link a create or an update is carrying to beforeCreate()/beforeUpdate(), when it sent one. */
     private ?array $pendingRegistrationLink = null;
 
     #[\Override]
@@ -80,32 +80,78 @@ class CampaignsController extends Controller
         if (!array_key_exists('app_registration_id', $payload)) {
             return parent::update($id, $payload);
         }
-        $link = $this->registrationLink($payload['app_registration_id']);
+        $link = ['value' => $this->registrationLink($payload['app_registration_id'])];
         unset($payload['app_registration_id']);
 
-        // No transaction of its own: bulk-upsert already wraps this call in
-        // one, and mysqli's begin_transaction() inside it would commit the
-        // outer (CLAUDE.md #13). The other fields go first, so a payload the
-        // base controller refuses changes nothing; the link is written after,
-        // and a failure there is reported as a write that already landed.
         if ($payload !== []) {
-            parent::update($id, $payload);
-        } else {
-            $this->get($id); // ownership + existence
-        }
-        try {
-            $stmt = $this->prepare('UPDATE 202_aff_campaigns SET app_registration_id = ? WHERE aff_campaign_id = ? AND user_id = ?');
-            $campaignId = (int)$id;
-            $this->bind($stmt, 'iii', $link, $campaignId, $this->userId);
-            $this->execute($stmt, 'Campaign app link failed');
-            $stmt->close();
-
-            return $this->get($id);
-        } catch (\Throwable $e) {
-            if ($payload === []) {
-                throw $e;
+            // One UPDATE: the other fields and the link together, through
+            // beforeUpdate(). The base records the change after it, so the
+            // change feed's record carries the link as written — a separate
+            // link UPDATE after parent::update() left the feed holding the
+            // old link for good. A payload the base refuses changes nothing.
+            $this->pendingRegistrationLink = $link;
+            try {
+                return parent::update($id, $payload);
+            } finally {
+                $this->pendingRegistrationLink = null;
             }
+        }
+
+        // The link alone: the base refuses a payload with no writable field,
+        // so the link is its own UPDATE — with the base's preconditions
+        // (ownership, If-Match) and its change record. No transaction of its
+        // own: bulk-upsert already wraps this call in one, and mysqli's
+        // begin_transaction() inside it would commit the outer (CLAUDE.md
+        // #13).
+        $current = $this->get($id);
+        $this->assertIfMatchSatisfied((array)$current['data']);
+        $stmt = $this->prepare('UPDATE 202_aff_campaigns SET app_registration_id = ? WHERE aff_campaign_id = ? AND user_id = ?');
+        $campaignId = (int)$id;
+        $this->bind($stmt, 'iii', $link['value'], $campaignId, $this->userId);
+        $this->execute($stmt, 'Campaign app link failed');
+        $stmt->close();
+
+        // As in the base update(): the write has landed, so a later failure
+        // must not read as "the update did not happen".
+        try {
+            $updated = $this->get($id);
+            $this->recordChange('update', (array)$updated['data']);
+        } catch (\Throwable $e) {
             throw new \Api\V3\Exception\WriteCommittedException('campaign', $e);
+        }
+
+        return $updated;
+    }
+
+    #[\Override]
+    protected function beforeUpdate(int|string $id, array $payload): array
+    {
+        if ($this->pendingRegistrationLink === null) {
+            return [];
+        }
+
+        return ['app_registration_id' => ['type' => 'i', 'value' => $this->pendingRegistrationLink['value']]];
+    }
+
+    /**
+     * Put each campaign's current state in the change feed, for a write that
+     * changed it from outside this controller: a registration delete and a
+     * user purge unlink every campaign linked to the registrations they
+     * remove, with an UPDATE of their own. Call it after that write has
+     * committed. A campaign that is deleted, or no longer this user's, is
+     * not in the feed and is skipped.
+     *
+     * @param list<int> $campaignIds
+     */
+    public function recordLinkChanges(array $campaignIds): void
+    {
+        foreach ($campaignIds as $campaignId) {
+            try {
+                $record = (array)$this->get($campaignId)['data'];
+            } catch (\Api\V3\Exception\NotFoundException) {
+                continue;
+            }
+            $this->recordChange('update', $record);
         }
     }
 

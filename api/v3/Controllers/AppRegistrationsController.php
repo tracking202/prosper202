@@ -281,10 +281,23 @@ class AppRegistrationsController extends Controller
         // The policy withdrawal, the unlinking and the row delete commit
         // together: a registration gone with its trusted development rows
         // still trusted would leave nothing to withdraw them from.
+        $this->unlinkedCampaigns = [];
         $this->transaction(function () use ($id): void {
             parent::delete($id);
         });
+        // The campaigns beforeDelete() unlinked changed too; the change feed
+        // hears it after the commit, never for a delete that rolled back.
+        try {
+            (new CampaignsController($this->db, $this->userId))->recordLinkChanges($this->unlinkedCampaigns);
+        } catch (\Throwable $e) {
+            throw new \Api\V3\Exception\WriteCommittedException('app registration', $e);
+        } finally {
+            $this->unlinkedCampaigns = [];
+        }
     }
+
+    /** @var list<int> the campaigns the delete in progress unlinks */
+    private array $unlinkedCampaigns = [];
 
     #[\Override]
     protected function beforeDelete(int|string $id): void
@@ -324,6 +337,16 @@ class AppRegistrationsController extends Controller
         // new id): its clicks' install tokens refused, their installs
         // foreign_click. Unlinked, the campaign is what it was before it was
         // linked, and the operator links it to the new registration.
+        $stmt = $this->prepare('SELECT aff_campaign_id FROM 202_aff_campaigns WHERE app_registration_id = ? AND user_id = ? FOR UPDATE');
+        $this->bind($stmt, 'ii', $registrationId, $this->userId);
+        $this->execute($stmt, 'Linked campaign lookup failed');
+        $linked = $stmt->get_result();
+        if ($linked === false) {
+            $stmt->close();
+            throw new \Api\V3\Exception\DatabaseException('Linked campaign lookup failed');
+        }
+        $this->unlinkedCampaigns = array_map(static fn (array $r): int => (int)$r['aff_campaign_id'], $linked->fetch_all(MYSQLI_ASSOC));
+        $stmt->close();
         $stmt = $this->prepare('UPDATE 202_aff_campaigns SET app_registration_id = NULL WHERE app_registration_id = ? AND user_id = ?');
         $this->bind($stmt, 'ii', $registrationId, $this->userId);
         $this->execute($stmt, 'Campaign unlink failed');
