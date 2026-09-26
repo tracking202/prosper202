@@ -9,6 +9,7 @@ use Prosper202\Attribution\AttributionWorker;
 use Prosper202\Attribution\DefaultModel;
 use Prosper202\Attribution\ModelType;
 use Prosper202\Attribution\WorkerHalted;
+use Prosper202\Database\Connection;
 use Prosper202\Database\Tables\AttributionTables;
 use Tests\Attribution\Support\AttributionDatabase;
 
@@ -120,6 +121,86 @@ final class AttributionWorkerIntegrationTest extends TestCase
         self::assertSame([], self::credits($other, $this->defaultModelId()), 'a fully reversed sale earns nothing');
         self::assertSame('6.00000', self::revenueUnder($this->defaultModelId()));
         self::assertSame(1, (int) self::scalar('SELECT COUNT(DISTINCT conv_id) FROM 202_attribution_credits'), 'reversal rows never get credits of their own');
+    }
+
+    public function testANonPayableReversalNetsNothingAsTheLedgerSays(): void
+    {
+        // ClickValueCalculator skips every non-payable row, reversals
+        // included, so the click keeps its $10; MTA must credit the same $10.
+        $this->campaign(1, 'accumulate');
+        $this->click(55, 1, time() - 100);
+        $this->convert(55, '10', 'NP-1');
+        $reversal = $this->ledger->record(1, ['click_id' => 55, 'source' => 'postback', 'transaction_id' => 'NP-1', 'payout' => '-10', 'payable' => false]);
+        self::assertGreaterThan(0, $reversal['convId']);
+        self::assertSame(
+            ['reverses' => true, 'payable' => '0'],
+            ['reverses' => self::scalar("SELECT reverses_conv_id FROM 202_conversion_logs WHERE conv_id = {$reversal['convId']}") !== null,
+             'payable' => (string) self::scalar("SELECT payable FROM 202_conversion_logs WHERE conv_id = {$reversal['convId']}")],
+            'the row under test is a non-payable reversal'
+        );
+        $this->work();
+
+        self::assertSame('10.00000', (string) self::scalar('SELECT click_payout FROM 202_clicks WHERE click_id = 55'), 'the ledger leaves the click its $10');
+        self::assertSame('10.00000', self::revenueUnder($this->defaultModelId()), 'and MTA credits the same $10, not $0');
+        // (A payable reversal nets: testReversalsNetAgainstTheSaleTheyName.)
+    }
+
+    public function testAJourneyKeepsTheLatestTwentyFiveTouchesAndSaysWhenItCut(): void
+    {
+        $this->campaign(1);
+        $base = time() - 3600;
+        for ($i = 0; $i <= 25; $i++) {
+            $this->click(1000 + $i, 1, $base + $i * 10);
+            $this->visit(1000 + $i, $base + $i * 10, self::cookie('long'));
+        }
+        // 24 earlier clicks and the converting one: exactly full, not cut.
+        $full = $this->convert(1024, '1', 'FULL');
+        // 25 earlier clicks: one more than fits, so the oldest goes.
+        $cut = $this->convert(1025, '1', 'CUT');
+        $this->work();
+
+        self::assertSame(['25', '0'], array_values(self::all("SELECT touches, truncated FROM 202_attribution_journey_meta WHERE conv_id = $full")[0]));
+        self::assertSame(range(1000, 1024), self::journeyClicks($full));
+        self::assertSame(['25', '1'], array_values(self::all("SELECT touches, truncated FROM 202_attribution_journey_meta WHERE conv_id = $cut")[0]));
+        self::assertSame(range(1001, 1025), self::journeyClicks($cut), 'the oldest touch is the one cut');
+    }
+
+    public function testTheFanOutsStopAtTheBudgetToo(): void
+    {
+        // Two identity merges and three model recomputes are waiting; the
+        // clock passes the deadline after the first unit of work.
+        $this->campaign(1);
+        $now = time();
+        foreach ([[900, 'x', 'y'], [910, 'z', 'w']] as [$c, $a, $b]) {
+            $this->click($c, 1, $now - 300);
+            $this->visit($c, $now - 300, self::cookie($a));
+            $this->click($c + 1, 1, $now - 200);
+            $this->visit($c + 1, $now - 200, self::cookie($b));
+            $this->click($c + 2, 1, $now - 100);
+            $this->visit($c + 2, $now - 100, self::cookie($a), self::cookie($b));
+        }
+        $this->addModel('Linear', ModelType::LINEAR);
+        $this->addModel('First', ModelType::FIRST_TOUCH);
+        self::$db->query('UPDATE 202_attribution_models SET recompute_requested_at = 1, recompute_cursor = 0');
+        self::assertSame(2, (int) self::scalar('SELECT COUNT(*) FROM 202_identity_merges WHERE requeued_at IS NULL'));
+        self::assertSame(3, (int) self::scalar('SELECT COUNT(*) FROM 202_attribution_models WHERE recompute_requested_at IS NOT NULL'));
+
+        $t = 1000;
+        $clock = static function () use (&$t): int {
+            $v = $t;
+            $t = 5000;
+            return $v;
+        };
+        $report = (new AttributionWorker($this->conn, $clock))->run(1, 200);
+
+        self::assertSame(1, $report->mergesRequeued, 'one merge, then the deadline');
+        self::assertSame(1, $report->modelsFannedOut, 'one model, then the deadline');
+        self::assertSame(1, (int) self::scalar('SELECT COUNT(*) FROM 202_identity_merges WHERE requeued_at IS NULL'), 'the other merge waits for the next run');
+        self::assertSame(2, (int) self::scalar('SELECT COUNT(*) FROM 202_attribution_models WHERE recompute_requested_at IS NOT NULL'));
+
+        $report = $this->work();
+        self::assertSame(1, $report->mergesRequeued, 'the next run takes the rest');
+        self::assertSame(2, $report->modelsFannedOut);
     }
 
     public function testProcessingTwiceWritesTheSameRows(): void
@@ -286,19 +367,82 @@ final class AttributionWorkerIntegrationTest extends TestCase
 
     public function testRunExclusiveSkipsWhileAnotherWorkerHoldsTheLock(): void
     {
-        $other = mysqli_connect(
-            (string) getenv('P202_TEST_DB_HOST'),
-            (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
-            (string) (getenv('P202_TEST_DB_PASS') ?: ''),
-            (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
-            (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
-        );
-        self::assertSame('1', (string) $other->query("SELECT GET_LOCK('" . AttributionWorker::LOCK_NAME . "', 0)")->fetch_row()[0]);
+        $other = self::connect();
+        $name = AttributionWorker::lockName($this->conn);
+        self::assertSame('1', (string) $other->query("SELECT GET_LOCK('" . $name . "', 0)")->fetch_row()[0]);
         try {
             self::assertNull(AttributionWorker::runExclusive($this->conn, 1));
         } finally {
             $other->close();
         }
         self::assertNotNull(AttributionWorker::runExclusive($this->conn, 1), 'the lock is released with its session');
+    }
+
+    public function testTheLockIsPerDatabase(): void
+    {
+        $name = AttributionWorker::lockName($this->conn);
+        $db = (string) self::scalar('SELECT DATABASE()');
+        self::assertSame(AttributionWorker::LOCK_PREFIX . sha1($db), $name);
+        self::assertLessThanOrEqual(64, strlen($name), 'MySQL refuses a longer lock name');
+
+        // A worker on another database of the same server holds its lock.
+        $other = self::connect();
+        $other->select_db('information_schema');
+        $otherName = AttributionWorker::lockName(new Connection($other));
+        self::assertNotSame($name, $otherName);
+        self::assertSame('1', (string) $other->query("SELECT GET_LOCK('" . $otherName . "', 0)")->fetch_row()[0]);
+        try {
+            self::assertNotNull(AttributionWorker::runExclusive($this->conn, 1), 'another install on the server does not hold this one up');
+        } finally {
+            $other->close();
+        }
+
+        // No database selected is an error, not a lock every install shares.
+        $none = mysqli_connect(
+            (string) getenv('P202_TEST_DB_HOST'),
+            (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+            (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+            '',
+            (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
+        );
+        try {
+            AttributionWorker::runExclusive(new Connection($none), 1);
+            self::fail('a worker with no database took a lock');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('needs a selected database', $e->getMessage());
+        } finally {
+            $none->close();
+        }
+    }
+
+    public function testARunThatFailsOnADeadConnectionReportsItsOwnError(): void
+    {
+        // The connection dies under the run: the run's exception is what the
+        // caller sees, not the RELEASE_LOCK that fails after it.
+        $victim = self::connect();
+        $threadId = $victim->thread_id;
+        $clock = static function () use ($threadId): int {
+            self::$db->query('KILL ' . (int) $threadId);
+            throw new \RuntimeException('the run failed first');
+        };
+        try {
+            AttributionWorker::runExclusive(new Connection($victim), 1, 200, $clock);
+            self::fail('the run did not fail');
+        } catch (\Throwable $e) {
+            self::assertSame('the run failed first', $e->getMessage(), get_class($e) . ': ' . $e->getMessage());
+        }
+        @$victim->close();
+        self::assertNotNull(AttributionWorker::runExclusive($this->conn, 1), 'the dead session took its lock with it');
+    }
+
+    private static function connect(): \mysqli
+    {
+        return mysqli_connect(
+            (string) getenv('P202_TEST_DB_HOST'),
+            (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+            (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+            (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
+            (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
+        );
     }
 }

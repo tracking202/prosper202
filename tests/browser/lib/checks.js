@@ -595,9 +595,21 @@ async function standalonePageBaseline(ctx, entry, options = {}) {
   const hit = await ui.page.evaluate(() => {
     const card = document.querySelector('.p202-standalone__card');
     if (!card) { return 'no card'; }
+    // The middle of the part of the card on screen, and a point either side
+    // of it: sampling only near the top (as this did) passed an overlay that
+    // left the title clickable and covered the rest (#169). elementFromPoint
+    // answers nothing outside the viewport, so the span is clipped to it.
     const box = card.getBoundingClientRect();
-    const el = document.elementFromPoint(box.left + box.width / 2, box.top + Math.min(box.height / 2, 40));
-    return el && el.closest('.p202-standalone__card') ? 'card' : (el ? el.tagName.toLowerCase() + '.' + el.className : 'nothing');
+    const top = Math.max(box.top, 0);
+    const bottom = Math.min(box.bottom, window.innerHeight);
+    if (bottom <= top) { return 'off screen'; }
+    for (const at of [0.25, 0.5, 0.75]) {
+      const el = document.elementFromPoint(box.left + box.width / 2, top + (bottom - top) * at);
+      if (!el || !el.closest('.p202-standalone__card')) {
+        return (el ? el.tagName.toLowerCase() + '.' + el.className : 'nothing') + ' at ' + Math.round(at * 100) + '%';
+      }
+    }
+    return 'card';
   });
   expect.eq(hit, 'card', 'the card takes a click in its middle, not the wallpaper behind it');
   await componentClassesAreStyled(ctx, entry.scriptOnly || []);

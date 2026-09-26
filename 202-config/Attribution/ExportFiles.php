@@ -11,9 +11,12 @@ namespace Prosper202\Attribution;
  * The directory is `P202_EXPORT_DIR` when 202-config.php defines it (put it
  * outside the web root where you can), else `202-config/temp/attribution-exports`.
  * That default is inside the web root, so it is made unreachable three ways:
- * a `.htaccess` that denies everything (Apache), an empty `index.html` (no
- * listing), and names no one can guess — `u<user>-e<export>-<128 random
- * bits>.csv`. Files are served only through the authenticated download
+ * the server config denies `202-config/temp` (the Dockerfile and the README's
+ * Apache and Nginx examples; the directory's own `.htaccess` also denies
+ * everything, but Apache reads it only under `AllowOverride AuthConfig`,
+ * answers 500 under the shipped `FileInfo` set and ignores it under `None`),
+ * an empty `index.html` (no listing), and names no one can guess —
+ * `u<user>-e<export>-<128 random bits>.csv`. Files are served only through the authenticated download
  * endpoints, which look the name up on the account's own export row.
  *
  * The row stores the name, never a path, and a name that does not match

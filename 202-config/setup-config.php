@@ -73,48 +73,6 @@ if (file_exists(substr(__DIR__, 0, -10) . '/202-config.php')) {
 
 
 
-/**
- * Whether the 202-config.php already here belongs to a finished install.
- *
- * Until U7 the wizard rewrote 202-config.php for anyone who posted to it, on
- * a running install too: one unauthenticated POST naming another database
- * server pointed the whole install at it. The wizard is for an install that
- * has no working configuration yet, so it now refuses when the file exists
- * and its database answers with an account in it. It answers "locked" when
- * it cannot tell — a configuration it cannot connect with, or a query that
- * fails — because a question it cannot answer must not open the door (error
- * pattern #11): editing 202-config.php on the server always works.
- */
-function p202_setup_config_locked(bool $configExists, ?string $host, ?string $user, ?string $pass, ?string $name): bool
-{
-	if (!$configExists) {
-		return false;
-	}
-	if ($host === null || $user === null || $name === null) {
-		return true;
-	}
-	mysqli_report(MYSQLI_REPORT_OFF);
-	$probe = @mysqli_connect($host, $user, (string) $pass, $name);
-	if (!$probe) {
-		return true;
-	}
-	$tables = mysqli_query($probe, "SHOW TABLES LIKE '202\\_users'");
-	if ($tables === false) {
-		mysqli_close($probe);
-		return true;
-	}
-	$hasUsersTable = mysqli_num_rows($tables) > 0;
-	mysqli_free_result($tables);
-	if (!$hasUsersTable) {
-		mysqli_close($probe);
-		return false; // configured, never installed: the wizard may redo it
-	}
-	$count = mysqli_query($probe, 'SELECT COUNT(*) AS cnt FROM 202_users');
-	$row = $count ? mysqli_fetch_assoc($count) : null;
-	mysqli_close($probe);
-	return !is_array($row) || (int) $row['cnt'] > 0;
-}
-
 $config_path = substr(__DIR__, 0, -10) . '/202-config.php';
 $config_source = file_exists($config_path) ? @file_get_contents($config_path) : false;
 // A 202-config.php in the format before the DB class (see

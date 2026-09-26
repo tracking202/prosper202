@@ -78,6 +78,41 @@ final class LedgerExplainerTest extends TestCase
         self::assertSame(4, $v[1]['superseded_by']);
     }
 
+    /**
+     * A row that is both a reversal and fixed-superseded is superseded:
+     * the docblock's order puts superseded (3) before not_netted (4), and
+     * the stored reason is what explains the row. No path writes such a
+     * row today (GoalEngine makes no reversal; pre_ledger is set only on
+     * legacy non-reversals), which is exactly why nothing else would catch
+     * the order changing.
+     */
+    public function testAReversalThatWasSupersededIsReportedSuperseded(): void
+    {
+        foreach ([SupersededReason::PRE_LEDGER, SupersededReason::REPLAY, SupersededReason::REEVALUATION] as $reason) {
+            foreach ([PayoutMode::REPLACE, PayoutMode::ACCUMULATE] as $mode) {
+                $rows = [
+                    self::row(1, '10', ['reason' => SupersededReason::REPLAY, 'by' => 3]),     // the sale, itself superseded: nothing to net
+                    self::row(2, '-10', ['reverses' => 1, 'reason' => $reason, 'by' => 4]),   // a reversal AND superseded
+                    self::row(3, '10', ['source' => ConversionSource::LEGACY_BASELINE]),
+                    self::row(4, '-10', ['reverses' => 3]),
+                ];
+                $v = LedgerExplainer::explain($rows, $mode)['rows'][2];
+                self::assertFalse($v['counted'], $reason->value . ' ' . $mode->value);
+                self::assertSame(NotCountedReason::SUPERSEDED, $v['reason'], $reason->value . ' ' . $mode->value . ': superseded, not not_netted');
+                self::assertSame($reason, $v['superseded_reason']);
+                self::assertSame(4, $v['superseded_by']);
+            }
+        }
+        // A reversal whose target does not count, and that nothing
+        // superseded, is still not_netted.
+        $plain = LedgerExplainer::explain([
+            self::row(1, '10', ['reason' => SupersededReason::REPLAY, 'by' => 3]),
+            self::row(2, '-10', ['reverses' => 1]),
+            self::row(3, '10', ['source' => ConversionSource::LEGACY_BASELINE]),
+        ], PayoutMode::ACCUMULATE)['rows'][2];
+        self::assertSame(NotCountedReason::NOT_NETTED, $plain['reason']);
+    }
+
     public function testAFixedSupersessionIsReportedWithTheReasonStoredOnTheRow(): void
     {
         $rows = [self::row(7, '2', ['source' => ConversionSource::GOAL, 'reason' => SupersededReason::REEVALUATION, 'by' => null])];

@@ -146,6 +146,8 @@ object EventPayload {
                 for ((k, v) in p) {
                     if (!PROP_NAME.matches(k)) {
                         e["$path.properties.$k"] = "is not a property name (a letter or _, then letters, digits or _, up to 64)"
+                    } else if (v is JsonValue.Str && unpairedSurrogateAt(v.value) >= 0) {
+                        e["$path.properties.$k"] = "must be valid Unicode text: it holds an unpaired UTF-16 surrogate at index ${unpairedSurrogateAt(v.value)}"
                     } else if (!isPropertyValue(v)) {
                         e["$path.properties.$k"] = "must be a string (up to $MAX_STRING_BYTES bytes), a finite number or a bool"
                     }
@@ -162,7 +164,9 @@ object EventPayload {
         val trusted = o["revenue_trusted"]
         if (trusted != null && trusted !is JsonValue.Null && trusted !is JsonValue.Bool) e["$path.revenue_trusted"] = "must be true or false"
         val tx = o["transaction_id"]
-        if (tx != null && tx !is JsonValue.Null && !(tx is JsonValue.Str && phpTrim(tx.value).isNotEmpty() && utf8Length(tx.value) <= MAX_STRING_BYTES)) {
+        if (tx is JsonValue.Str && unpairedSurrogateAt(tx.value) >= 0) {
+            e["$path.transaction_id"] = "must be valid Unicode text: it holds an unpaired UTF-16 surrogate at index ${unpairedSurrogateAt(tx.value)}"
+        } else if (tx != null && tx !is JsonValue.Null && !(tx is JsonValue.Str && phpTrim(tx.value).isNotEmpty() && utf8Length(tx.value) <= MAX_STRING_BYTES)) {
             e["$path.transaction_id"] = "must be a non-empty string of up to $MAX_STRING_BYTES bytes, or null"
         }
     }

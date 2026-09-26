@@ -124,8 +124,14 @@ of executing it, returning `202`:
 }
 ```
 
-Staged DELETEs embed their dry-run preview when one is available. The
-lifecycle endpoints:
+Staged DELETEs embed their dry-run preview when one is available. Staging
+runs the route's role checks first, exactly as the write and a dry run do:
+a key whose role the route refuses (an attribution route without
+`view_attribution_reports`, for instance) gets that route's `403` and
+nothing is recorded. A check the delete itself makes (`requireAdmin` on a
+user delete, `manage_attribution_models` on a model delete) gates only the
+preview: a proposer without it records the change with `"preview": null`
+for someone who holds it to apply. The lifecycle endpoints:
 
 | Method | Path | Scope | Description |
 | ------ | ---- | ----- | ----------- |

@@ -213,4 +213,76 @@ final class OverviewPagesTest extends TestCase
         $last = p202_overview_pagination(3, 2);
         self::assertStringContainsString('<li class="page-item disabled"><span class="page-link" aria-hidden="true">&rsaquo;</span>', $last, 'there is no next page after the last');
     }
+
+    /**
+     * A page link followed as a navigation (middle-click, a new tab, no
+     * script) opens the page with the filters the fragment was drawn under,
+     * not with whatever another tab has stored since (#162). The href is
+     * the view as the page's own query, so the page applies it as it would
+     * any link naming its filters.
+     */
+    public function testAPageLinkFollowedWithoutScriptCarriesTheViewItWasDrawnUnder(): void
+    {
+        $view = p202_report_view_query(['country_id', 'keyword'], ['country_id' => '12', 'keyword' => 'a&b c'], ['range' => P202_RANGE_CUSTOM, 'from' => '2026-01-02', 'to' => '2026-01-05']);
+        self::assertNotSame('', $view);
+        $html = p202_overview_pagination(3, 1, 'Pages of clicks', $view);
+        self::assertSame(1, preg_match('/<a class="page-link" href="([^"]*)" data-p202-offset="2" aria-label="Next page"/', $html, $m), $html);
+        $href = html_entity_decode($m[1], ENT_QUOTES, 'UTF-8');
+        self::assertStringStartsWith('?', $href);
+        parse_str(substr($href, 1), $query);
+        self::assertSame('2', $query['offset'] ?? null, 'the link still says which page');
+        unset($query['offset']);
+        parse_str($view, $expected);
+        self::assertSame($expected, $query, 'every filter and the window the fragment was drawn under, and nothing else');
+        self::assertSame('2026-01-02', $query['from'] ?? null);
+        self::assertSame('a&b c', $query['keyword'] ?? null, 'a value with a separator in it survives the markup');
+
+        $read = p202_report_prefs_from_query($query, ['range', 'country_id', 'keyword'], [], P202_REPORT_GROUP_NONE);
+        self::assertSame([], $read['errors'], 'the page accepts the link as its own filters');
+
+        self::assertStringContainsString('href="?offset=2"', p202_overview_pagination(3, 1), 'a fragment drawn under no view links the offset alone, as before');
+
+        // And every fragment that draws page links hands them the view it
+        // installed: the variable p202_report_view_begin() returned, not a
+        // view read some other way or none at all.
+        $callers = 0;
+        foreach (glob($this->root . '/tracking202/ajax/*.php') ?: [] as $file) {
+            $src = (string) file_get_contents($file);
+            if (!str_contains($src, 'p202_overview_pagination(')) {
+                continue;
+            }
+            $callers++;
+            $rel = substr($file, strlen($this->root) + 1);
+            self::assertSame(1, preg_match('/^(\$\w+) = p202_report_view_begin\(\);$/m', $src, $begin), "$rel installs its view in one statement");
+            self::assertSame(1, preg_match_all('/p202_overview_pagination\(/', $src), "$rel draws one set of page links");
+            self::assertSame(1, preg_match('/p202_overview_pagination\([^;]*,\s*' . preg_quote($begin[1], '/') . '\);/', $src), "$rel hands its page links the view it installed ({$begin[1]})");
+        }
+        self::assertGreaterThan(0, $callers, 'the sweep found the fragments that page');
+    }
+
+    /**
+     * `defaults` names stored filter columns. The window is not one, and a
+     * name the page does not offer has nothing to fill: either used to reach
+     * p202_report_prefs_save() as a bogus column and throw on a first visit.
+     * Both are refused by name, before anything is written (#162).
+     */
+    public function testADefaultForTheWindowOrAnUnofferedNameIsRefusedByName(): void
+    {
+        foreach ([
+            ['names' => ['range', 'country_id'], 'defaults' => ['range' => 'today']],
+            ['names' => ['country_id'], 'defaults' => ['not_a_filter' => '1']],
+            ['names' => ['country_id'], 'defaults' => ['group_1' => '1']],
+        ] as $spec) {
+            $fake = new \Tests\Support\FakeMysqliConnection();
+            $conn = new \Prosper202\Database\Connection($fake);
+            $name = (string) array_key_first($spec['defaults']);
+            try {
+                p202_overview_page_state($conn, 7, $spec, []);
+                self::fail("a default for '$name' was accepted");
+            } catch (\InvalidArgumentException $refused) {
+                self::assertStringContainsString("'$name'", $refused->getMessage());
+            }
+            self::assertSame([], $fake->statementsContaining('UPDATE'), 'nothing was written');
+        }
+    }
 }

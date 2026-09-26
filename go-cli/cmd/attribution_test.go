@@ -43,6 +43,8 @@ func TestAttributionCommandsValidateBeforeTheyConnect(t *testing.T) {
 		{"journeys with a bad time", []string{"attribution", "journeys", "--time-to", "soon"}, `invalid --time-to "soon"`, ""},
 		{"journey of a non-id", []string{"attribution", "journey", "x1"}, `conversion id must be a positive whole number, got "x1"`, "p202 conversion list"},
 		{"queue with a huge limit", []string{"attribution", "queue", "--limit", "5000"}, "invalid --limit 5000; 1 to 500", ""},
+		{"breakdown with a limit over the server's", []string{"attribution", "breakdown", "--limit", "1001"}, `invalid --limit "1001"; 1 to 1000`, "1 to 1000"},
+		{"breakdown with a limit too long to parse", []string{"attribution", "breakdown", "--limit", "99999999999999999999"}, `invalid --limit "99999999999999999999"; 1 to 1000`, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, err := executeCommand(tc.args...)

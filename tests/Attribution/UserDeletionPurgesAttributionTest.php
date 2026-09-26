@@ -198,6 +198,112 @@ final class UserDeletionPurgesAttributionTest extends TestCase
         $this->assertSame(0, (int) self::scalar(DefaultModel::MISSING_SQL), 'a deleted account without a default is not a missing default');
     }
 
+    /** A second connection to the test database, as a second process would have. */
+    private static function connect(): \mysqli
+    {
+        $db = mysqli_connect(
+            (string) getenv('P202_TEST_DB_HOST'),
+            (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+            (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+            (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
+            (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
+        );
+        self::assertInstanceOf(\mysqli::class, $db);
+
+        return $db;
+    }
+
+    /**
+     * A purge in progress holds the user row (UserDataPurge::LOCK_USER, its
+     * first statement): the worker's read of user_deleted waits for it
+     * rather than reading the row as it was before the purge and writing a
+     * journey the purge will never come back for. Once the purge commits,
+     * the worker reads the user as deleted and writes nothing.
+     */
+    public function testTheWorkerWaitsForAPurgeInProgressAndThenReadsTheUserDeleted(): void
+    {
+        $this->seed();
+        $purge = self::connect();
+        $purge->begin_transaction();
+        $lock = $purge->prepare(UserDataPurge::LOCK_USER);
+        $userId = 1;
+        $lock->bind_param('i', $userId);
+        $this->assertTrue($lock->execute());
+        $lock->close();
+
+        self::$db->query('SET SESSION innodb_lock_wait_timeout = 1');
+        try {
+            (new AttributionWorker($this->conn))->run(30, 200);
+            $this->fail('the worker read the user without waiting for the purge that holds it');
+        } catch (\Prosper202\Attribution\WorkerHalted $e) {
+            $this->assertStringContainsString('Lock wait timeout', $e->getMessage());
+        } finally {
+            self::$db->query('SET SESSION innodb_lock_wait_timeout = 50');
+        }
+
+        // The purge finishes as deleteUser() would.
+        $purge->query('UPDATE 202_users SET user_deleted = 1 WHERE user_id = 1');
+        $purge->commit();
+        $purge->close();
+
+        $queued = self::counts(1)['202_attribution_pending'];
+        $this->assertGreaterThan(0, $queued);
+        $report = (new AttributionWorker($this->conn))->run(30, 200);
+        $this->assertSame($queued, $report->outcomes['user_deleted'] ?? 0, 'it then reads the user deleted: ' . $report->summary());
+    }
+
+    /**
+     * The other order: a worker is writing a conversion's journey (holding
+     * the user row shared) when the delete starts. The purge's first
+     * statement waits for the worker's commit, so its DELETEs then see and
+     * remove what the worker wrote. Locked last instead, the purge ran its
+     * DELETEs first and the worker's rows outlived the user.
+     */
+    public function testAPurgeThatStartsWhileTheWorkerWritesDeletesWhatTheWorkerWrote(): void
+    {
+        $this->seed();
+        $this->files();
+        $pending = (int) self::scalar('SELECT p.conv_id FROM 202_attribution_pending p JOIN 202_conversion_logs c ON c.conv_id = p.conv_id WHERE c.user_id = 1 ORDER BY p.conv_id LIMIT 1');
+        $this->assertGreaterThan(0, $pending, 'a conversion of the user is waiting for the worker');
+
+        $worker = self::connect();
+        $workerConn = new \Prosper202\Database\Connection($worker);
+        $worker->begin_transaction();
+        $held = $worker->prepare(AttributionWorker::USER_LOCK_SQL);
+        $userId = 1;
+        $held->bind_param('i', $userId);
+        $this->assertTrue($held->execute());
+        $held->get_result();
+        $held->close();
+
+        $child = proc_open(
+            [PHP_BINARY, __DIR__ . '/fixtures/delete-user.php', '1', $this->exportDir],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes
+        );
+        $this->assertIsResource($child);
+        // Long enough for the purge to reach its first statement and, locked
+        // last, to run every DELETE before it blocked.
+        usleep(1_500_000);
+
+        // The worker writes the journey and credits and commits.
+        $this->assertSame('credited', (new AttributionWorker($workerConn))->processConversion($pending, 'recorded'));
+        $this->assertGreaterThan(0, (int) $worker->query("SELECT COUNT(*) FROM 202_attribution_journey_meta WHERE conv_id = $pending")->fetch_row()[0]);
+        $worker->commit();
+        $worker->close();
+
+        $out = (string) stream_get_contents($pipes[1]);
+        $err = (string) stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        $this->assertSame(0, proc_close($child), 'the delete: ' . $out . $err);
+        $this->assertSame("deleted\n", $out);
+
+        foreach (self::counts(1) as $table => $n) {
+            $this->assertSame(0, $n, "$table: what the worker wrote while the purge waited is gone with the user");
+        }
+    }
+
     public function testExportFilesStayWhenTheDeleteRollsBack(): void
     {
         $files = $this->seed();

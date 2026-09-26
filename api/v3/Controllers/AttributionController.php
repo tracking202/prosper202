@@ -229,7 +229,20 @@ class AttributionController
                     ['model_id' => $id]
                 );
             }
-            $files = (new ExportStore($this->conn))->fileNames($this->userId, $id);
+            $exports = new ExportStore($this->conn);
+            // Locked before anything is deleted: a runner holding one of the
+            // model's exports is writing its file, and deleting the row under
+            // it would leave the file named by nothing. Refused, as DELETE of
+            // a running export is; a claim that comes after waits for this
+            // transaction and then finds no row.
+            $running = $exports->lockForModelDelete($this->userId, $id);
+            if ($running !== []) {
+                throw new ConflictException(
+                    'Model ' . $id . ' has an export running (' . implode(', ', $running) . ') and cannot be deleted until it has finished; try again in a minute.',
+                    ['model_id' => $id, 'running_exports' => $running]
+                );
+            }
+            $files = $exports->fileNames($this->userId, $id);
             $this->models->delete($this->userId, $id);
             $this->audit($id, 'model_deleted', ['model_type' => (string) $row['model_type']]);
         });

@@ -91,15 +91,14 @@ $states = static function (mixed $counts): array {
             </div>
         </div>
     <?php } elseif ($totals !== null && $platform === 'android') {
-        // `installs` is always the trusted (attributed) count. Under an
-        // explicit trust filter the rows are that class — refuted or
-        // unvouched ones hold no trusted install — so the tile counts every
-        // install the filter selected (`received`), and says which class.
+        // `installs` counts the class the figures count: attributed ones,
+        // or under an explicit trust filter that class (the API recomputes
+        // it, in every grouping alike). The tile says which.
         $asFiltered = $report['trusted'] !== 'trusted-only'; ?>
         <div class="p202-tiles">
             <div class="p202-tile is-good">
                 <div class="p202-tile__label">Installs</div>
-                <div class="p202-tile__value"><?php echo $num($asFiltered ? $totals['received'] : $totals['installs']); ?></div>
+                <div class="p202-tile__value"><?php echo $num($totals['installs']); ?></div>
                 <div class="p202-tile__sub"><?php echo $asFiltered ? $e((string)$filters['trusted']) . ' installs, as filtered' : 'attributed to a click'; ?></div>
             </div>
             <div class="p202-tile">

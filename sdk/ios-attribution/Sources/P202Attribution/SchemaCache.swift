@@ -153,6 +153,10 @@ struct DeviceGoalState: Codable, Equatable {
     struct Pending: Codable, Equatable {
         var event: GoalEvent
         var conversionTypes: [ConversionUpdate.ConversionType]?
+        /// The re-engagement lifecycle the event was logged in
+        /// (`reengagementGeneration` then); nil for one queued before
+        /// lifecycles were counted, which is lifecycle 0.
+        var reengagementGeneration: Int? = nil
     }
 
     static let key = "p202attribution.goals"
@@ -167,7 +171,14 @@ struct DeviceGoalState: Codable, Equatable {
     /// (as a fresh lifecycle) rather than failing and starting everything
     /// over.
     var reengagementState: EvaluationState?
+    /// How many re-engagement lifecycles have begun (`beginReengagement()`);
+    /// nil — never stored, or stored before it was counted — is 0. A queued
+    /// event scoped to re-engagement counts toward the lifecycle it was
+    /// logged in and no other.
+    var reengagementGeneration: Int?
     var pending: [Pending] = []
+
+    var currentReengagementGeneration: Int { reengagementGeneration ?? 0 }
 
     func progress(for type: ConversionUpdate.ConversionType) -> EvaluationState {
         switch type {

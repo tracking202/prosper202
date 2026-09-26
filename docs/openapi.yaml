@@ -1818,7 +1818,9 @@ paths:
       description: >-
         Hard delete of the model, its credits and its export jobs; campaigns
         that named it fall back to the account default. The default model
-        cannot be deleted (409).
+        cannot be deleted (409), nor a model one of whose export jobs is
+        running (409, naming the jobs in `details.running_exports`; retry once they
+        finish).
       operationId: deleteAttributionModel
       responses:
         "200":
@@ -3763,15 +3765,17 @@ paths:
 
         **Android** figures are by install (a cohort): a goal an install
         reached counts in its install's group, however much later it was
-        reached. `installs` are trusted (attributed) installs; `organic`,
-        `refuted_count`, `unvouched_count`, `test_count`, `pending` and the
-        `match_states` / `integrity_states` breakdowns count every install
-        beside them. `events`, `goals_reached` and `revenue` are the goals
-        trusted installs reached (`trusted=` recomputes them over that
-        class, `meta.trusted: as-filtered`); `revenue` is the value of
-        payable outcomes. `group_by=goal` is the funnel: one row per goal
-        with the installs that reached it (distinct, per trust class), its
-        `after` and owner.
+        reached. `installs` are distinct trusted (attributed) installs;
+        `organic`, `refuted_count`, `unvouched_count`, `test_count`,
+        `pending` and the `match_states` / `integrity_states` breakdowns
+        count every install beside them. `events`, `goals_reached` and
+        `revenue` are the goals trusted installs reached (`trusted=`
+        recomputes `installs` and these over that class, `meta.trusted:
+        as-filtered`); `revenue` is the value of payable outcomes.
+        `installs` has one meaning in every grouping: the install groupings'
+        rows sum to the totals, and `group_by=goal` — the funnel, one row per
+        goal with its `after` and owner — counts the installs of that class
+        that reached the goal, each once (and each trust class beside it).
 
         **iOS** — the rest of this description. Groups postbacks by `group_by` and decodes winning postbacks'
         conversion values through the caller's SKAN encodings (those of the

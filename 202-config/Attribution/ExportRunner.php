@@ -20,10 +20,19 @@ use Prosper202\Database\Exceptions\QueryException;
  * stale-run reclaim puts it back.
  *
  * Webhook delivery: a failure the receiver may recover from (no
- * connection, a timeout, 5xx, 408, 429) is retried after 1, 2 and then 4
- * minutes, up to MAX_ATTEMPTS runs in all; one it cannot (a refused
- * destination, a redirect, another 4xx, a body too large) fails the job
- * at once. The file stays downloadable either way.
+ * connection, a timeout, 5xx, 408, 429) is retried with a doubling wait
+ * (1 minute after the first run, 2 after the second, ...) until the job
+ * has had MAX_ATTEMPTS runs in all — with 3, that is two retries; one it
+ * cannot recover from (a refused destination, a redirect, another 4xx, a
+ * body too large) fails the job at once. The file stays downloadable
+ * either way.
+ *
+ * Ownership. Every write that ends a run is conditional on the job still
+ * being `running`. When it matches nothing — the job was reclaimed as
+ * stale by another run, or deleted with its account or model while this
+ * run held it — the job is reported `lost`, not completed or failed, and
+ * a file this run wrote that no row names is removed rather than left on
+ * disk with nothing to clean it up.
  */
 final class ExportRunner
 {
@@ -55,7 +64,7 @@ final class ExportRunner
      */
     public function run(int $timeBudgetSeconds = 50, int $batch = 20): array
     {
-        $report = ['completed' => 0, 'failed' => 0, 'retrying' => 0, 'reclaimed' => 0];
+        $report = ['completed' => 0, 'failed' => 0, 'retrying' => 0, 'lost' => 0, 'reclaimed' => 0];
         $deadline = ($this->clock)() + max(1, $timeBudgetSeconds);
         $report['reclaimed'] = $this->store->reclaimStale(($this->clock)(), self::STALE_AFTER, self::MAX_ATTEMPTS);
 
@@ -86,7 +95,7 @@ final class ExportRunner
     /**
      * Run one job this runner has claimed.
      *
-     * @return 'completed'|'failed'|'retrying'
+     * @return 'completed'|'failed'|'retrying'|'lost'
      */
     public function runClaimed(int $exportId): string
     {
@@ -101,41 +110,52 @@ final class ExportRunner
         } catch (QueryException $e) {
             throw $e;
         } catch (\Throwable $e) {
-            $this->store->fail($exportId, $e->getMessage(), null, $now);
-
-            return 'failed';
+            return $this->ended($exportId, $this->store->fail($exportId, $e->getMessage(), null, $now), 'failed');
         }
 
         try {
-            $name = $row['file_path'] !== null && ExportFiles::isName((string) $row['file_path'])
-                ? $this->rewrite((int) $row['user_id'], $exportId, (string) $row['file_path'], $body)
-                : $this->files->write((int) $row['user_id'], $exportId, $body);
-            $this->store->recordFile($exportId, $name, max(0, substr_count($body, "\n") - 1));
+            $name = $this->files->write((int) $row['user_id'], $exportId, $body);
         } catch (QueryException $e) {
             throw $e;
         } catch (\Throwable $e) {
-            $this->store->fail($exportId, $e->getMessage(), null, ($this->clock)());
+            return $this->ended($exportId, $this->store->fail($exportId, $e->getMessage(), null, ($this->clock)()), 'failed');
+        }
+        try {
+            $this->store->recordFile($exportId, $name, max(0, substr_count($body, "\n") - 1));
+        } catch (QueryException $e) {
+            // Whether the UPDATE landed is unknown (a connection lost after
+            // the commit looks the same), so the file stays: if the row
+            // names it, the reclaimed run's retry replaces and removes it.
+            throw $e;
+        } catch (\Throwable $e) {
+            // The UPDATE matched no running job: no row names the file this
+            // run just wrote. Remove it, or it stays on disk with nothing
+            // that would ever clean it up.
+            if (!$this->files->remove($name)) {
+                error_log('p202 attribution export ' . $exportId . ': file ' . $name . ' names no job and could not be removed');
+            }
 
-            return 'failed';
+            return $this->ended($exportId, false, 'failed');
+        }
+        // A retry wrote a fresh file; the one before it is no longer named.
+        $previous = (string) ($row['file_path'] ?? '');
+        if ($previous !== '' && $previous !== $name && ExportFiles::isName($previous)) {
+            $this->files->remove($previous);
         }
 
         $url = (string) ($row['webhook_url'] ?? '');
         if ($url === '') {
-            $this->store->complete($exportId, null, ($this->clock)());
-
-            return 'completed';
+            return $this->ended($exportId, $this->store->complete($exportId, null, ($this->clock)()), 'completed');
         }
 
         $attempt = (int) $row['attempts'];
         $result = $this->sender->send($url, (string) $row['webhook_secret'], $body, $exportId, $attempt);
         $now = ($this->clock)();
         if ($result->delivered) {
-            $this->store->complete($exportId, $result->status, $now);
-
-            return 'completed';
+            return $this->ended($exportId, $this->store->complete($exportId, $result->status, $now), 'completed');
         }
         if ($result->retryable && $attempt < self::MAX_ATTEMPTS) {
-            $this->store->deferRetry(
+            $landed = $this->store->deferRetry(
                 $exportId,
                 (string) $result->error . ' The file is ready; delivery is tried again (attempt ' . ($attempt + 1) . ' of ' . self::MAX_ATTEMPTS . ').',
                 $result->status,
@@ -143,11 +163,32 @@ final class ExportRunner
                 $now
             );
 
-            return 'retrying';
+            return $this->ended($exportId, $landed, 'retrying');
         }
-        $this->store->fail($exportId, (string) $result->error . ' The file is ready to download.', $result->status, $now);
 
-        return 'failed';
+        return $this->ended(
+            $exportId,
+            $this->store->fail($exportId, (string) $result->error . ' The file is ready to download.', $result->status, $now),
+            'failed'
+        );
+    }
+
+    /**
+     * The outcome of a run's final write: what it recorded, or `lost` when
+     * the write matched no running job (another run reclaimed it, or it was
+     * deleted while this run held it).
+     *
+     * @param 'completed'|'failed'|'retrying' $outcome
+     * @return 'completed'|'failed'|'retrying'|'lost'
+     */
+    private function ended(int $exportId, bool $landed, string $outcome): string
+    {
+        if ($landed) {
+            return $outcome;
+        }
+        error_log('p202 attribution export ' . $exportId . ': no longer running when this run ended it (' . $outcome . '); another run or a delete took it');
+
+        return 'lost';
     }
 
     /**
@@ -203,14 +244,5 @@ final class ExportRunner
         if ((string) $model['status'] !== Model::STATUS_ACTIVE) {
             throw new \UnexpectedValueException('Model ' . $modelId . ' is ' . $model['status'] . ', so it has no credits to export.');
         }
-    }
-
-    /** A retry writes a fresh file and removes the one before it. */
-    private function rewrite(int $userId, int $exportId, string $previous, string $body): string
-    {
-        $name = $this->files->write($userId, $exportId, $body);
-        $this->files->remove($previous);
-
-        return $name;
     }
 }

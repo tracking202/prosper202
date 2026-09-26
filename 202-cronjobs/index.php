@@ -452,8 +452,9 @@ function RunSecondsCronjob()
             // here, and every job it did not reach is still pending.
             try {
                 $exports = (new \Prosper202\Attribution\ExportRunner(new \Prosper202\Database\Connection($db)))->run(15);
-                if ($exports['completed'] + $exports['failed'] + $exports['retrying'] > 0) {
-                    echo 'Attribution exports: ' . (int) $exports['completed'] . ' completed, ' . (int) $exports['failed'] . ' failed<br>';
+                if ($exports['completed'] + $exports['failed'] + $exports['retrying'] + $exports['lost'] > 0) {
+                    echo 'Attribution exports: ' . (int) $exports['completed'] . ' completed, ' . (int) $exports['failed'] . ' failed'
+                        . ($exports['lost'] > 0 ? ', ' . (int) $exports['lost'] . ' taken by another run or deleted' : '') . '<br>';
                 }
             } catch (\Throwable $e) {
                 error_log('Attribution export runner failed: ' . $e->getMessage());

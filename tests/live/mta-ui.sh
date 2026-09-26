@@ -20,7 +20,11 @@
 #     with a signature the pass verifies; a redirecting receiver is not
 #     followed; a failing one is retried; a scheduled one waits; webhooks
 #     aimed at 127.0.0.1, 169.254.169.254, 10.x, a decimal-spelled loopback
-#     and plain http are refused at save time with nothing written.
+#     and plain http are refused at save time with nothing written;
+#   - a staged or dry-run export DELETE runs the route's role checks: a key
+#     whose role has no view_attribution_reports is refused 403 and reads
+#     nothing of the export back, and the
+#     admin's key still stages one with its preview.
 #
 # The capture server listens on 127.0.0.2 over TLS with a CA this pass makes;
 # for the delivery to be allowed at all, the pass adds
@@ -106,6 +110,7 @@ CAMP1=960001; CAMP2=960002; CAMP3=960003; CAMP4=960004
 T1=960101; T2=960102; T3=960103; T4=960104
 CAMPS="$CAMP1,$CAMP2,$CAMP3,$CAMP4"
 MANAGER=mta_ui_manager
+LIMITED=mta_ui_limited
 CONFIG_BACKUP="$OUT/202-config.php.orig"
 cp 202-config.php "$CONFIG_BACKUP"
 HOOK_PID=""
@@ -135,11 +140,13 @@ SQL
   [ -n "${ORIG_DEFAULT:-}" ] && Q "UPDATE 202_attribution_models SET is_default = NULL WHERE user_id=$USER_ID; UPDATE 202_attribution_models SET is_default = 1, status='active' WHERE model_id=$ORIG_DEFAULT"
   Q "DELETE cr FROM 202_attribution_credits cr JOIN 202_attribution_models m ON m.model_id=cr.model_id WHERE m.user_id=$USER_ID AND m.model_name LIKE 'UI %'"
   Q "DELETE FROM 202_attribution_models WHERE user_id=$USER_ID AND model_name LIKE 'UI %'"
-  local mid
-  mid=$(Q "SELECT user_id FROM 202_users WHERE user_name='$MANAGER'")
-  if [ -n "$mid" ]; then
-    Q "DELETE FROM 202_attribution_models WHERE user_id=$mid; DELETE FROM 202_user_role WHERE user_id=$mid; DELETE FROM 202_users_pref WHERE user_id=$mid; DELETE FROM 202_api_keys WHERE user_id=$mid; DELETE FROM 202_users WHERE user_id=$mid"
-  fi
+  local mid who
+  for who in "$MANAGER" "$LIMITED"; do
+    mid=$(Q "SELECT user_id FROM 202_users WHERE user_name='$who'")
+    if [ -n "$mid" ]; then
+      Q "DELETE FROM 202_attribution_exports WHERE user_id=$mid; DELETE FROM 202_attribution_models WHERE user_id=$mid; DELETE FROM 202_user_role WHERE user_id=$mid; DELETE FROM 202_users_pref WHERE user_id=$mid; DELETE FROM 202_api_keys WHERE user_id=$mid; DELETE FROM 202_users WHERE user_id=$mid"
+    fi
+  done
 }
 trap cleanup EXIT
 cleanup
@@ -525,6 +532,35 @@ eq "$(Q "SELECT COUNT(*) FROM 202_attribution_exports WHERE export_id=$PLAIN_EXP
 eq "$(curl -sS "$BASE/202-config/temp/attribution-exports/" | wc -c)" 0 "the export directory lists nothing (its index.html is empty)"
 has "$DIR/.htaccess" 'Require all denied' "and denies every request on Apache"
 [[ "$(Q "SELECT file_path FROM 202_attribution_exports WHERE export_id=$HOOK_EXPORT")" =~ ^u[0-9]+-e[0-9]+-[0-9a-f]{32}\.csv$ ]] && ok "file names carry 128 random bits" || bad "file name is guessable"
+
+say "exports: a staged or dry-run delete runs the route's role checks first"
+# Role 4 (campaign optimizer) has no attribution permission. Its account
+# gets an export with a webhook URL worth not leaking.
+LID=$(api -X POST -d "{\"user_name\":\"$LIMITED\",\"user_email\":\"mta-ui-limited@example.test\",\"user_pass\":\"limited-pass-1\"}" "$BASE/api/v3/users" | js 'd["data"]["user_id"]')
+api -X POST -d '{"role_id":4}' "$BASE/api/v3/users/$LID/roles" > /dev/null
+LKEY=$(api -X POST -d '{}' "$BASE/api/v3/users/$LID/api-keys" | js 'd["data"]["api_key"]')
+LMODEL=$(Q "SELECT model_id FROM 202_attribution_models WHERE user_id=$LID AND is_default=1")
+Q "INSERT INTO 202_attribution_exports (user_id, model_id, group_by, range_start, range_end, status, webhook_url, webhook_secret, attempts, queued_at, created_at, updated_at)
+   VALUES ($LID, $LMODEL, 'campaign', $((NOW - 86400)), $NOW, 'failed', 'https://hooks.example.test/private-token-path', 'limited-secret-value', 0, $NOW, $NOW, $NOW)"
+LEXPORT=$(Q "SELECT MAX(export_id) FROM 202_attribution_exports WHERE user_id=$LID")
+[[ "$LKEY" =~ ^[0-9a-f]{16,}$ ]] && [[ "$LEXPORT" =~ ^[0-9]+$ ]] && ok "a role-4 account with a key and an export" || bad "setup: key '$LKEY' export '$LEXPORT'"
+as() { local k=$1; shift; curl -s -H "Authorization: Bearer $k" -H 'Content-Type: application/json' "$@"; }
+eq "$(as "$LKEY" -o /dev/null -w '%{http_code}' "$BASE/api/v3/attribution/exports/$LEXPORT")" 403 "its own export is refused to a GET"
+code=$(as "$LKEY" -o "$OUT/lx-staged.json" -w '%{http_code}' -X DELETE "$BASE/api/v3/attribution/exports/$LEXPORT?staged=1")
+eq "$code" 403 "and to a staged DELETE"
+has "$OUT/lx-staged.json" "does not have the 'view_attribution_reports' permission" "refused by the route's own role check"
+# (A staged change's presentation redacts webhook_* fields; the rest of the
+# record — model, range, status, last error — is what staging leaked.)
+grep -q '"record"' "$OUT/lx-staged.json" && bad "the refusal carries the export's record" || ok "and nothing of the export comes back"
+eq "$(as "$LKEY" -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/v3/attribution/exports/$LEXPORT?dry_run=1")" 403 "a dry run is refused the same way"
+eq "$(as "$LKEY" -o /dev/null -w '%{http_code}' -X POST -d '{}' "$BASE/api/v3/attribution/exports?staged=1")" 403 "and a staged create"
+eq "$(as "$LKEY" "$BASE/api/v3/staged-changes" | js 'len(d["data"])')" 0 "no proposal was recorded"
+eq "$(Q "SELECT COUNT(*) FROM 202_attribution_exports WHERE export_id=$LEXPORT")" 1 "the export is untouched"
+code=$(api -o "$OUT/ax-staged.json" -w '%{http_code}' -X DELETE "$BASE/api/v3/attribution/exports/$HOOK_EXPORT?staged=1")
+eq "$code" 202 "the admin's key still stages an export delete"
+eq "$(js 'str(d["data"]["preview"]["record"]["export_id"])' < "$OUT/ax-staged.json" 2>/dev/null)" "$HOOK_EXPORT" "with the preview of the export it would remove"
+CHG=$(js 'd["data"]["change_id"]' < "$OUT/ax-staged.json" 2>/dev/null)
+eq "$(api -o /dev/null -w '%{http_code}' -X POST "$BASE/api/v3/staged-changes/$CHG/discard")" 200 "and the proposal is discarded"
 
 # ─────────────────────────────────────────────────────────────────────
 if [ -n "${P202_BIN:-}" ]; then

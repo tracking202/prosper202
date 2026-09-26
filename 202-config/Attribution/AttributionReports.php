@@ -255,11 +255,14 @@ final class AttributionReports
     private function creditSource(int $userId, ?int $modelId, int $defaultModelId, int $from, int $to): array
     {
         if ($modelId !== null) {
+            // Ownership is part of the query, not only the caller's check: a
+            // model id of another account matches no credit row here.
             return [
                 '202_attribution_credits cr',
-                'cr.model_id = ? AND cr.conv_time >= ? AND cr.conv_time <= ?',
-                'iii',
-                [$modelId, $from, $to],
+                'cr.model_id = (SELECT om.model_id FROM 202_attribution_models om WHERE om.model_id = ? AND om.user_id = ?)
+                 AND cr.conv_time >= ? AND cr.conv_time <= ?',
+                'iiii',
+                [$modelId, $userId, $from, $to],
             ];
         }
 

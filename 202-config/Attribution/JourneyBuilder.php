@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Attribution;
 
 use Prosper202\Database\Connection;
+use Prosper202\Identity\IdentityGraph;
 
 /**
  * Builds a conversion's journey from the identity graph (plan §6.2).
@@ -102,29 +103,13 @@ final class JourneyBuilder
     }
 
     /**
-     * Every visitor key of the person a key belongs to. Merges compress
-     * paths (IdentityGraph::merge), so a key is at most one hop from its
-     * canonical key and every alias points straight at it.
+     * Every visitor key of the person a key belongs to (IdentityGraph owns
+     * the alias structure; this only delegates to it).
      *
      * @return list<int>
      */
     public function keysOfPerson(int $userId, int $key): array
     {
-        $stmt = $this->conn->prepareWrite(
-            'SELECT alias_of FROM 202_identity_visitors WHERE visitor_key = ? AND user_id = ? LIMIT 1'
-        );
-        $this->conn->bind($stmt, 'ii', [$key, $userId]);
-        $row = $this->conn->fetchOne($stmt);
-        if ($row === null) {
-            return [];
-        }
-        $canonical = $row['alias_of'] !== null ? (int) $row['alias_of'] : $key;
-
-        $stmt = $this->conn->prepareWrite(
-            'SELECT visitor_key FROM 202_identity_visitors WHERE user_id = ? AND (visitor_key = ? OR alias_of = ?) ORDER BY visitor_key'
-        );
-        $this->conn->bind($stmt, 'iii', [$userId, $canonical, $canonical]);
-
-        return array_map(static fn (array $r): int => (int) $r['visitor_key'], $this->conn->fetchAll($stmt));
+        return (new IdentityGraph($this->conn))->keysOfPerson($userId, $key);
     }
 }

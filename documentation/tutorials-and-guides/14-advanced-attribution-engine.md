@@ -97,4 +97,7 @@ define('P202_WEBHOOK_ALLOW_NETWORKS', '10.20.0.0/16');
 
 Export files are kept under `202-config/temp/attribution-exports/` (set
 `P202_EXPORT_DIR` to keep them outside the web root) until you delete the
-export.
+export. Inside the web root, make sure the web server denies
+`202-config/temp/`: the Docker image and the README's Apache and Nginx
+examples do; the directory's own `.htaccess` is not enough on its own,
+since Nginx never reads it and Apache ignores it under `AllowOverride None`.
