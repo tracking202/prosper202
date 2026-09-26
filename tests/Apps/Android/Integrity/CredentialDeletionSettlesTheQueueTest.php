@@ -111,7 +111,9 @@ final class CredentialDeletionSettlesTheQueueTest extends TestCase
         self::assertIsInt($settle);
         self::assertIsInt($gone);
         self::assertLessThan($gone, $settle, 'the registration delete settles the queue before the credential goes');
-        self::assertMatchesRegularExpression('/\$this->transaction\(function \(\) use \(\$id\): void \{\s*parent::delete\(\$id\);\s*\}\);/',
+        // deleteRecord() runs beforeDelete() and the row delete; the change
+        // records follow the commit (Controller::deleteRecord(), #167).
+        self::assertMatchesRegularExpression('/\$this->transaction\(fn \(\): array => \$this->deleteRecord\(\$id\)\)/',
             self::method('api/v3/Controllers/AppRegistrationsController.php', 'delete'), 'and both commit with the registration delete');
 
         $purge = self::method('api/v3/Apps/AppDataPurge.php', 'purgeUser');
