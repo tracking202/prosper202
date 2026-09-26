@@ -10,6 +10,7 @@ use Api\V3\Controllers\AppRegistrationsController;
 use Api\V3\Controllers\AppSkanEncodingsController;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Exception\WriteCommittedException;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\SchemaInstaller;
 use Prosper202\User\UserDataPurge;
@@ -71,6 +72,7 @@ final class AppRegistryIntegrationTest extends TestCase
 
     public static function tearDownAfterClass(): void
     {
+        self::$db?->query('DROP TRIGGER IF EXISTS p202_test_refuse_registration_delete');
         self::$db?->close();
         self::$db = null;
     }
@@ -205,6 +207,70 @@ final class AppRegistryIntegrationTest extends TestCase
             'the owner\'s own unlinked rows are re-linked by registering the app again');
     }
 
+    /**
+     * The trust withdrawal, the unlink, the encoding delete and the row
+     * delete commit together. The row delete is made to fail (a trigger
+     * refuses it) after the cascade has run inside the transaction: none of
+     * the cascade may stay behind.
+     */
+    public function testARegistrationDeleteThatFailsPartWayChangesNothing(): void
+    {
+        $id = (int) $this->apps()->create(['app_key' => '525463029', 'app_name' => 'A', 'accept_test_signals' => 1])['data']['registration_id'];
+        $dev = $this->postback(525463029, 0, null, 'development', null);
+        $this->apps()->update($id, ['app_name' => 'A again']); // re-runs the claim
+        (new AppSkanEncodingsController(self::$db, self::OWNER))->create(['registration_id' => $id, 'fine_value' => 1, 'event_name' => 'install']);
+        $this->assertSame(['user_id' => self::OWNER, 'registration_id' => $id, 'trusted' => 1], $this->postbackRow($dev));
+
+        self::$db->query('DROP TRIGGER IF EXISTS p202_test_refuse_registration_delete');
+        self::$db->query("CREATE TRIGGER p202_test_refuse_registration_delete BEFORE DELETE ON 202_app_registrations
+            FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'refused by the test'");
+        try {
+            $this->apps()->delete($id);
+            $this->fail('a delete whose row write failed reported success');
+        } catch (\Throwable $e) {
+            $this->assertStringNotContainsString('WriteCommitted', get_class($e), 'nothing committed, so nothing may say it did');
+        } finally {
+            self::$db->query('DROP TRIGGER IF EXISTS p202_test_refuse_registration_delete');
+        }
+
+        $this->assertCount(1, self::$db->query('SELECT registration_id FROM 202_app_registrations')->fetch_all(), 'the registration is still there');
+        $this->assertSame(['user_id' => self::OWNER, 'registration_id' => $id, 'trusted' => 1], $this->postbackRow($dev),
+            'the unlink and the trust withdrawal that ran before the failure were rolled back');
+        $this->assertSame(1, (int) self::$db->query('SELECT COUNT(*) AS c FROM 202_app_skan_encodings')->fetch_assoc()['c'],
+            'the encoding delete was rolled back');
+    }
+
+    /**
+     * The change record is written after the commit. When it fails, the
+     * delete has landed and the error says so (WriteCommittedException, which
+     * the retry seams read as "never retry"): the old wrapper recorded the
+     * change inside the transaction, so the same failure rolled the delete
+     * back and still claimed it had committed.
+     */
+    public function testAChangeRecordThatFailsAfterTheDeleteLeavesTheDeleteCommitted(): void
+    {
+        $id = (int) $this->apps()->create(['app_key' => '525463029', 'app_name' => 'A'])['data']['registration_id'];
+        $postback = $this->postback(525463029, self::OWNER, $id, 'valid', 1);
+        $apps = new class (self::$db, self::OWNER) extends AppRegistrationsController {
+            #[\Override]
+            protected function recordChange(string $operation, array $record): void
+            {
+                throw new \RuntimeException('the change log is unavailable');
+            }
+        };
+
+        try {
+            $apps->delete($id);
+            $this->fail('a failed change record was not reported');
+        } catch (WriteCommittedException) {
+            $this->addToAssertionCount(1);
+        }
+
+        $this->assertCount(0, self::$db->query('SELECT registration_id FROM 202_app_registrations')->fetch_all(),
+            'the delete it reported as committed is committed');
+        $this->assertNull($this->postbackRow($postback)['registration_id'], 'and so is its cascade');
+    }
+
     public function testAnEncodingMustNameMyOwnIosRegistrationOrBeAccountWide(): void
     {
         $mine = (int) $this->apps()->create(['app_key' => '525463029', 'app_name' => 'iOS'])['data']['registration_id'];
@@ -290,6 +356,32 @@ final class AppRegistryIntegrationTest extends TestCase
         $this->assertCount(1, self::$db->query('SELECT registration_id FROM 202_app_registrations')->fetch_all());
         $this->assertSame([['owner-key']], self::$db->query('SELECT api_key FROM 202_api_keys WHERE user_id = ' . self::OWNER)->fetch_all(),
             'the key revocation, the first statement to run, was rolled back too');
+    }
+
+    /**
+     * UserDataPurge refuses a non-positive id with InvalidArgumentException;
+     * the controller caught RuntimeException only, so that refusal escaped
+     * as an unhandled error. A row with user_id 0 (which NO_AUTO_VALUE_ON_ZERO
+     * lets a fixture write) is the one way past get()'s 404 to reach it.
+     */
+    public function testTheUsersControllerReportsThePurgesIdRefusalAsAFailedDelete(): void
+    {
+        self::$db->query("SET SESSION sql_mode='NO_AUTO_VALUE_ON_ZERO,STRICT_TRANS_TABLES'");
+        self::$db->query(
+            "INSERT INTO 202_users (user_id, user_name, user_pass, user_email, user_dash_email, user_timezone,
+                user_time_register, install_hash, user_hash, user_deleted)
+             VALUES (0, 'user0', 'x', 'u0@example.test', '', 'UTC', 1, '', '', 0)"
+        );
+        self::$db->query("SET SESSION sql_mode='STRICT_TRANS_TABLES'");
+        try {
+            (new \Api\V3\Controllers\UsersController(self::$db, self::OWNER))->delete(0);
+            $this->fail('deleting user 0 reported success');
+        } catch (\Api\V3\Exception\DatabaseException $e) {
+            $this->assertSame(500, $e->getCode());
+            $this->assertStringContainsString('unchanged', (string) $e->getPrevious()?->getMessage());
+        } finally {
+            self::$db->query('DELETE FROM 202_users WHERE user_id = 0');
+        }
     }
 
     public function testRetentionPrunesEveryUntrustedClassAndKeepsTrustedClaimedRows(): void

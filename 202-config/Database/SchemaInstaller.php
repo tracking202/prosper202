@@ -175,7 +175,8 @@ final class SchemaInstaller
     }
 
     /**
-     * Create SKAdNetwork (SKAN) attribution tables.
+     * Create the app tables (AppTables): registrations, their SKAN
+     * encodings, and the Apple postbacks.
      */
     public function createAppTables(): void
     {
