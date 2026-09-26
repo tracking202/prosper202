@@ -319,3 +319,36 @@ the view over it in memory for that request; nothing is written. A request
 with no view reads the stored row, as before; one whose view does not read
 answers 400 with the reason. `tests/Report/ReportViewReadersTest` holds every
 reader and every handed-off URL to this.
+
+<!-- U5: Update -->
+## A wide write is checked before it is made
+
+Some writes change many rows at once and cannot be undone: Update CPC sets
+the cost of every click a selection names. Such a page is two steps on one
+page, never an AJAX fragment. The selection is a GET form (so what is about
+to change is a link that can be sent, rule 8) whose answer is a panel saying
+what will change and how many rows that is, counted with the same clause the
+write runs; the write is a POST from that panel that carries the session
+token and repeats the selection in hidden fields, which the server reads and
+checks again, ownership included, rather than trusting. Once the panel offers
+the write, it is the page's one primary button and the check becomes a
+secondary one. A value the server cannot read is refused under its field; it
+never falls back to "every campaign" (error pattern #11).
+
+The number on the button is a promise: "Update 4 clicks" never changes a
+fifth. A selection whose window includes today keeps gaining rows between
+the check and the confirm, so the confirm form also carries the count the
+check showed and the highest row id it counted. The write is bounded by that
+id (rows recorded since are left alone, and the result says so), and it runs
+only if the bounded selection still counts the same, counted again under a
+lock in the write's own transaction. When it does not (a row edited into the
+selection, or recorded late below the boundary), nothing is written and the
+page shows the check again with both numbers and the new count to confirm. A
+confirm that does not carry the count is refused the same way, never read as
+"no limit".
+
+The Update pages answer a write in place with what it did (what was marked,
+what was skipped and why) rather than redirecting, because the answer is a
+report and each write is safe to send twice. Their destructive forms confirm
+through `form[data-p202-confirm]`, saying what is kept.
+

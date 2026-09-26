@@ -294,30 +294,6 @@ $(document).ready(function() {
 		}
 	});
 
-	//Update CPC date picker
-	$("#update-cpc-dates input").datepicker({dateFormat: 'mm/dd/yy'});
-
-	//Update CPC button
-	$("#update-cpc").click(function() {
-		var element = $("#confirm-cpc-update-content");
-		$.post("<?php echo get_absolute_url();?>tracking202/ajax/update_cpc.php", $('#cpc_form').serialize(true))
-		  .done(function(data) {
-		  	element.css("opacity", "1");
-		  	element.html(data);
-		});
-		
-	});
-
-	//Clear SUBIDs button
-	$("#clear-subids").click(function() {
-		var element = $("#response");
-		$.post("<?php echo get_absolute_url();?>tracking202/ajax/clear_subids.php", $('#clear_subids_form').serialize(true))
-		  .done(function(data) {
-		  	element.html(data);
-		});
-		
-	});
-
 	//Update Survey questions
 	$("#survey-form-submit").click(function() {
 		$('#perks-loading').show();

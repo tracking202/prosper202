@@ -266,7 +266,10 @@ final class AccountPostRequiresTokenTest extends TestCase
                 }
             }
             $markup = (string) preg_replace('/<!--.*?-->/s', '', $markup);
-            if (!preg_match_all('/<form\b([^>]*)>(.*?)<\/form>/is', $markup, $matches, PREG_SET_ORDER)) {
+            // An echo block inside the tag (action="…") ends in a question
+            // mark and a bracket that do not end the tag; read past it, or a
+            // method="post" after it goes unread and the form is skipped.
+            if (!preg_match_all('/<form\b((?:<\?php.*?\?>|[^>])*)>(.*?)<\/form>/is', $markup, $matches, PREG_SET_ORDER)) {
                 continue;
             }
             foreach ($matches as $match) {

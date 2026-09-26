@@ -670,3 +670,51 @@ async function overviewPageBaseline(ctx, entry, options = {}) {
 module.exports.OVERVIEW_FAMILY_PAGES = OVERVIEW_FAMILY_PAGES;
 module.exports.overviewReportDrawn = overviewReportDrawn;
 module.exports.overviewPageBaseline = overviewPageBaseline;
+
+/* U5: Update */
+
+/**
+ * The Update pages on the v2 shell, one baseline entry each: where the page
+ * is, the sub-menu entry that marks it current, and the heading it opens
+ * with. specs/update-pages.spec.js runs updatePageBaseline() over every
+ * entry, light and dark, at 1280px and 390px; adding a page is a line here.
+ */
+const UPDATE_PAGES = [
+  { path: '/tracking202/update/subids.php', menu: 'Update Subids', heading: 'Update subids' },
+  { path: '/tracking202/update/cpc.php', menu: 'Update CPC', heading: 'Update CPC' },
+  { path: '/tracking202/update/clear-subids.php', menu: 'Reset Campaign Subids', heading: 'Reset campaign subids' },
+  { path: '/tracking202/update/delete-subids.php', menu: 'Delete Subids', heading: 'Delete subids' },
+  { path: '/tracking202/update/upload.php', menu: 'Upload Revenue Reports', heading: 'Upload revenue reports' },
+];
+
+/** What the Update pages were built on before U5. */
+const UPDATE_CLASSIC_CLASSES = ['col-xs-4', 'col-xs-6', 'col-xs-8', 'col-xs-12', 'form-horizontal', 'form-group', 'control-label',
+  'input-sm', 'btn-p202', 'btn-block', 'form_seperator', 'panel', 'panel-body', 'panel-default', 'pull-right', 'input-group-addon',
+  'help-block', 'radio', 'fileinput', 'btn-file', 'table-bordered', 'infotext'];
+
+/**
+ * One Update page's baseline, at whatever viewport and theme the session
+ * has: it navigates, then checks the shell, the page's heading and sub-menu
+ * entry, every component class styled, no flex container eating its spaces,
+ * no classic class left in the live DOM, and wide tables scrolling in their
+ * own box — and, in dark mode, that the page is actually dark.
+ */
+async function updatePageBaseline(ctx, entry, options = {}) {
+  const { app, ui, expect } = ctx;
+  expect.section(entry.menu + ' (' + entry.path + ')');
+  await app.goto(entry.path);
+  await baseline(ctx);
+  expect.eq(await ui.text('h1.p202-page-header__title'), entry.heading, 'the page opens with its header');
+  expect.eq(await app.currentSubMenuItem(), entry.menu, 'the sub-menu marks ' + entry.menu + ' as current');
+  await currentSubMenuItemIsVisible(ctx);
+  await componentClassesAreStyled(ctx, entry.scriptOnly || []);
+  await flexContainersKeepTheirSpaces(ctx);
+  await noLegacyClasses(ctx, UPDATE_CLASSIC_CLASSES);
+  await tablesScrollThemselves(ctx);
+  if (options.dark) {
+    await darkThemeApplies(ctx);
+  }
+}
+
+module.exports.UPDATE_PAGES = UPDATE_PAGES;
+module.exports.updatePageBaseline = updatePageBaseline;
