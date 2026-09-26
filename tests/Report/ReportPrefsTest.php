@@ -102,10 +102,26 @@ final class ReportPrefsTest extends TestCase
         // set_user_prefs.php is a script, not a function, so this is the
         // structural half: it calls the shared reader for both bounds and no
         // longer splits on '/', which is what made it refuse YYYY-MM-DD.
+        // Since the Overview and Analyze families merged, the one reader is
+        // ReportFilterInput::parseDate(), which this file's function wraps;
+        // the writer calls it for both bounds.
         $source = (string) file_get_contents(dirname(__DIR__, 2) . '/tracking202/ajax/set_user_prefs.php');
-        self::assertStringContainsString('functions-report-prefs.php', $source, 'the writer loads the shared reader');
-        self::assertSame(1, substr_count($source, 'p202_report_parse_date('), 'one call, in the loop over both bounds');
+        self::assertSame(2, substr_count($source, 'ReportFilterInput::parseDate('), 'one call per bound');
         self::assertStringNotContainsString("explode('/'", $source, 'the slash-only parse is gone');
+    }
+
+    public function testBothReportFamiliesReadADateTheSameWay(): void
+    {
+        foreach (['2026-09-25', '2026-9-5', '09/25/2026', '9/5/26', ' 09 / 25 / 2026 ', '2026-02-30', '02/30/2026',
+            '25/09/2026', '1969-12-31', '2026-09-25T00:00', "2026-09-25\n", 'yesterday', ''] as $value) {
+            $classic = p202_report_parse_date($value);
+            $shared = \Tracking202\Report\ReportFilterInput::parseDate($value);
+            self::assertSame(
+                $shared === null ? null : ['year' => $shared[0], 'month' => $shared[1], 'day' => $shared[2]],
+                $classic,
+                var_export($value, true)
+            );
+        }
     }
 
     // ── the window ────────────────────────────────────────────────────

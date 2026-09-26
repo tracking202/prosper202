@@ -86,7 +86,11 @@ user can still reach every setting. Concretely:
    `202_users_pref` (`user_pref_time_predefined`, and a column per
    dimension), and a page that reads it must still yield to the URL wherever
    the URL speaks. Analyze › Mobile Apps is URL-only so far — it defaults to
-   Last 30 Days rather than to anything stored. An open "Advanced" disclosure
+   Last 30 Days rather than to anything stored. The other Analyze reports
+   (U3) take their filters from the URL and write them to that row before
+   they run, because their downloads and the classic pages read them there:
+   a URL that names any filter speaks for all of them, and one that names
+   none shows the stored default. An open "Advanced" disclosure
    persists per browser, in `localStorage`, because it is a convenience
    rather than a setting. Never put anything in browser storage that another
    account sharing the browser must not see.
@@ -203,7 +207,9 @@ option lists and calls them. The kit renders each in every state.
   — the `.p202-table` with right-aligned numbers, a totals row that stays
   last, the empty state in place of an empty table, `aria-sort` for the order
   the server delivered, and opt-in client-side sorting whose header buttons
-  are keyboard-reachable.
+  are keyboard-reachable. A table that is not sortable in place may give a
+  column an `href`: its heading becomes a link that reloads the report sorted
+  by that column on the server, the way a paginated report sorts (U3).
 
 ## The chrome is framework-neutral
 

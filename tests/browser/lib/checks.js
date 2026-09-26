@@ -469,6 +469,53 @@ module.exports = {
   tablesScrollThemselves,
 };
 
+/* U3: Analyze */
+
+/**
+ * The Analyze report pages on the v2 shell, one entry each: where it is, the
+ * sub-menu label that reaches it, and the heading it opens with. A page added
+ * to the family is a line here, and every pass that walks the list covers it.
+ */
+const ANALYZE_REPORT_PAGES = [
+  { path: '/tracking202/analyze/keywords.php', menu: 'Keywords', heading: 'Keywords' },
+  { path: '/tracking202/analyze/text_ads.php', menu: 'Text Ads', heading: 'Text Ads' },
+  { path: '/tracking202/analyze/referers.php', menu: 'Referers', heading: 'Referers' },
+  { path: '/tracking202/analyze/ips.php', menu: 'IPs', heading: 'IP Addresses' },
+  { path: '/tracking202/analyze/countries.php', menu: 'Countries', heading: 'Countries' },
+  { path: '/tracking202/analyze/regions.php', menu: 'Regions', heading: 'Regions' },
+  { path: '/tracking202/analyze/cities.php', menu: 'Cities', heading: 'Cities' },
+  { path: '/tracking202/analyze/isp.php', menu: 'ISP/Carrier', heading: 'ISPs and Carriers' },
+  { path: '/tracking202/analyze/landing_pages.php', menu: 'Landing Pages', heading: 'Landing Pages' },
+  { path: '/tracking202/analyze/devices.php', menu: 'Devices', heading: 'Devices' },
+  { path: '/tracking202/analyze/browsers.php', menu: 'Browsers', heading: 'Browsers' },
+  { path: '/tracking202/analyze/platforms.php', menu: 'Platforms', heading: 'Platforms' },
+  { path: '/tracking202/analyze/variables.php', menu: 'Custom Variables', heading: 'Custom Variables' },
+];
+
+/** Bootstrap 3 classes a migrated page most often keeps by accident. */
+const LIKELY_LEFTOVERS = ['col-xs-12', 'col-xs-6', 'panel', 'panel-body', 'well', 'form-horizontal', 'input-sm', 'label', 'pull-right'];
+
+/**
+ * Everything the standard asks of any v2 page, for the page on screen: the
+ * shell and no errors, every component class styled, no flex container
+ * eating its spaces, the current sub-menu entry in view, no Bootstrap 3
+ * class in the live DOM, and wide tables scrolling in their own box. One
+ * call per page, at whatever width and theme the caller is at.
+ *
+ * @param {{scriptOnly?: string[]}} [options] classes this page uses only as
+ *   script hooks
+ */
+async function v2PageBaseline(ctx, options = {}) {
+  await baseline(ctx);
+  await componentClassesAreStyled(ctx, options.scriptOnly || []);
+  await flexContainersKeepTheirSpaces(ctx);
+  await currentSubMenuItemIsVisible(ctx);
+  await noLegacyClasses(ctx, LIKELY_LEFTOVERS);
+  await tablesScrollThemselves(ctx);
+}
+
+module.exports.ANALYZE_REPORT_PAGES = ANALYZE_REPORT_PAGES;
+module.exports.v2PageBaseline = v2PageBaseline;
 /* U2: Overview, Visitors, Spy */
 
 /**

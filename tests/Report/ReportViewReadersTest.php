@@ -16,10 +16,11 @@ use Tests\TestCase;
  * download's — draws the other tab's filters again, silently. So this walks
  * the tree rather than trusting a list:
  *
- *  - every statement under 202-config/ that selects a report column (or *)
- *    from 202_users_pref, and every such statement in a file that installs a
- *    view (p202_report_view_begin()), is matched by a ReportView::apply() in
- *    the same file — counted, so a second read added beside a first is seen;
+ *  - every statement under 202-config/ and tracking202/ that selects a
+ *    report column (or *) from 202_users_pref is matched by a
+ *    ReportView::apply() in the same file — counted, so a second read added
+ *    beside a first is seen, and a new fragment that reads the row without
+ *    installing a view is in the scan whether or not it installs one;
  *  - every URL a page hands a view to (p202_report_view_url(), and the
  *    overview pages' `fragment` and `download`) is a file that installs it.
  *
@@ -36,7 +37,11 @@ final class ReportViewReadersTest extends TestCase
      * install and upgrade code, and the user repository behind the API's
      * preferences endpoint, whose job is to say what is stored.
      */
-    private const NOT_READERS = ['202-config/Database/', '202-config/migrations/', '202-config/install.php', '202-config/functions-upgrade.php', '202-config/connect2.php', '202-config/User/MysqlUserRepository.php'];
+    private const NOT_READERS = ['202-config/Database/', '202-config/migrations/', '202-config/install.php', '202-config/functions-upgrade.php', '202-config/connect2.php', '202-config/User/MysqlUserRepository.php',
+        // The opt-in JSON report API (TRACKING202_JSON_ARCHITECTURE_ENABLED): no page
+        // draws a view and hands it there; it answers for the stored filters,
+        // which is what an API caller asks it for.
+        'tracking202/ajax/report_dispatch.php'];
 
     private string $root;
 
@@ -69,7 +74,16 @@ final class ReportViewReadersTest extends TestCase
                 $files[] = substr($file->getPathname(), strlen($this->root) + 1);
             }
         }
+        foreach ($this->phpFiles(['tracking202/Report']) as $file) {
+            $files[] = $file;
+        }
         foreach ($this->filesInstallingAView() as $file) {
+            $files[] = $file;
+        }
+        // And every file under tracking202/: a new fragment that reads the
+        // row itself and forgets p202_report_view_begin() would otherwise
+        // sit in neither set, and the scan would never see it (#162).
+        foreach ($this->phpFiles(['tracking202']) as $file) {
             $files[] = $file;
         }
 
@@ -90,7 +104,7 @@ final class ReportViewReadersTest extends TestCase
             self::assertGreaterThanOrEqual($reads, $applies, "$file reads the report filters from 202_users_pref $reads time(s) but passes a row through ReportView::apply() $applies time(s); a read around the view draws another tab's filters");
         }
         // The scan must find the readers it exists for, or it proves nothing.
-        foreach (['202-config/functions-tracking202.php', '202-config/class-dataengine.php', '202-config/functions-report-prefs.php', 'tracking202/ajax/account_overview.php', 'tracking202/overview/group_overview_download.php'] as $reader) {
+        foreach (['202-config/functions-tracking202.php', '202-config/class-dataengine.php', '202-config/functions-report-prefs.php', 'tracking202/ajax/account_overview.php', 'tracking202/overview/group_overview_download.php', 'tracking202/Report/ReportPrefsStore.php', 'tracking202/analyze/keywords_download.php'] as $reader) {
             self::assertContains($reader, $checked, "the scan sees $reader's read of the report filters");
         }
     }
@@ -113,6 +127,19 @@ final class ReportViewReadersTest extends TestCase
             self::assertFileExists($this->root . '/' . $file, "$from hands a view to $url");
             self::assertMatchesRegularExpression('/\bp202_report_view_begin\(/', (string) file_get_contents($this->root . '/' . $file),
                 "$file is handed a view by $from but never installs it, so it draws whatever the stored filters say by then");
+        }
+    }
+
+    public function testEveryAnalyzeDownloadInstallsTheViewItsPageHandsIt(): void
+    {
+        require_once $this->root . '/tracking202/analyze/AnalyzeReportController.php';
+        $controller = (string) file_get_contents($this->root . '/tracking202/analyze/AnalyzeReportController.php');
+        self::assertMatchesRegularExpression("/'downloadUrl' => p202_report_view_url\\(/", $controller, 'the report page hands its download the view it drew');
+        foreach (\Tracking202\Analyze\AnalyzeReportController::REPORTS as $type => $report) {
+            $file = 'tracking202/analyze/' . $report['download'];
+            self::assertFileExists($this->root . '/' . $file);
+            self::assertMatchesRegularExpression('/\bp202_report_view_begin\(/', (string) file_get_contents($this->root . '/' . $file),
+                "$file ($type) is handed a view but never installs it, so it exports whatever the stored filters say by then");
         }
     }
 

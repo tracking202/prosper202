@@ -75,23 +75,31 @@ if (isset($_POST['user_pref_time_predefined']) && $_POST['user_pref_time_predefi
     
 } else { 
 	
-	// Either shape a report form submits: the classic calendar's mm/dd/yyyy
-	// (and the mm/dd/yy its presets fill in) or the v2 range picker's
-	// YYYY-MM-DD. One reader for both, in functions-report-prefs.php, so the
-	// two kinds of page cannot disagree about what a date says. A value that
-	// is present and does not parse is refused with the sentence below; the
-	// old reader silently dropped one that was missing a part.
-	foreach (['from' => [0, 0, 0], 'to' => [23, 59, 59]] as $which => [$hour, $minute, $second]) {
-		$raw = isset($_POST[$which]) ? trim((string) $_POST[$which]) : '';
-		if ($raw === '') {
-			continue;
+	// Either shape a report submits: the classic calendar's mm/dd/yyyy (or
+	// the mm/dd/yy its preset buttons wrote) and the ISO YYYY-MM-DD of the v2
+	// pages' <input type="date">. One parser, shared with those pages
+	// (tests/Report/ReportFilterInputTest pins both shapes), so the two cannot
+	// disagree about what a date is. An empty field is left unset, as before;
+	// one that is not a date is refused rather than guessed at.
+	$dateError = '<div class="error">That is not a date. Use mm/dd/yyyy or yyyy-mm-dd.</div>';
+	$fromRaw = trim((string) ($_POST['from'] ?? ''));
+	if ($fromRaw !== '') {
+		$fromDate = \Tracking202\Report\ReportFilterInput::parseDate($fromRaw);
+		if ($fromDate === null) {
+			$error['date'] = $dateError;
+		} else {
+			$clean['user_pref_time_from'] = mktime(0, 0, 0, $fromDate[1], $fromDate[2], $fromDate[0]);
 		}
-		$day = p202_report_parse_date($raw);
-		if ($day === null) {
-			$error['date'] = '<div class="error">Wrong date format, you must use the following format:   <strong>mm/dd/yyyy</strong> or <strong>yyyy-mm-dd</strong></div>';
-			continue;
+	}
+
+	$toRaw = trim((string) ($_POST['to'] ?? ''));
+	if ($toRaw !== '') {
+		$toDate = \Tracking202\Report\ReportFilterInput::parseDate($toRaw);
+		if ($toDate === null) {
+			$error['date'] = $dateError;
+		} else {
+			$clean['user_pref_time_to'] = mktime(23, 59, 59, $toDate[1], $toDate[2], $toDate[0]);
 		}
-		$clean['user_pref_time_' . $which] = mktime($hour, $minute, $second, $day['month'], $day['day'], $day['year']);
 	}
 }
 

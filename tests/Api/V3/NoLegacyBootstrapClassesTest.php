@@ -83,6 +83,18 @@ final class NoLegacyBootstrapClassesTest extends TestCase
      */
     private const V2_SHARED = [
         '202-config/functions-ui-partials.php',
+        // U3: the Customer LTV partials, which render only inside the v2
+        // Analyze › Customer LTV page (tracking202/analyze/ltv.php).
+        'tracking202/ajax/sort_ltv.php',
+        'tracking202/ajax/ltv_ui.php',
+        'tracking202/ajax/ltv_customer.php',
+        'tracking202/ajax/ltv_company.php',
+        'tracking202/ajax/ltv_companies.php',
+        'tracking202/ajax/ltv_products.php',
+        'tracking202/ajax/ltv_subscriptions.php',
+        'tracking202/ajax/ltv_settings.php',
+        'tracking202/ajax/ltv_merge_modal.php',
+        '202-js/ltv.js',
         // U2: Overview, Visitors, Spy. The fragments these pages draw their
         // reports from, and the script that draws them. OverviewPagesTest
         // fails when a page of the family names a fragment not listed here.

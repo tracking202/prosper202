@@ -487,10 +487,13 @@ function p202_filter_control(array $filter, string $prefix, bool $inline): strin
  * sorts on the server, by link, because sorting one page of rows reorders
  * that page and nothing else.
  *
- * @param list<array{key: string, label: string, num?: bool, sort?: string|false}> $columns
+ * @param list<array{key: string, label: string, num?: bool, sort?: string|false, href?: string}> $columns
  *   key    the row field this column reads
  *   num    a number: right-aligned, tabular, sorted numerically
  *   sort   'number', 'text' or false (not sortable); defaults from `num`
+ *   href   (a table that is not `sortable`) a URL that reloads the report
+ *          sorted by this column on the server; the heading becomes that
+ *          link, and `sorted` says which column the rows are in now
  * @param list<array<string, mixed>> $rows  one array per row, keyed by column
  *   key. A cell is a scalar (escaped) or an array: ['text' => escaped] or
  *   ['html' => TRUSTED], either with an optional 'sort' => the raw value to
@@ -575,6 +578,10 @@ function p202_data_table(array $columns, array $rows, array $options = []): stri
             $label = '<button type="button" class="p202-sort">' . $label . '</button>';
         } elseif ($sortable) {
             $classes[] = 'no-sort';
+        } elseif ((string) ($column['href'] ?? '') !== '') {
+            // U3: a server-sorted column. The heading is a link to the same
+            // report in that order, styled as the sort control it is.
+            $label = '<a class="p202-sort" href="' . $e((string) $column['href']) . '">' . $label . '</a>';
         }
         $html .= '<th scope="col"' . ($classes !== [] ? ' class="' . implode(' ', $classes) . '"' : '') . $attrs . '>' . $label . '</th>';
     }

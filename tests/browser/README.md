@@ -82,6 +82,11 @@ module.exports = {
     db.truncate(['202_attribution_postbacks']);
   },
 
+  // Optional. Set it when reset() replaces the shared fixture (the
+  // agent-eval seed other specs assert against) with data of its own: the
+  // runner then runs this spec after every spec that does not.
+  replacesFixture: false,
+
   // Optional. Signs in, seeds, whatever the whole spec needs once.
   async setup(ctx) {
     await ctx.app.login();

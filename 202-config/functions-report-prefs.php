@@ -114,21 +114,14 @@ function p202_report_pref_fields(): array
  */
 function p202_report_parse_date(string $value): ?array
 {
-    $value = trim($value);
-    if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $value, $m) === 1) {
-        [$year, $month, $day] = [(int) $m[1], (int) $m[2], (int) $m[3]];
-    } elseif (preg_match('#^(\d{1,2})\s*/\s*(\d{1,2})\s*/\s*(\d{4}|\d{2})$#', $value, $m) === 1) {
-        [$month, $day, $year] = [(int) $m[1], (int) $m[2], (int) $m[3]];
-        if (strlen($m[3]) === 2) {
-            $year += $year < 70 ? 2000 : 1900;
-        }
-    } else {
+    // One reader for every report page (Tracking202\Report\ReportFilterInput),
+    // so the Overview family and the Analyze family cannot disagree about
+    // what a date says.
+    $parsed = \Tracking202\Report\ReportFilterInput::parseDate($value);
+    if ($parsed === null) {
         return null;
     }
-    if ($year < 1970 || !checkdate($month, $day, $year)) {
-        return null;
-    }
-    return ['year' => $year, 'month' => $month, 'day' => $day];
+    return ['year' => $parsed[0], 'month' => $parsed[1], 'day' => $parsed[2]];
 }
 
 /**
@@ -526,6 +519,8 @@ function p202_report_view_begin(array $groups = []): string
     try {
         return p202_report_view_from_request($_GET, (int) ($_SESSION['user_id'] ?? 0), $groups);
     } catch (InvalidArgumentException $refused) {
+        // A download has already said "attachment"; the refusal is a page.
+        header_remove('Content-Disposition');
         http_response_code(400);
         header('Content-Type: text/html; charset=utf-8');
         echo '<div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body">'
