@@ -138,4 +138,37 @@ HTML;
         self::assertNull($apps[1]['image'], 'a path that climbs out of 202-img is not an icon');
         self::assertSame([], p202_appstore_apps(false, '/'));
     }
+
+    /**
+     * Every page on the standalone shell names itself in <title>. The
+     * upgrader's form was the one bare info_top() left (#169), so the tab
+     * read the generic name while its sibling states said "Upgrade". The
+     * one call without a title is _die(), whose message is the page.
+     */
+    public function testEveryStandalonePageNamesItsTitle(): void
+    {
+        $root = dirname(__DIR__, 2);
+        $bare = [];
+        $calls = 0;
+        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS));
+        foreach ($iterator as $file) {
+            $relative = substr($file->getPathname(), strlen($root) + 1);
+            if ($file->getExtension() !== 'php' || preg_match('#^(vendor|tests|\.git|\.claude)/#', $relative) === 1) {
+                continue;
+            }
+            $tokens = array_values(array_filter(\PhpToken::tokenize((string) file_get_contents($file->getPathname())), static fn (\PhpToken $t): bool => !$t->isIgnorable()));
+            foreach ($tokens as $i => $token) {
+                if ($token->text !== 'info_top' || ($tokens[$i + 1]->text ?? '') !== '(' || ($tokens[$i - 1] ?? null)?->is(T_FUNCTION)) {
+                    continue;
+                }
+                $calls++;
+                $titled = ($tokens[$i + 2]->text ?? '') === '[' && in_array($tokens[$i + 3]->text ?? '', ["'title'", '"title"'], true);
+                if (!$titled && !($relative === '202-config/functions.php' && ($tokens[$i + 2]->text ?? '') === ')')) {
+                    $bare[] = "$relative:{$token->line}";
+                }
+            }
+        }
+        self::assertGreaterThan(8, $calls, 'the scan found the standalone pages');
+        self::assertSame([], $bare, 'info_top() without a title');
+    }
 }
