@@ -10,6 +10,14 @@ $lockFile = __DIR__ . '/cron.lock';
 $logFile = __DIR__ . '/../202-config/cronjob.log';
 
 try {
+    // Bootstrap before taking the lock: a run that cannot start (the
+    // database needs an upgrade, 202-config.php is missing) stops inside
+    // connect.php — on the command line with the reason and exit status 1 —
+    // and must not leave a lock that makes the next runs report "already
+    // running" instead.
+    require_once __DIR__ . '/../202-config/connect.php';
+    require_once __DIR__ . '/../202-config/class-dataengine.php';
+
     // Check for lock file to prevent concurrent runs
     if (file_exists($lockFile)) {
         $lockTime = filemtime($lockFile);
@@ -25,8 +33,6 @@ try {
     // Create lock file
     touch($lockFile);
 
-	include_once(__DIR__ . '/../202-config/connect.php');
-	include_once(__DIR__ . '/../202-config/class-dataengine.php');
 
     // Cron does not need to hold the user's session lock while it runs.
     if (session_status() === PHP_SESSION_ACTIVE) {

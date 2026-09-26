@@ -2,8 +2,35 @@
 
 declare(strict_types=1);
 
+if (!function_exists('p202_cli_fail')) {
+    /**
+     * A command-line run (a cron job, a worker) that cannot go on: say why on
+     * stderr and exit non-zero.
+     *
+     * On the web every early stop below answers with a page or a redirect.
+     * On the command line a redirect is a header nobody reads and die() is
+     * exit status 0, so a cron run against a database that needs an upgrade
+     * printed nothing and reported success — the attribution worker looked
+     * like an idle one with an empty backlog (measurement plan §8.1). Every
+     * stop in this file goes through here first when PHP_SAPI is the CLI;
+     * tests/Cron/CronEntryPointsFailLoudlyTest holds that, and
+     * tests/live/cron-needs-upgrade.sh runs every cron job against a database
+     * wound back a version.
+     */
+    function p202_cli_fail(string $message): void
+    {
+        if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
+            return;
+        }
+        $script = basename((string) ($_SERVER['SCRIPT_FILENAME'] ?? $_SERVER['PHP_SELF'] ?? 'prosper202'));
+        fwrite(STDERR, 'Prosper202 (' . $script . '): ' . $message . PHP_EOL);
+        exit(1);
+    }
+}
+
 // Load centralized version configuration
 if (!file_exists(__DIR__ . '/version.php')) {
+    p202_cli_fail('202-config/version.php is missing; this copy of Prosper202 is incomplete. Deploy the release again.');
     die('Critical: Version file missing');
 }
 require_once(__DIR__ . '/version.php');
@@ -202,6 +229,7 @@ $temp_ip_address = $_SERVER['HTTP_X_FORWARDED_FOR'];
 if (file_exists(ROOT_PATH  . '202-config.php')) {
     include_once(ROOT_PATH  . '202-config.php');
 } else {
+    p202_cli_fail(ROOT_PATH . '202-config.php is missing: Prosper202 is not installed here. Open 202-config/setup-config.php on the site to install it.');
     header('location: setup-config.php');
     die();
 }
@@ -254,6 +282,7 @@ if (!function_exists('tracking202JsonArchitectureEnabled')) {
 // in the request (CLAUDE.md #4: no silent fallbacks).
 $autoloadPath = ROOT_PATH . 'vendor/autoload.php';
 if (!file_exists($autoloadPath)) {
+    p202_cli_fail('vendor/autoload.php is missing: run `composer install --no-dev` in ' . ROOT_PATH . '.');
     http_response_code(500);
     die('<h2>Prosper202: dependencies are missing</h2>'
         . '<p>The <code>vendor/</code> folder was not found, so required libraries '
@@ -370,6 +399,7 @@ try {
 } catch (Exception $e) {
     // Capture the specific exception message
     $db_error_msg = $e->getMessage();
+    p202_cli_fail('cannot connect to the database named in 202-config.php: ' . $db_error_msg);
 
     _die("<h6>Error establishing a database connection</h6>
 			<p><small>This either means that the username and password information in your <code>202-config.php</code> file is incorrect or we can't contact the database server. This could mean your host's database server is down.</small></p>
@@ -446,7 +476,13 @@ if ($skip_upgrade == false) {
     if (is_installed() == true) {
 
         //if we need upgrade, and its not already on the upgrade screen, redirect to the upgrade screen
-        if ((upgrade_needed() == true) and (($navigation[1] != '202-config') and ($navigation[2] != 'upgrade.php'))) {
+        // A command-line run has no request path: its navigation is empty,
+        // and reading a segment it does not have printed a warning ahead of
+        // the reason below.
+        if ((upgrade_needed() == true) and ((($navigation[1] ?? '') != '202-config') and (($navigation[2] ?? '') != 'upgrade.php'))) {
+            p202_cli_fail('the database needs an upgrade: its schema is version ' . PROSPER202::prosper202_version()
+                . ' and this code is version ' . PROSPER202::php_version()
+                . '. Nothing was run. Open 202-config/upgrade.php on the site (signed in) to upgrade it; cron jobs run again once it has.');
             header('location: ' . get_absolute_url() . '202-config/upgrade.php');
             die();
         }
@@ -459,6 +495,7 @@ switch ($navigation[1]) {
     case "alerts202":
     case "stats202":
         if (@ini_get('safe_mode')) {
+            p202_cli_fail('PHP safe_mode is on; turn it off to run this.');
             header('location: ' . get_absolute_url() . '202-account/disable-safe-mode.php');
             die();
         }
