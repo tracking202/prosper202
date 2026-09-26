@@ -285,9 +285,20 @@ final class PublicIntakeCoverageTest extends TestCase
         $this->assertIsInt($authAt, 'the router must authenticate somewhere');
         $preAuth = substr($src, 0, $authAt);
 
-        preg_match_all("~\\\$path === '(/apps[^']*)'~", $preAuth, $routes, PREG_OFFSET_CAPTURE);
+        // Literal routes (`$path === '/apps…'`) and pattern routes
+        // (`preg_match('#^/apps…#`, the events route's shape) alike: a
+        // public route written as a pattern must not escape the check.
+        preg_match_all("~\\\$path === '(/apps[^']*)'|preg_match\\('#\\^(/apps[^#]*)#~", $preAuth, $found, PREG_OFFSET_CAPTURE | PREG_SET_ORDER);
+        $routes = [1 => []];
+        foreach ($found as $m) {
+            $routes[1][] = isset($m[2]) && $m[2][1] >= 0 ? $m[2] : $m[1];
+        }
         $this->assertNotSame([], $routes[1], 'no pre-auth app route found; a silent zero would pass vacuously');
-        $this->assertSame(['/apps/schema'], array_column($routes[1], 0), 'the pre-auth app routes (PR 5 adds /apps/installs)');
+        $this->assertSame(
+            ['/apps/installs', '/apps/installs/([^/]+)/events$', '/apps/schema'],
+            array_column($routes[1], 0),
+            'the pre-auth app routes: the Android intake (installs, events) and the schema'
+        );
 
         foreach ($routes[1] as [$route, $at]) {
             $next = strpos($preAuth, 'exit;', $at);
@@ -295,7 +306,7 @@ final class PublicIntakeCoverageTest extends TestCase
             $branch = substr($preAuth, $at, $next - $at);
             $preflight = strpos($branch, 'PublicIntake::preflight(');
             $limit = strpos($branch, 'PublicIntake::rateLimit(');
-            $handler = strpos($branch, 'Controller(');
+            $handler = self::firstOf($branch, ['Controller(', 'Intake(']);
             $this->assertIsInt($preflight, "$route must run PublicIntake::preflight()");
             $this->assertIsInt($limit, "$route must rate-limit through PublicIntake::rateLimit()");
             $this->assertIsInt($handler, "$route must hand over to its controller");
@@ -308,5 +319,19 @@ final class PublicIntakeCoverageTest extends TestCase
 
         $intake = (string)file_get_contents(dirname(__DIR__, 2) . '/api/v3/Apps/PublicIntake.php');
         $this->assertStringContainsString('softIpRateLimit(', $intake, 'PublicIntake keys the limit on the validated peer');
+    }
+
+    /** @param list<string> $needles */
+    private static function firstOf(string $haystack, array $needles): int|false
+    {
+        $first = false;
+        foreach ($needles as $needle) {
+            $at = strpos($haystack, $needle);
+            if ($at !== false && ($first === false || $at < $first)) {
+                $first = $at;
+            }
+        }
+
+        return $first;
     }
 }

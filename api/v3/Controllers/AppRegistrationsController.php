@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
+use Api\V3\Apps\Android\InstallIntake;
+use Api\V3\Apps\Android\OrphanedPendingClicks;
 use Api\V3\Apps\AppIdentity;
 use Api\V3\Apps\AppPolicy;
 use Api\V3\Apps\AppToken;
@@ -33,7 +35,10 @@ use Api\V3\Exception\WriteCommittedException;
  * `accept_test_signals`, whether development-signed postbacks count as
  * trusted — is applied to the rows already stored on every write, because it
  * is a live policy rather than a receipt-time snapshot; deleting the
- * registration withdraws it.
+ * registration withdraws it. The same flag governs an Android app's test
+ * installs, and is applied to the stored ones the same way: each whose
+ * trust changes has its outcomes moved onto or off its click
+ * (InstallIntake::rejudgeTestInstalls()).
  */
 class AppRegistrationsController extends Controller
 {
@@ -60,6 +65,13 @@ class AppRegistrationsController extends Controller
             // Android test installs) count as trusted; 0 = they store flagged
             // and are pruned like any other unvouched row.
             'accept_test_signals' => ['type' => 'i', 'allowed' => [0, 1]],
+            // Android: how many days after its click an install may begin
+            // and still be attributed to it (1-365, default 7).
+            'attribution_window_days' => ['type' => 'i'],
+            // Android: 1 = an event's reported revenue may be paid by a goal
+            // valued from_property; 0 (default) = stored and reported, not
+            // credited, because the app token is public.
+            'trust_client_revenue' => ['type' => 'i', 'allowed' => [0, 1]],
             // What an app build presents in X-P202-App-Token to the pre-auth
             // routes. Served to the owner, never client-writable; rotate with
             // rotateAppToken().
@@ -85,6 +97,7 @@ class AppRegistrationsController extends Controller
         // read it (CLAUDE.md #18). store_link is not a column; it is read
         // for the app it names and replaced by that app's platform and key.
         $identity = AppIdentity::fromPayload($payload);
+        self::assertAndroidPolicy($payload, $identity->platform);
         unset($payload['store_link']);
         $payload['platform'] = $identity->platform;
         $payload['app_key'] = $identity->appKey;
@@ -103,9 +116,52 @@ class AppRegistrationsController extends Controller
         ];
     }
 
+    /**
+     * The Android policy fields, read from the RAW payload before the base
+     * controller casts them (CLAUDE.md #18): a whole number of days 1-365
+     * (a JSON integer or its canonical digits — the CLI sends strings) and a
+     * 0/1 flag. `1.5`, `"7.0"`, `1e2` or `0` are refused, never rounded.
+     * Both belong to Android registrations only: an iOS app's attribution
+     * comes from Apple's postbacks, which neither setting governs.
+     *
+     * @param array<string, mixed> $payload
+     */
+    private static function assertAndroidPolicy(array $payload, string $platform): void
+    {
+        $errors = [];
+        foreach (['attribution_window_days' => [1, AppPolicy::MAX_WINDOW_DAYS], 'trust_client_revenue' => [0, 1]] as $field => [$min, $max]) {
+            if (!array_key_exists($field, $payload) || $payload[$field] === null) {
+                continue;
+            }
+            if ($platform !== AppIdentity::ANDROID) {
+                $errors[$field] = 'applies to Android registrations only';
+                continue;
+            }
+            $raw = $payload[$field];
+            $text = is_int($raw) ? (string)$raw : (is_string($raw) ? $raw : null);
+            if ($text === null || preg_match('/^(0|[1-9][0-9]{0,2})$/D', $text) !== 1 || (int)$text < $min || (int)$text > $max) {
+                $errors[$field] = 'must be a whole number from ' . $min . ' to ' . $max;
+            }
+        }
+        if ($errors !== []) {
+            throw new ValidationException('Invalid app policy', $errors);
+        }
+    }
+
     #[\Override]
     protected function afterCreate(int $insertId, array $payload): void
     {
+        if ((string)$payload['platform'] === AppIdentity::ANDROID) {
+            // The built-in install goal exists from the start, so a campaign
+            // can attach it (with a payout) before the first install. Best
+            // effort: the intake creates it on first use as well.
+            try {
+                (new \Prosper202\Goals\MysqlGoalRepository(new \Prosper202\Database\Connection($this->db)))
+                    ->ensureBuiltinInstallGoal($this->userId, $insertId, time());
+            } catch (\Throwable $e) {
+                error_log('p202 apps: creating the install goal of registration ' . $insertId . ' failed: ' . $e->getMessage());
+            }
+        }
         // Best effort: a failed claim must not fail the registration (the
         // row exists either way). Updating the registration re-runs the
         // claim, so a logged failure here is recoverable without surgery.
@@ -187,6 +243,9 @@ class AppRegistrationsController extends Controller
             unset($payload['platform'], $payload['app_key'], $payload['store_link']);
         }
 
+        if (array_key_exists('attribution_window_days', $payload) || array_key_exists('trust_client_revenue', $payload)) {
+            self::assertAndroidPolicy($payload, (string)((array)$this->get($id)['data'])['platform']);
+        }
         $updated = parent::update($id, $payload);
         // Re-run the claim on every update so unclaimed history (or a claim
         // that failed at create time) is picked up by touching the
@@ -223,14 +282,40 @@ class AppRegistrationsController extends Controller
         // together: a registration gone with its trusted development rows
         // still trusted would leave nothing to withdraw them from.
         //
-        // The change record is written after the commit, not inside it. A
+        // The change records are written after the commit, not inside it. A
         // recordChange() failure inside would roll the cascade back and still
         // surface as WriteCommittedException ("landed, never retry"), so a
         // staged apply would be marked interrupted for a delete that never
         // happened (CLAUDE.md #13).
-        $deleted = $this->transaction(fn (): array => $this->deleteRecord($id));
-        $this->recordDeleted($deleted);
+        $this->unlinkedCampaigns = [];
+        try {
+            $deleted = $this->transaction(fn (): array => $this->deleteRecord($id));
+            // Both records are attempted, whichever fails: each is about a
+            // write that has landed.
+            $failure = null;
+            try {
+                $this->recordDeleted($deleted);
+            } catch (\Api\V3\Exception\WriteCommittedException $e) {
+                $failure = $e;
+            }
+            // The campaigns beforeDelete() unlinked changed too; the change
+            // feed hears it after the commit, never for a delete that rolled
+            // back.
+            try {
+                (new CampaignsController($this->db, $this->userId))->recordLinkChanges($this->unlinkedCampaigns);
+            } catch (\Throwable $e) {
+                $failure ??= new \Api\V3\Exception\WriteCommittedException('app registration', $e);
+            }
+            if ($failure !== null) {
+                throw $failure;
+            }
+        } finally {
+            $this->unlinkedCampaigns = [];
+        }
     }
+
+    /** @var list<int> the campaigns the delete in progress unlinks */
+    private array $unlinkedCampaigns = [];
 
     #[\Override]
     protected function beforeDelete(int|string $id): void
@@ -248,11 +333,41 @@ class AppRegistrationsController extends Controller
         $this->execute($stmt, 'Postback unlink failed');
         $stmt->close();
 
+        // Installs still waiting for their click can never settle once the
+        // registration is gone: the settler reads an install only through
+        // its registration, retention never prunes a pending install, and no
+        // app token reaches it. Settled here, in the same transaction, to the
+        // state the pending-click deadline leaves them in — bad_token, never
+        // paid (OrphanedPendingClicks).
+        (new OrphanedPendingClicks(new \Prosper202\Database\Connection($this->db)))
+            ->settleForDeletedRegistration($this->userId, $registrationId, time());
+
         // Encodings exist only for their registration; left behind they
         // would decode nothing and hold UNIQUE slots nobody can see.
         $stmt = $this->prepare('DELETE FROM 202_app_skan_encodings WHERE registration_id = ? AND user_id = ?');
         $this->bind($stmt, 'ii', $registrationId, $this->userId);
         $this->execute($stmt, 'Encoding delete failed');
+        $stmt->close();
+
+        // Campaigns linked to the app are unlinked. Left naming a
+        // registration that no longer exists, a campaign would read as
+        // linked to *another* app once the same app is registered again (a
+        // new id): its clicks' install tokens refused, their installs
+        // foreign_click. Unlinked, the campaign is what it was before it was
+        // linked, and the operator links it to the new registration.
+        $stmt = $this->prepare('SELECT aff_campaign_id FROM 202_aff_campaigns WHERE app_registration_id = ? AND user_id = ? FOR UPDATE');
+        $this->bind($stmt, 'ii', $registrationId, $this->userId);
+        $this->execute($stmt, 'Linked campaign lookup failed');
+        $linked = $stmt->get_result();
+        if ($linked === false) {
+            $stmt->close();
+            throw new \Api\V3\Exception\DatabaseException('Linked campaign lookup failed');
+        }
+        $this->unlinkedCampaigns = array_map(static fn (array $r): int => (int)$r['aff_campaign_id'], $linked->fetch_all(MYSQLI_ASSOC));
+        $stmt->close();
+        $stmt = $this->prepare('UPDATE 202_aff_campaigns SET app_registration_id = NULL WHERE app_registration_id = ? AND user_id = ?');
+        $this->bind($stmt, 'ii', $registrationId, $this->userId);
+        $this->execute($stmt, 'Campaign unlink failed');
         $stmt->close();
 
         // The app's goals are archived, not deleted: their versions and the
@@ -282,7 +397,10 @@ class AppRegistrationsController extends Controller
         $preview['data']['cascade'] = [
             ['resource' => 'app-skan-encodings', 'action' => 'delete', 'where' => 'registration_id = ' . (int)$id],
             ['resource' => 'app-postbacks', 'action' => 'unlink (registration_id set to NULL; owner kept; test-signal trust withdrawn)', 'where' => 'registration_id = ' . (int)$id],
+            ['resource' => 'campaigns', 'action' => 'unlink (app_registration_id set to NULL)', 'where' => 'app_registration_id = ' . (int)$id],
             ['resource' => 'goals', 'action' => 'archive (versions, outcomes and conversions kept)', 'where' => 'scope = registration, scope_id = ' . (int)$id],
+            ['resource' => 'app-installs', 'action' => 'kept (history; their conversions stay on the ledger), no longer reachable by any app token', 'where' => 'registration_id = ' . (int)$id],
+            ['resource' => 'app-installs', 'action' => 'settle the pending clicks: match_state pending_click → bad_token (never paid)', 'where' => 'registration_id = ' . (int)$id . ', still waiting for their click'],
         ];
         return $preview;
     }
@@ -299,9 +417,15 @@ class AppRegistrationsController extends Controller
         AppPolicy $policy,
         bool $claimHistory
     ): void {
+        if ($platform === AppIdentity::ANDROID) {
+            // Android installs are claimed at receipt (the token names the
+            // registration), so there is no history to claim; the policy is
+            // re-applied to the test installs already stored, and each one
+            // whose trust changes moves its outcomes onto or off its click.
+            (new InstallIntake($this->db))->rejudgeTestInstalls($this->userId, $registrationId);
+            return;
+        }
         if ($platform !== AppIdentity::IOS) {
-            // Only the Apple source stores signals today; the Android intake
-            // adds its own claim here.
             return;
         }
         if ($claimHistory) {

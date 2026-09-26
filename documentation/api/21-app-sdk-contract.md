@@ -48,6 +48,10 @@ platform-shaped:
 
 ```json
 {"data": {"platform": "android", "app_key": "com.example.app",
+  "integrity_mode": "off",
+  "sdk": {"installs_path": "/api/v3/apps/installs",
+          "events_path": "/api/v3/apps/installs/{install_uuid}/events",
+          "max_events_per_request": 100},
   "schema_version": "5b1a…", "generated_at": 1725690000}}
 ```
 
@@ -55,9 +59,10 @@ platform-shaped:
   to set when the app reports that event (`events` is always a JSON object,
   even when empty). With the goals engine (plan §4.5, §5.5) it becomes an
   evaluation-only view of the goals.
-- **Android** gets its identity; the Android intake adds the SDK settings
-  (the integrity mode among them). Its goals are evaluated on the server,
-  so the SDK reports every event.
+- **Android** gets its identity, `integrity_mode` (`off` until Play
+  Integrity ships; the SDK then requests no token) and `sdk`: where installs
+  and events go and how many events one request may carry. Its goals are
+  evaluated on the server, so the SDK reports every event.
 - **Revenue is withheld from both.** The document says what a device should
   do, never what the operator is paid.
 - `ETag` is the quoted `schema_version` and changes exactly when the
@@ -66,6 +71,86 @@ platform-shaped:
   all work). Responses are `Cache-Control: private, max-age=300` and
   `Vary: X-P202-App-Token`.
 
+## The Android intake
+
+Two routes, both selected by the app token (the operator's guide is
+[23-android-installs.md](23-android-installs.md)).
+
+### `POST /apps/installs`
+
+Sent once, on first launch, with what the Play Install Referrer API returned:
+
+```json
+{
+  "install_uuid": "8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293",
+  "app_key": "com.example.app",
+  "store": "google_play",
+  "referrer": {
+    "status": "ok",
+    "install_referrer": "p202=1042.3MVffxqa2WX3CV49&utm_source=news",
+    "referrer_click_timestamp_seconds": 1727200000,
+    "install_begin_timestamp_seconds": 1727200042,
+    "referrer_click_timestamp_server_seconds": 1727200001,
+    "install_begin_timestamp_server_seconds": 1727200043,
+    "install_version": "3.2.0",
+    "google_play_instant": false
+  },
+  "first_open_at": 1727200100,
+  "app_version": "3.2.0", "sdk_version": "1.0.0", "os_version": "15",
+  "test": false,
+  "integrity_token": null
+}
+```
+
+- `install_uuid` is a random UUID in lower case, minted once. **The SDK
+  builds the body once, persists it, and resends it unchanged** until it is
+  answered: a replay of the same body is `200` with `duplicate: true`, and
+  the same `install_uuid` with other content is `409`. The comparison is
+  over the canonical body — keys sorted at every level, no insignificant
+  whitespace, `integrity_token` left out — so key order and spacing do not
+  matter.
+- Every field is typed as JSON types it: a timestamp is an integer (Play's
+  `0` for "none" is accepted), `test` a boolean. A string where a number
+  belongs, an unknown field or an upper-case UUID is `400` naming the field.
+- `referrer.status` is Play's response code in lower case (`ok`,
+  `feature_not_supported`, `service_unavailable`, `developer_error`,
+  `service_disconnected`, `permission_error`); with anything but `ok` the
+  other referrer fields are absent.
+- `app_key` must be the token's app (`422` naming both).
+- `integrity_token` is reserved for Play Integrity (a later release): sent
+  or not, it is not judged yet.
+- The body is capped at 16 KB (`413`).
+
+The answer never carries the click, a conversion or money:
+
+```json
+{"data": {"install_uuid": "8d7c4a52-…", "match": "attributed",
+  "reason": "Attributed to click 1042.", "trusted": 1, "test": false,
+  "duplicate": false}}
+```
+
+### `POST /apps/installs/{install_uuid}/events`
+
+```json
+{"events": [
+  {"event_id": "e-1", "name": "level_reached", "occurred_at": 1727200500,
+   "properties": {"level": 3}},
+  {"event_id": "p-1", "name": "purchase", "occurred_at": 1727200600,
+   "revenue": 4.99, "transaction_id": "GPA.1234-5678"}
+]}
+```
+
+- 1–100 events, 64 KB. `event_id` is unique within the install (1–128
+  printable characters, not starting with `@`); a retried id is answered as
+  a duplicate, the same id with other content is `409`.
+- `properties` is flat — string (≤ 255 bytes), number or boolean — and at
+  most 32 entries. `revenue` is a number in the account's currency.
+- The server stamps `received_at` and decides whether `revenue` may be paid
+  (the registration's `trust_client_revenue`); sending either is `400`.
+- `occurred_at` is the device's clock. An event is ordered by
+  `min(occurred_at, received_at)`, so a clock can move an event earlier but
+  never past its arrival.
+
 ## Retry semantics
 
 The public app routes share one set of answers (`Api\V3\Apps\PublicIntake`),
@@ -73,20 +158,23 @@ and an SDK treats them the same way everywhere:
 
 | Status | Meaning | The SDK |
 | ------ | ------- | ------- |
-| `200`, `304` | Served | Uses the answer |
+| `200`, `304` | Served (for an install or events, also a replay of what was already stored) | Uses the answer |
 | `400` | The request is not one the server will ever accept (a malformed token, a malformed body) | Does not retry the same request |
-| `404` | Unknown token | Does not retry; keeps its cached document |
+| `404` | Unknown token; for events, an install this app never reported | Does not retry; for events, reports the install first |
 | `405` | Method not served | Does not retry |
+| `409` | The install_uuid or event_id was sent before with other content; events for a refuted install | Does not retry |
 | `413` | Body over the route's cap | Does not retry the same body |
+| `422` | The body's app_key is not the token's app; the token is an iOS app's; an install holding 10,000 events | Does not retry |
 | `429` | Rate limited per peer address; `Retry-After` says when | Retries after that many seconds |
-| `5xx` | The server or its database is unavailable | Retries with backoff; nothing was stored |
+| `5xx` | The server or its database is unavailable, or (`503`, events) the install is still pending; `Retry-After` when sent | Retries with backoff; nothing was stored |
 
 ## The test flag
 
 A registration's `accept_test_signals` decides whether test signals count:
-AdAttributionKit postbacks signed with Apple's development keys today, and
-installs the Android SDK sends with `test: true` once the intake exists.
-Off by default, and off whenever the policy cannot be read.
+AdAttributionKit postbacks signed with Apple's development keys, and
+installs the Android SDK sends with `test: true` (classified as usual, but
+trusted — and paid — only under the flag). Off by default, and off whenever
+the policy cannot be read.
 
 ## Vectors
 
@@ -98,4 +186,10 @@ evaluator's specification as data — `definitions.json` (what a valid goal
 is) and `evaluator.json` (what a goal set makes of a subject's events), with
 the format and every rule in `goals/README.md` — run by
 `tests/Goals/GoalVectorsTest.php` and, from PRs 7 and 8, by the Kotlin and
-Swift evaluators. The Android intake adds its vectors beside them.
+Swift evaluators. `android/` holds the intake's: `install-token.json` (the
+token format under a test key), `install-requests.json` (install bodies, the
+field errors of each invalid one, and each valid one's canonical form and
+fingerprint), `events-requests.json` and `responses.json` (every answer and
+whether the SDK retries it), specified in `android/README.md` and run by
+`tests/Apps/Android/AndroidContractVectorsTest.php`; the vectors were
+written by an implementation independent of the server's.

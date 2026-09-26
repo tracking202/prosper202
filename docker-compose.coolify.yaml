@@ -175,6 +175,7 @@ services:
         while true; do
           php 202-cronjobs/attribution-export.php || true
           php 202-cronjobs/sync-worker.php || true
+          php 202-cronjobs/app-installs.php || true
           now=$$(date +%s)
           if [ $$((now - last_hourly)) -ge 3600 ]; then
             php 202-cronjobs/attribution-rebuild.php || true

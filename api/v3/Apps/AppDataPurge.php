@@ -39,14 +39,29 @@ final class AppDataPurge
     public const TABLE_ACTIONS = [
         '202_app_postbacks' => 'release',
         '202_app_skan_encodings' => 'delete',
+        '202_app_installs' => 'delete',
         '202_app_registrations' => 'delete',
+    ];
+
+    /**
+     * Rows outside the app tables that point at a registration the purge
+     * deletes, and what happens to them; the user delete preview lists
+     * these beside TABLE_ACTIONS.
+     */
+    public const LINK_ACTIONS = [
+        '202_aff_campaigns' => 'unlink (app_registration_id set to NULL; the campaign is kept)',
     ];
 
     public function __construct(private readonly \mysqli $db)
     {
     }
 
-    public function purgeUser(int $userId): void
+    /**
+     * @return array<int, list<int>> the campaigns the purge unlinked, by
+     *         owner, for the caller to put in the change feed once it has
+     *         committed (CampaignsController::recordLinkChanges())
+     */
+    public function purgeUser(int $userId): array
     {
         if ($userId < 1) {
             // user_id 0 is "unclaimed": purging it would delete or release
@@ -67,7 +82,34 @@ final class AppDataPurge
             $userId
         );
         $this->run('DELETE FROM 202_app_skan_encodings WHERE user_id = ?', 'i', $userId);
+        // An install is the user's own record (their registration's SDK
+        // reported it to them), not a platform's: deleted, not released.
+        $this->run('DELETE FROM 202_app_installs WHERE user_id = ?', 'i', $userId);
+        // The user's campaigns stay (like their clicks); their links to the
+        // registrations deleted next go, as a registration delete unlinks
+        // them (AppRegistrationsController::beforeDelete()). Matched by the
+        // registration's owner, not the campaign's, so no campaign is left
+        // naming a registration this purge removes.
+        $stmt = $this->prepare(
+            'SELECT aff_campaign_id, user_id FROM 202_aff_campaigns
+             WHERE app_registration_id IN (SELECT registration_id FROM 202_app_registrations WHERE user_id = ?) FOR UPDATE'
+        );
+        $this->bind($stmt, 'i', $userId);
+        $this->execute($stmt, 'Linked campaign lookup failed');
+        $unlinked = [];
+        foreach ($this->result($stmt)->fetch_all(MYSQLI_ASSOC) as $row) {
+            $unlinked[(int) $row['user_id']][] = (int) $row['aff_campaign_id'];
+        }
+        $stmt->close();
+        $this->run(
+            'UPDATE 202_aff_campaigns SET app_registration_id = NULL
+             WHERE app_registration_id IN (SELECT registration_id FROM 202_app_registrations WHERE user_id = ?)',
+            'i',
+            $userId
+        );
         $this->run('DELETE FROM 202_app_registrations WHERE user_id = ?', 'i', $userId);
+
+        return $unlinked;
     }
 
     private function run(string $sql, string $types, mixed ...$values): void

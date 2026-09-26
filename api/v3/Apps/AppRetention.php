@@ -12,8 +12,8 @@ use Api\V3\Support\MysqliStatements;
  * Retention for the rows the public app intakes let anyone mint.
  *
  * Retention is data each signal source registers (RetentionClass), not a
- * list kept here: the Apple source registers its postback classes today,
- * and the Android intake adds its installs classes beside them. Only a row
+ * list kept here: the Apple source registers its postback classes and the
+ * Android source its install classes (Android\InstallRetention). Only a row
  * that is trusted and belongs to a registration is operator data kept
  * forever; every other class has a window.
  *
@@ -53,7 +53,7 @@ final class AppRetention
      */
     public static function registeredClasses(): array
     {
-        return PostbackReceiver::retentionClasses();
+        return [...PostbackReceiver::retentionClasses(), ...Android\InstallRetention::retentionClasses()];
     }
 
     public static function forRegisteredSources(\mysqli $db): self

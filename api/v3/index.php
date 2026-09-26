@@ -64,6 +64,45 @@ $queryParams = $_GET;
 $headers     = getallheaders() ?: [];
 RequestContext::setHeaders($headers);
 
+// ─── The Android intake (pre-auth) ────────────────────────────────────
+// POST /apps/installs and POST /apps/installs/{install_uuid}/events are
+// what the Android SDK calls: an app binary holds no API key, so the
+// registration is selected by the X-P202-App-Token header (plan §5.2,
+// §5.5). They are routed before the general body read because they read
+// their own, bounded one, and through PublicIntake's shared plumbing: the
+// method check and a declared body over the cap refused first, then the
+// soft rate limit keyed on the TCP peer, never on a header the sender
+// chooses (CLAUDE.md #16). GET /apps/installs is the reachability probe.
+if ($path === '/apps/installs' || preg_match('#^/apps/installs/([^/]+)/events$#D', $path, $androidEventsMatch) === 1) {
+    $androidEvents = isset($androidEventsMatch[1]);
+    $androidCap = $androidEvents ? \Api\V3\Apps\Android\InstallEventsIntake::MAX_BODY_BYTES : \Api\V3\Apps\Android\InstallIntake::MAX_BODY_BYTES;
+    $androidMethod = \Api\V3\Apps\PublicIntake::preflight($androidCap, $androidEvents ? ['POST'] : ['GET', 'POST']);
+    \Api\V3\Apps\PublicIntake::rateLimit($androidEvents ? 'app-install-events' : 'app-installs', $androidEvents ? 600 : 120, 60);
+    try {
+        if ($androidMethod === 'GET' || $androidMethod === 'HEAD') {
+            // The reachability probe the SDK and the Setup page call.
+            $androidResult = ['status' => 200, 'body' => ['data' => ['status' => 'ready']]];
+        } else {
+            $androidBody = \Api\V3\Apps\PublicIntake::readBody($androidCap);
+            $androidToken = RequestContext::header(\Api\V3\Apps\AppToken::HEADER_LOOKUP);
+            $androidResult = $androidEvents
+                ? (new \Api\V3\Apps\Android\InstallEventsIntake($db))->receive($androidToken, $androidEventsMatch[1], $androidBody)
+                : (new \Api\V3\Apps\Android\InstallIntake($db))->receive($androidToken, $androidBody, (string) ($_SERVER['REMOTE_ADDR'] ?? ''));
+        }
+    } catch (\Throwable $androidError) {
+        // Nothing was committed (every write is one transaction that rolled
+        // back), so a 5xx is the truthful answer and the SDK's retry is safe.
+        error_log('p202 android intake: ' . $androidError->getMessage());
+        Bootstrap::errorResponse('The install could not be recorded; retry later', 500);
+        exit;
+    }
+    foreach ($androidResult['headers'] ?? [] as $androidHeader => $androidValue) {
+        header($androidHeader . ': ' . $androidValue);
+    }
+    Bootstrap::jsonResponse($androidResult['body'], $androidResult['status']);
+    exit;
+}
+
 $payload = [];
 if (in_array($method, ['POST', 'PUT', 'PATCH'])) {
     $raw = file_get_contents('php://input', false, null, 0, 1_048_576); // 1 MB limit
@@ -510,6 +549,14 @@ try {
             $r->get('/report',         fn() => $crud($postbacks)->report($queryParams));
             $r->post('/verify',        fn() => $crud($postbacks)->verify($payload));
 
+            // An Android registration's installs, written only by the
+            // public intake (POST /apps/installs, routed before auth), and
+            // the install token for one of the caller's clicks: all reads.
+            $installs = \Api\V3\Controllers\AppInstallsController::class;
+            $r->get('/{id}/installs',        fn($ctx) => $crud($installs)->list((int)$ctx['id'], $queryParams));
+            $r->get('/{id}/installs/{uuid}', fn($ctx) => $crud($installs)->get((int)$ctx['id'], (string)$ctx['uuid']));
+            $r->get('/{id}/install-token',   fn($ctx) => $crud($installs)->installToken((int)$ctx['id'], $queryParams));
+
             $r->get('',            fn() => $crud($apps)->list($queryParams));
             // Deliberately NOT wrapped in $idempotent, for the same reason
             // API-key creation is not: the response carries the app token,
@@ -661,7 +708,7 @@ try {
                 'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}',
                 'rotators'      => '/rotators',
                 'attribution'   => '/attribution/models',
-                'apps'          => '/apps/{id|skan-encodings|postbacks|report|verify|schema}',
+                'apps'          => '/apps/{id|skan-encodings|postbacks|report|verify|schema|installs}',
                 'goals'         => '/goals/{id|validate|evaluate}',
                 'users'         => '/users',
                 'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics}',

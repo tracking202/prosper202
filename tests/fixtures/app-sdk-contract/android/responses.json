@@ -1,0 +1,175 @@
+{
+  "description": "What the Android intake answers and what the SDK does with it (plan §5.2, documentation/api/21-app-sdk-contract.md). A 2xx is the only success; a 4xx is terminal for that request (the SDK drops or keeps the data as the row says, never resends it unchanged); a 429 or 5xx is retried with backoff, honouring Retry-After. 'body' shows the shape; values vary.",
+  "installs": [
+    {
+      "status": 200,
+      "when": "recorded",
+      "retry": false,
+      "body": {
+        "data": {
+          "install_uuid": "8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293",
+          "match": "attributed",
+          "reason": "Attributed to click 42.",
+          "trusted": 1,
+          "test": false,
+          "duplicate": false
+        }
+      }
+    },
+    {
+      "status": 200,
+      "when": "a replay of a recorded install (same install_uuid, same body)",
+      "retry": false,
+      "body": {
+        "data": {
+          "install_uuid": "8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293",
+          "match": "attributed",
+          "reason": "Attributed to click 42.",
+          "trusted": 1,
+          "test": false,
+          "duplicate": true
+        }
+      }
+    },
+    {
+      "status": 400,
+      "when": "a malformed token header or body",
+      "retry": false,
+      "body": {
+        "error": true,
+        "message": "The install is invalid",
+        "status": 400,
+        "field_errors": {
+          "install_uuid": "…"
+        }
+      }
+    },
+    {
+      "status": 404,
+      "when": "an app token nobody holds",
+      "retry": false,
+      "body": {
+        "error": true,
+        "message": "Unknown app token",
+        "status": 404
+      }
+    },
+    {
+      "status": 405,
+      "when": "a method other than POST (GET/HEAD are the reachability probe)",
+      "retry": false
+    },
+    {
+      "status": 409,
+      "when": "the install_uuid was reported with different content",
+      "retry": false
+    },
+    {
+      "status": 413,
+      "when": "the body is over 16384 bytes",
+      "retry": false
+    },
+    {
+      "status": 422,
+      "when": "the body's app_key is not the token's app, or the token is an iOS app's",
+      "retry": false
+    },
+    {
+      "status": 429,
+      "when": "rate limited per peer address",
+      "retry": true,
+      "headers": {
+        "Retry-After": "<seconds>"
+      }
+    },
+    {
+      "status": 500,
+      "when": "nothing was stored",
+      "retry": true
+    },
+    {
+      "status": 503,
+      "when": "the database, or the key that verifies install tokens, is unavailable",
+      "retry": true,
+      "headers": {
+        "Retry-After": "<seconds>"
+      }
+    }
+  ],
+  "events": [
+    {
+      "status": 200,
+      "when": "stored (accepted) or already stored (duplicates)",
+      "retry": false,
+      "body": {
+        "data": {
+          "install_uuid": "8d7c4a52-9f0e-4b1d-a7c3-2e5f60718293",
+          "accepted": [
+            "e-1"
+          ],
+          "duplicates": []
+        }
+      }
+    },
+    {
+      "status": 400,
+      "when": "a malformed body",
+      "retry": false
+    },
+    {
+      "status": 404,
+      "when": "an install this app never reported: report it first",
+      "retry": false
+    },
+    {
+      "status": 409,
+      "when": "the install was refuted (bad_token, foreign_click, implausible), or an event_id was reused with different content",
+      "retry": false
+    },
+    {
+      "status": 413,
+      "when": "the body is over 65536 bytes",
+      "retry": false
+    },
+    {
+      "status": 422,
+      "when": "the install already holds 10000 events",
+      "retry": false
+    },
+    {
+      "status": 429,
+      "when": "rate limited per peer address",
+      "retry": true,
+      "headers": {
+        "Retry-After": "<seconds>"
+      }
+    },
+    {
+      "status": 503,
+      "when": "the install is still pending (pending_click, pending_integrity): its events wait until it settles",
+      "retry": true,
+      "headers": {
+        "Retry-After": "60"
+      },
+      "body": {
+        "error": true,
+        "message": "…",
+        "status": 503,
+        "match": "pending_click"
+      }
+    }
+  ],
+  "match_states": [
+    "attributed",
+    "organic",
+    "third_party",
+    "unavailable",
+    "pending_click",
+    "bad_token",
+    "foreign_click",
+    "implausible",
+    "outside_window",
+    "duplicate_click",
+    "pending_integrity"
+  ]
+}

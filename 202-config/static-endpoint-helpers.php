@@ -51,7 +51,7 @@ if (!function_exists('p202RespondJsonError')) {
     }
 }
 
-const P202_POSTBACK_USER_AGENT = 'Mozilla/5.0 Postback202-Bot v1.8';
+const P202_POSTBACK_USER_AGENT = 'Mozilla/5.0 Postback202-Bot v1.8'; // = PostbackSender::USER_AGENT
 
 if (!function_exists('p202ApplyConversionClickSide')) {
     /**
@@ -164,28 +164,11 @@ if (!function_exists('p202FireTrafficSourcePixels')) {
         $conn->bind($stmt, 'i', [$ppcAccountId]);
         $pixels = $conn->fetchAll($stmt);
 
-        // getUrl() answers '' both for a failed request and for an empty
-        // body, so it cannot say whether the network heard us. This asks
-        // curl for the status as well.
-        $fetch ??= static function (string $url): bool {
-            $ch = curl_init($url);
-            if ($ch === false) {
-                return false;
-            }
-            curl_setopt_array($ch, [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_FOLLOWLOCATION => true,
-                CURLOPT_MAXREDIRS => 5,
-                CURLOPT_TIMEOUT => 10,
-                CURLOPT_CONNECTTIMEOUT => 5,
-                CURLOPT_USERAGENT => P202_POSTBACK_USER_AGENT,
-            ]);
-            $body = curl_exec($ch);
-            $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-            curl_close($ch);
-
-            return $body !== false && $status >= 200 && $status < 400;
-        };
+        // The one server-to-server sender, shared with the Android
+        // notification outbox's worker: it answers whether the network
+        // heard us (getUrl() answered '' for a failure and an empty body
+        // alike).
+        $fetch ??= \Prosper202\Notifications\PostbackSender::fetch(...);
 
         foreach ($pixels as $pixel) {
             $type = (int) $pixel['pixel_type_id'];

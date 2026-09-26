@@ -2150,25 +2150,31 @@ paths:
       tags: [Goals]
       summary: Preview a re-evaluation
       description: |
-        Per click that has events on the campaigns the goal applies to: the
-        outcome rows that would be retired and written under `version`
+        Per subject of one `subject_type` — a click that has events on the
+        campaigns the goal applies to, or (`install`) an Android install of
+        the goal's registration, of the account, or on those campaigns —
+        the outcome rows that would be retired and written under `version`
         (default the current one), and what happens to each retired row's
         conversion (`supersede` by the new row, or `delete` where the new
         version no longer reaches the goal). The goal is re-decided with its
-        dependents — every goal of the click's set whose `after` names it,
+        dependents — every goal of the subject's set whose `after` names it,
         directly or through another dependent — because their outcomes were
         evaluated against the goal's: `goals` lists them, and their retired
         and written rows are in the same lists and totals, each naming its
-        `goal_id`. Dependents never add clicks: the selection and its cap
+        `goal_id`. Dependents never add subjects: the selection and its cap
         are the goal's own. A dependent's version that cannot be evaluated
         (invalid definition, missing prerequisite) is left as it is.
-        Changes nothing. At most `limit` (default 100, max 1000) clicks
-        after `after`; `next_after` continues.
+        Changes nothing. At most `limit` (default 100, max 1000) subjects
+        after `after`; `next_after` continues. `subject_type` defaults to
+        `click` for a campaign goal and `install` for a registration or
+        account goal. The built-in install goal is never re-evaluated
+        (`422`).
       operationId: previewGoalReevaluation
       parameters:
         - {name: version, in: query, schema: {type: integer}}
         - {name: limit, in: query, schema: {type: integer, default: 100, maximum: 1000}}
         - {name: after, in: query, schema: {type: integer}}
+        - {name: subject_type, in: query, schema: {type: string, enum: [click, install]}}
       responses:
         "200":
           description: The plan
@@ -2202,6 +2208,7 @@ paths:
                 version: {type: integer}
                 limit: {type: integer, maximum: 1000}
                 after: {type: integer}
+                subject_type: {type: string, enum: [click, install]}
       responses:
         "200":
           description: What was done
@@ -2777,7 +2784,12 @@ paths:
         `app_key` or `store_link` naming the same app is accepted and changes
         nothing; naming a different app is `422` — register it separately.
         Toggling `accept_test_signals` re-judges the stored test signals
-        too: the policy is live, not a receipt-time snapshot.
+        too: the policy is live, not a receipt-time snapshot. For an Android
+        app that includes the stored test installs: one that becomes trusted
+        gains its conversions (written, or restored when an earlier change
+        retired them) and notifies its traffic source; one that stops being
+        trusted has its conversions retired (an unsent notification
+        cancelled, a sent one retracted) and stays in the funnel.
       operationId: updateApp
       requestBody:
         required: true
@@ -2838,6 +2850,90 @@ paths:
                 $ref: "#/components/schemas/AppRegistrationResponse"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /apps/{id}/installs:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Apps]
+      summary: List an Android registration's installs
+      description: |
+        Installs the SDK reported for this registration, newest first, each
+        with its `match_state`, the `match_reason` sentence and its trust
+        (`1` trusted, `0` refuted, `null` unvouched). Written only by the
+        public intake (`POST /apps/installs`). Referrer fields and versions
+        come from an open endpoint, so strings are sanitized at
+        serialization; the raw body is never served. Unknown filters and
+        malformed values are `422`.
+      operationId: listAppInstalls
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/installMatchState"
+        - {name: trusted, in: query, schema: {type: string, enum: [trusted, refuted, unvouched, "1", "0"]}}
+        - {name: test, in: query, schema: {type: string, enum: ["0", "1"]}}
+        - {name: click_id, in: query, schema: {type: integer}}
+        - $ref: "#/components/parameters/timeFrom"
+        - $ref: "#/components/parameters/timeTo"
+      responses:
+        "200":
+          description: Paginated installs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppInstallListResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /apps/{id}/installs/{install_uuid}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+      - {name: install_uuid, in: path, required: true, schema: {type: string, format: uuid}}
+    get:
+      tags: [Apps]
+      summary: Get one install
+      operationId: getAppInstall
+      responses:
+        "200":
+          description: The install
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppInstallResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /apps/{id}/install-token:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Apps]
+      summary: The install token and store link for one click
+      description: |
+        `[[p202_install_token]]` for one of the caller's clicks — exactly
+        what the redirect writes into a store link — and the Google Play link
+        that carries it (`…&referrer=p202%3D<token>`). A read: nothing is
+        stored. The click must be the caller's, and its campaign must not be
+        linked to another registration (`422`). `503` when the installation
+        has no install-token key (run the upgrade, which mints it).
+      operationId: getAppInstallToken
+      parameters:
+        - {name: click_id, in: query, required: true, schema: {type: integer}}
+      responses:
+        "200":
+          description: The token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppInstallTokenResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          description: No install-token key
 
   /apps/skan-encodings:
     get:
@@ -3171,8 +3267,9 @@ paths:
 
         Platform-shaped: an iOS registration gets the ENCODE view of its
         SKAN encodings (`events`, always a JSON object, even when empty); an
-        Android registration gets its identity (and, with the Android intake,
-        its SDK settings). Revenue is never served. `ETag` equals
+        Android registration gets its identity, `integrity_mode` and the SDK
+        settings (`sdk`): its goals are evaluated on the server, so the SDK
+        reports every event. Revenue is never served. `ETag` equals
         `schema_version` and changes exactly when the document's behaviour
         changes; `If-None-Match` answers `304`. Methods other than GET are
         `405`. Rate-limited per peer address.
@@ -3222,6 +3319,158 @@ paths:
           $ref: "#/components/responses/AppRateLimited"
         "405":
           description: Only GET is served
+
+  /apps/installs:
+    get:
+      tags: [Apps]
+      summary: Android intake reachability probe
+      description: Answers `ready`, so the SDK and the operator can check the URL. Rate-limited per peer address.
+      operationId: probeAppInstalls
+      security: []
+      responses:
+        "200":
+          description: Ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      status: {type: string, enum: [ready]}
+        "429":
+          $ref: "#/components/responses/AppRateLimited"
+    post:
+      tags: [Apps]
+      summary: Report an Android install (the SDK)
+      description: |
+        What the Android SDK sends once, on first launch, with the Google Play
+        install referrer. No API key: the registration is selected by the
+        `X-P202-App-Token` header. The body is validated strictly (a number
+        sent as a string, an unknown field or a non-canonical
+        `install_uuid` is `400` naming the field) and capped at 16 KB (`413`);
+        `app_key` must be the token's app (`422` naming both).
+
+        The install is classified into a `match` state (plan §5.3):
+        `attributed` (the referrer's `p202` token verifies under this
+        installation's key, the click is the owner's, the campaign is not
+        linked to another app, Google's server timestamps sit after the click
+        and inside `attribution_window_days`), `organic`, `third_party`,
+        `unavailable`, `pending_click` (settled by
+        `202-cronjobs/app-installs.php`), `bad_token`, `foreign_click`,
+        `implausible`, `outside_window`, `duplicate_click` or
+        `pending_integrity`.
+
+        Everything durable commits in one transaction: the install row, its
+        classification, the built-in install goal's outcome and — for an
+        attributed, trusted install — its conversion on the click (key
+        `install`, `pixel_type` 4, at Google's install time; one per click),
+        the MTA outbox row and the traffic-source notification. A failure
+        answers `5xx` with nothing stored, so the retry is safe. A replay of
+        the same body answers `200` with `duplicate: true` and the stored
+        state; the same `install_uuid` with other content is `409`. The
+        answer never carries the click, the conversion or any money.
+        Rate-limited per peer address.
+      operationId: reportAppInstall
+      security: []
+      parameters:
+        - name: X-P202-App-Token
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppInstallRequest"
+      responses:
+        "200":
+          description: Recorded, or a replay of a recorded install
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppInstallReceiptResponse"
+        "400":
+          description: Missing or malformed token, or an invalid body (field_errors)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Unknown app token
+        "405":
+          description: Only GET and POST are served
+        "409":
+          description: The install_uuid was reported with different content
+        "413":
+          description: Body over 16 KB
+        "422":
+          description: The body's app_key is not the token's app, or the token is an iOS app's
+        "429":
+          $ref: "#/components/responses/AppRateLimited"
+        "503":
+          description: The database, or the key that verifies install tokens, is unavailable; retry later
+
+  /apps/installs/{install_uuid}/events:
+    parameters:
+      - {name: install_uuid, in: path, required: true, schema: {type: string, format: uuid}}
+    post:
+      tags: [Apps]
+      summary: Report an installed app's events (the SDK)
+      description: |
+        Events an installed app reports (`logEvent`), 1-100 per request, for
+        the goal engine: stored idempotently on (install, `event_id`) and
+        evaluated in event-time order against the install's goals — its
+        registration's, the account's and, when it is attributed, its
+        click's campaign's. What an event pays is the goals' and campaign's
+        decision; a revenue the app reports is paid only under the
+        registration's `trust_client_revenue`. The server stamps
+        `received_at` and revenue trust; a device that sends either is `400`.
+        Events for a pending install answer `503` with `Retry-After` (they
+        are evaluated once it settles); for a refuted one (`bad_token`,
+        `foreign_click`, `implausible`) `409`; for an unknown one `404`. A
+        reused `event_id` with other content is `409`; the 10,001st event of
+        an install is `422`. Rate-limited per peer address.
+      operationId: reportAppInstallEvents
+      security: []
+      parameters:
+        - name: X-P202-App-Token
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppInstallEventsRequest"
+      responses:
+        "200":
+          description: Stored (accepted) or already stored (duplicates)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppInstallEventsReceiptResponse"
+        "400":
+          description: Missing or malformed token, or an invalid body (field_errors)
+        "404":
+          description: Unknown app token, or an install this app never reported
+        "409":
+          description: The install was refuted, or an event_id was reused with other content
+        "413":
+          description: Body over 64 KB
+        "422":
+          description: The install holds 10,000 events, or the token is an iOS app's
+        "429":
+          $ref: "#/components/responses/AppRateLimited"
+        "503":
+          description: The install is still pending; retry after Retry-After
 
   /.well-known/skadnetwork/report-attribution/:
     servers:
@@ -3581,6 +3830,13 @@ components:
       schema:
         type: string
         enum: [low, medium, high]
+    installMatchState:
+      name: match_state
+      in: query
+      description: Only installs in this state
+      schema:
+        type: string
+        enum: [attributed, organic, third_party, unavailable, pending_click, bad_token, foreign_click, implausible, outside_window, duplicate_click, pending_integrity]
     postbackSignature:
       name: signature
       in: query
@@ -3754,6 +4010,14 @@ components:
             p202lpid, and customer ids signed with the account's linking key —
             so multi-touch attribution can join them into one journey. "0":
             none are read or set, and every click is its own journey.
+        app_registration_id:
+          type: integer
+          nullable: true
+          description: >-
+            The Android app registration this campaign's store links install
+            (`GET /apps`; null or 0 unlinks). An install of another app on one
+            of its clicks is `foreign_click`. Read raw: `"1e0"` or `1.5` is
+            `422`, never cast, and an iOS registration is refused.
         aff_campaign_time:
           type: integer
           readOnly: true
@@ -5086,6 +5350,23 @@ components:
             flagged and count nowhere. SKAdNetwork has no development key, so
             this never affects SKAdNetwork rows. A live policy: changing it
             re-judges the stored rows.
+        attribution_window_days:
+          type: integer
+          minimum: 1
+          maximum: 365
+          default: 7
+          description: >-
+            Android: how many days after its click an install may begin (on
+            Google's clock) and still be attributed to it; later is
+            `outside_window`.
+        trust_client_revenue:
+          type: integer
+          enum: [0, 1]
+          default: 0
+          description: >-
+            Android: 1 = a revenue value the app reports with an event may be
+            paid by a goal valued `from_property`. 0 (default) = it is stored
+            and reported but never credited — the app token is public.
         app_token:
           type: string
           pattern: "^[0-9a-f]{64}$"
@@ -5141,6 +5422,15 @@ components:
           enum: [0, 1]
           default: 0
           description: Trust test signals for this app (see `AppRegistration`)
+        attribution_window_days:
+          type: integer
+          minimum: 1
+          maximum: 365
+          description: Android only (see `AppRegistration`); read raw, so `7.0` or `"07"` is `422`, never rounded
+        trust_client_revenue:
+          type: integer
+          enum: [0, 1]
+          description: Android only (see `AppRegistration`)
 
     AppRegistrationUpdate:
       type: object
@@ -5158,6 +5448,15 @@ components:
           type: integer
           enum: [0, 1]
           description: Trust test signals for this app (see `AppRegistration`)
+        attribution_window_days:
+          type: integer
+          minimum: 1
+          maximum: 365
+          description: Android only (see `AppRegistration`)
+        trust_client_revenue:
+          type: integer
+          enum: [0, 1]
+          description: Android only (see `AppRegistration`)
 
     AppRegistrationResponse:
       type: object
@@ -5325,6 +5624,16 @@ components:
         scope_id: {type: integer}
         name: {type: string}
         current_version: {type: integer}
+        builtin:
+          type: string
+          nullable: true
+          enum: [install, null]
+          description: >-
+            `install` for the built-in install goal every Android registration
+            has (triggered by the install, reached once, no value of its own:
+            a campaign pays its default payout for it unless it lists goals
+            without it, or a payout of its own). It cannot be edited or
+            archived. `null` for an operator's goal.
         definition: {$ref: "#/components/schemas/GoalDefinition"}
         definition_valid: {type: boolean}
         effective_at: {type: integer}
@@ -5397,6 +5706,7 @@ components:
         ineligible_reason: {type: string, nullable: true}
         payable: {type: boolean}
         campaign_id: {type: integer, nullable: true}
+        app_registration_id: {type: integer, nullable: true, description: "An install subject's app registration"}
         conversion_id: {type: integer, nullable: true}
 
     GoalReevaluationResponse:
@@ -5407,11 +5717,12 @@ components:
           properties:
             goal_id: {type: integer}
             version: {type: integer}
+            subject_type: {type: string, enum: [click, install]}
             applied: {type: boolean}
             goals:
               type: array
               items: {type: integer}
-              description: Every goal re-decided on at least one of these clicks (the goal and its dependents)
+              description: Every goal re-decided on at least one of these subjects (the goal and its dependents)
             subjects:
               type: array
               items:
@@ -5582,6 +5893,227 @@ components:
       properties:
         data:
           $ref: "#/components/schemas/AppPostbackDetail"
+
+    AppInstall:
+      type: object
+      description: One Android install as the SDK reported it and the intake classified it.
+      properties:
+        install_row_id:
+          type: integer
+        registration_id:
+          type: integer
+        install_uuid:
+          type: string
+          format: uuid
+        store:
+          type: string
+          enum: [google_play]
+        click_id:
+          type: integer
+          nullable: true
+          description: The click the verified token named (attributed installs; null otherwise)
+        conversion_id:
+          type: integer
+          nullable: true
+          description: The install conversion on the click — set for every attributed, trusted install
+        match_state:
+          type: string
+          enum: [attributed, organic, third_party, unavailable, pending_click, bad_token, foreign_click, implausible, outside_window, duplicate_click, pending_integrity]
+        match_reason:
+          type: string
+          description: Why, as one sentence
+        trusted:
+          type: integer
+          nullable: true
+          enum: [0, 1, null]
+          description: 1 trusted, 0 refuted, null unvouched
+        is_test:
+          type: boolean
+        referrer_status:
+          type: string
+          enum: [ok, feature_not_supported, service_unavailable, developer_error, service_disconnected, permission_error]
+        referrer_raw:
+          type: string
+          nullable: true
+          description: Play's install referrer, kept to 2048 bytes
+        referrer_truncated:
+          type: boolean
+        utm_source:
+          type: string
+          nullable: true
+        utm_medium:
+          type: string
+          nullable: true
+        utm_campaign:
+          type: string
+          nullable: true
+        utm_term:
+          type: string
+          nullable: true
+        utm_content:
+          type: string
+          nullable: true
+        gclid:
+          type: string
+          nullable: true
+        referrer_click_at:
+          type: integer
+          nullable: true
+          description: The device's clock
+        install_begin_at:
+          type: integer
+          nullable: true
+          description: The device's clock
+        referrer_click_server_at:
+          type: integer
+          nullable: true
+          description: Google's clock
+        install_begin_server_at:
+          type: integer
+          nullable: true
+          description: Google's clock — the install conversion's time
+        install_version:
+          type: string
+          nullable: true
+        google_play_instant:
+          type: boolean
+          nullable: true
+        app_version:
+          type: string
+          nullable: true
+        sdk_version:
+          type: string
+          nullable: true
+        os_version:
+          type: string
+          nullable: true
+        integrity_state:
+          type: string
+          description: "`not_requested`, or `received` when the SDK sent a Play Integrity token (judged from PR 6 on)"
+        first_open_at:
+          type: integer
+          nullable: true
+        received_at:
+          type: integer
+        settled_at:
+          type: integer
+          nullable: true
+          description: When the state became final; null while pending
+        remote_ip:
+          type: string
+
+    AppInstallResponse:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/AppInstall"
+
+    AppInstallListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/AppInstall"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    AppInstallTokenResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            registration_id: {type: integer}
+            click_id: {type: integer}
+            click_time: {type: integer}
+            install_token: {type: string, pattern: "^[1-9][0-9]*\\.[A-Za-z0-9_-]{16}$"}
+            referrer: {type: string, example: p202=1042.3MVffxqa2WX3CV49}
+            store_url: {type: string}
+
+    AppInstallRequest:
+      type: object
+      required: [install_uuid, app_key, store, referrer]
+      additionalProperties: false
+      description: >-
+        Vectors: tests/fixtures/app-sdk-contract/android/install-requests.json.
+        Every timestamp is a JSON integer (unix seconds); a string or a float is 400.
+      properties:
+        install_uuid:
+          type: string
+          pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          description: The SDK's per-install id, lower-case; minted once and persisted with the body
+        app_key:
+          type: string
+        store:
+          type: string
+          enum: [google_play]
+        referrer:
+          type: object
+          additionalProperties: false
+          required: [status]
+          properties:
+            status:
+              type: string
+              enum: [ok, feature_not_supported, service_unavailable, developer_error, service_disconnected, permission_error]
+            install_referrer: {type: string, description: "Required when status is ok (\"\" for none)"}
+            referrer_click_timestamp_seconds: {type: integer}
+            install_begin_timestamp_seconds: {type: integer}
+            referrer_click_timestamp_server_seconds: {type: integer}
+            install_begin_timestamp_server_seconds: {type: integer}
+            install_version: {type: string, nullable: true}
+            google_play_instant: {type: boolean, nullable: true}
+        first_open_at: {type: integer, nullable: true}
+        app_version: {type: string, nullable: true, maxLength: 64}
+        sdk_version: {type: string, nullable: true, maxLength: 32}
+        os_version: {type: string, nullable: true, maxLength: 32}
+        test: {type: boolean, default: false}
+        integrity_token: {type: string, nullable: true, description: "A Play Integrity token; stored for PR 6's verdict worker and excluded from the fingerprint"}
+
+    AppInstallReceiptResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            install_uuid: {type: string}
+            match: {type: string, enum: [attributed, organic, third_party, unavailable, pending_click, bad_token, foreign_click, implausible, outside_window, duplicate_click, pending_integrity]}
+            reason: {type: string}
+            trusted: {type: integer, nullable: true, enum: [0, 1, null]}
+            test: {type: boolean}
+            duplicate: {type: boolean}
+
+    AppInstallEventsRequest:
+      type: object
+      required: [events]
+      additionalProperties: false
+      description: "Vectors: tests/fixtures/app-sdk-contract/android/events-requests.json"
+      properties:
+        events:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [event_id, name, occurred_at]
+            properties:
+              event_id: {type: string, maxLength: 128, description: "Unique within the install; not starting with @"}
+              name: {type: string, maxLength: 64}
+              occurred_at: {type: integer, description: "The device's clock; an event is ordered by min(occurred_at, received_at)"}
+              properties: {type: object, maxProperties: 32, additionalProperties: {oneOf: [{type: string, maxLength: 255}, {type: number}, {type: boolean}]}}
+              revenue: {type: number, nullable: true}
+              transaction_id: {type: string, nullable: true, maxLength: 255}
+
+    AppInstallEventsReceiptResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            install_uuid: {type: string}
+            accepted: {type: array, items: {type: string}}
+            duplicates: {type: array, items: {type: string}}
 
     AppPostbackListResponse:
       type: object
@@ -5875,6 +6407,17 @@ components:
             app_id:
               type: integer
               description: iOS only — the App Store id as a number
+            integrity_mode:
+              type: string
+              enum: ["off"]
+              description: Android only — whether the SDK requests a Play Integrity token (`off` until Play Integrity ships)
+            sdk:
+              type: object
+              description: Android only — how the SDK talks to the intake
+              properties:
+                installs_path: {type: string, example: /api/v3/apps/installs}
+                events_path: {type: string, example: "/api/v3/apps/installs/{install_uuid}/events"}
+                max_events_per_request: {type: integer, example: 100}
             schema_version:
               type: string
               description: Content hash of the mapping; also the ETag (unquoted)

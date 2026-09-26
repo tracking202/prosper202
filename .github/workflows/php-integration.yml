@@ -120,6 +120,19 @@ jobs:
             --group integration \
             tests/Apps/AppRegistryIntegrationTest.php \
             --verbose --no-coverage
+          # The Android intake: the install, its classification, the install
+          # conversion, the MTA and notification outbox rows commit together
+          # (failures planted by triggers roll all of it back), replays and
+          # forgeries, the pending-click settler, and events through the goal
+          # engine with the traffic-source notification once per outcome.
+          vendor/bin/phpunit --configuration phpunit.ci.xml \
+            --group integration \
+            tests/Apps/Android/InstallIntakeIntegrationTest.php \
+            --verbose --no-coverage
+          vendor/bin/phpunit --configuration phpunit.ci.xml \
+            --group integration \
+            tests/Apps/Android/AppInstallAtomicityTest.php \
+            --verbose --no-coverage
           # Checks the SQL the v3 API ships against the schema it ships, by
           # preparing every statically-known statement on a real server. It
           # needs its own database because it installs a fresh schema.

@@ -93,4 +93,32 @@ final class AppOpenApiCoverageTest extends TestCase
             $this->assertStringContainsString("\n  $path:\n", $spec, "$path is served but not documented in docs/openapi.yaml");
         }
     }
+
+    /**
+     * The Android intake (PR 5): every column the install reads serve is a
+     * documented AppInstall property, every documented match-state enum is
+     * the server's MatchState set, and every install route is documented.
+     */
+    public function testTheAndroidInstallSurfaceIsDocumented(): void
+    {
+        $constant = (new \ReflectionClass(\Api\V3\Controllers\AppInstallsController::class))->getConstant('COLUMNS');
+        $this->assertIsString($constant);
+        $columns = array_map('trim', explode(',', $constant));
+        $this->assertGreaterThan(25, count($columns));
+        $this->assertSame([], array_values(array_diff($columns, $this->documentedProperties('AppInstall'))),
+            'install columns the API serves but docs/openapi.yaml does not describe');
+
+        $spec = $this->spec();
+        $this->assertGreaterThanOrEqual(3, preg_match_all('/enum: \[(attributed, organic[^\]]*)\]/', $spec, $m));
+        foreach ($m[1] as $enum) {
+            $this->assertSame(\Api\V3\Apps\Android\MatchState::values(), array_map('trim', explode(',', $enum)), 'a documented match_state enum');
+        }
+        foreach (['/apps/installs', '/apps/installs/{install_uuid}/events', '/apps/{id}/installs', '/apps/{id}/installs/{install_uuid}', '/apps/{id}/install-token'] as $path) {
+            $this->assertStringContainsString("\n  $path:\n", $spec, "$path is served but not documented");
+        }
+        foreach (['attribution_window_days', 'trust_client_revenue'] as $field) {
+            $this->assertContains($field, $this->documentedProperties('AppRegistration'));
+        }
+        $this->assertContains('app_registration_id', $this->documentedProperties('Campaign'));
+    }
 }
