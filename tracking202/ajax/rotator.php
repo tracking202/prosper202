@@ -564,29 +564,17 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 }
 
 /**
- * Whether `$sql` (integer placeholders only) finds a row. A statement that
- * cannot run is an error, not "no row" (CLAUDE.md #1): the caller refuses
- * on false, and a failure must not read as a refusal it did not decide.
+ * Whether `$sql` (integer placeholders only) finds a row, read from the
+ * primary. A statement that cannot run is an error, not "no row" (CLAUDE.md
+ * #1): Connection throws on a failed prepare, execute or get_result, so a
+ * failure never reads as a refusal it did not decide.
  *
  * @param list<int> $ids
  */
 function p202_rotator_row_exists(mysqli $db, string $sql, array $ids): bool
 {
-	$stmt = $db->prepare($sql);
-	if ($stmt === false) {
-		throw new RuntimeException('Could not check a redirector id: ' . $db->error);
-	}
-	$stmt->bind_param(str_repeat('i', count($ids)), ...$ids);
-	if (!$stmt->execute()) {
-		$stmt->close();
-		throw new RuntimeException('Could not check a redirector id: ' . $db->error);
-	}
-	$result = $stmt->get_result();
-	if ($result === false) {
-		$stmt->close();
-		throw new RuntimeException('Could not read a redirector id check: ' . $db->error);
-	}
-	$found = $result->fetch_row() !== null;
-	$stmt->close();
-	return $found;
+	$conn = new \Prosper202\Database\Connection($db);
+	$stmt = $conn->prepareWrite($sql);
+	$conn->bind($stmt, str_repeat('i', count($ids)), $ids);
+	return $conn->fetchOne($stmt) !== null;
 }
