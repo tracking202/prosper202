@@ -70,6 +70,69 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 		}
 	}
 
+	// Every id this link stores, or reads a name or a setting from, must be
+	// this account's. The lookups below and the INSERT took them as posted,
+	// so another account's campaign, source, account, ad or redirector could
+	// be attached to a tracker here and its names read back through this
+	// account's Slack notices (#164, #173). Checked before anything is
+	// written or deleted, as the sibling code endpoints check theirs.
+	$owned = [
+		'aff_network_id' => ['202_aff_networks', 'aff_network_id', 'aff_network_deleted', 'That campaign category'],
+		'aff_campaign_id' => ['202_aff_campaigns', 'aff_campaign_id', 'aff_campaign_deleted', 'That campaign'],
+		'landing_page_id' => ['202_landing_pages', 'landing_page_id', 'landing_page_deleted', 'That landing page'],
+		'text_ad_id' => ['202_text_ads', 'text_ad_id', 'text_ad_deleted', 'That text ad'],
+		'ppc_network_id' => ['202_ppc_networks', 'ppc_network_id', 'ppc_network_deleted', 'That traffic source'],
+		'ppc_account_id' => ['202_ppc_accounts', 'ppc_account_id', 'ppc_account_deleted', 'That traffic source account'],
+		'tracker_rotator' => ['202_rotators', 'id', null, 'That redirector'],
+	];
+	$ownedRows = [];
+	foreach ($owned as $field => [$table, $column, $deletedColumn, $what]) {
+		$raw = $_POST[$field] ?? '';
+		if (!is_string($raw)) {
+			die(p202_flash('bad', $what . ' was sent more than once.'));
+		}
+		if ($raw === '' || $raw === '0') {
+			continue;
+		}
+		if (preg_match('/^[1-9]\d{0,9}$/D', $raw) !== 1) {
+			die(p202_flash('bad', $what . ' is not one of yours, or it was removed.'));
+		}
+		$ownedSql = 'SELECT * FROM `' . $table . '` WHERE `' . $column . '` = ? AND `user_id` = ?'
+			. ($deletedColumn !== null ? ' AND COALESCE(`' . $deletedColumn . '`, 0) = 0' : '') . ' LIMIT 1';
+		$ownedStmt = $db->prepare($ownedSql);
+		if ($ownedStmt === false) {
+			record_mysql_error($db, $ownedSql);
+		}
+		$ownedId = (int) $raw;
+		$ownedUser = (int) $_SESSION['user_id'];
+		$ownedStmt->bind_param('ii', $ownedId, $ownedUser);
+		if (!$ownedStmt->execute()) {
+			$ownedStmt->close();
+			record_mysql_error($db, $ownedSql);
+		}
+		$ownedResult = $ownedStmt->get_result();
+		if ($ownedResult === false) {
+			$ownedStmt->close();
+			record_mysql_error($db, $ownedSql);
+		}
+		$ownedRow = $ownedResult->fetch_assoc();
+		$ownedStmt->close();
+		if ($ownedRow === null) {
+			die(p202_flash('bad', $what . ' is not one of yours, or it was removed.'));
+		}
+		$ownedRows[$field] = $ownedRow;
+	}
+	// An account is chosen under its source: one from another source would
+	// be stored with the posted source's variables in its link.
+	if (isset($ownedRows['ppc_account_id'], $ownedRows['ppc_network_id'])
+		&& (string) $ownedRows['ppc_account_id']['ppc_network_id'] !== (string) $ownedRows['ppc_network_id']['ppc_network_id']) {
+		die(p202_flash('bad', 'That traffic source account belongs to a different traffic source.'));
+	}
+	if (isset($ownedRows['aff_campaign_id'], $ownedRows['aff_network_id'])
+		&& (string) $ownedRows['aff_campaign_id']['aff_network_id'] !== (string) $ownedRows['aff_network_id']['aff_network_id']) {
+		die(p202_flash('bad', 'That campaign belongs to a different category.'));
+	}
+
 //echo the warnings: the link is still made
 	foreach (['text_ad_id', 'ppc_network_id', 'ppc_account_id', 'cpc', 'click_cloaking', 'cloaking_url'] as $warning) {
 		if (isset($error[$warning])) {
