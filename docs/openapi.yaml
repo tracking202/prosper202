@@ -119,7 +119,7 @@ tags:
   - name: Rotators
     description: Traffic rotator and rule management
   - name: Attribution
-    description: Attribution models, snapshots, and exports
+    description: Multi-touch attribution — models, credit reports over visitor journeys, and the worker's queue
   - name: Users
     description: User, role, API key, and preference management
   - name: Attribution postbacks
@@ -1596,37 +1596,41 @@ paths:
           $ref: "#/components/responses/NotFound"
 
   # ─── Attribution ─────────────────────────────────────────────────────
+  # Multi-touch attribution. Reads need the view_attribution_reports role
+  # permission and model writes manage_attribution_models, on top of the
+  # attribution:read / attribution:write key scope.
 
   /attribution/models:
     get:
       tags: [Attribution]
       summary: List attribution models
+      description: Every account has exactly one default model (a last-touch model is created with the account). Credits are computed for every active model.
       operationId: listAttributionModels
       parameters:
-        - $ref: "#/components/parameters/limit"
-        - $ref: "#/components/parameters/offset"
         - name: type
           in: query
           description: Filter by model type
           schema:
-            type: string
-            enum:
-              - first_touch
-              - last_touch
-              - linear
-              - time_decay
-              - position_based
-              - algorithmic
+            $ref: "#/components/schemas/AttributionModelType"
       responses:
         "200":
-          description: Paginated model list
+          description: The account's models
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/AttributionModelListResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
     post:
       tags: [Attribution]
       summary: Create an attribution model
+      description: >-
+        The attribution worker computes the new model's credits for existing
+        conversions from their stored journeys (`recompute_pending` is true
+        until it has). A lookback wider than a stored journey rebuilds that
+        journey from the identity graph first. Honors `Idempotency-Key`.
       operationId: createAttributionModel
       requestBody:
         required: true
@@ -1641,6 +1645,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AttributionModelResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: A model with the same name (slug) exists; the details name it.
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -1663,6 +1671,12 @@ paths:
     put:
       tags: [Attribution]
       summary: Update an attribution model
+      description: >-
+        Partial update. Changing model_type without sending weighting_config
+        resets the config to the new type's defaults. A model cannot stop
+        being the default (make another one the default instead), and the
+        default cannot be deactivated. A change to what the model computes
+        queues its recompute; deactivating it removes its credits.
       operationId: updateAttributionModel
       requestBody:
         required: true
@@ -1679,6 +1693,8 @@ paths:
                 $ref: "#/components/schemas/AttributionModelResponse"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: The new name collides with another model's.
         "422":
           $ref: "#/components/responses/ValidationError"
     delete:
@@ -1686,7 +1702,10 @@ paths:
         - $ref: "#/components/parameters/dryRun"
       tags: [Attribution]
       summary: Delete an attribution model
-      description: Cascading hard delete. Removes all touchpoints, snapshots, and exports for this model.
+      description: >-
+        Hard delete of the model, its credits and its export jobs; campaigns
+        that named it fall back to the account default. The default model
+        cannot be deleted (409).
       operationId: deleteAttributionModel
       responses:
         "200":
@@ -1695,57 +1714,152 @@ paths:
           description: Model deleted
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: The model is the account default.
 
-  /attribution/models/{id}/snapshots:
-    parameters:
-      - $ref: "#/components/parameters/resourceId"
+  /attribution/reports/breakdown:
     get:
       tags: [Attribution]
-      summary: List snapshots for a model
-      operationId: listAttributionSnapshots
+      summary: Attributed conversions, revenue, cost and ROI by a click dimension
+      description: >-
+        Credits for conversions whose conv_time is in range, grouped by a
+        dimension of the credited clicks; clicks and cost from the
+        dimension's own clicks whose click_time is in range; assisted
+        conversions (journeys where the dimension had a touch before the
+        converting click). Money values are exact decimal strings. Without
+        model_id the report is "effective": each conversion under its
+        campaign's model override when that model is active, otherwise the
+        account default. Unknown parameters are refused.
+      operationId: attributionBreakdown
       parameters:
-        - name: scope_type
+        - name: group_by
           in: query
-          description: Filter by scope
           schema:
-            type: string
-            enum: [global, campaign, landing_page]
+            $ref: "#/components/schemas/AttributionDimension"
+        - name: model_id
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+        - name: compare_model_id
+          in: query
+          description: A second model, returned side by side as compare_* columns.
+          schema:
+            type: integer
+            minimum: 1
+        - $ref: "#/components/parameters/attributionPeriod"
+        - $ref: "#/components/parameters/attributionTimeFrom"
+        - $ref: "#/components/parameters/attributionTimeTo"
         - name: limit
           in: query
           schema:
             type: integer
-            default: 500
+            minimum: 1
             maximum: 1000
-        - name: offset
-          in: query
-          schema:
-            type: integer
-            default: 0
+            default: 100
       responses:
         "200":
-          description: Paginated snapshot list
+          description: One row per dimension value, sorted by attributed revenue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionBreakdownResponse"
+        "409":
+          description: The model named is inactive or invalid and has no credits; the message gives the reason.
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /attribution/reports/journeys:
+    get:
+      tags: [Attribution]
+      summary: Journey metrics
+      description: Length distribution, time to convert, truncated and unidentified journeys, and the one-touch share by the converting click's browser, for conversions in range.
+      operationId: attributionJourneyMetrics
+      parameters:
+        - $ref: "#/components/parameters/attributionPeriod"
+        - $ref: "#/components/parameters/attributionTimeFrom"
+        - $ref: "#/components/parameters/attributionTimeTo"
+      responses:
+        "200":
+          description: Journey metrics
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   data:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/AttributionSnapshot"
-                  pagination:
-                    $ref: "#/components/schemas/Pagination"
+                    $ref: "#/components/schemas/AttributionJourneyMetrics"
+                  meta:
+                    type: object
 
-  /attribution/models/{id}/exports:
+  /attribution/conversions/{id}/journey:
     parameters:
       - $ref: "#/components/parameters/resourceId"
     get:
       tags: [Attribution]
-      summary: List exports for a model
-      operationId: listAttributionExports
+      summary: One conversion's journey explained
+      description: The touches (oldest first, converting click last), the identity signals each click carried, every model's credit per touch, and the conversion's place in the worker's queue if it is waiting.
+      operationId: attributionConversionJourney
       responses:
         "200":
-          description: Export list
+          description: The journey
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AttributionConversionJourney"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /attribution/queue:
+    get:
+      tags: [Attribution]
+      summary: The attribution worker's backlog
+      description: Conversions waiting to be attributed, failing ones with their last error and retry time, and identity merges and model changes not yet fanned out.
+      operationId: attributionQueue
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+      responses:
+        "200":
+          description: The backlog
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AttributionQueue"
+
+  /attribution/exports:
+    get:
+      tags: [Attribution]
+      summary: List attribution exports
+      description: The account's export jobs, newest first. Needs view_attribution_reports.
+      operationId: listAttributionExports
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, running, completed, failed]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: Export jobs
           content:
             application/json:
               schema:
@@ -1755,19 +1869,35 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/AttributionExport"
+        "422":
+          $ref: "#/components/responses/ValidationError"
     post:
       tags: [Attribution]
-      summary: Schedule an export
-      operationId: scheduleAttributionExport
+      summary: Queue an attribution export
+      description: >-
+        Queues a breakdown to be written as CSV by the export runner (the
+        minutely cron), now or at run_at, with every group (no row limit; more
+        than 50,000 groups fails the job with the reason). With webhook_url,
+        the runner also POSTs the file there, signed: X-P202-Signature is
+        sha256=<hex HMAC-SHA256 of "<X-P202-Timestamp>.<body>"> under the
+        export's secret, which this response carries once. Webhook URLs must
+        be https and every address the host resolves to must be public
+        (private, loopback, link-local, metadata, documentation, multicast and
+        reserved ranges are refused, IPv4 carried in IPv6 included); the
+        check runs here and again at send time, the connection is pinned to
+        the checked address, and redirects are not followed. Ids and times
+        are JSON numbers; a string is refused, not cast. Needs
+        view_attribution_reports. Honors `Idempotency-Key`.
+      operationId: createAttributionExport
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AttributionExportCreate"
+              $ref: "#/components/schemas/AttributionExportInput"
       responses:
         "201":
-          description: Export scheduled
+          description: Queued. data.webhook_secret is present only here, only when the export has a webhook.
           content:
             application/json:
               schema:
@@ -1775,6 +1905,95 @@ paths:
                 properties:
                   data:
                     $ref: "#/components/schemas/AttributionExport"
+        "409":
+          description: The model named is inactive or invalid, or the account has no default model.
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /attribution/exports/{id}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Attribution]
+      summary: Get an attribution export
+      operationId: getAttributionExport
+      responses:
+        "200":
+          description: The export job
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AttributionExport"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
+      tags: [Attribution]
+      summary: Delete an attribution export and its file
+      description: Refused (409) while the export is running.
+      operationId: deleteAttributionExport
+      responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
+        "204":
+          description: Export and file deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The export is running.
+
+  /attribution/exports/{id}/download:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Attribution]
+      summary: Download an export's CSV
+      description: >-
+        The file the runner wrote: key, name, clicks, cost,
+        attributed_conversions, attributed_revenue, roi, assisted_conversions,
+        and compare_attributed_conversions, compare_attributed_revenue,
+        compare_roi with a comparison model. Money and credit are exact
+        decimals; a text cell starting with =, +, - or @ is prefixed with an
+        apostrophe so a spreadsheet does not run it.
+      operationId: downloadAttributionExport
+      responses:
+        "200":
+          description: The CSV
+          content:
+            text/csv:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: No file yet (the export has not run), or the file is no longer on disk.
+
+  /attribution/exports/{id}/retry:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    post:
+      tags: [Attribution]
+      summary: Queue a failed export again
+      description: Resets its attempts; only a failed export can be retried (409 otherwise).
+      operationId: retryAttributionExport
+      responses:
+        "200":
+          description: Queued again
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AttributionExport"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The export is not failed.
 
   # ─── Users ───────────────────────────────────────────────────────────
 
@@ -2932,6 +3151,25 @@ components:
       name: id
       in: path
       required: true
+      schema:
+        type: integer
+    attributionPeriod:
+      name: period
+      in: query
+      description: A named range; exclusive with time_from/time_to. Without either, the last 30 days.
+      schema:
+        type: string
+        enum: [today, yesterday, last7, last30, last90]
+    attributionTimeFrom:
+      name: time_from
+      in: query
+      description: Range start, unix seconds.
+      schema:
+        type: integer
+    attributionTimeTo:
+      name: time_to
+      in: query
+      description: Range end, unix seconds.
       schema:
         type: integer
     limit:
@@ -4233,33 +4471,77 @@ components:
 
     # ── Attribution ────────────────────────────────────────────────────
 
+    AttributionModelType:
+      type: string
+      description: The engine's model enum; nothing else is accepted anywhere.
+      enum:
+        - last_touch
+        - first_touch
+        - linear
+        - time_decay
+        - position_based
+
+    AttributionDimension:
+      type: string
+      default: campaign
+      enum:
+        - campaign
+        - traffic_source
+        - landing_page
+        - keyword
+        - c1
+        - c2
+        - c3
+        - c4
+        - country
+        - device
+        - day
+
+    AttributionWeightingConfig:
+      type: object
+      description: >-
+        A JSON object (never a string). time_decay takes half_life_hours
+        (0 < h <= 8760, default 48); position_based takes first_weight and
+        last_weight (each 0–1, together at most 1, defaults 0.4/0.4; with two
+        touches the ends renormalise); the other types take no keys. Unknown
+        keys and non-numbers are refused.
+      properties:
+        half_life_hours:
+          type: number
+        first_weight:
+          type: number
+        last_weight:
+          type: number
+      additionalProperties: false
+
     AttributionModel:
       type: object
       properties:
         model_id:
-          type: integer
-        user_id:
           type: integer
         model_name:
           type: string
         model_slug:
           type: string
         model_type:
-          type: string
-          enum:
-            - first_touch
-            - last_touch
-            - linear
-            - time_decay
-            - position_based
-            - algorithmic
+          $ref: "#/components/schemas/AttributionModelType"
         weighting_config:
+          $ref: "#/components/schemas/AttributionWeightingConfig"
+        lookback_days:
+          type: integer
+          description: Days before a conversion whose clicks can earn credit; the converting click always can.
+        status:
           type: string
-          description: JSON string containing model-specific configuration
-        is_active:
-          type: integer
+          enum: [active, inactive, invalid]
+          description: invalid is set by the engine when a stored definition fails validation; status_reason says why.
+        status_reason:
+          type: string
+          nullable: true
         is_default:
-          type: integer
+          type: boolean
+        recompute_pending:
+          type: boolean
+          description: The worker has not yet recomputed this model's credits after its last change.
         created_at:
           type: integer
         updated_at:
@@ -4272,50 +4554,42 @@ components:
         model_name:
           type: string
         model_type:
-          type: string
-          enum:
-            - first_touch
-            - last_touch
-            - linear
-            - time_decay
-            - position_based
-            - algorithmic
+          $ref: "#/components/schemas/AttributionModelType"
         weighting_config:
-          oneOf:
-            - type: string
-            - type: object
-          description: JSON config or object (auto-encoded)
-        is_active:
+          $ref: "#/components/schemas/AttributionWeightingConfig"
+        lookback_days:
           type: integer
-          default: 1
+          minimum: 1
+          maximum: 365
+          default: 30
+        status:
+          type: string
+          enum: [active, inactive]
+          default: active
         is_default:
-          type: integer
-          default: 0
+          type: boolean
+          default: false
 
     AttributionModelUpdate:
       type: object
+      additionalProperties: false
       properties:
         model_name:
           type: string
-        model_slug:
-          type: string
         model_type:
-          type: string
-          enum:
-            - first_touch
-            - last_touch
-            - linear
-            - time_decay
-            - position_based
-            - algorithmic
+          $ref: "#/components/schemas/AttributionModelType"
         weighting_config:
-          oneOf:
-            - type: string
-            - type: object
-        is_active:
+          $ref: "#/components/schemas/AttributionWeightingConfig"
+        lookback_days:
           type: integer
+          minimum: 1
+          maximum: 365
+        status:
+          type: string
+          enum: [active, inactive]
         is_default:
-          type: integer
+          type: boolean
+          description: Only true is accepted on a model that is already the default.
 
     AttributionModelResponse:
       type: object
@@ -4330,53 +4604,160 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AttributionModel"
-        pagination:
-          $ref: "#/components/schemas/Pagination"
 
-    AttributionSnapshot:
+    AttributionBreakdownRow:
       type: object
       properties:
-        snapshot_id:
+        key:
+          type: string
+          description: The dimension value (an id, or YYYY-MM-DD for day); "0" when the click has none.
+        name:
+          type: string
+          nullable: true
+        clicks:
           type: integer
+        cost:
+          type: string
+          description: Sum of the dimension's own click costs in range.
+        attributed_conversions:
+          type: string
+          description: Sum of credit (8 decimal places).
+        attributed_revenue:
+          type: string
+          description: Sum of credited revenue (5 decimal places).
+        roi:
+          type: number
+          nullable: true
+        assisted_conversions:
+          type: integer
+        compare_attributed_conversions:
+          type: string
+        compare_attributed_revenue:
+          type: string
+        compare_roi:
+          type: number
+          nullable: true
+
+    AttributionBreakdownResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttributionBreakdownRow"
+        totals:
+          type: object
+          properties:
+            conversions:
+              type: integer
+            attributed_conversions:
+              type: string
+            attributed_revenue:
+              type: string
+            compare_attributed_conversions:
+              type: string
+            compare_attributed_revenue:
+              type: string
+        meta:
+          type: object
+          properties:
+            group_by:
+              type: string
+            time_from:
+              type: integer
+            time_to:
+              type: integer
+            model:
+              type: object
+              description: The model read, or {mode:"effective", default_model_id} when none was named.
+            compare_model:
+              type: object
+              nullable: true
+            groups:
+              type: integer
+              description: How many groups the report has; more than limit means data holds the top `limit` by attributed revenue.
+            limit:
+              type: integer
+
+    AttributionExportInput:
+      type: object
+      additionalProperties: false
+      properties:
+        group_by:
+          $ref: "#/components/schemas/AttributionDimension"
         model_id:
           type: integer
-        user_id:
+          minimum: 1
+          description: Default the account default model, stored as its id so the job reads a fixed model.
+        compare_model_id:
           type: integer
-        scope_type:
+          minimum: 1
+        period:
           type: string
-        scope_id:
+          enum: [today, yesterday, last7, last30, last90]
+        time_from:
           type: integer
-        date_hour:
+          description: Unix seconds; with time_to, instead of period. Default the last 30 days.
+        time_to:
           type: integer
-        attributed_revenue:
-          type: number
-        attributed_cost:
-          type: number
+        run_at:
+          type: integer
+          description: Unix seconds, at most a year ahead; a past time means as soon as possible. Default now.
+        webhook_url:
+          type: string
+          maxLength: 500
+          description: https://host[:port][/path], spelled plainly (no user info, fragment or backslash); the host a DNS name or a canonical IP address that is public.
+        webhook_secret:
+          type: string
+          minLength: 16
+          maxLength: 255
+          description: Printable ASCII, no spaces. Generated (64 hex characters) when a webhook is given without one.
 
     AttributionExport:
       type: object
       properties:
         export_id:
           type: integer
-        user_id:
-          type: integer
         model_id:
           type: integer
-        scope_type:
+        compare_model_id:
+          type: integer
+          nullable: true
+        group_by:
           type: string
-        scope_id:
+        time_from:
           type: integer
-        start_hour:
+        time_to:
           type: integer
-        end_hour:
-          type: integer
-        requested_format:
-          type: string
-          enum: [csv, json]
         status:
           type: string
-          enum: [queued, processing, completed, failed]
-        queued_at:
+          enum: [pending, running, completed, failed]
+        rows_exported:
+          type: integer
+          nullable: true
+        file_ready:
+          type: boolean
+        download_path:
+          type: string
+          nullable: true
+        webhook_url:
+          type: string
+          nullable: true
+        webhook_signed:
+          type: boolean
+        webhook_secret:
+          type: string
+          description: Only in the create response.
+        webhook_status_code:
+          type: integer
+          nullable: true
+        attempts:
+          type: integer
+          description: Runs so far; a retryable webhook failure (no connection, timeout, 5xx, 408, 429) is retried after 1 and then 2 minutes, 3 runs in all.
+        last_error:
+          type: string
+          nullable: true
+        run_at:
           type: integer
         started_at:
           type: integer
@@ -4384,40 +4765,218 @@ components:
         completed_at:
           type: integer
           nullable: true
-        file_path:
-          type: string
-          nullable: true
-        webhook_url:
-          type: string
-          nullable: true
         created_at:
           type: integer
-        updated_at:
-          type: integer
 
-    AttributionExportCreate:
+    AttributionJourneyMetrics:
       type: object
       properties:
-        scope_type:
-          type: string
-          default: global
-          enum: [global, campaign, landing_page]
-        scope_id:
+        conversions:
           type: integer
-          default: 0
-        start_hour:
+        one_touch:
           type: integer
-          description: Start timestamp (defaults to 0)
-        end_hour:
+        one_touch_share:
+          type: number
+        truncated:
           type: integer
-          description: End timestamp (defaults to current time)
-        format:
+          description: Journeys the 25-touch cap cut.
+        unidentified:
+          type: integer
+          description: Converting clicks with no visitor key (one touch by construction).
+        average_touches:
+          type: number
+        length_distribution:
+          type: array
+          items:
+            type: object
+            properties:
+              touches:
+                type: integer
+              conversions:
+                type: integer
+        time_to_convert:
+          type: object
+          additionalProperties:
+            type: integer
+        one_touch_by_browser:
+          type: array
+          items:
+            type: object
+            properties:
+              browser:
+                type: string
+              conversions:
+                type: integer
+              one_touch:
+                type: integer
+              one_touch_share:
+                type: number
+        recent_conversions:
+          type: array
+          description: The newest 25 attributed conversions in range, the entry points of a journey drill-down.
+          items:
+            type: object
+            properties:
+              conv_id:
+                type: integer
+              conv_time:
+                type: integer
+              touches:
+                type: integer
+              identified:
+                type: boolean
+              truncated:
+                type: boolean
+              amount:
+                type: string
+                description: What the conversion counts for in attribution, the amount its credits sum to - its recorded amount net of the reversals naming it.
+              recorded_amount:
+                type: string
+                description: The conversion's own recorded amount, before reversals.
+              counted:
+                type: boolean
+              campaign_name:
+                type: string
+                nullable: true
+
+    AttributionConversionJourney:
+      type: object
+      properties:
+        conv_id:
+          type: integer
+        click_id:
+          type: integer
+        amount:
           type: string
-          default: csv
-          enum: [csv, json]
-        webhook_url:
+          description: |
+            What the conversion counts for in attribution, and so what each
+            model's revenue column sums to: the recorded amount net of the
+            reversals naming it (a $10 sale reversed by $4 is 6.00000), or
+            0.00000 when it does not count.
+        recorded_amount:
           type: string
-          description: URL to POST export delivery notification
+          description: The conversion's own recorded amount, before reversals (negative for a reversal row).
+        counted:
+          type: boolean
+          description: false when the conversion counts for nothing - not payable, superseded, deleted, itself a reversal, or reversed in full.
+        conv_time:
+          type: integer
+        journey:
+          type: object
+          nullable: true
+          description: null when the conversion does not count (not payable, superseded, deleted or fully reversed) or has not been processed yet.
+          properties:
+            touches:
+              type: integer
+            built_lookback_days:
+              type: integer
+            built_at:
+              type: integer
+            truncated:
+              type: boolean
+            identified:
+              type: boolean
+        touches:
+          type: array
+          items:
+            type: object
+            properties:
+              position:
+                type: integer
+              click_id:
+                type: integer
+              click_time:
+                type: integer
+              campaign_id:
+                type: integer
+                nullable: true
+              campaign_name:
+                type: string
+                nullable: true
+              ppc_account_id:
+                type: integer
+                nullable: true
+              ppc_account_name:
+                type: string
+                nullable: true
+              signals:
+                type: array
+                items:
+                  type: string
+                  enum: [vid, lpid, cust]
+        credits:
+          type: array
+          items:
+            type: object
+            properties:
+              model_id:
+                type: integer
+              model_name:
+                type: string
+              model_type:
+                $ref: "#/components/schemas/AttributionModelType"
+              touches:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    position:
+                      type: integer
+                    click_id:
+                      type: integer
+                    credit:
+                      type: string
+                    revenue:
+                      type: string
+        pending:
+          type: object
+          nullable: true
+          properties:
+            reason:
+              type: string
+            enqueued_at:
+              type: integer
+            attempts:
+              type: integer
+            last_error:
+              type: string
+              nullable: true
+            retry_at:
+              type: integer
+
+    AttributionQueue:
+      type: object
+      properties:
+        pending:
+          type: integer
+        oldest_enqueued_at:
+          type: integer
+          nullable: true
+        failing:
+          type: integer
+        merges_awaiting_requeue:
+          type: integer
+        models_awaiting_recompute:
+          type: integer
+        rows:
+          type: array
+          items:
+            type: object
+            properties:
+              conv_id:
+                type: integer
+              reason:
+                type: string
+                enum: [recorded, counted_state, identity_merge, rebuild_journey, model_changed]
+              enqueued_at:
+                type: integer
+              attempts:
+                type: integer
+              last_error:
+                type: string
+                nullable: true
+              retry_at:
+                type: integer
 
     # ── Users ──────────────────────────────────────────────────────────
 

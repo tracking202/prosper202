@@ -16,6 +16,14 @@ import (
 
 const maxResponseSize = 10 << 20 // 10 MB
 
+// maxDownloadSize bounds a file download (an attribution export's CSV).
+// Download refuses a larger body rather than returning a short file.
+const maxDownloadSize = 64 << 20 // 64 MB
+
+// OpDownloadTooLarge marks a download refused because the body exceeded
+// maxDownloadSize.
+const OpDownloadTooLarge = "download_too_large"
+
 // stagedMode, when set (the root --staged flag), stamps staged=1 onto every
 // mutating request so the server records the write as a proposal (a staged
 // change with a server-issued id) instead of executing it. The
@@ -165,6 +173,9 @@ func HintFor(err error) string {
 	}
 	var reqErr *RequestError
 	if errors.As(err, &reqErr) {
+		if reqErr.Op == OpDownloadTooLarge {
+			return "Nothing was written. Create a smaller export (a shorter --time-from/--time-to range, or a coarser --group-by such as campaign) and download that one."
+		}
 		switch reqErr.Kind {
 		case "network":
 			return "Check the server URL (`p202 config get`) and that the instance is reachable; run `p202 config test` to verify the connection."
@@ -443,7 +454,18 @@ func (c *Client) do(method, path string, params map[string]string, body interfac
 	return c.doWithHeaders(method, path, params, body, nil)
 }
 
+// Download GETs a file endpoint and returns its bytes. A JSON read above
+// is capped by truncation; a file cannot be, because a short CSV reads as a
+// complete one — so a body over maxDownloadSize is an error here.
+func (c *Client) Download(path string) ([]byte, error) {
+	return c.doLimited("GET", path, nil, nil, nil, maxDownloadSize, true)
+}
+
 func (c *Client) doWithHeaders(method, path string, params map[string]string, body interface{}, headers map[string]string) ([]byte, error) {
+	return c.doLimited(method, path, params, body, headers, maxResponseSize, false)
+}
+
+func (c *Client) doLimited(method, path string, params map[string]string, body interface{}, headers map[string]string, limit int64, strict bool) ([]byte, error) {
 	u := c.baseURL + "/" + strings.TrimLeft(path, "/")
 
 	if stagedMode &&
@@ -507,13 +529,23 @@ func (c *Client) doWithHeaders(method, path string, params map[string]string, bo
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	readLimit := limit
+	if strict {
+		readLimit = limit + 1
+	}
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, readLimit))
 	if err != nil {
 		return nil, &RequestError{Kind: "network", Op: "read_response", Err: err}
 	}
 
 	if resp.StatusCode >= 400 {
 		return nil, parseAPIError(resp.StatusCode, respBody)
+	}
+	if strict && int64(len(respBody)) > limit {
+		// Not a network failure: the server answered in full and the file
+		// is simply bigger than this client takes. The fix is a smaller
+		// file, which HintFor names.
+		return nil, &RequestError{Kind: "validation", Op: OpDownloadTooLarge, Err: fmt.Errorf("the file is larger than %d MB, the most this client downloads", limit>>20)}
 	}
 
 	return respBody, nil

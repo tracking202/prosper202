@@ -243,13 +243,18 @@ function p202_account_save_currency(\Prosper202\Database\Connection $conn, int $
  * must not be soft-deleted, and the role is replaced rather than updated in
  * place, so a user who somehow has no role row gets one.
  *
+ * A new user's other first rows (its default attribution model) are written
+ * by $onCreate inside the same transaction, so an account never commits
+ * without them; it must not open a transaction of its own.
+ *
  * @param array<string, string|int|null> $userSet  202_users column => value; the
  *   column names are the caller's own literals, never the request's
+ * @param (callable(int): mixed)|null $onCreate  run with the new user's id, for a create only
  * @return int the user's id
  * @throws DomainException when the edited user is not there any more
  * @throws Throwable when nothing was saved
  */
-function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $editUserId, array $userSet, int $roleId): int
+function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $editUserId, array $userSet, int $roleId, ?callable $onCreate = null): int
 {
     if ($userSet === []) {
         throw new InvalidArgumentException('p202_account_save_user(): nothing to save');
@@ -265,7 +270,7 @@ function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $edi
     }
     $values = array_values($userSet);
 
-    return $conn->transaction(static function () use ($conn, $editUserId, $assignments, $types, $values, $roleId): int {
+    return $conn->transaction(static function () use ($conn, $editUserId, $assignments, $types, $values, $roleId, $onCreate): int {
         if ($editUserId !== null) {
             $stmt = $conn->prepareWrite('SELECT `user_id` FROM `202_users` WHERE `user_id` = ? AND `user_deleted` != 1 FOR UPDATE');
             $conn->bind($stmt, 'i', [$editUserId]);
@@ -300,6 +305,9 @@ function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $edi
         $stmt = $conn->prepareWrite('INSERT INTO `202_user_role` (`user_id`, `role_id`) VALUES (?, ?)');
         $conn->bind($stmt, 'ii', [$userId, $roleId]);
         $conn->executeInsert($stmt);
+        if ($editUserId === null && $onCreate !== null) {
+            $onCreate($userId);
+        }
         return $userId;
     });
 }

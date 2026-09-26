@@ -553,23 +553,53 @@ p202 rotator rule-update <rotator_id> <rule_id> [--rule_name S] [--splittest 0|1
 
 ### Attribution
 
+Multi-touch attribution: credit for each conversion spread over the visitor's
+journey (their clicks, linked by first-party identity signals, across
+campaigns) under every active model. The worker computes credits from the
+conversion outbox every minute; `queue` shows what it has not processed yet.
+
 ```
 p202 attribution model list      [--type T] [--json]
 p202 attribution model get       <id> [--json]
-p202 attribution model create    --model_name S --model_type T
-                                 [--weighting_config JSON] [--is_active 0|1]
-                                 [--is_default 0|1] [--idempotency-key S] [--json]
-p202 attribution model update    <id> [flags...] [--json]
-p202 attribution model delete    <id> [--force] [--dry-run] [--json]
-
-p202 attribution snapshot list   <model_id> [--scope_type S] [--limit 100] [--offset 0] [--json]
-
-p202 attribution export list     <model_id> [--json]
-p202 attribution export schedule <model_id> [--scope_type S] [--scope_id N]
-                                 [--start_hour T] [--end_hour T]
-                                 [--format csv|json] [--webhook_url URL]
+p202 attribution model create    --model-name S --model-type T
+                                 [--weighting-config JSON] [--lookback-days 1-365]
+                                 [--status active|inactive] [--default]
                                  [--idempotency-key S] [--json]
+p202 attribution model update    <id> [same flags] [--json]
+p202 attribution model delete    <id> [--force] [--dry-run] [--json]   (never the default)
+
+p202 attribution breakdown       [--group-by D] [--model ID] [--compare-model ID]
+                                 [--period P | --time-from T --time-to T] [--limit N] [--json]
+p202 attribution journeys        [--period P | --time-from T --time-to T] [--json]
+p202 attribution journey         <conv_id> [--json]
+p202 attribution queue           [--limit N] [--json]
+
+p202 attribution export create   [--group-by D] [--model ID] [--compare-model ID]
+                                 [--period P | --time-from T --time-to T] [--run-at T]
+                                 [--webhook-url https://…] [--webhook-secret S]
+                                 [--idempotency-key S] [--json]
+p202 attribution export list     [--status pending|running|completed|failed] [--limit 1-200] [--json]
+p202 attribution export get      <id> [--json]
+p202 attribution export download <id> [--output FILE]
+p202 attribution export retry    <id> [--json]        (failed exports only)
+p202 attribution export delete   <id> [--force] [--dry-run] [--json]   (not while running)
 ```
+
+Exports are jobs the minutely cron runs: every group of the breakdown as CSV,
+then (with `--webhook-url`) a signed POST to that https URL. `webhook_secret`
+is in the create response only. A webhook aimed at a private, loopback,
+link-local or metadata address — or a name resolving to one — is refused with
+`Error [validation]`, the address in `field_errors.webhook_url`, and a hint.
+`download` exits non-zero with nothing written when the file is not ready (409:
+check `export get`, `export retry` a failed one).
+
+Model types: last_touch, first_touch, linear, time_decay
+(`{"half_life_hours":48}`), position_based (`{"first_weight":0.4,"last_weight":0.4}`).
+Dimensions (`--group-by`): campaign, traffic_source, landing_page, keyword,
+c1–c4, country, device, day. Without `--model` the breakdown is "effective":
+each conversion under its campaign's model override, else the account default.
+Money comes back as exact decimal strings; `totals.attributed_revenue` equals
+the counted conversion value in the range under every model.
 
 ### Users
 

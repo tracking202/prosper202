@@ -114,13 +114,29 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['delete_user_id'])) {
 		p202_account_redirect('202-account/user-management.php');
 	}
 
+	// Attribution export files first: the export rows deleted below are the
+	// only record of their names (plan §7.2, "export files on disk").
+	try {
+		$exportFiles = new \Prosper202\Attribution\ExportFiles();
+		foreach ((new \Prosper202\Attribution\ExportStore(new \Prosper202\Database\Connection($db)))->fileNames((int) $mysql['user_id']) as $exportFile) {
+			if (!$exportFiles->remove($exportFile)) {
+				error_log('user-management: attribution export file ' . $exportFile . ' of user ' . (int) $mysql['user_id'] . ' could not be removed');
+			}
+		}
+	} catch (\Throwable $exception) {
+		error_log('user-management: attribution export files of user ' . (int) $mysql['user_id'] . ' not removed: ' . $exception->getMessage());
+	}
+
 	// Purge attribution data for the deleted user
+	// (The full user-deletion cascade is plan §7.2's, PR 3; these are the
+	// multi-touch attribution tables, in dependency order.)
 	$attributionCleanupQueries = [
-		"DELETE FROM 202_attribution_touchpoints WHERE snapshot_id IN (SELECT snapshot_id FROM 202_attribution_snapshots WHERE user_id = " . $mysql['user_id'] . ")",
-		"DELETE FROM 202_attribution_snapshots WHERE user_id = " . $mysql['user_id'],
-		"DELETE FROM 202_attribution_settings WHERE user_id = " . $mysql['user_id'],
-		"DELETE FROM 202_attribution_models WHERE user_id = " . $mysql['user_id'],
-		"DELETE FROM 202_attribution_audit WHERE user_id = " . $mysql['user_id']
+		"DELETE cr FROM 202_attribution_credits cr JOIN 202_attribution_models m ON m.model_id = cr.model_id WHERE m.user_id = " . (int) $mysql['user_id'],
+		"DELETE j FROM 202_attribution_journeys j JOIN 202_attribution_journey_meta jm ON jm.conv_id = j.conv_id WHERE jm.user_id = " . (int) $mysql['user_id'],
+		"DELETE FROM 202_attribution_journey_meta WHERE user_id = " . (int) $mysql['user_id'],
+		"DELETE FROM 202_attribution_exports WHERE user_id = " . (int) $mysql['user_id'],
+		"DELETE FROM 202_attribution_models WHERE user_id = " . (int) $mysql['user_id'],
+		"DELETE FROM 202_attribution_audit WHERE user_id = " . (int) $mysql['user_id']
 	];
 
 	foreach ($attributionCleanupQueries as $cleanupQuery) {
@@ -309,7 +325,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$saved = false;
 		$gone = false;
 		try {
-			p202_account_save_user(new \Prosper202\Database\Connection($db), $editing === true ? (int) $mysql['form_user_id'] : null, $userSet, (int) $mysql['user_role']);
+			// Every account starts with its default attribution model (plan
+			// §6.4), written in the account's own transaction so a new user
+			// never commits without one.
+			$conn = new \Prosper202\Database\Connection($db);
+			p202_account_save_user($conn, $editing === true ? (int) $mysql['form_user_id'] : null, $userSet, (int) $mysql['user_role'],
+				static fn (int $newUserId): int => \Prosper202\Attribution\DefaultModel::ensureFor($conn, $newUserId));
 			$saved = true;
 		} catch (DomainException $missing) {
 			$gone = true;

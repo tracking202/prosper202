@@ -1,77 +1,76 @@
-# Advanced Attribution Engine Rollout Checklist
+# Multi-touch attribution engine
 
-This guide tracks the remaining work to deliver the Advanced Attribution Engine as a production-ready feature. Work through the list top-to-bottom, updating the checkboxes as milestones are completed.
+The engine behind `/api/v3/attribution/*` and `p202 attribution`. It was
+rewritten in the 1.9.76 release (plan: `measurement-rewrite-plan.md` §6); the
+engine it replaced built "journeys" from the account's recent clicks on the
+same campaign, so every model reported the same totals over strangers'
+clicks.
 
-## Quick Overview
-- **What’s shipped already:** database schema, PHP domain layer (strategies, repositories, job runner), CLI rebuild script, initial PHPUnit coverage, API surface scaffolding.
-- **What’s left:** production-grade strategy logic, UI/API wiring, scheduling, exports, permissions, observability, documentation polish, and automated testing reliability.
+## Flow
 
-## Task Checklist
+```
+conversion path (gpb, gpx, upx, px, pb, cb202, API, uploads)
+   └─ MysqlConversionRepository::record() / softDelete() / clearClicks()
+        └─ same transaction: ledger row + 202_attribution_pending (the outbox)
 
-### 1. Attribution Logic & Data Integrity
-- [x] Define database schema (models, snapshots, touchpoints, settings, audit) and installer/upgrade paths.
-- [x] Implement core repositories (MySQL + fallbacks) and service factory wiring.
-- [x] Provide baseline strategies (last-touch, time-decay, position-based, assisted) and job runner.
-- [x] Implement per-strategy touchpoint credit calculations (last-touch, time-decay, position-based, assisted).
-- [x] Extend position-based and assisted models to support true multi-touch journeys when touch history is available.
-  - Implemented shared journey persistence via `202_conversion_touchpoints`, hydrated repositories, and regression coverage for multi-touch batches. Historical conversions can be retrofitted using `202-cronjobs/backfill-conversion-journeys.php`.
-- [x] Add validation for model weighting configs and scope rules (reject invalid payloads with actionable errors).
-- [x] Add batching/pagination to conversion fetches to protect memory during large backfills.
+identity capture (dl.php, rtr.php, LP beacons, signed cust)
+   └─ IdentityGraph: 202_clicks_visitor, merges → 202_identity_merges (requeued_at NULL)
 
-### 2. Scheduling & Operations
-- [x] Provide CLI entry point (`202-cronjobs/attribution-rebuild.php`).
-- [x] Register cronjobs (`202_dataengine_job`/`202_cronjobs`) with safe defaults and overlapping-run protection.
-- [x] Log attribution job runs and errors (`202_cronjob_logs`, audit hooks).
-- [x] Add system check to `202-account/ajax/system-checks.php` for prerequisites (PHP version, cron, schema).
+attribution worker (every minute; MySQL named lock, one at a time)
+   1. merges      → re-queue the merged person's conversions (identity_merge)
+   2. model edits → re-queue the account's attributed conversions (rebuild_journey / model_changed)
+   3. outbox      → per conversion, one transaction:
+                     counted? → journey (stored or rebuilt) → credits for every active model
+                     delete the pending row only if its enqueue_seq is unchanged
+```
 
-### 3. API & UI Experience
-- [x] Complete REST endpoints for model CRUD, snapshot retrieval, and export scheduling (auth + validation; pagination to follow).
-- [x] Build dashboard/report screens in `202-account` & `202-charts` (model selector, comparison cards, charts).
-  - Delivered dedicated `202-account/attribution.php` with filters, KPI cards, chart containers, sandbox controls, and export listings powered by `202-js/attribution.js`.
-- [x] Implement sandbox workflow UI (model toggles, confidence hints, promote-to-default action).
-  - Sandbox comparison UI is implemented in the dashboard (promote controls and empty-state messaging) and is wired to the **v2** attribution API: `202-js/attribution.js` calls `/api/v2/attribution/sandbox` and promotes a default via `PATCH /api/v2/attribution/models/{id}`. The v3 API does not expose a `/sandbox` route.
-- [x] Provide CSV/XLS exports + webhook integrations for snapshots.
-  - Implemented asynchronous export queue (`202_attribution_exports`), API scheduling endpoint, cron processor (`202-cronjobs/attribution-export.php`), download bridge `202-account/attribution-export.php`, and UI controls with optional webhooks/downloads.
-- [x] Surface documentation links/tooltips inside UI.
+Nothing on the conversion path knows the engine exists: a broken engine
+(worker not running, a table missing, a model with an invalid config) only
+lets the outbox grow, and the backlog is processed once it is fixed.
 
-### 4. Security, Permissions & Audit
-- [x] Extend `202_permissions`/`202_roles` with attribution-specific capabilities.
-- [x] Enforce role checks in API.
-- [x] Record attribution actions in `202_attribution_audit`.
-- [x] Ensure data deletion/retention flows purge attribution tables (GDPR/CCPA compliance).
+## Code
 
-### 5. Observability & Performance
-- [x] Add instrumentation (execution time, processed rows, error counts) and surface in admin diagnostics.
-- [ ] Cache common snapshot queries (Memcached/Redis) with invalidation on recompute.
-  - Plan: Introduce cache facade in snapshot repository, key by model+scope+hour window, and flush relevant keys after each rebuild batch.
-- [x] Document guidance for scaling (indexing, resource usage, cron frequency).
-  - Plan: Publish an “Operating at Scale” doc summarising recommended MySQL indexes, cron cadence, and batch sizing along with infrastructure sizing tips.
+| Class | Role |
+| ----- | ---- |
+| `Prosper202\Attribution\ModelType` | The only list of models |
+| `ModelConfig` | Validates a definition on write (API) and on load (worker, reports) |
+| `ModelRepository` | Model rows; writes request recomputes |
+| `DefaultModel` | The one statement that gives every account its default, run by the installer, user creation and the 1.9.56 rung |
+| `JourneyBuilder` | A conversion's journey from the identity graph |
+| `CreditCalculator` | Pure: credits in 1e-8 units summing to exactly 1, revenue in 1e-5 units summing to exactly the amount |
+| `AttributionStore` | Rewrites a conversion's journey, journey meta and credits |
+| `AttributionWorker` | The run described above |
+| `AttributionReports` | The reads behind the reports API |
 
-### 6. Testing & Tooling
-- [x] Introduce PHPUnit coverage for strategies and job runner (mock repositories).
-- [x] Resolve PHPUnit bootstrap issue (vendor mismatch) and ensure suites run locally/CI.
-- [x] Add strategy-unit tests for position-based and assisted variants once credit logic is refined.
-- [ ] Add integration tests for API endpoints + UI smoke tests (Cypress/Playwright if available).
-  - API regression coverage for exports and scheduling now lives under `tests/Attribution/Api` and `tests/Attribution/Export`; front-end smoke automation remains outstanding.
-- [x] Update `phpstan`/lint config to include attribution namespaces.
+## Tables
 
-### 7. Documentation & Enablement
-- [x] Write customer-facing setup & user guides (`documentation/tutorials-and-guides`).
-- [x] Produce API reference updates (`documentation/api/`) with endpoint details and payload samples.
-- [x] Draft release notes & upgrade instructions, highlighting new cron requirements.
-- [x] Create troubleshooting guide (common errors, cron failures, data reconciliation tips).
+| Table | Holds |
+| ----- | ----- |
+| `202_attribution_models` | Models; `model_type` is an enum column, `is_default` is 1 or NULL under `UNIQUE (user_id, is_default)` |
+| `202_attribution_journeys` | `(conv_id, position) → click_id, click_time` |
+| `202_attribution_journey_meta` | What each journey was built under: `built_lookback_days`, `truncated`, `identified` |
+| `202_attribution_credits` | `(conv_id, model_id, click_id) → position, credit, revenue, conv_time` |
+| `202_attribution_pending` | The outbox (conversion schema): `reason`, `enqueue_seq`, and the worker's `attempts`, `last_error`, `retry_at` |
+| `202_attribution_audit` | Model changes |
+| `202_attribution_exports` | Export jobs (the pipeline arrives with the rebuilt dashboard) |
 
-## Attribution Dashboard & Export Workflow
-- **Accessing the dashboard:** Navigate to **Account ▸ Attribution** to open `202-account/attribution.php`. The page sets `data-api-base` to `/api/v2/attribution`, and `202-js/attribution.js` drives the UI against that **v2** surface: KPI cards and chart regions call `/api/v2/attribution/metrics`, and the model selector calls `/api/v2/attribution/models`. (The separately documented [v3 Attribution API](../api/13-attribution.md) exposes `/attribution/models` plus snapshot/export sub-resources for programmatic and CLI access; the dashboard does not call v3 directly.)
-- **Using the sandbox:** Select comparison models in the sandbox panel. The UI calls `/api/v2/attribution/sandbox`, surfacing placeholder insights until the computation engine backfills live metrics; promote-to-default actions send `PATCH /api/v2/attribution/models/{id}`.
-- **Scheduling exports:** Use the export drawer on the dashboard to request CSV/XLS snapshots. The UI calls `POST /api/v2/attribution/models/{id}/exports`, enqueueing jobs in `202_attribution_exports` and generating download tokens served through `202-account/attribution-export.php`.
-- **Processing pipeline:** The cron worker `202-cronjobs/attribution-export.php` claims pending jobs, streams snapshot data through `SnapshotExporter`, and issues optional webhooks using `WebhookDispatcher`. Export files are processed using chunked encoding to minimize memory usage, with a 10MB size limit for webhook dispatch. Logs appear in cron output, and job status updates render in the dashboard export history list.
+## Failure handling
 
-## How to Use This Checklist
-1. Review each section before beginning implementation work for the sprint.
-2. When a task is completed, update the checkbox to `[x]` and, if needed, add short notes or links to commits/PRs.
-3. Keep related documentation in sync, especially when touching API/UI or operational tasks.
-4. Once all checkboxes are marked, the feature is ready for GA release.
+- A row that throws (an inconsistent identity row, an amount out of range)
+  is kept with `attempts`, `last_error` and an exponential `retry_at`
+  (1 minute doubling to a day); the rest of the queue carries on. A
+  re-queue by the ledger resets it. `--retry-now` makes every failed row
+  due again after a fix.
+- A database error (a missing table, a lost connection) stops the run and
+  leaves every row untouched, so nothing is charged a backoff for the
+  engine's failure.
+- A stored model definition that no longer validates is marked
+  `invalid` with the reason; the other models keep computing.
 
-## Contact
-Questions or updates?  (`#prosper202-attribution
+## Honest limits
+
+Browsers erode a redirect domain's cookies, so journeys undercount on some
+browsers; `GET /attribution/reports/journeys` shows the one-touch share by
+browser. Cross-device journeys need a signed customer id. Clicks recorded
+before visitor capture existed have no visitor key and are one-touch
+journeys. See the plan's §6.2 for the full list.

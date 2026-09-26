@@ -30,7 +30,6 @@ if ($p202Nav2 === 'setup') {
         ['Landing Pages', 'file', 'landing_pages.php', ['landing_pages.php']],
         ['Text Ads', 'fonts', 'text_ads.php', ['text_ads.php']],
         ['Redirector', 'repeat', 'rotator.php', ['rotator.php']],
-        ['Attribution', 'chart', 'attribution_models.php', ['attribution_models.php']],
         ['Mobile Apps', 'phone', 'mobile_apps.php', ['mobile_apps.php']],
         ['Get LP Code', 'terminal', 'get_landing_code.php', ['get_landing_code.php', 'get_simple_landing_code.php', 'get_adv_landing_code.php']],
         ['Get Links', 'link', 'get_trackers.php', ['get_trackers.php']],

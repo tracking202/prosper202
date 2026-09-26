@@ -79,6 +79,11 @@ final class ConversionTables
      *
      * enqueue_seq increments on every re-queue of a pending row, so a worker
      * that processed a row deletes it only if nothing re-queued it meanwhile.
+     *
+     * attempts / last_error / retry_at belong to the worker: a row whose
+     * processing failed is kept with the error and retried after a backoff,
+     * so one malformed conversion delays only itself, never the queue behind
+     * it. A re-queue resets them — the change may be what fixes it.
      */
     public static function attributionPending(): SchemaDefinition
     {
@@ -89,8 +94,12 @@ final class ConversionTables
                 `enqueued_at` int(10) unsigned NOT NULL,
                 `reason` varchar(32) NOT NULL,
                 `enqueue_seq` int(10) unsigned NOT NULL DEFAULT '1',
+                `attempts` smallint(5) unsigned NOT NULL DEFAULT '0',
+                `last_error` varchar(255) DEFAULT NULL,
+                `retry_at` int(10) unsigned NOT NULL DEFAULT '0',
                 PRIMARY KEY (`conv_id`),
-                KEY `enqueued_at` (`enqueued_at`)
+                KEY `enqueued_at` (`enqueued_at`),
+                KEY `due` (`retry_at`,`enqueued_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

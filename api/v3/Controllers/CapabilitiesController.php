@@ -46,7 +46,7 @@ class CapabilitiesController
                     'api_key_scopes' => $this->apiKeyScopesEnabled(),
                     // Idempotency-Key honored on single POST creates across
                     // the operator surface (CRUD entities, conversions,
-                    // rotators + rules, attribution models + exports, users).
+                    // rotators + rules, attribution models, users).
                     // LTV write endpoints keep their own upsert/dedup
                     // semantics; API-key creation is excluded (secret
                     // responses are never stored for replay).
