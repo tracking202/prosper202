@@ -178,6 +178,12 @@ This stack is a development configuration (PHP `display_errors` is on). For prod
        location ~ /\.(?!well-known/) {
            deny all;
        }
+
+       # Attribution export CSVs and upgrade zips; served only through the
+       # authenticated download endpoints (^~ wins over the .php regex)
+       location ^~ /202-config/temp/ {
+           deny all;
+       }
    }
    ```
 
@@ -203,6 +209,14 @@ If you prefer Apache over Nginx, point your document root at the project directo
         Options -Indexes +FollowSymLinks
         AllowOverride FileInfo Options=FollowSymLinks
         Require all granted
+    </Directory>
+
+    # Attribution export CSVs and upgrade zips, served only through the
+    # authenticated download endpoints. The directory's own .htaccess needs
+    # AllowOverride AuthConfig, so the deny lives here instead.
+    <Directory /path/to/prosper202/202-config/temp>
+        AllowOverride None
+        Require all denied
     </Directory>
 
     # Deny dotfiles (.git, .env, ...) but keep /.well-known/ reachable for
@@ -258,6 +272,12 @@ This variant sets `AllowOverride None` and inlines the shipped `.htaccess` rules
     <FilesMatch "\.php$">
         SetHandler "proxy:unix:/run/php/php8.3-fpm.sock|fcgi://localhost"
     </FilesMatch>
+
+    # Attribution export CSVs and upgrade zips: with AllowOverride None the
+    # directory's .htaccess is never read, so this is the only deny
+    <Directory /path/to/prosper202/202-config/temp>
+        Require all denied
+    </Directory>
 
     # Deny dotfiles (.git, .env, ...) but keep /.well-known/ for ACME
     <LocationMatch "/\.(?!well-known/)">

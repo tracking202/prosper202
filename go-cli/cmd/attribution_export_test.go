@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -116,6 +117,46 @@ func TestAttributionExportRefusedWebhookSaysWhatToDo(t *testing.T) {
 	}
 	if hint := hintFor(err); !strings.Contains(hint, "P202_WEBHOOK_ALLOW_NETWORKS") {
 		t.Errorf("hint = %q", hint)
+	}
+}
+
+func TestAttributionExportDownloadTooLargeIsAValidationErrorWithAHint(t *testing.T) {
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/attribution/exports/9/download") {
+			w.WriteHeader(404)
+			return
+		}
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		// One byte over the 64 MB the client takes, streamed.
+		chunk := bytes.Repeat([]byte("x"), 1<<20)
+		for i := 0; i < 64; i++ {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+		}
+		w.Write([]byte("x"))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	out := filepath.Join(tmp, "big.csv")
+	_, _, err := executeCommand("attribution", "export", "download", "9", "--output", out)
+	if err == nil {
+		t.Fatal("a body over the cap was accepted")
+	}
+	if !strings.Contains(err.Error(), "larger than 64 MB") {
+		t.Errorf("message = %q", err.Error())
+	}
+	if code := exitCodeForError(err); code != ExitValidation {
+		t.Errorf("exit code = %d, want %d (not a network failure)", code, ExitValidation)
+	}
+	if hint := hintFor(err); !strings.Contains(hint, "smaller export") || strings.Contains(hint, "config test") {
+		t.Errorf("hint = %q, want the smaller-export remedy, not the connectivity one", hint)
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Errorf("a refused download left a file behind")
 	}
 }
 
