@@ -5,6 +5,12 @@ include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
 
 AUTH::require_user();
 
+// Draw the window ltv.php drew, not whatever the stored one says by now: a
+// second tab may have stored another (ReportView). ltv.js sends the view
+// with every request under tracking202/ajax/.
+require_once(substr(__DIR__, 0, -17) . '/202-config/functions-report-prefs.php');
+$reportView = p202_report_view_begin();
+
 //set the timezone for the user, for entering their dates.
 AUTH::set_timezone($_SESSION['user_timezone']);
 

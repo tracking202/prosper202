@@ -164,6 +164,147 @@ function p202_account_save_profile(\Prosper202\Database\Connection $conn, int $u
 }
 
 /**
+ * Save the account currency and re-price this account's campaigns into it:
+ * all of it or none.
+ *
+ * account.php wrote the currency, then each campaign's payout, each an
+ * autocommitted UPDATE and none of the campaign ones checked: a failure
+ * part-way left some campaigns re-priced while the page said "saved" (#165).
+ * And the exchange-rate helper answers an unreachable service with a payout
+ * of 0 (it divides a missing value), so every campaign was re-priced to
+ * nothing and that was stored. Now the rates are asked for first, outside
+ * the transaction (no lock is held across a network call), a rate the
+ * service did not give stops the whole change, and every write runs in one
+ * transaction. A payout of 0 is 0 in any currency and is not asked for.
+ *
+ * @param callable(string, string): mixed $rate  (campaign currency, payout)
+ *   => the service's answer, ['exchange_payout' => number]
+ * @throws Throwable when nothing was saved
+ */
+function p202_account_save_currency(\Prosper202\Database\Connection $conn, int $userId, string $currency, string $storedCurrency, callable $rate): void
+{
+    $updates = [];
+    if ($storedCurrency !== $currency) {
+        $stmt = $conn->prepareWrite('SELECT `aff_campaign_id`, `aff_campaign_payout`, `aff_campaign_currency`, `aff_campaign_foreign_payout` FROM `202_aff_campaigns` WHERE `aff_campaign_deleted` = 0 AND `user_id` = ?');
+        $conn->bind($stmt, 'i', [$userId]);
+        $converted = static function (string $campaignCurrency, string $payout) use ($rate): string {
+            if ((float) $payout == 0.0) {
+                return '0';
+            }
+            $answer = $rate($campaignCurrency, $payout);
+            $value = is_array($answer) ? ($answer['exchange_payout'] ?? null) : null;
+            if (!is_numeric($value) || (float) $value <= 0) {
+                throw new RuntimeException('The exchange rate service did not answer with a payout for ' . $campaignCurrency . ' ' . $payout . '.');
+            }
+            return (string) $value;
+        };
+        foreach ($conn->fetchAll($stmt) as $row) {
+            $id = (int) $row['aff_campaign_id'];
+            $payout = (string) $row['aff_campaign_payout'];
+            $foreign = (string) $row['aff_campaign_foreign_payout'];
+            $campaignCurrency = (string) $row['aff_campaign_currency'];
+            if ((float) $foreign == 0.0) {
+                // Still in its own currency: keep the original, show the converted.
+                $updates[] = ['UPDATE `202_aff_campaigns` SET `aff_campaign_foreign_payout` = ?, `aff_campaign_payout` = ? WHERE `aff_campaign_id` = ? AND `user_id` = ?', 'ssii', [$payout, $converted($campaignCurrency, $payout), $id, $userId]];
+            } elseif ($currency === $campaignCurrency) {
+                // Back to its own currency: the original returns.
+                $updates[] = ['UPDATE `202_aff_campaigns` SET `aff_campaign_payout` = ?, `aff_campaign_foreign_payout` = \'0.00\' WHERE `aff_campaign_id` = ? AND `user_id` = ?', 'sii', [$foreign, $id, $userId]];
+            } else {
+                $updates[] = ['UPDATE `202_aff_campaigns` SET `aff_campaign_payout` = ? WHERE `aff_campaign_id` = ? AND `user_id` = ?', 'sii', [$converted($campaignCurrency, $foreign), $id, $userId]];
+            }
+        }
+    }
+
+    $conn->transaction(static function () use ($conn, $userId, $currency, $updates): void {
+        $stmt = $conn->prepareWrite('UPDATE `202_users_pref` SET `user_account_currency` = ? WHERE `user_id` = ?');
+        $conn->bind($stmt, 'si', [$currency, $userId]);
+        $conn->executeUpdate($stmt);
+        foreach ($updates as [$sql, $types, $values]) {
+            $stmt = $conn->prepareWrite($sql);
+            $conn->bind($stmt, $types, $values);
+            $conn->executeUpdate($stmt);
+        }
+    });
+}
+
+/**
+ * Create a user, or save an edit to one, with its role: all of it or none.
+ *
+ * Settings › Users wrote the user row, then the role, then (for a new user)
+ * the preferences row, each autocommitted. A failure after the first left a
+ * live account with a password and no role, which a retry then collided with
+ * on its username (#165, #173). One transaction now holds every write, and
+ * Connection throws on a failed prepare, bind or execute, so transaction()
+ * rolls all of it back. The caller must not be inside a transaction already:
+ * mysqli's begin_transaction() commits an open one (CLAUDE.md #13), and
+ * nothing on the page that calls this opens one.
+ *
+ * An edit is also held to a user who is still there: the row is locked and
+ * must not be soft-deleted, and the role is replaced rather than updated in
+ * place, so a user who somehow has no role row gets one.
+ *
+ * @param array<string, string|int|null> $userSet  202_users column => value; the
+ *   column names are the caller's own literals, never the request's
+ * @return int the user's id
+ * @throws DomainException when the edited user is not there any more
+ * @throws Throwable when nothing was saved
+ */
+function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $editUserId, array $userSet, int $roleId): int
+{
+    if ($userSet === []) {
+        throw new InvalidArgumentException('p202_account_save_user(): nothing to save');
+    }
+    $assignments = [];
+    $types = '';
+    foreach ($userSet as $column => $value) {
+        if (preg_match('/^[a-z_0-9]+$/', (string) $column) !== 1) {
+            throw new InvalidArgumentException("p202_account_save_user(): '$column' is not a column name");
+        }
+        $assignments[] = '`' . $column . '` = ?';
+        $types .= is_int($value) || $value === null ? 'i' : 's';
+    }
+    $values = array_values($userSet);
+
+    return $conn->transaction(static function () use ($conn, $editUserId, $assignments, $types, $values, $roleId): int {
+        if ($editUserId !== null) {
+            $stmt = $conn->prepareWrite('SELECT `user_id` FROM `202_users` WHERE `user_id` = ? AND `user_deleted` != 1 FOR UPDATE');
+            $conn->bind($stmt, 'i', [$editUserId]);
+            if ($conn->fetchOne($stmt) === null) {
+                throw new DomainException('That user is not there any more.');
+            }
+            $stmt = $conn->prepareWrite('UPDATE `202_users` SET ' . implode(', ', $assignments) . ' WHERE `user_id` = ? AND `user_deleted` != 1');
+            $conn->bind($stmt, $types . 'i', [...$values, $editUserId]);
+            $conn->executeUpdate($stmt);
+            $userId = $editUserId;
+            $stmt = $conn->prepareWrite('DELETE FROM `202_user_role` WHERE `user_id` = ?');
+            $conn->bind($stmt, 'i', [$userId]);
+            $conn->executeUpdate($stmt);
+        } else {
+            $stmt = $conn->prepareWrite('INSERT INTO `202_users` SET ' . implode(', ', $assignments));
+            $conn->bind($stmt, $types, $values);
+            $userId = $conn->executeInsert($stmt);
+            if ($userId <= 0) {
+                // The same value, asked of the server on this connection:
+                // the role and preferences rows must name the new user, and
+                // an id of 0 would attach them to nobody.
+                $stmt = $conn->prepareWrite('SELECT LAST_INSERT_ID() AS `id`');
+                $userId = (int) (($conn->fetchOne($stmt) ?? [])['id'] ?? 0);
+            }
+            if ($userId <= 0) {
+                throw new RuntimeException('The new user was not given an id.');
+            }
+            $stmt = $conn->prepareWrite('INSERT INTO `202_users_pref` (`user_id`) VALUES (?)');
+            $conn->bind($stmt, 'i', [$userId]);
+            $conn->executeInsert($stmt);
+        }
+        $stmt = $conn->prepareWrite('INSERT INTO `202_user_role` (`user_id`, `role_id`) VALUES (?, ?)');
+        $conn->bind($stmt, 'ii', [$userId, $roleId]);
+        $conn->executeInsert($stmt);
+        return $userId;
+    });
+}
+
+/**
  * The account's API keys, newest first, each with its scope.
  *
  * An install whose 202_api_keys has no scope column (one that predates
