@@ -35,7 +35,9 @@ const PAIRS = [
   // family has no classic page to hold the strip against. The strip shape
   // comes back when a family that uses it (Overview, Update) has a page on
   // each shell; until then the Setup grid and the account pair are measured.
-  { name: 'setup', classic: '/tracking202/setup/aff_networks.php', v2: '/tracking202/setup/mobile_apps.php' },
+  // Attribution Models is the one Setup page U4 left classic (the MTA rewrite
+  // replaces it); every other Setup page is on v2 now.
+  { name: 'setup', classic: '/tracking202/setup/attribution_models.php', v2: '/tracking202/setup/mobile_apps.php' },
   { name: 'account', classic: '/202-account/help.php', v2: '/202-account/ui-kit.php' },
 ];
 

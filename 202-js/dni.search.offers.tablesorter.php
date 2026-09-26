@@ -137,7 +137,7 @@ $(document).on('click', 'button.requestOffer', function(e) {
   var btn = $(this).button('loading');
   var offer_id = $(this).data('offer-id');
   var type = $(this).data('type');
-  $.get('<?php echo get_absolute_url();?>tracking202/ajax/dni_get_offers.php?request_offer_access&dni='+dni+'&offer_id='+offer_id+'&type='+type+'', function(data) {
+  $.post('<?php echo get_absolute_url();?>tracking202/ajax/dni_get_offers.php?request_offer_access&dni='+dni+'&offer_id='+offer_id+'&type='+type+'', function(data) {
     //console.log(data);
     try {
       // If there is error in back-end, do nothing
@@ -178,7 +178,7 @@ $(document).on('click', 'button.setupOffer', function(e) {
       } else {
         $ddlci = null;
   } ?>
-  $.get('<?php echo get_absolute_url();?>tracking202/ajax/dni_get_offers.php?setup_offer&ddlci=<?php echo $ddlci;?>&dni='+dni+'&offer_id='+offer_id, function(data) {
+  $.post('<?php echo get_absolute_url();?>tracking202/ajax/dni_get_offers.php?setup_offer&ddlci=<?php echo $ddlci;?>&dni='+dni+'&offer_id='+offer_id, function(data) {
     $("input[name='dni_id']").val(dni);
     $("input[name='dni_offer_id']").val(offer_id);
     $('#aff_network_id').val(data['aff_network_id']).trigger('change');

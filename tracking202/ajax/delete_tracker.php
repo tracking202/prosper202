@@ -15,7 +15,15 @@ if (!empty($user_row['url']))
 	$slack = new Slack($user_row['url']);
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && $userObj->hasPermission("remove_tracker")) {
-	
+
+	// Deleting a tracker is a write, and every other Setup write asks for the
+	// session token (error pattern #5); this one did not until U4. The page
+	// posts through jQuery, whose prefilter attaches the token.
+	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+		http_response_code(403);
+		die('Invalid token, please reload the page and try again.');
+	}
+
 	if (!isset($_POST['tracker_id'])) {
 		die("Error: No tracker ID provided");
 	}
@@ -27,7 +35,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $userObj->hasPermission("remove_trac
 		$sql = "SELECT * FROM 202_trackers WHERE tracker_id = '".$mysql['tracker_id']."' AND user_id = '".$mysql['user_id']."'";
 		$result = $db->query($sql);
 		$row = false;
-		if ($result->num_rows > 0) {
+		if ($result instanceof mysqli_result && $result->num_rows > 0) {
 			$row = $result->fetch_assoc();
 		}
 
@@ -47,5 +55,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $userObj->hasPermission("remove_trac
 
 	$sql = "DELETE FROM 202_trackers WHERE tracker_id = '".$mysql['tracker_id']."' AND user_id = '".$mysql['user_id']."'";
 	$result = $db->query($sql);
+	if (!$result) {
+		// The list removes the row when this answers 200; a delete that did
+		// not happen must not look like one that did (#173, #1).
+		error_log('delete_tracker.php: the tracker was not deleted: ' . $db->error);
+		http_response_code(500);
+		die('The tracker could not be deleted. Reload the page and try again.');
+	}
 
 }

@@ -24,55 +24,109 @@ if (!empty($user_row['url']))
 $error = [];
 $html = [];
 
-//check variables
-	if (!empty($_POST['tracker_type']) && $_POST['tracker_type'] == 0) { 
+// The answer is markup for Setup › Get Links (v2): a refusal is a danger
+// flash and stops here; a warning is a warning flash above the link. The
+// sentences are the ones this endpoint always said.
+require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 
-		if(empty($_POST['aff_network_id'])) { $error['aff_network_id'] = '<div class="error"><small><span class="fui-alert"></span> You have not selected an affiliate network.</small></div>'; }
-		if(empty($_POST['aff_campaign_id'])) { $error['aff_campaign_id'] = '<div class="error"><small><span class="fui-alert"></span> You have not selected an affiliate campaign.</small></div>'; }
-		if(empty($_POST['method_of_promotion'])) { $error['method_of_promotion'] = '<div class="error"><small><span class="fui-alert"></span> You have to select your method of promoting this affiliate link.</small></div>'; }
-		
-		echo ($error['aff_network_id'] ?? '') . 
-		     ($error['aff_campaign_id'] ?? '') . 
-		     ($error['method_of_promotion'] ?? '');
-		
-		if (!empty($error)) { die(); } 
+//check variables
+	// A direct link or simple landing page needs its campaign. This check
+	// read `!empty($_POST['tracker_type'])`, which is false for '0', so it
+	// never ran and a link to no campaign was stored; it runs now.
+	if ((string) ($_POST['tracker_type'] ?? '') === '0') {
+
+		if(empty($_POST['aff_network_id'])) { $error['aff_network_id'] = 'You have not selected an affiliate network.'; }
+		if(empty($_POST['aff_campaign_id'])) { $error['aff_campaign_id'] = 'You have not selected an affiliate campaign.'; }
+		if(empty($_POST['method_of_promotion'])) { $error['method_of_promotion'] = 'You have to select your method of promoting this affiliate link.'; }
+
+		if (!empty($error)) {
+			foreach ($error as $sentence) {
+				echo p202_flash('bad', $sentence);
+			}
+			die();
+		}
 
 	} else if(!empty($_POST['tracker_type']) && $_POST['tracker_type'] == 2) {
-		if(empty($_POST['tracker_rotator'])) { die('<div class="error"><small><span class="fui-alert"></span> You have not selected rotator.</small></div>'); }
-	}
-	
-	//but we'll allow them to choose the following options, can make a tracker link without but they will be notified	
-	if (!empty($_POST['tracker_type']) && $_POST['tracker_type'] != 2) {
-		if(empty($_POST['click_cloaking'])) { $error['click_cloaking'] = '<div class="error"><small><span class="fui-alert"></span> WARNING: This tracking link is not attached to any cloaking preference, are you sure you want to do this?</small></div>'; }
+		if(empty($_POST['tracker_rotator'])) { die(p202_flash('bad', 'You have not selected rotator.')); }
 	}
 
-	
-	if (!empty($_POST['ppc_network_id']) and empty($_POST['ppc_account_id'])) { 
-		die('<div class="error"><small><span class="fui-alert"></span> ERROR: You have a traffic source selected, but YOU DO NOT HAVE A PPC ACCOUNT SELECTED.  In order to track your traffic-sources you must select a ppc-account. If you have not created one, go back to step #1 to add it now.</small></div>');
+	//but we'll allow them to choose the following options, can make a tracker link without but they will be notified
+	if (isset($_POST['tracker_type']) && $_POST['tracker_type'] != 2) {
+		if(empty($_POST['click_cloaking'])) { $error['click_cloaking'] = 'This tracking link is not attached to any cloaking preference, are you sure you want to do this?'; }
 	}
-	if(empty($_POST['ppc_network_id'])) { $error['ppc_network_id'] = '<div class="error"><small><span class="fui-alert"></span> WARNING: This tracking link is not attached to any PPC network, are you sure you want to do this?</small></div>'; }
-	if(empty($_POST['ppc_account_id'])) { $error['ppc_account_id'] = '<div class="error"><small><span class="fui-alert"></span> WARNING: This tracking link is not attached to any PPC account, are you sure you want to do this?</small></div>'; }
-	if((!isset($_POST['cpc_dollars']) || !is_numeric($_POST['cpc_dollars'])) or (!isset($_POST['cpc_cents']) || !is_numeric($_POST['cpc_cents']))) { $error['cpc'] = '<div class="error"><small><span class="fui-alert"></span> WARNING: This tracking link does not have it\'s CPC set, are you sure you want to do this?</small></div>'; }
+
+
+	if (!empty($_POST['ppc_network_id']) and empty($_POST['ppc_account_id'])) {
+		die(p202_flash('bad', 'You have a traffic source selected, but no account for it. To track a traffic source, choose one of its accounts; add one on Traffic Sources if it has none.'));
+	}
+	if(empty($_POST['ppc_network_id'])) { $error['ppc_network_id'] = 'This tracking link is not attached to any traffic source, are you sure you want to do this?'; }
+	if(empty($_POST['ppc_account_id'])) { $error['ppc_account_id'] = 'This tracking link is not attached to any traffic source account, are you sure you want to do this?'; }
+	if((!isset($_POST['cpc_dollars']) || !is_numeric($_POST['cpc_dollars'])) or (!isset($_POST['cpc_cents']) || !is_numeric($_POST['cpc_cents']))) { $error['cpc'] = 'This tracking link does not have its CPC set, are you sure you want to do this?'; }
 
 	//if they do a landing page, make sure they have one
-	if (!empty($_POST['method_of_promotion']) && $_POST['method_of_promotion'] == 'landingpage') { 
+	if (!empty($_POST['method_of_promotion']) && $_POST['method_of_promotion'] == 'landingpage') {
 		if (empty($_POST['landing_page_id'])) {
-			$error['landing_page_id'] = '<div class="error"><small><span class="fui-alert"></span> You have not selected a landing page to use.</small></div>'; 
+			die(p202_flash('bad', 'You have not selected a landing page to use.'));
 		}
-		
-		if (isset($error['landing_page_id'])) {
-			echo $error['landing_page_id'];
-			die();
-		}    
 	}
 
-//echo error
-	echo ($error['text_ad_id'] ?? '') . 
-	     ($error['ppc_network_id'] ?? '') . 
-	     ($error['ppc_account_id'] ?? '') . 
-	     ($error['cpc'] ?? '') . 
-	     ($error['click_cloaking'] ?? '') . 
-	     ($error['cloaking_url'] ?? '');
+	// Every id this link stores, or reads a name or a setting from, must be
+	// this account's. The lookups below and the INSERT took them as posted,
+	// so another account's campaign, source, account, ad or redirector could
+	// be attached to a tracker here and its names read back through this
+	// account's Slack notices (#164, #173). Checked before anything is
+	// written or deleted, as the sibling code endpoints check theirs.
+	$owned = [
+		'aff_network_id' => ['202_aff_networks', 'aff_network_id', 'aff_network_deleted', 'That campaign category'],
+		'aff_campaign_id' => ['202_aff_campaigns', 'aff_campaign_id', 'aff_campaign_deleted', 'That campaign'],
+		'landing_page_id' => ['202_landing_pages', 'landing_page_id', 'landing_page_deleted', 'That landing page'],
+		'text_ad_id' => ['202_text_ads', 'text_ad_id', 'text_ad_deleted', 'That text ad'],
+		'ppc_network_id' => ['202_ppc_networks', 'ppc_network_id', 'ppc_network_deleted', 'That traffic source'],
+		'ppc_account_id' => ['202_ppc_accounts', 'ppc_account_id', 'ppc_account_deleted', 'That traffic source account'],
+		'tracker_rotator' => ['202_rotators', 'id', null, 'That redirector'],
+	];
+	$ownedRows = [];
+	// Read from the primary; Connection throws on a failed prepare, execute
+	// or fetch, so a failure is an error page, never "not yours" (#1).
+	$ownedConn = new \Prosper202\Database\Connection($db);
+	foreach ($owned as $field => [$table, $column, $deletedColumn, $what]) {
+		$raw = $_POST[$field] ?? '';
+		if (!is_string($raw)) {
+			die(p202_flash('bad', $what . ' was sent more than once.'));
+		}
+		if ($raw === '' || $raw === '0') {
+			continue;
+		}
+		if (preg_match('/^[1-9]\d{0,9}$/D', $raw) !== 1) {
+			die(p202_flash('bad', $what . ' is not one of yours, or it was removed.'));
+		}
+		$ownedSql = 'SELECT * FROM `' . $table . '` WHERE `' . $column . '` = ? AND `user_id` = ?'
+			. ($deletedColumn !== null ? ' AND COALESCE(`' . $deletedColumn . '`, 0) = 0' : '') . ' LIMIT 1';
+		$ownedStmt = $ownedConn->prepareWrite($ownedSql);
+		$ownedConn->bind($ownedStmt, 'ii', [(int) $raw, (int) $_SESSION['user_id']]);
+		$ownedRow = $ownedConn->fetchOne($ownedStmt);
+		if ($ownedRow === null) {
+			die(p202_flash('bad', $what . ' is not one of yours, or it was removed.'));
+		}
+		$ownedRows[$field] = $ownedRow;
+	}
+	// An account is chosen under its source: one from another source would
+	// be stored with the posted source's variables in its link.
+	if (isset($ownedRows['ppc_account_id'], $ownedRows['ppc_network_id'])
+		&& (string) $ownedRows['ppc_account_id']['ppc_network_id'] !== (string) $ownedRows['ppc_network_id']['ppc_network_id']) {
+		die(p202_flash('bad', 'That traffic source account belongs to a different traffic source.'));
+	}
+	if (isset($ownedRows['aff_campaign_id'], $ownedRows['aff_network_id'])
+		&& (string) $ownedRows['aff_campaign_id']['aff_network_id'] !== (string) $ownedRows['aff_network_id']['aff_network_id']) {
+		die(p202_flash('bad', 'That campaign belongs to a different category.'));
+	}
+
+//echo the warnings: the link is still made
+	foreach (['text_ad_id', 'ppc_network_id', 'ppc_account_id', 'cpc', 'click_cloaking', 'cloaking_url'] as $warning) {
+		if (isset($error[$warning])) {
+			echo p202_flash('warn', $error[$warning]);
+		}
+	}
 
 //show tracking code
 
@@ -398,109 +452,44 @@ $html = [];
 	}
 	
 
-	?><?php if(isset($_POST['edit_tracker']) && $_POST['edit_tracker'] && isset($_POST['tracker_id']) && $_POST['tracker_id']) { ?><small
-	class="success"><em><u>Tracker updated! Your tracking link stays the
-			same.</u></em></small><?php } ?>
-<br>
-<small><em><u>Make sure you test out all the links to make sure they
-			work yourself before running them live.</u></em></small><?php 	
-	
+	// ── The answer ─────────────────────────────────────────────────────
+	$trackingLinkParts = [];
 	if (($_POST['method_of_promotion'] ?? '') == 'directlink') {
-
-		$destination_url = 'http://' . getTrackingDomain() . get_absolute_url().'tracking202/redirect/dl.php?t202id=' . $tracker_id_public . $tracking_variable_string;
-		$html['destination_url'] = htmlentities($destination_url, ENT_QUOTES, 'UTF-8');
-		printf('<br></br><small><strong>Destination URL:</strong></small><br/>
-            <span class="infotext">This is the destination URL you should use in your PPC campaigns. 
-            This destination URL stores your above settings,
-            so when someone goes through this destination URL we know the CPC, the PPC account, 
-			the Ad Copy and everything else you have set above to this unique tracking destination URL.<br/>
-			If you modify your PPC campaign from the above settings, 
-			always make sure to update it with a new tracking202 destination.
-            You should have a unique tracking202 destination URL for each different above configuration you use.<br/>
-            In order to track keywords, make sure immediately following &t202kw= you insert your dynamic keyword.
-            For example: &t202kw={keyword}</span>');
-            echo p202_copy_snippet($destination_url, ['rows' => 2]);
-
-	} 
-
+		$trackingLinkParts[] = 'http://' . getTrackingDomain() . get_absolute_url() . 'tracking202/redirect/dl.php?t202id=' . $tracker_id_public . $tracking_variable_string;
+	}
 	if (($_POST['tracker_type'] ?? '') == 2) {
-
-		$destination_url = 'http://' . getTrackingDomain() . get_absolute_url().'tracking202/redirect/rtr.php?t202id=' . $tracker_id_public . $tracking_variable_string;
-		$html['destination_url'] = htmlentities($destination_url, ENT_QUOTES, 'UTF-8');
-		printf('<br></br><small><strong>Destination URL:</strong></small><br/>
-            <span class="infotext">This is the destination URL you should use in your PPC campaigns. 
-            This destination URL stores your above settings,
-            so when someone goes through this destination URL we know the CPC, the PPC account, 
-			the Ad Copy and everything else you have set above to this unique tracking destination URL.<br/>
-			If you modify your PPC campaign from the above settings, 
-			always make sure to update it with a new tracking202 destination.
-            You should have a unique tracking202 destination URL for each different above configuration you use.<br/>
-            In order to track keywords, make sure immediately following &t202kw= you insert your dynamic keyword.
-            For example: &t202kw={keyword}</span>');
-            echo p202_copy_snippet($destination_url, ['rows' => 2]);
-
-	} 
-	
+		$trackingLinkParts[] = 'http://' . getTrackingDomain() . get_absolute_url() . 'tracking202/redirect/rtr.php?t202id=' . $tracker_id_public . $tracking_variable_string;
+	}
 	if ((($_POST['method_of_promotion'] ?? '') == 'landingpage') or (($_POST['tracker_type'] ?? '') == 1)) {
-
-		$destination_url = ($parsed_url['scheme'] ?? 'http') . '://' . 
-		                   ($parsed_url['host'] ?? '') . 
+		$destination_url = ($parsed_url['scheme'] ?? 'http') . '://' .
+		                   ($parsed_url['host'] ?? '') .
 		                   ($parsed_url['path'] ?? '') . '?';
 		if (!empty($parsed_url['query'])) {
-			$destination_url .= $parsed_url['query'] . '&';  ;
+			$destination_url .= $parsed_url['query'] . '&';
 		}
 		$destination_url .= 't202id=' . $tracker_id_public;
 		if (!empty($parsed_url['fragment'])) {
 			$destination_url .= '#' . $parsed_url['fragment'];
 		}
 		$destination_url .= $tracking_variable_string;
-		
-		 
-		$html['destination_url'] = htmlentities($destination_url, ENT_QUOTES, 'UTF-8');
-		printf('<br></br><small><strong>Destination URL:</strong></small><br/>
-	            <span class="infotext">This is the destination URL you should use in your PPC campaigns. 
-	            This destination URL stores your above settings,
-	            so when someone goes through this destination URL we know the CPC, the PPC account, 
-	            the Ad Copy and everything else you have set above to this unique tracking destination URL.<br/>
-				If you modify your PPC campaign from the above settings, 
-				always make sure to update it with a new tracking202 destination.
-				You should have a unique tracking202 destination URL for each different above configuration you use.<br/>
-				In order to track keywords, make sure immediately following &t202kw= you insert your dynamic keyword.
-	            For example: &t202kw={keyword}</span>');
-	            echo p202_copy_snippet($destination_url, ['rows' => 2]);
-	}   
-
-	/*
-	if ($_POST['tracker_type'] != 2) {
-		$destination_url = 'http://' . getTrackingDomain() . get_absolute_url().'tracking202/static/ipx.php?t202id=' . $tracker_id_public;
-		$html['destination_url'] = htmlentities($destination_url, ENT_QUOTES, 'UTF-8');
-		printf('<br/><small><strong>Impression URL:</strong></small><br></br>
-	            <textarea class="form-control" rows="2" style="background-color: #f5f5f5; font-size: 12px;">%s</textarea>', $html['destination_url']);
-
-		printf('<br/><small><strong>Impression Pixel</strong></small><br></br>
-	            <textarea class="form-control" rows="2" style="background-color: #f5f5f5; font-size: 12px;"><img height="1" width="1" border="0" style="display: none;" src="%s" /></textarea>', $html['destination_url']);
+		$trackingLinkParts[] = $destination_url;
 	}
 
-	*/
-
+	if (isset($_POST['edit_tracker']) && $_POST['edit_tracker'] && isset($_POST['tracker_id']) && $_POST['tracker_id']) {
+		echo p202_flash('ok', 'Tracker updated. Your tracking link stays the same.');
+	}
+	foreach ($trackingLinkParts as $trackingLink) {
+		echo p202_setup_code_box($trackingLink, ['label' => 'Destination URL']);
+	}
 	?>
-
-
-<br />
-<small><strong>Final Thoughts</strong></small>
-<br />
-<span class="infotext">If you are confused about how to dynamically
-	insert keywords into your url, here are some examples below:<br /> <br />
-<ul>
-		<li><strong>Bing Ads Example:</strong> &t202kw={QueryString}</li>
-		<li><strong>Google Adwords Example:</strong> &t202kw={keyword} - <a
-			href="https://adwords.google.com/support/bin/answer.py?answer=74996&hl=en_US"
-			target="_new">More Info</a></li>
-	</ul> It is extremely important whenever you modify your PPC campaign,
-	if you are to change your CPC on your bids for instance, you must
-	update it with a new unique tracking202 destination URL. If you change
-	your CPC and use a old destination URL, tracking202 will think the CPC
-	is set to whatever, your last unique destination URL had its CPC set
-	to. In most cases, for every text ad you use, you should have a unique
-	tracking destination for that specific text ad.
-</span>
+<p class="form-text">Use this as the destination URL in your campaign at the traffic source. It carries everything set above, so when you change the cost, the account or the ad, get a new link. To track keywords, put your traffic source's keyword token right after <code>t202kw=</code>. Test the link yourself before you run traffic to it.</p>
+<details class="p202-disclosure" data-p202-remember="setup-get-links-keywords">
+	<summary>Keyword tokens <span class="p202-disclosure__hint">examples for the big ad networks</span></summary>
+	<div class="p202-disclosure__body">
+		<ul class="mb-2">
+			<li>Microsoft Advertising (Bing): <code>&amp;t202kw={QueryString}</code></li>
+			<li>Google Ads: <code>&amp;t202kw={keyword}</code></li>
+		</ul>
+		<p class="mb-0">When you change a bid, get a new link: an old link keeps reporting the cost it was made with. In most cases each text ad should have its own link.</p>
+	</div>
+</details>

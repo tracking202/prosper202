@@ -544,6 +544,14 @@ $sections = [
 				<button type="button" class="btn btn-secondary btn-sm p202-copy" data-p202-copy="3f9a1c2e8b7d4f6a0e1c2b3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6c21e">Copy</button>
 				<button type="button" class="btn btn-outline-danger btn-sm">Rotate…</button>
 			</div>
+			<label class="form-label mt-3">A long snippet <span class="text-body-secondary">(<code>p202-code__value--long</code>: scrolls in its own box)</span></label>
+			<?php
+			$kitLongSnippet = "<?php\n// Tracking202 PHP Redirection\n" . str_repeat("// ---------------------------------------------------------\n", 18) . "header('location: ' . \$tracking202outbound);\n?>";
+			?>
+			<div class="p202-code">
+				<pre class="p202-code__value p202-code__value--long"><?php echo htmlspecialchars($kitLongSnippet, ENT_QUOTES, 'UTF-8'); ?></pre>
+				<button type="button" class="btn btn-secondary btn-sm p202-copy" data-p202-copy="<?php echo htmlspecialchars($kitLongSnippet, ENT_QUOTES, 'UTF-8'); ?>"><i class="bi bi-clipboard"></i> Copy</button>
+			</div>
 		</div>
 		<div class="col-lg-6">
 			<div class="p202-strip">
