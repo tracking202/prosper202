@@ -551,6 +551,25 @@ class AttributionEngineTest {
 
     // ----------------------------------------------------------- customer
 
+    /**
+     * A customer id that is not Unicode (an unpaired surrogate) is refused
+     * by CustomerId.of(), so it never reaches the engine; accepted, it was
+     * persisted in the install body and every sendInstall() threw computing
+     * the canonical body, before any request, forever.
+     */
+    @Test
+    fun aCustomerIdThatIsNotUnicodeIsRefusedAndTheInstallIsStillSent() {
+        val e = engine()
+        assertFailsWith<InvalidCustomerIdException> {
+            e.setCustomerId(CustomerId.of("abc\uD800def", "c21cbbf0bddfc93538dd9329f809dbb663e3029dc51fb6c145dc2fbae3e670b4"))
+        }
+        e.configure(config())
+        time.settle()
+        val install = http.installs().single().json
+        assertNull(install["customer"], "the install went, without the refused customer")
+        assertNull(e.customerId)
+    }
+
     @Test
     fun aCustomerSetBeforeTheInstallRidesItsBody() {
         val e = engine()

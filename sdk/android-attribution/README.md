@@ -48,6 +48,10 @@ gradle -p sdk/android-attribution -Pp202.android=false :core:test
   on either route, a token requested only when the schema asks and bound to
   the body, holding back for Play, a waiting install's events, the file
   store.
+- `UnicodeInputTest`: every string the app passes (the customer id, event
+  property values and transaction ids, the configured endpoint and
+  versions) is refused by name when it holds an unpaired UTF-16 surrogate,
+  which the canonical form cannot encode and no server can store.
 - `LiveServerTest` runs the real engine against an instance; it skips
   unless `tests/live/android-sdk.sh` sets `P202_LIVE_BASE`.
 
