@@ -1,6 +1,6 @@
 # Measurement rewrite: app measurement (iOS + Android) and multi-touch attribution
 
-Status: **in progress.** PR 0 (legacy endpoints), PR 1 (the conversion ledger), PR 1b (breakdown reads), PR 2 (identity capture), PR 3 (the app core reshape), PR 4 (the goals engine), PR 4b (web events), PR 5 (the Android intake), PR 8 (the iOS SDK), PR 9 (the MTA engine) and PR 10 (the MTA UI and exports) are built, and Part E's UI migration is complete with U8 (the classic shell removed, §10.4.1); the rest is proposal.
+Status: **built; release gate run (PR 12, §8.1).** Every PR in §8 — 0 through 11, with 1b and 4b — and Part E's UI migration (U1–U8) are built; PR 12 ran the release gate. One item is open for the release decision: the MTA reports miss their 2 s target at 1M conversions (§8.1).
 
 ## Scope
 
@@ -3220,11 +3220,12 @@ JourneyLookbackTest, AttributionReportsIntegrationTest}`.
   `api/v2/categories` and `api/v2/reports` are the older key-based API,
   not the attribution app, and stay.
 - **Not done here:** the upgrade-equals-install test from a real 1.9.55
-  database (PR 12). Measured instead: a fresh install wound back to 1.9.56
+  database (PR 12; done, §8.1). Measured instead: a fresh install wound back to 1.9.56
   with every MTA table dropped, climbed through the real upgrade page
   (`tests/live/upgrade-csrf.sh` with `P202_PRIOR_VERSION=1.9.56`), ends with
   every MTA table's `SHOW CREATE TABLE` identical to a fresh install's and
-  one default model per account. Agent-eval cases for MTA are PR 12's.
+  one default model per account. Agent-eval cases for MTA are PR 12's (done,
+  §8.1).
 
 **Deleted, with the reason each subject no longer exists:** the whole
 `202-config/Attribution/` v2 engine (repositories, services, strategies,
@@ -3373,8 +3374,8 @@ download refuses a body over 64 MB rather than truncating it, unlike the
 JSON reads), and the PHP CLI `attribution:export:*`.
 
 **Not done here:** recurring export schedules; a retention policy for old
-export jobs and files; agent-eval cases for MTA (PR 12's, §8); the report
-performance target at 1M conversions (measured in PR 12).
+export jobs and files; agent-eval cases for MTA (PR 12's, §8 — done, §8.1); the
+report performance target at 1M conversions (measured in PR 12: missed, §8.1).
 
 ---
 
@@ -3482,12 +3483,16 @@ latency goes down.
 capped at 25 touches, newest kept, a stated design choice rather than an
 inherited constant) and writes credits for (models × touches) rows. The target is 1,000
 conversions per minute per worker on modest hardware. That target is measured
-on a seeded instance before release, not asserted.
+on a seeded instance before release, not asserted. **Measured (PR 12, §8.1):**
+about 330 a minute at 1M conversions until `KEY reverses_conv_id` was added,
+about 15,000 a minute after, with the same journeys and credits.
 
 **MTA reports.** They are grouped queries over `(model_id, click_id)` joined to
 click dimensions. The target is under 2 s for 30 days at 1M conversions. If
 measurement misses it, the fix is an hourly rollup keyed on
 (model, dimension, hour), recomputed from credits for dirty hours only.
+**Measured (PR 12, §8.1): missed** — 31–72 s a breakdown at 1M conversions;
+the rollup is not built, and is the release decision's open item.
 
 **Android intake and events.** p95 under 100 ms. There are no external calls
 on the request path: Integrity decoding and pixel firing are deferred. Goal
@@ -3546,10 +3551,12 @@ answer as the unoptimised path on a sparse and a dense dataset (CLAUDE.md,
 - **Upgrade equals install.** The test goes in three steps:
   1. Build a 1.9.55 database by running the installer from the last commit
      whose `202-config/version.php` reads 1.9.55. That needs a full-history
-     clone; this sandbox's is shallow.
+     clone; this sandbox's is shallow. (As built, §8.1: no version.php ever
+     read 1.9.55; the origin is the 1.9.55 release, 4589787, installed on
+     PHP 7.4.)
   2. Upgrade it with the new code.
-  3. Compare `SHOW CREATE TABLE` for every table the 1.9.56–1.9.76 rungs touch
-     against a fresh 1.9.76 install. They must match, apart from the
+  3. Compare `SHOW CREATE TABLE` for every table (as built: every table, and
+     every seeded row) against a fresh 1.9.76 install. They must match, apart from the
      normalisation differences the reconciler docblock lists.
 
   This one test covers the only real upgrade path, and every schema PR runs
@@ -3713,7 +3720,7 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 | 9 | **MTA engine:** schema rewrite and rungs, worker, models, credits, reports API; v2 and dead code deleted. **Built; `tests/live/mta-engine.sh`; decisions in §6.5.** | 1, 2 |
 | 10 | **MTA UI and exports:** dashboard on the v2 shell, comparison, journey metrics, SSRF-safe webhooks. **Built; `tests/live/mta-ui.sh` (and `mta-engine.sh` re-run), `tests/browser/specs/mta-dashboard.spec.js`; decisions in §6.6.** | 9 |
 | 11 | **Mobile Apps UI:** Android pages, link builder, goal editor and funnel, cross-platform report. **Built; `tests/live/mobile-apps-ui.sh` (and the setup/analyze mobile-apps, android-intake, play-integrity, ios-sdk and app-core passes re-run), `tests/browser/specs/setup-mobile-apps.spec.js` and `analyze-mobile-apps.spec.js`, agent-eval `mobile-apps-ui-001`; decisions in §5.13.** | 3–5 |
-| 12 | **Release gate:** upgrade-equals-install from a real 1.9.55 database, full live passes, agent-eval cases, docs and OpenAPI, and the whole-app browser pass on v2 | all, including U8 |
+| 12 | **Release gate:** upgrade-equals-install from a real 1.9.55 database, full live passes, agent-eval cases, docs and OpenAPI, and the whole-app browser pass on v2. **Built; `tests/live/upgrade-equals-install.sh` (CI: `upgrade-equals-install.yml`), every integration suite in CI (`tests/run-integration-suites.sh`), agent-eval `mta-001`–`mta-003`, `RoutesAreDocumentedTest` and `DocumentationLinksTest`; four upgrade differences and a worker index fixed; the 1M report measurement misses its target. Decisions and the readiness summary in §8.1.** | all, including U8 |
 
 - PRs 1, 2 and 3 depend on no other measurement PR and can proceed in
   parallel. PR 1 lands with U5 (§10.4), because it rewrites the revenue
@@ -3724,6 +3731,297 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 
 Identity capture (PR 2) gets no special ordering: with a single release, it is
 in the first release by construction.
+
+### 8.1 As built: the release gate (PR 12)
+
+What the gate ran, what it found, and what it leaves for the release
+decision. Everything below was run on the tree at the head of
+`claude/mr-12-release-gate` (U8 at a893a15 plus this PR); the
+release-readiness summary at the end says what ran and what could not.
+
+**Upgrade equals install, from the real 1.9.55.** `202-config/version.php`
+never read 1.9.55: it was created at 1.9.56 (f4fe692). Before it the version
+lived in `connect.php`, which read 1.9.55 from 4589787 ("Upgrade to 1.9.55",
+2023-03-10) until 75a381b moved it to 1.9.56. The commits between are the
+1.9.56 development line with the old string still in place, and the last of
+them (fc613ef) cannot install at all (its installer dies on a strict-types
+TypeError before creating the account), so the origin is the release,
+4589787 — what every 1.9.55 database was installed from. It does not parse
+on PHP 8 (`$string{0}` offsets), so it installs on PHP 7.4, the PHP it
+shipped for; the upgrade and the fresh install run on this checkout's PHP.
+
+`tests/live/upgrade-equals-install.sh` installs 1.9.55 from its own tree
+over HTTP, upgrades that database through this checkout's upgrade page (the
+form's own fields, token included), installs this checkout fresh into a
+second database with the installer an operator runs, and compares every
+table with `tests/live/schema-diff.php` (`Tests\Upgrade\SchemaDiff`) and
+every seeded row with `CHECKSUM TABLE`. Only what `SchemaReconciler`'s
+docblock lists as metadata is forgiven — index order, the table comment,
+partition boundaries (both installers cut weekly partitions from the moment
+they ran; the `PARTITION BY` scheme is compared) — plus the `AUTO_INCREMENT`
+counter. Row checksums skip only the per-install account, key, secret and
+`auto_cron` rows (the last records whether a remote call answered), and the
+default attribution model is compared without its timestamps.
+
+The first run found four real differences, each a bug in the ladder:
+
+- `user_data_feedback` did not exist after the upgrade. The installer gained
+  it during the 1.9.56 line and no rung created it, so an upgraded install
+  had no table for `get_user_data_feedback()`. Created in the 1.9.55 rung
+  from `CoreTables::userDataFeedback()`.
+- `202_users.user_pass` stayed `char(32)`, the salted MD5 of 1.9.55, while
+  the app writes `password_hash()` (60 characters or more). Only the login
+  path widened it, lazily, so a password set any other way before the
+  account's first login — a reset, a user created through the API or a CLI —
+  did not fit. Widened in the 1.9.55 rung (non-lossy; a failed probe fails
+  the rung rather than reading as "already wide").
+- `202_user_role` kept a `user_id` index, the one MySQL made for the foreign
+  key before the 1.9.62 rung added `uniq_user_role` (which leads with
+  `user_id` and serves the constraint). The installer's table has no such
+  index; the 1.9.62 rung now drops it, and does not advance the version
+  until it is gone.
+- `202_aff_campaigns.attribution_model_id` was added after
+  `aff_campaign_cloaking`; `CampaignTables` puts it after
+  `aff_campaign_foreign_payout`. The 1.9.56 rung adds it there.
+
+No rung was added: the version stays 1.9.76 and every rung above 1.9.55 was
+changed in place, since no database holds an intermediate shape. After the
+fixes the pass is 20 of 20 on MariaDB 10.11 and on MySQL 8.0.46 (both
+local; CI's is MySQL 8.0): 156 tables identical, the rows of 151 identical,
+the upgrade logging nothing. The CI job is
+`.github/workflows/upgrade-equals-install.yml` (full-history checkout, PHP
+7.4 then 8.3).
+
+Planted, each through the whole script: the `user_pass` widening removed,
+`attribution_model_id` back after `aff_campaign_cloaking`, the `(3, 22)`
+role permission dropped from the 1.9.56 rung, and `user_data_feedback`'s
+create removed — all four reported, as the type, the column order, the
+seed rows and the missing table. Two forgivable plants — the fresh install's
+`202_users` index order swapped and a table comment added to
+`202_user_role` — passed, and the comment was confirmed present in the
+fresh table. `SchemaDiffTest` holds the normaliser to the same line: index
+order, table comment, counter and partition ranges (MariaDB's and MySQL 8's
+spellings) forgiven; a type, a nullability, a default, a column comment,
+an index definition or kind, a collation, an engine, a constraint, an extra
+index, a column out of place, a partition scheme and a missing or extra
+table each reported.
+
+**Every integration suite in CI.** The tree has 39 `@group integration`
+suites (a 40th file names the group only in prose). CI named nine by hand;
+the other 30 — every Goals suite among them — ran nowhere, and one of those,
+`tests/DataEngine/ReportIntegrationTest`, could not have run anywhere:
+`connect.php` answers a missing `202-config.php` with a redirect and `die()`,
+which ends PHPUnit with exit 0 and no report. The integration job now runs
+`tests/run-integration-suites.sh`: every file `tests/integration-suites.php`
+selects (the same `@group` reading PHPUnit uses, from its own
+`parseDocBlock` regex), one file per invocation, each on a freshly created
+database, writing a `202-config.php` for the one suite that bootstraps the
+app. A suite passes only with exit 0 and `OK (N tests…)`, N ≥ 1: a skip is
+not a run. The DataEngine suite now installs its schema and runs 39 tests.
+`tests/Redirect/DlIntegrationTest` is an HTTP suite (`@group instance`): it
+had never run and expected `t202id=0` to redirect, which the guard at the
+top of `dl.php` refuses; it is rewritten to create its own
+tracker through the API and pin the page's contract (an id that is not a
+positive number is an empty 200, an unknown tracker the 404 page, a real
+one a 302 to its campaign with every parameter accepted and no PHP notice),
+and runs in the Agent Evals job after the eval suite. Locally: 38 database
+suites, 435 tests, green; the instance suite 11 tests, green.
+`IntegrationSuiteSelectionTest` holds the selector to PHPUnit's own reading
+(it loads every file that mentions `@group` and asks
+`PHPUnit\Util\Test::getGroups()`) and both workflows to calling it; a
+planted `/** Needs MySQL. @group integration */` one-liner that the first
+selector could not read failed it, and passes now that the selector reads
+the annotation PHPUnit's way.
+
+**The android-intake flake: a clock boundary.** Reported as three checks
+failing when `android-intake.sh` ran after `play-integrity.sh`, twice in six
+runs. Those six runs are in the PR 6 fix session's scratch logs, and the two
+failing ones finished 13 and 12 seconds after the play-integrity pass before
+them — impossible with
+the purchase-section wait (about two minutes), so that tree predated
+4327dc9, which added it. On this tree, with the wait removed and the
+received and occurred times printed, six runs after play-integrity failed
+once, and the one that failed was the one whose `p0` arrived a second after
+`p2`: the events are dated in the server's future, so each is evaluated at
+the second it arrived, and when all three share a second the tie falls to
+the event id (`"p0" < "p1"`) and the pass is green. A one-second pause
+before `p0` (the window widened) failed three runs of three; the same pause
+with the wait restored passed two of two, and five runs of the real pass
+after play-integrity passed. Play Integrity itself plays no part beyond
+shifting the timing. The wait stays — the cause genuinely is the clock — and
+the pass now asserts it: each purchase's POST must answer 200, and no
+purchase may be stored with `occurred_at >= received_at`; with the wait
+removed that check fails, by name, every run.
+
+**MTA agent-eval cases** (`tests/fixtures/agent-eval/cases/mta.json`, with
+`reference-agent.sh` branches for each):
+
+- `mta-001`: one browser (a cookie jar) clicks two campaigns a second apart
+  and converts through `gpb.php`; the worker runs; the ask is which campaign
+  first- and last-touch credit. The checks read the report under each model
+  (sign-only, so re-runs strengthen the pattern), the model list must not
+  change, and the reply must name both.
+- `mta-002`: a time-decay model from an operator's wording — a half-life in
+  hours, a lookback in days, not the default — checked exactly, with the
+  default unchanged.
+- `mta-003`: deleting the default model is refused by the server; the agent
+  must preview, report the refusal and change nothing (the whole model list
+  is `state_unchanged`).
+
+All three pass their deterministic graders with the reference agent
+(`needs_judge` for the rubric), and a deliberately wrong agent — the same
+campaign under both models, a half-life of 288 hours made the default, a
+stand-in default created so the delete goes through — failed all three.
+
+**The MTA report at 1M conversions: the target is missed.** Measured on a
+seeded scratch database (MariaDB 10.11, this sandbox): 1,000,000 conversions
+over 30 days, journeys of 1–4 touches (2.5M clicks with `202_clicks_advance`
+rows, 5,000 keywords, 200 countries, 50 campaigns, 10 traffic sources), and
+credits under three models (last touch, the default; first touch; linear) —
+4.5M credit rows. `AttributionReports::breakdown()`, three runs each, the
+whole call (credits, cost, assists and totals queries):
+
+| Breakdown (30 days) | min | median | max | groups |
+|---|---|---|---|---|
+| campaign, effective (each conversion's model) | 36.8 s | 37.8 s | 38.0 s | 50 |
+| traffic source, effective | 35.8 s | 36.0 s | 36.8 s | 10 |
+| keyword, effective | 43.5 s | 44.1 s | 44.5 s | 5,000 |
+| country, effective | 41.7 s | 41.8 s | 41.9 s | 200 |
+| day, effective | 30.8 s | 31.1 s | 31.4 s | 31 |
+| campaign, linear (2.5 credit rows a conversion) | 46.4 s | 46.6 s | 47.1 s | 50 |
+| campaign, first touch beside last touch | 47.9 s | 49.1 s | 49.8 s | 50 |
+| keyword, linear beside last touch | 69.5 s | 70.5 s | 72.3 s | 5,000 |
+| journey metrics | 26.1 s (one run) | | | |
+
+Every case is 15–35 times the 2 s target, and the answers are right (every
+case credits the 999,961 conversions inside the window; linear sums to
+999,960.9975 from the seed's rounding of thirds). Where the time goes, for
+the campaign breakdown: the credit rows under each conversion's model 11.3 s
+(a full pass over 202_conversion_logs to find the model), the cost from the
+clicks 8.3 s, the assists over the journeys 12.7 s, the totals 6.0 s. Every
+one of them joins or scans millions of rows, and the per-row join back to
+`202_clicks` by `click_id` crosses a table range-partitioned by click time
+(158 weekly partitions), so no index brings the sum near 2 s. The plan's
+remedy stands (§7.3): an hourly rollup keyed on (model, dimension, hour),
+recomputed from credits for dirty hours only — plus the same for the click
+cost and assists that every row carries. It is not built here: it is a
+schema and engine change, not a gate check, and §7.3 requires any such fix
+to be shown returning the same answer on a sparse and a dense dataset
+first. **This is the one open performance item for the release decision.**
+The seeder and timer were scratch scripts and are not committed; the
+dataset is fully described above, so the rollup can be measured against the
+same shape.
+
+**The attribution worker at 1M conversions: a missing index, fixed.** The
+target is 1,000 conversions a minute per worker (§7.3). On the same
+database, given an identity graph (one visitor per journey) and a backlog of
+the newest 5,000 conversions, the worker processed 326 in its 60-second
+budget — about 330 a minute. Sampling its connection showed one statement
+in 87 of 88 samples: `CountedAmount`'s lookup of the reversals naming a
+conversion, `WHERE reverses_conv_id = ?`, which no index served, so every
+conversion read the whole ledger (about 300 ms at 1M rows). The same lookup
+runs for every conversion the journey drill-down and the recent-conversions
+list show. `202_conversion_logs` gains `KEY reverses_conv_id` in
+`ConversionTables` and in the ledger upgrade step's index list (the rung
+changed in place). Shown to return the same answer before it was kept: with
+reversals planted (full, partial and deleted ones), `CountedAmount` over a
+fixed set of conversions gave the same digest without and with the key on a
+sparse database (10,000 conversions, 103 reversals; 0.68 s → 0.12 s) and a
+dense one (1M, 100 reversals; 93 s → 0.12 s), and the worker built the same
+journeys and credits for the same 300-conversion backlog without and with
+it (36.3 s → 1.07 s). With the key the worker cleared all 5,000 in 20.0 s —
+about 15,000 a minute, fifteen times the target.
+
+While measuring, one more thing surfaced and is left as it is: a cron run
+against a database whose `202_version` is behind the code exits 0 without a
+word, because `connect.php` redirects to the upgrade page and `die()`s — on
+the command line that is silence and success. The first worker run here did
+exactly that (the seeded database had no version row) and looked like an
+empty backlog.
+
+**Docs and OpenAPI.** The router served 210 operations and
+`docs/openapi.yaml` described 138: the LTV (40 operations), sync, change
+feed and audit (14), forecast events (6), the eight bulk upserts,
+`/`, `/versions`, `/capabilities`, `/system/metrics`, `/reports/weekpart`
+and `PUT /rotators/{id}/rules/{ruleId}` had never been written down, while
+the per-feature coverage tests each checked only their own paths. All 72 are
+documented from their controllers (the document validates with
+openapi-spec-validator before and after), and `RoutesAreDocumentedTest`
+holds the two sides equal through `RouteInventory`, which reads the router
+by walking `index.php`'s tokens with a stack of group prefixes bounded by
+brace depth, derives which variables are routers (every `new Router()` and
+every `Router $x` parameter), expands the CRUD loop's `$resource` from
+`$crudMap`, and refuses by line what it cannot read (a computed path, an
+arrow-function group, an unknown router method). Planted: a route in a
+nested group, a group whose parameter is not `$r`, an arrow-function group,
+a route through `add()`, an uninterpretable path, a documented operation
+nothing serves and a served one removed from the document — seven of seven
+caught. `documentation/` had no dangling links; its index missed four pages
+(the Coolify guide, visitor identity, this plan, and an earlier edition of
+Step 7), now listed, and `DocumentationLinksTest` checks both — inline,
+reference and HTML links, fenced code skipped. Planted: a page dropped from
+the index, and inline, reference, HTML-image and anchored links to missing
+files — five caught; a missing path inside a fenced block correctly passed.
+
+**Release readiness.**
+
+What ran, on the final tree, in this sandbox (PHP 8.4, MariaDB 10.11, a
+partial `vendor/`):
+
+- **Live passes:** all 21 in `tests/live/` that exercise an instance, on one
+  freshly installed and seeded instance, in the order a user meets the
+  features (pre-login and upgrade pages, account, setup, update, pixels, the
+  ledger, reads, identity, goals, web events, MTA engine and UI, app core,
+  mobile setup and analysis, the iOS and Android SDKs, the Android intake
+  and Play Integrity, the mobile UI), then Play Integrity followed directly
+  by android-intake: 23 runs, 2,625 checks, none failed. The other three
+  files are the scratch-database guard and the mobile seeder (sourced and
+  run by the passes) and upgrade-equals-install, which builds its own two
+  instances: 20 of 20 on the final tree (MariaDB), and on MySQL 8.0.46 with
+  the same ladder.
+- **Browser:** the whole suite with the CDN mirror, on a second fresh
+  instance after the eval suite (CI's order): 4,068 passed, 0 failed, 200
+  skipped (the table-scroll and sub-menu checks on pages with no table or no
+  current entry). The first full run failed two checks, both isolation bugs
+  in the specs rather than the pages: `analyze-mobile-apps` truncated the
+  app registrations but not the installs and goal outcomes keyed on their
+  ids, so an Android install an eval case had left was counted as the
+  spec's; `click-breakdown` took the two newest unconverted clicks, which
+  the MTA eval case can leave in different campaigns. Both fixed.
+- **Agent evals:** 21 cases, every deterministic grader passing
+  (`needs_judge`: the rubric half needs a judge command, which is not run
+  here).
+- **PHPUnit,** one path per invocation: every unit directory (2,761
+  tests across 30 suites; the only skips are pre-existing environmental ones),
+  the 38 database integration suites (435 tests) through
+  `tests/run-integration-suites.sh`, and the instance suite (11 tests).
+- **Go:** gofmt, `go vet`, `go test ./...` and golangci-lint (0 issues),
+  all with an empty `HOME`.
+- **PHPStan:** clean except the six documented `class.notFound` errors for
+  `cli/` that a partial `vendor/` produces.
+- **The verification ladder** (`verify.sh --changed`), run before the
+  commit; its scope report is given with the PR.
+
+What did not run: GitHub CI itself (nothing was pushed; the new
+`upgrade-equals-install.yml` job and the widened integration and eval jobs
+are checked by `actionlint` and by running their scripts locally, not by a
+runner); the eval rubrics (no judge); CI's PHP 8.3 and MySQL 8.0 for
+anything but the upgrade comparison.
+
+Open for the release decision:
+
+1. **The MTA reports miss their target at 1M conversions** (31–72 s against
+   2 s). The rollup of §7.3 is the remedy and is not built. Only the
+   1M shape was measured; whether to ship before the rollup is the
+   decision.
+2. **A cron against a database that needs an upgrade exits 0 silently**
+   (`connect.php`'s redirect-and-`die()` on the command line). Pre-existing
+   and not a measurement-rewrite regression, but the attribution worker
+   inherits it (observed here): after a code deploy without the upgrade, it
+   looks like an idle worker.
+3. **`CLAUDE.md`'s "Two page shells" note is stale** since U8 removed the
+   classic shell; it still describes `['ui' => 'v2']` and the Bootstrap 3
+   stack.
 
 ## 9. Decisions
 

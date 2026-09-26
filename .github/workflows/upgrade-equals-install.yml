@@ -1,0 +1,134 @@
+name: Upgrade Equals Install
+
+# The release gate's schema check (measurement-rewrite plan §7.6): install the
+# real 1.9.55 release from its own commit, upgrade it through the upgrade page
+# with this checkout, install this checkout fresh, and require every table's
+# SHOW CREATE TABLE and every seeded row to match. tests/live/upgrade-equals-install.sh
+# has the details and the list of differences it forgives.
+#
+# 1.9.55 predates PHP 8 (a parse error on 8.x), so the origin installer runs
+# on PHP 7.4 and everything else on 8.3; the second setup-php makes 8.3 the
+# default `php` and leaves `php7.4` on PATH.
+
+on:
+  pull_request:
+    paths:
+      - '**.php'
+      - 'tests/live/upgrade-equals-install.sh'
+      - 'tests/live/schema-diff.php'
+      - 'tests/fixtures/agent-eval/ci/**'
+      - '.github/workflows/upgrade-equals-install.yml'
+  push:
+    branches: [master]
+    paths:
+      - '**.php'
+      - 'tests/live/upgrade-equals-install.sh'
+      - 'tests/live/schema-diff.php'
+      - 'tests/fixtures/agent-eval/ci/**'
+      - '.github/workflows/upgrade-equals-install.yml'
+  workflow_dispatch:
+
+jobs:
+  upgrade-equals-install:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      # The 1.9.55 commit is years behind the tip: a shallow clone does not
+      # have it, and the script refuses to run without it.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up PHP 7.4 for the 1.9.55 installer
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '7.4'
+          extensions: mysqli, mbstring, curl, xml, ctype, json
+          coverage: none
+
+      - name: Keep PHP 7.4 reachable by name
+        run: |
+          command -v php7.4
+          php7.4 -r 'echo PHP_VERSION, PHP_EOL; exit(extension_loaded("mysqli") ? 0 : 1);'
+
+      - name: Set up PHP 8.3 for this checkout
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          # See php-unit.yml for why the procedural `memcache` extension is disabled.
+          extensions: mysqli, pdo, pdo_mysql, memcached, :memcache, mbstring, curl, zip, dom, xml, gd, zlib
+          coverage: none
+
+      - name: Both interpreters are there
+        run: |
+          php -r 'exit(version_compare(PHP_VERSION, "8.3", ">=") ? 0 : 1);'
+          php7.4 -r 'exit(version_compare(PHP_VERSION, "8.0", "<") ? 0 : 1);'
+
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.composer/cache
+            ~/.cache/composer
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: Configure Composer authentication
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if [ -n "${GITHUB_TOKEN}" ]; then
+            composer config -g github-oauth.github.com "${GITHUB_TOKEN}"
+          fi
+
+      - name: Install dependencies
+        env:
+          COMPOSER_ALLOW_SUPERUSER: 1
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Wait for MySQL
+        run: |
+          for _ in $(seq 1 30); do
+            if mysqladmin ping -h 127.0.0.1 -P 3306 -uroot -proot --silent; then
+              echo "MySQL is up"; exit 0
+            fi
+            sleep 2
+          done
+          echo "MySQL did not become ready in time" >&2
+          exit 1
+
+      - name: Upgrade 1.9.55 and compare it with a fresh install
+        env:
+          P202_ORIGIN_PHP: php7.4
+          P202_DB_HOST: 127.0.0.1
+          P202_DB_PORT: 3306
+          P202_DB_USER: root
+          P202_DB_PASS: root
+          P202_UEI_WORKDIR: ${{ runner.temp }}/uei
+        run: bash tests/live/upgrade-equals-install.sh
+
+      - name: Upload the servers' logs and pages
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upgrade-equals-install
+          path: |
+            ${{ runner.temp }}/uei/*.log
+            ${{ runner.temp }}/uei/*.html
+            ${{ runner.temp }}/uei/*.txt
+            ${{ runner.temp }}/uei/fresh-runtime/*.log
+          if-no-files-found: ignore

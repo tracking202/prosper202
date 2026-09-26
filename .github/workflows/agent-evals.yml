@@ -207,6 +207,30 @@ jobs:
             "${JUDGE_ARGS[@]}" \
             --json | tee eval-results.json
 
+      - name: Run the integration suites that need a running instance
+        # `@group instance` suites (tests/integration-suites.php --instance)
+        # speak HTTP to an instance, so they run here rather than in the
+        # database-only integration job — after the eval suite, because they
+        # create the entities they click and a case must read the fixture
+        # alone. Each must report OK with at least one test: a suite that
+        # skipped did not run.
+        env:
+          P202_BASE: http://127.0.0.1:8000
+          P202_API_KEY: ${{ env.P202_EVAL_API_KEY }}
+        run: |
+          mapfile -t SUITES < <(php tests/integration-suites.php --instance)
+          if [ "${#SUITES[@]}" -lt 1 ]; then
+            echo "tests/integration-suites.php --instance selected nothing" >&2
+            exit 1
+          fi
+          # This job installs with --no-dev, so PHPUnit comes as the phar
+          # (PHPUnit 9, as composer.json pins); the suites load by path.
+          curl -sSfL https://phar.phpunit.de/phpunit-9.phar -o "$RUNNER_TEMP/phpunit-9.phar"
+          for suite in "${SUITES[@]}"; do
+            php "$RUNNER_TEMP/phpunit-9.phar" --configuration phpunit.ci.xml --group integration --no-coverage "$suite" | tee phpunit-instance.out
+            grep -qE '^OK \([1-9][0-9]* tests?' phpunit-instance.out
+          done
+
       - name: Upload results and server log
         if: always()
         uses: actions/upload-artifact@v4

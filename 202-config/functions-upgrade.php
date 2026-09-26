@@ -192,7 +192,7 @@ if (!function_exists('_upgrade_conversion_ledger')) {
      *   4. add KEY click_transaction and UNIQUE uniq_click_dedupe, then drop
      *      the old UNIQUE (click_id, transaction_id) — a reversal carries the
      *      transaction id of the row it reverses, so the id cannot stay
-     *      unique per click;
+     *      unique per click — and add KEY reverses_conv_id;
      *   5. add 202_aff_campaigns.payout_mode.
      *
      * Every probe is tri-state: a SHOW that fails stops the step (false, so
@@ -267,6 +267,9 @@ if (!function_exists('_upgrade_conversion_ledger')) {
             ['click_transaction', true, 'ALTER TABLE `202_conversion_logs` ADD KEY `click_transaction` (`click_id`,`transaction_id`)'],
             ['uniq_click_dedupe', true, 'ALTER TABLE `202_conversion_logs` ADD UNIQUE KEY `uniq_click_dedupe` (`click_id`,`dedupe_key`)'],
             ['uniq_click_transaction', false, 'ALTER TABLE `202_conversion_logs` DROP INDEX `uniq_click_transaction`'],
+            // Every counted amount looks up the reversals naming a
+            // conversion (ConversionTables says why the key exists).
+            ['reverses_conv_id', true, 'ALTER TABLE `202_conversion_logs` ADD KEY `reverses_conv_id` (`reverses_conv_id`)'],
         ];
         foreach ($indexSteps as [$name, $wanted, $ddl]) {
             if (array_key_exists($name, $indexes) === $wanted) {
@@ -3159,10 +3162,48 @@ class UPGRADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;";
             $result = _upgrade_query($sql);
 
-            $sql = "UPDATE 202_version SET version='1.9.56'";
-            $result = _upgrade_query($sql);
+            // Two differences between a 1.9.55 database and a fresh install
+            // that nothing else in the ladder closed, found by
+            // tests/live/upgrade-equals-install.sh from the real 1.9.55
+            // release. No install has run this rung (none exists above
+            // 1.9.55), so they are added here in place.
+            $rung_ok = true;
 
-            $prosper202_version = '1.9.56';
+            // user_data_feedback arrived in the installer during the 1.9.56
+            // line and no rung ever created it, so an upgraded install had
+            // no table for get_user_data_feedback() to read.
+            if (_upgrade_query(\Prosper202\Database\Tables\CoreTables::userDataFeedback()->createStatement) === false) {
+                $rung_ok = false;
+                error_log('Prosper202 upgrade: failed to create user_data_feedback');
+            }
+
+            // 1.9.55 stored a 32-character salted MD5 in char(32); the
+            // hash hash_user_pass() writes now is 60 characters or more.
+            // Only the login path widened the column, lazily, so until an
+            // account logged in, a password set any other way (a reset, a
+            // user created through the API or the CLI) did not fit.
+            // Widening is not lossy. A failed probe is not "already wide"
+            // (error pattern #11): it fails the rung.
+            $check = _upgrade_query("SHOW COLUMNS FROM `202_users` LIKE 'user_pass'");
+            $column = $check instanceof mysqli_result ? $check->fetch_assoc() : null;
+            if (!is_array($column)) {
+                $rung_ok = false;
+                error_log('Prosper202 upgrade: could not read 202_users.user_pass');
+            } elseif (strtolower((string) $column['Type']) !== 'varchar(255)'
+                && _upgrade_query("ALTER TABLE `202_users` MODIFY `user_pass` varchar(255) NOT NULL") === false) {
+                $rung_ok = false;
+                error_log('Prosper202 upgrade: failed to widen 202_users.user_pass');
+            }
+
+            if ($rung_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.56'") !== false) {
+                    $prosper202_version = '1.9.56';
+                } else {
+                    error_log('Prosper202 upgrade: failed to persist version 1.9.56; leaving version at 1.9.55 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: the 1.9.56 step is incomplete; leaving version at 1.9.55 so the next run retries.');
+            }
         }
 
         if ($prosper202_version == '1.9.56') {
@@ -3200,7 +3241,9 @@ class UPGRADE
             if (!($check instanceof mysqli_result)) {
                 $mta_ok = false;
             } elseif ($check->num_rows === 0 && _upgrade_query(
-                "ALTER TABLE `202_aff_campaigns` ADD COLUMN `attribution_model_id` int(11) DEFAULT NULL AFTER `aff_campaign_cloaking`"
+                // Where CampaignTables puts it, so the upgraded table is the
+                // installed one column for column.
+                "ALTER TABLE `202_aff_campaigns` ADD COLUMN `attribution_model_id` int(11) DEFAULT NULL AFTER `aff_campaign_foreign_payout`"
             ) === false) {
                 $mta_ok = false;
             }
@@ -3628,12 +3671,27 @@ class UPGRADE
             if ($verify instanceof mysqli_result) {
                 $uniqueNow = $verify->num_rows > 0;
             }
+
+            // With the UNIQUE key in place, the `user_id` index MySQL made
+            // for the foreign key before it is redundant (uniq_user_role
+            // leads with user_id and serves the constraint), and the
+            // installer's table (UserTables::userRole) does not have it.
+            // Found by tests/live/upgrade-equals-install.sh. A failed probe
+            // leaves the version where it is, like the key above.
+            $redundantGone = false;
             if ($uniqueNow) {
+                $redundant = _upgrade_query("SHOW INDEX FROM `202_user_role` WHERE Key_name = 'user_id'");
+                if ($redundant instanceof mysqli_result) {
+                    $redundantGone = $redundant->num_rows === 0
+                        || _upgrade_query("ALTER TABLE `202_user_role` DROP INDEX `user_id`") !== false;
+                }
+            }
+            if ($uniqueNow && $redundantGone) {
                 $sql = "UPDATE 202_version SET version='1.9.63'";
                 $result = _upgrade_query($sql);
                 $prosper202_version = '1.9.63';
             } else {
-                error_log('Prosper202 upgrade: 202_user_role.uniq_user_role was not created; leaving version at 1.9.62 so the next run retries.');
+                error_log('Prosper202 upgrade: 202_user_role.uniq_user_role was not created, or its redundant user_id index not dropped; leaving version at 1.9.62 so the next run retries.');
             }
         }
 

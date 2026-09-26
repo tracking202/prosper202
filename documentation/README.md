@@ -6,6 +6,7 @@
 ### Documentation
 
 - [Introduction](00-introduction.md)
+- [Deploying Prosper202 on Coolify](deploying-on-coolify.md)
 
 ### Setting Up Prosper202 Pro
 
@@ -17,7 +18,7 @@
 - [Step 4 - Landing Pages](setting-up-prosper202-pro/05-step-4.md)
 - [Step 5 - Text Ads](setting-up-prosper202-pro/06-step-5.md)
 - [Step 6 - Redirector / Split Test](setting-up-prosper202-pro/07-step-6.md)
-- [Step 7 - Landing Page Codes](setting-up-prosper202-pro/08-step-7.md)
+- [Step 7 - Landing Page Codes](setting-up-prosper202-pro/08-step-7.md) ([earlier edition](setting-up-prosper202-pro/999-step-7-landing-page-codes.md))
 - [Step 8 - Tracking Link](setting-up-prosper202-pro/09-step-8.md)
 - [Step 9 - Conversion Tracking](setting-up-prosper202-pro/10-step-9.md)
 - [Step 10 - Final Step](setting-up-prosper202-pro/11-step-10.md)
@@ -89,6 +90,8 @@ A separate PHP/Symfony Console CLI also ships at `bin/p202` (run `php bin/p202 l
 
 - [Multi-touch Attribution Engine](features/advanced-attribution-engine.md)
 - [The Prosper202 UI Standard](features/ui-standard.md)
+- [Visitor identity](features/visitor-identity.md) — how clicks are linked to one person, with first-party signals only
+- [Measurement rewrite plan](features/measurement-rewrite-plan.md) — app measurement (iOS and Android), goals, the conversion ledger and multi-touch attribution: the design, what was built, and the release gate
 
 ### Partnering With Us
 

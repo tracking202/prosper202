@@ -2433,7 +2433,7 @@ function getIspData($ip)
 
 function systemHash(): string
 {
-    $hash = hash('ripemd160', $_SERVER['HTTP_HOST'] . $_SERVER['SERVER_ADDR']);
+    $hash = hash('ripemd160', ($_SERVER['HTTP_HOST'] ?? '') . ($_SERVER['SERVER_ADDR'] ?? ''));
     return $hash;
 }
 

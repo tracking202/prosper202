@@ -371,6 +371,17 @@ T=$(( $(ctime "$C1") + 100 ))
 # it, which would erase the order the purchases below depend on (p0 must
 # stay earlier than p1 and p2). The latest one is T + 20, so wait until
 # that is in the past; a pass that reaches here fast pays up to ~2 minutes.
+#
+# This is a clock boundary, measured (PR 12): without the wait, p1, p2 and
+# p0 all sort by the second they arrived in. When all three land in one
+# second the tie falls to the event id, "p0" < "p1", and the pass is green;
+# when p0 lands one second after p2 it sorts last, the second purchase stays
+# p2's $10, and three checks below fail. Without the wait, six runs after
+# play-integrity.sh failed once — the one whose p0 arrived a second after
+# p2 — a one-second pause before p0 failed three runs of three, and the same
+# pause with the wait restored passed two of two. The check after p0
+# asserts none of the purchases was clamped, so a pass that loses this wait
+# fails by name, every run, instead of by luck.
 wait_s=$(( T + 21 - $(date +%s) ))
 if [ "$wait_s" -gt 0 ]; then sleep "$wait_s"; fi
 for level in 1 2 3; do
@@ -395,12 +406,14 @@ eq "$(api PUT "/apps/$R" '{"trust_client_revenue":1}')" 200 "the operator trusts
 for p in "p1 10 5" "p2 20 10"; do
     set -- $p
     events_body "$OUT/e.json" "[{\"event_id\":\"$1\",\"name\":\"purchase\",\"occurred_at\":$((T + $2)),\"revenue\":$3}]"
-    device POST "/apps/installs/$U1/events" "$TOKEN" "$OUT/e.json" > /dev/null
+    eq "$(device POST "/apps/installs/$U1/events" "$TOKEN" "$OUT/e.json")" 200 "purchase $1 is accepted"
 done
 eq "$(Q "SELECT CONCAT(click_payout, '/', payable) FROM 202_conversion_logs WHERE click_id=$C1 AND source_ref='goal:$G_SECOND:1' AND superseded_reason IS NULL")" \
    "10.00000/1" "the second purchase pays its reported \$10"
 events_body "$OUT/e.json" "[{\"event_id\":\"p0\",\"name\":\"purchase\",\"occurred_at\":$((T + 5)),\"revenue\":1}]"
-device POST "/apps/installs/$U1/events" "$TOKEN" "$OUT/e.json" > /dev/null
+eq "$(device POST "/apps/installs/$U1/events" "$TOKEN" "$OUT/e.json")" 200 "the late purchase p0 is accepted"
+eq "$(Q "SELECT SUM(e.occurred_at >= e.received_at) FROM 202_goal_events e JOIN 202_app_installs i ON i.install_row_id = e.subject_id AND e.subject_type = 'install' WHERE i.install_uuid = '$U1' AND e.event_id IN ('p0','p1','p2')")" 0 \
+   "no purchase was dated in the server's future, so their order is their own, not the second each arrived in"
 eq "$(Q "SELECT GROUP_CONCAT(CONCAT(click_payout, ':', COALESCE(superseded_reason, 'counted')) ORDER BY conv_id) FROM 202_conversion_logs WHERE click_id=$C1 AND source_ref='goal:$G_SECOND:1'")" \
    "10.00000:replay,5.00000:counted" "a late, earlier purchase re-decides it: \$10 superseded, \$5 counted"
 eq "$(Q "SELECT click_payout FROM 202_clicks WHERE click_id=$C1")" "11.50000" "the click is \$2.50 + \$4 + \$5"

@@ -109,14 +109,22 @@ module.exports = {
     const { db, ui, config, app, state } = ctx;
     db.write(PREF_RESET);
     await app.login();
-    const clicks = db.rows('SELECT c.click_id FROM 202_clicks c JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id'
+    // Clicks nothing else has converted: another suite on the same
+    // instance (the agent-eval events case) may have given the newest click
+    // a conversion of its own, which this spec's figures do not know.
+    const eligible = " FROM 202_clicks c JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id"
       + " WHERE c.user_id=1 AND ac.payout_mode='replace' AND c.click_time >= UNIX_TIMESTAMP(CURDATE())"
-      // Clicks nothing else has converted: another suite on the same
-      // instance (the agent-eval events case) may have given the newest
-      // click a conversion of its own, which this spec's figures do not know.
-      + " AND NOT EXISTS (SELECT 1 FROM 202_conversion_logs l WHERE l.click_id = c.click_id AND (l.transaction_id IS NULL OR l.transaction_id NOT LIKE 'breakdown-spec-%'))"      + ' ORDER BY c.click_id DESC LIMIT 2').map((r) => String(r[0]));
+      + " AND NOT EXISTS (SELECT 1 FROM 202_conversion_logs l WHERE l.click_id = c.click_id AND (l.transaction_id IS NULL OR l.transaction_id NOT LIKE 'breakdown-spec-%'))";
+    // Both from one campaign, the newest with two such clicks: the Group
+    // Overview scenario reads both sales inside that campaign's group, and
+    // the newest click alone can be the only one its campaign has (the
+    // agent-eval MTA case leaves one unconverted click on its first campaign).
+    const campaign = db.value('SELECT c.aff_campaign_id' + eligible
+      + ' GROUP BY c.aff_campaign_id HAVING COUNT(*) >= 2 ORDER BY MAX(c.click_id) DESC LIMIT 1');
+    const clicks = campaign === '' ? [] : db.rows('SELECT c.click_id' + eligible
+      + ' AND c.aff_campaign_id = ' + Number(campaign) + ' ORDER BY c.click_id DESC LIMIT 2').map((r) => String(r[0]));
     if (clicks.length < 2) {
-      throw new Error('the fixture has ' + clicks.length + ' clicks today in a replace campaign; seed it (tests/fixtures/agent-eval/seed.sh) first');
+      throw new Error('the fixture has no replace campaign with two unconverted clicks today; seed it (tests/fixtures/agent-eval/seed.sh) first');
     }
     for (const [click, amounts] of [[clicks[0], ['3', '4']], [clicks[1], ['6']]]) {
       for (let i = 0; i < amounts.length; i++) {

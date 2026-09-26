@@ -2026,7 +2026,7 @@ function api_key_validate($key)
 
 function systemHash(): string
 {
-    $hash = hash('ripemd160', $_SERVER['HTTP_HOST'] . $_SERVER['SERVER_ADDR']);
+    $hash = hash('ripemd160', ($_SERVER['HTTP_HOST'] ?? '') . ($_SERVER['SERVER_ADDR'] ?? ''));
     return $hash;
 }
 
