@@ -130,6 +130,7 @@ final class UserDataPurge
      * Soft-delete the user and purge their data, atomically.
      *
      * @throws \RuntimeException when any statement fails; nothing is changed
+     * @throws \InvalidArgumentException when the id is not positive; nothing is changed
      */
     public function deleteUser(int $userId): void
     {

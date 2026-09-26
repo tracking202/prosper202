@@ -129,6 +129,32 @@ final class CampaignLinkChangeFeedTest extends TestCase
         self::assertNull(self::linkIn($feed[0]), 'the unlinked campaign as it is now');
     }
 
+    /**
+     * The registration's own change record and the campaigns' are each about
+     * a write that has committed: one failing must not cost the other, and
+     * the delete still says it landed.
+     */
+    public function testARegistrationDeleteWhoseOwnChangeRecordFailsStillRecordsTheUnlinkedCampaigns(): void
+    {
+        $apps = new class (self::$db, 1) extends AppRegistrationsController {
+            #[\Override]
+            protected function recordChange(string $operation, array $record): void
+            {
+                throw new \RuntimeException('the change log is unavailable');
+            }
+        };
+        try {
+            $apps->delete(5);
+            self::fail('a failed change record was not reported');
+        } catch (\Api\V3\Exception\WriteCommittedException) {
+            $this->addToAssertionCount(1);
+        }
+        self::assertNull(self::linkNow());
+        $feed = $this->feed();
+        self::assertCount(1, $feed, 'the unlinked campaign reached the feed');
+        self::assertNull(self::linkIn($feed[0]));
+    }
+
     public function testAUserPurgeRecordsTheCampaignsItUnlinks(): void
     {
         (new UserDataPurge(self::$db))->deleteUser(1);
