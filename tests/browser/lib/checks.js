@@ -514,6 +514,55 @@ module.exports = {
   tablesScrollThemselves,
 };
 
+/* U6: Account ----------------------------------------------------------- */
+
+/**
+ * The Account family on the v2 shell: one baseline entry per page. `path` is
+ * where it lives; `scriptOnly` names classes the page uses only as script
+ * hooks (legitimately unstyled); `banned` adds Bootstrap 3 names the page
+ * used to carry, so the live DOM is checked for the ones it really had.
+ */
+const ACCOUNT_PAGES = [
+  { name: 'Home', path: '/202-account/' },
+  { name: 'Personal settings', path: '/202-account/account.php' },
+  { name: 'Users', path: '/202-account/user-management.php' },
+  { name: 'API integrations', path: '/202-account/api-integrations.php', banned: ['label-primary', 'label-important', 'glyphicon'] },
+  { name: 'Settings', path: '/202-account/administration.php', banned: ['label-important', 'radio-inline', 'pull-right'] },
+  { name: 'Help', path: '/202-account/help.php' },
+  { name: 'Document', path: '/202-account/docs.php?doc=ui-standard' },
+  { name: 'VIP Perks', path: '/202-account/vip-perks.php', banned: ['radio-inline'] },
+  { name: 'ClickServers', path: '/202-account/clickservers.php' },
+  { name: 'Safe mode', path: '/202-account/disable-safe-mode.php', banned: ['big-alert'] },
+  { name: 'API key required', path: '/202-account/api-key-required.php', banned: ['big-alert'] },
+  { name: 'App key required', path: '/202-account/app-key-required.php', banned: ['big-alert'] },
+  { name: '1-click upgrade', path: '/202-account/auto-upgrade.php' },
+  { name: 'Premium upgrade', path: '/202-account/auto-upgrade-premium.php' },
+];
+
+/** What every Account page was built on before U6: the classic grid and panels. */
+const ACCOUNT_CLASSIC_CLASSES = ['col-xs-4', 'col-xs-8', 'col-xs-12', 'panel', 'panel-body', 'panel-default',
+  'form-horizontal', 'control-label', 'input-sm', 'btn-p202', 'account_left', 'form_seperator', 'infotext'];
+
+/**
+ * One Account page's baseline, at whatever viewport the session has: the
+ * shell and its scripts, the component layer, the chrome, and no classic
+ * class left in the live DOM.
+ */
+async function accountPageBaseline(ctx, page) {
+  const { app, expect } = ctx;
+  expect.section(page.name + ' (' + page.path + ')');
+  await app.goto(page.path);
+  await baseline(ctx);
+  await componentClassesAreStyled(ctx, page.scriptOnly || []);
+  await flexContainersKeepTheirSpaces(ctx);
+  await currentSubMenuItemIsVisible(ctx);
+  await noLegacyClasses(ctx, ACCOUNT_CLASSIC_CLASSES.concat(page.banned || []));
+  await tablesScrollThemselves(ctx);
+}
+
+module.exports.ACCOUNT_PAGES = ACCOUNT_PAGES;
+module.exports.accountPageBaseline = accountPageBaseline;
+
 /* U3: Analyze */
 
 /**

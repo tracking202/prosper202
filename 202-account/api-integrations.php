@@ -1,12 +1,19 @@
 <?php
 
 /**
- * API Integrations Management - Refactored for improved readability
+ * Account › 3rd-party API integrations, on the v2 shell.
+ *
+ * Every form keeps its field names and posts the session token; the POST
+ * handler refuses a request whose token does not match before it writes
+ * anything. Removing a DNI network was a GET link guarded only by confirm()
+ * in the browser, so any page could make a signed-in browser remove one; it
+ * is a POST with the token now, behind the same confirmation.
  */
 
 declare(strict_types=1);
 include_once(str_repeat("../", 1) . '202-config/connect.php');
 include_once(str_repeat("../", 1) . '202-config/clickserver_api_management.php');
+require_once __DIR__ . '/../202-config/functions-account-ui.php';
 
 AUTH::require_user();
 
@@ -19,9 +26,6 @@ if (!$userObj->hasPermission("access_to_api_integrations")) {
 $error = [];
 $html = [];
 $mysql = [];
-$selected = [];
-$add_success = false;
-$delete_success = false;
 
 // Initialize change status variables
 $change_cb_key = false;
@@ -80,16 +84,19 @@ function processApiKeyUpdate($config, &$error, &$change_flag, $user_row, $slack,
 	$slack_event = $config['slack_event'];
 	$user_id = $_SESSION['user_id'];
 
-	if (!validateRequired($_POST[$post_key], $error_key, $error_message, $error)) {
+	if (!validateRequired($_POST[$post_key] ?? '', $error_key, $error_message, $error)) {
 		return false;
 	}
 
 	if (!$error) {
-		$new_value = $_POST[$post_key];
+		$new_value = (string)$_POST[$post_key];
 		$old_value = $user_row[$field_name] ?? '';
 
 		if ($new_value !== $old_value) {
-			updateUserPreference($field_name, $new_value, $user_id, $db);
+			if (!updateUserPreference($field_name, $new_value, $user_id, $db)) {
+				$error[$error_key] = 'This could not be saved just now; the old value is still in place. Try again.';
+				return false;
+			}
 
 			// Special handling for cb_key verification reset
 			if ($field_name === 'cb_key') {
@@ -106,40 +113,14 @@ function processApiKeyUpdate($config, &$error, &$change_flag, $user_row, $slack,
 }
 
 /**
- * Display success message
+ * The ClickBank verification pill, in one place: the page renders it and the
+ * "Check status" request answers with it.
  */
-function showSuccessMessage($condition, $message)
+function apiint_cb_pill(bool $verified): string
 {
-	if ($condition) {
-		echo '<div class="apiint-note apiint-note--ok" role="status"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M13.5 4.5L6.5 11.5L2.5 7.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>' . htmlspecialchars((string) $message) . '</span></div>';
-	}
-}
-
-/**
- * Display error message
- */
-function showErrorMessage($errors, $key)
-{
-	if (isset($errors[$key]) && $errors[$key]) {
-		echo '<div class="apiint-note apiint-note--err" role="alert"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 5v3.5M8 11h.01M8 1.5 14.5 13a.6.6 0 0 1-.52.9H2.02a.6.6 0 0 1-.52-.9L8 1.5z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>' . htmlspecialchars((string) $errors[$key]) . '</span></div>';
-	}
-}
-
-/**
- * Status pill: $state is one of ok | off | warn | err
- */
-function apiint_pill($state, $text)
-{
-	echo '<span class="apiint-pill apiint-pill--' . $state . '"><span class="apiint-pill-dot"></span>' . htmlspecialchars((string) $text) . '</span>';
-}
-
-/**
- * Labeled endpoint URL row with a copy button
- */
-function apiint_endpoint($label, $url)
-{
-	$safe = htmlspecialchars((string) $url);
-	echo '<div class="apiint-endpoint"><span class="apiint-endpoint-label">' . htmlspecialchars((string) $label) . '</span><code>' . $safe . '</code><button type="button" class="apiint-copy" data-copy="' . $safe . '" title="Copy to clipboard">Copy</button></div>';
+	return $verified
+		? '<span class="p202-pill p202-pill--good">Verified</span>'
+		: '<span class="p202-pill p202-pill--warn">Unverified</span>';
 }
 
 $strProtocol = getSecureStatus() ? 'https://' : 'http://'; // SERVER_PROTOCOL is "HTTP/1.1" even over TLS (review finding)
@@ -169,6 +150,12 @@ $user_row = $user_results->fetch_assoc();
 $username = $user_row['username'];
 $editing_dni_network = false;
 $dniNetworks = getAllDniNetworks($user_row['install_hash']);
+// The network list comes from the DNI service; when it cannot be reached the
+// page says so instead of offering an empty select.
+$dniNetworksAvailable = is_array($dniNetworks);
+if (!$dniNetworksAvailable) {
+	$dniNetworks = [];
+}
 $dniProcesing = ['host' => getDNIHost(), 'install_hash' => $user_row['install_hash'], 'networks' => []];
 
 if (!empty($user_row['url']))
@@ -180,36 +167,43 @@ if (isset($_GET['cb_status']) && $_GET['cb_status'] == 1) {
              FROM 202_users_pref
              WHERE user_id='" . $mysql['user_id'] . "'";
 	$user_results = $db->query($user_sql);
-	$user_row = $user_results->fetch_assoc();
-	if ($user_row['cb_verified']) {
-		echo '<span class="label label-primary">Verified</span>';
-	} else {
-		echo '<span class="label label-important">Unverified</span>';
+	$user_row = $user_results ? $user_results->fetch_assoc() : null;
+	if (!is_array($user_row)) {
+		http_response_code(503);
+		echo '<span class="p202-pill p202-pill--bad">Could not check</span>';
+		die();
 	}
+	echo apiint_cb_pill((bool)$user_row['cb_verified']);
 	die();
 }
 
 //get all of the user data
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 $user_sql = "	SELECT 	*
-				 FROM   	`202_users` 
+				 FROM   	`202_users`
 				 LEFT JOIN	`202_users_pref` USING (user_id)
 				 WHERE  	`202_users`.`user_id`='" . $mysql['user_id'] . "'";
 $user_result = $db->query($user_sql);
 $user_row = $user_result->fetch_assoc();
-$html = array_map('htmlentities', $user_row);
 
 $cb_verified = $user_row['cb_verified'];
+
+// The retired GET address for removing a DNI network: never a write.
+if (isset($_GET['delete_dni_network']) && !empty($_GET['delete_dni_network'])) {
+	p202_account_flash('warn', 'Removing a network now asks first. Use remove beside the network below.');
+	p202_account_redirect('202-account/api-integrations.php#dni');
+}
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	// validate token
-	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
-		$error['token'] = 'You must use our forms to submit data.';
+	if (!AUTH::check_csrf_token()) {
+		p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
+		p202_account_redirect('202-account/api-integrations.php');
 	}
 
 	// ClickBank Key Update
-	if (!isset($error['token']) && isset($_POST['change_cb_key']) && $_POST['change_cb_key'] == '1') {
+	if (isset($_POST['change_cb_key']) && $_POST['change_cb_key'] == '1') {
 		$config = [
 			'post_key' => 'cb_key',
 			'field_name' => 'cb_key',
@@ -217,11 +211,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			'error_message' => 'Clickbank Secret Key can\'t be empty!',
 			'slack_event' => 'cb_key_updated'
 		];
-		processApiKeyUpdate($config, $error, $change_cb_key, $user_row, $slack, $username, $db);
+		if (processApiKeyUpdate($config, $error, $change_cb_key, $user_row, $slack, $username, $db)) {
+			p202_account_flash('ok', 'Your ClickBank secret key was saved.');
+			p202_account_redirect('202-account/api-integrations.php#clickbank');
+		}
 	}
 
 	// Slack Webhook Update
-	if (!isset($error['token']) && isset($_POST['change_user_slack_incoming_webhook']) && $_POST['change_user_slack_incoming_webhook'] == '1') {
+	if (isset($_POST['change_user_slack_incoming_webhook']) && $_POST['change_user_slack_incoming_webhook'] == '1') {
 		$config = [
 			'post_key' => 'user_slack_incoming_webhook',
 			'field_name' => 'user_slack_incoming_webhook',
@@ -229,11 +226,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			'error_message' => 'Slack Incoming Webhook URL can\'t be empty!',
 			'slack_event' => 'user_slack_incoming_webhook_updated'
 		];
-		processApiKeyUpdate($config, $error, $change_user_slack_incoming_webhook, $user_row, $slack, $username, $db);
+		if (processApiKeyUpdate($config, $error, $change_user_slack_incoming_webhook, $user_row, $slack, $username, $db)) {
+			p202_account_flash('ok', 'Your Slack incoming webhook URL was saved.');
+			p202_account_redirect('202-account/api-integrations.php#slack');
+		}
 	}
 
 	// Zaxaa API Signature Update
-	if (!isset($error['token']) && isset($_POST['change_zaxaa_api_signature']) && $_POST['change_zaxaa_api_signature'] == '1') {
+	if (isset($_POST['change_zaxaa_api_signature']) && $_POST['change_zaxaa_api_signature'] == '1') {
 		$config = [
 			'post_key' => 'zaxaa_api_signature',
 			'field_name' => 'zaxaa_api_signature',
@@ -241,11 +241,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			'error_message' => 'Zaxaa API signature can\'t be empty!',
 			'slack_event' => 'zaxaa_api_signature_updated'
 		];
-		processApiKeyUpdate($config, $error, $change_zaxaa_api_signature, $user_row, $slack, $username, $db);
+		if (processApiKeyUpdate($config, $error, $change_zaxaa_api_signature, $user_row, $slack, $username, $db)) {
+			p202_account_flash('ok', 'Your Zaxaa API signature was saved.');
+			p202_account_redirect('202-account/api-integrations.php#zaxaa');
+		}
 	}
 
 	// JVZoo Secret Key Update
-	if (!isset($error['token']) && isset($_POST['change_jvzoo_secret_key']) && $_POST['change_jvzoo_secret_key'] == '1') {
+	if (isset($_POST['change_jvzoo_secret_key']) && $_POST['change_jvzoo_secret_key'] == '1') {
 		$config = [
 			'post_key' => 'jvzoo_ipn_secret_key',
 			'field_name' => 'jvzoo_ipn_secret_key',
@@ -253,11 +256,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			'error_message' => 'JVZoo secret key can\'t be empty!',
 			'slack_event' => 'jvzoo_secret_key_updated'
 		];
-		processApiKeyUpdate($config, $error, $change_jvzoo_secret_key, $user_row, $slack, $username, $db);
+		if (processApiKeyUpdate($config, $error, $change_jvzoo_secret_key, $user_row, $slack, $username, $db)) {
+			p202_account_flash('ok', 'Your JVZoo secret key was saved.');
+			p202_account_redirect('202-account/api-integrations.php#jvzoo');
+		}
 	}
 
 	// IPQualityScore API Key Update
-	if (!isset($error['token']) && isset($_POST['change_ipqs_api_key']) && $_POST['change_ipqs_api_key'] == '1') {
+	if (isset($_POST['change_ipqs_api_key']) && $_POST['change_ipqs_api_key'] == '1') {
 		$config = [
 			'post_key' => 'ipqs_api_key',
 			'field_name' => 'ipqs_api_key',
@@ -265,12 +271,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			'error_message' => 'The IPQualityScore API Key can\'t be empty!',
 			'slack_event' => 'ipqs_api_key_updated'
 		];
-		processApiKeyUpdate($config, $error, $change_ipqs_api_key, $user_row, $slack, $username, $db);
+		if (processApiKeyUpdate($config, $error, $change_ipqs_api_key, $user_row, $slack, $username, $db)) {
+			p202_account_flash('ok', 'Your IPQualityScore API key was saved.');
+			p202_account_redirect('202-account/api-integrations.php#ipqs');
+		}
 	}
 
 	// Landing Page Optimizer pairing: connect registers a local
 	// wildcard webhook and completes the SaaS handshake; disconnect reverses.
-	if (!isset($error['token']) && isset($_POST['lpo_action']) && in_array($_POST['lpo_action'], ['connect', 'disconnect'], true)) {
+	if (isset($_POST['lpo_action']) && in_array($_POST['lpo_action'], ['connect', 'disconnect'], true)) {
 		$lpo_user_id = (int) $_SESSION['user_id'];
 		$lpo_conn = new \Prosper202\Database\Connection($db);
 		$lpo_webhooks = new \Prosper202\Ltv\MysqlWebhookRepository($lpo_conn);
@@ -388,18 +397,45 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	// Landing Page Optimizer privacy pref: include/omit keyword text in
 	// t202ctx context tokens (lpo_ctx_kw — default on, '0' = omit;
 	// p202-edge-sync §8). Storage only; rtr.php honors it at mint time.
-	if (!isset($error['token']) && isset($_POST['lpo_ctx_kw_save']) && $_POST['lpo_ctx_kw_save'] == '1' && array_key_exists('lpo_ctx_kw', $user_row)) {
+	if (isset($_POST['lpo_ctx_kw_save']) && $_POST['lpo_ctx_kw_save'] == '1' && array_key_exists('lpo_ctx_kw', $user_row)) {
 		$lpo_ctx_kw_new = !empty($_POST['lpo_ctx_kw']) ? '1' : '0';
 		if ($lpo_ctx_kw_new !== (string) ($user_row['lpo_ctx_kw'] ?? '1')) {
 			updateUserPreference('lpo_ctx_kw', $lpo_ctx_kw_new, $_SESSION['user_id'], $db);
 			lpo_ctx_pref_cache_bust($_SESSION['user_id']);
 			$user_row['lpo_ctx_kw'] = $lpo_ctx_kw_new;
 		}
-		$lpo_ctx_kw_saved = true;
+		p202_account_flash('ok', 'Context token preference saved.');
+		p202_account_redirect('202-account/api-integrations.php#lpo');
 	}
 
-	if (!isset($error['token']) && isset($_POST['dni_network'])) {
-		if (array_search('', $_POST) !== false) {
+	if (isset($_POST['delete_dni_network'])) {
+		$deleteDniId = (int)$_POST['delete_dni_network'];
+		$mysql['deleteDniNetworkId'] = $db->real_escape_string((string)$deleteDniId);
+		$dniDeleted = $db->query("DELETE FROM 202_dni_networks WHERE id = '" . $mysql['deleteDniNetworkId'] . "' AND user_id = '" . $mysql['user_id'] . "'");
+		$dniDeletedRows = $dniDeleted ? $db->affected_rows : 0;
+		if ($dniDeletedRows > 0) {
+			// Only the network this user owned: the classic query retired
+			// the affiliate network of whatever id it was handed.
+			$sql = "UPDATE 202_aff_networks SET aff_network_deleted = '1', aff_network_time = '" . time() . "' WHERE dni_network_id = '" . $mysql['deleteDniNetworkId'] . "' AND user_id = '" . $mysql['user_id'] . "'";
+			if ($db->query($sql)) {
+				p202_account_flash('ok', 'The network is removed. Its offers stay in your campaigns; they stop updating.');
+			} else {
+				// The integration is gone; its category could not be retired.
+				error_log('api-integrations.php: the DNI category was not retired: ' . $db->error);
+				p202_account_flash('warn', 'The network is removed, but its campaign category could not be retired. If it is still listed under Setup › Campaign Categories, remove it there.');
+			}
+		} elseif (!$dniDeleted) {
+			p202_account_flash('bad', 'The network could not be removed; try again.');
+		} else {
+			p202_account_flash('warn', 'That network was not found; nothing was removed.');
+		}
+		p202_account_redirect('202-account/api-integrations.php#dni');
+	}
+
+	if (isset($_POST['dni_network'])) {
+		$dniRequired = ['dni_network', 'dni_network_type', 'dni_network_name', 'dni_network_api_key', 'dni_network_affiliate_id'];
+		$dniMissing = array_filter($dniRequired, static fn (string $field): bool => trim((string)($_POST[$field] ?? '')) === '');
+		if ($dniMissing) {
 			$error['dni_network'] = 'Make sure all fields are selected and filled out!';
 		} else {
 			$mysql['dniNetworkId'] = $db->real_escape_string((string)$_POST['dni_network']);
@@ -410,7 +446,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$mysql['dniApikey'] = $db->real_escape_string((string)$_POST['dni_network_api_key']);
 			$dniAuth = authDniNetworks($user_row['install_hash'], $_POST['dni_network'], $_POST['dni_network_api_key'], $_POST['dni_network_affiliate_id']);
 
-			if ($dniAuth['auth'] == false) {
+			if (empty($dniAuth['auth'])) {
 				$error['dni_network_auth'] = 'Can\'t authenticate with provided credentials. Try again!';
 			} else {
 				if (!isset($_POST['editing_dni_network'])) {
@@ -425,9 +461,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 					$mysql['dniShortDescription'] = $db->real_escape_string($dniShortDescription);
 					$mysql['dniFavIcon'] = $db->real_escape_string($dniFavIcon);
-					$mysql['dniFavIcon'] = $db->real_escape_string($dniFavIcon);
 
-					$dniProcessed = $db->real_escape_string($dniAuth['processed']);
+					$dniProcessed = $db->real_escape_string((string)$dniAuth['processed']);
 
 					$sql = "INSERT INTO 202_dni_networks SET user_id = '" . $mysql['user_id'] . "', networkId = '" . $mysql['dniNetworkId'] . "', name = '" . $mysql['dniNetworkName'] . "', type = '" . $mysql['dniNetworkType'] . "', apiKey = '" . $mysql['dniApikey'] . "', time = '" . time() . "', processed = '" . $dniProcessed . "', shortDescription = '" . $mysql['dniShortDescription'] . "', favIcon = '" . $mysql['dniFavIcon'] . "'";
 
@@ -435,11 +470,31 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 						$sql .= ", affiliateId = '" . $mysql['dniAffiliateId'] . "'";
 					}
 
-					if ($db->query($sql)) {
-						$success['dni_network_added'] = $mysql['dniNetworkName'] . " network configured. API processing can take up to 5 minutes.";
-						$sql = "INSERT INTO 202_aff_networks SET dni_network_id = '" . $db->insert_id . "', user_id = '" . $mysql['user_id'] . "', aff_network_name = '" . $mysql['dniNetworkName'] . " (DNI)" . "', aff_network_time = '" . time() . "'";
-						$db->query($sql);
+					// The integration and its campaign category land together:
+					// the category's first query was checked and the second was
+					// not, so a failure left an integration with no category
+					// while the page said "configured" (#165, #1).
+					$dniSaved = false;
+					try {
+						(new \Prosper202\Database\Connection($db))->transaction(static function () use ($db, $sql, $mysql): void {
+							if (!$db->query($sql)) {
+								throw new RuntimeException('the network: ' . $db->error);
+							}
+							$categorySql = "INSERT INTO 202_aff_networks SET dni_network_id = '" . (int) $db->insert_id . "', user_id = '" . $mysql['user_id'] . "', aff_network_name = '" . $mysql['dniNetworkName'] . " (DNI)" . "', aff_network_time = '" . time() . "'";
+							if (!$db->query($categorySql)) {
+								throw new RuntimeException('its category: ' . $db->error);
+							}
+						});
+						$dniSaved = true;
+					} catch (Throwable $failed) {
+						error_log('api-integrations.php: a DNI network was not saved: ' . $failed->getMessage());
 					}
+					if ($dniSaved) {
+						tagUserByNetwork($user_row['install_hash'], 'affiliate-networks', $dniNetworkName[0]);
+						p202_account_flash('ok', $dniNetworkName[0] . ' network configured. API processing can take up to 5 minutes.');
+						p202_account_redirect('202-account/api-integrations.php#dni');
+					}
+					$error['dni_network'] = 'The network could not be saved, and nothing was added; try again.';
 				} else if (isset($_POST['editing_dni_network_id']) && !empty($_POST['editing_dni_network_id'])) {
 					$mysql['editing_dni_network_id'] = $db->real_escape_string((string)$_POST['editing_dni_network_id']);
 					$sql = "UPDATE 202_dni_networks SET networkId = '" . $mysql['dniNetworkId'] . "', name = '" . $mysql['dniNetworkName'] . "', type = '" . $mysql['dniNetworkType'] . "', apiKey = '" . $mysql['dniApikey'] . "', time = '" . time() . "'";
@@ -450,37 +505,48 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 					$sql .= " WHERE id = '" . $mysql['editing_dni_network_id'] . "' AND user_id = '" . $mysql['user_id'] . "'";
 
-					if ($db->query($sql)) {
-						$sql = "UPDATE 202_aff_networks SET aff_network_name = '" . $mysql['dniNetworkName'] . " (DNI)" . "', aff_network_time = '" . time() . "' WHERE dni_network_id = '" . $mysql['editing_dni_network_id'] . "' AND user_id = '" . $mysql['user_id'] . "'";
-						$db->query($sql);
-						header('Location: ' . get_absolute_url() . '202-account/api-integrations.php?dni_network_updated=1');
-						die();
+					// The edit names a network of this account's or changes
+					// nothing: it flashed "updated" on a no-op for an id that is
+					// not there. `time` always changes, so a row that exists is
+					// always an affected row.
+					$dniFound = true;
+					$dniSaved = false;
+					try {
+						(new \Prosper202\Database\Connection($db))->transaction(static function () use ($db, $sql, $mysql, &$dniFound): void {
+							if (!$db->query($sql)) {
+								throw new RuntimeException('the network: ' . $db->error);
+							}
+							if ($db->affected_rows < 1) {
+								$dniFound = false;
+								return;
+							}
+							$categorySql = "UPDATE 202_aff_networks SET aff_network_name = '" . $mysql['dniNetworkName'] . " (DNI)" . "', aff_network_time = '" . time() . "' WHERE dni_network_id = '" . $mysql['editing_dni_network_id'] . "' AND user_id = '" . $mysql['user_id'] . "'";
+							if (!$db->query($categorySql)) {
+								throw new RuntimeException('its category: ' . $db->error);
+							}
+						});
+						$dniSaved = $dniFound;
+					} catch (Throwable $failed) {
+						error_log('api-integrations.php: a DNI network was not updated: ' . $failed->getMessage());
 					}
+					if ($dniSaved) {
+						p202_account_flash('ok', 'DNI network updated. API processing can take up to 5 minutes.');
+						p202_account_redirect('202-account/api-integrations.php#dni');
+					}
+					$error['dni_network'] = $dniFound
+						? 'The network could not be saved, and nothing changed; try again.'
+						: 'That network was not found; nothing was changed.';
 				}
-
-				tagUserByNetwork($user_row['install_hash'], 'affiliate-networks', $dniNetworkName[0]);
 			}
 		}
 	}
-
-	$html = array_merge($html, array_map('htmlentities', $_POST));
-}
-
-
-if (isset($_GET['delete_dni_network']) && !empty($_GET['delete_dni_network'])) {
-	$mysql['deleteDniNetworkId'] = $db->real_escape_string((string)$_GET['delete_dni_network']);
-	$db->query("DELETE FROM 202_dni_networks WHERE id = '" . $mysql['deleteDniNetworkId'] . "' AND user_id = '" . $mysql['user_id'] . "'");
-	$sql = "UPDATE 202_aff_networks SET aff_network_deleted = '1', aff_network_time = '" . time() . "' WHERE dni_network_id = '" . $mysql['deleteDniNetworkId'] . "'";
-	$db->query($sql);
-	header('Location: ' . get_absolute_url() . '202-account/api-integrations.php');
-	die();
 }
 
 if (isset($_GET['edit_dni_network']) && !empty($_GET['edit_dni_network'])) {
 	$mysql['editDniNetworkId'] = $db->real_escape_string((string)$_GET['edit_dni_network']);
 	$sql_edit_dni = "SELECT * FROM 202_dni_networks WHERE id = '" . $mysql['editDniNetworkId'] . "' AND user_id = '" . $mysql['user_id'] . "'";
 	$edit_dni_result = $db->query($sql_edit_dni);
-	if ($edit_dni_result->num_rows > 0) {
+	if ($edit_dni_result && $edit_dni_result->num_rows > 0) {
 		$edit_dni_row = $edit_dni_result->fetch_assoc();
 		$editing_dni_network = true;
 	}
@@ -488,512 +554,473 @@ if (isset($_GET['edit_dni_network']) && !empty($_GET['edit_dni_network'])) {
 
 $dni_sql = "SELECT * FROM 202_dni_networks WHERE user_id = '1'";
 $dni_result = $db->query($dni_sql);
+$dniRows = [];
+if ($dni_result) {
+	while ($dni_row = $dni_result->fetch_assoc()) {
+		$dniRows[] = $dni_row;
+		if ($dni_row['processed'] == false) {
+			$dniProcesing['networks'][] = ['id' => $dni_row['id'], 'networkId' => $dni_row['networkId'], 'api_key' => $dni_row['apiKey'], 'type' => $dni_row['type']];
+		}
+	}
+}
 
-template_top('API Integrations');
+// The networks still importing, for the progress poller's inline script.
+// Network-supplied strings can be invalid UTF-8, which made json_encode()
+// return false and the script read `var processing = ;` (#165, #1): they are
+// substituted, and an encoding that still fails is said on the page.
+$dniProcessingJson = json_encode($dniProcesing, JSON_NUMERIC_CHECK | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_INVALID_UTF8_SUBSTITUTE);
+if ($dniProcessingJson === false) {
+	error_log('api-integrations.php: the DNI progress data could not be encoded: ' . json_last_error_msg());
+	$dniProcessingJson = '{"networks":[]}';
+	$dniProgressUnavailable = true;
+}
 
+$e = static fn (mixed $v): string => htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
+$self = get_absolute_url() . '202-account/api-integrations.php';
+$base = get_absolute_url();
+/** What was typed on a refused submit, or what is stored. Secret fields here were shown in full on the classic page too. */
+$fieldValue = static function (string $field) use ($user_row): string {
+	if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST[$field])) {
+		return (string)$_POST[$field];
+	}
+	return (string)($user_row[$field] ?? '');
+};
+/** A help article link, when this integration has one. */
+$helpLink = static function (string $page) use ($e): string {
+	$url = showHelpUrl($page);
+	return $url === '' ? '' : '<a class="p202-help" href="' . $e($url) . '" target="_blank" rel="noopener" title="Help" aria-label="Help"><i class="bi bi-question-circle"></i></a>';
+};
+/** A labelled URL to paste somewhere else, with Copy. */
+$endpoint = static function (string $label, string $url) use ($e): string {
+	return '<label class="form-label">' . $e($label) . '</label>'
+		. '<div class="p202-code mb-3"><pre class="p202-code__value">' . $e($url) . '</pre>'
+		. '<button type="button" class="btn btn-secondary btn-sm p202-copy" data-p202-copy="' . $e($url) . '">Copy</button></div>';
+};
+$trackingBase = $strProtocol . getTrackingDomain() . get_absolute_url();
+
+$flashExtra = [];
+if (!empty($dniProgressUnavailable)) {
+	$flashExtra[] = ['kind' => 'warn', 'text' => 'The import progress of your DNI networks cannot be shown just now; reload the page to see it.'];
+}
+if (isset($_GET['lpo']) && $_GET['lpo'] === 'connected') {
+	$flashExtra[] = ['kind' => 'ok', 'text' => 'Landing Page Optimizer connected.'];
+}
+if (isset($_GET['lpo']) && $_GET['lpo'] === 'disconnected') {
+	$flashExtra[] = ['kind' => 'ok', 'text' => 'Landing Page Optimizer disconnected.'];
+}
+if (!$dni_result) {
+	$flashExtra[] = ['kind' => 'bad', 'text' => 'Your DNI networks could not be read just now. Reload the page to see them.'];
+}
+
+/** The key-based integrations, which all work the same way: one secret, one Save. */
+$keyIntegrations = [
+	'ipqs' => [
+		'title' => 'IPQualityScore', 'icon' => 'ipqs.png', 'help' => '',
+		'desc' => 'Detect and redirect click fraud in real time.',
+		'extra' => '<a href="https://202.redirexit.com/tracking202/redirect/dl.php?t202id=12608&amp;t202kw=" target="_blank" rel="noopener">Get a free API key</a>',
+		'flag' => 'change_ipqs_api_key', 'field' => 'ipqs_api_key', 'label' => 'IPQS API key', 'error' => 'ipqs_api_key_error',
+		'endpoint' => null,
+	],
+	'clickbank' => [
+		'title' => 'ClickBank', 'icon' => 'clickbank.png', 'help' => 'clickbank',
+		'desc' => 'Update conversions automatically from ClickBank’s Instant Notification Service.',
+		'extra' => '',
+		'flag' => 'change_cb_key', 'field' => 'cb_key', 'label' => 'ClickBank secret key', 'error' => 'cb_key',
+		'endpoint' => ['INS URL', $trackingBase . 'tracking202/static/cb202.php'],
+	],
+	'jvzoo' => [
+		'title' => 'JVZoo', 'icon' => 'jvzoo.png', 'help' => 'jvzoo',
+		'desc' => 'Update conversions from JVZoo’s Instant Payment Notification (JVZIPN).',
+		'extra' => '',
+		'flag' => 'change_jvzoo_secret_key', 'field' => 'jvzoo_ipn_secret_key', 'label' => 'JVZoo secret key', 'error' => 'jvzoo_secret_key_error',
+		'endpoint' => ['IPN URL', $trackingBase . 'tracking202/static/jvzoo.php'],
+	],
+	'zaxaa' => [
+		'title' => 'Zaxaa', 'icon' => 'zaxaa.png', 'help' => 'zaxaa',
+		'desc' => 'Update conversions from Zaxaa Payment Notification (ZPN).',
+		'extra' => '',
+		'flag' => 'change_zaxaa_api_signature', 'field' => 'zaxaa_api_signature', 'label' => 'Zaxaa API signature', 'error' => 'zaxaa_api_signature_error',
+		'endpoint' => ['ZPN URL', $trackingBase . 'tracking202/static/zpn.php'],
+	],
+	'slack' => [
+		'title' => 'Slack', 'icon' => 'slack.png', 'help' => 'slack',
+		'desc' => 'Send Prosper202 notifications into a Slack channel, and receive Slack commands at the webhook below.',
+		'extra' => '',
+		'flag' => 'change_user_slack_incoming_webhook', 'field' => 'user_slack_incoming_webhook', 'label' => 'Slack incoming webhook URL', 'error' => 'user_slack_incoming_webhook',
+		'endpoint' => ['Prosper202 webhook', $trackingBase . 'tracking202/static/slack.php'],
+	],
+];
+$cb_crypto_ok = extension_loaded('mcrypt') || function_exists("openssl_decrypt");
+
+template_top('API Integrations', ['ui' => 'v2']);
 ?>
 
-<style>
-	/* API Integrations page — scoped card layout (Notion-grade pass) */
-	.apiint{max-width:1100px;margin:0 auto;padding:4px 4px 48px;font-size:14px;color:#37352f;}
-	.apiint *,.apiint *::before,.apiint *::after{box-sizing:border-box;}
-	.apiint-head{margin:18px 2px 20px;}
-	.apiint-head h1{font-size:22px;font-weight:700;margin:0 0 6px;color:#37352f;letter-spacing:-.01em;}
-	.apiint-head p{margin:0;color:#787774;font-size:14px;}
-	.apiint-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:16px;align-items:start;}
-	.apiint-card{background:#fff;border:1px solid #e9e9e7;border-radius:10px;padding:20px 22px 18px;box-shadow:0 1px 2px rgba(15,15,15,.03);transition:border-color .15s ease,box-shadow .15s ease;}
-	.apiint-card:hover{border-color:#d3d3d0;box-shadow:0 2px 6px rgba(15,15,15,.05);}
-	.apiint-card--wide{grid-column:1/-1;}
-	.apiint-card-head{display:flex;align-items:center;gap:10px;margin-bottom:6px;}
-	.apiint-card-head img{width:22px;height:22px;border-radius:5px;object-fit:contain;flex:none;}
-	.apiint-card-head h2{font-size:15px;font-weight:600;margin:0;color:#37352f;flex:1 1 auto;line-height:1.3;}
-	.apiint-icon-fallback{width:22px;height:22px;border-radius:5px;background:#eef3fe;color:#2383e2;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none;letter-spacing:.02em;}
-	.apiint-card-head h2 .btn{background:none;border:none;color:#c8c7c4;padding:0 2px;font-size:13px;line-height:1;vertical-align:1px;box-shadow:none;}
-	.apiint-card-head h2 .btn:hover,.apiint-card-head h2 .btn:focus{color:#2383e2;background:none;}
-	.apiint-pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;line-height:1;padding:4px 9px;border-radius:999px;white-space:nowrap;flex:none;}
-	.apiint-pill-dot{width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.75;}
-	.apiint-pill--ok{background:#dbeddb;color:#1c3829;}
-	.apiint-pill--off{background:#f1f1ef;color:#6f6e69;}
-	.apiint-pill--warn{background:#fdecc8;color:#402c1b;}
-	.apiint-pill--err{background:#ffe2dd;color:#5d1715;}
-	.apiint-desc{color:#787774;font-size:13px;line-height:1.5;margin:0 0 14px;}
-	.apiint-desc a{color:#2383e2;}
-	.apiint-note{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.45;border-radius:6px;padding:9px 12px;margin:0 0 12px;text-align:left;}
-	.apiint-note svg{flex:none;margin-top:2px;}
-	.apiint-note--ok{background:#f0f9f0;color:#1c3829;border:1px solid #cfe8cf;}
-	.apiint-note--err{background:#fdf0ef;color:#5d1715;border:1px solid #f5d5d0;}
-	.apiint-note--warn{background:#fdf5e6;color:#6b4415;border:1px solid #f0e0bf;}
-	.apiint-endpoint{display:flex;align-items:center;gap:8px;background:#f7f7f5;border:1px solid #edece9;border-radius:6px;padding:7px 10px;margin:0 0 10px;}
-	.apiint-endpoint-label{font-size:11px;font-weight:600;color:#9b9a97;text-transform:uppercase;letter-spacing:.04em;flex:none;}
-	.apiint-endpoint code{flex:1 1 auto;background:none;border:none;padding:0;font-size:12px;color:#37352f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:SFMono-Regular,Consolas,"Liberation Mono",Menlo,monospace;}
-	.apiint-copy{flex:none;font-size:12px;font-weight:500;color:#2383e2;background:none;border:none;padding:2px 6px;border-radius:4px;cursor:pointer;}
-	.apiint-copy:hover{background:#e8f2fc;}
-	.apiint-copy.is-copied{color:#1c8a50;}
-	.apiint-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:13px;font-weight:500;line-height:1;padding:9px 14px;border-radius:6px;border:1px solid transparent;cursor:pointer;text-decoration:none;transition:background .12s ease;}
-	.apiint-btn--primary{background:#2383e2;color:#fff;}
-	.apiint-btn--primary:hover,.apiint-btn--primary:focus{background:#0e70cf;color:#fff;text-decoration:none;}
-	.apiint-btn--ghost{background:#fff;border-color:#e0e0dd;color:#37352f;}
-	.apiint-btn--ghost:hover,.apiint-btn--ghost:focus{background:#f7f7f5;color:#37352f;text-decoration:none;}
-	.apiint-btn--danger{background:#fff;border-color:#f0d4d0;color:#c4554d;}
-	.apiint-btn--danger:hover,.apiint-btn--danger:focus{background:#fdf0ef;color:#c4554d;text-decoration:none;}
-	.apiint-actions{display:flex;align-items:center;gap:8px;margin-top:2px;flex-wrap:wrap;}
-	.apiint-actions form{margin:0;display:inline;}
-	.apiint-meta{font-size:12px;color:#9b9a97;margin:12px 0 0;line-height:1.5;}
-	.apiint-config{margin-top:14px;border-top:1px solid #f1f1ef;padding-top:10px;}
-	.apiint-config summary{list-style:none;display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:500;color:#6f6e69;cursor:pointer;user-select:none;border-radius:5px;padding:4px 8px;margin-left:-8px;}
-	.apiint-config summary:hover{background:#f1f1ef;color:#37352f;}
-	.apiint-config summary::-webkit-details-marker{display:none;}
-	.apiint-config summary::before{content:"";width:0;height:0;border-left:5px solid currentColor;border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform .12s ease;flex:none;}
-	.apiint-config[open] summary::before{transform:rotate(90deg);}
-	.apiint-config form{margin:12px 0 0;}
-	.apiint-field{margin:0 0 12px;}
-	.apiint-field label{display:block;font-size:12px;font-weight:600;color:#6f6e69;margin:0 0 5px;}
-	.apiint .apiint-field input.form-control{height:34px;font-size:13px;border:1px solid #e0e0dd;border-radius:6px;box-shadow:none;padding:6px 10px;}
-	.apiint .apiint-field input.form-control:focus{border-color:#2383e2;box-shadow:0 0 0 2px rgba(35,131,226,.18);}
-	.apiint .table{margin:0 0 16px;border:1px solid #edece9;border-radius:8px;border-collapse:separate;border-spacing:0;overflow:hidden;font-size:13px;width:100%;}
-	.apiint .table th{background:#f7f7f5;color:#6f6e69;font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:600;border:none;border-bottom:1px solid #edece9;padding:8px 12px;text-align:left;}
-	.apiint .table td{border:none;border-bottom:1px solid #f1f1ef;padding:9px 12px;vertical-align:middle;}
-	.apiint .table tr:last-child td{border-bottom:none;}
-	.apiint .table a{color:#6f6e69;}
-	.apiint .table a:hover{color:#37352f;}
-	.apiint-dni-form .form-control{height:34px;font-size:13px;border:1px solid #e0e0dd;border-radius:6px;box-shadow:none;}
-	@media (max-width:767px){.apiint-grid{grid-template-columns:1fr;}.apiint-card{padding:16px;}}
-</style>
+<div class="p202-page-header">
+	<div class="p202-page-header__icon"><i class="bi bi-plug"></i></div>
+	<div class="p202-page-header__text">
+		<h1 class="p202-page-header__title">API integrations</h1>
+		<p class="p202-page-header__desc">Connect Prosper202 to your affiliate networks and tools. Everything here is optional; connect only what you use.</p>
+	</div>
+</div>
 
-<div class="apiint">
-	<header class="apiint-head">
-		<h1>API Integrations</h1>
-		<p>Connect Prosper202 to your affiliate networks and tools. Everything here is optional &mdash; connect only what you use.</p>
-	</header>
-	<div class="apiint-grid">
+<?php echo p202_account_render_flashes($flashExtra); ?>
 
-		<section class="apiint-card apiint-card--wide" id="dni">
-			<div class="apiint-card-head">
-				<img src="<?php echo get_absolute_url(); ?>202-img/icons/integrations/dni.jpg" alt="">
-				<h2>Direct Network Integration <?php showHelp("dni"); ?></h2>
-				<?php if ($dni_result->num_rows > 0) {
-					apiint_pill('ok', $dni_result->num_rows . ' network' . ($dni_result->num_rows === 1 ? '' : 's') . ' connected');
-				} else {
-					apiint_pill('off', 'Not connected');
-				} ?>
-			</div>
-			<p class="apiint-desc">Search, apply to and set up offers from your affiliate networks without leaving Prosper202.</p>
-			<?php showErrorMessage($error, 'dni_network'); ?>
-			<?php showErrorMessage($error, 'dni_network_auth'); ?>
-			<?php showSuccessMessage(isset($success['dni_network_added']) && $success['dni_network_added'], $success['dni_network_added'] ?? ''); ?>
-			<?php showSuccessMessage(isset($_GET['dni_network_updated']), 'DNI Network updated successfully. API processing can take up to 5 minutes.'); ?>
-			<?php if ($dni_result->num_rows > 0) { ?>
-				<table class="table" id="stats-table">
-					<thead>
-						<tr>
-							<th>Network</th>
-							<th>API Key</th>
-							<th>ID</th>
-							<th></th>
-						</tr>
-					</thead>
-					<tbody>
-						<?php while ($dni_row = $dni_result->fetch_assoc()) {
-							if ($dni_row['processed'] == false) {
-								$dniProcesing['networks'][] = ['id' => $dni_row['id'], 'networkId' => $dni_row['networkId'], 'api_key' => $dni_row['apiKey'], 'type' => $dni_row['type']];
-							}
-						?>
-							<tr>
-								<td> <img src="<?php echo $dni_row['favIcon']; ?>" width=16>&nbsp;&nbsp;<?php echo $dni_row['name'] . " (" . $dni_row['type'] . ")"; ?><span class="fui-info-circle" style="font-size: 12px; margin: -25px 0px 0px 5px;" data-toggle="tooltip" title="" data-original-title="<?php echo $dni_row['shortDescription']; ?>"></span><br>
-									<?php if ($dni_row['processed'] == false) { ?>
-										<div id="network-<?php echo $dni_row['id']; ?>">
-											<span style='font-size:10px'>processing... <img src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif"></span>
-											<div class="progress" style="margin: 0px 5px;">
-												<div id="<?php echo $dni_row['id']; ?>" class="progress-bar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" style="width: 0%; color:#34495E">
-													0.00%
-												</div>
-											</div>
-											<div>
-											<?php } ?>
-								</td>
-								<td><?php echo substr((string) $dni_row['apiKey'], 0, 12) . "... "; ?><a href="#" class="link showFullDniApikey" data-long="<?php echo $dni_row['apiKey']; ?>" data-short="<?php echo substr((string) $dni_row['apiKey'], 0, 12); ?>">show</a></td>
-								<td><?php echo $dni_row['affiliateId']; ?></td>
-								<td><a href="<?php echo get_absolute_url(); ?>202-account/api-integrations.php?edit_dni_network=<?php echo $dni_row['id']; ?>" title="Edit"><i class="glyphicon glyphicon-pencil"></i></a> <a href="<?php echo get_absolute_url(); ?>202-account/api-integrations.php?delete_dni_network=<?php echo $dni_row['id']; ?>" onClick="return confirm('Delete This DNI Network?')" title="Delete"><i class="glyphicon glyphicon-trash"></i></a></td>
-							</tr>
-						<?php } ?>
-					</tbody>
-				</table>
-			<?php } else { ?>
-				<p class="apiint-meta" style="margin:0 0 12px;">No networks connected yet &mdash; pick a network below to get started.</p>
-			<?php } ?>
-			<div class="apiint-dni-form">
-				<form class="form-horizontal" role="form" method="post" action="">
-					<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>">
-					<input type="hidden" name="dni_network_type" id="dni_network_type" value="<?php echo $edit_dni_row['type'] ?? ''; ?>">
-					<input type="hidden" name="dni_network_name" id="dni_network_name" value="<?php echo $edit_dni_row['name'] ?? ''; ?>">
-					<?php if (isset($editing_dni_network) && $editing_dni_network) { ?>
-						<input type="hidden" name="editing_dni_network" value="1">
-						<input type="hidden" name="editing_dni_network_id" value="<?php echo $edit_dni_row['id'] ?? ''; ?>">
-					<?php } ?>
-					<div class="col-xs-3" style="padding: 0px; padding-right: 5px;">
-						<label class="sr-only" for="dni_network">Select Network</label>
-						<select name="dni_network" class="form-control input-sm">
-							<option value="">Select network</option>
-							<?php foreach ($dniNetworks as $dninetwork) { ?>
-								<option value="<?php echo $dninetwork['networkId']; ?>" data-type="<?php echo $dninetwork['networkType']; ?>" <?php if (isset($edit_dni_row['networkId']) && $edit_dni_row['networkId'] == $dninetwork['networkId'] || isset($mysql['add_dni']) && $mysql['add_dni'] == $dninetwork['networkId']) echo 'selected'; ?>><?php echo $dninetwork['name']; ?> (<?php echo $dninetwork['networkType']; ?>)</option>
-							<?php } ?>
-						</select>
-					</div>
-					<div class="<?php if (isset($editing_dni_network) && $editing_dni_network) {
-									if (isset($edit_dni_row['type']) && $edit_dni_row['type'] == 'HasOffers') echo 'col-xs-7';
-									else echo 'col-xs-5';
-								} else {
-									echo 'col-xs-7';
-								} ?>" id="dni_api_key_input_group" style="padding: 0px; padding-right: 5px;">
-						<label class="sr-only" for="dni_network_api_key">Add API key</label>
-						<input type="text" name="dni_network_api_key" class="form-control input-sm" placeholder="API Key" value="<?php echo $edit_dni_row['apiKey'] ?? ''; ?>">
-						<div id="dniInfo"></div>
-					</div>
-					<div class="col-xs-2" id="dni_affiliate_id_input_group" style="<?php if (isset($editing_dni_network) && $editing_dni_network) {
-																						if (isset($edit_dni_row['type']) && $edit_dni_row['type'] == 'HasOffers') echo 'display:none;';
-																					} else {
-																						echo 'display:none;';
-																					} ?> padding: 0px; padding-right: 5px;">
-						<label class="sr-only" for="dni_network_affiliate_id">Add Affiliate ID</label>
-						<input type="text" name="dni_network_affiliate_id" id="dni_network_affiliate_id" class="form-control input-sm" placeholder="Affiliate ID" value="<?php if (isset($editing_dni_network) && $editing_dni_network) {
-																																								if (isset($edit_dni_row['type']) && $edit_dni_row['type'] == 'HasOffers') echo 'null';
-																																							} else {
-																																								echo $edit_dni_row['affiliateId'] ?? '';
-																																							} ?>">
-					</div>
-					<div class="col-xs-2" style="padding: 0px;">
-						<button class="apiint-btn apiint-btn--primary" type="submit" style="width:100%;"><?php if (isset($editing_dni_network) && $editing_dni_network) echo 'Save changes';
-																											else echo 'Add network'; ?></button>
-					</div>
-				</form>
-			</div>
-		</section>
-
-		<?php
-		// Landing Page Optimizer pairing card. Status lives in
-		// 202_users_pref (lpo_status / lpo_site_key); every feature screen is
-		// hosted — this card only connects and disconnects the generic bridge.
-		$lpo_schema_ready = array_key_exists('lpo_status', $user_row);
-		$lpo_connected = $lpo_schema_ready && (string) ($user_row['lpo_status'] ?? '') === 'active';
-		$lpo_site_key = (string) ($user_row['lpo_site_key'] ?? '');
-		$lpo_has_api_key = trim((string) ($user_row['p202_customer_api_key'] ?? '')) !== '';
-		$lpo_needs_subscription = !empty($lpo_needs_subscription); // set by the connect catch above
-		$lpo_sub_retry = !empty($lpo_sub_retry); // the failed attempt came from the "I've subscribed" retry
-		$lpo_saas_base = \Prosper202\Lpo\PairingClient::saasBaseUrl();
-		$lpo_capabilities = \Prosper202\Lpo\PairingClient::CAPABILITIES;
-		?>
-		<section class="apiint-card" id="lpo">
-			<div class="apiint-card-head">
-				<div class="apiint-icon-fallback" aria-hidden="true">LP</div>
-				<h2>Landing Page Optimizer</h2>
-				<?php if ($lpo_connected) {
-					apiint_pill('ok', 'Connected');
-				} elseif (!$lpo_schema_ready) {
-					apiint_pill('warn', 'Upgrade needed');
-				} elseif ($lpo_needs_subscription) {
-					apiint_pill('warn', 'Subscription required');
-				} elseif (isset($error['lpo'])) {
-					apiint_pill('err', 'Action needed');
-				} else {
-					apiint_pill('off', 'Not connected');
-				} ?>
-			</div>
-			<p class="apiint-desc">Run hosted A/B experiments on your landing pages. Connecting registers a signed conversion webhook &mdash; nothing else changes on this install.</p>
-			<?php showSuccessMessage(isset($_GET['lpo']) && $_GET['lpo'] === 'connected', 'Landing Page Optimizer connected.'); ?>
-			<?php showSuccessMessage(isset($_GET['lpo']) && $_GET['lpo'] === 'disconnected', 'Landing Page Optimizer disconnected.'); ?>
-			<?php showErrorMessage($error, 'lpo'); ?>
-			<?php if ($lpo_connected) { ?>
-				<?php apiint_endpoint('Site key', $lpo_site_key); ?>
-				<div class="apiint-actions">
-					<a href="<?php echo htmlspecialchars($lpo_saas_base); ?>/api/customers/experiments" target="_blank" rel="noopener" class="apiint-btn apiint-btn--primary">Manage experiments&nbsp;&rarr;</a>
-					<form method="post" action="">
-						<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-						<input type="hidden" name="lpo_action" value="disconnect" />
-						<button class="apiint-btn apiint-btn--danger" type="submit" onclick="return confirm('Disconnect the Landing Page Optimizer? The pairing webhook will be removed.');">Disconnect</button>
-					</form>
-				</div>
-				<?php if (array_key_exists('lpo_ctx_kw', $user_row)) { ?>
-					<details class="apiint-config"<?php if (!empty($lpo_ctx_kw_saved)) echo ' open'; ?>>
-						<summary>Privacy</summary>
-						<?php showSuccessMessage(!empty($lpo_ctx_kw_saved), 'Context token preference saved.'); ?>
-						<form method="post" action="">
-							<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-							<input type="hidden" name="lpo_ctx_kw_save" value="1" />
-							<div class="apiint-field">
-								<label style="display:flex;align-items:flex-start;gap:8px;font-weight:400;color:#37352f;font-size:13px;cursor:pointer;text-transform:none;">
-									<input type="checkbox" name="lpo_ctx_kw" value="1" style="margin:2px 0 0;"<?php if ((string) ($user_row['lpo_ctx_kw'] ?? '1') !== '0') echo ' checked'; ?>>
-									<span>Include keyword text in optimizer context tokens<br><span class="apiint-meta" style="margin:0;">Keywords ride the signed t202ctx token on rotator&rarr;landing-page redirects so experiments can segment by search term. Turn off to keep search terms out of tokens.</span></span>
-								</label>
-							</div>
-							<button class="apiint-btn apiint-btn--ghost" type="submit">Save</button>
-						</form>
-					</details>
+<div class="row g-4">
+	<div class="col-12">
+		<section class="p202-panel" id="dni">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">Direct Network Integration</h2>
+				<?php echo $helpLink('dni'); ?>
+				<?php if ($dniRows) { ?>
+					<span class="p202-pill p202-pill--good"><?php echo count($dniRows) === 1 ? '1 network connected' : count($dniRows) . ' networks connected'; ?></span>
+				<?php } else { ?>
+					<span class="p202-pill">Not connected</span>
 				<?php } ?>
-				<p class="apiint-meta">Bridge v<?php echo htmlspecialchars(\Prosper202\Bridge\EventBridge::BRIDGE_VERSION); ?> &middot; <?php echo htmlspecialchars(implode(', ', $lpo_capabilities['events'])); ?>, wildcard subscribe, remote config, v3 API, context tokens, dimensions sync</p>
-			<?php } elseif (!$lpo_schema_ready) { ?>
-				<p class="apiint-desc" style="margin-bottom:0;">Run the Prosper202 upgrade to enable this integration.</p>
-			<?php } elseif ($lpo_needs_subscription) { ?>
-				<div class="apiint-note apiint-note--warn" role="status">
-					<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.4"/><path d="M8 7.4v3.4M8 4.9h.01" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-					<span><?php if ($lpo_sub_retry) { ?>We still don&rsquo;t see an active Landing Page Optimizer subscription for this account. If you just subscribed, give it a minute, then connect again.<?php } else { ?>Landing Page Optimizer runs on a Landing Page Optimizer plan, and this account doesn&rsquo;t have one yet. Start a subscription, then connect this install.<?php } ?></span>
-				</div>
-				<div class="apiint-actions">
-					<a class="apiint-btn apiint-btn--primary" href="<?php echo htmlspecialchars($lpo_saas_base); ?>/api/customers/experiments" target="_blank" rel="noopener">Get Landing Page Optimizer&nbsp;&rarr;</a>
-					<form method="post" action="" style="display:inline;">
-						<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-						<input type="hidden" name="lpo_action" value="connect" />
-						<input type="hidden" name="lpo_retry" value="1" />
-						<button class="apiint-btn apiint-btn--ghost" type="submit">I&rsquo;ve subscribed &mdash; connect</button>
-					</form>
-				</div>
-			<?php } elseif ($lpo_has_api_key) { ?>
-				<div class="apiint-actions">
-					<form method="post" action="">
-						<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-						<input type="hidden" name="lpo_action" value="connect" />
-						<button class="apiint-btn apiint-btn--primary" type="submit">Connect</button>
-					</form>
-				</div>
-			<?php } else { ?>
-				<p class="apiint-desc">You&rsquo;ll need your Prosper202 Customer API key first &mdash; it only takes a minute.</p>
-				<div class="apiint-actions">
-					<a class="apiint-btn apiint-btn--primary" href="<?php echo htmlspecialchars($lpo_saas_base); ?>/api/customers/login?redirect=get-api">Get your API key</a>
-				</div>
-			<?php } ?>
-		</section>
-
-		<section class="apiint-card" id="ipqs">
-			<div class="apiint-card-head">
-				<img src="<?php echo get_absolute_url(); ?>202-img/icons/integrations/ipqs.png" alt="">
-				<h2>IPQualityScore <?php showHelp("jvzoo"); ?></h2>
-				<?php apiint_pill(trim((string) ($user_row['ipqs_api_key'] ?? '')) !== '' ? 'ok' : 'off', trim((string) ($user_row['ipqs_api_key'] ?? '')) !== '' ? 'Connected' : 'Not connected'); ?>
 			</div>
-			<p class="apiint-desc">Detect and redirect click fraud in real time. <a href='https://202.redirexit.com/tracking202/redirect/dl.php?t202id=12608&t202kw=' target='_blank' rel='noopener'>Get a free API key</a>.</p>
-			<?php showSuccessMessage($change_ipqs_api_key, 'Your IPQualityScore API key was changed successfully.'); ?>
-			<?php showErrorMessage($error, 'ipqs_api_key_error'); ?>
-			<details class="apiint-config"<?php if (isset($error['ipqs_api_key_error'])) echo ' open'; ?>>
-				<summary><?php echo trim((string) ($user_row['ipqs_api_key'] ?? '')) !== '' ? 'Update API key' : 'Connect'; ?></summary>
-				<form method="post" action="">
-					<input type="hidden" name="change_ipqs_api_key" value="1" />
-					<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-					<div class="apiint-field">
-						<label for="ipqs_api_key">IPQS API key</label>
-						<input type="text" class="form-control input-sm" id="ipqs_api_key" name="ipqs_api_key" value="<?php echo $html['ipqs_api_key']; ?>">
-					</div>
-					<button class="apiint-btn apiint-btn--primary" type="submit">Save</button>
-				</form>
-			</details>
-		</section>
-
-		<section class="apiint-card" id="clickbank">
-			<div class="apiint-card-head">
-				<img src="<?php echo get_absolute_url(); ?>202-img/icons/integrations/clickbank.png" alt="">
-				<h2>ClickBank <?php showHelp("clickbank"); ?></h2>
+			<div class="p202-panel__body">
+				<p class="text-secondary">Search, apply to and set up offers from your affiliate networks without leaving Prosper202.</p>
 				<?php
-				$cb_crypto_ok = extension_loaded('mcrypt') || function_exists("openssl_decrypt");
-				if (!$cb_crypto_ok) {
-					apiint_pill('warn', 'Unavailable');
-				} elseif (trim((string) ($user_row['cb_key'] ?? '')) === '') {
-					apiint_pill('off', 'Not connected');
-				} elseif ($cb_verified) {
-					apiint_pill('ok', 'Verified');
-				} else {
-					apiint_pill('warn', 'Unverified');
-				} ?>
-			</div>
-			<p class="apiint-desc">Update conversions automatically from ClickBank&rsquo;s Instant Notification Service.</p>
-			<?php showSuccessMessage($change_cb_key, 'Your Clickbank secret key was changed successfully.'); ?>
-			<?php showErrorMessage($error, 'cb_key'); ?>
-			<?php if ($cb_crypto_ok) { ?>
-				<?php apiint_endpoint('INS URL', $strProtocol . '' . getTrackingDomain() . get_absolute_url() . 'tracking202/static/cb202.php'); ?>
-				<details class="apiint-config"<?php if (isset($error['cb_key'])) echo ' open'; ?>>
-					<summary><?php echo trim((string) ($user_row['cb_key'] ?? '')) !== '' ? 'Update secret key' : 'Connect'; ?></summary>
-					<form method="post" action="">
-						<input type="hidden" name="change_cb_key" value="1" />
-						<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-						<div class="apiint-field">
-							<label for="cb_key">ClickBank secret key</label>
-							<input type="text" class="form-control input-sm" id="cb_key" name="cb_key" value="<?php echo $html['cb_key']; ?>">
-						</div>
-						<div class="apiint-actions">
-							<button class="apiint-btn apiint-btn--primary" type="submit">Save</button>
-							<a id="cb_status" class="apiint-btn apiint-btn--ghost">Check status</a>
-							<small><span id="cb_verified">
-								<?php if (!$cb_verified) { ?>
-									<span class="label label-important">Unverified</span>
-								<?php } else { ?>
-									<span class="label label-primary">Verified</span>
+				foreach (['dni_network', 'dni_network_auth'] as $dniErrorKey) {
+					if (isset($error[$dniErrorKey])) {
+						echo p202_flash('bad', $error[$dniErrorKey]);
+					}
+				}
+				?>
+				<?php if ($dniRows) { ?>
+					<div class="p202-table-wrap mb-3">
+						<table class="table p202-table">
+							<thead><tr><th>Network</th><th>API key</th><th>Affiliate ID</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
+							<tbody>
+								<?php foreach ($dniRows as $dni_row) {
+									$dniKey = (string)$dni_row['apiKey'];
+									$dniKeyId = 'dni-key-' . (int)$dni_row['id'];
+									?>
+									<tr>
+										<td>
+											<?php if ((string)$dni_row['favIcon'] !== '') { ?><img src="<?php echo $e($dni_row['favIcon']); ?>" width="16" height="16" alt="" class="me-1"><?php } ?>
+											<span title="<?php echo $e($dni_row['shortDescription']); ?>"><?php echo $e($dni_row['name'] . ' (' . $dni_row['type'] . ')'); ?></span>
+											<?php if ($dni_row['processed'] == false) { ?>
+												<div class="mt-1" id="network-<?php echo (int)$dni_row['id']; ?>">
+													<div class="form-text mt-0">Processing offers…</div>
+													<div class="progress" role="progressbar" aria-label="Processing <?php echo $e($dni_row['name']); ?>" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+														<div class="progress-bar" data-dni-progress="<?php echo (int)$dni_row['id']; ?>" style="width: 0%">0%</div>
+													</div>
+												</div>
+											<?php } ?>
+										</td>
+										<td>
+											<div class="p202-code">
+												<pre class="p202-code__value p202-code__value--masked" id="<?php echo $dniKeyId; ?>" data-p202-value="<?php echo $e($dniKey); ?>"><?php echo $e(substr($dniKey, 0, 12) . str_repeat("\u{2022}", 8)); ?></pre>
+												<button type="button" class="btn btn-secondary btn-sm" data-p202-reveal="#<?php echo $dniKeyId; ?>">Reveal</button>
+											</div>
+										</td>
+										<td><?php echo $e($dni_row['affiliateId'] ?? ''); ?></td>
+										<td class="text-end text-nowrap">
+											<a class="btn btn-secondary btn-sm" href="<?php echo $e($self . '?edit_dni_network=' . (int)$dni_row['id'] . '#dni'); ?>">Edit</a>
+											<form method="post" action="<?php echo $e($self . '#dni'); ?>" class="d-inline" data-p202-confirm="<?php echo $e('Remove ' . $dni_row['name'] . '? Its offers stay in your campaigns but stop updating, and its DNI affiliate network is retired.'); ?>">
+												<?php echo p202_account_token_field(); ?>
+												<input type="hidden" name="delete_dni_network" value="<?php echo (int)$dni_row['id']; ?>">
+												<button type="submit" class="btn btn-outline-danger btn-sm">Remove…</button>
+											</form>
+										</td>
+									</tr>
 								<?php } ?>
-							</span></small>
+							</tbody>
+						</table>
+					</div>
+				<?php } ?>
+
+				<?php if (!$dniNetworksAvailable) { ?>
+					<?php echo p202_flash('warn', 'The list of DNI networks could not be loaded from the Prosper202 service just now, so a network cannot be added. Reload the page to try again.'); ?>
+				<?php } else {
+					$dniType = (string)($_POST['dni_network_type'] ?? ($edit_dni_row['type'] ?? ''));
+					$dniSelected = (string)($_POST['dni_network'] ?? ($edit_dni_row['networkId'] ?? $mysql['add_dni']));
+					?>
+					<form method="post" action="<?php echo $e($self . '#dni'); ?>" data-dni-form>
+						<?php echo p202_account_token_field(); ?>
+						<input type="hidden" name="dni_network_type" id="dni_network_type" value="<?php echo $e($dniType); ?>">
+						<input type="hidden" name="dni_network_name" id="dni_network_name" value="<?php echo $e($_POST['dni_network_name'] ?? ($edit_dni_row['name'] ?? '')); ?>">
+						<?php if ($editing_dni_network) { ?>
+							<input type="hidden" name="editing_dni_network" value="1">
+							<input type="hidden" name="editing_dni_network_id" value="<?php echo $e($edit_dni_row['id'] ?? ''); ?>">
+						<?php } ?>
+						<div class="row g-2 align-items-end">
+							<div class="col-md-4">
+								<label class="form-label" for="dni_network"><?php echo $editing_dni_network ? 'Network' : 'Add a network'; ?></label>
+								<select name="dni_network" id="dni_network" class="form-select" required>
+									<option value="">Select network</option>
+									<?php foreach ($dniNetworks as $dninetwork) { ?>
+										<option value="<?php echo $e($dninetwork['networkId']); ?>" data-type="<?php echo $e($dninetwork['networkType']); ?>"<?php echo $dniSelected !== '' && $dniSelected == $dninetwork['networkId'] ? ' selected' : ''; ?>><?php echo $e($dninetwork['name'] . ' (' . $dninetwork['networkType'] . ')'); ?></option>
+									<?php } ?>
+								</select>
+							</div>
+							<div class="col-md" id="dni_api_key_input_group">
+								<label class="form-label" for="dni_network_api_key">API key</label>
+								<input type="text" name="dni_network_api_key" id="dni_network_api_key" class="form-control" required autocomplete="off" spellcheck="false" value="<?php echo $e($_POST['dni_network_api_key'] ?? ($edit_dni_row['apiKey'] ?? '')); ?>">
+							</div>
+							<div class="col-md-2" id="dni_affiliate_id_input_group"<?php echo $dniType === 'Cake' ? '' : ' hidden'; ?>>
+								<label class="form-label" for="dni_network_affiliate_id">Affiliate ID</label>
+								<input type="text" name="dni_network_affiliate_id" id="dni_network_affiliate_id" class="form-control" value="<?php echo $e($_POST['dni_network_affiliate_id'] ?? ($dniType === 'Cake' ? ($edit_dni_row['affiliateId'] ?? '') : 'null')); ?>">
+							</div>
+							<div class="col-md-auto">
+								<div class="p202-toolbar">
+									<?php if ($editing_dni_network) { ?>
+										<a class="btn btn-secondary" href="<?php echo $e($self . '#dni'); ?>">Cancel</a>
+									<?php } ?>
+									<button class="btn btn-primary" type="submit"><?php echo $editing_dni_network ? 'Save changes' : 'Add network'; ?></button>
+								</div>
+							</div>
 						</div>
+						<div class="form-text">HasOffers networks need only the API key; Cake networks also ask for your affiliate ID.</div>
 					</form>
-				</details>
-			<?php } else { ?>
-				<div class="apiint-note apiint-note--err" role="alert"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 5v3.5M8 11h.01M8 1.5 14.5 13a.6.6 0 0 1-.52.9H2.02a.6.6 0 0 1-.52-.9L8 1.5z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>The mcrypt (or OpenSSL) PHP extension is required for this integration. Install it, or ask your hosting provider for assistance.</span></div>
-			<?php } ?>
-		</section>
-
-		<section class="apiint-card" id="jvzoo">
-			<div class="apiint-card-head">
-				<img src="<?php echo get_absolute_url(); ?>202-img/icons/integrations/jvzoo.png" alt="">
-				<h2>JVZoo <?php showHelp("jvzoo"); ?></h2>
-				<?php apiint_pill(trim((string) ($user_row['jvzoo_ipn_secret_key'] ?? '')) !== '' ? 'ok' : 'off', trim((string) ($user_row['jvzoo_ipn_secret_key'] ?? '')) !== '' ? 'Connected' : 'Not connected'); ?>
+				<?php } ?>
 			</div>
-			<p class="apiint-desc">Update conversions from JVZoo&rsquo;s Instant Payment Notification (JVZIPN).</p>
-			<?php showSuccessMessage($change_jvzoo_secret_key, 'Your JVZoo secret key was changed successfully.'); ?>
-			<?php showErrorMessage($error, 'jvzoo_secret_key_error'); ?>
-			<?php apiint_endpoint('IPN URL', $strProtocol . '' . getTrackingDomain() . get_absolute_url() . 'tracking202/static/jvzoo.php'); ?>
-			<details class="apiint-config"<?php if (isset($error['jvzoo_secret_key_error'])) echo ' open'; ?>>
-				<summary><?php echo trim((string) ($user_row['jvzoo_ipn_secret_key'] ?? '')) !== '' ? 'Update secret key' : 'Connect'; ?></summary>
-				<form method="post" action="">
-					<input type="hidden" name="change_jvzoo_secret_key" value="1" />
-					<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-					<div class="apiint-field">
-						<label for="jvzoo_ipn_secret_key">JVZoo secret key</label>
-						<input type="text" class="form-control input-sm" id="jvzoo_ipn_secret_key" name="jvzoo_ipn_secret_key" value="<?php echo $html['jvzoo_ipn_secret_key']; ?>">
+		</section>
+	</div>
+
+	<?php
+	// Landing Page Optimizer pairing card. Status lives in
+	// 202_users_pref (lpo_status / lpo_site_key); every feature screen is
+	// hosted — this card only connects and disconnects the generic bridge.
+	$lpo_schema_ready = array_key_exists('lpo_status', $user_row);
+	$lpo_connected = $lpo_schema_ready && (string) ($user_row['lpo_status'] ?? '') === 'active';
+	$lpo_site_key = (string) ($user_row['lpo_site_key'] ?? '');
+	$lpo_has_api_key = trim((string) ($user_row['p202_customer_api_key'] ?? '')) !== '';
+	$lpo_needs_subscription = !empty($lpo_needs_subscription); // set by the connect catch above
+	$lpo_sub_retry = !empty($lpo_sub_retry); // the failed attempt came from the "I've subscribed" retry
+	$lpo_saas_base = \Prosper202\Lpo\PairingClient::saasBaseUrl();
+	$lpo_capabilities = \Prosper202\Lpo\PairingClient::CAPABILITIES;
+	?>
+	<div class="col-12 col-lg-6">
+		<section class="p202-panel h-100" id="lpo">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">Landing Page Optimizer</h2>
+				<?php if ($lpo_connected) { ?>
+					<span class="p202-pill p202-pill--good">Connected</span>
+				<?php } elseif (!$lpo_schema_ready) { ?>
+					<span class="p202-pill p202-pill--warn">Upgrade needed</span>
+				<?php } elseif ($lpo_needs_subscription) { ?>
+					<span class="p202-pill p202-pill--warn">Subscription required</span>
+				<?php } elseif (isset($error['lpo'])) { ?>
+					<span class="p202-pill p202-pill--bad">Action needed</span>
+				<?php } else { ?>
+					<span class="p202-pill">Not connected</span>
+				<?php } ?>
+			</div>
+			<div class="p202-panel__body">
+				<p class="text-secondary">Run hosted A/B experiments on your landing pages. Connecting registers a signed conversion webhook; nothing else changes on this install.</p>
+				<?php if (isset($error['lpo'])) {
+					echo p202_flash('bad', $error['lpo']);
+				} ?>
+				<?php if ($lpo_connected) { ?>
+					<?php echo $endpoint('Site key', $lpo_site_key); ?>
+					<div class="p202-toolbar">
+						<a href="<?php echo $e($lpo_saas_base); ?>/api/customers/experiments" target="_blank" rel="noopener" class="btn btn-secondary">Manage experiments <i class="bi bi-box-arrow-up-right"></i></a>
+						<form method="post" action="<?php echo $e($self . '#lpo'); ?>" data-p202-confirm="Disconnect the Landing Page Optimizer? The pairing webhook will be removed.">
+							<?php echo p202_account_token_field(); ?>
+							<input type="hidden" name="lpo_action" value="disconnect">
+							<button class="btn btn-outline-danger" type="submit">Disconnect…</button>
+						</form>
 					</div>
-					<button class="apiint-btn apiint-btn--primary" type="submit">Save</button>
-				</form>
-			</details>
-		</section>
-
-		<section class="apiint-card" id="zaxaa">
-			<div class="apiint-card-head">
-				<img src="<?php echo get_absolute_url(); ?>202-img/icons/integrations/zaxaa.png" alt="">
-				<h2>Zaxaa <?php showHelp("zaxaa"); ?></h2>
-				<?php apiint_pill(trim((string) ($user_row['zaxaa_api_signature'] ?? '')) !== '' ? 'ok' : 'off', trim((string) ($user_row['zaxaa_api_signature'] ?? '')) !== '' ? 'Connected' : 'Not connected'); ?>
-			</div>
-			<p class="apiint-desc">Update conversions from Zaxaa Payment Notification (ZPN).</p>
-			<?php showSuccessMessage($change_zaxaa_api_signature, 'Your Zaxaa API signature was changed successfully.'); ?>
-			<?php showErrorMessage($error, 'zaxaa_api_signature_error'); ?>
-			<?php apiint_endpoint('ZPN URL', $strProtocol . '' . getTrackingDomain() . get_absolute_url() . 'tracking202/static/zpn.php'); ?>
-			<details class="apiint-config"<?php if (isset($error['zaxaa_api_signature_error'])) echo ' open'; ?>>
-				<summary><?php echo trim((string) ($user_row['zaxaa_api_signature'] ?? '')) !== '' ? 'Update API signature' : 'Connect'; ?></summary>
-				<form method="post" action="">
-					<input type="hidden" name="change_zaxaa_api_signature" value="1" />
-					<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-					<div class="apiint-field">
-						<label for="zaxaa_api_signature">Zaxaa API signature</label>
-						<input type="text" class="form-control input-sm" id="zaxaa_api_signature" name="zaxaa_api_signature" value="<?php echo $html['zaxaa_api_signature']; ?>">
+					<?php if (array_key_exists('lpo_ctx_kw', $user_row)) { ?>
+						<details class="p202-disclosure mt-3" data-p202-remember="account-lpo-privacy">
+							<summary>Advanced <span class="p202-disclosure__hint">keyword privacy</span></summary>
+							<div class="p202-disclosure__body">
+								<form method="post" action="<?php echo $e($self . '#lpo'); ?>">
+									<?php echo p202_account_token_field(); ?>
+									<input type="hidden" name="lpo_ctx_kw_save" value="1">
+									<div class="form-check mb-2">
+										<input class="form-check-input" type="checkbox" name="lpo_ctx_kw" value="1" id="lpo_ctx_kw"<?php if ((string) ($user_row['lpo_ctx_kw'] ?? '1') !== '0') echo ' checked'; ?>>
+										<label class="form-check-label" for="lpo_ctx_kw">Include keyword text in optimizer context tokens</label>
+										<div class="form-text">On by default. Keywords ride the signed t202ctx token on rotator-to-landing-page redirects so experiments can segment by search term; turn it off to keep search terms out of tokens.</div>
+									</div>
+									<button class="btn btn-secondary btn-sm" type="submit">Save</button>
+								</form>
+							</div>
+						</details>
+					<?php } ?>
+					<p class="form-text mb-0 mt-3">Bridge v<?php echo $e(\Prosper202\Bridge\EventBridge::BRIDGE_VERSION); ?> · <?php echo $e(implode(', ', $lpo_capabilities['events'])); ?>, wildcard subscribe, remote config, v3 API, context tokens, dimensions sync</p>
+				<?php } elseif (!$lpo_schema_ready) { ?>
+					<p class="mb-0">Run the Prosper202 upgrade to enable this integration.</p>
+				<?php } elseif ($lpo_needs_subscription) { ?>
+					<?php echo p202_flash('warn', $lpo_sub_retry
+						? 'We still don’t see an active Landing Page Optimizer subscription for this account. If you just subscribed, give it a minute, then connect again.'
+						: 'Landing Page Optimizer runs on a Landing Page Optimizer plan, and this account doesn’t have one yet. Start a subscription, then connect this install.'); ?>
+					<div class="p202-toolbar">
+						<a class="btn btn-secondary" href="<?php echo $e($lpo_saas_base); ?>/api/customers/experiments" target="_blank" rel="noopener">Get Landing Page Optimizer <i class="bi bi-box-arrow-up-right"></i></a>
+						<form method="post" action="<?php echo $e($self . '#lpo'); ?>">
+							<?php echo p202_account_token_field(); ?>
+							<input type="hidden" name="lpo_action" value="connect">
+							<input type="hidden" name="lpo_retry" value="1">
+							<button class="btn btn-secondary" type="submit">I’ve subscribed, connect</button>
+						</form>
 					</div>
-					<button class="apiint-btn apiint-btn--primary" type="submit">Save</button>
-				</form>
-			</details>
-		</section>
-
-		<section class="apiint-card" id="slack">
-			<div class="apiint-card-head">
-				<img src="<?php echo get_absolute_url(); ?>202-img/icons/integrations/slack.png" alt="">
-				<h2>Slack <?php showHelp("slack"); ?></h2>
-				<?php apiint_pill(trim((string) ($user_row['user_slack_incoming_webhook'] ?? '')) !== '' ? 'ok' : 'off', trim((string) ($user_row['user_slack_incoming_webhook'] ?? '')) !== '' ? 'Connected' : 'Not connected'); ?>
-			</div>
-			<p class="apiint-desc">Send Prosper202 notifications into a Slack channel, and receive Slack commands via the webhook below.</p>
-			<?php showSuccessMessage($change_user_slack_incoming_webhook, 'Your Slack Incoming Webhook URL was changed successfully.'); ?>
-			<?php showErrorMessage($error, 'user_slack_incoming_webhook'); ?>
-			<?php apiint_endpoint('P202 webhook', $strProtocol . '' . getTrackingDomain() . get_absolute_url() . 'tracking202/static/slack.php'); ?>
-			<details class="apiint-config"<?php if (isset($error['user_slack_incoming_webhook'])) echo ' open'; ?>>
-				<summary><?php echo trim((string) ($user_row['user_slack_incoming_webhook'] ?? '')) !== '' ? 'Update webhook URL' : 'Connect'; ?></summary>
-				<form method="post" action="">
-					<input type="hidden" name="change_user_slack_incoming_webhook" value="1" />
-					<input type="hidden" name="token" value="<?php echo $_SESSION['token']; ?>" />
-					<div class="apiint-field">
-						<label for="user_slack_incoming_webhook">Slack incoming webhook URL</label>
-						<input type="text" class="form-control input-sm" id="user_slack_incoming_webhook" name="user_slack_incoming_webhook" value="<?php echo $html['user_slack_incoming_webhook']; ?>">
+				<?php } elseif ($lpo_has_api_key) { ?>
+					<form method="post" action="<?php echo $e($self . '#lpo'); ?>">
+						<?php echo p202_account_token_field(); ?>
+						<input type="hidden" name="lpo_action" value="connect">
+						<button class="btn btn-secondary" type="submit">Connect</button>
+					</form>
+				<?php } else { ?>
+					<div class="p202-empty">
+						<i class="bi bi-key p202-empty__icon"></i>
+						<strong class="p202-empty__title">A customer API key comes first</strong>
+						<div>Get your Prosper202 customer API key, save it in Personal settings, then connect here.</div>
+						<div class="p202-empty__action"><a class="btn btn-secondary btn-sm" href="<?php echo $e($lpo_saas_base); ?>/api/customers/login?redirect=get-api">Get your API key</a></div>
 					</div>
-					<button class="apiint-btn apiint-btn--primary" type="submit">Save</button>
-				</form>
-			</details>
-		</section>
-
-		<section class="apiint-card" id="paykickstart">
-			<div class="apiint-card-head">
-				<img src="<?php echo get_absolute_url(); ?>202-img/icons/integrations/paykickstart.png" alt="">
-				<h2>PayKickstart <?php showHelp("paykickstart"); ?></h2>
-				<?php apiint_pill('off', 'No setup needed'); ?>
+				<?php } ?>
 			</div>
-			<p class="apiint-desc">Update conversions from PayKickstart&rsquo;s Affiliate IPN &mdash; just paste this URL as your IPN URL in PayKickstart.</p>
-			<?php apiint_endpoint('IPN URL', $strProtocol . '' . getTrackingDomain() . get_absolute_url() . 'tracking202/static/paykickstart.php'); ?>
 		</section>
+	</div>
 
+	<?php foreach ($keyIntegrations as $anchor => $integration) {
+		$stored = trim((string)($user_row[$integration['field']] ?? ''));
+		$hasError = isset($error[$integration['error']]);
+		$fieldErrors = $hasError ? [$integration['field'] => (string)$error[$integration['error']]] : [];
+		$isClickbank = $anchor === 'clickbank';
+		?>
+		<div class="col-12 col-lg-6">
+			<section class="p202-panel h-100" id="<?php echo $e($anchor); ?>">
+				<div class="p202-panel__head">
+					<img src="<?php echo $e($base . '202-img/icons/integrations/' . $integration['icon']); ?>" width="22" height="22" alt="" class="rounded-1">
+					<h2 class="p202-panel__title"><?php echo $e($integration['title']); ?></h2>
+					<?php echo $integration['help'] !== '' ? $helpLink($integration['help']) : ''; ?>
+					<?php if ($isClickbank && !$cb_crypto_ok) { ?>
+						<span class="p202-pill p202-pill--warn">Unavailable</span>
+					<?php } elseif ($stored === '') { ?>
+						<span class="p202-pill">Not connected</span>
+					<?php } elseif ($isClickbank) { ?>
+						<span data-cb-status><?php echo apiint_cb_pill((bool)$cb_verified); ?></span>
+					<?php } else { ?>
+						<span class="p202-pill p202-pill--good">Connected</span>
+					<?php } ?>
+				</div>
+				<div class="p202-panel__body">
+					<p class="text-secondary"><?php echo $e($integration['desc']); ?><?php echo $integration['extra'] !== '' ? ' ' . $integration['extra'] . '.' : ''; ?></p>
+					<?php if ($isClickbank && !$cb_crypto_ok) { ?>
+						<?php echo p202_flash('bad', 'The mcrypt (or OpenSSL) PHP extension is required for this integration. Install it, or ask your hosting provider for assistance.'); ?>
+					<?php } else { ?>
+						<?php if ($integration['endpoint'] !== null) {
+							echo $endpoint($integration['endpoint'][0], $integration['endpoint'][1]);
+						} ?>
+						<details class="p202-disclosure"<?php echo $hasError ? ' open' : ''; ?>>
+							<summary><?php echo $stored === '' ? 'Connect' : 'Update'; ?> <span class="p202-disclosure__hint"><?php echo $e($stored === '' ? 'paste your ' . $integration['label'] : $integration['label']); ?></span></summary>
+							<div class="p202-disclosure__body">
+								<form method="post" action="<?php echo $e($self . '#' . $anchor); ?>">
+									<input type="hidden" name="<?php echo $e($integration['flag']); ?>" value="1">
+									<?php echo p202_account_token_field(); ?>
+									<label class="form-label" for="<?php echo $e($integration['field']); ?>"><?php echo $e($integration['label']); ?></label>
+									<div class="input-group">
+										<input type="text" class="form-control<?php echo p202_account_invalid($fieldErrors, $integration['field']); ?>" id="<?php echo $e($integration['field']); ?>" name="<?php echo $e($integration['field']); ?>" required autocomplete="off" spellcheck="false" value="<?php echo $e($fieldValue($integration['field'])); ?>">
+										<button class="btn btn-secondary" type="submit">Save</button>
+									</div>
+									<?php echo p202_account_field_error($fieldErrors, $integration['field']); ?>
+								</form>
+								<?php if ($isClickbank && $stored !== '') { ?>
+									<div class="p202-toolbar mt-2">
+										<button type="button" class="btn btn-link btn-sm p-0" data-cb-check="<?php echo $e($self . '?cb_status=1'); ?>">Check verification again</button>
+									</div>
+								<?php } ?>
+							</div>
+						</details>
+					<?php } ?>
+				</div>
+			</section>
+		</div>
+	<?php } ?>
+
+	<div class="col-12 col-lg-6">
+		<section class="p202-panel h-100" id="paykickstart">
+			<div class="p202-panel__head">
+				<img src="<?php echo $e($base . '202-img/icons/integrations/paykickstart.png'); ?>" width="22" height="22" alt="" class="rounded-1">
+				<h2 class="p202-panel__title">PayKickstart</h2>
+				<span class="p202-pill">No setup needed</span>
+			</div>
+			<div class="p202-panel__body">
+				<p class="text-secondary">Update conversions from PayKickstart’s Affiliate IPN: paste this URL as your IPN URL in PayKickstart.</p>
+				<?php echo $endpoint('IPN URL', $trackingBase . 'tracking202/static/paykickstart.php'); ?>
+			</div>
+		</section>
 	</div>
 </div>
 
 <script>
-	$(function() {
-		// Copy-to-clipboard for endpoint URLs
-		$('.apiint').on('click', '.apiint-copy', function() {
-			var $btn = $(this);
-			var text = $btn.attr('data-copy');
-			var done = function() {
-				$btn.addClass('is-copied').text('Copied');
-				setTimeout(function() { $btn.removeClass('is-copied').text('Copy'); }, 1600);
+	document.addEventListener('DOMContentLoaded', function () {
+		var token = <?php echo json_encode((string)($_SESSION['token'] ?? '')); ?>;
+
+		/* The DNI form: the chosen network decides its type and name (sent
+		   as hidden fields, as before) and whether an affiliate ID is asked
+		   for. HasOffers networks need none, and the server expects the
+		   literal "null" for them. */
+		var select = document.getElementById('dni_network');
+		if (select) {
+			var sync = function (initial) {
+				var option = select.options[select.selectedIndex];
+				var type = option ? (option.getAttribute('data-type') || '') : '';
+				var affiliate = document.getElementById('dni_affiliate_id_input_group');
+				var affiliateInput = document.getElementById('dni_network_affiliate_id');
+				document.getElementById('dni_network_type').value = type;
+				document.getElementById('dni_network_name').value = option && option.value ? option.text : '';
+				if (type === 'Cake') {
+					affiliate.hidden = false;
+					if (!initial && affiliateInput.value === 'null') { affiliateInput.value = ''; }
+					affiliateInput.required = true;
+				} else {
+					affiliate.hidden = true;
+					affiliateInput.required = false;
+					affiliateInput.value = 'null';
+				}
 			};
-			if (navigator.clipboard && window.isSecureContext) {
-				navigator.clipboard.writeText(text).then(done);
-			} else {
-				var ta = document.createElement('textarea');
-				ta.value = text;
-				ta.style.position = 'fixed';
-				ta.style.opacity = '0';
-				document.body.appendChild(ta);
-				ta.select();
-				try { document.execCommand('copy'); done(); } catch (e) {}
-				document.body.removeChild(ta);
-			}
-		});
-		// After a POST, bring the outcome into view
-		var note = $('.apiint-note').first();
-		if (note.length) {
-			note.closest('details').attr('open', true);
-			note[0].scrollIntoView({ block: 'center' });
+			select.addEventListener('change', function () { sync(false); });
+			sync(true);
 		}
-	});
-</script>
 
-<?php if (count($dniProcesing['networks']) > 0) { ?>
-	<script type="text/javascript">
-		$(document).ready(function() {
-			var DNIdata = JSON.stringify(<?php echo json_encode($dniProcesing, JSON_NUMERIC_CHECK); ?>);
-			getDNIProgress(DNIdata);
+		/* ClickBank: ask the server whether the key has verified yet. */
+		document.addEventListener('click', function (event) {
+			var button = event.target.closest ? event.target.closest('[data-cb-check]') : null;
+			if (!button) { return; }
+			event.preventDefault();
+			var target = document.querySelector('[data-cb-status]');
+			button.disabled = true;
+			fetch(button.getAttribute('data-cb-check'), { credentials: 'same-origin' })
+				.then(function (response) { return response.text(); })
+				.then(function (html) { if (target) { target.innerHTML = html; } })
+				.catch(function () { if (target) { target.innerHTML = '<span class="p202-pill p202-pill--bad">Could not check</span>'; } })
+				.then(function () { button.disabled = false; });
+		});
 
-			window.setInterval(function() {
-				getDNIProgress(DNIdata);
-			}, 3000);
-
-			function getDNIProgress(DNIdata) {
-				$.post("<?php echo get_absolute_url(); ?>202-account/ajax/dni.php?getProgress=true", DNIdata).done(function(response) {
-					var json = $.parseJSON(response);
-					$.each(json.data, function(index, item) {
-						if (item.progress == '100') {
-							$.post("<?php echo get_absolute_url(); ?>202-account/ajax/dni.php?updateStatus=true&dni=" + item.id, function(data1) {
-								$("#network-" + item.id).remove();
-							});
+		/* Networks still importing their offers: poll their progress. */
+		var processing = <?php echo $dniProcessingJson; ?>;
+		if (!processing.networks || processing.networks.length === 0) { return; }
+		var base = <?php echo json_encode($base . '202-account/ajax/dni.php'); ?>;
+		var poll = function () {
+			fetch(base + '?getProgress=true', { method: 'POST', credentials: 'same-origin', body: JSON.stringify(processing) })
+				.then(function (response) { return response.json(); })
+				.then(function (json) {
+					(json && json.data ? json.data : []).forEach(function (item) {
+						var bar = document.querySelector('[data-dni-progress="' + item.id + '"]');
+						if (bar) {
+							bar.style.width = item.progress + '%';
+							bar.textContent = item.progress + '%';
+							bar.parentNode.setAttribute('aria-valuenow', item.progress);
 						}
-						$("#" + item.id).css('width', item.progress + '%').attr('aria-valuenow', item.progress).text(item.progress + '%');
+						if (String(item.progress) === '100') {
+							var body = new URLSearchParams();
+							body.set('token', token);
+							fetch(base + '?updateStatus=true&dni=' + encodeURIComponent(item.id), { method: 'POST', credentials: 'same-origin', body: body })
+								.then(function (response) {
+									if (response.ok) {
+										var row = document.getElementById('network-' + item.id);
+										if (row) { row.remove(); }
+									}
+								});
+						}
 					});
-				});
-			}
-			$('select[name=dni_network]').trigger("change");
-		});
-	</script>
-<?php } else { ?>
-	<script type="text/javascript">
-		$(document).ready(function() {
-			//manually trigger the change function
-			$('select[name=dni_network]').trigger("change");
-		});
-	</script>
-<?php } ?>
-<script>
-	dniNetworks = <?php echo json_encode(getAllDniNetworks($user_row['install_hash'])); ?>;
-
-	function dni() {
-		var selectedNetwork = $('select[name=dni_network] option:selected').val()
-		var dniNetwork = $(dniNetworks).filter(function(i, n) {
-			return n.networkId === selectedNetwork
-		});
-		var dniInfo = '<small> <img src="' + dniNetwork[0].favIconUrl + '" width="16"> <strong>' + dniNetwork[0].name + '</strong><br><br>' + dniNetwork[0].shortDescription + ' <br><br><a href="' + dniNetwork[0].websiteURL + '" target="_blank" class="btn btn-xs btn-info btn-block">Get An Account with ' + dniNetwork[0].name + '</a></small>'
-		$("#dniInfo").html(dniInfo);
-	}
+				})
+				.catch(function () {});
+		};
+		poll();
+		window.setInterval(poll, 3000);
+	});
 </script>
 <?php template_bottom();
