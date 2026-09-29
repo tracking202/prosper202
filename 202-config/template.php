@@ -316,7 +316,12 @@ function p202_chrome_header(string $ui, array $navigation, ?object $userObj, arr
 
 	$html = '<header class="p202c-header"><div class="p202c-header__inner">';
 	if (defined('TRACKING202_ADS_URL')) {
-		$html .= '<div class="p202c-brand"><iframe class="advertise-top-left" src="' . $e(TRACKING202_ADS_URL . '/prosper202-cs-topleft/?t202aid=' . ($_SESSION['user_cirrus_link'] ?? '')) . '" scrolling="no" frameborder="0" title="Prosper202"></iframe></div>';
+		$logoSrc = TRACKING202_ADS_URL . '/prosper202-cs-topleft/?t202aid=' . ($_SESSION['user_cirrus_link'] ?? '');
+		if ($ui === P202_UI_V2) {
+			// Follows the system until p202-chrome.js posts the page's own theme; classic has no dark mode.
+			$logoSrc .= '&theme=auto';
+		}
+		$html .= '<div class="p202c-brand"><iframe class="advertise-top-left" src="' . $e($logoSrc) . '" scrolling="no" frameborder="0" title="Prosper202"></iframe></div>';
 	}
 	$html .= '<nav class="p202c-nav" aria-label="Primary">';
 	foreach ($links as $link) {
