@@ -9,6 +9,15 @@ name: Android SDK
 # is decided anywhere but the core. The env-gated LiveServerTest skips itself
 # here, as it does on any machine that does not set P202_LIVE_BASE
 # (tests/live/android-sdk.sh sets it).
+#
+# The second job builds the Android libraries themselves (:android and
+# :integrity) with AGP against the runner image's Android SDK ($ANDROID_HOME),
+# runs Android lint on them (warnings are errors, no baseline), and runs their
+# Robolectric suites: Play's real install-referrer client bound to a played
+# Play Store, P202Attribution.configure() posting to an HTTP server on
+# 127.0.0.1, and PlayIntegrityProvider over a fake StandardIntegrityManager.
+# No emulator: nothing here runs on a device or gets a real Play Integrity
+# token. LiveInstanceTest skips itself as LiveServerTest does.
 
 on:
   push:
@@ -44,4 +53,63 @@ jobs:
           gradle-version: '8.14.3'   # the version the SDK is developed against
 
       - name: Test
-        run: gradle -p sdk/android-attribution --no-daemon -Pp202.android=false :core:test
+        # check = test + Animal Sniffer (the core against the Android API 21 signature).
+        run: gradle -p sdk/android-attribution --no-daemon -Pp202.android=false :core:check
+
+  android:
+    name: Android libraries (AGP assemble, lint, Robolectric)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          # Robolectric 4.14's Android 15 (SDK 35) runtime needs Java 21.
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+
+      - name: Android SDK
+        run: |
+          # settings.gradle.kts includes :android and :integrity only when it
+          # finds an SDK; the task paths below fail loudly if it did not.
+          test -d "$ANDROID_HOME" || { echo "ANDROID_HOME ($ANDROID_HOME) is not a directory" >&2; exit 1; }
+          echo "ANDROID_HOME=$ANDROID_HOME"
+
+      - name: Assemble, lint, Robolectric tests
+        run: >-
+          gradle -p sdk/android-attribution --no-daemon
+          :android:assembleRelease :integrity:assembleRelease
+          :android:lintRelease :integrity:lintRelease
+          :android:testReleaseUnitTest :integrity:testReleaseUnitTest
+
+      - name: The suites ran (a floor on the executed test count)
+        run: |
+          python3 - <<'PY'
+          import glob, re, sys
+          floor = {"android": 11, "integrity": 6}
+          bad = False
+          for mod, want in floor.items():
+              ran = 0
+              for f in glob.glob(f"sdk/android-attribution/{mod}/build/test-results/testReleaseUnitTest/*.xml"):
+                  m = re.search(r'tests="(\d+)" skipped="(\d+)"', open(f).read(2000))
+                  ran += int(m[1]) - int(m[2])
+              print(f"{mod}: {ran} tests executed (floor {want})")
+              bad |= ran < want
+          sys.exit(1 if bad else 0)
+          PY
+
+      - name: Upload lint and test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-sdk-reports
+          path: |
+            sdk/android-attribution/*/build/reports/
+            sdk/android-attribution/*/build/test-results/
+          if-no-files-found: ignore
