@@ -7,6 +7,10 @@ namespace Tests\Ltv;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\Connection;
 use Prosper202\Database\SchemaInstaller;
+use Prosper202\Identity\IdentityGraph;
+use Prosper202\Identity\IdentityKeys;
+use Prosper202\Identity\IdentitySignal;
+use Prosper202\Identity\SignalType;
 use Prosper202\Ltv\CompanyConflictException;
 use Prosper202\Ltv\MysqlCompanyRepository;
 use Prosper202\Ltv\MysqlCustomerCrmRepository;
@@ -701,6 +705,84 @@ final class LtvDatabaseIntegrationTest extends TestCase
         self::assertSame($merchant, $p13n->resolveVisitorCustomer(1, ['cust' => '123', 'cust_type' => 'merchant_id'], 0, true));
         self::assertSame($custom, $p13n->resolveVisitorCustomer(1, ['cust' => '123'], 0, true), 'untyped refs default to custom, like ingest');
         self::assertNull($p13n->resolveVisitorCustomer(1, ['cust' => '123', 'cust_type' => 'bogus'], 0, true), 'unknown types resolve nobody');
+    }
+
+    /**
+     * Erasing a customer reaches the identity graph (plan §7.2): the signal
+     * the customer's id became, and every observation of it, are gone, so the
+     * id no longer maps to a visitor key; the merge it caused keeps its row
+     * (the worker's re-queue) but loses the hash. Another customer's signal,
+     * and a signal of another kind, are untouched.
+     */
+    public function testEraseRemovesTheCustomersIdentitySignals(): void
+    {
+        foreach (['signals', 'observations', 'merges', 'keys'] as $table) {
+            self::$db->query('TRUNCATE TABLE 202_identity_' . $table);
+        }
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $erased = $customers->resolveOrCreateByAlias(1, 'merchant_id', 'm-100', [], null, 1700000000);
+        $customers->addAlias(1, $erased, 'email_md5', str_repeat('ab', 16), 1700000000);
+        $kept = $customers->resolveOrCreateByAlias(1, 'merchant_id', 'm-200', [], null, 1700000000);
+
+        $hashKey = (new IdentityKeys(self::$conn))->forUser(1)['hash'];
+        $hash = static fn (string $canonical, SignalType $type = SignalType::CUSTOMER): string
+            => IdentityGraph::hash($hashKey, new IdentitySignal($type, $canonical));
+        $signals = [
+            'erased-merchant' => $hash('merchant_id:m-100'),
+            'erased-email' => $hash('email_md5:' . str_repeat('ab', 16)),
+            'kept' => $hash('merchant_id:m-200'),
+        ];
+        $cookie = $hash('merchant_id:m-100', SignalType::VISITOR_COOKIE);
+        $clickId = 9100;
+        foreach ($signals + ['cookie' => $cookie] as $name => $h) {
+            $type = $name === 'cookie' ? 'vid' : 'cust';
+            self::$db->query(
+                'INSERT INTO 202_identity_signals (user_id, signal_type, signal_hash, visitor_key, merges, created_at)'
+                . " VALUES (1, '$type', '$h', 5, 0, 1700000000)"
+            );
+            self::$db->query(
+                'INSERT INTO 202_identity_observations (click_id, signal_type, signal_hash, observed_at)'
+                . ' VALUES (' . ($clickId++) . ", '$type', '$h', 1700000000)"
+            );
+        }
+        self::$db->query(
+            'INSERT INTO 202_identity_merges'
+            . ' (user_id, from_key, into_key, click_id, signal_type, signal_hash, merged_at)'
+            . " VALUES (1, 6, 5, 9100, 'cust', '{$signals['erased-merchant']}', 1700000000)"
+        );
+
+        $crm = new MysqlCustomerCrmRepository($conn = self::$conn, $customers, new MysqlCustomerFieldRepository($conn));
+        $crm->erase(1, $erased);
+
+        $count = fn (string $table, string $where): string
+            => (string) $this->scalar("SELECT COUNT(*) FROM $table WHERE $where");
+        foreach (['erased-merchant', 'erased-email'] as $name) {
+            $h = $signals[$name];
+            self::assertSame('0', $count('202_identity_signals', "signal_hash = '$h'"), "the $name signal is gone");
+            self::assertSame('0', $count('202_identity_observations', "signal_hash = '$h'"), "its observations too");
+        }
+        $merge = $this->row('SELECT signal_hash, requeued_at FROM 202_identity_merges WHERE click_id = 9100');
+        self::assertSame('erased', $merge['signal_hash'] ?? null, 'the merge row stays, without the hash');
+        self::assertIsArray($merge, 'the merge row is still there');
+        self::assertArrayHasKey('requeued_at', $merge);
+        self::assertNull($merge['requeued_at'], 'and its re-queue is still pending');
+        $signal = static fn (string $h): string => "signal_hash = '$h'";
+        self::assertSame('1', $count('202_identity_signals', $signal($signals['kept'])), 'the other customer stays');
+        self::assertSame('1', $count('202_identity_signals', $signal($cookie)), 'another kind of signal stays');
+        self::assertSame('2', $count('202_identity_observations', '1'), 'only the erased observations went');
+        self::assertSame('0', $count('202_customer_aliases', "customer_id = $erased"), 'the aliases are gone too');
+        self::assertSame('1', $count('202_customer_aliases', "customer_id = $kept"));
+    }
+
+    /** An account whose identity keys were never minted erases without minting them. */
+    public function testEraseMintsNoIdentityKeys(): void
+    {
+        self::$db->query('TRUNCATE TABLE 202_identity_keys');
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $id = $customers->resolveOrCreateByAlias(1, 'custom', 'nobody', [], null, 1700000000);
+        $fields = new MysqlCustomerFieldRepository(self::$conn);
+        (new MysqlCustomerCrmRepository(self::$conn, $customers, $fields))->erase(1, $id);
+        self::assertSame('0', (string) $this->scalar('SELECT COUNT(*) FROM 202_identity_keys'));
     }
 
     public function testCompanyDomainIsUniquePerAccountAndMergeInheritsSafely(): void

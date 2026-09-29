@@ -228,6 +228,9 @@ say "deleting a user purges their apps and releases their postbacks"
 code=$(api POST /users "{\"user_name\":\"appcore$RUN\",\"user_email\":\"appcore$RUN@example.com\",\"user_pass\":\"appcore-pass-$RUN\"}")
 eq "$code" 201 "an admin creates a second user"
 OTHER=$(field "d['data']['user_id']")
+# Registering an app asks for manage_attribution_models, which of the stock
+# roles only Admin and Super user hold.
+eq "$(api POST "/users/$OTHER/roles" '{"role_id":2}')" 200 "with a role that may manage apps"
 api POST "/users/$OTHER/api-keys" '{}' > /dev/null
 OKEY=$(field "d['data'].get('api_key') or d['data'].get('key')")
 [ -n "$OKEY" ] && ok "and a key for them" || bad "and a key for them"
@@ -299,6 +302,40 @@ grep -q '^postbacks/unclaimed: 1 aged row(s) removed, 0 remaining$' "$OUT/run.tx
 eq "$(Q "SELECT COUNT(*) FROM 202_app_postbacks WHERE transaction_id='core-old-unclaimed-$RUN'")" 0 "the aged unclaimed row is gone"
 eq "$(Q "SELECT COUNT(*) FROM 202_app_postbacks WHERE transaction_id='core-old-trusted-$RUN'")" 1 "the trusted, claimed row of the same age stays"
 eq "$(Q "SELECT COUNT(*) FROM 202_app_postbacks WHERE transaction_id='core-a-$RUN'")" 1 "a fresh refuted row inside its window stays"
+
+say "the /apps routes ask for the Mobile Apps pages' role permissions"
+# Role 4 (campaign optimizer) has neither attribution permission; role 3
+# (campaign manager) may view attribution reports but not manage models. The
+# pages let both read the registry and let neither change it; only role 3
+# sees the report.
+mkrole() { # $1 name, $2 role -> the new account's API key
+  local uid
+  api POST /users "{\"user_name\":\"$1-$RUN\",\"user_email\":\"$1-$RUN@example.test\",\"user_pass\":\"$1-pass-1\"}" > /dev/null
+  uid=$(field "d['data']['user_id']")
+  api POST "/users/$uid/roles" "{\"role_id\":$2}" > /dev/null
+  api POST "/users/$uid/api-keys" '{}' > /dev/null
+  field "d['data']['api_key']"
+}
+LIM_KEY=$(mkrole core-optimizer 4)
+VIEW_KEY=$(mkrole core-manager 3)
+[[ "$LIM_KEY" =~ ^[0-9a-f]{16,}$ ]] && [[ "$VIEW_KEY" =~ ^[0-9a-f]{16,}$ ]] && ok "two role-limited accounts with keys" || bad "could not make the accounts: '$LIM_KEY' '$VIEW_KEY'"
+
+for key in "$LIM_KEY" "$VIEW_KEY"; do
+  eq "$(api GET /apps '' "$key")" 200 "the registry reads as it does on the Setup page"
+  eq "$(api POST /apps '{"platform":"android","app_key":"com.example.denied","app_name":"Denied"}' "$key")" 403 "a registration is refused"
+  has "$OUT/body" "'manage_attribution_models' permission" "by the manage permission"
+  eq "$(api PUT "/apps/$AID/integrity-credential" '{"service_account_json":"{}"}' "$key")" 403 "a Play Integrity credential is refused"
+  eq "$(api POST "/apps/$AID/app-token/rotate" '' "$key")" 403 "a token rotation is refused"
+  eq "$(api POST /apps/skan-encodings "{\"registration_id\":$AID,\"fine_value\":1}" "$key")" 403 "a SKAN encoding is refused"
+  eq "$(api DELETE "/apps/$AID?dry_run=1" '' "$key")" 403 "and so is a delete's dry run"
+done
+eq "$(Q "SELECT COUNT(*) FROM 202_app_registrations WHERE app_key='com.example.denied'")" 0 "nothing was registered"
+eq "$(api GET /apps/report '' "$LIM_KEY")" 403 "without view_attribution_reports the report is refused"
+has "$OUT/body" "'view_attribution_reports' permission" "by the view permission"
+eq "$(api GET /apps/postbacks '' "$LIM_KEY")" 403 "and so are the postbacks behind it"
+eq "$(api GET "/apps/$AID/installs" '' "$LIM_KEY")" 403 "and the installs"
+eq "$(api GET /apps/report '' "$VIEW_KEY")" 200 "with it the report reads"
+eq "$(api GET /apps/postbacks '' "$VIEW_KEY")" 200 "and so do the postbacks"
 
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 echo "artifacts: $OUT"
