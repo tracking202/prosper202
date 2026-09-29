@@ -323,9 +323,6 @@ function p202_chrome_header(array $navigation, ?object $userObj, array $userData
 	if ($can('access_to_api_integrations')) {
 		$menu[] = ['id' => '3rdPartyAPIPage', 'href' => '202-account/api-integrations.php', 'label' => '3rd Party API Integrations', 'active' => $nav2 === 'api-integrations.php'];
 	}
-	if ($can('view_attribution_reports')) {
-		$menu[] = ['id' => 'AttributionAnalyticsPage', 'href' => '202-account/attribution.php', 'label' => 'Attribution Analytics', 'active' => $nav2 === 'attribution.php'];
-	}
 	if ($can('add_users')) {
 		$menu[] = ['id' => 'UserManagementPage', 'href' => '202-account/user-management.php', 'label' => 'User Management', 'active' => $nav2 === 'user-management.php'];
 	}

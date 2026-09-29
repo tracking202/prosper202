@@ -45,7 +45,7 @@ $snippets = [
 template_top('Pixel And Postback URLs');
 ?>
 
-<div class="p202-page-header p202-page-header--accent">
+<div class="p202-page-header">
 	<div class="p202-page-header__icon"><i class="bi bi-arrow-left-right"></i></div>
 	<div class="p202-page-header__text">
 		<h1 class="p202-page-header__title">Postback / Pixel</h1>

@@ -155,7 +155,7 @@ if (!$hasAndroid) {
 template_top('Analyze Mobile Apps');
 ?>
 
-<div class="p202-page-header p202-page-header--accent">
+<div class="p202-page-header">
     <div class="p202-page-header__icon"><i class="bi bi-phone"></i></div>
     <div class="p202-page-header__text">
         <h1 class="p202-page-header__title">Mobile App Attribution</h1>

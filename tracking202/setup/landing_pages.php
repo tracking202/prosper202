@@ -394,7 +394,7 @@ $pageItem = static function (array $page, bool $advanced) use ($self, $token, $c
 
 template_top('Landing Page Setup'); ?>
 
-<div class="p202-page-header p202-page-header--accent">
+<div class="p202-page-header">
 	<div class="p202-page-header__icon"><i class="bi bi-file-earmark"></i></div>
 	<div class="p202-page-header__text">
 		<h1 class="p202-page-header__title">Landing Pages</h1>

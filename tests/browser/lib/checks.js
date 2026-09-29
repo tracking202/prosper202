@@ -199,7 +199,7 @@ async function currentSubMenuItemIsVisible(ctx) {
   const placement = await ui.page.evaluate((selector) => {
     const current = document.querySelector(selector);
     if (!current) { return null; }
-    const list = current.closest('.p202c-subnav__list, .p202c-strip__list');
+    const list = current.closest('.p202c-strip__list');
     if (!list) { return null; }
     const item = current.getBoundingClientRect();
     const box = list.getBoundingClientRect();

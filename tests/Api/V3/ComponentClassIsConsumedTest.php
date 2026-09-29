@@ -66,7 +66,7 @@ final class ComponentClassIsConsumedTest extends TestCase
             count($used),
             'Far fewer first-party component classes than expected — the extractor is probably broken.'
         );
-        foreach (['p202-panel', 'p202-panel__body', 'p202-pill', 'p202c-subnav'] as $expected) {
+        foreach (['p202-panel', 'p202-panel__body', 'p202-pill', 'p202c-strip'] as $expected) {
             self::assertArrayHasKey($expected, $used, "the extractor found $expected");
         }
     }

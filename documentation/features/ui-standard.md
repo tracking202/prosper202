@@ -28,13 +28,13 @@ pieces Bootstrap does not have. Each is a thin class on Bootstrap primitives:
 
 | Class | Purpose |
 |---|---|
-| `.p202-page-header` | Title, one-line description, optional icon and action. Every page has one. `--accent` is the blue variant for the Setup family. |
+| `.p202-page-header` | Title, one-line description, optional icon and action. Every page has one. One style everywhere; the blue `--accent` variant Setup used was removed. |
 | `.p202-tabs` | The in-page tab strip, a `.nav.nav-tabs` with the accent underline. `--compact` for dense strips. |
 | `.p202-panel` | A titled card with a count pill, an aside slot and a body. |
 | `.p202-tile` | A KPI tile: uppercase label, tabular number, sub-line; `is-good`, `is-bad`, `is-muted`. |
 | `.p202-pill` | A status pill: neutral, `--accent`, `--good`, `--warn`, `--bad`. Status, or — as an `<a>` — a switch between readings of one table, which is how the report's groupings work without JavaScript. |
 | `.p202-table` | The report table inside `.p202-table-wrap`: uppercase headers, `.num` columns, `.p202-table__totals` row. A sortable column's header is a `.p202-sort` button; its arrow follows `aria-sort`. |
-| `.p202-list` | The side-panel list: `__item`, `__name`, `__actions`, `__children`, `is-active`. |
+| `.p202-list` | The side-panel list: `__item`, `__name`, `__actions`, `__children`, `is-active`. Rows divided by a hairline, not boxed; children hang off a tree line; actions stay grey until pointed at, and `--danger` turns red only then. |
 | `.p202-empty` | An empty state: icon, title, one sentence, one action. |
 | `.p202-code` / `.p202-copy` | A read-only code box with a Copy button that says "Copied". |
 | `.p202-strip` | Stacked status rows: pill, label, value, aside. |

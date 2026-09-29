@@ -87,7 +87,6 @@ if ($canSee) {
 		'title' => ['text' => 'From ' . date('d/m/Y', (int) $from) . ' to ' . date('d/m/Y', (int) $to)],
 		'xAxis' => ['categories' => $categories],
 		'yAxis' => ['title' => ['text' => null]],
-		'plotOptions' => ['line' => ['dataLabels' => ['enabled' => true]]],
 		'series' => $chart['series'] ?? [],
 	], JSON_NUMERIC_CHECK | JSON_THROW_ON_ERROR);
 

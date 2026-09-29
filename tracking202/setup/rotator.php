@@ -264,7 +264,7 @@ $ruleCard = static function (array $rule, array $criteria, array $redirects, boo
 
 template_top('Smart Redirector'); ?>
 
-<div class="p202-page-header p202-page-header--accent">
+<div class="p202-page-header">
 	<div class="p202-page-header__icon"><i class="bi bi-arrow-repeat"></i></div>
 	<div class="p202-page-header__text">
 		<h1 class="p202-page-header__title">Redirector</h1>

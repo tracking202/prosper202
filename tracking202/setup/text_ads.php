@@ -344,10 +344,14 @@ $editId = $isEdit ? (int) $_GET['edit_text_ad_id'] : 0;
 $action = $self . ($isEdit ? '?edit_text_ad_id=' . $editId : ($isCopy ? '?copy_text_ad_id=' . (int) $_GET['copy_text_ad_id'] : ''));
 $isAdvanced = $form['text_ad_type'] === '1';
 
-$adItem = static function (array $ad) use ($self, $token, $canRemove, $editId): string {
+// $group is the label of the section the ad is listed under: it is part of
+// the ad's filter text, so filtering by a campaign or page keeps its ads.
+$adItem = static function (array $ad, string $group) use ($self, $token, $canRemove, $editId): string {
 	$id = (int) $ad['text_ad_id'];
 	$name = (string) $ad['text_ad_name'];
-	$out = '<li class="p202-list__item' . ($editId === $id ? ' is-active' : '') . '" data-p202-filter-text="' . p202_setup_e($name) . '">'
+	$headline = (string) ($ad['text_ad_headline'] ?? '');
+	$filterText = $group . ' ' . $name . ' ' . $headline;
+	$out = '<li class="p202-list__item' . ($editId === $id ? ' is-active' : '') . '" data-p202-filter-text="' . p202_setup_e($filterText) . '">'
 		. '<span class="p202-list__name">' . p202_setup_e($name) . '</span>'
 		. '<span class="p202-list__actions">'
 		. '<a class="p202-list__action" href="' . p202_setup_e($self . '?edit_text_ad_id=' . $id) . '">edit</a>'
@@ -356,12 +360,28 @@ $adItem = static function (array $ad) use ($self, $token, $canRemove, $editId): 
 		$out .= p202_setup_remove_form($self, ['delete_text_ad_id' => $id, 'delete_text_ad_name' => $name, 'token' => $token],
 			'Remove the ad "' . $name . '"? Clicks already tracked keep their history.');
 	}
-	return $out . '</span><span class="p202-list__meta">' . p202_setup_e($ad['text_ad_headline'] ?? '') . '</span></li>';
+	return $out . '</span><span class="p202-list__meta">' . p202_setup_e($headline) . '</span></li>';
 };
+
+// One section of a grouped list: a label pinned while its rows scroll past,
+// then the rows. The section's own filter text is empty, so the filter shows
+// it exactly when one of its ads matches.
+$adGroup = static function (string $label, array $ads) use ($adItem): string {
+	$out = '<li class="p202-list__item" data-p202-filter-text="">'
+		. '<div class="p202-list__group"><span class="p202-list__group-label">' . p202_setup_e($label) . '</span>'
+		. '<span class="p202-pill">' . count($ads) . '</span></div>'
+		. '<ul class="p202-list__children">';
+	foreach ($ads as $ad) {
+		$out .= $adItem($ad, $label);
+	}
+	return $out . '</ul></li>';
+};
+$campaignAdCount = array_sum(array_map('count', $adsByCampaign));
+$pageAdCount = array_sum(array_map('count', $adsByPage));
 
 template_top('Text Ads Setup'); ?>
 
-<div class="p202-page-header p202-page-header--accent">
+<div class="p202-page-header">
 	<div class="p202-page-header__icon"><i class="bi bi-fonts"></i></div>
 	<div class="p202-page-header__text">
 		<h1 class="p202-page-header__title">Text Ads</h1>
@@ -477,71 +497,59 @@ if ($error) {
 		<section class="p202-panel mb-4">
 			<div class="p202-panel__head">
 				<h2 class="p202-panel__title">Ads for campaigns</h2>
-				<span class="p202-pill p202-pill--accent"><?php echo array_sum(array_map('count', $adsByCampaign)); ?></span>
+				<span class="p202-pill p202-pill--accent"><?php echo $campaignAdCount; ?></span>
+				<?php if ($campaignAdCount > 5) { ?>
+					<div class="p202-panel__aside"><?php echo p202_setup_list_filter('campaign-ad-list', 'Filter by ad, headline or campaign…'); ?></div>
+				<?php } ?>
 			</div>
-			<div class="p202-panel__body">
-				<?php if ($adsByCampaign === []) { ?>
+			<?php if ($adsByCampaign === []) { ?>
+				<div class="p202-panel__body">
 					<div class="p202-empty">
 						<i class="bi bi-fonts p202-empty__icon"></i>
 						<strong class="p202-empty__title">No text ads yet</strong>
 						<div>Store each variation of your ad copy here, then pick it when you get a tracking link.</div>
 						<?php if ($campaignOptions !== [] || $advancedOptions !== []) { ?><div class="p202-empty__action"><a class="btn btn-secondary btn-sm" href="#text_ad_name">Add your first ad</a></div><?php } ?>
 					</div>
-				<?php } else { ?>
-					<ul class="p202-list">
+				</div>
+			<?php } else { ?>
+				<div class="p202-panel__body p202-panel__body--scroll">
+					<ul class="p202-list p202-list--grouped" id="campaign-ad-list">
 						<?php foreach ($campaignOptions as $group) {
-							$groupCampaigns = array_filter($group['options'], static fn ($campaignId): bool => isset($adsByCampaign[(int) $campaignId]), ARRAY_FILTER_USE_KEY);
-							if ($groupCampaigns === []) {
-								continue;
-							} ?>
-							<li class="p202-list__item">
-								<span class="p202-list__name"><?php echo p202_setup_e($group['label']); ?></span>
-								<ul class="p202-list__children">
-									<?php foreach ($groupCampaigns as $campaignId => $campaign) { ?>
-										<li class="p202-list__item">
-											<span class="p202-list__name"><?php echo p202_setup_e($campaign['label']); ?></span>
-											<ul class="p202-list__children">
-												<?php foreach ($adsByCampaign[(int) $campaignId] as $ad) {
-													echo $adItem($ad);
-												} ?>
-											</ul>
-										</li>
-									<?php } ?>
-								</ul>
-							</li>
-						<?php } ?>
+							foreach ($group['options'] as $campaignId => $campaign) {
+								if (isset($adsByCampaign[(int) $campaignId])) {
+									echo $adGroup($group['label'] . ' › ' . $campaign['label'], $adsByCampaign[(int) $campaignId]);
+								}
+							}
+						} ?>
 					</ul>
-				<?php } ?>
-			</div>
+				</div>
+			<?php } ?>
 		</section>
 
 		<section class="p202-panel">
 			<div class="p202-panel__head">
 				<h2 class="p202-panel__title">Ads for advanced landing pages</h2>
-				<span class="p202-pill p202-pill--accent"><?php echo array_sum(array_map('count', $adsByPage)); ?></span>
-			</div>
-			<div class="p202-panel__body">
-				<?php if ($adsByPage === []) { ?>
-					<p class="text-body-secondary mb-0">None yet.</p>
-				<?php } else { ?>
-					<ul class="p202-list">
-						<?php foreach ($advancedPages as $page) {
-							$pageAds = $adsByPage[(int) $page['landing_page_id']] ?? [];
-							if ($pageAds === []) {
-								continue;
-							} ?>
-							<li class="p202-list__item">
-								<span class="p202-list__name"><?php echo p202_setup_e($page['landing_page_nickname']); ?></span>
-								<ul class="p202-list__children">
-									<?php foreach ($pageAds as $ad) {
-										echo $adItem($ad);
-									} ?>
-								</ul>
-							</li>
-						<?php } ?>
-					</ul>
+				<span class="p202-pill p202-pill--accent"><?php echo $pageAdCount; ?></span>
+				<?php if ($pageAdCount > 5) { ?>
+					<div class="p202-panel__aside"><?php echo p202_setup_list_filter('page-ad-list', 'Filter by ad, headline or page…'); ?></div>
 				<?php } ?>
 			</div>
+			<?php if ($adsByPage === []) { ?>
+				<div class="p202-panel__body">
+					<p class="text-body-secondary mb-0">None yet.</p>
+				</div>
+			<?php } else { ?>
+				<div class="p202-panel__body p202-panel__body--scroll">
+					<ul class="p202-list p202-list--grouped" id="page-ad-list">
+						<?php foreach ($advancedPages as $page) {
+							$pageAds = $adsByPage[(int) $page['landing_page_id']] ?? [];
+							if ($pageAds !== []) {
+								echo $adGroup((string) $page['landing_page_nickname'], $pageAds);
+							}
+						} ?>
+					</ul>
+				</div>
+			<?php } ?>
 		</section>
 	</div>
 </div>

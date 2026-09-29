@@ -491,7 +491,7 @@ if (isset($_GET['dl_dni']) && isset($_GET['dl_offer_id']) && !isset($_POST['aff_
 template_top('Affiliate Campaigns Setup');
 ?>
 
-<div class="p202-page-header p202-page-header--accent">
+<div class="p202-page-header">
 	<div class="p202-page-header__icon"><i class="bi bi-link-45deg"></i></div>
 	<div class="p202-page-header__text">
 		<h1 class="p202-page-header__title">Campaigns</h1>
