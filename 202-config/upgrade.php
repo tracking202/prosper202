@@ -36,19 +36,22 @@ if (!php_version_supported()) {
     $version_error['phpversion'] = 'Prosper202 requires PHP ' . PROSPER202_MIN_PHP_VERSION . ', or newer.';
 }
 
-// Get Database version
+// Get Database version. The floors are the installer's (install.php,
+// requirements.php; DatabaseFloorsAgreeTest holds the three together): the
+// schema this version upgrades to has JSON columns (CoreTables) that an
+// older server rejects, so an upgrade there would stop partway.
 $mysqlversion = $db->server_info;
 if (preg_match('/-(10\..+)-MariaDB/i', (string) $mysqlversion, $match)) {
     // Support For MariaDB
     $mysqlversion = $match[1];
-    $dbwording = "MariaDB >= 10.0.12";
-    if ((version_compare($mysqlversion, '10.0.12') < 0)) {
-        $version_error['mysqlversion'] = 'Prosper202 requires MariaDB 10.0.12, or newer.';
+    $dbwording = "MariaDB >= 10.6";
+    if ((version_compare($mysqlversion, '10.6') < 0)) {
+        $version_error['mysqlversion'] = 'Prosper202 requires MariaDB 10.6, or newer.';
     }
 } else {
-    $dbwording = "MySQL >= 5.6";
-    if ((version_compare($mysqlversion, '5.6') < 0)) {
-        $version_error['mysqlversion'] = 'Prosper202 requires MySQL 5.6, or newer.';
+    $dbwording = "MySQL >= 8.0";
+    if ((version_compare($mysqlversion, '8.0') < 0)) {
+        $version_error['mysqlversion'] = 'Prosper202 requires MySQL 8.0, or newer.';
     }
 }
 
