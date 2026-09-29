@@ -352,7 +352,7 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 				}
 			}
 
-			if ($_POST['method_of_promotion'] == 'landingpage' || $_POST['tracker_type'] == '1') {
+			if (($_POST['method_of_promotion'] ?? '') == 'landingpage' || $_POST['tracker_type'] == '1') {
 				if (($get_tracker_row['landing_page_id']) && $_POST['landing_page_id'] != $get_tracker_row['landing_page_id']) {
 					
 					$mysql['landing_page_id'] = $db->real_escape_string((string)($_POST['landing_page_id'] ?? '0'));
@@ -366,22 +366,26 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 
 			if (isset($_POST['tracker_type']) && ($_POST['tracker_type'] == '0' || $_POST['tracker_type'] == '1')) {
 
-				if (isset($_POST['text_ad_id']) && $get_tracker_row['text_ad_id']) {
+				if (!empty($_POST['text_ad_id']) && $get_tracker_row['text_ad_id']) {
 					$mysql['text_ad_id'] = $db->real_escape_string((string)($_POST['text_ad_id'] ?? '0'));
 					$sql = "SELECT text_ad_name FROM 202_text_ads WHERE text_ad_id = '".$mysql['text_ad_id']."'";
 					$result = $db->query($sql);
 					$row = $result->fetch_assoc();
 
-					$slack->push('tracking_link_text_ad_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_ad' => $get_tracker_row['text_ad_name'], 'new_ad' => $row['text_ad_name'], 'user' => $user_row['username']]);
+					if (is_array($row)) {
+						$slack->push('tracking_link_text_ad_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_ad' => $get_tracker_row['text_ad_name'], 'new_ad' => $row['text_ad_name'], 'user' => $user_row['username']]);
+					}
 				}
 
-				if (isset($_POST['text_ad_id']) && !$get_tracker_row['text_ad_id']) {
+				if (!empty($_POST['text_ad_id']) && !$get_tracker_row['text_ad_id']) {
 					$mysql['text_ad_id'] = $db->real_escape_string((string)($_POST['text_ad_id'] ?? '0'));
 					$sql = "SELECT text_ad_name FROM 202_text_ads WHERE text_ad_id = '".$mysql['text_ad_id']."'";
 					$result = $db->query($sql);
 					$row = $result->fetch_assoc();
 
-					$slack->push('tracking_link_text_ad_added', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'ad' => $row['text_ad_name'], 'user' => $user_row['username']]);
+					if (is_array($row)) {
+						$slack->push('tracking_link_text_ad_added', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'ad' => $row['text_ad_name'], 'user' => $user_row['username']]);
+					}
 				}
 
 				if (!$_POST['text_ad_id'] && $get_tracker_row['text_ad_id']) {
