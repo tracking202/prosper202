@@ -160,6 +160,14 @@ jobs:
             --group integration \
             tests/Attribution/AttributionExportsIntegrationTest.php \
             --verbose --no-coverage
+          # Erasing an LTV customer reaches the identity graph: the signal
+          # the customer's id became and its observations go, the merge row
+          # the worker still needs stays without the hash. Only the erase
+          # cases of the LTV suite run here.
+          vendor/bin/phpunit --configuration phpunit.ci.xml \
+            --group integration --filter Erase \
+            tests/Ltv/LtvDatabaseIntegrationTest.php \
+            --verbose --no-coverage
           # Checks the SQL the v3 API ships against the schema it ships, by
           # preparing every statically-known statement on a real server. It
           # needs its own database because it installs a fresh schema.
