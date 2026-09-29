@@ -3277,6 +3277,7 @@ paths:
         - {name: integrity_state, in: query, description: "Only installs whose Play Integrity verdict stands here", schema: {type: string, enum: [not_requested, received, missing, pending, valid, invalid, error, skipped]}}
         - {name: trusted, in: query, schema: {type: string, enum: [trusted, refuted, unvouched, "1", "0"]}}
         - {name: test, in: query, schema: {type: string, enum: ["0", "1"]}}
+        - {name: ctit_flag, in: query, description: "Only installs whose click-to-install time is in this tail; unmeasured = no click of yours to measure from", schema: {type: string, enum: [short, ok, long, unmeasured]}}
         - {name: click_id, in: query, schema: {type: integer}}
         - $ref: "#/components/parameters/timeFrom"
         - $ref: "#/components/parameters/timeTo"
@@ -3750,7 +3751,7 @@ paths:
         `registration` and `platform` group any; `ad-network`, `source`,
         `country`, `version`, `protocol` and `conversion-type` are Apple's
         dimensions and need `ios`; `campaign`, `match-state`,
-        `integrity-state` and `goal` are Android's and need
+        `integrity-state`, `ctit-flag` and `goal` are Android's and need
         `platform=android`. A one-platform grouping or filter asked of
         another platform is a `422` naming the platform to ask for. `limit`
         applies per platform.
@@ -3776,6 +3777,18 @@ paths:
         rows sum to the totals, and `group_by=goal` — the funnel, one row per
         goal with its `after` and owner — counts the installs of that class
         that reached the goal, each once (and each trust class beside it).
+
+        **Android fraud marks** (plan §7.1), beside the figures, never
+        subtracted from them: `ctit_measured`, `ctit_short` and `ctit_long`
+        count every install in the group whose click-to-install time was
+        measured, and the ones below the app's `ctit_min_seconds` or above
+        its `ctit_max_seconds`; `group_by=ctit-flag` groups by it
+        (`short`, `ok`, `long`, `unmeasured`) and `ctit_flag=` filters.
+        `fast_goals` counts the outcomes among `goals_reached` reached
+        sooner after the install than the app's `fast_goal_seconds`;
+        `fast_goals=1` keeps the installs with at least one, `0` the rest.
+        Such an outcome carries revenue under the app's `fast_goal_policy`
+        `count` (the default) and none under `hold`.
 
         **iOS** — the rest of this description. Groups postbacks by `group_by` and decodes winning postbacks'
         conversion values through the caller's SKAN encodings (those of the
@@ -3830,7 +3843,7 @@ paths:
           description: day, registration and platform for either platform; the iOS and Android dimensions need their `platform`
           schema:
             type: string
-            enum: [day, registration, platform, ad-network, source, country, version, protocol, conversion-type, campaign, match-state, integrity-state, goal]
+            enum: [day, registration, platform, ad-network, source, country, version, protocol, conversion-type, campaign, match-state, integrity-state, ctit-flag, goal]
             default: day
         - name: limit
           in: query
@@ -3888,6 +3901,18 @@ paths:
           description: Android — only installs on this campaign's clicks
           schema:
             type: integer
+        - name: ctit_flag
+          in: query
+          description: Android — only installs whose click-to-install time is in this tail (`unmeasured`, no click of yours to measure from)
+          schema:
+            type: string
+            enum: [short, ok, long, unmeasured]
+        - name: fast_goals
+          in: query
+          description: Android — 1 only installs with a goal reached implausibly fast (`fast_goal_seconds`), 0 only installs without one
+          schema:
+            type: integer
+            enum: [0, 1]
       responses:
         "200":
           description: Report groups
@@ -4075,7 +4100,12 @@ paths:
         answer never carries the click, the conversion or any money.
         A `customer` (a signed customer id) is linked to the install's click
         after the commit, and the answer's `customer` says whether it was.
-        Rate-limited per peer address.
+        Rate-limited per peer address, and per app: past the registration's
+        `install_cap_per_minute` a new install is `429` with `Retry-After`,
+        stored and counted nowhere (a replay of a stored install is still
+        answered). The install's click-to-install time is recorded and
+        flagged against the app's `ctit_min_seconds` / `ctit_max_seconds`;
+        a flag never changes the `match`.
       operationId: reportAppInstall
       security: []
       parameters:
@@ -4115,9 +4145,23 @@ paths:
         "422":
           description: The body's app_key is not the token's app, or the token is an iOS app's
         "429":
-          $ref: "#/components/responses/AppRateLimited"
+          description: >-
+            Over the per-peer rate limit, or over the app's
+            `install_cap_per_minute`; nothing was stored. `Retry-After` and
+            `retry_after_seconds` say when to retry.
+          headers:
+            Retry-After:
+              schema: {type: integer}
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "503":
-          description: The database, or the key that verifies install tokens, is unavailable; retry later
+          description: >-
+            The database, the key that verifies install tokens, or the
+            install cap's store is unavailable, or the app's
+            `install_cap_per_minute` is unreadable (named in the message);
+            nothing was stored, retry after Retry-After
 
   /apps/installs/{install_uuid}/events:
     parameters:
@@ -4140,7 +4184,12 @@ paths:
         reused `event_id` with other content is `409`; the 10,001st event of
         an install is `422`. A body may carry a `customer` (a signed customer
         id) beside its events, or alone; it is linked to the install's click
-        after the events commit. Rate-limited per peer address.
+        after the events commit. Rate-limited per peer address, and per
+        install: a batch that would take the install past its app's
+        `event_cap_per_minute` events in the minute is `429` with
+        `Retry-After`, and none of it is stored. A goal reached sooner after
+        the install than the app's `fast_goal_seconds` is flagged, and paid
+        or held per its `fast_goal_policy`.
       operationId: reportAppInstallEvents
       security: []
       parameters:
@@ -4174,9 +4223,22 @@ paths:
         "422":
           description: The install holds 10,000 events, or the token is an iOS app's
         "429":
-          $ref: "#/components/responses/AppRateLimited"
+          description: >-
+            Over the per-peer rate limit, or the batch would pass the
+            install's `event_cap_per_minute`; nothing was stored.
+            `Retry-After` says when to retry.
+          headers:
+            Retry-After:
+              schema: {type: integer}
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "503":
-          description: The install is still pending; retry after Retry-After
+          description: >-
+            The install is still pending, the event cap's store is
+            unavailable, or the app's `event_cap_per_minute` is unreadable;
+            retry after Retry-After
 
   /.well-known/skadnetwork/report-attribution/:
     servers:
@@ -9957,6 +10019,63 @@ components:
             are requested for; published in the schema document for the SDK.
             Required for `observe` and `require`. Replaced, never cleared: an
             update sending `null` is `422`.
+        ctit_min_seconds:
+          type: integer
+          minimum: 0
+          maximum: 3600
+          default: 10
+          description: >-
+            Android: an install that began sooner than this after its click
+            is flagged `short` (click injection's mark). 0 flags only an
+            install that began before its click. A flag marks an install in
+            the report; it never refuses one.
+        ctit_max_seconds:
+          type: integer
+          minimum: 60
+          maximum: 31536000
+          default: 86400
+          description: >-
+            Android: an install that began later than this after its click
+            is flagged `long` (click spamming's mark). A fixed cap, one day by
+            default, rather than a percentile of the app's own distribution,
+            which the attack it detects inflates. Must exceed
+            `ctit_min_seconds`.
+        install_cap_per_minute:
+          type: integer
+          minimum: 1
+          maximum: 60000
+          default: 300
+          description: >-
+            Android: installs the app may record in a minute; past it
+            `POST /apps/installs` answers `429` with `Retry-After`, stores
+            and counts nothing, and the SDK retries.
+        event_cap_per_minute:
+          type: integer
+          minimum: 100
+          maximum: 60000
+          default: 200
+          description: >-
+            Android: events one install may post in a minute, counted per
+            event; a batch that would pass it is `429` with `Retry-After` and
+            stored nowhere. Never below one full batch (100).
+        fast_goal_seconds:
+          type: integer
+          minimum: 0
+          maximum: 3600
+          default: 5
+          description: >-
+            Android: a goal an install reached sooner than this after the
+            install (Google's install-begin) is flagged `too_fast`; the
+            install goal itself never is. 0 flags none.
+        fast_goal_policy:
+          type: string
+          enum: [count, hold]
+          default: count
+          description: >-
+            Android: `count` pays and notifies a goal reached too fast like
+            any other and flags it in the report; `hold` records and flags it
+            and neither pays it nor sends it to the traffic source. Decided
+            when the outcome is written; a held outcome stays held.
         app_token:
           type: string
           pattern: "^[0-9a-f]{64}$"
@@ -10029,6 +10148,35 @@ components:
           type: integer
           format: int64
           description: Android only (see `AppRegistration`)
+        ctit_min_seconds:
+          type: integer
+          minimum: 0
+          maximum: 3600
+          description: Android only (see `AppRegistration`); read raw, so `"07"` or `1.5` is `422`
+        ctit_max_seconds:
+          type: integer
+          minimum: 60
+          maximum: 31536000
+          description: Android only (see `AppRegistration`); must exceed `ctit_min_seconds` as the write leaves them
+        install_cap_per_minute:
+          type: integer
+          minimum: 1
+          maximum: 60000
+          description: Android only (see `AppRegistration`)
+        event_cap_per_minute:
+          type: integer
+          minimum: 100
+          maximum: 60000
+          description: Android only (see `AppRegistration`)
+        fast_goal_seconds:
+          type: integer
+          minimum: 0
+          maximum: 3600
+          description: Android only (see `AppRegistration`)
+        fast_goal_policy:
+          type: string
+          enum: [count, hold]
+          description: Android only (see `AppRegistration`)
 
     AppRegistrationUpdate:
       type: object
@@ -10068,6 +10216,35 @@ components:
           description: >-
             Android only (see `AppRegistration`); digits, as a JSON integer or
             string. `null` is `422`: the number can be replaced, not cleared
+        ctit_min_seconds:
+          type: integer
+          minimum: 0
+          maximum: 3600
+          description: Android only (see `AppRegistration`); read raw, so `"07"` or `1.5` is `422`
+        ctit_max_seconds:
+          type: integer
+          minimum: 60
+          maximum: 31536000
+          description: Android only (see `AppRegistration`); must exceed `ctit_min_seconds` as the write leaves them
+        install_cap_per_minute:
+          type: integer
+          minimum: 1
+          maximum: 60000
+          description: Android only (see `AppRegistration`); `null` is `422`
+        event_cap_per_minute:
+          type: integer
+          minimum: 100
+          maximum: 60000
+          description: Android only (see `AppRegistration`); `null` is `422`
+        fast_goal_seconds:
+          type: integer
+          minimum: 0
+          maximum: 3600
+          description: Android only (see `AppRegistration`); `null` is `422`
+        fast_goal_policy:
+          type: string
+          enum: [count, hold]
+          description: Android only (see `AppRegistration`); `null` is `422`
             (set `integrity_mode` to `off` to stop Play Integrity)
 
     AppRegistrationResponse:
@@ -10677,6 +10854,22 @@ components:
         os_version:
           type: string
           nullable: true
+        ctit_seconds:
+          type: integer
+          nullable: true
+          description: >-
+            Click-to-install time: Google's server install-begin time (the
+            receipt time when Play gave none) minus the click's time, in
+            seconds; null when the install's token named no click of yours.
+            Negative within the classifier's two-minute clock-skew allowance.
+        ctit_flag:
+          type: string
+          nullable: true
+          enum: [short, ok, long, null]
+          description: >-
+            `short` below the app's `ctit_min_seconds`, `long` above its
+            `ctit_max_seconds`, `ok` between, as the thresholds stood when it
+            was measured; null when not measured. A mark, never a refusal.
         integrity_mode:
           type: string
           enum: ["off", observe, require]
@@ -11043,6 +11236,22 @@ components:
         pending:
           type: integer
           description: Android — installs waiting for their click or their Play Integrity verdict
+        ctit_measured:
+          type: integer
+          description: Android — installs whose click-to-install time was measured (their token named a click of yours)
+        ctit_short:
+          type: integer
+          description: Android — installs that began sooner after their click than the app's `ctit_min_seconds` (click injection's mark)
+        ctit_long:
+          type: integer
+          description: Android — installs that began later after their click than the app's `ctit_max_seconds` (click spamming's mark)
+        fast_goals:
+          type: integer
+          description: Android — the outcomes among `goals_reached` reached sooner after the install than the app's `fast_goal_seconds`
+        ctit_flag:
+          type: string
+          enum: [short, ok, long, unmeasured]
+          description: Android ctit-flag mode
         match_states:
           type: object
           description: Android — installs per match state (always an object)
@@ -11148,6 +11357,14 @@ components:
         organic:
           type: integer
         pending:
+          type: integer
+        ctit_measured:
+          type: integer
+        ctit_short:
+          type: integer
+        ctit_long:
+          type: integer
+        fast_goals:
           type: integer
         match_states:
           type: object
@@ -11342,7 +11559,7 @@ components:
           properties:
             group_by:
               type: string
-              enum: [day, registration, platform, ad-network, source, country, version, protocol, conversion-type, campaign, match-state, integrity-state, goal]
+              enum: [day, registration, platform, ad-network, source, country, version, protocol, conversion-type, campaign, match-state, integrity-state, ctit-flag, goal]
             platform:
               type: string
               enum: [ios, android, all]

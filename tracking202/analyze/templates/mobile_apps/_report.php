@@ -130,7 +130,20 @@ $states = static function (mixed $counts): array {
                     <a href="<?php echo $e($link(['trusted' => null])); ?>">Drop the filter</a> to count attributed installs only.
                 </div>
             </div>
-        <?php } elseif ((int)$totals['received'] > (int)$totals['installs']) { ?>
+        <?php } ?>
+        <?php if ($filters['ctit_flag'] !== '' || $filters['fast_goals'] !== '') { ?>
+            <div class="alert alert-warning p202-flash" role="status">
+                <i class="bi bi-exclamation-triangle"></i>
+                <div class="p202-flash__body">
+                    Every figure here is narrowed to installs
+                    <?php if ($filters['ctit_flag'] !== '') { ?>whose click-to-install time is <strong><?php echo $e($filters['ctit_flag']); ?></strong><?php } ?>
+                    <?php if ($filters['ctit_flag'] !== '' && $filters['fast_goals'] !== '') { ?>and<?php } ?>
+                    <?php if ($filters['fast_goals'] !== '') { ?><?php echo $filters['fast_goals'] === '1' ? 'with a goal reached too fast' : 'with no goal reached too fast'; ?><?php } ?>.
+                    <a href="<?php echo $e($link(['ctit_flag' => null, 'fast_goals' => null])); ?>">Drop these filters</a> to count them all.
+                </div>
+            </div>
+        <?php } ?>
+        <?php if ($report['trusted'] === 'trusted-only' && (int)$totals['received'] > (int)$totals['installs']) { ?>
             <div class="alert alert-info p202-flash" role="status">
                 <i class="bi bi-info-circle"></i>
                 <div class="p202-flash__body">
@@ -286,6 +299,7 @@ $states = static function (mixed $counts): array {
                                 <th class="num">Installs reaching it</th>
                                 <th class="num">Unvouched</th>
                                 <th class="num">Times reached</th>
+                                <th class="num">Too fast</th>
                             <?php } else { ?>
                                 <th class="num">Received</th>
                                 <th class="num">Installs</th>
@@ -294,6 +308,7 @@ $states = static function (mixed $counts): array {
                                 <th class="num">Refuted</th>
                                 <th class="num">Unvouched</th>
                                 <th class="num">Goals reached</th>
+                                <th class="num">Too fast</th>
                             <?php } ?>
                             <th class="num">Revenue</th>
                         </tr>
@@ -306,6 +321,7 @@ $states = static function (mixed $counts): array {
                                 <td class="num"><?php echo $num($group['installs'] ?? 0); ?></td>
                                 <td class="num"><?php echo $num($group['unvouched_count'] ?? 0); ?></td>
                                 <td class="num"><?php echo $num($group['goals_reached'] ?? 0); ?></td>
+                                <td class="num"><?php echo $num($group['fast_goals'] ?? 0); ?></td>
                             <?php } else { ?>
                                 <td class="num"><?php echo $num($group['received'] ?? 0); ?></td>
                                 <td class="num"><?php echo $num($group['installs'] ?? 0); ?></td>
@@ -314,6 +330,7 @@ $states = static function (mixed $counts): array {
                                 <td class="num"><?php echo $num($group['refuted_count'] ?? 0); ?></td>
                                 <td class="num"><?php echo $num($group['unvouched_count'] ?? 0); ?></td>
                                 <td class="num"><?php echo $num($group['goals_reached'] ?? 0); ?></td>
+                                <td class="num"><?php echo $num($group['fast_goals'] ?? 0); ?></td>
                             <?php } ?>
                             <td class="num"><?php echo $e($money($C::groupRevenue($group))); ?></td>
                         </tr>
@@ -328,6 +345,7 @@ $states = static function (mixed $counts): array {
                             <td class="num"><?php echo $num($totals['refuted_count']); ?></td>
                             <td class="num"><?php echo $num($totals['unvouched_count']); ?></td>
                             <td class="num"><?php echo $num($totals['goals_reached']); ?></td>
+                            <td class="num"><?php echo $num($totals['fast_goals'] ?? 0); ?></td>
                             <td class="num"><?php echo $e($money($totals['revenue'])); ?></td>
                         </tr>
                     <?php } ?>
@@ -435,6 +453,27 @@ $states = static function (mixed $counts): array {
                                 </table>
                             </div>
                         <?php } ?>
+                    </div>
+                </section>
+            </div>
+            <div class="col-12 col-lg-6">
+                <section class="p202-panel">
+                    <div class="p202-panel__head">
+                        <h2 class="p202-panel__title">Fraud signals</h2>
+                        <p class="p202-panel__sub">Marked, not refused: each app's limits are under Setup › Mobile Apps, Advanced.</p>
+                    </div>
+                    <div class="p202-panel__body">
+                        <div class="p202-table-wrap">
+                            <table class="table p202-table">
+                                <thead><tr><th>Signal</th><th class="num">Count</th></tr></thead>
+                                <tbody>
+                                    <tr><td><a href="<?php echo $e($link(['ctit_flag' => 'short'])); ?>">Installs too soon after the click</a></td><td class="num"><?php echo $num($totals['ctit_short'] ?? 0); ?></td></tr>
+                                    <tr><td><a href="<?php echo $e($link(['ctit_flag' => 'long'])); ?>">Installs too long after the click</a></td><td class="num"><?php echo $num($totals['ctit_long'] ?? 0); ?></td></tr>
+                                    <tr><td><a href="<?php echo $e($link(['group_by' => 'ctit-flag'])); ?>">Installs with a click-to-install time</a></td><td class="num"><?php echo $num($totals['ctit_measured'] ?? 0); ?></td></tr>
+                                    <tr><td><a href="<?php echo $e($link(['fast_goals' => '1'])); ?>">Goals reached too soon after the install</a></td><td class="num"><?php echo $num($totals['fast_goals'] ?? 0); ?></td></tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </section>
             </div>

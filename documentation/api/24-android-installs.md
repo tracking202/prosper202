@@ -410,3 +410,50 @@ Each install carries `integrity_mode` (as it arrived), `integrity_state`,
 `integrity_reason`, `integrity_attempts`, `integrity_next_at`,
 `integrity_checked_at` and `integrity_verdict` — what the policy read from
 Google's verdict (never the token).
+
+## 10. Fraud limits
+
+The app token ships in the app, so anyone can post installs and events with
+it. Four limits bound what that buys (plan §7.1). Each is an Android
+registration setting (`PUT /apps/{id}`, `p202 app update <id> --…`, or Setup ›
+Mobile Apps › Advanced), with a default a new app gets:
+
+| Setting | Default | What it does |
+| ------- | ------- | ------------ |
+| `ctit_min_seconds` | 10 | An install that began sooner than this after its click is flagged `short`: too fast for a person to reach the store and start a download, click injection's mark. |
+| `ctit_max_seconds` | 86400 (a day) | An install that began later than this after its click is flagged `long`, click spamming's mark. A fixed cap, not a percentile of the app's own installs: the attack inflates that distribution, and a small app has too few installs for one. |
+| `install_cap_per_minute` | 300 | Installs the app may record in a minute. Past it `POST /apps/installs` answers `429` with `Retry-After`, stores and counts nothing; the SDK keeps the install and retries. A replay of a stored install is still answered. |
+| `event_cap_per_minute` | 200 (at least 100) | Events one install may post in a minute, counted per event. A batch that would pass it is `429` and stored nowhere; the SDK retries it. |
+| `fast_goal_seconds` | 5 | A goal an install reached sooner than this after the install (Google's install-begin time) is flagged. The install goal itself never is; 0 flags none. |
+| `fast_goal_policy` | `count` | `count`: a flagged goal pays and is sent like any other, and the report shows it. `hold`: it is recorded and flagged, never paid or sent. |
+
+**Click-to-install time** (CTIT) is Google's install-begin time minus the
+click's time, recorded on every install whose token names a click of yours
+(`ctit_seconds`, `ctit_flag` on the install; `GET /apps/{id}/installs?ctit_flag=short`,
+`p202 app install list <id> --ctit-flag short`). A flag marks an install; it
+never refuses one — the refusal for click injection is still `implausible`
+(install-begin before Google's own click time). Flags are decided against
+the thresholds when the install is measured.
+
+**A goal flagged as too fast still pays by default.** The threshold is a
+heuristic — an app whose first goal is "opened the app" reaches it in
+seconds — so `count` leaves the money where it was and makes the pattern
+visible; an app that sees fabricated events choose `hold`. The decision is
+made when the outcome is written, and there is no release: a held outcome
+stays held, and switching the policy re-judges nothing already recorded.
+
+**The report** (`GET /apps/report?platform=android`, Analyze › Mobile Apps)
+counts `ctit_measured`, `ctit_short` and `ctit_long` over every install in a
+group, groups by `ctit-flag` (`short`, `ok`, `long`, `unmeasured`) and
+filters by `ctit_flag`; `fast_goals` counts the flagged outcomes among
+`goals_reached`, and `fast_goals=1` keeps the installs with one. Held goals
+carry no revenue.
+
+**Failure is closed.** A limit the server cannot read — a stored value no
+write would store — is read as the one that trusts least and named in the
+log: the caps answer `503` naming the setting (nothing is recorded, the SDK
+retries), the CTIT thresholds flag every measured install, and the fast-goal
+setting flags under an hour and holds. The caps' counters live in the
+server's state directory (`P202_SERVER_STATE_DIR`); if it cannot be written
+the intakes answer `503` rather than admit without counting. They are per
+server: a deployment with several web servers applies each cap per server.

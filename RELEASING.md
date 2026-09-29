@@ -23,6 +23,24 @@ no Go toolchain**:
 That is the "download the release, not the git clone" promise: shared-hosting
 users upload the zip and the browser wizard does the rest.
 
+## Upgrades are one-way: a database backup is required
+
+Upgrading an install changes its database in place, and there is no
+downgrade. **Restoring a backup taken before the upgrade is the only way
+back.** Putting the old files back is not a rollback: from 1.9.76 the upgrade
+makes `202_conversion_logs.dedupe_key` `NOT NULL` with no default (and drops
+`uniq_click_transaction`), so 1.9.55 code redeployed on an upgraded database
+inserts conversions that strict mode refuses or that collide on
+`uniq_click_dedupe` — it can no longer record conversions at all.
+
+Every release's notes, and anyone walking an operator through an upgrade,
+must say so before the upgrade is started. The upgrade page
+(`202-config/upgrade.php`) says it above its button on every upgrade
+(`#upgrade-backup-warning`). A backup means a full `mysqldump` (or the
+host's snapshot) of the Prosper202 database, taken after the site stops
+taking traffic and before the upgrade page is opened; see
+`documentation/features/measurement-rewrite-plan.md` §7.5a.
+
 ## The single source of truth: `202-config/version.php`
 
 The version lives in **one** place — the `$version_string` in

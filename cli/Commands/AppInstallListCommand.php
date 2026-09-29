@@ -19,7 +19,7 @@ class AppInstallListCommand extends BaseCommand
 {
     protected static $defaultName = 'app:install:list';
 
-    private const FILTERS = ['match_state', 'trusted', 'test', 'click_id', 'time_from', 'time_to'];
+    private const FILTERS = ['match_state', 'trusted', 'test', 'ctit_flag', 'click_id', 'time_from', 'time_to'];
 
     #[\Override]
     protected function configure(): void
@@ -32,6 +32,7 @@ class AppInstallListCommand extends BaseCommand
             ->addOption('match_state', null, InputOption::VALUE_REQUIRED, 'Only this state: attributed, organic, third_party, unavailable, pending_click, bad_token, foreign_click, implausible, outside_window, duplicate_click, pending_integrity')
             ->addOption('trusted', null, InputOption::VALUE_REQUIRED, 'Only this trust class: trusted, refuted, unvouched')
             ->addOption('test', null, InputOption::VALUE_REQUIRED, '1 = only test installs, 0 = only real ones')
+            ->addOption('ctit_flag', null, InputOption::VALUE_REQUIRED, 'Only this click-to-install tail: short, ok, long, unmeasured')
             ->addOption('click_id', null, InputOption::VALUE_REQUIRED, 'Only installs matched to this click')
             ->addOption('time_from', null, InputOption::VALUE_REQUIRED, 'Received-at range start (unix)')
             ->addOption('time_to', null, InputOption::VALUE_REQUIRED, 'Received-at range end (unix)');

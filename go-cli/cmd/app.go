@@ -99,6 +99,27 @@ var appRegistrationBodyFields = map[string]string{
 	"integrity-mode":          "integrity_mode",
 	// Digits only: sent as the string it was typed as, read raw server-side.
 	"integrity-cloud-project-number": "integrity_cloud_project_number",
+	// Android fraud limits (AppLimits, FastGoalPolicy server-side).
+	"ctit-min-seconds":       "ctit_min_seconds",
+	"ctit-max-seconds":       "ctit_max_seconds",
+	"install-cap-per-minute": "install_cap_per_minute",
+	"event-cap-per-minute":   "event_cap_per_minute",
+	"fast-goal-seconds":      "fast_goal_seconds",
+	"fast-goal-policy":       "fast_goal_policy",
+}
+
+// appLimitRanges are the whole-number fraud limits and the range the server
+// accepts for each, with what the setting does for the hint.
+var appLimitRanges = []struct {
+	field, flag string
+	min, max    int
+	hint        string
+}{
+	{"ctit_min_seconds", "ctit-min-seconds", 0, 3600, "An install that began sooner than this after its click is flagged short (click injection); the default is 10."},
+	{"ctit_max_seconds", "ctit-max-seconds", 60, 31536000, "An install that began later than this after its click is flagged long (click spamming); the default is 86400, one day."},
+	{"install_cap_per_minute", "install-cap-per-minute", 1, 60000, "Installs the app may report a minute; past it the SDK is answered 429 and retries. The default is 300."},
+	{"event_cap_per_minute", "event-cap-per-minute", 100, 60000, "Events one install may post a minute, never below one full batch (100); the default is 200."},
+	{"fast_goal_seconds", "fast-goal-seconds", 0, 3600, "A goal reached sooner than this after its install is flagged; 0 flags none. The default is 5."},
 }
 
 // integrityModes are the Play Integrity modes a registration takes.
@@ -128,6 +149,19 @@ func validateAppRegistrationBody(body map[string]string) error {
 	if v, ok := body["integrity_cloud_project_number"]; ok && !positiveID.MatchString(v) {
 		return validationError("--integrity-cloud-project-number must be the Google Cloud project NUMBER (digits), got %q", v).
 			WithHint("It is on the Cloud project's dashboard (Project number), not the project id.")
+	}
+	for _, r := range appLimitRanges {
+		v, ok := body[r.field]
+		if !ok {
+			continue
+		}
+		if n, err := strconv.Atoi(v); err != nil || n < r.min || n > r.max || strconv.Itoa(n) != v {
+			return validationError("--%s must be a whole number from %d to %d, got %q", r.flag, r.min, r.max, v).WithHint(r.hint)
+		}
+	}
+	if v, ok := body["fast_goal_policy"]; ok && v != "count" && v != "hold" {
+		return validationError("--fast-goal-policy must be one of: count, hold, got %q", v).
+			WithHint("count pays a goal reached too fast and flags it in the report (the default); hold records and flags it and never pays or notifies it.")
 	}
 	if v, ok := body["platform"]; ok && v != "ios" && v != "android" {
 		return validationError("--platform must be one of: ios, android, got %q", v).
@@ -359,7 +393,7 @@ var appUpdateCmd = &cobra.Command{
 			// Same sentence the generated CRUD update commands use, so an
 			// agent scripting against one wording works on both surfaces.
 			return validationError("no fields specified; pass at least one flag to update").
-				WithHint("Pass at least one of --app-name, --notes, --accept-test-signals, --attribution-window-days, --trust-client-revenue, --integrity-mode, --integrity-cloud-project-number.")
+				WithHint("Pass at least one of --app-name, --notes, --accept-test-signals, --attribution-window-days, --trust-client-revenue, --integrity-mode, --integrity-cloud-project-number, --ctit-min-seconds, --ctit-max-seconds, --install-cap-per-minute, --event-cap-per-minute, --fast-goal-seconds, --fast-goal-policy.")
 		}
 		if err := validateAppRegistrationBody(body); err != nil {
 			return err
@@ -694,6 +728,12 @@ func init() {
 		cmd.Flags().String("trust-client-revenue", "", "Android: 1 = revenue the app reports may be paid by a goal valued from it; 0 = stored, never credited (default)")
 		cmd.Flags().String("integrity-mode", "", "Android: Play Integrity off (default), observe (record verdicts) or require (attribute only a passing verdict); needs `app integrity credential set` first and --integrity-cloud-project-number")
 		cmd.Flags().String("integrity-cloud-project-number", "", "Android: the Google Cloud project NUMBER the SDK requests integrity tokens for (required for observe/require; can be replaced, not cleared)")
+		cmd.Flags().String("ctit-min-seconds", "", "Android: flag an install that began sooner than this after its click (0-3600, default 10)")
+		cmd.Flags().String("ctit-max-seconds", "", "Android: flag an install that began later than this after its click (60-31536000, default 86400)")
+		cmd.Flags().String("install-cap-per-minute", "", "Android: installs the app may report a minute; past it 429 (1-60000, default 300)")
+		cmd.Flags().String("event-cap-per-minute", "", "Android: events one install may post a minute; past it 429 (100-60000, default 200)")
+		cmd.Flags().String("fast-goal-seconds", "", "Android: flag a goal reached sooner than this after its install (0-3600, default 5; 0 flags none)")
+		cmd.Flags().String("fast-goal-policy", "", "Android: count (pay a fast goal and flag it, default) or hold (flag it, never pay)")
 	}
 	// Update sends exactly the flags given, an empty one included (clearing
 	// the notes): a deliberate write, not a missing value (collectAppBody).

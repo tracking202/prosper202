@@ -95,6 +95,27 @@ trait AndroidDatabase
     {
         self::$db?->close();
         self::$db = null;
+        putenv('P202_SERVER_STATE_DIR');
+        self::removeAndroidStateDir();
+    }
+
+    /** This test's ServerStateStore directory (setUp()). */
+    private static string $androidStateDir = '';
+
+    private static function removeAndroidStateDir(): void
+    {
+        if (self::$androidStateDir === '' || !is_dir(self::$androidStateDir)) {
+            return;
+        }
+        $items = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator(self::$androidStateDir, \FilesystemIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::CHILD_FIRST
+        );
+        foreach ($items as $item) {
+            $item->isDir() ? rmdir($item->getPathname()) : unlink($item->getPathname());
+        }
+        rmdir(self::$androidStateDir);
+        self::$androidStateDir = '';
     }
 
     protected function setUp(): void
@@ -116,6 +137,12 @@ trait AndroidDatabase
         $this->conn = new Connection(self::$db);
         $this->goals = new MysqlGoalRepository($this->conn);
         $this->sent = [];
+        // The abuse caps' store (ServerStateStore) is a directory of bucket
+        // files: each test gets an empty one, so a count left by another
+        // test, suite or run inside the same minute is never read.
+        self::removeAndroidStateDir();
+        self::$androidStateDir = sys_get_temp_dir() . '/p202-android-it-' . getmypid() . '-' . bin2hex(random_bytes(4));
+        putenv('P202_SERVER_STATE_DIR=' . self::$androidStateDir);
         self::fixture("INSERT INTO 202_app_registrations SET registration_id=5, user_id=1, platform='android', app_key='com.example.summit',
             app_name='Summit', accept_test_signals=0, attribution_window_days=7, trust_client_revenue=0, app_token='" . self::TOKEN . "', created_at=1, updated_at=1");
         self::fixture("INSERT INTO 202_app_registrations SET registration_id=6, user_id=2, platform='android', app_key='com.other.app',

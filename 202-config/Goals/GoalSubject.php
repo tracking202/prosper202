@@ -36,6 +36,12 @@ final class GoalSubject
         public readonly ?int $campaignId = null,
         /** An install subject's app registration: whose goals it evaluates. */
         public readonly ?int $registrationId = null,
+        /**
+         * An install subject's registration's fast-goal policy. Null on an
+         * install subject reads as FastGoalPolicy::unreadable() — the
+         * trusting-least reading — never as "no policy" (GoalEngine::valuation()).
+         */
+        public readonly ?FastGoalPolicy $fastGoals = null,
     ) {
         if ($type !== self::CLICK && $type !== self::INSTALL) {
             throw new \InvalidArgumentException('subject type must be click or install, got "' . $type . '"');
@@ -48,6 +54,6 @@ final class GoalSubject
     /** @param array<int, int> $rebases */
     public function withRebases(array $rebases): self
     {
-        return new self($this->type, $this->id, $this->clickAt, $this->installAt, $rebases, $this->clickId, $this->campaignId, $this->registrationId);
+        return new self($this->type, $this->id, $this->clickAt, $this->installAt, $rebases, $this->clickId, $this->campaignId, $this->registrationId, $this->fastGoals);
     }
 }

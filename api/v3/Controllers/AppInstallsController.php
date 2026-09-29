@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Api\V3\Apps\AppIdentity;
+use Api\V3\Apps\Android\ClickToInstallTime;
 use Api\V3\Apps\Android\Integrity\IntegrityState;
 use Api\V3\Apps\Android\InstallToken;
 use Api\V3\Apps\Android\InstallTokenKey;
@@ -41,7 +42,7 @@ final class AppInstallsController
         . 'utm_content, gclid, referrer_click_at, install_begin_at, referrer_click_server_at, install_begin_server_at, '
         . 'install_version, google_play_instant, app_version, sdk_version, os_version, integrity_mode, integrity_state, integrity_reason, '
         . 'integrity_attempts, integrity_next_at, integrity_checked_at, integrity_verdict, first_open_at, '
-        . 'received_at, settled_at, remote_ip';
+        . 'ctit_seconds, ctit_flag, received_at, settled_at, remote_ip';
 
     private const UNTRUSTED_FIELDS = [
         'referrer_raw', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'gclid',
@@ -53,7 +54,7 @@ final class AppInstallsController
     private const INT_FIELDS = [
         'install_row_id', 'registration_id', 'click_id', 'conversion_id', 'trusted', 'referrer_click_at', 'install_begin_at',
         'referrer_click_server_at', 'install_begin_server_at', 'first_open_at', 'received_at', 'settled_at',
-        'integrity_attempts', 'integrity_next_at', 'integrity_checked_at',
+        'integrity_attempts', 'integrity_next_at', 'integrity_checked_at', 'ctit_seconds',
     ];
 
     public function __construct(private readonly \mysqli $db, private readonly int $userId)
@@ -64,7 +65,7 @@ final class AppInstallsController
     public function list(int $registrationId, array $params): array
     {
         $this->registration($registrationId);
-        $allowed = ['match_state', 'integrity_state', 'trusted', 'test', 'click_id', 'time_from', 'time_to', 'limit', 'offset'];
+        $allowed = ['match_state', 'integrity_state', 'trusted', 'test', 'ctit_flag', 'click_id', 'time_from', 'time_to', 'limit', 'offset'];
         $unknown = array_diff(array_map('strval', array_keys($params)), $allowed);
         if ($unknown !== []) {
             throw new ValidationException('Unknown filter', array_fill_keys(array_values($unknown), 'is not a filter here (allowed: ' . implode(', ', $allowed) . ')'));
@@ -100,6 +101,19 @@ final class AppInstallsController
                 'unvouched' => 'trusted IS NULL',
                 default => throw new ValidationException('Invalid trusted', ['trusted' => 'must be trusted (1), refuted (0) or unvouched']),
             };
+        }
+        if (isset($params['ctit_flag'])) {
+            $flag = (string) $params['ctit_flag'];
+            if (!in_array($flag, ClickToInstallTime::filterValues(), true)) {
+                throw new ValidationException('Invalid ctit_flag', ['ctit_flag' => 'must be one of ' . implode(', ', ClickToInstallTime::filterValues())]);
+            }
+            if ($flag === ClickToInstallTime::UNMEASURED) {
+                $where[] = 'ctit_flag IS NULL';
+            } else {
+                $where[] = 'ctit_flag = ?';
+                $types .= 's';
+                $binds[] = $flag;
+            }
         }
         if (isset($params['test'])) {
             $test = (string) $params['test'];

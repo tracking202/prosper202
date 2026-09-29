@@ -47,7 +47,10 @@ use Prosper202\Database\Schema\TableRegistry;
  *   app an install subject belongs to, so the app report can group outcomes
  *   without joining through the installs. Retired rows keep
  *   superseded_at, and every read goes through
- *   MysqlGoalRepository::liveOutcomes().
+ *   MysqlGoalRepository::liveOutcomes(). `too_fast` marks an install
+ *   subject's outcome reached sooner after the install than its
+ *   registration's `fast_goal_seconds` (plan §7.1, FastGoalPolicy), decided
+ *   when the row is written.
  *
  * Event ids and event names are compared byte for byte (utf8mb4_bin):
  * `Purchase` and `purchase` are two events, and a case-folding collation
@@ -215,6 +218,7 @@ final class GoalTables
                 `value_note` varchar(32) DEFAULT NULL,
                 `ineligible_reason` varchar(16) DEFAULT NULL,
                 `payable` tinyint(1) unsigned NOT NULL DEFAULT '0',
+                `too_fast` tinyint(1) unsigned NOT NULL DEFAULT '0',
                 `campaign_id` mediumint(8) unsigned DEFAULT NULL,
                 `app_registration_id` int(10) unsigned DEFAULT NULL,
                 `conversion_id` int(11) unsigned DEFAULT NULL,

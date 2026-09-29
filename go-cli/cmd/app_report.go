@@ -18,7 +18,7 @@ import (
 
 var appReportSharedGroupings = []string{"day", "registration", "platform"}
 var appReportIOSGroupings = []string{"ad-network", "source", "country", "version", "protocol", "conversion-type"}
-var appReportAndroidGroupings = []string{"campaign", "match-state", "integrity-state", "goal"}
+var appReportAndroidGroupings = []string{"campaign", "match-state", "integrity-state", "ctit-flag", "goal"}
 
 // appReportAndroidFlagDefs are the install filters the report takes beside
 // the postback filters (appFilterFlagDefs, which are iOS's).
@@ -32,6 +32,8 @@ var appReportAndroidFlagDefs = []struct {
 	{"trusted", "trusted", "Android: only this trust class (trusted, refuted, unvouched); goals are then counted over it"},
 	{"test", "test", "Android: 1 = only test installs, 0 = only real ones"},
 	{"aff-campaign-id", "aff_campaign_id", "Android: only installs on this campaign's clicks (`p202 campaign list`)"},
+	{"ctit-flag", "ctit_flag", "Android: only installs whose click-to-install time is short, ok, long or unmeasured"},
+	{"fast-goals", "fast_goals", "Android: 1 = only installs with a goal reached implausibly fast, 0 = only installs without one"},
 }
 
 // appReportSharedFilters are postback filter flags that both platforms read.
@@ -44,7 +46,8 @@ var appReportCmd = &cobra.Command{
 		"Android installs with --platform android, and both with --platform all. Any platform groups by\n" +
 		"day (UTC), registration or platform; iOS also by ad-network, source, country, version, protocol\n" +
 		"or conversion-type (Apple's postbacks, decoded through `p202 app encoding`), Android also by\n" +
-		"campaign, match-state, integrity-state or goal (the funnel: installs that reached each goal).\n\n" +
+		"campaign, match-state, integrity-state, ctit-flag (click-to-install time: short, ok, long,\n" +
+		"unmeasured) or goal (the funnel: installs that reached each goal).\n\n" +
 		"Every row carries platform, installs, the trust-class counts, goals_reached, revenue and\n" +
 		"events. Headline figures count trusted signals only: signature-verified postbacks, attributed\n" +
 		"installs. --signature (iOS) or --trusted (Android) recompute them over one class.\n" +
@@ -73,7 +76,7 @@ var appReportCmd = &cobra.Command{
 
 func registerAppReportFlags(cmd *cobra.Command) {
 	cmd.Flags().String("platform", "", "ios (the default), android, or all for both")
-	cmd.Flags().String("group-by", "day", "Group by: day, registration, platform; with --platform ios also ad-network, source, country, version, protocol, conversion-type; with --platform android also campaign, match-state, integrity-state, goal")
+	cmd.Flags().String("group-by", "day", "Group by: day, registration, platform; with --platform ios also ad-network, source, country, version, protocol, conversion-type; with --platform android also campaign, match-state, integrity-state, ctit-flag, goal")
 	cmd.Flags().StringP("limit", "l", "", "Max groups per platform (default 100)")
 	registerAppFilterFlags(cmd)
 	for _, def := range appReportAndroidFlagDefs {
@@ -144,6 +147,13 @@ func collectAppReportParams(cmd *cobra.Command) (map[string]string, error) {
 	}
 	if v, ok := params["test"]; ok && v != "0" && v != "1" {
 		return nil, validationError("--test must be 0 or 1, got %q", v)
+	}
+	if v, ok := params["ctit_flag"]; ok && v != "short" && v != "ok" && v != "long" && v != "unmeasured" {
+		return nil, validationError("--ctit-flag must be one of: short, ok, long, unmeasured; got %q", v).
+			WithHint("short and long are below the app's --ctit-min-seconds and above its --ctit-max-seconds (`p202 app get <id>`); unmeasured installs had no click of yours to measure from.")
+	}
+	if v, ok := params["fast_goals"]; ok && v != "0" && v != "1" {
+		return nil, validationError("--fast-goals must be 0 or 1, got %q", v)
 	}
 	if v, ok := params["aff_campaign_id"]; ok && !positiveID.MatchString(v) {
 		return nil, validationError("--aff-campaign-id must be a positive whole number, got %q", v).
