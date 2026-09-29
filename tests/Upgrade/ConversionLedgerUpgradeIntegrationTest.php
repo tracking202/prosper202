@@ -82,6 +82,12 @@ final class ConversionLedgerUpgradeIntegrationTest extends TestCase
             KEY campaign_id (campaign_id),
             KEY customer_id (customer_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        // Every upgraded install has its clicks; the rung marks the newest one
+        // for the attribution backfill (ConversionBackfill::MARK_SQL).
+        $db->query('DROP TABLE IF EXISTS 202_clicks');
+        $db->query('DROP TABLE IF EXISTS 202_attribution_backfill');
+        $db->query('CREATE TABLE 202_clicks (click_id bigint(20) unsigned NOT NULL, PRIMARY KEY (click_id)) ENGINE=InnoDB');
+        $db->query('INSERT INTO 202_clicks (click_id) VALUES (1), (2), (3), (4), (5), (6)');
         $db->query("CREATE TABLE 202_aff_campaigns (
             aff_campaign_id mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
             user_id mediumint(8) unsigned NOT NULL,
@@ -242,6 +248,11 @@ final class ConversionLedgerUpgradeIntegrationTest extends TestCase
             \Prosper202\Database\Tables\IdentityTables::getDefinitions(),
             \Prosper202\Database\Tables\GoalTables::getDefinitions()
         )));
+        $this->assertSame(
+            ['next_click_id' => '0', 'through_click_id' => '6', 'walking' => '1'],
+            $db->query('SELECT next_click_id, through_click_id, finished_at IS NULL AS walking FROM 202_attribution_backfill')->fetch_assoc(),
+            'the rung marks every click it found for the attribution backfill and walks none of them'
+        );
         $reconciler = new SchemaReconciler(static fn (string $sql) => _upgrade_query($sql));
         foreach (\Prosper202\Database\Tables\IdentityTables::getDefinitions() as $def) {
             $this->assertNotNull($db->query("SHOW TABLES LIKE '" . $def->tableName . "'")->fetch_row(), $def->tableName);
