@@ -219,7 +219,33 @@ if (!function_exists('_upgrade_conversion_ledger')) {
             $columns[$column] = 'YES';
         }
 
-        if (_upgrade_query(_upgrade_conversion_ledger_backfill_sql()) === false) {
+        // Backfill in primary-key ranges. One statement over the whole table
+        // holds a row lock on every row it has passed until it commits, so a
+        // write to an old conversion (a delete, a payout change) waited for
+        // the whole scan: 47.5 s at 1M rows on MySQL 8, against a 50 s
+        // innodb_lock_wait_timeout. A range of 50,000 commits in about a
+        // second. Each range touches only rows with no key yet, so a re-run
+        // resumes; the final pass takes rows written past the range read.
+        $bounds = _upgrade_query('SELECT MIN(`conv_id`) AS lo, MAX(`conv_id`) AS hi FROM `202_conversion_logs`');
+        $range = $bounds instanceof \mysqli_result ? $bounds->fetch_assoc() : null;
+        if (!is_array($range)) {
+            error_log('Prosper202 upgrade: could not read the conv_id range of 202_conversion_logs;'
+                . ' the ledger step will retry.');
+            return false;
+        }
+        $bounds->free();
+        $hi = (int) ($range['hi'] ?? 0);
+        $chunk = 50000;
+        for ($from = (int) ($range['lo'] ?? 0); $range['lo'] !== null && $from <= $hi; $from += $chunk) {
+            $to = min($hi, $from + $chunk - 1);
+            $range_sql = _upgrade_conversion_ledger_backfill_sql() . ' AND `conv_id` BETWEEN ' . $from . ' AND ' . $to;
+            if (_upgrade_query($range_sql) === false) {
+                error_log('Prosper202 upgrade: failed to backfill the conversion ledger columns;'
+                    . ' the ledger step will retry.');
+                return false;
+            }
+        }
+        if (_upgrade_query(_upgrade_conversion_ledger_backfill_sql() . ' AND `conv_id` > ' . $hi) === false) {
             error_log('Prosper202 upgrade: failed to backfill the conversion ledger columns; the ledger step will retry.');
             return false;
         }
@@ -316,6 +342,107 @@ if (!function_exists('_upgrade_conversion_ledger')) {
         }
 
         return true;
+    }
+}
+
+if (!function_exists('_upgrade_conversion_idempotency')) {
+    /**
+     * The 1.9.61 step's conversion idempotency: (click_id, transaction_id)
+     * unique, so a retried or replayed postback cannot record a conversion
+     * twice. Returns whether the UNIQUE key is in place; the rung advances
+     * its version only then.
+     *
+     * Byte for byte. The column was utf8mb4_general_ci, under which Tx-1 and
+     * TX-1 on one click are "the same id": the de-duplication below nulled
+     * the transaction id of every case variant but the first, and the key
+     * would have refused them. They are different orders from the network —
+     * measured on a 1.9.55 database of 1M conversions, 8,249 of 12,500
+     * case-variant rows lost their transaction id to this step, and the
+     * ledger step that follows, which makes the column binary anyway
+     * (ConversionTables: an id a network chose compares exactly), came too
+     * late to save them. So the column is made utf8mb4_bin first (the
+     * ledger step then finds it done), and the de-duplication only merges
+     * ids that are the same bytes. Each part is probed or idempotent, so a
+     * re-run resumes, and a failed part stops the step (false) rather than
+     * letting a later part run on a table it assumed was converted.
+     *
+     * Every row is kept: a duplicate loses its transaction id, not its row.
+     */
+    function _upgrade_conversion_idempotency(): bool
+    {
+        $collations = _upgrade_conversion_ledger_probe(
+            'SHOW FULL COLUMNS FROM `202_conversion_logs`',
+            'Field',
+            'Collation'
+        );
+        if ($collations === null || !array_key_exists('transaction_id', $collations)) {
+            error_log('Prosper202 upgrade: could not read 202_conversion_logs.transaction_id;'
+                . ' the 1.9.61 step will retry.');
+            return false;
+        }
+        $exact = 'ALTER TABLE `202_conversion_logs` MODIFY `transaction_id` varchar(255) COLLATE utf8mb4_bin DEFAULT NULL';
+        if ($collations['transaction_id'] !== 'utf8mb4_bin' && _upgrade_query($exact) === false) {
+            error_log('Prosper202 upgrade: failed to make 202_conversion_logs.transaction_id compare exactly;'
+                . ' the 1.9.61 step will retry.');
+            return false;
+        }
+
+        // Empty transaction ids must be stored as NULL, not '', otherwise the
+        // UNIQUE key below would reject a click legitimately converting more
+        // than once when no network order id is supplied (NULLs do not collide).
+        $blank = "UPDATE 202_conversion_logs SET transaction_id = NULL WHERE transaction_id = ''";
+        if (_upgrade_query($blank) === false) {
+            error_log('Prosper202 upgrade: failed to clear blank transaction ids; the 1.9.61 step will retry.');
+            return false;
+        }
+
+        // Neutralise any pre-existing duplicate (click_id, transaction_id)
+        // by nulling the transaction id on all but the earliest of each
+        // group — the same bytes only (the COLLATEs say so even where the
+        // column already does).
+        $dedupe = "UPDATE 202_conversion_logs AS c
+                JOIN (
+                    SELECT MIN(conv_id) AS keep_id, click_id, transaction_id COLLATE utf8mb4_bin AS tx
+                    FROM 202_conversion_logs
+                    WHERE transaction_id IS NOT NULL
+                    GROUP BY click_id, transaction_id COLLATE utf8mb4_bin
+                    HAVING COUNT(*) > 1
+                ) AS d
+                  ON c.click_id = d.click_id
+                 AND c.transaction_id COLLATE utf8mb4_bin = d.tx
+                SET c.transaction_id = NULL
+                WHERE c.conv_id <> d.keep_id";
+        if (_upgrade_query($dedupe) === false) {
+            error_log('Prosper202 upgrade: failed to clear duplicate transaction ids; the 1.9.61 step will retry.');
+            return false;
+        }
+
+        // Add the UNIQUE backstop only if it is not already present.
+        $result = _upgrade_query("SHOW INDEX FROM `202_conversion_logs` WHERE Key_name = 'uniq_click_transaction'");
+        if (!($result instanceof mysqli_result)) {
+            return false;
+        }
+        if ($result->num_rows > 0) {
+            return true;
+        }
+        _upgrade_query(
+            'ALTER TABLE `202_conversion_logs` ADD UNIQUE KEY `uniq_click_transaction` (`click_id`,`transaction_id`)'
+        );
+
+        // Re-check: only treat the key as present if the ALTER actually
+        // succeeded (e.g. it can fail if de-duplication above did not run).
+        $result = _upgrade_query("SHOW INDEX FROM `202_conversion_logs` WHERE Key_name = 'uniq_click_transaction'");
+        $present = $result instanceof mysqli_result && $result->num_rows > 0;
+        if ($present) {
+            // The new composite unique key covers the click_id lookup as a
+            // leftmost prefix, so drop the now-redundant standalone index.
+            $result = _upgrade_query("SHOW INDEX FROM `202_conversion_logs` WHERE Key_name = 'click_id'");
+            if ($result instanceof mysqli_result && $result->num_rows > 0) {
+                _upgrade_query('ALTER TABLE `202_conversion_logs` DROP INDEX `click_id`');
+            }
+        }
+
+        return $present;
     }
 }
 
@@ -496,8 +623,83 @@ class PROSPER202
 
 class UPGRADE
 {
+    /**
+     * Whether the last upgrade_databases() call found another upgrade of this
+     * database already running, and so ran nothing. The pages read it to say
+     * so instead of reporting a failure.
+     */
+    public static bool $lastRunBusy = false;
 
+    /**
+     * The upgrade, one at a time per database, reporting success only when the
+     * stored version reached the code's. Every entry point calls this
+     * (202-config/upgrade.php, the two 1-click pages, and the in-app updater
+     * in functions.php).
+     *
+     * Serialized with a MySQL named lock on this database: the upgrade page
+     * renders only when the ladder returns, so behind a proxy's read timeout
+     * the operator sees a 504 while the request carries on, and a second POST
+     * ran a second ladder alongside the first — racing its ALTERs — and
+     * printed Success! at 1.9.75. A second caller now runs nothing
+     * ($lastRunBusy). The lock belongs to the connection, so it is released if
+     * the process dies.
+     *
+     * "Success" is the ladder reaching the code's version, not the ladder
+     * returning: it returns true when a rung holds its version for the next
+     * run to retry, which read as a finished upgrade.
+     *
+     * The client giving up must not stop the ladder between a rung's DDL and
+     * its version write (every caller used to set this itself, or not at
+     * all), so it is set here.
+     */
     public static function upgrade_databases($time_from)
+    {
+        self::$lastRunBusy = false;
+        ignore_user_abort(true);
+        set_time_limit(0);
+
+        $lockName = "CONCAT('prosper202_upgrade:', SHA1(DATABASE()))";
+        $got = _upgrade_query('SELECT GET_LOCK(' . $lockName . ', 0) AS got');
+        $row = $got instanceof mysqli_result ? $got->fetch_assoc() : null;
+        if (!is_array($row) || $row['got'] === null) {
+            error_log('Prosper202 upgrade: could not take the upgrade lock; nothing was run.');
+
+            return false;
+        }
+        if ((int) $row['got'] !== 1) {
+            self::$lastRunBusy = true;
+            error_log('Prosper202 upgrade: another upgrade of this database is running; nothing was run.');
+
+            return false;
+        }
+
+        try {
+            $laddered = self::ladder($time_from);
+        } finally {
+            _upgrade_query('SELECT RELEASE_LOCK(' . $lockName . ')');
+        }
+        if ($laddered !== true) {
+            return false;
+        }
+        // The version this ladder climbs to is the version of the code that
+        // is running it: PROSPER202::php_version(), loaded with this class.
+        // Not the files on disk — a 1-click upgrade swaps them mid-request,
+        // after this class was loaded, so the ladder that just ran is the old
+        // one, and the next request's upgrade check runs the new one.
+        $stored = (string) PROSPER202::prosper202_version();
+        $code = (string) PROSPER202::php_version();
+        if ($stored !== $code) {
+            error_log('Prosper202 upgrade: the ladder stopped at ' . $stored . ' (the code is ' . $code
+                . '); see the messages above. Run the upgrade again.');
+
+            return false;
+        }
+
+        return true;
+    }
+
+    /** The rungs, in order (the historical body of upgrade_databases()). */
+    private static function ladder($time_from)
     {
         global $dbname;
 
@@ -3474,56 +3676,11 @@ class UPGRADE
         // level so retried/replayed postbacks can never double-count a conversion.
         if ($prosper202_version == '1.9.60') {
 
-            // Empty transaction ids must be stored as NULL, not '', otherwise the
-            // UNIQUE key below would reject a click legitimately converting more
-            // than once when no network order id is supplied (NULLs do not collide).
-            $sql = "UPDATE 202_conversion_logs SET transaction_id = NULL WHERE transaction_id = ''";
-            $result = _upgrade_query($sql);
-
-            // Defensively neutralise any pre-existing duplicate (click_id, transaction_id)
-            // rows by nulling the transaction id on all but the earliest of each group.
-            // This preserves every conversion row (no data loss) while allowing the
-            // UNIQUE index to be created on installs that already contain duplicates.
-            $sql = "UPDATE 202_conversion_logs AS c
-                    JOIN (
-                        SELECT MIN(conv_id) AS keep_id, click_id, transaction_id
-                        FROM 202_conversion_logs
-                        WHERE transaction_id IS NOT NULL
-                        GROUP BY click_id, transaction_id
-                        HAVING COUNT(*) > 1
-                    ) AS d
-                      ON c.click_id = d.click_id
-                     AND c.transaction_id = d.transaction_id
-                    SET c.transaction_id = NULL
-                    WHERE c.conv_id <> d.keep_id";
-            $result = _upgrade_query($sql);
-
-            // Add the UNIQUE backstop only if it is not already present.
-            $sql = "SHOW INDEX FROM `202_conversion_logs` WHERE Key_name = 'uniq_click_transaction'";
-            $result = _upgrade_query($sql);
-            $uniqueKeyPresent = ($result && mysqli_num_rows($result) > 0);
-            if (!$uniqueKeyPresent) {
-                $sql = "ALTER TABLE `202_conversion_logs`
-                        ADD UNIQUE KEY `uniq_click_transaction` (`click_id`,`transaction_id`)";
-                _upgrade_query($sql);
-
-                // Re-check: only treat the key as present if the ALTER actually
-                // succeeded (e.g. it can fail if de-duplication above did not run).
-                $sql = "SHOW INDEX FROM `202_conversion_logs` WHERE Key_name = 'uniq_click_transaction'";
-                $result = _upgrade_query($sql);
-                $uniqueKeyPresent = ($result && mysqli_num_rows($result) > 0);
-
-                if ($uniqueKeyPresent) {
-                    // The new composite unique key covers the click_id lookup as a
-                    // leftmost prefix, so drop the now-redundant standalone index.
-                    $sql = "SHOW INDEX FROM `202_conversion_logs` WHERE Key_name = 'click_id'";
-                    $result = _upgrade_query($sql);
-                    if ($result && mysqli_num_rows($result) > 0) {
-                        $sql = "ALTER TABLE `202_conversion_logs` DROP INDEX `click_id`";
-                        _upgrade_query($sql);
-                    }
-                }
-            }
+            // Conversion idempotency at the database: exact transaction ids,
+            // no blank ones, no exact duplicates, and the UNIQUE backstop
+            // (_upgrade_conversion_idempotency() says how, and why the
+            // comparison is byte for byte).
+            $uniqueKeyPresent = _upgrade_conversion_idempotency();
 
             // Add a composite index for the "last click for this ip/user within N
             // days" lookback the off/postback redirects run on every conversion.

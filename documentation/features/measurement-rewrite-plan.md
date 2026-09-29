@@ -3578,14 +3578,52 @@ breaks conversion recording. **Take a database backup before upgrading;
 restoring it is the only way back.** The upgrade page and `RELEASING.md`
 have to say so before release (open, §8.1).
 
-The data migration has run only on an empty 1.9.55 database
-(`upgrade-equals-install.sh`) and on seeded test databases, never on a
-populated `202_conversion_logs` at volume. The rung's full-table
-`UPDATE … WHERE dedupe_key IS NULL`, its two collation `MODIFY`s and three
-index `ALTER`s, and the 1.9.61 duplicate-nulling `UPDATE`, all lock the
-table for a time proportional to its size, and the upgrade runs inside an
-HTTP request from `upgrade.php`. How long they take at 1M+ rows, and whether
-the request survives it, is unmeasured (open, §8.1).
+**Measured at 1M conversions.** The database was in the 1.9.55 shape
+(duplicates, case variants, blank and NULL ids; 128 MB buffer pool) and
+was upgraded through `upgrade.php` over HTTP:
+- 57 s on MariaDB 10.11 and 91 s on MySQL 8.0.
+- About 96% of that time is `202_conversion_logs`: the ledger backfill
+  (19 s / 25 s), the 1.9.61 duplicate-nulling JOIN (14 s / 13 s), and on
+  MySQL 8 the two collation `MODIFY`s, which copy the table (18 s each)
+  and block conversion inserts while they run.
+- The page renders only at the end, so a 60 s proxy read timeout answers
+  504. The upgrade carries on: `UPGRADE::upgrade_databases()` sets
+  `ignore_user_abort` and no time limit. A process killed mid-backfill
+  re-enters cleanly.
+- Correctness held: every row's `dedupe_key`, `source` and
+  `transaction_id` matched an independent computation, once the 1.9.61
+  fix below was in.
+
+The same measurement found three defects, each fixed in place (the version
+stays 1.9.76):
+- **The 1.9.61 step lost ids.** It de-duplicated `(click_id,
+  transaction_id)` under the column's `utf8mb4_general_ci`, so the case
+  variants of an id on one click (Tx-1, TX-1) counted as one, and every
+  variant but the first lost its transaction id: 8,249 of 12,500
+  case-variant rows at 1M. The step now makes `transaction_id` `utf8mb4_bin`
+  first (the ledger step then finds that done, so the cost is moved, not
+  added) and merges only byte-identical ids
+  (`_upgrade_conversion_idempotency()`).
+- **Old conversions were locked for the whole backfill.** One `UPDATE`
+  over the whole table held a row lock on every row it had passed, so a
+  write to an old conversion waited up to 47.5 s on MySQL 8, against a
+  50 s lock wait timeout. It now runs in 50,000-id ranges, each committing
+  in about a second, plus a final pass for rows written past the range it
+  read.
+- **A second upgrade ran alongside the first.** A second session's POST
+  (an operator reloading after the 504) ran a second ladder concurrently
+  and printed Success! at 1.9.75. The ladder now runs under a named lock
+  per database: a second caller runs nothing, and the page says an
+  upgrade is already running. Success now means the stored version
+  reached the code's. It used to mean the ladder returned, which it also
+  does when a rung holds its version to retry.
+
+`tests/live/upgrade-csrf.sh` covers both: a POST while the lock is held,
+and a ladder that stops short.
+
+The measurement agent also tried one combined `ALTER` for the ledger DDL,
+so MySQL 8 copies the table once instead of twice. It was not adopted: it
+failed once in five runs, cause unknown.
 - The iOS SDK keeps its platform floor (iOS 14+, full support 15.4+) and its
   behaviour, gaining the header rename, `setCustomerId()` and the on-device
   goal evaluator. Android needs API 21+ and Play Store app 8.3.73+.
@@ -4102,13 +4140,21 @@ Open for the release decision:
 3. **`CLAUDE.md`'s "Two page shells" note is stale** since U8 removed the
    classic shell; it still describes `['ui' => 'v2']` and the Bootstrap 3
    stack.
-4. **The upgrade is one-way and its data migration is unmeasured at
-   volume** (§7.5a). Before release: the upgrade page and `RELEASING.md`
-   must require a backup and say restoring it is the only way back, and the
-   conversion-ledger and 1.9.61 rungs should be timed on a seeded 1.9.55
-   database of realistic size (duplicate transaction ids, case variants,
-   blank ids, subid uploads, 1M+ rows) to know whether the HTTP upgrade
-   survives them.
+4. **The upgrade is one-way** (§7.5a). Its data migration is now measured
+   at 1M conversions: 57 s on MariaDB and 91 s on MySQL 8 through
+   `upgrade.php`, and it survives a proxy's 504 because it carries on
+   server-side. That measurement led to three fixes, all in place:
+   - the 1.9.61 step nulled case-variant ids (it now compares byte for
+     byte);
+   - the ledger backfill locked old conversions for the whole scan (it now
+     runs in 50k ranges);
+   - a second session ran a second ladder (it now takes a lock, and
+     Success! means the version reached the code's).
+
+   `RELEASING.md` and the upgrade page now tell large installs about the
+   timeout and that a 504 needs nothing redone. **Still open:** the upgrade
+   page and `RELEASING.md` must require a backup and say that restoring it
+   is the only way back.
 5. **Security mitigations the plan listed that were never built** (§7.1): a
    click-to-install-time distribution with its tails flagged, a
    per-registration install cap, a per-install event rate cap, and a report

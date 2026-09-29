@@ -190,6 +190,15 @@ eq "$(mysql_q -N "$DB_UP" -e 'SELECT version FROM 202_version')" "$ORIGIN_VERSIO
 eq "$(mysql_q -N "$DB_UP" -e 'SELECT COUNT(*) FROM 202_users')" 1 "the installer created its account"
 ORIGIN_TABLES=$(mysql_q -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$DB_UP'")
 ok "$ORIGIN_VERSION created $ORIGIN_TABLES tables"
+# Conversions the upgrade must carry over exactly: three case variants of one
+# network id on a click (three orders), an exact duplicate, and a blank id.
+# The 1.9.61 step used to compare ids case-insensitively and clear all but
+# the first variant's. Checked after the upgrade, then removed so the row
+# comparison below compares the two installs' own seeds.
+mysql_q "$DB_UP" -e "INSERT INTO 202_conversion_logs (click_id, transaction_id, campaign_id, click_payout, user_id, click_time, conv_time, time_difference, ip, pixel_type, user_agent, deleted) VALUES
+    (99001, 'Tx-1', 1, 5, 1, 1, 2, '', '', 2, '', 0), (99001, 'TX-1', 1, 5, 1, 1, 2, '', '', 2, '', 0), (99001, 'tx-1', 1, 5, 1, 1, 2, '', '', 2, '', 0),
+    (99001, 'DUP', 1, 5, 1, 1, 2, '', '', 2, '', 0), (99001, 'DUP', 1, 5, 1, 1, 2, '', '', 2, '', 0), (99001, '', 1, 5, 1, 1, 2, '', '', 2, '', 0)" \
+    || die "could not seed $DB_UP's conversions"
 stop_servers
 
 # ---------------------------------------------------------------------------
@@ -259,6 +268,10 @@ else
     bad "the upgrade logged $UPGRADE_ERRORS error/warning line(s):"
     grep -E 'Prosper202 upgrade|PHP (Fatal|Warning|Parse)' "$WORK/upgrade-server.log" | head -20 | sed 's/^/      /'
 fi
+eq "$(mysql_q -N "$DB_UP" -e "SELECT GROUP_CONCAT(CONCAT_WS('=', COALESCE(transaction_id, '-'), dedupe_key) ORDER BY conv_id SEPARATOR ' ') FROM 202_conversion_logs WHERE click_id = 99001")" \
+    "Tx-1=tx:Tx-1 TX-1=tx:TX-1 tx-1=tx:tx-1 DUP=tx:DUP -=row:5 -=row:6" \
+    "each case variant of an id keeps it and its own ledger key; the exact duplicate and the blank id are cleared, every row kept"
+mysql_q "$DB_UP" -e "DELETE FROM 202_conversion_logs WHERE click_id = 99001" || die "could not remove the seeded conversions"
 stop_servers
 
 # ---------------------------------------------------------------------------

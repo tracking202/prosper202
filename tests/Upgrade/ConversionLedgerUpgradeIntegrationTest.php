@@ -44,6 +44,14 @@ final class ConversionLedgerUpgradeIntegrationTest extends TestCase
         return $db->connect_errno ? null : $db;
     }
 
+    /** The last lines the upgrade logged, for a failure message. */
+    private static function lastLogged(): string
+    {
+        $log = @file(sys_get_temp_dir() . '/p202-ledger-upgrade-it.log', FILE_IGNORE_NEW_LINES) ?: [];
+
+        return 'logged: ' . implode(' | ', array_slice($log, -3));
+    }
+
     private function preLedgerDatabase(): \mysqli
     {
         $db = self::connect();
@@ -155,6 +163,80 @@ final class ConversionLedgerUpgradeIntegrationTest extends TestCase
         $this->assertTrue($db->query("INSERT INTO 202_conversion_logs (click_id, campaign_id, user_id, click_time, conv_time, time_difference, ip,
             pixel_type, user_agent, transaction_id, click_payout, deleted, source, dedupe_key, reverses_conv_id)
             VALUES (1, 7, 1, 1, 2, '', '', 2, '', 'TX-1', -5, 0, 'postback', 'rev:1:1', 1)"));
+    }
+
+    /**
+     * The 1.9.61 step on the table 1.9.55 left: transaction_id under
+     * utf8mb4_general_ci and no UNIQUE key yet. Case variants of one id on a
+     * click (Tx-1, TX-1, tx-1) are different orders and keep their ids — the
+     * step used to compare them case-insensitively and null all but the
+     * first (8,249 of 12,500 such rows at 1M conversions); exact duplicates
+     * still lose all but the first id; a blank id becomes NULL; no row is
+     * dropped. The ledger step that follows then keys each variant on its
+     * own. The table spans several 50,000-id backfill ranges.
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testThe1961StepKeepsCaseVariantsAndTheLedgerKeysThemApart(): void
+    {
+        $db = $this->preLedgerDatabase();
+        $db->query('DROP TABLE 202_conversion_logs');
+        $db->query("CREATE TABLE 202_conversion_logs (
+            conv_id int(11) unsigned NOT NULL AUTO_INCREMENT,
+            click_id bigint(20) unsigned NOT NULL,
+            campaign_id mediumint(8) unsigned NOT NULL,
+            user_id mediumint(8) unsigned NOT NULL,
+            click_time int(10) NOT NULL,
+            conv_time int(10) NOT NULL,
+            time_difference text NOT NULL,
+            ip varchar(45) NOT NULL DEFAULT '',
+            pixel_type int(11) unsigned NOT NULL,
+            user_agent text NOT NULL,
+            transaction_id varchar(255) DEFAULT NULL,
+            click_payout decimal(11,5) NOT NULL,
+            deleted tinyint(4) NOT NULL DEFAULT '0',
+            customer_id bigint(20) unsigned DEFAULT NULL,
+            PRIMARY KEY (conv_id),
+            KEY click_id (click_id),
+            KEY user_id (user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        $rows = [
+            1 => [1, 'Tx-1'], 2 => [1, 'TX-1'], 3 => [1, 'tx-1'],       // three orders
+            60_000 => [1, 'DUP'], 60_001 => [1, 'DUP'],                  // one order, twice
+            120_000 => [2, ''], 120_001 => [2, 'Ab'], 180_000 => [3, 'ab'],
+        ];
+        foreach ($rows as $id => [$click, $tx]) {
+            $this->assertTrue($db->query("INSERT INTO 202_conversion_logs (conv_id, click_id, campaign_id, user_id, click_time, conv_time,
+                time_difference, ip, pixel_type, user_agent, transaction_id, click_payout, deleted)
+                VALUES ($id, $click, 7, 1, 1, 2, '', '', 2, '', '" . $db->real_escape_string($tx) . "', 5, 0)"));
+        }
+
+        $this->assertTrue(_upgrade_conversion_idempotency(), 'the UNIQUE backstop is in place; ' . self::lastLogged());
+        $ids = static fn (): array => array_column(
+            $db->query('SELECT conv_id, transaction_id FROM 202_conversion_logs ORDER BY conv_id')->fetch_all(MYSQLI_ASSOC),
+            'transaction_id',
+            'conv_id'
+        );
+        $this->assertSame(
+            [1 => 'Tx-1', 2 => 'TX-1', 3 => 'tx-1', 60000 => 'DUP', 60001 => null, 120000 => null, 120001 => 'Ab', 180000 => 'ab'],
+            $ids(),
+            'case variants keep their ids; the second exact duplicate and the blank id are cleared; every row stays'
+        );
+        $collation = $db->query("SHOW FULL COLUMNS FROM 202_conversion_logs WHERE Field = 'transaction_id'")->fetch_assoc();
+        $this->assertSame('utf8mb4_bin', $collation['Collation']);
+        $indexes = array_unique(array_column($db->query('SHOW INDEX FROM 202_conversion_logs')->fetch_all(MYSQLI_ASSOC), 'Key_name'));
+        $this->assertContains('uniq_click_transaction', $indexes);
+        $this->assertNotContains('click_id', $indexes, 'the unique key serves the click lookup');
+        $this->assertTrue(_upgrade_conversion_idempotency(), 'a re-run succeeds');
+        $this->assertSame(8, count($ids()), 'and changes nothing');
+
+        $this->assertTrue(_upgrade_conversion_ledger(), 'the ledger step follows; ' . self::lastLogged());
+        $this->assertSame(
+            ['tx:Tx-1', 'tx:TX-1', 'tx:tx-1', 'tx:DUP', 'row:60001', 'row:120000', 'tx:Ab', 'tx:ab'],
+            array_column($db->query('SELECT dedupe_key FROM 202_conversion_logs ORDER BY conv_id')->fetch_all(MYSQLI_ASSOC), 'dedupe_key'),
+            'each order its own key, across every backfill range'
+        );
     }
 
     /**
