@@ -4099,9 +4099,10 @@ Open for the release decision:
    per million conversions, during which reports compute in full).
 2. ~~**A cron against a database that needs an upgrade exits 0 silently.**~~
    **Closed by PR 13 (§8.2):** every job exits 1 with the reason.
-3. **`CLAUDE.md`'s "Two page shells" note is stale** since U8 removed the
+3. ~~**`CLAUDE.md`'s "Two page shells" note is stale** since U8 removed the
    classic shell; it still describes `['ui' => 'v2']` and the Bootstrap 3
-   stack.
+   stack.~~ **Closed:** the note now describes the one shell, `info_top()`
+   for standalone pages, and the unknown-option throw.
 4. **The upgrade is one-way and its data migration is unmeasured at
    volume** (§7.5a). Before release: the upgrade page and `RELEASING.md`
    must require a backup and say restoring it is the only way back, and the
