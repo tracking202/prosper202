@@ -29,7 +29,8 @@
 #   - deleting the registration settles an install still waiting for its
 #     verdict (integrity_unverified / error, never paid, never decoded).
 #
-# The worker is 202-cronjobs/app-installs.php from this checkout, run with
+# The worker is 202-cronjobs/app-installs.php from this checkout (or, with
+# P202_CRON_VIA=index, the minutely 202-cronjobs/index.php), run with
 # P202_PLAY_INTEGRITY_ENDPOINT=https://127.0.0.1:<port> and the fake's CA;
 # so the checkout's 202-config.php must name the instance's database. No
 # request reaches Google. Truncates the app, goal and outbox tables, so it
@@ -148,9 +149,24 @@ fake_requests() { # python expression over the recorded requests list r
     curl -s --noproxy '*' --cacert "$TLS/cert.pem" "https://127.0.0.1:$FAKE_PORT/control/requests" > "$OUT/requests.json"
     python3 -c "import json,sys; r=json.load(open(sys.argv[1]))['requests']; print($1)" "$OUT/requests.json"
 }
+# P202_CRON_VIA=index drives every settle through the minutely
+# 202-cronjobs/index.php — the one job a default deployment schedules —
+# instead of app-installs.php. It runs on the command line so the fake
+# Google's endpoint and CA reach it; the minute tier's once-a-minute row is
+# cleared first so each call is a fresh minute.
+CRON_VIA=${P202_CRON_VIA:-app-installs}
+case "$CRON_VIA" in app-installs|index) ;; *) echo "P202_CRON_VIA must be app-installs or index" >&2; exit 2;; esac
 cron() {
+    local job=202-cronjobs/app-installs.php
+    if [ "$CRON_VIA" = index ]; then
+        job=202-cronjobs/index.php
+        Q "DELETE FROM 202_cronjobs WHERE cronjob_type='second'"
+    fi
     (cd "$ROOT" && P202_PLAY_INTEGRITY_ENDPOINT="https://127.0.0.1:$FAKE_PORT" P202_PLAY_INTEGRITY_CA_FILE="$TLS/cert.pem" \
-        "$PHP" 202-cronjobs/app-installs.php) > "$OUT/cron.txt" 2>&1
+        "$PHP" "$job") > "$OUT/cron.txt" 2>&1
+    if [ "$CRON_VIA" = index ] && ! grep -qF 'play integrity:' "$OUT/cron.txt"; then
+        bad "202-cronjobs/index.php ran the Android intake (no play integrity line in its output)"
+    fi
 }
 row() { Q "SELECT CONCAT_WS('/', match_state, COALESCE(trusted, 'null'), integrity_state) FROM 202_app_installs WHERE install_uuid='$1'"; }
 paid() { Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id=$1 AND dedupe_key='install'"; }

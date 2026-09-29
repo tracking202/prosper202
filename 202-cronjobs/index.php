@@ -231,6 +231,13 @@ function RunHourlyCronJob()
             // (202-cronjobs/lpo_dimensions.php) remains the backstop.
             PushDirtyLpoDimensions();
 
+            // App measurement retention (202-cronjobs/app-retention.php is
+            // the same prune with a report and options). No default
+            // scheduler runs that file, and the receiver's opportunistic
+            // pass covers only Apple postbacks and only while they arrive,
+            // so without this nothing aged out Android install rows at all.
+            PruneAppRetention();
+
             // Log the execution
             $log_sql = "REPLACE INTO 202_cronjob_logs (id, last_execution_time) VALUES (1, " . $now . ")";
             $log_result = $db->query($log_sql);
@@ -245,6 +252,42 @@ function RunHourlyCronJob()
     } catch (Exception $e) {
         error_log("RunHourlyCronJob Exception: " . $e->getMessage());
         return false;
+    }
+}
+
+/**
+ * Hourly app-measurement retention: the passes 202-cronjobs/app-retention.php
+ * would run, bounded so one hourly tier cannot hold the cron for long (40
+ * passes clear 20k rows per class; a larger backlog drains over the next
+ * hours and is logged). The windows are read from this process's
+ * environment, the same one the receiver's opportunistic pass reads. A
+ * database failure is logged and leaves the rest of the tier running; the
+ * rows it did not reach are pruned next hour.
+ */
+function PruneAppRetention(): void
+{
+    $maxPasses = 40;
+    try {
+        $retention = \Api\V3\Apps\AppRetention::forRegisteredSources(getDatabaseConnection());
+        if ($retention->missingTable() !== null) {
+            return; // a schema that predates the app tables has nothing to prune
+        }
+        $now = time();
+        $before = $retention->backlog($now);
+        $needed = (int) ceil(($before === [] ? 0 : max($before)) / \Api\V3\Apps\AppRetention::PRUNE_BATCH_LIMIT);
+        $passes = min($needed, $maxPasses);
+        for ($i = 0; $i < $passes; $i++) {
+            $retention->prune($now);
+        }
+        if ($passes > 0) {
+            echo 'App retention: ' . $passes . ' pass(es)<br>';
+        }
+        if ($needed > $maxPasses) {
+            error_log('App retention: backlog needed ' . $needed . ' passes, ran ' . $maxPasses
+                . '; the rest drains next hour');
+        }
+    } catch (\Throwable $e) {
+        error_log('App retention failed: ' . $e->getMessage());
     }
 }
 
@@ -458,6 +501,34 @@ function RunSecondsCronjob()
                 }
             } catch (\Throwable $e) {
                 error_log('Attribution export runner failed: ' . $e->getMessage());
+            }
+
+            // Android intake (plan §5.2, §5.3, §5.6): decode Play Integrity
+            // verdicts and settle pending_click installs. Every default
+            // scheduler runs only this file, so without this call an
+            // integrity_mode=require install stayed pending_integrity for
+            // good and a pending_click install never settled.
+            // 202-cronjobs/app-installs.php is the same run on its own; the
+            // job's named lock keeps the two from overlapping. It runs
+            // before the notification send below so an install it settles
+            // has its postback sent in the same run. A row's failure stays
+            // due for the next run and is logged by the pass that met it.
+            try {
+                if (\Api\V3\Apps\Android\AndroidIntakeJob::installed($db)) {
+                    $intake = \Api\V3\Apps\Android\AndroidIntakeJob::runExclusive($db);
+                    if ($intake === null) {
+                        echo 'Android intake: another run holds the lock; skipped<br>';
+                    } else {
+                        $intakeSummary = \Api\V3\Apps\Android\AndroidIntakeJob::summary($intake);
+                        echo nl2br(htmlspecialchars($intakeSummary, ENT_QUOTES)) . '<br>';
+                        $failedInstalls = $intake['integrity']['failed'] + $intake['settle']['failed'];
+                        if ($failedInstalls > 0) {
+                            error_log('Android intake: ' . $failedInstalls . ' install(s) failed; ' . $intakeSummary);
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {
+                error_log('Android intake failed: ' . $e->getMessage());
             }
 
             // Traffic-source postbacks for goal outcomes, web and app alike

@@ -13,7 +13,7 @@ use Throwable;
  * Settles installs left `pending_click` (plan §5.3): the token verified, but
  * the click it names had not been written yet — the redirect writes its
  * click row after sending the visitor on, and a store round trip can beat
- * it. Run by 202-cronjobs/app-installs.php.
+ * it. Run by AndroidIntakeJob, from 202-cronjobs/index.php and app-installs.php.
  *
  * Each install settles in its own transaction, the same shape as the
  * intake's (plan §5.2): the install row is locked FOR UPDATE first, so a
