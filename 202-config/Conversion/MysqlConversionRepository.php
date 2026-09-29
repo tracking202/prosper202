@@ -772,6 +772,13 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                 throw new LedgerIntegrityException('conversion ' . $convId . ' was not undeleted');
             }
             $this->reinstateRevenueEvent($convId, $conv['customer_id'] !== null ? (int) $conv['customer_id'] : 0, $userId, $clickId);
+            // Its live reversals net again, so the events its retirement
+            // voided with it (softDeleteLocked()) are posted again too. A
+            // reversal whose event was never voided — none on file, or no
+            // customer — posts nothing (reinstateRevenueEvent() checks).
+            foreach ($this->liveReversalsOf($convId, $userId) as $reversal) {
+                $this->reinstateRevenueEvent($reversal['conv_id'], $reversal['customer_id'], $userId, $clickId);
+            }
         } elseif ($engineMark) {
             $stmt = $this->conn->prepareWrite(
                 "UPDATE 202_conversion_logs SET superseded_by = NULL, superseded_reason = NULL
@@ -917,7 +924,44 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
 
         $this->voidRevenueEvent($id, $conv['customer_id'] !== null ? (int) $conv['customer_id'] : 0, $userId);
 
+        // A reversal nets only while the sale it reverses counts
+        // (ClickValueCalculator rule 4), so with the sale gone the ledger
+        // stops counting its live reversal too — the reversal row stays,
+        // NOT_NETTED. LTV follows: the reversal's event is voided with the
+        // sale's, or the customer is left holding a refund of a sale that no
+        // longer exists (a $10 sale and its -$10 reversal ended at -$10).
+        // Deleting the reversal later voids nothing twice: its void key is
+        // the same. A revival of the sale posts it again
+        // (reviveGoalRowInTransaction()).
+        foreach ($this->liveReversalsOf($id, $userId) as $reversal) {
+            $this->voidRevenueEvent($reversal['conv_id'], $reversal['customer_id'], $userId);
+        }
+
         return $clickId;
+    }
+
+    /**
+     * The live (not deleted) reversals naming a conversion: what a delete of
+     * it also stops counting. The caller holds the click's lock on a write
+     * path; the delete preview reads it unlocked.
+     *
+     * @return list<array{conv_id: int, customer_id: int}>
+     */
+    public function liveReversalsOf(int $convId, int $userId): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT conv_id, customer_id FROM 202_conversion_logs
+             WHERE reverses_conv_id = ? AND user_id = ? AND deleted = 0 ORDER BY conv_id'
+        );
+        $this->conn->bind($stmt, 'ii', [$convId, $userId]);
+
+        return array_map(
+            static fn (array $r): array => [
+                'conv_id' => (int) $r['conv_id'],
+                'customer_id' => $r['customer_id'] !== null ? (int) $r['customer_id'] : 0,
+            ],
+            $this->conn->fetchAll($stmt)
+        );
     }
 
     /**

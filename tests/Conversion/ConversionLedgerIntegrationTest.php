@@ -6,6 +6,7 @@ namespace Tests\Conversion;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Conversion\Ledger\ReversalException;
+use Prosper202\Conversion\Ledger\SupersededReason;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Conversion\RevenueUploadImporter;
 use Prosper202\Database\Connection;
@@ -507,6 +508,167 @@ final class ConversionLedgerIntegrationTest extends TestCase
             array_column($pending, 'conv_id'),
             'deleting S-2 queues it, the sale that counts again, and the reversal that nets again'
         );
+    }
+
+    private static function truncateLtv(): void
+    {
+        foreach (['202_customers', '202_customer_aliases', '202_revenue_events', '202_revenue_line_items'] as $t) {
+            self::$db->query('TRUNCATE TABLE ' . $t);
+        }
+    }
+
+    /**
+     * A customer's LTV as the cache holds it and as the revenue ledger sums
+     * it (what ltv_maintenance.php reconciles the cache to), both asserted.
+     */
+    private function assertLtv(string $ref, string $expected, string $message = ''): void
+    {
+        $c = self::$db->query(
+            'SELECT customer_id, total_revenue FROM 202_customers WHERE primary_ref='
+            . "'" . self::$db->real_escape_string($ref) . "'"
+        )->fetch_assoc();
+        self::assertNotNull($c, "customer $ref exists");
+        $sum = self::$db->query(
+            'SELECT COALESCE(SUM(amount), 0) AS s FROM 202_revenue_events WHERE customer_id=' . (int) $c['customer_id']
+        )->fetch_assoc();
+
+        self::assertSame(
+            ['cached' => $expected, 'ledger' => $expected],
+            [
+                'cached' => number_format((float) $c['total_revenue'], 2, '.', ''),
+                'ledger' => number_format((float) $sum['s'], 2, '.', ''),
+            ],
+            $message
+        );
+    }
+
+    /**
+     * Codex P2 on PR #157: a $10 sale and its -$10 reversal net to $0 in LTV.
+     * Deleting the sale voided its event (-$10) while the reversal's -$10
+     * stayed, so the customer ended at -$10 although the conversion ledger
+     * counts neither row (a reversal nets only while its sale counts). The
+     * delete now voids the live reversal's event with the sale's, in the same
+     * transaction, so LTV and the ledger agree at every step — and deleting
+     * the reversal afterwards changes nothing, because its event is already
+     * voided under the same key.
+     */
+    public function testDeletingASaleWhoseReversalIsLiveKeepsLtvWithTheLedger(): void
+    {
+        self::truncateLtv();
+        $this->campaign(7);
+        $this->click(100, 7);
+        $customer = ['customer_ref' => 'rev-ltv-1', 'customer_ref_type' => 'custom'];
+
+        $sale = $this->record(100, ['payout' => '10', 'transaction_id' => 'S-1'] + $customer);
+        $rev = $this->record(100, ['transaction_id' => 'S-1', 'reversal' => true] + $customer);
+        $saleId = (int) $sale['convId'];
+        $revId = (int) $rev['convId'];
+        self::assertSame($saleId, (int) $rev['reversesConvId']);
+        self::assertSame('0.00000', $this->clickState(100)['payout']);
+        $this->assertLtv('rev-ltv-1', '0.00', 'the sale and its reversal net to nothing');
+
+        // The API's DELETE, previewed and then performed: the preview names
+        // the reversal and what happens to it.
+        $api = new \Api\V3\Controllers\ConversionsController(self::$db, 1);
+        $preview = $api->deletePreview($saleId)['data'];
+        self::assertSame(
+            [['resource' => 'conversions', 'count' => 1, 'ids' => [$revId], 'effect' => 'reversal_stops_netting']],
+            $preview['cascade']
+        );
+        self::assertStringContainsString('Conversion ' . $revId . ' reverses it', $preview['note']);
+        self::assertSame([], $api->deletePreview($revId)['data']['cascade'], 'a reversal has no reversal of its own');
+
+        $api->delete($saleId);
+
+        self::assertSame(
+            ['lead' => 0, 'payout' => '0.00000', 'spy_payout' => '0.00'],
+            $this->clickState(100),
+            'the ledger counts neither row'
+        );
+        $this->assertLtv('rev-ltv-1', '0.00', 'and neither does LTV');
+        self::assertSame('0', (string) $this->rows(100)[1]['deleted'], 'the reversal row stays, not netting');
+
+        $this->repo->softDelete($revId, 1);
+        $this->assertLtv('rev-ltv-1', '0.00', 'deleting the reversal after its sale voids nothing twice');
+        $voids = self::$db->query(
+            "SELECT COUNT(*) AS n FROM 202_revenue_events WHERE idempotency_key = 'void:conv:" . $revId . "'"
+        )->fetch_assoc();
+        self::assertSame('1', (string) $voids['n']);
+    }
+
+    /**
+     * The same with a second sale that replaced the first: the ledger counts
+     * S-2 ($10) whether or not S-1 and its reversal are deleted, so LTV must
+     * stay at $10 across the delete (it fell to $0 before the fix).
+     */
+    public function testDeletingAReplacedSaleWhoseReversalIsLiveKeepsTheNewSale(): void
+    {
+        self::truncateLtv();
+        $this->campaign(7);
+        $this->click(100, 7);
+        $customer = ['customer_ref' => 'rev-ltv-2', 'customer_ref_type' => 'custom'];
+        $sale = $this->record(100, ['payout' => '10', 'transaction_id' => 'S-1'] + $customer);
+        $this->record(100, ['transaction_id' => 'S-1', 'reversal' => true] + $customer);
+        $this->record(100, ['payout' => '10', 'transaction_id' => 'S-2'] + $customer);
+        $this->assertLtv('rev-ltv-2', '10.00');
+
+        $this->repo->softDelete((int) $sale['convId'], 1);
+
+        self::assertSame('10.00000', $this->clickState(100)['payout']);
+        $this->assertLtv('rev-ltv-2', '10.00');
+    }
+
+    /** Clearing a subid deletes the sale and its reversal together: nothing is left, in either. */
+    public function testClearingASubidWithAReversedSaleLeavesLtvAtZero(): void
+    {
+        self::truncateLtv();
+        $this->campaign(7);
+        $this->click(100, 7);
+        $customer = ['customer_ref' => 'rev-ltv-3', 'customer_ref_type' => 'custom'];
+        $this->record(100, ['payout' => '10', 'transaction_id' => 'S-1'] + $customer);
+        $this->record(100, ['transaction_id' => 'S-1', 'reversal' => true] + $customer);
+        $this->record(100, ['payout' => '4', 'transaction_id' => 'S-2'] + $customer);
+
+        self::assertSame(1, $this->repo->clearClicks(1, [100]));
+
+        self::assertSame(0, $this->clickState(100)['lead']);
+        $this->assertLtv('rev-ltv-3', '0.00');
+    }
+
+    /**
+     * The goals engine retires a goal row and may revive it. A reversal of
+     * that row stops netting while it is retired and nets again when it is
+     * revived, so its LTV event is voided with the retirement and posted
+     * again with the revival (without that, LTV read +$10 after the revival
+     * while the ledger netted the pair to $0).
+     */
+    public function testRetiringAndRevivingAReversedGoalRowMovesItsReversalsLtvWithIt(): void
+    {
+        self::truncateLtv();
+        $this->campaign(7);
+        $this->click(100, 7);
+        $customer = ['customer_ref' => 'rev-ltv-4', 'customer_ref_type' => 'custom'];
+        $goal = $this->repo->record(
+            1,
+            ['click_id' => 100, 'source' => 'goal', 'payout' => '10', 'transaction_id' => 'G-1'] + $customer
+        );
+        $goalId = (int) $goal['convId'];
+        $this->record(100, ['transaction_id' => 'G-1', 'reversal' => true] + $customer);
+        $this->assertLtv('rev-ltv-4', '0.00');
+
+        $conn = new Connection(self::$db);
+        $retire = fn () => $this->repo->retireGoalRowInTransaction($goalId, 1, SupersededReason::REEVALUATION);
+        $conn->transaction($retire);
+        self::assertSame('0.00000', $this->clickState(100)['payout']);
+        $this->assertLtv('rev-ltv-4', '0.00', 'retired: neither row counts');
+
+        $dedupeKey = (string) $goal['dedupeKey'];
+        $conn->transaction(fn () => $this->repo->reviveGoalRowInTransaction($goalId, 1, 100, $dedupeKey));
+        self::assertSame('0.00000', $this->clickState(100)['payout'], 'revived: the sale counts, net of its reversal');
+        $this->assertLtv('rev-ltv-4', '0.00', 'and so does LTV');
+
+        $conn->transaction($retire);
+        $this->assertLtv('rev-ltv-4', '0.00', 'a second retirement voids the second generation');
     }
 
     public function testAFailedInsertLeavesNeitherARowNorAChangedClick(): void
