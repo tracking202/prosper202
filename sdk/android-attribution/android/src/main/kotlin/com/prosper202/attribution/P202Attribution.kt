@@ -144,6 +144,15 @@ object P202Attribution {
     @JvmStatic
     val installMatch: String? get() = engine?.installMatch
 
+    /**
+     * Forget the engine, as a new process would (the Robolectric tests'
+     * relaunch). The old engine's worker keeps running until it is idle; its
+     * state is on disk, which is what a relaunch reads.
+     */
+    internal fun resetForTests() {
+        synchronized(this) { engine = null }
+    }
+
     private fun requireEngine(): AttributionEngine =
         engine ?: throw IllegalStateException("P202Attribution.configure() must be called first (in Application.onCreate)")
 

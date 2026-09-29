@@ -1,0 +1,46 @@
+// Robolectric setup shared by :android and :integrity (applied from their
+// build files). Robolectric runs the tests against a real Android framework
+// jar (android-all-instrumented); left to itself it downloads that jar at
+// test time into ~/.m2, outside Gradle's cache. It is resolved here as an
+// ordinary dependency instead — cached with everything else (CI's Gradle
+// cache included) — and Robolectric runs offline against the copy.
+//
+// One SDK only: API 35 (Android 15), Robolectric 4.14.1's newest
+// (DefaultSdkProvider: 15 / 12650502, instrumented i7). Not the modules'
+// compileSdk 34: Robolectric always loads its newest SDK's jar to parse the
+// app's resources, whatever SDK a test runs on (robolectric.enabledSdks does
+// not change that), so running on 34 needs both jars; on 35 it needs one.
+// robolectric.properties pins the tests to 35.
+
+configurations {
+    robolectricSdk { canBeConsumed = false; canBeResolved = true; transitive = false }
+}
+
+dependencies {
+    robolectricSdk 'org.robolectric:android-all-instrumented:15-robolectric-12650502-i7'
+}
+
+// The HTTP server, looper pump and vector reader both suites use.
+android.sourceSets.test.java.srcDir(rootProject.file('test-shared/kotlin'))
+
+tasks.withType(Test).configureEach {
+    def sdkJar = configurations.robolectricSdk
+    inputs.files(sdkJar)
+    systemProperty 'robolectric.offline', 'true'
+    // Robolectric looks for the jar by its artifact file name in this
+    // directory: Gradle's cache directory holds exactly that file, so it is
+    // read in place rather than copied (it is 190 MB).
+    jvmArgumentProviders.add({ ["-Drobolectric.dependency.dir=${sdkJar.singleFile.parentFile.absolutePath}".toString()] } as CommandLineArgumentProvider)
+    // The cross-language vectors every implementation runs (plan §4.3).
+    systemProperty 'p202.contractDir', rootProject.file('../../tests/fixtures/app-sdk-contract').absolutePath
+    // The live pass hands a running instance in (see LiveInstanceTest).
+    for (name in ['P202_LIVE_BASE', 'P202_LIVE_APP_TOKEN', 'P202_LIVE_APP_KEY', 'P202_LIVE_REFERRER', 'P202_LIVE_CLICK_TIME', 'P202_LIVE_OUT']) {
+        def v = System.getenv(name)
+        if (v != null) environment(name, v)
+    }
+    testLogging {
+        events 'failed', 'skipped'
+        showStandardStreams = System.getenv('P202_LIVE_BASE') != null
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
+}

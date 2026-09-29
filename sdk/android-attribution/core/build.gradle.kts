@@ -1,7 +1,14 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
-    kotlin("jvm") version "2.0.21"
+    kotlin("jvm")
+    // The core runs on Android from API 21, and Android lint does not reach it:
+    // lint's NewApi check skips a plain JVM module, even as a dependency of an
+    // Android one with checkDependencies (tried: a planted java.util.Base64
+    // call in :core was reported by neither). Animal Sniffer checks the
+    // compiled classes against the API-21 signature instead; it is what found
+    // EventPayload's Map.putIfAbsent (API 24, not backported by D8).
+    id("ru.vyarus.animalsniffer")
 }
 
 group = "com.prosper202"
@@ -20,7 +27,18 @@ kotlin {
     }
 }
 
+animalsniffer {
+    // D8 backports these classes' Java 8 static helpers (Long.hashCode(long)
+    // and the like, which Kotlin emits for data classes) when it dexes the
+    // app for minSdk < 24; checked by dexing :core with build-tools 34's d8
+    // --min-api 21 and reading the dex, which calls none of them. Animal
+    // Sniffer's ignores are per class, so these three are trusted whole.
+    ignore = listOf("java.lang.Boolean", "java.lang.Long", "java.lang.Double")
+}
+
 dependencies {
+    // Android API 21 (the SDK's minSdk) as an Animal Sniffer signature.
+    signature("com.toasttab.android:gummy-bears-api-21:0.15.0@signature")
     testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")
 }

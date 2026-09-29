@@ -1,6 +1,6 @@
 plugins {
-    id("com.android.library") version "8.7.3"
-    kotlin("android") version "2.0.21"
+    id("com.android.library")
+    kotlin("android")
 }
 
 // Optional: an app whose registration uses Play Integrity (observe or
@@ -15,8 +15,11 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        // Play Integrity's own floor.
-        minSdk = 21
+        // Play Integrity's own floor: integrity 1.6.0's manifest declares
+        // minSdkVersion 23. This said 21 until the module's first AGP build
+        // (its unit-test manifest merge) refused it — as every app with
+        // minSdk 21 or 22 that added the module would have been refused.
+        minSdk = 23
     }
 
     compileOptions {
@@ -26,6 +29,17 @@ android {
 
     kotlinOptions {
         jvmTarget = "1.8"
+        allWarningsAsErrors = true
+    }
+
+    lint {
+        abortOnError = true
+        warningsAsErrors = true
+    }
+
+    testOptions {
+        // Robolectric: the real Android framework classes on the JVM.
+        unitTests.isIncludeAndroidResources = true
     }
 }
 
@@ -33,4 +47,10 @@ dependencies {
     api(project(":core"))
     // The standard request (StandardIntegrityManager), 1.6.0, the latest release.
     implementation("com.google.android.play:integrity:1.6.0")
+
+    testImplementation(kotlin("test"))
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.14.1")
 }
+
+apply(from = rootProject.file("robolectric.gradle"))
