@@ -343,6 +343,29 @@ class ConversionsController
                 . ($one ? 'its revenue event is' : 'their revenue events are') . ' voided in the same transaction.';
         }
 
+        // The traffic-source postbacks queued for it (NotificationOutbox::
+        // onReplaced(), which delete() runs): cancelled where none was
+        // attempted, retracted where one may have gone out.
+        $stmt = $this->prepare(
+            "SELECT COALESCE(SUM(status = 'pending' AND attempts = 0), 0) AS cancel,
+                    COALESCE(SUM(status <> 'cancelled' AND NOT (status = 'pending' AND attempts = 0)), 0) AS retract
+             FROM 202_notification_pending WHERE conv_id = ? AND user_id = ? AND kind = 'reached'"
+        );
+        $this->bind($stmt, 'ii', $id, $this->userId);
+        $this->execute($stmt, 'Reading the queued postbacks failed');
+        $postbacks = $this->result($stmt)->fetch_assoc();
+        $stmt->close();
+        $cancel = (int) ($postbacks['cancel'] ?? 0);
+        $retract = (int) ($postbacks['retract'] ?? 0);
+        if ($cancel + $retract > 0) {
+            $cascade[] = ['resource' => 'notifications', 'count' => $cancel, 'effect' => 'postback_cancelled'];
+            $cascade[] = ['resource' => 'notifications', 'count' => $retract, 'effect' => 'postback_retracted'];
+            $note .= ' Its traffic-source postbacks: ' . $cancel . ' not yet sent '
+                . ($cancel === 1 ? 'is' : 'are') . ' cancelled, and '
+                . $retract . ' that may have gone out ' . ($retract === 1 ? 'gets a retraction' : 'get retractions')
+                . ' (sent to the correction URL where one is set).';
+        }
+
         return ['data' => [
             'dry_run' => true,
             'action' => 'delete',

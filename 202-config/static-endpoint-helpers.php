@@ -109,9 +109,51 @@ if (!function_exists('p202FireTrafficSourcePixels')) {
      *        says whether it succeeded; injected by tests.
      * @return array{markup: string, types: list<int>, server_calls: int, server_failures: int, browser_skipped: int, server_skipped: int}
      */
-    function p202FireTrafficSourcePixels(mysqli $db, int $ppcAccountId, array $tokens, ?callable $fetch = null): array
+    function p202FireTrafficSourcePixels(
+        mysqli $db,
+        int $ppcAccountId,
+        array $tokens,
+        ?callable $fetch = null,
+        bool $server = true
+    ): array {
+        // $server false: the type-4 postbacks were queued with the
+        // conversion (notify_traffic_source) and go out through the outbox
+        // (p202SendQueuedPostbacks()); only the markup types render here.
+        $conn = new \Prosper202\Database\Connection($db);
+
+        return \Prosper202\Conversion\TrafficSourcePixels::fire($conn, $ppcAccountId, $tokens, $fetch, true, $server);
+    }
+}
+
+if (!function_exists('p202SendQueuedPostbacks')) {
+    /**
+     * Send, now, the traffic-source postbacks queued for one conversion
+     * (p202RecordConversion() with notify_traffic_source) — after the commit
+     * that queued them. Best effort by design: the rows are already durable,
+     * so a send that fails, throws or never happens is retried by the
+     * notification worker (202-cronjobs/index.php every minute) instead of
+     * being lost. A retried request for the same conversion calls this
+     * again, which sends whatever is still due. Never throws.
+     *
+     * @return array{sent: int, failed: int, retrying: int, queued: int}
+     */
+    function p202SendQueuedPostbacks(mysqli $db, int $convId): array
     {
-        return \Prosper202\Conversion\TrafficSourcePixels::fire(new \Prosper202\Database\Connection($db), $ppcAccountId, $tokens, $fetch);
+        $out = ['sent' => 0, 'failed' => 0, 'retrying' => 0, 'queued' => 0];
+        if ($convId <= 0) {
+            return $out;
+        }
+        try {
+            $conn = new \Prosper202\Database\Connection($db);
+            $outbox = new \Prosper202\Notifications\NotificationOutbox($conn);
+            $out = $outbox->sendDue(20, [$convId]) + $out;
+            $out['queued'] = $outbox->reachedState($convId)['total'];
+        } catch (\Throwable $e) {
+            error_log('conversion ' . $convId . ': its queued postbacks were not sent now; the worker retries them: '
+                . $e->getMessage());
+        }
+
+        return $out;
     }
 }
 
@@ -437,6 +479,12 @@ if (!function_exists('p202RecordConversion')) {
         }
         if (isset($log['reversal_ref']) && (string) $log['reversal_ref'] !== '') {
             $data['reversal_ref'] = (string) $log['reversal_ref'];
+        }
+        if (!empty($log['notify_traffic_source'])) {
+            // Queue the click's traffic-source server postbacks with the row
+            // (NotificationOutbox), in its transaction; the caller sends
+            // them with p202SendQueuedPostbacks() and the worker retries.
+            $data['notify_traffic_source'] = true;
         }
         if (isset($log['event_name']) && (string) $log['event_name'] !== '') {
             // The `event=` of a hit on a campaign without goals: kept on the

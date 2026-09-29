@@ -114,6 +114,58 @@ final class InstallReportIntegrationTest extends TestCase
         self::assertFalse($r['meta']['groups_truncated']);
     }
 
+    /**
+     * Codex P2 on PR #157: an outcome whose conversion was reversed or
+     * deleted stays live (the funnel still counts it), but its revenue is
+     * what the ledger kept — 0 — in every grouping and the totals, as in the
+     * click's payout and MTA. The report used to keep summing the outcome's
+     * own value.
+     */
+    public function testRevenueIsWhatTheLedgerKeptAfterAReversalAndADelete(): void
+    {
+        $this->seed();
+        $repo = new \Prosper202\Conversion\MysqlConversionRepository(new \Prosper202\Database\Connection(self::$db));
+        $l3 = self::$db->query("SELECT o.conversion_id FROM 202_goal_outcomes o WHERE o.goal_id = {$this->level3} AND o.superseded_at IS NULL
+            AND o.subject_id = (SELECT install_row_id FROM 202_app_installs WHERE install_uuid = '" . self::U1 . "')")->fetch_assoc();
+        self::assertNotNull($l3['conversion_id'] ?? null, 'U1 reached Level 3 with a ledger row');
+        $l3Conv = (int) $l3['conversion_id'];
+        // A network's reversal of that sale names it by transaction id.
+        self::fixture("UPDATE 202_conversion_logs SET transaction_id = 'L3-TX' WHERE conv_id = $l3Conv");
+        $rev = $repo->record(1, ['click_id' => 100, 'transaction_id' => 'L3-TX', 'reversal' => true, 'source' => 'postback']);
+        self::assertSame($l3Conv, (int) $rev['reversesConvId']);
+
+        $u2 = self::$db->query("SELECT o.conversion_id FROM 202_goal_outcomes o WHERE o.goal_id = {$this->installGoal} AND o.superseded_at IS NULL
+            AND o.subject_id = (SELECT install_row_id FROM 202_app_installs WHERE install_uuid = '" . self::U2 . "')")->fetch_assoc();
+        $repo->softDelete((int) $u2['conversion_id'], 1);
+
+        // Kept: U1's install, 2.50. Reversed: U1's Level 3. Deleted: U2's install.
+        $pick = [
+            'registration' => static fn (array $g): bool => true,
+            'day' => static fn (array $g): bool => true,
+            'campaign' => static fn (array $g): bool => ($g['aff_campaign_id'] ?? null) === 30,
+            'match-state' => static fn (array $g): bool => $g['match_state'] === 'attributed',
+        ];
+        foreach ($pick as $groupBy => $which) {
+            $r = self::jsonRound($this->report(['platform' => 'android', 'group_by' => $groupBy]));
+            $matching = array_values(array_filter($r['data']['groups'], $which));
+            self::assertCount(1, $matching, "$groupBy: the group the trusted installs fall in");
+            $g = $matching[0];
+            self::assertSame(4, $g['goals_reached'], "$groupBy: the funnel still counts every outcome");
+            self::assertEqualsWithDelta(2.5, $g['revenue'], 0.00001, "$groupBy: revenue is what the ledger kept");
+            self::assertEqualsCanonicalizing([
+                'install' => ['count' => 2, 'revenue' => 2.5],
+                'Level 3' => ['count' => 1, 'revenue' => 0],
+                'Tutorial' => ['count' => 1, 'revenue' => 0],
+            ], $g['events'], $groupBy);
+            self::assertEqualsWithDelta(2.5, $r['data']['totals']['revenue'], 0.00001, "$groupBy totals");
+        }
+        $byName = [];
+        foreach (self::jsonRound($this->report(['platform' => 'android', 'group_by' => 'goal']))['data']['groups'] as $row) {
+            $byName[$row['goal_name']] = [$row['goals_reached'], (float) $row['revenue']];
+        }
+        self::assertEquals(['install' => [2, 2.5], 'Level 3' => [1, 0.0], 'Tutorial' => [1, 0.0]], $byName, 'goal rows');
+    }
+
     public function testEachBreakdownGroupsTheSameInstalls(): void
     {
         $this->seed();

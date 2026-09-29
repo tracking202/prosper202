@@ -416,6 +416,27 @@ if (!function_exists('_upgrade_measurement_tables')) {
             }
         }
 
+        // The conversions recorded before the ledger, for multi-touch
+        // attribution (Prosper202\Attribution\ConversionBackfill): only the
+        // marker here — the newest click at this upgrade — so a table of any
+        // size costs this request one indexed MAX(). The attribution worker
+        // walks the clicks up to it in bounded chunks, every minute, from
+        // 202-cronjobs/index.php. INSERT IGNORE: a re-run of this step after a
+        // partial failure keeps the walk where it is rather than restarting
+        // it.
+        if ($ok) {
+            foreach ($definitions as $definition) {
+                if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::ATTRIBUTION_BACKFILL) {
+                    if (_upgrade_query(\Prosper202\Attribution\ConversionBackfill::MARK_SQL) === false) {
+                        $ok = false;
+                        error_log('Prosper202 upgrade: failed to mark the pre-upgrade conversions'
+                            . ' for the attribution backfill');
+                    }
+                    break;
+                }
+            }
+        }
+
         foreach ($reconciler->getApplied() as $statement) {
             error_log('Prosper202 upgrade: reconciled measurement schema: ' . $statement);
         }

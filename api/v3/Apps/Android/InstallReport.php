@@ -41,8 +41,10 @@ use Api\V3\Support\ResponseSanitizer;
  * it, so no row exceeds the totals'. InstallReportIntegrationTest holds
  * all of it on one dataset under every trust filter.
  *
- * `revenue` is what the campaigns were credited: the value of payable
- * outcomes, the ledger's view. A goal reached but not paid on the
+ * `revenue` is what the campaigns were credited: for each payable outcome,
+ * the counted amount of its ledger row (revenue()), so a conversion an
+ * operator deleted or a network reversed stops counting here as it does in
+ * the click's payout and in MTA. A goal reached but not paid on the
  * install's campaign counts in `events` and `goals_reached` with no
  * revenue.
  *
@@ -95,6 +97,25 @@ final class InstallReport
 
     /** Joined for the campaign dimension and filter: the click's campaign, the owner's own clicks only. */
     private const CLICK_JOIN = 'LEFT JOIN 202_clicks c ON c.click_id = i.click_id AND c.user_id = i.user_id';
+
+    /** An outcome's ledger row, which its revenue is read from (revenue()). */
+    private const LEDGER_JOIN =
+        'LEFT JOIN 202_conversion_logs lc ON lc.conv_id = o.conversion_id AND lc.user_id = o.user_id';
+
+    /**
+     * What a payable outcome contributes to `revenue`: its ledger row's
+     * counted amount (CountedAmount — net of live reversals, 0 once the row
+     * is deleted, superseded or reversed away, and 0 for an outcome with no
+     * ledger row, which no campaign was credited for), never the outcome's
+     * own value. The outcome itself stays live and still counts in `events`
+     * and `goals_reached`: the funnel is what the installs did; revenue is
+     * what the ledger kept, the same figure the click's payout and the MTA
+     * credits carry.
+     */
+    private static function revenue(): string
+    {
+        return \Prosper202\Attribution\CountedAmount::sql('lc');
+    }
 
     public function __construct(private readonly \mysqli $db, private readonly int $userId)
     {
@@ -184,9 +205,10 @@ final class InstallReport
 
         $names = [];
         $sql = 'SELECT ' . $expr . ' AS grp, o.goal_id, COUNT(*) AS outcomes,'
-            . ' COALESCE(SUM(CASE WHEN o.payable = 1 THEN o.value END), 0) AS revenue'
+            . ' COALESCE(SUM(CASE WHEN o.payable = 1 THEN ' . self::revenue() . ' END), 0) AS revenue'
             . ' FROM 202_goal_outcomes o'
-            . ' JOIN 202_app_installs i ON i.install_row_id = o.subject_id AND i.user_id = o.user_id ' . self::CLICK_JOIN
+            . ' JOIN 202_app_installs i ON i.install_row_id = o.subject_id AND i.user_id = o.user_id '
+            . self::CLICK_JOIN . ' ' . self::LEDGER_JOIN
             . " WHERE o.user_id = ? AND o.subject_type = 'install' AND o.superseded_at IS NULL AND " . $gate
             . ' AND ' . implode(' AND ', $scopedWhere)
             . ' GROUP BY grp, o.goal_id';
@@ -235,9 +257,10 @@ final class InstallReport
             . ' COUNT(DISTINCT CASE WHEN i.trusted IS NULL THEN o.subject_id END) AS unvouched_count,'
             . ' COUNT(DISTINCT CASE WHEN i.is_test = 1 THEN o.subject_id END) AS test_count,'
             . ' SUM(CASE WHEN ' . $gate . ' THEN 1 ELSE 0 END) AS outcomes,'
-            . ' COALESCE(SUM(CASE WHEN ' . $gate . ' AND o.payable = 1 THEN o.value END), 0) AS revenue'
+            . ' COALESCE(SUM(CASE WHEN ' . $gate . ' AND o.payable = 1 THEN ' . self::revenue() . ' END), 0) AS revenue'
             . ' FROM 202_goal_outcomes o'
-            . ' JOIN 202_app_installs i ON i.install_row_id = o.subject_id AND i.user_id = o.user_id ' . self::CLICK_JOIN
+            . ' JOIN 202_app_installs i ON i.install_row_id = o.subject_id AND i.user_id = o.user_id '
+            . self::CLICK_JOIN . ' ' . self::LEDGER_JOIN
             . " WHERE o.user_id = ? AND o.subject_type = 'install' AND o.superseded_at IS NULL"
             . ' AND ' . implode(' AND ', $where)
             . ' GROUP BY o.goal_id ORDER BY installs DESC, o.goal_id LIMIT ?';
@@ -304,9 +327,11 @@ final class InstallReport
         }
 
         $outcomeRows = $this->fetchAll(
-            'SELECT o.goal_id, COUNT(*) AS outcomes, COALESCE(SUM(CASE WHEN o.payable = 1 THEN o.value END), 0) AS revenue'
+            'SELECT o.goal_id, COUNT(*) AS outcomes,'
+            . ' COALESCE(SUM(CASE WHEN o.payable = 1 THEN ' . self::revenue() . ' END), 0) AS revenue'
             . ' FROM 202_goal_outcomes o'
-            . ' JOIN 202_app_installs i ON i.install_row_id = o.subject_id AND i.user_id = o.user_id ' . self::CLICK_JOIN
+            . ' JOIN 202_app_installs i ON i.install_row_id = o.subject_id AND i.user_id = o.user_id '
+            . self::CLICK_JOIN . ' ' . self::LEDGER_JOIN
             . " WHERE o.user_id = ? AND o.subject_type = 'install' AND o.superseded_at IS NULL AND " . $gate
             . ' AND ' . $whereSql . ' GROUP BY o.goal_id',
             'i' . $types,

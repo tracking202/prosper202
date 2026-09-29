@@ -69,6 +69,33 @@ final class CountedAmount
     }
 
     /**
+     * of() in SQL, for a read that sums many conversions at once: the
+     * counted amount of the 202_conversion_logs row aliased `$row`, 0 where
+     * of() answers null — including a row that is not there (a LEFT JOIN
+     * that found nothing). The same rule, so a report summing this and one
+     * reading of() agree; ConversionLedgerIntegrationTest runs both over the
+     * same rows. `$row` must be a plain alias; the reversals are read by a
+     * correlated subquery aliased `$row`_r.
+     */
+    public static function sql(string $row): string
+    {
+        if (preg_match('/^[a-z][a-z0-9_]*$/D', $row) !== 1) {
+            throw new \InvalidArgumentException('not a table alias: ' . $row);
+        }
+        $r = $row . '_r';
+
+        return "(CASE WHEN $row.conv_id IS NULL OR $row.reverses_conv_id IS NOT NULL"
+            . " OR ($row.superseded_reason IS NOT NULL AND $row.superseded_reason <> '')"
+            . " OR $row.payable <> 1 OR $row.deleted <> 0 THEN 0"
+            . " ELSE (SELECT CASE WHEN COUNT($r.conv_id) > 0"
+            . " AND $row.click_payout + COALESCE(SUM($r.click_payout), 0) <= 0 THEN 0"
+            . " ELSE $row.click_payout + COALESCE(SUM($r.click_payout), 0) END"
+            . " FROM 202_conversion_logs $r"
+            . " WHERE $r.reverses_conv_id = $row.conv_id AND $r.deleted = 0 AND $r.payable = 1)"
+            . ' END)';
+    }
+
+    /**
      * The fields a read shows for a conversion's amount: `amount`, what it
      * counts for (what its credits sum to; 0 when it does not count),
      * `recorded_amount`, the row's own amount, and `counted`.

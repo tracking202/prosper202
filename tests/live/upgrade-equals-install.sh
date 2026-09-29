@@ -282,7 +282,10 @@ say "5. compare the rows both installs seed"
 #   202_users_pref           auto_cron records whether a remote registration
 #                            call answered, which the network decides
 #   202_attribution_models   compared below without its timestamps
-ROW_EXEMPT=' 202_users 202_api_keys 202_deployment_secrets 202_users_pref 202_attribution_models '
+#   202_attribution_backfill the upgrade's own marker for bringing the clicks
+#                            recorded before it into attribution; a fresh
+#                            install has nothing from before (checked below)
+ROW_EXEMPT=' 202_users 202_api_keys 202_deployment_secrets 202_users_pref 202_attribution_models 202_attribution_backfill '
 ROWS_COMPARED=0
 ROW_DIFFS=()
 while IFS= read -r table; do
@@ -305,6 +308,9 @@ else
     bad "seed rows differ in ${#ROW_DIFFS[@]} of $ROWS_COMPARED tables:"
     printf '      %s\n' "${ROW_DIFFS[@]}"
 fi
+eq "$(mysql_q -N "$DB_UP" -e "SELECT CONCAT_WS('/', backfill_id, next_click_id, through_click_id = (SELECT COALESCE(MAX(click_id), 0) FROM 202_clicks), finished_at IS NULL) FROM 202_attribution_backfill")" "1/0/1/1" \
+    "the upgrade marks every click it found for the attribution backfill, and walks none of them in the request"
+eq "$(mysql_q -N "$DB_FRESH" -e "SELECT COUNT(*) FROM 202_attribution_backfill")" "0" "a fresh install has nothing to backfill"
 MODELS="SELECT user_id, model_name, model_slug, model_type, weighting_config, lookback_days, status, is_default FROM 202_attribution_models ORDER BY model_id"
 eq "$(mysql_q -N "$DB_UP" -e "$MODELS")" "$(mysql_q -N "$DB_FRESH" -e "$MODELS")" \
     "the account's default attribution model is the one a fresh install gives it"

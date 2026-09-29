@@ -4113,11 +4113,29 @@ Open for the release decision:
    click-to-install-time distribution with its tails flagged, a
    per-registration install cap, a per-install event rate cap, and a report
    flag for goals reached implausibly fast. Build them or accept the risk.
-6. **MTA starts empty at the upgrade.** Nothing enqueues a conversion
-   recorded before it, so a pre-upgrade range has no credits and its MTA
-   reports are empty; the rollup backfill (item 1) sums only what the worker
-   credits after the upgrade. Say so in the release notes, or add a
-   backfill enqueue.
+6. ~~**MTA starts empty at the upgrade.**~~ **Closed** (Codex P1 on PR
+   #157): the conversion-ledger step writes a marker,
+   `202_attribution_backfill` (the newest click at the upgrade, one indexed
+   `MAX()` in the request, the rung changed in place and the version still
+   1.9.76), and the attribution worker —
+   `Prosper202\Attribution\ConversionBackfill`, from
+   `AttributionWorker::runExclusive()`, so every minute from
+   `202-cronjobs/index.php` — walks the clicks up to it by primary key, 5,000
+   ids a chunk under a third of its budget, and carries each pre-upgrade lead
+   click in as the `legacy_baseline` row the ledger would write on its first
+   touch (`ensureManaged()`), queued with reason `backfill` and credited like
+   any conversion. The pre-upgrade rows themselves stay `pre_ledger`: the
+   click's cached value is what stands for them, as the ledger already
+   decided. Idempotent (a managed click gets no second baseline; a walk
+   interrupted before its cursor moved re-reads the chunk and adds nothing)
+   and resumable. While it runs, `GET /attribution/queue` and the breakdown
+   and journey metrics' `meta.backfill` say how far it is, and the
+   Attribution page shows a strip; `null` once finished, and on a fresh
+   install, which has no marker. A baseline's conversion time is its
+   click's, so a backfilled conversion reports on its click's day.
+   `tests/Attribution/ConversionBackfillIntegrationTest`;
+   `tests/live/upgrade-equals-install.sh` checks the marker after a real
+   1.9.55 upgrade and its absence after a fresh install.
 7. **Identity data has no retention window** (§7.2): observations and
    signals live as long as the clicks do. Erasing a customer now reaches
    them; a retention class for them does not exist.

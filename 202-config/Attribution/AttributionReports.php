@@ -804,6 +804,8 @@ final class AttributionReports
             'failing' => (int) ($s['failing'] ?? 0),
             'merges_awaiting_requeue' => $merges,
             'models_awaiting_recompute' => $models,
+            // The pre-upgrade backfill while it runs (ConversionBackfill), null after.
+            'backfill' => (new ConversionBackfill($this->conn))->progress(),
             'rows' => $rows,
         ];
     }

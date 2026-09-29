@@ -56,13 +56,14 @@ has()  { if grep -qF "$2" "$1"; then ok "$3"; else bad "$3"; fi; }
 USER_ID=$(Q "SELECT user_id FROM 202_users ORDER BY user_id LIMIT 1")
 [ -n "$USER_ID" ] || { echo "no user in $DB" >&2; exit 2; }
 NOW=$(date +%s)
-API=930008; R=930001; RA=930002; ACC=930003; UP=930004; UP2=930005; SUB=930006; DEL=930007
-CLICKS="$R,$RA,$ACC,$UP,$UP2,$SUB,$DEL,$API"
+API=930008; R=930001; RA=930002; ACC=930003; UP=930004; UP2=930005; SUB=930006; DEL=930007; RT=930009
+CLICKS="$R,$RA,$ACC,$UP,$UP2,$SUB,$DEL,$API,$RT"
 ACIP_R=930100; ACIP_A=930101
 
 cleanup() {
   mysql_q "$DB" <<SQL
 DELETE FROM 202_attribution_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICKS));
+DELETE FROM 202_notification_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICKS));
 DELETE FROM 202_conversion_logs WHERE click_id IN ($CLICKS);
 DELETE FROM 202_dataengine WHERE click_id IN ($CLICKS);
 DELETE FROM 202_clicks WHERE click_id IN ($CLICKS);
@@ -80,7 +81,8 @@ cleanup
 CAPTURE_DIR="$OUT/capture"; mkdir -p "$CAPTURE_DIR"; : > "$CAPTURE_DIR/pb"
 ( cd "$CAPTURE_DIR" && exec python3 -m http.server "$CAPTURE_PORT" --bind 127.0.0.1 ) 2> "$OUT/capture.log" &
 CAPTURE_PID=$!
-trap 'kill $CAPTURE_PID 2>/dev/null; cleanup' EXIT
+RETRY_PID=
+trap 'kill $CAPTURE_PID $RETRY_PID 2>/dev/null; cleanup' EXIT
 sleep 1
 
 mysql_q "$DB" <<SQL
@@ -111,7 +113,8 @@ seed_click $UP2 "$CAMP_R" 7.50 0
 seed_click $SUB "$CAMP_R" 7.50 0
 seed_click $DEL "$CAMP_R" 7.50 0
 seed_click $API "$CAMP_R" 7.50 0
-[ "$(Q "SELECT COUNT(*) FROM 202_clicks_tracking WHERE click_id IN ($CLICKS)")" = 8 ] || { echo "seeding clicks failed" >&2; exit 2; }
+seed_click $RT "$CAMP_R" 7.50 "$PPC"
+[ "$(Q "SELECT COUNT(*) FROM 202_clicks_tracking WHERE click_id IN ($CLICKS)")" = 9 ] || { echo "seeding clicks failed" >&2; exit 2; }
 
 value()  { Q "SELECT CONCAT(click_lead, '/', click_payout) FROM 202_clicks WHERE click_id=$1"; }
 rows()   { Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id=$1 AND deleted=0"; }
@@ -149,6 +152,30 @@ eq "$(gpb "subid=$R&txid=NOPE&status=reversed")" 404 "reversing an unknown sale 
 eq "$(rows $R)" 3 "neither refusal wrote a row"
 sleep 1
 eq "$(grep -cE 'GET /pb\?' "$OUT/capture.log")" 2 "the reversal was not announced to the traffic source as a conversion"
+
+say "a postback that fails after the conversion is recorded is retried, not lost"
+# The server postback is queued with the conversion, in its transaction, and
+# sent from the outbox: a network that is down when the conversion lands is
+# asked again — by the network's own retry of the postback (a duplicate,
+# which records nothing) or by the worker — instead of never. It used to be
+# sent inline, only while the row was new, so the retry sent nothing.
+RETRY_PORT=$((CAPTURE_PORT + 1))
+Q "UPDATE 202_ppc_account_pixels SET pixel_code='http://127.0.0.1:$RETRY_PORT/pb?tx=[[transactionid]]&sub=[[subid]]' WHERE ppc_account_id=$PPC"
+eq "$(gpb "subid=$RT&amount=3&txid=RT1")" 202 "the conversion is recorded while the network is unreachable"
+eq "$(value $RT)" "1/3.00000" "and counts"
+RT_CONV=$(Q "SELECT conv_id FROM 202_conversion_logs WHERE click_id=$RT AND dedupe_key='tx:RT1'")
+eq "$(Q "SELECT CONCAT(kind, '/', status, '/', attempts) FROM 202_notification_pending WHERE conv_id=$RT_CONV")" "reached/pending/1" \
+   "its postback is kept: tried once, waiting to retry"
+( cd "$CAPTURE_DIR" && exec python3 -m http.server "$RETRY_PORT" --bind 127.0.0.1 ) 2> "$OUT/retry.log" &
+RETRY_PID=$!
+sleep 1
+Q "UPDATE 202_notification_pending SET next_attempt_at = 0 WHERE conv_id=$RT_CONV"
+gpb "subid=$RT&amount=3&txid=RT1" >/dev/null
+eq "$(rows $RT)" 1 "the network's retry is a duplicate"
+sleep 1
+eq "$(grep -cE 'GET /pb\?tx=RT1&sub='"$RT" "$OUT/retry.log")" 1 "and it sends the postback the first request could not"
+eq "$(Q "SELECT CONCAT(status, '/', attempts) FROM 202_notification_pending WHERE conv_id=$RT_CONV")" "sent/2" "which is recorded sent"
+Q "UPDATE 202_ppc_account_pixels SET pixel_code='http://127.0.0.1:$CAPTURE_PORT/pb?tx=[[transactionid]]&pay=[[payout]]&sub=[[subid]]' WHERE ppc_account_id=$PPC"
 
 say "accumulate campaign: the rows add up; an id-less conversion happens once"
 gpb "subid=$ACC&amount=5&txid=A1" >/dev/null

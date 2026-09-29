@@ -102,6 +102,7 @@ final class TableRegistry
 
     // Conversion ledger (ConversionTables)
     public const string ATTRIBUTION_PENDING = '202_attribution_pending';
+    public const string ATTRIBUTION_BACKFILL = '202_attribution_backfill';
     public const string CONVERSION_UPLOADS = '202_conversion_uploads';
     public const string NOTIFICATION_PENDING = '202_notification_pending';
     public const string NOTIFICATION_CORRECTION_URLS = '202_notification_correction_urls';
