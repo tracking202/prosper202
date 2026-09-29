@@ -79,6 +79,27 @@ has()  { if grep -qF -- "$2" "$1"; then ok "$3"; else bad "$3"; fi; }
 hasnt(){ if grep -qF -- "$2" "$1"; then bad "$3"; else ok "$3"; fi; }
 ne()   { if [ "$1" != "$2" ]; then ok "$3"; else bad "$3 (both '$1')"; fi; }
 
+# P202_CRON_VIA=index settles through the minutely 202-cronjobs/index.php,
+# fetched over HTTP as docker-compose.yaml and the installer's cron line do —
+# the only job a default deployment schedules — instead of app-installs.php.
+# The minute tier's once-a-minute row is cleared first so each fetch is a
+# fresh minute. Returns 0 when the run answered as a success. Under php -S
+# start the server with PHP_CLI_SERVER_WORKERS=4 or more: the cron request
+# holds a worker while it sends the pixel's postbacks back to this same
+# server, and a single-worker server times every one of them out.
+CRON_VIA=${P202_CRON_VIA:-app-installs}
+case "$CRON_VIA" in app-installs|index) ;; *) echo "P202_CRON_VIA must be app-installs or index" >&2; exit 2;; esac
+settle_cron() { # OUTFILE
+    if [ "$CRON_VIA" = index ]; then
+        Q "DELETE FROM 202_cronjobs WHERE cronjob_type='second'"
+        local code
+        code=$(curl -s -o "$1" -w '%{http_code}' "$BASE/202-cronjobs/index.php")
+        [ "$code" = 200 ] && grep -qF 'pending clicks:' "$1"
+        return
+    fi
+    (cd "$ROOT" && "$PHP" 202-cronjobs/app-installs.php) > "$1" 2>&1
+}
+
 # api METHOD PATH [JSON-BODY] — as the operator; body in $OUT/body, status printed.
 api() {
     local args=(-s -o "$OUT/body" -w '%{http_code}' -X "$1" -H "Authorization: Bearer $P202_API_KEY")
@@ -466,8 +487,8 @@ eq "$(awk 'tolower($1) == "retry-after:" {print $2+0}' "$OUT/headers")" 60 "with
 mysql_q "$DB" -e "INSERT INTO 202_clicks SELECT * FROM p202_pass_hold_clicks; INSERT INTO 202_clicks_spy SELECT * FROM p202_pass_hold_spy;
                   DROP TABLE p202_pass_hold_clicks; DROP TABLE p202_pass_hold_spy;"
 QUEUED_BEFORE=$(Q "SELECT COALESCE(MAX(notification_id), 0) FROM 202_notification_pending")
-(cd "$ROOT" && "$PHP" 202-cronjobs/app-installs.php) > "$OUT/cron.txt" 2>&1
-eq "$?" 0 "202-cronjobs/app-installs.php runs"
+settle_cron "$OUT/cron.txt"
+eq "$?" 0 "the $CRON_VIA cron runs"
 has "$OUT/cron.txt" "settled attributed=1" "and settles the install"
 eq "$(Q "SELECT CONCAT_WS('/', match_state, trusted, conversion_id IS NOT NULL, settled_at IS NOT NULL) FROM 202_app_installs WHERE install_uuid='$U8'")" "attributed/1/1/1" \
    "attributed, with its conversion"
@@ -481,7 +502,7 @@ eq "$(Q "SELECT COUNT(*) FROM 202_notification_pending WHERE status='pending' AN
 # still carried the accepting URL would be resent too, and the log count
 # below must see that): the next run retries them.
 Q "UPDATE 202_notification_pending SET next_attempt_at = 0 WHERE status='pending' AND attempts > 0"
-(cd "$ROOT" && "$PHP" 202-cronjobs/app-installs.php) > "$OUT/cron2.txt" 2>&1
+settle_cron "$OUT/cron2.txt"
 eq "$?" 0 "the job runs again"
 eq "$(Q "SELECT GROUP_CONCAT(DISTINCT CONCAT_WS('/', status, attempts)) FROM 202_notification_pending WHERE kind='reached' AND destination=1 AND status <> 'cancelled' AND conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id=$C1)")" "pending/2" \
    "the refusing URL was retried"

@@ -195,17 +195,10 @@ try {
     // A FAILED probe is not the same answer as "not there" (error pattern
     // #11), so the false return fails the job instead.
     $retention = AppRetention::forRegisteredSources($db);
-    foreach ($retention->tables() as $table) {
-        $tables = $db->query("SHOW TABLES LIKE '" . $db->real_escape_string($table) . "'");
-        if ($tables === false) {
-            throw new RuntimeException('could not check for ' . $table . ': ' . $db->error);
-        }
-        $tableExists = $tables->num_rows > 0;
-        $tables->close();
-        if (!$tableExists) {
-            echo "app-retention: {$table} is not installed; nothing to prune\n";
-            exit(0);
-        }
+    $missing = $retention->missingTable();
+    if ($missing !== null) {
+        echo "app-retention: {$missing} is not installed; nothing to prune\n";
+        exit(0);
     }
 
     $policy = $retention->policy($now);
