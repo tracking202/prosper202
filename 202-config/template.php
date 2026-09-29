@@ -333,7 +333,10 @@ function p202_chrome_header(array $navigation, ?object $userObj, array $userData
 
 	$html = '<header class="p202c-header"><div class="p202c-header__inner">';
 	if (defined('TRACKING202_ADS_URL')) {
-		$html .= '<div class="p202c-brand"><iframe class="advertise-top-left" src="' . $e(TRACKING202_ADS_URL . '/prosper202-cs-topleft/?t202aid=' . ($_SESSION['user_cirrus_link'] ?? '')) . '" scrolling="no" frameborder="0" title="Prosper202"></iframe></div>';
+		// The logo follows the system theme until p202-chrome.js posts the
+		// page's own; every page has a dark mode, so every page asks for it.
+		$logoSrc = TRACKING202_ADS_URL . '/prosper202-cs-topleft/?t202aid=' . ($_SESSION['user_cirrus_link'] ?? '') . '&theme=auto';
+		$html .= '<div class="p202c-brand"><iframe class="advertise-top-left" src="' . $e($logoSrc) . '" scrolling="no" frameborder="0" title="Prosper202"></iframe></div>';
 	}
 	$html .= '<nav class="p202c-nav" aria-label="Primary">';
 	foreach ($links as $link) {
