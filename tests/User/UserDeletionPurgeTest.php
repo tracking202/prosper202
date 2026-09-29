@@ -134,10 +134,13 @@ final class UserDeletionPurgeTest extends TestCase
     public function testThePurgeDeletesEveryAttributionTable(): void
     {
         $tables = array_map(static fn ($definition): string => $definition->tableName, \Prosper202\Database\Tables\AttributionTables::getDefinitions());
-        // The outbox is conversion schema (ConversionTables), but its rows
-        // for the user's conversions are MTA state: left, the worker would
-        // rebuild the journeys the purge removed.
+        // The outbox and the rollup's dirty marks are conversion schema
+        // (ConversionTables: recording writes them), but their rows are MTA
+        // state: left, the worker would rebuild the journeys the purge
+        // removed, and the rollup re-sum hours of an account that is gone.
         $tables[] = '202_attribution_pending';
+        $tables[] = '202_attribution_rollup_dirty';
+        $tables[] = '202_attribution_rollup_dirty_clicks';
         sort($tables);
         $purged = [];
         foreach (\Prosper202\User\UserDataPurge::MTA_STATEMENTS as $sql) {

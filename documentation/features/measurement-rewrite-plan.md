@@ -697,7 +697,8 @@ than `NULL` on purpose: MySQL's `UNIQUE` admits any number of `NULL`s, so
 
 - **Rename.** `schema_token` becomes `app_token`, and `X-P202-Schema-Token`
   becomes `X-P202-App-Token`. Minting, header-only transport, rotation and
-  redaction are unchanged (`SchemaTokenHygieneTest` is ported). The token is
+  redaction are unchanged (`SchemaTokenHygieneTest` is ported, as
+`tests/Apps/AppTokenHygieneTest.php`). The token is
   documented as **an identifier, not a secret**, because it ships in every
   binary.
 - **One wire contract** (`documentation/api/21-app-sdk-contract.md`) covers
@@ -1017,7 +1018,7 @@ The steps:
    marks (error pattern #13). The one thing the request never does is
    answer 200 for an install whose row it did not commit.
 
-   `tests/Api/V3/AppInstallAtomicityTest` plants a throw in each of
+   `tests/Apps/Android/AppInstallAtomicityTest.php` plants a throw in each of
    classification, `record()` and the notification enqueue and asserts, for
    every plant, that no install row exists afterwards and that the replay
    records the conversion, the outbox row and the notification exactly
@@ -3391,15 +3392,15 @@ rollup of PR 13, §8.2).
 |---|---|
 | Forged Android installs for arbitrary clicks | HMAC install token; `bad_token` counts nowhere |
 | Replayed referrer | `UNIQUE (click_id, dedupe_key)` with the `install` key: one install conversion per click |
-| **Click spamming** (harvest real tokens from cheap clicks) | The inherent residual risk. Mitigations: (a) Google's server click time must be within minutes of our `click_time`; (b) CTIT distribution with short and long tails flagged; (c) per-registration, per-peer caps; (d) Play Integrity |
+| **Click spamming** (harvest real tokens from cheap clicks) | The inherent residual risk. **Built:** (a) Google's server click time must be within minutes of our `click_time`; (d) Play Integrity; the per-peer rate limit on the intake. **Not built:** (b) a CTIT distribution with its tails flagged, and (c) a per-registration cap — nothing in the tree computes click-to-install time or limits a registration (review of #157, B1). Open for the release decision (§8.1) |
 | Click injection | Server click time after server install-begin → `implausible` |
-| Row minting on public intakes | Body caps; rate limit on `REMOTE_ADDR` (#16) with injective bucket names (#17); a retention class for every untrusted state |
+| Row minting on public intakes | Body caps; rate limit on `REMOTE_ADDR` (#16) with injective bucket names (#17); a retention class for every untrusted state. Behind a TLS-terminating proxy the peer is the proxy, so the ceiling is one for the whole server (`PublicIntake`: 120 installs and 600 event requests a minute), and the limiter fails open when its store cannot be read; a deployment behind a proxy (Coolify, a load balancer) should terminate the rate limit at the proxy or accept the shared ceiling |
 | App token lifted into another app | `app_key` mismatch is a visible 422; the token rotates |
 | SSRF through MTA export webhooks | `https` only; private-range refusal of every resolved address; connect pinned to the validated address; no redirects (§6.3) |
 | MTA journey poisoning (a crafted `p202vid`, LP id or `cust` joins someone else's journey) | Browser ids are random 128-bit values, so guessing one is infeasible, and a user can only pollute their own journeys. A customer id links a journey only when it carries a valid `cust_sig` from the operator's server (§6.2); an unsigned `cust` on a public pixel never links. Any signal linking more than the cap is quarantined. Credits are bounded by conversions, which MTA never creates |
-| **Fabricated in-app events** to reach payable goals (the app token is public) | Goals pay only for installs that are `attributed`, and under `require`, only for integrity-valid ones. Values come from the goal or campaign, never from the client unless `trust_client_revenue` is set. `UNIQUE (subject, event_id)` stops replays inflating counts. Per-install event rate caps apply. Reports flag installs whose goals were reached implausibly fast |
+| **Fabricated in-app events** to reach payable goals (the app token is public) | Goals pay only for installs that are `attributed`, and under `require`, only for integrity-valid ones. Values come from the goal or campaign, never from the client unless `trust_client_revenue` is set. `UNIQUE (subject, event_id)` stops replays inflating counts. **Not built:** a per-install event rate cap (the event intake has the per-peer limit only, §5.10) and a report flag for goals reached implausibly fast (review of #157, B1); open for the release decision (§8.1) |
 | Goal definitions as an attack surface | Data only (JSON schema validated on write and on load), bounded complexity, no expression evaluation. An invalid stored definition disables that goal with its reason and never throws through other goals (#11) |
-| Permission drift between surfaces | One permission check per operation, and a structural test over the routes |
+| Permission drift between surfaces | One permission check per operation on every surface. `/attribution` asks for `view_attribution_reports` and, to change a model, `manage_attribution_models`; `/apps` asks for `manage_attribution_models` on every write and `view_attribution_reports` on the report and the rows behind it (postbacks, installs, notifications, verify), as the Mobile Apps pages do — it asked for nothing until the review of #157 (B2). `AppsRoutePermissionTest` requires every `/apps` route to carry a decision, the check first in its handler, and `app-core.sh` drives it with role-3 and role-4 keys. `/goals` and `/events` take no role permission, as the campaign pages that edit goals and the conversion API do not. There is no one structural test over every route |
 | Malformed values resolving permissively | Missing HMAC key, unparseable referrer, unreadable policy and invalid model config all resolve to the non-trusting or disabled state (#11) |
 
 ### 7.2 Privacy
@@ -3409,8 +3410,10 @@ rollup of PR 13, §8.2).
   and carry no information. A customer id is canonicalised (trimmed;
   lower-cased where the operator marks the id as an email) and stored as
   `HMAC-SHA256(account hashing key, canonical id)`, where the key is **one
-  per Prosper202 account**, held server-side, minted with the schema and
-  rotatable. Web pixels, the API and both SDKs all send the raw id over TLS
+  per Prosper202 account**, held server-side and minted the first time the
+  account needs it (`IdentityKeys::forUser()`). Only the linking key rotates
+  (`rotateLinkKey()`); the hashing key does not, and rotating it would start
+  the account's graph afresh. Web pixels, the API and both SDKs all send the raw id over TLS
   and the server hashes it, so the same person hashes the same way on every
   path and the raw value is never stored. None of these is sent to third
   parties.
@@ -3423,6 +3426,17 @@ rollup of PR 13, §8.2).
   landing-page id therefore extends journeys; it does not guarantee them. The
   one-touch share by browser (§6.2) measures what is lost.
 - No device identifiers are collected on Android, and no advertising ID.
+- **Erasing an end customer.** `MysqlCustomerCrmRepository::erase()` (the
+  LTV customer erasure) deletes the customer's aliases, personalization
+  tokens and field values and anonymizes the customer row; since the review
+  of #157 (B6) it also hashes each alias the way the identity graph does and
+  deletes the signal that id became and its observations in the same
+  transaction, so the id no longer maps to a visitor key. A merge row the
+  signal caused keeps its re-queue for the worker and loses the hash. The
+  visitor keys it merged stay merged: pseudonymous click links that carry
+  nothing of the customer. `LtvDatabaseIntegrationTest` holds it.
+  **Open:** identity observations and signals have no retention window;
+  they live as long as the clicks do.
 - **User deletion.** Today `202-account/user-management.php` deletes no
   clicks and no conversion rows at all (a grep finds neither table in its
   purge), so PR 3 first audits the whole cascade and writes it down. The
@@ -3448,34 +3462,35 @@ rollup of PR 13, §8.2).
   |---|---|---|
   | `202_api_keys` | deleted (sessions already refuse a deleted user) | PR 3 |
   | `202_attribution_credits` (through the user's models), `_journeys` (through the journey meta), `_journey_meta`, the outbox rows (`202_attribution_pending`) of the user's conversions, `_exports`, `_models`, `_audit` | deleted, children first; the attribution worker refuses a deleted user's conversions, so nothing rebuilds them | PR 9 (the tables; the MTA purge was the account page's alone before PR 3) |
+  | `202_attribution_rollup`, `_rollup_state`, `_rollup_overrides`, `_rollup_dirty`, `_rollup_dirty_clicks` | deleted | PR 13 |
   | export files on disk | removed after the delete commits; their names are read from the export rows inside the transaction first, and a file that cannot be removed is logged by name | PR 10 |
   | `202_goal_outcomes`, `_progress`, `_events`, `_subjects`, `202_campaign_goals`, `202_goal_versions`, `202_goals` | deleted (the ledger rows the outcomes wrote stay, with the clicks) | PR 4 |
   | `202_identity_observations` (for the user's clicks), `202_clicks_visitor`, `202_identity_merges`, `_signals`, `_visitors`, `_keys` | deleted | PR 3 (the tables are PR 2's) |
-  | `202_app_registrations`, `202_app_skan_encodings` | deleted | PR 3 |
+  | `202_app_registrations`, `202_app_skan_encodings`, `202_app_skan_encoding_history`, `202_app_integrity_credentials` | deleted | PR 3, PR 8, PR 6 |
   | `202_app_postbacks` | released: `user_id = 0`, `registration_id = NULL`, test-signal trust withdrawn; pruned by the unclaimed window | PR 3 |
   | `202_app_installs` | deleted (the owner's record, not a platform's) | PR 5 |
   | `202_notification_pending` (the user's) | deleted, so a deleted account's queued postbacks never go out | PR 5 |
-  | `202_goals`, `_goal_versions`, `202_campaign_goals`, `202_goal_subjects`, `_events`, `_progress`, `_outcomes` | deleted | PR 4 |
-  | `202_app_installs`, `202_notification_pending` | deleted | PR 5 |
+  | `202_notification_correction_urls`, `202_conversion_uploads` | deleted | review of #179 |
   | `202_users` | `user_deleted = 1`, last | — |
   | `202_clicks*`, `202_conversion_logs` and the ledger rows | kept, as the clicks always were | — |
 
-  PR 5 added `202_app_installs` (deleted: an install is the owner's record,
-  not a platform's) and the user's `202_notification_pending` rows (deleted,
-  so a deleted account's queued postbacks never go out).
-
   Each PR adds its statements to `UserDataPurge` (or, for app tables, an
-  action to `AppDataPurge::TABLE_ACTIONS`); `UserDeletionPurgeTest` requires
-  the purge to name every table in `AppTables`, `GoalTables` and
-  `AttributionTables`, and `UserDeletionPurgesAttributionTest` deletes a
+  action to `AppDataPurge::TABLE_ACTIONS`); `UserDeletionPurgeTest` walks
+  every `*Tables` class and requires each table that holds a user's rows to
+  be purged or kept by name (since the review of #179 found two it had
+  missed), and `UserDeletionPurgesAttributionTest` deletes a
   seeded user and checks every MTA table and export file is empty of them
   while another account's rows stay.
 
 ### 7.3 Performance
 
-**Redirect hot path.** It gains one cookie read or write, one HMAC for the
-install token, and one row in the existing click transaction. It gains no
-query.
+**Redirect hot path.** It gains one cookie read or write and one HMAC for the
+install token. It is not free of queries: the identity graph does one indexed
+lookup per signal the click carries, in its own transaction (§6.2), and an
+offer redirect that rewrites a click older than an hour writes one
+`202_attribution_rollup_dirty_clicks` mark in the same transaction as the
+rewrite (§8.2). That mark table is conversion schema (`ConversionTables`),
+not MTA schema, so a broken engine cannot fail the redirect.
 
 **Pixel and postback paths.** They gain one outbox insert and lose MTA's
 inline settings lookup, journey queries and 24-hour rebuilds. Conversion
@@ -3527,10 +3542,17 @@ answer as the unoptimised path on a sparse and a dense dataset (CLAUDE.md,
   (§6.3).
 - **Post-commit failures** complete via cron (#13). No response invites a
   duplicating retry.
-- **Isolation.** A broken MTA engine (worker down, credits table missing,
-  invalid model config) never affects conversion recording: the outbox
-  accumulates. The outbox table itself is conversion schema (§2) and is not
-  optional.
+- **Isolation.** A broken MTA engine (worker down, any MTA table missing,
+  invalid model config) never affects conversion recording or a redirect:
+  the outbox accumulates. What recording writes for MTA — the outbox and the
+  report rollup's dirty marks — is conversion schema (`ConversionTables`,
+  §2) and is not optional. Until the review of #157 (B3) the marks were
+  `AttributionTables`, so the pixel's cost update and an old click's offer
+  redirect wrote an MTA table in their own transactions; they moved.
+  `AttributionWorkerIntegrationTest::testRecordingWritesNoAttributionTable`
+  moves every `AttributionTables` table out of reach and records through
+  the ledger, the pixel's click side, the redirect's click mark and the LTV
+  click stamp; the old layout fails it.
 - **Every fallible call is checked,** including `get_result`, `store_result`
   and `prepare` (#1).
 
@@ -3540,7 +3562,30 @@ answer as the unoptimised path on a sparse and a dense dataset (CLAUDE.md,
   schema directly. No database holds an intermediate shape, so no legacy
   guard or drop is needed.
 - PHP 8.3 (CI) and 8.4; MySQL 8.0+ and MariaDB 10.6+, the floors the
-  installer enforces (`202-config/install.php:409-417`).
+  installer, `requirements.php` and — since the review of #157 (B5) —
+  `upgrade.php` enforce. `upgrade.php` had kept 1.9.55's floors (MariaDB
+  10.0.12, MySQL 5.6), which would have let a server that rejects the JSON
+  columns start an upgrade and stop partway; `DatabaseFloorsAgreeTest`
+  holds the three pages together.
+
+### 7.5a Rollback
+
+The upgrade is one-way. The conversion-ledger rung makes `dedupe_key`
+`NOT NULL` with no default and drops `uniq_click_transaction`, so 1.9.55
+code redeployed on an upgraded database inserts conversions that strict
+mode refuses or that collide on `uniq_click_dedupe`: a code-only rollback
+breaks conversion recording. **Take a database backup before upgrading;
+restoring it is the only way back.** The upgrade page and `RELEASING.md`
+have to say so before release (open, §8.1).
+
+The data migration has run only on an empty 1.9.55 database
+(`upgrade-equals-install.sh`) and on seeded test databases, never on a
+populated `202_conversion_logs` at volume. The rung's full-table
+`UPDATE … WHERE dedupe_key IS NULL`, its two collation `MODIFY`s and three
+index `ALTER`s, and the 1.9.61 duplicate-nulling `UPDATE`, all lock the
+table for a time proportional to its size, and the upgrade runs inside an
+HTTP request from `upgrade.php`. How long they take at 1M+ rows, and whether
+the request survives it, is unmeasured (open, §8.1).
 - The iOS SDK keeps its platform floor (iOS 14+, full support 15.4+) and its
   behaviour, gaining the header rename, `setCustomerId()` and the on-device
   goal evaluator. Android needs API 21+ and Play Store app 8.3.73+.
@@ -3565,9 +3610,10 @@ answer as the unoptimised path on a sparse and a dense dataset (CLAUDE.md,
      every seeded row) against a fresh 1.9.76 install. They must match, apart from the
      normalisation differences the reconciler docblock lists.
 
-  This one test covers the only real upgrade path, and every schema PR runs
-  it: the app tables, the goal and ledger additions, the identity tables and
-  MTA's rungs alike.
+  This one test covers the only real upgrade path: the app tables, the goal
+  and ledger additions, the identity tables and MTA's rungs alike. As built
+  it arrived with the release gate (PR 12, §8.1) and runs in CI from then
+  on; the schema PRs before it were checked by their own upgrade tests.
 
 **PRs 5–7 (Android):**
 - **Unit tests:** referrer parser, token (including the missing-key case),
@@ -3726,8 +3772,8 @@ independently reviewable and verified, and ships as **one 1.9.76 release**.
 | 9 | **MTA engine:** schema rewrite and rungs, worker, models, credits, reports API; v2 and dead code deleted. **Built; `tests/live/mta-engine.sh`; decisions in §6.5.** | 1, 2 |
 | 10 | **MTA UI and exports:** dashboard on the v2 shell, comparison, journey metrics, SSRF-safe webhooks. **Built; `tests/live/mta-ui.sh` (and `mta-engine.sh` re-run), `tests/browser/specs/mta-dashboard.spec.js`; decisions in §6.6.** | 9 |
 | 11 | **Mobile Apps UI:** Android pages, link builder, goal editor and funnel, cross-platform report. **Built; `tests/live/mobile-apps-ui.sh` (and the setup/analyze mobile-apps, android-intake, play-integrity, ios-sdk and app-core passes re-run), `tests/browser/specs/setup-mobile-apps.spec.js` and `analyze-mobile-apps.spec.js`, agent-eval `mobile-apps-ui-001`; decisions in §5.13.** | 3–5 |
-| 13 | **Report rollup and loud cron jobs:** the MTA breakdowns read a rollup the worker keeps (hourly and daily sums, marks in every writer's transaction, exact at every edge); cron jobs exit 1 with the reason against a database that needs an upgrade. **Built; `RollupMatchesFullComputationTest` (differential, randomized), `RollupWritersAreMarkedTest`, `CronEntryPointsFailLoudlyTest`, `tests/live/cron-needs-upgrade.sh`, the rollup section of `mta-engine.sh`; every breakdown under 2 s at 1M conversions. Decisions in §8.2.** | 12 |
 | 12 | **Release gate:** upgrade-equals-install from a real 1.9.55 database, full live passes, agent-eval cases, docs and OpenAPI, and the whole-app browser pass on v2. **Built; `tests/live/upgrade-equals-install.sh` (CI: `upgrade-equals-install.yml`), every integration suite in CI (`tests/run-integration-suites.sh`), agent-eval `mta-001`–`mta-003`, `RoutesAreDocumentedTest` and `DocumentationLinksTest`; four upgrade differences and a worker index fixed; the 1M report measurement misses its target. Decisions and the readiness summary in §8.1.** | all, including U8 |
+| 13 | **Report rollup and loud cron jobs:** the MTA breakdowns read a rollup the worker keeps (hourly and daily sums, marks in every writer's transaction, exact at every edge); cron jobs exit 1 with the reason against a database that needs an upgrade. **Built; `RollupMatchesFullComputationTest` (differential, randomized), `RollupWritersAreMarkedTest`, `CronEntryPointsFailLoudlyTest`, `tests/live/cron-needs-upgrade.sh`, the rollup section of `mta-engine.sh`; every breakdown under 2 s at 1M conversions. Decisions in §8.2.** | 12 |
 
 - PRs 1, 2 and 3 depend on no other measurement PR and can proceed in
   parallel. PR 1 lands with U5 (§10.4), because it rewrites the revenue
@@ -4013,7 +4059,12 @@ What did not run: GitHub CI itself (nothing was pushed; the new
 `upgrade-equals-install.yml` job and the widened integration and eval jobs
 are checked by `actionlint` and by running their scripts locally, not by a
 runner); the eval rubrics (no judge); CI's PHP 8.3 and MySQL 8.0 for
-anything but the upgrade comparison.
+anything but the upgrade comparison. Since then every branch of the stack
+has been pushed and GitHub CI has run on each head. Beyond the gate, the
+surfaces listed in item 8 of "Open for the release decision" below have
+never run for real, and PR 13's change to `connect.php` (every page) and
+two redirects was followed by two browser specs, not the whole browser
+suite.
 
 **Re-run with PR 13 (§8.2),** on its tree, the same way (PHP 8.4 with the
 memcached extension CI loads, MariaDB 10.11, a partial `vendor/`):
@@ -4051,14 +4102,49 @@ Open for the release decision:
 3. **`CLAUDE.md`'s "Two page shells" note is stale** since U8 removed the
    classic shell; it still describes `['ui' => 'v2']` and the Bootstrap 3
    stack.
+4. **The upgrade is one-way and its data migration is unmeasured at
+   volume** (§7.5a). Before release: the upgrade page and `RELEASING.md`
+   must require a backup and say restoring it is the only way back, and the
+   conversion-ledger and 1.9.61 rungs should be timed on a seeded 1.9.55
+   database of realistic size (duplicate transaction ids, case variants,
+   blank ids, subid uploads, 1M+ rows) to know whether the HTTP upgrade
+   survives them.
+5. **Security mitigations the plan listed that were never built** (§7.1): a
+   click-to-install-time distribution with its tails flagged, a
+   per-registration install cap, a per-install event rate cap, and a report
+   flag for goals reached implausibly fast. Build them or accept the risk.
+6. **MTA starts empty at the upgrade.** Nothing enqueues a conversion
+   recorded before it, so a pre-upgrade range has no credits and its MTA
+   reports are empty; the rollup backfill (item 1) sums only what the worker
+   credits after the upgrade. Say so in the release notes, or add a
+   backfill enqueue.
+7. **Identity data has no retention window** (§7.2): observations and
+   signals live as long as the clicks do. Erasing a customer now reaches
+   them; a retention class for them does not exist.
+8. **Surfaces that have never run for real,** from the as-built sections:
+   the Android module has not been assembled with AGP, linted, or run on a
+   device or emulator, and its integrity provider has never requested a real
+   token (§5.12); the server's Play Integrity client has never made a
+   request to Google, only to a self-written fake (§5.11); the iOS
+   StoreKit/AdAttributionKit hand-off compiles out on Linux and was not
+   built for a device (§5.9); iOS `setCustomerId()` rides no request, so the
+   web→iOS identity link that §6.2 and decision 5 describe does not exist
+   (§5.9); export jobs and their files have no retention and stay on disk
+   (§6.6); the Android intake's p95 under 100 ms (§7.3) was never measured.
+9. **The shared intake rate limit behind a proxy** (§7.1): on a deployment
+   behind a TLS-terminating proxy every client shares one ceiling. Document
+   the deployment guidance or add a trusted-proxy option.
 
 ### 8.2 As built: the report rollup and loud cron jobs (PR 13)
 
 PR 13 closes the two items §8.1 left open for the release decision that are
 code: the MTA reports at 1M conversions, and cron jobs that exit 0 in silence
 against a database that needs an upgrade. The version stays 1.9.76 and no
-rung was added: the new tables are `AttributionTables` definitions, so the
-1.9.56 rung and the installer create them from the same DDL
+rung was added: the new tables are schema definitions the rungs and the
+installer share — the rollup, its state and overrides `AttributionTables`
+(created by the 1.9.56 rung), the two dirty-mark tables `ConversionTables`
+(created by the 1.9.75 rung, since the review of #157: recording writes
+them, §7.4) — so the upgrade and the installer create them from the same DDL
 (`upgrade-equals-install.sh`: 20 of 20 on MariaDB 10.11 and on MySQL
 8.0.46, 161 tables identical where there were 156).
 

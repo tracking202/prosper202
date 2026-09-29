@@ -294,6 +294,52 @@ final class AttributionWorkerIntegrationTest extends TestCase
         self::assertSame([90 => '1.00000000'], self::credits($conv, $this->defaultModelId()));
     }
 
+    /**
+     * plan §7.4 "Isolation": recording writes no AttributionTables table.
+     * Every one of them is moved out of reach, and every writer on a
+     * recording path still commits — the ledger (a conversion and its outbox
+     * row), the pixel's click side with a CPA (its rollup mark), the offer
+     * redirect's rewrite of an old click (its click mark) and the LTV click
+     * stamp. A writer that reached an MTA table here fails this test, which
+     * the drop of one engine table above cannot see.
+     */
+    public function testRecordingWritesNoAttributionTable(): void
+    {
+        require_once __DIR__ . '/../../202-config/static-endpoint-helpers.php';
+        $this->campaign(1);
+        $old = time() - 2 * 3600;
+        $this->click(95, 1, $old);
+        $tables = array_map(static fn ($d): string => $d->tableName, AttributionTables::getDefinitions());
+        self::assertNotContains('202_attribution_rollup_dirty', $tables, 'the rollup marks are recording schema');
+        self::assertNotContains('202_attribution_pending', $tables, 'and so is the outbox');
+        foreach ($tables as $table) {
+            self::fixture("RENAME TABLE `$table` TO `{$table}_away`");
+        }
+        try {
+            $conv = $this->convert(95, '7');
+            $outbox = (int) self::scalar("SELECT COUNT(*) FROM 202_attribution_pending WHERE conv_id=$conv");
+            self::assertSame(1, $outbox, 'recorded with its outbox row');
+
+            self::$db->begin_transaction();
+            self::assertTrue(p202ApplyConversionClickSide(self::$db, 95, '0.50'), 'the pixel sets the cost');
+            \Prosper202\Report\RollupDirty::click($this->conn, 1, 95);
+            (new \Prosper202\Ltv\MysqlCustomerRepository($this->conn))->stampClickCustomer(95, 1);
+            self::$db->commit();
+
+            self::assertSame('0.50000', (string) self::scalar('SELECT click_cpc FROM 202_clicks WHERE click_id=95'));
+            $marks = static fn (string $table, string $where): int
+                => (int) self::scalar("SELECT COUNT(*) FROM $table WHERE $where");
+            self::assertGreaterThan(0, $marks('202_attribution_rollup_dirty', 'user_id=1'), 'the cost is marked');
+            self::assertGreaterThan(0, $marks('202_attribution_rollup_dirty_clicks', 'click_id=95'), 'and the rewrite');
+        } finally {
+            foreach ($tables as $table) {
+                self::fixture("RENAME TABLE `{$table}_away` TO `$table`");
+            }
+        }
+        $this->work();
+        self::assertSame([95 => '1.00000000'], self::credits($conv, $this->defaultModelId()), 'the engine catches up');
+    }
+
     public function testAModelChangeRecomputesFromTheStoredJourney(): void
     {
         $this->campaign(1);

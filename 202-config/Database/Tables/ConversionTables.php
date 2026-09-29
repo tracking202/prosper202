@@ -47,6 +47,8 @@ final class ConversionTables
             self::conversionUploads(),
             self::notificationPending(),
             self::notificationCorrectionUrls(),
+            self::attributionRollupDirty(),
+            self::attributionRollupDirtyClicks(),
         ];
     }
 
@@ -233,6 +235,55 @@ final class ConversionTables
                 PRIMARY KEY (`pixel_id`),
                 KEY `user_id` (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='The correction URL of a traffic source postback pixel'"
+        );
+    }
+
+    // The report rollup's dirty marks. They are the rollup's to read, but the
+    // conversion path, the redirects and the LTV click stamp write them in
+    // the transaction of the change they mark (AttributionRollup rule 2),
+    // so they are recording's schema, as the MTA outbox is: recording never
+    // writes an AttributionTables table (plan §7.4).
+
+    /**
+     * Hours whose sums are stale: a range of hours an account's data
+     * changed in, written in the same transaction as the change (the
+     * worker's credit rewrites, a CPC update, the rollup's own resolution
+     * of a changed click). A report computes a dirty hour exactly; the
+     * rollup re-sums it and deletes the row.
+     */
+    public static function attributionRollupDirty(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::ATTRIBUTION_ROLLUP_DIRTY,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ATTRIBUTION_ROLLUP_DIRTY . "` (
+                `dirty_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `hour_from` int(10) unsigned NOT NULL,
+                `hour_to` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`dirty_id`),
+                KEY `user_hour` (`user_id`,`hour_from`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * Clicks changed after the fact (a rotator re-click rewriting its click,
+     * a CPC set on one click). A click's change reaches the hours of every
+     * conversion whose journey holds it, which the writer does not look up:
+     * the rollup resolves the click into dirty hours, and until it has, the
+     * account's reports are computed exactly.
+     */
+    public static function attributionRollupDirtyClicks(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::ATTRIBUTION_ROLLUP_DIRTY_CLICKS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ATTRIBUTION_ROLLUP_DIRTY_CLICKS . "` (
+                `dirty_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `click_id` bigint(20) unsigned NOT NULL,
+                PRIMARY KEY (`dirty_id`),
+                KEY `user_id` (`user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }
 }

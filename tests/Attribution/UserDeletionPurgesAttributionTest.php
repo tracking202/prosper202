@@ -145,7 +145,10 @@ final class UserDeletionPurgesAttributionTest extends TestCase
     public function testTheCascadeNamesEveryAttributionTable(): void
     {
         $tables = array_map(static fn ($d): string => $d->tableName, AttributionTables::getDefinitions());
+        // Conversion schema (recording writes them) holding MTA state.
         $tables[] = '202_attribution_pending';
+        $tables[] = '202_attribution_rollup_dirty';
+        $tables[] = '202_attribution_rollup_dirty_clicks';
         sort($tables);
         $checked = array_keys(self::ownership());
         sort($checked);
