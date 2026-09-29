@@ -55,9 +55,37 @@ gradle -p sdk/android-attribution -Pp202.android=false :core:test
 - `LiveServerTest` runs the real engine against an instance; it skips
   unless `tests/live/android-sdk.sh` sets `P202_LIVE_BASE`.
 
+With an Android SDK (`ANDROID_HOME`) and JDK 21, the Android libraries
+build, lint and run their Robolectric suites (Robolectric 4.14.1, Android
+15's framework on the JVM; no device or emulator):
+
+```
+gradle -p sdk/android-attribution :android:assembleRelease :integrity:assembleRelease \
+  :android:lintRelease :integrity:lintRelease :android:testReleaseUnitTest :integrity:testReleaseUnitTest
+```
+
+- `PlayInstallReferrerSourceTest`: Play's real installreferrer client bound
+  to a played Play Store service — its answer field for field, an organic
+  install, no or too old a Play Store, an unbindable service, a
+  `RemoteException`, the connection unbound.
+- `P202AttributionTest`: `configure()` posting through the real transport
+  to an HTTP server on 127.0.0.1 — the reference install reproduced byte
+  for byte from the device end, the install id kept in `noBackupFilesDir`
+  across a relaunch, an unreadable state file moved aside, 429/503 retried
+  with the same bytes, a 400 terminal.
+- `PlayIntegrityProviderTest`: the provider over a fake
+  `StandardIntegrityManager` with Play's own types — every `integrity.json`
+  hash, preparing per project, re-preparing once, Play's error codes
+  sorted, a timeout, and the engine sending the token bound to the body.
+- `LiveInstanceTest` runs `configure()` against an instance; it skips
+  unless `tests/live/android-sdk.sh` sets `P202_LIVE_BASE`.
+
+`:core:check` also runs Animal Sniffer against Android API 21's signature:
+Android lint does not look inside the plain JVM core.
+
 The goal-evaluator vectors (`goals/`) are not run here: Android goals are
 evaluated on the server (plan §4.3), so the SDK reports every event and
 evaluates none.
 
 Gradle 8.14 and Kotlin 2.0.21; the Android module uses AGP 8.7.3,
-`compileSdk 34`, `minSdk 21`.
+`compileSdk 34`, `minSdk 21` (the integrity module `minSdk 23`, Play Integrity 1.6.0's floor).

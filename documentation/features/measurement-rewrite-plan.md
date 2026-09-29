@@ -2477,7 +2477,9 @@ The SDK is `sdk/android-attribution/`: `core/` (package
   module is the facade, Play's referrer client, the storage directory and
   device facts. The core's tests run in CI on a JDK
   (`.github/workflows/android-sdk.yml`, `-Pp202.android=false`); the
-  Android module is built only where an Android SDK is found.
+  Android module is built only where an Android SDK is found — in CI, by
+  the same workflow's second job (AGP assemble, lint, Robolectric; see
+  "Built and run without a device" below).
 - **No dependency but the referrer client** (§5.6). So no WorkManager, no
   androidx lifecycle and no JSON library: the core has its own strict JSON
   parser and two writers — the wire's, and the canonical one, which is
@@ -2578,11 +2580,48 @@ The SDK is `sdk/android-attribution/`: `core/` (package
   replayed (duplicate) and changed (409), and Play Integrity under
   `require` against PR 6's fake Google (below). Server side:
   `InstallCustomerLinkIntegrationTest` and the integrity worker's customer
-  test. The Android and integrity modules were type-checked against the
-  `android-34` platform stubs and installreferrer 2.2's, integrity 1.6.0's
-  and play-services-tasks/basement's classes as plain Kotlin (warnings as
-  errors); they were not assembled with AGP (the disk had no room for it),
-  not linted, and not run on a device or emulator.
+  test.
+- **Built and run without a device (MR 15).** The `android` and
+  `integrity` modules are assembled with AGP 8.7.3 (`compileSdk 34`, debug
+  and release, Kotlin warnings as errors) and pass Android lint with
+  warnings as errors and no baseline or disabled checks ("No issues
+  found" for both variants of both). Their Robolectric suites run on
+  Robolectric 4.14.1's Android 15 framework (JDK 21): 11 tests in
+  `android` — Play's real installreferrer 2.2 client bound to a played
+  Play Store service (field-for-field answer, organic empty referrer, no
+  Play Store, a Play Store too old, an unbindable service, a
+  `RemoteException`, the connection unbound after the answer), and
+  `P202Attribution.configure()` posting through the real
+  `HttpURLConnection` to an HTTP server on 127.0.0.1 (the reference
+  install of `install-requests.json` reproduced from the device end —
+  canonical form and fingerprint byte for byte, the referrer's token
+  verifying under `install-token.json`'s key as click 42; the install id
+  minted once into `noBackupFilesDir` and not resent after a relaunch; an
+  unreadable state file moved aside; a 429 and a 503 retried with the same
+  bytes; a 400 terminal) — and 6 in `integrity` — `PlayIntegrityProvider`
+  over a fake `StandardIntegrityManager` with Play's own request, task and
+  exception types (every `integrity.json` hash, prepare once per project,
+  re-prepare on `INTEGRITY_TOKEN_PROVIDER_INVALID`, the error codes
+  sorted, a timeout retryable, and the engine sending the token bound to
+  the reference body's fingerprint). Thirteen planted defects, one per
+  behaviour above, each failed the suite and were restored. The optional
+  `LiveInstanceTest` runs `configure()` against a live instance from
+  `tests/live/android-sdk.sh` ("device R": attributed to its click, with
+  the version facts read from Android; the pass was 58 of 58, and with the
+  referrer lower-cased in `PlayInstallReferrerSource` it failed 4). CI's
+  `android-sdk.yml` job "Android libraries" runs assemble, lint and both
+  Robolectric suites with a floor on the executed test count. Two defects
+  the first AGP build found: the integrity module said `minSdk 21`, but
+  integrity 1.6.0's manifest requires 23 (the manifest merger refuses it,
+  as it would have refused every app below 23 — now 23; the base SDK stays
+  21), and the core called `Map.putIfAbsent` (API 24, not backported by
+  D8), found by Animal Sniffer against the API 21 signature, which now runs
+  on `:core` because Android lint does not reach a plain JVM module.
+  **Not verified:** nothing has run on a device or emulator (this sandbox
+  has no `/dev/kvm`), so Robolectric's framework stands in for a real
+  Android's — its binder, its `noBackupFilesDir`, its network stack; Play's
+  referrer service was played, not the Play Store's; and no real Play
+  Integrity token has been requested.
 - **Play Integrity, as PR 6 built the server (§5.11).** When the schema
   document's `integrity` block says `request_token: true` with
   `token_type: standard`, `request_hash:
@@ -2626,9 +2665,9 @@ The SDK is `sdk/android-attribution/`: `core/` (package
   - **Not done:** the provider has not requested a real token — that needs
     a Play-distributed build of an app linked to a Cloud project, a device,
     and Google; the JVM tests hand the engine a provider, and the Android
-    code was only type-checked against the `integrity` 1.6.0 and
-    play-services-tasks classes. Play Integrity's remediation dialogs
-    (`showDialog`) are not offered.
+    provider's Robolectric suite (MR 15, above) drives a fake
+    `StandardIntegrityManager`, not Play. Play Integrity's remediation
+    dialogs (`showDialog`) are not offered.
 
 ### 5.13 As built: decisions (PR 11)
 
@@ -4122,9 +4161,10 @@ Open for the release decision:
    signals live as long as the clicks do. Erasing a customer now reaches
    them; a retention class for them does not exist.
 8. **Surfaces that have never run for real,** from the as-built sections:
-   the Android module has not been assembled with AGP, linted, or run on a
-   device or emulator, and its integrity provider has never requested a real
-   token (§5.12); the server's Play Integrity client has never made a
+   the Android modules are now assembled with AGP, lint-clean and run under
+   Robolectric in CI (MR 15, §5.12), but have not run on a device or
+   emulator, and the integrity provider has never requested a real token
+   (§5.12); the server's Play Integrity client has never made a
    request to Google, only to a self-written fake (§5.11); the iOS
    StoreKit/AdAttributionKit hand-off compiles out on Linux and was not
    built for a device (§5.9); iOS `setCustomerId()` rides no request, so the
