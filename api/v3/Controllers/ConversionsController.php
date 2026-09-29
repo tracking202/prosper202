@@ -319,14 +319,61 @@ class ConversionsController
     public function deletePreview(int $id): array
     {
         $existing = $this->get($id);
+        $repo = new \Prosper202\Conversion\MysqlConversionRepository(
+            new \Prosper202\Database\Connection($this->db)
+        );
+        // What delete() will do to the reversals naming this conversion
+        // (MysqlConversionRepository::softDeleteLocked()): they stay, stop
+        // netting, and their revenue events are voided with this one's.
+        $reversalIds = array_column($repo->liveReversalsOf($id, $this->userId), 'conv_id');
+        $cascade = [];
+        $note = 'Soft-deletes the conversion, voids its revenue ledger event, and corrects the customer LTV rollups'
+            . ' in one transaction.';
+        if ($reversalIds !== []) {
+            $cascade[] = [
+                'resource' => 'conversions',
+                'count' => count($reversalIds),
+                'ids' => $reversalIds,
+                'effect' => 'reversal_stops_netting',
+            ];
+            $one = count($reversalIds) === 1;
+            $note .= ' ' . ($one ? 'Conversion ' : 'Conversions ') . implode(', ', $reversalIds)
+                . ($one ? ' reverses it: it stays but stops' : ' reverse it: they stay but stop')
+                . ' counting (a reversal nets only while its sale counts), and '
+                . ($one ? 'its revenue event is' : 'their revenue events are') . ' voided in the same transaction.';
+        }
+
+        // The traffic-source postbacks queued for it (NotificationOutbox::
+        // onReplaced(), which delete() runs): cancelled where none was
+        // attempted, retracted where one may have gone out.
+        $stmt = $this->prepare(
+            "SELECT COALESCE(SUM(status = 'pending' AND attempts = 0), 0) AS cancel,
+                    COALESCE(SUM(status <> 'cancelled' AND NOT (status = 'pending' AND attempts = 0)), 0) AS retract
+             FROM 202_notification_pending WHERE conv_id = ? AND user_id = ? AND kind = 'reached'"
+        );
+        $this->bind($stmt, 'ii', $id, $this->userId);
+        $this->execute($stmt, 'Reading the queued postbacks failed');
+        $postbacks = $this->result($stmt)->fetch_assoc();
+        $stmt->close();
+        $cancel = (int) ($postbacks['cancel'] ?? 0);
+        $retract = (int) ($postbacks['retract'] ?? 0);
+        if ($cancel + $retract > 0) {
+            $cascade[] = ['resource' => 'notifications', 'count' => $cancel, 'effect' => 'postback_cancelled'];
+            $cascade[] = ['resource' => 'notifications', 'count' => $retract, 'effect' => 'postback_retracted'];
+            $note .= ' Its traffic-source postbacks: ' . $cancel . ' not yet sent '
+                . ($cancel === 1 ? 'is' : 'are') . ' cancelled, and '
+                . $retract . ' that may have gone out ' . ($retract === 1 ? 'gets a retraction' : 'get retractions')
+                . ' (sent to the correction URL where one is set).';
+        }
+
         return ['data' => [
             'dry_run' => true,
             'action' => 'delete',
             'resource' => 'conversions',
             'mode' => 'soft',
             'record' => $existing['data'],
-            'cascade' => [],
-            'note' => 'Soft-deletes the conversion, voids its revenue ledger event, and corrects the customer LTV rollups in one transaction.',
+            'cascade' => $cascade,
+            'note' => $note,
         ]];
     }
 

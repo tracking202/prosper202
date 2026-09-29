@@ -70,3 +70,24 @@ curl -X POST https://your-domain.com/api/v3/conversions \
   -H "Content-Type: application/json" \
   -d '{ "click_id": 12345, "payout": 4.50, "transaction_id": "txn-abc-123" }'
 ```
+
+## Delete Conversion
+
+`DELETE /conversions/{id}` soft-deletes the conversion, recomputes its click's
+value, voids its revenue event (a compensating adjustment) and corrects the
+customer's LTV rollups, in one transaction.
+
+A reversal nets only while the sale it reverses counts, so deleting a sale
+that has a live reversal leaves the reversal row in place but no longer
+counting, and voids the reversal's revenue event in the same transaction: a
+$10 sale and its -$10 reversal are $0 in the click's value and in the
+customer's LTV before the delete, and still $0 after it. Deleting the
+reversal afterwards changes nothing further. The traffic-source postbacks
+queued for the conversion are settled in the same transaction, as the goals
+engine settles an outcome it retires: one not yet sent is cancelled, one
+that may have gone out gets a retraction (sent to the pixel's correction URL
+where one is set, recorded `suppressed` otherwise). `?dry_run=1` answers what the
+delete will do without doing it; a sale with live reversals lists them under
+`cascade` (`{"resource": "conversions", "count", "ids", "effect":
+"reversal_stops_netting"}`) and says so in `note`.
+ Its postbacks are listed as two `notifications` entries, `effect` `postback_cancelled` and `postback_retracted`, each with its `count`.

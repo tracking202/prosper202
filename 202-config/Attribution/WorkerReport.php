@@ -11,6 +11,8 @@ final class WorkerReport
     public int $modelsFannedOut = 0;
     public int $remaining = 0;
     public ?RollupReport $rollup = null;
+    /** @var array{clicks: int, baselines: int, next_click_id: int, through_click_id: int, finished: bool}|null what ConversionBackfill did this run */
+    public ?array $backfill = null;
     /** @var array<string, int> outcome => count */
     public array $outcomes = [];
 
@@ -40,6 +42,13 @@ final class WorkerReport
             $this->modelsFannedOut,
             $this->remaining,
             $this->rollup !== null ? '; ' . $this->rollup->summary() : ''
-        );
+        ) . ($this->backfill === null ? '' : sprintf(
+            '; pre-upgrade backfill: %d lead click(s) examined, %d queued, %s',
+            $this->backfill['clicks'],
+            $this->backfill['baselines'],
+            $this->backfill['finished']
+                ? 'finished'
+                : 'at click ' . $this->backfill['next_click_id'] . ' of ' . $this->backfill['through_click_id']
+        ));
     }
 }

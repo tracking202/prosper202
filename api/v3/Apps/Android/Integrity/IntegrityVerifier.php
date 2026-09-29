@@ -20,7 +20,8 @@ use Throwable;
 
 /**
  * The Play Integrity verdict worker (plan §5.6, §5.11), run by
- * 202-cronjobs/app-installs.php: it decodes the tokens installs arrived
+ * Api\V3\Apps\Android\AndroidIntakeJob from the minutely
+ * 202-cronjobs/index.php and from 202-cronjobs/app-installs.php: it decodes the tokens installs arrived
  * with under `observe` and `require`, off the request path.
  *
  * One install at a time, in three steps, so no network call is ever made

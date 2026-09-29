@@ -221,7 +221,13 @@ it never went out, and a `correction` is recorded if it did. An outcome a
 new goal version writes for an `n` an earlier version already announced
 is a `correction` at that URL, not a new postback.
 
-Schedule the job every minute:
+Nothing extra needs scheduling: the minutely `202-cronjobs/index.php` —
+the one job the installer's cron line and `docker-compose.yaml` run —
+decodes Play Integrity verdicts, settles `pending_click` installs and sends
+due postbacks every minute. `202-cronjobs/app-installs.php` is the same
+work as a standalone CLI job, for deployments that run workers on their own
+(`docker-compose.coolify.yaml`); the two share a lock, so scheduling both is
+safe:
 
 ```
 * * * * * /usr/bin/php /path/to/prosper202/202-cronjobs/app-installs.php >> /var/log/prosper202/app-installs.log 2>&1
@@ -247,7 +253,8 @@ These routes need the `apps` scope area (`apps:read`). The PHP CLI has
 
 Refuted installs are pruned after 90 days and unvouched, settled installs
 without events after 180 (`P202_APP_RETENTION_DAYS_INSTALLS_REFUTED`,
-`…_INSTALLS_UNVOUCHED`; `202-cronjobs/app-retention.php`). Trusted installs,
+`…_INSTALLS_UNVOUCHED`; pruned hourly by `202-cronjobs/index.php`, or by
+`202-cronjobs/app-retention.php` on its own). Trusted installs,
 pending ones and installs with events are kept. Deleting a user deletes
 their installs, their queued postbacks and their Play Integrity
 credentials; deleting a registration keeps its installs (their conversions

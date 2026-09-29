@@ -400,10 +400,16 @@ the ones a deleted user's purge released), **refuted** postbacks
 that does not accept test signals) after 90 days. Only a trusted row that
 belongs to a registration is kept forever.
 
-`202-cronjobs/app-retention.php` is the pruner to schedule (hourly
-or daily): it runs whether or not postbacks are arriving, drains the backlog
-rather than nibbling at it, and reports what it removed (`--dry-run` reports
-the windows and the backlog without deleting). The receiver also prunes
+The hourly tier of `202-cronjobs/index.php` — the minutely cron every
+default install already runs — prunes on these windows (up to 40 batches
+per class an hour; a larger backlog drains over the following hours).
+`202-cronjobs/app-retention.php` is the same prune as a standalone CLI job
+(hourly or daily): it runs whether or not postbacks are arriving, drains the
+backlog rather than nibbling at it, and reports what it removed
+(`--dry-run` reports the windows and the backlog without deleting). The
+windows are read from the environment of whichever process prunes — the
+web server's for `index.php` fetched over HTTP, the crontab's for the CLI
+job. The receiver also prunes
 opportunistically, piggybacked on its own traffic in small batches, but that
 is a safety net rather than the policy — it only fires while new postbacks
 are still arriving.

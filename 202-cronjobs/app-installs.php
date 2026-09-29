@@ -7,7 +7,12 @@ declare(strict_types=1);
  *
  * Three jobs the request path leaves to a worker (plan §5.2, §5.3, §5.6,
  * §7.3), in this order, so an install settled by the first two has its
- * postback sent by the third in the same run:
+ * postback sent by the third in the same run. The minutely
+ * 202-cronjobs/index.php runs all three too — it is the only job a default
+ * deployment schedules — so this file is for deployments that run workers
+ * on their own (docker-compose.coolify.yaml). Steps 0 and 1 are
+ * Api\V3\Apps\Android\AndroidIntakeJob, which holds a named lock so the
+ * two entry points never run them at once:
  *
  *  0. Decode Play Integrity tokens (Api\V3\Apps\Android\Integrity\
  *     IntegrityVerifier): installs that arrived under `observe` or
@@ -42,9 +47,7 @@ declare(strict_types=1);
  *     >> /var/log/prosper202/app-installs.log 2>&1
  */
 
-use Api\V3\Apps\Android\Integrity\GooglePlayIntegrityClient;
-use Api\V3\Apps\Android\Integrity\IntegrityVerifier;
-use Api\V3\Apps\Android\PendingClickSettler;
+use Api\V3\Apps\Android\AndroidIntakeJob;
 use Prosper202\Database\Connection;
 use Prosper202\Notifications\NotificationOutbox;
 
@@ -92,40 +95,23 @@ try {
         }
     }
 
-    $verified = (new IntegrityVerifier($db, GooglePlayIntegrityClient::fromEnvironment()))->run(200);
-    $verdicts = [];
-    foreach ($verified['verdicts'] as $state => $n) {
-        $verdicts[] = $state . '=' . $n;
+    // The same work the minutely 202-cronjobs/index.php runs, under the
+    // same lock: a deployment that schedules both never runs it twice at once.
+    $intake = AndroidIntakeJob::runExclusive($db);
+    if ($intake === null) {
+        echo "play integrity / pending clicks: another run holds the lock; skipped\n";
+    } else {
+        echo AndroidIntakeJob::summary($intake), "\n";
     }
-    printf(
-        "play integrity: %d examined, %s, %d retrying, %d failed\n",
-        $verified['examined'],
-        $verdicts === [] ? 'no verdicts' : implode(' ', $verdicts),
-        $verified['retrying'],
-        $verified['failed']
-    );
-
-    $settled = (new PendingClickSettler($db))->run(500);
-    $byState = [];
-    foreach ($settled['settled'] as $state => $n) {
-        $byState[] = $state . '=' . $n;
-    }
-    printf(
-        "pending clicks: %d examined, settled %s, %d still pending, %d failed\n",
-        $settled['examined'],
-        $byState === [] ? 'none' : implode(' ', $byState),
-        $settled['still_pending'],
-        $settled['failed']
-    );
 
     $sent = (new NotificationOutbox(new Connection($db)))->sendDue(500);
     printf("notifications: %d sent, %d retrying, %d failed\n", $sent['sent'], $sent['retrying'], $sent['failed']);
 
-    if ($verified['failed'] > 0) {
-        $fail($verified['failed'] . ' install(s) could not be verified; see the error log');
+    if ($intake !== null && $intake['integrity']['failed'] > 0) {
+        $fail($intake['integrity']['failed'] . ' install(s) could not be verified; see the error log');
     }
-    if ($settled['failed'] > 0) {
-        $fail($settled['failed'] . ' install(s) could not be settled; see the error log');
+    if ($intake !== null && $intake['settle']['failed'] > 0) {
+        $fail($intake['settle']['failed'] . ' install(s) could not be settled; see the error log');
     }
 } catch (Throwable $e) {
     $fail($e->getMessage());

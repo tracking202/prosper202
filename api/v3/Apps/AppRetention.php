@@ -26,8 +26,9 @@ use Api\V3\Support\MysqliStatements;
  *
  * The overrides are read from the environment of whichever process prunes,
  * so the cron (202-cronjobs/app-retention.php) and php-fpm (the receiver's
- * opportunistic pass) are configured separately; the cron prints the
- * windows it resolved for exactly that reason.
+ * opportunistic pass, and the hourly tier of 202-cronjobs/index.php, which a
+ * default deployment fetches over HTTP) are configured separately; the cron
+ * prints the windows it resolved for exactly that reason.
  */
 final class AppRetention
 {
@@ -78,6 +79,29 @@ final class AppRetention
             static fn (RetentionClass $class): string => $class->table,
             $this->classes
         )));
+    }
+
+    /**
+     * The first of tables() this schema does not have, or null when all are
+     * there: an install upgraded from before the app tables has nothing to
+     * prune. A failed probe throws — "could not check" is not "not there"
+     * (CLAUDE.md #11).
+     */
+    public function missingTable(): ?string
+    {
+        foreach ($this->tables() as $table) {
+            $result = $this->db->query("SHOW TABLES LIKE '" . $this->db->real_escape_string($table) . "'");
+            if (!$result instanceof \mysqli_result) {
+                throw new DatabaseException('could not check for ' . $table . ': ' . $this->db->error);
+            }
+            $exists = $result->num_rows > 0;
+            $result->close();
+            if (!$exists) {
+                return $table;
+            }
+        }
+
+        return null;
     }
 
     /**

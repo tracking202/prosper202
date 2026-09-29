@@ -44,6 +44,7 @@ final class ConversionTables
         return [
             self::conversionLogs(),
             self::attributionPending(),
+            self::attributionBackfill(),
             self::conversionUploads(),
             self::notificationPending(),
             self::notificationCorrectionUrls(),
@@ -105,6 +106,33 @@ final class ConversionTables
      * so one malformed conversion delays only itself, never the queue behind
      * it. A re-queue resets them — the change may be what fixes it.
      */
+    /**
+     * The upgrade's backfill of pre-upgrade conversions into MTA
+     * (Attribution\ConversionBackfill): one row for the installation, or
+     * none. The upgrade that turns an existing 202_conversion_logs into the
+     * ledger writes it (clicks up to through_click_id are the ones recorded
+     * before the ledger existed); the worker walks next_click_id up to it in
+     * bounded chunks and stamps finished_at. A fresh install has nothing
+     * from before, so it never gets a row. Not per user: the walk is over
+     * the installation's clicks, and each click's row names its own user.
+     */
+    public static function attributionBackfill(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::ATTRIBUTION_BACKFILL,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ATTRIBUTION_BACKFILL . "` (
+                `backfill_id` tinyint(3) unsigned NOT NULL,
+                `next_click_id` bigint(20) unsigned NOT NULL DEFAULT '0',
+                `through_click_id` bigint(20) unsigned NOT NULL,
+                `started_at` int(10) unsigned NOT NULL,
+                `finished_at` int(10) unsigned DEFAULT NULL,
+                `clicks_examined` bigint(20) unsigned NOT NULL DEFAULT '0',
+                `baselines` int(10) unsigned NOT NULL DEFAULT '0',
+                PRIMARY KEY (`backfill_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
     public static function attributionPending(): SchemaDefinition
     {
         return SchemaBuilder::fromRawSql(
