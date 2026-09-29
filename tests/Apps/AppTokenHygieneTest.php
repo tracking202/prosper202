@@ -41,13 +41,15 @@ final class AppTokenHygieneTest extends TestCase
         $end = strpos($src, "\$router->group(", $start + 1);
         self::assertIsInt($end);
         $group = substr($src, $start, $end - $start);
-        self::assertSame(
-            1,
-            preg_match("/\\\$r->post\\('',\\s*(.+)\\);/", $group, $m),
-            'the POST /apps route registration must be present'
-        );
-        self::assertStringContainsString('$crud($apps)->create(', $m[1]);
-        self::assertStringNotContainsString('$idempotent(', $m[1]);
+        // The handler runs from its registration to the next one (it spans
+        // lines since it checks the manage permission first).
+        $at = strpos($group, "\$r->post('',");
+        self::assertIsInt($at, 'the POST /apps route registration must be present');
+        $next = strpos($group, '$r->', $at + 1);
+        $handler = substr($group, $at, ($next === false ? strlen($group) : $next) - $at);
+        self::assertSame(1, substr_count($group, "\$r->post('',"), 'POST /apps is registered once');
+        self::assertStringContainsString('$crud($apps)->create(', $handler);
+        self::assertStringNotContainsString('$idempotent(', $handler);
     }
 
     public function testPublicSchemaBranchAcceptsTheTokenOnlyAsAHeader(): void
