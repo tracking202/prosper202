@@ -497,7 +497,8 @@ final class MobileAppsReportTest extends TestCase
     {
         $api = [
             'ios' => [...\Api\V3\Controllers\AppPostbacksController::metricKeys(), 'decoded', 'ambiguous_encoding', 'revenue'],
-            'android' => ['received', 'installs', 'organic', 'pending', 'refuted_count', 'unvouched_count', 'test_count', 'goals_reached', 'revenue'],
+            'android' => ['received', 'installs', 'organic', 'pending', 'refuted_count', 'unvouched_count', 'test_count', 'goals_reached', 'revenue',
+                'ctit_measured', 'ctit_short', 'ctit_long', 'fast_goals'],
             'all' => ['platform', 'installs', 'goals_reached', 'revenue', 'trusted_count', 'refuted_count', 'unvouched_count', 'test_count'],
         ];
         foreach ($api as $platform => $fields) {

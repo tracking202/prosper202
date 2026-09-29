@@ -116,12 +116,17 @@ if (!empty($version_error)) {
         }
 
         if (!$error) {
+            // One upgrade at a time, and true only once the stored version
+            // is the code's (UPGRADE::upgrade_databases()). Behind a proxy's
+            // read timeout this page answers 504 while the upgrade carries
+            // on; a second POST meanwhile runs nothing and says so.
             if (UPGRADE::upgrade_databases($time_from) == true) {
                 // Clear all PHP caches
                 clear_php_caches();
                 $success = true;
             } else {
                 $error = true;
+                $upgrade_busy = UPGRADE::$lastRunBusy;
             }
         }
     }
@@ -149,6 +154,11 @@ if (!empty($version_error)) {
             <div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-shield-exclamation"></i><div class="p202-flash__body">Your session has expired or the security check failed. Please refresh the page and submit again.</div></div>
             <a class="btn btn-primary w-100" href="<?php echo get_absolute_url(); ?>202-config/upgrade.php">Start the <?php echo strtolower($task_202); ?> again</a>
         <?php echo p202_standalone_card_end();
+        } elseif (!empty($upgrade_busy)) {
+            echo p202_standalone_card('An upgrade is already running', 'Nothing was changed by this request.'); ?>
+            <div class="alert alert-warning p202-flash" role="alert"><i class="bi bi-hourglass-split"></i><div class="p202-flash__body">Another request is upgrading this database right now. It keeps running even if its page timed out. Wait a few minutes, then reload this page: once the upgrade has finished it takes you to the login page.</div></div>
+            <a class="btn btn-primary w-100" href="<?php echo get_absolute_url(); ?>202-config/upgrade.php">Check again</a>
+        <?php echo p202_standalone_card_end();
         } elseif ($error == true) {
             echo p202_standalone_card('An error occured', 'The ' . strtolower($task_202) . ' did not finish.'); ?>
             <div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body">An unexpected error occured while you were trying to <?php echo strtolower($task_202); ?>. Please try again, or if you keep encountering problems review our <a href="http://support.tracking202.com">support docs</a>.</div></div>
@@ -164,6 +174,7 @@ if (!empty($version_error)) {
         } else {
             echo p202_standalone_card($task_202 . ' to Prosper202 ' . $version, 'This could take a while, depending on the last time you updated.'); ?>
             <p><?php echo $task_202_2; ?> from <span class="p202-pill"><?php echo htmlspecialchars((string) PROSPER202::prosper202_version(), ENT_QUOTES, 'UTF-8'); ?></span> to <span class="p202-pill p202-pill--accent"><?php echo htmlspecialchars((string) $version, ENT_QUOTES, 'UTF-8'); ?></span>. Press the button below to begin.</p>
+            <p class="small text-body-secondary">On a large install (a million conversions takes one to two minutes) this page can outlast your proxy or host's time limit and show a timeout error. The upgrade keeps running on the server regardless: wait a few minutes and reload this page. It takes you to the login page once the upgrade has finished. There is nothing to redo.</p>
             <?php $change_logs = changelog();
             $pending_logs = [];
             if (!empty($change_logs)) {
@@ -218,6 +229,19 @@ if (!empty($version_error)) {
                     </fieldset>
                 <?php } ?>
 
+                <?php /* Said before the button, every time: the upgrade cannot be
+                         undone in place (plan §7.5a). Markup from the kit's
+                         warning flash, parts included (CLAUDE.md #19). */ ?>
+                <div class="alert alert-warning p202-flash" role="status" id="upgrade-backup-warning">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <div class="p202-flash__body">
+                        <strong>Back up your database before you press the button.</strong>
+                        This upgrade is one-way: it changes the database in place, and restoring that backup is the only way back.
+                        <?php if (version_compare(PROSPER202::prosper202_version(), '1.9.76', '<')) { ?>
+                            It makes <code>202_conversion_logs.dedupe_key</code> required (NOT NULL), so the Prosper202 you are upgrading from can no longer record conversions against this database, even if you put its files back.
+                        <?php } ?>
+                    </div>
+                </div>
                 <button class="btn btn-primary btn-lg w-100" id="upgrade-submit" type="submit"><?php echo $task_202; ?> Prosper202</button>
             </form>
         <?php echo p202_standalone_card_end(); ?>

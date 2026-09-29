@@ -3431,16 +3431,16 @@ rollup of PR 13, §8.2).
 |---|---|
 | Forged Android installs for arbitrary clicks | HMAC install token; `bad_token` counts nowhere |
 | Replayed referrer | `UNIQUE (click_id, dedupe_key)` with the `install` key: one install conversion per click |
-| **Click spamming** (harvest real tokens from cheap clicks) | The inherent residual risk. **Built:** (a) Google's server click time must be within minutes of our `click_time`; (d) Play Integrity; the per-peer rate limit on the intake. **Not built:** (b) a CTIT distribution with its tails flagged, and (c) a per-registration cap — nothing in the tree computes click-to-install time or limits a registration (review of #157, B1). Open for the release decision (§8.1) |
-| Click injection | Server click time after server install-begin → `implausible` |
+| **Click spamming** (harvest real tokens from cheap clicks) | The inherent residual risk. **Built:** (a) Google's server click time must be within minutes of our `click_time`; (d) Play Integrity; the per-peer rate limit on the intake; (b) every install whose token names a click of the owner's records its click-to-install time (`ctit_seconds`: Google's install-begin minus `click_time`) and flags the tails against the registration's `ctit_min_seconds` (default 10) and `ctit_max_seconds` (default one day, a fixed cap: a percentile of the app's own distribution moves with the attack that inflates it) — a mark in the Android report (`ctit_short`, `ctit_long`, `group_by=ctit-flag`, `ctit_flag=`), never a refusal; (c) a per-registration install cap (`install_cap_per_minute`, default 300): 429 with Retry-After, nothing stored or counted, keyed on the registration id the token resolves to (§8.3) |
+| Click injection | Server click time after server install-begin → `implausible`; an install that began within `ctit_min_seconds` of our click is flagged `short` (§8.3) |
 | Row minting on public intakes | Body caps; rate limit on `REMOTE_ADDR` (#16) with injective bucket names (#17); a retention class for every untrusted state. Behind a TLS-terminating proxy the peer is the proxy, so the ceiling is one for the whole server (`PublicIntake`: 120 installs and 600 event requests a minute), and the limiter fails open when its store cannot be read; a deployment behind a proxy (Coolify, a load balancer) should terminate the rate limit at the proxy or accept the shared ceiling |
 | App token lifted into another app | `app_key` mismatch is a visible 422; the token rotates |
 | SSRF through MTA export webhooks | `https` only; private-range refusal of every resolved address; connect pinned to the validated address; no redirects (§6.3) |
 | MTA journey poisoning (a crafted `p202vid`, LP id or `cust` joins someone else's journey) | Browser ids are random 128-bit values, so guessing one is infeasible, and a user can only pollute their own journeys. A customer id links a journey only when it carries a valid `cust_sig` from the operator's server (§6.2); an unsigned `cust` on a public pixel never links. Any signal linking more than the cap is quarantined. Credits are bounded by conversions, which MTA never creates |
-| **Fabricated in-app events** to reach payable goals (the app token is public) | Goals pay only for installs that are `attributed`, and under `require`, only for integrity-valid ones. Values come from the goal or campaign, never from the client unless `trust_client_revenue` is set. `UNIQUE (subject, event_id)` stops replays inflating counts. **Not built:** a per-install event rate cap (the event intake has the per-peer limit only, §5.10) and a report flag for goals reached implausibly fast (review of #157, B1); open for the release decision (§8.1) |
+| **Fabricated in-app events** to reach payable goals (the app token is public) | Goals pay only for installs that are `attributed`, and under `require`, only for integrity-valid ones. Values come from the goal or campaign, never from the client unless `trust_client_revenue` is set. `UNIQUE (subject, event_id)` stops replays inflating counts. **Built** (§8.3): a per-install event cap (`event_cap_per_minute`, default 200 events a minute, never below a full batch; 429, nothing of the batch stored), and a flag on an outcome reached sooner after the install than `fast_goal_seconds` (default 5), counted and filterable in the report (`fast_goals`); a flagged outcome still pays under `fast_goal_policy: count` (the default — the threshold is a heuristic an app's first goal can legitimately meet) and is recorded unpaid and unsent under `hold` |
 | Goal definitions as an attack surface | Data only (JSON schema validated on write and on load), bounded complexity, no expression evaluation. An invalid stored definition disables that goal with its reason and never throws through other goals (#11) |
 | Permission drift between surfaces | One permission check per operation on every surface. `/attribution` asks for `view_attribution_reports` and, to change a model, `manage_attribution_models`; `/apps` asks for `manage_attribution_models` on every write and `view_attribution_reports` on the report and the rows behind it (postbacks, installs, notifications, verify), as the Mobile Apps pages do — it asked for nothing until the review of #157 (B2). `AppsRoutePermissionTest` requires every `/apps` route to carry a decision, the check first in its handler, and `app-core.sh` drives it with role-3 and role-4 keys. `/goals` and `/events` take no role permission, as the campaign pages that edit goals and the conversion API do not. There is no one structural test over every route |
-| Malformed values resolving permissively | Missing HMAC key, unparseable referrer, unreadable policy and invalid model config all resolve to the non-trusting or disabled state (#11) |
+| Malformed values resolving permissively | Missing HMAC key, unparseable referrer, unreadable policy and invalid model config all resolve to the non-trusting or disabled state (#11); an unreadable abuse limit to the one that trusts least, named — the caps answer 503, the CTIT and fast-goal thresholds flag everything, the fast-goal policy holds, and a cap store that cannot answer refuses rather than admits (§8.3) |
 
 ### 7.2 Privacy
 
@@ -3614,17 +3614,57 @@ The upgrade is one-way. The conversion-ledger rung makes `dedupe_key`
 code redeployed on an upgraded database inserts conversions that strict
 mode refuses or that collide on `uniq_click_dedupe`: a code-only rollback
 breaks conversion recording. **Take a database backup before upgrading;
-restoring it is the only way back.** The upgrade page and `RELEASING.md`
-have to say so before release (open, §8.1).
+restoring it is the only way back.** The upgrade page says so above its
+button on every upgrade (`#upgrade-backup-warning`, naming `dedupe_key` when
+the stored version is below 1.9.76), and `RELEASING.md` has a section on it
+(§8.3).
 
-The data migration has run only on an empty 1.9.55 database
-(`upgrade-equals-install.sh`) and on seeded test databases, never on a
-populated `202_conversion_logs` at volume. The rung's full-table
-`UPDATE … WHERE dedupe_key IS NULL`, its two collation `MODIFY`s and three
-index `ALTER`s, and the 1.9.61 duplicate-nulling `UPDATE`, all lock the
-table for a time proportional to its size, and the upgrade runs inside an
-HTTP request from `upgrade.php`. How long they take at 1M+ rows, and whether
-the request survives it, is unmeasured (open, §8.1).
+**Measured at 1M conversions.** The database was in the 1.9.55 shape
+(duplicates, case variants, blank and NULL ids; 128 MB buffer pool) and
+was upgraded through `upgrade.php` over HTTP:
+- 57 s on MariaDB 10.11 and 91 s on MySQL 8.0.
+- About 96% of that time is `202_conversion_logs`: the ledger backfill
+  (19 s / 25 s), the 1.9.61 duplicate-nulling JOIN (14 s / 13 s), and on
+  MySQL 8 the two collation `MODIFY`s, which copy the table (18 s each)
+  and block conversion inserts while they run.
+- The page renders only at the end, so a 60 s proxy read timeout answers
+  504. The upgrade carries on: `UPGRADE::upgrade_databases()` sets
+  `ignore_user_abort` and no time limit. A process killed mid-backfill
+  re-enters cleanly.
+- Correctness held: every row's `dedupe_key`, `source` and
+  `transaction_id` matched an independent computation, once the 1.9.61
+  fix below was in.
+
+The same measurement found three defects, each fixed in place (the version
+stays 1.9.76):
+- **The 1.9.61 step lost ids.** It de-duplicated `(click_id,
+  transaction_id)` under the column's `utf8mb4_general_ci`, so the case
+  variants of an id on one click (Tx-1, TX-1) counted as one, and every
+  variant but the first lost its transaction id: 8,249 of 12,500
+  case-variant rows at 1M. The step now makes `transaction_id` `utf8mb4_bin`
+  first (the ledger step then finds that done, so the cost is moved, not
+  added) and merges only byte-identical ids
+  (`_upgrade_conversion_idempotency()`).
+- **Old conversions were locked for the whole backfill.** One `UPDATE`
+  over the whole table held a row lock on every row it had passed, so a
+  write to an old conversion waited up to 47.5 s on MySQL 8, against a
+  50 s lock wait timeout. It now runs in 50,000-id ranges, each committing
+  in about a second, plus a final pass for rows written past the range it
+  read.
+- **A second upgrade ran alongside the first.** A second session's POST
+  (an operator reloading after the 504) ran a second ladder concurrently
+  and printed Success! at 1.9.75. The ladder now runs under a named lock
+  per database: a second caller runs nothing, and the page says an
+  upgrade is already running. Success now means the stored version
+  reached the code's. It used to mean the ladder returned, which it also
+  does when a rung holds its version to retry.
+
+`tests/live/upgrade-csrf.sh` covers both: a POST while the lock is held,
+and a ladder that stops short.
+
+The measurement agent also tried one combined `ALTER` for the ledger DDL,
+so MySQL 8 copies the table once instead of twice. It was not adopted: it
+failed once in five runs, cause unknown.
 - The iOS SDK keeps its platform floor (iOS 14+, full support 15.4+) and its
   behaviour, gaining the header rename, `setCustomerId()` and the on-device
   goal evaluator. Android needs API 21+ and Play Store app 8.3.73+.
@@ -4141,22 +4181,47 @@ Open for the release decision:
 3. **`CLAUDE.md`'s "Two page shells" note is stale** since U8 removed the
    classic shell; it still describes `['ui' => 'v2']` and the Bootstrap 3
    stack.
-4. **The upgrade is one-way and its data migration is unmeasured at
-   volume** (§7.5a). Before release: the upgrade page and `RELEASING.md`
-   must require a backup and say restoring it is the only way back, and the
-   conversion-ledger and 1.9.61 rungs should be timed on a seeded 1.9.55
-   database of realistic size (duplicate transaction ids, case variants,
-   blank ids, subid uploads, 1M+ rows) to know whether the HTTP upgrade
-   survives them.
-5. **Security mitigations the plan listed that were never built** (§7.1): a
-   click-to-install-time distribution with its tails flagged, a
-   per-registration install cap, a per-install event rate cap, and a report
-   flag for goals reached implausibly fast. Build them or accept the risk.
-6. **MTA starts empty at the upgrade.** Nothing enqueues a conversion
-   recorded before it, so a pre-upgrade range has no credits and its MTA
-   reports are empty; the rollup backfill (item 1) sums only what the worker
-   credits after the upgrade. Say so in the release notes, or add a
-   backfill enqueue.
+4. **The upgrade is one-way** (§7.5a). Its data migration is now measured
+   at 1M conversions: 57 s on MariaDB and 91 s on MySQL 8 through
+   `upgrade.php`, and it survives a proxy's 504 because it carries on
+   server-side. That measurement led to three fixes, all in place:
+   - the 1.9.61 step nulled case-variant ids (it now compares byte for
+     byte);
+   - the ledger backfill locked old conversions for the whole scan (it now
+     runs in 50k ranges);
+   - a second session ran a second ladder (it now takes a lock, and
+     Success! means the version reached the code's).
+
+   `RELEASING.md` and the upgrade page now tell large installs about the
+   timeout and that a 504 needs nothing redone, and both require a backup and
+   say that restoring it is the only way back (§8.3).
+5. ~~**Security mitigations the plan listed that were never built**
+   (§7.1).~~ **Closed by PR 14 (§8.3):** click-to-install time recorded and
+   its tails flagged, a per-registration install cap, a per-install event
+   cap, and a flag on goals reached implausibly fast.
+6. ~~**MTA starts empty at the upgrade.**~~ **Closed** (Codex P1 on PR
+   #157): the conversion-ledger step writes a marker,
+   `202_attribution_backfill` (the newest click at the upgrade, one indexed
+   `MAX()` in the request, the rung changed in place and the version still
+   1.9.76), and the attribution worker —
+   `Prosper202\Attribution\ConversionBackfill`, from
+   `AttributionWorker::runExclusive()`, so every minute from
+   `202-cronjobs/index.php` — walks the clicks up to it by primary key, 5,000
+   ids a chunk under a third of its budget, and carries each pre-upgrade lead
+   click in as the `legacy_baseline` row the ledger would write on its first
+   touch (`ensureManaged()`), queued with reason `backfill` and credited like
+   any conversion. The pre-upgrade rows themselves stay `pre_ledger`: the
+   click's cached value is what stands for them, as the ledger already
+   decided. Idempotent (a managed click gets no second baseline; a walk
+   interrupted before its cursor moved re-reads the chunk and adds nothing)
+   and resumable. While it runs, `GET /attribution/queue` and the breakdown
+   and journey metrics' `meta.backfill` say how far it is, and the
+   Attribution page shows a strip; `null` once finished, and on a fresh
+   install, which has no marker. A baseline's conversion time is its
+   click's, so a backfilled conversion reports on its click's day.
+   `tests/Attribution/ConversionBackfillIntegrationTest`;
+   `tests/live/upgrade-equals-install.sh` checks the marker after a real
+   1.9.55 upgrade and its absence after a fresh install.
 7. **Identity data has no retention window** (§7.2): observations and
    signals live as long as the clicks do. Erasing a customer now reaches
    them; a retention class for them does not exist.
@@ -4516,6 +4581,141 @@ rollup. The part adds 24,748 rows to 10.8M; its three build statements take
 52 minutes here against 20 before, with another session's integration
 suites running on the same server throughout, so that time measures the
 sandbox, not the part.
+
+### 8.3 As built: the abuse limits and the backup warning (PR 14)
+
+The four §7.1 mitigations that were open for the release decision (§8.1,
+item 5), and the backup half of item 4. The schema changes are made in place
+(`AppTables`, `GoalTables`; the 1.9.75 rung creates them from those
+definitions): no rung, and the version stays 1.9.76.
+
+**Where the settings live.** Six Android registration columns, read by two
+value objects that follow AppPolicy's rule — strict, and a value no write
+stores is the reading that trusts least, named in the log (#11):
+`Api\V3\Apps\AppLimits` (`ctit_min_seconds`, `ctit_max_seconds`,
+`install_cap_per_minute`, `event_cap_per_minute`) and
+`Prosper202\Goals\FastGoalPolicy` (`fast_goal_seconds`,
+`fast_goal_policy`). Each column is judged alone: an unreadable CTIT
+minimum is its ceiling (3600) and an unreadable maximum its floor (60), so
+every measured install is flagged; an unreadable cap is null, which the
+intakes answer with a 503 naming the column; an unreadable fast-goal
+threshold is its ceiling (3600) and an unreadable policy `hold`. The
+registration API reads each raw before the base controller casts it (#18),
+refuses `null` for these NOT NULL columns by name (#4), holds the CTIT
+minimum below the maximum as the write leaves them, and refuses them on
+iOS. Setup › Mobile Apps shows all six under Advanced; the Go CLI takes them
+on `app create` and `app update`.
+
+**(b) Click-to-install time.** `ClickToInstallTime`: Google's server
+install-begin (the receipt time when Play gave none) minus our `click_time`,
+written to `202_app_installs.ctit_seconds` with `ctit_flag` `short`, `ok` or
+`long`, inside `InstallIntake::classifyWithClick()` — the one step the
+intake, the pending-click settler and the integrity worker all take — for
+any install whose token names a click of the owner's, whatever state
+follows. The registration's thresholds reach the settler and the worker
+through `LockedInstall`, which now reads the limit columns beside the policy
+ones. Defaults: **10 s** short (a person cannot reach the store page and start
+a download faster; the `implausible` rule already refuses an install that
+began before Google's own click) and **86 400 s** long. The long tail is a
+fixed cap rather than the window's 90th percentile: the percentile is learned
+from the distribution click spamming inflates, so it moves with the attack,
+and a small app has too few installs for one to mean anything; a day leaves
+room for installs that wait for Wi-Fi. A flag marks, never refuses, and is
+the thresholds' as they stood when the install was measured. The report
+counts `ctit_measured`, `ctit_short` and `ctit_long` over every install in a
+group (like the state breakdowns, not trust-gated), groups by `ctit-flag`
+and filters by `ctit_flag`; the install list filters by it too; Analyze ›
+Mobile Apps has a Fraud signals panel with the counts and filter links.
+
+**(c) Per-registration install cap** (`install_cap_per_minute`, default
+**300**: well above any launch spike a single app's organic traffic makes, and
+low enough that a scripted flood stays a few hundred rows a minute rather than
+the per-peer ceiling times every proxy it can reach). Checked in
+`InstallIntake::receive()` after every check that can refuse the body and
+after the replay answer, so only a request about to store a new install
+spends it, and over it the answer is 429 with `Retry-After` (and
+`retry_after_seconds`), nothing stored and nothing counted; the SDK retries
+429. The bucket is `app-install-cap:r<registration_id>` — the id the token
+resolved from our table, never anything the body names (#16); the store's
+file name is a slug plus a hash of the whole bucket (#17), and
+`ServerStateStore::reserveQuota()` takes a cost under the file lock and takes
+nothing from a refused request. Unlike the per-peer limiter it fails
+**closed**: a store that cannot be read or written (or a bucket that does not
+decode) throws, and the intake answers 503 with `Retry-After`, so a broken
+state directory delays installs instead of removing the cap. It is per
+server, as the per-peer limit is.
+
+**Per-install event cap** (`event_cap_per_minute`, default **200** events a
+minute, never below one full batch of 100 so a batch always fits): the same
+`admit()`, in `InstallEventsIntake::receive()` once the body has parsed,
+costing the batch's event count, keyed on
+`app-install-event-cap:r<registration>:i<install_row_id>`. A batch that would
+pass it is refused whole with 429 and stored nowhere.
+
+**Goals reached implausibly fast** (`fast_goal_seconds`, default **5**). In
+`GoalEngine::valuation()`, the one place every outcome write decides its
+value: an install subject's outcome whose effective time is less than the
+threshold after the install's time is `too_fast` (a new
+`202_goal_outcomes` column, written on insert and on restate); the install
+itself (`@install`) never is. The policy rides the install subject
+(`GoalSubject::$fastGoals`, read plainly from the registration by
+`installSubject()`; an install subject built without one is judged under the
+unreadable policy). **Decision: a flagged outcome still pays under
+`fast_goal_policy: count`, the default** — the threshold is a heuristic, and
+an app whose first goal is "opened the app" meets it honestly within seconds
+— and is visible in the report (`fast_goals` among `goals_reached`,
+`fast_goals=1` for the installs with one). Under `hold` it is recorded,
+counted in the funnel and flagged, its ledger row written unpayable, and
+nothing is sent to the traffic source. There is no release: the decision is
+the one in force when the outcome is written, like every snapshot the intake
+takes.
+
+**The backup warning.** `202-config/upgrade.php` says above its button,
+inside the form that posts, as the kit's warning flash, that the upgrade is
+one-way and a backup is required, restoring it the only way back, and —
+from below 1.9.76 — that `202_conversion_logs.dedupe_key` becomes NOT NULL
+so the old code can no longer record conversions. `RELEASING.md` has the
+same as a section. `UpgradeBackupWarningTest` pins both.
+
+**Tests.** Unit: `AppLimitsTest`, `ClickToInstallTimeTest`,
+`FastGoalPolicyTest`, `ServerStateStoreQuotaTest`,
+`UpgradeBackupWarningTest`, the Go CLI's `app_limits_test.go`. Integration:
+`AbuseLimitsIntegrationTest` (10 tests) drives both intakes' `receive()` with
+the real ServerStateStore under a per-test directory (`AndroidDatabase` now
+gives every Android suite one, so no count leaks between tests or runs).
+Live: `tests/live/android-abuse-limits.sh`, 97 checks over HTTP against a
+fresh instance (PHP 8.4 with memcached, MariaDB 10.11): the defaults and nine
+malformed writes refused by name, CTIT `ok`/`short`/`long`/unmeasured through
+real clicks, the report and install-list reads, the cap's 429 with
+`Retry-After` and nothing stored, a replay answered, another app's budget
+apart, an unreadable cap's 503, the event cap refusing a batch whole, count
+and hold, the Setup form and Analyze's Fraud signals panel, and the upgrade
+page's warning (the stored version wound back for one GET). Rerunnable
+inside the same minute: it deletes rather than truncates the app tables, so
+the caps' buckets, keyed on ids, are never a previous run's.
+
+Planted, each restored from a scratch copy and the restore checked by
+SHA-256: 26 defects against the unit and integration tests — CTIT not
+recorded, recorded on the intake's path only, the short tail inclusive, an
+unreadable threshold read as the default, the settler reading default
+thresholds instead of the registration's (missed at first: the settler test
+ran on the defaults; it now raises the minimum first), the install cap
+removed, checked before the replay answer, keyed on the body's install_uuid,
+failing open on an unreadable cap and on a broken store, the quota counting
+refusals and reading a corrupt bucket as empty, the registry not reading the
+cap columns, the event cap removed, costing one per request, keyed per
+registration, `hold` ignored, `too_fast` not written, the install flagged,
+an unreadable policy read as `count`, the report's fast filter counting
+retired outcomes and dropping the count, the API's range and order checks
+removed, and the warning moved below the button or stripped of its body
+part — all 26 caught. Five more through the live pass itself (the install
+cap, the event cap, CTIT, `hold`, the warning hidden), each caught, so every
+guard is reached from the outermost entry (#12, #18).
+
+What did not run: the browser suite (no Playwright or Chromium in this
+sandbox; the Analyze and Setup changes were read over HTTP by the live
+passes, not measured in a browser), `tests/Cli` (Symfony on a partial
+`vendor/`), and GitHub CI.
 
 ## 9. Decisions
 

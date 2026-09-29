@@ -191,6 +191,9 @@ try {
 			// click_lead under the click lock (as gpx.php does). A reversal
 			// always names its sale's transaction id.
 			'once_per_click'  => p202ExtractTransactionId($_GET) === '',
+            // The traffic source's server postbacks are queued with the row,
+            // in its transaction, and sent below; see after the record.
+            'notify_traffic_source' => true,
 		],
 		(string) ($cvar_sql_row['click_cpa'] ?? ''),
 		$mysql['use_pixel_payout'] == 1,
@@ -216,6 +219,15 @@ if ($conversionId > 0) {
 }
 $newlyRecorded = $conversionId > 0 && !$conversionResult['duplicate'];
 
+// The server postbacks were queued with the conversion (the row and the
+// promise to announce it committed together). Send what is due for it now —
+// on a retry of a conversion already recorded too, so a first request that
+// died after its commit is recovered by the network's retry as well as by the
+// worker, which retries anything still pending.
+if ($conversionId > 0) {
+    p202SendQueuedPostbacks($db, $conversionId);
+}
+
 // A reversal nets an earlier sale; announcing it to the traffic source as a
 // conversion would tell the network about a sale that was taken back.
 if ($newlyRecorded && $conversionResult['reverses_conv_id'] === 0 && $mysql['ppc_account_id']) {
@@ -225,7 +237,8 @@ if ($newlyRecorded && $conversionResult['reverses_conv_id'] === 0 && $mysql['ppc
 	// This conversion's amount, not the click's cached total, which in an
 	// accumulating campaign is the sum of every conversion so far.
 	$tokens['payout'] = $conversionResult['payout'];
-	$fired = p202FireTrafficSourcePixels($db, (int) $mysql['ppc_account_id'], $tokens);
+    // Markup only: the type-4 postbacks went out through the outbox above.
+    $fired = p202FireTrafficSourcePixels($db, (int) $mysql['ppc_account_id'], $tokens, null, false);
 	if (array_intersect($fired['types'], [1, 2, 3, 4]) !== []) {
 		header('HTTP/1.1 202 Accepted', true, 202);
 	}

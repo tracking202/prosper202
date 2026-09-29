@@ -8,11 +8,13 @@ use Api\V3\Apps\Android\Integrity\IntegrityBinding;
 use Api\V3\Apps\Android\Integrity\IntegrityMode;
 use Api\V3\Apps\Android\Integrity\IntegrityState;
 use Api\V3\Apps\AppIdentity;
+use Api\V3\Apps\AppLimits;
 use Api\V3\Apps\AppPolicy;
 use Api\V3\Apps\AppRegistration;
 use Api\V3\Apps\AppRegistry;
 use Api\V3\Apps\AppToken;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\ServerStateStore;
 use Prosper202\Database\Connection;
 use Prosper202\Goals\GoalEngine;
 use Prosper202\Goals\MysqlGoalRepository;
@@ -50,6 +52,13 @@ use Throwable;
  * answered as the stored install; the click comes only from a token whose
  * MAC verifies. Answers never carry click data the referrer did not
  * already hold.
+ *
+ * Abuse limits (plan §7.1, AppLimits): a new install spends one of the
+ * registration's `install_cap_per_minute` before anything is written, and
+ * over it is answered 429 with Retry-After with nothing stored (admit(),
+ * which the events intake shares for its per-install cap); every install
+ * whose token names a click of the owner's has its click-to-install time
+ * recorded and flagged (ClickToInstallTime), which marks and never refuses.
  */
 final class InstallIntake
 {
@@ -62,12 +71,17 @@ final class InstallIntake
     /**
      * @param (callable(): int)|null $clock
      * @param (callable(): ?string)|null $keyLoader the install-token key (tests plant one)
+     * @param (callable(string, int, int, int): ?int)|null $quota the abuse caps' store:
+     *        (bucket, limit, window seconds, cost) => seconds to wait when refused, null when
+     *        admitted; throws when it cannot answer. ServerStateStore::reserveQuota() unless
+     *        a test plants one.
      */
     public function __construct(
         private readonly \mysqli $db,
         private $clock = null,
         ?GoalEngine $engine = null,
         private $keyLoader = null,
+        private $quota = null,
     ) {
         $this->conn = new Connection($db);
         $this->goals = new MysqlGoalRepository($this->conn);
@@ -112,6 +126,25 @@ final class InstallIntake
         $stored = $this->stored($registration->registrationId, $payload->installUuid);
         if ($stored !== null) {
             return $this->replay($stored, $payload);
+        }
+
+        // The registration's install cap (plan §7.1), after every check that
+        // can refuse the body and after the replay answer, so only a request
+        // that is about to store a new install spends the budget. The bucket
+        // is the registration's id, which the token resolved from our own
+        // table: a sender can pick which app's budget to spend (the token is
+        // public), never mint a new bucket or reach another's by spelling
+        // (CLAUDE.md #16, #17). Over the cap nothing is stored or counted.
+        $refused = $this->admit(
+            'app-install-cap:r' . $registration->registrationId,
+            $registration->limits->installCapPerMinute,
+            1,
+            $registration,
+            'install_cap_per_minute',
+            'This app has reached its cap on installs a minute'
+        );
+        if ($refused !== null) {
+            return $refused;
         }
 
         $parsed = $payload->referrerStatus === 'ok' ? ReferrerParser::parse((string) $payload->installReferrer) : null;
@@ -164,6 +197,45 @@ final class InstallIntake
         $data = self::present($done['row'], false) + $this->customer($done['row'], $payload->customer);
 
         return ['status' => 200, 'body' => ['data' => $data]];
+    }
+
+    /**
+     * Spend $cost of a registration's abuse cap (AppLimits) on $bucket, or
+     * the answer that refuses the request: 429 with Retry-After over the
+     * cap, and 503 — fail closed, with the reason logged by name — when the
+     * cap is unreadable or its store cannot answer. Null admits.
+     *
+     * @return array{status: int, body: array<string, mixed>, headers?: array<string, string>}|null
+     */
+    public function admit(string $bucket, ?int $cap, int $cost, AppRegistration $registration, string $column, string $overMessage): ?array
+    {
+        if ($cap === null) {
+            error_log('p202 android intake: registration ' . $registration->registrationId . '\'s ' . $column
+                . ' is unreadable; refusing with 503 until it is repaired');
+
+            return self::error(503, 'This app\'s ' . $column . ' setting is unreadable, so the server cannot apply it; '
+                . 'the request was not recorded. Retry later.', [], ['Retry-After' => '300']);
+        }
+        try {
+            $retryAfter = $this->quota !== null
+                ? ($this->quota)($bucket, $cap, AppLimits::WINDOW_SECONDS, $cost)
+                : (new ServerStateStore())->reserveQuota($bucket, $cap, AppLimits::WINDOW_SECONDS, $cost);
+        } catch (Throwable $e) {
+            error_log('p202 android intake: the ' . $column . ' store is unavailable for registration ' . $registration->registrationId
+                . '; refusing with 503: ' . $e->getMessage() . ($e->getPrevious() !== null ? ' (' . $e->getPrevious()->getMessage() . ')' : ''));
+
+            return self::error(503, 'The server cannot check this app\'s ' . $column . ' right now; the request was not recorded. Retry later.', [], ['Retry-After' => '60']);
+        }
+        if ($retryAfter === null) {
+            return null;
+        }
+        if (!is_int($retryAfter) || $retryAfter < 1) {
+            throw new \LogicException('a refused quota must say how long to wait');
+        }
+
+        return self::error(429, $overMessage . ' (' . $column . ' = ' . $cap . '): nothing was recorded. Retry after ' . $retryAfter . ' s.', [
+            'retry_after_seconds' => $retryAfter,
+        ], ['Retry-After' => (string) $retryAfter]);
     }
 
     /**
@@ -442,6 +514,9 @@ final class InstallIntake
             $this->conn->bind($dup, 'iii', [$clickId, $rowId, $clickId]);
             $hasInstall = (int) (($this->conn->fetchOne($dup) ?? ['n' => 0])['n']) > 0;
         }
+        if ($click !== null && $click['user_id'] === $registration->userId) {
+            $this->recordClickToInstallTime($registration, $payload, $rowId, $click['click_time'], $receivedAt);
+        }
 
         return InstallClassifier::withClick(
             $payload,
@@ -454,6 +529,28 @@ final class InstallIntake
             $receivedAt,
             $now,
         );
+    }
+
+    /**
+     * The install's click-to-install time and the tail it falls in
+     * (ClickToInstallTime), written onto the row in the caller's transaction
+     * whenever the token names a click of the registration's owner — on
+     * every path that classifies against a click (the intake, the
+     * pending-click settler, the integrity worker), whatever state follows.
+     * The thresholds are the registration's when it was measured.
+     */
+    private function recordClickToInstallTime(AppRegistration $registration, InstallPayload $payload, int $rowId, int $clickTime, int $receivedAt): void
+    {
+        $seconds = ClickToInstallTime::seconds($payload->installBeginServerAt, $receivedAt, $clickTime);
+        $flag = ClickToInstallTime::flag($seconds, $registration->limits);
+        $unreadable = array_values(array_intersect($registration->limits->unreadable, ['ctit_min_seconds', 'ctit_max_seconds']));
+        if ($unreadable !== []) {
+            error_log('p202 android intake: registration ' . $registration->registrationId . '\'s ' . implode(', ', $unreadable)
+                . ' is unreadable; install ' . $rowId . ' is flagged against the least trusting threshold');
+        }
+        $stmt = $this->conn->prepareWrite('UPDATE 202_app_installs SET ctit_seconds = ?, ctit_flag = ? WHERE install_row_id = ?');
+        $this->conn->bind($stmt, 'isi', [$seconds, $flag, $rowId]);
+        $this->conn->executeUpdate($stmt);
     }
 
     /**

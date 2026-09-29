@@ -39,6 +39,10 @@ use Prosper202\Goals\MysqlGoalRepository;
  *  - every other install evaluates its events — an attributed, trusted one
  *    with its click (ledger rows, payouts, notifications), the rest for the
  *    funnel only.
+ *
+ * One install may post at most its registration's `event_cap_per_minute`
+ * events a minute (AppLimits); a batch that would pass it is answered 429
+ * with Retry-After and stored nowhere, and the SDK keeps it and retries.
  */
 final class InstallEventsIntake
 {
@@ -51,12 +55,15 @@ final class InstallEventsIntake
     private GoalEngine $engine;
     private InstallIntake $installs;
 
-    /** @param (callable(): int)|null $clock */
-    public function __construct(\mysqli $db, private $clock = null, ?GoalEngine $engine = null)
+    /**
+     * @param (callable(): int)|null $clock
+     * @param (callable(string, int, int, int): ?int)|null $quota the event cap's store (InstallIntake::admit())
+     */
+    public function __construct(\mysqli $db, private $clock = null, ?GoalEngine $engine = null, $quota = null)
     {
         $this->conn = new Connection($db);
         $this->engine = $engine ?? new GoalEngine($this->conn, new MysqlGoalRepository($this->conn), null, $clock);
-        $this->installs = new InstallIntake($db, $clock, $this->engine);
+        $this->installs = new InstallIntake($db, $clock, $this->engine, null, $quota);
     }
 
     private function now(): int
@@ -118,6 +125,23 @@ final class InstallEventsIntake
         }
 
         $rowId = (int) $install['install_row_id'];
+        // The install's event cap (plan §7.1), counted per event and spent
+        // only by a body that parsed, so a refused batch stores nothing and
+        // counts nothing. The bucket is (registration, install row), both
+        // ours: an install's budget is its own, and no spelling of the path's
+        // uuid reaches another's (CLAUDE.md #16, #17).
+        $refused = $this->installs->admit(
+            'app-install-event-cap:r' . $registration->registrationId . ':i' . $rowId,
+            $registration->limits->eventCapPerMinute,
+            count($events),
+            $registration,
+            'event_cap_per_minute',
+            'Install ' . $installUuid . ' has reached its cap on events a minute'
+        );
+        if ($refused !== null) {
+            return $refused;
+        }
+
         // A hint for retention only (installs with events are kept). It is
         // written inside the engine's transaction, once the engine has
         // stored at least one new event: set ahead of the evaluation, a batch

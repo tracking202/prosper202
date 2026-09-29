@@ -7,8 +7,9 @@ declare(strict_types=1);
  * at the foot of the app's page.
  *
  * The name and notes are the common case. Test signals — and for Android
- * the attribution window and whether client revenue may be paid — are
- * under a closed Advanced disclosure, each default said in one line.
+ * the attribution window, whether client revenue may be paid and the
+ * fraud limits (plan §7.1) — are under a closed Advanced disclosure, each
+ * default said in one line.
  *
  * @var array<string, mixed> $settingsApp the registration
  * @var string $settingsReturn 'app' (back to its page) or 'list'
@@ -28,7 +29,19 @@ $sAndroid = (string)($sApp['platform'] ?? '') === 'android';
 $sPosted = ($mobileApps['failedForm'] ?? '') === 'update';
 $sValue = static fn (string $field, mixed $stored): string => (string)($sPosted ? ($form[$field] ?? '') : $stored);
 $sChecked = static fn (string $field, mixed $stored): bool => $sPosted ? isset($form[$field]) : (int)$stored === 1;
-$sAdvancedOpen = $sPosted && (isset($mobileApps['fieldErrors']['attribution_window_days']) || isset($mobileApps['fieldErrors']['trust_client_revenue']));
+$sLimitFields = ['ctit_min_seconds', 'ctit_max_seconds', 'install_cap_per_minute', 'event_cap_per_minute', 'fast_goal_seconds', 'fast_goal_policy'];
+$sAdvancedOpen = $sPosted && array_intersect(['attribution_window_days', 'trust_client_revenue', ...$sLimitFields], array_keys((array)($mobileApps['fieldErrors'] ?? []))) !== [];
+// One numeric abuse limit (AppLimits, FastGoalPolicy): the stored value, its
+// default said in one line.
+$sLimit = static function (string $field, string $label, string $default, string $help) use ($e, $sValue, $sApp, $invalid, $fieldError): string {
+    return '<div class="mb-3">'
+        . '<label class="form-label" for="settings_' . $field . '">' . $e($label) . '</label>'
+        . '<input class="form-control' . $invalid($field) . '" type="text" inputmode="numeric" id="settings_' . $field . '" name="' . $field . '"'
+        . ' value="' . $e($sValue($field, $sApp[$field] ?? $default)) . '" maxlength="8">'
+        . '<div class="form-text">' . $e($help) . '</div>'
+        . $fieldError($field)
+        . '</div>';
+};
 ?>
 <form method="post" action="<?php echo $e($self); ?>">
     <?php echo $mobileApps['csrf']; ?>
@@ -50,7 +63,7 @@ $sAdvancedOpen = $sPosted && (isset($mobileApps['fieldErrors']['attribution_wind
         <?php echo $fieldError('notes'); ?>
     </div>
     <details class="p202-disclosure mb-3" data-p202-remember="setup-mobile-apps-settings"<?php echo $sAdvancedOpen ? ' open' : ''; ?>>
-        <summary>Advanced <span class="p202-disclosure__hint"><?php echo $sAndroid ? 'test installs, attribution window, client revenue' : 'development postbacks'; ?></span></summary>
+        <summary>Advanced <span class="p202-disclosure__hint"><?php echo $sAndroid ? 'test installs, attribution window, client revenue, fraud limits' : 'development postbacks'; ?></span></summary>
         <div class="p202-disclosure__body">
             <div class="form-check mb-3">
                 <input class="form-check-input" type="checkbox" id="settings_accept_test_signals" name="accept_test_signals" value="1"<?php echo $sChecked('accept_test_signals', $sApp['accept_test_signals'] ?? 0) ? ' checked' : ''; ?>>
@@ -76,6 +89,28 @@ $sAdvancedOpen = $sPosted && (isset($mobileApps['fieldErrors']['attribution_wind
                         <span class="d-block form-text">Off by default: the app token ships inside the app, so anyone can report revenue with it. Reported revenue is stored and shown, and a goal valued from it pays only when this is on.</span>
                     </label>
                     <?php echo $fieldError('trust_client_revenue'); ?>
+                </div>
+                <?php
+                echo $sLimit('ctit_min_seconds', 'Flag installs faster than, seconds', '10',
+                    '10 by default: an install that began sooner than this after its click is flagged short, the mark of click injection. Flags are shown in Analyze › Mobile Apps; they do not refuse the install.');
+                echo $sLimit('ctit_max_seconds', 'Flag installs slower than, seconds', '86400',
+                    '86400 (one day) by default: an install that began later than this after its click is flagged long, the mark of click spamming.');
+                echo $sLimit('install_cap_per_minute', 'Installs a minute, at most', '300',
+                    '300 by default: past it the app\'s SDK is told to retry later, and nothing is recorded until it does.');
+                echo $sLimit('event_cap_per_minute', 'Events a minute per install, at most', '200',
+                    '200 by default, and never below 100 (one full batch): past it that install\'s events wait on the device and are retried.');
+                echo $sLimit('fast_goal_seconds', 'Flag goals reached within, seconds of the install', '5',
+                    '5 by default: a goal reached sooner than this after the install is flagged, since a person needs longer. 0 flags none.');
+                ?>
+                <div class="mb-1">
+                    <label class="form-label" for="settings_fast_goal_policy">Goals flagged as too fast</label>
+                    <select class="form-select<?php echo $invalid('fast_goal_policy'); ?>" id="settings_fast_goal_policy" name="fast_goal_policy">
+                        <?php $sPolicy = $sValue('fast_goal_policy', $sApp['fast_goal_policy'] ?? 'count'); ?>
+                        <option value="count"<?php echo $sPolicy === 'count' ? ' selected' : ''; ?>>Pay them, and show the flag</option>
+                        <option value="hold"<?php echo $sPolicy === 'hold' ? ' selected' : ''; ?>>Hold them: record, flag, do not pay</option>
+                    </select>
+                    <div class="form-text">Pay by default: the flag is a heuristic, and an app whose first goal is opening it reaches that in seconds. A held goal is never paid or sent to the traffic source.</div>
+                    <?php echo $fieldError('fast_goal_policy'); ?>
                 </div>
             <?php } ?>
         </div>

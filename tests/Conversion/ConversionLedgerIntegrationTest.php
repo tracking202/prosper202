@@ -671,6 +671,49 @@ final class ConversionLedgerIntegrationTest extends TestCase
         $this->assertLtv('rev-ltv-4', '0.00', 'a second retirement voids the second generation');
     }
 
+    /**
+     * CountedAmount::sql() is of() in SQL (a report sums it where of() is
+     * read one row at a time): both over the same rows, in every shape the
+     * rule names — a plain sale, a partial and a full reversal, a deleted
+     * reversal, a deleted and a superseded sale, and a reversal itself.
+     */
+    public function testCountedAmountSqlAgreesWithOfOnEveryShape(): void
+    {
+        $this->campaign(7);
+        $this->campaign(8, 'accumulate');
+        $this->click(100, 7);
+        $this->click(101, 8);
+        $this->click(102, 8);
+        $this->record(100, ['payout' => '10', 'transaction_id' => 'P-1']);          // superseded by P-2
+        $this->record(100, ['payout' => '7', 'transaction_id' => 'P-2']);           // plain
+        $this->record(101, ['payout' => '10', 'transaction_id' => 'A-1']);
+        $this->record(101, ['payout' => '-4', 'transaction_id' => 'A-1']);          // partial reversal
+        $this->record(101, ['payout' => '5', 'transaction_id' => 'A-2']);
+        $this->record(101, ['transaction_id' => 'A-2', 'reversal' => true]);        // full reversal
+        $this->record(102, ['payout' => '6', 'transaction_id' => 'B-1']);
+        $revB = $this->record(102, ['payout' => '-6', 'transaction_id' => 'B-1']);  // reversal, then deleted
+        $this->repo->softDelete((int) $revB['convId'], 1);
+        $gone = $this->record(102, ['payout' => '3', 'transaction_id' => 'B-2']);   // deleted sale
+        $this->repo->softDelete((int) $gone['convId'], 1);
+
+        $conn = new Connection(self::$db);
+        $rows = self::$db->query(
+            'SELECT c.conv_id, c.click_payout, c.payable, c.deleted, c.superseded_reason, c.reverses_conv_id, '
+            . \Prosper202\Attribution\CountedAmount::sql('c') . ' AS counted_sql FROM 202_conversion_logs c ORDER BY c.conv_id'
+        )->fetch_all(MYSQLI_ASSOC);
+        self::assertCount(9, $rows);
+        $seen = [];
+        foreach ($rows as $row) {
+            $of = \Prosper202\Attribution\CountedAmount::of($conn, $row, true);
+            $expected = \Prosper202\Conversion\Ledger\Amount::fromUnits($of ?? 0);
+            $actual = \Prosper202\Conversion\Ledger\Amount::fromUnits(\Prosper202\Conversion\Ledger\Amount::toUnits((string) $row['counted_sql']));
+            self::assertSame($expected, $actual, 'conversion ' . $row['conv_id']);
+            $seen[] = $expected;
+        }
+        // The shapes are real: something counts in full, in part, and not at all.
+        self::assertSame(['0.00000', '7.00000', '6.00000', '0.00000', '0.00000', '0.00000', '6.00000', '0.00000', '0.00000'], $seen);
+    }
+
     public function testAFailedInsertLeavesNeitherARowNorAChangedClick(): void
     {
         $this->campaign(7);

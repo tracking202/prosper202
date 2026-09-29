@@ -570,6 +570,17 @@ $modelSettings = static function (array $m): string {
 	<?php echo p202_flash('bad', $loadError); ?>
 <?php } else { ?>
 
+<?php if ($queue !== null && ($queue['backfill'] ?? null) !== null) { ?>
+    <div class="p202-strip mb-3" id="attribution-backfill">
+        <div class="p202-strip__row">
+            <span class="p202-pill p202-pill--warn">Catching up</span>
+            <span class="p202-strip__label">Before the upgrade</span>
+            <span class="p202-strip__value"><?php echo $h($queue['backfill']['note'] . ' '
+                . (int) $queue['backfill']['percent'] . '% of the clicks read so far; it moves every minute.'); ?></span>
+        </div>
+    </div>
+<?php } ?>
+
 <?php if ($queue !== null && ((int) $queue['pending'] > 0 || (int) $queue['failing'] > 0)) { ?>
 	<div class="p202-strip mb-3" id="attribution-worker">
 		<div class="p202-strip__row">

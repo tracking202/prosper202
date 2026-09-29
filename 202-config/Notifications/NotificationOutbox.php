@@ -203,7 +203,17 @@ final class NotificationOutbox implements OutcomeNotificationSink
             }
         }
 
-        foreach ($announced as [$pixelId, $destination]) {
+        // A row retired twice with nothing in its place — an operator's
+        // delete (MysqlConversionRepository::softDeleteLocked()) and then the
+        // engine retiring the same outcome — must not tell a destination
+        // "0" twice: one whose open retraction (the latest, with no
+        // correction after it) still stands is left as it is.
+        $retracted = $newConvId === null ? $this->openRetractions($oldConvId) : [];
+
+        foreach ($announced as $key => [$pixelId, $destination]) {
+            if (isset($retracted[$key])) {
+                continue;
+            }
             if ($newConvId !== null) {
                 // This destination already heard the outcome: the
                 // replacement's own "reached" there would count it twice
@@ -233,6 +243,33 @@ final class NotificationOutbox implements OutcomeNotificationSink
                 $now
             );
         }
+    }
+
+    /**
+     * The destinations ('pixel:destination') where a retraction of $convId
+     * stands: the latest retraction there is not cancelled and no
+     * correction was recorded after it. Read under the caller's lock.
+     *
+     * @return array<string, true>
+     */
+    private function openRetractions(int $convId): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            "SELECT pixel_id, destination, kind, status FROM 202_notification_pending
+             WHERE conv_id = ? AND kind IN ('retraction', 'correction') ORDER BY notification_id FOR UPDATE"
+        );
+        $this->conn->bind($stmt, 'i', [$convId]);
+        $open = [];
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $key = (int) $row['pixel_id'] . ':' . (int) $row['destination'];
+            if ((string) $row['kind'] === self::KIND_RETRACTION && (string) $row['status'] !== 'cancelled') {
+                $open[$key] = true;
+            } else {
+                unset($open[$key]);
+            }
+        }
+
+        return $open;
     }
 
     /**

@@ -53,6 +53,11 @@ if (($_POST['start_upgrade'] ?? '') === '1' && !hash_equals((string) ($_SESSION[
 
 if (($_POST['start_upgrade'] ?? '') === '1' && hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
 
+    // A client that gives up (a proxy's read timeout, a closed tab) must not
+    // stop the download, the file swap or the ladder halfway.
+    ignore_user_abort(true);
+    set_time_limit(0);
+
 	$GetUpdate = @getData('https://my.tracking202.com/api/v2/premium-p202/download/' . $user_row['install_hash'] . '/' . $user_row['p202_customer_api_key']);
 	$installlog = "Downloading new update...\n";
 	$checkError = json_decode((string) $GetUpdate, true);
@@ -150,7 +155,9 @@ if (($_POST['start_upgrade'] ?? '') === '1' && hash_equals((string) ($_SESSION['
 			$version = $latest_version;
 			$upgrade_done = true;
 		} else {
-			$installlog .= "Database upgrade failed! Please try again!\n";
+            $installlog .= UPGRADE::$lastRunBusy
+                ? "Another upgrade of this database is running (its page may have timed out; it carries on). Nothing was changed; reload in a few minutes.\n"
+                : "Database upgrade failed! Please try again!\n";
 			$upgrade_done = false;
 		}
 	}

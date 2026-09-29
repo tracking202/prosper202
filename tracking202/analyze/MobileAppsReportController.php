@@ -24,7 +24,8 @@ use Tracking202\Apps\RegisteredApps;
  *  - Report, the grouped totals — /apps/report, rendered. Both platforms
  *    together by day, app or platform; iOS alone by Apple's dimensions (ad
  *    network, source, country, version, protocol, conversion type); Android
- *    alone by campaign, match state, Play Integrity state or goal.
+ *    alone by campaign, match state, Play Integrity state, click-to-install
+ *    time or goal, with the fraud marks (plan §7.1) counted and filterable.
  *  - Funnel, an app's goals in order with the installs that reached each.
  *  - Postbacks, the individual iOS rows behind the totals, for the moment a
  *    total looks wrong and the question becomes "which ones".
@@ -80,6 +81,7 @@ class MobileAppsReportController
         'campaign'        => 'Campaign',
         'match-state'     => 'Match state',
         'integrity-state' => 'Play Integrity',
+        'ctit-flag'       => 'Click-to-install',
         'goal'            => 'Goal',
     ];
 
@@ -366,6 +368,22 @@ class MobileAppsReportController
                 : 'The trust filter was ignored: it must be one of ' . implode(', ', self::TRUST_CLASSES) . '.');
             $trusted = '';
         }
+        // The fraud marks (plan §7.1): Android installs only, like the
+        // trust filter, and dropped by name rather than sent to a 422.
+        $ctitFlag = strtolower(trim((string)($_GET['ctit_flag'] ?? '')));
+        if ($ctitFlag !== '' && (!in_array($ctitFlag, \Api\V3\Apps\Android\ClickToInstallTime::filterValues(), true) || $platform !== 'android')) {
+            $this->flashFilterDropped($platform !== 'android'
+                ? 'The click-to-install filter was ignored: it filters Android installs, so it applies to the Android report only.'
+                : 'The click-to-install filter was ignored: it must be one of ' . implode(', ', \Api\V3\Apps\Android\ClickToInstallTime::filterValues()) . '.');
+            $ctitFlag = '';
+        }
+        $fastGoals = trim((string)($_GET['fast_goals'] ?? ''));
+        if ($fastGoals !== '' && (($fastGoals !== '0' && $fastGoals !== '1') || $platform !== 'android')) {
+            $this->flashFilterDropped($platform !== 'android'
+                ? 'The fast-goals filter was ignored: it filters Android installs, so it applies to the Android report only.'
+                : 'The fast-goals filter was ignored: it must be 1 (installs with a goal reached too fast) or 0 (installs without one).');
+            $fastGoals = '';
+        }
         $status = strtolower(trim((string)($_GET['status'] ?? '')));
         if ($status !== '' && !in_array($status, AppNotificationsController::STATUSES, true)) {
             $this->flashFilterDropped('The status filter was ignored: it must be one of ' . implode(', ', AppNotificationsController::STATUSES) . '.');
@@ -385,6 +403,8 @@ class MobileAppsReportController
             'registration_id' => $registrationId,
             'signature' => $signature,
             'trusted' => $trusted,
+            'ctit_flag' => $ctitFlag,
+            'fast_goals' => $fastGoals,
             'status' => $status,
         ];
     }
@@ -599,7 +619,7 @@ class MobileAppsReportController
             'time_from' => $filters['time_from'],
             'time_to' => $filters['time_to'],
         ];
-        foreach (['registration_id', 'signature', 'trusted'] as $key) {
+        foreach (['registration_id', 'signature', 'trusted', 'ctit_flag', 'fast_goals'] as $key) {
             if ($filters[$key] !== '') {
                 $params[$key] = $filters[$key];
             }
@@ -1157,6 +1177,8 @@ class MobileAppsReportController
                 'Received' => 'received', 'Installs' => 'installs', 'Organic' => 'organic', 'Pending' => 'pending',
                 'Refuted' => 'refuted_count', 'Unvouched' => 'unvouched_count', 'Test' => 'test_count',
                 'Goals reached' => 'goals_reached', 'Revenue' => 'revenue',
+                'Click-to-install measured' => 'ctit_measured', 'Click-to-install short' => 'ctit_short', 'Click-to-install long' => 'ctit_long',
+                'Goals reached too fast' => 'fast_goals',
             ],
             default => [
                 'Platform' => 'platform', 'Installs' => 'installs', 'Goals reached' => 'goals_reached', 'Revenue' => 'revenue',
@@ -1305,6 +1327,7 @@ class MobileAppsReportController
             'platform' => 'platform',
             'match-state' => 'match_state',
             'integrity-state' => 'integrity_state',
+            'ctit-flag' => 'ctit_flag',
             'goal' => 'goal_name',
             'day' => 'date',
             default => self::groupKeys()[$groupBy] ?? '',

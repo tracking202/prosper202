@@ -98,6 +98,8 @@ $link = static function (array $changes) use ($self, $filters, $view, $customRan
         'registration_id' => $pick('registration_id', $filters['registration_id']),
         'signature' => $C::signatureApplies((string)$pick('view', $view), $platform) ? $pick('signature', $filters['signature']) : null,
         'trusted' => $platform === 'android' ? $pick('trusted', $filters['trusted']) : null,
+        'ctit_flag' => $platform === 'android' ? $pick('ctit_flag', $filters['ctit_flag']) : null,
+        'fast_goals' => $platform === 'android' ? $pick('fast_goals', $filters['fast_goals']) : null,
         'status' => $pick('status', $filters['status']),
         'page' => $changes['page'] ?? null,
         'download' => $changes['download'] ?? null,
@@ -270,6 +272,19 @@ template_top('Analyze Mobile Apps');
                             <option value="<?php echo $e($key); ?>"<?php echo $filters['trusted'] === $key ? ' selected' : ''; ?>><?php echo $e(ucfirst($key) . ' only'); ?></option>
                         <?php } ?>
                     <?php } ?>
+                </select>
+                <label class="form-label mb-0" for="ctit_flag">Click-to-install</label>
+                <select class="form-select form-select-sm w-auto" id="ctit_flag" name="ctit_flag">
+                    <option value="">Any</option>
+                    <?php foreach (['short' => 'Too short', 'ok' => 'Within limits', 'long' => 'Too long', 'unmeasured' => 'Not measured'] as $key => $label) { ?>
+                        <option value="<?php echo $e($key); ?>"<?php echo $filters['ctit_flag'] === $key ? ' selected' : ''; ?>><?php echo $e($label); ?></option>
+                    <?php } ?>
+                </select>
+                <label class="form-label mb-0" for="fast_goals">Goals</label>
+                <select class="form-select form-select-sm w-auto" id="fast_goals" name="fast_goals">
+                    <option value="">Any</option>
+                    <option value="1"<?php echo $filters['fast_goals'] === '1' ? ' selected' : ''; ?>>Reached too fast</option>
+                    <option value="0"<?php echo $filters['fast_goals'] === '0' ? ' selected' : ''; ?>>None too fast</option>
                 </select>
             <?php } elseif ($view === 'notifications') { ?>
                 <label class="form-label mb-0" for="status">Status</label>

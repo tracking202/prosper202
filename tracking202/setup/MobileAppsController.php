@@ -339,8 +339,8 @@ class MobileAppsController extends SetupController
 
     /**
      * Save an app's settings: its name and notes, test signals, and for an
-     * Android app the attribution window and whether client revenue may be
-     * paid. The Android fields are sent as typed (the API reads them raw and
+     * Android app the attribution window, whether client revenue may be
+     * paid, and the fraud limits. The Android fields are sent as typed (the API reads them raw and
      * refuses `07` or `1.5` by name); a blank window is not sent, so the
      * stored one stands.
      */
@@ -358,6 +358,14 @@ class MobileAppsController extends SetupController
                 $payload['attribution_window_days'] = $window;
             }
             $payload['trust_client_revenue'] = isset($_POST['trust_client_revenue']) ? 1 : 0;
+            // The fraud limits, as typed and only when typed: the API reads
+            // them raw and names what it refuses.
+            foreach (['ctit_min_seconds', 'ctit_max_seconds', 'install_cap_per_minute', 'event_cap_per_minute', 'fast_goal_seconds', 'fast_goal_policy'] as $limit) {
+                $value = trim((string)($_POST[$limit] ?? ''));
+                if ($value !== '') {
+                    $payload[$limit] = $value;
+                }
+            }
         }
         $this->apps->update($id, $payload);
         $this->redirect((string)($_POST['return_to'] ?? '') === 'app'

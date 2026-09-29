@@ -58,6 +58,18 @@ Fields:
 | `recompute_pending` | boolean | Read-only: the worker has not yet recomputed this model's credits after its last change |
 
 Every account gets a `last_touch` default when it is created (and on upgrade).
+
+**Conversions from before the upgrade.** An upgraded install's conversions
+are brought into attribution after the upgrade, not during it: the upgrade
+marks the clicks it found, and the worker (every minute, from
+`202-cronjobs/index.php`) walks them in bounded chunks, queuing each lead
+click at the value it held with reason `backfill`. A backfilled conversion
+reports on its click's day. While the walk runs, `GET /attribution/queue`
+(`data.backfill`) and the breakdown and journey reports (`meta.backfill`)
+carry `{in_progress, started_at, clicks_examined, baselines_queued, percent,
+note}` — reports over dates before the upgrade are incomplete until it
+finishes — and the Attribution page says so; the field is `null` once it has
+finished, and always on a fresh install.
 Changing a model's type without sending `weighting_config` resets the config
 to the new type's defaults.
 

@@ -1089,6 +1089,61 @@ class ServerStateStore
         fclose($fh);
     }
 
+    /**
+     * Take $cost units of a fixed-window quota, or refuse without taking any.
+     *
+     * The per-registration install cap and the per-install event cap (plan
+     * §7.1): unlike softIpRateLimit(), a refused request consumes nothing —
+     * what is over the cap is neither stored nor counted — and the check
+     * fails CLOSED: a store that cannot be read or written throws, and the
+     * caller answers 503 rather than guessing (the SDK retries 5xx, so an
+     * outage of the limiter delays installs and loses none). The bucket file
+     * is written under the same exclusive lock as the rate limits, so a
+     * burst cannot all read the same count; its name is the rate-limit path
+     * (slug plus a hash of the whole bucket), so the caller's bucket string
+     * must itself be injective (CLAUDE.md #17).
+     *
+     * @return int|null seconds until the window resets when refused, null when admitted
+     * @throws \RuntimeException when the quota cannot be read or written
+     */
+    public function reserveQuota(string $bucket, int $limit, int $windowSeconds, int $cost = 1): ?int
+    {
+        if ($limit < 1 || $windowSeconds < 1 || $cost < 1) {
+            throw new \InvalidArgumentException('a quota needs a positive limit, window and cost');
+        }
+        $now = time();
+        $admitted = false;
+        $resetAt = $now + $windowSeconds;
+        $this->mutateJsonFile(
+            $this->rateLimitPath($bucket),
+            ['window_start' => 0, 'count' => 0],
+            static function (array $state) use ($now, $limit, $windowSeconds, $cost, &$admitted, &$resetAt): array {
+                $windowStart = $state['window_start'] ?? 0;
+                $count = $state['count'] ?? 0;
+                if (!is_int($windowStart) || !is_int($count) || $count < 0) {
+                    throw new DatabaseException('Quota state is malformed');
+                }
+                if ($windowStart <= 0 || ($now - $windowStart) >= $windowSeconds || $windowStart > $now) {
+                    $windowStart = $now;
+                    $count = 0;
+                }
+                $resetAt = $windowStart + $windowSeconds;
+                if ($count + $cost <= $limit) {
+                    $count += $cost;
+                    $admitted = true;
+                }
+
+                return ['window_start' => $windowStart, 'count' => $count, 'updated_at' => gmdate('c')];
+            },
+            true
+        );
+        if ($admitted) {
+            return null;
+        }
+
+        return max(1, $resetAt - $now);
+    }
+
     /** @return array{allowed: bool, remaining: int, reset_at: int} */
     public function consumeRateLimit(string $bucket, int $maxPerWindow, int $windowSeconds): array
     {
@@ -1286,7 +1341,7 @@ class ServerStateStore
      * @param array<string, mixed> $default
      * @param callable(array<string, mixed>): array<string, mixed> $mutator
      */
-    private function mutateJsonFile(string $path, array $default, callable $mutator): void
+    private function mutateJsonFile(string $path, array $default, callable $mutator, bool $strict = false): void
     {
         $this->ensureDir(dirname($path));
         $lockPath = $path . '.lock';
@@ -1300,7 +1355,7 @@ class ServerStateStore
         }
 
         try {
-            $data = $this->readJsonFile($path, $default);
+            $data = $this->readJsonFile($path, $default, $strict);
             $data = $mutator($data);
             $this->writeJsonFileAtomic($path, $data);
         } finally {
@@ -1309,7 +1364,13 @@ class ServerStateStore
         }
     }
 
-    private function readJsonFile(string $path, array $default): array
+    /**
+     * A state file's contents, or $default when there is none. Strict, an
+     * unreadable or undecodable file throws instead of reading as the
+     * default: for a quota the default is "nothing used yet", the most
+     * permissive answer there is (CLAUDE.md #11).
+     */
+    private function readJsonFile(string $path, array $default, bool $strict = false): array
     {
         if (!is_file($path)) {
             return $default;
@@ -1317,11 +1378,17 @@ class ServerStateStore
 
         $raw = file_get_contents($path);
         if ($raw === false || $raw === '') {
+            if ($strict) {
+                throw new DatabaseException('State file ' . basename($path) . ' could not be read');
+            }
             return $default;
         }
 
         $decoded = json_decode($raw, true);
         if (!is_array($decoded)) {
+            if ($strict) {
+                throw new DatabaseException('State file ' . basename($path) . ' is not a JSON object');
+            }
             return $default;
         }
 

@@ -25,7 +25,7 @@ use Api\V3\Exception\ValidationException;
  * silent. The shared groupings — day, registration, platform — work on
  * any; a grouping or a filter only one platform has (ad-network, source,
  * country, version, protocol, conversion-type and every postback filter
- * for iOS; campaign, match-state, integrity-state, goal and the install
+ * for iOS; campaign, match-state, integrity-state, ctit-flag, goal and the install
  * filters for Android) needs that platform, and asked of another one the
  * request is a 422 that says which platform to ask for.
  *
@@ -46,7 +46,7 @@ final class AppReportController
     public const IOS_GROUPINGS = ['ad-network', 'source', 'country', 'version', 'protocol', 'conversion-type'];
 
     /** Groupings only Android installs carry. */
-    public const ANDROID_GROUPINGS = ['campaign', 'match-state', 'integrity-state', 'goal'];
+    public const ANDROID_GROUPINGS = ['campaign', 'match-state', 'integrity-state', 'ctit-flag', 'goal'];
 
     /** Parameters every platform reads. */
     private const SHARED_PARAMS = ['time_from', 'time_to', 'registration_id', 'registration_ids', 'limit'];
@@ -298,6 +298,8 @@ final class AppReportController
             . '; figures are by install (a cohort): a goal an install reached counts in the group of its install, however much later it was reached'
             . '; events, goals_reached and revenue count the goals trusted installs reached (trusted= recomputes installs and these over that class)'
             . '; revenue is the value of payable outcomes, what the campaigns were credited'
-            . '; group_by=goal counts distinct installs per goal (installs, and each trust class) and orders busiest first — sort by after for a funnel';
+            . '; group_by=goal counts distinct installs per goal (installs, and each trust class) and orders busiest first — sort by after for a funnel'
+            . '; ctit_measured, ctit_short and ctit_long count every install whose click-to-install time was measured, and the ones below the app\'s ctit_min_seconds or above its ctit_max_seconds'
+            . '; fast_goals counts the outcomes among goals_reached reached sooner after the install than the app\'s fast_goal_seconds (paid unless the app\'s fast_goal_policy is hold)';
     }
 }

@@ -482,7 +482,7 @@ function RunSecondsCronjob()
                     new \Prosper202\Database\Connection($db),
                     20
                 );
-                if ($attribution !== null && $attribution->processed() > 0) {
+                if ($attribution !== null && ($attribution->processed() > 0 || $attribution->backfill !== null)) {
                     echo 'Attribution: ' . htmlspecialchars($attribution->summary(), ENT_QUOTES) . '<br>';
                 }
             } catch (\Throwable $e) {

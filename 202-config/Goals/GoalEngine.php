@@ -179,7 +179,28 @@ final class GoalEngine
             throw new GoalEngineException('Install ' . $installRowId . ' not found', GoalEngineException::NOT_FOUND);
         }
 
-        return self::installSubjectFrom($installRowId, $row);
+        return self::installSubjectFrom($installRowId, $row, $this->fastGoalPolicy($userId, (int) $row['registration_id']));
+    }
+
+    /**
+     * A registration's fast-goal policy (FastGoalPolicy), read plainly — it
+     * is not the install's credit, and no install path locks registrations
+     * before installs. A registration that is gone, or whose columns do not
+     * read, is the trusting-least policy, named in the log.
+     */
+    private function fastGoalPolicy(int $userId, int $registrationId): FastGoalPolicy
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT fast_goal_seconds, fast_goal_policy FROM 202_app_registrations WHERE registration_id = ? AND user_id = ? LIMIT 1'
+        );
+        $this->conn->bind($stmt, 'ii', [$registrationId, $userId]);
+        $policy = FastGoalPolicy::fromRow($this->conn->fetchOne($stmt));
+        if ($policy->unreadable !== []) {
+            error_log('p202 goals: registration ' . $registrationId . '\'s ' . implode(', ', $policy->unreadable)
+                . ' could not be read; outcomes of its installs are flagged under ' . $policy->seconds . ' s and held');
+        }
+
+        return $policy;
     }
 
     /**
@@ -229,11 +250,18 @@ final class GoalEngine
             }
         }
 
-        return self::installSubjectFrom($subject->id, $row);
+        // The registration's fast-goal policy is not credit, so the one the
+        // caller's subject carries stands; a subject built without one reads
+        // it now.
+        return self::installSubjectFrom(
+            $subject->id,
+            $row,
+            $subject->fastGoals ?? $this->fastGoalPolicy($userId, (int) $row['registration_id'])
+        );
     }
 
     /** @param array<string, mixed> $row an install row with its click's click_time and aff_campaign_id (null without one) */
-    private static function installSubjectFrom(int $installRowId, array $row): GoalSubject
+    private static function installSubjectFrom(int $installRowId, array $row, FastGoalPolicy $fastGoals): GoalSubject
     {
         $credited = (string) $row['match_state'] === 'attributed' && $row['trusted'] !== null && (int) $row['trusted'] === 1;
         if ($credited && ($row['click_id'] === null || $row['click_time'] === null)) {
@@ -250,6 +278,7 @@ final class GoalEngine
             $credited ? (int) $row['click_id'] : null,
             $credited ? (int) $row['aff_campaign_id'] : null,
             (int) $row['registration_id'],
+            $fastGoals,
         );
     }
 
@@ -1120,13 +1149,13 @@ final class GoalEngine
         $insert = $this->conn->prepareWrite(
             'INSERT INTO 202_goal_outcomes
                 (user_id, subject_type, subject_id, goal_id, goal_version, n, event_id, reached_at, value, value_source,
-                 value_note, ineligible_reason, payable, campaign_id, app_registration_id, conversion_id, superseded_by, superseded_reason, superseded_at, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?)'
+                 value_note, ineligible_reason, payable, too_fast, campaign_id, app_registration_id, conversion_id, superseded_by, superseded_reason, superseded_at, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?)'
         );
-        $this->conn->bind($insert, 'isiiiisissssiiii', [
+        $this->conn->bind($insert, 'isiiiisissssiiiii', [
             $userId, $subject->type, $subject->id, $o->goalId, $o->version, $o->n, $o->eventId, $o->reachedAt,
             $amountUnits === null ? null : Amount::fromUnits($amountUnits),
-            $v['source'], $v['note'], $o->ineligibleReason, $payable ? 1 : 0, $subject->campaignId, $subject->registrationId, $now,
+            $v['source'], $v['note'], $o->ineligibleReason, $payable ? 1 : 0, $v['too_fast'] ? 1 : 0, $subject->campaignId, $subject->registrationId, $now,
         ]);
         $outcomeId = $this->conn->executeInsert($insert);
         if ($outcomeId <= 0) {
@@ -1152,7 +1181,7 @@ final class GoalEngine
      * goal by the campaign's term for it (none without a click).
      *
      * @param array<string, mixed>|null $term
-     * @return array{payable: bool, units: int|null, source: string, note: string|null, notify: bool, install: bool, name: string}
+     * @return array{payable: bool, units: int|null, source: string, note: string|null, notify: bool, install: bool, name: string, too_fast: bool}
      */
     private function valuation(GoalSubject $subject, Outcome $o, ?array $term, ?GoalEvent $event): array
     {
@@ -1172,9 +1201,22 @@ final class GoalEngine
             [$payable, $amountUnits, $source, $note] = self::payability($o, $term, $event);
         }
 
+        // Reached implausibly soon after the install (FastGoalPolicy): always
+        // flagged, and under `hold` neither paid nor sent. An install subject
+        // that carries no policy is judged under the trusting-least one.
+        $tooFast = false;
+        if ($subject->type === GoalSubject::INSTALL && $subject->installAt !== null) {
+            $fast = $subject->fastGoals ?? FastGoalPolicy::unreadable();
+            $tooFast = $fast->tooFast($o, $subject->installAt);
+            if ($tooFast && $fast->hold) {
+                $payable = false;
+                $notify = false;
+            }
+        }
+
         return [
             'payable' => $payable, 'units' => $amountUnits, 'source' => $source, 'note' => $note,
-            'notify' => $notify, 'install' => $isInstallGoal, 'name' => $meta['name'],
+            'notify' => $notify, 'install' => $isInstallGoal, 'name' => $meta['name'], 'too_fast' => $tooFast,
         ];
     }
 
@@ -1187,7 +1229,7 @@ final class GoalEngine
      * Write an outcome's ledger row on the subject's click, link it, and
      * queue its notification — the first write of the row.
      *
-     * @param array{payable: bool, units: int|null, source: string, note: string|null, notify: bool, install: bool, name: string} $v
+     * @param array{payable: bool, units: int|null, source: string, note: string|null, notify: bool, install: bool, name: string, too_fast: bool} $v
      * @param array{ledger: list<array<string, mixed>>, clicks: array<int, true>, notices: list<array<string, mixed>>} $post
      * @return array{0: int, 1: bool, 2: string|null} the conversion id, whether the row is new, and its dedupe key
      */
@@ -1273,7 +1315,7 @@ final class GoalEngine
      * outbox settles the retraction that retirement queued and never
      * re-announces it), or, when this click never had one, a first write.
      *
-     * @param array{payable: bool, units: int|null, source: string, note: string|null, notify: bool, install: bool, name: string} $v
+     * @param array{payable: bool, units: int|null, source: string, note: string|null, notify: bool, install: bool, name: string, too_fast: bool} $v
      * @param array{ledger: list<array<string, mixed>>, clicks: array<int, true>, notices: list<array<string, mixed>>} $post
      * @return array{0: int, 1: bool, 2: string|null} the conversion id, whether the row is new, and its dedupe key
      */
@@ -1318,16 +1360,16 @@ final class GoalEngine
      * value and payability as valuation() decides them now, and the ledger
      * row it names.
      *
-     * @param array{payable: bool, units: int|null, source: string, note: string|null, notify: bool, install: bool, name: string} $v
+     * @param array{payable: bool, units: int|null, source: string, note: string|null, notify: bool, install: bool, name: string, too_fast: bool} $v
      */
     private function restate(int $outcomeId, GoalSubject $subject, array $v, ?int $convId): void
     {
         $stmt = $this->conn->prepareWrite(
-            'UPDATE 202_goal_outcomes SET conversion_id = ?, campaign_id = ?, payable = ?, value = ?, value_source = ?, value_note = ?
+            'UPDATE 202_goal_outcomes SET conversion_id = ?, campaign_id = ?, payable = ?, too_fast = ?, value = ?, value_source = ?, value_note = ?
              WHERE outcome_id = ?'
         );
-        $this->conn->bind($stmt, 'iiisssi', [
-            $convId, $subject->campaignId, $v['payable'] ? 1 : 0,
+        $this->conn->bind($stmt, 'iiiisssi', [
+            $convId, $subject->campaignId, $v['payable'] ? 1 : 0, $v['too_fast'] ? 1 : 0,
             $v['units'] === null ? null : Amount::fromUnits($v['units']), $v['source'], $v['note'], $outcomeId,
         ]);
         $this->conn->executeUpdate($stmt);
