@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace Prosper202\Ltv;
 
 use Prosper202\Database\Connection;
+use Prosper202\Identity\CustomerId;
+use Prosper202\Identity\IdentityGraph;
+use Prosper202\Identity\IdentitySignal;
+use Prosper202\Identity\SignalType;
 use RuntimeException;
 
 /**
@@ -333,6 +337,10 @@ final class MysqlCustomerCrmRepository
 
         $now = time();
         $this->conn->transaction(function () use ($userId, $customerId, $now): void {
+            // The identity graph links clicks by a keyed hash of the same
+            // aliases, so it is reached before they go.
+            $this->eraseIdentitySignals($userId, $customerId);
+
             $stmt = $this->conn->prepareWrite(
                 'DELETE FROM 202_customer_aliases WHERE customer_id = ? AND user_id = ?'
             );
@@ -365,6 +373,70 @@ final class MysqlCustomerCrmRepository
             $this->conn->bind($stmt, 'iii', [$now, $customerId, $userId]);
             $this->conn->executeUpdate($stmt);
         });
+    }
+
+    /**
+     * Remove the identity graph's record of an erased customer's ids.
+     *
+     * A customer id reaches the graph as a CUSTOMER signal whose value is the
+     * alias in its canonical "type:value" form (CustomerId), stored only as
+     * the account's keyed hash of it. Each alias is hashed the same way and
+     * its signal row and the observations that name it are deleted and the
+     * merges it caused lose the hash, so the id no longer maps to a visitor key and no later
+     * click can join the erased customer's journeys through it. The visitor
+     * keys the signal once merged stay merged: they are pseudonymous click
+     * links that carry nothing of the customer.
+     *
+     * An account whose identity keys were never minted has no signals to
+     * reach; the keys are read, never minted here.
+     */
+    private function eraseIdentitySignals(int $userId, int $customerId): void
+    {
+        $stmt = $this->conn->prepareWrite('SELECT hash_key FROM 202_identity_keys WHERE user_id = ? LIMIT 1');
+        $this->conn->bind($stmt, 'i', [$userId]);
+        $keys = $this->conn->fetchOne($stmt);
+        if ($keys === null) {
+            return;
+        }
+        $hashKey = (string) $keys['hash_key'];
+
+        $stmt = $this->conn->prepareWrite(
+            'SELECT alias_type, alias_value FROM 202_customer_aliases WHERE customer_id = ? AND user_id = ?'
+        );
+        $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
+        $type = SignalType::CUSTOMER->value;
+        foreach ($this->conn->fetchAll($stmt) as $alias) {
+            $canonical = CustomerId::canonical((string) $alias['alias_value'], (string) $alias['alias_type']);
+            if ($canonical === null) {
+                continue;
+            }
+            $hash = IdentityGraph::hash($hashKey, new IdentitySignal(SignalType::CUSTOMER, $canonical));
+
+            $stmt = $this->conn->prepareWrite(
+                'DELETE FROM 202_identity_signals WHERE user_id = ? AND signal_type = ? AND signal_hash = ?'
+            );
+            $this->conn->bind($stmt, 'iss', [$userId, $type, $hash]);
+            $this->conn->executeUpdate($stmt);
+
+            // Observations carry no account column; the hash is keyed by
+            // this account's secret, so no other account's row shares it.
+            $stmt = $this->conn->prepareWrite(
+                'DELETE FROM 202_identity_observations WHERE signal_type = ? AND signal_hash = ?'
+            );
+            $this->conn->bind($stmt, 'ss', [$type, $hash]);
+            $this->conn->executeUpdate($stmt);
+
+            // A merge row is the worker's to-do list (requeued_at IS NULL
+            // re-queues the conversions it moved), so it stays; only the
+            // hash that names the customer goes, replaced by a marker no
+            // HMAC can equal.
+            $stmt = $this->conn->prepareWrite(
+                "UPDATE 202_identity_merges SET signal_hash = 'erased'
+                 WHERE user_id = ? AND signal_type = ? AND signal_hash = ?"
+            );
+            $this->conn->bind($stmt, 'iss', [$userId, $type, $hash]);
+            $this->conn->executeUpdate($stmt);
+        }
     }
 
     /**

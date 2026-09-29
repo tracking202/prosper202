@@ -588,28 +588,73 @@ try {
         // receivers under /.well-known/. The literal paths are registered
         // before /apps/{id}, which would otherwise match them (first match
         // wins).
-        $router->group('/apps', function (Router $r) use ($crud, $idempotent, $queryParams, $payload) {
+        // Role permissions mirror the Mobile Apps pages (plan §7.1, one
+        // permission check per operation on every surface): reading the
+        // registry, its encodings and its integrity status needs no more
+        // than the Setup pages do, as MobileAppsController reads them;
+        // changing anything needs manage_attribution_models, as that page's
+        // writes do; the report and the rows behind it (postbacks, installs)
+        // need view_attribution_reports, as MobileAppsReportController does.
+        // The checks sit inside the handlers because one path carries both a
+        // read and a write; the DELETE previews repeat them below.
+        $router->group('/apps', function (Router $r) use ($crud, $idempotent, $queryParams, $payload, $auth, $db) {
             $apps = \Api\V3\Controllers\AppRegistrationsController::class;
             $encodings = \Api\V3\Controllers\AppSkanEncodingsController::class;
             $postbacks = \Api\V3\Controllers\AppPostbacksController::class;
+            $manage = static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'manage_attribution_models');
+            };
+            $view = static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'view_attribution_reports');
+            };
 
             $r->get('/skan-encodings',         fn() => $crud($encodings)->list($queryParams));
             $r->get('/skan-encodings/{id}',    fn($ctx) => $crud($encodings)->get((int)$ctx['id']));
-            $r->post('/skan-encodings',        fn() => ['_status' => 201] + $idempotent('apps/skan-encodings', $payload, fn() => $crud($encodings)->create($payload)));
-            $r->put('/skan-encodings/{id}',    fn($ctx) => $crud($encodings)->update((int)$ctx['id'], $payload));
-            $r->delete('/skan-encodings/{id}', fn($ctx) => tap($crud($encodings), fn($c) => $c->delete((int)$ctx['id'])));
+            $r->post('/skan-encodings',        function () use ($manage, $crud, $encodings, $idempotent, $payload) {
+                $manage();
+                return ['_status' => 201] + $idempotent('apps/skan-encodings', $payload, fn() => $crud($encodings)->create($payload));
+            });
+            $r->put('/skan-encodings/{id}',    function ($ctx) use ($manage, $crud, $encodings, $payload) {
+                $manage();
+                return $crud($encodings)->update((int)$ctx['id'], $payload);
+            });
+            $r->delete('/skan-encodings/{id}', function ($ctx) use ($manage, $crud, $encodings) {
+                $manage();
+                $crud($encodings)->delete((int)$ctx['id']);
+                return null; // 204
+            });
 
-            $r->get('/postbacks',      fn() => $crud($postbacks)->list($queryParams));
-            $r->get('/postbacks/{id}', fn($ctx) => $crud($postbacks)->get((int)$ctx['id']));
-            $r->get('/report',         fn() => $crud($postbacks)->report($queryParams));
-            $r->post('/verify',        fn() => $crud($postbacks)->verify($payload));
+            $r->get('/postbacks',      function () use ($view, $crud, $postbacks, $queryParams) {
+                $view();
+                return $crud($postbacks)->list($queryParams);
+            });
+            $r->get('/postbacks/{id}', function ($ctx) use ($view, $crud, $postbacks) {
+                $view();
+                return $crud($postbacks)->get((int)$ctx['id']);
+            });
+            $r->get('/report',         function () use ($view, $crud, $postbacks, $queryParams) {
+                $view();
+                return $crud($postbacks)->report($queryParams);
+            });
+            $r->post('/verify',        function () use ($view, $crud, $postbacks, $payload) {
+                $view();
+                return $crud($postbacks)->verify($payload);
+            });
 
             // An Android registration's installs, written only by the
             // public intake (POST /apps/installs, routed before auth), and
             // the install token for one of the caller's clicks: all reads.
+            // The token is tracking plumbing (the landing page's server asks
+            // for it, as it posts conversions), so it takes no role check.
             $installs = \Api\V3\Controllers\AppInstallsController::class;
-            $r->get('/{id}/installs',        fn($ctx) => $crud($installs)->list((int)$ctx['id'], $queryParams));
-            $r->get('/{id}/installs/{uuid}', fn($ctx) => $crud($installs)->get((int)$ctx['id'], (string)$ctx['uuid']));
+            $r->get('/{id}/installs',        function ($ctx) use ($view, $crud, $installs, $queryParams) {
+                $view();
+                return $crud($installs)->list((int)$ctx['id'], $queryParams);
+            });
+            $r->get('/{id}/installs/{uuid}', function ($ctx) use ($view, $crud, $installs) {
+                $view();
+                return $crud($installs)->get((int)$ctx['id'], (string)$ctx['uuid']);
+            });
             $r->get('/{id}/install-token',   fn($ctx) => $crud($installs)->installToken((int)$ctx['id'], $queryParams));
 
             // Play Integrity (plan §5.6, §5.11): the status read, and the
@@ -618,8 +663,14 @@ try {
             // change would store and show to reviewers.
             $integrity = \Api\V3\Controllers\AppIntegrityController::class;
             $r->get('/{id}/integrity',               fn($ctx) => $crud($integrity)->status((int)$ctx['id']));
-            $r->put('/{id}/integrity-credential',    fn($ctx) => $crud($integrity)->setCredential((int)$ctx['id'], $payload));
-            $r->delete('/{id}/integrity-credential', fn($ctx) => $crud($integrity)->clearCredential((int)$ctx['id']));
+            $r->put('/{id}/integrity-credential',    function ($ctx) use ($manage, $crud, $integrity, $payload) {
+                $manage();
+                return $crud($integrity)->setCredential((int)$ctx['id'], $payload);
+            });
+            $r->delete('/{id}/integrity-credential', function ($ctx) use ($manage, $crud, $integrity) {
+                $manage();
+                return $crud($integrity)->clearCredential((int)$ctx['id']);
+            });
 
             $r->get('',            fn() => $crud($apps)->list($queryParams));
             // Deliberately NOT wrapped in $idempotent, for the same reason
@@ -627,11 +678,24 @@ try {
             // which must not persist in the server-state store as a
             // replayable record. Retry safety comes from the global UNIQUE
             // (platform, app_key) instead — a duplicate create answers 409.
-            $r->post('',           fn() => ['_status' => 201] + $crud($apps)->create($payload));
+            $r->post('',           function () use ($manage, $crud, $apps, $payload) {
+                $manage();
+                return ['_status' => 201] + $crud($apps)->create($payload);
+            });
             $r->get('/{id}',       fn($ctx) => $crud($apps)->get((int)$ctx['id']));
-            $r->put('/{id}',       fn($ctx) => $crud($apps)->update((int)$ctx['id'], $payload));
-            $r->delete('/{id}',    fn($ctx) => tap($crud($apps), fn($c) => $c->delete((int)$ctx['id'])));
-            $r->post('/{id}/app-token/rotate', fn($ctx) => $crud($apps)->rotateAppToken((int)$ctx['id']));
+            $r->put('/{id}',       function ($ctx) use ($manage, $crud, $apps, $payload) {
+                $manage();
+                return $crud($apps)->update((int)$ctx['id'], $payload);
+            });
+            $r->delete('/{id}',    function ($ctx) use ($manage, $crud, $apps) {
+                $manage();
+                $crud($apps)->delete((int)$ctx['id']);
+                return null; // 204
+            });
+            $r->post('/{id}/app-token/rotate', function ($ctx) use ($manage, $crud, $apps) {
+                $manage();
+                return $crud($apps)->rotateAppToken((int)$ctx['id']);
+            });
         });
 
         // ── Goals (plan §2.2, §5.5) ─────────────────────────────────────
@@ -817,8 +881,16 @@ try {
             return $crud(\Api\V3\Controllers\AttributionController::class)->deleteModelPreview((int)$ctx['id']);
         });
         $previewRouter->delete('/attribution/exports/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionController::class)->deleteExportPreview((int)$ctx['id']));
-        $previewRouter->delete('/apps/skan-encodings/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AppSkanEncodingsController::class)->deletePreview((int)$ctx['id']));
-        $previewRouter->delete('/apps/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AppRegistrationsController::class)->deletePreview((int)$ctx['id']));
+        // The /apps deletes check manage_attribution_models inside their
+        // handlers; the previews repeat it.
+        $previewRouter->delete('/apps/skan-encodings/{id}', function ($ctx) use ($crud, $auth, $db) {
+            $auth->requirePermission($db, 'manage_attribution_models');
+            return $crud(\Api\V3\Controllers\AppSkanEncodingsController::class)->deletePreview((int)$ctx['id']);
+        });
+        $previewRouter->delete('/apps/{id}', function ($ctx) use ($crud, $auth, $db) {
+            $auth->requirePermission($db, 'manage_attribution_models');
+            return $crud(\Api\V3\Controllers\AppRegistrationsController::class)->deletePreview((int)$ctx['id']);
+        });
         $previewRouter->delete('/goals/{id}', fn($ctx) => $crud(\Api\V3\Controllers\GoalsController::class)->deletePreview(\Api\V3\Controllers\GoalsController::pathId($ctx['id'])));
         $previewRouter->delete('/goals/{id}/campaigns/{campaignId}', fn($ctx) => $crud(\Api\V3\Controllers\GoalsController::class)->detachCampaignPreview(
             \Api\V3\Controllers\GoalsController::pathId($ctx['id']),
