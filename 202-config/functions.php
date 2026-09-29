@@ -398,6 +398,10 @@ require_once __DIR__ . '/functions-standalone-ui.php';
 
 						if ($calcVersion == $version) {
 							//Auto upgrade without user confirmation
+                            // A client that gives up (a proxy's read timeout, a closed tab) must not
+                            // stop the download, the file swap or the ladder halfway.
+                            ignore_user_abort(true);
+                            set_time_limit(0);
 							$GetUpdate = @getData($link);
 							if ($GetUpdate) {
 								$FilesUpdated = false;

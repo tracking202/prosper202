@@ -136,7 +136,9 @@ $p202_display_errors = (PHP_SAPI !== 'cli' && getenv('APP_ENV') === 'production'
 @ini_set('display_errors', $p202_display_errors);
 @ini_set('error_reporting', '6135');
 // @ini_set('safe_mode', 'Off'); // Removed in PHP 5.4
-@ini_set('set_time_limit', '0');
+// (There was an @ini_set('set_time_limit', '0') here. set_time_limit is a
+// function, not an ini key, so it never did anything; the pages that need no
+// time limit — the upgrade paths, the cron — call set_time_limit(0) themselves.)
 
 if (!class_exists('Memcache')) {
     class Memcache

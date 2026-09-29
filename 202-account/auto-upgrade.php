@@ -63,6 +63,11 @@ if ($rss_xml !== null) {
 
 if (($_POST['start_upgrade'] ?? '') === '1') {
 
+    // A client that gives up (a proxy's read timeout, a closed tab) must not
+    // stop the download, the file swap or the ladder halfway.
+    ignore_user_abort(true);
+    set_time_limit(0);
+
 	// validate token
 	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
 		$log .= "You must use our forms to submit data.\n";
@@ -203,7 +208,9 @@ if (($_POST['start_upgrade'] ?? '') === '1') {
 				$version = $latest_version;
 				$upgrade_done = true;
 			} else {
-				$log .= "Database upgrade failed! Please try again!\n";
+                $log .= UPGRADE::$lastRunBusy
+                    ? "Another upgrade of this database is running (its page may have timed out; it carries on). Nothing was changed; reload in a few minutes.\n"
+                    : "Database upgrade failed! Please try again!\n";
 				$upgrade_done = false;
 			}
 		}

@@ -311,6 +311,11 @@ class AttributionController
                     'default_model_id' => (int) $default['model_id'],
                 ],
                 'compare_model' => $compare !== null ? self::present($compare) : null,
+                // While conversions recorded before the upgrade are still
+                // being brought into attribution, reports over those dates
+                // are incomplete; null once that has finished (or on an
+                // install that never had any).
+                'backfill' => (new \Prosper202\Attribution\ConversionBackfill($this->conn))->progress(),
             ],
         ];
     }
@@ -325,7 +330,11 @@ class AttributionController
 
         return [
             'data' => (new AttributionReports($this->conn))->journeyMetrics($this->userId, $from, $to),
-            'meta' => ['time_from' => $from, 'time_to' => $to],
+            'meta' => [
+                'time_from' => $from,
+                'time_to' => $to,
+                'backfill' => (new \Prosper202\Attribution\ConversionBackfill($this->conn))->progress(),
+            ],
         ];
     }
 

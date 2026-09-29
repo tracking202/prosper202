@@ -17,6 +17,7 @@ use Prosper202\Conversion\Ledger\SupersededReason;
 use Prosper202\Database\Connection;
 use Prosper202\DataEngine\ClickRollupSql;
 use Prosper202\Ltv\MysqlCustomerRepository;
+use Prosper202\Notifications\NotificationOutbox;
 use RuntimeException;
 use Throwable;
 
@@ -24,9 +25,17 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
 {
     private MysqlCustomerRepository $customers;
 
+    private ?NotificationOutbox $outbox = null;
+
     public function __construct(private Connection $conn)
     {
         $this->customers = new MysqlCustomerRepository($conn);
+    }
+
+    /** The traffic-source notification outbox, on this connection (built on first use). */
+    private function outbox(): NotificationOutbox
+    {
+        return $this->outbox ??= new NotificationOutbox($this->conn);
     }
 
     public function list(int $userId, array $filters, int $offset, int $limit): array
@@ -529,6 +538,24 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $this->customers->stampClickCustomer($clickId, $customerId);
         }
 
+        // The traffic source's server-to-server postbacks for this row
+        // (gpb.php and upx.php ask for them), queued in the notification
+        // outbox in this transaction: the row and the promise to announce it
+        // commit together, so a send that fails after the commit — or never
+        // starts — is retried by the worker instead of being lost with the
+        // request. A reversal is not a new conversion and announces nothing.
+        if (!empty($data['notify_traffic_source']) && $reverses === null) {
+            $this->outbox()->queueReached(
+                $userId,
+                $convId,
+                $clickId,
+                $eventName ?? '',
+                Amount::fromUnits($amountUnits),
+                $dedupeKey,
+                $transactionId
+            );
+        }
+
         if ($clickSideUpdate !== null) {
             $clickSideUpdate($clickId, $payout);
         }
@@ -890,6 +917,13 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             );
             $this->conn->bind($stmt, 'ii', [$id, $userId]);
             $this->conn->executeUpdate($stmt);
+            // What the traffic source was told about this row is settled the
+            // way the goals engine settles a retirement with nothing in its
+            // place (GoalEngine calls onReplaced() before it retires a row):
+            // a postback not yet attempted is cancelled, one that may have
+            // gone out gets a retraction. The engine's own retirements (the
+            // branch below) are settled by the engine, never twice.
+            $this->outbox()->onReplaced($userId, $id, null);
         } else {
             // The mark is the provenance a revival reads; a deletion that
             // did not carry it would be one the engine can never undo.
@@ -1191,6 +1225,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                     $this->conn->bind($del, 'i', [$convId]);
                     $this->conn->executeUpdate($del);
                     $this->voidRevenueEvent($convId, $row['customer_id'] !== null ? (int) $row['customer_id'] : 0, $userId);
+                    // As softDeleteLocked(): its postbacks cancelled or retracted.
+                    $this->outbox()->onReplaced($userId, $convId, null);
                     $deleted[] = $convId;
                 }
 

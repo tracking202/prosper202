@@ -132,6 +132,18 @@ missing): `php`, `composer`, `go`, `git`, `zip`. The script exports the current
   convert (see `documentation/features/measurement-rewrite-plan.md`,
   Constraints).
 
+- **An upgrade on a large install answers 504 (or another timeout).** The page
+  renders only when the upgrade finishes. At 1M conversions that takes 57 s on
+  MariaDB 10.11 and 91 s on MySQL 8.0 (plan §7.5a), which is more than a 60 s
+  proxy read timeout. The upgrade keeps running on the server:
+  `UPGRADE::upgrade_databases()` ignores the client going away and has no time
+  limit. Tell the operator to wait a few minutes and reload `upgrade.php`;
+  there is nothing to redo. If they reload while it is still running, the page
+  says "An upgrade is already running" and changes nothing, because a named
+  lock allows one upgrade per database. Once it has finished, the page sends
+  them to the login page. A process killed mid-upgrade leaves the stored
+  version where the last completed step put it, and the next run resumes
+  from there.
 - **`fail_on_unmatched_files`** trips when the build produced no zip — read the
   "Build release artifact" step log; the publish step is working as intended by
   refusing to create an empty release.

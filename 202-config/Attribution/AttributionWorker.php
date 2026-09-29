@@ -102,7 +102,16 @@ final class AttributionWorker
         }
         $failure = null;
         try {
-            return (new self($conn, $clock))->run($timeBudgetSeconds, $batchSize);
+            // Pre-upgrade conversions first (ConversionBackfill), with a third
+            // of the budget, under this lock: what it queues is processed by
+            // the run below or the next one. A no-op once it has finished, and
+            // on a fresh install, which has nothing from before the ledger.
+            $now = $clock !== null ? (int) $clock() : time();
+            $backfill = (new ConversionBackfill($conn, $clock))->run($now + max(1, intdiv($timeBudgetSeconds, 3)));
+            $report = (new self($conn, $clock))->run($timeBudgetSeconds, $batchSize);
+            $report->backfill = $backfill;
+
+            return $report;
         } catch (\Throwable $e) {
             $failure = $e;
             throw $e;
