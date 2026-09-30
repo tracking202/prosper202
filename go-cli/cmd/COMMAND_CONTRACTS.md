@@ -26,6 +26,11 @@ This file captures the API paths and payload/query expectations used by upcoming
 - `campaign clone <id>`
   - `GET /api/v3/campaigns/{id}`
   - `POST /api/v3/campaigns` with cloned mutable fields
+- `campaign list --url-contains <text>`
+  - paginated `GET /api/v3/campaigns`, filtered client-side on the five offer URL fields
+- `campaign replace-url`
+  - paginated `GET /api/v3/campaigns` (with `filter[aff_network_id]` when `--aff-network-id` is set)
+  - one `PUT /api/v3/campaigns/{id}` per matched campaign, carrying only the changed URL fields
 - `tracker create-with-url`
   - `POST /api/v3/trackers`
   - `GET /api/v3/trackers/{id}/url`

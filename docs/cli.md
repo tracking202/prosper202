@@ -260,6 +260,36 @@ p202 campaign clone 42
 p202 campaign clone 42 --name "Q1 Offer (Copy)"
 ```
 
+Find campaigns by offer URL, and rewrite offer URLs in bulk:
+
+```bash
+# Every campaign with a URL (any of the five slots) containing the text; case-insensitive, all pages
+p202 campaign list --url-contains old-network.com
+
+# Preview: which campaign, slot, old URL and new URL. Writes nothing.
+p202 campaign replace-url --match old-network.com --set 'https://example.com/?utm_source={slug}' --dry-run
+
+# Swap just the matched text, e.g. http -> https for one host
+p202 campaign replace-url --match http://promo.example.com --with https://promo.example.com
+```
+
+| Flag | Description |
+|------|-------------|
+| `--match <text>` | Required. Text the URLs to change contain (case-insensitive) |
+| `--with <text>` | Replace the matched text inside the URL |
+| `--set <url>` | Replace the whole URL; `{id}` and `{slug}` (campaign name, lowercased and hyphenated) are filled per campaign. Must be absolute `http(s)://` |
+| `--slot <1-5\|all>` | URL slots to consider, comma-separated (default `all`; 1 is `aff_campaign_url`) |
+| `--ids <list>` | Only these campaign IDs |
+| `--aff-network-id <id>` | Only campaigns in this affiliate network |
+| `--dry-run` | List the changes without writing |
+| `-f, --force` | Skip the confirmation prompt |
+
+Pass exactly one of `--with` or `--set`. Without `--dry-run` the change list is printed and
+confirmed first; `--staged` records one proposal per campaign instead of writing. Each campaign
+gets a single `PUT /campaigns/{id}` carrying only its changed slots. The output lists every slot
+with `status` `applied`, `staged` (with `change_id`) or `failed`; any failure exits 5 (partial
+failure). Matching runs in the CLI over every page, so it works with any server version.
+
 ### Affiliate network (`p202 aff-network`)
 
 | Flag | Required | Description |

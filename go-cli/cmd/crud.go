@@ -31,8 +31,9 @@ type crudEntity struct {
 	Endpoint      string
 	Fields        []crudField
 	ListParams    []crudField
-	IDField       string // internal primary-key field (e.g. aff_campaign_id)
-	PublicIDField string // public-facing id field (e.g. aff_campaign_id_public)
+	IDField       string   // internal primary-key field (e.g. aff_campaign_id)
+	PublicIDField string   // public-facing id field (e.g. aff_campaign_id_public)
+	URLFields     []string // URL fields `list --url-contains` searches; none means no such flag
 }
 
 // resolvePublicID treats id as a public id and returns the matching internal id
@@ -543,6 +544,18 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("list", entity.Endpoint)
 			defer func() { done(retErr == nil, errString(retErr)) }()
+			urlContains := ""
+			if len(entity.URLFields) > 0 {
+				urlContains, _ = cmd.Flags().GetString("url-contains")
+			}
+			if urlContains != "" {
+				for _, paging := range []string{"page", "limit", "offset"} {
+					if cmd.Flags().Changed(paging) {
+						return validationError("--url-contains searches every page, so it cannot be combined with --%s", paging).
+							WithHint("Drop --page/--limit/--offset; every match is returned.")
+					}
+				}
+			}
 			c, err := api.NewFromConfig()
 			if err != nil {
 				return err
@@ -569,6 +582,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 				}
 			}
 			allRows, _ := cmd.Flags().GetBool("all")
+			if urlContains != "" {
+				allRows = true
+			}
 			resolveNames, _ := cmd.Flags().GetBool("resolve-names")
 			if resolveNames && !envFlagEnabled("CLI_ENABLE_RESOLVE_NAMES", true) {
 				return validationError("--resolve-names is disabled").WithHint("Set CLI_ENABLE_RESOLVE_NAMES=1 in the environment to enable it, or drop the flag.")
@@ -578,6 +594,15 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 				rows, err := fetchAllRowsWithParams(c, entity.Endpoint, params)
 				if err != nil {
 					return err
+				}
+				if urlContains != "" {
+					matched := make([]map[string]interface{}, 0, len(rows))
+					for _, row := range rows {
+						if rowMatchesURL(row, entity.URLFields, urlContains) {
+							matched = append(matched, row)
+						}
+					}
+					rows = matched
 				}
 				if resolveNames {
 					if err := resolveForeignKeyNames(c, rows); err != nil {
@@ -635,6 +660,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	listCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 	listCmd.Flags().Bool("all", false, "Fetch all rows across pages")
 	listCmd.Flags().Bool("resolve-names", false, "Resolve foreign key IDs to names")
+	if len(entity.URLFields) > 0 {
+		listCmd.Flags().String("url-contains", "", fmt.Sprintf("Only %s with a URL containing this text (case-insensitive; searches every page; fields: %s)", entity.Name+"s", strings.Join(entity.URLFields, ", ")))
+	}
 	for _, p := range entity.ListParams {
 		listCmd.Flags().String(p.Name, "", p.Desc)
 		for _, alias := range p.Aliases {
@@ -826,9 +854,10 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 func init() {
 	entities := []crudEntity{
 		{
-			Name:     "campaign",
-			Plural:   "campaigns (affiliate offers with URLs, payouts, and postback settings)",
-			Endpoint: "campaigns",
+			Name:      "campaign",
+			Plural:    "campaigns (affiliate offers with URLs, payouts, and postback settings)",
+			Endpoint:  "campaigns",
+			URLFields: campaignURLFields,
 			Fields: []crudField{
 				{Name: "aff_campaign_name", Desc: "Campaign name", Required: true},
 				{Name: "aff_campaign_url", Desc: "Primary offer URL", Required: true},
@@ -1029,7 +1058,7 @@ func init() {
 		}
 		cloneCmd.Flags().String("name", "", "Optional name override for the cloned campaign")
 		registerIdempotencyKeyFlag(cloneCmd)
-		campaignCmd.AddCommand(cloneCmd)
+		campaignCmd.AddCommand(cloneCmd, newCampaignReplaceURLCmd())
 	}
 
 	if trackerCmd != nil {
