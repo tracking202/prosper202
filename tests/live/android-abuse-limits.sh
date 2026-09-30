@@ -18,7 +18,12 @@
 #     answered; another app's budget is its own; an unreadable cap is a 503
 #     naming it;
 #   - the event cap: a batch that would pass event_cap_per_minute is 429 and
-#     stored nowhere, the rest of the budget still spendable;
+#     stored nowhere, the rest of the budget still spendable; a replayed
+#     batch at the cap is answered with its duplicates and costs nothing; a
+#     body carrying only a customer id is capped too;
+#   - refunds: an install and an events batch admitted and then failed (a
+#     trigger planted to fail the insert) spend none of the budget, so the
+#     SDK's retry is admitted;
 #   - goals reached too fast: flagged and paid (and sent) under `count`,
 #     flagged and neither paid nor sent under `hold`; the report's
 #     fast_goals count and filter;
@@ -266,6 +271,45 @@ eq "$(device POST "/apps/installs/$U4/events" "$TOKEN" "$OUT/b3.json")" 200 "the
 eq "$(Q "SELECT COUNT(*) FROM 202_goal_events WHERE subject_type = 'install' AND subject_id = $IROW4")" 100 "100 stored in all"
 events_body "$OUT/b4.json" d 60 "$(eval_at "$U1" 400)"
 eq "$(device POST "/apps/installs/$U1/events" "$TOKEN" "$OUT/b4.json")" 200 "another install has its own budget"
+eq "$(device POST "/apps/installs/$U4/events" "$TOKEN" "$OUT/b1.json")" 200 "at the cap, a replay of the first 60 is still answered"
+eq "$(field "[len(d['data']['accepted']), len(d['data']['duplicates'])]")" "[0, 60]" "as 60 duplicates"
+eq "$(Q "SELECT COUNT(*) FROM 202_goal_events WHERE subject_type = 'install' AND subject_id = $IROW4")" 100 "storing nothing"
+printf '{"customer":{"id":"u-829","type":"custom","signature":"%s"}}' "$(printf 'a%.0s' $(seq 64))" > "$OUT/cust.json"
+eq "$(device POST "/apps/installs/$U4/events" "$TOKEN" "$OUT/cust.json")" 429 "a customer id alone is under the same cap"
+has "$OUT/body" "event_cap_per_minute = 100" "and the answer names it"
+
+# ─────────────────────────────────────────────────────────────────────
+say "refunds: a request admitted and then failed spends nothing"
+fail_inserts() { mysql_q "$DB" -e "CREATE TRIGGER p202_live_planted_failure BEFORE INSERT ON $1 FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'planted failure'"; }
+stop_failing() { mysql_q "$DB" -e "DROP TRIGGER IF EXISTS p202_live_planted_failure"; }
+trap 'stop_failing; cleanup; restore_version' EXIT
+U7=$(uuid); install_body "$OUT/i7.json" "$U7" "" "$T3" 40
+eq "$(device POST /apps/installs "$TOKEN" "$OUT/i7.json")" 200 "a fresh install, its event budget untouched"
+IROW7=$(row "$U7" install_row_id)
+fail_inserts 202_goal_events
+events_body "$OUT/f1.json" f 60 "$(eval_at "$U7" 200)"
+code=$(device POST "/apps/installs/$U7/events" "$TOKEN" "$OUT/f1.json")
+stop_failing
+if [ "${code:0:1}" = 5 ]; then ok "a batch of 60 the store fails is a $code"; else bad "the failed batch answered $code"; fi
+eq "$(Q "SELECT COUNT(*) FROM 202_goal_events WHERE subject_type = 'install' AND subject_id = $IROW7")" 0 "and stored nothing"
+events_body "$OUT/f2.json" g 100 "$(eval_at "$U7" 300)"
+eq "$(device POST "/apps/installs/$U7/events" "$TOKEN" "$OUT/f2.json")" 200 "the whole budget of 100 is still there: the 60 were refunded"
+eq "$(device POST "/apps/installs/$U7/events" "$TOKEN" "$OUT/f2.json")" 200 "and a replay of those 100 at the cap is answered"
+eq "$(field "len(d['data']['duplicates'])")" 100 "as duplicates"
+events_body "$OUT/f3.json" h 1 "$(eval_at "$U7" 500)"
+eq "$(device POST "/apps/installs/$U7/events" "$TOKEN" "$OUT/f3.json")" 429 "while one new event is refused"
+
+eq "$(api POST /apps '{"store_link":"com.p202.abuse.single","app_name":"Single","install_cap_per_minute":1}')" 201 "an app capped at 1 install a minute"
+TOKEN_S=$(field "d['data']['app_token']")
+US1=$(uuid); install_body "$OUT/s1.json" "$US1" "" "$T3" 40 com.p202.abuse.single
+fail_inserts 202_app_installs
+code=$(device POST /apps/installs "$TOKEN_S" "$OUT/s1.json")
+stop_failing
+if [ "${code:0:1}" = 5 ]; then ok "an install the store fails is a $code"; else bad "the failed install answered $code"; fi
+eq "$(row "$US1" "COUNT(*)")" 0 "and is not stored"
+eq "$(device POST /apps/installs "$TOKEN_S" "$OUT/s1.json")" 200 "the SDK's retry is admitted: the failed attempt was refunded"
+US2=$(uuid); install_body "$OUT/s2.json" "$US2" "" "$T3" 40 com.p202.abuse.single
+eq "$(device POST /apps/installs "$TOKEN_S" "$OUT/s2.json")" 429 "and the cap still holds for what was recorded"
 
 # ─────────────────────────────────────────────────────────────────────
 say "the install cap: past it nothing is stored, and the SDK is told when to retry"

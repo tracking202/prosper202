@@ -1,13 +1,13 @@
 <?php
 /**
- * The sub-menu under the Prosper202 CS section tabs: the Setup button grid,
- * or the strip of report links for Overview, Analyze and Update.
+ * The sub-menu under the Prosper202 CS section tabs: one strip of links for
+ * Setup, Overview, Analyze and Update. Setup had its own grid of outlined
+ * icon buttons; it uses the same light strip as the other sections now.
  *
  * Part of the shared chrome — framework-neutral markup styled by
- * 202-css/p202-chrome.css and rendered by both page shells, with inline SVG
- * icons from p202_chrome_icon(). The strip keeps its historical id and its
+ * 202-css/p202-chrome.css. The strip keeps its historical id and its
  * li.active shape because 202-js/p202-chrome.js scrolls the active item into
- * view on narrow screens. Never add a Bootstrap class of either version here;
+ * view. Keep Bootstrap classes out of it;
  * tests/Api/V3/NoLegacyBootstrapClassesTest.php scans this file.
  *
  * The setup pages' own component styles (page header, side panel) used to be
@@ -20,37 +20,24 @@ $p202Nav3 = (string) ($navigation[3] ?? '');
 $p202Base = get_absolute_url();
 $p202E = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 
-if ($p202Nav2 === 'setup') {
-    // label, icon, page, the page names it is current for ('' is the section index)
-    $p202SetupItems = [
-        ['Traffic Sources', 'globe', 'ppc_accounts.php', ['ppc_accounts.php', '']],
-        ['Categories', 'grid', 'aff_networks.php', ['aff_networks.php']],
-        ['Campaigns', 'link', 'aff_campaigns.php', ['aff_campaigns.php']],
-        ['Landing Pages', 'file', 'landing_pages.php', ['landing_pages.php']],
-        ['Text Ads', 'fonts', 'text_ads.php', ['text_ads.php']],
-        ['Redirector', 'repeat', 'rotator.php', ['rotator.php']],
-        ['Mobile Apps', 'phone', 'mobile_apps.php', ['mobile_apps.php']],
-        ['Get LP Code', 'terminal', 'get_landing_code.php', ['get_landing_code.php', 'get_simple_landing_code.php', 'get_adv_landing_code.php']],
-        ['Get Links', 'link', 'get_trackers.php', ['get_trackers.php']],
-        ['Postback/Pixel', 'transfer', 'get_postback.php', ['get_postback.php']],
-    ];
-    ?>
-<nav class="p202c-subnav" aria-label="Setup">
-    <ul class="p202c-subnav__list">
-        <?php foreach ($p202SetupItems as [$p202Label, $p202Icon, $p202Page, $p202Pages]) {
-            $p202Active = in_array($p202Nav3, $p202Pages, true); ?>
-        <li><a class="p202c-subnav__link<?php echo $p202Active ? ' is-active' : ''; ?>" href="<?php echo $p202E($p202Base . 'tracking202/setup/' . $p202Page); ?>"<?php echo $p202Active ? ' aria-current="page"' : ''; ?>><?php echo p202_chrome_icon($p202Icon); ?><span><?php echo $p202E($p202Label); ?></span></a></li>
-        <?php } ?>
-    </ul>
-</nav>
-<?php
-    return;
-}
-
 // label, path, the page names it is current for ('' is the section index)
 $p202StripItems = [];
 $p202StripLabel = '';
-if (($p202Nav1 === 'account' && $p202Nav2 === '') || $p202Nav2 === 'overview') {
+if ($p202Nav2 === 'setup') {
+    $p202StripLabel = 'Setup';
+    $p202StripItems = [
+        ['Traffic Sources', 'tracking202/setup/ppc_accounts.php', ['ppc_accounts.php', '']],
+        ['Categories', 'tracking202/setup/aff_networks.php', ['aff_networks.php']],
+        ['Campaigns', 'tracking202/setup/aff_campaigns.php', ['aff_campaigns.php']],
+        ['Landing Pages', 'tracking202/setup/landing_pages.php', ['landing_pages.php']],
+        ['Text Ads', 'tracking202/setup/text_ads.php', ['text_ads.php']],
+        ['Redirector', 'tracking202/setup/rotator.php', ['rotator.php']],
+        ['Mobile Apps', 'tracking202/setup/mobile_apps.php', ['mobile_apps.php']],
+        ['Get LP Code', 'tracking202/setup/get_landing_code.php', ['get_landing_code.php', 'get_simple_landing_code.php', 'get_adv_landing_code.php']],
+        ['Get Links', 'tracking202/setup/get_trackers.php', ['get_trackers.php']],
+        ['Postback/Pixel', 'tracking202/setup/get_postback.php', ['get_postback.php']],
+    ];
+} elseif (($p202Nav1 === 'account' && $p202Nav2 === '') || $p202Nav2 === 'overview') {
     $p202StripLabel = 'Overview reports';
     $p202StripItems = [
         ['Campaign Overview', 'tracking202/overview', ['campaign.php', '']],

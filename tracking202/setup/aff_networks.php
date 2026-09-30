@@ -184,7 +184,7 @@ $editId = $editing ? (int) ($_GET['edit_aff_network_id'] ?? 0) : 0;
 template_top('Campaign Category Setup');
 ?>
 
-<div class="p202-page-header p202-page-header--accent">
+<div class="p202-page-header">
 	<div class="p202-page-header__icon"><i class="bi bi-grid"></i></div>
 	<div class="p202-page-header__text">
 		<h1 class="p202-page-header__title">Campaign Categories</h1>

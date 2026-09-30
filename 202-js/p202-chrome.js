@@ -195,6 +195,20 @@
         }
     }
 
+    /* The header logo */
+    var brandFrame = document.querySelector('iframe.advertise-top-left');
+    if (brandFrame && window.MutationObserver) {
+        var postTheme = function () {
+            var theme = document.documentElement.getAttribute('data-bs-theme');
+            if ((theme === 'dark' || theme === 'light') && brandFrame.contentWindow) {
+                brandFrame.contentWindow.postMessage({ type: 'p202-theme', theme: theme }, new URL(brandFrame.src).origin);
+            }
+        };
+        brandFrame.addEventListener('load', postTheme);
+        new MutationObserver(postTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-bs-theme'] });
+        postTheme();
+    }
+
     }
 
     if (document.readyState === 'loading') {

@@ -72,6 +72,34 @@ final class AppLimitsTest extends TestCase
         }
     }
 
+    /**
+     * A pair each inside its range but not ordered is a row no write leaves
+     * (the write path refuses it under the registration's lock): both are
+     * named, and both read as the trusting-least pair, whichever bound was
+     * the bad one — not as the accidental "everything is short or long" the
+     * raw pair would give.
+     */
+    public function testACtitPairThatDoesNotOrderIsUnreadableAndNamesBoth(): void
+    {
+        foreach ([[600, 600], [3600, 60], ['700', '600']] as [$min, $max]) {
+            $limits = AppLimits::fromRow(['ctit_min_seconds' => $min, 'ctit_max_seconds' => $max] + self::ROW);
+            self::assertSame(['ctit_min_seconds', 'ctit_max_seconds'], $limits->unreadable, json_encode([$min, $max]));
+            self::assertSame(
+                [AppLimits::RANGES['ctit_min_seconds'][1], AppLimits::RANGES['ctit_max_seconds'][0]],
+                [$limits->ctitMinSeconds, $limits->ctitMaxSeconds]
+            );
+            self::assertSame([300, 200], [$limits->installCapPerMinute, $limits->eventCapPerMinute], 'the caps still read');
+            foreach ([0, 61, 3599, 86400] as $ctit) {
+                self::assertNotSame(ClickToInstallTime::OK, ClickToInstallTime::flag($ctit, $limits));
+            }
+        }
+        // One bound unreadable and the other fine names only the bad one.
+        $one = AppLimits::fromRow(['ctit_min_seconds' => '07'] + self::ROW);
+        self::assertSame(['ctit_min_seconds'], $one->unreadable);
+        // Ordered by one second is readable.
+        self::assertSame([], AppLimits::fromRow(['ctit_min_seconds' => 599, 'ctit_max_seconds' => 600] + self::ROW)->unreadable);
+    }
+
     public function testTheDefaultsAreTheColumnDefaults(): void
     {
         $sql = \Prosper202\Database\Tables\AppTables::appRegistrations()->createStatement;

@@ -15,8 +15,8 @@ const SELECTORS = {
   // Two shapes, one job: Setup renders a button grid, every other family a
   // scrolling strip. A spec names the entry, not the chrome it happens to be
   // in, so both are listed and openFromSubMenu tries each.
-  subNavLink: ['.p202c-subnav__link', '.p202c-strip__list a'],
-  subNavCurrent: '.p202c-subnav__link[aria-current="page"], .p202c-strip__list a[aria-current="page"]',
+  subNavLink: ['.p202c-strip__list a'],
+  subNavCurrent: '.p202c-strip__list a[aria-current="page"]',
   flashBody: '.p202-flash__body',
   fieldError: '.invalid-feedback',
   panel: '.p202-panel',

@@ -347,25 +347,31 @@ class AppRegistrationsController extends Controller
             ...array_keys(AppLimits::RANGES), 'fast_goal_seconds', 'fast_goal_policy',
         ];
         $namesIntegrity = array_key_exists('integrity_mode', $payload) || array_key_exists('integrity_cloud_project_number', $payload);
-        if (array_intersect(array_keys($payload), $policyFields) !== [] && !$namesIntegrity) {
-            $stored = (array)$this->get($id)['data'];
-            self::assertAndroidPolicy($payload, (string)$stored['platform']);
-            self::assertCtitOrder($payload, $stored);
-        }
-        if ($namesIntegrity) {
-            // Only a write that names Play Integrity is held to it: an
-            // unrelated field is never refused over the stored setting. The
-            // check and the write commit under the registration's row lock,
-            // which DELETE /apps/{id}/integrity-credential takes for its own
-            // check and delete: checked apart from the write, a credential
-            // cleared in between leaves observe or require committed with
-            // nothing to decode (AppIntegrityController::clearCredential()).
+        $namesPolicy = array_intersect(array_keys($payload), $policyFields) !== [];
+        if ($namesPolicy) {
+            // Every write that names a policy field is checked against the
+            // row it will leave, under the registration's row lock, and
+            // commits under it: the checks that compare the payload with
+            // the stored row (assertCtitOrder(), assertIntegrityUsable())
+            // mean nothing if another write can change that row between the
+            // check and this one. Two updates that each move one CTIT bound
+            // would otherwise both pass against the old other bound and
+            // leave min >= max (which AppLimits::fromRow() then reads as
+            // unreadable). The same lock is the one
+            // DELETE /apps/{id}/integrity-credential takes for its own check
+            // and delete: checked apart from the write, a credential cleared
+            // in between leaves observe or require committed with nothing to
+            // decode (AppIntegrityController::clearCredential()). Only a
+            // write that names Play Integrity is held to it: an unrelated
+            // field is never refused over the stored setting.
             $committed = null;
-            $updated = $this->transaction(function () use ($id, $payload, &$committed): ?array {
+            $updated = $this->transaction(function () use ($id, $payload, $namesIntegrity, &$committed): ?array {
                 $current = AppIntegrityController::lockRegistration($this->db, $this->userId, (int)$id);
                 self::assertAndroidPolicy($payload, (string)$current['platform']);
                 self::assertCtitOrder($payload, $current);
-                $this->assertIntegrityUsable((int)$id, $payload, $current);
+                if ($namesIntegrity) {
+                    $this->assertIntegrityUsable((int)$id, $payload, $current);
+                }
                 try {
                     return parent::update($id, $payload);
                 } catch (WriteCommittedException $e) {

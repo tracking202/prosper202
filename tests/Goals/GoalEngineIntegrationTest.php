@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Goals;
 
+use Prosper202\Goals\FastGoalPolicy;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Goals\GoalEngineException;
@@ -215,7 +216,12 @@ final class GoalEngineIntegrationTest extends TestCase
         self::assertSame(1, $result['outcomes_written']);
         self::assertSame('0', self::$db->query('SELECT COUNT(*) AS n FROM 202_conversion_logs')->fetch_assoc()['n']);
         $row = self::$db->query('SELECT subject_type, subject_id, conversion_id, payable, value_note, app_registration_id FROM 202_goal_outcomes')->fetch_assoc();
-        self::assertSame(['install', '55', null, '0', 'not_payable_on_campaign', '9'], [
+        // Registration 9 has no row here, so its fast-goal policy is the
+        // unreadable one (hold, under an hour): the level, 5 s after the
+        // install, is held, and the note says so rather than
+        // not_payable_on_campaign — the reason that stands if a click ever
+        // credits the install (FastGoalPolicy).
+        self::assertSame(['install', '55', null, '0', FastGoalPolicy::HELD_NOTE, '9'], [
             $row['subject_type'], $row['subject_id'], $row['conversion_id'], $row['payable'], $row['value_note'], $row['app_registration_id'],
         ]);
     }

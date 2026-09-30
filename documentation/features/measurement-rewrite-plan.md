@@ -4217,9 +4217,10 @@ Open for the release decision:
    per million conversions, during which reports compute in full).
 2. ~~**A cron against a database that needs an upgrade exits 0 silently.**~~
    **Closed by PR 13 (§8.2):** every job exits 1 with the reason.
-3. **`CLAUDE.md`'s "Two page shells" note is stale** since U8 removed the
+3. ~~**`CLAUDE.md`'s "Two page shells" note is stale** since U8 removed the
    classic shell; it still describes `['ui' => 'v2']` and the Bootstrap 3
-   stack.
+   stack.~~ **Closed:** the note now describes the one shell, `info_top()`
+   for standalone pages, and the unknown-option throw.
 4. **The upgrade is one-way** (§7.5a). Its data migration is now measured
    at 1M conversions: 57 s on MariaDB and 91 s on MySQL 8 through
    `upgrade.php`, and it survives a proxy's 504 because it carries on
@@ -4684,14 +4685,26 @@ nothing from a refused request. Unlike the per-peer limiter it fails
 **closed**: a store that cannot be read or written (or a bucket that does not
 decode) throws, and the intake answers 503 with `Retry-After`, so a broken
 state directory delays installs instead of removing the cap. It is per
-server, as the per-peer limit is.
+server, as the per-peer limit is (N web hosts that do not share the state
+directory enforce up to N× the cap), and the window is fixed, so a burst
+straddling a boundary can reach up to twice the cap. The charge is taken at
+admission and given back (`refundQuota()`, under the same lock, strict, never
+below zero, only to the window it was charged to) when the admitted request
+then records nothing — a 503, an exception, a concurrent duplicate — and a
+refund that fails is logged, never thrown over the original error: the cap
+counts what was recorded, not attempts.
 
 **Per-install event cap** (`event_cap_per_minute`, default **200** events a
 minute, never below one full batch of 100 so a batch always fits): the same
 `admit()`, in `InstallEventsIntake::receive()` once the body has parsed,
 costing the batch's event count, keyed on
 `app-install-event-cap:r<registration>:i<install_row_id>`. A batch that would
-pass it is refused whole with 429 and stored nowhere.
+pass it is refused whole with 429 and stored nowhere. It is charged for the
+ids the install does not hold yet (so a replay of a stored batch costs
+nothing and is answered at the cap), and after the engine runs whatever it
+did not accept is refunded — ids a concurrent request stored first, a batch
+it refused, a failure (measured, when the exception does not say whether the
+commit landed). A body carrying only a customer id costs one.
 
 **Goals reached implausibly fast** (`fast_goal_seconds`, default **5**). In
 `GoalEngine::valuation()`, the one place every outcome write decides its
@@ -4707,9 +4720,13 @@ an app whose first goal is "opened the app" meets it honestly within seconds
 — and is visible in the report (`fast_goals` among `goals_reached`,
 `fast_goals=1` for the installs with one). Under `hold` it is recorded,
 counted in the funnel and flagged, its ledger row written unpayable, and
-nothing is sent to the traffic source. There is no release: the decision is
-the one in force when the outcome is written, like every snapshot the intake
-takes.
+nothing is sent to the traffic source, and the outcome's `value_note` is
+`held_too_fast`. There is no release: the decision is the one in force when
+an outcome of that (goal, reaching event) is first written, like every
+snapshot the intake takes, and it stands through a restatement, a credit
+change, a revival and a re-evaluation or replay that replaces the row with
+the same reaching event (`valuation()`'s `$decided`) — so `hold` → `count`
+pays only goals reached afterwards and `count` → `hold` un-pays nothing.
 
 **The backup warning.** `202-config/upgrade.php` says above its button,
 inside the form that posts, as the kit's warning flash, that the upgrade is

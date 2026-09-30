@@ -4103,7 +4103,9 @@ paths:
         Rate-limited per peer address, and per app: past the registration's
         `install_cap_per_minute` a new install is `429` with `Retry-After`,
         stored and counted nowhere (a replay of a stored install is still
-        answered). The install's click-to-install time is recorded and
+        answered). The cap counts over fixed one-minute windows, per web
+        host unless the state directory is shared, and an admitted install
+        that is then not recorded (`503`, `500`) is refunded. The install's click-to-install time is recorded and
         flagged against the app's `ctit_min_seconds` / `ctit_max_seconds`;
         a flag never changes the `match`.
       operationId: reportAppInstall
@@ -4187,7 +4189,10 @@ paths:
         after the events commit. Rate-limited per peer address, and per
         install: a batch that would take the install past its app's
         `event_cap_per_minute` events in the minute is `429` with
-        `Retry-After`, and none of it is stored. A goal reached sooner after
+        `Retry-After`, and none of it is stored. Only newly stored events
+        are charged — duplicates cost nothing, so a replayed batch is
+        answered even at the cap — a refused or failed batch is refunded,
+        and a body with only a `customer` costs one. A goal reached sooner after
         the install than the app's `fast_goal_seconds` is flagged, and paid
         or held per its `fast_goal_policy`.
       operationId: reportAppInstallEvents
@@ -10056,8 +10061,9 @@ components:
           default: 200
           description: >-
             Android: events one install may post in a minute, counted per
-            event; a batch that would pass it is `429` with `Retry-After` and
-            stored nowhere. Never below one full batch (100).
+            newly stored event (duplicates are free); a batch that would pass
+            it is `429` with `Retry-After` and stored nowhere. Never below one
+            full batch (100).
         fast_goal_seconds:
           type: integer
           minimum: 0
@@ -10074,8 +10080,10 @@ components:
           description: >-
             Android: `count` pays and notifies a goal reached too fast like
             any other and flags it in the report; `hold` records and flags it
-            and neither pays it nor sends it to the traffic source. Decided
-            when the outcome is written; a held outcome stays held.
+            and neither pays it nor sends it to the traffic source
+            (`value_note: held_too_fast`). Decided when the outcome is first
+            written and never re-judged: a held outcome stays held, and a
+            switch of policy applies only to goals reached afterwards.
         app_token:
           type: string
           pattern: "^[0-9a-f]{64}$"
@@ -10495,7 +10503,7 @@ components:
         reached_at: {type: integer}
         value: {type: string, nullable: true}
         value_source: {type: string, description: "fixed, property, none, or payout (the campaign's)"}
-        value_note: {type: string, nullable: true, description: "missing, not_a_number, negative, out_of_range, untrusted_value, not_payable_on_campaign"}
+        value_note: {type: string, nullable: true, description: "missing, not_a_number, negative, out_of_range, untrusted_value, not_payable_on_campaign, held_too_fast (an Android goal reached too fast under fast_goal_policy hold)"}
         ineligible_reason: {type: string, nullable: true}
         payable: {type: boolean}
         campaign_id: {type: integer, nullable: true}

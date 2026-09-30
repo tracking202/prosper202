@@ -519,7 +519,7 @@ $pixelRow = static function (array $pixel, string $index, array $pixelTypes): st
 
 template_top('Traffic Sources'); ?>
 
-<div class="p202-page-header p202-page-header--accent">
+<div class="p202-page-header">
 	<div class="p202-page-header__icon"><i class="bi bi-globe"></i></div>
 	<div class="p202-page-header__text">
 		<h1 class="p202-page-header__title">Traffic Sources</h1>
