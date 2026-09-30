@@ -6,13 +6,15 @@ on:
 
 jobs:
   php-lint:
-    runs-on: ubuntu-latest
+    # PHP 8.3 comes with the pinned runner image, so this job runs no
+    # third-party action. A newer image (ubuntu-latest moving on) could bring a
+    # different PHP, which is why the image is named, not "latest".
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.3'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Runner PHP is 8.3
+        run: |
+          php -r 'exit(PHP_MAJOR_VERSION === 8 && PHP_MINOR_VERSION === 3 ? 0 : 1);' || { php -v; echo "::error::expected PHP 8.3 on ubuntu-24.04"; exit 1; }
       - name: PHP Syntax Check
         id: php_lint
         run: |
@@ -92,3 +94,23 @@ jobs:
       - name: Fail when lint errors detected
         if: ${{ steps.php_lint.outputs.exit_code != '0' || steps.shell_lint.outputs.exit_code != '0' }}
         run: exit 1
+
+  # The release zip is extracted into the web root of hosts with no terminal.
+  # build/release-manifest.php decides what it carries and is fail-closed, so
+  # a new top-level path must be classified in the PR that adds it; without
+  # this job that only surfaced when the tag build refused to package.
+  release-manifest:
+    # Runner-image PHP and Composer, as in php-lint above.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Runner PHP is 8.3, with Composer
+        run: |
+          php -r 'exit(PHP_MAJOR_VERSION === 8 && PHP_MINOR_VERSION === 3 ? 0 : 1);' || { php -v; echo "::error::expected PHP 8.3 on ubuntu-24.04"; exit 1; }
+          composer --version
+      - name: Every tracked path is classified for the release zip
+        run: php build/scripts/release-tree.php check-manifest
+      # The zip's vendor/ is installed from composer.lock; a lock that has
+      # drifted from composer.json would ship the old set with only a warning.
+      - name: composer.lock matches composer.json
+        run: composer validate --no-check-publish --no-check-all

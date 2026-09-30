@@ -901,12 +901,18 @@ run_patterns() {
 }
 
 # CI's workflow gate (.github/workflows/scripts-lint.yml, actionlint job):
-# invalid action inputs, unknown contexts, workflow syntax. A workflow-only
-# change previously selected nothing that could see any of that, and one
-# such change on this branch was rejected by CI for an input that did not
-# exist in the action version named.
+# invalid action inputs, unknown contexts, workflow syntax, and every action
+# pinned to a commit SHA (scripts/check-action-pins.sh; actionlint accepts
+# @v4). A workflow-only change previously selected nothing that could see
+# any of that, and one such change on this branch was rejected by CI for an
+# input that did not exist in the action version named.
 run_actionlint() {
-    actionlint
+    actionlint || return 1
+    if [ ! -x scripts/check-action-pins.sh ]; then
+        echo "scripts/check-action-pins.sh is missing or not executable; CI's actionlint job runs it"
+        return 1
+    fi
+    scripts/check-action-pins.sh
 }
 
 # Mirrors the Swift SDK job. Selected only for changes under

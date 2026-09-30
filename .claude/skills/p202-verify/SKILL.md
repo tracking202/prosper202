@@ -183,6 +183,19 @@ A regression test is not a substitute for either. It proves this instance is
 gone and does nothing for the next one elsewhere. Grep for every analogous
 site before deciding a check can cover them all.
 
+## Changing the ladder itself
+
+`verify.sh`, and every script a tier calls (`scripts/check-code-patterns.sh`,
+`scripts/check-action-pins.sh`), have their own regression harness:
+`scripts/tests/verify-ladder.test.sh` and
+`scripts/tests/check-code-patterns.test.sh`. Run both after any such change.
+They copy the ladder into throwaway repositories and assert each tier's
+verdict on planted trees, so a tier that passes on the real tree can still
+fail them — an actionlint tier that started calling the pin check passed
+here and failed CI, because the harness's "valid workflow" uses no action
+and its throwaway had no copy of the script. CI runs both in the hook-tests
+job of `scripts-lint.yml`.
+
 ## Reference
 
 `references/sandbox-recovery.md` — recovering PHPUnit, PHPStan, the PHP CLI,
