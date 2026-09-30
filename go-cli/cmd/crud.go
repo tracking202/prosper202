@@ -1060,6 +1060,7 @@ func init() {
 		cloneCmd.Flags().String("name", "", "Optional name override for the cloned campaign")
 		registerIdempotencyKeyFlag(cloneCmd)
 		campaignCmd.AddCommand(cloneCmd, newCampaignReplaceURLCmd())
+		campaignCmd.AddCommand(newCampaignCheckURLsCmd())
 	}
 
 	if trackerCmd != nil {

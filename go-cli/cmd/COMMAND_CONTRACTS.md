@@ -35,6 +35,10 @@ This file captures the API paths and payload/query expectations used by upcoming
   - paginated `GET /api/v3/campaigns` (unfiltered), then one `PUT /api/v3/campaigns/{id}` per campaign with a slot to restore
 - `landing-page list --url-contains <text>`
   - paginated `GET /api/v3/landing-pages`, filtered client-side on `landing_page_url` and `leave_behind_page_url`
+- `campaign check-urls`
+  - paginated `GET /api/v3/campaigns` (with `filter[aff_network_id]` when `--aff-network-id` is set); no writes
+  - no HTTP request to the offer URLs: DNS, TCP connect and TLS handshake once per unique host
+  - with `--http` (after confirmation): one `HEAD` per unique offer URL, then a `GET` if the `HEAD` got 405
 - `tracker create-with-url`
   - `POST /api/v3/trackers`
   - `GET /api/v3/trackers/{id}/url`

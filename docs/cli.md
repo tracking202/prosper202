@@ -330,6 +330,52 @@ rows are still printed, the manifest is printed on stderr after `Undo manifest` 
 file to use with `--undo`), and the command exits 5 (`partial_failure`): the writes happened,
 but their undo record did not.
 
+Find dead offer URLs **without sending a click**. Opening an affiliate link registers one, so by
+default no HTTP request is made:
+
+```bash
+# Every offer URL slot of every campaign
+p202 campaign check-urls
+
+# One network's primary URLs, with more time per host
+p202 campaign check-urls --aff-network-id 32 --slot 1 --timeout 10s --json
+```
+
+| Flag | Description |
+|------|-------------|
+| `--url-contains <text>` | Only URLs containing the text (case-insensitive, per slot) |
+| `--slot <1-5\|all>` | URL slots to check, comma-separated (default `all`) |
+| `--ids <list>` | Only these campaign IDs |
+| `--aff-network-id <id>` | Only campaigns in this affiliate network |
+| `--timeout <duration>` | Time per host for DNS, connect and TLS together, and per `--http` request (default `5s`) |
+| `--http` | Also send one request per URL (see below); asks first |
+| `-f, --force` | Skip the `--http` confirmation |
+
+Each unique host (scheme, host and port) is checked once: a DNS lookup, a TCP connect and, for
+`https`, a TLS handshake with normal certificate verification, after which the connection is
+closed. There is one row per campaign URL slot: `aff_campaign_id`, `aff_campaign_name`, `field`,
+`url`, `host` (`host:port`), `status` and `detail`. `status` is one of:
+
+- `ok`: the detail gives the address reached and, for https, the certificate's expiry date
+- `invalid_url`: does not parse, has no host, is not http/https, or has a click token in the host
+- `dns_failed`: the detail says `no such host` when the domain does not resolve
+- `connect_failed`: e.g. connection refused
+- `timeout`: no answer to the connect or TLS handshake within `--timeout`
+- `tls_failed`: the detail starts with `expired`, `hostname mismatch`, `unknown authority` or
+  `invalid certificate`
+
+Tokens such as `[[subid]]` are fine anywhere except the host. A summary with the count per status
+goes to stderr.
+
+`--http` also sends one `HEAD` per unique URL on a host that passed (a `GET` only if `HEAD` gets
+405), follows no redirects, and adds `http_status` and `location`. A request that fails is
+reported as `http_failed`. Affiliate networks may record each request as a click, so the command
+warns and asks first (`--force` skips the question). Tokens are sent as `p202check`.
+`http_status` is reported but not judged: a 4xx leaves `status` as `ok`.
+
+Like `p202 rotator check`, it exits 5 (`partial_failure`) when any row's `status` is not `ok`, with
+every row still on stdout. Exit 0 means every URL in scope passed.
+
 ### Affiliate network (`p202 aff-network`)
 
 | Flag | Required | Description |
