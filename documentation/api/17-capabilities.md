@@ -53,7 +53,8 @@ API version and feature detection.
       "create_idempotency": true,
       "delete_dry_run": true,
       "response_sanitization": true,
-      "staged_writes": true
+      "staged_writes": true,
+      "report_breakdowns": ["campaign", "aff_network", "ppc_account", "ppc_network", "landing_page", "keyword", "country", "city", "region", "browser", "platform", "device", "isp", "text_ad"]
     },
     "limits": {
       "max_bulk_rows": 500,
@@ -88,6 +89,7 @@ API version and feature detection.
 | `features.staged_writes` | boolean | `?staged=1` on an operator-surface write records it as a proposal with a server-issued change id; `/staged-changes` lists, applies, and discards, with validation re-run at apply time. See [Staged Writes](00-api-integrations.md#staged-writes). |
 | `features.app_platforms` | array | The platforms the app registry (`/apps`, the `apps` scope area) takes a registration for (`ios`, `android`). `p202 app` commands require it. See [App measurement](19-app-measurement.md). |
 | `features.app_postbacks` | array | The platform-signed postback protocols this server receives, verifies and stores (`skadnetwork`, `adattributionkit`): Apple's SKAdNetwork receiver at `/.well-known/skadnetwork/report-attribution/` and AdAttributionKit receiver at `/.well-known/appattribution/report-attribution/`, served under `/apps/postbacks`, `/apps/report` and `/apps/verify`, decoded through `/apps/skan-encodings`, and the public `GET /apps/schema` (selected by the `X-P202-App-Token` header) that app builds fetch at runtime. See [App measurement](19-app-measurement.md). |
+| `features.report_breakdowns` | array | The dimensions `GET /reports/breakdown` accepts as `breakdown`, read from the report controller's own map. The Go CLI checks a dimension it does not know against this list before refusing it. |
 | `limits.max_bulk_rows` | integer | Maximum rows per bulk-upsert request. |
 | `limits.max_job_concurrency` | integer | Maximum concurrent async jobs. |
 | `limits.max_job_events_page` | integer | Maximum job events returned per page. |

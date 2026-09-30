@@ -108,7 +108,9 @@ var dimensionAliases = map[string]string{
 }
 
 // breakdownDimensions are the dimensions ReportsController::BREAKDOWNS
-// knows, in its order.
+// knows, in its order. Servers advertise their own list as
+// features.report_breakdowns in /capabilities; dimensionEnum prefers it for
+// a value missing here.
 var breakdownDimensions = []string{
 	"campaign", "aff_network", "ppc_account", "ppc_network", "landing_page", "keyword",
 	"country", "city", "region", "browser", "platform", "device", "isp", "text_ad",
@@ -117,6 +119,7 @@ var breakdownDimensions = []string{
 // dimensionEnum is a --breakdown/--group-by flag's accepted values.
 func dimensionEnum(values []string) *enumSpec {
 	return newEnum(values, enumAliases(dimensionAliases), enumFoldCase(),
+		enumServerList("features", "report_breakdowns"),
 		enumHint("Reports break down by these dimensions only; `p202 search <what you want to do>` finds other commands."))
 }
 

@@ -6,6 +6,7 @@ This file captures the API paths and payload/query expectations used by upcoming
 
 - `GET /api/versions` (optional capability probe)
 - `GET /api/v3/capabilities` (optional capability probe)
+  - `data.features.report_breakdowns`: the dimensions `reports/breakdown` accepts, from `ReportsController::breakdownDimensions()`. A dimension flag (`analytics --group-by`, `report breakdown --breakdown/--group-by`, `report crosstab --cols`, `report losers/winners/breakeven --breakdown`) probes it only for a value missing from the CLI's built-in list: listed means the value is sent, unlisted means refused with the server's list. With no config or no server the built-in list's error stands
 - `GET /api/v3/reports/summary`
   - Query: report filter params (`period`, `time_from`, `time_to`, etc.)
 - `GET /api/v3/trackers/{id}/url`
@@ -73,6 +74,8 @@ This file captures the API paths and payload/query expectations used by upcoming
   - two paged `GET /api/v3/reports/breakdown` reads, `time_from=start&time_to=split-1` then `time_from=split&time_to=end` (never `period`, `sort` or the caller's `limit`/`offset`), each with `limit=500` and increasing `offset` until a short page, plus the entity filters
   - rows merged by breakdown `id`; sort, `--limit` and `--offset` applied client-side to the merged rows
   - no request when the split, window or sort flags are invalid
+- `search <words...>` and `commands [command...]`
+  - no requests: both read the CLI's own command tree
 - list `--all`
   - paginated `GET /api/v3/{entity}` loop until exhausted
 - delete `--ids`

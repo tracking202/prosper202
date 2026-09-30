@@ -4,6 +4,8 @@ import (
 	"sort"
 	"strings"
 
+	"p202/internal/api"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -25,6 +27,9 @@ type enumSpec struct {
 	fold    bool              // match case-insensitively (only where the command normalizes case itself)
 	list    bool              // a comma-separated list, each item one of values
 	hint    string            // recovery step printed with an invalid value
+	// server is a /capabilities path whose list, when the server sends
+	// one, is authoritative for a value the built-in list lacks.
+	server []string
 }
 
 type enumOption func(*enumSpec)
@@ -48,6 +53,10 @@ func enumFoldCase() enumOption { return func(s *enumSpec) { s.fold = true } }
 func enumList() enumOption     { return func(s *enumSpec) { s.list = true } }
 
 func enumHint(hint string) enumOption { return func(s *enumSpec) { s.hint = hint } }
+
+func enumServerList(path ...string) enumOption {
+	return func(s *enumSpec) { s.server = path }
+}
 
 // sortedKeys lists a map's keys in order, for a value set held as a map.
 func sortedKeys(m map[string]string) []string {
@@ -124,6 +133,32 @@ func (s *enumSpec) resolve(v string) (string, bool) {
 	return v, false
 }
 
+// enumServerValues fetches the server's list at a /capabilities path. It is
+// a variable so tests can stand in for the server.
+var enumServerValues = func(path []string) ([]string, bool) {
+	c, err := api.NewFromConfig()
+	if err != nil {
+		return nil, false
+	}
+	raw, ok := c.Capability(path...)
+	if !ok {
+		return nil, false
+	}
+	items, ok := raw.([]interface{})
+	if !ok || len(items) == 0 {
+		return nil, false
+	}
+	values := make([]string, 0, len(items))
+	for _, item := range items {
+		str, ok := item.(string)
+		if !ok {
+			return nil, false
+		}
+		values = append(values, str)
+	}
+	return values, true
+}
+
 // check returns nil when raw is accepted for --flag, else a validation
 // error whose message lists every accepted value. An empty value is left
 // to refuseEmptyStringFlags.
@@ -138,6 +173,18 @@ func (s *enumSpec) check(flag, raw string) *CLIError {
 		}
 		if _, ok := s.resolve(item); ok {
 			continue
+		}
+		// Built-in list first, so a typo fails without a server. Only
+		// then may the server's own list vouch for the value.
+		if len(s.server) > 0 {
+			if remote, ok := enumServerValues(s.server); ok {
+				if containsString(remote, strings.TrimSpace(item)) {
+					continue
+				}
+				served := newEnum(remote, enumAliases(s.aliases))
+				served.list, served.hint = s.list, s.hint
+				return served.invalid(flag, item, " (this server's list)")
+			}
 		}
 		return s.invalid(flag, item, "")
 	}
