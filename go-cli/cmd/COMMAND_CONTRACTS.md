@@ -6,6 +6,7 @@ This file captures the API paths and payload/query expectations used by upcoming
 
 - `GET /api/versions` (optional capability probe)
 - `GET /api/v3/capabilities` (optional capability probe)
+  - `data.features.report_breakdowns`: the dimensions `reports/breakdown` accepts, from `ReportsController::breakdownDimensions()`. A dimension flag (`analytics --group-by`, `report breakdown --breakdown/--group-by`, `report crosstab --cols`, `report losers/winners/breakeven --breakdown`) probes it only for a value missing from the CLI's built-in list: listed means the value is sent, unlisted means refused with the server's list. With no config or no server the built-in list's error stands
 - `GET /api/v3/reports/summary`
   - Query: report filter params (`period`, `time_from`, `time_to`, etc.)
 - `GET /api/v3/trackers/{id}/url`
@@ -38,12 +39,24 @@ This file captures the API paths and payload/query expectations used by upcoming
   - one `PUT /api/v3/campaigns/{id}` per matched campaign, carrying only the changed URL fields
 - `campaign replace-url --undo <file>`
   - paginated `GET /api/v3/campaigns` (unfiltered), then one `PUT /api/v3/campaigns/{id}` per campaign with a slot to restore
+- `conversion import <file>`
+  - `--dry-run`: no request; with `--check-clicks`, the read below and nothing else
+  - one `GET /api/v3/clicks/{id}/conversions` per distinct click of the ready rows (read-only): a 404 whose message starts `Click not found` marks the click's rows `click_not_found`; a bare 404 (`Not found`, no such route) refuses the import before any write; 401/403 or a network failure stops it before any write
+  - `data[].transaction_id`, `data[].reverses_conv_id`, `data[].amount` and `click.lead` decide which rows are already recorded; `data[].conv_id` is kept to recognise a create the server answered with an existing conversion
+  - then one `POST /api/v3/conversions` per remaining row, sales before negative-payout rows: `{click_id: int, transaction_id?: string, payout?: "decimal string", conv_time?: int}` with `Idempotency-Key: conv-import-v1-<first 20 bytes of sha256("p202 conversion import v1\n" + click_id + "\n" + quoted transaction_id + "\n" + quoted payout + "\n" + conv_time), hex>`; under `--staged` with `staged=1`
+  - a `201` carrying `idempotent_replay: true`, or naming a `conv_id` the click already had, is a duplicate; a `202` staged envelope is `staged`; a 404 `Click not found...` is `click_not_found`
 - `landing-page list --url-contains <text>`
   - paginated `GET /api/v3/landing-pages`, filtered client-side on `landing_page_url` and `leave_behind_page_url`
 - `campaign check-urls`
   - paginated `GET /api/v3/campaigns` (with `filter[aff_network_id]` when `--aff-network-id` is set); no writes
   - no HTTP request to the offer URLs: DNS, TCP connect and TLS handshake once per unique host
   - with `--http` (after confirmation): one `HEAD` per unique offer URL, then a `GET` if the `HEAD` got 405
+- `system health`
+  - for an https base URL, first a DNS lookup, TCP connect and verified TLS handshake to its host (no HTTP bytes), through the same probe as `campaign check-urls`
+  - then `GET /api/v3/system/health` (unauthenticated), attempted whatever the handshake found; the `tls_*` fields are merged into its `data` object
+- `system cron`
+  - `GET /api/v3/system/cron`: `data.jobs` (`cronjob_type`, `cronjob_time`, `last_run_human`, every row of `202_cronjobs`) and `data.recent_logs` (`id`, `last_execution_time`, `time_human`, up to 20); times may arrive as numeric strings
+  - summarized client-side; `--raw` keeps the server's arrays
 - `tracker create-with-url`
   - `POST /api/v3/trackers`
   - `GET /api/v3/trackers/{id}/url`
@@ -56,6 +69,13 @@ This file captures the API paths and payload/query expectations used by upcoming
   - repeated `POST /api/v3/{entity}` requests
 - `analytics`
   - `GET /api/v3/reports/breakdown` with alias-mapped query params
+- `analytics --split-at <YYYY-MM-DD|unix>`
+  - the window resolved client-side to inclusive unix bounds: `last7|last30|last90` as now minus N days, `--days N`, `--time_from`/`--time_to` (end defaults to now); default `last90`; `today`/`yesterday` refused
+  - two paged `GET /api/v3/reports/breakdown` reads, `time_from=start&time_to=split-1` then `time_from=split&time_to=end` (never `period`, `sort` or the caller's `limit`/`offset`), each with `limit=500` and increasing `offset` until a short page, plus the entity filters
+  - rows merged by breakdown `id`; sort, `--limit` and `--offset` applied client-side to the merged rows
+  - no request when the split, window or sort flags are invalid
+- `search <words...>` and `commands [command...]`
+  - no requests: both read the CLI's own command tree
 - list `--all`
   - paginated `GET /api/v3/{entity}` loop until exhausted
 - delete `--ids`

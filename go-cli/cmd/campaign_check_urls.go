@@ -229,22 +229,54 @@ func connectVerdict(err error, t urlTarget, timeout time.Duration) hostVerdict {
 	return hostVerdict{urlCheckConnectFailed, err.Error()}
 }
 
-func tlsFailureDetail(err error) string {
+// Certificate failure kinds; `system health` reports them as tls_status.
+const (
+	tlsStatusExpired          = "expired"
+	tlsStatusHostnameMismatch = "hostname_mismatch"
+	tlsStatusUnknownAuthority = "unknown_authority"
+	tlsStatusInvalid          = "invalid"
+)
+
+// classifyTLSFailure says why a verified handshake failed: kind is one of
+// the tlsStatus constants, reason the phrase check-urls prints.
+func classifyTLSFailure(err error) (kind, reason string) {
 	var unknown x509.UnknownAuthorityError
 	var hostErr x509.HostnameError
 	var invalid x509.CertificateInvalidError
-	reason := "handshake failed"
 	switch {
 	case errors.As(err, &unknown):
-		reason = "unknown authority"
+		return tlsStatusUnknownAuthority, "unknown authority"
 	case errors.As(err, &hostErr):
-		reason = "hostname mismatch"
+		return tlsStatusHostnameMismatch, "hostname mismatch"
 	case errors.As(err, &invalid) && invalid.Reason == x509.Expired:
-		reason = "expired"
+		return tlsStatusExpired, "expired"
 	case errors.As(err, &invalid):
-		reason = "invalid certificate"
+		return tlsStatusInvalid, "invalid certificate"
 	}
+	return tlsStatusInvalid, "handshake failed"
+}
+
+func tlsFailureDetail(err error) string {
+	_, reason := classifyTLSFailure(err)
 	return reason + ": " + err.Error()
+}
+
+// tlsHandshake runs a verified TLS handshake for serverName over conn, then
+// closes it. The leaf is the server's certificate, also when verification
+// failed; nil when none arrived.
+func (p urlProbe) tlsHandshake(ctx context.Context, conn net.Conn, serverName string) (*x509.Certificate, error) {
+	tc := tls.Client(conn, &tls.Config{ServerName: serverName, RootCAs: p.rootCAs})
+	if err := tc.HandshakeContext(ctx); err != nil {
+		_ = tc.Close()
+		var verr *tls.CertificateVerificationError
+		if errors.As(err, &verr) && len(verr.UnverifiedCertificates) > 0 {
+			return verr.UnverifiedCertificates[0], err
+		}
+		return nil, err
+	}
+	leaf := tc.ConnectionState().PeerCertificates[0]
+	_ = tc.Close()
+	return leaf, nil
 }
 
 // checkHost resolves, connects and (for https) completes a verified TLS
@@ -260,18 +292,14 @@ func (p urlProbe) checkHost(t urlTarget, timeout time.Duration) hostVerdict {
 		_ = conn.Close()
 		return hostVerdict{urlCheckOK, "TCP connect to " + addr + " ok"}
 	}
-	tc := tls.Client(conn, &tls.Config{ServerName: t.host, RootCAs: p.rootCAs})
-	err = tc.HandshakeContext(ctx)
+	leaf, err := p.tlsHandshake(ctx, conn, t.host)
 	if err != nil {
-		_ = tc.Close()
 		if isTimeout(err) || ctx.Err() != nil {
 			return hostVerdict{urlCheckTimeout, fmt.Sprintf("TLS handshake with %s did not finish within %s", addr, timeout)}
 		}
 		return hostVerdict{urlCheckTLSFailed, tlsFailureDetail(err)}
 	}
-	notAfter := tc.ConnectionState().PeerCertificates[0].NotAfter
-	_ = tc.Close()
-	return hostVerdict{urlCheckOK, fmt.Sprintf("TLS ok at %s; certificate valid until %s", addr, notAfter.UTC().Format("2006-01-02"))}
+	return hostVerdict{urlCheckOK, fmt.Sprintf("TLS ok at %s; certificate valid until %s", addr, leaf.NotAfter.UTC().Format("2006-01-02"))}
 }
 
 // httpStatus sends HEAD (GET only when HEAD is 405) and follows no redirect.

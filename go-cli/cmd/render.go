@@ -15,6 +15,7 @@ func renderOpts() output.Opts {
 		NDJSON:     ndjsonOutput,
 		Wide:       wideOutput,
 		RawHeaders: rawHeaders,
+		Compact:    compactJSON,
 	}
 	if strings.TrimSpace(fieldsFlag) != "" {
 		for _, f := range strings.Split(fieldsFlag, ",") {

@@ -25,14 +25,14 @@ func TestAttributionExportCommandsValidateBeforeTheyConnect(t *testing.T) {
 		message string
 		hint    string
 	}{
-		{"create by an unknown dimension", []string{"attribution", "export", "create", "--group-by", "planet"}, `invalid --group-by "planet"; valid: campaign`, ""},
+		{"create by an unknown dimension", []string{"attribution", "export", "create", "--group-by", "planet"}, `--group-by must be one of: campaign, traffic_source, landing_page, keyword, c1, c2, c3, c4, country, device, day; got "planet"`, ""},
 		{"create with a model name", []string{"attribution", "export", "create", "--model", "linear"}, `invalid --model "linear"`, "p202 attribution model list"},
 		{"create comparing a model with itself", []string{"attribution", "export", "create", "--model", "2", "--compare-model", "2"}, "--compare-model must differ from --model", ""},
 		{"create with a period and a range", []string{"attribution", "export", "create", "--period", "last7", "--time-to", "5"}, "--period and --time-from/--time-to are exclusive", "--period last30"},
 		{"create with a date for run-at", []string{"attribution", "export", "create", "--run-at", "tomorrow"}, `invalid --run-at "tomorrow": unix time in seconds`, "date -d"},
 		{"create with an http webhook", []string{"attribution", "export", "create", "--webhook-url", "http://hooks.example.com/"}, "exports are only sent over https", "public address"},
 		{"create with a secret and no webhook", []string{"attribution", "export", "create", "--webhook-secret", "abcdefghijklmnopq"}, "--webhook-secret needs --webhook-url", ""},
-		{"list by an unknown status", []string{"attribution", "export", "list", "--status", "done"}, `invalid --status "done"; valid: pending, running, completed, failed`, ""},
+		{"list by an unknown status", []string{"attribution", "export", "list", "--status", "done"}, `--status must be one of: pending, running, completed, failed; got "done"`, ""},
 		{"list with a huge limit", []string{"attribution", "export", "list", "--limit", "1000"}, "invalid --limit 1000; 1 to 200", ""},
 		{"get a non-id", []string{"attribution", "export", "get", "latest"}, `export id must be a positive whole number, got "latest"`, "p202 attribution export list"},
 		{"download a non-id", []string{"attribution", "export", "download", "0"}, `export id must be a positive whole number, got "0"`, "p202 attribution export list"},

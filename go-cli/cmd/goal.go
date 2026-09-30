@@ -42,6 +42,15 @@ var goalDefinitionFlags = []string{
 
 var goalPredicateOps = []string{"eq", "neq", "gt", "gte", "lt", "lte", "in", "exists"}
 
+// goalSubjectTypes are the subjects a goal is evaluated for
+// (Prosper202\Goals\GoalSubject; features.goals.subjects in /capabilities).
+var goalSubjectTypes = []string{"click", "install"}
+
+// goalNotifyEnum takes the spellings strconv.ParseBool reads, resolved to
+// true or false.
+var goalNotifyEnum = newEnum([]string{"true", "false"}, enumFoldCase(),
+	enumAliases(map[string]string{"1": "true", "t": "true", "0": "false", "f": "false"}))
+
 func registerGoalDefinitionFlags(cmd *cobra.Command) {
 	cmd.Flags().String("definition", "", "The whole definition as JSON (exclusive with the quick flags)")
 	cmd.Flags().StringP("file", "F", "", "Read the definition JSON from a file (- for stdin)")
@@ -54,9 +63,11 @@ func registerGoalDefinitionFlags(cmd *cobra.Command) {
 	cmd.Flags().String("sum-gte", "", "The running-sum threshold")
 	cmd.Flags().String("after", "", "Goal ids that must be reached first, comma-separated")
 	cmd.Flags().String("within-days", "", "Only events within this many days of --within-from")
-	cmd.Flags().String("within-from", "", "Window anchor: install or click")
+	cmd.Flags().String("within-from", "", "Window anchor")
+	enumFlag(cmd, "within-from", newEnum([]string{"install", "click"}))
 	cmd.Flags().Bool("no-window", false, "Remove the window (update)")
-	cmd.Flags().String("repeat", "", "once (default) or each")
+	cmd.Flags().String("repeat", "", "How often it can be reached (default once)")
+	enumFlag(cmd, "repeat", newEnum([]string{"once", "each"}))
 	cmd.Flags().String("repeat-max", "", "With --repeat each: the most times it can be reached (1-10000; required for a --sum-prop goal)")
 	cmd.Flags().String("value", "", "Fixed value of reaching the goal, e.g. 4.00")
 	cmd.Flags().String("value-from-property", "", "Value from an event property (default the event's revenue)")
@@ -267,9 +278,6 @@ func applyGoalQuickFlags(cmd *cobra.Command, def map[string]interface{}) error {
 			return err
 		}
 		from, _ := cmd.Flags().GetString("within-from")
-		if from != "install" && from != "click" {
-			return validationError("--within-from must be one of: install, click, got %q", from)
-		}
 		def["within"] = map[string]interface{}{"days": days, "from": from}
 	}
 
@@ -282,9 +290,6 @@ func applyGoalQuickFlags(cmd *cobra.Command, def map[string]interface{}) error {
 		mode, _ := cmd.Flags().GetString("repeat")
 		if !changed("repeat") {
 			mode = "each"
-		}
-		if mode != "once" && mode != "each" {
-			return validationError("--repeat must be one of: once, each, got %q", mode)
 		}
 		repeat := map[string]interface{}{"mode": mode}
 		if changed("repeat-max") {
@@ -429,12 +434,9 @@ func goalPayoutBody(cmd *cobra.Command, body map[string]interface{}) error {
 		body["payout"] = nil
 	}
 	if cmd.Flags().Changed("notify") {
-		v, _ := cmd.Flags().GetString("notify")
-		b, err := strconv.ParseBool(v)
-		if err != nil {
-			return validationError("--notify must be true or false, got %q", v)
-		}
-		body["notify_traffic_source"] = b
+		// Checked against goalNotifyEnum in PersistentPreRunE, which
+		// resolves every accepted spelling to true or false.
+		body["notify_traffic_source"] = enumValue(cmd, "notify") == "true"
 	}
 	return nil
 }
@@ -623,9 +625,6 @@ var goalOutcomesCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		params := map[string]string{}
 		if v, _ := cmd.Flags().GetString("subject-type"); v != "" {
-			if v != "click" && v != "install" {
-				return validationError("--subject-type must be one of: click, install, got %q", v)
-			}
 			params["subject_type"] = v
 		}
 		if v, _ := cmd.Flags().GetString("subject-id"); v != "" {
@@ -734,10 +733,6 @@ var goalReevaluateCmd = &cobra.Command{
 			}
 		}
 		subjectType, _ := cmd.Flags().GetString("subject-type")
-		if subjectType != "" && subjectType != "click" && subjectType != "install" {
-			return validationError("--subject-type must be one of: click, install; got %q", subjectType).
-				WithHint("click re-evaluates a campaign goal's clicks; install re-evaluates Android installs (the default for registration and account goals).")
-		}
 		apply, _ := cmd.Flags().GetBool("apply")
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -863,7 +858,8 @@ func init() {
 	goalCreateCmd.Flags().Bool("not-payable", false, "Campaign goal: track it, do not pay for it")
 	for _, cmd := range []*cobra.Command{goalCreateCmd, goalCampaignSetCmd} {
 		cmd.Flags().String("payout", "", "Campaign payout for reaching the goal (default: the goal's own value)")
-		cmd.Flags().String("notify", "", "true/false: tell the traffic source when the goal is reached (default true)")
+		cmd.Flags().String("notify", "", "Tell the traffic source when the goal is reached (default true)")
+		enumFlag(cmd, "notify", goalNotifyEnum)
 	}
 	goalCampaignSetCmd.Flags().Bool("clear-payout", false, "Go back to the goal's own value")
 	registerIdempotencyKeyFlag(goalCreateCmd)
@@ -872,7 +868,8 @@ func init() {
 	}
 	registerDeleteFlags(goalDeleteCmd, "goal")
 
-	goalOutcomesCmd.Flags().String("subject-type", "", "Only click or install subjects")
+	goalOutcomesCmd.Flags().String("subject-type", "", "Only this kind of subject")
+	enumFlag(goalOutcomesCmd, "subject-type", newEnum(goalSubjectTypes))
 	goalOutcomesCmd.Flags().String("subject-id", "", "Only this click (or install)")
 	goalOutcomesCmd.Flags().StringP("limit", "l", "", "Max results")
 	goalOutcomesCmd.Flags().StringP("offset", "o", "", "Pagination offset")
@@ -883,7 +880,9 @@ func init() {
 	goalReevaluateCmd.Flags().String("limit", "", "Clicks per call (default 100, at most 1000)")
 	goalReevaluateCmd.Flags().String("after", "", "Continue after this click id (the previous answer's next_after)")
 	goalReevaluateCmd.Flags().Bool("apply", false, "Apply the re-evaluation (without it: preview only)")
-	goalReevaluateCmd.Flags().String("subject-type", "", "click or install (default: click for a campaign goal, install for a registration or account goal)")
+	goalReevaluateCmd.Flags().String("subject-type", "", "Subjects to re-evaluate (default: click for a campaign goal, install for a registration or account goal)")
+	enumFlag(goalReevaluateCmd, "subject-type", newEnum(goalSubjectTypes,
+		enumHint("click re-evaluates a campaign goal's clicks; install re-evaluates Android installs (the default for registration and account goals).")))
 
 	registerSingleDeleteFlags(goalCampaignRemoveCmd)
 	goalCampaignCmd.AddCommand(goalCampaignListCmd, goalCampaignSetCmd, goalCampaignRemoveCmd)

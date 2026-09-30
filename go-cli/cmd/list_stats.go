@@ -18,7 +18,8 @@ const breakdownPageSize = 500
 
 func registerListStatsFlags(cmd *cobra.Command, entity crudEntity) {
 	cmd.Flags().Bool("with-stats", false, fmt.Sprintf("Add each %s's traffic in the window: %s (0 when none; needs the reports:read scope)", entity.Name, strings.Join(listStatsFields, ", ")))
-	cmd.Flags().String("period", "", "Stats window for --with-stats: "+strings.Join(reportPeriods, ", ")+" (default last30)")
+	cmd.Flags().String("period", "", "Stats window for --with-stats (default last30): {values}")
+	enumFlag(cmd, "period", newEnum(reportPeriods, enumHint("For any other window use --days N (e.g. --days 60).")))
 	cmd.Flags().Int("days", 0, "Stats window for --with-stats in days, ending now (ignored when --period is given)")
 	cmd.Flags().Int("min-clicks", 0, fmt.Sprintf("With --with-stats: only %ss with at least N clicks in the window (searches every page)", entity.Name))
 }
@@ -38,10 +39,6 @@ func listStatsParams(cmd *cobra.Command, entity crudEntity) (map[string]string, 
 	}
 	period, _ := cmd.Flags().GetString("period")
 	period = strings.TrimSpace(period)
-	if period != "" && !containsString(reportPeriods, period) {
-		return nil, 0, validationError("invalid --period %q; valid: %s", period, strings.Join(reportPeriods, ", ")).
-			WithHint("For any other window use --days N (e.g. --days 60).")
-	}
 	days, _ := cmd.Flags().GetInt("days")
 	if period == "" && days == 0 {
 		period = "last30"

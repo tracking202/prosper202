@@ -184,6 +184,9 @@ func defaultExecProfileRunner(call execCall) execResult {
 	}
 
 	command := osexec.Command(executable, execChildArgs(call)...)
+	if extra := execChildEnv(call); len(extra) > 0 {
+		command.Env = append(os.Environ(), extra...)
+	}
 	// Capture stdout and stderr into distinct buffers so per-profile JSON on
 	// stdout parses cleanly and stderr (warnings, hints) is reported separately
 	// instead of being mixed in by CombinedOutput().

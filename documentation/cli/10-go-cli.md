@@ -36,14 +36,46 @@ p202 config show
 
 | Flag | Format | Use Case |
 | ---- | ------ | -------- |
-| (default) | Table | Human-readable output |
-| `--json` | JSON | Structured output for automation |
+| (default) | Table, or compact JSON for an AI agent | Human-readable output; see below |
+| `--json` | JSON (pretty-printed) | Structured output for automation |
+| `--ndjson` | One compact JSON object per row | Streaming rows into other tools |
 | `--csv` | CSV | Spreadsheet-compatible output |
+| `-q`, `--quiet` | Ids, one per line | Scripting pipelines |
+| `--table` | Table | Force tables when an agent would get JSON |
+
+**AI agents get JSON by default.** When `AI_AGENT`, `CLAUDECODE`, `GEMINI_CLI`, `CODEX_SANDBOX`,
+`CODEX_SANDBOX_NETWORK_DISABLED`, `CODEX_THREAD_ID` or `CURSOR_AGENT` is set (to anything but
+empty, `0`, `false`, `no` or `off`), commands print compact single-line JSON and errors print as
+the JSON envelope. Precedence, first match wins: a format flag; `P202_OUTPUT=json|table|ndjson|csv`;
+the profile default `p202 config set-default output.format <format>`; an agent marker (unless
+`--wide`, `--raw-headers` or `--fields` asks for a table shape); a table. Explicit `--json` keeps
+its pretty-printed form, and `p202 config show` reports the format in use and why. The evidence for
+each marker is in `docs/cli-agent.md`.
+
+## Finding a Command
+
+`p202 search <what you want to do>` ranks commands offline by your words, matched
+against each command's name, aliases, description, examples, flags and the values
+its flags accept (plurals fold; synonyms such as referrer/referer, offer/campaign,
+dead/broken, undo/revert and link/url match; "per"/"by" ask for a breakdown). Each
+result says why it matched and, when a flag value matched, gives a command line to
+try; `--json` returns `{query, terms, good_match, note, results[]}`. When nothing
+matches well, `good_match` is false, the note says so, and only the closest three
+are shown.
+
+`p202 commands [command...]` lists the command tree, or one subtree. `--json`
+returns `{schema, cli_version, global_flags, commands[]}`: per command its path,
+use, aliases, short and long description, examples, whether it runs, and its flags
+(name, shorthand, type, default, usage, `required`, and for fixed-set flags
+`allowed_values`, `value_aliases`, `value_list`). Global flags are listed once and
+hidden flags are left out. `p202 --help` points at both commands.
 
 ## Commands
 
 | Command | Description |
 | ------- | ----------- |
+| `p202 search <words...>` | Find the command for a task (offline; see [Finding a Command](#finding-a-command)) |
+| `p202 commands [command...]` | Every command and flag, with allowed values, in one call (`--json`, `--ndjson`, `--quiet`) |
 | `p202 campaign list` | List campaigns; `--url-contains <text>` returns every campaign with an offer URL (any of the five slots) containing the text; `--with-stats` adds each campaign's `total_clicks`, `total_leads`, `total_income`, `total_cost`, `total_net` for `--period` (default `last30`) or `--days N`, `0` when it had no traffic (needs `reports:read`); `--min-clicks N` keeps campaigns with at least N clicks |
 | `p202 campaign get <id>` | Get a single campaign |
 | `p202 campaign create` | Create a campaign |
@@ -58,6 +90,7 @@ p202 config show
 | `p202 click list` | List clicks |
 | `p202 click conversions <id>` | Explain a click's value: every conversion on it, whether it counts and why not, what produced it (goal and version, upload, reversal, API key), ending with the click's value; `--json` is `GET /clicks/{id}/conversions` unchanged |
 | `p202 conversion list` | List conversions, with their provenance (`--click_id`, `--source`, `--goal` filter by click, by what produced them and by goal) |
+| `p202 conversion import <file>` | Record a network's conversion export (CSV with a header row, or a JSON array of objects) against the clicks its subids name, for installs whose postbacks were never wired. Columns are auto-detected from common headers (subid: `subid`, `sub_id`, `aff_sub`, `sub1`, `click_id`, `clickid`, `s2`; payout: `payout`, `commission`, `amount`, `revenue`; transaction id: `transaction_id`, `order_id`, `txid`; time: `date`, `time`, `conversion_date`, `created_at`) and reported on stderr and in `meta.columns`; two candidate headers for one column are refused, and `--subid-column`/`--payout-column`/`--txid-column`/`--time-column` choose. The subid is read as the postback reads it (the click id: digits, no leading zero); rows are `invalid` (with the reason), `duplicate_in_file`, or ready. `--dry-run` sends nothing (`--check-clicks` adds one read-only `GET /clicks/{id}/conversions` per click). Otherwise the clicks are read first, you confirm (`--force` skips; `--staged` records proposals), and each ready row is `POST /conversions` with an `Idempotency-Key` derived from its click, transaction id, payout and time. Rows end `created`, `duplicate` (already on the click), `click_not_found`, `failed` or `staged`; re-running the same file sends only what is not recorded yet; exit 5 if any row failed |
 | `p202 rotator list` | List rotators |
 | `p202 report summary` | Performance summary |
 | `p202 report breakdown` | Performance by dimension |
@@ -81,7 +114,8 @@ p202 config show
 | `p202 user list` | List users |
 | `p202 change list` | Review staged writes awaiting approval |
 | `p202 eval run` | Run behavioral evals against an agent driving this instance |
-| `p202 system health` | Health check |
+| `p202 system health` | Health check, plus a TLS certificate check of an https base URL made first, on its own connection (verified handshake, no HTTP request). Adds `tls_status` (`ok`, `expiring` within `--cert-warn-days` (default 21), `expired`, `hostname_mismatch`, `unknown_authority`, `invalid`, `unreachable`; `not_used` for http), `tls_not_after`, `tls_days_left`, `tls_issuer` and `tls_detail`. Exits 5 with the health object on stdout when `tls_status` is not `ok`/`not_used`; an expired certificate is reported as expired with a `certbot renew` hint, not as the network error the API call then hits |
+| `p202 system cron` | Whether cron is ticking: per `cronjob_type` its row count and last run with age, and the last execution from `202_cronjob_logs` with its age. `hourl`/`secon` are labelled as `hourly`/`second` truncated by the `char(5)` column, with a note when they pile up. Exits 5 with the summary on stdout when the last execution is older than 5 minutes (`stale`) or missing (`never_ran`). `--raw` prints every row as the server returns it (under `--json`, added to the summary as `jobs`/`recent_logs`) |
 
 All entities support standard CRUD operations (`list`, `get`, `create`, `update`, `delete`) where applicable. Five behaviors apply across the board on servers that advertise them in `/capabilities`:
 
@@ -185,7 +219,18 @@ p202 import campaigns /tmp/campaigns.json --skip-errors
 p202 analytics --group-by country --period last30 --sort conversions --limit 10
 ```
 
-Aliases: `--group-by lp` -> `landing_page`, `--sort conversions` -> `total_leads`, `--sort revenue` -> `total_income`.
+`--group-by` takes the report breakdown dimensions: campaign, aff_network, ppc_account, ppc_network, landing_page, keyword, country, city, region, browser, platform, device, isp, text_ad. Aliases: `--group-by lp` -> `landing_page` (also `source`, `network`, `offer`, `geo`), `--sort conversions` -> `total_leads`, `--sort revenue` -> `total_income`. A dimension missing from this list is sent when the server advertises it in `/capabilities` (`features.report_breakdowns`); otherwise it is refused with the list.
+
+`--split-at YYYY-MM-DD|unix` compares the two sides of a date (00:00 UTC) inside the window
+(`--period last7|last30|last90`, `--days N`, `--time_from`/`--time_to`; default `last90`): one row per
+value with clicks, conversions and revenue before, after, the change and percent change, and each
+side's per-day rate, since the sides are rarely the same length. Values on one side only get zeros on
+the other; rows rank by the absolute change in clicks (`--sort clicks_per_day` for the per-day rate).
+Both windows' bounds and lengths go to stderr and to `meta` under `--json`.
+
+```bash
+p202 analytics --group-by country --split-at 2026-09-04 --sort clicks_per_day --limit 10
+```
 
 ## Forecasting
 
@@ -229,7 +274,20 @@ Key behaviors, each detailed in the guide:
 ```bash
 p202 campaign delete --ids 1,2,3 --force
 p202 conversion delete --ids 789,790,791 --force
+p202 conversion import network-feb.csv --dry-run --check-clicks
+p202 conversion import network-feb.csv --force
 ```
+
+`conversion import` is safe to re-run. Before writing, it reads each click's
+conversions: a row whose transaction id is already on the click, or an
+id-less row whose click already converted (the postback converts a click once
+without an id), is `duplicate` and is not sent. The rest carry a fixed
+`Idempotency-Key` each, so a retry within the server's 24-hour idempotency
+window replays instead of recording again. Negative rows (reversals) are sent
+after the sales, so a newest-first report still reverses the right sale. A
+refused key or a lost connection while reading stops the command with its own
+exit code (2 or 3) before anything is written; during the writes it stops
+sending, marks the unsent rows `failed`, and exits 5 with a hint to re-run.
 
 ## Config Defaults
 
@@ -240,6 +298,7 @@ p202 config set-default report.period last30
 p202 config set-default report.campaign_id 5
 p202 config get-default report.period
 p202 config unset-default report.period
+p202 config set-default output.format table   # json, table, ndjson or csv
 ```
 
 ## Errors
@@ -259,8 +318,9 @@ Error [auth]: fetching historical data: API error (401): invalid api key
 Hint: Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong.
 ```
 
-With `--json` or `--ndjson` the same failure is a single JSON envelope, so
-an agent reads structured fields instead of parsing prose:
+With `--json` or `--ndjson`, and whenever JSON was chosen automatically
+for an AI agent (see Output Modes), the same failure is a single JSON
+envelope, so an agent reads structured fields instead of parsing prose:
 
 ```json
 {"error":{"category":"auth","message":"fetching historical data: API error (401): invalid api key","hint":"Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong.","exit_code":2,"command":"p202 forecast","http_status":401}}
@@ -278,7 +338,19 @@ an agent reads structured fields instead of parsing prose:
 
 Lists of valid values (supported entities, the metrics a response did
 contain) sit in the message itself, so they are visible even when the hint
-is ignored; the hint carries the next action. Hints come from three sources,
+is ignored; the hint carries the next action. Every flag that takes a fixed
+set of values is declared with that set: its `--help` lists it, a value
+outside it is refused before the command runs (so before any request, and
+with no configuration needed) as `--<flag> must be one of: <values>; got
+"<value>"`, exit 1, and `p202 commands --json` reports it as
+`allowed_values`. Tests walk the command tree to keep every such flag this
+way and to refuse help text that trails off (`etc.`, `...`) instead of
+listing values.
+
+An unknown command or flag exits 1 with a hint naming `<command> --help` and
+`p202 search <what you want to do>`. A mistyped subcommand under a group
+(`p202 campaign lsit`) is refused the same way, with Cobra's suggestion (`did
+you mean list?`), instead of printing the group's help and exiting 0. Hints come from three sources,
 in order of precedence: a hint attached by the command itself (for example,
 which flag to change when the requested metric is missing, or the dependency
 order to sync first when a foreign key cannot be resolved); a generic hint
@@ -337,7 +409,7 @@ wrong state points at `p202 change show`; and only an actual duplicate gets
 | 2 | Authentication/authorization failure |
 | 3 | Network error (connection timeout, DNS failure) |
 | 4 | Server error (5xx response) |
-| 5 | Partial failure (some items in bulk operation failed) |
+| 5 | Partial failure (some items in bulk operation failed, or a check such as `system health` or `rotator check` found a problem; its rows stay on stdout) |
 
 ## Telemetry
 

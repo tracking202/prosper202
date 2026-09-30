@@ -295,8 +295,8 @@ func TestCampaignListStatsFlagsAreValidatedBeforeAnyRequest(t *testing.T) {
 		msg, hint   string
 		unconfigged bool
 	}{
-		{[]string{"--with-stats", "--period", "last14"}, "invalid --period \"last14\"; valid: today, yesterday, last7, last30, last90", "--days N", false},
-		{[]string{"--with-stats", "--period", "last14"}, "invalid --period", "--days N", true},
+		{[]string{"--with-stats", "--period", "last14"}, "--period must be one of: today, yesterday, last7, last30, last90; got \"last14\"", "--days N", false},
+		{[]string{"--with-stats", "--period", "last14"}, "--period must be one of", "--days N", true},
 		{[]string{"--period", "last30"}, "--period only applies with --with-stats", "Add --with-stats", false},
 		{[]string{"--days", "7"}, "--days only applies with --with-stats", "Add --with-stats", true},
 		{[]string{"--min-clicks", "3"}, "--min-clicks only applies with --with-stats", "Add --with-stats", false},

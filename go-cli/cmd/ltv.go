@@ -25,8 +25,17 @@ func collectLtvParams(cmd *cobra.Command) map[string]string {
 	return params
 }
 
+// Values the LTV endpoints accept: MysqlLtvRepository's BREAKDOWNS and
+// CUSTOMER_SORTS, and MysqlSubscriptionRepository's statuses.
+var (
+	ltvDimensions           = []string{"campaign", "ppc_account", "landing_page", "product"}
+	ltvCustomerSorts        = []string{"total_revenue", "order_count", "last_activity_time", "first_seen_time", "mrr"}
+	ltvSubscriptionStatuses = []string{"trialing", "active", "past_due", "paused", "canceled"}
+)
+
 func addLtvTimeFilters(cmd *cobra.Command) {
-	cmd.Flags().StringP("period", "p", "", "Period: today, yesterday, last7, last30, last90")
+	cmd.Flags().StringP("period", "p", "", "Period")
+	enumFlag(cmd, "period", newEnum(reportPeriods))
 	cmd.Flags().String("time_from", "", "Acquisition window start (unix timestamp)")
 	cmd.Flags().String("time_to", "", "Acquisition window end (unix timestamp)")
 }
@@ -238,18 +247,22 @@ func init() {
 	addLtvTimeFilters(ltvSummaryCmd)
 
 	addLtvTimeFilters(ltvCustomersCmd)
-	ltvCustomersCmd.Flags().StringP("sort", "s", "", "Sort: total_revenue, order_count, last_activity_time, first_seen_time, mrr")
-	ltvCustomersCmd.Flags().String("dir", "", "Sort direction: ASC or DESC")
+	ltvCustomersCmd.Flags().StringP("sort", "s", "", "Sort")
+	enumFlag(ltvCustomersCmd, "sort", newEnum(ltvCustomerSorts))
+	ltvCustomersCmd.Flags().String("dir", "", "Sort direction")
+	enumFlag(ltvCustomersCmd, "dir", sortDirEnum())
 	ltvCustomersCmd.Flags().StringP("limit", "l", "", "Rows per page (max 500)")
 	ltvCustomersCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 
 	addLtvTimeFilters(ltvBreakdownCmd)
-	ltvBreakdownCmd.Flags().StringP("by", "b", "", "Dimension: campaign, ppc_account, landing_page, product")
+	ltvBreakdownCmd.Flags().StringP("by", "b", "", "Dimension")
+	enumFlag(ltvBreakdownCmd, "by", newEnum(ltvDimensions))
 	ltvBreakdownCmd.Flags().StringP("limit", "l", "", "Rows per page (max 500)")
 	ltvBreakdownCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 
 	addLtvTimeFilters(ltvPredictCmd)
-	ltvPredictCmd.Flags().StringP("by", "b", "", "Also project per cohort: campaign, ppc_account, landing_page")
+	ltvPredictCmd.Flags().StringP("by", "b", "", "Also project per cohort")
+	enumFlag(ltvPredictCmd, "by", newEnum(ltvDimensions))
 
 	ltvAbmCmd.Flags().StringP("company", "c", "", "Drill into one company by name")
 	ltvAbmCmd.Flags().StringP("days", "d", "", "Engagement window in days (default 90, max 365)")
@@ -258,7 +271,8 @@ func init() {
 
 	ltvEngagementCmd.Flags().StringP("days", "d", "", "Engagement window in days (default 90, max 365)")
 
-	ltvSubscriptionsCmd.Flags().StringP("status", "s", "", "Filter: trialing, active, past_due, paused, canceled")
+	ltvSubscriptionsCmd.Flags().StringP("status", "s", "", "Only this status")
+	enumFlag(ltvSubscriptionsCmd, "status", newEnum(ltvSubscriptionStatuses))
 	ltvSubscriptionsCmd.Flags().StringP("limit", "l", "", "Rows per page (max 500)")
 	ltvSubscriptionsCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 
