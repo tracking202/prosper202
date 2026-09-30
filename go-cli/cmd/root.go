@@ -37,8 +37,8 @@ var rootCmd = &cobra.Command{
 		activeCommandPath = cmd.CommandPath()
 		configpkg.SetActiveOverride(profileName)
 		api.SetStagedMode(stagedWrites)
-		if jsonOutput && csvOutput {
-			return validationError("--json and --csv cannot be used together").WithHint("Pick one output mode.")
+		if err := resolveOutputMode(parsedOutputFlags()); err != nil {
+			return err
 		}
 		// Before any command reads its flags: an explicitly empty value
 		// would otherwise read as "not given" (empty_flags.go).
@@ -59,9 +59,18 @@ func buildAliasHelp() string {
 	return "\n\nUI-friendly aliases: " + strings.Join(parts, ", ") + ". Original names also work."
 }
 
+// outputHelp is the output paragraph of `p202 --help`.
+const outputHelp = "\n\nOutput: tables for people. When an AI agent runs p202 (any of AI_AGENT,\n" +
+	"CLAUDECODE, GEMINI_CLI, CODEX_SANDBOX, CODEX_SANDBOX_NETWORK_DISABLED,\n" +
+	"CODEX_THREAD_ID or CURSOR_AGENT is set), commands print compact one-line JSON\n" +
+	"and errors print as a JSON envelope on stderr. A format flag always wins:\n" +
+	"--json (pretty), --ndjson, --csv, -q, --table. Without one, P202_OUTPUT\n" +
+	"(json, table, ndjson or csv), then `p202 config set-default output.format\n" +
+	"<format>`, decide. `p202 config show` says which format is in use and why."
+
 func Execute() {
 	rootCmd.Long = "p202 is a command-line tool for managing a Prosper202 tracking instance.\n" +
-		"Designed for both human operators and AI agents." + buildAliasHelp()
+		"Designed for both human operators and AI agents." + outputHelp + buildAliasHelp()
 	if err := rootCmd.Execute(); err != nil {
 		recoverCommandContext(os.Args[1:])
 		printError(os.Stderr, err)
@@ -72,9 +81,10 @@ func Execute() {
 // recoverCommandContext fills in what Cobra never got to set when it
 // rejected the invocation before PersistentPreRunE ran (a wrong argument
 // count, an unknown subcommand): the command path the error output names
-// and hints with, and the output-mode flags that select the JSON envelope.
-// Both are recovered from the raw arguments so an agent still receives a
-// structured, hinted error for the most common mistakes.
+// and hints with, and the output mode that selects the JSON envelope (from
+// the raw arguments, P202_OUTPUT, the config default and agent detection).
+// An agent still receives a structured, hinted error for the most common
+// mistakes.
 func recoverCommandContext(args []string) {
 	if activeCommandPath == "" {
 		if cmd, _, err := rootCmd.Find(args); err == nil && cmd != nil {
@@ -86,21 +96,14 @@ func recoverCommandContext(args []string) {
 	if jsonOutput || ndjsonOutput {
 		return
 	}
-	for _, a := range args {
-		switch a {
-		case "--":
-			return
-		case "--json":
-			jsonOutput = true
-		case "--ndjson":
-			ndjsonOutput = true
-		}
-	}
+	// The error being reported matters more than a second one about flags.
+	_ = resolveOutputMode(outputFlagsFromArgs(args))
 }
 
-// printError writes the failure to w. Under --json/--ndjson it is a single
-// JSON envelope ({"error": {category, message, hint, exit_code, command,
-// http_status, field_errors}}) so agents never parse prose; otherwise a
+// printError writes the failure to w. Under JSON output (--json, --ndjson,
+// or JSON chosen for an agent) it is a single JSON envelope ({"error":
+// {category, message, hint, exit_code, command, http_status,
+// field_errors}}) so agents never parse prose; otherwise a
 // human-readable "Error [category]: ..." line followed by a "Hint:" line
 // when there is a recovery step to suggest.
 func printError(w io.Writer, err error) {
@@ -140,7 +143,8 @@ func normalizeFlagName(_ *pflag.FlagSet, name string) pflag.NormalizedName {
 
 func init() {
 	rootCmd.SetGlobalNormalizationFunc(normalizeFlagName)
-	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output raw JSON instead of tables")
+	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output pretty-printed JSON instead of tables")
+	rootCmd.PersistentFlags().BoolVar(&tableOutput, "table", false, "Output tables even when an AI agent would get JSON")
 	rootCmd.PersistentFlags().BoolVar(&csvOutput, "csv", false, "Output as CSV instead of tables")
 	rootCmd.PersistentFlags().BoolVarP(&quietOutput, "quiet", "q", false, "Print only ids, one per line (for scripting)")
 	rootCmd.PersistentFlags().BoolVar(&ndjsonOutput, "ndjson", false, "Output newline-delimited JSON (one row per line)")

@@ -36,9 +36,21 @@ p202 config show
 
 | Flag | Format | Use Case |
 | ---- | ------ | -------- |
-| (default) | Table | Human-readable output |
-| `--json` | JSON | Structured output for automation |
+| (default) | Table, or compact JSON for an AI agent | Human-readable output; see below |
+| `--json` | JSON (pretty-printed) | Structured output for automation |
+| `--ndjson` | One compact JSON object per row | Streaming rows into other tools |
 | `--csv` | CSV | Spreadsheet-compatible output |
+| `-q`, `--quiet` | Ids, one per line | Scripting pipelines |
+| `--table` | Table | Force tables when an agent would get JSON |
+
+**AI agents get JSON by default.** When `AI_AGENT`, `CLAUDECODE`, `GEMINI_CLI`, `CODEX_SANDBOX`,
+`CODEX_SANDBOX_NETWORK_DISABLED`, `CODEX_THREAD_ID` or `CURSOR_AGENT` is set (to anything but
+empty, `0`, `false`, `no` or `off`), commands print compact single-line JSON and errors print as
+the JSON envelope. Precedence, first match wins: a format flag; `P202_OUTPUT=json|table|ndjson|csv`;
+the profile default `p202 config set-default output.format <format>`; an agent marker (unless
+`--wide`, `--raw-headers` or `--fields` asks for a table shape); a table. Explicit `--json` keeps
+its pretty-printed form, and `p202 config show` reports the format in use and why. The evidence for
+each marker is in `docs/cli-agent.md`.
 
 ## Commands
 
@@ -266,6 +278,7 @@ p202 config set-default report.period last30
 p202 config set-default report.campaign_id 5
 p202 config get-default report.period
 p202 config unset-default report.period
+p202 config set-default output.format table   # json, table, ndjson or csv
 ```
 
 ## Errors
@@ -285,8 +298,9 @@ Error [auth]: fetching historical data: API error (401): invalid api key
 Hint: Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong.
 ```
 
-With `--json` or `--ndjson` the same failure is a single JSON envelope, so
-an agent reads structured fields instead of parsing prose:
+With `--json` or `--ndjson`, and whenever JSON was chosen automatically
+for an AI agent (see Output Modes), the same failure is a single JSON
+envelope, so an agent reads structured fields instead of parsing prose:
 
 ```json
 {"error":{"category":"auth","message":"fetching historical data: API error (401): invalid api key","hint":"Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong.","exit_code":2,"command":"p202 forecast","http_status":401}}

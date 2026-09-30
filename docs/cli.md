@@ -51,12 +51,33 @@ p202 report summary --period today
 
 | Flag       | Description                              |
 |------------|------------------------------------------|
-| `--json`   | Output raw JSON instead of formatted tables |
+| `--json`   | Output pretty-printed JSON instead of formatted tables |
+| `--ndjson` | Output one compact JSON object per row   |
 | `--csv`    | Output CSV instead of formatted tables   |
+| `-q`, `--quiet` | Print only ids, one per line        |
+| `--table`  | Output tables even when an AI agent would get JSON |
 | `--profile` | Override active profile for this command |
 | `--group`  | Select a profile tag group for multi-profile commands (`report summary`, `dashboard`, `exec`) |
 
-`--json` and `--csv` are mutually exclusive.
+`--json` and `--csv` are mutually exclusive, and so is `--table` with any other format flag.
+
+### Output format when no flag is given
+
+People get tables. When an AI agent runs `p202` (one of `AI_AGENT`, `CLAUDECODE`, `GEMINI_CLI`,
+`CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED`, `CODEX_THREAD_ID` or `CURSOR_AGENT` is set to a
+value other than empty, `0`, `false`, `no` or `off`), every command prints compact single-line JSON
+and errors print as the JSON envelope on stderr. The first of these that applies decides:
+
+1. A format flag (`--json`, `--ndjson`, `--csv`, `-q`, `--table`).
+2. `P202_OUTPUT=json|table|ndjson|csv` in the environment (JSON from here is pretty-printed).
+3. The profile default: `p202 config set-default output.format table`.
+4. An agent marker: compact JSON, unless `--wide`, `--raw-headers` or `--fields` asks for a table shape.
+5. A table.
+
+`p202 config show` prints the format in use and the reason (`Output: table (default)`,
+`output_source: agent:CLAUDECODE`). `--json` output is unchanged by any of this.
+[docs/cli-agent.md](cli-agent.md#output-agents-get-json-without-asking) has the evidence behind
+each marker and the ones deliberately left out.
 
 ## Configuration
 
@@ -96,10 +117,17 @@ Display the current configuration. The API key is masked in output (first 4 + la
 
 ```
 $ p202 config show
-Config file  ~/.p202/config.json
-URL          https://prosper.example.com
-API Key      abc1...xyz9
+Config file: ~/.p202/config.json
+Active:      default
+Profile:     default
+URL:         https://prosper.example.com
+API key:     abc1...xyz9
+Profiles:    default
+Output:      table (default)
 ```
+
+The last line (`output_format` and `output_source` under JSON) says which output format commands
+use and why: `flag`, `P202_OUTPUT`, `config`, `agent:<VARIABLE>` or `default`.
 
 ### `p202 config test`
 
@@ -145,6 +173,7 @@ Supported default keys include:
 - `report.aff_campaign_id`, `report.ppc_account_id`, `report.aff_network_id`, `report.ppc_network_id`, `report.landing_page_id`, `report.country_id`
 - `report.breakdown`, `report.sort`, `report.sort_dir`, `report.limit`, `report.offset`, `report.interval`
 - `crud.aff_campaign_id`, `crud.ppc_account_id`, `crud.aff_network_id`, `crud.ppc_network_id`, `crud.landing_page_id`, `crud.text_ad_id`, `crud.rotator_id`, `crud.country_id`
+- `output.format`: `json`, `table`, `ndjson` or `csv`; the output format when no format flag or `P202_OUTPUT` is given (see [Global flags](#output-format-when-no-flag-is-given))
 
 ### Feature flags
 

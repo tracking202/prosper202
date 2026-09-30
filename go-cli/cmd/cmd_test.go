@@ -432,6 +432,8 @@ func executeCommand(args ...string) (string, string, error) {
 	configpkg.ResetActiveOverride()
 	jsonOutput = false
 	csvOutput = false
+	tableOutput = false
+	compactJSON, outputImplicit, outputSource = false, false, sourceDefault
 	profileName = ""
 	groupName = ""
 	_ = rootCmd.PersistentFlags().Set("json", "false")
