@@ -17,10 +17,15 @@ go-cli/p202 config set-key <key>
 go-cli/p202 config test
 ```
 
+`go-cli/p202` in these commands is the binary `make -C go-cli build` leaves in a
+checkout. A release zip ships it pre-built under `go-cli/dist/<os>-<arch>/`
+instead; `P202=$(.claude/skills/onboard-prosper202/scripts/find-cli.sh)` gives
+the right one, and `seed.sh` finds it by itself.
+
 ## Seeding
 
 ```bash
-P202_BIN=go-cli/p202 tests/fixtures/agent-eval/seed.sh
+tests/fixtures/agent-eval/seed.sh        # P202_BIN=<path> to name the binary
 ```
 
 The script is **safe to re-run**: every create carries a fixed

@@ -4,7 +4,14 @@ Cross-platform CLI distributed as a single static binary with zero dependencies.
 
 ## Installation
 
-Pre-built binaries are available for Linux, macOS, and Windows.
+**From a release zip** the binaries are already built, under
+`go-cli/dist/<os>-<arch>/p202` for `linux-amd64`, `linux-arm64`, `darwin-amd64`
+and `darwin-arm64`, and `go-cli/dist/windows-<arch>/p202.exe`.
+`.claude/skills/onboard-prosper202/scripts/find-cli.sh` prints the path of the
+one for the machine it runs on. The zip carries no Go source, so the build
+below is for a checkout of the repository.
+
+**From a checkout**, build for the current platform (requires Go):
 
 ```bash
 cd go-cli

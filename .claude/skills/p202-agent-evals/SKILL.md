@@ -23,8 +23,13 @@ cover what the *model* decides when it drives `p202`.
 ```bash
 docker-compose up -d && open http://localhost:8000   # run the installer, keep the API key
 go-cli/p202 config set-url http://localhost:8000 && go-cli/p202 config set-key <key>
-P202_BIN=go-cli/p202 tests/fixtures/agent-eval/seed.sh
+tests/fixtures/agent-eval/seed.sh        # P202_BIN=<path> to name the binary
 ```
+
+`go-cli/p202` in these commands is the binary `make -C go-cli build` leaves in a
+checkout. A release zip ships it pre-built under `go-cli/dist/<os>-<arch>/`
+instead; `P202=$(.claude/skills/onboard-prosper202/scripts/find-cli.sh)` gives
+the right one, and `seed.sh` finds it by itself.
 
 `seed.sh` is idempotent (fixed `Idempotency-Key` per create) and prints
 every seeded id. It includes one data-plane injection keyword —
