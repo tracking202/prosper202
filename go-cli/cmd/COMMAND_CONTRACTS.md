@@ -31,6 +31,8 @@ This file captures the API paths and payload/query expectations used by upcoming
 - `campaign replace-url`
   - paginated `GET /api/v3/campaigns` (with `filter[aff_network_id]` when `--aff-network-id` is set)
   - one `PUT /api/v3/campaigns/{id}` per matched campaign, carrying only the changed URL fields
+- `campaign replace-url --undo <file>`
+  - paginated `GET /api/v3/campaigns` (unfiltered), then one `PUT /api/v3/campaigns/{id}` per campaign with a slot to restore
 - `landing-page list --url-contains <text>`
   - paginated `GET /api/v3/landing-pages`, filtered client-side on `landing_page_url` and `leave_behind_page_url`
 - `tracker create-with-url`

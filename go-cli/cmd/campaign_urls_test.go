@@ -13,7 +13,8 @@ import (
 	"testing"
 )
 
-// campaignFake serves GET /campaigns in pages and records every PUT.
+// campaignFake serves GET /campaigns in pages, records every PUT and applies
+// the ones it answers 200 to its rows.
 type campaignFake struct {
 	mu       sync.Mutex
 	endpoint string // list path under /api/v3; "campaigns" when empty
@@ -79,6 +80,13 @@ func (f *campaignFake) server(t *testing.T) *httptest.Server {
 				_, _ = w.Write([]byte(`{"data":{"change_id":"chg_00000000000000000000000` + id + `","status":"staged","method":"PUT","path":"/campaigns/` + id + `"}}`))
 				return
 			}
+			for _, row := range f.rows {
+				if strconv.Itoa(row["aff_campaign_id"].(int)) == id {
+					for k, v := range body {
+						row[k] = v
+					}
+				}
+			}
 			_, _ = w.Write([]byte(`{"data":{"aff_campaign_id":` + id + `}}`))
 		default:
 			w.WriteHeader(404)
@@ -104,12 +112,14 @@ func newCampaignFake() *campaignFake {
 	}}
 }
 
-func setupCampaignFake(t *testing.T, f *campaignFake) {
+// setupCampaignFake points a fresh HOME's config at f and returns that HOME and f's URL.
+func setupCampaignFake(t *testing.T, f *campaignFake) (string, string) {
 	t.Helper()
 	srv := f.server(t)
 	tmp := t.TempDir()
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
+	return tmp, srv.URL
 }
 
 // feedStdin answers the confirmation prompt with answer.

@@ -49,7 +49,7 @@ p202 config show
 | `p202 campaign create` | Create a campaign |
 | `p202 campaign update <id>` | Update a campaign |
 | `p202 campaign delete <id>` | Delete a campaign |
-| `p202 campaign replace-url` | Rewrite offer URLs in bulk: `--match <text>` plus `--with <text>` (replace the matched part) or `--set <url>` (whole URL, `{id}`/`{slug}` filled per campaign); `--slot`, `--ids`, `--aff-network-id` narrow it; `--dry-run` lists campaign, slot, old and new URL and writes nothing; otherwise confirms first (`--force` skips), one `PUT` per campaign, exit 5 on partial failure |
+| `p202 campaign replace-url` | Rewrite offer URLs in bulk: `--match <text>` plus `--with <text>` (replace the matched part) or `--set <url>` (whole URL, `{id}`/`{slug}` filled per campaign); `--slot`, `--ids`, `--aff-network-id` narrow it; `--dry-run` lists campaign, slot, old and new URL and writes nothing; otherwise confirms first (`--force` skips), one `PUT` per campaign, exit 5 on partial failure. Each applying run saves an undo manifest of its applied slots to `~/.p202/undo/` and prints `Undo with: … --undo <file>` (`meta.undo_manifest` under `--json`); `--undo <file>` restores the old URLs only where the slot still holds that run's new URL (others `skipped`), refuses a manifest from another base URL, and exits 5 if a manifest cannot be saved after the writes (it is then printed on stderr) |
 | `p202 aff-network list` | List affiliate networks (alias: `category`) |
 | `p202 ppc-network list` | List PPC/traffic networks (alias: `traffic-network`) |
 | `p202 tracker list` | List trackers |

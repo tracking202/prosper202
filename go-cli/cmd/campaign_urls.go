@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -146,11 +148,27 @@ func groupChangesByCampaign(changes []urlChange) ([]string, map[string]map[strin
 	return order, bodies
 }
 
-func renderURLChanges(changes []urlChange) error {
+// pendingURLChanges returns the rows not yet given a status (to be written).
+func pendingURLChanges(rows []urlChange) []urlChange {
+	var out []urlChange
+	for _, r := range rows {
+		if r.Status == "" {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// renderURLChanges prints the rows; undoPath, when set, goes in meta.undo_manifest.
+func renderURLChanges(changes []urlChange, undoPath string) error {
 	if changes == nil {
 		changes = []urlChange{}
 	}
-	data, err := json.Marshal(map[string]interface{}{"data": changes})
+	payload := map[string]interface{}{"data": changes}
+	if undoPath != "" {
+		payload["meta"] = map[string]interface{}{"undo_manifest": undoPath}
+	}
+	data, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("encoding URL changes: %w", err)
 	}
@@ -159,6 +177,101 @@ func renderURLChanges(changes []urlChange) error {
 		opts.Fields = replaceURLColumns
 	}
 	output.RenderWith(data, opts)
+	return nil
+}
+
+// applyURLChanges confirms and sends the rows without a status (one PUT per
+// campaign), saves the applied ones in an undo manifest, and renders every row.
+func applyURLChanges(c *api.Client, rows []urlChange, force bool, record undoManifest, retryHint string) error {
+	todo := pendingURLChanges(rows)
+	order, bodies := groupChangesByCampaign(todo)
+	skipped := countStatus(rows, "skipped")
+	if !force && !api.StagedMode() {
+		fmt.Fprintf(os.Stderr, "%d URL(s) on %d campaign(s) will change:\n", len(todo), len(order))
+		for _, ch := range todo {
+			fmt.Fprintf(os.Stderr, "  #%s %s [%s]\n    - %s\n    + %s\n", ch.CampaignID, ch.CampaignName, ch.Field, ch.OldURL, ch.NewURL)
+		}
+		if skipped > 0 {
+			fmt.Fprintf(os.Stderr, "%d slot(s) are skipped and left as they are.\n", skipped)
+		}
+		if !confirmPrompt("Apply these %d change(s)?", len(todo)) {
+			fmt.Fprintln(os.Stderr, "Cancelled.")
+			return nil
+		}
+	}
+
+	// One PUT per campaign, so every slot of a campaign shares its outcome.
+	outcome := map[string]urlChange{}
+	updated, staged, failed := 0, 0, 0
+	for _, id := range order {
+		data, perr := c.Put("campaigns/"+id, bodies[id])
+		if perr != nil {
+			outcome[id] = urlChange{Status: "failed", Error: perr.Error()}
+			failed++
+			fmt.Fprintf(os.Stderr, "Failed to update campaign %s: %v\n", id, perr)
+			continue
+		}
+		if cid, ok := stagedChangeID(data); ok {
+			outcome[id] = urlChange{Status: "staged", ChangeID: cid}
+			staged++
+			continue
+		}
+		outcome[id] = urlChange{Status: "applied"}
+		updated++
+	}
+	var applied []undoEntry
+	for i := range rows {
+		if rows[i].Status != "" {
+			continue
+		}
+		o := outcome[rows[i].CampaignID]
+		rows[i].Status, rows[i].ChangeID, rows[i].Error = o.Status, o.ChangeID, o.Error
+		if r := rows[i]; r.Status == "applied" {
+			applied = append(applied, undoEntry{CampaignID: r.CampaignID, CampaignName: r.CampaignName, Field: r.Field, OldURL: r.OldURL, NewURL: r.NewURL})
+		}
+	}
+
+	// Staged and failed slots changed nothing on the server, so only applied ones are recorded.
+	var undoPath string
+	var undoErr error
+	if len(applied) > 0 {
+		now := time.Now()
+		record.Format, record.Version, record.CreatedAt, record.Changes = undoManifestFormat, undoManifestVersion, now.UTC().Format(time.RFC3339), applied
+		undoPath, undoErr = writeUndoManifest(record, now)
+	}
+	if err := renderURLChanges(rows, undoPath); err != nil {
+		return err
+	}
+	if staged > 0 {
+		output.Success("Staged %d of %d campaign update(s); apply them with `p202 change apply <change_id>`.", staged, len(order))
+	} else {
+		output.Success("Updated %d of %d campaign(s) (%d URL(s)).", updated, len(order), len(todo))
+	}
+	if skipped > 0 {
+		output.Success("Skipped %d slot(s); their rows say why.", skipped)
+	}
+	if undoPath != "" {
+		output.Success("Undo with: p202 campaign replace-url --undo %s --profile %s", shellArg(undoPath), shellArg(record.Profile))
+	}
+
+	var manifestHint string
+	if undoErr != nil {
+		// The writes happened: print the manifest so the undo is not lost with the file.
+		if line, err := encodeUndoManifest(record, ""); err == nil {
+			output.Success("Undo manifest (save it to a file, then pass it to --undo): %s", bytes.TrimSpace(line))
+		}
+		manifestHint = fmt.Sprintf("The rows with status applied were written. Save the JSON after `Undo manifest:` on stderr to a file to undo them with --undo <file>, and fix %s (permissions, free space) so later runs can save theirs.", undoDir())
+	}
+	switch {
+	case failed > 0 && undoErr != nil:
+		return partialFailureError("failed to update %d of %d campaigns, and the undo manifest for the %d applied slot(s) could not be saved: %v", failed, len(order), len(applied), undoErr).
+			WithHint("%s %s", retryHint, manifestHint)
+	case failed > 0:
+		return partialFailureError("failed to update %d of %d campaigns", failed, len(order)).WithHint("%s", retryHint)
+	case undoErr != nil:
+		return partialFailureError("updated %d of %d campaign(s), but the undo manifest could not be saved: %v", updated, len(order), undoErr).
+			WithHint("%s", manifestHint)
+	}
 	return nil
 }
 
@@ -177,19 +290,35 @@ func newCampaignReplaceURLCmd() *cobra.Command {
 			"per campaign instead of writing). Matching runs in the CLI over every page\n" +
 			"of campaigns, so it works against any server version.\n\n" +
 			"Re-running is safe with --set (updated URLs no longer contain --match),\n" +
-			"but with --with it rewrites again if the replacement still contains --match.",
+			"but with --with it rewrites again if the replacement still contains --match.\n\n" +
+			"Undo: every run that applies a change saves the applied slots (old and new\n" +
+			"URL, profile, base URL) to ~/.p202/undo/replace-url-<UTC time>.json and\n" +
+			"prints `Undo with: p202 campaign replace-url --undo <file>` (under --json\n" +
+			"also meta.undo_manifest). --undo puts old_url back only where the slot\n" +
+			"still holds that run's new_url; slots changed since, and deleted campaigns,\n" +
+			"are left alone and listed with status skipped. It refuses a manifest\n" +
+			"written against another base URL, cannot be combined with --match, --with,\n" +
+			"--set, --slot, --ids or --aff-network-id, and otherwise behaves like a\n" +
+			"normal run (--dry-run, the prompt, --force, --staged, exit 5 on a failed\n" +
+			"PUT). An undo that applies changes saves its own manifest, so it can be\n" +
+			"undone too. If a manifest cannot be saved after the writes, the command\n" +
+			"prints it on stderr and exits 5.",
 		Example: "  p202 campaign replace-url --match g2afse.com --set 'https://example.com/?utm_source={slug}' --dry-run\n" +
-			"  p202 campaign replace-url --match http://promo.example.com --with https://promo.example.com --force",
+			"  p202 campaign replace-url --match http://promo.example.com --with https://promo.example.com --force\n" +
+			"  p202 campaign replace-url --undo ~/.p202/undo/replace-url-20260930T101500Z.json --dry-run",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("replace-url", "campaigns")
 			defer func() { done(retErr == nil, errString(retErr)) }()
+			if cmd.Flags().Changed("undo") {
+				return runReplaceURLUndo(cmd)
+			}
 
 			// Validate every flag before building a client.
 			match, _ := cmd.Flags().GetString("match")
 			if strings.TrimSpace(match) == "" {
 				return validationError("--match is required").
-					WithHint("Pass the text the old URLs share, e.g. --match old-network.com; preview with `p202 campaign list --url-contains <text>`.")
+					WithHint("Pass the text the old URLs share, e.g. --match old-network.com (preview with `p202 campaign list --url-contains <text>`), or --undo <file> to revert an earlier run.")
 			}
 			withSet := cmd.Flags().Changed("with")
 			setSet := cmd.Flags().Changed("set")
@@ -229,6 +358,10 @@ func newCampaignReplaceURLCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			target, err := activeReplaceURLTarget()
+			if err != nil {
+				return err
+			}
 			params := map[string]string{}
 			if v, _ := cmd.Flags().GetString("aff-network-id"); v != "" {
 				params["filter[aff_network_id]"] = v
@@ -238,72 +371,28 @@ func newCampaignReplaceURLCmd() *cobra.Command {
 				return err
 			}
 			changes := planURLReplacements(rows, fields, match, with, setTmpl, setSet, onlyIDs)
-			order, bodies := groupChangesByCampaign(changes)
 
 			if len(changes) == 0 {
-				if err := renderURLChanges(changes); err != nil {
+				if err := renderURLChanges(changes, ""); err != nil {
 					return err
 				}
 				output.Success("No campaign offer URL contains %q (or every match already has the new value); nothing to change.", match)
 				return nil
 			}
 			if dryRun {
-				if err := renderURLChanges(changes); err != nil {
+				if err := renderURLChanges(changes, ""); err != nil {
 					return err
 				}
+				order, _ := groupChangesByCampaign(changes)
 				output.Success("Dry run: %d URL(s) on %d campaign(s) would change. Nothing was written; drop --dry-run to apply.", len(changes), len(order))
 				return nil
 			}
-			if !force && !api.StagedMode() {
-				fmt.Fprintf(os.Stderr, "%d URL(s) on %d campaign(s) will change:\n", len(changes), len(order))
-				for _, ch := range changes {
-					fmt.Fprintf(os.Stderr, "  #%s %s [%s]\n    - %s\n    + %s\n", ch.CampaignID, ch.CampaignName, ch.Field, ch.OldURL, ch.NewURL)
-				}
-				if !confirmPrompt("Apply these %d change(s)?", len(changes)) {
-					fmt.Fprintln(os.Stderr, "Cancelled.")
-					return nil
-				}
-			}
-
-			// One PUT per campaign, so every slot of a campaign shares its outcome.
-			outcome := map[string]urlChange{}
-			updated, staged, failed := 0, 0, 0
-			for _, id := range order {
-				data, perr := c.Put("campaigns/"+id, bodies[id])
-				if perr != nil {
-					outcome[id] = urlChange{Status: "failed", Error: perr.Error()}
-					failed++
-					fmt.Fprintf(os.Stderr, "Failed to update campaign %s: %v\n", id, perr)
-					continue
-				}
-				if cid, ok := stagedChangeID(data); ok {
-					outcome[id] = urlChange{Status: "staged", ChangeID: cid}
-					staged++
-					continue
-				}
-				outcome[id] = urlChange{Status: "applied"}
-				updated++
-			}
-			for i := range changes {
-				o := outcome[changes[i].CampaignID]
-				changes[i].Status, changes[i].ChangeID, changes[i].Error = o.Status, o.ChangeID, o.Error
-			}
-			if err := renderURLChanges(changes); err != nil {
-				return err
-			}
-			if staged > 0 {
-				output.Success("Staged %d of %d campaign update(s); apply them with `p202 change apply <change_id>`.", staged, len(order))
-			} else {
-				output.Success("Updated %d of %d campaign(s) (%d URL(s)).", updated, len(order), len(changes))
-			}
-			if failed > 0 {
-				return partialFailureError("failed to update %d of %d campaigns", failed, len(order)).
-					WithHint("Rows with status failed carry the server error. Fix it and re-run the same command: updated campaigns no longer match --match (unless the --with text still contains it), so only the failures are retried.")
-			}
-			return nil
+			record := undoManifest{Profile: target.Profile, BaseURL: target.BaseURL, Match: match, With: with, Set: setTmpl}
+			return applyURLChanges(c, changes, force, record,
+				"Rows with status failed carry the server error. Fix it and re-run the same command: updated campaigns no longer match --match (unless the --with text still contains it), so only the failures are retried.")
 		},
 	}
-	cmd.Flags().String("match", "", "Text the offer URLs to change contain (case-insensitive, required)")
+	cmd.Flags().String("match", "", "Text the offer URLs to change contain (case-insensitive; required unless --undo)")
 	cmd.Flags().String("with", "", "Replace the matched text with this")
 	cmd.Flags().String("set", "", "Replace the whole URL with this; {id} and {slug} are filled per campaign")
 	cmd.Flags().String("slot", "all", "URL slots to consider: 1-5, comma-separated, or all")
@@ -311,5 +400,6 @@ func newCampaignReplaceURLCmd() *cobra.Command {
 	cmd.Flags().String("aff-network-id", "", "Only campaigns in this affiliate network (`p202 aff-network list`)")
 	cmd.Flags().Bool("dry-run", false, "List the changes without writing anything")
 	cmd.Flags().BoolP("force", "f", false, "Skip the confirmation prompt")
+	cmd.Flags().String("undo", "", "Revert a run from its undo manifest `file` (printed after \"Undo with:\"): restores old URLs where the slot is unchanged since")
 	return cmd
 }
