@@ -73,7 +73,9 @@ return [
         // The iOS and Android SDK sources (56 tracked files; the build output
         // beside them is untracked and never exported). README.md calls the
         // Swift helper bundled and documentation/api/ links both directories,
-        // and the zip promises everything the repository would give.
+        // and the zip promises everything the repository would give. The two
+        // Python checks under sdk/android-attribution/scripts stay: the
+        // Android README's API-21 verification procedure ends in one of them.
         'sdk',
         // Two fixtures only; see 'keep_only'. The SDK test suites read the
         // cross-language contract vectors from tests/fixtures/app-sdk-contract
@@ -136,7 +138,6 @@ return [
         '202-config/Messaging/mock-server.php',   // local stand-in for the central messaging API
         '202-config/Messaging/MOCK-SERVER.md',
         '202-config/Messaging/CENTRAL-API.md',    // contract for the central server, not the install
-        'sdk/android-attribution/scripts',        // CI's test-floor and dex API checks (android-sdk.yml)
         'tests/fixtures/agent-eval/ci',           // CI's headless installer and php -S router (agent-evals.yml)
     ],
 
