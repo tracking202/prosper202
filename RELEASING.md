@@ -33,9 +33,11 @@ and usually reachable over HTTP. [`build/release-manifest.php`](build/release-ma
 decides what ships, and it is **fail-closed**. Every top-level path must be
 listed under either `ship` or `exclude`, and an unlisted one stops the build.
 `keep_only` reduces a shipped directory to named children: only
-`go-cli/dist` and the onboarding skill under `.claude/` ship. `exclude_nested`
-removes dev files inside shipped directories, such as `202-config/PHPStan`
-and the messaging mock server.
+`go-cli/dist`, two skills under `.claude/` (onboarding, and the eval case
+format `p202 eval run` names), and two fixtures under `tests/` (the SDK
+contract vectors and the eval cases the bundled SDKs and CLI point at) ship.
+`exclude_nested` removes dev files inside shipped directories, such as
+`202-config/PHPStan` and the messaging mock server.
 
 `build/scripts/release-tree.php` enforces it at three points:
 

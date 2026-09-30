@@ -75,11 +75,16 @@ return [
         // Swift helper bundled and documentation/api/ links both directories,
         // and the zip promises everything the repository would give.
         'sdk',
+        // Two fixtures only; see 'keep_only'. The SDK test suites read the
+        // cross-language contract vectors from tests/fixtures/app-sdk-contract
+        // (gradle's p202.contractDir, GoalVectorsTests.swift), and `p202 goal`
+        // and `p202 eval run` name tests/fixtures/app-sdk-contract/goals/ and
+        // tests/fixtures/agent-eval/cases/ in their help.
+        'tests',
     ],
 
     'exclude' => [
-        // Tests, static analysis and their configuration.
-        'tests',
+        // Static analysis, test runners and their configuration.
         'phpstan-baseline.neon',
         'phpstan-legacy-stubs.php',
         'phpstan.neon.dist',
@@ -114,10 +119,15 @@ return [
     'keep_only' => [
         '.claude' => ['skills'],
         // find-cli.sh resolves the bundled go-cli/dist binary, so the
-        // onboarding skill works from an unpacked release.
-        '.claude/skills' => ['onboard-prosper202'],
+        // onboarding skill works from an unpacked release; p202-agent-evals is
+        // the case format `p202 eval run` sends its user to.
+        '.claude/skills' => ['onboard-prosper202', 'p202-agent-evals'],
         // Pre-built binaries only; the Go source is not needed to run them.
         'go-cli' => ['dist'],
+        // The two fixtures the shipped SDKs and CLI point at; every test
+        // suite and every other fixture stays out.
+        'tests' => ['fixtures'],
+        'tests/fixtures' => ['agent-eval', 'app-sdk-contract'],
     ],
 
     // Developer-only paths inside shipped directories.
@@ -127,6 +137,7 @@ return [
         '202-config/Messaging/MOCK-SERVER.md',
         '202-config/Messaging/CENTRAL-API.md',    // contract for the central server, not the install
         'sdk/android-attribution/scripts',        // CI's test-floor and dex API checks (android-sdk.yml)
+        'tests/fixtures/agent-eval/ci',           // CI's headless installer and php -S router (agent-evals.yml)
     ],
 
     // Go CLI binaries the zip promises (README, RELEASING.md, and the
