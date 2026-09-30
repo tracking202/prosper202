@@ -1,0 +1,120 @@
+package cmd
+
+import (
+	"encoding/json"
+	"reflect"
+	"strings"
+	"testing"
+)
+
+func searchJSON(t *testing.T, words ...string) searchAnswer {
+	t.Helper()
+	stdout, _, err := executeCommand(append(append([]string{"search"}, words...), "--json")...)
+	if err != nil {
+		t.Fatalf("search %v: %v", words, err)
+	}
+	var a searchAnswer
+	if err := json.Unmarshal([]byte(stdout), &a); err != nil {
+		t.Fatalf("search --json is not JSON: %v\n%s", err, stdout)
+	}
+	return a
+}
+
+func rankOf(a searchAnswer, command string) int {
+	for i, r := range a.Results {
+		if r.Command == command {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+func TestSearchFindsTheCommandForEachTask(t *testing.T) {
+	setTestHome(t, t.TempDir())
+
+	a := searchJSON(t, "breakdown", "by", "browser")
+	if !a.GoodMatch || rankOf(a, "p202 report breakdown") != 1 {
+		t.Errorf("breakdown by browser: %+v", a.Results)
+	}
+	if r := rankOf(a, "p202 analytics"); r == 0 || r > 3 || a.Results[r-1].Try != "p202 analytics --group-by browser" {
+		t.Errorf("breakdown by browser: analytics at %d in %+v", r, a.Results)
+	}
+	if a.Results[0].Try != "p202 report breakdown --breakdown browser" {
+		t.Errorf("breakdown by browser: try = %q", a.Results[0].Try)
+	}
+
+	a = searchJSON(t, "dead links")
+	if !a.GoodMatch || rankOf(a, "p202 campaign check-urls") != 1 || !containsString(a.Results[0].Matched, `command name "check-urls" (for "link")`) {
+		t.Errorf("dead links: %+v", a.Results)
+	}
+
+	a = searchJSON(t, "undo", "url", "change")
+	if !a.GoodMatch || rankOf(a, "p202 campaign replace-url") != 1 || !containsString(a.Results[0].Matched, "flag --undo") {
+		t.Errorf("undo url change: %+v", a.Results)
+	}
+
+	a = searchJSON(t, "clicks per campaign")
+	if !a.GoodMatch || rankOf(a, "p202 report breakdown") != 1 {
+		t.Errorf("clicks per campaign: %+v", a.Results)
+	}
+	if r := rankOf(a, "p202 analytics"); r == 0 || r > 5 {
+		t.Errorf("clicks per campaign: analytics at %d", r)
+	}
+	if !strings.Contains(a.Results[0].Try, "--breakdown campaign") {
+		t.Errorf("clicks per campaign: try = %q", a.Results[0].Try)
+	}
+}
+
+// No report has a referrer dimension. Search must say so rather than dress
+// up the nearest text match as the answer.
+func TestSearchDoesNotPretendAReferrerDimensionExists(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	for _, q := range []string{"referrer", "breakdown by referrer"} {
+		a := searchJSON(t, q)
+		if q == "referrer" && (a.GoodMatch || !strings.HasPrefix(a.Note, `No command matches "referrer" well`) || len(a.Results) > closestShown) {
+			t.Errorf("%s: good=%v note=%q results=%d", q, a.GoodMatch, a.Note, len(a.Results))
+		}
+		for _, r := range a.Results {
+			for _, m := range r.Matched {
+				if strings.Contains(m, "accepts refer") {
+					t.Errorf("%s: %s claims %q", q, r.Command, m)
+				}
+			}
+			if strings.Contains(r.Try, "refer") {
+				t.Errorf("%s: %s suggests %q", q, r.Command, r.Try)
+			}
+		}
+	}
+
+	stdout, _, err := executeCommand("search", "referrer")
+	if err != nil || !strings.HasPrefix(stdout, `No command matches "referrer" well`) {
+		t.Errorf("human form: %v\n%s", err, stdout)
+	}
+}
+
+func TestSearchWithNothingToSearchFor(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	a := searchJSON(t, "xyzzy", "plugh")
+	if a.GoodMatch || len(a.Results) != 0 || !strings.Contains(a.Note, "p202 commands") {
+		t.Errorf("no match: %+v", a)
+	}
+	for _, args := range [][]string{{"search"}, {"search", "the", "by"}} {
+		_, _, err := executeCommand(args...)
+		if err == nil || exitCodeForError(err) != ExitValidation || !strings.Contains(hintFor(err), "p202 search") {
+			t.Errorf("%v: %v / %q", args, err, hintFor(err))
+		}
+	}
+	_, _, err := executeCommand("search", "clicks", "--limit", "0")
+	if err == nil || exitCodeForError(err) != ExitValidation {
+		t.Errorf("--limit 0: %v", err)
+	}
+}
+
+func TestSearchNormalisesPluralsAndSynonyms(t *testing.T) {
+	if got := searchQueryTerms([]string{"Clicks", "per", "the", "CAMPAIGNS", "entries"}); !reflect.DeepEqual(got, []string{"click", "campaign", "entry"}) {
+		t.Errorf("terms = %v", got)
+	}
+	if !containsString(searchSynonyms["referrer"], "referer") || !containsString(searchSynonyms["undo"], "revert") || !containsString(searchSynonyms["link"], "url") {
+		t.Error("synonym groups are not symmetric")
+	}
+}
