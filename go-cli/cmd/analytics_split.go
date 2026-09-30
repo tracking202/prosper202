@@ -30,6 +30,9 @@ const splitDefaultPeriod = "last90"
 // (now minus N days, as ReportsController::applyTimeFilters does).
 var splitPeriodDays = map[string]int64{"last7": 7, "last30": 30, "last90": 90}
 
+// splitPerDaySorts are the --sort keys that rank --split-at rows by per-day change.
+var splitPerDaySorts = []string{"clicks_per_day", "conversions_per_day", "revenue_per_day"}
+
 // splitMetrics are the breakdown fields --split-at compares, by output name.
 var splitMetrics = []struct{ name, field string }{
 	{"clicks", "total_clicks"},

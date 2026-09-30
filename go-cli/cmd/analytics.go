@@ -66,6 +66,11 @@ var analyticsCmd = &cobra.Command{
 			return err
 		}
 
+		if sortBy, _ := cmd.Flags().GetString("sort"); split == nil && strings.HasSuffix(strings.ToLower(strings.TrimSpace(sortBy)), "_per_day") {
+			return validationError("--sort %s ranks --split-at output; it needs --split-at", sortBy).
+				WithHint("Add --split-at <YYYY-MM-DD>, or sort plain analytics by one of: %s.", strings.Join(breakdownSorts, ", "))
+		}
+
 		c, err := api.NewFromConfig()
 		if err != nil {
 			return err
@@ -134,7 +139,8 @@ func init() {
 	analyticsCmd.Flags().String("time_from", "", "Start timestamp (unix)")
 	analyticsCmd.Flags().String("time_to", "", "End timestamp (unix)")
 	analyticsCmd.Flags().String("sort", "", "Sort by")
-	enumFlag(analyticsCmd, "sort", newEnum(breakdownSorts, enumAliases(analyticsSortAliases), enumFoldCase()))
+	// The *_per_day keys rank --split-at output only; plain analytics refuses them in RunE.
+	enumFlag(analyticsCmd, "sort", newEnum(append(append([]string{}, breakdownSorts...), splitPerDaySorts...), enumAliases(analyticsSortAliases), enumFoldCase()))
 	analyticsCmd.Flags().String("sort-dir", "", "Sort direction")
 	enumFlag(analyticsCmd, "sort-dir", sortDirEnum())
 	analyticsCmd.Flags().StringP("limit", "l", "", "Max results")
