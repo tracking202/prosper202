@@ -7,7 +7,7 @@ namespace Api\V3\Support;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ConflictException;
 
-class ServerStateStore
+class ServerStateStore implements QuotaStore
 {
     private const int DEFAULT_RETENTION = 5000;
 
@@ -1063,7 +1063,48 @@ class ServerStateStore
                 $this->unlinkUnheldLock($path);
                 continue;
             }
+            if ($isBucket) {
+                $this->unlinkIdleBucket($path, $cutoff);
+                continue;
+            }
             @unlink($path);
+        }
+    }
+
+    /**
+     * Remove a bucket only under its own lock, and only if it is still idle
+     * once the lock is held. The mtime above was read without the lock, so a
+     * request could rewrite the bucket between that read and an unlink —
+     * deleting a live count, and for a quota (reserveQuota()) handing the
+     * rest of the window a fresh budget. Taken non-blocking: a bucket someone
+     * is inside is live by definition, and a collection pass that runs on a
+     * request path must not wait on one. With the lock held, a writer that
+     * comes after reads no file — a fresh window, which is what a bucket idle
+     * past $cutoff (never less than an hour, many windows) already was. The
+     * lock file goes with the bucket, while still held, as unlinkUnheldLock()
+     * removes one; 'c+' because a bucket with no lock file beside it is still
+     * one a writer may be about to lock.
+     */
+    private function unlinkIdleBucket(string $path, int $cutoff): void
+    {
+        $lockPath = $path . '.lock';
+        $fh = @fopen($lockPath, 'c+');
+        if ($fh === false) {
+            return;
+        }
+        try {
+            if (!flock($fh, LOCK_EX | LOCK_NB)) {
+                return;
+            }
+            clearstatcache(true, $path);
+            $mtime = @filemtime($path);
+            if ($mtime !== false && $mtime < $cutoff) {
+                @unlink($path);
+                @unlink($lockPath);
+            }
+            flock($fh, LOCK_UN);
+        } finally {
+            fclose($fh);
         }
     }
 
@@ -1103,10 +1144,31 @@ class ServerStateStore
      * (slug plus a hash of the whole bucket), so the caller's bucket string
      * must itself be injective (CLAUDE.md #17).
      *
+     * An admitted cost is spent when it is taken, before the caller does the
+     * work; a caller whose work then fails (or turns out to have been done
+     * already) gives it back with refundQuota(), so the cap counts what was
+     * recorded rather than what was attempted. The window is fixed, not
+     * sliding: a burst straddling a window boundary can take up to twice
+     * the limit in a short span. And the bucket is a file under this store's
+     * directory, so web hosts that do not share it each keep their own count.
+     *
      * @return int|null seconds until the window resets when refused, null when admitted
      * @throws \RuntimeException when the quota cannot be read or written
      */
     public function reserveQuota(string $bucket, int $limit, int $windowSeconds, int $cost = 1): ?int
+    {
+        return $this->reserveQuotaWindow($bucket, $limit, $windowSeconds, $cost)['retry_after'];
+    }
+
+    /**
+     * reserveQuota(), also naming the window the cost was charged to, which
+     * refundQuota() needs to give it back to that window and no other.
+     *
+     * @return array{retry_after: int|null, window_start: int} retry_after null when admitted
+     * @throws \RuntimeException when the quota cannot be read or written
+     */
+    #[\Override]
+    public function reserveQuotaWindow(string $bucket, int $limit, int $windowSeconds, int $cost = 1): array
     {
         if ($limit < 1 || $windowSeconds < 1 || $cost < 1) {
             throw new \InvalidArgumentException('a quota needs a positive limit, window and cost');
@@ -1114,20 +1176,18 @@ class ServerStateStore
         $now = time();
         $admitted = false;
         $resetAt = $now + $windowSeconds;
+        $charged = $now;
         $this->mutateJsonFile(
             $this->rateLimitPath($bucket),
             ['window_start' => 0, 'count' => 0],
-            static function (array $state) use ($now, $limit, $windowSeconds, $cost, &$admitted, &$resetAt): array {
-                $windowStart = $state['window_start'] ?? 0;
-                $count = $state['count'] ?? 0;
-                if (!is_int($windowStart) || !is_int($count) || $count < 0) {
-                    throw new DatabaseException('Quota state is malformed');
-                }
+            static function (array $state) use ($now, $limit, $windowSeconds, $cost, &$admitted, &$resetAt, &$charged): array {
+                [$windowStart, $count] = self::quotaState($state);
                 if ($windowStart <= 0 || ($now - $windowStart) >= $windowSeconds || $windowStart > $now) {
                     $windowStart = $now;
                     $count = 0;
                 }
                 $resetAt = $windowStart + $windowSeconds;
+                $charged = $windowStart;
                 if ($count + $cost <= $limit) {
                     $count += $cost;
                     $admitted = true;
@@ -1137,11 +1197,66 @@ class ServerStateStore
             },
             true
         );
-        if ($admitted) {
-            return null;
+
+        return ['retry_after' => $admitted ? null : max(1, $resetAt - $now), 'window_start' => $charged];
+    }
+
+    /**
+     * Give back $cost units that reserveQuotaWindow() charged to the window
+     * starting at $windowStart: a request that was admitted and then did not
+     * do the work it paid for (it failed, or what it carried was already
+     * stored). Under the same exclusive lock and as strict as the charge —
+     * a bucket that cannot be read or written throws, and is never
+     * overwritten as though it held nothing. It never takes a count below
+     * zero, and it refunds nothing once that window has closed: the next
+     * window never held the charge, and crediting it would let a failure
+     * buy the next minute more than the cap.
+     *
+     * @return bool whether the units went back (false: the window had already closed)
+     * @throws \RuntimeException when the quota cannot be read or written
+     */
+    #[\Override]
+    public function refundQuota(string $bucket, int $windowSeconds, int $cost, int $windowStart): bool
+    {
+        if ($windowSeconds < 1 || $cost < 1 || $windowStart < 1) {
+            throw new \InvalidArgumentException('a refund needs a positive window, cost and window start');
+        }
+        $refunded = false;
+        $path = $this->rateLimitPath($bucket);
+        $this->mutateJsonFile(
+            $path,
+            ['window_start' => 0, 'count' => 0],
+            static function (array $state) use ($windowStart, $cost, &$refunded): array {
+                [$current, $count] = self::quotaState($state);
+                if ($current !== $windowStart) {
+                    return $state;
+                }
+                $refunded = true;
+
+                return ['window_start' => $current, 'count' => max(0, $count - $cost), 'updated_at' => gmdate('c')];
+            },
+            true
+        );
+
+        return $refunded;
+    }
+
+    /**
+     * A quota bucket's window start and count, or a throw: a malformed
+     * bucket is never read as "nothing used" (CLAUDE.md #11).
+     *
+     * @param array<string, mixed> $state
+     * @return array{0: int, 1: int}
+     */
+    private static function quotaState(array $state): array
+    {
+        $windowStart = $state['window_start'] ?? 0;
+        $count = $state['count'] ?? 0;
+        if (!is_int($windowStart) || !is_int($count) || $count < 0) {
+            throw new DatabaseException('Quota state is malformed');
         }
 
-        return max(1, $resetAt - $now);
+        return [$windowStart, $count];
     }
 
     /** @return array{allowed: bool, remaining: int, reset_at: int} */

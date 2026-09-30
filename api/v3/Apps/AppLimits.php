@@ -32,7 +32,9 @@ namespace Api\V3\Apps;
  *
  * Read strictly, like AppPolicy, and never permissively (CLAUDE.md #11). A
  * value that is missing (a query that did not select the column) or not
- * exactly what a write stores is named in `unreadable`, and resolves to the
+ * exactly what a write stores — including a CTIT pair whose short threshold
+ * is not below its long one, which names both — is named in `unreadable`,
+ * and resolves to the
  * reading that trusts least: both CTIT tails flag everything (the short
  * threshold at its ceiling, the long one at its floor), and a cap is null,
  * which the intakes answer with a 503 naming the column rather than
@@ -108,6 +110,19 @@ final class AppLimits
                 $unreadable[] = $column;
             }
             $values[$column] = $value;
+        }
+
+        // Two readable bounds that do not order (min >= max) are no reading
+        // of either: the write path refuses that pair (assertCtitOrder(),
+        // under the registration's row lock), so a stored one is a row
+        // nothing wrote as it stands. Both are named unreadable and read as
+        // the trusting-least pair, never as "every install is short or long"
+        // by accident of which bound won.
+        if ($values['ctit_min_seconds'] !== null && $values['ctit_max_seconds'] !== null
+            && $values['ctit_min_seconds'] >= $values['ctit_max_seconds']) {
+            $values['ctit_min_seconds'] = null;
+            $values['ctit_max_seconds'] = null;
+            $unreadable = array_values(array_unique([...$unreadable, 'ctit_min_seconds', 'ctit_max_seconds']));
         }
 
         return new self(

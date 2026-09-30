@@ -55,4 +55,28 @@ final class FastGoalPolicyTest extends TestCase
             self::assertSame(FastGoalPolicy::MAX_SECONDS, $policy->seconds);
         }
     }
+
+    /**
+     * The decision a stored outcome carries (GoalEngine::valuation()'s
+     * $decided): held is the note, which makes it too fast whatever the
+     * column says; a flagged row that is unpaid for another reason is not
+     * held; and a row read without the columns cannot answer.
+     */
+    public function testAStoredOutcomeCarriesItsDecision(): void
+    {
+        self::assertSame([true, true], FastGoalPolicy::decidedOn(['too_fast' => '1', 'payable' => '0', 'value_note' => FastGoalPolicy::HELD_NOTE]));
+        self::assertSame([true, true], FastGoalPolicy::decidedOn(['too_fast' => '0', 'payable' => '0', 'value_note' => 'held_too_fast']));
+        self::assertSame([true, false], FastGoalPolicy::decidedOn(['too_fast' => '1', 'payable' => '0', 'value_note' => 'not_payable_on_campaign']));
+        self::assertSame([true, false], FastGoalPolicy::decidedOn(['too_fast' => 1, 'payable' => 1, 'value_note' => null]));
+        self::assertSame([false, false], FastGoalPolicy::decidedOn(['too_fast' => '0', 'payable' => '1', 'value_note' => null]));
+        foreach ([['too_fast' => '1'], ['value_note' => null], []] as $partial) {
+            try {
+                FastGoalPolicy::decidedOn($partial);
+                self::fail('a row without the columns cannot answer: ' . json_encode($partial));
+            } catch (\LogicException $e) {
+                self::assertStringContainsString('too_fast and value_note', $e->getMessage());
+            }
+        }
+        self::assertLessThanOrEqual(32, strlen(FastGoalPolicy::HELD_NOTE), 'fits value_note varchar(32)');
+    }
 }

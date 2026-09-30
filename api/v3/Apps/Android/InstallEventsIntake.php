@@ -6,6 +6,7 @@ namespace Api\V3\Apps\Android;
 
 use Api\V3\Apps\AppRegistration;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\QuotaStore;
 use Prosper202\Database\Connection;
 use Prosper202\Goals\GoalEngine;
 use Prosper202\Goals\GoalEngineException;
@@ -43,6 +44,12 @@ use Prosper202\Goals\MysqlGoalRepository;
  * One install may post at most its registration's `event_cap_per_minute`
  * events a minute (AppLimits); a batch that would pass it is answered 429
  * with Retry-After and stored nowhere, and the SDK keeps it and retries.
+ * The cap counts events stored, not events sent: a batch is charged for
+ * the ids the install does not already hold (so a replay of a stored batch
+ * costs nothing and is answered with its duplicates even at the cap), and
+ * whatever the engine then does not accept — ids another request stored
+ * first, a batch it refuses, a failure — is refunded. A body carrying only
+ * a customer id costs one.
  */
 final class InstallEventsIntake
 {
@@ -57,9 +64,9 @@ final class InstallEventsIntake
 
     /**
      * @param (callable(): int)|null $clock
-     * @param (callable(string, int, int, int): ?int)|null $quota the event cap's store (InstallIntake::admit())
+     * @param QuotaStore|null $quota the event cap's store (InstallIntake::admit())
      */
-    public function __construct(\mysqli $db, private $clock = null, ?GoalEngine $engine = null, $quota = null)
+    public function __construct(\mysqli $db, private $clock = null, ?GoalEngine $engine = null, ?QuotaStore $quota = null)
     {
         $this->conn = new Connection($db);
         $this->engine = $engine ?? new GoalEngine($this->conn, new MysqlGoalRepository($this->conn), null, $clock);
@@ -115,8 +122,18 @@ final class InstallEventsIntake
             return InstallIntake::error(400, $e->getMessage(), ['field_errors' => $e->getFieldErrors()]);
         }
         $events = $parsed['events'];
+        $rowId = (int) $install['install_row_id'];
+        $bucket = 'app-install-event-cap:r' . $registration->registrationId . ':i' . $rowId;
+        $overMessage = 'Install ' . $installUuid . ' has reached its cap on events a minute';
         if ($events === []) {
-            // A customer id alone: nothing for the goals, one link.
+            // A customer id alone: nothing for the goals, one link, and one
+            // unit of the install's event cap — it is a write a public token
+            // can make, so it is capped like the events it rides with.
+            $charge = $this->installs->admit($bucket, $registration->limits->eventCapPerMinute, 1, $registration, 'event_cap_per_minute', $overMessage);
+            if (is_array($charge)) {
+                return $charge;
+            }
+
             return ['status' => 200, 'body' => ['data' => [
                 'install_uuid' => $installUuid,
                 'accepted' => [],
@@ -124,22 +141,26 @@ final class InstallEventsIntake
             ] + $this->installs->customer($install, $parsed['customer'])]];
         }
 
-        $rowId = (int) $install['install_row_id'];
         // The install's event cap (plan §7.1), counted per event and spent
         // only by a body that parsed, so a refused batch stores nothing and
         // counts nothing. The bucket is (registration, install row), both
         // ours: an install's budget is its own, and no spelling of the path's
-        // uuid reaches another's (CLAUDE.md #16, #17).
-        $refused = $this->installs->admit(
-            'app-install-event-cap:r' . $registration->registrationId . ':i' . $rowId,
-            $registration->limits->eventCapPerMinute,
-            count($events),
-            $registration,
-            'event_cap_per_minute',
-            'Install ' . $installUuid . ' has reached its cap on events a minute'
-        );
-        if ($refused !== null) {
-            return $refused;
+        // uuid reaches another's (CLAUDE.md #16, #17). It is charged for the
+        // ids the install does not hold yet — a replayed batch whose answer
+        // was lost costs nothing, and is answered even at the cap — and
+        // after the engine runs, whatever it did not accept goes back
+        // (refund()): ids a concurrent request stored first, a batch it
+        // refused, and every way this request fails.
+        $subject = $this->engine->installSubject($registration->userId, $rowId);
+        $ids = array_values(array_unique(array_map(static fn (GoalEvent $e): string => $e->eventId, $events)));
+        $known = count($this->engine->storedEventIds($subject, $ids));
+        $cost = count($ids) - $known;
+        $charge = null;
+        if ($cost > 0) {
+            $charge = $this->installs->admit($bucket, $registration->limits->eventCapPerMinute, $cost, $registration, 'event_cap_per_minute', $overMessage);
+            if (is_array($charge)) {
+                return $charge;
+            }
         }
 
         // A hint for retention only (installs with events are kept). It is
@@ -155,23 +176,44 @@ final class InstallEventsIntake
             $this->conn->executeUpdate($flag);
         };
 
+        // How many of the charged events this request stored: from the
+        // engine's answer when it gives one, 0 when it refused the batch in
+        // its transaction (rolled back), and otherwise measured — an
+        // exception says nothing about whether the commit landed, and
+        // ingest() can throw after it (CLAUDE.md #13).
+        $stored = null;
         try {
-            $result = $this->engine->ingest($registration->userId, $this->engine->installSubject($registration->userId, $rowId), $events, $markHasEvents);
-        } catch (GoalEngineException $e) {
-            return match ($e->reason) {
-                GoalEngineException::EVENT_CONFLICT => InstallIntake::error(409, $e->getMessage()),
-                GoalEngineException::EVENT_CAP => InstallIntake::error(422, $e->getMessage()),
-                default => throw $e,
-            };
-        } catch (\Throwable $e) {
-            if (!\Prosper202\Database\Connection::isRetryableLockError($e)) {
-                throw $e;
-            }
-            // The engine retried once and lost the lock again; the batch
-            // rolled back, so the SDK's retry is safe and is told to make it.
-            error_log('p202 android events: install ' . $installUuid . ' lost a lock twice; answered 503: ' . $e->getMessage());
+            try {
+                $result = $this->engine->ingest($registration->userId, $subject, $events, $markHasEvents);
+            } catch (GoalEngineException $e) {
+                if ($e->reason === GoalEngineException::EVENT_CONFLICT || $e->reason === GoalEngineException::EVENT_CAP) {
+                    $stored = 0;
+                }
 
-            return InstallIntake::error(503, 'The server is busy with this install; retry shortly.', [], ['Retry-After' => '5']);
+                return match ($e->reason) {
+                    GoalEngineException::EVENT_CONFLICT => InstallIntake::error(409, $e->getMessage()),
+                    GoalEngineException::EVENT_CAP => InstallIntake::error(422, $e->getMessage()),
+                    default => throw $e,
+                };
+            } catch (\Throwable $e) {
+                if (!\Prosper202\Database\Connection::isRetryableLockError($e)) {
+                    throw $e;
+                }
+                // The engine retried once and lost the lock again; the batch
+                // rolled back, so the SDK's retry is safe and is told to make it.
+                error_log('p202 android events: install ' . $installUuid . ' lost a lock twice; answered 503: ' . $e->getMessage());
+                $stored = 0;
+
+                return InstallIntake::error(503, 'The server is busy with this install; retry shortly.', [], ['Retry-After' => '5']);
+            }
+            $stored = count($result['accepted']);
+        } finally {
+            if ($charge !== null) {
+                $stored ??= $this->landed($subject, $ids, $known, $installUuid);
+                if ($charge->cost > $stored) {
+                    $this->installs->refund($charge, $charge->cost - $stored, 'install ' . $installUuid . '\'s batch stored ' . $stored . ' of the ' . $charge->cost . ' events charged');
+                }
+            }
         }
 
         return ['status' => 200, 'body' => ['data' => [
@@ -179,6 +221,26 @@ final class InstallEventsIntake
             'accepted' => $result['accepted'],
             'duplicates' => $result['duplicates'],
         ] + $this->installs->customer($install, $parsed['customer'])]];
+    }
+
+    /**
+     * How many of $ids the install holds now beyond the $known it held
+     * before the batch, after a failure that did not say whether the batch
+     * committed. Ids another request stored meanwhile count as landed: the
+     * error is in the direction that refunds less. A read that fails
+     * refunds nothing, for the same reason, and is logged.
+     *
+     * @param list<string> $ids
+     */
+    private function landed(\Prosper202\Goals\GoalSubject $subject, array $ids, int $known, string $installUuid): int
+    {
+        try {
+            return max(0, count($this->engine->storedEventIds($subject, $ids)) - $known);
+        } catch (\Throwable $e) {
+            error_log('p202 android events: install ' . $installUuid . '\'s batch failed and what it stored could not be read, so nothing is refunded: ' . $e->getMessage());
+
+            return PHP_INT_MAX;
+        }
     }
 
     /**

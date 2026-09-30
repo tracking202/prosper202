@@ -14,6 +14,7 @@ use Api\V3\Apps\AppRegistration;
 use Api\V3\Apps\AppRegistry;
 use Api\V3\Apps\AppToken;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\QuotaStore;
 use Api\V3\Support\ServerStateStore;
 use Prosper202\Database\Connection;
 use Prosper202\Goals\GoalEngine;
@@ -56,7 +57,10 @@ use Throwable;
  * Abuse limits (plan §7.1, AppLimits): a new install spends one of the
  * registration's `install_cap_per_minute` before anything is written, and
  * over it is answered 429 with Retry-After with nothing stored (admit(),
- * which the events intake shares for its per-install cap); every install
+ * which the events intake shares for its per-install cap). The unit is
+ * given back (refund()) when the admitted request then records nothing — a
+ * 503, an exception, or a concurrent request that stored the same install
+ * first — so the cap counts installs recorded, not attempts; every install
  * whose token names a click of the owner's has its click-to-install time
  * recorded and flagged (ClickToInstallTime), which marks and never refuses.
  */
@@ -71,17 +75,15 @@ final class InstallIntake
     /**
      * @param (callable(): int)|null $clock
      * @param (callable(): ?string)|null $keyLoader the install-token key (tests plant one)
-     * @param (callable(string, int, int, int): ?int)|null $quota the abuse caps' store:
-     *        (bucket, limit, window seconds, cost) => seconds to wait when refused, null when
-     *        admitted; throws when it cannot answer. ServerStateStore::reserveQuota() unless
-     *        a test plants one.
+     * @param QuotaStore|null $quota the abuse caps' store; a ServerStateStore (on the
+     *        configured state directory, read per request) unless a test plants one
      */
     public function __construct(
         private readonly \mysqli $db,
         private $clock = null,
         ?GoalEngine $engine = null,
         private $keyLoader = null,
-        private $quota = null,
+        private readonly ?QuotaStore $quota = null,
     ) {
         $this->conn = new Connection($db);
         $this->goals = new MysqlGoalRepository($this->conn);
@@ -135,7 +137,7 @@ final class InstallIntake
         // table: a sender can pick which app's budget to spend (the token is
         // public), never mint a new bucket or reach another's by spelling
         // (CLAUDE.md #16, #17). Over the cap nothing is stored or counted.
-        $refused = $this->admit(
+        $charge = $this->admit(
             'app-install-cap:r' . $registration->registrationId,
             $registration->limits->installCapPerMinute,
             1,
@@ -143,46 +145,58 @@ final class InstallIntake
             'install_cap_per_minute',
             'This app has reached its cap on installs a minute'
         );
-        if ($refused !== null) {
-            return $refused;
+        if (is_array($charge)) {
+            return $charge;
         }
 
-        $parsed = $payload->referrerStatus === 'ok' ? ReferrerParser::parse((string) $payload->installReferrer) : null;
+        // From here until the commit, every way out that records nothing —
+        // a 503, the replay a concurrent duplicate is answered with, an
+        // exception — gives the unit back: the cap counts installs
+        // recorded, and the SDK's retry of a 5xx must not pay twice.
+        $committed = false;
         try {
-            $first = InstallClassifier::fromReferrer($payload, $parsed, $this->installKey($parsed));
-        } catch (MissingInstallKey $e) {
-            error_log('p202 android intake: ' . $e->getMessage());
-
-            return self::error(503, 'This server cannot verify install tokens right now; retry later.', [], ['Retry-After' => '300']);
-        }
-
-        $work = fn (): array => $this->record($registration, $payload, $parsed, $first, $remoteIp);
-        try {
+            $parsed = $payload->referrerStatus === 'ok' ? ReferrerParser::parse((string) $payload->installReferrer) : null;
             try {
-                $done = $this->conn->transaction($work);
-            } catch (Throwable $e) {
-                if (!Connection::isRetryableLockError($e)) {
-                    throw $e;
-                }
-                $done = $this->conn->transaction($work);
-            }
-        } catch (Throwable $e) {
-            if (Connection::isMysqlError($e, 1062, 'Duplicate entry')) {
-                // A concurrent request for the same install committed first.
-                $stored = $this->stored($registration->registrationId, $payload->installUuid);
-                if ($stored !== null) {
-                    return $this->replay($stored, $payload);
-                }
-            }
-            if (Connection::isRetryableLockError($e)) {
-                // Lost the lock twice in a row: nothing was written (the
-                // transaction rolled back), so the SDK's retry is safe and
-                // is told to make it, rather than read a bare 500.
-                error_log('p202 android intake: install ' . $payload->installUuid . ' lost a lock twice; answered 503: ' . $e->getMessage());
+                $first = InstallClassifier::fromReferrer($payload, $parsed, $this->installKey($parsed));
+            } catch (MissingInstallKey $e) {
+                error_log('p202 android intake: ' . $e->getMessage());
 
-                return self::error(503, 'The server is busy with this install; retry shortly.', [], ['Retry-After' => '5']);
+                return self::error(503, 'This server cannot verify install tokens right now; retry later.', [], ['Retry-After' => '300']);
             }
-            throw $e;
+
+            $work = fn (): array => $this->record($registration, $payload, $parsed, $first, $remoteIp);
+            try {
+                try {
+                    $done = $this->conn->transaction($work);
+                } catch (Throwable $e) {
+                    if (!Connection::isRetryableLockError($e)) {
+                        throw $e;
+                    }
+                    $done = $this->conn->transaction($work);
+                }
+            } catch (Throwable $e) {
+                if (Connection::isMysqlError($e, 1062, 'Duplicate entry')) {
+                    // A concurrent request for the same install committed first.
+                    $stored = $this->stored($registration->registrationId, $payload->installUuid);
+                    if ($stored !== null) {
+                        return $this->replay($stored, $payload);
+                    }
+                }
+                if (Connection::isRetryableLockError($e)) {
+                    // Lost the lock twice in a row: nothing was written (the
+                    // transaction rolled back), so the SDK's retry is safe and
+                    // is told to make it, rather than read a bare 500.
+                    error_log('p202 android intake: install ' . $payload->installUuid . ' lost a lock twice; answered 503: ' . $e->getMessage());
+
+                    return self::error(503, 'The server is busy with this install; retry shortly.', [], ['Retry-After' => '5']);
+                }
+                throw $e;
+            }
+            $committed = true;
+        } finally {
+            if (!$committed) {
+                $this->refund($charge, $charge->cost, 'install ' . $payload->installUuid . ' was not recorded');
+            }
         }
 
         // Committed. What follows describes committed state; a failure here
@@ -203,11 +217,13 @@ final class InstallIntake
      * Spend $cost of a registration's abuse cap (AppLimits) on $bucket, or
      * the answer that refuses the request: 429 with Retry-After over the
      * cap, and 503 — fail closed, with the reason logged by name — when the
-     * cap is unreadable or its store cannot answer. Null admits.
+     * cap is unreadable or its store cannot answer. Admitted, the charge,
+     * which the caller hands to refund() for whatever the request then does
+     * not record.
      *
-     * @return array{status: int, body: array<string, mixed>, headers?: array<string, string>}|null
+     * @return QuotaCharge|array{status: int, body: array<string, mixed>, headers?: array<string, string>}
      */
-    public function admit(string $bucket, ?int $cap, int $cost, AppRegistration $registration, string $column, string $overMessage): ?array
+    public function admit(string $bucket, ?int $cap, int $cost, AppRegistration $registration, string $column, string $overMessage): QuotaCharge|array
     {
         if ($cap === null) {
             error_log('p202 android intake: registration ' . $registration->registrationId . '\'s ' . $column
@@ -217,17 +233,16 @@ final class InstallIntake
                 . 'the request was not recorded. Retry later.', [], ['Retry-After' => '300']);
         }
         try {
-            $retryAfter = $this->quota !== null
-                ? ($this->quota)($bucket, $cap, AppLimits::WINDOW_SECONDS, $cost)
-                : (new ServerStateStore())->reserveQuota($bucket, $cap, AppLimits::WINDOW_SECONDS, $cost);
+            $window = $this->quotaStore()->reserveQuotaWindow($bucket, $cap, AppLimits::WINDOW_SECONDS, $cost);
         } catch (Throwable $e) {
             error_log('p202 android intake: the ' . $column . ' store is unavailable for registration ' . $registration->registrationId
                 . '; refusing with 503: ' . $e->getMessage() . ($e->getPrevious() !== null ? ' (' . $e->getPrevious()->getMessage() . ')' : ''));
 
             return self::error(503, 'The server cannot check this app\'s ' . $column . ' right now; the request was not recorded. Retry later.', [], ['Retry-After' => '60']);
         }
+        $retryAfter = $window['retry_after'];
         if ($retryAfter === null) {
-            return null;
+            return new QuotaCharge($bucket, $cost, $window['window_start'], AppLimits::WINDOW_SECONDS, $registration->registrationId, $column);
         }
         if (!is_int($retryAfter) || $retryAfter < 1) {
             throw new \LogicException('a refused quota must say how long to wait');
@@ -236,6 +251,33 @@ final class InstallIntake
         return self::error(429, $overMessage . ' (' . $column . ' = ' . $cap . '): nothing was recorded. Retry after ' . $retryAfter . ' s.', [
             'retry_after_seconds' => $retryAfter,
         ], ['Retry-After' => (string) $retryAfter]);
+    }
+
+    /**
+     * Give back $units of what admit() charged, for a request that did not
+     * record them. Never throws: it runs on the way out of a failure, and a
+     * refund that cannot be made must not replace the error the caller is
+     * answering with, so it is logged by bucket and left — the cap then
+     * over-counts that window by $units, the direction that admits less.
+     */
+    public function refund(QuotaCharge $charge, int $units, string $why): void
+    {
+        if ($units < 1) {
+            return;
+        }
+        $units = min($units, $charge->cost);
+        try {
+            $this->quotaStore()->refundQuota($charge->bucket, $charge->windowSeconds, $units, $charge->windowStart);
+        } catch (Throwable $e) {
+            error_log('p202 android intake: ' . $why . ', but refunding ' . $units . ' of registration ' . $charge->registrationId . '\'s '
+                . $charge->column . ' (bucket ' . $charge->bucket . ') failed: ' . $e->getMessage()
+                . ($e->getPrevious() !== null ? ' (' . $e->getPrevious()->getMessage() . ')' : ''));
+        }
+    }
+
+    private function quotaStore(): QuotaStore
+    {
+        return $this->quota ?? new ServerStateStore();
     }
 
     /**

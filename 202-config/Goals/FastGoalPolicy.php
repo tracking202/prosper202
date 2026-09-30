@@ -26,10 +26,21 @@ namespace Prosper202\Goals;
  *   default leaves the money where it was and makes the pattern visible.
  * - `hold`: it is recorded, counted in the funnel and flagged, and neither
  *   paid nor sent to the traffic source; its ledger row (when the install
- *   has a click) is written unpayable, as a tracked outcome is. There is no
- *   release: an outcome held stays held, and the decision is the
- *   registration's when the outcome is written, like every snapshot the
- *   intake takes.
+ *   has a click) is written unpayable, as a tracked outcome is, and the
+ *   outcome's `value_note` says `held_too_fast` (HELD_NOTE).
+ *
+ * The decision is made once, under the policy the registration has when an
+ * outcome of that (goal, reaching event) is first written, and it stands
+ * (GoalEngine::valuation()'s $decided): there is no release. Restating an
+ * outcome, giving it its ledger row when the install's credit changes,
+ * reviving it, or replacing it in a re-evaluation (a new goal version, a
+ * replay that shifts n) with the same reaching event all keep the stored
+ * `too_fast` and held-or-not, whatever the policy says by then. So
+ * switching `hold` to `count` pays only outcomes written afterwards, and
+ * switching `count` to `hold` never un-pays an outcome already written.
+ * Held is read from the note rather than from `too_fast` with
+ * `payable = 0`: under `count` a flagged outcome is also unpaid while its
+ * install has no credit, and it must pay once the credit arrives.
  *
  * Read strictly (CLAUDE.md #11): a value that is missing or not exactly
  * what a write stores is named in `unreadable` and resolves to the reading
@@ -39,6 +50,8 @@ final class FastGoalPolicy
 {
     public const COUNT = 'count';
     public const HOLD = 'hold';
+    /** The value_note of an outcome held under `hold` (≤ the column's 32 characters). */
+    public const HELD_NOTE = 'held_too_fast';
     public const DEFAULT_SECONDS = 5;
     public const MAX_SECONDS = 3600;
 
@@ -88,6 +101,26 @@ final class FastGoalPolicy
         }
 
         return $value;
+    }
+
+    /**
+     * The fast-goal decision a stored outcome row carries: whether it was
+     * too fast, and whether it was held. A held row is too fast whatever its
+     * `too_fast` column says. A row read without the columns is a query that
+     * cannot answer, and is refused rather than read as "not fast"
+     * (CLAUDE.md #2, #11).
+     *
+     * @param array<string, mixed> $row a 202_goal_outcomes row
+     * @return array{0: bool, 1: bool} too fast, held
+     */
+    public static function decidedOn(array $row): array
+    {
+        if (!array_key_exists('too_fast', $row) || !array_key_exists('value_note', $row)) {
+            throw new \LogicException('an outcome row read without too_fast and value_note cannot carry its fast-goal decision');
+        }
+        $held = $row['value_note'] === self::HELD_NOTE;
+
+        return [$held || (int) $row['too_fast'] === 1, $held];
     }
 
     /**
