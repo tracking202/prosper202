@@ -91,11 +91,14 @@ func fetchAllRows(c *api.Client, endpoint string) ([]map[string]interface{}, err
 }
 
 func fetchAllRowsWithParams(c *api.Client, endpoint string, baseParams map[string]string) ([]map[string]interface{}, error) {
-	const defaultPageSize = 100
+	return fetchAllRowsPaged(c, endpoint, baseParams, 100)
+}
+
+// fetchAllRowsPaged is fetchAllRowsWithParams with the page size to request.
+func fetchAllRowsPaged(c *api.Client, endpoint string, baseParams map[string]string, pageSize int) ([]map[string]interface{}, error) {
 	const maxPages = 10000
 
 	offset := 0
-	pageSize := defaultPageSize
 	all := make([]map[string]interface{}, 0)
 	seenKeys := map[string]struct{}{}
 

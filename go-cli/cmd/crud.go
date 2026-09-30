@@ -34,6 +34,7 @@ type crudEntity struct {
 	IDField       string   // internal primary-key field (e.g. aff_campaign_id)
 	PublicIDField string   // public-facing id field (e.g. aff_campaign_id_public)
 	URLFields     []string // URL fields `list --url-contains` searches; none means no such flag
+	StatsGroupBy  string   // reports/breakdown dimension `list --with-stats` merges by IDField; "" means no such flag
 }
 
 // resolvePublicID treats id as a public id and returns the matching internal id
@@ -554,10 +555,25 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if len(entity.URLFields) > 0 {
 				urlContains, _ = cmd.Flags().GetString("url-contains")
 			}
+			var statsParams map[string]string
+			minClicks := 0
+			if entity.StatsGroupBy != "" {
+				var err error
+				if statsParams, minClicks, err = listStatsParams(cmd, entity); err != nil {
+					return err
+				}
+			}
+			// Client-side filters read every page, so paging flags make no sense with them.
+			clientFilter := ""
 			if urlContains != "" {
+				clientFilter = "--url-contains"
+			} else if minClicks > 0 {
+				clientFilter = "--min-clicks"
+			}
+			if clientFilter != "" {
 				for _, paging := range []string{"page", "limit", "offset"} {
 					if cmd.Flags().Changed(paging) {
-						return validationError("--url-contains searches every page, so it cannot be combined with --%s", paging).
+						return validationError("%s searches every page, so it cannot be combined with --%s", clientFilter, paging).
 							WithHint("Drop --page/--limit/--offset; every match is returned.")
 					}
 				}
@@ -588,7 +604,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 				}
 			}
 			allRows, _ := cmd.Flags().GetBool("all")
-			if urlContains != "" {
+			if clientFilter != "" {
 				allRows = true
 			}
 			resolveNames, _ := cmd.Flags().GetBool("resolve-names")
@@ -609,6 +625,11 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 						}
 					}
 					rows = matched
+				}
+				if statsParams != nil {
+					if rows, err = addListStats(c, entity, rows, statsParams, minClicks); err != nil {
+						return err
+					}
 				}
 				if resolveNames {
 					if err := resolveForeignKeyNames(c, rows); err != nil {
@@ -640,13 +661,20 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if resolveNames {
+			if resolveNames || statsParams != nil {
 				rows, err := parseDataArray(data)
 				if err != nil {
 					return err
 				}
-				if err := resolveForeignKeyNames(c, rows); err != nil {
-					return err
+				if statsParams != nil {
+					if rows, err = addListStats(c, entity, rows, statsParams, 0); err != nil {
+						return err
+					}
+				}
+				if resolveNames {
+					if err := resolveForeignKeyNames(c, rows); err != nil {
+						return err
+					}
 				}
 				var parsed map[string]interface{}
 				resp := map[string]interface{}{"data": rows}
@@ -668,6 +696,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	listCmd.Flags().Bool("resolve-names", false, "Resolve foreign key IDs to names")
 	if len(entity.URLFields) > 0 {
 		listCmd.Flags().String("url-contains", "", fmt.Sprintf("Only %s with a URL containing this text (case-insensitive; searches every page; fields: %s)", entity.Name+"s", strings.Join(entity.URLFields, ", ")))
+	}
+	if entity.StatsGroupBy != "" {
+		registerListStatsFlags(listCmd, entity)
 	}
 	for _, p := range entity.ListParams {
 		listCmd.Flags().String(p.Name, "", p.Desc)
@@ -860,10 +891,12 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 func init() {
 	entities := []crudEntity{
 		{
-			Name:      "campaign",
-			Plural:    "campaigns (affiliate offers with URLs, payouts, and postback settings)",
-			Endpoint:  "campaigns",
-			URLFields: campaignURLFields,
+			Name:         "campaign",
+			Plural:       "campaigns (affiliate offers with URLs, payouts, and postback settings)",
+			Endpoint:     "campaigns",
+			IDField:      "aff_campaign_id",
+			URLFields:    campaignURLFields,
+			StatsGroupBy: "campaign",
 			Fields: []crudField{
 				{Name: "aff_campaign_name", Desc: "Campaign name", Required: true},
 				{Name: "aff_campaign_url", Desc: "Primary offer URL", Required: true},
@@ -1066,6 +1099,7 @@ func init() {
 		cloneCmd.Flags().String("name", "", "Optional name override for the cloned campaign")
 		registerIdempotencyKeyFlag(cloneCmd)
 		campaignCmd.AddCommand(cloneCmd, newCampaignReplaceURLCmd())
+		campaignCmd.AddCommand(newCampaignCheckURLsCmd())
 	}
 
 	if trackerCmd != nil {

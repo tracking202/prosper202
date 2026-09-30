@@ -44,12 +44,13 @@ p202 config show
 
 | Command | Description |
 | ------- | ----------- |
-| `p202 campaign list` | List campaigns; `--url-contains <text>` returns every campaign with an offer URL (any of the five slots) containing the text |
+| `p202 campaign list` | List campaigns; `--url-contains <text>` returns every campaign with an offer URL (any of the five slots) containing the text; `--with-stats` adds each campaign's `total_clicks`, `total_leads`, `total_income`, `total_cost`, `total_net` for `--period` (default `last30`) or `--days N`, `0` when it had no traffic (needs `reports:read`); `--min-clicks N` keeps campaigns with at least N clicks |
 | `p202 campaign get <id>` | Get a single campaign |
 | `p202 campaign create` | Create a campaign |
 | `p202 campaign update <id>` | Update a campaign |
 | `p202 campaign delete <id>` | Delete a campaign |
 | `p202 campaign replace-url` | Rewrite offer URLs in bulk: `--match <text>` plus `--with <text>` (replace the matched part) or `--set <url>` (whole URL, `{id}`/`{slug}` filled per campaign); `--slot`, `--ids`, `--aff-network-id` narrow it; `--dry-run` lists campaign, slot, old and new URL and writes nothing; otherwise confirms first (`--force` skips), one `PUT` per campaign, exit 5 on partial failure. Each applying run saves an undo manifest of its applied slots to `~/.p202/undo/` and prints `Undo with: … --undo <file>` (`meta.undo_manifest` under `--json`); `--undo <file>` restores the old URLs only where the slot still holds that run's new URL (others `skipped`), refuses a manifest from another base URL, and exits 5 if a manifest cannot be saved after the writes (it is then printed on stderr) |
+| `p202 campaign check-urls` | Find dead offer URLs without sending clicks: once per unique host, a DNS lookup, a TCP connect and, for https, a verified TLS handshake, with no HTTP bytes sent. One row per URL slot with `status` (`ok`, `invalid_url`, `dns_failed`, `connect_failed`, `timeout`, `tls_failed`) and `detail`. `--url-contains`, `--slot`, `--ids` and `--aff-network-id` narrow it; `--timeout` is per host (default 5s). `--http` also sends a HEAD (a GET on 405) and reports `http_status`/`location`, after a click warning and a confirmation (`--force` skips it). Exits 5 when any status is not `ok` |
 | `p202 aff-network list` | List affiliate networks (alias: `category`) |
 | `p202 ppc-network list` | List PPC/traffic networks (alias: `traffic-network`) |
 | `p202 tracker list` | List trackers |

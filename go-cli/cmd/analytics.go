@@ -52,6 +52,33 @@ var analyticsAllowedSort = map[string]bool{
 	"conv_rate":    true,
 }
 
+// reportPeriods are the windows ReportsController::applyTimeFilters knows; it reads any other value as all time.
+var reportPeriods = []string{"today", "yesterday", "last7", "last30", "last90"}
+
+// applyReportWindow maps --period, --days and --time_from/--time_to onto report
+// params: --period wins, and --days applies only without an explicit range.
+func applyReportWindow(params map[string]string, period string, days int, timeFrom, timeTo string) error {
+	if days < 0 {
+		return validationError("--days must be 0 or greater").WithHint("Pass a number of days, e.g. --days 30, or use --period (%s).", strings.Join(reportPeriods, ", "))
+	}
+	if period != "" {
+		params["period"] = period
+		return nil
+	}
+	if timeFrom != "" {
+		params["time_from"] = timeFrom
+	}
+	if timeTo != "" {
+		params["time_to"] = timeTo
+	}
+	if days > 0 && timeFrom == "" && timeTo == "" {
+		now := time.Now().Unix()
+		params["time_to"] = strconv.FormatInt(now, 10)
+		params["time_from"] = strconv.FormatInt(now-int64(days*86400), 10)
+	}
+	return nil
+}
+
 var analyticsCmd = &cobra.Command{
 	Use:   "analytics",
 	Short: "Query performance stats grouped by campaign, traffic source, country, etc. (shorthand for report breakdown)",
@@ -95,28 +122,11 @@ var analyticsCmd = &cobra.Command{
 		}
 
 		period, _ := cmd.Flags().GetString("period")
-		period = strings.TrimSpace(period)
 		days, _ := cmd.Flags().GetInt("days")
-		if days < 0 {
-			return validationError("--days must be 0 or greater")
-		}
 		timeFrom, _ := cmd.Flags().GetString("time_from")
 		timeTo, _ := cmd.Flags().GetString("time_to")
-
-		if period != "" {
-			params["period"] = period
-		} else {
-			if timeFrom != "" {
-				params["time_from"] = timeFrom
-			}
-			if timeTo != "" {
-				params["time_to"] = timeTo
-			}
-			if days > 0 && timeFrom == "" && timeTo == "" {
-				now := time.Now().Unix()
-				params["time_to"] = strconv.FormatInt(now, 10)
-				params["time_from"] = strconv.FormatInt(now-int64(days*86400), 10)
-			}
+		if err := applyReportWindow(params, strings.TrimSpace(period), days, timeFrom, timeTo); err != nil {
+			return err
 		}
 
 		sortDir, _ := cmd.Flags().GetString("sort-dir")

@@ -23,6 +23,7 @@ type campaignFake struct {
 	gets     []string
 	failPut  map[string]bool
 	stageAll bool
+	extra    http.HandlerFunc // other paths, when set (called under mu)
 }
 
 type campaignPut struct {
@@ -88,6 +89,8 @@ func (f *campaignFake) server(t *testing.T) *httptest.Server {
 				}
 			}
 			_, _ = w.Write([]byte(`{"data":{"aff_campaign_id":` + id + `}}`))
+		case f.extra != nil:
+			f.extra(w, r)
 		default:
 			w.WriteHeader(404)
 			_, _ = w.Write([]byte(`{"message":"not found"}`))
