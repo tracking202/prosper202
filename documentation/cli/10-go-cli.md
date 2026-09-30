@@ -53,6 +53,7 @@ p202 config show
 | `p202 aff-network list` | List affiliate networks (alias: `category`) |
 | `p202 ppc-network list` | List PPC/traffic networks (alias: `traffic-network`) |
 | `p202 tracker list` | List trackers |
+| `p202 landing-page list` | List landing pages; `--url-contains <text>` returns every landing page whose `landing_page_url` or `leave_behind_page_url` contains the text |
 | `p202 click list` | List clicks |
 | `p202 click conversions <id>` | Explain a click's value: every conversion on it, whether it counts and why not, what produced it (goal and version, upload, reversal, API key), ending with the click's value; `--json` is `GET /clicks/{id}/conversions` unchanged |
 | `p202 conversion list` | List conversions, with their provenance (`--click_id`, `--source`, `--goal` filter by click, by what produced them and by goal) |

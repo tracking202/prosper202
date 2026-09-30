@@ -16,6 +16,7 @@ import (
 // campaignFake serves GET /campaigns in pages and records every PUT.
 type campaignFake struct {
 	mu       sync.Mutex
+	endpoint string // list path under /api/v3; "campaigns" when empty
 	rows     []map[string]interface{}
 	puts     []campaignPut
 	gets     []string
@@ -30,11 +31,15 @@ type campaignPut struct {
 
 func (f *campaignFake) server(t *testing.T) *httptest.Server {
 	t.Helper()
+	endpoint := f.endpoint
+	if endpoint == "" {
+		endpoint = "campaigns"
+	}
 	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/campaigns":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/"+endpoint:
 			f.gets = append(f.gets, r.URL.RawQuery)
 			q := r.URL.Query()
 			offset, _ := strconv.Atoi(q.Get("offset"))
@@ -179,6 +184,41 @@ func TestCampaignListURLContainsRejectsPagingFlagsBeforeAnyRequest(t *testing.T)
 	}
 	if len(f.gets) != 0 {
 		t.Errorf("no campaign request should be made, got %v", f.gets)
+	}
+}
+
+func TestLandingPageListURLContainsSearchesBothURLFieldsAndEveryPage(t *testing.T) {
+	f := &campaignFake{endpoint: "landing-pages"}
+	for i := 0; i < 120; i++ {
+		f.rows = append(f.rows, map[string]interface{}{"landing_page_id": 1000 + i, "landing_page_url": "https://filler.example/lp"})
+	}
+	f.rows = append([]map[string]interface{}{
+		{"landing_page_id": 7, "landing_page_url": "https://OLD-HOST.example/lp1", "leave_behind_page_url": ""},
+		{"landing_page_id": 8, "landing_page_url": "https://keep.example/lp2", "leave_behind_page_url": "https://keep.example/lb"},
+	}, f.rows...)
+	// Past the first page, matching only on the leave-behind URL.
+	f.rows = append(f.rows, map[string]interface{}{"landing_page_id": 9, "landing_page_url": "https://keep.example/lp3", "leave_behind_page_url": "https://old-host.example/lb"})
+	setupCampaignFake(t, f)
+
+	stdout, _, err := executeCommand("landing-page", "list", "--url-contains", "old-host.EXAMPLE", "--json")
+	if err != nil {
+		t.Fatalf("landing-page list --url-contains: %v", err)
+	}
+	var resp struct {
+		Data []map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &resp); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout)
+	}
+	var ids []int
+	for _, row := range resp.Data {
+		ids = append(ids, int(row["landing_page_id"].(float64)))
+	}
+	if len(ids) != 2 || ids[0] != 7 || ids[1] != 9 {
+		t.Fatalf("matched ids = %v, want [7 9] (landing_page_url case-insensitive, leave_behind_page_url on page 2)", ids)
+	}
+	if len(f.gets) < 2 {
+		t.Errorf("expected more than one page request, got %v", f.gets)
 	}
 }
 

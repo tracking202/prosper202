@@ -947,9 +947,10 @@ func init() {
 			},
 		},
 		{
-			Name:     "landing-page",
-			Plural:   "landing pages (pre-sell pages visitors see before the offer)",
-			Endpoint: "landing-pages",
+			Name:      "landing-page",
+			Plural:    "landing pages (pre-sell pages visitors see before the offer)",
+			Endpoint:  "landing-pages",
+			URLFields: []string{"landing_page_url", "leave_behind_page_url"},
 			Fields: []crudField{
 				{Name: "landing_page_url", Desc: "Landing page URL", Required: true},
 				{Name: "aff_campaign_id", Desc: "Campaign ID", Required: true},

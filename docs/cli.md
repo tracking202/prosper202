@@ -341,6 +341,10 @@ p202 tracker list --all --resolve-names
 
 ### Landing page (`p202 landing-page`)
 
+`p202 landing-page list --url-contains <text>` returns every landing page whose
+`landing_page_url` or `leave_behind_page_url` contains the text (case-insensitive, all pages;
+not combinable with `--page`/`--limit`/`--offset`).
+
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--landing_page_url` | Yes | Landing page URL |
