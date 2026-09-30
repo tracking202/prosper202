@@ -571,7 +571,8 @@ func init() {
 	rotatorCmd.AddCommand(rotatorTestCmd)
 
 	trackerTestCmd.Flags().String("geo", "", "Comma-separated country codes to simulate (spoofs X-Forwarded-For)")
-	trackerTestCmd.Flags().String("device", "", "Device to simulate: mobile, desktop, tablet")
+	trackerTestCmd.Flags().String("device", "", "Device to simulate")
+	enumFlag(trackerTestCmd, "device", newEnum(sortedKeys(deviceUAs), enumFoldCase()))
 	// The tracker command is built dynamically in crud.go's init() (which runs
 	// before this file's init), so look it up by name to attach the subcommand.
 	if tc := findChildCommand("tracker"); tc != nil {

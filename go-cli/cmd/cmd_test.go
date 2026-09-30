@@ -4449,7 +4449,7 @@ func TestAnalyticsInvalidGroupByRejects(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid group-by")
 	}
-	if !strings.Contains(err.Error(), "unsupported --group-by") {
+	if !strings.Contains(err.Error(), "--group-by must be one of: campaign, aff_network") {
 		t.Errorf("unexpected error: %q", err.Error())
 	}
 }
@@ -4469,7 +4469,7 @@ func TestAnalyticsInvalidSortRejects(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid sort")
 	}
-	if !strings.Contains(err.Error(), "unsupported --sort") {
+	if !strings.Contains(err.Error(), "--sort must be one of: total_clicks") {
 		t.Errorf("unexpected error: %q", err.Error())
 	}
 }

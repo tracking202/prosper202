@@ -107,6 +107,19 @@ var dimensionAliases = map[string]string{
 	"geo":     "country",
 }
 
+// breakdownDimensions are the dimensions ReportsController::BREAKDOWNS
+// knows, in its order.
+var breakdownDimensions = []string{
+	"campaign", "aff_network", "ppc_account", "ppc_network", "landing_page", "keyword",
+	"country", "city", "region", "browser", "platform", "device", "isp", "text_ad",
+}
+
+// dimensionEnum is a --breakdown/--group-by flag's accepted values.
+func dimensionEnum(values []string) *enumSpec {
+	return newEnum(values, enumAliases(dimensionAliases), enumFoldCase(),
+		enumHint("Reports break down by these dimensions only; `p202 search <what you want to do>` finds other commands."))
+}
+
 // resolveDimension normalizes a user-supplied breakdown dimension.
 func resolveDimension(d string) string {
 	d = strings.ToLower(strings.TrimSpace(d))
@@ -135,6 +148,25 @@ var metricAliases = map[string]string{
 	"avg_cpc":     "avg_cpc",
 }
 
+// Sort columns each report endpoint accepts (ReportsController's
+// ALLOWED_SORTS, DAYPART_ALLOWED_SORTS, WEEKPART_ALLOWED_SORTS) and the
+// metric columns a breakdown row carries (METRIC_FIELDS).
+var (
+	breakdownSorts = []string{"total_clicks", "total_leads", "total_income", "total_cost", "total_net", "roi", "epc", "conv_rate"}
+	metricColumns  = []string{"total_clicks", "total_click_throughs", "total_leads", "total_income", "total_cost", "total_net", "epc", "avg_cpc", "conv_rate", "roi", "cpa"}
+	daypartSorts   = append([]string{"hour_of_day"}, metricColumns...)
+	weekpartSorts  = append([]string{"day_of_week"}, metricColumns...)
+	sortDirections = []string{"ASC", "DESC"}
+)
+
+// metricEnum is a --sort/--metric flag's accepted columns, with the
+// friendly aliases (clicks, revenue, ...) that name one of them.
+func metricEnum(columns []string) *enumSpec {
+	return newEnum(columns, enumAliases(metricAliases), enumFoldCase())
+}
+
+func sortDirEnum() *enumSpec { return newEnum(sortDirections, enumFoldCase()) }
+
 // resolveMetric normalizes a user-supplied sort/metric name to the API column.
 func resolveMetric(m string) string {
 	m = strings.ToLower(strings.TrimSpace(m))
@@ -160,9 +192,12 @@ func applyReportSort(cmd *cobra.Command, params map[string]string) {
 	}
 }
 
-// addSortFlags registers --sort and --sort_dir on a report subcommand. The
-// global flag normalizer makes --sort-dir an accepted spelling automatically.
-func addSortFlags(cmd *cobra.Command, sortHelp string) {
-	cmd.Flags().StringP("sort", "s", "", sortHelp)
-	cmd.Flags().String("sort_dir", "", "Sort direction: ASC or DESC (also --sort-dir)")
+// addSortFlags registers --sort (one of columns) and --sort_dir on a report
+// subcommand. The global flag normalizer makes --sort-dir an accepted
+// spelling automatically.
+func addSortFlags(cmd *cobra.Command, columns []string) {
+	cmd.Flags().StringP("sort", "s", "", "Sort by")
+	enumFlag(cmd, "sort", metricEnum(columns))
+	cmd.Flags().String("sort_dir", "", "Sort direction (also --sort-dir)")
+	enumFlag(cmd, "sort_dir", sortDirEnum())
 }

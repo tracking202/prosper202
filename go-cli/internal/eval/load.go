@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -96,10 +97,8 @@ func validateCase(c Case) error {
 	if strings.TrimSpace(c.Ask) == "" && c.Skip == "" {
 		return fmt.Errorf("ask is required (or mark the case skip with a reason)")
 	}
-	switch c.Priority {
-	case "", "critical", "high", "medium", "low":
-	default:
-		return fmt.Errorf("priority %q is not one of critical, high, medium, low", c.Priority)
+	if c.Priority != "" && !slices.Contains(Priorities, c.Priority) {
+		return fmt.Errorf("priority %q is not one of %s", c.Priority, strings.Join(Priorities, ", "))
 	}
 	e := c.Expected
 	hasExpectation := len(e.RunsOneOf) > 0 || len(e.NeverRuns) > 0 || len(e.StateUnchanged) > 0 ||

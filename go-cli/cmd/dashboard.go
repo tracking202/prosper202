@@ -42,7 +42,8 @@ var dashboardCmd = &cobra.Command{
 }
 
 func init() {
-	dashboardCmd.Flags().StringP("period", "p", "", "Period: today, yesterday, last7, last30, last90")
+	dashboardCmd.Flags().StringP("period", "p", "", "Period (default today)")
+	enumFlag(dashboardCmd, "period", newEnum(reportPeriods))
 	dashboardCmd.Flags().String("time_from", "", "Start timestamp (unix)")
 	dashboardCmd.Flags().String("time_to", "", "End timestamp (unix)")
 	dashboardCmd.Flags().String("aff_campaign_id", "", "Filter by INTERNAL campaign id (from `campaign list`), not the public id in tracking URLs")

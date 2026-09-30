@@ -42,7 +42,10 @@ var rootCmd = &cobra.Command{
 		}
 		// Before any command reads its flags: an explicitly empty value
 		// would otherwise read as "not given" (empty_flags.go).
-		return refuseEmptyStringFlags(cmd)
+		if err := refuseEmptyStringFlags(cmd); err != nil {
+			return err
+		}
+		return refuseInvalidEnumFlags(cmd)
 	},
 }
 

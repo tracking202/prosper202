@@ -28,32 +28,35 @@ var appInstallCmd = &cobra.Command{
 		"  p202 app install simulate 3 --click 1042",
 }
 
+// The values an install filter takes: the server's MatchState and
+// IntegrityState (listed in /capabilities as features.app_installs and
+// features.play_integrity), the trust classes and the CTIT flags.
+var (
+	appMatchStateEnum = newEnum([]string{"attributed", "organic", "third_party", "unavailable", "pending_click",
+		"bad_token", "foreign_click", "implausible", "outside_window", "duplicate_click",
+		"pending_integrity", "integrity_failed", "integrity_unverified"})
+	appIntegrityStateEnum = newEnum([]string{"not_requested", "received", "missing", "pending", "valid", "invalid", "error", "skipped"})
+	appTrustEnum          = newEnum([]string{"trusted", "refuted", "unvouched"})
+	appCtitFlagEnum       = newEnum([]string{"short", "ok", "long", "unmeasured"},
+		enumHint("short and long are below the app's --ctit-min-seconds and above its --ctit-max-seconds (`p202 app get <id>`); unmeasured installs had no click of yours to measure from."))
+)
+
 // appInstallFilterDefs is the one table of list filter flags: flag, API
-// query parameter, help.
+// query parameter, help, and the values the flag takes (nil: not a fixed set).
 var appInstallFilterDefs = []struct {
 	flag  string
 	param string
 	help  string
+	enum  *enumSpec
 }{
-	{"match-state", "match_state", "Only this state: attributed, organic, third_party, unavailable, pending_click, bad_token, foreign_click, implausible, outside_window, duplicate_click, pending_integrity, integrity_failed, integrity_unverified"},
-	{"integrity-state", "integrity_state", "Only this Play Integrity state: not_requested, received, missing, pending, valid, invalid, error, skipped"},
-	{"trusted", "trusted", "Only this trust class: trusted, refuted or unvouched"},
-	{"test", "test", "1 = only test installs, 0 = only real ones"},
-	{"ctit-flag", "ctit_flag", "Only installs whose click-to-install time is short, ok, long or unmeasured"},
-	{"click-id", "click_id", "Only installs attributed or matched to this click"},
-	{"time-from", "time_from", "Received-at range start (unix timestamp)"},
-	{"time-to", "time_to", "Received-at range end (unix timestamp)"},
-}
-
-var matchStates = map[string]bool{
-	"attributed": true, "organic": true, "third_party": true, "unavailable": true, "pending_click": true,
-	"bad_token": true, "foreign_click": true, "implausible": true, "outside_window": true, "duplicate_click": true,
-	"pending_integrity": true, "integrity_failed": true, "integrity_unverified": true,
-}
-
-var integrityStates = map[string]bool{
-	"not_requested": true, "received": true, "missing": true, "pending": true,
-	"valid": true, "invalid": true, "error": true, "skipped": true,
+	{"match-state", "match_state", "Only this state", appMatchStateEnum},
+	{"integrity-state", "integrity_state", "Only this Play Integrity state", appIntegrityStateEnum},
+	{"trusted", "trusted", "Only this trust class", appTrustEnum},
+	{"test", "test", "Only test installs (1) or only real ones (0)", newEnum(binaryValues)},
+	{"ctit-flag", "ctit_flag", "Only installs whose click-to-install time is", appCtitFlagEnum},
+	{"click-id", "click_id", "Only installs attributed or matched to this click", nil},
+	{"time-from", "time_from", "Received-at range start (unix timestamp)", nil},
+	{"time-to", "time_to", "Received-at range end (unix timestamp)", nil},
 }
 
 var positiveID = regexp.MustCompile(`^[1-9][0-9]{0,18}$`)
@@ -78,21 +81,8 @@ func collectInstallFilters(cmd *cobra.Command) (map[string]string, error) {
 		}
 		params[def.param] = v
 	}
-	if v, ok := params["match_state"]; ok && !matchStates[v] {
-		return nil, validationError("--match-state must be one of: attributed, organic, third_party, unavailable, pending_click, bad_token, foreign_click, implausible, outside_window, duplicate_click, pending_integrity, integrity_failed, integrity_unverified; got %q", v)
-	}
-	if v, ok := params["integrity_state"]; ok && !integrityStates[v] {
-		return nil, validationError("--integrity-state must be one of: not_requested, received, missing, pending, valid, invalid, error, skipped; got %q", v)
-	}
-	if v, ok := params["trusted"]; ok && v != "trusted" && v != "refuted" && v != "unvouched" {
-		return nil, validationError("--trusted must be one of: trusted, refuted, unvouched; got %q", v)
-	}
-	if v, ok := params["test"]; ok && v != "0" && v != "1" {
-		return nil, validationError("--test must be 0 or 1, got %q", v)
-	}
-	if v, ok := params["ctit_flag"]; ok && v != "short" && v != "ok" && v != "long" && v != "unmeasured" {
-		return nil, validationError("--ctit-flag must be one of: short, ok, long, unmeasured; got %q", v)
-	}
+	// The fixed-set filters were checked against their lists in
+	// PersistentPreRunE (enum_flags.go).
 	if v, ok := params["click_id"]; ok && !positiveID.MatchString(v) {
 		return nil, validationError("--click-id must be a positive whole number, got %q", v).
 			WithHint("`p202 click list` lists click ids.")
@@ -315,6 +305,9 @@ func init() {
 	registerPagedListFlags(appInstallListCmd)
 	for _, def := range appInstallFilterDefs {
 		appInstallListCmd.Flags().String(def.flag, "", def.help)
+		if def.enum != nil {
+			enumFlag(appInstallListCmd, def.flag, def.enum)
+		}
 	}
 	appInstallTokenCmd.Flags().String("click", "", "The click to sign (from `p202 click list`)")
 	appInstallSimulateCmd.Flags().String("click", "", "The click the install comes from (from `p202 click list`)")

@@ -227,7 +227,9 @@ func init() {
 	clickListCmd.Flags().String("ppc_account_id", "", "Filter by PPC account ID")
 	clickListCmd.Flags().String("landing_page_id", "", "Filter by landing page ID")
 	clickListCmd.Flags().String("click_lead", "", "Filter: 0=clicks only, 1=conversions only")
+	enumFlag(clickListCmd, "click_lead", newEnum(binaryValues))
 	clickListCmd.Flags().String("click_bot", "", "Filter: 0=human, 1=bot")
+	enumFlag(clickListCmd, "click_bot", newEnum(binaryValues))
 
 	clickCmd.AddCommand(clickListCmd, clickGetCmd, clickConversionsCmd)
 	rootCmd.AddCommand(clickCmd)

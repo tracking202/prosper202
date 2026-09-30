@@ -429,7 +429,8 @@ func init() {
 	registerDeleteFlags(rotatorDeleteCmd, "rotator")
 
 	rotatorRuleCreateCmd.Flags().String("rule_name", "", "Rule name (required)")
-	rotatorRuleCreateCmd.Flags().String("splittest", "", "Enable split test (0|1)")
+	rotatorRuleCreateCmd.Flags().String("splittest", "", "Enable split test")
+	enumFlag(rotatorRuleCreateCmd, "splittest", newEnum(binaryValues))
 	rotatorRuleCreateCmd.Flags().String("criteria_json", "", `Criteria JSON array, e.g. [{"type":"country","statement":"is","value":"United States(US)"}]`)
 	rotatorRuleCreateCmd.Flags().String("redirects_json", "", `Redirects JSON array, e.g. [{"redirect_campaign":"90008","weight":"100","name":"A"}]`)
 	rotatorRuleCreateCmd.Flags().String("country", "", "Sugar: ISO country code (e.g. US) -> a country `is` criterion; avoids hand-writing --criteria_json")
@@ -439,8 +440,10 @@ func init() {
 
 	rotatorRuleUpdateCmd.Flags().String("rule_id", "", "Rule ID (alternative to the second positional arg)")
 	rotatorRuleUpdateCmd.Flags().String("rule_name", "", "Rule name")
-	rotatorRuleUpdateCmd.Flags().String("splittest", "", "Enable split test (0|1)")
-	rotatorRuleUpdateCmd.Flags().String("status", "", "Rule status (0|1)")
+	rotatorRuleUpdateCmd.Flags().String("splittest", "", "Enable split test")
+	enumFlag(rotatorRuleUpdateCmd, "splittest", newEnum(binaryValues))
+	rotatorRuleUpdateCmd.Flags().String("status", "", "Rule status (1 = active)")
+	enumFlag(rotatorRuleUpdateCmd, "status", newEnum(binaryValues))
 	rotatorRuleUpdateCmd.Flags().String("criteria_json", "", `Criteria JSON array, e.g. [{"type":"country","statement":"is","value":"US"}]`)
 	rotatorRuleUpdateCmd.Flags().String("redirects_json", "", `Redirects JSON array, e.g. [{"redirect_url":"...","weight":"50","name":"A"}]`)
 

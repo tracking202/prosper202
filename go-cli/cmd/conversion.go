@@ -34,9 +34,6 @@ var conversionListCmd = &cobra.Command{
 			params["click_id"] = v
 		}
 		if v, _ := cmd.Flags().GetString("source"); v != "" {
-			if !isConversionSource(v) {
-				return validationError("--source must be one of %s, got %q", strings.Join(conversionSources, ", "), v)
-			}
 			params["source"] = v
 		}
 		if v, _ := cmd.Flags().GetString("goal"); v != "" {
@@ -101,15 +98,6 @@ var conversionListCmd = &cobra.Command{
 // (ConversionSource in 202-config/Conversion/Ledger), in the server's order.
 var conversionSources = []string{"pixel", "postback", "universal_pixel", "api", "subid_upload", "revenue_upload",
 	"legacy_pixel", "clickbank", "app_install", "goal", "legacy_baseline"}
-
-func isConversionSource(v string) bool {
-	for _, s := range conversionSources {
-		if s == v {
-			return true
-		}
-	}
-	return false
-}
 
 var conversionGetCmd = &cobra.Command{
 	Use:   "get <id>",
@@ -255,7 +243,8 @@ func init() {
 	conversionListCmd.Flags().String("time_from", "", "Start timestamp (unix)")
 	conversionListCmd.Flags().String("time_to", "", "End timestamp (unix)")
 	conversionListCmd.Flags().String("click_id", "", "Only this click's conversions (see also `p202 click conversions <id>`)")
-	conversionListCmd.Flags().String("source", "", "Only conversions from this source: "+strings.Join(conversionSources, ", "))
+	conversionListCmd.Flags().String("source", "", "Only conversions from this source")
+	enumFlag(conversionListCmd, "source", newEnum(conversionSources))
 	conversionListCmd.Flags().String("goal", "", "Only this goal's outcomes, every version (goal id from `p202 goal list`)")
 	// An empty filter is refused by name (empty_flags.go): read as "not
 	// given" it would list every conversion as though filtered.

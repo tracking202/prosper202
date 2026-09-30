@@ -22,7 +22,11 @@ type crudField struct {
 	Required bool
 	QueryKey string
 	Aliases  []string
+	Enum     []string // the values the field takes (the controller's 'allowed'); nil: not a fixed set
 }
+
+// forecastEventRecurrences are ForecastEventsController's recurrence values.
+var forecastEventRecurrences = []string{"none", "monthly", "yearly", "custom"}
 
 type crudEntity struct {
 	Name          string
@@ -702,6 +706,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	}
 	for _, p := range entity.ListParams {
 		listCmd.Flags().String(p.Name, "", p.Desc)
+		if p.Enum != nil {
+			enumFlag(listCmd, p.Name, newEnum(p.Enum))
+		}
 		for _, alias := range p.Aliases {
 			listCmd.Flags().String(alias, "", p.Desc+" (legacy alias)")
 			_ = listCmd.Flags().MarkHidden(alias)
@@ -767,6 +774,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	}
 	for _, f := range entity.Fields {
 		createCmd.Flags().String(f.Name, "", f.Desc)
+		if f.Enum != nil {
+			enumFlag(createCmd, f.Name, newEnum(f.Enum))
+		}
 	}
 	registerIdempotencyKeyFlag(createCmd)
 
@@ -801,6 +811,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	}
 	for _, f := range entity.Fields {
 		updateCmd.Flags().String(f.Name, "", f.Desc)
+		if f.Enum != nil {
+			enumFlag(updateCmd, f.Name, newEnum(f.Enum))
+		}
 	}
 
 	// delete
@@ -909,10 +922,10 @@ func init() {
 				{Name: "aff_campaign_currency", Desc: "Currency code (e.g. USD)"},
 				{Name: "aff_campaign_foreign_payout", Desc: "Foreign currency payout"},
 				{Name: "aff_network_id", Desc: "Affiliate network ID"},
-				{Name: "aff_campaign_cloaking", Desc: "Enable cloaking (0 or 1)"},
-				{Name: "aff_campaign_rotate", Desc: "Enable rotation (0 or 1)"},
-				{Name: "payout_mode", Desc: "How conversions set a click's value: replace (latest payout, default) or accumulate (sum)"},
-				{Name: "identity_signals", Desc: "Link this campaign's clicks into multi-touch journeys (1, default) or not (0)"},
+				{Name: "aff_campaign_cloaking", Desc: "Enable cloaking (1) or not (0)", Enum: binaryValues},
+				{Name: "aff_campaign_rotate", Desc: "Enable rotation (1) or not (0)", Enum: binaryValues},
+				{Name: "payout_mode", Desc: "How conversions set a click's value, replace (latest payout, default) or accumulate (sum)", Enum: []string{"replace", "accumulate"}},
+				{Name: "identity_signals", Desc: "Link this campaign's clicks into multi-touch journeys (1, default) or not (0)", Enum: binaryValues},
 				{Name: "app_registration_id", Desc: "The Android app registration this campaign's store links install (`p202 app list --platform android`; 0 unlinks). An install of another app on its click is foreign_click"},
 				{Name: "aff_campaign_postback_url", Desc: "Postback URL"},
 				{Name: "aff_campaign_postback_append", Desc: "Postback append string"},
@@ -955,7 +968,7 @@ func init() {
 			Fields: []crudField{
 				{Name: "ppc_account_name", Desc: "Account name", Required: true},
 				{Name: "ppc_network_id", Desc: "PPC network ID", Required: true},
-				{Name: "ppc_account_default", Desc: "Set as default account (0 or 1)"},
+				{Name: "ppc_account_default", Desc: "Set as default account (1) or not (0)", Enum: binaryValues},
 			},
 			ListParams: []crudField{
 				{Name: "ppc_network_id", QueryKey: "filter[ppc_network_id]", Desc: "Filter by PPC network ID"},
@@ -975,7 +988,7 @@ func init() {
 				{Name: "rotator_id", Desc: "Rotator ID"},
 				{Name: "click_cpc", Desc: "Cost per click"},
 				{Name: "click_cpa", Desc: "Cost per action"},
-				{Name: "click_cloaking", Desc: "Enable cloaking (0 or 1)"},
+				{Name: "click_cloaking", Desc: "Cloaking: 1 on, 0 off, -1 use the campaign's setting", Enum: []string{"-1", "0", "1"}},
 				{Name: "tracker_id_public", Desc: "Public tracker ID"},
 			},
 			ListParams: []crudField{
@@ -1027,8 +1040,8 @@ func init() {
 				{Name: "event_name", Desc: "Event name (e.g. 'Black Friday', 'Server Outage')", Required: true},
 				{Name: "event_date", Desc: "Event date (YYYY-MM-DD)", Required: true},
 				{Name: "end_date", Desc: "End date for multi-day events (YYYY-MM-DD)"},
-				{Name: "recurrence", Desc: "Recurrence: none, monthly, yearly, custom"},
-				{Name: "impact_type", Desc: "Impact type: boost, suppress, neutral"},
+				{Name: "recurrence", Desc: "Recurrence", Enum: forecastEventRecurrences},
+				{Name: "impact_type", Desc: "Impact type", Enum: []string{"boost", "suppress", "neutral"}},
 				{Name: "expected_impact_pct", Desc: "Expected impact percentage (e.g. +200 for 3x boost, -50 for half)"},
 				{Name: "lead_days", Desc: "Days before event that impact ramps up"},
 				{Name: "lag_days", Desc: "Days after event that impact decays"},
@@ -1037,7 +1050,7 @@ func init() {
 			},
 			ListParams: []crudField{
 				{Name: "event_name", QueryKey: "filter[event_name]", Desc: "Filter by event name"},
-				{Name: "recurrence", QueryKey: "filter[recurrence]", Desc: "Filter by recurrence type"},
+				{Name: "recurrence", QueryKey: "filter[recurrence]", Desc: "Filter by recurrence type", Enum: forecastEventRecurrences},
 				{Name: "tags", QueryKey: "filter[tags]", Desc: "Filter by tag"},
 			},
 		},
