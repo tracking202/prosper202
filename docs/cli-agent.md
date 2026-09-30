@@ -20,7 +20,7 @@ When `p202` detects that an AI agent is running it, **every command prints compa
 
 | Variable | Set by | Evidence |
 |----------|--------|----------|
-| `AI_AGENT` | The cross-tool convention: Claude Code (`claude-code_<version>_agent` on the commands its model runs), GitHub Copilot, and any agent that adopts it | Observed in a Claude Code session; the convention is the one `@vercel/detect-agent` reads first |
+| `AI_AGENT` | The cross-tool convention: Claude Code (`claude-code_<version>_agent` on every Bash-tool command, including ones a person types with `!`, whose output also goes to the model; add `--table` there for a table), GitHub Copilot, and any agent that adopts it | Observed in a Claude Code session; the convention is the one `@vercel/detect-agent` reads first |
 | `CLAUDECODE` | Claude Code (`1` on every command it runs) | Observed in a Claude Code session |
 | `GEMINI_CLI` | Gemini CLI (`1` on `run_shell_command`) | Gemini CLI shell-tool documentation |
 | `CODEX_SANDBOX` | OpenAI Codex, under macOS Seatbelt (`seatbelt`) | `AGENTS.md` in openai/codex |
