@@ -9,6 +9,7 @@ use mysqli_result;
 use mysqli_stmt;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
 use RuntimeException;
 
 /**
@@ -115,15 +116,21 @@ final class ConnectionTest extends TestCase
         $this->assertNull($conn->fetchOne($stmt));
     }
 
-    public function testFetchOneReturnsNullWhenGetResultReturnsFalse(): void
+    public function testFetchOneThrowsWhenGetResultReturnsFalse(): void
     {
+        // false from get_result() is a fetch failure, not an empty result set
+        // (that is a mysqli_result with no rows). This test used to assert
+        // null here, which pinned the defect: a failed lookup read exactly
+        // like "no such row" (CLAUDE.md error pattern #1).
         $stmt = $this->createMock(mysqli_stmt::class);
         $stmt->method('execute')->willReturn(true);
         $stmt->method('get_result')->willReturn(false);
         $stmt->expects($this->once())->method('close');
 
         $conn = new Connection($this->createFakeMysqli());
-        $this->assertNull($conn->fetchOne($stmt));
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessage('get_result failed');
+        $conn->fetchOne($stmt);
     }
 
     // ── FetchAll ─────────────────────────────────────────────────────
@@ -152,15 +159,18 @@ final class ConnectionTest extends TestCase
         $this->assertSame($rows, $conn->fetchAll($stmt));
     }
 
-    public function testFetchAllReturnsEmptyArrayWhenGetResultReturnsFalse(): void
+    public function testFetchAllThrowsWhenGetResultReturnsFalse(): void
     {
+        // As for fetchOne: [] is what an empty result set yields; false is an
+        // error and must not be read as "no rows".
         $stmt = $this->createMock(mysqli_stmt::class);
         $stmt->method('execute')->willReturn(true);
         $stmt->method('get_result')->willReturn(false);
         $stmt->expects($this->once())->method('close');
 
         $conn = new Connection($this->createFakeMysqli());
-        $this->assertSame([], $conn->fetchAll($stmt));
+        $this->expectException(QueryException::class);
+        $conn->fetchAll($stmt);
     }
 
     // ── ExecuteInsert ────────────────────────────────────────────────

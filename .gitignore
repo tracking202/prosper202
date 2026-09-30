@@ -68,3 +68,7 @@ RECTOR_FINDINGS.md
 rector_report.txt
 PHPSTAN_AND_CODE_QUALITY_TOOLS.md
 /mysql_data_test_install
+
+# Attribution export files (Prosper202\Attribution\ExportFiles): account data,
+# written at run time, never part of the tree.
+/202-config/temp/attribution-exports/

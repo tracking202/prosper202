@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Cli\Commands;
 
+use P202Cli\Commands\AttributionBreakdownCommand;
 use P202Cli\Commands\AttributionModelCreateCommand;
 use P202Cli\Commands\AttributionModelUpdateCommand;
 use P202Cli\Commands\CrudCommands;
@@ -295,5 +296,39 @@ class CrudCommandsTest extends TestCase
 
         $this->assertSame(Command::FAILURE, $status);
         $this->assertStringContainsString('Invalid --weighting_config JSON', $tester->getDisplay());
+    }
+
+    /**
+     * The server caps a lookback at 365 days and a breakdown at 1000 rows;
+     * the CLI refuses past either before it builds a client, rather than
+     * round-tripping for a 422.
+     */
+    public function testAttributionLookbackOverAYearIsRefusedLocally(): void
+    {
+        foreach (['attribution:model:create' => new AttributionModelCreateCommand(), 'attribution:model:update' => new AttributionModelUpdateCommand()] as $name => $command) {
+            $app = new Application('test', '1.0');
+            $app->add($command);
+            $tester = new CommandTester($app->find($name));
+            $args = $name === 'attribution:model:create'
+                ? ['--model_name' => 'Linear', '--model_type' => 'linear', '--lookback_days' => '400']
+                : ['id' => '12', '--lookback_days' => '400'];
+            $status = $tester->execute($args);
+
+            $this->assertSame(Command::FAILURE, $status, $name);
+            $this->assertStringContainsString('Invalid --lookback_days: a whole number of days from 1 to 365', $tester->getDisplay(), $name);
+        }
+    }
+
+    public function testAttributionBreakdownLimitOverTheServersIsRefusedLocally(): void
+    {
+        foreach (['1001', '0', '12abc'] as $limit) {
+            $app = new Application('test', '1.0');
+            $app->add(new AttributionBreakdownCommand());
+            $tester = new CommandTester($app->find('attribution:breakdown'));
+            $status = $tester->execute(['--limit' => $limit]);
+
+            $this->assertSame(Command::FAILURE, $status, $limit);
+            $this->assertStringContainsString('Invalid --limit: a whole number of rows from 1 to 1000', $tester->getDisplay(), $limit);
+        }
     }
 }

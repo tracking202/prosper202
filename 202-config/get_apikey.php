@@ -18,59 +18,50 @@ if (is_installed() == true) {
 $html['user_api'] = isset($_GET['customers_api_key']) ? htmlentities((string) $_GET['customers_api_key'], ENT_QUOTES, 'UTF-8') : '';
 $error = ['user_email' => false];
 
-info_top(); ?>
-<div class="main col-xs-7 install">
-	<center><img src="<?php echo get_absolute_url(); ?>202-img/prosper202.png"></center>
-
-	<?php if ($html['user_api'] == '') { ?>
-		<h6>Let's Start Off By Getting Your API Key</h6>
-		<small>Your API Key Activates Prosper202 ClickServer & more. You'll need an active paid subscription to continue. Don't worry if you don't have a subscription yet, you'll be able to get one on the next few screens.</small>
-		<br><br>
-		<small><strong>IMPORTANT:</strong> Never share your private API key with anyone, it's linked directly to your payment information.</small>
-	<?php } else { ?>
-		<h6>Great We Found Your API Key!</h6>
-		<small>Now, let's get that saved and move on to the next step of the Prosper202 ClickServer Installation</small>
-		<br><br>
-		<small><strong>REMEMBER:</strong> Never share your private API key with anyone.</small>
-	<?php } ?>
-	<br><br>
-	<form method=post action="" id="getapikey" class="form-horizontal" role="form">
-			<div class="form-group">
-			<label for="user_api" class="col-xs-4 control-label"><strong>Prosper202 API Key:</strong><br> <small></label>
-			<div class="col-xs-8">
-				<input type="text" class="form-control input-sm" style="color:black;" id="user_api" name="user_api" value="<?php echo $html['user_api']; ?>" placeholder="Click Button To Get Your API Key" readonly>
-			</div>
+info_top(['title' => 'License key - Prosper202 ClickServer']);
+if ($html['user_api'] == '') {
+	echo p202_standalone_card('Get your license key', 'Step 2 of 3: your API key activates Prosper202 ClickServer. You need an active subscription; you can start one on the next screens.');
+} else {
+	echo p202_standalone_card('We found your license key', 'Step 2 of 3: save it and move on to creating your account.');
+} ?>
+	<form action="" id="getapikey">
+		<div class="mb-3">
+			<label for="user_api" class="form-label">Prosper202 API key</label>
+			<input type="text" class="form-control font-monospace" id="user_api" name="user_api" value="<?php echo $html['user_api']; ?>" placeholder="Filled in when you fetch it" readonly>
+			<div class="form-text">Never share your API key: it is linked to your payment details.</div>
+			<div class="invalid-feedback d-block" id="getapikey-error" role="alert"></div>
 		</div>
-
 		<?php if ($html['user_api'] == '') { ?>
-			<a class="btn btn-lg btn-p202 btn-block" href="https://my.tracking202.com/api/customers/login?redirect=get-api">Click Here For Your API Key<span class="fui-check-inverted pull-right"></a>
+			<a class="btn btn-primary btn-lg w-100" href="https://my.tracking202.com/api/customers/login?redirect=get-api">Get my API key</a>
 		<?php } else { ?>
-			<button class="btn btn-lg btn-p202 btn-block" type="submit">Save API Key & Install Prosper202 ClickServer<span class="fui-check-inverted pull-right"></span></button>
+			<button class="btn btn-primary btn-lg w-100" type="submit">Save the key and continue</button>
 		<?php } ?>
-
 	</form>
-</div>
-<script type="text/javascript">
-	$(document).ready(function() {
-
-		$("#getapikey").submit(function(event) {
-
-			var apikey = {
-				apikey: $("#user_api").val()
-			};
-
-			$.post("<?php echo get_absolute_url(); ?>202-account/ajax/validate-apikey.php", apikey).done(function(response) {
-				var json = $.parseJSON(response);
+<?php echo p202_standalone_card_end(); ?>
+<script>
+	// The key is checked by the license service before the installer is
+	// opened; the installer reads it from the user_api cookie.
+	document.addEventListener('DOMContentLoaded', function () {
+		var form = document.getElementById('getapikey');
+		if (!form) { return; }
+		form.addEventListener('submit', function (event) {
+			event.preventDefault();
+			var key = document.getElementById('user_api').value;
+			$.post(<?php echo json_encode(get_absolute_url() . '202-account/ajax/validate-apikey.php'); ?>, { apikey: key }).done(function (response) {
+				var json = {};
+				try { json = JSON.parse(response); } catch (e) { json = {}; }
 				if (json.msg === 'Key valid') {
-					document.cookie = "user_api=" + $("#user_api").val();
-					document.location.href = "install.php"
+					// Secure whenever the page is on HTTPS (as the browser sees it, so
+					// behind a TLS-terminating proxy too): the key is a credential.
+					document.cookie = 'user_api=' + encodeURIComponent(key) + '; path=' + <?php echo json_encode(get_absolute_url() . '202-config/'); ?> + '; SameSite=Lax' + (window.location.protocol === 'https:' ? '; Secure' : '');
+					document.location.href = 'install.php';
 				} else {
+					document.getElementById('getapikey-error').textContent = 'This API key is not valid. Fetch it again from my.tracking202.com.';
 					if (confirm('Your Api Key Is Invalid. Would You Like Help Finding Your Key?')) {
-						document.location.href = "https://my.tracking202.com/api/customers/login?redirect=get-api"
+						document.location.href = 'https://my.tracking202.com/api/customers/login?redirect=get-api';
 					}
 				}
 			});
-			event.preventDefault();
 		});
 	});
 </script>
@@ -83,5 +74,5 @@ if (isset($_SERVER["HTTPS"]) && strtolower((string) $_SERVER["HTTPS"]) == "on") 
 }
 
 ?>
-<img src="https://my.tracking202.com/api/v2/dni/deeplink/cookie/set/<?php echo base64_encode($strProtocol .  $_SERVER['SERVER_NAME'] . get_absolute_url()); ?>">
+<img src="https://my.tracking202.com/api/v2/dni/deeplink/cookie/set/<?php echo base64_encode($strProtocol .  $_SERVER['SERVER_NAME'] . get_absolute_url()); ?>" alt="" width="1" height="1" class="d-block">
 <?php info_bottom();

@@ -3,8 +3,10 @@
 declare(strict_types=1);
 include_once(substr(__DIR__, 0, -19) . '/202-config/connect.php');
 include_once(substr(__DIR__, 0, -19) . '/202-config/class-dataengine-slim.php');
+require_once __DIR__ . '/_includes/update_ui.php';
 
-use Prosper202\Attribution\AttributionServiceFactory;
+use Prosper202\Click\ClickId;
+use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
 AUTH::require_user();
@@ -16,150 +18,137 @@ if (!$userObj->hasPermission("access_to_update_section")) {
 
 // Initialize variables to prevent undefined variable warnings
 $success = false;
+$subidError = '';
+$fieldError = '';
+$marked = 0;
+$ignored = [];
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
-	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-	$mysql['click_update_type'] = 'upload';
-	$mysql['click_update_time'] = time();
+	if (!AUTH::check_csrf_token()) {
+		$subidError = P202_UPDATE_TOKEN_REFUSED;
+	} elseif (p202_update_lines(is_string($_POST['subids'] ?? null) ? $_POST['subids'] : '') === []) {
+		// An empty list used to answer "0 subid(s) marked", which reads as
+		// "none of them matched"; the person sent nothing, so say that.
+		$fieldError = 'Paste at least one subid, one per line.';
+	} else {
+		$userId = (int) $_SESSION['user_id'];
 
-	$subids = $_POST['subids'] ?? '';
-	$subids = trim((string) $subids);
-	$subids = explode("\r", $subids);
-	$subids = str_replace("\n", '', $subids);
+		// One subid per line, whatever line ending the browser sent.
+		$lines = preg_split('/\R/', trim((string) ($_POST['subids'] ?? ''))) ?: [];
 
-	// Conversion rows go through the single canonical writer.
-	$conversionRepo = new MysqlConversionRepository(new Connection($db));
+		// Conversion rows go through the single canonical writer, which
+		// locks the click, records the row and derives the click's value
+		// from its rows. once_per_click: marking a click that is already a
+		// lead changes nothing (the page used to re-flag it).
+		$conn = new Connection($db);
+		$conversionRepo = new MysqlConversionRepository($conn);
+		$de = new DataEngine();
 
-	foreach ($subids as $click_id) {
-		$mysql['click_id'] = $db->real_escape_string($click_id);
-
-		$click_sql = "
-			SELECT 2c.click_id, 2c.click_lead, 2c.aff_campaign_id, 2c.click_time, 2c.click_payout
-			FROM
-				202_clicks AS 2c
-			WHERE
-				2c.click_id ='" . $mysql['click_id'] . "'
-				AND 2c.user_id='" . $mysql['user_id'] . "'
-		";
-		$click_result = $db->query($click_sql) or record_mysql_error($click_sql);
-		$click_row = $click_result->fetch_assoc();
-
-		// Check if click_row exists and click_id is not null before processing
-		if ($click_row && isset($click_row['click_id']) && $click_row['click_id'] !== null) {
-			$mysql['click_id'] = $db->real_escape_string((string)$click_row['click_id']);
-		} else {
-			// Skip this iteration if no valid click found
-			continue;
-		}
-
-		if (is_numeric($mysql['click_id'])) {
-			$clickId = (int) $mysql['click_id'];
-			$userId = (int) $mysql['user_id'];
-
-			// Flag the click as a lead and clear any filtering, on both the clicks
-			// and spy tables. When a conversion row is recorded this runs inside the
-			// repository transaction (below) so the flag and the audit row commit or
-			// roll back together.
-			$applyClickUpdate = function () use ($db, $clickId, $userId): void {
-				foreach (['202_clicks', '202_clicks_spy'] as $table) {
-					$update_sql = "UPDATE " . $table . " SET click_lead='1', `click_filtered`='0'"
-						. " WHERE click_id='" . $clickId . "' AND user_id='" . $userId . "'";
-					if (!$db->query($update_sql)) {
-						throw new RuntimeException('subids: failed to update ' . $table . ' for click ' . $clickId);
-					}
-				}
-			};
-
-			// Click-level dedup (subid uploads carry no transaction id): only record
-			// a conversion when this click has no non-deleted conversion yet.
-			$check_sql = "SELECT conv_id FROM 202_conversion_logs WHERE click_id = '" . $clickId . "' AND user_id = '" . $userId . "' AND deleted = 0 LIMIT 1";
-			$check_result = $db->query($check_sql);
-
-			if ($check_result && $check_result->num_rows === 0) {
-				$conv_time = time();
-				$click_time = (int) $click_row['click_time'];
-				$diff = (new DateTime(date('Y-m-d H:i:s', $click_time)))->diff(new DateTime(date('Y-m-d H:i:s', $conv_time)));
-
-				$conversionRepo->record(
-					$userId,
-					[
-						'click_id'        => $clickId,
-						'transaction_id'  => '',
-						'campaign_id'     => (int) $click_row['aff_campaign_id'],
-						'payout'          => (float) $click_row['click_payout'],
-						'click_time'      => $click_time,
-						'conv_time'       => $conv_time,
-						'time_difference' => $diff->d . ' days, ' . $diff->h . ' hours, ' . $diff->i . ' min and ' . $diff->s . ' sec',
-						'ip'              => '',
-						'pixel_type'      => 0,
-						'user_agent'      => 'subid-upload',
-					],
-					function (int $lockedClickId, float $payout) use ($applyClickUpdate): void {
-						$applyClickUpdate();
-					}
-				);
-			} else {
-				// Already has a conversion logged; just (re)apply the click flag.
-				$applyClickUpdate();
+		foreach ($lines as $line) {
+			$line = trim($line);
+			if ($line === '') {
+				continue;
+			}
+			$clickId = ClickId::parse($line);
+			if ($clickId === null) {
+				$ignored[] = $line;
+				continue;
 			}
 
-			$de = new DataEngine();
-			$de->setDirtyHour((string) $clickId);
+			$result = $conversionRepo->record(
+				$userId,
+				[
+					'click_id'   => $clickId,
+					'source'     => ConversionSource::SUBID_UPLOAD->value,
+					'user_agent' => 'subid-upload',
+					'pixel_type' => 0,
+					'once_per_click' => true,
+				],
+				function (int $lockedClickId) use ($conn, $userId): void {
+					// A converting click is never left filtered.
+					foreach (['UPDATE 202_clicks SET click_filtered = 0 WHERE click_id = ? AND user_id = ?',
+						'UPDATE 202_clicks_spy SET click_filtered = 0 WHERE click_id = ? AND user_id = ?'] as $sql) {
+						$stmt = $conn->prepareWrite($sql);
+						$conn->bind($stmt, 'ii', [$lockedClickId, $userId]);
+						$conn->executeUpdate($stmt);
+					}
+				}
+			);
+
+			if (!$result['clickFound']) {
+				$ignored[] = $line;
+				continue;
+			}
+			if (!$result['duplicate']) {
+				$marked++;
+				$de->setDirtyHour((string) $clickId);
+			}
 		}
-	}
 
-	// Rebuild attribution snapshots so the attribution page reflects changes immediately
-	try {
-		$jobRunner = AttributionServiceFactory::createJobRunner();
-		$userId = (int) $_SESSION['user_id'];
-		$endTime = time();
-		$startTime = $endTime - 86400;
-		$jobRunner->runForUser($userId, $startTime, $endTime);
-	} catch (Throwable $e) {
-		error_log('Attribution rebuild after subid upload failed: ' . $e->getMessage());
+		$success = true;
 	}
-
-	$success = true;
 }
 
+// What the form shows: a refused list is kept for another try; after a
+// success the box is empty for the next report.
+$typed = $success ? '' : (is_string($_POST['subids'] ?? null) ? $_POST['subids'] : '');
+$base = get_absolute_url();
+
 //show the template
-template_top('Update Subids'); ?>
-<div class="row" style="margin-bottom: 15px;">
-	<div class="col-xs-12">
-		<div class="row">
-			<div class="col-xs-4">
-				<h6>Update Your Subids</h6>
+template_top('Update Subids');
+
+echo p202_update_header('bi-check2-square', 'Update subids', 'Mark clicks as converted by pasting the subids from your affiliate network\'s report.');
+
+if ($success) {
+	echo p202_flash('ok', $marked . ' subid(s) marked as converted. Your account income now reflects them.');
+	if ($ignored !== []) {
+		echo p202_flash('warn', 'Not found in your account, so not marked: ' . p202_update_list_sentence($ignored) . '.');
+	}
+} elseif ($subidError !== '') {
+	echo p202_flash('bad', $subidError);
+}
+?>
+
+<div class="row g-4">
+	<div class="col-12 col-lg-7">
+		<section class="p202-panel">
+			<div class="p202-panel__head">
+				<h2 class="p202-panel__title">Converted subids</h2>
+				<span class="p202-panel__sub">one per line</span>
 			</div>
-			<div class="col-xs-8">
-				<div class="success pull-right" style="margin-top: 20px;">
-					<small>
-						<?php if ($success == true) { ?>
-							<span class="fui-check-inverted"></span> Your submission was successful. Your account income now reflects the subids just uploaded.
-						<?php } ?>
-					</small>
+			<div class="p202-panel__body">
+				<form method="post" action="<?php echo p202_setup_e($base . 'tracking202/update/subids.php'); ?>" id="update-subids">
+					<?php echo p202_setup_token_field((string) ($_SESSION['token'] ?? '')); ?>
+					<div class="mb-3">
+						<label class="form-label" for="subids">Subids</label>
+						<textarea class="form-control font-monospace<?php echo $fieldError !== '' ? ' is-invalid' : ''; ?>" rows="8" name="subids" id="subids" placeholder="Paste your subids, one per line" required><?php echo p202_setup_e($typed); ?></textarea>
+						<div class="form-text">Each click is recorded as a conversion at its campaign's payout. A click that already converted is left as it is, so sending the same list twice changes nothing.</div>
+						<?php if ($fieldError !== '') { ?><div class="invalid-feedback d-block"><?php echo p202_setup_e($fieldError); ?></div><?php } ?>
+					</div>
+					<div class="p202-form-actions">
+						<button class="btn btn-primary" type="submit">Mark as converted</button>
+					</div>
+				</form>
+			</div>
+		</section>
+	</div>
+	<div class="col-12 col-lg-5">
+		<section class="p202-panel">
+			<div class="p202-panel__head"><h2 class="p202-panel__title">Other ways to record income</h2></div>
+			<div class="p202-panel__body">
+				<div class="list-group">
+					<a class="list-group-item list-group-item-action" href="<?php echo p202_setup_e($base . 'tracking202/update/upload.php'); ?>">
+						<strong class="d-block">Upload a revenue report</strong>
+						<span class="small text-secondary">When your network reports an amount per subid, record the exact amounts from its CSV.</span>
+					</a>
+					<a class="list-group-item list-group-item-action" href="<?php echo p202_setup_e($base . 'tracking202/setup/get_postback.php'); ?>">
+						<strong class="d-block">Set up a postback</strong>
+						<span class="small text-secondary">Let the network tell Prosper202 about each conversion as it happens.</span>
+					</a>
 				</div>
 			</div>
-		</div>
-	</div>
-	<div class="col-xs-12">
-		<small>Here is where you can update your income for Prosper202, by importing your subids from your affiliate marketing reports.</small>
-	</div>
-</div>
-
-<div class="row form_seperator">
-	<div class="col-xs-12"></div>
-</div>
-
-<div class="row">
-	<div class="col-xs-12">
-		<form method="post" action="" class="form-horizontal" role="form">
-			<div class="form-group" style="margin:0px 0px 15px 0px;">
-				<label for="subids">Subids</label>
-				<textarea rows="5" name="subids" id="subids" placeholder="Add your subids..." class="form-control"></textarea>
-			</div>
-			<button class="btn btn-sm btn-p202 btn-block" type="submit">Update Subids</button>
-		</form>
+		</section>
 	</div>
 </div>
 

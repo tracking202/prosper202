@@ -33,6 +33,15 @@ RUN a2enmod rewrite \
         echo '    AllowOverride FileInfo Options=FollowSymLinks'; \
         echo '    Require all granted'; \
         echo '</Directory>'; \
+        echo '# 202-config/temp holds attribution export CSVs and upgrade zips,'; \
+        echo '# served only through the authenticated download endpoints. Its'; \
+        echo '# own .htaccess needs AllowOverride AuthConfig, which the block'; \
+        echo '# above does not grant, so the deny is made here, where it holds'; \
+        echo '# whatever the override set.'; \
+        echo '<Directory /var/www/html/202-config/temp>'; \
+        echo '    AllowOverride None'; \
+        echo '    Require all denied'; \
+        echo '</Directory>'; \
         echo '# Deny dotfiles (.env, .git, ...) but keep /.well-known/ for ACME'; \
         echo '<LocationMatch "/\.(?!well-known/)">'; \
         echo '    Require all denied'; \

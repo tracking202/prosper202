@@ -1,0 +1,733 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Conversion;
+
+use PHPUnit\Framework\TestCase;
+use Prosper202\Conversion\Ledger\ReversalException;
+use Prosper202\Conversion\Ledger\SupersededReason;
+use Prosper202\Conversion\MysqlConversionRepository;
+use Prosper202\Conversion\RevenueUploadImporter;
+use Prosper202\Database\Connection;
+use Prosper202\Database\SchemaInstaller;
+
+/**
+ * The conversion ledger against a real MySQL/MariaDB: every path that sets
+ * a click's value, with the value read back from 202_clicks and explained
+ * by the rows. The calculator's rules are unit-tested in
+ * ClickValueCalculatorTest; this is the proof that the writer applies them
+ * to the real tables, under the real keys, in one transaction.
+ *
+ * Skips unless P202_TEST_DB_HOST (and friends) name a scratch database.
+ *
+ * @group integration
+ */
+final class ConversionLedgerIntegrationTest extends TestCase
+{
+    private static ?\mysqli $db = null;
+    private MysqlConversionRepository $repo;
+
+    public static function setUpBeforeClass(): void
+    {
+        $host = getenv('P202_TEST_DB_HOST');
+        if ($host === false || $host === '') {
+            return;
+        }
+        if (!function_exists('_mysqli_query')) {
+            eval('function _mysqli_query($dbOrSql, $sql = null) { return $sql === null ? null : $dbOrSql->query($sql); }');
+        }
+        if (!class_exists('DataEngine', false)) {
+            eval('class DataEngine { public function setDirtyHour($id) {} public function getSummary($s,$e,$p,$u=1,$up=false,$n=false){ return ""; } }');
+        }
+        mysqli_report(MYSQLI_REPORT_STRICT);
+        try {
+            $db = @mysqli_connect(
+                $host,
+                (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+                (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+                (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
+                (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
+            );
+        } catch (\Throwable) {
+            return;
+        }
+        if (!$db) {
+            return;
+        }
+        $db->query("SET SESSION sql_mode=''");
+        (new SchemaInstaller($db))->install();
+        // The ledger runs under strict mode in production; so does this.
+        $db->query("SET SESSION sql_mode='STRICT_TRANS_TABLES'");
+        self::$db = $db;
+    }
+
+    public static function tearDownAfterClass(): void
+    {
+        self::$db?->close();
+        self::$db = null;
+    }
+
+    protected function setUp(): void
+    {
+        if (!self::$db) {
+            self::markTestSkipped('No test database configured (set P202_TEST_DB_HOST).');
+        }
+        foreach (['202_conversion_logs', '202_clicks', '202_clicks_spy', '202_aff_campaigns', '202_attribution_pending', '202_conversion_uploads', '202_dataengine'] as $t) {
+            self::$db->query('TRUNCATE TABLE ' . $t);
+        }
+        $this->repo = new MysqlConversionRepository(new Connection(self::$db));
+    }
+
+    /** Fixture rows omit columns the tracking code fills; only the writer runs strict. */
+    private static function fixture(string $sql): void
+    {
+        self::$db->query("SET SESSION sql_mode=''");
+        try {
+            if (self::$db->query($sql) !== true) {
+                throw new \RuntimeException('fixture failed: ' . self::$db->error);
+            }
+        } finally {
+            self::$db->query("SET SESSION sql_mode='STRICT_TRANS_TABLES'");
+        }
+    }
+
+    private function campaign(int $id, string $mode = 'replace', string $payout = '10.00'): void
+    {
+        self::fixture("INSERT INTO 202_aff_campaigns SET aff_campaign_id=$id, user_id=1, aff_network_id=1, aff_campaign_name='c$id',
+            aff_campaign_url='http://x', aff_campaign_payout=$payout, aff_campaign_time=1, aff_campaign_foreign_payout=$payout, payout_mode='$mode'");
+    }
+
+    private function click(int $id, int $campaign, string $payout = '10.00', int $lead = 0): void
+    {
+        foreach (['202_clicks', '202_clicks_spy'] as $t) {
+            self::fixture("INSERT INTO $t SET click_id=$id, user_id=1, aff_campaign_id=$campaign, click_payout=$payout, click_cpc=0, click_lead=$lead, click_time=1700000000");
+        }
+    }
+
+    /** @return array{lead: int, payout: string, spy_payout: string} */
+    private function clickState(int $id): array
+    {
+        $c = self::$db->query("SELECT click_lead, click_payout FROM 202_clicks WHERE click_id=$id")->fetch_assoc();
+        $s = self::$db->query("SELECT click_payout FROM 202_clicks_spy WHERE click_id=$id")->fetch_assoc();
+
+        return ['lead' => (int) $c['click_lead'], 'payout' => (string) $c['click_payout'], 'spy_payout' => (string) $s['click_payout']];
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function rows(int $clickId): array
+    {
+        $r = self::$db->query("SELECT conv_id, click_payout, source, dedupe_key, superseded_by, superseded_reason, deleted, reverses_conv_id, source_ref
+            FROM 202_conversion_logs WHERE click_id=$clickId ORDER BY conv_id");
+
+        return $r->fetch_all(MYSQLI_ASSOC);
+    }
+
+    private function record(int $clickId, array $data): array
+    {
+        return $this->repo->record(1, ['click_id' => $clickId, 'source' => 'postback'] + $data);
+    }
+
+    public function testReplaceKeepsTheLatestAndSaysWhatItReplaced(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7);
+
+        $a = $this->record(100, ['payout' => '5', 'transaction_id' => 'A']);
+        $b = $this->record(100, ['payout' => '10', 'transaction_id' => 'B']);
+
+        self::assertSame(['lead' => 1, 'payout' => '10.00000', 'spy_payout' => '10.00'], $this->clickState(100));
+        $rows = $this->rows(100);
+        self::assertSame((string) $b['convId'], (string) $rows[0]['superseded_by']);
+        self::assertSame('replace', $rows[0]['superseded_reason']);
+        self::assertNull($rows[1]['superseded_reason']);
+        self::assertSame(['tx:A', 'tx:B'], array_column($rows, 'dedupe_key'));
+
+        // Deleting the winner restores the one it replaced.
+        $this->repo->softDelete((int) $b['convId'], 1);
+        self::assertSame('5.00000', $this->clickState(100)['payout']);
+        self::assertNull($this->rows(100)[0]['superseded_reason'], 'no longer superseded');
+
+        // Deleting the last one leaves a click that is no longer a lead.
+        $this->repo->softDelete((int) $a['convId'], 1);
+        self::assertSame(0, $this->clickState(100)['lead']);
+    }
+
+    public function testAReplayIsADuplicateAndChangesNothing(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7);
+
+        $first = $this->record(100, ['payout' => '5', 'transaction_id' => 'A']);
+        $again = $this->record(100, ['payout' => '99', 'transaction_id' => 'A']);
+
+        self::assertTrue($again['duplicate']);
+        self::assertSame($first['convId'], $again['convId']);
+        self::assertCount(1, $this->rows(100));
+        self::assertSame('5.00000', $this->clickState(100)['payout']);
+    }
+
+    /**
+     * A network's transaction id is its own identity, byte for byte. Under
+     * the table's case-insensitive collation `tx:A-1` and `tx:a-1` were one
+     * key on a click, so the second sale was answered as a replay of the
+     * first and its money dropped (CLAUDE.md #17); dedupe_key and
+     * transaction_id are binary-collated so both are stored and counted.
+     */
+    public function testTransactionIdsThatDifferOnlyInCaseAreTwoSales(): void
+    {
+        $this->campaign(8, 'accumulate', '4.00');
+        $this->click(200, 8, '4.00');
+
+        $upper = $this->record(200, ['payout' => '5', 'transaction_id' => 'A-1']);
+        $lower = $this->record(200, ['payout' => '3', 'transaction_id' => 'a-1']);
+
+        self::assertFalse($lower['duplicate'], 'a-1 is not a replay of A-1');
+        self::assertNotSame($upper['convId'], $lower['convId']);
+        self::assertSame(['tx:A-1', 'tx:a-1'], array_column($this->rows(200), 'dedupe_key'), 'both are stored');
+        self::assertSame('8.00000', $this->clickState(200)['payout'], 'both are counted');
+
+        $breakdown = (new \Prosper202\Conversion\Ledger\ClickBreakdown(new Connection(self::$db)))->forClick(200, 1);
+        self::assertNotNull($breakdown);
+        self::assertSame([true, true], array_column($breakdown['rows'], 'counted'), 'the click breakdown counts both');
+
+        // Each still deduplicates against itself, exactly.
+        $again = $this->record(200, ['payout' => '3', 'transaction_id' => 'a-1']);
+        self::assertTrue($again['duplicate']);
+        self::assertSame($lower['convId'], $again['convId']);
+        self::assertCount(2, $this->rows(200));
+
+        // A reversal names its sale exactly: reversing a-1 nets the $3, not
+        // the older A-1 the case-insensitive lookup found first.
+        $rev = $this->record(200, ['transaction_id' => 'a-1', 'reversal' => true]);
+        self::assertSame((string) $lower['convId'], (string) $this->rows(200)[2]['reverses_conv_id']);
+        self::assertSame('5.00000', $this->clickState(200)['payout']);
+        self::assertFalse($rev['duplicate']);
+    }
+
+    public function testAccumulateAddsAndAPlainConversionHappensOnce(): void
+    {
+        $this->campaign(8, 'accumulate', '4.00');
+        $this->click(200, 8, '4.00');
+
+        $this->record(200, ['payout' => '5', 'transaction_id' => 'A']);
+        $this->record(200, ['payout' => '3', 'transaction_id' => 'B']);
+        self::assertSame('8.00000', $this->clickState(200)['payout']);
+
+        // No id of its own: the campaign's one plain conversion, worth the
+        // campaign's payout (the click's cached value is a running total).
+        $plain = $this->record(200, []);
+        self::assertFalse($plain['duplicate']);
+        self::assertSame('12.00000', $this->clickState(200)['payout']);
+        $retry = $this->record(200, []);
+        self::assertTrue($retry['duplicate'], 'an id-less retry must not double the money');
+        self::assertSame('12.00000', $this->clickState(200)['payout']);
+        self::assertSame('conversion', $this->rows(200)[2]['dedupe_key']);
+    }
+
+    public function testAReversalNetsItsSaleOnceAndSaysWhichSale(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7);
+        $sale = $this->record(100, ['payout' => '3', 'transaction_id' => 'S-1']);
+
+        $rev = $this->record(100, ['transaction_id' => 'S-1', 'reversal' => true]);
+        self::assertFalse($rev['duplicate']);
+        self::assertSame(['lead' => 1, 'payout' => '0.00000', 'spy_payout' => '0.00'], $this->clickState(100));
+        $row = $this->rows(100)[1];
+        self::assertSame('-3.00000', $row['click_payout']);
+        self::assertSame((string) $sale['convId'], (string) $row['reverses_conv_id']);
+        self::assertSame('conv:' . $sale['convId'], $row['source_ref']);
+        self::assertSame('rev:' . $sale['convId'] . ':1', $row['dedupe_key']);
+
+        self::assertTrue($this->record(100, ['transaction_id' => 'S-1', 'reversal' => true])['duplicate'], 'a replayed reversal');
+
+        try {
+            $this->record(100, ['transaction_id' => 'S-1', 'reversal' => true, 'reversal_ref' => 'R-2']);
+            self::fail('a second, different reversal of one sale was accepted');
+        } catch (ReversalException $e) {
+            self::assertSame(ReversalException::CONFLICT, $e->kind);
+            self::assertStringContainsString('already reversed by conversion ' . $rev['convId'], $e->getMessage());
+        }
+
+        try {
+            $this->record(100, ['transaction_id' => 'NOPE', 'reversal' => true]);
+            self::fail('a reversal of an unknown sale was accepted');
+        } catch (ReversalException $e) {
+            self::assertSame(ReversalException::NO_TARGET, $e->kind);
+            self::assertStringContainsString('"NOPE"', $e->getMessage());
+        }
+        self::assertCount(2, $this->rows(100), 'refused reversals write nothing');
+    }
+
+    public function testANegativeAmountForAKnownSaleIsAPartialReversal(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7);
+        $this->record(100, ['payout' => '10', 'transaction_id' => 'S-1']);
+        $this->record(100, ['payout' => '-4', 'transaction_id' => 'S-1']);
+
+        self::assertSame('6.00000', $this->clickState(100)['payout']);
+    }
+
+    public function testAPreLedgerClickKeepsItsValueAsABaselineRow(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7, '20.00', 1); // converted before the upgrade: $20 cached
+        self::fixture("INSERT INTO 202_conversion_logs SET click_id=100, transaction_id=NULL, campaign_id=7, click_payout=12, user_id=1,
+            click_time=1, conv_time=1, time_difference='', ip='', pixel_type=2, user_agent='', deleted=0,
+            source='postback', dedupe_key='row:1', superseded_reason='pre_ledger'");
+
+        // Replace: a new conversion replaces the cached $20, as it always did.
+        $this->record(100, ['payout' => '5', 'transaction_id' => 'N']);
+        self::assertSame('5.00000', $this->clickState(100)['payout']);
+        $rows = $this->rows(100);
+        self::assertSame('legacy_baseline', $rows[1]['source']);
+        self::assertSame('20.00000', $rows[1]['click_payout']);
+        self::assertSame((string) $rows[1]['conv_id'], (string) $rows[0]['superseded_by'], 'the old row points at the value that stands for it');
+
+        // And the baseline is inserted once.
+        $this->record(100, ['payout' => '6', 'transaction_id' => 'M']);
+        self::assertCount(1, array_filter($this->rows(100), static fn (array $r): bool => $r['source'] === 'legacy_baseline'));
+    }
+
+    public function testReversingAPreLedgerSaleNetsTheCarriedValue(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7, '12.00', 1);
+        self::fixture("INSERT INTO 202_conversion_logs SET click_id=100, transaction_id='OLD-1', campaign_id=7, click_payout=12, user_id=1,
+            click_time=1, conv_time=1, time_difference='', ip='', pixel_type=2, user_agent='', deleted=0,
+            source='postback', dedupe_key='tx:OLD-1', superseded_reason='pre_ledger'");
+
+        $this->record(100, ['transaction_id' => 'OLD-1', 'reversal' => true]);
+        self::assertSame(['lead' => 1, 'payout' => '0.00000', 'spy_payout' => '0.00'], $this->clickState(100));
+    }
+
+    public function testAPreLedgerClickInAnAccumulatingCampaignAddsToItsOldValue(): void
+    {
+        $this->campaign(8, 'accumulate');
+        $this->click(200, 8, '20.00', 1);
+        $this->record(200, ['payout' => '5', 'transaction_id' => 'N']);
+        self::assertSame('25.00000', $this->clickState(200)['payout']);
+    }
+
+    public function testAConversionClearedBeforeTheUpgradeDoesNotComeBack(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7, '10.00', 0); // cleared: not a lead, old row still there
+        self::fixture("INSERT INTO 202_conversion_logs SET click_id=100, campaign_id=7, click_payout=50, user_id=1,
+            click_time=1, conv_time=1, time_difference='', ip='', pixel_type=2, user_agent='', deleted=0,
+            source='postback', dedupe_key='row:1', superseded_reason='pre_ledger'");
+
+        $this->record(100, ['payout' => '5', 'transaction_id' => 'N']);
+        self::assertSame('5.00000', $this->clickState(100)['payout'], 'the $50 cleared before the upgrade stays cleared');
+        self::assertCount(0, array_filter($this->rows(100), static fn (array $r): bool => $r['source'] === 'legacy_baseline'));
+    }
+
+    public function testAnUploadIsSummedPerFileAndTheNextFileReplacesIt(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7);
+        $this->click(101, 7);
+        $this->record(100, ['payout' => '9', 'transaction_id' => 'P']); // a postback before the upload
+
+        $importer = new RevenueUploadImporter(new Connection(self::$db), $this->repo);
+        $csv = static function (string $text) {
+            $h = fopen('php://memory', 'r+');
+            fwrite($h, $text);
+            rewind($h);
+            return $h;
+        };
+
+        $first = $importer->import(1, 'a.csv', $csv("subid,amount\n100,$1.00\n100,2.00\n101,4\n999,5\n101,oops\n"), 0, 1);
+        self::assertSame(3, $first['recorded']);
+        self::assertSame(2, $first['skipped']);
+        self::assertSame(['100' => '3.00000', '101' => '4.00000'], array_map('strval', $first['totals']));
+        self::assertSame('3.00000', $this->clickState(100)['payout'], 'the file replaces the postback, summed within the file');
+        self::assertSame('4.00000', $this->clickState(101)['payout']);
+        $reasons = array_column(array_filter($first['lines'], static fn ($l) => $l['status'] === 'skipped'), 'reason', 'line');
+        self::assertSame([5 => 'no click with this subid in your account', 6 => 'the commission is not a number'], $reasons);
+        self::assertSame(
+            ['line' => 1, 'subid' => 'subid', 'amount' => 'amount', 'status' => 'header', 'reason' => 'read as the header row (not a subid)'],
+            $first['lines'][0],
+            'line 1 is listed as the header it was read as, not dropped'
+        );
+
+        $second = $importer->import(1, 'b.csv', $csv("subid,amount\n100,5\n"), 0, 1);
+        self::assertSame(1, $second['recorded']);
+        self::assertSame('5.00000', $this->clickState(100)['payout'], 'the newer file replaces the older one');
+        self::assertSame('4.00000', $this->clickState(101)['payout'], 'a click the newer file does not name keeps its value');
+        $batchRows = array_filter($this->rows(100), static fn (array $r): bool => $r['source'] === 'revenue_upload');
+        self::assertSame(['batch', 'batch', null], array_column(array_values($batchRows), 'superseded_reason'));
+
+        // Re-applying the same file is a duplicate of every line.
+        $again = $importer->import(1, 'b.csv', $csv("subid,amount\n100,5\n"), 0, 1);
+        self::assertSame('5.00000', $this->clickState(100)['payout']);
+        self::assertSame(1, $again['recorded'], 'a new batch: its own lines, its own keys');
+    }
+
+    /**
+     * The legacy endpoints' id-less rule (gpb.php, upx.php, gpx.php and the
+     * per-campaign pixel and postback, through p202RecordConversion): a
+     * retry cannot be told from a repeat, so the click converts once. In a
+     * replace campaign the row is keyed by its own id, so the click's lead
+     * flag is the guard; in an accumulate campaign the key "conversion" is,
+     * and the one plain conversion is still owed on a click that is a lead
+     * through keyed sales.
+     */
+    public function testAnIdlessRetryRecordsOnceInEitherMode(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7);
+        $idless = ['payout' => '4', 'once_per_click_unkeyed' => true];
+
+        $first = $this->record(100, $idless);
+        $retry = $this->record(100, $idless);
+        self::assertFalse($first['duplicate']);
+        self::assertTrue($retry['duplicate'], 'replace: the retry is refused on the lead click');
+        self::assertCount(1, $this->rows(100));
+
+        $this->campaign(8, 'accumulate', '4.00');
+        $this->click(200, 8);
+        $this->record(200, ['payout' => '5', 'transaction_id' => 'A1']);
+        $plain = $this->record(200, ['once_per_click_unkeyed' => true]);
+        $again = $this->record(200, ['once_per_click_unkeyed' => true]);
+        self::assertFalse($plain['duplicate'], 'accumulate: the plain conversion is owed on a lead click');
+        self::assertTrue($again['duplicate'], 'and happens once');
+        self::assertSame(['tx:A1', 'conversion'], array_column($this->rows(200), 'dedupe_key'));
+        self::assertSame('9.00000', $this->clickState(200)['payout']);
+    }
+
+    public function testAHeaderlessFileStillListsItsFirstLine(): void
+    {
+        $this->campaign(7);
+        $this->click(101, 7);
+        $h = fopen('php://memory', 'r+');
+        fwrite($h, "101.5,7\n101,4\n");
+        rewind($h);
+
+        $import = (new RevenueUploadImporter(new Connection(self::$db), $this->repo))->import(1, 'c.csv', $h, 0, 1);
+
+        self::assertSame(1, $import['recorded']);
+        self::assertSame(
+            ['line' => 1, 'subid' => '101.5', 'amount' => '7', 'status' => 'header', 'reason' => 'read as the header row (not a subid)'],
+            $import['lines'][0],
+            'a malformed first subid in a file with no header is listed, not lost'
+        );
+    }
+
+    public function testClearingASubidDeletesItsRowsAndItsLead(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7);
+        $this->click(101, 7, '20.00', 1); // a pre-ledger lead with no rows
+        $this->record(100, ['payout' => '5', 'transaction_id' => 'A']);
+
+        self::assertSame(2, $this->repo->clearClicks(1, [100, 101, 999]));
+
+        self::assertSame(0, $this->clickState(100)['lead']);
+        self::assertSame(0, $this->clickState(101)['lead']);
+        self::assertSame(['1'], array_values(array_unique(array_column($this->rows(100), 'deleted'))));
+        self::assertSame('legacy_baseline', $this->rows(101)[0]['source'], 'the pre-ledger value is recorded, then cleared');
+        self::assertSame('1', (string) $this->rows(101)[0]['deleted']);
+    }
+
+    /** @return array{leads: int, payout: string}|null The click's row in the table every report reads. */
+    private function reportRow(int $clickId): ?array
+    {
+        $row = self::$db->query("SELECT leads, payout FROM 202_dataengine WHERE click_id=$clickId")->fetch_assoc();
+
+        return $row === null ? null : ['leads' => (int) $row['leads'], 'payout' => (string) $row['payout']];
+    }
+
+    public function testEveryWriteRefreshesTheReportRowOfItsClick(): void
+    {
+        // The reports read 202_dataengine, not 202_clicks. A conversion that
+        // changed the click but not its report row never showed up in any
+        // report: the API, the upload and the subid pages all went through
+        // record() without re-rolling the click.
+        $this->campaign(7);
+        $this->click(100, 7);
+        self::assertNull($this->reportRow(100), 'no report row before anything happens');
+
+        $a = $this->record(100, ['payout' => '5', 'transaction_id' => 'A']);
+        self::assertSame(['leads' => 1, 'payout' => '5.00'], $this->reportRow(100), 'recorded: the report sees the lead');
+
+        $b = $this->record(100, ['payout' => '12', 'transaction_id' => 'B']);
+        self::assertSame('12.00', $this->reportRow(100)['payout'], 'replaced: the report sees the new value');
+
+        $this->repo->softDelete((int) $b['convId'], 1);
+        self::assertSame('5.00', $this->reportRow(100)['payout'], 'deleted: the report falls back');
+
+        $this->repo->softDelete((int) $a['convId'], 1);
+        self::assertSame(0, $this->reportRow(100)['leads'], 'the last one deleted: no longer a lead in the report');
+
+        $this->record(100, ['payout' => '7', 'transaction_id' => 'C']);
+        self::assertSame(1, $this->reportRow(100)['leads']);
+        $this->repo->clearClicks(1, [100]);
+        self::assertSame(0, $this->reportRow(100)['leads'], 'cleared: the report sees it');
+    }
+
+    public function testEveryCountedChangeIsQueuedForAttributionInTheSameTransaction(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7);
+        $a = $this->record(100, ['payout' => '5', 'transaction_id' => 'A']);
+        $b = $this->record(100, ['payout' => '10', 'transaction_id' => 'B']);
+
+        $pending = self::$db->query('SELECT conv_id, reason, enqueue_seq FROM 202_attribution_pending ORDER BY conv_id')->fetch_all(MYSQLI_ASSOC);
+        self::assertSame([(string) $a['convId'], (string) $b['convId']], array_column($pending, 'conv_id'));
+        self::assertSame('counted_state', $pending[0]['reason'], 'A was queued again when B superseded it');
+        self::assertSame('2', (string) $pending[0]['enqueue_seq']);
+
+        // A reversal carries no supersession of its own: it stops netting
+        // when a later sale supersedes the sale it reverses, and starts again
+        // when that sale counts again. Both flips are counted-state changes
+        // and must reach the outbox like any other.
+        $this->click(101, 7);
+        $sale = $this->record(101, ['payout' => '5', 'transaction_id' => 'S-1']);
+        $rev = $this->record(101, ['transaction_id' => 'S-1', 'reversal' => true]);
+        self::$db->query('DELETE FROM 202_attribution_pending');
+
+        $later = $this->record(101, ['payout' => '10', 'transaction_id' => 'S-2']);
+        self::assertSame(['lead' => 1, 'payout' => '10.00000', 'spy_payout' => '10.00'], $this->clickState(101), 'S-2 replaced S-1 and its reversal');
+        $pending = self::$db->query('SELECT conv_id, reason FROM 202_attribution_pending ORDER BY conv_id')->fetch_all(MYSQLI_ASSOC);
+        self::assertSame(
+            [(string) $sale['convId'], (string) $rev['convId'], (string) $later['convId']],
+            array_column($pending, 'conv_id'),
+            'the superseded sale, the reversal that stopped netting, and the new sale are all queued'
+        );
+        self::assertSame('counted_state', $pending[1]['reason'], 'the reversal is queued as a counted-state change');
+
+        self::$db->query('DELETE FROM 202_attribution_pending');
+        $this->repo->softDelete((int) $later['convId'], 1);
+        self::assertSame(['lead' => 1, 'payout' => '0.00000', 'spy_payout' => '0.00'], $this->clickState(101), 'S-1 counts again, net of its reversal');
+        $pending = self::$db->query('SELECT conv_id FROM 202_attribution_pending ORDER BY conv_id')->fetch_all(MYSQLI_ASSOC);
+        self::assertSame(
+            [(string) $sale['convId'], (string) $rev['convId'], (string) $later['convId']],
+            array_column($pending, 'conv_id'),
+            'deleting S-2 queues it, the sale that counts again, and the reversal that nets again'
+        );
+    }
+
+    private static function truncateLtv(): void
+    {
+        foreach (['202_customers', '202_customer_aliases', '202_revenue_events', '202_revenue_line_items'] as $t) {
+            self::$db->query('TRUNCATE TABLE ' . $t);
+        }
+    }
+
+    /**
+     * A customer's LTV as the cache holds it and as the revenue ledger sums
+     * it (what ltv_maintenance.php reconciles the cache to), both asserted.
+     */
+    private function assertLtv(string $ref, string $expected, string $message = ''): void
+    {
+        $c = self::$db->query(
+            'SELECT customer_id, total_revenue FROM 202_customers WHERE primary_ref='
+            . "'" . self::$db->real_escape_string($ref) . "'"
+        )->fetch_assoc();
+        self::assertNotNull($c, "customer $ref exists");
+        $sum = self::$db->query(
+            'SELECT COALESCE(SUM(amount), 0) AS s FROM 202_revenue_events WHERE customer_id=' . (int) $c['customer_id']
+        )->fetch_assoc();
+
+        self::assertSame(
+            ['cached' => $expected, 'ledger' => $expected],
+            [
+                'cached' => number_format((float) $c['total_revenue'], 2, '.', ''),
+                'ledger' => number_format((float) $sum['s'], 2, '.', ''),
+            ],
+            $message
+        );
+    }
+
+    /**
+     * Codex P2 on PR #157: a $10 sale and its -$10 reversal net to $0 in LTV.
+     * Deleting the sale voided its event (-$10) while the reversal's -$10
+     * stayed, so the customer ended at -$10 although the conversion ledger
+     * counts neither row (a reversal nets only while its sale counts). The
+     * delete now voids the live reversal's event with the sale's, in the same
+     * transaction, so LTV and the ledger agree at every step — and deleting
+     * the reversal afterwards changes nothing, because its event is already
+     * voided under the same key.
+     */
+    public function testDeletingASaleWhoseReversalIsLiveKeepsLtvWithTheLedger(): void
+    {
+        self::truncateLtv();
+        $this->campaign(7);
+        $this->click(100, 7);
+        $customer = ['customer_ref' => 'rev-ltv-1', 'customer_ref_type' => 'custom'];
+
+        $sale = $this->record(100, ['payout' => '10', 'transaction_id' => 'S-1'] + $customer);
+        $rev = $this->record(100, ['transaction_id' => 'S-1', 'reversal' => true] + $customer);
+        $saleId = (int) $sale['convId'];
+        $revId = (int) $rev['convId'];
+        self::assertSame($saleId, (int) $rev['reversesConvId']);
+        self::assertSame('0.00000', $this->clickState(100)['payout']);
+        $this->assertLtv('rev-ltv-1', '0.00', 'the sale and its reversal net to nothing');
+
+        // The API's DELETE, previewed and then performed: the preview names
+        // the reversal and what happens to it.
+        $api = new \Api\V3\Controllers\ConversionsController(self::$db, 1);
+        $preview = $api->deletePreview($saleId)['data'];
+        self::assertSame(
+            [['resource' => 'conversions', 'count' => 1, 'ids' => [$revId], 'effect' => 'reversal_stops_netting']],
+            $preview['cascade']
+        );
+        self::assertStringContainsString('Conversion ' . $revId . ' reverses it', $preview['note']);
+        self::assertSame([], $api->deletePreview($revId)['data']['cascade'], 'a reversal has no reversal of its own');
+
+        $api->delete($saleId);
+
+        self::assertSame(
+            ['lead' => 0, 'payout' => '0.00000', 'spy_payout' => '0.00'],
+            $this->clickState(100),
+            'the ledger counts neither row'
+        );
+        $this->assertLtv('rev-ltv-1', '0.00', 'and neither does LTV');
+        self::assertSame('0', (string) $this->rows(100)[1]['deleted'], 'the reversal row stays, not netting');
+
+        $this->repo->softDelete($revId, 1);
+        $this->assertLtv('rev-ltv-1', '0.00', 'deleting the reversal after its sale voids nothing twice');
+        $voids = self::$db->query(
+            "SELECT COUNT(*) AS n FROM 202_revenue_events WHERE idempotency_key = 'void:conv:" . $revId . "'"
+        )->fetch_assoc();
+        self::assertSame('1', (string) $voids['n']);
+    }
+
+    /**
+     * The same with a second sale that replaced the first: the ledger counts
+     * S-2 ($10) whether or not S-1 and its reversal are deleted, so LTV must
+     * stay at $10 across the delete (it fell to $0 before the fix).
+     */
+    public function testDeletingAReplacedSaleWhoseReversalIsLiveKeepsTheNewSale(): void
+    {
+        self::truncateLtv();
+        $this->campaign(7);
+        $this->click(100, 7);
+        $customer = ['customer_ref' => 'rev-ltv-2', 'customer_ref_type' => 'custom'];
+        $sale = $this->record(100, ['payout' => '10', 'transaction_id' => 'S-1'] + $customer);
+        $this->record(100, ['transaction_id' => 'S-1', 'reversal' => true] + $customer);
+        $this->record(100, ['payout' => '10', 'transaction_id' => 'S-2'] + $customer);
+        $this->assertLtv('rev-ltv-2', '10.00');
+
+        $this->repo->softDelete((int) $sale['convId'], 1);
+
+        self::assertSame('10.00000', $this->clickState(100)['payout']);
+        $this->assertLtv('rev-ltv-2', '10.00');
+    }
+
+    /** Clearing a subid deletes the sale and its reversal together: nothing is left, in either. */
+    public function testClearingASubidWithAReversedSaleLeavesLtvAtZero(): void
+    {
+        self::truncateLtv();
+        $this->campaign(7);
+        $this->click(100, 7);
+        $customer = ['customer_ref' => 'rev-ltv-3', 'customer_ref_type' => 'custom'];
+        $this->record(100, ['payout' => '10', 'transaction_id' => 'S-1'] + $customer);
+        $this->record(100, ['transaction_id' => 'S-1', 'reversal' => true] + $customer);
+        $this->record(100, ['payout' => '4', 'transaction_id' => 'S-2'] + $customer);
+
+        self::assertSame(1, $this->repo->clearClicks(1, [100]));
+
+        self::assertSame(0, $this->clickState(100)['lead']);
+        $this->assertLtv('rev-ltv-3', '0.00');
+    }
+
+    /**
+     * The goals engine retires a goal row and may revive it. A reversal of
+     * that row stops netting while it is retired and nets again when it is
+     * revived, so its LTV event is voided with the retirement and posted
+     * again with the revival (without that, LTV read +$10 after the revival
+     * while the ledger netted the pair to $0).
+     */
+    public function testRetiringAndRevivingAReversedGoalRowMovesItsReversalsLtvWithIt(): void
+    {
+        self::truncateLtv();
+        $this->campaign(7);
+        $this->click(100, 7);
+        $customer = ['customer_ref' => 'rev-ltv-4', 'customer_ref_type' => 'custom'];
+        $goal = $this->repo->record(
+            1,
+            ['click_id' => 100, 'source' => 'goal', 'payout' => '10', 'transaction_id' => 'G-1'] + $customer
+        );
+        $goalId = (int) $goal['convId'];
+        $this->record(100, ['transaction_id' => 'G-1', 'reversal' => true] + $customer);
+        $this->assertLtv('rev-ltv-4', '0.00');
+
+        $conn = new Connection(self::$db);
+        $retire = fn () => $this->repo->retireGoalRowInTransaction($goalId, 1, SupersededReason::REEVALUATION);
+        $conn->transaction($retire);
+        self::assertSame('0.00000', $this->clickState(100)['payout']);
+        $this->assertLtv('rev-ltv-4', '0.00', 'retired: neither row counts');
+
+        $dedupeKey = (string) $goal['dedupeKey'];
+        $conn->transaction(fn () => $this->repo->reviveGoalRowInTransaction($goalId, 1, 100, $dedupeKey));
+        self::assertSame('0.00000', $this->clickState(100)['payout'], 'revived: the sale counts, net of its reversal');
+        $this->assertLtv('rev-ltv-4', '0.00', 'and so does LTV');
+
+        $conn->transaction($retire);
+        $this->assertLtv('rev-ltv-4', '0.00', 'a second retirement voids the second generation');
+    }
+
+    /**
+     * CountedAmount::sql() is of() in SQL (a report sums it where of() is
+     * read one row at a time): both over the same rows, in every shape the
+     * rule names — a plain sale, a partial and a full reversal, a deleted
+     * reversal, a deleted and a superseded sale, and a reversal itself.
+     */
+    public function testCountedAmountSqlAgreesWithOfOnEveryShape(): void
+    {
+        $this->campaign(7);
+        $this->campaign(8, 'accumulate');
+        $this->click(100, 7);
+        $this->click(101, 8);
+        $this->click(102, 8);
+        $this->record(100, ['payout' => '10', 'transaction_id' => 'P-1']);          // superseded by P-2
+        $this->record(100, ['payout' => '7', 'transaction_id' => 'P-2']);           // plain
+        $this->record(101, ['payout' => '10', 'transaction_id' => 'A-1']);
+        $this->record(101, ['payout' => '-4', 'transaction_id' => 'A-1']);          // partial reversal
+        $this->record(101, ['payout' => '5', 'transaction_id' => 'A-2']);
+        $this->record(101, ['transaction_id' => 'A-2', 'reversal' => true]);        // full reversal
+        $this->record(102, ['payout' => '6', 'transaction_id' => 'B-1']);
+        $revB = $this->record(102, ['payout' => '-6', 'transaction_id' => 'B-1']);  // reversal, then deleted
+        $this->repo->softDelete((int) $revB['convId'], 1);
+        $gone = $this->record(102, ['payout' => '3', 'transaction_id' => 'B-2']);   // deleted sale
+        $this->repo->softDelete((int) $gone['convId'], 1);
+
+        $conn = new Connection(self::$db);
+        $rows = self::$db->query(
+            'SELECT c.conv_id, c.click_payout, c.payable, c.deleted, c.superseded_reason, c.reverses_conv_id, '
+            . \Prosper202\Attribution\CountedAmount::sql('c') . ' AS counted_sql FROM 202_conversion_logs c ORDER BY c.conv_id'
+        )->fetch_all(MYSQLI_ASSOC);
+        self::assertCount(9, $rows);
+        $seen = [];
+        foreach ($rows as $row) {
+            $of = \Prosper202\Attribution\CountedAmount::of($conn, $row, true);
+            $expected = \Prosper202\Conversion\Ledger\Amount::fromUnits($of ?? 0);
+            $actual = \Prosper202\Conversion\Ledger\Amount::fromUnits(\Prosper202\Conversion\Ledger\Amount::toUnits((string) $row['counted_sql']));
+            self::assertSame($expected, $actual, 'conversion ' . $row['conv_id']);
+            $seen[] = $expected;
+        }
+        // The shapes are real: something counts in full, in part, and not at all.
+        self::assertSame(['0.00000', '7.00000', '6.00000', '0.00000', '0.00000', '0.00000', '6.00000', '0.00000', '0.00000'], $seen);
+    }
+
+    public function testAFailedInsertLeavesNeitherARowNorAChangedClick(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7);
+        try {
+            // Strict mode refuses an event name longer than its column; the
+            // whole transaction (row, click, outbox) must roll back.
+            $this->record(100, ['payout' => '5', 'transaction_id' => 'A', 'event_name' => str_repeat('e', 300)]);
+            self::fail('an over-long event name was stored');
+        } catch (\Throwable) {
+            self::addToAssertionCount(1);
+        }
+        self::assertSame([], $this->rows(100));
+        self::assertSame(0, $this->clickState(100)['lead']);
+        self::assertSame('0', (string) self::$db->query('SELECT COUNT(*) AS n FROM 202_attribution_pending')->fetch_assoc()['n']);
+    }
+}

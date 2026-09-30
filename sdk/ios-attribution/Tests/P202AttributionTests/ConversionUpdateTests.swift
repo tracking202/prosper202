@@ -2,41 +2,64 @@ import XCTest
 @testable import P202Attribution
 
 final class ConversionUpdateTests: XCTestCase {
+    /// Goals 1-4 encoded; goal 5 reached but not encoded.
     private let schema = P202AttributionSchema(
         appId: 1,
         schemaVersion: "v",
-        events: [
-            "purchase": .init(fineValue: 63, coarseValue: .high),
-            "signup": .init(fineValue: 5, coarseValue: nil),
-            "engaged": .init(fineValue: nil, coarseValue: .medium),
-            "broken": .init(fineValue: 99, coarseValue: nil),
+        goals: [],
+        encodings: [
+            1: .init(fineValue: 63, coarseValue: .high),
+            2: .init(fineValue: 5, coarseValue: nil),
+            3: .init(fineValue: nil, coarseValue: .medium),
+            4: .init(fineValue: 99, coarseValue: nil),
         ]
     )
 
-    func testMappedEventResolvesFineAndCoarse() {
-        let update = ConversionUpdate.resolve(event: "purchase", in: schema, lastFineValue: nil)
-        XCTAssertEqual(update, ConversionUpdate(fineValue: 63, coarseValue: .high, usedFineFallback: false))
+    private func reached(_ goalIds: Int..., ineligible: String? = nil) -> [GoalOutcome] {
+        return goalIds.map {
+            GoalOutcome(goalId: $0, version: 1, n: 1, eventId: "e", reachedAt: 0, valueUnits: nil,
+                        valueSource: "none", valueNote: nil, ineligibleReason: ineligible)
+        }
     }
 
-    func testUnmappedEventIsANoOpNotAGuess() {
-        XCTAssertNil(ConversionUpdate.resolve(event: "unmapped", in: schema, lastFineValue: 40))
+    private func resolve(_ outcomes: [GoalOutcome], lastFineValue: Int? = nil) -> ConversionUpdate? {
+        return ConversionUpdate.resolve(outcomes: outcomes, in: schema, lastFineValue: lastFineValue)
+    }
+
+    func testAReachedGoalResolvesToItsEncoding() {
+        XCTAssertEqual(resolve(reached(1)), ConversionUpdate(fineValue: 63, coarseValue: .high, usedFineFallback: false))
+    }
+
+    func testNothingReachedOrNothingEncodedIsANoOpNotAGuess() {
+        XCTAssertNil(resolve([], lastFineValue: 40))
+        XCTAssertNil(resolve(reached(5), lastFineValue: 40))
+    }
+
+    func testAnIneligibleOutcomeWasNotReached() {
+        // A click-windowed goal on a device with no click is recorded as
+        // no_click; it must not set the value a real reach would.
+        XCTAssertNil(resolve(reached(1, ineligible: "no_click")))
+    }
+
+    func testSeveralGoalsInOneEventTakeTheHighestOfEachKind() {
+        XCTAssertEqual(resolve(reached(2, 3)), ConversionUpdate(fineValue: 5, coarseValue: .medium, usedFineFallback: false))
+        XCTAssertEqual(resolve(reached(2, 1, 3)), ConversionUpdate(fineValue: 63, coarseValue: .high, usedFineFallback: false))
     }
 
     func testCoarseOnlyMappingKeepsTheLastFineValue() {
         // The coarse-bearing SKAdNetwork API always takes a fine value;
         // sending an arbitrary one would downgrade the fine signal.
-        let update = ConversionUpdate.resolve(event: "engaged", in: schema, lastFineValue: 41)
-        XCTAssertEqual(update, ConversionUpdate(fineValue: 41, coarseValue: .medium, usedFineFallback: true))
+        XCTAssertEqual(resolve(reached(3), lastFineValue: 41), ConversionUpdate(fineValue: 41, coarseValue: .medium, usedFineFallback: true))
     }
 
     func testCoarseOnlyMappingWithNoHistoryFallsBackToZero() {
-        let update = ConversionUpdate.resolve(event: "engaged", in: schema, lastFineValue: nil)
+        let update = resolve(reached(3))
         XCTAssertEqual(update?.fineValue, 0)
         XCTAssertEqual(update?.usedFineFallback, true)
     }
 
     func testScopingKeepsTheDecisionAndAddsThePostbacks() {
-        let decision = ConversionUpdate.resolve(event: "purchase", in: schema, lastFineValue: nil)
+        let decision = resolve(reached(1))
         XCTAssertNil(decision?.conversionTypes, "resolution itself is unscoped")
         XCTAssertEqual(decision?.includesInstall, true)
         XCTAssertEqual(decision?.includesReengagement, false)
@@ -110,7 +133,7 @@ final class ConversionUpdateTests: XCTestCase {
     }
 
     func testOutOfRangeFineValuesAreClampedNotCrashed() {
-        let update = ConversionUpdate.resolve(event: "broken", in: schema, lastFineValue: nil)
+        let update = resolve(reached(4))
         XCTAssertEqual(update?.fineValue, 63)
     }
 }

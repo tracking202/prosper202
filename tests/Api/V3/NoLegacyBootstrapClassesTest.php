@@ -7,23 +7,28 @@ namespace Tests\Api\V3;
 use Tests\TestCase;
 
 /**
- * Pages on the v2 shell, and the chrome both shells render, carry no
- * Bootstrap 3 or Flat UI Pro class.
+ * No page, fragment, script or stylesheet in the tree carries a Bootstrap 3,
+ * Flat UI Pro or Font Awesome 4 class.
  *
- * The v2 shell does not load those stylesheets, so a leftover `col-xs-6` or
- * `panel panel-default` renders as nothing at all — no error, no warning, an
- * unstyled block that looks like a page that was never finished. The chrome
- * is shared by both shells and styled by its own sheet, so a Bootstrap class
- * of either version there breaks one of them.
+ * The shell loads none of those stylesheets — U8 deleted them with the
+ * classic shell — so a leftover `col-xs-6` or `panel panel-default` renders
+ * as nothing at all: no error, no warning, an unstyled block that looks like
+ * a page that was never finished. Until U8 this test checked the chrome and
+ * the pages that opted into the v2 shell; with one shell there is nothing to
+ * opt into, so it checks every PHP, JavaScript and HTML file the install
+ * serves, and every first-party stylesheet's selectors.
  *
  * The banned set is not a hand-written list. It is every class Bootstrap
- * 3.3.4 defines that Bootstrap 5.3 does not, read from the two stylesheets in
- * the repository — about six hundred names: every grid offset and push, every
- * glyphicon, panel, well, label and navbar variant — plus Flat UI Pro's icon
- * font (`fui-*`) and its component classes, plus the Bootstrap 3 data-API
- * attributes (`data-toggle=` and friends; Bootstrap 5 uses `data-bs-*`). A
- * class both versions define (`row`, `btn-primary`, `active`) is allowed,
- * because a v2 page may use it.
+ * 3.3.4 defines that Bootstrap 5.3 does not — about six hundred names: every
+ * grid offset and push, every glyphicon, panel, well, label and navbar
+ * variant. The 3.3.4 stylesheet is gone, so the difference was read from it
+ * once, before the deletion, into tests/fixtures/ui/bootstrap3-only-classes.txt;
+ * the subtraction is re-checked against the live Bootstrap 5 files here, so
+ * a class a v2 page may use can never be banned. Added to it: Flat UI Pro's
+ * icon font (`fui-*`) and its component classes, Font Awesome 4 (`fa`,
+ * `fa-*`), and the Bootstrap 3 data-API attributes (`data-toggle=` and
+ * friends; Bootstrap 5 uses `data-bs-*`). A class both versions define
+ * (`row`, `btn-primary`, `active`) is allowed.
  *
  * Markup is checked token by token: every `class="..."` attribute in the
  * file, including those inside PHP and JavaScript strings and those written
@@ -31,21 +36,18 @@ use Tests\TestCase;
  * for the ways they name a class without writing an attribute —
  * `classList.add`, `className =`, jQuery's `addClass` and friends, and the
  * selector strings passed to `querySelector`, `closest`, `matches` and `$()`.
- * The chrome stylesheet is checked by the classes its selectors
- * name. Detection stays textual: a page opts into the v2 shell by passing
- * 'ui' => 'v2' to template_top(), and that string is what selects it here,
- * so a page cannot migrate unchecked. The partials the shell includes at
- * runtime (the section tabs, the sub-menu) are in the chrome list, so a v2
- * tracking page is covered although the partials are not pages.
+ * A class a script assembles at runtime is out of reach here; the browser
+ * passes' noLegacyClasses check reads the live DOM for those.
  */
 final class NoLegacyBootstrapClassesTest extends TestCase
 {
-    private const BOOTSTRAP3 = '202-css/css/bootstrap-3.3.4.min.css';
-    private const BOOTSTRAP5 = '202-css/vendor/bootstrap-5.3.8.min.css';
+    private const BANNED_FIXTURE = 'tests/fixtures/ui/bootstrap3-only-classes.txt';
+    private const BOOTSTRAP5 = ['202-css/vendor/bootstrap-5.3.8.min.css', '202-css/vendor/bootstrap-icons-1.13.1/bootstrap-icons.min.css'];
 
     /**
      * Flat UI Pro component classes a page might carry (its icon font is
-     * caught by prefix), and the classic first-party button class.
+     * caught by prefix), the classic first-party button class, and Font
+     * Awesome 4's base class (its icons are caught by prefix).
      */
     private const FLAT_UI = [
         'btn-embossed', 'btn-hg', 'btn-inverse', 'btn-wide', 'btn-tip', 'btn-group-hg',
@@ -57,51 +59,76 @@ final class NoLegacyBootstrapClassesTest extends TestCase
         'pagination-inverse', 'select-primary', 'select-danger', 'select-success',
         'select-warning', 'select-info', 'select-inverse', 'select-default', 'select-hg',
         'select-lg', 'select-sm', 'tile', 'tile-image', 'tile-title', 'tile-hot-ribbon',
-        'todo', 'btn-p202',
+        'todo', 'btn-p202', 'fa',
     ];
 
     /** Class prefixes that belong to the classic kits and their plugins. */
-    private const LEGACY_PREFIXES = ['fui-', 'glyphicon', 'btn-social-', 'bootstrap-switch', 'bootstrap-tagsinput', 'tagsinput-', 'iconbar', 'multiselect', 'fileinput'];
+    private const LEGACY_PREFIXES = ['fui-', 'fa-', 'glyphicon', 'btn-social-', 'bootstrap-switch', 'bootstrap-tagsinput', 'tagsinput-', 'iconbar', 'multiselect', 'fileinput'];
 
     /** Bootstrap 3 data-API attributes; Bootstrap 5 uses data-bs-*. */
     private const LEGACY_ATTRIBUTES = ['data-toggle=', 'data-dismiss=', 'data-target=', 'data-ride=', 'data-spy=', 'data-parent=', 'data-slide='];
 
-    /** Shared by both shells; must be clean whatever pages exist. */
-    private const CHROME = [
+    /**
+     * Files the sweep must reach, so a filter that silently skips a family
+     * fails here rather than passing on less: the chrome, the kit, a page, a
+     * fragment, a pre-login page, the update banner and the shared scripts.
+     */
+    private const MUST_SCAN = [
         '202-config/template.php',
         '202-config/functions-ui.php',
+        '202-config/functions-ui-partials.php',
+        '202-config/functions-standalone-ui.php',
+        '202-config/functions-update-banner.php',
         'tracking202/_config/top.php',
         'tracking202/_config/sub-menu.php',
+        '202-account/ui-kit.php',
+        '202-account/ajax/update-needed.php',
+        'tracking202/setup/aff_campaigns.php',
+        'tracking202/ajax/click_history.php',
+        '202-login.php',
         '202-js/p202-chrome.js',
         '202-js/p202-ui.js',
     ];
 
-    private const CHROME_STYLESHEET = '202-css/p202-chrome.css';
+    /**
+     * Not served, or not ours: everything else the install serves is scanned.
+     * build/logs is PHPUnit's own report output (phpunit.xml), ignored by git.
+     * sdk holds the mobile SDKs, which the install does not serve; running
+     * the Android SDK's live pass leaves Gradle's HTML test reports under
+     * its (git-ignored) build directories, and those read as page markup.
+     */
+    private const SKIP_DIRS = ['vendor', 'node_modules', 'tests', '.git', 'documentation', 'docs', 'build/logs', 'sdk', '202-js/vendor', '202-css/vendor', '202-config/temp', '202-config/data', '202-config/geo'];
 
-    private const SKIP_DIRS = ['vendor', 'node_modules', 'tests', '.git', '202-config/temp', '202-config/data', '202-config/geo'];
-
-    public function testTheBannedSetIsReadFromTheTwoStylesheets(): void
+    public function testTheBannedSetIsTheRecordedBootstrap3Difference(): void
     {
-        $banned = $this->bannedClasses(dirname(__DIR__, 3));
-        self::assertGreaterThan(400, count($banned), 'the Bootstrap 3 minus Bootstrap 5 difference was read from the stylesheets');
-        foreach (['col-xs-12', 'col-sm-offset-2', 'col-md-push-3', 'panel', 'panel-default', 'panel-heading', 'glyphicon', 'glyphicon-ok', 'form-group', 'form-horizontal', 'control-label', 'help-block', 'input-group-addon', 'btn-default', 'btn-xs', 'btn-block', 'well', 'caret', 'label', 'pull-right', 'text-right', 'hidden-xs', 'visible-xs', 'img-responsive', 'navbar-default', 'navbar-toggle', 'sr-only', 'table-condensed', 'dropdown-menu-right'] as $legacy) {
+        $root = dirname(__DIR__, 3);
+        $banned = $this->bannedClasses($root);
+        self::assertGreaterThan(550, count($banned), 'the Bootstrap 3 minus Bootstrap 5 difference was read from the fixture');
+        foreach (['col-xs-12', 'col-sm-offset-2', 'col-md-push-3', 'panel', 'panel-default', 'panel-heading', 'glyphicon', 'glyphicon-ok', 'form-group', 'form-horizontal', 'control-label', 'help-block', 'input-group-addon', 'btn-default', 'btn-xs', 'btn-block', 'well', 'caret', 'label', 'pull-right', 'text-right', 'hidden-xs', 'visible-xs', 'img-responsive', 'navbar-default', 'navbar-toggle', 'sr-only', 'table-condensed', 'dropdown-menu-right', 'input-sm'] as $legacy) {
             self::assertContains($legacy, $banned, "$legacy is Bootstrap 3 only and is banned");
         }
         foreach (['row', 'col-md-6', 'col-sm-12', 'btn', 'btn-primary', 'btn-sm', 'active', 'disabled', 'table', 'table-striped', 'form-control', 'input-group', 'nav', 'nav-tabs', 'breadcrumb', 'badge', 'alert', 'container', 'text-center', 'modal', 'dropdown-menu', 'list-group-item', 'pagination', 'progress-bar'] as $shared) {
             self::assertNotContains($shared, $banned, "$shared exists in both versions and is allowed");
         }
+        $five = [];
+        foreach (self::BOOTSTRAP5 as $sheet) {
+            $css = file_get_contents($root . '/' . $sheet);
+            self::assertIsString($css, "$sheet is readable");
+            $five = array_merge($five, $this->selectorClasses($css));
+        }
+        self::assertGreaterThan(1000, count($five), 'Bootstrap 5 and its icons define over a thousand classes');
+        self::assertSame([], array_values(array_intersect($banned, $five)), 'no class the shell\'s own stylesheets define is banned');
     }
 
-    public function testTheChromeAndEveryV2PageCarryNoLegacyClass(): void
+    public function testNoFileInTheTreeCarriesALegacyClass(): void
     {
         $root = dirname(__DIR__, 3);
         $banned = array_fill_keys($this->bannedClasses($root), true);
-        $files = self::CHROME;
-        foreach ($this->v2Pages($root) as $page) {
-            $files[] = $page;
+        $files = $this->servedFiles($root);
+        self::assertGreaterThan(400, count($files), 'the sweep walked the tree');
+        foreach (self::MUST_SCAN as $file) {
+            self::assertContains($file, $files, "$file is swept");
         }
-        $files = array_values(array_unique($files));
-        self::assertContains('202-account/ui-kit.php', $files, 'the UI kit is a v2 page and is checked');
 
         $offences = [];
         foreach ($files as $file) {
@@ -126,15 +153,18 @@ final class NoLegacyBootstrapClassesTest extends TestCase
             }
         }
 
-        $stylesheet = file_get_contents($root . '/' . self::CHROME_STYLESHEET);
-        self::assertIsString($stylesheet);
-        foreach ($this->selectorClasses($stylesheet) as $class) {
-            if ($this->isLegacy($class, $banned)) {
-                $offences[] = sprintf('%s: selector .%s', self::CHROME_STYLESHEET, $class);
+        $sheets = glob($root . '/202-css/*.css') ?: [];
+        self::assertNotEmpty($sheets, 'the first-party stylesheets were found');
+        foreach ($sheets as $sheet) {
+            $relative = substr($sheet, strlen($root) + 1);
+            foreach ($this->selectorClasses((string) file_get_contents($sheet)) as $class) {
+                if ($this->isLegacy($class, $banned)) {
+                    $offences[] = sprintf('%s: selector .%s', $relative, $class);
+                }
             }
         }
 
-        self::assertSame([], $offences, "Bootstrap 3 / Flat UI classes on the v2 shell or in the chrome:\n" . implode("\n", $offences));
+        self::assertSame([], $offences, "Bootstrap 3 / Flat UI / Font Awesome 4 classes, which no stylesheet the shell loads styles:\n" . implode("\n", $offences));
     }
 
     public function testTheScannerSeesClassesInsidePhpAndJavaScriptStrings(): void
@@ -229,21 +259,25 @@ final class NoLegacyBootstrapClassesTest extends TestCase
     }
 
     /**
-     * The classes Bootstrap 3 defines and Bootstrap 5 does not.
+     * The classes Bootstrap 3 defines and Bootstrap 5 does not, as recorded
+     * before U8 deleted the Bootstrap 3 stylesheet.
      *
      * @return list<string>
      */
     private function bannedClasses(string $root): array
     {
-        $bootstrap3 = file_get_contents($root . '/' . self::BOOTSTRAP3);
-        $bootstrap5 = file_get_contents($root . '/' . self::BOOTSTRAP5);
-        self::assertIsString($bootstrap3, self::BOOTSTRAP3 . ' is readable');
-        self::assertIsString($bootstrap5, self::BOOTSTRAP5 . ' is readable');
-        $three = $this->selectorClasses($bootstrap3);
-        $five = $this->selectorClasses($bootstrap5);
-        self::assertGreaterThan(500, count($three), 'Bootstrap 3 defines hundreds of classes');
-        self::assertGreaterThan(1000, count($five), 'Bootstrap 5 defines over a thousand classes');
-        return array_values(array_diff($three, $five));
+        $text = file_get_contents($root . '/' . self::BANNED_FIXTURE);
+        self::assertIsString($text, self::BANNED_FIXTURE . ' is readable');
+        $classes = [];
+        foreach (explode("\n", $text) as $line) {
+            $line = trim($line);
+            if ($line === '' || str_starts_with($line, '#')) {
+                continue;
+            }
+            self::assertMatchesRegularExpression('/^-?[_a-zA-Z][_a-zA-Z0-9-]*$/', $line, 'one class name per line in ' . self::BANNED_FIXTURE);
+            $classes[] = $line;
+        }
+        return $classes;
     }
 
     /**
@@ -293,13 +327,13 @@ final class NoLegacyBootstrapClassesTest extends TestCase
     }
 
     /**
-     * Every PHP file under the repository that opts into the v2 shell.
+     * Every PHP, JavaScript and HTML file the install serves or renders.
      *
      * @return list<string> repo-relative paths
      */
-    private function v2Pages(string $root): array
+    private function servedFiles(string $root): array
     {
-        $pages = [];
+        $files = [];
         $iterator = new \RecursiveIteratorIterator(
             new \RecursiveCallbackFilterIterator(
                 new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS),
@@ -310,7 +344,7 @@ final class NoLegacyBootstrapClassesTest extends TestCase
                             return false;
                         }
                     }
-                    return $file->isDir() || str_ends_with($file->getFilename(), '.php');
+                    return $file->isDir() || preg_match('/\.(php|js|html?)$/', $file->getFilename()) === 1;
                 }
             )
         );
@@ -322,12 +356,9 @@ final class NoLegacyBootstrapClassesTest extends TestCase
             if (!$file->isFile()) {
                 continue;
             }
-            $source = (string) file_get_contents($file->getPathname());
-            if (preg_match("/['\"]ui['\"]\\s*=>\\s*['\"]v2['\"]/", $source) === 1) {
-                $pages[] = ltrim(str_replace($root, '', $file->getPathname()), '/');
-            }
+            $files[] = ltrim(str_replace($root, '', $file->getPathname()), '/');
         }
-        sort($pages);
-        return $pages;
+        sort($files);
+        return $files;
     }
 }

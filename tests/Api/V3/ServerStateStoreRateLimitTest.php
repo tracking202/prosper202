@@ -153,7 +153,9 @@ final class ServerStateStoreRateLimitTest extends TestCase
         $endpoints = [
             '/tracking202/static/p13n.php' => 'p13n',
             '/tracking202/static/p13n_event.php' => 'p13n_event',
-            '/api/v3/Attribution/PostbackEndpoint.php' => 'attribution-receiver',
+            // The public app intake's shared plumbing: every pre-auth app
+            // route and the /.well-known/ postback endpoints limit through it.
+            '/api/v3/Apps/PublicIntake.php' => null,
         ];
         foreach ($endpoints as $file => $prefix) {
             $src = (string)file_get_contents($root . $file);
@@ -162,12 +164,40 @@ final class ServerStateStoreRateLimitTest extends TestCase
                 $src,
                 $file . ' must rate-limit through softIpRateLimit()'
             );
-            $this->assertStringContainsString("'" . $prefix . "'", $src, $file . ' must keep its bucket prefix');
+            if ($prefix !== null) {
+                $this->assertStringContainsString("'" . $prefix . "'", $src, $file . ' must keep its bucket prefix');
+            }
             $this->assertStringNotContainsString(
                 'consumeRateLimit(',
                 $src,
                 $file . ' must not build its own bucket key: unauthenticated endpoints key on REMOTE_ADDR only'
             );
         }
+    }
+
+    /**
+     * The public app routes limit through PublicIntake, each with its own
+     * bucket prefix, and none builds a bucket key of its own.
+     */
+    public function testThePublicAppRoutesLimitThroughPublicIntake(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $callers = [
+            '/api/v3/Apps/Apple/PostbackIntake.php' => "RATE_LIMIT_BUCKET = 'app-postbacks'",
+            '/api/v3/index.php' => "PublicIntake::rateLimit('app-schema'",
+        ];
+        foreach ($callers as $file => $bucket) {
+            $src = (string)file_get_contents($root . $file);
+            $this->assertStringContainsString('PublicIntake::rateLimit(', $src, $file . ' must limit through PublicIntake');
+            $this->assertStringContainsString($bucket, $src, $file . ' must keep its bucket prefix');
+        }
+        // index.php also rate-limits authenticated requests (keyed by the API
+        // key, which the caller proved), so only the postback intake is held
+        // to having no bucket key of its own.
+        $this->assertStringNotContainsString(
+            'consumeRateLimit(',
+            (string)file_get_contents($root . '/api/v3/Apps/Apple/PostbackIntake.php'),
+            'PostbackIntake must not build its own bucket key'
+        );
     }
 }

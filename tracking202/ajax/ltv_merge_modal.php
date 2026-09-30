@@ -22,42 +22,52 @@ declare(strict_types=1);
  * API pushes.
  */
 ?>
-<div id="ltv-merge-overlay" style="display: none; position: fixed; inset: 0; background: rgba(15, 20, 25, 0.45); z-index: 10000;" onclick="if (event.target === this) { ltvMergeClose(); }">
-    <div style="max-width: 520px; margin: 9vh auto 0; background: #fff; border-radius: 10px; box-shadow: 0 18px 60px rgba(0,0,0,0.28); overflow: hidden; font-size: 14px;">
-        <!-- Step 1: search -->
-        <div id="ltv-merge-search-step">
-            <div style="padding: 14px 16px 10px;">
-                <div id="ltv-merge-title" style="font-weight: 600; margin-bottom: 2px;"></div>
-                <div id="ltv-merge-subtitle" class="text-muted" style="font-size: 12px;"></div>
-            </div>
-            <div style="padding: 0 16px 6px;">
-                <input type="text" id="ltv-merge-input" class="form-control" autocomplete="off" spellcheck="false"
-                       style="border-radius: 6px; box-shadow: none;"
-                       oninput="ltvMergeQueue();" onkeydown="ltvMergeKeys(event);">
-            </div>
-            <div id="ltv-merge-results" style="max-height: 300px; overflow-y: auto; padding: 4px 8px 8px;"></div>
-            <div style="padding: 8px 16px; border-top: 1px solid #eee; color: #999; font-size: 11px;">
-                <kbd>&uarr;</kbd> <kbd>&darr;</kbd> to navigate &nbsp; <kbd>&crarr;</kbd> to select &nbsp; <kbd>esc</kbd> to close
-            </div>
-        </div>
-        <!-- Step 2: confirm -->
-        <div id="ltv-merge-confirm-step" style="display: none;">
-            <div style="padding: 14px 16px 6px;">
-                <div style="font-weight: 600;">Confirm merge</div>
-            </div>
-            <div style="padding: 4px 16px 0;">
-                <div id="ltv-merge-card-gone" style="border: 1px solid #e5e5e5; border-radius: 8px; padding: 10px 12px; opacity: 0.75;"></div>
-                <div style="text-align: center; color: #888; font-size: 12px; padding: 6px 0;">
-                    everything moves down into &nbsp;&darr;&nbsp;
-                    <a href="#" onclick="ltvMergeSwap(); return false;" title="Keep the other record instead">swap direction</a>
+<?php /* A Bootstrap 5 modal (the v2 shell loads its script): focus is held
+         inside it while it is open and returned when it closes, Escape and a
+         click outside close it, and it follows the theme. */ ?>
+<div class="modal fade" id="ltv-merge-overlay" tabindex="-1" aria-labelledby="ltv-merge-title" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <!-- Step 1: search -->
+            <div id="ltv-merge-search-step">
+                <div class="modal-header">
+                    <div>
+                        <h2 class="modal-title fs-6" id="ltv-merge-title"></h2>
+                        <div id="ltv-merge-subtitle" class="text-secondary small"></div>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
-                <div id="ltv-merge-card-kept" style="border: 1px solid #4a90d9; border-radius: 8px; padding: 10px 12px; background: #f4f9ff;"></div>
-                <p id="ltv-merge-moves" class="text-muted" style="font-size: 12px; margin: 10px 2px 0;"></p>
-                <p class="text-muted" style="font-size: 12px; margin: 4px 2px 0;"><strong>This cannot be undone.</strong></p>
+                <div class="modal-body pb-2">
+                    <input type="text" id="ltv-merge-input" class="form-control" autocomplete="off" spellcheck="false"
+                           aria-label="Search" oninput="ltvMergeQueue();" onkeydown="ltvMergeKeys(event);">
+                    <div id="ltv-merge-results" class="list-group list-group-flush mt-2" style="max-height: 300px; overflow-y: auto;"></div>
+                </div>
+                <div class="modal-footer justify-content-start text-secondary small">
+                    <span><kbd>&uarr;</kbd> <kbd>&darr;</kbd> to navigate</span>
+                    <span><kbd>&crarr;</kbd> to select</span>
+                    <span><kbd>esc</kbd> to close</span>
+                </div>
             </div>
-            <div style="padding: 12px 16px; text-align: right;">
-                <a href="#" onclick="ltvMergeBack(); return false;" style="margin-right: 14px;">Back</a>
-                <button type="button" class="btn btn-primary" id="ltv-merge-go" onclick="ltvMergeConfirm();">Merge records</button>
+            <!-- Step 2: confirm -->
+            <div id="ltv-merge-confirm-step" style="display: none;">
+                <div class="modal-header">
+                    <h2 class="modal-title fs-6">Confirm merge</h2>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="ltv-merge-card-gone" class="border rounded-3 p-2 px-3 opacity-75"></div>
+                    <div class="text-center text-secondary small py-2">
+                        everything moves down into &nbsp;&darr;&nbsp;
+                        <a href="#" onclick="ltvMergeSwap(); return false;" title="Keep the other record instead">swap direction</a>
+                    </div>
+                    <div id="ltv-merge-card-kept" class="border border-primary rounded-3 p-2 px-3 bg-primary-subtle"></div>
+                    <p id="ltv-merge-moves" class="text-secondary small mt-3 mb-0"></p>
+                    <p class="text-secondary small mt-1 mb-0"><strong>This cannot be undone.</strong></p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-link" onclick="ltvMergeBack();">Back</button>
+                    <button type="button" class="btn btn-primary" id="ltv-merge-go" onclick="ltvMergeConfirm();">Merge records</button>
+                </div>
             </div>
         </div>
     </div>
@@ -79,12 +89,16 @@ function ltvMergeOpen(cfg) {
     ltvMergeRenderResults([], 'Start typing to search.');
     document.getElementById('ltv-merge-search-step').style.display = '';
     document.getElementById('ltv-merge-confirm-step').style.display = 'none';
-    document.getElementById('ltv-merge-overlay').style.display = 'block';
-    setTimeout(function() { input.focus(); }, 0);
+    var overlay = document.getElementById('ltv-merge-overlay');
+    overlay.addEventListener('shown.bs.modal', function () { input.focus(); }, { once: true });
+    overlay.addEventListener('hidden.bs.modal', function () { ltvMergeCfg = null; }, { once: true });
+    bootstrap.Modal.getOrCreateInstance(overlay).show();
 }
 
 function ltvMergeClose() {
-    document.getElementById('ltv-merge-overlay').style.display = 'none';
+    var overlay = document.getElementById('ltv-merge-overlay');
+    var modal = overlay ? bootstrap.Modal.getInstance(overlay) : null;
+    if (modal) { modal.hide(); }
     ltvMergeCfg = null;
 }
 
@@ -120,7 +134,7 @@ function ltvMergeRenderResults(results, message) {
     while (box.firstChild) { box.removeChild(box.firstChild); }
     if (message) {
         var m = document.createElement('div');
-        m.style.cssText = 'padding: 14px 10px; color: #999;';
+        m.className = 'text-secondary small px-2 py-3';
         m.textContent = message;
         box.appendChild(m);
         return;
@@ -132,25 +146,25 @@ function ltvMergeRenderResults(results, message) {
 }
 
 function ltvMergeRow(r, index) {
-    var row = document.createElement('div');
-    row.className = 'ltv-merge-row';
-    row.style.cssText = 'display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px; cursor: pointer;';
+    var row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center gap-2 ltv-merge-row';
     row.onmouseenter = function() { ltvMergeState.active = index; ltvMergeHighlight(); };
     row.onclick = function() { ltvMergeSelect(index); };
 
     var left = document.createElement('div');
     left.style.cssText = 'min-width: 0;';
     var label = document.createElement('div');
-    label.style.cssText = 'font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
+    label.className = 'fw-bold text-truncate';
     label.textContent = r.label;
     var sub = document.createElement('div');
-    sub.style.cssText = 'color: #999; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
+    sub.className = 'text-secondary small text-truncate';
     sub.textContent = r.sub || '';
     left.appendChild(label);
     left.appendChild(sub);
 
     var meta = document.createElement('div');
-    meta.style.cssText = 'color: #666; font-size: 12px; white-space: nowrap;';
+    meta.className = 'text-secondary small text-nowrap';
     meta.textContent = r.meta || '';
 
     row.appendChild(left);
@@ -161,12 +175,12 @@ function ltvMergeRow(r, index) {
 function ltvMergeHighlight() {
     var rows = document.getElementById('ltv-merge-results').getElementsByClassName('ltv-merge-row');
     for (var i = 0; i < rows.length; i++) {
-        rows[i].style.background = (i === ltvMergeState.active) ? '#eef4fb' : '';
+        rows[i].classList.toggle('active', i === ltvMergeState.active);
     }
 }
 
 function ltvMergeKeys(event) {
-    if (event.key === 'Escape') { ltvMergeClose(); return; }
+    if (event.key === 'Escape') { return; } // the modal closes itself
     if (!ltvMergeState.results.length) { return; }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
@@ -191,13 +205,13 @@ function ltvMergeSelect(index) {
 function ltvMergeCard(el, r, kept) {
     while (el.firstChild) { el.removeChild(el.firstChild); }
     var badge = document.createElement('div');
-    badge.style.cssText = 'font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: ' + (kept ? '#3a7bd5' : '#999') + '; margin-bottom: 2px;';
+    badge.className = 'small text-uppercase fw-bold ' + (kept ? 'text-primary-emphasis' : 'text-secondary');
     badge.textContent = kept ? 'Kept — everything ends up here' : 'Merged away — excluded from reports';
     var label = document.createElement('div');
-    label.style.cssText = 'font-weight: 600;';
+    label.className = 'fw-bold';
     label.textContent = r.label;
     var sub = document.createElement('div');
-    sub.style.cssText = 'color: #999; font-size: 12px;';
+    sub.className = 'text-secondary small';
     sub.textContent = [r.sub, r.meta].filter(Boolean).join(' — ');
     el.appendChild(badge);
     el.appendChild(label);

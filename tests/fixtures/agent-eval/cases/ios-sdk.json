@@ -1,0 +1,41 @@
+{
+  "cases": [
+    {
+      "id": "ios-sdk-001-encode-a-funnel-goal",
+      "priority": "high",
+      "state": "seeded fixture plus a fresh iOS registration EVAL IOS APP (App Store id 990077555); setup deletes any earlier one (its goals are archived with it, its encodings go too) and registers it again",
+      "setup": [
+        "p202 app list --json | jq -r '.data[] | select(.app_key==\"990077555\") | .registration_id' | xargs -r -I{} p202 app delete {} --force",
+        "p202 app create --platform ios --app-key 990077555 --app-name 'EVAL IOS APP' --json >/dev/null"
+      ],
+      "ask": "Our iOS app EVAL IOS APP (App Store id 990077555) logs tutorial_complete, and level_reached with a numeric level property. Make SKAN fine conversion value 20 mean: the user reached level 3 or higher after finishing the tutorial, within the first 7 days after install.",
+      "expected": {
+        "runs_one_of": [
+          "app encoding create"
+        ],
+        "checks": [
+          {
+            "run": "rid=$(p202 app list --json | jq -r '.data[] | select(.app_key==\"990077555\") | .registration_id' | head -1); g=$(p202 app encoding list --registration-id \"$rid\" --json | jq -r '.data[] | select(.fine_value==20) | .goal_id' | head -1); p202 goal get \"$g\" --json | jq '.data.definition | .trigger.event==\"level_reached\" and ([.trigger.where[] | select(.prop==\"level\" and .op==\"gte\" and .value==3)] | length)==1 and .within.days==7 and .within.from==\"install\" and (.after | length)==1'",
+            "includes": [
+              "true"
+            ]
+          },
+          {
+            "run": "rid=$(p202 app list --json | jq -r '.data[] | select(.app_key==\"990077555\") | .registration_id' | head -1); g=$(p202 app encoding list --registration-id \"$rid\" --json | jq -r '.data[] | select(.fine_value==20) | .goal_id' | head -1); p=$(p202 goal get \"$g\" --json | jq -r '.data.definition.after[0]'); p202 goal get \"$p\" --json | jq '.data.definition.trigger.event==\"tutorial_complete\"'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if fine value 20 of EVAL IOS APP's registration names one goal triggered by level_reached with level >= 3, windowed 7 days from the install (not from the click), that waits in `after` for a goal triggered by tutorial_complete. FAIL if the value names a plain level_reached goal (the order and the window are lost), a window counted from the click (a device never knows its click, and the server refuses it), or an encoding on another registration or the account-wide set.",
+        "reply_includes": [
+          "20"
+        ]
+      },
+      "cleanup": [
+        "p202 app list --json | jq -r '.data[] | select(.app_key==\"990077555\") | .registration_id' | xargs -r -I{} p202 app delete {} --force"
+      ],
+      "notes": "Before PR 8 an encoding could only name a plain event goal, so the honest answer was a refusal; now the iOS SDK evaluates goals on the device and the whole funnel can be encoded. The checks read the stored goal the encoding names and its prerequisite, not the reply."
+    }
+  ]
+}

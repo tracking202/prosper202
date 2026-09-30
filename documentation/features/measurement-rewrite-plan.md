@@ -1,0 +1,4871 @@
+# Measurement rewrite: app measurement (iOS + Android) and multi-touch attribution
+
+Status: **built; release gate run (PR 12, §8.1); the report rollup and loud cron jobs (PR 13, §8.2).** Every PR in §8 — 0 through 13, with 1b and 4b — and Part E's UI migration (U1–U8) are built; PR 12 ran the release gate and PR 13 closed the two code items it left open: every MTA breakdown is under its 2 s target at 1M conversions (0.1–1.25 s, from 30–70 s), and a cron job against a database that needs an upgrade exits 1 with the reason instead of 0 in silence. What is left for the release decision is in §8.1.
+
+## Scope
+
+This plan covers three things:
+
+- **Native Android install tracking.**
+- **A reshape of the iOS app measurement shipped in 1.9.76.** That feature is
+  SKAdNetwork / AdAttributionKit, documented in
+  `documentation/api/19-attribution-postbacks.md`.
+- **A rewrite of the multi-touch attribution (MTA) engine.** It was first
+  shipped in 1.9.56 and is documented in
+  `documentation/features/advanced-attribution-engine.md` and `ATTRIBUTION_SETUP.md`.
+
+## Constraints
+
+- **No install exists above 1.9.55.** Every real database is at 1.9.55 or
+  older, and nobody sits at any version from 1.9.56 to 1.9.76.
+  - Any schema created by the 1.9.55 → 1.9.76 rungs may therefore change
+    **in place**: its table names, its columns and the rungs themselves.
+  - The upgrade path that matters is **≤ 1.9.55 → 1.9.76**, and the only
+    upgrade behaviour to preserve is that path's.
+  - Development and branch databases above 1.9.55 are disposable and are
+    reinstalled, not repaired.
+- Neither the app-measurement feature (added in 1.9.76) nor MTA (added in
+  1.9.56) has users, so both may be rewritten freely.
+- **The release stays 1.9.76.**
+- Nothing outside these two features changes shape. The click pipeline, the
+  conversion writer and the pixel endpoints are touched only where these
+  features attach to them.
+- The same freedom would allow other cleanups in the 1.9.56–1.9.75 rungs, for
+  example the guarded repeat of the `202_api_keys.scope` repair. Those are out
+  of scope here and are listed only so they are not forgotten.
+
+## Sources
+
+- Android platform facts were checked against Google's and Meta's
+  documentation on 2026-09-25.
+- Codebase facts cite `main` at `99972c2` and were read, not executed, unless
+  marked otherwise.
+
+## Parts
+
+| Part | Covers |
+|---|---|
+| A (§1–2) | What joins the two features, and what keeps them apart |
+| B (§3–5) | App measurement: the iOS reshape, then Android |
+| C (§6) | The MTA rewrite |
+| D (§7–9) | Non-functional requirements, phasing, decisions |
+| E (§10) | Moving the whole app onto the v2 UI shell |
+
+---
+
+# Part A: how the pieces fit
+
+## 1. Two features that meet at exactly one point
+
+Both features call themselves "attribution", share the `202_attribution_*`
+table prefix, the `/attribution` route group, the `attribution` API scope area
+and the `p202 attribution` CLI parent. They answer different questions:
+
+| | App measurement | Multi-touch attribution |
+|---|---|---|
+| Question | Did an ad produce an install or an in-app event, and what was it worth? | Given a conversion, how much credit does each earlier touch deserve? |
+| Unit | A platform signal (iOS postback, Android install) | A conversion and the journey of clicks behind it |
+| Needs a click? | iOS: never has one. Android: yes | Always |
+
+**The one place they meet is the conversion.** An attributed Android install,
+and each Android in-app event, becomes a row in `202_conversion_logs` on a
+real click. A conversion is what MTA distributes credit for. So:
+
+```
+ iOS postback ─► app measurement (aggregate report; never a conversion; never in MTA)
+
+ Android install/goal  ─► app measurement ─► ConversionRecorder ─► 202_conversion_logs
+ every web path (pixels, postbacks, API,  ───────────┘                 │
+ uploads, ClickBank, web goals)                                        │
+                                                        outbox row (same transaction)
+                                                                       ▼
+                                                              MTA: journey + credits
+```
+
+**Rule:** the features share three core things owned by neither: the
+conversion writer (§2), the goals engine (§2.2) and the identity graph
+(§6.2). Nothing else is shared. A table prefix, a scope area, a CLI parent or
+a report shared between them would couple two things that change for
+different reasons.
+
+**Consequence:** they are separated by name. MTA is the attribution engine, so
+it keeps the `attribution` names. App measurement moves out to `app` names.
+
+| | App measurement | MTA |
+|---|---|---|
+| Tables | `202_app_*` | `202_attribution_*` |
+| API routes | `/apps/*` | `/attribution/*` |
+| API scope area | `apps` | `attribution` |
+| CLI | `p202 app …` | `p202 attribution …` |
+
+A scoped key that can read install reports can no longer delete attribution
+models, and today it can: one `attribution` area covers both
+(`api/v3/Auth.php:142`).
+
+## 2. The shared seam: `ConversionRecorder` and an outbox
+
+`MysqlConversionRepository::record()`
+(`202-config/Conversion/MysqlConversionRepository.php:120-298`) is already the
+single transactional writer. Every path that writes `202_conversion_logs` goes
+through it: gpb, gpx, upx, subid upload, `POST /conversions`, and after this
+plan the Android intake. It already emits `conversion.recorded` after the
+commit for the LTV/LPO bridge (`:278-295`).
+
+MTA attaches through an **outbox written inside that same transaction**. A
+row in `202_attribution_pending (conv_id PK, enqueued_at, reason)` goes in beside the
+conversion, and the MTA worker consumes it. The alternative, a post-commit
+callback, is rejected:
+
+- **An outbox is atomic and at-least-once.** A conversion either exists
+  with its pending row or does not exist at all, so no conversion is ever
+  missed. A worker can still die after claiming a row and process it twice,
+  which is why the worker's credit and journey writes are idempotent (§6.3):
+  the exactly-once *effect* comes from those, not from the outbox. A
+  post-commit hook has neither property: it can die between the commit and
+  the hook, and that journey is silently never built (error pattern #13).
+- **Today's inline hooks are the defect this replaces.** gpb, gpx and upx each
+  call `isMultiTouchEnabled()` outside their `try` (`gpb.php:302`,
+  `gpx.php:165`, `upx.php:300`). A missing or unreadable settings table
+  therefore 500s the request *after* the conversion committed. gpx, upx and
+  subid upload also run a synchronous 24-hour rebuild of every model inside
+  the pixel request (`gpx.php:188`, `upx.php:323`, `subids.php:118`). The
+  rewrite deletes all of this. The conversion paths no longer know MTA
+  exists.
+- **Paths not covered today are covered for free.** The v3 conversions API
+  and subid upload persist no journey today. They go through `record()`, so
+  the outbox covers them.
+
+**The outbox table is part of the conversion schema, not of MTA.**
+`202_attribution_pending` is defined in `ConversionTables` beside
+`202_conversion_logs` and created by the same rung; an insert into it failing
+fails the conversion transaction like any other schema failure would, and is
+reported the same way. What recording is isolated from is the MTA *engine*:
+a worker that is down, a credits table that is missing, a model whose config
+is invalid. In every one of those cases rows accumulate in the outbox and
+are processed when the engine is fixed. That is a backlog, not a lost
+journey.
+
+### 2.1 The conversion ledger: every amount, where it came from, and how it rolls up
+
+**The requirement.** A click showing $10 must be explainable as, for example:
+
+| Amount | Counted in the $10? | Source | Linked to |
+|---|---|---|---|
+| $5.00 | yes | Android install | goal "Install" v1, campaign "Summit CPI" |
+| $3.00 | yes | App event `level_reached` | goal "Reached level 3" v2 |
+| $2.00 | yes | Global postback | transaction `A-7731` |
+| $0.00 | no, unpaid | App event `tutorial_complete` | goal "Tutorial" v1 (tracked, not paid) |
+
+Paid and unpaid outcomes are both visible, and each one is linked to whatever
+generated it.
+
+**What exists today, from reading the code:**
+
+- **A click can hold several `202_conversion_logs` rows.** Each is keyed by a
+  distinct transaction id (`UNIQUE (click_id, transaction_id)`), and each
+  keeps its own amount, `pixel_type`, IP, user agent and time. That is the
+  basis of the documented **Transactions ID** funnel feature
+  (`documentation/setting-up-prosper202-pro/999-transactions-id.md`): each
+  funnel step posts its own conversion with a transaction id.
+- **Nothing is called a "sub-conversion" or "sub-subid".** Nothing rolls rows
+  up into the click. The click's income is one value that the latest
+  conversion overwrites (§5.5).
+- **Several paths wrote no row at all**, so their amounts could never be
+  broken down:
+  - the revenue CSV upload (`tracking202/update/upload.php:128-165`) summed per
+    subid within a file and wrote only the total. **Done (PR 1):** every line
+    is a ledger row of its upload batch (`RevenueUploadImporter`); see
+    point 3.
+  - the legacy `px.php` / `pb.php` pixels only flagged the click, and the
+    ClickBank endpoint (`cb202.php`) overwrote `click_payout` with the order
+    total. **Done (PR 0, 2026-09-25):** all three now record through
+    `p202RecordLegacyConversion()` in `202-config/static-endpoint-helpers.php`,
+    with the gpx one-conversion-per-click gate when no id is present, pb's
+    campaign scope and px's owner check applied before any write, and the
+    ClickBank receipt as the transaction id so repeated INS deliveries
+    de-duplicate and two sales are two rows. `tests/live/legacy-pixels.sh`
+    drives all three against a running instance.
+- **A row cannot say what produced it.** `pixel_type` distinguishes only
+  pixel (1), postback (2), universal pixel (3) and "other" (0). The V3 API
+  and the manual subid upload are told apart only by an empty user agent
+  versus the string `subid-upload`.
+- **No per-click view exists.** Group Overview's **Transaction ID** level
+  joins conversion rows to the click (`202-config/ReportSummaryForm.class.php:907-909`)
+  but adds up the click's single income figure. So each transaction row shows
+  the click's last payout, and a click with N transactions is counted N times.
+  That is a live defect, fixed below. The LTV customer panel does list
+  revenue events, but per customer, not per click, and only for conversions
+  linked to a customer.
+
+**The design: `202_conversion_logs` becomes the ledger, and the click total
+becomes a cache of it.**
+
+1. **Every path writes a row.** `px.php`, `pb.php` and ClickBank do since
+   PR 0 (one row per receipt, the receipt as the transaction id, so duplicate
+   INS deliveries de-duplicate). PR 1 adds the last one: the CSV upload writes
+   one row per CSV line, tagged with its upload batch, and gives the PR 0 rows
+   their `source` value (`legacy_pixel`, `clickbank`).
+2. **Provenance columns** on every row:
+
+   | Column | Values |
+   |---|---|
+   | `source` | `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `app_install`, `goal`, `legacy_baseline` (below) |
+   | `source_ref` | What generated it: goal id and version, upload batch id, API key id, app install row. Resolved by the UI into a name and a link |
+   | `event_name` | The event that reached the goal, or the postback's `event=` value |
+   | `payable` | `1` counts toward income and leads. `0` is a tracked outcome on a click: an unpaid goal, or an event reported for visibility. Outcomes on a subject with no click (an organic install) live only in `202_goal_outcomes`, §5.5 |
+   | `superseded_by` | Set in `replace` mode when a later payable row replaced this one's value, so the breakdown can say *why* a row is not in the total |
+   | `superseded_reason` | Why (PR 1 added it, because "superseded" has owners): `replace` and `batch` are derived by the recompute and cleared by it when the row that replaced this one is deleted; `pre_ledger`, `replay` and `reevaluation` are decisions made once elsewhere, which the recompute never touches |
+   | `reverses_conv_id` | On a reversal, the row it reverses (indexed lookups; `source_ref` also names it as `conv:<id>`) |
+
+   A reversal (below) is a row with a negative amount whose `source` is the
+   path it arrived by and whose `source_ref` names the row it reverses.
+
+   `pixel_type` is kept as it is, for compatibility.
+3. **The click total is derived from the ledger, never written on its own.**
+   `record()` and `softDelete()` recompute the click's cached `click_payout`
+   and `click_lead` from its rows under the click lock they already hold.
+   Reversal rows (below) never compete for "latest": they net against the
+   row they reverse.
+   - `accumulate` campaigns: the sum of payable, non-deleted rows, reversals
+     included.
+   - `replace` campaigns: the latest payable, non-deleted, non-reversal row,
+     **plus the reversals that name it**. A $3 sale reversed is $0, not −$3.
+     Earlier rows are marked `superseded_by`. For a click without reversals
+     the number is the same one those campaigns show today.
+   - **The CSV upload's unit is the batch, not the line.** A file with three
+     lines for one click writes three rows carrying one batch id, and the
+     click's uploaded value is the **sum of the newest batch's rows** for
+     that click, which supersedes earlier batches' rows and earlier plain
+     rows. That is today's "sum within the file, replace across files",
+     kept exactly, with the lines now visible.
+   - **A click converted before the upgrade holds its value in its cache,
+     not in its rows.** Its rows (if any) were overwritten by later writes
+     or undercount a revenue upload that left none, so they cannot be
+     re-added into the value; and a click cleared before the upgrade still
+     has its old rows. So (as built in PR 1) the upgrade marks **every
+     pre-existing row** `superseded_reason = pre_ledger`, and the first
+     ledger write on a click that is still a lead with no ledger-managed row
+     inserts a **`legacy_baseline`** row (amount = the cached
+     `click_payout`, `dedupe_key = legacy`, payable) under the same lock and
+     points the old rows at it. The recompute then preserves the income, the
+     breakdown shows where it came from, and a conversion cleared before the
+     upgrade cannot come back. Such clicks are never recomputed on their
+     own. Historical amounts are not otherwise backfilled, because their
+     individual parts were never stored.
+
+   The earlier objection to summing rows was that uploads write none. It
+   disappears once every path writes rows.
+4. **Default payouts come from the goal or the campaign, never from the
+   cached `click_payout`.** Today an amount-less conversion reads that field
+   (`MysqlConversionRepository.php:165`), which in `accumulate` mode is a
+   running total.
+5. **The breakdown is a first-class read:**
+   - `GET /api/v3/clicks/{id}/conversions` returns every row with its amount,
+     `payable`, `source` and resolved `source_ref` (goal name and version,
+     batch, key), its transaction id and time, and whether it is counted,
+     with the reason when it is not (`unpaid`, `superseded`, `deleted`,
+     `duplicate`);
+   - the click row in the Visitors / click-history views opens that
+     breakdown;
+   - `GET /conversions` gains `click_id`, `source` and `goal` filters and
+     returns the provenance columns.
+6. **Reports can group by what generated the value.** Group Overview gains a
+   **Goal / source** level whose income sums **ledger rows**. The broken
+   **Transaction ID** level is fixed the same way: it sums the rows' own
+   amounts, so a click with three transactions shows three amounts that add
+   up to the click's income.
+7. **Leads stay "converting clicks".** A click is a lead if it has at least
+   one payable, non-deleted row, whatever its net value after reversals.
+   Unpaid outcomes are counted separately, as events.
+
+**Built in PR 1** (the paths, and what each now does):
+
+- `MysqlConversionRepository::record()` builds the row's key
+  (`DedupeKey`), carries a pre-ledger click in (`ensureManaged`), inserts,
+  recomputes the click from its rows (`MysqlConversionLedger`, rules in
+  `ClickValueCalculator`) and writes the MTA outbox row, in one
+  transaction. `softDelete()` and the new `clearClicks()` do the same.
+- `ClickValueWritersTest` fails on any UPDATE of `click_lead` or
+  `click_payout` outside the ledger. The one other writer it allows is the
+  offer redirects' routing seed (`off.php`, `offrtr.php`), which now only
+  touches a click that has not converted (`AND click_lead = 0`).
+- The static endpoints' click update (`p202ApplyConversionUpdate`) became
+  `p202ApplyConversionClickSide` (CPA cost and the filtered flag only).
+  The subid-upload, delete-subids and clear-subids pages record and clear
+  through the ledger, and carry and check the session token; the revenue
+  upload applies a report by token-checked POST (it ran from a GET) and
+  reads the whole file (it read the first 100,000 bytes).
+- The traffic-source pixel (`p202FireTrafficSourcePixels`, used by gpb and
+  upx) fires after recording, only for a newly recorded conversion that is
+  not a reversal, for every pixel row of the account, with
+  `[[transactionid]]` and the conversion's own `[[payout]]`. It used to fire
+  before recording, on replays and failed writes too, and read only the
+  account's first pixel row. gpb answers 500 when recording fails.
+- gpx, upx and gpb read click ids with the exact parser PR 0 gave px and pb;
+  a present-but-malformed value is refused, never cast or sent to the IP
+  fallback.
+- Deferred to PR 1b, and done there: `source_ref` naming the API key that
+  wrote an API row (§2.3).
+
+**Compatibility.**
+
+- In `replace` mode (the default), income per click is unchanged for every
+  existing campaign.
+- **One real change, stated as such:** the legacy pixels, ClickBank and the
+  CSV upload start writing conversion rows. On upgraded installs those
+  conversions appear from the upgrade on in conversion lists, the API and MTA.
+  Before, they changed the click and left no trace. Historical clicks are not
+  backfilled, because their individual amounts were never stored.
+
+#### Transaction ids in the ledger
+
+Transaction ids stay, and matter more than before. They do three jobs today,
+mixed into one column. The ledger separates them.
+
+| Job | Today | After |
+|---|---|---|
+| **Stopping duplicates** | `UNIQUE (click_id, transaction_id)`. A blank id is stored as `NULL` and never deduplicated (`MysqlConversionRepository.php:127-130`), so every retry of a blank-id postback adds a row | Its own column, **`dedupe_key`**, which is never empty. `UNIQUE (click_id, dedupe_key)` |
+| **Linking to the network's records** (disputes, reversals, reconciliation) | The same column | **`transaction_id`** keeps exactly this job: the id the network or merchant sent, shown and searchable, `NULL` when none was sent |
+| **Telling funnel steps apart** (the Transactions ID recipe) | One campaign copy and one id per step | Goals and events (§2.2). The id is no longer the thing that says *which step* this was |
+
+**Why a separate `dedupe_key`.**
+
+- **Goal and install rows need ids the network never sent.** The earlier
+  draft of this plan put synthetic values such as `p202-goal:12:1` into
+  `transaction_id`. That shares a namespace with network ids: a network
+  that happens to send `p202-install` would collide with ours (error pattern
+  #17), and the column would stop meaning "the network's id".
+- **Every source gets a namespaced key** instead, built by one function so the
+  prefixes cannot drift:
+
+  | Source | `dedupe_key` |
+  |---|---|
+  | Network or merchant id (a ClickBank receipt is one) | `tx:<id>` |
+  | Goal | `goal:<goal_id>:<goal_version>:<n>:<event_id>` (the version is in the key so a re-evaluation under a new version writes its own rows; the event is, so a replay that moves the *n*th outcome to an earlier event writes a new row instead of colliding with the one it supersedes, §5.5) |
+  | Install (the built-in `install` goal's row, never a second `goal:` row) | `install` |
+  | App or web event | `evt:<subject_type>:<subject_id>:<event_id>` (an event id is unique only within its subject, §2.2) |
+  | Reversal | `rev:<original conv_id>:<reversal ref>` (below) |
+  | Legacy baseline | `legacy` |
+  | CSV upload | `up:<batch>:<line>` |
+
+  A prefix before the colon cannot occur inside another source's key, so two
+  sources can never produce the same key.
+
+**The blank-id rule, which the ledger forces.** In `replace` mode a
+duplicated blank-id postback adds a row but does not change the click's
+value, so today it is mostly harmless. In `accumulate` mode it **doubles the
+money**. So:
+
+- **In `accumulate` mode, a payable row with no id of its own** (no
+  transaction id, goal, event id, receipt or upload line) is treated as the
+  campaign's single plain "conversion". Its key is `conversion`, so it can
+  happen **once per click**.
+  That is the rule `gpx.php:94` already applies to image pixels today, made
+  uniform.
+- **To record several amounts on one click, send something that tells them
+  apart:** a transaction id, an `event=`, or an event id. The breakdown then
+  names each one.
+- `replace` campaigns keep today's behaviour exactly: blank-id rows still
+  record, with a per-row key (`row:<conv_id>`), and the latest wins.
+- **Existing rows** are keyed on upgrade by the same function:
+  `tx:<transaction_id>` where one was sent, `row:<conv_id>` where it was
+  blank. Nothing merges and nothing is lost.
+
+**Reversals by transaction id** (new, and only possible because the id keeps
+its meaning).
+
+- A postback carrying `status=reversed` or a negative `amount`, together with
+  the transaction id of an earlier row, records a **reversal row**: negative
+  amount, `transaction_id` = the original's (that is the linkage), `source_ref`
+  = the original conversion, and its own dedupe key
+  `rev:<original conv_id>:<reversal ref>`, where the reversal ref is the
+  network's reversal id when it sends one and `1` otherwise. The key cannot
+  collide with the original's `tx:<id>`, a replay of the same reversal is a
+  duplicate, and a second distinct reversal of one sale is refused with a
+  422 naming the first. The breakdown then shows "$3.00 sale, reversed
+  −$3.00".
+- The click's value recomputes from the rows, netting the reversal against
+  the row it names (point 3 above), in both payout modes.
+- Today such a postback is either answered as a duplicate and ignored, or
+  recorded as an unrelated row.
+- The LTV ledger already records negative payouts as adjustments
+  (`MysqlConversionRepository.php:222-227`), so this makes the click side
+  agree with it.
+
+**Passing the id on to traffic sources.** The `[[transactionid]]` /
+`[[t202txid]]` token exists in `replaceTokens()`, but nothing fills it.
+
+- `gpb.php`'s traffic-source postback does not include it
+  (`gpb.php:146-163`).
+- The helper that would, `getTokens()` (`connect2.php:2918`), has no callers.
+
+With several conversions per click, a network needs the id to tell them apart
+and to dedupe on its side. The shared pixel-firing function (PR 1) therefore
+fills `[[transactionid]]` / `[[t202txid]]` with the row's `transaction_id`,
+falling back to its `dedupe_key`, next to `[[p202_goal]]` and
+`[[p202_goal_value]]`.
+
+### 2.2 Goals are a core feature, for web campaigns as well as apps
+
+Goals (§5.5 has the full definition) evaluate **events** into **outcomes**.
+Nothing in that design is specific to apps. What differs is the *subject*
+whose progress is tracked:
+
+| | Subject | Events come from |
+|---|---|---|
+| App campaign | The install (and through it, its click) | The SDK's `logEvent` |
+| Web campaign | **The click** | A pixel or postback carrying `event=` (with optional `event_props` as JSON, and `amount`); `POST /api/v3/events` keyed by `click_id`; `p202.js`'s `track(name, props)` on landing and thank-you pages, tied to the click by the first-party ids of §6.2 |
+
+- **Goal definitions attach to campaigns.** An app registration supplies a
+  default set that its campaigns inherit. Payable goals, payouts and
+  "notify traffic source" are configured per campaign, as in §5.5.
+- **Events and progress are keyed by subject**, whichever platform reported
+  them:
+  - `202_goal_events (subject_type ENUM('click','install'), subject_id, event_id, name, properties JSON, occurred_at, received_at)`,
+    `UNIQUE (subject_type, subject_id, event_id)`;
+  - `202_goal_progress (subject_type, subject_id, goal_id, goal_version, count, sum, reached_at, times_reached)`.
+
+  The app tables in §5.4 keep only what is app-specific.
+- **Old web setups keep working unchanged.** A pixel or postback without
+  `event=` is today's plain conversion: one ledger row, `source` =
+  pixel/postback, no goal. Goals are opt-in per campaign.
+- **Goals replace the Transactions ID workaround.** A funnel becomes one
+  campaign with goals (opt-in → sale → upsell), each with its own payout,
+  rolled up per click by `accumulate` and broken down by §2.1. Today it means
+  copying the campaign once per step. The old recipe still works; the docs
+  point to the new one.
+
+### 2.3 As built: decisions (PR 1b)
+
+PR 1b built the reads of §2.1 points 5 and 6. The pieces:
+`Prosper202\Conversion\Ledger\LedgerExplainer` (which rows count, and why
+not), `ClickBreakdown` (one click, resolved), `LedgerReportSql` (the same
+question in SQL, for reports), `SourceRef` (the one builder and reader of
+`source_ref`); the API route `GET /clicks/{id}/conversions` and the
+`/conversions` filters; `p202 click conversions` and `click:conversions`;
+`tracking202/ajax/click_conversions.php` opened from Visitors and Spy; Group
+Overview's Goal / source level and the repaired Transaction ID level.
+
+- **One definition of "counts".** Whether a row is part of its click's value
+  is `ClickValueCalculator`'s answer, read from its `counted` set; the
+  breakdown adds only the reason for each row left out, in a fixed order:
+  `deleted`, `unpaid`, `superseded` (with the row's `superseded_reason` —
+  stored for the fixed reasons, from the calculator for the derived ones),
+  and `not_netted` for a reversal whose sale does not count. §2.1 named a
+  fourth reason, `duplicate`; it is not built, because a repeat is answered as
+  a duplicate and never stored, so no stored row can be one. A payable, live,
+  non-reversal row that neither counts nor is superseded has no reason under
+  the rules; the explainer throws naming it instead of inventing one.
+- **The breakdown says whether it adds up.** `click` carries the reports'
+  figure (`click_payout`, `lead`) beside what the counted rows add up to
+  (`ledger_value`) and `matches_click`, so a cache that drifted from its
+  rows is visible instead of looking right. A lead with no ledger-managed row
+  is `ledger_state: pre_ledger` and matches by definition: its value lives in
+  the cache until its next conversion carries it in (§2.1 point 3).
+- **Scope: both reads.** The route is in the `clicks` area by path and shows
+  conversion rows, so it requires `clicks:read` (the dispatcher) and
+  `conversions:read` (the route). It is not paged: a click's rows are all
+  returned, oldest first.
+- **API rows name their key by a digest.** 202_api_keys has no id; the key
+  is the secret. `source_ref` for a row written through `POST /conversions`
+  is `apikey:` and the first 16 hex digits of the key's SHA-256
+  (`SourceRef::apiKey`), carried from `Auth` through `RequestContext`. The
+  breakdown matches it against the account's keys and names the key by when
+  it was created, or as revoked; the key never appears in a response. A
+  staged create records the key of the request that applied it, which is the
+  key that executed the write.
+- **`/conversions` filters are strict.** `click_id` and `goal` must be
+  positive integer ids and `source` a ledger source, or the request is a 422
+  naming each bad field — an ignored filter would answer with every
+  conversion of the account. `goal` matches every version of the goal
+  (`source_ref LIKE 'goal:<id>:%'`, the colon keeping goal 1 from goal 12).
+  Rows now carry their provenance columns, `payable` as a boolean, and a goal
+  row's `goal_id` and `goal_version`. Deleted rows stay out of the list; the
+  breakdown shows them.
+- **Reports read the persisted state, pinned to the calculator.**
+  `LedgerReportSql::countedPredicate()` is "payable, live, no
+  `superseded_reason`" for a sale, and for a reversal "its target counts, or
+  its target is a live pre-ledger row while the click's baseline counts" —
+  what the recompute persists under the click lock. Its equivalence with the
+  calculator is not argued but tested: `LedgerReadsIntegrationTest` builds a
+  click in every shape the rules name, through the real repository, and
+  requires the same set click by click.
+- **The ledger levels partition a click.** A report part is one counted row;
+  income is the part's own amount; the click's clicks, click-throughs, leads
+  and cost sit on exactly one part, its latest counted non-reversal row.
+  Children therefore add up to their parent, the report's totals are the
+  same with or without a ledger level, and "leads stay converting clicks"
+  (§2.1 point 7) holds at every level. A click with no counted row is one
+  part carrying its report row whole: `[Not converted]`, or — a pre-ledger
+  lead whose value is still its cache — `[No transaction ID]` and `Value
+  before the ledger`, where its baseline row will land. Clicks, leads and
+  cost come from 202_dataengine and income from the ledger, so a report row
+  the rollup has not refreshed yet shows the ledger's income.
+- **Group keys are injective (CLAUDE.md #17).** The Transaction ID level's
+  key is a kind prefix and the HEX of the id's bytes: the column's collation
+  (utf8mb4_general_ci) would otherwise fold `A-1`, `a-1` and `Ä-1` into one
+  group. The Goal / source level groups goal rows by goal, every version
+  together, and every other row by its source.
+- **The Transaction ID level no longer joins every row.** It joined all of a
+  click's conversion rows to its report row and summed the click's income per
+  row, so a click with N rows counted N times, and its children were keyed by
+  a `conv_id` picked arbitrarily from each group. Its key is now
+  `transaction_key`; stored preferences hold the level's number (35), so no
+  saved setting changes.
+- **The click history.** A row whose click has any ledger row (deleted and
+  superseded included) shows "n conversions"; the button opens a modal drawn
+  with the table and fills it from `click_conversions.php`. The fragment
+  reads no report filter — a click's rows are the same in every window — so
+  it takes no view (ReportView); it follows the history's owner rule (a
+  publisher sees their own clicks, other sessions every account's), and a
+  role without campaign data sees `?` for amounts, as Group Overview does.
+- **CLIs.** The Go and PHP CLIs print one flattened line per row and end
+  with the click's value, saying so when the rows do not add up; `--json`
+  is the API's answer unchanged. Both check `--source` against their own copy
+  of the source list before any request; `ConversionSourceListsTest` pins
+  both copies to the enum.
+- **Every depth offers both ledger levels, and the download names them.**
+  The level list has two copies (`ReportBasicForm`'s and
+  `ReportSummaryForm`'s), and the classic builder drew its fourth selector
+  from the one Goal / source had not been added to; both copies now match
+  and all four selectors read `ReportSummaryForm`'s, the class that runs the
+  query (`GroupingLevelOffersTest`). The download
+  (`group_overview_download.php`) printed its Transaction ID column from
+  `transaction_id`, which the ledger levels no longer select, and had no
+  Goal / source column; both now print the level's own label.
+- **Dedupe keys no longer fold case.** Found here and fixed when the PRs
+  were combined: `dedupe_key` was utf8mb4_general_ci, so on one click
+  `tx:A-1` and `tx:a-1` were one key (a UNIQUE violation, executed) and a
+  network that sends ids differing only in case had the second answered as
+  a duplicate. `dedupe_key` and `transaction_id` are now utf8mb4_bin in
+  `ConversionTables` and in the 1.9.75 → 1.9.76 ledger step (which converges
+  an existing column's collation too), so both sales are stored and counted,
+  and a reversal names its sale exactly instead of the first case variant.
+  A `transaction_id` filter matches exactly. The same review found
+  `202_revenue_events.idempotency_key` (LTV) caller-chosen and
+  case-insensitive; it is utf8mb4_bin as well. Checked by
+  `ConversionLedgerIntegrationTest::testTransactionIdsThatDifferOnlyInCaseAreTwoSales`,
+  `ConversionLedgerUpgradeIntegrationTest` (upgrade == install per column,
+  collation included) and
+  `LtvDatabaseIntegrationTest::testIdempotencyKeysThatDifferOnlyInCaseAreTwoEvents`.
+
+Checked by `tests/Conversion/Ledger/` (`LedgerExplainerTest`,
+`LedgerReadsIntegrationTest`, `LedgerReadsOpenApiTest`,
+`ConversionSourceListsTest`), `tests/Report/GroupingLevelOffersTest`,
+`tests/Cli/Commands/ClickConversionsCommandTest`,
+`go-cli/cmd/click_test.go`, the live pass `tests/live/breakdown-reads.sh`, and
+`tests/browser/specs/click-breakdown.spec.js`.
+
+---
+
+# Part B: app measurement
+
+## 3. What "like iOS" can and cannot mean for Android
+
+| | iOS | Android |
+|---|---|---|
+| Mechanism | The OS sends a **signed, aggregate postback** to a well-known URL | Our SDK reads the **Google Play Install Referrer** on first launch and reports it |
+| Timing | 24–48 h+ after install, deliberately delayed | Seconds after first open |
+| Trust anchor | Apple's ECDSA signature | None from the platform: a signed token we put in the store link, click plausibility, optionally Play Integrity |
+| Granularity | No click, no device, a 6-bit conversion value | **Click-level**: the referrer carries our click id |
+| What it becomes in Prosper202 | Report rows that can never join a click | **A real conversion on the originating click**, visible in every campaign report and in MTA |
+
+Google's SKAdNetwork analogue, the Privacy Sandbox Attribution Reporting API
+on Android, was **retired on 17 October 2025**
+(<https://privacysandbox.google.com/blog/update-on-plans-for-privacy-sandbox-technologies>).
+No replacement postback exists.
+
+Both platforms share **everything around the signal**: registry and
+ownership, app token and SDK contract, events, goals and revenue, public
+intake plumbing, trust vocabulary, retention and the report surface. They
+differ only in **how a signal is received and judged**, and the architecture
+makes that boundary explicit:
+
+```
+                         ┌──────────── app measurement core ───────────┐
+  store link / SDK /     │ AppRegistry     one registration per app,   │
+  Setup page / CLI  ───► │                 keyed (platform, app_key)   │
+                         │ AppIdentity     parse + validate an app id  │
+                         │                 or a store link             │
+                         │ AppToken        header-only; rotatable      │
+                         │ Goals           events → outcomes → value   │
+                         │ Verdict         source state → trust bit    │
+                         │ PublicIntake    probe, 405/413, DB, peer    │
+                         │                 rate limit, bounded body    │
+                         │ Retention       per-source prune classes    │
+                         │ ReportSource    shared metric set           │
+                         └──────────▲───────────────────▲──────────────┘
+               ┌────────────────────┴───┐   ┌───────────┴─────────────────┐
+               │ Apple signal source     │   │ Android signal source        │
+               │ Skadnetwork/AAK protocol│   │ InstallReferrerIntake        │
+               │ PostbackVerifier / JWS  │   │ InstallToken (HMAC)          │
+               │ SignatureState: Verdict │   │ ReferrerParser               │
+               │ SkanEncoding (6-bit CV) │   │ MatchState: Verdict          │
+               │ 202_app_postbacks       │   │ ConversionRecorder (§2)      │
+               │                         │   │ 202_app_installs             │
+               └─────────────────────────┘   └──────────────────────────────┘
+```
+
+A class belongs in the core only if both sources call it.
+
+## 4. App core reshape (PR 3)
+
+PR 3 changes no user-visible iOS behaviour except the renames below. It is
+done when:
+
+- every existing iOS test is **ported, not deleted**, and green;
+- the SKAN and AAK signature vectors are byte-identical;
+- the live passes (`tests/live/setup-mobile-apps.sh`,
+  `analyze-mobile-apps.sh`) and the browser specs are green on the new code.
+
+### 4.1 Tables: new names, new shape
+
+The tables are renamed by meaning, not by necessity. No database holds the
+1.9.76 tables (see Constraints), so they could be reshaped under their old
+names. The `attribution` names belong to MTA (§1), though, so app measurement
+moves to `202_app_*`.
+
+| Old | New | What changes |
+|---|---|---|
+| `202_attribution_apps` | `202_app_registrations` | Identity becomes `(platform, app_key)`; per-app policy |
+| `202_attribution_postbacks` | `202_app_postbacks` | Adds `registration_id`; `signature_valid` becomes `trusted` |
+| `202_attribution_conversion_values` | `202_goals` (core, §2.2) + `202_app_skan_encodings` | What an outcome is worth is split from how iOS encodes it |
+| — | `202_app_installs` | Android (§5). Events are core (`202_goal_events`, §2.2) |
+
+**The legacy guard is deleted, not extended.**
+`_upgrade_attribution_legacy_skan_state()` and the "Upgrade paused" halt in
+`_upgrade_attribution_tables()` (`functions-upgrade.php:307-350`) exist to
+protect postbacks in the pre-release `202_skan_*` tables. Only a branch
+deployment above 1.9.55 could hold those, and none exists.
+
+- The 1.9.75 → 1.9.76 rung keeps one job: create the app, goal and ledger
+  additions from their installer definitions.
+- Its test pins what matters now: the ≤ 1.9.55 path, and the rung's shape
+  rules (the version is written only on success).
+- RELEASING.md's branch-deployment repair section is replaced by one line:
+  databases above 1.9.55 from before this change are reinstalled.
+
+### 4.2 One registry for both platforms
+
+`202_app_registrations` columns:
+
+- `registration_id` PK. It is **the key everything else uses**; no table links
+  to a registration through a raw app id.
+- `user_id`.
+- `platform` (`ios` | `android`).
+- `app_key` varchar(255), with `UNIQUE (platform, app_key)`:
+  - Apple: the App Store item id as canonical decimal;
+  - Android: the application id (package name). The package is the identity,
+    not the listing, because one package can ship through Play, Galaxy Store
+    and AppGallery.
+- `app_name`, `notes`.
+- `app_token`, renamed from `schema_token`.
+- `accept_test_signals`, renamed from `accept_development_postbacks`. It covers
+  AAK development-key postbacks and Android test installs.
+- Android only: `attribution_window_days`, `trust_client_revenue`, and the
+  Play Integrity mode (§5.6). Whether an install *pays* is not a registration
+  setting: it is the campaign's payable-goal list (§5.5), where `install` is a
+  built-in goal.
+- Timestamps.
+
+**`AppIdentity`** is the one implementation of "is this a valid app id, and
+what does this store link name". It replaces three split copies:
+
+- `AttributionAppsController::assertUsableAppId()`, the raw-payload check per
+  error pattern #18;
+- `MobileAppsController::appStoreId()`, the saturation round-trip;
+- `MobileAppsController::parseStoreReference()`.
+
+Per-platform rules:
+
+- **Apple:** digits, positive, exact round-trip, no leading zero.
+- **Android:** dot-separated `[A-Za-z][A-Za-z0-9_]*` segments, at least two,
+  case-sensitive.
+
+It has one link parser, for `apps.apple.com/…/id123`, a bare id,
+`play.google.com/store/apps/details?id=…`, `market://details?id=…` and a bare
+package. The API (`store_link`), the Setup page and the CLI (`--store-link`)
+all call it.
+
+**The `app_id = 0` sentinel disappears.** Account-wide rules become
+`registration_id = 0`, which can never be a real registration and is never
+reached by casting an app identifier. It stays `NOT NULL DEFAULT 0` rather
+than `NULL` on purpose: MySQL's `UNIQUE` admits any number of `NULL`s, so
+`NULL` would allow duplicate account-wide rules.
+
+### 4.3 App token and the SDK contract
+
+- **Rename.** `schema_token` becomes `app_token`, and `X-P202-Schema-Token`
+  becomes `X-P202-App-Token`. Minting, header-only transport, rotation and
+  redaction are unchanged (`SchemaTokenHygieneTest` is ported, as
+`tests/Apps/AppTokenHygieneTest.php`). The token is
+  documented as **an identifier, not a secret**, because it ships in every
+  binary.
+- **One wire contract** (`documentation/api/21-app-sdk-contract.md`) covers
+  the schema document, the intake, the events route, the retry semantics
+  (400/413 terminal, 429/5xx retry), the test flag and the header.
+- **Cross-language vectors** in `tests/fixtures/app-sdk-contract/` are read by
+  the PHP, Swift and Kotlin tests. This is the pattern
+  `t202ctx-vectors.json` already uses.
+- **`GET /apps/schema`** is platform-shaped:
+  - iOS gets an **evaluation-only** view of the goals — triggers, predicates,
+    thresholds, `after`, windows, repeat rules and the SKAN encodings — with
+    every `value` and every campaign payout stripped, and evaluates goals on
+    the device (§5.5);
+  - Android gets the integrity mode and the SDK settings. Its goals are
+    evaluated on the server, so the SDK reports every event.
+
+  Revenue is withheld from both.
+- **Both SDKs** expose `configure(endpoint, appToken)`,
+  `logEvent(name, properties)` and `setCustomerId(id, signature)`. The
+  signature is the operator-server-computed `cust_sig` of §6.2, carried on
+  the wire as `customer: {id, signature}` in the install and event bodies;
+  the server verifies it before the id becomes an identity signal, and an
+  id without a valid signature is stored for LTV only and links nothing.
+  There is no one-argument form: the app token is public, so an unsigned id
+  from the SDK is exactly the request-controlled `cust` a public pixel
+  carries.
+
+### 4.4 Trust: one vocabulary, per-source verdicts
+
+```php
+interface Verdict   // implemented by backed enums
+{
+    public function trustBit(AppPolicy $policy): ?int;  // 1 trusted, 0 refuted, null unvouched
+    public function isTest(): bool;                      // governed by accept_test_signals
+}
+```
+
+- `SignatureState` (Apple) implements it unchanged, and `DEVELOPMENT` reports
+  `isTest()`.
+- `MatchState` (Android, §5.3) implements it too.
+- Both signal tables store `trusted` plus their own state column.
+- Reports count `trusted = 1` by default and show every other class beside
+  it. That is today's `meta.trusted`, applied to both sources.
+- An unreadable policy resolves to *untrusting* (error pattern #11), in one
+  place.
+
+### 4.5 Goals and iOS encoding
+
+A conversion-value rule currently does two jobs: *what an outcome is worth*,
+and *how iOS encodes it in 6 bits*. Android needs only the first, and it needs
+it to be far more expressive than "this event name" (§5.5). The split:
+
+- **Goals, `202_goals`** (core, §2.2). Web campaigns and both app platforms use them. A goal is a named
+  outcome ("install", "level 3", "first purchase ≥ $10") with its value. It is
+  the only place revenue is configured. Goals are defined in §5.5.
+- **`202_app_skan_encodings`**
+  - Columns: `(user_id, registration_id, fine_value | coarse_value, goal_id, revenue_override NULL)`.
+  - Apple only. An encoding says which fine or coarse value means "this goal
+    was reached". `revenue_override` keeps tiered decoding.
+- **Decode** keeps today's resolution: app-specific before account-wide, and
+  no fallback from fine to coarse. **Encode** keeps the highest-value tie-break.
+- **Behaviour change:** an encoding must name a registration or be
+  account-wide. Today a rule can target an App Store id nobody registered,
+  and it decodes nothing until someone does.
+
+### 4.6 Shared plumbing, retention, and fixes
+
+- **`PublicIntake`**, which replaces `PostbackEndpoint`, serves:
+  - the Apple `/.well-known/` entries, which Apple dictates;
+  - the pre-auth routes `GET /apps/schema` and `POST /apps/installs`, instead
+    of the inline copy at `api/v3/index.php:131-153`.
+- **Retention** is data that each source registers. It replaces
+  `PostbackReceiver::PRUNE_CLASSES`:
+
+  | Table | Class | Days |
+  |---|---|---|
+  | `202_app_postbacks` | unclaimed | 30 |
+  | `202_app_postbacks` | refuted | 90 |
+  | `202_app_postbacks` | unvouched | 90 |
+  | `202_app_installs` | refuted | 90 |
+  | `202_app_installs` | unvouched (not pending) | 180 |
+
+  The cron is `202-cronjobs/app-retention.php`. Environment variables become
+  `P202_APP_RETENTION_DAYS_<TABLE>_<CLASS>`. A malformed value prunes nothing
+  and is named in the log; `0` disables that class.
+- **User deletion purges app data.** `202-account/user-management.php:287-296`
+  names only the MTA tables today. A deleted user's registration therefore
+  keeps its global `UNIQUE` slot forever, and nobody can register that app
+  again. The purge deletes the user's rows in every `202_app_*` table with
+  **one named exception**: `202_app_postbacks` rows are *released* — `user_id`
+  set to 0 and `registration_id` to NULL — because they are Apple's record
+  of a postback, not the user's data. Released rows then fall under the
+  30-day unclaimed retention window (§4.6) and are pruned by it.
+- **The Analyze page and report filters** move from raw `app_id(s)` to
+  `registration_id(s)`. The postback's own `app_id` stays as a forensic column
+  and filter.
+
+### 4.7 As built: decisions
+
+What PR 3 settled, including where it stops short of §4.1–§4.6 and which PR
+picks the rest up.
+
+- **Namespaces.** The platform-neutral core is `Api\V3\Apps` (`AppIdentity`,
+  `AppRegistry`, `AppToken`, `AppPolicy`, `Verdict`, `PublicIntake`,
+  `AppRetention`, `RetentionClass`, `AppDataPurge`); Apple's receiver, its
+  protocols and `SignatureState` live under `Api\V3\Apps\Apple`. The
+  controllers are `AppRegistrationsController`, `AppSkanEncodingsController`,
+  `AppPostbacksController` and `AppSchemaController`.
+- **Tables.** `202_app_registrations`, `202_app_postbacks` and
+  `202_app_skan_encodings`, created by the 1.9.75 rung from `AppTables`
+  alongside the ledger and identity tables (`_upgrade_measurement_tables`).
+  The legacy guard, the backfill and the "Upgrade paused" halt are deleted;
+  RELEASING.md says databases above 1.9.55 are reinstalled.
+- **`app_key` is `utf8mb4_bin`.** Package names are case-sensitive, and the
+  install's default collation is not: under it `com.Example.App` and
+  `com.example.app` would share the `UNIQUE (platform, app_key)` slot
+  (error pattern #17).
+- **The Android-only registration columns are not added yet**
+  (`attribution_window_days`, `trust_client_revenue`, the integrity mode):
+  nothing reads them before the Android intake, so they arrive with PR 5/6
+  rather than as columns with no behaviour.
+- **Android is registrable through the API and the CLI** (`POST /apps`,
+  `p202 app create --store-link`). The Setup and Analyze pages stay iOS-only
+  — their app view is SKAN's — and a Google Play link pasted into Setup is
+  read and pointed at those two. The Android pages are PR 11.
+- **Identity is fixed at create.** `platform` and `app_key` (and
+  `store_link`) are accepted on update only when they name the app the
+  registration already is; anything else is a 422. Identity is parsed from
+  the raw payload in `create()`/`update()`, never in a hook the base class
+  has already cast (error pattern #18). `store_link` and `app_key` are
+  exclusive; a `platform` that contradicts the link is a 422.
+- **Deleting a registration** withdraws test-signal trust, unlinks its
+  postbacks (`registration_id` → NULL, owner kept) and deletes its
+  encodings, in one transaction. Registering the app again relinks the
+  owner's rows; the claim is `app_id = ? AND registration_id IS NULL AND
+  (user_id = 0 OR user_id = caller)`.
+- **SKAN encodings keep `event_name`/`revenue`** for now and gain
+  `registration_id` (`0` = account-wide). A non-zero id must be one of the
+  caller's own iOS registrations, validated on the raw payload. Pointing
+  encodings at goals is PR 4.
+- **Routes and scope.** Everything moved under `/apps`
+  (`/apps/skan-encodings`, `/apps/postbacks`, `/apps/report`,
+  `/apps/verify`, `/apps/{id}/app-token/rotate`) in a new `apps` scope area;
+  `POST /apps/verify` is a read. The old `/attribution/apps…` routes answer
+  404; `attribution` is MTA's alone. The CLI is `p202 app …` and
+  `p202 app encoding …`, with no aliases for the old names (nothing shipped
+  them).
+- **Report vocabulary.** Group mode `registration` replaces `app`; the
+  per-class counts are `trusted_count`, `refuted_count`, `unvouched_count`
+  and `test_count`; `meta.trusted` is `trusted-only`.
+- **The app token.** `X-P202-App-Token` only (never a query parameter);
+  `GET /apps/schema` answers 400 for a malformed or missing header, 404 for
+  an unknown token, 405 for anything but GET/HEAD, and sends `Vary` on the
+  header. The iOS document keeps `app_id` beside `platform`/`app_key`; the
+  Android one carries its identity and nothing else until the intake adds
+  its settings. The iOS SDK's URL and header constants moved in this PR,
+  because the server stopped answering the old ones; the Swift API rename
+  (`schemaToken`) is PR 8.
+- **The contract and vectors.** `documentation/api/21-app-sdk-contract.md`
+  covers the token, the schema document, the retry table and the test flag;
+  the intake and events routes join it with PR 5.
+  `tests/fixtures/app-sdk-contract/app-identity.json` is read by the PHP
+  suite today; the Swift and Kotlin suites read it from PRs 8 and 7.
+- **Trust.** `Verdict` is implemented by `SignatureState` (DEVELOPMENT is the
+  test class); `AppPolicy::fromRow()` accepts only `1`/`'1'`, so an
+  unreadable policy is untrusting. The receiver never asks the registry
+  about app 0.
+- **`PublicIntake`** serves both `/.well-known/` receivers and
+  `GET /apps/schema` (rate-limited per peer address); `POST /apps/installs`
+  joins it in PR 5.
+- **Retention** is registered by the source (`PostbackReceiver::retentionClasses()`);
+  the environment variables are `P202_APP_RETENTION_DAYS_POSTBACKS_<CLASS>`.
+  The install classes arrive with `202_app_installs` in PR 5.
+- **User deletion** is one class, `Prosper202\User\UserDataPurge`, used by all
+  three delete paths (the API, Account › User Management and the user
+  repository) and pinned by `UserDeletionPurgeTest`; see §7.2 for the
+  cascade. It also revokes the user's REST API keys: the API authenticates
+  by key alone, and a deleted user's key otherwise kept working — found by
+  the live pass, which then watched it register an app whose postbacks the
+  purge had just released.
+
+## 5. Android on the core (PRs 4–7)
+
+### 5.1 The click id in the store link
+
+**The new token.** `[[p202_install_token]]` is added to `replaceTokens()` /
+`replaceTrackerPlaceholders()` (`202-config/connect2.php:486-680,
+2192-2255`). It expands to `<click_id>.<mac>`:
+
+- `mac` = the first 12 bytes of
+  `HMAC-SHA256(K_install, "p202-install-v1|" . click_id)`, in base64url.
+- `[[subid]]` is not enough: sequential click ids let anyone credit an
+  install, and a payout, to any click (error pattern #16).
+
+**The key.**
+
+- `K_install` is a random 32-byte secret. **It is minted by one idempotent
+  function called from both paths that create a 1.9.76 schema**: the fresh
+  installer (`INSTALL::install_databases()` / `DataSeeder`) and the
+  1.9.75 → 1.9.76 rung. A fresh install never runs a rung, so a key minted
+  only there would leave every new deployment with no key and, under the
+  fail-closed rule below, no attributed install. The upgrade-equals-install
+  test (§7.6) asserts the key exists on both paths.
+- `CtxToken`'s key derives from the LPO webhook secret, which most installs
+  never set, so it cannot be reused.
+- The key is readable on the hot path without a query.
+- **If it is missing, the token expands empty**, and the install is recorded
+  unattributed (error pattern #11).
+
+**Encoding.** The link is `…&referrer=p202%3D[[p202_install_token]]`. The
+token alphabet survives `rawurlencode202()` unchanged.
+
+**Timing.** For non-cloaked links `dl.php` writes the click row after the
+redirect (`:518` vs `:626-629`), so the token is computed in the first
+substitution pass from `$click_id`. The fallback used while MySQL is down
+(`dl.php:106-190`) substitutes `p202` for `[[subid]]`; it must substitute
+**empty** for this token.
+
+**Passthrough parameters.** `getPrePopVars()` puts them at the top level of
+the Play URL, where Play ignores them, so they never reach the app. The docs
+say so.
+
+### 5.2 Intake: `POST /api/v3/apps/installs`
+
+It is served by `PublicIntake` and gated by `X-P202-App-Token`. The body is
+JSON, capped at 16 KB:
+
+```json
+{
+  "install_uuid": "8d7c…",
+  "app_key": "com.example.app",
+  "store": "google_play",
+  "referrer": {
+    "status": "ok",
+    "install_referrer": "p202=…&utm_source=…",
+    "referrer_click_timestamp_seconds": 1727200000,
+    "install_begin_timestamp_seconds": 1727200042,
+    "referrer_click_timestamp_server_seconds": 1727200001,
+    "install_begin_timestamp_server_seconds": 1727200043,
+    "install_version": "3.2.0",
+    "google_play_instant": false
+  },
+  "first_open_at": 1727200100,
+  "app_version": "3.2.0", "sdk_version": "1.0.0", "os_version": "15",
+  "test": false,
+  "integrity_token": null
+}
+```
+
+The steps:
+
+1. **Validate strictly** (error pattern #4).
+2. **Resolve the registration** by token. A mismatched `app_key` is a 422
+   naming both values.
+3. **Open one transaction for everything durable that follows.** Steps
+   3–6 — the install row, the classification, the conversion, the outbox
+   rows — commit together or not at all. The `(registration_id,
+   install_uuid)` row is inserted *inside* that transaction, so a failure
+   anywhere before the commit leaves nothing behind and the retry does the
+   whole job again. Making only the notification atomic with the conversion
+   would leave a hole: a durable install row written first, then a failure
+   in classification or `ConversionRecorder`, and every retry answered
+   `duplicate: true` with the conversion, the MTA outbox row and the
+   notification never written (error pattern #13, seen from the retry
+   side). The invariant the transaction buys is **an `attributed` install
+   row always has its `conversion_id`**; `ConversionRecorder` is the only
+   writer of install conversions and it runs inside the same transaction as
+   the row that points at it, so the invariant is a fact of the schema's
+   write path, not of a retry's good luck. The lock order is install row
+   (the `INSERT`), then the click `FOR UPDATE` inside `record()`, everywhere.
+
+   Then **insert the install row**, idempotent on `(registration_id,
+   install_uuid)`. A replay of a committed install answers 200 with
+   `duplicate: true` and the stored `match`; a replay of one that never
+   committed finds nothing and runs the flow. The settle paths — the
+   pending-click cron of §5.3 and the Play Integrity decoder — use the same
+   transaction shape: `UPDATE` the install row (`match_state`, `settled_at`,
+   `conversion_id`) in the transaction that records the conversion and
+   queues the notification, locking the install row `FOR UPDATE` first so a
+   concurrent replay of the same install waits for the settle rather than
+   reading the half-settled row.
+4. **Classify** into `MatchState`. Classification is a pure computation over
+   the referrer, the token and one click lookup; the one network call
+   (decoding a Play Integrity token) is never made inside the transaction —
+   `pending_integrity` is a stored state that a worker settles later, as
+   above.
+5. **Record the conversion** for `attributed` rows, via `ConversionRecorder`
+   (§2):
+   - **This row *is* the built-in `install` goal's row.** Its key is
+     `install`, `transaction_id` is `NULL` because no network sent one, and
+     the goal engine never writes a second `goal:` row for the install.
+     `UNIQUE (click_id, dedupe_key)` makes one install conversion per click a
+     database fact (§2.1, transaction ids).
+   - `pixel_type = 4`, which is unused; 0–3 are taken.
+   - `conv_time` is Google's server install-begin time.
+   - The conversion is skipped when the campaign does not list `install` as
+     payable; the install is still stored and reported.
+   - The outbox row means MTA picks it up (§6).
+6. **Queue the traffic source's notification, durably.** In the same
+   transaction as the conversion, a row goes into `202_notification_pending`
+   (`conv_id`, pixel id, `kind`, attempt count, next attempt), keyed unique
+   on `(conv_id, pixel id, kind)` so a retried install cannot queue it
+   twice (`kind` is `reached` here; §5.5 adds `correction` and
+   `retraction`). The
+   request may attempt the send right after commit, but the outbox row is
+   the record: a worker sends whatever is still pending, with backoff, and
+   marks the row done. `gpb.php:166-240`'s `202_ppc_account_pixels` logic is
+   extracted into the one sender both the request path and the worker call.
+   Without the outbox, a process killed between the commit and the send
+   would leave nothing for cron to find, and a replay of the install exits
+   as a duplicate before reaching the send.
+7. **Commit, then answer.** A failure *before* the commit answers 500 with
+   nothing stored, and the SDK's retry is safe by construction. A failure
+   *after* the commit — the immediate send attempt, the response itself —
+   still answers 200 with the stored `match`, and the workers finish the
+   work from the outbox rows; that is the boundary `WriteCommittedException`
+   marks (error pattern #13). The one thing the request never does is
+   answer 200 for an install whose row it did not commit.
+
+   `tests/Apps/Android/AppInstallAtomicityTest.php` plants a throw in each of
+   classification, `record()` and the notification enqueue and asserts, for
+   every plant, that no install row exists afterwards and that the replay
+   records the conversion, the outbox row and the notification exactly
+   once; and the structural check
+   `AttributedInstallHasConversionTest` scans the schema for any writer of
+   `202_app_installs.match_state = 'attributed'` outside the two
+   transactional paths above.
+
+The `GET` probe answers `ready`. The response never carries click data the
+referrer did not already have.
+
+### 5.3 `MatchState`
+
+| State | Trust | Meaning |
+|---|---|---|
+| `attributed` | 1 | MAC verified, click found and owned, timing plausible, inside the window |
+| `organic` | null | Play's organic referrer, or no referrer |
+| `third_party` | null | `gclid`, Meta's envelope, another tracker's referrer; parsed fields are stored |
+| `unavailable` | null | The referrer API was not available |
+| `pending_click` | null | Token valid, click row not written yet; cron settles it within 24 h |
+| `bad_token` | 0 | MAC fails, malformed, or the click was never recorded |
+| `foreign_click` | 0 | The click belongs to another user, or to a campaign linked to another registration |
+| `implausible` | 0 | Timing contradicts the click (§7.1) |
+| `outside_window` | null | Later than `attribution_window_days` |
+| `duplicate_click` | null | The click already has an install conversion |
+| `pending_integrity` | null | Registration requires Play Integrity; the verdict is being decoded |
+| `integrity_failed` | 0 | Would be attributed; its Play Integrity verdict failed (PR 6, §5.11) |
+| `integrity_unverified` | null | Would be attributed; `require` and no verdict (no token, or none within 24 h) (PR 6, §5.11) |
+
+Every row carries a `match_reason` sentence, shown as-is in the UI.
+
+### 5.4 Tables
+
+**`202_app_installs`**
+
+- Identity and links: `install_row_id`, `user_id`, `registration_id`,
+  `install_uuid` (UNIQUE per registration), `store`, `click_id`,
+  `conversion_id`.
+- State: `match_state`, `match_reason`, `trusted`, `is_test`.
+- Referrer: `referrer_raw` varchar(2048), truncated with a flag and never
+  rejected; parsed `utm_*` and `gclid`; the four referrer timestamps.
+- Versions: `install_version`, `app_version`, `sdk_version`, `os_version`.
+- Other: `integrity_state`, `first_open_at`, `received_at`, `settled_at`,
+  `raw_payload`, `remote_ip`.
+
+Events and goals are core, not app tables (§2.2): **`202_goals`** (versioned
+definitions, owned by a campaign or by an app registration as its default
+set), **`202_goal_events`**, **`202_goal_progress`** and **`202_goal_subjects`**
+(the per-subject lock row, §5.5; all keyed by subject: click or install),
+**`202_goal_outcomes`** (§5.5), and **`202_campaign_goals`**
+(`campaign_id, goal_id, payout, notify_traffic_source`). An app event is a
+`202_goal_events` row with `subject_type = 'install'`.
+
+**`202_aff_campaigns.app_registration_id`** NULL, used by `foreign_click` and
+the link builder. It is added in the 1.9.75 → 1.9.76 rung, next to the app tables.
+
+**Why the two signal tables stay separate.** Postback identity is Apple's
+(network, transaction, window, signature). Install identity is ours
+(`install_uuid`, click). Merging them would make every identity column
+nullable and weaken the uniqueness that deduplication rests on.
+
+### 5.5 Events and goals: engagement-based conversions
+
+The requirement: an install can be the conversion, but so can **any
+engagement after it**, and it has to be very flexible. For example:
+
+- install;
+- reach level 3;
+- complete the tutorial *after* registering;
+- the 3rd purchase;
+- cumulative purchases of $20 or more within 7 days of install;
+- every subscription renewal, capped at 12.
+
+The design separates what the app reports (**events**) from what the operator
+pays and reports on (**goals**).
+
+**Events: what the app reports.**
+`POST /apps/installs/{install_uuid}/events` accepts
+`{event_id, name, occurred_at, properties: {…}, revenue?, currency?}`.
+
+- Properties are flat and typed (string, number, bool). At most 32 per event.
+- Events are stored in `202_goal_events` with `subject_type = 'install'`,
+  idempotent on `(subject, event_id)`.
+- An event on its own records nothing: it is evidence, and goals decide what
+  it is worth.
+- The SDK call is
+  `P202Attribution.logEvent("level_reached", mapOf("level" to 3))`, the same
+  on iOS.
+
+**Goals: what counts.** `202_goals` (core, §2.2); for apps the registration supplies the default set. `install` is a
+built-in goal every registration has, and it is payable by default. A goal is
+a validated JSON definition. It is data, never code: there is no expression
+evaluation, so there is nothing to inject.
+
+```json
+{
+  "name": "Reached level 3",
+  "trigger": {"event": "level_reached",
+              "where": [{"prop": "level", "op": "gte", "value": 3}]},
+  "threshold": {"count": 1},
+  "after": ["tutorial_complete"],
+  "within": {"days": 7, "from": "install"},
+  "repeat": {"mode": "once"},
+  "value": {"type": "fixed", "amount": 4.00}
+}
+```
+
+| Field | Options |
+|---|---|
+| `trigger` | `install`, or an event name, plus `where` predicates on its properties: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `exists`. The predicates are ANDed; a second goal expresses OR |
+| `threshold` | `count` (the Nth matching event) or `sum` of a numeric property (cumulative spend) |
+| `after` | Goals that must already be reached: sequences and funnels |
+| `within` | A window from `install` or from `click`; unset means for the life of the install. A subject with no click (an organic install) cannot evaluate a `from: click` window: the goal is **ineligible** for it, recorded as a non-payable outcome with reason `no_click`, never silently re-based on the install time |
+| `repeat` | `once`, or `each` with an optional `max`: every renewal, capped |
+| `value` | `fixed`, `from_property` (the event's revenue), or `none` (tracked, not paid) |
+
+Complexity is bounded (at most 20 predicates, at most 5 `after` references,
+no cycles), so evaluation is O(goals) per event and a definition can never
+become a performance or denial-of-service problem.
+
+**Evaluation.**
+
+- Goals are evaluated **server-side** for Android and for web, in the same
+  transaction as the event insert, against per-subject state in
+  `202_goal_progress` (§2.2).
+- It is deterministic and idempotent by `event_id`, so a retried event can
+  never reach a goal twice.
+- **Events are evaluated in event-time order per subject, not in arrival
+  order.** The order key is `(occurred_at, received_at, event_id)`, with
+  `occurred_at` clamped to `received_at` so a device clock cannot move an
+  event into a window; `within` windows compare the same clamped value.
+  Retries, offline queues and separate web callers reorder deliveries, so a
+  prerequisite `A` can arrive after the `B` whose `after` names it. An
+  engine that evaluated `B` on arrival and never looked at it again would
+  miss that funnel for good with both `occurred_at` values sitting in the
+  table. Instead:
+  - every request that appends events for a subject takes that subject's
+    lock first (`SELECT … FOR UPDATE` on a `202_goal_subjects (subject_type,
+    subject_id)` row, inserted on first sight), so two requests for one
+    subject serialize and the evaluation below never races itself;
+  - an event whose order key sorts **after** everything already stored for
+    the subject is evaluated incrementally against `202_goal_progress`, the
+    common case and O(goals);
+  - an event whose order key sorts **before** a stored one is a
+    **replay**: progress for the subject is recomputed from its stored
+    events in order-key order, under the same lock, in the same
+    transaction. Replay is bounded — a subject holds at most 10,000 events
+    (the 10,001st is refused with a 422 naming the cap), and the recompute
+    is pure PHP over one indexed read — so out-of-order delivery costs one
+    bounded recompute and can never fork the result from what in-order
+    delivery would have produced.
+  - **A replay recomputes every outcome, not only reachability.** The
+    recompute yields, for each `(goal, version, n)` the subject has reached,
+    the event that reached it, its `reached_at` and its value. Which event
+    *is* "the 2nd purchase" changes when an earlier one arrives late, and
+    with `from_property` values so does the money: two purchases of $5 and
+    $10 give `n = 1` $5 and `n = 2` $10; a late $1 purchase that occurred
+    before both makes the correct answer $1, $5, $10. Keeping the stored
+    rows would leave revenue and `reached_at` a function of arrival order,
+    the thing this rule exists to remove. So the recomputed set is
+    reconciled against the stored one:
+    - an outcome that is new is written;
+    - an outcome whose stored row names the same event is untouched;
+    - an outcome whose stored row names a *different* event, `reached_at` or
+      value is **superseded**: the stored row gets `superseded_by` the
+      recomputed row, `superseded_reason = 'replay'`, and the new row is
+      written. Its ledger row is treated the same way, below;
+    - no outcome is withdrawn: the number reached for a `(goal, version)`
+      never goes down across a replay, because adding an event can only add
+      matches.
+    The one thing that is never re-decided by arrival is the version:
+    events are evaluated under the goal versions current at their own
+    `received_at`, not at replay time, so a replay can never apply an edit
+    to history — that is what the explicit re-evaluation operation below is
+    for.
+  - **The ledger follows.** A goal's ledger key is
+    `goal:<goal_id>:<goal_version>:<n>:<event_id>` (§2.1): a retry of the
+    same event is still a byte-identical duplicate, and a recompute that
+    moves `n` to a different event writes a *different* row rather than
+    colliding with the old one. The old row is marked `superseded_by` the
+    new one, and **a superseded row never counts toward the click total in
+    either payout mode** — `accumulate` sums the rows that are payable,
+    not deleted and not superseded; `replace` takes the latest such row —
+    so the click shows $16 and not $31 after the example above. Both rows
+    go to the MTA outbox, as every change of counted state does (§6.3),
+    and the notification rule below decides what the traffic source hears.
+
+  `tests/Goals/EventOrderTest` delivers every permutation of a three-step
+  funnel's events and asserts the same outcomes for each, plants the gap
+  directly (`B` first, then `A`, and the `after: [A]` goal is reached), and
+  runs the $5, $10, late-$1 purchase case: after the replay the outcomes
+  read $1, $5, $10, the ledger holds two superseded rows and three counted
+  ones, and the click total is $16.
+- **Goals are versioned.** Editing a goal creates a new version. Conversions
+  record the version that produced them, so an edit never rewrites history.
+  Re-evaluating past installs under a new version is an explicit operation
+  with a dry-run preview. It is stageable like other writes.
+
+**What a reached goal does.** This is decided per **campaign**, not per goal,
+because the same app is often sold under different deals.
+
+- A campaign linked to the registration lists its **payable goals** and a
+  payout for each. It can override the goal's `value`.
+- **Payable** goals record a conversion on the install's click, with
+  `dedupe_key = 'goal:' . goal_id . ':' . goal_version . ':' . n . ':' .
+  event_id`, where `n` is the repeat index and `event_id` the event that
+  reached it. It is deduped by `UNIQUE (click_id, dedupe_key)`, and it
+  enters MTA. When the triggering event carried a network transaction id,
+  that id is kept in `transaction_id`. The built-in `install` goal is the
+  exception: its row is the intake's install row (key `install`, §5.2).
+- **Re-evaluation under a new version** replaces the previous version's
+  results for each subject it touches, in both tables, in one transaction
+  per subject:
+  - every `202_goal_outcomes` row of the same `(subject, goal_id)` at an
+    older version is retired: `superseded_reason = 'reevaluation'`,
+    `superseded_at` set, `superseded_by` the new version's row for the same
+    `n` where one exists and NULL where it does not. The new version's
+    outcome rows are then written. Because retirement is a state of the old
+    row and not a pointer it must be able to follow, a subject the new
+    definition no longer qualifies is handled the same way: its old outcomes
+    are retired and nothing new is written. Without a marker on the outcome
+    table, the funnel and app report — which read this table, not the
+    ledger — would count both versions and every re-evaluation would
+    inflate them; superseding the ledger rows alone does not touch what
+    those reports read;
+  - the ledger rows those outcomes had written are marked `superseded_by`
+    the new version's row for the same `(subject, goal)` where one exists,
+    and **soft-deleted** (`softDelete()`, which recomputes the click total
+    under the click lock) where the new version reaches nothing for the
+    subject; a row cannot be superseded by a row that does not exist. The
+    deletion carries `superseded_reason = 'reevaluation'` so a later
+    revival can tell it from an operator's (§5.7).
+
+  Every read of `202_goal_outcomes` — the funnel, the app report, the
+  per-subject breakdown, the CLI — filters `superseded_at IS NULL` through
+  one repository method, and `202_goal_progress` needs no marker because it
+  is already keyed by `goal_version`. The preview lists exactly the outcome
+  rows that would be retired and written, the ledger rows that would be
+  superseded or deleted, and the traffic-source notifications already
+  delivered for them that cannot be recalled, per subject, before anything
+  is applied. `tests/Goals/ReevaluationSupersedesOutcomesTest` re-evaluates a
+  subject under a version that reaches the goal, one that reaches it at a
+  different `n`, and one that does not reach it, and asserts the funnel
+  count is one, one and zero, never two.
+- Each payable goal also has a **"notify traffic source"** option (default
+  on). It queues the campaign's traffic-source postback through the
+  notification outbox of §5.2, with new tokens `[[p202_goal]]` and
+  `[[p202_goal_value]]`, so a network can be told "install" and "level 3"
+  separately, or only "level 3".
+- **A traffic source is told about an outcome once.** A postback that has
+  been delivered cannot be recalled, so a replacement row — one written by
+  a replay or a re-evaluation that supersedes an earlier row for the same
+  `(subject, goal, n)` — never queues a fresh "reached" postback: upstream
+  would count, or pay, the same outcome twice while the tables here show
+  one. The outbox row carries a `kind`:
+  - `reached`: the first row for an outcome. The key becomes
+    `(conv_id, pixel id, kind)`;
+  - `correction`: a replacement whose predecessor's `reached` was already
+    sent, carrying `[[p202_goal_value]]` (new), `[[p202_previous_value]]`
+    and `[[p202_original_conv_id]]`; and `retraction`, for an outcome
+    retired by re-evaluation with no replacement. Both are sent only to a
+    traffic-source pixel that has a **correction URL** configured, which is
+    off by default because most networks have no endpoint for one. Without
+    it the row is stored as `suppressed` with its reason, shown in the
+    click breakdown, and counted in the re-evaluation preview as
+    "notifications already delivered that cannot be recalled";
+  - a predecessor whose `reached` row is still *pending* is simpler: that
+    row is cancelled and the replacement queues its own `reached`, so a
+    network that has heard nothing yet hears the corrected value first.
+  An outcome the old version never reached is new to the network, and its
+  first row is a `reached` like any other.
+- **Every reached goal writes an outcome row**, whether or not the subject
+  has a click: `202_goal_outcomes (outcome_id, subject_type, subject_id,
+  goal_id, goal_version, n, event_id, reached_at, value, payable,
+  conversion_id NULL, superseded_by NULL, superseded_reason ENUM('replay',
+  'reevaluation') NULL, superseded_at NULL)`, `UNIQUE (subject_type,
+  subject_id, goal_id, goal_version, n, event_id)`. That is the
+  funnel's and the app report's source, and it is what makes an organic
+  install's goals visible at all — `202_conversion_logs` is click-bound, so
+  an install with no click can have no ledger row.
+- **When the subject has a click**, the outcome also writes a ledger row and
+  links it through `conversion_id`: payable outcomes as described above;
+  **non-payable** ones with `payable = 0`, so the click breakdown shows them,
+  and nothing else follows — no income, no lead, no MTA credit, no
+  notification.
+- A campaign that has configured no payable goals pays on `install`. That is
+  the default the decision in §9 asks for; turning it off is a campaign
+  setting, not a global one.
+
+**One click, several payouts: a real constraint in the core.** Classic
+campaign reports allow one lead and one payout per click. Income is
+`IF(click_lead>0, click_payout, 0)` (`202-config/DataEngine/ClickRollupSql.php:68`).
+Every conversion **overwrites** `click_payout` rather than adding to it
+(`MysqlConversionRepository::applyStandardClickUpdate()`, `:345-353`;
+`p202ApplyConversionUpdate()`, `static-endpoint-helpers.php:57-118`). A
+campaign paying $1 for the install and $4 for level 3 would show $4 of
+income, not $5.
+
+**The precedent: the revenue CSV upload already consolidates**, within one
+file (`tracking202/update/upload.php:128-165`), and today writes no
+conversion rows while doing it. That is why the click's value has to be
+derived from a ledger every path writes to (§2.1), and why the mode below is
+per campaign: networks that send a second postback to *correct* a payout
+(pending → approved, a new amount) rely on replacement, and would be
+double-counted by an always-add rule.
+
+**Design: a per-campaign payout mode, computed from the ledger (§2.1).**
+
+- **`202_aff_campaigns.payout_mode`:**
+  - `replace`: today's behaviour. It is the default for every existing
+    campaign and every web campaign.
+  - `accumulate`: the click's value is the sum of its payable conversions. It
+    is the default for campaigns with goals and for app campaigns, and it is
+    selectable on any campaign.
+- **Both modes derive the click's cached value from its ledger rows** under
+  the click lock `record()` already holds
+  (`MysqlConversionRepository.php:136-144`). Neither mode increments a running
+  total, so a delete, a supersede or a replayed request cannot leave the
+  cache disagreeing with the rows.
+- **The CSV upload** keeps "the file replaces the click's uploaded revenue":
+  it now writes one row per line, and a new batch supersedes the earlier
+  batch's rows for the same click.
+- **Nothing changes for any existing campaign's income.** Only campaigns an
+  operator switches, or new goal and app campaigns, accumulate.
+
+**Revenue trust.** Anyone holding the app token can post events.
+
+- Goal values come from the goal or campaign definition.
+- A `from_property` value is paid only if the registration sets
+  `trust_client_revenue`. Otherwise it is stored and reported, but not
+  credited.
+- Reports say which regime produced each number.
+
+**iOS uses the same goals.** An SKAN encoding maps a fine or coarse value to a
+goal, so decoded postbacks report "reached level 3" in the same vocabulary as
+Android.
+
+- Apple's postback carries only the value, so the **iOS SDK evaluates goals
+  on the device** to decide which value to set. The schema document ships the
+  evaluation-only view of the goals (§4.3: no values, no payouts), and the
+  helper runs the same evaluator.
+- **An in-flight postback carries no version.** SKAN postbacks arrive up to
+  35 days after install (the third conversion window), so an encoding edited
+  today is still being applied by devices that fetched the old schema. SKAN
+  encodings are therefore versioned with an effective time and never
+  deleted, and a postback decodes under the encoding version that was active
+  at `received_at − 35 days`. If the encoding changed inside that horizon,
+  the row is decoded under both versions; where they agree it counts, and
+  where they disagree it is reported as `ambiguous_encoding` and credited to
+  neither. The UI says so when an encoding is edited: the report is exact
+  again 35 days later. **As built the horizon is 48 days** — the windows,
+  Apple's delivery delay and the SDK's bound on the age of its document
+  (§5.9).
+- One evaluator specification, with cross-language vectors in
+  `tests/fixtures/app-sdk-contract/goals/`, is run by the PHP and Swift test
+  suites, so the two evaluators cannot drift.
+- Until the Swift evaluator lands, iOS encodings can name a goal whose trigger
+  is a plain event, which is exactly today's behaviour. (Landed in PR 8; an
+  encoding now names any goal a device can reach, §5.9.)
+
+### 5.6 UI, report, testing, SDK
+
+**Setup › Mobile Apps.** Pasting a Play link registers the app. The name
+comes from a best-effort fetch of the listing's `og:title`, falling back to
+asking for it. The Android app page has:
+
+- the token panel;
+- the Gradle and init snippet;
+- an intake reachability check;
+- **a store-link builder** that writes the campaign URL and sets
+  `app_registration_id`;
+- recent installs with their reasons;
+- the test opt-in.
+
+The token panel, reachability check, recent signals and test opt-in are
+shared partials with the iOS page.
+
+**Analyze › Mobile Apps / `GET /apps/report`.**
+
+- Each `ReportSource` returns the shared metrics: `installs`, `reengagements`
+  and `redownloads` (iOS), `events`, `revenue`, and the trust-class counts.
+- **Shared dimensions:** `day`, `registration`, `platform`, `country`.
+- **Platform-specific dimensions** require the matching `platform` filter;
+  without it the request is a 422 with a hint, never a silent exclusion.
+- **Totals** are per platform plus a labelled combined figure. iOS numbers are
+  delayed, aggregate and privacy-thresholded; Android numbers are not.
+- **Campaign reports and MTA need no change to include attributed Android
+  installs.**
+
+**Testing.**
+
+- A debug build of the SDK can send `test: true`. Those installs count only
+  under `accept_test_signals`, the same flag AAK development postbacks use.
+- `p202 app install simulate <registration> --click <id>` mints a real token
+  for a real click and posts it as the SDK would.
+
+**SDK** (`sdk/android-attribution/`):
+
+- Kotlin, `minSdk 21`. The only dependency is
+  `com.android.installreferrer:installreferrer:2.2`, the latest release
+  (January 2021).
+- The referrer is read once and persisted. It stays available for 90 days.
+- Backoff: 400 and 413 are terminal; 429 and 5xx are retried.
+- `install_uuid` is excluded from Auto Backup.
+- No advertising ID and no `AD_ID` permission.
+- Tests: JVM tests over the contract vectors, plus a live integration test.
+
+**Play Integrity, in the first release, opt-in per registration (PR 6).** It is the only
+control that tells a real app on a real device from a click-spamming script,
+and this plan attaches payouts to installs and goals. It therefore belongs
+next to the payouts, not two phases later. It needs the app owner's Google
+Cloud project, so it cannot be on by default.
+
+- **Modes:**
+  - `off` (the default);
+  - `observe`: store the verdict and report it; attribution is unaffected;
+  - `require`: attribution and payable goals wait for a `valid` verdict.
+- **The SDK** requests a standard token with
+  `requestHash = SHA-256(canonical install body)` when the registration's
+  schema document says integrity is on. The canonical body is the install
+  JSON with keys sorted, no insignificant whitespace, and the
+  `integrity_token` field **excluded** (it cannot hash a field derived from
+  itself); the SDK and the server compute it with the same rule, and the
+  contract vectors (§4.3) pin the bytes.
+- **The server** decodes the token through Google's `decodeIntegrityToken`,
+  using the owner's service account. The OAuth JWT is signed RS256 with
+  `openssl_sign`, so no new dependency is needed. The credential is encrypted
+  at rest and redacted like the app token.
+- **A cron worker does the decoding, off the request path.** Under `require`
+  the install waits as `pending_integrity`, which is typically seconds.
+- A verdict is `valid` only with `PLAY_RECOGNIZED` plus
+  `MEETS_DEVICE_INTEGRITY`, **and** a `requestHash` that matches the stored
+  body.
+- Google's default quota is 10,000 decodes per app per day. The page shows
+  usage, and a request refused by quota stays pending. Under `require` it is
+  never waved through (error pattern #11).
+
+**Advertising ID: not collected.** Nothing in this design needs it:
+
+- the referrer carries the click;
+- the goals ride the install id;
+- deduplication uses our own ids.
+
+Collecting it would add the `AD_ID` permission, a consent flow and a Play Data
+safety declaration to every app that uses the SDK. It is all zeros for users
+who deleted it and for apps without the permission. If an ad network later
+requires a device id in its postback, it can be added as an opt-in SDK field
+without changing anything here.
+
+**After the release, each part independent:**
+
+- Meta referrer decryption: AES-256-GCM with the per-app key.
+- Huawei, Samsung and Xiaomi stores. Huawei reports milliseconds.
+- Deferred deep links, and `assetlinks.json`.
+
+### 5.7 As built: decisions (PR 4)
+
+What PR 4 settled, where it stops short of §2.2, §4.5 and §5.5, and which PR
+picks up the rest. The engine is `Prosper202\Goals` (`GoalDefinition`,
+`GoalEvaluator`, `GoalEngine`, `MysqlGoalRepository`, `PlainGoals`); the API
+is `GoalsController`; the CLI is `p202 goal …`.
+
+- **Owners (scopes).** A goal belongs to a campaign, an app registration or
+  the account. `after` may only name goals of the same scope, and names are
+  unique per owner. A campaign evaluates its own goals from the start, and
+  the goals it attaches from another scope from the moment they were
+  attached (`starts_at`); a prerequisite starts when the goal that needs it
+  does.
+- **Versions.** `202_goal_versions` keeps every definition; a version is
+  immutable and an edit adds one. An event is evaluated under the version
+  whose `effective_at` is at or before its `received_at`, so an edit starts
+  the goal afresh for later arrivals and never re-decides the past on its
+  own. `POST /goals/{id}/reevaluation` is the explicit way to apply the
+  current version to past events. It rebases each subject (the `rebases`
+  column on `202_goal_subjects`) and retires the older versions' outcomes
+  with reason `reevaluation`, superseding their ledger rows where there is
+  a replacement and soft-deleting them where there is none. It handles at
+  most 1000 subjects per call (`GoalEngine::MAX_SUBJECTS_PER_CALL`), and
+  the preview says how many subjects it would touch. It re-decides the
+  goal together with its dependents (every goal whose `after` chain leads
+  to it, any version's `after` counting): their outcomes were evaluated
+  against the goal's, so a prerequisite that stops matching retires the
+  outcomes reached behind it and one that starts matching writes the ones
+  waiting on it, and the progress of exactly those goals is replaced with
+  them (`ReevaluationReconcilesDependentsTest`). Dependents never add
+  subjects, so the cap is unchanged; a dependent version the evaluator
+  disables as `invalid_definition` or `prerequisite_missing` is left as
+  it is.
+- **Archive, not delete.** `DELETE /goals/{id}` archives: versions,
+  outcomes and their conversions are kept, and archive time ends the goal's
+  span (`ends_at`), so a replay sees what the incremental evaluation saw.
+  It is refused while an SKAN encoding names the goal or another goal waits
+  for it in `after`. Deleting a registration archives its goals.
+- **Order and replay.** Events are ordered by (`min(occurred_at,
+  received_at)`, `received_at`, `event_id` byte order). An in-order event is
+  evaluated incrementally from stored progress. An event that sorts earlier
+  than the newest stored one replays the subject from its stored events
+  under the per-subject lock row. Outcomes that moved are superseded with
+  reason `replay`, never duplicated. A replay does not retire outcomes it
+  does not recompute, which is why detaching a goal keeps the conversions
+  it already recorded.
+- **Evaluator.** Goals run in topological order (Kahn's algorithm, lowest
+  id first); a goal on an `after` cycle is disabled with its reason, as is
+  one whose stored version cannot be parsed (§7.1). A window with no anchor
+  makes the outcome ineligible (`no_click` / `no_install`), never payable.
+  Sums are computed in integer units of 0.00001. The install pseudo-event's
+  id is `@install`.
+- **Bounded cost per event.** A sum threshold with `repeat: each` requires
+  `max` (a sum can jump past many multiples in one event; a count cannot,
+  so a count's `each` may stay unbounded). A stored definition without it
+  is `invalid_definition`. The number of n an event reaches is computed
+  (`floor(sum / gte)`, capped), never searched for. A summand outside
+  ±999999.99999 does not count; event `revenue` outside it is refused at
+  intake by name; the running sum is held between −10^15 units and
+  `cap × gte`, so it never leaves a 64-bit integer. `POST /goals/evaluate`
+  answers at most 10,000 outcomes (`EvaluationTooLarge` → `422 events`).
+  `SumBoundsTest` pins what the vectors cannot hold. A reconciliation
+  reads at most 100,000 live outcomes of a subject
+  (`GoalEngine::MAX_LIVE_OUTCOMES_PER_SUBJECT`) and refuses the subject
+  past that rather than reconciling a truncated read.
+- **Payability** (`GoalEngine::payability`). A goal the campaign does not
+  pay for is tracked at its own value, with note `not_payable_on_campaign`.
+  A campaign payout overrides the goal's value. A `fixed` value pays, and
+  `none` is tracked with no value. `from_property` pays only when the
+  event's revenue is trusted. An untrusted value is kept and not paid
+  (`untrusted_value`). Under `payout_mode = replace`, the click takes its
+  newest counted row, so a replayed outcome's replacement row becomes the
+  click's value, which is the intended reading.
+- **One writer.** Goal outcomes reach the ledger only through
+  `MysqlConversionRepository` (its in-transaction variants), with
+  `DedupeKey::goal()` keys and `ConversionSource::GOAL`. Every read of
+  outcomes goes through `MysqlGoalRepository::liveOutcomes()`.
+  `GoalWritersTest` pins both.
+- **SKAN encodings name goals.** `202_app_skan_encodings` has `goal_id` and
+  an optional `revenue_override` in place of `event_name` and `revenue`.
+  Until the on-device evaluator ships (PR 8), an encoding can only name a
+  *plain event* goal (one event, no `where`, count 1, no `after`, no
+  `within`, repeat once) of its registration or of the account. A goal an
+  encoding names cannot be edited out of that shape. Setup › Mobile Apps
+  still asks for an event name and turns it into a plain goal through
+  `PlainGoals`, in the same transaction as the encoding.
+- **Reads that are POSTs.** `/goals/validate` and `/goals/evaluate` compute
+  and write nothing, so they take read scope, are exempt from staging, and
+  the Go CLI never stamps them as staged (`readOnlyPost`).
+- **Vectors.** `tests/fixtures/app-sdk-contract/goals/` holds
+  `evaluator.json` and `definitions.json`, plus a `README.md` that is the
+  format's specification. PHP runs them through `GoalVectorsTest`; the
+  Swift evaluator (PR 8) runs the same files.
+- **Deferred.**
+  - The encoding versioning with the postback horizon (§5.5) goes to PR 8 (built, §5.9; 48 days as built),
+    with the evaluator that needs it.
+  - `notify_traffic_source` is stored on campaign goals but nothing fires
+    yet. The notification outbox goes to PR 5 (installs) and 4b (web
+    events). **4b:** fires, without an outbox (§5.8); **combined:** web
+    and app outcomes both queue through PR 5's outbox (§5.10, "Merged with
+    PR 4b").
+  - Install subjects, `app_registration_id` on outcomes, the install
+    goal's ledger rows and `trust_client_revenue` go to PR 5.
+    `GoalSubject` and the evaluator already model an install subject, but
+    no intake produces one.
+  - There is no HTTP event intake yet (PRs 4b and 5). The live pass
+    drives the engine through `tests/live/goals-ingest.php`. **4b:** web
+    events arrive over HTTP three ways (§5.8).
+  - There are no PHP CLI (`bin/p202`) goal commands, matching PR 3; the
+    Go CLI is the CLI.
+- **Revival restores the ledger row, whichever retirement happened.** A
+  retired outcome that a reconciliation returns to (the same goal, version,
+  n and event — the outcome's UNIQUE key names the event) is revived, not
+  written twice. The path is real: a prerequisite that matches, stops
+  matching and matches again retires its dependent with no replacement
+  (row deleted) and then revives it, and until this was fixed the revived
+  dependent was live and unpaid (`RevivalRestoresTheLedgerTest`, and the
+  last re-evaluation section of `tests/live/goals.sh`). Both retirements
+  and the revival go through the ledger's writer, in the engine's
+  transaction: `MysqlConversionRepository::retireGoalRowInTransaction()`
+  soft-deletes and marks the row with the engine's reason in one
+  statement, and `reviveGoalRowInTransaction()` restores it by state —
+  engine-superseded: the mark is lifted; engine-deleted (deleted, marked,
+  no `superseded_by`): undeleted and unmarked; deleted without the mark
+  (an operator's DELETE or a subid clear): left deleted, because the engine
+  restores what it retired, never what someone else removed; already
+  counting: untouched. Either way the click is recomputed and the row
+  queued for MTA. The row must be the outcome's own (its click and
+  `DedupeKey::goal()` key); a link to any other row is refused as
+  `integrity` and the subject's transaction rolls back, so a revival never
+  pays for an outcome the row does not record. A second live row for the
+  key cannot exist — UNIQUE `(click_id, dedupe_key)` counts deleted rows.
+  A revived row keeps the value it was recorded at (a campaign payout
+  edited in between does not re-price it, as it re-prices no other
+  conversion). Under `payout_mode = replace` "latest" stays insertion
+  order: a revived row keeps its `conv_id`, so it is the click's value only
+  when no newer counted row exists — at the third step of the scenario
+  above, on a replace campaign, the prerequisite's new row is.
+- **LTV follows the row.** Deleting a linked conversion voids its revenue
+  event (`void:conv:<id>`); a revival posts it again as a new event of the
+  original's type and amount keyed `reinstate:conv:<id>:<g>`, and the next
+  deletion voids that with `void:conv:<id>:<g>`, so every cycle compensates
+  exactly once and the reconcile jobs' order count (purchases minus
+  `void:` adjustments) still agrees with the cache. `reinstate:` is a
+  reserved idempotency prefix.
+- **Notifications for revived and re-written outcomes (for 4b and 5).**
+  Decided here, built with the outbox. A traffic source's knowledge is per
+  `(subject, goal, n)`, not per row: (1) a *revived* row keeps its
+  `conv_id`, so its `reached` key `(conv_id, pixel, kind)` already exists
+  and it is never announced again; if its retirement queued a
+  `retraction` that is still pending, the retraction is cancelled; if the
+  retraction was delivered, the revival queues a `correction` (previous
+  value 0), sent only to a pixel with a correction URL and otherwise
+  stored `suppressed`, as every correction is. (2) "An outcome the old version never reached" means no
+  row for that `(subject, goal, n)` was ever announced, retired rows
+  included — so at the third step of the scenario above, the prerequisite's
+  new-version row, written for an `n` whose earlier row was announced and
+  then retired, is a `correction`, not a fresh `reached`. Keying the rule
+  on the immediate predecessor alone would re-announce it, and a network
+  would count the same outcome twice.
+
+### 5.8 As built: decisions (PR 4b)
+
+What PR 4b settled for web events (§2.2), where it stops short, and which PR
+picks up the rest. The intake is `Prosper202\Goals\WebEvents` (reading a
+request into an event, finding the click a visitor id names), the
+notification is `TrafficSourceNotifier` behind the engine's
+`OutcomeNotifier` seam, the sender is `Prosper202\Conversion\TrafficSourcePixels`;
+the API is `EventsController`; the CLIs are `p202 event send` and
+`bin/p202 event:send`. The user-facing contract is
+`documentation/api/23-events.md`.
+
+- **Three intakes, one engine.** `event=` on gpb, gpx, upx, pb and px
+  (through `p202RecordWebEvent()`), `POST /events`, and `p202.track()`
+  (`tracking202/static/event.php`) all end in `GoalEngine::ingest()` on the
+  click subject; nothing else writes an event or a goal conversion.
+  `WebEventPathsTest` fails when an endpoint that records a conversion does
+  not ask the event path first (ClickBank is exempt by name: its INS has no
+  event), and when a `GoalEngine` is built outside the tests without a
+  notifier.
+- **Legacy first.** A request without `event=` never reaches the event
+  code (one array lookup). `event=` on a campaign with no *live* goal (none,
+  or all archived) is the plain conversion it always was — same payout,
+  same keys, same gates — with the name kept in `event_name` when it is a
+  valid event name (one that is not is not kept: the conversion is what
+  that request always meant, and refusing it would lose a sale). Goals are opt-in per
+  campaign, so a network that already appends `event` changes nothing.
+  `POST /events` has no legacy to keep: on a campaign without goals it
+  stores the events and says so (`goals_evaluated: false`, a note naming
+  re-evaluation), because an API caller asked for events.
+- **Event ids.** An explicit id is the caller's. A pixel without one gets
+  `@tx:<txid>` (hashed as `@txh:<sha256>` when too long or not printable),
+  or `@once:<name>` without a transaction id — the once-per-click pixel
+  rule, per event name. `@` starts no caller id (GoalEvent refuses it), so
+  derived and sent ids cannot collide (#17).
+- **Server-clocked events.** A pixel, `p202.track()`, and an API event with
+  no `occurred_at` are timed by the server, and a retry later would carry a
+  different time into the fingerprint and be refused as a conflict. Such
+  events are marked (`GoalEvent::$clockedByServer`) and the engine compares
+  a stored id at its stored time; a time the reporter gave is still part of
+  the event (the PR 4 rule).
+- **Trust.** A pixel's or postback's `amount` pays a `from_property` goal,
+  as it sets a plain conversion's payout today; the API's `revenue` pays;
+  `p202.track()`'s never does (stored with `untrusted_value`).
+- **`p202.track()` names no click.** The click is the newest one of the
+  page's account observed with the page's `p202lpid` (the simple page's own
+  campaign, any campaign for an advanced page), within 30 days, unless the
+  signal is quarantined. No consent or capture off means no id and nothing
+  sent. Calls wait for the pageview's `record.php` (the click must exist);
+  `&p202_beacon=0` loads the script on a thank-you page without recording a
+  click. The answer never says which click was found.
+- **Notification, without an outbox** (as 4b shipped it; the server
+  postbacks now queue through PR 5's outbox, §5.10 "Merged with PR 4b" —
+  the kinds, tokens and send-once rule below are kept). The engine decides each written
+  outcome's `kind` inside the transaction that knows which rows are
+  replacements: `reached` (payable, newly on the ledger, its campaign term
+  notifies), `suppressed` (a replay's or a re-evaluation's replacement,
+  or an outcome whose event already reached the goal in an outcome the same
+  plan retires — a replay that shifts n: $5, $10 and a late $1 become $1,
+  $5, $10 and the network hears nothing new, so it has $15 of a $16 click
+  until correction postbacks exist; `no_click`), `off`, `none` (unpaid). After the commit the notifier sends
+  `reached` ones through `TrafficSourcePixels::fire()` with
+  `[[p202_goal]]`, `[[p202_goal_id]]`, `[[p202_goal_value]]` (money written
+  `4.00`), `[[payout]]` and `[[transactionid]]` (the event's transaction id,
+  else the row's dedupe key). A notifier that throws is logged and reported
+  as `failed`; the write stands (#13). Re-evaluation apply notifies the
+  outcomes the old version never reached — in §5.7's sense: no row for that
+  `(subject, goal, n)` was ever announced, retired rows and every version
+  included. A revived outcome is never announced again (its first write
+  was the announcement, and this path sends no retraction, so the network
+  still holds it); a new row for an `n` an earlier row may have announced
+  is `suppressed` (`replacement`). With no record of what was sent, "may
+  have announced" is "an earlier row for that n was payable on the ledger",
+  the direction that never tells a network twice (`announcedBefore()`;
+  `WebEventsIntegrationTest` runs the retire-and-reach-again funnel). The
+  outbox, when the two meet, answers it from what was actually queued.
+  Browser pixels render only where a
+  browser asked (upx's answer); elsewhere they are counted `browser_only`.
+- **The sender became a class.** `replaceTokens()` (connect2.php) and
+  `p202FireTrafficSourcePixels()` delegate to `TrafficSourcePixels`, so the
+  API path sends exactly what gpb sends; the old `replaceTokens()` was run
+  against the new one on every token and fill mode before it was replaced.
+- **Endpoint answers.** gpb, pb and upx answer an event with JSON (upx with
+  the notification's browser pixels when there are any); `422` with
+  `field_errors` names a bad `event`, `event_id`, `event_props` or `amount`;
+  `409` a reused id; an event that is also a reversal is refused. gpx and px
+  have already sent their image and log a refusal.
+- **`POST /events`.** Scope area `events`; stageable like `POST
+  /conversions`; `Idempotency-Key` honored; `event_id` required; `201`
+  when something was stored, `200` for an all-duplicate retry.
+- **The goal editor** is a Goals panel under the campaign form (edit mode):
+  the common shape open, the rest under Advanced, writing through
+  `GoalsController` so page and API refuse alike. A goal the form cannot
+  show faithfully is listed with a pointer to `p202 goal update`, never
+  rewritten by the form. "Faithfully" is a round trip, not a list: the form
+  is filled from the stored definition, built back, and must give the same
+  canonical definition compared strictly, so a condition value keeps its
+  JSON type (the form carries it in a "compare as" field; `"123"`, `123`,
+  `true`, `"true"`, `3` and `3.0` all survive an unchanged save), and a
+  save for a goal that no longer fits is refused. The campaign form gains **When a click converts
+  more than once** (`payout_mode`) under Advanced; a post without the field
+  keeps the stored mode.
+- **Order within a second.** Events are ordered by time, then arrival,
+  then id, at one-second resolution; two funnel steps posted in the same
+  second are ordered by id. Documented, not changed.
+- **Deferred.**
+  - The notification outbox (`kind`, delivery state, retries) with
+    correction and retraction postbacks goes to PR 5, as §5.5 describes;
+    until then a replacement is never sent and a failed delivery is
+    reported, not retried. (Done when the PRs were combined: §5.10.)
+  - The per-click breakdown of events and outcomes in the UI is PR 1b's.
+  - The PHP CLI has no `Idempotency-Key` support at all (not only for
+    events); each event's id is what makes its retries safe.
+
+### 5.9 As built: decisions (PR 8)
+
+What PR 8 settled for the iOS SDK (`sdk/ios-attribution/`), the server
+side it needed, and the PR 4 deferrals it picked up (§5.7: encoding
+versions with the postback horizon — 48 days as built, below; relaxing "an
+encoding names a plain goal").
+
+- **The Swift API.** `configure(endpoint:appToken:)` (the `schemaToken`
+  parameter is gone; the header was renamed in PR 3). `logEvent(_:properties:revenue:conversionTypes:)`
+  now **throws**: an event the server's rules would refuse (name, more than
+  32 properties, a property name, a string over 255 bytes, a non-finite
+  number) is `EventError` and records nothing, rather than a silent no-op
+  (CLAUDE.md #4); logging before `configure` is `SDKError.notConfigured`.
+  An event that reaches no encoded goal still returns nil. Nothing had
+  shipped the old signature (§7.5), so there is no compatibility shim.
+- **One evaluator specification, three implementations.**
+  `GoalDefinition.swift` and `GoalEvaluator.swift` are ports of the PHP
+  classes, run against `definitions.json` (valid, error paths and the
+  canonical form) and `evaluator.json` (whole, and one event at a time from
+  a state stored and read back as the device keeps it). JSON is parsed by
+  the SDK's own `JSONValue`, which keeps an integer apart from a fraction
+  as `json_decode()` does (`3` is a count, `3.0` is not; Foundation's
+  decoders cannot tell), reads `{}`/`[]` and `{"0":…}` the way PHP's
+  `array_is_list()` does, and trims and folds exactly the ASCII PHP's
+  `trim()`/`strtolower()` touch. Fourteen planted evaluator defects (window
+  end, clock choice, typed equality, `in`, ineligible prerequisites, tie
+  order, version by event clock, repeat cap, a cast count, rounding, rebase,
+  the parser's int/float, a blank name, a numeric-string comparator) each
+  fail the Swift vector suite. PR 4's later bounds on sums (rules 6, 8 and
+  9 of the vectors README: a repeating sum needs `max`, a summand counts
+  only within ±999999.99999, the sum is held in an `Int64` between −10^15
+  units and cap × gte, and the total reached is computed) were ported
+  when PR 8 took that fix in; fourteen planted defects in them each fail
+  the Swift suite — two of them (a floor at zero, and an unsaturated add
+  on a damaged stored state that traps the host app) only through
+  Swift-side tests added with the port, since the shared vectors never
+  take a sum below zero and back. Searching n one at a time instead of computing the total
+  gives the same answers by construction and is the one plant no vector
+  can see, so the code computes it and says why.
+- **The device is an install subject with no click.** Its install time is
+  the first `configure` on the device (persisted, token-independent like
+  the last fine value); SKAdNetwork never says which ad the app came from,
+  so there is no `click_at`, and a goal windowed `from: click` is
+  ineligible there (`no_click`), as for an organic install on the server.
+  There are no rebases on a device (re-evaluation is a server operation).
+- **Incremental evaluation from stored state, never re-ordered.** Each
+  event is evaluated with `continueFrom()` against the persisted
+  `EvaluationState`; its `received_at` (and `occurred_at`) is the device
+  clock but never earlier than the last event's, so a clock set back cannot
+  sort an event before one already folded in — the condition under which
+  incremental equals whole evaluation (the property the second vector run
+  checks). An event is evaluated under the schema the device holds when it
+  is logged: a new goal version reaching the device later does not
+  re-decide past events (the server does not either, §5.7).
+- **Events wait for the first schema.** Before any schema has arrived
+  (first launch, offline) events are queued — the install first, then up to
+  100 events — and evaluated with their own times when it does; the 101st
+  throws `pendingEventsFull` (keeping the earliest, which belong to the
+  first conversion window).
+- **What is set.** Only eligible outcomes count. When one event reaches
+  several encoded goals, the highest fine and the highest coarse value
+  among their encodings are set (the encode side's existing tie-break).
+  Coarse-only encodings keep the last fine value, per postback, as before.
+- **The schema document (iOS).** `events` (event name → values) is
+  replaced by `goals` — every goal an encoding names plus every
+  prerequisite its versions name (`specsWithPrerequisites()`, the server's
+  own evaluation set), every version with its `effective_at`, `starts_at`
+  / `ends_at`, and each definition **without `value`** — and `encodings`,
+  per goal, the fine/coarse value. Both are lists. The SDK refuses a
+  document that is not an iOS app's (platform, a canonical App Store key
+  by the `keys` vectors of `app-identity.json`, `app_id` agreeing) or whose
+  encodings/goal ids it cannot read; a definition it cannot parse disables
+  that version, as on the server.
+- **A shadowing bug fixed on the encode side.** Per goal and per kind the
+  registration's own encodings beat the account-wide ones — and an
+  account-wide value the registration has given its own meaning is not
+  served at all, because the report decodes that value through the
+  registration's encoding. The pre-PR 8 per-event map served it, so a
+  device could set a value the report then read as another event.
+- **Which goals an encoding may name.** Any live goal of the registration
+  or the account that a device can reach: everything the evaluator
+  supports, except a goal counting `within` `from: click`, or one waiting
+  in `after` (transitively) for such a goal — refused with a 422 on
+  `goal_id` naming the goal (`SkanEncodingRules`). The same rule guards
+  goal edits: a goal an encoding names, or one an encoded goal waits for,
+  cannot be edited into a click window. A goal no encoding depends on is
+  not held to it. `plain_event` stays in `/goals/validate` as information
+  (Setup › Mobile Apps still makes plain goals from event names).
+- **Encoding versions.** `202_app_skan_encodings` keeps each encoding's
+  current meaning with a read-only `effective_at`; every update and delete
+  first copies the meaning it replaces into `202_app_skan_encoding_history`
+  with `retired_at` (`SkanEncodingHistory`, one `INSERT … SELECT`), and so
+  does deleting a registration (which removes its encodings). The history
+  is deleted only by the user purge (`AppDataPurge`), and
+  `SkanEncodingHistoryWritersTest` holds the writer list. No transaction
+  wraps the copy and the replace — the Setup page already runs them inside
+  its own, and `begin_transaction()` inside one would commit it (#13) —
+  so the copy runs first: a replace that then fails leaves the same meaning
+  twice, which decodes as once. **Known limitation:** two concurrent
+  updates of one encoding can lose the intermediate meaning's (sub-second)
+  span.
+- **Meanings are kept by app, not by registration id.** Each history row
+  also records the App Store id of its registration (`app_id`, 0 for the
+  account-wide set), read by the same `INSERT … SELECT` from the
+  registration; the report keys current encodings by their registration's
+  app and every postback by its own `app_id`. Keyed by registration id (as
+  first built), deleting a registration broke both halves: its postbacks
+  lose their `registration_id` while the history was saved under that id,
+  so they decoded through the account-wide set; registering the app again
+  claims them under a new id, which still could not reach the history — a
+  trial the app had encoded was credited as whatever the account-wide set
+  said (Codex, PR 8 review). An app is also what a device's document
+  belongs to, so this is the key the question was always about. A
+  registration-scoped meaning whose app cannot be read (no iOS
+  registration behind a current encoding, a NULL `app_id` in the history)
+  is logged and matches no postback rather than counting as account-wide
+  (CLAUDE.md #11). The sweep for other paths: the user purge deletes the
+  history with the user's encodings and hands the postbacks to user 0, so
+  nothing of the old owner's should decode them for anyone; the claim is
+  the only other writer of `registration_id`, and nothing else reads the
+  history.
+- **The horizon: 48 days.** A postback received at R decodes under every
+  meaning its value had at any instant of [R − 48 days, R], resolved as
+  before (the app's own over the account-wide; fine never falls back to
+  coarse). One meaning (goal and revenue override) decodes it; two that
+  disagree count as `ambiguous_encoding`, credited to no goal; none — the
+  value had no meaning inside the horizon — takes the first meaning given
+  after R, so encodings added once postbacks arrive still read them (the
+  report's behaviour before versions; without it every new app's first
+  postbacks would be undecoded) and a value never given one is undecoded.
+  The horizon is the longest a document the device used can predate the
+  postback's arrival, three terms (`SkanEncodingTimeline::HORIZON_DAYS`):
+  - **35 days** of conversion windows (`CONVERSION_WINDOW_DAYS`): the third
+    closes on day 35 after the install or re-engagement.
+  - **6 days** of delivery delay (`DELIVERY_DELAY_DAYS`). SKAdNetwork 4
+    and AdAttributionKit send the first postback 24–48 hours after the
+    first window ends and the second and third 24–144 hours after theirs
+    end (Apple developer documentation, *Receiving postbacks in multiple
+    conversion windows*; AdAttributionKit keeps the same windows and
+    delays). The plan's first figure, 35 days, left this out: a device on
+    the pre-edit document that set the value on day 35 had its postback
+    delivered up to day 41, past the old horizon, and it was credited to
+    the new meaning instead of being counted ambiguous (Codex, PR 8
+    review).
+  - **7 days** of schema age (`SCHEMA_MAX_AGE_DAYS`), enforced in the SDK
+    rather than assumed. The SDK used its cached document for as long as
+    it had one — a device offline since before an edit kept setting the
+    old meaning's values, with no bound at all. For an install postback
+    the document cannot predate the install (the cache lives in the app's
+    container, which an uninstall removes), but a re-engagement's windows
+    start whenever the user comes back. So `P202Attribution.maxSchemaAge`
+    (7 days since the last successful fetch or 304, not configurable
+    because the server's horizon is built from it) is the oldest document
+    the SDK encodes with: an event logged while it holds only an older one
+    waits in the pending queue (as before the first schema, up to 100) and
+    is encoded with the next document that arrives; a relaunch does not
+    flush with the stale one either. A fetch time in the device's future
+    (the clock set back since) counts as unknown age, so not usable. The
+    opportunistic refresh interval is capped at half the age, so an online
+    device never ages out between two attempts. The cost, deliberate: a
+    build whose app token was rotated can no longer fetch, so its events
+    stop setting values 7 days after its last fetch (the SDK contract doc
+    says so), and every edit is ambiguous for 48 days rather than 35.
+    `SkanEncodingTimelineTest` reads the Swift constant, so the two cannot
+    drift apart. Why 7: long enough that a device offline for a weekend or
+    a trip still encodes, short enough that the ambiguity after an edit
+    grows by a week rather than a month.
+  - **Known limitations.** A postback Apple delivers later than its
+    documented delay (if a device offline at delivery time sends it later)
+    can decode under a later meaning; the horizon is the documented bound,
+    not a guarantee against a device that breaks it. And a coarse-only
+    update re-sends the postback's last fine value (so the fine value is
+    not downgraded): for the install postback that value was chosen after
+    the install, inside the bound, but for AdAttributionKit's re-engagement
+    postback it may have been chosen during an earlier re-engagement, under
+    a document older than the horizon.
+- **The report groups by decode segment, not by postback.** Rows are
+  grouped by `INTERVAL(received_at, breakpoints…)` — the effective and
+  retired times and each plus the horizon, where some decode can change —
+  and each segment is decoded once. `SkanEncodingTimelineTest` shows the
+  segment decode equals decoding every postback at its own time on random
+  dense timelines (the performance fix returns the same answer, §7.3).
+  `ambiguous_encoding` is per group; `data.totals` has no decode columns,
+  as before. Analyze › Mobile Apps does not show the new count yet (its app
+  view is PR 11); the API, the CLI (which renders it) and the notes do.
+- **Saying so.** Setup › Mobile Apps warns on a rule edit, with the date
+  the report is exact again (48 days on), naming the 7 days a device keeps
+  its document and the 41 a postback can take; a delete says the value
+  keeps decoding for 48 days. The API returns `effective_at` on every
+  encoding.
+- **`setCustomerId(_:signature:type:)`.** Validates and canonicalises the id
+  exactly as `CustomerId::canonical()` does and the signature's shape (64
+  hex, either case), throws `P202CustomerId.Invalid` otherwise, persists it
+  (token-independent) until `clearCustomerId()`, and exposes the wire
+  object `customer: {id, type, signature}` — `type` added to the plan's
+  `{id, signature}` because the signature covers `"<type>:<id>"` and the
+  server cannot verify without it. New vectors,
+  `tests/fixtures/app-sdk-contract/customer-id.json` (signatures computed
+  with Python's `hmac`), run by `CustomerIdVectorsTest` (PHP) and the Swift
+  suite. **No iOS request carries it yet:** SKAN is the iOS signal and the
+  schema fetch is a GET that must not carry a person's id, so it rides the
+  first iOS body route when one exists; nothing in §8 adds one.
+- **Verification.** The Swift toolchain (swift.org 6.0.3 for Ubuntu 24.04)
+  runs the SDK suite on Linux; StoreKit/AdAttributionKit calls compile out
+  there, so the framework hand-off itself is exercised only by the pure
+  `adAttributionKitDelivery` decision, as before. `tests/live/ios-sdk.sh`
+  runs every vector through the running server's `/goals/validate` and
+  `/goals/evaluate`, the encoding rules, the document, `p202 app schema`,
+  the Swift SDK's live suite against the instance (a funnel reaching the
+  encoded value), the versioned report (before / inside / after the horizon
+  and after a delete), the Setup page's warning, and a registration deleted
+  and made again whose postbacks keep decoding under its own encodings.
+
+### 5.10 As built: decisions (PR 5)
+
+What PR 5 settled, where it departs from §5.1–§5.6, and which PR picks up
+the rest. The Android source is `Api\V3\Apps\Android` (`InstallToken`,
+`InstallTokenKey`, `ReferrerParser`, `InstallPayload`, `InstallClassifier`,
+`MatchState`, `InstallVerdict`, `InstallIntake`, `InstallEventsIntake`,
+`PendingClickSettler`, `InstallRetention`); the outbox is
+`Prosper202\Notifications` (`OutcomeNotificationSink`, `NotificationOutbox`,
+`PostbackSender`); the
+operator's reads are `AppInstallsController`; the guide is
+`documentation/api/24-android-installs.md`.
+
+- **The key.** `K_install` lives in `202_deployment_secrets`
+  (`SecretTables`: installation-wide secrets, owned by no user, so the user
+  purge never touches it). One statement mints it —
+  `InstallTokenKey::mintStatement()`, `INSERT … ON DUPLICATE KEY UPDATE`,
+  never replacing an existing key — run by `INSTALL::install_databases()`
+  and by the 1.9.75 rung (`_upgrade_measurement_tables()` mints it once the
+  secrets table exists); `ConversionLedgerUpgradeIntegrationTest` pins both
+  paths and that a second run keeps the key.
+- **The hot path makes one query, not none.** §5.1 asked for no query;
+  `p202InstallToken()` reads the key with one primary-key lookup, only for
+  a URL that carries `[[p202_install_token]]`, once per process, and keeps
+  it only when it was read (a missing or unreadable key is re-read next
+  time, never cached as "none"). A key column on a row the redirect already
+  reads would have meant per-user keys or touching every redirect's tracker
+  query; one indexed read on the app campaigns that need it was judged the
+  smaller cost.
+- **The token expands empty** for a click id that is not canonical (the
+  fallback redirect's `p202`), and for a missing or unreadable key. All
+  five cached-redirect fallbacks (`dl.php`, `lp.php`, `off.php` twice,
+  `processCacheRedirect()`) empty it; `AttributedInstallHasConversionTest`
+  finds every `[[subid]]` → `p202` substitution and requires the emptying
+  beside it.
+- **The routes.** `POST /apps/installs` (and its `GET` probe) and
+  `POST /apps/installs/{install_uuid}/events` are routed before the
+  general body read and before authentication, through `PublicIntake`
+  (method, declared-length cap, per-`REMOTE_ADDR` limit — 120 installs and
+  600 event requests a minute, the probe counted too — bounded read).
+  `PublicIntakeCoverageTest` now finds pattern routes as well as literal
+  ones. Caps: 16 KB for an install, 64 KB for events.
+- **Replays and reuse.** The row is keyed on `(registration_id,
+  install_uuid)` with `install_uuid` canonical lower case in `ascii_bin`
+  (no two spellings of one id). A replay answers `duplicate: true` with the
+  stored state, as §5.2 says — but only when its **body fingerprint**
+  matches: the same id with other content is `409` (CLAUDE.md #15, #16),
+  where §5.2 would have answered it as the stored install. The fingerprint
+  is the SHA-256 of the canonical body without `integrity_token`, the same
+  bytes PR 6's `requestHash` needs; the vectors pin them. A concurrent
+  second request for one install waits on the unique key and answers as the
+  replay.
+- **Missing key with a token is `503`, not `bad_token`.** A token the
+  server cannot verify is not a forged one; refuting it would prune a
+  genuine install after 90 days. Organic installs never need the key.
+- **Timing.** On Google's server clock against ours: the install may not
+  begin before the store click; the store click must fall within 2 minutes
+  before and 30 minutes after our click (`CLOCK_SKEW`, `MAX_STORE_DELAY`);
+  install-begin must be less than `attribution_window_days` after our
+  click. Play Store 8.3.73+ (the documented floor) always sends server
+  timestamps, so a verified token without them is `implausible`. An
+  unreadable window is 0 days, inside which nothing falls.
+- **One install per click** is checked under the click's `FOR UPDATE` lock:
+  an attributed install or an `install` ledger row already on the click is
+  `duplicate_click`. `UNIQUE (click_id, dedupe_key)` stays the backstop.
+- **Test installs** are classified like any other; `InstallVerdict` pairs
+  the state with the flag, and a test install that would be trusted is
+  unvouched unless `accept_test_signals` is on. Only a trusted install lends
+  its click to the goal engine, so the invariant is **an attributed,
+  trusted install row always names its conversion** (an untrusted test
+  install is attributed with no conversion). `InstallIntake::settle()`
+  throws before commit when it would not hold.
+- **The built-in install goal is a real goal row**, `202_goals.builtin =
+  'install'`, one per Android registration (`UNIQUE (user_id, scope,
+  scope_id, builtin)`), created with the registration and on first use by
+  the intake. Its definition is fixed (install trigger, once, value
+  `none`); it cannot be edited, archived or re-evaluated. Its outcome's
+  ledger row is the install conversion — key `install`, source
+  `app_install`, `pixel_type` 4, `source_ref install:<row>`, at Google's
+  install-begin time — so the engine never writes a `goal:` row for the
+  install. What it pays is the campaign's: no listed goals → the default
+  payout; listed → its payout or the default; other goals listed without it
+  → tracked on the click, unpaid (`installPayability()`).
+- **Install subjects** carry `registrationId`; they evaluate the
+  registration's goals, the account's, and — when attributed and trusted —
+  the click's campaign's (`specsForInstall()`, the earlier start winning
+  when a goal is in two sets). The `install` anchor is Google's
+  install-begin time, else the receipt. Outcomes store
+  `app_registration_id`.
+- **Pending installs are evaluated when they settle**, not before: their
+  events answer `503` with `Retry-After: 60`, so no outcome written without
+  a click ever needs a ledger row back-filled. Refuted installs get no goal
+  subject at all, and their events are `409` (terminal).
+- **Events.** The body is `{"events": [...]}`, 1–100 — one shape for an
+  offline queue's flush rather than the single-event form §5.5 sketched.
+  `currency` is not accepted (a `400` naming it): revenue is in the
+  account's currency until a currency column exists. The server stamps
+  `received_at` and revenue trust (`trust_client_revenue`); a device that
+  sends either is refused by name. Per-install limits are the engine's
+  10,000 events and the per-peer rate limit; no separate per-install rate.
+- **Notifications.** `202_notification_pending` is conversion schema
+  (`ConversionTables`), written in the conversion's transaction, one row per
+  URL of each **server postback pixel** (type 4) of the click's
+  traffic-source account;
+  browser pixels have no page on an install and are not queued. The URL is
+  resolved at queue time. **The unit is the destination, not the pixel**: a
+  pixel's code may hold several space-separated URLs, and each is its own
+  row (`destination`, its position in the code; the key is `(conv_id,
+  pixel_id, destination, kind)`) with its own attempts, backoff and status.
+  An earlier draft stored a pixel's URLs in one row, so a failure at the
+  second URL left the row pending and every retry started again at the
+  first — an endpoint that had accepted the conversion was sent it up to 8
+  times. The column is created by the 1.9.75 rung with the rest of the
+  table (see Constraints: no database holds it). **Nothing is sent on the request path** — §7.3's "no external
+  calls" won over §5.2's "may attempt the send" — so the worker
+  (`202-cronjobs/app-installs.php`, every minute) sends, claiming each row by
+  compare-and-set on its attempt count, backing off 1 minute doubling to 6
+  hours, `failed` after 8. Queuing was gated to install subjects until the
+  merge with PR 4b below; it now covers every subject with a click.
+- **One way to tell a network, to be reconciled with PR 4b.** The engine
+  reaches the outbox only through `OutcomeNotificationSink`
+  (`queueReached()`, `onReplaced()`, both called inside the ledger row's
+  transaction); `NotificationOutbox` is its implementation. PR 4b (web
+  events), built in parallel on PR 4 without this outbox, ships its own
+  best-effort notifier (`Conversion/TrafficSourcePixels`,
+  `Goals/OutcomeNotifier`, `TrafficSourceNotifier`): sent right after
+  commit, no retry, never re-announced. **When the two meet, 4b's notifier
+  must be merged onto this outbox** — web outcomes queued through the sink
+  in the ledger transaction, sent by the worker — not kept as a second
+  path: two paths would tell a network about one outcome twice, and only
+  this one survives a crash between commit and send. Its type-4 pixel
+  filter, token resolution and send-once rule are the ones to keep; its
+  immediate send is what the worker replaces.
+- **Once per outcome, per destination.** A replaced outcome's pending,
+  unattempted `reached` is cancelled and the replacement's goes out; one
+  that was sent or attempted is never repeated, and a `correction` (or,
+  with no replacement, a `retraction`) is stored `suppressed` — no pixel has
+  a correction URL yet (configuration of one is deferred to the UI, PR 11).
+  Each destination is decided on its own: the replacement's `reached` is
+  cancelled only at the destinations the replaced row announced (an earlier
+  draft cancelled all of them, so a pixel the replaced row never reached
+  heard nothing at all). A destination is *announced* when the replaced
+  row's `reached` there was attempted, or when the replaced row carries a
+  `correction` there — it is itself a replacement whose predecessor went out
+  (an earlier draft missed this and re-announced on the second move). The
+  table (`NotificationOutboxIntegrationTest` has a case per row):
+
+  | Replaced row's `reached` at a destination | Announced | Replaced row | Replacement's `reached` there | Recorded |
+  |---|---|---|---|---|
+  | pending, unattempted | no | cancelled | goes out (if present) | — |
+  | pending, attempted (retrying) | yes | left retrying | cancelled | `correction` / `retraction`, suppressed |
+  | sent | yes | left sent | cancelled | `correction` / `retraction`, suppressed |
+  | failed (attempts exhausted; may have landed) | yes | left failed | cancelled | `correction` / `retraction`, suppressed |
+  | cancelled, with a `correction` on the replaced row | yes | left cancelled | cancelled | `correction` / `retraction`, suppressed |
+  | cancelled, no `correction` | no | left cancelled | goes out | — (not produced: a row whose reached was cancelled unannounced has been replaced and is not replaced again) |
+  | none (pixel added since) | no | — | goes out | — |
+
+  "If present": the replacement has no row at a destination whose pixel was
+  removed in between, and nothing is recorded for an unannounced one.
+- **Revived and re-written outcomes (§5.7's decisions, built here).**
+  Announced-ness is per `(subject, goal, n)` per destination, not per row.
+  `OutcomeNotificationSink` gains `onRevived()` and `onAnnouncedBefore()`:
+  - the engine calls `onRevived($convId)` when a revival restored the
+    row (`reviveGoalRowInTransaction()` changed it; an operator's
+    deletion that stays stays retracted). Its `reached` is never queued a
+    second time. Per destination, its open retraction (the latest, with no
+    correction after it) is cancelled when it never went out — pending and
+    unattempted, or `suppressed` — because the network still holds the
+    value; when it was delivered (sent, failed, or attempted) a retrying
+    one is stopped and a `correction` with previous value 0 is recorded. A
+    `reached` the retirement cancelled unsent, at a destination nothing
+    else announced the outcome to, is queued again: that network has heard
+    nothing.
+  - after the retirements, every outcome written with a new ledger row
+    asks `onAnnouncedBefore($convId, $priors)`, where the priors are every
+    other row for its `(subject, goal, n)` — retired rows and every version
+    included. Wherever one of them was announced (a `reached` sent,
+    failed or attempted, or a correction or retraction recorded there) the
+    new row's pending `reached` is cancelled and a `correction` recorded,
+    with previous value what the network last heard there (0 after a
+    delivered retraction); a destination where `onReplaced()` already
+    recorded the new row's correction is left alone. Keyed on the
+    immediate predecessor alone, the third step of §5.7's funnel
+    re-announced A.
+  - **The correction-URL rule** is one helper for every correction and
+    retraction: queued `pending` to the destination's correction URL when
+    it has one (tokens `[[subid]]`, `[[p202_goal_value]]`/`[[payout]]` —
+    the value the network should now hold, 0 for a retraction —
+    `[[p202_previous_value]]`, `[[p202_conv_id]]`,
+    `[[p202_original_conv_id]]`, `[[p202_notification]]`,
+    `[[transactionid]]`, `[[timestamp]]`, `[[random]]`), `suppressed`
+    otherwise. No destination has one until PR 11 configures them; the
+    outbox takes the resolver as a constructor argument.
+  - **`generation`.** The key is now `(conv_id, pixel_id, destination,
+    kind, generation)`: a `reached` is always generation 0 (a replayed
+    install still finds it queued), and each correction or retraction of
+    a conversion at a destination is the next generation, so a row
+    retired, revived and retired again records its second retraction
+    instead of losing it to the first one's key. Changed in place (see
+    Constraints).
+  `AnnouncedOncePerOutcomeTest` drives the funnel through the engine with
+  and without a correction URL and through two cycles;
+  `NotificationOutboxIntegrationTest` has a case per retraction state and
+  per announced-before destination. Ten planted defects each fail at
+  least one of them.
+- **One sender.** `PostbackSender::fetch()` is the curl call gpb and upx
+  used inline; `p202FireTrafficSourcePixels()` and the worker share it. It
+  now refuses a URL that is not `http(s)://` (a `file://` pixel used to be
+  fetched), which is a behaviour change for gpb/upx's server pixels.
+- **The settler** re-reads the stored body, re-classifies under the install
+  row's `FOR UPDATE` and the click's, and writes the final state with its
+  conversion and notifications in one transaction per install; a click still
+  missing 24 hours after receipt is `bad_token` ("never recorded").
+  `AppInstallAtomicityTest` plants a failure (a trigger) in the
+  classification write, the ledger insert, the notification insert and the
+  MTA outbox insert, and in the settler: nothing survives, and the retry
+  records everything once.
+- **Retention.** `installs/refuted` 90 days; `installs/unvouched` 180 days
+  but only for settled installs **without events** (`has_events`), because
+  an install that reported events carries a funnel the operator reads.
+  Pruning an install keeps the outcomes it reached. The environment
+  variables are `P202_APP_RETENTION_DAYS_INSTALLS_<CLASS>`.
+- **Deletion.** A user's installs and queued postbacks are deleted with the
+  user. Deleting a registration keeps its installs (their conversions stay
+  on the ledger) and archives its goals, the install goal among them.
+  Both delete paths — the registration delete and the user purge
+  (`AppDataPurge`) — **unlink the campaigns** that name a registration they
+  remove (`app_registration_id = NULL`), in the same transaction. Left
+  dangling, a link reads as "linked to another app" once the same app is
+  registered again under a new id: token generation refuses the campaign's
+  clicks and the intake classifies their installs `foreign_click`. A stale
+  link is **not** tolerated at read time: both delete paths now clear it,
+  no installation holds one from before (Constraints), and reading a
+  dangling id as "unlinked" would mean a join to the registration under the
+  click's `FOR UPDATE` in the intake — locking the registration row for
+  every install — to cover a state nothing produces. A link that somehow
+  dangles fails closed (`foreign_click`, unpaid) and names the missing
+  registration in its reason.
+- **Operator reads** live under the registration — `GET /apps/{id}/installs`,
+  `/apps/{id}/installs/{install_uuid}` — because `GET /apps/installs` is the
+  public probe. `GET /apps/{id}/install-token?click_id=` is a read (no
+  staging), refuses a click whose campaign is linked to another app, and
+  returns the click time so `p202 app install simulate` can place Google's
+  timestamps plausibly. `simulate` refuses `--staged` (the public intake
+  records at once — CLAUDE.md #14). The PHP CLI has `app:install:list`,
+  `app:install:get` and `app:install:token`; `simulate` is the Go CLI's
+  only, since it posts to the SDK route with the app token, which the PHP
+  API client cannot send.
+- **Registrations and campaigns.** `attribution_window_days` (1–365,
+  default 7) and `trust_client_revenue` are added now; the Play Integrity
+  mode is PR 6's. Both are Android-only and read from the raw payload
+  (`7.0`, `"07"` are `422`). `202_aff_campaigns.app_registration_id` is
+  read raw, must name one of the caller's Android registrations, and `null`
+  or `0` unlinks; it is written after the base update without a
+  transaction of its own, because bulk-upsert already holds one
+  (CLAUDE.md #13).
+- **Play Integrity seam (PR 6).** `MatchState::PENDING_INTEGRITY` exists and
+  nothing produces it; `integrity_state` is `not_requested`, or `received`
+  when the SDK sent a token, which is kept in `raw_payload`; the schema
+  document says `integrity_mode: off`.
+- **Surfaces.** The schema document gives Android `integrity_mode` and
+  `sdk` (paths, events per request); `/capabilities` has
+  `features.app_installs`; `GET /goals/{id}/reevaluation` takes
+  `subject_type` (default `install` for registration and account goals);
+  `p202 goal reevaluate --subject-type`; OpenAPI and
+  `AppOpenApiCoverageTest` cover the install columns, states and routes.
+- **Deferred.** Android in `GET /apps/report` and the Mobile Apps pages
+  (PR 11); the correction URL (PR 11); web clicks' notifications (PR 4b; done when the two were combined, below);
+  Play Integrity (PR 6); the Kotlin SDK reading `android/` vectors (PR 7).
+- **Merged with PR 4b.** When the two branches were combined, 4b's
+  notifier moved onto this outbox, as the bullet above requires. One path
+  now: the engine queues every payable, notifying outcome with a click —
+  web or install — through `OutcomeNotificationSink::queueReached()` in
+  the ledger row's transaction, and the worker sends it; the request path
+  sends no server postback. `202-cronjobs/index.php` runs `sendDue()`
+  every minute beside `app-installs.php`, since web installs often have no
+  host crontab and 4b's postbacks used to leave with the request. What
+  each side kept:
+  - **4b's tokens and money.** The outbox resolves URLs with
+    `TrafficSourcePixels` (the tracker's and gpb's rules, and its click
+    tokens: keyword, c1–c4, click ids, UTM, CPC, referrer), adds
+    `[[sourceid]]`, `[[p202_goal_id]]` and 4b's money format (`4.00`, not
+    `4.00000`), so a queued postback reads as an immediate one did.
+    `NotificationOutbox::replaceTokens()` delegates to it with blanks
+    filled; PR 5's own copy of the click query is gone.
+  - **The send-once rule, for both.** PR 5's slot rule (a replacement of an
+    outcome that never went out is the one announced; of one that went
+    out, it is cancelled with a `correction` recorded) plus 4b's event
+    rule, which PR 5 lacked: a replay that shifts n ($5, $10 and a late $1
+    become $1, $5, $10) must not announce the $10 event again as "the
+    third". `onAnnouncedBefore()` (it was `onEventMoved()` until §5.7's
+    per-n rule arrived from PR 5, and the two became one call) cancels a
+    written outcome's postback when its reaching event had reached the
+    goal in a retired outcome that was announced, or when any earlier row
+    for its `(subject, goal, n)` was; if those were cancelled unsent, the
+    new one stands. This now also covers installs. Both rules are decided **per destination**
+    (PR 5's review moved the outbox to one row per URL): a replacement or
+    a moved event is withheld only at the (pixel, URL) pairs the retired
+    outcome announced — its `reached` sent or attempted, or a `correction`
+    of it recording that the URL had already heard the event — and a URL
+    that heard nothing hears the outcome that stands, once.
+  - **4b's kinds, decided from the outbox.** `reached` / `suppressed` are
+    read back from what the outbox holds after the retirements (a
+    replacement of an unsent outcome is `reached`, where 4b said
+    `suppressed`); with no server pixel queued they are decided
+    structurally, as 4b did. `notifications[].status` is `queued` (with
+    `queued`, the rows waiting), `rendered`, `browser_only`, `no_pixels`
+    or `not_sent`; `sent` and `server_calls` are gone from the answer.
+  - **Browser pixels stay on the request.** An image, iframe or script
+    pixel cannot wait for a worker, so `TrafficSourceNotifier` still
+    renders them into a browser's answer (upx) for `reached` notices;
+    `TrafficSourcePixels::fire()` takes `$server = false` for that.
+  - **One sender.** `PostbackSender` (http(s) only, redirects included) is
+    `TrafficSourcePixels`' default and the source of its user agent, so
+    gpb/upx pixels and the outbox send the same way.
+  Checked by `WebEventsIntegrationTest` (4b's cases, the worker run
+  between requests, plus a replacement of an unsent outcome, and a
+  two-URL pixel: one URL refusing is retried alone, a replacement is
+  withheld only at the URL that heard the first value, and a replay that
+  shifts n reaches each URL with each event once) and
+  `InstallIntakeIntegrationTest`, and live by `web-events.sh` (which now
+  runs the worker) and `android-intake.sh`.
+
+### 5.11 As built: decisions (PR 6)
+
+(Numbered 5.11 because §5.8 and §5.9 are taken on other branches and §5.10
+is PR 5's.)
+
+What PR 6 settled, where it departs from §5.6, and what is left. The code is
+`Api\V3\Apps\Android\Integrity` (`IntegrityMode`, `IntegrityState`,
+`IntegrityBinding`, `IntegrityPolicy`, `IntegrityJudgement`,
+`ServiceAccountCredential`, `IntegrityCredentialStore`, the
+`PlayIntegrityClient` interface with `DecodeResult`, its real
+`GooglePlayIntegrityClient`, and the worker `IntegrityVerifier`); the
+operator surface is `AppIntegrityController`; the guide is
+`documentation/api/24-android-installs.md` §9.
+
+- **Modes.** `202_app_registrations.integrity_mode` is `off` (default),
+  `observe` or `require`; `integrity_cloud_project_number` is published in
+  the schema document for the SDK. Both are Android-only and read raw
+  (CLAUDE.md #18). An unreadable stored mode is `require`, the one that
+  trusts least (CLAUDE.md #11) — `off` would switch the control off in
+  silence. `observe`/`require` need both halves — a credential to decode
+  with and a Cloud project number for the SDK to request tokens with — so
+  an app is created `off`, and `PUT /apps/{id}` refuses a non-`off` mode
+  unless the credential is stored and the number is sent with it or already
+  stored (read raw against the stored row, whichever field the write
+  names). Without the number the schema document used to publish
+  `request_token: true` beside a null project, and every install arrived
+  tokenless; `request_token` is now also false whenever the number is null.
+  The number is **replaced, never cleared**: an explicit `null` is refused
+  by name in every mode (the base controller used to drop it in silence),
+  because under `observe`/`require` clearing it is the broken state above
+  and under `off` it is unused. The credential cannot be cleared while the
+  mode needs it, **nor while any install of the registration is still
+  queued for a verdict** (`409` naming how many, how many are held from
+  attribution, and that each settles within 24 h): switching `require` off
+  does not release installs already waiting, so clearing the credential
+  under them would have retried them to `error` / `integrity_unverified` —
+  valid attribution lost to a setting. A mode set while the credential
+  disappears concurrently is not guarded beyond that: the worker then
+  retries with "no credential" and ends `error`.
+- **Deleting a registration settles its queue.** The delete removes the
+  credential, and every worker read joins the registration, so a queue left
+  behind could never be decoded or settled — and, selected oldest-first by
+  `integrity_next_at`, 200 such rows would have filled every batch and
+  starved every other app's verdicts. The delete now settles, in its own
+  transaction, `integrity_state` `pending` → `error` and `match_state`
+  `pending_integrity` → `integrity_unverified` (trust, click and conversion
+  stay NULL: never paid; goals are not evaluated — the registration's are
+  archived with it), with a reason naming the deletion
+  (`UnverifiableInstalls`). The worker settles any install whose
+  registration disappeared some other way the same way before it selects,
+  and its selection joins the registration, so a row it cannot process can
+  never hold a slot. The user purge deletes installs before credentials, so
+  it leaves nothing queued. `CredentialDeletionSettlesTheQueueTest` pins
+  every path that removes a credential and what each does first. The
+  pending-click settler had the same starvation shape (PR 5) and its
+  selection now joins the registration too. A `pending_click` install of a
+  deleted registration can never settle (no policy is left to settle it
+  under, and no token reaches it), so the delete settles it as the 24-hour
+  deadline would — `bad_token`, never paid — and the settler does the same,
+  before it selects, for one whose registration disappeared another way
+  (`OrphanedPendingClicks`, the pending-click twin of
+  `UnverifiableInstalls`).
+- **The mode is a snapshot.** Each install stores the mode it arrived under
+  (`202_app_installs.integrity_mode`) and that copy governs it for good:
+  switching `require` off releases nothing already waiting, switching it on
+  re-judges nothing already attributed. This is what makes "never pay then
+  un-pay" a property of the write path rather than of operator discipline.
+- **What `require` gates, and where.** Only installs that would be
+  `attributed` wait. Organic, third-party and unavailable installs have no
+  click to pay and are settled at once (their verdict is still decoded and
+  recorded); refuted ones are never decoded (`skipped`) so forged traffic
+  cannot spend the quota. The gate is the first statement of
+  `InstallIntake::settle()`, the one writer of `match_state`, so the intake,
+  the pending-click settler and the integrity worker all pass through it:
+  `valid` → attributed; `pending` → `pending_integrity`; `invalid`/`skipped`
+  → `integrity_failed` (refuted); anything else (`missing`, `error`) →
+  `integrity_unverified` (unvouched). `AttributedInstallHasConversionTest`
+  pins the gate's position and that the worker writes only `integrity_*`
+  columns directly. Two new `MatchState`s were added rather than folding a
+  failed verdict into `attributed` with `trusted = 0`: every existing reader
+  that means "attributed" keeps meaning "paid".
+- **Money and notifications.** Under `require` nothing is written for a
+  waiting install — no ledger row, no MTA outbox row, no notification, no
+  goal subject — so there is nothing to un-pay and no postback that could
+  have gone out. The worker writes the verdict and, for a passing one, the
+  conversion, the outbox row and the notification in one transaction, after
+  re-classifying from the stored body under the click's lock (another
+  install may have taken the click: `duplicate_click`; "first verified
+  wins", not "first received"). Events for a waiting install are `503` like
+  a pending click's; for `integrity_failed` they are `409`. `observe`
+  changes nothing about money whatever the verdict.
+- **Binding.** `requestHash` is the install fingerprint PR 5 already stores
+  as `body_hash` (SHA-256 hex of the canonical body without
+  `integrity_token`): one hash of one set of bytes, pinned in
+  `android/integrity.json` by an independent Python implementation for the
+  Kotlin SDK (PR 7). Standard tokens only; a classic `nonce` verdict fails.
+  The SDK must request a fresh token per send attempt; a replay of a
+  committed install is its duplicate whatever token it carries.
+- **Policy.** Package (request and, when present, `appIntegrity`), request
+  hash, issued at most 600 s before arrival and at most 120 s after,
+  `PLAY_RECOGNIZED`, `MEETS_DEVICE_INTEGRITY` or `MEETS_STRONG_INTEGRITY`,
+  and a licensing verdict that is not `UNLICENSED`. §5.6 named only
+  recognition and device integrity; licensing was added as "an explicit
+  negative refutes, absence does not", because Google withholds it whenever
+  an earlier check fails and an app may not have licensing responses
+  enabled. Freshness is measured against the install's receipt, not the
+  decode time, so a retried decode hours later judges the same token the
+  same way. Test installs get no exemption: debug builds use Play Console's
+  integrity test responses.
+- **Replays.** `integrity_token_hash` (SHA-256; the token itself stays only
+  in `raw_payload`, where PR 5 kept it) lets the worker refuse a token
+  another install of the registration already verified, without a decode.
+  It is deliberately not a unique key: two installs presenting one token
+  are resolved by the request hash (only the body it was requested for can
+  pass), and a unique key would have let whichever arrived first — possibly
+  the lifted copy — block the genuine install.
+- **The worker.** `202-cronjobs/app-installs.php` runs it first each minute,
+  then the pending-click settler, then the notification sender, so an
+  install verified in a run has its postback sent in the same run. Claim by
+  compare-and-set on `integrity_attempts` *and* the due time (the lease is
+  the next backoff), decode outside any transaction, then lock the row and
+  settle. A `retry` answer (network, timeout, 5xx, 429, 401/403/404, a
+  refused credential, an unreadable credential) backs off 1 min doubling to
+  1 h; at 24 h from receipt or 24 attempts the state is `error`, terminal.
+  A `400` from Google (not a token it can decode) is `invalid` at once.
+  Nothing is ever waved through.
+- **The client.** `PlayIntegrityClient` is an interface; the tests hand the
+  worker a double. `GooglePlayIntegrityClient` signs the RFC 7523 assertion
+  with `openssl_sign` (RS256), caches the access token on the object until a
+  minute before expiry (dropped on 401; a failure is never cached), and
+  posts to pinned endpoints: HTTPS only, peer and host verified, redirects
+  not followed, 5 s connect, 10 s total, 64 KB read cap. A key file's
+  `token_uri` must be Google's. `P202_PLAY_INTEGRITY_ENDPOINT` replaces the
+  origin for tests only and is refused unless it is `https://` on loopback
+  (with `P202_PLAY_INTEGRITY_CA_FILE`, verification stays on).
+  `GooglePlayIntegrityClientTest` and the live pass drive it against
+  `tests/fixtures/play-integrity/fake_google.py`, a TLS fake that verifies
+  the assertion's signature with the openssl CLI and records every request.
+  **No request has been made to Google itself**: the request shapes follow
+  Google's documentation and have been checked only against that fake.
+- **The credential.** `202_app_integrity_credentials`, one row per
+  registration: the account's email, key id and project in the clear (to
+  be shown), the key AES-256-GCM encrypted under
+  `play_integrity_credential` in `202_deployment_secrets` (minted on first
+  use by an idempotent statement that never replaces a key), with
+  `registration|user` as associated data. The key is in the same database:
+  this keeps it out of anything that reads the credential table or an API
+  row, not out of a full dump — said so in the guide. Reading is tri-state:
+  a row that will not decrypt is a named error, never "no credential". The
+  routes (`PUT`/`DELETE /apps/{id}/integrity-credential`) are not stageable;
+  the body key is `credential`, which the staging guard also refuses by
+  name. Deleting the registration or the user deletes the credential
+  (the registration's queue is settled first; the user's installs are
+  deleted with it).
+- **Surfaces.** `GET /apps/{id}/integrity` (mode, credential summary,
+  counts by integrity state and by the three integrity match states, tokens
+  Google decoded since UTC midnight against the 10,000 default quota — per
+  UTC day, not Google's Pacific day); installs carry and filter on the
+  `integrity_*` columns, with `integrity_verdict` as a summary object, never
+  the token; the intake's answer gains `integrity`; the schema document an
+  `integrity` block; `/capabilities` `features.play_integrity`. Go CLI:
+  `app integrity status|credential set|credential clear`, `app create/update
+  --integrity-mode --integrity-cloud-project-number`, `app install list
+  --integrity-state`; the key is read from a file or stdin, never a flag.
+  PHP CLI: `app:integrity:status|mode|credential:set|credential:clear`.
+- **Deferred.** The Android report and the Mobile Apps pages showing
+  verdicts and quota (PR 11); the Kotlin SDK requesting and binding the
+  token (PR 7); expected signing-certificate digests (`certificateSha256Digest`)
+  as an optional per-registration check; rotating the credential encryption
+  key; a real decode against Google, which needs an operator's Cloud project
+  and a Play-distributed build.
+
+### 5.12 As built: decisions (PR 7)
+
+(Numbered 5.12: PR 6's decisions are §5.11. PR 7 was built on PR 5 while
+PR 6 was built in parallel, then PR 6 was merged in and the SDK wired to it;
+the Play Integrity bullet below is that wiring.)
+
+What PR 7 settled, where it departs from §4.3 and §5.6, and what it leaves.
+The SDK is `sdk/android-attribution/`: `core/` (package
+`com.prosper202.attribution.core`: `Json`, `InstallToken`, `InstallPayload`,
+`EventPayload`, `CustomerId`, `AttributionConfig`, `AttributionEngine`,
+`Answers`, and the platform seams in `Platform.kt`), `android/`
+(`P202Attribution`, `PlayInstallReferrerSource`) and the optional
+`integrity/` (`PlayIntegrityProvider`). The guide is
+`documentation/api/25-android-sdk.md`.
+
+- **Two modules, one of them platform-free.** Everything that decides
+  anything — the token, the bodies, the canonical form, the queue, the
+  retry rules, the transport (`HttpURLConnection`), the store format — is
+  plain Kotlin that runs on Android from API 21 and on the JVM; the Android
+  module is the facade, Play's referrer client, the storage directory and
+  device facts. The core's tests run in CI on a JDK
+  (`.github/workflows/android-sdk.yml`, `-Pp202.android=false`); the
+  Android module is built only where an Android SDK is found.
+- **No dependency but the referrer client** (§5.6). So no WorkManager, no
+  androidx lifecycle and no JSON library: the core has its own strict JSON
+  parser and two writers — the wire's, and the canonical one, which is
+  PHP's `json_encode` byte for byte (keys by UTF-8 bytes, control
+  characters as lower-case `\u00xx`, U+2028/2029 escaped; `JsonTest`
+  holds PHP's executed output) and refuses a fractional number rather than
+  guess PHP's float spelling. Work runs on one daemon thread; retries are
+  timers on it, and the next attempt's time is persisted, so a relaunch
+  resumes the schedule. Events flush 5 s after the first unsent one, at
+  once when a batch of 100 fills, and when the last activity stops.
+- **The install is built once and persisted** (§5.2's replay check), in one
+  JSON file in `noBackupFilesDir` — which is what "excluded from Auto
+  Backup" (§5.6) becomes without asking the app to edit its backup rules;
+  device-to-device transfer skips it too. An unreadable file is moved
+  aside, never read as empty. `install_uuid` survives a token change: a
+  rotated token is the same install.
+- **The referrer is read up to three times.** Play's transient answers
+  (`service_unavailable`, `service_disconnected`, and a client that never
+  calls back within 60 s) are read again after 10 s and 60 s; the third is
+  reported as it is (`unavailable`). Permanent errors are reported at once.
+- **Answers follow `responses.json`**, run as vectors: 429 and 5xx retried
+  (30 s doubling to 6 h, jitter in [½, 1], `Retry-After` honoured), every
+  other status terminal. Two additions the contract does not name: a 2xx
+  that is not `{"data": …}` (a captive portal) and a lost connection are
+  retried. A refused install is tied to the endpoint and token it was
+  refused under, and a build with another token or endpoint re-arms it with
+  the same body. For events: a `400` naming `events[i]` drops those events
+  and sends the rest; `413` halves the batch; `409` with a `match` (a
+  refuted install) and `422` (the 10,000-event cap) stop events for good;
+  `404` holds the queue until another endpoint or token. Every other
+  refusal must cost the queue something — the named events, else the whole
+  batch, and a customer claim that rode a request refused without naming
+  anything else — because a request resent unchanged at once is a tight
+  loop; `AttributionEngineTest` plants both loops.
+- **`logEvent` refuses what the server would.** The builder runs the
+  server's whole-body validation (`EventPayload.validateBody`, every
+  `events-requests.json` case) on a one-event body and throws
+  `InvalidEventException` naming each field. The queue holds at most 500;
+  past that the *newest* are dropped and reported, so a funnel's first
+  steps are never the ones lost. `occurred_at` never goes backwards (iOS's
+  rule). Event ids are random UUIDs.
+- **Device facts are not allowed to cost the install.** A version string
+  the server would refuse (a control character, over its column) is sent
+  as `null` and logged; everything else in the body comes from Play or the
+  SDK and is valid by construction (`InstallPayload.build` asserts it).
+- **The customer id reaches the server — which PR 5 did not accept.**
+  §4.3 put `customer` on the install and event bodies; PR 5's intake
+  refused any unknown field, so PR 7 adds it on the server
+  (`CustomerClaim`, `InstallCustomerLink`): `{id, type, signature}` — `type`
+  added, as PR 8 did, because the signature covers `"<type>:<id>"` —
+  validated strictly (`400` naming `customer.<field>`), and, after the
+  commit and only for an attributed, trusted install, verified under the
+  account's linking key and linked to the install's click through
+  `ClickIdentity::attachToStoredClick` (the campaign's `identity_signals`
+  still decides). The answer names the outcome (`linked`, `unverified`,
+  `no_click`, `not_linked`); a replay links again (idempotent), and the
+  pending-click settler links a body's claim when the install settles. An
+  events body may carry the customer **alone** (no `events`), so an app
+  that logs no events can still send it; `{"events": []}` is still `400`.
+  The SDK sends the claim on the install body when it was set before the
+  body was built, otherwise once on the events route, and again when it
+  changes; a server that predates the field (`400` naming only `customer`)
+  gets the install without it. `customer-id.json` is PR 8's file,
+  byte-identical, with its PHP test, so the two branches merge cleanly;
+  the new install and events cases were computed with Python's `hmac` and
+  `json`.
+  **Not done:** an unverified id is kept only in the install's
+  `raw_payload`; nothing writes an LTV alias from the app path.
+- **No agent-eval case.** Nothing here is operated through `p202` or the
+  REST API by an agent: the SDK runs inside an app, and the operator's side
+  (`p202 app install simulate`/`list`) is PR 5's, whose case android-001
+  stands. The customer claim's server side is covered by the live pass and
+  `InstallCustomerLinkIntegrationTest`.
+- **The schema document is read once per process**, before the first
+  attempt to send the install (not for events): it is where the
+  registration says whether to request a Play Integrity token. A document
+  that cannot be read now (network, `429`, `5xx`) holds the install back
+  like its own failure would; one refused for good (`4xx`) or silent about
+  integrity means no token, and the install's own answer says what is
+  wrong. Batch size stays the contract's 100.
+- **No goal evaluator.** Android goals are evaluated on the server (§4.3),
+  so the Kotlin SDK runs the `android/`, `customer-id.json` and
+  `app-identity.json` (Android keys) vectors, not `goals/`. The
+  "Kotlin (Android SDK)" row of `goals/README.md` (and the sentence in
+  `evaluator.json`'s description) is therefore stale; it is left for the
+  merge with PR 8, which edits the adjacent row, so the two branches do not
+  conflict — delete it then.
+- **Verification.** `ContractVectorsTest` (every vector above),
+  `AttributionEngineTest` (virtual time: one install, same bytes on every
+  retry, backoff across a relaunch, refusal and re-arm, batching under
+  both caps, the queue bound, refuted installs, both customer routes, the
+  schema-gated integrity request, holding back for Play and a waiting
+  install's events, the file store), `JsonTest`. `tests/live/android-sdk.sh`
+  runs the real engine (`LiveServerTest`) against an instance and reads
+  the database back: attributed install, events paying level 3, the phone's
+  click joining a web click's person through `setCustomerId`, a relaunch
+  that sends nothing, an organic and a forged install, the stored body
+  replayed (duplicate) and changed (409), and Play Integrity under
+  `require` against PR 6's fake Google (below). Server side:
+  `InstallCustomerLinkIntegrationTest` and the integrity worker's customer
+  test. The Android and integrity modules were type-checked against the
+  `android-34` platform stubs and installreferrer 2.2's, integrity 1.6.0's
+  and play-services-tasks/basement's classes as plain Kotlin (warnings as
+  errors); they were not assembled with AGP (the disk had no room for it),
+  not linted, and not run on a device or emulator.
+- **Play Integrity, as PR 6 built the server (§5.11).** When the schema
+  document's `integrity` block says `request_token: true` with
+  `token_type: standard`, `request_hash:
+  sha256_hex_of_canonical_install_body` and a `cloud_project_number` (a
+  decimal string on the wire, parsed to the `long` Play takes), every
+  attempt to send the install asks the `IntegrityProvider` for a **fresh**
+  token with `requestHash` = `InstallAttempt.requestHash`, the install's
+  fingerprint — the `android/integrity.json` vectors pin that hash for
+  every body, and the live pass proves the binding end to end: the fake
+  Google signs the hash the SDK bound, and the server's own policy accepts
+  it only because it equals the stored `body_hash` (planted: binding the
+  wire bytes instead ends `integrity_failed`). A block naming another
+  token type or binding, or no project, is not requested against: a token
+  bound some other way would be refuted as another install's, where no
+  token is only unvouched. The provider is asked only then (under `off` it
+  is never called).
+  - **The Android provider is an optional module**, `integrity/`
+    (`com.prosper202:integrity`, `PlayIntegrityProvider`, depending on
+    `com.google.android.play:integrity:1.6.0`), so an app that does not use
+    Play Integrity keeps the base SDK's single dependency (§5.6). It
+    prepares the standard token provider once per process and Cloud project,
+    requests with the body's hash, re-prepares once on
+    `INTEGRITY_TOKEN_PROVIDER_INVALID`, and sorts Play's error codes:
+    network, server, quota, transient and binding errors are retryable.
+  - **A retryable failure holds the install back** — no token under
+    `require` means `integrity_unverified`, never paid, which is worth a
+    wait — for at most `MAX_INTEGRITY_ATTEMPTS` (3) asks on the install's
+    backoff, then it goes without; any other failure sends it without a
+    token at once. A registration that asks for tokens from an app that
+    configured no provider gets the install without one and a Logcat
+    warning.
+  - **Waiting installs keep their events.** `pending_integrity` (like
+    `pending_click`) answers events `503` with `Retry-After`; they stay
+    queued and go when it settles. `integrity_failed` is refuted: its events
+    are `409`, and the SDK drops them and stops. `integrity_unverified` is
+    unvouched, and its events are evaluated as an organic install's.
+  - **The customer id links when the verdict passes.** PR 6's worker
+    settles a waiting install; it now links the claim its body carried,
+    after its commit, as the intake and the pending-click settler do
+    (`IntegrityIntegrationTest::testAWaitingInstallsCustomerLinksOnlyWhenItsVerdictPasses`).
+  - **Not done:** the provider has not requested a real token — that needs
+    a Play-distributed build of an app linked to a Cloud project, a device,
+    and Google; the JVM tests hand the engine a provider, and the Android
+    code was only type-checked against the `integrity` 1.6.0 and
+    play-services-tasks classes. Play Integrity's remediation dialogs
+    (`showDialog`) are not offered.
+
+### 5.13 As built: decisions (PR 11)
+
+(Numbered 5.13 because §5.12 is PR 7's.)
+
+What PR 11 settled, where it departs from the rows above, and what is left.
+The pages are `tracking202/setup/MobileAppsController.php` and
+`tracking202/analyze/MobileAppsReportController.php` with their templates
+and partials; the API is `AppReportController` (over
+`AppPostbacksController::report()` and `Apps\Android\InstallReport`),
+`AppNotificationsController`, `AppLinksController` and `Apps\StoreLink`;
+correction URLs are `Prosper202\Notifications\CorrectionUrls`.
+
+- **The pages were already v2.** Both Mobile Apps pages were built on the
+  v2 shell for iOS; PR 11 rewrote them for two platforms rather than
+  migrating them, and split them into partials (`templates/mobile_apps/`)
+  that `NoLegacyBootstrapClassesTest`, `ComponentClassIsConsumedTest` and
+  `SetupPostsRequireTokenTest` all read.
+- **The app decides.** A store link gives the platform and id; the store
+  gives the name and icon (Apple's lookup service, the Play listing's
+  `og:title`/`og:image`); only a name the store would not give is asked
+  for. Icons are fetched only from `*.mzstatic.com` and
+  `play-lh.googleusercontent.com` over https, no redirects, at most 40 KB,
+  checked by magic bytes, and stored as a `data:` URI in
+  `202_app_registrations.app_icon` — no file store, and no page hotlinks a
+  store (which would tell it who looks at the page). A test instance points
+  both lookups at a fake store with `P202_APP_STORE_LOOKUP_ORIGIN`, honoured
+  only for a loopback origin.
+- **`GET /apps/report` without `platform` is iOS.** The first cut made the
+  omitted platform mean both, with a 422 for every iOS-only grouping or
+  filter asked without `platform=ios`. The agent-eval suite caught what that
+  does to existing clients: the reference agent's `app report --group-by
+  protocol --app-id` stopped working, and every saved query's totals
+  changed shape. Omitted is now `ios` — what the report meant before
+  Android existed — `all` asks for both, and every answer names its
+  `platform`. The page never omits it: it decides from the apps (the one the
+  filter names, else the one platform the account uses, else both).
+- **Android is by install, and revenue is payable outcomes.** The Android
+  report groups installs (a cohort): a goal reached a week later counts in
+  its install's day and campaign. `revenue` is the value of live (not
+  superseded), payable outcomes — what the campaign decided to pay — not
+  the click's payout, which a web goal or another app could share.
+  `installs` are distinct trusted installs, in every grouping alike; the
+  other trust classes are counted beside them, and `trusted=` recomputes
+  `installs` and the goal figures over one class
+  (`meta.trusted: as-filtered`), as the iOS `signature` filter does.
+- **Combined figures are only the shared ones.** With `platform=all` the
+  totals are `{ios, android, combined}`, and `combined` adds installs, goals
+  reached and revenue only: Apple's postbacks are delayed, aggregate and
+  privacy-thresholded, so a combined "postbacks" or "organic" would add
+  unlike things. `limit` applies per platform.
+- **iOS apps have no funnel.** A SKAN postback carries at most one decoded
+  value per window, not a per-install sequence of goals, so there is no
+  funnel to draw from it. The Funnel and Postbacks sent tabs appear once the
+  account has an Android app; their URLs still answer without one. A funnel
+  step's second share is of the goal it waits for (`after`; the smallest of
+  several, since all must be reached; the install for a goal that waits for
+  nothing), not of the row above it — two goals at one depth are siblings.
+- **Country is iOS only.** Apple's postback carries a country; an install
+  row does not, and the click's country is a different fact (where the ad
+  was clicked, not where the app was installed), so Android is not grouped
+  by it rather than grouped by a proxy.
+- **Filters are the URL's.** The report's filters live in its own query
+  string, never in `202_users_pref`, so another tab cannot change them
+  and there is no ReportView to hand on; `ReportViewReadersTest::testTheMobileAppsReportReadsNoStoredFilter`
+  holds the page and its partials to that, and the CSV is the page itself
+  under the same URL.
+- **The horizon is the constant.** The brief said 48 days; this branch
+  started on a 35-day constant and, after merging the stack, has PR 8's 48
+  (conversion window 35 + delivery delay 6 + schema age 7, keyed by App
+  Store id). Every page sentence renders `SkanEncodingTimeline`'s constants
+  and the date they give, never a literal, so the number cannot drift from
+  the decode.
+- **The goal editor is 4b's form, told what its window counts from.**
+  `p202_goal_form_fits()` and `p202_goal_definition_from_form()` take
+  `click` or `install`; the round-trip test (4b's, after the merge) then
+  refuses a click-window goal on an app page as a goal the form cannot show,
+  which is listed with its `p202 goal update` command.
+- **The link builder.** `GET /apps/{id}/store-link?campaign_id=` says what
+  the campaign's offer URL should be and what is missing; `--apply` (and the
+  page's confirmed button) writes it through the campaigns controller.
+  Android needs both the token in the referrer and the campaign link;
+  iOS needs the store link only — Apple's postback names the app and the
+  ad network, never the click, so a campaign-app link would claim a
+  precision that is not there.
+- **Correction URLs are per pixel, positional per destination.** They live
+  in `202_notification_correction_urls` (one row per server pixel, owner
+  guarded on every upsert, pruned when the traffic-source form deletes a
+  pixel, created on install and on the 1.9.75 rung). After the merge the
+  outbox tracks one row per URL of a pixel's code, so a correction URL field
+  holds one URL per pixel URL, in order; destination N's correction goes to
+  the Nth correction URL, a destination without one is `suppressed` with the
+  reason, and more correction URLs than the code has are refused. The field
+  is always shown: a per-row show-when cannot read a repeated
+  `pixel_type_id[]`, and a disabled field would drop out of the positional
+  array and shift every correction after it onto the wrong pixel.
+- **One correction mechanism: the outbox's resolver is CorrectionUrls.**
+  PR 4's revival rule gave `NotificationOutbox` one helper for every
+  correction and retraction (`amend()`, which also numbers them by
+  `generation`) and a constructor seam for the destination's URL whose
+  default answered "none". That default is now
+  `CorrectionUrls::resolver()`: the pixel's stored correction URLs, split
+  as its code is, taken at the destination's position, and counted only
+  while the row's user owns the pixel through its traffic-source account.
+  Every construction without an explicit resolver — `GoalEngine`, the
+  `app-installs` worker — therefore uses the operator's configuration; a
+  resolver that says "none" exists only where a test passes one. This
+  branch's own correction path (a second URL builder beside `amend()`) was
+  removed in the merge, and with it its token names: a correction URL takes
+  `amend()`'s tokens — `[[p202_goal_value]]` / `[[payout]]` (the value the
+  network should now hold, `0.00` for a retraction),
+  `[[p202_previous_value]]`, `[[p202_conv_id]]`, `[[p202_original_conv_id]]`,
+  `[[p202_notification]]`, `[[subid]]`, `[[transactionid]]`,
+  `[[timestamp]]`, `[[random]]` — filled there rather than added to the
+  tracker's token list, where every pixel would blank them.
+- **No Kotlin snippet.** The Android page shows the intake URL and the app
+  token, not code; PR 7's SDK (`sdk/android-attribution`, now merged) has
+  its own guide (`25-android-sdk.md`), and the snippet on this page is
+  left for a follow-up.
+- **The PHP CLI's `--postback_version`.** `--version` is Symfony's own
+  option; `app:report` shipped a `--version` filter that made the command
+  refuse to start, found only by running it.
+  `CommandOptionsDoNotShadowTheApplicationTest` now merges every command's
+  definition the way a run does.
+- **Deferred.** The Kotlin snippet on the Android page; Android grouping by the click's
+  country, if it is wanted as what it is; a correction URL per destination
+  edited as separate fields rather than one positional field; icons for apps
+  registered through the API or CLI (only the page looks them up).
+
+---
+
+# Part C: the MTA rewrite
+
+## 6. MTA
+
+### 6.1 What is there today, and why it is rewritten rather than repaired
+
+The engine is about 15,500 lines of PHP, JS and Go, not counting tests. There are two API
+surfaces: a Slim v2 app used by the dashboard, and v3 used by the CLI.
+
+The defects below were found by reading the code. The four that decide
+whether the engine produces a meaningful number were confirmed at the cited
+lines.
+
+1. **A journey is not a person's journey.** `fetchCandidateTouches()`
+   (`202-config/Attribution/Repository/Mysql/ConversionJourneyRepository.php:185-238`)
+   selects the account's 25 most recent clicks **on the same campaign** in the
+   30 days before the conversion. `user_id` there is the account owner. No
+   visitor, cookie, IP or customer id narrows it, and bot or filtered clicks
+   are not excluded. A conversion's "journey" is therefore made of strangers'
+   clicks, and every downstream number inherits that.
+2. **Every model reports the same totals.** Credit always sums to 1, and
+   snapshots are only ever written at global scope
+   (`AttributionJobRunner.php:161,191,281`). The hourly revenue and
+   conversion totals are identical whichever model is chosen. The campaign and
+   landing-page scopes the docs, API and CLI advertise always come back empty.
+   Revenue is the converting click's payout and cost the converting click's
+   cost, so assist clicks never contribute their own cost.
+3. **It sits on the conversion path in the unsafe order** (§2): an uncaught
+   settings check after commit, and synchronous rebuilds inside pixel
+   requests.
+4. **The API accepts models the engine cannot load.** v3 allows
+   `first_touch` and `linear` but not `assisted`
+   (`api/v3/Controllers/AttributionController.php:14`). The engine's enum has
+   no `first_touch` or `linear` (`ModelType.php:12-16`). One such row makes
+   `ModelType::from` throw on load, which breaks rebuilds, the dashboard and
+   the setup page for that user. `algorithmic` silently runs last-touch.
+5. **Other defects:**
+   - Export webhooks POST to any URL the caller supplied, with no scheme or
+     host validation (`202-cronjobs/attribution-export.php:288`, from
+     `AttributionController.php:308`). That is server-side request forgery
+     for any key holder.
+   - One malformed export row fatals every export run and jams the queue.
+   - The download bridge reads columns that exist only in a dead DDL.
+   - There are three model-CRUD implementations, two export stacks, two
+     dashboards, and two migration runners, neither of which works.
+   - The campaign's `attribution_model_id` is written but never read.
+   - The snapshot key is not unique, so concurrent rebuilds double-count.
+   - The GDPR purge misses exports and journeys.
+   - Most repository, cron and v3 paths have no tests.
+
+Items 1 and 2 are the design, not bugs in it. Fixing them changes the
+journey source, the storage and the reports, which is all of the engine.
+
+### 6.2 Identity: what a journey is built from
+
+A journey needs an identity that belongs to one person. Prosper202 has none
+at click time today: its cookies are per-click (`tracking202subid*`,
+`connect2.php:695-718`).
+
+A single cookie would work, but it fails exactly where browsers are
+tightening. So the identity is **a small identity graph fed by several
+first-party signals**, each allowed only to *link*, never to *guess*.
+
+| Signal | Where it comes from | What it links | Why it helps |
+|---|---|---|---|
+| **Tracking-domain cookie** `p202vid` | 128-bit random, set by `dl.php`/`rtr.php` (`Secure`, `HttpOnly`, `SameSite=Lax`, 400-day cap) | Clicks through redirects in one browser | Works everywhere redirects do; the baseline |
+| **Landing-page first-party id** `p202lpid` | The LP script (`tracking202/static/landing.php`, which every LP already loads) stores an id in the **landing page's own** `localStorage` and sends it with the pageview beacon (`record_simple.php`/`record_adv.php`) and on every link into the tracker when it is followed | Clicks on the operator's own sites | The LP domain is a site the user actually interacts with, so browsers treat its storage as first-party. It survives where a bounce-only tracking domain is cleared |
+| **Customer id, signed** | `cust` plus `cust_sig` on a click or conversion, and `setCustomerId(id, signature)` in both SDKs; stored hashed. `cust_sig = HMAC-SHA256(account linking key, "<type>:<value>")`, computed by the operator's own server, which is the only party that holds the key. The type is the LTV alias vocabulary (`cust_type`, default `custom`; email digests fold to lower case), and it is inside the signed string so a signature for one namespace cannot be replayed in another. A `customer_ref` on an authenticated `POST /api/v3/conversions` is the operator's own statement and links without a signature | A person across browsers, **and web → app** | The only deterministic cross-device link. `cust` is request-controlled on public pixels, so an **unsigned** id keeps its LTV role exactly as today and links no journeys: anyone who learns someone's customer id could otherwise join their clicks. The signature is what makes the id a proof rather than a claim |
+| IP address, user agent, fingerprinting | — | **Never used** | Carrier-grade NAT and offices merge strangers, which is today's defect in another form. Fingerprinting is a privacy and platform-policy problem, and it is wrong often enough to corrupt credit silently |
+
+**How the graph works.** Each click records the signals it carried in
+`202_identity_observations (click_id, signal_type, signal_hash, observed_at)`,
+and each distinct signal maps to a visitor key in
+`202_identity_signals (user_id, signal_type, signal_hash, visitor_key)`.
+The observations are the evidence: they say which click carried which
+signal, which is what the journey view uses to explain a link.
+A click carrying two signals that already map to different visitor keys
+**merges** them, union-find style:
+
+- a row in `202_identity_merges` records the merge and the click that
+  caused it;
+- the lower key becomes the alias of the higher;
+- journeys resolve to the canonical key.
+
+Merges are append-only and explainable: the journey view shows which signal
+linked which clicks.
+
+**A merge re-attributes the conversions it joins.** A signed customer id
+arriving in an SDK event *after* the install — the normal order — merges the
+install click's visitor key with the person's earlier web clicks after the
+install conversion's outbox job has already built its journey. Left there,
+that journey stays one-touch and the web-to-app attribution the graph exists
+for never appears. So a merge is itself a trigger: the merge row is the
+record (`202_identity_merges` gains `requeued_at NULL`), and the attribution
+worker, before it claims pending conversions, takes every merge with
+`requeued_at IS NULL`, finds the conversions of **either** component's clicks
+whose journey window (`conv_time` minus the journey lookback, §6.3) overlaps
+a click of the *other* component — one indexed read of `202_clicks_visitor`
+per component — and enqueues them with reason `identity_merge`, in batches,
+then sets `requeued_at`. The request that caused the merge does only the
+merge; the fan-out runs in the worker so a merge that joins two busy keys
+cannot slow a click. The re-enqueued conversions rebuild their journeys from
+`202_clicks_visitor` under the canonical key, which now spans both sides.
+`tests/Attribution/MergeRequeuesConversionsTest` records a web click, an
+install click with a different visitor key, the install conversion (journey
+built one-touch), then the signed customer id on both, and asserts the
+journey is rebuilt with two touches and credits under every active model. The click row itself stores its canonical `visitor_key`
+in `202_clicks_visitor (click_id PK, user_id, visitor_key, click_time)`, with
+`KEY (user_id, visitor_key, click_time)`. It is not a column on the hot
+`202_clicks`. **As built,** it is written in its own transaction immediately
+after `recordClick()` commits, not inside it: identity is an enrichment, and a
+lock error or a failure in the graph must never cost the click it rides on.
+A failed link is retried once on a deadlock, then logged with the click id,
+and the click is a one-touch journey. The rotator writes its click rows
+inline, so it links after them the same way.
+
+**Guards against over-merging.** A graph that merges too eagerly collapses
+strangers, which is the failure being replaced.
+
+- A signal that has linked more than a set number of visitor keys (default 20)
+  is quarantined. It stops linking, and it is reported. This catches a
+  shared kiosk, a `cust=test` used in QA, or a leaked `p202vid`.
+- Customer ids pass through the same cap.
+
+**Journey rule.** A journey is the clicks with the converting click's
+canonical `visitor_key`, within the model's lookback (default 30 days),
+**across all campaigns**. Crossing campaigns is the point: a journey limited to one
+campaign cannot tell models apart at the campaign level. Clicks flagged bot
+are excluded (as built, filtered repeat-IP clicks are kept: §6.5). A click with
+no `visitor_key` makes a one-touch journey,
+labelled as such.
+
+**Honest limits, stated in the product and not discovered by users:**
+
+- **Browsers erode a redirect domain's cookies.** Safari's tracking
+  prevention, and Chrome's bounce-tracking mitigations where third-party
+  cookies are blocked, clear or cap state for domains a user only passes
+  through. So journeys undercount on those browsers. The report shows the
+  share of conversions whose journey is one touch, by browser, so the
+  undercount is visible.
+- **Landing-page JavaScript clicks** (`record_simple.php`, `record_adv.php`)
+  load the tracking domain as a third-party script. The cookie is partitioned
+  or blocked there. Those clicks get a visitor id only when the LP domain and
+  the tracking domain are the same site. The docs say so.
+- **Cross-device only through customer ids.** Without `cust` or
+  `setCustomerId()`, a person on two devices is two visitors.
+- **Consent is one switch.** `p202_consent=0` on a tracking URL, or
+  `p202.consent(false)` on a landing page (remembered in its storage, and
+  sent on the beacon and on every link into the tracker; the beacon waits
+  for the page's scripts, and `window.p202 = {consent: false}` set before the
+  snippet counts), or a campaign's `identity_signals = 0` (which its landing
+  pages honour too: no LP id is read, minted or sent), captures nothing: no
+  cookie is set or read, and the click is a one-touch journey. No identity
+  parameter rides the redirect to an offer (`p202lpid`, `cust` and
+  `customer_ref` with their types, `cust_sig`, `p202_consent`); the customer
+  id, its signature and the refusal do reach the operator's own landing page
+  when a redirector sends the visitor there, for `landing.php`.
+- **A cross-site LP beacon mints nothing.** When the LP and the tracker are
+  different sites (`Sec-Fetch-Site: cross-site`) the browser neither sends
+  nor keeps the tracker's cookie on the beacon, so the beacon links by
+  `p202lpid` alone rather than minting a fresh one-click visitor per
+  pageview.
+- **Nothing before the upgrade.** Clicks recorded before an install runs the
+  release containing visitor capture have no visitor id and cannot be
+  backfilled. Every install upgrading from 1.9.55 or older starts with
+  one-touch journeys, and they fill in as new clicks arrive. That is why
+  visitor capture must be in the first release that goes out (§8, PR 2).
+
+### 6.3 Engine
+
+**Trigger.** The outbox (§2). The worker `202-cronjobs/attribution-worker.php`, run
+every minute with overlap protection, claims pending rows in batches. For each
+conversion it builds the journey once and computes credits for each active
+model. It is idempotent: in one transaction it deletes and rewrites the
+conversion's journey rows and credit rows, so a row claimed twice produces
+the same result.
+
+**Every change of counted state enqueues, and so does every change of what
+a journey could contain.** A conversion's credits must reflect whether its
+ledger row still counts. So `record()` enqueues not only the new conversion
+but every row it superseded; `softDelete()` and a reversal enqueue the rows
+they affect; and the worker, finding a row that no longer counts
+(`payable = 0`, superseded, deleted, or netted to zero), deletes its credits
+rather than recomputing them. Without this, a `replace` campaign with a $5
+then a $10 conversion reports $15 in MTA while the click shows $10. The
+other side of the same rule: an identity merge (§6.2) and a model lookback
+wider than a journey was built with (Storage, below) each enqueue the
+conversions whose journeys they can change, with a `reason` column on
+`202_attribution_pending` (`recorded`, `counted_state`, `identity_merge`,
+`rebuild_journey`) so the worker's log and the CLI say why a conversion was
+recomputed.
+
+**Models.** One enum is the only list. The API, CLI, UI and engine all read
+it, and a structural test fails if any surface lists a value the enum lacks
+(error pattern #5):
+
+| Model | Credit |
+|---|---|
+| `last_touch` | The last touch gets 1 |
+| `first_touch` | The first touch gets 1 |
+| `linear` | Every touch gets 1/n |
+| `time_decay` | `2^(-Δt / half_life)` normalised; `half_life_hours` is configurable, default 48 (as today) |
+| `position_based` | `first`/`last` weights (default 0.4/0.4), the middle shares the rest; with one or two touches the weights renormalise |
+
+- `algorithmic` is **removed**, not aliased: a model that claims to be one
+  thing and computes another is worse than an absent one. It can come back
+  when it exists.
+- `assisted` stops being a model. "Assisted conversions" is a report on
+  non-last touches under any model.
+- Weighting configs are validated by the same class on write and on load. A
+  stored config that fails validation marks that model `invalid` with the
+  reason. It never throws in a way that takes other models down.
+
+**Storage.** `202_attribution_credits`:
+
+- Columns: `(conv_id, model_id, click_id, position, credit decimal(9,8), revenue decimal(11,5))`.
+- Key: `PRIMARY KEY (conv_id, model_id, click_id)`.
+- Index: `KEY (model_id, click_id)`.
+
+`revenue` is the conversion row's amount × credit, so the credits of a
+conversion sum exactly to its revenue. The rounding remainder is assigned to
+the last touch, and a test pins the sum. The journey itself is in
+`202_attribution_journeys (conv_id, position, click_id, click_time)` with
+`PRIMARY KEY (conv_id, position)`, rebuilt together with the credits in the
+same transaction, and it is what reports explain.
+
+**A stored journey is a superset of every model's window, and says so.** The
+journey has no `model_id`: it is built once per conversion and every model
+reads it. That only works if it was built at least as wide as the widest
+model reads, so:
+
+- a journey is built with the **journey lookback**, the maximum lookback of
+  every active model at build time (never less than the 30-day default),
+  and the fixed 25-touch cap (§7.3), which no model may exceed — the cap is
+  validated on the model, not discovered at read time;
+- `202_attribution_journey_meta (conv_id PK, built_lookback_days, built_at,
+  truncated)` records what each journey was built under. `truncated` says
+  the 25-touch cap cut the journey, so a report can label it;
+- a model activated or edited to a lookback **wider than a journey's
+  `built_lookback_days`** cannot be served from that journey: the clicks it
+  wants were never stored. So such a change enqueues, with reason
+  `rebuild_journey`, every conversion whose `built_lookback_days` is
+  narrower than the new lookback, in batches from the worker, and the
+  worker rebuilds those journeys **from `202_clicks_visitor`** — the raw
+  click identity data, which is retained as long as the clicks are — and
+  then recomputes credits. A narrower change recomputes credits from the
+  stored journey, which already holds more than it needs.
+
+`tests/Attribution/JourneyLookbackTest` activates a 60-day model over a
+conversion whose journey was built at 30 days with a 45-day-old click, and
+asserts that the click appears in the rebuilt journey and its credits, and
+that a 7-day model over the same journey reads it without a rebuild.
+
+**Reports** are grouped over credits, joined to the clicks' own dimensions.
+This is where models differ:
+
+- **Dimensions:** campaign, traffic source (PPC account), keyword, c1–c4,
+  landing page, country, device, day.
+- **Metrics:** attributed conversions (Σ credit), attributed revenue
+  (Σ revenue), and **cost from the dimension's own clicks**, so ROI per
+  source is real.
+- **Model comparison:** the same grouping under two models side by side. It
+  replaces the sandbox stub.
+- **Journey metrics:** length distribution, time to convert, share of
+  one-touch journeys by browser (§6.2), and assisted conversions per
+  dimension.
+- **Performance:** grouped queries run over indexed credits for the requested
+  range. An hourly rollup table is added only if measurement shows the query
+  path is too slow (§7.3). A cache that is not needed is a cache that can be
+  wrong. Measurement did (PR 12, §8.1); the rollup is built, and shown to
+  answer exactly what the full computation answers (PR 13, §8.2).
+
+**Model choice** per account, with a per-campaign override that is actually
+read (today `attribution_model_id` is written and never read). The account
+default is used in the campaign reports' "attributed" columns. Changing a
+model or its config marks it for recomputation, and the worker re-derives its
+credits from the stored journeys — except a lookback wider than a journey was
+built with, which rebuilds that journey from the raw click identity data
+first (above).
+
+**Exports.**
+
+- One pipeline, CSV only. The "xls" is tab-separated text today, so the claim
+  is dropped.
+- A webhook destination must be `https`. At send time the hostname is
+  resolved, every resolved address is checked against the private, loopback,
+  link-local and metadata ranges, and the connection is then made **to the
+  validated address** with the hostname pinned (`CURLOPT_RESOLVE`) and TLS
+  verified against the hostname, so a DNS answer cannot change between the
+  check and the connect. Redirects are not followed at all. The same check
+  runs when the destination is saved, so the error is shown to the person
+  saving it. It is signed with HMAC as today.
+- A malformed job row fails only that job.
+
+**One API surface.** v3 only. The Slim v2 app (`api/v2/`) and the unlinked
+dashboard (`202-account/attribution/index.php`) are deleted. The dashboard
+page is rebuilt on the v2 UI shell (`ui-standard.md`) against v3.
+Permission checks are the same on every surface (error pattern #5): v3 today
+checks none of the `view_attribution_reports` / `manage_attribution_models`
+permissions that v2 enforces.
+
+### 6.4 Schema and upgrade
+
+The MTA schema is created by the 1.9.56 – 1.9.58 rungs, which no install has
+run. So it is **redefined in place and its rungs are rewritten**. Nothing is
+left behind to guard or to drop.
+
+**Tables.**
+
+| Today | After | Notes |
+|---|---|---|
+| `202_attribution_models` | `202_attribution_models`, reshaped | `model_type` constrained to the enum (§6.3); `weighting_config` validated JSON; `status` (`active`/`invalid`) plus `status_reason`; one default per account |
+| `202_attribution_snapshots`, `202_attribution_touchpoints` | `202_attribution_credits` | Per-conversion credit rows replace hourly global snapshots |
+| `202_conversion_touchpoints` | `202_attribution_journeys` | Journeys built from visitor identity, not from the account's campaign clicks |
+| `202_attribution_settings` | *(gone)* | The multi-touch toggle existed to keep the engine off the pixel path. The outbox takes it off that path permanently, so the toggle has nothing left to protect. Per-campaign model choice uses `202_aff_campaigns.attribution_model_id` |
+| — | `202_attribution_pending` | The outbox (§2) |
+| — | `202_clicks_visitor`, `202_identity_signals`, `202_identity_merges` | The identity graph (§6.2), created by PR 2. `202_clicks_visitor (click_id PK, user_id, visitor_key, click_time)` with `KEY (user_id, visitor_key, click_time)` is a click attribute, so it takes the click tables' prefix |
+| `202_attribution_exports` | `202_attribution_exports`, reshaped | One column set. Today there are two conflicting DDLs, in the 1.9.56 and 1.9.58 rungs |
+| `202_attribution_audit` | unchanged | |
+
+**Where the definitions live.** The MTA tables move into
+`AttributionTables::getDefinitions()`; the identity tables into their own
+`IdentityTables`; the goal and ledger additions into `ConversionTables`. `202_conversion_logs`, a core table
+whose definition sits in `AttributionTables` today, moves out to its own
+`ConversionTables`. Rewriting MTA's definitions then cannot touch the
+conversion table.
+
+**Rungs.**
+
+- The 1.9.56 rung creates every MTA table from those definitions: the same
+  "installer definitions, advance only on success" shape the 1.9.75 → 1.9.76
+  rung uses for app tables.
+- The 1.9.57 and 1.9.58 rungs lose their MTA DDL (settings columns, the second
+  exports DDL, `202_conversion_touchpoints`) and keep only their version
+  advance. Their other work stays exactly as it is.
+- The 1.9.56 rung's `202_aff_campaigns.attribution_model_id` column and the
+  permission rows 22 and 23 are kept. They are now read.
+
+**One default model, on every path.** Today upgraded installs get a
+"last-touch-default" row per user and fresh installs get none (error pattern
+#5). Credits need a `model_id`, so an account with no model row would have no
+credits and empty MTA and campaign-report attribution until someone created
+one. The rewrite therefore seeds a real `last_touch` model, flagged default,
+for every account through one idempotent `ensureDefaultModel(user_id)` called
+from the fresh installer, the 1.9.56 rung and user creation — the same
+one-function-both-paths shape as `K_install` (§5.1) — and the
+upgrade-equals-install test asserts every account has exactly one default.
+The worker computes credits for every active model, the default included.
+- **Deletions.** The dead code is deleted outright: `MysqlAttributionRepository`,
+  `InMemoryAttributionRepository`, the `Attribution\Export\*` stack,
+  `MysqlExportRepository`, both migration runners and their `.sql`, v2, the
+  second dashboard, and the `purge-disabled-journeys.php` and
+  `backfill-conversion-journeys.php` crons. Their tests go with them. Every
+  deleted test is listed in the PR with the reason its subject no longer
+  exists; no test is deleted merely because it fails.
+
+### 6.5 As built (PR 9)
+
+PR 9 built §6.3–6.4 as written except where this section says otherwise.
+The live pass is `tests/live/mta-engine.sh`; the integration tests are
+`tests/Attribution/{AttributionWorkerIntegrationTest, MergeRequeuesConversionsTest,
+JourneyLookbackTest, AttributionReportsIntegrationTest}`.
+
+**Where it differs from §6.2–6.4, and why:**
+
+- **Filtered clicks stay in journeys; bot clicks do not.** §6.2 says "clicks
+  flagged bot or filtered are excluded". Measured on a live instance:
+  Prosper202 sets `click_filtered` on *every* click from an IP the account
+  has seen in the last 24 hours (`FILTER::checkLastIps`), so a person's second
+  and third clicks in a day — the touches a journey is made of — are all
+  "filtered", and excluding them made every same-day journey one touch. The
+  flag cannot say why it was set; bots carry `click_bot` too, and strangers
+  never share a visitor key, which is the gate that keeps them out. So
+  journeys exclude `click_bot = 1` only, and the report's clicks and cost
+  count the same clicks.
+- **A merge re-queues every conversion of the merged person**, not only those
+  whose window overlaps a click of the other side. A superset: recomputing a
+  conversion whose journey did not change rewrites the same rows, the
+  quarantine cap bounds how many keys one person has, and after path
+  compression the two sides can no longer be told apart without a second
+  table. One transaction per merge: enqueue, then set `requeued_at`.
+- **Clicks after the converting click are never in its journey**, even when
+  they precede the conversion's arrival: the conversion happened through the
+  converting click. The converting click is always the last touch, and it is
+  inside every model's window whatever its age.
+- **The window is anchored on `conv_time`**: a model's lookback admits
+  touches with `click_time >= conv_time − lookback_days`.
+- **Model status is `active` / `inactive` / `invalid`** (§6.4 listed
+  `active`/`invalid`): a person can switch a model off without deleting it.
+  `invalid` is only ever set by the engine, with `status_reason`; an update
+  that validates a whole definition makes it active again. The default model
+  must be active and cannot be deleted or unset (409 / 422 say to make
+  another model the default first).
+- **`is_default` is 1 or NULL under `UNIQUE (user_id, is_default)`**, so the
+  database itself holds "at most one default"; `DefaultModel` (the plan's
+  `ensureDefaultModel`) makes it "exactly one". One statement serves every
+  path: `DefaultModel::SEED_ALL_SQL` in the 1.9.56 rung (followed by a check
+  that no account lacks a default before the rung advances) and
+  `DefaultModel::ensureFor()` in the installer, v3 user creation,
+  `user-management.php` and `MysqlUserRepository`. The worker creates it for
+  an account it meets without one (a path that could not), rather than
+  computing no credits forever.
+- **Lookback is a column** (`lookback_days`, 1–365, default 30), not a
+  weighting-config key. There is no per-model touch count to validate: the
+  25-touch cap is fixed and no model can ask for more.
+- **Credits carry `conv_time`** and have a second index `(model_id,
+  conv_time)`, so a report's date range is read from the index instead of
+  joining back to the ledger. **Journey meta carries `user_id`, `conv_time`,
+  `touches` and `identified`** for the same reason and for the fan-outs.
+  Only non-zero credits are stored.
+- **Revenue is split exactly.** Credit units are floored (with 1e-6 of a unit
+  of float tolerance) and the remainder goes to the last touch that has
+  credit; revenue per touch is `amount × credit` rounded half up, the
+  remainder again to the last credited touch, falling back to flooring when
+  rounding up would leave that touch negative. So 2/7 of $7 is $2.00000, not
+  the $1.99999 its eight-digit credit floors to, and every conversion's
+  credits sum to exactly 1 and its revenue to exactly its counted amount
+  (`CreditCalculatorTest`, 2,100+ assertions over every model, 1–25 touches
+  and edge amounts).
+- **A conversion's MTA value is its amount net of the reversals naming it.**
+  Reversal rows get no credits of their own; a sale reversed to nothing (or
+  below) does not count.
+- **Reasons.** `recorded`, `counted_state`, `identity_merge`,
+  `rebuild_journey` as planned, plus `model_changed` for a model change that
+  can be served from the stored journey. Correctness never rests on the
+  reason: the worker rebuilds unless the reason is `model_changed` *and* the
+  stored journey is at least as wide as the widest active model reads, and a
+  `model_changed` enqueue never overwrites a pending row's stronger reason.
+- **Outbox failure state.** `202_attribution_pending` gained `attempts`,
+  `last_error` and `retry_at` (a PR 1 table; nobody runs it yet). A row whose
+  processing throws is kept with the error and retried after 1 minute,
+  doubling to a day; the ledger's re-queue resets it. A database error
+  (`QueryException`: a missing table, a lost connection) stops the run and
+  charges no row, so fixing the engine drains the backlog on the next run.
+- **The worker runs from the minutely `202-cronjobs/index.php` as well as on
+  its own** (`202-cronjobs/attribution-worker.php`), under one MySQL named
+  lock, so the single documented crontab line is enough.
+- **Reports API paths.** `GET /attribution/reports/breakdown`,
+  `/attribution/reports/journeys`, `/attribution/conversions/{id}/journey`
+  and `/attribution/queue`. `/attribution/report` was taken by the SKAN
+  report until PR 3 moves it; the CLI command is `p202 attribution
+  breakdown` for the same reason. Without `model_id` the breakdown is
+  "effective": each conversion under its campaign's `attribution_model_id`
+  when that model is active and the account's, else the default — that is
+  where the per-campaign override is read. The campaign form's model field
+  lists the account's models and refuses an id that is not one of them.
+- **Permissions on v3.** `Auth::requirePermission()` checks the role
+  permissions the session pages check: `view_attribution_reports` for every
+  attribution read, `manage_attribution_models` for model writes, on top of
+  the key scope. A failed lookup is a 500, never a pass.
+- **Exports.** Both old export stacks are deleted (they exported the
+  snapshots, which are gone) and `202_attribution_exports` has its one final
+  column set; the pipeline, the SSRF-safe webhooks and their endpoints are
+  PR 10's, so this PR has no export endpoint.
+- **The dashboard** (`202-account/attribution.php`) is a v2-shell page that
+  says it is being rebuilt, lists the account's models and the worker's
+  backlog, and names the CLI and API reads. (PR 10 replaced it: §6.6.) `tracking202/setup/attribution_models.php`
+  (the old model editor) redirects there, and its Setup tab is gone. The
+  Slim v2 app (`api/v2/app.php`, `index.php`, `.htaccess`) is deleted;
+  `api/v2/categories` and `api/v2/reports` are the older key-based API,
+  not the attribution app, and stay.
+- **Not done here:** the upgrade-equals-install test from a real 1.9.55
+  database (PR 12; done, §8.1). Measured instead: a fresh install wound back to 1.9.56
+  with every MTA table dropped, climbed through the real upgrade page
+  (`tests/live/upgrade-csrf.sh` with `P202_PRIOR_VERSION=1.9.56`), ends with
+  every MTA table's `SHOW CREATE TABLE` identical to a fresh install's and
+  one default model per account. Agent-eval cases for MTA are PR 12's (done,
+  §8.1).
+
+**Deleted, with the reason each subject no longer exists:** the whole
+`202-config/Attribution/` v2 engine (repositories, services, strategies,
+snapshots, settings, the two export stacks, analytics) and
+`202-config/Validation/` (used only by the old model editor);
+`api/Attribution/Controller.php` and `api/v2/{app,index}.php`,
+`api/v2/.htaccess`; `202-account/attribution/` (the unlinked second
+dashboard), `202-account/attribution-export.php`,
+`202-account/ajax/system-checks.php` (only the old dashboard called it; it
+checked the two deleted crons); `202-js/attribution.js`,
+`202-js/attribution-dashboard.js`; `tracking202/setup/AttributionController.php`
+and its template; the crons `attribution-rebuild.php`,
+`attribution-export.php`, `backfill-conversion-journeys.php`,
+`purge-disabled-journeys.php`; both migration runners and their `.sql`,
+`documentation/sql/1.9.58-attribution-settings.sql`; the PHP CLI
+`attribution:snapshot:list`, `attribution:export:list`,
+`attribution:export:schedule` and the Go `attribution snapshot` / `export`
+commands; `p202ResolveAdvertiserId()` and `p202PersistLegacyJourney()` (their
+only callers were the inline hooks); `package.json` and
+`playwright.config.js` (their only spec was the old dashboard's). Tests
+deleted with their subjects: `tests/Attribution/{Api/AttributionApiTest,
+AssistedStrategyTest, AttributionJobRunnerTest, AttributionRepositoryTest,
+AttributionServiceExportTest, AttributionServiceTest,
+AttributionSettingsServiceTest, ConversionHydratorTest,
+Export/ExportProcessorTest, Export/MysqlExportRepositoryTest,
+LastTouchStrategyTest, ModelDefinitionValidationTest,
+MysqlConversionRepositoryTest, PositionBasedStrategyTest,
+TimeDecayStrategyTest, Support/RepositoryFakes}` and
+`tests/playwright/attribution-dashboard.spec.js` — each tested a class,
+page or endpoint that no longer exists; none was failing.
+
+### 6.6 As built (PR 10)
+
+PR 10 built the dashboard and the export pipeline §6.3 describes. The live
+pass is `tests/live/mta-ui.sh`, the browser pass
+`tests/browser/specs/mta-dashboard.spec.js`; the SSRF guard's tests are
+`tests/Attribution/{WebhookGuardTest, WebhookSenderTest}` and the pipeline's
+`tests/Attribution/AttributionExportsIntegrationTest`.
+
+**The dashboard.**
+
+- **It stays at `202-account/attribution.php`**, the URL PR 9 gave it and the
+  header's *Attribution* entry points at, rather than moving under Analyze
+  (`ui-standard.md`, migration step 2): its links, permissions and tests
+  already name it, and nothing on it depends on the Analyze filters.
+- **One code path.** Every read and write on the page calls
+  `Api\V3\Controllers\AttributionController`, the object the v3 routes call,
+  so the page enforces exactly the API's rules and permissions (error pattern
+  #5) and shows the API's sentences under the fields they name. Numbers the
+  API reads as JSON numbers are parsed strictly on the page first, so a typo
+  gets a field sentence rather than the API's "not a string" refusal.
+- **Views:** Report (breakdown, effective or chosen model, a comparison
+  model under *Advanced*, CSV of exactly what is shown), Journeys (length,
+  time to convert, the one-touch share by browser of §6.2 with its honest
+  limit said on the page, and the newest 25 conversions), Journey (one
+  conversion: touches, the signals that linked them, every model's share and
+  revenue per touch, each column summed exactly — integer units, not
+  floats — on the page), Models (add, edit, switch off/on, make default,
+  delete, each behind the session token; a role without
+  `manage_attribution_models` sees them read-only and its POST is refused)
+  and Exports.
+- **The window** is the classic calendar's: presets in the account's time
+  zone, whole days, `last7` meaning seven days before today's midnight
+  through today. The page sends explicit `time_from`/`time_to`; the API's own
+  `period` list is unchanged.
+- **The API grew two reads for it:** the breakdown's `meta.groups` (how many
+  groups there are, so a page of the top `limit` says what it left out) and
+  the journey metrics' `recent_conversions` (the drill-down's entry points).
+- **A conversion's amount is what it counts for.** Wherever a conversion's
+  amount is shown beside its credits (the drill-down, the recent
+  conversions, their API reads) `amount` is the worker's own number — the
+  recorded amount net of the reversals naming it, from the one function the
+  worker splits (`CountedAmount`) — so a $10 sale reversed by $4 reads $6
+  over model columns that each sum to $6. `recorded_amount` and `counted`
+  sit beside it, and the page names a partial reversal. The breakdown, its
+  CSV and the exports sum credits, which were net already.
+
+**Exports.**
+
+- **The schema is PR 9's, unchanged.** "Scheduled" is `queued_at` in the
+  future (`run_at` on the API); there is no recurring schedule, which would
+  need a schedule table and a rolling window. `model_id` is NOT NULL, so an
+  export names a model: the account default when none is given, stored as
+  its id so the job reads a fixed model (the effective mode is a report
+  view, not an export).
+- **Every group.** An export writes the whole breakdown; more than 50,000
+  groups fails the job with the reason instead of cutting it.
+- **The runner** (`202-cronjobs/attribution-exports.php`, and the minutely
+  cron) claims a job with a conditional UPDATE, so two runners never share
+  one; a job left `running` for 15 minutes by a runner that died is put back
+  (or failed after three attempts). A malformed job — an unknown dimension, a
+  model gone or switched off, a backwards range — fails alone with its reason.
+- **Retries:** no connection, a timeout, 5xx, 408 or 429 retries after one
+  minute and then two, three runs in all; a redirect, another 4xx, a refused
+  destination or a body over 5 MB fails at once. The file is kept and
+  downloadable whatever the webhook did; a retry rewrites it.
+- **Files** live in `202-config/temp/attribution-exports/` (the directory the
+  Coolify compose file already mounts) or `P202_EXPORT_DIR`: a deny-all
+  `.htaccess`, an empty `index.html`, and names with 128 random bits. The row
+  holds the name only, checked against its pattern before it touches the
+  disk, and downloads go through the authenticated endpoints. Deleting an
+  export, its model (as the model or the comparison) or its user removes the
+  file; export rows and files are otherwise kept until deleted.
+
+**Webhooks (§7.1).**
+
+- `https://host[:port][/path]` only, matched by a strict pattern rather than
+  `parse_url()`: no user info, fragment, backslash, whitespace or non-ASCII.
+  An IP literal must be a canonical dotted quad or bracketed IPv6; decimal,
+  hex, octal, short and zero-padded spellings are refused by name. A
+  single-label name and `.localhost`, `.local`, `.internal` are refused.
+- Every address the host resolves to (IPv4 through the C library, so
+  `/etc/hosts` counts; IPv6 from AAAA records) is checked against the IANA
+  not-globally-reachable ranges — this-network, private, CGNAT, loopback,
+  link-local, IETF, documentation, benchmarking, 6to4, multicast, reserved;
+  IPv6 outside global unicast, unique-local, site-local, discard, Teredo,
+  6to4 and documentation — plus the Alibaba, Oracle, Azure and AWS IPv6
+  metadata addresses. IPv4-mapped and NAT64 addresses are judged as the IPv4
+  they carry. One bad answer refuses the URL.
+- The check runs at save time (a field error) and again at send time; the
+  connection goes to the checked address with the host pinned
+  (`CURLOPT_RESOLVE`), the proxy disabled (an inherited `https_proxy` would
+  resolve the name itself), TLS verified against the host name, no redirects,
+  5 s to connect, 15 s in all, 64 KB of answer read. The address curl reports
+  having connected to is compared with the pinned one.
+- **The operator's allowlist:** `P202_WEBHOOK_ALLOW_NETWORKS` in
+  `202-config.php` (CIDRs) admits a receiver on the operator's own network.
+  It can never admit link-local, the metadata addresses, this-network,
+  multicast or reserved space, and an entry that does not parse stops every
+  webhook with the reason (error pattern #11). The live pass uses it for
+  `127.0.0.2` only, and asserts `127.0.0.1` stays refused.
+- **Signing:** `X-P202-Signature: sha256=<hex>` over
+  `<X-P202-Timestamp>.<body>`, with `X-P202-Export-Id` and
+  `X-P202-Delivery-Attempt`. The secret is per export, generated (64 hex
+  characters) or given (16–255 printable characters), returned once — in the
+  create response, and on the page in a panel shown on the next render only —
+  and stored as is, because the server signs with it.
+- **Permissions:** creating, retrying, deleting and downloading exports
+  needs `view_attribution_reports`, like the reports an export reads.
+
+**Surfaces.** REST v3 (`/attribution/exports`, `/{id}`, `/{id}/download`,
+`/{id}/retry`, DELETE with `dry_run`, staged writes), `docs/openapi.yaml`
+(checked field by field by `tests/Attribution/ExportSurfacesAgreeTest`), the
+Go CLI `p202 attribution export list|get|create|download|retry|delete` (the
+download refuses a body over 64 MB rather than truncating it, unlike the
+JSON reads), and the PHP CLI `attribution:export:*`.
+
+**Not done here:** recurring export schedules; a retention policy for old
+export jobs and files; agent-eval cases for MTA (PR 12's, §8 — done, §8.1); the
+report performance target at 1M conversions (missed in PR 12, §8.1; met by the
+rollup of PR 13, §8.2).
+
+---
+
+# Part D: requirements, phasing, decisions
+
+## 7. Non-functional requirements
+
+### 7.1 Security
+
+| Threat | Mitigation |
+|---|---|
+| Forged Android installs for arbitrary clicks | HMAC install token; `bad_token` counts nowhere |
+| Replayed referrer | `UNIQUE (click_id, dedupe_key)` with the `install` key: one install conversion per click |
+| **Click spamming** (harvest real tokens from cheap clicks) | The inherent residual risk. **Built:** (a) Google's server click time must be within minutes of our `click_time`; (d) Play Integrity; the per-peer rate limit on the intake. **Not built:** (b) a CTIT distribution with its tails flagged, and (c) a per-registration cap — nothing in the tree computes click-to-install time or limits a registration (review of #157, B1). Open for the release decision (§8.1) |
+| Click injection | Server click time after server install-begin → `implausible` |
+| Row minting on public intakes | Body caps; rate limit on `REMOTE_ADDR` (#16) with injective bucket names (#17); a retention class for every untrusted state. Behind a TLS-terminating proxy the peer is the proxy, so the ceiling is one for the whole server (`PublicIntake`: 120 installs and 600 event requests a minute), and the limiter fails open when its store cannot be read; a deployment behind a proxy (Coolify, a load balancer) should terminate the rate limit at the proxy or accept the shared ceiling |
+| App token lifted into another app | `app_key` mismatch is a visible 422; the token rotates |
+| SSRF through MTA export webhooks | `https` only; private-range refusal of every resolved address; connect pinned to the validated address; no redirects (§6.3) |
+| MTA journey poisoning (a crafted `p202vid`, LP id or `cust` joins someone else's journey) | Browser ids are random 128-bit values, so guessing one is infeasible, and a user can only pollute their own journeys. A customer id links a journey only when it carries a valid `cust_sig` from the operator's server (§6.2); an unsigned `cust` on a public pixel never links. Any signal linking more than the cap is quarantined. Credits are bounded by conversions, which MTA never creates |
+| **Fabricated in-app events** to reach payable goals (the app token is public) | Goals pay only for installs that are `attributed`, and under `require`, only for integrity-valid ones. Values come from the goal or campaign, never from the client unless `trust_client_revenue` is set. `UNIQUE (subject, event_id)` stops replays inflating counts. **Not built:** a per-install event rate cap (the event intake has the per-peer limit only, §5.10) and a report flag for goals reached implausibly fast (review of #157, B1); open for the release decision (§8.1) |
+| Goal definitions as an attack surface | Data only (JSON schema validated on write and on load), bounded complexity, no expression evaluation. An invalid stored definition disables that goal with its reason and never throws through other goals (#11) |
+| Permission drift between surfaces | One permission check per operation on every surface. `/attribution` asks for `view_attribution_reports` and, to change a model, `manage_attribution_models`; `/apps` asks for `manage_attribution_models` on every write and `view_attribution_reports` on the report and the rows behind it (postbacks, installs, notifications, verify), as the Mobile Apps pages do — it asked for nothing until the review of #157 (B2). `AppsRoutePermissionTest` requires every `/apps` route to carry a decision, the check first in its handler, and `app-core.sh` drives it with role-3 and role-4 keys. `/goals` and `/events` take no role permission, as the campaign pages that edit goals and the conversion API do not. There is no one structural test over every route |
+| Malformed values resolving permissively | Missing HMAC key, unparseable referrer, unreadable policy and invalid model config all resolve to the non-trusting or disabled state (#11) |
+
+### 7.2 Privacy
+
+- **New identifiers:** `p202vid` (tracking-domain cookie), the landing-page
+  first-party id, and hashed customer ids. The two browser ids are random
+  and carry no information. A customer id is canonicalised (trimmed;
+  lower-cased where the operator marks the id as an email) and stored as
+  `HMAC-SHA256(account hashing key, canonical id)`, where the key is **one
+  per Prosper202 account**, held server-side and minted the first time the
+  account needs it (`IdentityKeys::forUser()`). Only the linking key rotates
+  (`rotateLinkKey()`); the hashing key does not, and rotating it would start
+  the account's graph afresh. Web pixels, the API and both SDKs all send the raw id over TLS
+  and the server hashes it, so the same person hashes the same way on every
+  path and the raw value is never stored. None of these is sent to third
+  parties.
+- **Consent:** operators must cover these in their consent flow where their
+  jurisdiction requires it. One switch suppresses every browser signal: a
+  `p202_consent=0` parameter, `p202.consent(false)` from the landing-page script (`landing.php`), or a per-campaign
+  setting. The journey is then one touch.
+- **Browser limits on landing-page storage:** Safari caps storage written by
+  scripts (seven days without interaction) and may clear it sooner. The
+  landing-page id therefore extends journeys; it does not guarantee them. The
+  one-touch share by browser (§6.2) measures what is lost.
+- No device identifiers are collected on Android, and no advertising ID.
+- **Erasing an end customer.** `MysqlCustomerCrmRepository::erase()` (the
+  LTV customer erasure) deletes the customer's aliases, personalization
+  tokens and field values and anonymizes the customer row; since the review
+  of #157 (B6) it also hashes each alias the way the identity graph does and
+  deletes the signal that id became and its observations in the same
+  transaction, so the id no longer maps to a visitor key. A merge row the
+  signal caused keeps its re-queue for the worker and loses the hash. The
+  visitor keys it merged stay merged: pseudonymous click links that carry
+  nothing of the customer. `LtvDatabaseIntegrationTest` holds it.
+  **Open:** identity observations and signals have no retention window;
+  they live as long as the clicks do.
+- **User deletion.** Today `202-account/user-management.php` deletes no
+  clicks and no conversion rows at all (a grep finds neither table in its
+  purge), so PR 3 first audits the whole cascade and writes it down. The
+  target order is: notification and attribution outbox rows for the user's
+  conversions, `202_attribution_credits` and `_journeys` for them, the
+  user's `202_conversion_logs` rows, goal events and progress, campaign
+  goals and goals, identity observations, signals and merges, and
+  `202_clicks_visitor` for the user's clicks; then the `202_app_*` rows
+  (postbacks released, §4.6) and export files on disk. Where the existing
+  cascade keeps the user's clicks, the ledger rows are deleted with the
+  same policy the clicks get.
+
+  **The audit (PR 3).** Before PR 3 there were three writers of
+  `user_deleted = 1` — the API's `UsersController::delete()`, which purged
+  nothing; `user-management.php`, which deleted the MTA tables statement by
+  statement with no transaction; and `MysqlUserRepository::softDelete()`,
+  which purged nothing — so what a deletion removed depended on the screen it
+  came from. All three now call `UserDataPurge::deleteUser()`, one
+  transaction that rolls everything back when any statement fails, and
+  `UserDeletionPurgeTest` refuses a fourth writer. What it does today:
+
+  | Data | Action | Since |
+  |---|---|---|
+  | `202_api_keys` | deleted (sessions already refuse a deleted user) | PR 3 |
+  | `202_attribution_credits` (through the user's models), `_journeys` (through the journey meta), `_journey_meta`, the outbox rows (`202_attribution_pending`) of the user's conversions, `_exports`, `_models`, `_audit` | deleted, children first; the attribution worker refuses a deleted user's conversions, so nothing rebuilds them | PR 9 (the tables; the MTA purge was the account page's alone before PR 3) |
+  | `202_attribution_rollup`, `_rollup_state`, `_rollup_overrides`, `_rollup_dirty`, `_rollup_dirty_clicks` | deleted | PR 13 |
+  | export files on disk | removed after the delete commits; their names are read from the export rows inside the transaction first, and a file that cannot be removed is logged by name | PR 10 |
+  | `202_goal_outcomes`, `_progress`, `_events`, `_subjects`, `202_campaign_goals`, `202_goal_versions`, `202_goals` | deleted (the ledger rows the outcomes wrote stay, with the clicks) | PR 4 |
+  | `202_identity_observations` (for the user's clicks), `202_clicks_visitor`, `202_identity_merges`, `_signals`, `_visitors`, `_keys` | deleted | PR 3 (the tables are PR 2's) |
+  | `202_app_registrations`, `202_app_skan_encodings`, `202_app_skan_encoding_history`, `202_app_integrity_credentials` | deleted | PR 3, PR 8, PR 6 |
+  | `202_app_postbacks` | released: `user_id = 0`, `registration_id = NULL`, test-signal trust withdrawn; pruned by the unclaimed window | PR 3 |
+  | `202_app_installs` | deleted (the owner's record, not a platform's) | PR 5 |
+  | `202_notification_pending` (the user's) | deleted, so a deleted account's queued postbacks never go out | PR 5 |
+  | `202_notification_correction_urls`, `202_conversion_uploads` | deleted | review of #179 |
+  | `202_users` | `user_deleted = 1`, last | — |
+  | `202_clicks*`, `202_conversion_logs` and the ledger rows | kept, as the clicks always were | — |
+
+  Each PR adds its statements to `UserDataPurge` (or, for app tables, an
+  action to `AppDataPurge::TABLE_ACTIONS`); `UserDeletionPurgeTest` walks
+  every `*Tables` class and requires each table that holds a user's rows to
+  be purged or kept by name (since the review of #179 found two it had
+  missed), and `UserDeletionPurgesAttributionTest` deletes a
+  seeded user and checks every MTA table and export file is empty of them
+  while another account's rows stay.
+
+### 7.3 Performance
+
+**Redirect hot path.** It gains one cookie read or write and one HMAC for the
+install token. It is not free of queries: the identity graph does one indexed
+lookup per signal the click carries, in its own transaction (§6.2), and an
+offer redirect that rewrites a click older than an hour writes one
+`202_attribution_rollup_dirty_clicks` mark in the same transaction as the
+rewrite (§8.2). That mark table is conversion schema (`ConversionTables`),
+not MTA schema, so a broken engine cannot fail the redirect.
+
+**Pixel and postback paths.** They gain one outbox insert and lose MTA's
+inline settings lookup, journey queries and 24-hour rebuilds. Conversion
+latency goes down.
+
+**MTA worker.** Per conversion it runs one indexed journey query (a journey is
+capped at 25 touches, newest kept, a stated design choice rather than an
+inherited constant) and writes credits for (models × touches) rows. The target is 1,000
+conversions per minute per worker on modest hardware. That target is measured
+on a seeded instance before release, not asserted. **Measured (PR 12, §8.1):**
+about 330 a minute at 1M conversions until `KEY reverses_conv_id` was added,
+about 15,000 a minute after, with the same journeys and credits.
+
+**MTA reports.** They are grouped queries over `(model_id, click_id)` joined to
+click dimensions. The target is under 2 s for 30 days at 1M conversions. If
+measurement misses it, the fix is an hourly rollup keyed on
+(model, dimension, hour), recomputed from credits for dirty hours only.
+**Measured (PR 12, §8.1): missed** — 31–72 s a breakdown at 1M conversions.
+**Built (PR 13, §8.2):** the rollup, per hour and per UTC day, maintained by
+the worker from marks every writer leaves in its own transaction; at 1M
+conversions every breakdown takes 0.10–1.25 s and answers the same bytes as
+the full computation. The journey metrics read is rolled up too (§8.2, "The
+journey metrics"): 0.02 s at 1M conversions, from 12.6 s.
+
+**Android intake and events.** p95 under 100 ms. There are no external calls
+on the request path: Integrity decoding and pixel firing are deferred. Goal
+evaluation is O(goals) per event, bounded by the complexity limits, and
+touches only the install's own progress rows.
+
+**Identity graph.** Each click does one indexed lookup per signal it carries
+(at most three) and, rarely, a merge. Journeys resolve a canonical key
+through an alias table capped in depth by path compression at merge time.
+
+**App measurement reshape.** It must not slow the iOS receiver: the same
+statements under new names.
+
+**Before any performance fix ships,** it must be shown to return the same
+answer as the unoptimised path on a sparse and a dense dataset (CLAUDE.md,
+"A performance fix must be shown to return the same answer").
+
+### 7.4 Reliability
+
+- **Exactly-once conversions** come from database keys:
+  - `(registration_id, install_uuid)`;
+  - `(click_id, dedupe_key)` on the ledger;
+  - `(subject, event_id)` on events.
+- **Exactly-once MTA effect** comes from the in-transaction outbox
+  (at-least-once delivery) plus idempotent journey and credit rewrites
+  (§6.3).
+- **Post-commit failures** complete via cron (#13). No response invites a
+  duplicating retry.
+- **Isolation.** A broken MTA engine (worker down, any MTA table missing,
+  invalid model config) never affects conversion recording or a redirect:
+  the outbox accumulates. What recording writes for MTA — the outbox and the
+  report rollup's dirty marks — is conversion schema (`ConversionTables`,
+  §2) and is not optional. Until the review of #157 (B3) the marks were
+  `AttributionTables`, so the pixel's cost update and an old click's offer
+  redirect wrote an MTA table in their own transactions; they moved.
+  `AttributionWorkerIntegrationTest::testRecordingWritesNoAttributionTable`
+  moves every `AttributionTables` table out of reach and records through
+  the ledger, the pixel's click side, the redirect's click mark and the LTV
+  click stamp; the old layout fails it.
+- **Every fallible call is checked,** including `get_result`, `store_result`
+  and `prepare` (#1).
+
+### 7.5 Compatibility
+
+- The release stays 1.9.76. The ≤ 1.9.55 → 1.9.76 path creates the final
+  schema directly. No database holds an intermediate shape, so no legacy
+  guard or drop is needed.
+- PHP 8.3 (CI) and 8.4; MySQL 8.0+ and MariaDB 10.6+, the floors the
+  installer, `requirements.php` and — since the review of #157 (B5) —
+  `upgrade.php` enforce. `upgrade.php` had kept 1.9.55's floors (MariaDB
+  10.0.12, MySQL 5.6), which would have let a server that rejects the JSON
+  columns start an upgrade and stop partway; `DatabaseFloorsAgreeTest`
+  holds the three pages together.
+
+### 7.5a Rollback
+
+The upgrade is one-way. The conversion-ledger rung makes `dedupe_key`
+`NOT NULL` with no default and drops `uniq_click_transaction`, so 1.9.55
+code redeployed on an upgraded database inserts conversions that strict
+mode refuses or that collide on `uniq_click_dedupe`: a code-only rollback
+breaks conversion recording. **Take a database backup before upgrading;
+restoring it is the only way back.** The upgrade page and `RELEASING.md`
+have to say so before release (open, §8.1).
+
+**Measured at 1M conversions.** The database was in the 1.9.55 shape
+(duplicates, case variants, blank and NULL ids; 128 MB buffer pool) and
+was upgraded through `upgrade.php` over HTTP:
+- 57 s on MariaDB 10.11 and 91 s on MySQL 8.0.
+- About 96% of that time is `202_conversion_logs`: the ledger backfill
+  (19 s / 25 s), the 1.9.61 duplicate-nulling JOIN (14 s / 13 s), and on
+  MySQL 8 the two collation `MODIFY`s, which copy the table (18 s each)
+  and block conversion inserts while they run.
+- The page renders only at the end, so a 60 s proxy read timeout answers
+  504. The upgrade carries on: `UPGRADE::upgrade_databases()` sets
+  `ignore_user_abort` and no time limit. A process killed mid-backfill
+  re-enters cleanly.
+- Correctness held: every row's `dedupe_key`, `source` and
+  `transaction_id` matched an independent computation, once the 1.9.61
+  fix below was in.
+
+The same measurement found three defects, each fixed in place (the version
+stays 1.9.76):
+- **The 1.9.61 step lost ids.** It de-duplicated `(click_id,
+  transaction_id)` under the column's `utf8mb4_general_ci`, so the case
+  variants of an id on one click (Tx-1, TX-1) counted as one, and every
+  variant but the first lost its transaction id: 8,249 of 12,500
+  case-variant rows at 1M. The step now makes `transaction_id` `utf8mb4_bin`
+  first (the ledger step then finds that done, so the cost is moved, not
+  added) and merges only byte-identical ids
+  (`_upgrade_conversion_idempotency()`).
+- **Old conversions were locked for the whole backfill.** One `UPDATE`
+  over the whole table held a row lock on every row it had passed, so a
+  write to an old conversion waited up to 47.5 s on MySQL 8, against a
+  50 s lock wait timeout. It now runs in 50,000-id ranges, each committing
+  in about a second, plus a final pass for rows written past the range it
+  read.
+- **A second upgrade ran alongside the first.** A second session's POST
+  (an operator reloading after the 504) ran a second ladder concurrently
+  and printed Success! at 1.9.75. The ladder now runs under a named lock
+  per database: a second caller runs nothing, and the page says an
+  upgrade is already running. Success now means the stored version
+  reached the code's. It used to mean the ladder returned, which it also
+  does when a rung holds its version to retry.
+
+`tests/live/upgrade-csrf.sh` covers both: a POST while the lock is held,
+and a ladder that stops short.
+
+The measurement agent also tried one combined `ALTER` for the ledger DDL,
+so MySQL 8 copies the table once instead of twice. It was not adopted: it
+failed once in five runs, cause unknown.
+- The iOS SDK keeps its platform floor (iOS 14+, full support 15.4+) and its
+  behaviour, gaining the header rename, `setCustomerId()` and the on-device
+  goal evaluator. Android needs API 21+ and Play Store app 8.3.73+.
+- CLI and API renames (`p202 app`, `/apps/*`, the `apps` scope area) have no
+  compatibility shims, because there are no users.
+
+### 7.6 Verification: what "done" means
+
+**PR 3 (app core reshape):**
+- iOS tests are ported and green, and the signature vectors are unchanged.
+- The iOS live, browser and SDK suites are green.
+
+**Upgrade (every PR that touches a rung, and the release gate, PR 12):**
+- **Upgrade equals install.** The test goes in three steps:
+  1. Build a 1.9.55 database by running the installer from the last commit
+     whose `202-config/version.php` reads 1.9.55. That needs a full-history
+     clone; this sandbox's is shallow. (As built, §8.1: no version.php ever
+     read 1.9.55; the origin is the 1.9.55 release, 4589787, installed on
+     PHP 7.4.)
+  2. Upgrade it with the new code.
+  3. Compare `SHOW CREATE TABLE` for every table (as built: every table, and
+     every seeded row) against a fresh 1.9.76 install. They must match, apart from the
+     normalisation differences the reconciler docblock lists.
+
+  This one test covers the only real upgrade path: the app tables, the goal
+  and ledger additions, the identity tables and MTA's rungs alike. As built
+  it arrived with the release gate (PR 12, §8.1) and runs in CI from then
+  on; the schema PRs before it were checked by their own upgrade tests.
+
+**PRs 5–7 (Android):**
+- **Unit tests:** referrer parser, token (including the missing-key case),
+  timing rules, `AppIdentity` on raw payloads.
+- **Contract vectors:** exercised in PHP, Swift and Kotlin.
+- **Live pass:**
+  1. a real `dl.php` click;
+  2. the token read from `Location`;
+  3. an SDK-shaped POST;
+  4. the conversion row and `click_lead` checked;
+  5. a replay answers duplicate;
+  6. a second device answers `duplicate_click`;
+  7. a tampered MAC answers `bad_token`;
+  8. the traffic-source pixel fires.
+
+  Negative cases assert the state and the reason ("not succeeded" is not
+  "refused").
+
+**MTA:**
+- **Strategy unit tests:** credit sums to 1, revenue sums to payout exactly,
+  and the one- and two-touch edge cases.
+- **A structural test** that every surface's model list equals the enum.
+- **Live pass:**
+  1. three clicks from one browser (cookie jar) across two campaigns;
+  2. one click from another browser;
+  3. convert via `gpb.php`;
+  4. run the worker;
+  5. assert the journey is exactly the three same-browser clicks;
+  6. assert the credits under each model;
+  7. assert the report grouped by campaign **differs between `first_touch`
+     and `last_touch`** (the property today's engine cannot produce);
+  8. assert the stranger's click has no credit.
+- **Isolation test:** drop `202_attribution_credits` (an engine table, not
+  the outbox), fire a conversion, and assert the conversion records with a
+  200 and the outbox row is kept; then restore the table, run the worker and
+  assert the credits appear.
+- **Counted-state test:** on a `replace` campaign record $5 then $10, run the
+  worker, and assert MTA reports $10; soft-delete the $10 row and assert it
+  reports $5 again.
+- **SSRF test:** a webhook to `http://127.0.0.1`, to a private address, and to
+  a hostname resolving to one. Each is refused at schedule time and at send
+  time.
+
+**Ledger and breakdown (PRs 1, 1b):**
+- **Live pass on a click:**
+  1. a $2 postback with a transaction id;
+  2. a CSV upload row of $1 for the same subid;
+  3. an app goal of $5;
+  4. an unpaid goal.
+
+  Then assert that `GET /clicks/{id}/conversions` lists four rows with the
+  right `source`, `source_ref` names, `payable` flags and counted reasons.
+  Under `accumulate`, the click value is $8. Under `replace` it is the latest
+  payable row, and the others are marked superseded.
+- **Group Overview:** the Transaction ID level's rows sum to the click's
+  income. Today it multiplies the click's income by the transaction count; a
+  regression test fixes that in place.
+- **Legacy paths:** `px.php`, `pb.php`, ClickBank (including a duplicate
+  receipt) and the CSV upload (including a re-upload superseding the earlier
+  batch) each write the expected rows. Income per click is unchanged in
+  `replace` mode.
+- **Consistency:** a structural test asserts that nothing **updates**
+  `click_payout` or `click_lead` on an existing click in `202_clicks` or
+  `202_clicks_spy` except the ledger's recompute. Click creation still seeds
+  the campaign default (`connect2.php:3186-3211`). The writers PR 1 moves
+  behind the recompute are, by a grep of every `UPDATE` touching those
+  columns:
+  - `p202ApplyConversionUpdate()` (`static-endpoint-helpers.php:57-118`, used
+    by gpx, gpb, upx, px, pb and cb202);
+  - `applyStandardClickUpdate()` (`MysqlConversionRepository.php:345-353`);
+  - `tracking202/update/upload.php:153-163`;
+  - `tracking202/update/subids.php:66`.
+
+  That invariant keeps the cache honest (error pattern #5).
+
+**Goals:**
+- **Web:** a postback with `event=optin` and then `event=sale` on one
+  campaign's click reaches two goals, with two ledger rows and a rolled-up
+  value.
+- **Evaluator vectors** (`tests/fixtures/app-sdk-contract/goals/`) run by PHP
+  and Swift: predicates, `count`, `sum`, `after` chains, windows, repeat
+  caps, clock clamping, and an invalid definition.
+- **Live pass:** an install on a campaign paying install $1 and level 3 $4:
+  1. post `level_reached` with levels 1, 2 and 3, plus a replay of level 3;
+  2. assert exactly two conversions;
+  3. with the campaign in `accumulate` mode, assert `click_payout` = 5.00 and
+     campaign-report income 5.00. Then repeat in `replace` mode and assert
+     4.00;
+  4. assert two traffic-source notifications, carrying the goal tokens;
+  5. assert the MTA credits for both conversions.
+- **Versioning:** edit the goal; the old conversions keep their version;
+  a preview of re-evaluation changes nothing until applied; applying it
+  leaves the funnel count for the subject at one, with the old outcome
+  carrying `superseded_reason = 'reevaluation'`, and queues no second
+  "reached" postback for a goal the traffic source was already told about.
+- **Order:** deliver `level_reached` 3 before 1 and 2, and a `tutorial_complete`
+  after the `register` that its goal's `after` requires but with the earlier
+  `occurred_at`; assert the same conversions as the in-order run.
+
+**Play Integrity:** `observe` stores the verdict without changing
+attribution. Under `require`:
+- a missing or invalid token leaves the install unattributed, with its
+  reason;
+- a quota refusal stays pending and is never waved through.
+
+This runs against recorded Google responses, because a live Google call is
+not possible in CI.
+
+**Identity:**
+- A cookie-jar live pass across a tracking-domain click, an LP click and a
+  `cust` conversion asserts one visitor key.
+- A signal driven past the cap is quarantined and stops merging.
+
+**Cross-feature:** an attributed Android install appears in the MTA report on
+the install click's campaign, with that browser's earlier web clicks in its
+journey.
+
+**Agent-eval cases:**
+- register an Android app from a store link;
+- build a campaign link;
+- simulate an install;
+- read both reports.
+
+## 8. Delivery: many small PRs, one release
+
+**Code quality comes from review size and verification per change, not from
+release count.** So the work lands as a sequence of small PRs, each
+independently reviewable and verified, and ships as **one 1.9.76 release**.
+
+- **Every release adds an upgrade origin.** Anything released becomes a
+  version some database can sit at, and the ladder must upgrade it forever.
+  Today the only origin is ≤ 1.9.55. Shipping PR 3 on its own would add a
+  second: a database with the reshaped app tables but no Android or goal
+  tables. The next release would have to reconcile that, which is exactly the
+  machinery this plan deletes.
+- **One release means the upgrade-equals-install test (§7.6) has exactly one
+  path to prove.**
+- **Nothing is half-shipped.** The goal model spans iOS and Android. Shipping
+  one platform's half would freeze a schema the other half may need to change.
+- **Each PR is still merged green,** with its own live pass where it touches
+  a user path. "One release" is not "one PR".
+
+| # | PR | Depends on |
+|---|---|---|
+| 0 | **Legacy endpoints record conversions** (§2.1): `px.php`, `pb.php` and `cb202.php` through the shared writer; `tests/live/legacy-pixels.sh`. **Merged first, alone.** | — |
+| 1 | **Conversion ledger** (§2.1): provenance columns; the CSV upload writes rows (the last path that does not); click value derived from rows under `payout_mode`; outbox row in `record()`; `ConversionTables` split out; `gpb.php` pixel-firing logic extracted to one function. **Built; `tests/live/conversion-ledger.sh`.** | — |
+| 1b | **Breakdown reads:** `GET /clicks/{id}/conversions` and `p202 click conversions <id>`, `/conversions` filters, the click-history breakdown view, Group Overview's Goal/source level, and the Transaction ID level fixed to sum rows. **Built; `tests/live/breakdown-reads.sh`, `tests/browser/specs/click-breakdown.spec.js`. Decisions in §2.3.** | 1, 4 (for goal names); U2 |
+| 2 | **Identity capture:** `p202vid`, LP first-party id (in `landing.php`, with `p202.consent()`), signed `cust` on clicks and conversions, `202_identity_*`, `202_clicks_visitor`, consent switch and per-campaign `identity_signals`. **Built; `tests/live/identity-graph.sh`, `tests/browser/specs/identity-landing.spec.js`.** | — |
+| 3 | **App core reshape** (§4): registry, `AppIdentity`, token rename, verdicts, `PublicIntake`, retention, user-deletion purge, `/apps` and `p202 app` renames, legacy guard deleted. **Built; `tests/live/app-core.sh` (with `setup-mobile-apps.sh`, `analyze-mobile-apps.sh` and both mobile-apps browser specs ported). Decisions in §4.7.** | — |
+| 4 | **Goals engine** (core): definitions, validation, versioning, server evaluator keyed by subject (click or install), cross-language vectors, campaign goal payouts, SKAN encodings pointing at goals, `/goals` API and `p202 goal …`. **Built; `tests/live/goals.sh` (with `app-core.sh`, `conversion-ledger.sh`, `setup-mobile-apps.sh`, `analyze-mobile-apps.sh` re-run and both mobile-apps browser specs), vectors in `tests/fixtures/app-sdk-contract/goals/`. Decisions in §5.7.** | 1, 3 |
+| 4b | **Web events:** `event=` on pixels and postbacks, `POST /events`, `p202.js` `track()`, the web campaign goal editor, the Transactions ID docs pointing to goals. **Built; `tests/live/web-events.sh` (with `legacy-pixels.sh`, `goals.sh`, `identity-graph.sh`, `conversion-ledger.sh` re-run), `tests/browser/specs/web-events.spec.js`. Decisions in §5.8.** | 2, 4 |
+| 5 | **Android intake:** install token, `MatchState`, installs and events endpoints, conversions through goals, traffic-source notify, pending-click cron. **Built; `tests/live/android-intake.sh` (with `goals.sh`, `app-core.sh`, `conversion-ledger.sh`, `legacy-pixels.sh` re-run), vectors in `tests/fixtures/app-sdk-contract/android/`, agent-eval case android-001. Decisions in §5.10.** | 1, 3, 4 |
+| 6 | **Play Integrity** (opt-in modes). **Built; `tests/live/play-integrity.sh` against a local TLS fake of Google (with `android-intake.sh`, `goals.sh`, `app-core.sh`, `conversion-ledger.sh` re-run), vectors in `tests/fixtures/app-sdk-contract/android/integrity.json`. Decisions in §5.11. No request has been made to Google itself.** | 5 |
+| 7 | **Android SDK** (installs, events, customer id, integrity). **Built; `sdk/android-attribution/` (a JVM core with every `android/` — `integrity.json` included —, `customer-id.json` and Android `app-identity.json` vector; the Android module; the optional Play Integrity module), the server's `customer` claim on both intake bodies, `tests/live/android-sdk.sh` (the SDK's engine against an instance, Play Integrity under `require` against PR 6's fake Google). Decisions in §5.12.** | 5, 6 |
+| 8 | **iOS SDK:** header rename, `setCustomerId`, on-device goal evaluator on the shared vectors. **Built; `tests/live/ios-sdk.sh` (the Swift SDK's live suite against the instance included; `app-core.sh`, `goals.sh`, `setup-mobile-apps.sh`, `analyze-mobile-apps.sh` re-run), Swift vectors in `GoalVectorsTests`, encoding versions with the 48-day horizon, kept by app. Decisions in §5.9.** | 3, 4 |
+| 9 | **MTA engine:** schema rewrite and rungs, worker, models, credits, reports API; v2 and dead code deleted. **Built; `tests/live/mta-engine.sh`; decisions in §6.5.** | 1, 2 |
+| 10 | **MTA UI and exports:** dashboard on the v2 shell, comparison, journey metrics, SSRF-safe webhooks. **Built; `tests/live/mta-ui.sh` (and `mta-engine.sh` re-run), `tests/browser/specs/mta-dashboard.spec.js`; decisions in §6.6.** | 9 |
+| 11 | **Mobile Apps UI:** Android pages, link builder, goal editor and funnel, cross-platform report. **Built; `tests/live/mobile-apps-ui.sh` (and the setup/analyze mobile-apps, android-intake, play-integrity, ios-sdk and app-core passes re-run), `tests/browser/specs/setup-mobile-apps.spec.js` and `analyze-mobile-apps.spec.js`, agent-eval `mobile-apps-ui-001`; decisions in §5.13.** | 3–5 |
+| 12 | **Release gate:** upgrade-equals-install from a real 1.9.55 database, full live passes, agent-eval cases, docs and OpenAPI, and the whole-app browser pass on v2. **Built; `tests/live/upgrade-equals-install.sh` (CI: `upgrade-equals-install.yml`), every integration suite in CI (`tests/run-integration-suites.sh`), agent-eval `mta-001`–`mta-003`, `RoutesAreDocumentedTest` and `DocumentationLinksTest`; four upgrade differences and a worker index fixed; the 1M report measurement misses its target. Decisions and the readiness summary in §8.1.** | all, including U8 |
+| 13 | **Report rollup and loud cron jobs:** the MTA breakdowns read a rollup the worker keeps (hourly and daily sums, marks in every writer's transaction, exact at every edge); cron jobs exit 1 with the reason against a database that needs an upgrade. **Built; `RollupMatchesFullComputationTest` (differential, randomized), `RollupWritersAreMarkedTest`, `CronEntryPointsFailLoudlyTest`, `tests/live/cron-needs-upgrade.sh`, the rollup section of `mta-engine.sh`; every breakdown under 2 s at 1M conversions. Decisions in §8.2.** | 12 |
+
+- PRs 1, 2 and 3 depend on no other measurement PR and can proceed in
+  parallel. PR 1 lands with U5 (§10.4), because it rewrites the revenue
+  upload's behaviour and U5 its page.
+- The UI migration runs as its own series, **U1–U8** (§10.4), interleaved with these PRs so that each page is moved to v2 before a measurement PR adds to it. U8, which removes the classic shell, comes after both series.
+- The later extensions (Meta decryption, other stores, deep links) come after
+  the release.
+
+Identity capture (PR 2) gets no special ordering: with a single release, it is
+in the first release by construction.
+
+### 8.1 As built: the release gate (PR 12)
+
+What the gate ran, what it found, and what it leaves for the release
+decision. Everything below was run on the tree at the head of
+`claude/mr-12-release-gate` (U8 at a893a15 plus this PR); the
+release-readiness summary at the end says what ran and what could not.
+
+**Upgrade equals install, from the real 1.9.55.** `202-config/version.php`
+never read 1.9.55: it was created at 1.9.56 (f4fe692). Before it the version
+lived in `connect.php`, which read 1.9.55 from 4589787 ("Upgrade to 1.9.55",
+2023-03-10) until 75a381b moved it to 1.9.56. The commits between are the
+1.9.56 development line with the old string still in place, and the last of
+them (fc613ef) cannot install at all (its installer dies on a strict-types
+TypeError before creating the account), so the origin is the release,
+4589787 — what every 1.9.55 database was installed from. It does not parse
+on PHP 8 (`$string{0}` offsets), so it installs on PHP 7.4, the PHP it
+shipped for; the upgrade and the fresh install run on this checkout's PHP.
+
+`tests/live/upgrade-equals-install.sh` installs 1.9.55 from its own tree
+over HTTP, upgrades that database through this checkout's upgrade page (the
+form's own fields, token included), installs this checkout fresh into a
+second database with the installer an operator runs, and compares every
+table with `tests/live/schema-diff.php` (`Tests\Upgrade\SchemaDiff`) and
+every seeded row with `CHECKSUM TABLE`. Only what `SchemaReconciler`'s
+docblock lists as metadata is forgiven — index order, the table comment,
+partition boundaries (both installers cut weekly partitions from the moment
+they ran; the `PARTITION BY` scheme is compared) — plus the `AUTO_INCREMENT`
+counter. Row checksums skip only the per-install account, key, secret and
+`auto_cron` rows (the last records whether a remote call answered), and the
+default attribution model is compared without its timestamps.
+
+The first run found four real differences, each a bug in the ladder:
+
+- `user_data_feedback` did not exist after the upgrade. The installer gained
+  it during the 1.9.56 line and no rung created it, so an upgraded install
+  had no table for `get_user_data_feedback()`. Created in the 1.9.55 rung
+  from `CoreTables::userDataFeedback()`.
+- `202_users.user_pass` stayed `char(32)`, the salted MD5 of 1.9.55, while
+  the app writes `password_hash()` (60 characters or more). Only the login
+  path widened it, lazily, so a password set any other way before the
+  account's first login — a reset, a user created through the API or a CLI —
+  did not fit. Widened in the 1.9.55 rung (non-lossy; a failed probe fails
+  the rung rather than reading as "already wide").
+- `202_user_role` kept a `user_id` index, the one MySQL made for the foreign
+  key before the 1.9.62 rung added `uniq_user_role` (which leads with
+  `user_id` and serves the constraint). The installer's table has no such
+  index; the 1.9.62 rung now drops it, and does not advance the version
+  until it is gone.
+- `202_aff_campaigns.attribution_model_id` was added after
+  `aff_campaign_cloaking`; `CampaignTables` puts it after
+  `aff_campaign_foreign_payout`. The 1.9.56 rung adds it there.
+
+No rung was added: the version stays 1.9.76 and every rung above 1.9.55 was
+changed in place, since no database holds an intermediate shape. After the
+fixes the pass is 20 of 20 on MariaDB 10.11 and on MySQL 8.0.46 (both
+local; CI's is MySQL 8.0): 156 tables identical, the rows of 151 identical,
+the upgrade logging nothing. The CI job is
+`.github/workflows/upgrade-equals-install.yml` (full-history checkout, PHP
+7.4 then 8.3).
+
+Planted, each through the whole script: the `user_pass` widening removed,
+`attribution_model_id` back after `aff_campaign_cloaking`, the `(3, 22)`
+role permission dropped from the 1.9.56 rung, and `user_data_feedback`'s
+create removed — all four reported, as the type, the column order, the
+seed rows and the missing table. Two forgivable plants — the fresh install's
+`202_users` index order swapped and a table comment added to
+`202_user_role` — passed, and the comment was confirmed present in the
+fresh table. `SchemaDiffTest` holds the normaliser to the same line: index
+order, table comment, counter and partition ranges (MariaDB's and MySQL 8's
+spellings) forgiven; a type, a nullability, a default, a column comment,
+an index definition or kind, a collation, an engine, a constraint, an extra
+index, a column out of place, a partition scheme and a missing or extra
+table each reported.
+
+**Every integration suite in CI.** The tree has 39 `@group integration`
+suites (a 40th file names the group only in prose). CI named nine by hand;
+the other 30 — every Goals suite among them — ran nowhere, and one of those,
+`tests/DataEngine/ReportIntegrationTest`, could not have run anywhere:
+`connect.php` answers a missing `202-config.php` with a redirect and `die()`,
+which ends PHPUnit with exit 0 and no report. The integration job now runs
+`tests/run-integration-suites.sh`: every file `tests/integration-suites.php`
+selects (the same `@group` reading PHPUnit uses, from its own
+`parseDocBlock` regex), one file per invocation, each on a freshly created
+database, writing a `202-config.php` for the one suite that bootstraps the
+app. A suite passes only with exit 0 and `OK (N tests…)`, N ≥ 1: a skip is
+not a run. The DataEngine suite now installs its schema and runs 39 tests.
+`tests/Redirect/DlIntegrationTest` is an HTTP suite (`@group instance`): it
+had never run and expected `t202id=0` to redirect, which the guard at the
+top of `dl.php` refuses; it is rewritten to create its own
+tracker through the API and pin the page's contract (an id that is not a
+positive number is an empty 200, an unknown tracker the 404 page, a real
+one a 302 to its campaign with every parameter accepted and no PHP notice),
+and runs in the Agent Evals job after the eval suite. Locally: 38 database
+suites, 435 tests, green; the instance suite 11 tests, green.
+`IntegrationSuiteSelectionTest` holds the selector to PHPUnit's own reading
+(it loads every file that mentions `@group` and asks
+`PHPUnit\Util\Test::getGroups()`) and both workflows to calling it; a
+planted `/** Needs MySQL. @group integration */` one-liner that the first
+selector could not read failed it, and passes now that the selector reads
+the annotation PHPUnit's way.
+
+**The android-intake flake: a clock boundary.** Reported as three checks
+failing when `android-intake.sh` ran after `play-integrity.sh`, twice in six
+runs. Those six runs are in the PR 6 fix session's scratch logs, and the two
+failing ones finished 13 and 12 seconds after the play-integrity pass before
+them — impossible with
+the purchase-section wait (about two minutes), so that tree predated
+4327dc9, which added it. On this tree, with the wait removed and the
+received and occurred times printed, six runs after play-integrity failed
+once, and the one that failed was the one whose `p0` arrived a second after
+`p2`: the events are dated in the server's future, so each is evaluated at
+the second it arrived, and when all three share a second the tie falls to
+the event id (`"p0" < "p1"`) and the pass is green. A one-second pause
+before `p0` (the window widened) failed three runs of three; the same pause
+with the wait restored passed two of two, and five runs of the real pass
+after play-integrity passed. Play Integrity itself plays no part beyond
+shifting the timing. The wait stays — the cause genuinely is the clock — and
+the pass now asserts it: each purchase's POST must answer 200, and no
+purchase may be stored with `occurred_at >= received_at`; with the wait
+removed that check fails, by name, every run.
+
+**MTA agent-eval cases** (`tests/fixtures/agent-eval/cases/mta.json`, with
+`reference-agent.sh` branches for each):
+
+- `mta-001`: one browser (a cookie jar) clicks two campaigns a second apart
+  and converts through `gpb.php`; the worker runs; the ask is which campaign
+  first- and last-touch credit. The checks read the report under each model
+  (sign-only, so re-runs strengthen the pattern), the model list must not
+  change, and the reply must name both.
+- `mta-002`: a time-decay model from an operator's wording — a half-life in
+  hours, a lookback in days, not the default — checked exactly, with the
+  default unchanged.
+- `mta-003`: deleting the default model is refused by the server; the agent
+  must preview, report the refusal and change nothing (the whole model list
+  is `state_unchanged`).
+
+All three pass their deterministic graders with the reference agent
+(`needs_judge` for the rubric), and a deliberately wrong agent — the same
+campaign under both models, a half-life of 288 hours made the default, a
+stand-in default created so the delete goes through — failed all three.
+
+**The MTA report at 1M conversions: the target is missed.** Measured on a
+seeded scratch database (MariaDB 10.11, this sandbox): 1,000,000 conversions
+over 30 days, journeys of 1–4 touches (2.5M clicks with `202_clicks_advance`
+rows, 5,000 keywords, 200 countries, 50 campaigns, 10 traffic sources), and
+credits under three models (last touch, the default; first touch; linear) —
+4.5M credit rows. `AttributionReports::breakdown()`, three runs each, the
+whole call (credits, cost, assists and totals queries):
+
+| Breakdown (30 days) | min | median | max | groups |
+|---|---|---|---|---|
+| campaign, effective (each conversion's model) | 36.8 s | 37.8 s | 38.0 s | 50 |
+| traffic source, effective | 35.8 s | 36.0 s | 36.8 s | 10 |
+| keyword, effective | 43.5 s | 44.1 s | 44.5 s | 5,000 |
+| country, effective | 41.7 s | 41.8 s | 41.9 s | 200 |
+| day, effective | 30.8 s | 31.1 s | 31.4 s | 31 |
+| campaign, linear (2.5 credit rows a conversion) | 46.4 s | 46.6 s | 47.1 s | 50 |
+| campaign, first touch beside last touch | 47.9 s | 49.1 s | 49.8 s | 50 |
+| keyword, linear beside last touch | 69.5 s | 70.5 s | 72.3 s | 5,000 |
+| journey metrics | 26.1 s (one run) | | | |
+
+Every case is 15–35 times the 2 s target, and the answers are right (every
+case credits the 999,961 conversions inside the window; linear sums to
+999,960.9975 from the seed's rounding of thirds). Where the time goes, for
+the campaign breakdown: the credit rows under each conversion's model 11.3 s
+(a full pass over 202_conversion_logs to find the model), the cost from the
+clicks 8.3 s, the assists over the journeys 12.7 s, the totals 6.0 s. Every
+one of them joins or scans millions of rows, and the per-row join back to
+`202_clicks` by `click_id` crosses a table range-partitioned by click time
+(158 weekly partitions), so no index brings the sum near 2 s. The plan's
+remedy stands (§7.3): an hourly rollup keyed on (model, dimension, hour),
+recomputed from credits for dirty hours only — plus the same for the click
+cost and assists that every row carries. It is not built here: it is a
+schema and engine change, not a gate check, and §7.3 requires any such fix
+to be shown returning the same answer on a sparse and a dense dataset
+first. **This is the one open performance item for the release decision.**
+The seeder and timer were scratch scripts and are not committed; the
+dataset is fully described above, so the rollup can be measured against the
+same shape.
+
+**The attribution worker at 1M conversions: a missing index, fixed.** The
+target is 1,000 conversions a minute per worker (§7.3). On the same
+database, given an identity graph (one visitor per journey) and a backlog of
+the newest 5,000 conversions, the worker processed 326 in its 60-second
+budget — about 330 a minute. Sampling its connection showed one statement
+in 87 of 88 samples: `CountedAmount`'s lookup of the reversals naming a
+conversion, `WHERE reverses_conv_id = ?`, which no index served, so every
+conversion read the whole ledger (about 300 ms at 1M rows). The same lookup
+runs for every conversion the journey drill-down and the recent-conversions
+list show. `202_conversion_logs` gains `KEY reverses_conv_id` in
+`ConversionTables` and in the ledger upgrade step's index list (the rung
+changed in place). Shown to return the same answer before it was kept: with
+reversals planted (full, partial and deleted ones), `CountedAmount` over a
+fixed set of conversions gave the same digest without and with the key on a
+sparse database (10,000 conversions, 103 reversals; 0.68 s → 0.12 s) and a
+dense one (1M, 100 reversals; 93 s → 0.12 s), and the worker built the same
+journeys and credits for the same 300-conversion backlog without and with
+it (36.3 s → 1.07 s). With the key the worker cleared all 5,000 in 20.0 s —
+about 15,000 a minute, fifteen times the target.
+
+While measuring, one more thing surfaced and is left as it is: a cron run
+against a database whose `202_version` is behind the code exits 0 without a
+word, because `connect.php` redirects to the upgrade page and `die()`s — on
+the command line that is silence and success. The first worker run here did
+exactly that (the seeded database had no version row) and looked like an
+empty backlog.
+
+**Docs and OpenAPI.** The router served 210 operations and
+`docs/openapi.yaml` described 138: the LTV (40 operations), sync, change
+feed and audit (14), forecast events (6), the eight bulk upserts,
+`/`, `/versions`, `/capabilities`, `/system/metrics`, `/reports/weekpart`
+and `PUT /rotators/{id}/rules/{ruleId}` had never been written down, while
+the per-feature coverage tests each checked only their own paths. All 72 are
+documented from their controllers (the document validates with
+openapi-spec-validator before and after), and `RoutesAreDocumentedTest`
+holds the two sides equal through `RouteInventory`, which reads the router
+by walking `index.php`'s tokens with a stack of group prefixes bounded by
+brace depth, derives which variables are routers (every `new Router()` and
+every `Router $x` parameter), expands the CRUD loop's `$resource` from
+`$crudMap`, and refuses by line what it cannot read (a computed path, an
+arrow-function group, an unknown router method). Planted: a route in a
+nested group, a group whose parameter is not `$r`, an arrow-function group,
+a route through `add()`, an uninterpretable path, a documented operation
+nothing serves and a served one removed from the document — seven of seven
+caught. `documentation/` had no dangling links; its index missed four pages
+(the Coolify guide, visitor identity, this plan, and an earlier edition of
+Step 7), now listed, and `DocumentationLinksTest` checks both — inline,
+reference and HTML links, fenced code skipped. Planted: a page dropped from
+the index, and inline, reference, HTML-image and anchored links to missing
+files — five caught; a missing path inside a fenced block correctly passed.
+
+**Release readiness.**
+
+What ran, on the final tree, in this sandbox (PHP 8.4, MariaDB 10.11, a
+partial `vendor/`):
+
+- **Live passes:** all 21 in `tests/live/` that exercise an instance, on one
+  freshly installed and seeded instance, in the order a user meets the
+  features (pre-login and upgrade pages, account, setup, update, pixels, the
+  ledger, reads, identity, goals, web events, MTA engine and UI, app core,
+  mobile setup and analysis, the iOS and Android SDKs, the Android intake
+  and Play Integrity, the mobile UI), then Play Integrity followed directly
+  by android-intake: 23 runs, 2,625 checks, none failed. The other three
+  files are the scratch-database guard and the mobile seeder (sourced and
+  run by the passes) and upgrade-equals-install, which builds its own two
+  instances: 20 of 20 on the final tree (MariaDB), and on MySQL 8.0.46 with
+  the same ladder.
+- **Browser:** the whole suite with the CDN mirror, on a second fresh
+  instance after the eval suite (CI's order): 4,068 passed, 0 failed, 200
+  skipped (the table-scroll and sub-menu checks on pages with no table or no
+  current entry). The first full run failed two checks, both isolation bugs
+  in the specs rather than the pages: `analyze-mobile-apps` truncated the
+  app registrations but not the installs and goal outcomes keyed on their
+  ids, so an Android install an eval case had left was counted as the
+  spec's; `click-breakdown` took the two newest unconverted clicks, which
+  the MTA eval case can leave in different campaigns. Both fixed.
+- **Agent evals:** 21 cases, every deterministic grader passing
+  (`needs_judge`: the rubric half needs a judge command, which is not run
+  here).
+- **PHPUnit,** one path per invocation: every unit directory (2,761
+  tests across 30 suites; the only skips are pre-existing environmental ones),
+  the 38 database integration suites (435 tests) through
+  `tests/run-integration-suites.sh`, and the instance suite (11 tests).
+- **Go:** gofmt, `go vet`, `go test ./...` and golangci-lint (0 issues),
+  all with an empty `HOME`.
+- **PHPStan:** clean except the six documented `class.notFound` errors for
+  `cli/` that a partial `vendor/` produces.
+- **The verification ladder** (`verify.sh --changed`), run before the
+  commit; its scope report is given with the PR.
+
+What did not run: GitHub CI itself (nothing was pushed; the new
+`upgrade-equals-install.yml` job and the widened integration and eval jobs
+are checked by `actionlint` and by running their scripts locally, not by a
+runner); the eval rubrics (no judge); CI's PHP 8.3 and MySQL 8.0 for
+anything but the upgrade comparison. Since then every branch of the stack
+has been pushed and GitHub CI has run on each head. Beyond the gate, the
+surfaces listed in item 8 of "Open for the release decision" below have
+never run for real, and PR 13's change to `connect.php` (every page) and
+two redirects was followed by two browser specs, not the whole browser
+suite.
+
+**Re-run with PR 13 (§8.2),** on its tree, the same way (PHP 8.4 with the
+memcached extension CI loads, MariaDB 10.11, a partial `vendor/`):
+
+- **Live passes:** the 22 that exercise an instance — `cron-needs-upgrade.sh`
+  new, `mta-engine.sh` with its rollup section — in the same order on one
+  fresh seeded instance, then Play Integrity and android-intake again: 24
+  runs, 2,756 checks, none failed.
+- **Upgrade equals install:** 20 of 20 on MariaDB and on MySQL 8.0.46, 161
+  tables (the five rollup tables new).
+- **Agent evals:** on a second fresh instance, 21 cases, every deterministic
+  grader passing. Run first on the instance the live passes had just used,
+  three cases errored on the API's 429 rate limit, which those passes had
+  spent; not a product difference.
+- **Browser:** `mta-dashboard` (269 passed, 24 skipped) and `update-pages`
+  (287 passed, 20 skipped), with the CDN mirror, after the eval suite.
+- **PHPUnit,** one path per invocation: 31 unit directories, 2,781 tests
+  (`tests/Cli` with the Symfony autoloads the partial `vendor/` lacks), and
+  the 39 database integration suites, 449 tests, through
+  `tests/run-integration-suites.sh`; the differential test also on MySQL 8.
+- **PHPStan:** the same six `class.notFound` errors for `cli/` and nothing
+  else.
+
+Open for the release decision:
+
+1. ~~**The MTA reports miss their target at 1M conversions** (31–72 s against
+   2 s).~~ **Closed by PR 13 (§8.2):** every breakdown 0.10–1.25 s at 1M
+   conversions, the same bytes as the full computation; the journey metrics
+   read, rolled up as well, 0.02 s where it took 12.6 s. The rollup costs
+   storage (at 1M conversions 10.8M rows, about 1.5 GB beside the 2.3 GB it
+   sums) and a backfill after the upgrade (about 20 minutes of worker time
+   per million conversions, during which reports compute in full).
+2. ~~**A cron against a database that needs an upgrade exits 0 silently.**~~
+   **Closed by PR 13 (§8.2):** every job exits 1 with the reason.
+3. ~~**`CLAUDE.md`'s "Two page shells" note is stale** since U8 removed the
+   classic shell; it still describes `['ui' => 'v2']` and the Bootstrap 3
+   stack.~~ **Closed:** the note now describes the one shell, `info_top()`
+   for standalone pages, and the unknown-option throw.
+4. **The upgrade is one-way** (§7.5a). Its data migration is now measured
+   at 1M conversions: 57 s on MariaDB and 91 s on MySQL 8 through
+   `upgrade.php`, and it survives a proxy's 504 because it carries on
+   server-side. That measurement led to three fixes, all in place:
+   - the 1.9.61 step nulled case-variant ids (it now compares byte for
+     byte);
+   - the ledger backfill locked old conversions for the whole scan (it now
+     runs in 50k ranges);
+   - a second session ran a second ladder (it now takes a lock, and
+     Success! means the version reached the code's).
+
+   `RELEASING.md` and the upgrade page now tell large installs about the
+   timeout and that a 504 needs nothing redone. **Still open:** the upgrade
+   page and `RELEASING.md` must require a backup and say that restoring it
+   is the only way back.
+5. **Security mitigations the plan listed that were never built** (§7.1): a
+   click-to-install-time distribution with its tails flagged, a
+   per-registration install cap, a per-install event rate cap, and a report
+   flag for goals reached implausibly fast. Build them or accept the risk.
+6. ~~**MTA starts empty at the upgrade.**~~ **Closed** (Codex P1 on PR
+   #157): the conversion-ledger step writes a marker,
+   `202_attribution_backfill` (the newest click at the upgrade, one indexed
+   `MAX()` in the request, the rung changed in place and the version still
+   1.9.76), and the attribution worker —
+   `Prosper202\Attribution\ConversionBackfill`, from
+   `AttributionWorker::runExclusive()`, so every minute from
+   `202-cronjobs/index.php` — walks the clicks up to it by primary key, 5,000
+   ids a chunk under a third of its budget, and carries each pre-upgrade lead
+   click in as the `legacy_baseline` row the ledger would write on its first
+   touch (`ensureManaged()`), queued with reason `backfill` and credited like
+   any conversion. The pre-upgrade rows themselves stay `pre_ledger`: the
+   click's cached value is what stands for them, as the ledger already
+   decided. Idempotent (a managed click gets no second baseline; a walk
+   interrupted before its cursor moved re-reads the chunk and adds nothing)
+   and resumable. While it runs, `GET /attribution/queue` and the breakdown
+   and journey metrics' `meta.backfill` say how far it is, and the
+   Attribution page shows a strip; `null` once finished, and on a fresh
+   install, which has no marker. A baseline's conversion time is its
+   click's, so a backfilled conversion reports on its click's day.
+   `tests/Attribution/ConversionBackfillIntegrationTest`;
+   `tests/live/upgrade-equals-install.sh` checks the marker after a real
+   1.9.55 upgrade and its absence after a fresh install.
+7. **Identity data has no retention window** (§7.2): observations and
+   signals live as long as the clicks do. Erasing a customer now reaches
+   them; a retention class for them does not exist.
+8. **Surfaces that have never run for real,** from the as-built sections:
+   the Android module has not been assembled with AGP, linted, or run on a
+   device or emulator, and its integrity provider has never requested a real
+   token (§5.12); the server's Play Integrity client has never made a
+   request to Google, only to a self-written fake (§5.11); the iOS
+   StoreKit/AdAttributionKit hand-off compiles out on Linux and was not
+   built for a device (§5.9); iOS `setCustomerId()` rides no request, so the
+   web→iOS identity link that §6.2 and decision 5 describe does not exist
+   (§5.9); export jobs and their files have no retention and stay on disk
+   (§6.6); the Android intake's p95 under 100 ms (§7.3) was never measured.
+9. **The shared intake rate limit behind a proxy** (§7.1): on a deployment
+   behind a TLS-terminating proxy every client shares one ceiling. Document
+   the deployment guidance or add a trusted-proxy option.
+
+### 8.2 As built: the report rollup and loud cron jobs (PR 13)
+
+PR 13 closes the two items §8.1 left open for the release decision that are
+code: the MTA reports at 1M conversions, and cron jobs that exit 0 in silence
+against a database that needs an upgrade. The version stays 1.9.76 and no
+rung was added: the new tables are schema definitions the rungs and the
+installer share — the rollup, its state and overrides `AttributionTables`
+(created by the 1.9.56 rung), the two dirty-mark tables `ConversionTables`
+(created by the 1.9.75 rung, since the review of #157: recording writes
+them, §7.4) — so the upgrade and the installer create them from the same DDL
+(`upgrade-equals-install.sh`: 20 of 20 on MariaDB 10.11 and on MySQL
+8.0.46, 161 tables identical where there were 156).
+
+**The rollup (§7.3's remedy, as built).** `202_attribution_rollup` holds, per
+account, what a breakdown sums, already summed: credits (Σ credit, Σ revenue
+by `conv_time`), cost (clicks, Σ `click_cpc` by `click_time`), assists
+(distinct conversions by `conv_time`) and totals, for every dimension, every
+model and the effective model, per hour and per UTC day. `AttributionRollup`
+maintains it from the attribution worker's run, under the worker's lock, with
+at least a quarter of the run's budget; `AttributionReports::breakdownAll()`
+reads it. Where it differs from §7.3's sketch, and why:
+
+- **Keyed on (account, part, dimension, model, grain, bucket, key)**, not
+  (model, dimension, hour): the cost and assist sums every row carries are
+  not per model, and the effective model is its own rows (model 0), summed
+  under the overrides and default recorded beside them.
+- **A day grain beside the hour.** An hour grain alone does not compress a
+  high-cardinality dimension: at 1M conversions the keyword breakdown has
+  about as many (keyword, hour) rows as credits. Whole UTC days inside a range
+  read one row per key per day; the hours at either end read hour rows; the
+  day dimension always reads hours, since it groups them by each hour's local
+  date.
+- **Names are not stored.** A campaign renamed after its hour was summed
+  would keep its old name. Every name table is joined on its primary key, so
+  the group's name is looked up when the report runs, and a key that was
+  NULL in every row it sums (no `clicks_advance` row, say) is kept apart from
+  a real 0 so it still has no name.
+- **Exact, not approximate, at every edge.** A plan splits the range into
+  hours the rollup serves and second ranges it does not: the part-hours at
+  either end, hours not summed yet, dirty hours, an hour that is not one
+  local date in the session's time zone (at +05:30 the hour that straddles
+  local midnight; a DST change inside an hour), and everything when a
+  changed click is unresolved or the effective rows were summed under other
+  overrides or another default. Each part is one statement: the rollup rows
+  `UNION ALL` the exact rows of the rest, summed by MySQL — so the decimals
+  and their formatting are MySQL's own — with a guard evaluated in the same
+  statement's snapshot. A failed guard (the rollup moved between the plan and
+  the read) plans again; three failures, or no hour to serve, run the full
+  computation unchanged.
+- **Marks, in the writer's transaction.** `Prosper202\Report\RollupDirty` is
+  the one way to say "these hours changed": the worker marks the old and new
+  hour of every journey and credit it rewrites (so retraction, replacement,
+  reversal, revival, a recompute after a model change and an identity merge
+  all mark through it); the CPC tools mark the range or the click's hours; a
+  rewritten click (a rotator re-click, a click leaving its landing page for
+  an offer, a tracking row added to a click that had none) is marked as a
+  click, which the rollup resolves into the click's hours and the conversion
+  hours of every journey holding it. A change to overrides or the default is
+  not marked by its writer: the reports compare the live overrides with the
+  recorded ones in every statement, and the rollup re-sums every hour when
+  they differ. It sits outside the engine's namespace, so click and
+  conversion paths write marks as they write the outbox
+  (`ConversionPathsDoNotCallTheEngineTest` holds).
+- **Hot paths stay free.** New clicks need no mark: their hour is summed only
+  once it has been over for `SEAL_SECONDS` (two hours). The redirects that
+  rewrite an existing click mark it only when its oldest row is more than
+  `HOT_PATH_SECONDS` (one hour) old, read in the statement they already run;
+  in exchange the rollup leaves dirty any hour whose journeys hold a click
+  younger than the seal (a conversion dated before its own click can), so no
+  clean hour can hold an unmarked rewrite. The rotator re-click marks always,
+  in a transaction with its REPLACEs.
+- **Deleting a model's credits deletes its rollup rows** in the same
+  transaction (a model with no credits sums to nothing), and a user deletion
+  deletes the rollup with the rest of the MTA state.
+
+**Correctness, shown before speed.** `RollupMatchesFullComputationTest`
+computes every breakdown twice — through the rollup, and with it switched
+off, which is the pre-PR 13 computation — and asserts the two identical,
+rows, names, sums, totals and order:
+
+- three randomized tenants (fixed seeds): sparse (7 conversions over two
+  years), medium (300 over 45 days) and dense (900 over 3 days), with 1–5
+  touch journeys, 5% bot clicks, click ids with two rows, a credit whose
+  click is gone, NULL, 0 and nameless dimension values, overrides to an
+  active and an inactive model, a second account in the same hours and the
+  newest hours unsummed; every dimension; effective, an explicit model, a
+  comparison and effective beside a comparison; ranges over everything, on
+  hour and UTC-day boundaries, one second either side of an hour, inside one
+  hour, across and beyond the summed frontier, and six random ones; the day
+  dimension under +00:00, +05:30, +05:45, -03:30 and +14:00, and on a server
+  with zone tables America/New_York and Australia/Lord_Howe (a 30-minute DST
+  shift);
+- changes after the rollup was summed, through the real writers, each
+  compared while its hours are dirty and again after they are re-summed, and
+  each first shown to change the full computation's answer (or the
+  comparison proves nothing): a retraction, a replacement, a partial
+  reversal, a revival, a conversion recorded for an old hour, a model's
+  config changed, a campaign override set, the default changed, one click
+  rewritten as a rotator re-click does, and a CPC range update; then a
+  conversion dated before its young click (its hour must stay dirty), that
+  young click's campaign rewritten without a mark, as a redirect may (shown
+  to change the answer), and a model switched off;
+- every comparison over summed hours also asserts the rollup served some.
+
+Run here on MariaDB 10.11 (no zone tables, so the five offsets) — 5 tests,
+4,203 assertions, and inside the 39-suite integration run — and on MySQL
+8.0.46 with zone tables loaded, so the two named zones as well: 5 tests,
+4,515 assertions; again there at `P202_ROLLUP_DIFF_SCALE=10` (3,000 and
+9,000 conversions per tenant; 5 tests, 4,515 assertions, 5 min 38 s). A
+separate pass on MySQL 8 rebuilt the rollup and compared 22 breakdowns under
+the server's default `ONLY_FULL_GROUP_BY` mode (the tests' session sets
+`STRICT_TRANS_TABLES` only): identical.
+
+Planted, each through the whole test, on the final tree (`plant.py` in the
+session's scratch; every plant confirmed to have landed and every file
+restored by hash):
+
+- an off-by-one-hour bucket (per-model credits summed into the next hour),
+  and the plan's first whole hour taken from the hour the range starts in —
+  both caught by the randomized tenants;
+- a stale bucket after a retraction (`clear()` not marking), and stale
+  buckets after any credit rewrite (`saveCredits()` not marking) — caught
+  at "a retraction" and at "a model's config changed", while dirty;
+- a time-zone shift (the day dimension's hours an hour late), hours that
+  straddle a local midnight treated as one date, and hours grouped by their
+  UTC date instead of the session's — caught at +05:30, -03:30 and UTC;
+- a changed click resolved to its own hours but not its journeys', the
+  effective rows summed without the per-campaign overrides, day rows summed
+  from 23 of their 24 hours, names dropped for some keys, an override change
+  recorded without marking the hours summed under the old one, and an hour
+  holding a young touch left clean — each caught;
+- dirty hours planned as clean, alone and with the guard's own dirty check
+  removed; the overrides check removed from the plan and from the guard —
+  caught (dirty hours alone: the guard refused every plan and the rollup
+  served nothing, which the served-hours assertion catches);
+- the overrides check removed from the plan alone — **not caught, and not
+  wrong**: the guard in the same statement refuses the effective rows, the
+  plan is made again and the full computation answers. It costs three
+  planning attempts while the overrides are out of step, nothing else.
+
+For the other two tests: `RollupWritersAreMarkedTest` caught a redirect's
+mark removed and a writer left unclassified.
+
+**At 1M conversions.** PR 12's dataset and harness, re-run on this tree
+(MariaDB 10.11, this sandbox): 1,000,000 conversions over 30 days, journeys
+of 1–4 touches, 2.5M clicks, 5,000 keywords, 200 countries, 50 campaigns, 10
+traffic sources, three models, 4.5M credit rows. Both modes read the same
+window, three runs each; "before" is the full computation
+(`new AttributionReports($conn, false)`), "after" the rollup. The answer of
+every case was hashed in both modes: identical in all eight cases (and again after the worker re-credited
+the newest 5,000 conversions and re-summed the four hours they touched: the
+eight answers changed, and changed identically in both modes).
+
+| Breakdown (30 days) | before: min / median / max | after: min / median / max | groups |
+|---|---|---|---|
+| campaign, effective (each conversion's model) | 36.2 / 36.4 / 37.2 s | 0.144 / 0.171 / 0.198 s | 50 |
+| traffic source, effective | 37.4 / 37.9 / 38.0 s | 0.133 / 0.136 / 0.136 s | 10 |
+| keyword, effective | 43.7 / 43.8 / 43.9 s | 0.757 / 0.843 / 0.973 s | 5,000 |
+| country, effective | 41.0 / 41.1 / 41.1 s | 0.173 / 0.180 / 0.182 s | 200 |
+| day, effective | 29.7 / 30.0 / 30.0 s | 0.152 / 0.153 / 0.159 s | 31 |
+| campaign, linear (2.5 credit rows a conversion) | 45.7 / 45.7 / 46.4 s | 0.104 / 0.106 / 0.110 s | 50 |
+| campaign, first touch beside last touch | 47.0 / 47.1 / 47.4 s | 0.097 / 0.098 / 0.107 s | 50 |
+| keyword, linear beside last touch | 68.5 / 69.5 / 70.2 s | 1.090 / 1.137 / 1.249 s | 5,000 |
+| journey metrics (rolled up since; see "The journey metrics" below) | 13.4 s (one run) | 13.5 s (one run) | |
+
+Every breakdown is under the 2 s target; the slowest, keyword beside a
+comparison, is 1.25 s at worst. 717 of the window's 720 hours were read from
+the rollup (the newest three were not summed yet and were computed exactly,
+with the part-hours at the edges). What it costs, measured on the same
+database:
+
+- **Storage:** 10.8M rollup rows, the database 2.3 GB → 3.8 GB. The keyword
+  hours are most of it (5,000 keywords give about as many rows per hour as
+  credits); the day rows are what make keyword fast.
+- **Backfill:** summing the 718 sealed hours from nothing took 20 minutes
+  (about 45 s per day of data); the worker gives the rollup at least a
+  quarter of each run, so after the upgrade an account at this size is
+  summed within the first hours of cron, with reports computing in full
+  until then. Re-summing one hour takes 1.5 s, a day 42.5 s.
+- **The worker:** its marks add two statements per conversion. A backlog of
+  5,000 conversions was processed, and the four hours it dirtied re-summed,
+  in 32.2 s (5.8 s of it the re-sum): about 11,400 conversions a minute
+  against 15,000 before the marks, eleven times the 1,000 target.
+- **A change of overrides or default** re-sums every summed hour — about as
+  long as the backfill — and the reports compute in full meanwhile. A change
+  to one model's config re-credits every conversion through the worker and
+  re-sums the hours as it goes.
+
+**Cron jobs fail loudly.** `connect.php` answered every early stop the web's
+way, a page or a redirect and then `die()`: on the command line that is
+silence (or an HTML page) and exit status 0. Every stop now calls
+`p202_cli_fail()` first, which under the CLI writes the reason to stderr and
+exits 1 — for a database that needs an upgrade, "the database needs an
+upgrade: its schema is version X and this code is version Y. Nothing was run.
+Open 202-config/upgrade.php on the site (signed in) …" — and does nothing on
+the web, where the redirect is unchanged. The sweep over every entry point in
+`202-cronjobs/` (CLAUDE.md #5) found three more ways to fail quietly:
+
+- nine jobs bootstrapped with `include_once(str_repeat("../", 1) . …)`, a
+  path relative to the working directory: run by cron from anywhere but
+  `202-cronjobs/`, the include failed with a warning and the job died later on
+  an unrelated missing class (exit 255, measured), never reaching
+  `connect.php`'s checks. All bootstrap with
+  `require_once __DIR__ . '/../202-config/connect.php'`;
+- the minutely cron took its lock before bootstrapping, so a run stopped by
+  the upgrade check left `cron.lock` behind and the next ten minutes of runs
+  reported "already running". It bootstraps first;
+- `sync-worker.php` bootstraps the API, not `connect.php`, so it had no
+  version check at all; it makes the same check (`SchemaVersion::mismatch()`,
+  where an unreadable version is not "current") and exits 1.
+
+`CronEntryPointsFailLoudlyTest` holds all of it — every job requires
+`connect.php` by its own path and never includes; every `die`/`exit` and
+`_die()` in `connect.php` is preceded in its own block by an unconditional
+`p202_cli_fail()`, with no jump between; the lock follows the bootstrap;
+`sync-worker.php` checks before it works — and runs every job without an
+install, from another directory: each exits non-zero naming
+`202-config.php`. Planted: a job including `connect.php` relatively again; the upgrade stop's
+`p202_cli_fail()` replaced with a no-op, and made conditional; the
+missing-config stop's removed; `sync-worker.php`'s check removed; the lock
+taken before the bootstrap — six of six caught. `tests/live/cron-needs-upgrade.sh`
+winds a live instance's version back and runs every job: 77 checks, all passing, on the fresh instance: every job exits 1 naming both
+versions and the upgrade page with nothing on stdout, the outbox untouched,
+no lock left, the web still redirected, and the worker, the sync worker and
+the data engine job exit 0 once the version is back (the first run caught a
+PHP warning printed ahead of the reason — `$navigation[2]` read on a command
+line with no request path — now read with a default).
+
+**The journey metrics** (`GET /attribution/reports/journeys`) were the one
+MTA read left over 2 s at 1M: 13.5 s above. Profiled on a fresh 1M dataset
+(the same seed, with journey click times taken from the clicks, 12 browsers,
+truncated and unidentified journeys), its five statements took 1.7 s (the
+summary: 1M secondary-index lookups back into the clustered index for
+`touches`, `truncated`, `identified`), 1.3 s (lengths, the same), 2.3 s
+(time to convert: 1M primary-key lookups into `202_attribution_journeys` for
+position 0), 7.4 s (browsers: the last position's journey row, then
+`202_clicks_advance` by `click_id`, then `202_browsers`) and 4 ms (the 25
+newest conversions, by index). A covering index on
+`(user_id, conv_time, touches, truncated, identified)` took the first two to
+0.4 and 0.3 s and left the joins at 2.5 and 6.3 s (9.5 s in all), and no
+index removes a per-conversion join of 2.5M and 2.5M-row tables, so the index
+was dropped and the counts were folded into the rollup:
+
+- **A journey part** (`AttributionRollup::PART_JOURNEYS`), not per model, one
+  "dimension" per count: conversions by touches, truncated and unidentified
+  by touches, conversions by time-to-convert bucket, and conversions and
+  one-touch conversions by the converting click's browser id — per hour and
+  per UTC day, built in the same transaction as every other part, from the
+  same joins as the full computation. Its sources were already the rollup's
+  (journeys, journey meta, `clicks_advance`), so every mark that keeps a
+  breakdown exact keeps these; `RollupWritersAreMarkedTest` needed nothing.
+- **Names at read time, grouped as the full computation groups them.** The
+  browser is stored by id and named when the report runs, grouped by
+  `COALESCE(name, 'Unknown')` and ordered as before. A NULL browser (no
+  `clicks_advance` row) and a real id are different keys (`key_null`), in the
+  hour rows and — a change to `buildDay()` for every part — in the day rows,
+  which used to fold them together with `MIN(key_null)`. A breakdown sums
+  both into one group either way; the browsers must not, since browser 0 can
+  have a name.
+- **The average** is MySQL's own: `SELECT ? / ?` over Σ touches and the
+  count, the division AVG does at the same `div_precision_increment`. Shown
+  equal as strings to `AVG()` over 74,768 constructed groups, including every
+  `.xxxx5` tie, on MariaDB 10.11.
+- **A rollup summed before the part existed is not read for it.** A marker
+  row (`GRAIN_MARKER`) says the account's hours carry the part. It is written
+  with the account's state; a state without it (a branch deployment that
+  summed before this change) gets it in `sync()` together with a dirty mark on
+  every built hour, in one transaction. The plan and the guard both require
+  it, so such an account's journey metrics are computed in full until its
+  hours are summed again.
+- **A pre-existing failure, fixed on both paths.** The time-to-convert bucket
+  subtracted two unsigned columns, and a conversion dated before its first
+  touch (which the rollup's young-click rule already knows happens) raised
+  "BIGINT UNSIGNED value is out of range": the whole endpoint answered 500.
+  The difference is now signed and such a conversion is under an hour. On
+  data where the old statement answered, the answer is unchanged (below).
+
+Shown the same before speed. `RollupMatchesFullComputationTest` compares
+`journeyMetrics()` with and without the rollup over every range of the three
+randomized tenants, the other account, and every change of the changes test
+while dirty and after re-summing, and asserts served hours for the journey
+comparisons separately. The tenants now carry what the counts can disagree
+on, each asserted present in the data before it is relied on: every
+time-to-convert bucket, first touches after the conversion, journeys missing
+their first or last position, truncated and unidentified journeys,
+converting clicks with no `clicks_advance` row, with a browser id that has no
+row, with browser 0 that has one, two ids of one name and an id named
+'Unknown'. The changes test asserts which changes moved the journey metrics
+(a retraction, a replacement, a partial reversal — through the recent list's
+amount — a revival, a conversion for an old hour, and the rewritten click,
+whose browser the test now changes); writing that assertion found the
+rewritten click's `REPLACE INTO 202_clicks_advance` had never landed
+(unchecked, and missing three NOT NULL columns), so that step had exercised
+only the campaign change. Two new tests: a rollup without the part is read in
+full, marked whole by the next `sync()`, and read from again once re-summed;
+and each journey statement, handed a plan the rollup then moved under (a
+planned hour marked dirty, a changed click unresolved, the marker gone, the
+frontier moved back), refuses it. Run: MariaDB 10.11, 7 tests, 4,378
+assertions; MySQL 8.0.46 with zone tables, 7 tests, 4,690 assertions, and the
+journey comparison again under the server's default `ONLY_FULL_GROUP_BY`
+mode: identical.
+
+Planted, each through the whole test, every file restored by hash:
+
+- no journey rows summed; truncated counts summed an hour late; the hour rows
+  folding a NULL browser into id 0; the day rows doing so (the old
+  `buildDay()`); the one-touch browser counts dropped; the exact branch's
+  browsers read from the first touch; its unidentified count inverted — each
+  caught by the randomized tenants or the changes test;
+- a changed click resolved to its own hours only — caught at "one click
+  rewritten (summed again)";
+- a rollup without the part left unmarked — caught; the marker not written
+  for a new account — caught by the served-hours assertion; the plan and the
+  guard both ignoring the marker — caught;
+- the guard removed from the tallies statement, and from the browsers
+  statement — each caught by the moved-plan test (the differential runs
+  cannot see it: nothing moves between their plan and read);
+- the unsigned subtraction put back — every run errors with "BIGINT UNSIGNED
+  value is out of range", the pre-change behaviour;
+- the plan alone ignoring the marker — **not caught, and not wrong**: the
+  guard refuses the plan three times and the full computation answers.
+
+At 1M conversions (MariaDB 10.11, this sandbox, the same 128 MB buffer pool
+as the table above), the 30-day window, three runs each (five through the rollup):
+
+| Journey metrics (30 days) | min | median | max |
+|---|---|---|---|
+| before: the class at 9896126 | 12.38 s | 12.61 s | 12.61 s |
+| the full computation after this change (`useRollup` false) | 12.42 s | 12.59 s | 12.71 s |
+| through the rollup | 0.018 s | 0.019 s | 0.036 s |
+
+(719 of the window's hours read
+from the rollup, the part-hours at either end computed exactly.) The three
+answers hash the same (`b35fcf0369086590`, 999,959 conversions) and are the
+same file byte for byte. On the rebuilt rollup the eight breakdowns of the
+table above were re-hashed in both modes: identical, 0.02–1.36 s through the
+rollup. The part adds 24,748 rows to 10.8M; its three build statements take
+0.37 s a UTC day at this size, under 1% of the day's build. The backfill took
+52 minutes here against 20 before, with another session's integration
+suites running on the same server throughout, so that time measures the
+sandbox, not the part.
+
+## 9. Decisions
+
+**Settled** (2026-09-25):
+
+| # | Question | Decision | Where |
+|---|---|---|---|
+| 1 | Install as a conversion by default? | Yes: `install` is a built-in goal, payable unless the campaign says otherwise. Any engagement after it can be a conversion too, through versioned, data-defined goals: event predicates, counts and sums, sequences, windows, repeats, fixed or property values, chosen per campaign | §5.5 |
+| 2 | Traffic-source postbacks? | An option per payable goal per campaign, default on, with `[[p202_goal]]` / `[[p202_goal_value]]` tokens | §5.5 |
+| 3 | Play Integrity | In the first release (PR 6), opt-in per registration: `off` / `observe` / `require` | §5.6 |
+| 4 | Advertising ID | Not collected; nothing in the design needs it | §5.6 |
+| 5 | Journey identity | An identity graph: tracking-domain cookie, landing-page first-party id, hashed customer id; merge caps; never IP or fingerprinting | §6.2 |
+| 6 | Release shape | Small PRs in dependency order, one 1.9.76 release | §8 |
+| 7 | Naming | App measurement: `202_app_*`, `/apps/*`, scope `apps`, `p202 app`, `app_key`, `app_token`, `accept_test_signals`. MTA: `202_attribution_*`, `/attribution/*`, scope `attribution`, `p202 attribution` | §1 |
+| 8 | Several payouts on one click | A per-campaign `payout_mode`. `replace` keeps today's behaviour and is the default for every existing and web campaign. `accumulate` consolidates payouts into one value per click, like the revenue CSV upload already does within a file, and is the default for app campaigns | §5.5 |
+| 9 | Seeing what a click's value is made of | `202_conversion_logs` becomes a ledger with provenance (`source`, `source_ref`, `event_name`, `payable`, `superseded_by`); every path writes rows; the click value is derived from them; a per-click breakdown in the API and UI; reports group by goal/source | §2.1 |
+| 9a | Transaction ids | Kept, with one meaning: the external id, for reconciliation and reversals. Deduplication moves to a namespaced `dedupe_key`. A blank-id payable row counts once per click in `accumulate` mode. The id is passed to traffic sources via `[[transactionid]]` | §2.1 |
+| 10 | Goals on web campaigns | Goals are core: the subject is the click (web) or the install (app), and events come from pixel/postback `event=`, `POST /events` and `p202.js` | §2.2 |
+| 11 | The app's two looks | Migrate the whole app to the v2 shell in this release (Part E, PRs U1–U8), then delete the classic shell and legacy assets | §10 |
+
+**Confirmed (2026-09-25) and partly done.** Decision 9 has the legacy
+pixels (`px.php`, `pb.php`), ClickBank and the revenue CSV upload **write
+conversion rows**. The three endpoints do, as PR 0 (see §2.1); the CSV upload
+follows in PR 1. From the upgrade on, those conversions appear in conversion
+lists, the API, MTA and the breakdown. Income per click in `replace` mode is
+unchanged.
+
+---
+
+# Part E: moving the whole app onto the v2 UI
+
+## 10. Whole-app UI migration
+
+### 10.1 Why this is in the plan
+
+`documentation/features/ui-standard.md` moves pages from Bootstrap 3 and Flat
+UI Pro to the v2 shell (Bootstrap 5.3 and the Prosper202 theme) one family at a
+time. One family has moved: Setup › Mobile Apps and Analyze › Mobile Apps
+(#153). A grep for `'ui' => 'v2'` finds those two pages and the admin-only UI
+kit, **out of about 60 pages that call `template_top()`**. Every page this plan
+adds would be built on v2: Android, goals, the conversion breakdown, the MTA
+dashboard. Without a full migration, the release would ship a *wider* mix of
+two looks than today.
+
+**Decision (2026-09-25): migrate the whole app in this release,** as its own
+PR series running beside the measurement PRs.
+
+### 10.2 Inventory
+
+Counted from the tree. Section counts are pages that call `template_top()`.
+Standalone pages render their own `<html>`.
+
+| Family | Pages | Notes |
+|---|---|---|
+| Analyze | 15 (1 already v2) | keywords, text ads, referers, IPs, countries, regions, cities, ISPs, landing pages, devices, browsers, platforms, variables, LTV. They share a report layout and `202-js/tracking-report.js` (489 lines), so most move together |
+| Overview | 6 | Home, group overview, breakdown, day- and week-parting, rotator breakdown. The Highcharts-heavy pages |
+| Visitors, Spy | 2 | The click-history views that get the §2.1 breakdown |
+| Setup | 13 (1 already v2) | Campaigns, networks, traffic sources, landing pages, text ads, rotators, trackers, postbacks, landing-page code, the smart component, and attribution models. Form-heavy; the campaign form gets payout mode and goals |
+| Update | 5 | subids, CPC, revenue upload, clear/delete subids |
+| Account | 15 | account, users, API keys and integrations, administration, help, docs, VIP perks, click servers, safe mode, attribution dashboard, and more. `202-js/attribution.js` (1,732 lines) belongs to the MTA dashboard, which §6 rebuilds on v2 rather than migrating |
+| Pre-login and standalone | about 10 | `202-login.php`, `202-lost-pass.php`, `202-pass-reset.php`, `202-config/install.php`, `202-config/upgrade.php`, `202-404.php`, `202-access-denied.php`, `202-license.php`, `api-key-required.php`, `index.php` |
+| Other sections | 3 + 1 | `202-tv`, `202-resources`, `202-appstore`, plus the separate `202-Mobile/` mini-site (login, mini-stats) |
+| AJAX fragments | 18 files | Files under `tracking202/ajax/` and `202-account/ajax/` that return markup with Bootstrap 3 or Flat UI classes. They must move with the page that loads them |
+| Shared JavaScript | `202-js/custom.php` (1,804 lines) and the page scripts | Built on the legacy asset set in `202-config/assets.php`: jQuery UI, Bootstrap 3 JS, select2, tablesorter and its widgets, tokenfield, typeahead, jquery-validate, fileinput, radiocheck, Flat UI Pro JS |
+
+### 10.3 How each page moves (the existing recipe, applied everywhere)
+
+- `template_top($title, ['ui' => 'v2'])`, with markup rebuilt from Bootstrap
+  components and the component layer. Each component's markup is copied from
+  `202-account/ui-kit.php`, parts included (error pattern #19).
+- **The chrome does not change.** It is already framework-neutral
+  (`202-css/p202-chrome.css`).
+- **The page follows the UI standard's principles** (§ "the app decides what
+  it can"):
+  - common-case forms, with the rest under **Advanced**;
+  - defaults explained in one line;
+  - one primary action;
+  - empty states that do the first step.
+
+  This is a redesign per page, not a class rename. That is why pages move in
+  families, with a review of each.
+- **Legacy libraries are replaced once, by one choice per job, recorded in
+  the UI standard.** Each replacement is a pinned asset in `assets.php`, with
+  its SHA-384:
+
+  | Job | Replacement |
+  |---|---|
+  | Date pickers | Native `<input type="date">` |
+  | Tag inputs and typeahead | `<datalist>`, or one small pinned library, chosen in U1 |
+  | Sortable tables | `tablesort.js`, already in the v2 manifest |
+  | Validation | Native constraint validation plus the server's error sentences |
+  | Select boxes | Native `<select>`, or one pinned searchable select where the list is long |
+
+  jQuery stays available on v2 (`jquery.js` is in the manifest), so scripts
+  are ported, not rewritten, where porting is enough. **A port is not a
+  copy:** the v2 shell emits page scripts in `<head>`
+  (`202-config/template.php:211`), before the body exists, so a script that
+  touches the DOM as it loads breaks silently there. U1 makes the shell emit
+  `js_page` assets with `defer`, and the porting rule is that DOM work runs
+  under `DOMContentLoaded`; the browser pass's console-error check is what
+  catches the one that was missed.
+- **Pre-login pages keep their security invariants.**
+  `PreLoginPostRequiresTokenTest` and `tests/live/upgrade-csrf.sh` pin that
+  the form that posts carries the session token inside it (error pattern
+  #21). They must stay green through the rewrite of login, install and
+  upgrade. This is the family where a markup change can silently break a
+  security check, so it goes last, alone, with the live CSRF pass run before
+  merge.
+- **`202-Mobile/`** is retired if the v2 pages pass the phone-width browser
+  pass (§10.5): its login and mini-stats become redirects to the responsive
+  pages. If any view is missing at phone width, that view is built on v2
+  before the redirect.
+
+### 10.4 PR series (U1–U8), interleaved with the measurement PRs
+
+| # | PR | Before / with |
+|---|---|---|
+| **U1** | **Foundation:** the header and navigation screenshot check on both shells (the comparison started and not finished on 2026-09-25); the replacement-library choices in §10.3 added to the manifest and the UI standard; shared v2 partials for report filters, date ranges and tables | Before everything else in Part E |
+| **U2** | **Overview, Visitors, Spy** | Before PR 1b, which adds the per-click breakdown to the click history and a Goal/source level to Group Overview. Those land on v2 pages instead of being built twice |
+| **U3** | **Analyze** (the remaining 14 report pages, the shared report layout, `tracking-report.js`, their AJAX fragments) | With or after U2; they share filters |
+| **U4** | **Setup** (12 pages) | Before PR 4b and PR 11, which add payout mode, goals and the link builder to the campaign form |
+| **U5** | **Update** (5 pages) | With PR 1 (the same PR or the one next to it): PR 1 rewrites the revenue CSV upload's behaviour and U5 its page, and they are reviewed together. **Done:** Update Subids, Update CPC, Reset Campaign Subids, Delete Subids and Upload Revenue Reports on v2; the CPC update and the campaign reset moved off their AJAX fragments onto their pages (the CPC write had asked for no token). Checked by `tests/live/update-pages.sh` and `tests/live/conversion-ledger.sh`, `tests/browser/specs/update-pages.spec.js` (`UPDATE_PAGES` in `lib/checks.js`), `tests/Update/UpdatePostsRequireTokenTest` and `UpdateUiHelpersTest` |
+| **U6** | **Account** (14 pages; the attribution dashboard is replaced by PR 10, not migrated) | Any time after U1 |
+| **U7** | **Standalone and pre-login** (login, password reset, install, upgrade, error pages, `index.php`, `202-tv`, `202-resources`, `202-appstore`, `202-Mobile` retirement) | Last page family, on its own. **Done:** `info_top()` is the standalone v2 shell (`202-config/functions-standalone-ui.php`, `.p202-standalone`), so sign-in, the password reset pair, the license-key page, the 404, every `_die()` message and the whole install path (wizard, requirements, license key, installer and its success panel, upgrader) render on it; the POST handling of sign-in, install and upgrade is byte-identical, only markup moved. TV202, Hot Deals and the App Store are v2 pages that read their feeds into rows (no remote markup reaches a page). `202-Mobile/` redirects to the responsive pages (its mini stats are Campaign Overview's totals, which pass the 390px browser pass). Token checks added to the license-key page and the setup wizard, which also refuses to touch an installed instance's `202-config.php` except to bring a legacy-format one to the current format with every setting carried over (`setup-config.php?step=1.1`, `tests/Install/SetupConfigHelpersTest`), and whose session cookie takes Secure from the proxy-aware `p202_request_is_https()` every session start shares (`tests/Standalone/SessionCookieSecureTest`); the password reset pages, which died on every request, work again. Checked by `tests/live/prelogin-pages.sh`, `tests/live/upgrade-csrf.sh`, `install-instance.sh` (and a wizard-to-installer run on a fresh database), `tests/browser/specs/prelogin-pages.spec.js` (`STANDALONE_PAGES` and `FEED_SECTION_PAGES` in `lib/checks.js`), `PreLoginPostRequiresTokenTest` (the license-key page added), `tests/Standalone/`, and `MysqliQueryArgumentOrderTest` |
+| **U8** | **Removal:** the classic shell branch of `template_top()`, every `legacy.*` asset, Flat UI Pro, the old stylesheets and `202-js/flat-ui-pro.min.js`; `template_top()` stops taking a `ui` option | After U2–U7 and after every measurement PR that touches a page. **Done:** one page shell; `template_top()` refuses a `ui` option (and any option it does not define) with an `InvalidArgumentException` that says to delete it, and `p202_overview_run()` refuses the overview family's `shell` key the same way. Deleted: the classic branch of `p202_shell_assets()`, every `legacy.*` manifest entry and its file, List.js and its fuzzy-search plugin (only the classic shell loaded them), Bootstrap 3, Flat UI Pro (stylesheet, source map, icon font, kit images, `202-js/flat-ui-pro.min.js`), Font Awesome 4 and the Glyphicons font, `custom.css`, `custom.min.css`, `p202-ui.css`, `design-system.css`, `202-js/custom.php`, `202-js/account.{php,js,min.js}`, the DNI tablesorter scripts, `jquery.caret.js`, the classic survey modal, and the classic-only code nothing reached any more (`display_calendar()`, `showHelp()`, `p202_copy_snippet()`, DataEngine's HTML report renderers, the JSON transport's dependent-filter dropdowns, fifteen AJAX fragments only `custom.php` loaded and one nothing loaded, and two Account AJAX endpoints nothing on a v2 page called). Migrated: the update banner, the one classic feature v2 pages had lost. Checked by the four structural tests pointed at the whole tree (§10.4.1), `UpdateBannerTest`, `tests/browser/specs/update-banner.spec.js`, and the full browser and live passes |
+
+#### 10.4.1 As built: U8
+
+**One shell, and a leftover option is loud.** `p202_shell_assets(array $context)`
+has no shell argument and no classic branch; `P202_UI_CLASSIC`,
+`p202_ui_shell()` and `p202_shell_defers_page_scripts()` are gone, and the
+page scripts are always deferred. `template_top()` checks its options against
+the six it defines before it writes a byte: `'ui'` gets its own sentence
+("no longer takes a 'ui' option … delete 'ui' from the call"), any other
+unknown key names the six. The choice was between that and silently ignoring
+the key; ignoring is the "leftover `ui` does something odd" this PR was told
+to avoid (a reader would still believe the option chose something), and a
+throw is caught on the first request by every live pass and the browser
+suite. The body keeps the class `p202-shell-v2` (`P202_SHELL_BODY_CLASS`),
+because the live passes and the browser harness read it; it names the
+surviving shell, not a choice. All 37 `template_top(..., ['ui' => 'v2'])`
+callers and the 8 overview pages' `'shell' => ['ui' => 'v2']` were simplified.
+
+**Nothing was left on the classic stack.** Every `template_top()` caller
+already passed `'ui' => 'v2'`, and a whole-tree scan with the Bootstrap 3 set
+(below) found legacy classes in 31 files. Each was traced to its caller:
+
+- Loaded only by the classic shell, and deleted with it: `202-js/custom.php`
+  and the fifteen `tracking202/ajax/` fragments it alone posted to
+  (`aff_campaigns`, `aff_networks`, `landing_pages`, `text_ads`,
+  `adv_text_ads`, `ad_preview`, `method_of_promotion`, `ppc_networks`,
+  `ppc_accounts`, `countries`, `regions`, `isp`, `device_type`, `browser`,
+  `platform`), `tracking202/ajax/get_postback.php` (no caller at all),
+  `202-js/account.*`, the DNI tablesorter scripts, the classic survey modal
+  and its `202-account/ajax/survey.php`, and
+  `202-account/ajax/upgrade_submit_api_key.php` (a form in the classic banner
+  posted to the page it was on, so nothing reached it; it compared the token
+  with `!=` and was on `AccountPostRequiresTokenTest`'s known-unguarded list,
+  now one shorter).
+- Classic-only code no page called: `display_calendar()` and
+  `display_calendar2()` (1,000 lines), `showHelp()`, `p202_copy_snippet()`,
+  `DisplayData::displayReport()`, `displayPerPPCReport()`,
+  `displayVariableReport()` and `paginate()`, `SetupController::addSuccess()`,
+  and `StaticFilterOptionsProvider` with the three `tracking202StaticFilterSsr*`
+  helpers and their two constants (only `display_calendar()` read them).
+- The off-by-default JSON report transport's `dependentFilters`: Bootstrap 3
+  dropdowns whose `onchange` handlers called `custom.php` functions. The only
+  in-tree caller asked for none. `DependentFilterPayloadBuilder` is deleted,
+  `includeDependentFilters` leaves the request's allowed fields, and a client
+  that still sends it is refused by name with a 422 (ReportDispatchRequestTest)
+  rather than answered without them.
+- Still reached, and migrated: the update banner (below), the database-error
+  box `record_mysql_error()` prints (now the kit's danger flash, with the
+  admin address escaped; `connect2.php`'s copy too), and the ROI badge in
+  `ReportSummaryForm::getRowHtml()` (`badge text-bg-*`; the method's only
+  caller is itself unreached, but the markup is fixed rather than excused).
+
+**The update banner.** The classic chrome loaded a "new version available"
+notice under the header from `custom.php` (Bootstrap 3 collapsible panels, a
+changelog modal, an inline key form). No v2 page drew it, and the footer's
+"out of date" line reads a session flag only that banner's request set, so
+once every page was on v2 an out-of-date install said nothing at all. It is
+now
+`p202_update_banner()` (`202-config/functions-update-banner.php`), the kit's
+dismissible flash, drawn by `p202-chrome.js` into `#update_needed` once the
+page is idle: `check-for-update.php` first, then `update-needed.php`, with
+closing it posting `delay=1` to `delay-alert.php` (snoozed for an hour, as
+before). The state order is the classic one (managed deployment, 1-click not
+possible, update needed, premium release). Changed on purpose: the release
+feed's headline and body are text, not markup; the register link is used only
+when it is http(s); the changelog modal is a link to the upgrade page, which
+lists what is new; the inline Customer API key form, which posted to whatever
+page it was on, is a link to Personal Settings, where that key is set; the
+key lookup is a prepared statement with every return checked; and publishers
+(sub-accounts) get no banner. `UpdateBannerTest` renders every state;
+`update-banner.spec.js` drives drawing, dismissal and the snooze in a browser
+at 1280 and 390px, light and dark. The instance is newer than any release the
+feed advertises, so the real `update-needed.php` answers with nothing; the
+spec serves the real renderer's markup (run through the PHP CLI) for that one
+response and says so, and everything else is the real path.
+
+**The structural tests now assert the new invariant, over every page.**
+
+- `NoLegacyBootstrapClassesTest` sweeps every PHP, JavaScript and HTML file
+  the install serves (686 today, with a floor and a list of files it must
+  reach) and every first-party stylesheet's selectors, where it used to
+  sweep the pages that opted in, a hand list of shared partials and the
+  chrome sheet. The Bootstrap 3 difference is recorded in
+  `tests/fixtures/ui/bootstrap3-only-classes.txt` (600 classes, read from the
+  3.3.4 stylesheet before it was deleted; its SHA-384 is in the header) and
+  re-checked against the live Bootstrap 5 files, so a class the shell styles
+  can never be banned. Font Awesome's `fa`/`fa-*` joined the Flat UI list,
+  since its stylesheet went too.
+- `ShellIsolationTest` asserts that no context loads a legacy file and every
+  file loaded exists; that the manifest has no `legacy.*` entry, no legacy
+  file, and nothing unloaded (a font counts as loaded when a loaded
+  stylesheet names it); that no legacy file or directory is left in
+  `202-css/` or `202-js/` for a page to name by path; that no PHP file passes
+  a `ui` key (read from the token stream); and, in a process of its own, that
+  `template_top()` refuses `ui` in four spellings and an unknown key before
+  writing anything, still renders a page with its usual options, and emits
+  the page scripts deferred and jQuery and Bootstrap blocking.
+- `ComponentClassIsConsumedTest` counts a class as styled only by a sheet
+  the shell loads. Before, any sheet in `202-css/` counted, including the
+  three the classic shell alone loaded, so a v2 page could use a class only
+  `p202-ui.css` defined and pass unstyled; a new test also requires every
+  sheet in `202-css/` to be one the shell loads.
+- `AssetManifestTest`, `UiPartialsTest`, `OverviewPagesTest`,
+  `AnalyzeReportPagesTest`, `GroupingLevelOffersTest` (the classic builder's
+  selectors are gone; the page's `p202_overview_groupings()` is compared with
+  `ReportSummaryForm`'s list instead) and `AccountPostRequiresTokenTest`
+  follow the removals. `tests/browser/specs/chrome-shells.spec.js`, which
+  compared the chrome across the two shells, is deleted with its helpers and
+  the harness's survey-dismissal step.
+
+Each updated test was shown to fail on a planted regression, the plant
+confirmed on disk and restored by copy from the scratchpad: 19 plants, all
+caught. Where the old test existed, four of the plants were run against it
+on the base commit: a `col-xs-6` in an AJAX fragment no page opted into, a Font
+Awesome icon on an Account page, a Bootstrap 3 selector in the component
+sheet, and a class only an unloaded sheet defines each passed the old tests
+and fail the new ones.
+
+**Deleting CSS, swept.** Every class selector in the deleted stylesheets
+(2,265 names across Bootstrap 3, Flat UI Pro, Font Awesome, Select2,
+tokenfield, the tablesorter themes, `custom.css`, `custom.min.css`,
+`p202-ui.css` and `design-system.css`) was checked against the classes the
+remaining markup and scripts name. 2,106 were defined only in deleted
+sheets; 9 of those are still named, and none of them lost styling in U8,
+because no page loaded a deleted sheet after U7: `error` (the handlers'
+stored message strings, which the v2 helpers turn into text), `infotext`
+(two unreached help printers), `footer` and `advertise-top-left` (the chrome,
+styled by `p202c-footer` and `.p202c-brand iframe`), `list` (a PHP value, not
+a class), `no-sort` and `tablesorter-childRow` (script hooks: tablesort's own
+class, and the DNI server's row markup), and `title` and
+`result_main_column_level_0` (the unreached print renderer). The browser
+suite's `componentClassesAreStyled` check measured every page after the
+deletion.
+
+**Asset weight, before and after, on three pages.** "Before" is the classic
+shell's list at the base commit (the last one that had it), computed from
+`p202_shell_assets()` over the files on disk; "after" is the one shell,
+computed the same way and measured live (bytes the browser fetched from the
+instance, uncompressed). Highcharts (278,589 bytes, from its pinned CDN URL)
+loads on both under `tracking202/` and is left out of the sums.
+
+| Page | Classic shell: files, CSS+JS bytes (gzip) | U8 shell: files, CSS+JS bytes (gzip) | Change (gzip) | U8 live: requests, CSS+JS+fonts bytes |
+|---|---|---|---|---|
+| Analyze › Keywords | 26, 1,052,066 (251,959) | 12, 580,593 (124,357) | −51% | 19, 903,090 |
+| Setup › Campaigns | 32, 1,227,861 (303,057) | 12, 580,593 (124,357) | −59% | 19, 917,030 (adds `p202-setup.js`) |
+| Account home | 26, 1,054,391 (252,912) | 11, 578,073 (123,248) | −51% | 17, 866,654 |
+
+The classic lists also loaded the Flat UI and Font Awesome fonts (311,788
+bytes of woff declared against 343,336 for Lato and Bootstrap Icons now), and
+`custom.php`, a PHP-rendered script, on every page. The U8 shell is 1,681 raw
+bytes (386 gzip) heavier than the v2 shell at the base commit: the banner's
+loader and its two rules. The tree lost 4.5 MB of `202-css/` and 1.2 MB of
+`202-js/`.
+
+**Left open.** CLAUDE.md's "Two page shells, one chrome" note still
+describes the classic shell and the `ui` option; it is project instruction
+and is left for its owner to edit. `renderDynamicContentSegmentHelp()` and
+`getDynamicContentSegment()` print classic-era help markup (`infotext`, no
+banned class) and have no caller. The off-by-default JSON transport
+(`report_dispatch.php`) serves no page since the classic reports went.
+
+### 10.5 What "migrated" means, checked
+
+- **`NoLegacyBootstrapClassesTest` stops being opt-in.** Until U8 it checked
+  the pages that passed `'ui' => 'v2'`. U8 points it at **every page, AJAX
+  fragment and script in the tree**, so a Bootstrap 3 or Flat UI class
+  anywhere fails CI. **Done in U8** (§10.4.1).
+- **A structural test that the legacy assets are unreachable.** No
+  `legacy.*` id in `assets.php` is referenced by any page, and U8 deletes
+  them. An asset nobody loads is removed, not kept "just in case". **Done in
+  U8:** ShellIsolationTest (§10.4.1).
+- **`ComponentClassIsConsumedTest`** covers every new class, so no class that
+  styles nothing ships (error pattern #19).
+- **Browser passes per family** (`tests/browser/`, with a baseline entry per
+  page in `lib/checks.js`):
+  - light and dark themes;
+  - a 1280px desktop and a 390px phone width;
+  - no console errors;
+  - `flexContainersKeepTheirSpaces` and `currentSubMenuItemIsVisible`;
+  - each page's interactive behaviour: forms submit and show server errors,
+    filters apply, AJAX panels load, confirm dialogs confirm.
+- **Live pass per family:** the Setup and Update pages are driven end to end,
+  creating a campaign, uploading a revenue file and generating links, because
+  a form that looks right and posts the wrong field is the failure a
+  screenshot cannot see.
+- **Pre-login:** `PreLoginPostRequiresTokenTest` and
+  `tests/live/upgrade-csrf.sh` are green on the migrated pages.
+
+### 10.6 Non-functional notes
+
+- **Performance.** A v2 page loads Bootstrap 5.3 and the theme instead of
+  Bootstrap 3, Flat UI Pro, jQuery UI and a stack of plugins. The asset
+  weight per page goes down; U8 measures the before and after on three
+  representative pages rather than asserting it. **Measured in U8**
+  (§10.4.1): 51–59% less CSS and JavaScript after gzip on the three pages.
+- **Accessibility.** Bootstrap 5 components bring focus handling and ARIA
+  that the Bootstrap 3 and Flat UI widgets lack. Each family's browser pass
+  also checks keyboard reachability of the primary action and labelled form
+  fields.
+- **Risk.** The migration is wide but shallow per page: markup and scripts,
+  not data. The two places it touches behaviour are covered first by tests:
+  the pre-login security checks (U7) and the revenue upload (U5, together
+  with the ledger change).

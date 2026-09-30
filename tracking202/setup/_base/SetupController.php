@@ -18,7 +18,6 @@ abstract class SetupController
     protected User $user;
     protected ?Slack $slack = null;
     protected array $errors = [];
-    protected array $successMessages = [];
     protected string $csrfToken;
     
     public function __construct()
@@ -145,14 +144,6 @@ abstract class SetupController
     protected function addError(string $field, string $message): void
     {
         $this->errors[$field] = '<div class="error">' . htmlspecialchars($message) . '</div>';
-    }
-    
-    /**
-     * Add success message
-     */
-    protected function addSuccess(string $message): void
-    {
-        $this->successMessages[] = '<div class="success">' . htmlspecialchars($message) . '</div>';
     }
     
     /**

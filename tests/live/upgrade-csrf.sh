@@ -39,8 +39,8 @@ DB_PASS=${P202_DB_PASS:-}
 DB_HOST=${P202_DB_HOST:-}
 DB_PORT=${P202_DB_PORT:-}
 # The rung to wind back to. Any version below the code version works — the
-# ladder climbs from wherever it starts — and 1.9.75 is the one RELEASING.md
-# names for the attribution tables.
+# ladder climbs from wherever it starts — and 1.9.75 is the rung that creates
+# the measurement tables.
 PRIOR=${P202_PRIOR_VERSION:-1.9.75}
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -165,6 +165,35 @@ hasnt "$OUT/no-session.html" 'Success!' "not upgraded"
 has   "$OUT/no-session.html" 'security check failed' "says why"
 eq "$(stored)" "$PRIOR" "202_version untouched"
 rm -f "$JAR2"
+
+say "POST while another upgrade of this database holds the upgrade lock"
+# A second session's POST (an operator reloading after the first page's 504)
+# ran a second ladder alongside the first and printed Success! at 1.9.75. The
+# ladder now runs under a named lock per database; the second runs nothing.
+mysql_q -N "$DB" -e "SELECT GET_LOCK(CONCAT('prosper202_upgrade:', SHA1(DATABASE())), 0); SELECT SLEEP(6);" > "$OUT/holder.txt" &
+HOLDER=$!
+sleep 1
+STATUS=$(fetch "$JAR" "$OUT/busy.html" "${SUBMIT[@]}")
+wait "$HOLDER"
+eq "$(head -1 "$OUT/holder.txt")" 1 "the other session held the lock"
+eq "$STATUS" 200 "answered 200"
+hasnt "$OUT/busy.html" 'Success!' "not reported as upgraded"
+has   "$OUT/busy.html" 'An upgrade is already running' "says another upgrade is running"
+eq "$(stored)" "$PRIOR" "and ran nothing: 202_version untouched"
+
+say "a ladder that stops short of the code version is not a success"
+# upgrade_databases() returned true whenever it ran to its end, including when
+# a rung held its version for the next run; the page then said Success! at a
+# version below the code's. A stored version no rung matches is the plainest
+# such stop: 1.9.3.9 is below the code's, needs no date (the pre-1.9.3 rungs
+# ask for one, and a missing date fails before the ladder), and no rung names it.
+Q "UPDATE 202_version SET version='1.9.3.9'"
+STATUS=$(fetch "$JAR" "$OUT/short.html" "${SUBMIT[@]}")
+eq "$STATUS" 200 "answered 200"
+hasnt "$OUT/short.html" 'Success!' "not reported as upgraded"
+has   "$OUT/short.html" 'did not finish' "says it did not finish"
+eq "$(stored)" "1.9.3.9" "the version is where the ladder left it"
+wind_back
 
 say "POST the form as a browser would — its own fields, token included"
 STATUS=$(fetch "$JAR" "$OUT/ok.html" "${SUBMIT[@]}")

@@ -108,31 +108,24 @@ missing): `php`, `composer`, `go`, `git`, `zip`. The script exports the current
   `CGO_ENABLED=0`, so no C toolchain is needed.
 - **Zip name doesn't match the tag** — you tagged without bumping
   `202-config/version.php`. Delete the tag, bump the file, re-tag.
-- **A branch deployment says "Already Upgraded" but its schema is behind** —
-  development only. `upgrade_needed()` is `stored != code`, so an install that
-  already recorded the version you are developing never re-runs its step, even
-  if the tables were reshaped under that number since. Symptom: an
-  unknown-column error on a table the release added. To repair, on that
-  install: **back up the database**, set the stored version back to the release
-  before the step that creates the tables (`UPDATE 202_version SET
-  version='1.9.75';` for the 1.9.76 attribution tables), then run
-  `202-config/upgrade.php`.
+- **A branch deployment's schema is behind the code** — databases above 1.9.55
+  from before the app-core reshape are reinstalled, not repaired: no release
+  ever carried their intermediate schema, so the upgrade path has none to
+  convert (see `documentation/features/measurement-rewrite-plan.md`,
+  Constraints).
 
-  Two things to know first. `202-config/upgrade.php` needs no login — that is
-  how a fresh upgrade runs before there is a session — so while the version is
-  wound back, anyone who can reach the host can load the page and run the
-  upgrade themselves. They cannot do it from another site: the POST requires
-  the session token the page embeds, the same check `install.php` makes, and
-  `tests/live/upgrade-csrf.sh` proves it against a running instance. Still, do
-  it behind a firewall or in a maintenance window. And re-running the step is
-  idempotent but not inert: `SchemaReconciler` adds the columns and indexes the
-  live table is missing and issues `MODIFY COLUMN` where a column is `NOT NULL`
-  and the definition is not, the backfill `UPDATE`s run every time (on a
-  matching table they change no rows), and the step stops the whole upgrade
-  with `Upgrade paused` while pre-release `202_skan_*` tables still hold rows,
-  because creating the `202_attribution_*` tables alongside them would strand
-  those postbacks.
-
+- **An upgrade on a large install answers 504 (or another timeout).** The page
+  renders only when the upgrade finishes. At 1M conversions that takes 57 s on
+  MariaDB 10.11 and 91 s on MySQL 8.0 (plan §7.5a), which is more than a 60 s
+  proxy read timeout. The upgrade keeps running on the server:
+  `UPGRADE::upgrade_databases()` ignores the client going away and has no time
+  limit. Tell the operator to wait a few minutes and reload `upgrade.php`;
+  there is nothing to redo. If they reload while it is still running, the page
+  says "An upgrade is already running" and changes nothing, because a named
+  lock allows one upgrade per database. Once it has finished, the page sends
+  them to the login page. A process killed mid-upgrade leaves the stored
+  version where the last completed step put it, and the next run resumes
+  from there.
 - **`fail_on_unmatched_files`** trips when the build produced no zip — read the
   "Build release artifact" step log; the publish step is working as intended by
   refusing to create an empty release.

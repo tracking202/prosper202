@@ -171,58 +171,65 @@
 /* ---------- Tokens: dark ---------- */
 
 [data-bs-theme="dark"] {
+    /* Lifted one notch from near-black (page #0f1216, panels #171b21) to the
+       range of GitHub's "dimmed" theme: panels stand out from the page at
+       about 1.18:1 instead of 1.09:1, so they read as surfaces rather than
+       outlines, and body text is a softer white (12:1 on a panel, not 14:1).
+       Every text colour below was checked against the panel, the panel head
+       and the hover background, and the chart palette in 202-js/chart.theme.js
+       was re-validated on the new panel. */
     color-scheme: dark;
 
     --p202-accent: #2f6fdd;
     --p202-accent-hover: #3f7de6;
     --p202-accent-active: #5a90ea;
     --p202-accent-text: #6f9ff0;
-    --p202-accent-soft: #1e2a40;
+    --p202-accent-soft: #26365a;
     --p202-accent-border: #2f4a7a;
-    --p202-surface: #171b21;
-    --p202-line-strong: #3d444d;
+    --p202-surface: #20252c;
+    --p202-line-strong: #4a525d;
     --p202-good: #5cc47f;
     --p202-warn: #f0a95c;
     --p202-bad: #f07a70;
 
-    --bs-body-color: #e8eaed;
-    --bs-body-color-rgb: 232, 234, 237;
-    --bs-body-bg: #0f1216;
-    --bs-body-bg-rgb: 15, 18, 22;
-    --bs-emphasis-color: #ffffff;
-    --bs-emphasis-color-rgb: 255, 255, 255;
+    --bs-body-color: #dfe3e8;
+    --bs-body-color-rgb: 223, 227, 232;
+    --bs-body-bg: #13161b;
+    --bs-body-bg-rgb: 19, 22, 27;
+    --bs-emphasis-color: #f3f5f7;
+    --bs-emphasis-color-rgb: 243, 245, 247;
     --bs-secondary-color: #9aa3ad;
     --bs-secondary-color-rgb: 154, 163, 173;
-    --bs-secondary-bg: #1d222a;
-    --bs-secondary-bg-rgb: 29, 34, 42;
-    --bs-tertiary-color: #8a919b;
-    --bs-tertiary-color-rgb: 138, 145, 155;
-    --bs-tertiary-bg: #232932;
-    --bs-tertiary-bg-rgb: 35, 41, 50;
-    --bs-heading-color: #e8eaed;
+    --bs-secondary-bg: #272d35;
+    --bs-secondary-bg-rgb: 39, 45, 53;
+    --bs-tertiary-color: #949ba5;
+    --bs-tertiary-color-rgb: 148, 155, 165;
+    --bs-tertiary-bg: #2d333c;
+    --bs-tertiary-bg-rgb: 45, 51, 60;
+    --bs-heading-color: #dfe3e8;
 
     --bs-primary-text-emphasis: #8db3f5;
-    --bs-primary-bg-subtle: #1e2a40;
+    --bs-primary-bg-subtle: #26365a;
     --bs-primary-border-subtle: #2f4a7a;
     --bs-secondary-text-emphasis: #c9cdd3;
-    --bs-secondary-bg-subtle: #232932;
-    --bs-secondary-border-subtle: #2c323a;
+    --bs-secondary-bg-subtle: #2d333c;
+    --bs-secondary-border-subtle: #383f49;
     --bs-success-text-emphasis: #5cc47f;
-    --bs-success-bg-subtle: #15301f;
+    --bs-success-bg-subtle: #1c3f29;
     --bs-success-border-subtle: #1f5a34;
     --bs-info-text-emphasis: #8db3f5;
-    --bs-info-bg-subtle: #1e2a40;
+    --bs-info-bg-subtle: #26365a;
     --bs-info-border-subtle: #2f4a7a;
     --bs-warning-text-emphasis: #f0a95c;
-    --bs-warning-bg-subtle: #3a2810;
+    --bs-warning-bg-subtle: #46331c;
     --bs-warning-border-subtle: #7a4e18;
     --bs-danger-text-emphasis: #f07a70;
-    --bs-danger-bg-subtle: #3b1a17;
+    --bs-danger-bg-subtle: #4d2521;
     --bs-danger-border-subtle: #7a2a24;
-    --bs-light: #232932;
-    --bs-light-rgb: 35, 41, 50;
-    --bs-dark: #e8eaed;
-    --bs-dark-rgb: 232, 234, 237;
+    --bs-light: #2d333c;
+    --bs-light-rgb: 45, 51, 60;
+    --bs-dark: #dfe3e8;
+    --bs-dark-rgb: 223, 227, 232;
 
     --bs-link-color: #6f9ff0;
     --bs-link-color-rgb: 111, 159, 240;
@@ -230,7 +237,7 @@
     --bs-link-hover-color-rgb: 141, 179, 245;
     --bs-code-color: #f07a70;
 
-    --bs-border-color: #2c323a;
+    --bs-border-color: #383f49;
     --bs-border-color-translucent: rgba(255, 255, 255, 0.12);
     --bs-box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
     --bs-box-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);

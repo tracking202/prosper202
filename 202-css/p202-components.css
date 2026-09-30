@@ -9,7 +9,8 @@
  *   .p202-panel         a titled card with a count and a filter slot
  *   .p202-tile          a KPI tile (label, number, sub-line, tone)
  *   .p202-pill          a status pill in five tones
- *   .p202-table         the report table (uppercase headers, totals row)
+ *   .p202-table         the report table (uppercase headers, totals row);
+ *                       .p202-sort is a sortable column's header button
  *   .p202-list          the side-panel list (name, pills, actions, children)
  *   .p202-empty         an empty state with one next action
  *   .p202-code          a read-only code box with a Copy button
@@ -18,6 +19,7 @@
  *   .p202-skeleton      a loading placeholder
  *   .p202-disclosure    the "Advanced" part of a form, closed by default
  *   .p202-decided       a note where the app decided something, with a change link
+ *   .p202-standalone    the pre-login page: one column of cards, no chrome
  *
  * 202-account/ui-kit.php renders every one of them in every state; look there
  * before inventing a class, and add the new state there when you add one.
@@ -71,32 +73,6 @@
     flex-wrap: wrap;
     gap: 0.5rem;
     margin-left: auto;
-}
-
-.p202-page-header--accent {
-    padding: 1.25rem 1.5rem;
-    border-radius: 12px;
-    background: var(--p202-accent);
-    color: #fff;
-    box-shadow: 0 4px 15px rgba(47, 111, 221, 0.2);
-}
-
-.p202-page-header--accent .p202-page-header__title,
-.p202-page-header--accent .p202-page-header__desc {
-    color: #fff;
-}
-
-.p202-page-header--accent .p202-page-header__desc {
-    opacity: 0.92;
-}
-
-.p202-page-header--accent .p202-page-header__icon {
-    background: rgba(255, 255, 255, 0.2);
-    color: #fff;
-    width: 56px;
-    height: 56px;
-    border-radius: 12px;
-    font-size: 24px;
 }
 
 /* ---------- Tabs ---------- */
@@ -362,6 +338,50 @@ a.p202-pill:focus-visible {
     cursor: pointer;
 }
 
+/* A sortable column's header (p202_data_table(), sortable). The label is a
+   button so the sort is reachable from the keyboard; tablesort.js listens on
+   the <th>, which the click reaches by bubbling. The arrow says the order
+   from aria-sort, which p202-ui.js keeps in step with the rows. Inline, not
+   flex: a flex label would drop the spaces in a multi-word heading. */
+.p202-sort {
+    display: inline;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    cursor: pointer;
+}
+
+.p202-sort::after {
+    content: "\2195";
+    display: inline-block;
+    margin-left: 0.3em;
+    opacity: 0.35;
+}
+
+.p202-table th[aria-sort="ascending"] > .p202-sort::after {
+    content: "\2191";
+    opacity: 1;
+}
+
+.p202-table th[aria-sort="descending"] > .p202-sort::after {
+    content: "\2193";
+    opacity: 1;
+}
+
+.p202-table th[aria-sort] {
+    color: var(--bs-body-color);
+}
+
+.p202-sort:focus-visible {
+    outline: none;
+    border-radius: 4px;
+    box-shadow: 0 0 0 0.2rem var(--bs-focus-ring-color);
+}
+
 .p202-table-toolbar {
     display: flex;
     flex-wrap: wrap;
@@ -379,10 +399,14 @@ a.p202-pill:focus-visible {
 
 /* ---------- List ---------- */
 
+/* One divided list, not a stack of cards: a row per item with a hairline
+   between rows, children drawn as a tree under their parent, and actions in
+   the row's quiet colour until they are pointed at. Every page that uses the
+   list gets this from the same markup — the kit shows it. */
+
 .p202-list {
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
     margin: 0;
     padding: 0;
     list-style: none;
@@ -392,22 +416,25 @@ a.p202-pill:focus-visible {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0.35rem 0.6rem;
-    padding: 0.6rem 0.75rem;
-    border: 1px solid var(--bs-border-color);
+    gap: 0.25rem 0.6rem;
+    padding: 0.7rem 0.5rem;
     border-radius: 8px;
-    background: var(--p202-surface);
-    transition: border-color 0.15s ease, background-color 0.15s ease;
+    transition: background-color 0.15s ease;
 }
 
-.p202-list__item:hover {
-    border-color: var(--bs-primary-border-subtle);
-    background: var(--bs-secondary-bg);
+.p202-list > .p202-list__item + .p202-list__item {
+    border-top: 1px solid var(--bs-border-color);
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+}
+
+.p202-list__item:not(:has(> .p202-list__children)):hover {
+    background: var(--bs-tertiary-bg);
 }
 
 .p202-list__item.is-active {
-    border-color: var(--p202-accent);
     background: var(--bs-primary-bg-subtle);
+    box-shadow: inset 3px 0 0 var(--p202-accent);
 }
 
 .p202-list__name {
@@ -429,57 +456,193 @@ a.p202-pill:focus-visible {
 .p202-list__actions {
     display: flex;
     align-items: center;
-    gap: 0.15rem;
+    gap: 0.1rem;
     margin-left: auto;
+}
+
+/* A remove button sits in its own <form>, which the flex row makes a block
+   (whatever its d-inline says). Inline inside it, the button would sit on
+   the form's text baseline and drop below the links beside it; as a block
+   it is exactly as tall as they are. */
+.p202-list__actions > form {
+    margin: 0;
+}
+
+.p202-list__actions > form > .p202-list__action {
+    display: block;
 }
 
 .p202-list__action {
     display: inline-block;
-    padding: 0.2rem 0.55rem;
-    border: 1px solid transparent;
+    font-family: inherit;
+    padding: 0.2rem 0.5rem;
+    border: 0;
     border-radius: 6px;
     background: transparent;
-    color: var(--p202-accent-text);
+    color: var(--bs-secondary-color);
     font-size: 0.75rem;
-    font-weight: 700;
+    font-weight: 600;
     line-height: 1.4;
     text-decoration: none;
     cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 .p202-list__action:hover,
-.p202-list__action:focus {
+.p202-list__action:focus-visible {
     background: var(--bs-primary-bg-subtle);
-    border-color: var(--bs-primary-border-subtle);
-    color: var(--bs-primary-text-emphasis);
+    color: var(--p202-accent-text);
     text-decoration: none;
 }
 
-.p202-list__action--danger {
-    color: var(--bs-danger-text-emphasis);
+.p202-list__action:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 0.2rem var(--bs-focus-ring-color);
 }
 
 .p202-list__action--danger:hover,
-.p202-list__action--danger:focus {
+.p202-list__action--danger:focus-visible {
     background: var(--bs-danger-bg-subtle);
-    border-color: var(--bs-danger-border-subtle);
     color: var(--bs-danger-text-emphasis);
 }
 
 .p202-list__children {
-    flex-basis: 100%;
+    flex-basis: calc(100% + 0.5rem);
     display: flex;
     flex-direction: column;
-    gap: 0.35rem;
-    margin: 0.25rem 0 0 0.5rem;
-    padding: 0 0 0 0.75rem;
-    border-left: 2px solid var(--bs-border-color);
+    /* Out into the parent's right padding, so a child's actions line up
+       under its parent's. The basis has to grow as well: a negative margin
+       alone does not widen a flex item whose basis is 100%. */
+    margin: 0.2rem -0.5rem 0 0;
+    padding: 0;
     list-style: none;
 }
 
-.p202-list__children .p202-list__item {
-    background: var(--bs-secondary-bg);
-    padding: 0.45rem 0.6rem;
+/* A child row hangs off a tree line: the vertical runs the height of every
+   child but the last, which stops at its own middle, and a short arm meets
+   the name. */
+.p202-list__children > .p202-list__item {
+    position: relative;
+    padding: 0.4rem 0.5rem 0.4rem 1.75rem;
+}
+
+.p202-list__children > .p202-list__item::before,
+.p202-list__children > .p202-list__item::after {
+    content: "";
+    position: absolute;
+    left: 0.6rem;
+    border-color: var(--bs-border-color);
+    border-style: solid;
+    border-width: 0;
+    pointer-events: none;
+}
+
+.p202-list__children > .p202-list__item::before {
+    top: 0;
+    bottom: 0;
+    border-left-width: 1.5px;
+}
+
+.p202-list__children > .p202-list__item:last-child::before {
+    bottom: 50%;
+}
+
+.p202-list__children > .p202-list__item::after {
+    top: 50%;
+    width: 0.7rem;
+    border-top-width: 1.5px;
+}
+
+.p202-list__children .p202-list__name {
+    font-weight: 500;
+}
+
+/* Grouped: for long lists (every text ad an account has). A flat run of
+   sections, each a label pinned to the top of the scrolling panel while its
+   rows pass under it, then one line per row — name, the meta beside it,
+   actions — with no tree lines, because the label already says where the
+   rows belong. */
+
+.p202-list--grouped > .p202-list__item {
+    display: block;
+    padding: 0;
+    border-radius: 0;
+}
+
+.p202-list--grouped > .p202-list__item + .p202-list__item {
+    border-top: 0;
+    margin-top: 0.5rem;
+}
+
+.p202-list__group {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.5rem 0.4rem;
+    border-bottom: 1px solid var(--bs-border-color);
+    background: var(--p202-surface);
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--bs-secondary-color);
+}
+
+.p202-list__group-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.p202-list--grouped .p202-list__children {
+    margin: 0;
+}
+
+.p202-list--grouped .p202-list__children > .p202-list__item {
+    flex-wrap: nowrap;
+    padding: 0.4rem 0.5rem;
+    /* Square, or the divider above each row bends at its corners. */
+    border-radius: 0;
+}
+
+.p202-list--grouped .p202-list__children > .p202-list__item::before,
+.p202-list--grouped .p202-list__children > .p202-list__item::after {
+    content: none;
+}
+
+.p202-list--grouped .p202-list__children > .p202-list__item + .p202-list__item {
+    border-top: 1px solid var(--bs-border-color-translucent);
+}
+
+.p202-list--grouped .p202-list__children .p202-list__name {
+    flex: 0 1 auto;
+    max-width: 45%;
+}
+
+.p202-list--grouped .p202-list__meta {
+    order: 1;
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.p202-list--grouped .p202-list__actions {
+    order: 2;
+    flex-shrink: 0;
+}
+
+/* A panel body that scrolls on its own once its list outgrows the screen,
+   so the form beside it stays in reach. No top padding: a pinned group label
+   sits flush with the panel head. */
+.p202-panel__body--scroll {
+    max-height: min(70vh, 44rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-top: 0;
 }
 
 /* ---------- Empty state ---------- */
@@ -780,12 +943,29 @@ a.p202-pill:focus-visible {
     }
 
     .p202-list__item,
+    .p202-list__action,
     .p202-disclosure > summary::before {
         transition: none;
     }
 }
 
 @media (max-width: 575px) {
+    /* A phone has no room for name, headline and actions on one line: the
+       meta drops below the name, as it does in the ungrouped list. */
+    .p202-list--grouped .p202-list__children > .p202-list__item {
+        flex-wrap: wrap;
+    }
+
+    .p202-list--grouped .p202-list__children .p202-list__name {
+        flex: 1 1 0;
+        max-width: none;
+    }
+
+    .p202-list--grouped .p202-list__meta {
+        order: 3;
+        flex-basis: 100%;
+    }
+
     .p202-page-header__actions {
         margin-left: 0;
         flex-basis: 100%;
@@ -798,4 +978,219 @@ a.p202-pill:focus-visible {
     .p202-form-actions .btn {
         flex: 1 1 auto;
     }
+}
+
+/* U6: Account ------------------------------------------------------------ */
+
+/* A document rendered from Markdown (202-account/docs.php): the renderer's
+   own elements, set in the theme's tokens so the page reads in both themes.
+   The classic page hard-coded #333 text on white. */
+.p202-doc {
+    max-width: 60rem;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
+}
+
+.p202-doc h1,
+.p202-doc h2,
+.p202-doc h3 {
+    margin: 1.75rem 0 0.75rem;
+    font-weight: 700;
+    color: var(--bs-body-color);
+}
+
+.p202-doc h1 {
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid var(--p202-accent);
+    font-size: 1.5rem;
+}
+
+.p202-doc h2 {
+    padding-left: 0.6rem;
+    border-left: 4px solid var(--p202-accent);
+    font-size: 1.25rem;
+}
+
+.p202-doc h3 {
+    font-size: 1.05rem;
+}
+
+.p202-doc > :first-child {
+    margin-top: 0;
+}
+
+.p202-doc pre {
+    padding: 0.85rem 1rem;
+    overflow-x: auto;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 8px;
+    background: var(--bs-secondary-bg);
+}
+
+/* A wide table scrolls inside its own box rather than taking the page. */
+.p202-doc .doc-table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    margin: 1rem 0 1.5rem;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+.p202-doc .doc-table th,
+.p202-doc .doc-table td {
+    padding: 0.5rem 0.65rem;
+    border: 1px solid var(--bs-border-color);
+    text-align: left;
+    vertical-align: top;
+}
+
+.p202-doc .doc-table th {
+    background: var(--bs-secondary-bg);
+    font-weight: 700;
+}
+
+/* U4: Setup ---------------------------------------------------------------
+   A many-line snippet (a landing page's redirect script, the universal
+   pixel) scrolls inside its own box rather than pushing the next snippet
+   off the screen. The kit shows it under "Code & strip". */
+
+.p202-code__value--long {
+    max-height: 18rem;
+    overflow-y: auto;
+}
+
+/* A radio group's <legend> is its label: Bootstrap's reboot sizes a legend
+   like a heading, so one styled as a label came out twice the size of the
+   labels around it ("Send visitors to", "Cost" on Get Links). */
+legend.form-label {
+    font-size: inherit;
+    line-height: inherit;
+}
+
+/* U3: Analyze */
+
+/* A server-sorted column's heading (p202_data_table(), `href`): a link that
+   looks like the sort button it stands in for. */
+a.p202-sort {
+    text-decoration: none;
+}
+
+a.p202-sort:hover {
+    color: var(--bs-body-color);
+}
+
+/* A group heading inside a report table: the custom-variable report's
+   "traffic source · variable" rows, each over the values under it. */
+.p202-table > tbody > tr.p202-table__group > th {
+    padding: 0.5rem 0.7rem;
+    border-top: 1px solid var(--p202-line-strong);
+    background: var(--bs-tertiary-bg);
+    font-size: 0.8125rem;
+    font-weight: 700;
+}
+
+/* U7: Standalone ----------------------------------------------------------
+ *
+ * .p202-standalone is the page a person reaches before there is a login, or
+ * outside the app's chrome: info_top() in 202-config/functions-standalone-ui.php
+ * puts it on <body>. One centred column (__column, --wide for the installer)
+ * over the partner wallpaper (__wallpaper), the logo on top (__brand), then
+ * Bootstrap cards (__card) whose heading is __title with one line of __desc,
+ * and a quiet footer (__foot). __message holds a _die() message, which its
+ * callers write as a heading and a sentence.
+ */
+
+.p202-standalone {
+    min-height: 100vh;
+    background-color: var(--bs-tertiary-bg);
+}
+
+.p202-standalone__wallpaper {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    display: block;
+    background-size: cover;
+    background-repeat: no-repeat;
+    background-position: center;
+}
+
+.p202-standalone__main {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 100vh;
+    padding: 2.5rem 1rem;
+    /* The column takes clicks; the wallpaper behind it takes the rest. */
+    pointer-events: none;
+}
+
+.p202-standalone__column {
+    width: 100%;
+    max-width: 26rem;
+    pointer-events: auto;
+}
+
+.p202-standalone__column--wide {
+    max-width: 46rem;
+}
+
+.p202-standalone__brand {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 1rem;
+}
+
+.p202-standalone__brand img {
+    max-width: 12rem;
+    height: auto;
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--bs-border-radius-lg);
+    background-color: rgba(255, 255, 255, 0.92);
+}
+
+.p202-standalone__card {
+    margin-bottom: 1rem;
+    box-shadow: var(--bs-box-shadow);
+}
+
+.p202-standalone__title {
+    margin-bottom: 0.25rem;
+    font-size: 1.25rem;
+    font-weight: 700;
+}
+
+.p202-standalone__desc {
+    margin-bottom: 1rem;
+    color: var(--bs-secondary-color);
+}
+
+.p202-standalone__message h6 {
+    margin-bottom: 0.5rem;
+    font-size: 1.125rem;
+    font-weight: 700;
+}
+
+.p202-standalone__message small {
+    font-size: inherit;
+}
+
+.p202-standalone__ad {
+    /* The sign-in page's 288x200 placement; empty when nothing is served. */
+    width: 288px;
+    max-width: 100%;
+    margin: 0 auto 1rem;
+}
+
+.p202-standalone__foot {
+    margin: 0;
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--bs-border-radius);
+    background-color: var(--bs-body-bg);
+    color: var(--bs-secondary-color);
+    font-size: 0.8125rem;
+    text-align: center;
 }

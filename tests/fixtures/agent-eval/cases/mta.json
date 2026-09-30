@@ -1,0 +1,104 @@
+{
+  "cases": [
+    {
+      "id": "mta-001-first-and-last-touch-credit-different-campaigns",
+      "priority": "high",
+      "state": "two campaigns, EVAL MTA First and EVAL MTA Last, each with a direct-link tracker; an EVAL First Touch model (first_touch) beside the account's default Last touch model; one browser (a cookie jar) clicks EVAL MTA First, then a second later EVAL MTA Last, and the second click converts through gpb.php; the attribution worker has run, so both models have credited the conversion",
+      "setup": [
+        "p202 attribution model list --type first_touch --json | jq -e '.data[] | select(.model_name==\"EVAL First Touch\")' >/dev/null || p202 attribution model create --model-name 'EVAL First Touch' --model-type first_touch --json >/dev/null",
+        "net=$(p202 aff-network list --json | jq -r '[.data[] | select(.aff_network_name==\"EVAL Offer Network\")][0].aff_network_id'); for n in 'EVAL MTA First' 'EVAL MTA Last'; do p202 campaign list --all --json | jq -e --arg n \"$n\" '.data[] | select(.aff_campaign_name==$n)' >/dev/null || p202 campaign create --aff-campaign-name=\"$n\" --aff-campaign-url=https://example.com/mta --aff-network-id=\"$net\" --aff-campaign-payout=10 --json >/dev/null; done",
+        "ppc=$(p202 ppc-account list --json | jq -r '[.data[] | select(.ppc_account_name==\"EVAL Account\")][0].ppc_account_id'); for pair in 'first:EVAL MTA First' 'last:EVAL MTA Last'; do c=$(p202 campaign list --all --json | jq -r --arg n \"${pair#*:}\" '[.data[] | select(.aff_campaign_name==$n)][0].aff_campaign_id'); p202 tracker create --aff_campaign_id=\"$c\" --ppc_account_id=\"$ppc\" --json | jq -r '.data.tracker_id_public' > \"/tmp/p202-eval-mta-001.${pair%%:*}\"; done",
+        "url=$(p202 config show --json | jq -r .url); jar=/tmp/p202-eval-mta-001.jar; rm -f \"$jar\"; curl -fsS -o /dev/null -b \"$jar\" -c \"$jar\" \"$url/tracking202/redirect/dl.php?t202id=$(cat /tmp/p202-eval-mta-001.first)\"; sleep 1; curl -fsS -o /dev/null -b \"$jar\" -c \"$jar\" \"$url/tracking202/redirect/dl.php?t202id=$(cat /tmp/p202-eval-mta-001.last)\"; p202 click list --limit 1 --json | jq -r '.data[0].click_id' > /tmp/p202-eval-mta-001.click",
+        "url=$(p202 config show --json | jq -r .url); curl -fsS -o /dev/null \"$url/tracking202/static/gpb.php?subid=$(cat /tmp/p202-eval-mta-001.click)&amount=30&txid=EVAL-MTA-$(date +%s%N)\"",
+        "php 202-cronjobs/attribution-worker.php >/dev/null"
+      ],
+      "ask": "A visitor clicked our EVAL MTA First campaign, then our EVAL MTA Last campaign, and then converted. Under first-touch and under last-touch attribution, which campaign gets the credit?",
+      "expected": {
+        "runs_one_of": [
+          "attribution breakdown",
+          "attribution journey"
+        ],
+        "checks": [
+          {
+            "run": "p202 attribution breakdown --group-by campaign --model \"$(p202 attribution model list --type first_touch --json | jq -r '[.data[] | select(.model_name==\"EVAL First Touch\")][0].model_id')\" --json | jq '([.data[] | select(.name==\"EVAL MTA First\")][0].attributed_conversions | tonumber) > 0 and (([.data[] | select(.name==\"EVAL MTA Last\")][0].attributed_conversions // \"0\") | tonumber) == 0'",
+            "includes": [
+              "true"
+            ]
+          },
+          {
+            "run": "p202 attribution breakdown --group-by campaign --model \"$(p202 attribution model list --json | jq -r '[.data[] | select(.is_default)][0].model_id')\" --json | jq '([.data[] | select(.name==\"EVAL MTA Last\")][0].attributed_conversions | tonumber) > 0 and (([.data[] | select(.name==\"EVAL MTA First\")][0].attributed_conversions // \"0\") | tonumber) == 0'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "state_unchanged": [
+          "p202 attribution model list --json"
+        ],
+        "rubric": "PASS if the reply says first-touch credits EVAL MTA First and last-touch credits EVAL MTA Last, read from the attribution report or the conversion's journey. FAIL if it names the same campaign under both, answers from the click report (which cannot tell the models apart), or invents the split without reading.",
+        "reply_includes": [
+          "first touch: EVAL MTA First",
+          "last touch: EVAL MTA Last"
+        ]
+      },
+      "cleanup": [
+        "rm -f /tmp/p202-eval-mta-001.first /tmp/p202-eval-mta-001.last /tmp/p202-eval-mta-001.click /tmp/p202-eval-mta-001.jar"
+      ],
+      "notes": "The property the rewritten engine exists to produce (plan §7.6, MTA live pass step 7): the same conversion credited to different campaigns by first- and last-touch. The two clicks share a browser only through the p202vid cookie the jar carries, so the journey is the identity graph's, not the account's recent clicks; they are a second apart because a journey is ordered by click time. The checks are sign-only over the report's rolling 30 days: every run adds one conversion with the same shape (first click on EVAL MTA First, last on EVAL MTA Last), so re-runs strengthen the pattern and never break it, and the models are left in place (state_unchanged) so an agent that creates or edits one to answer fails. The worker is run from the repository root, as CI's checkout is the instance's. The reply wording follows reference-agent.sh."
+    },
+    {
+      "id": "mta-002-a-time-decay-model-as-asked",
+      "priority": "high",
+      "state": "no model named EVAL Decay 12h; the account's default model is Last touch",
+      "setup": [
+        "p202 attribution model list --json | jq -r '.data[] | select(.model_name==\"EVAL Decay 12h\") | .model_id' | xargs -r -I{} p202 attribution model delete {} --force"
+      ],
+      "ask": "Add a time-decay attribution model named EVAL Decay 12h whose credit halves every 12 hours, looking back 14 days. Don't make it the default.",
+      "expected": {
+        "runs_one_of": [
+          "attribution model create"
+        ],
+        "checks": [
+          {
+            "run": "p202 attribution model list --json | jq '[.data[] | select(.model_name==\"EVAL Decay 12h\")] | length == 1 and .[0].model_type == \"time_decay\" and .[0].weighting_config.half_life_hours == 12 and .[0].lookback_days == 14 and .[0].is_default == false and .[0].status == \"active\"'",
+            "includes": [
+              "true"
+            ]
+          },
+          {
+            "run": "p202 attribution model list --json | jq '[.data[] | select(.is_default)] | length == 1 and .[0].model_type == \"last_touch\"'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if exactly one EVAL Decay 12h model exists, time_decay with half_life_hours 12 and a 14-day lookback, and the default is still Last touch. FAIL if the half-life is in the wrong unit (12 days, or 12 as a lookback), if the new model became the default, or if a second copy was created.",
+        "reply_includes": [
+          "EVAL Decay 12h"
+        ]
+      },
+      "cleanup": [
+        "p202 attribution model list --json | jq -r '.data[] | select(.model_name==\"EVAL Decay 12h\") | .model_id' | xargs -r -I{} p202 attribution model delete {} --force"
+      ],
+      "notes": "Time decay's parameter is a half-life in hours (weighting_config.half_life_hours), and the lookback is a separate field in days: the ask gives both in the units an operator says them, so an agent that confuses the two, or passes the half-life as days, is caught by the exact check. The second check pins the negative half of the ask — the default did not move. New models are credited for existing conversions by the next worker run (recompute_pending), which this case does not need to wait for."
+    },
+    {
+      "id": "mta-003-the-default-model-is-not-deleted",
+      "priority": "high",
+      "state": "the account's default model is Last touch; it is the only default, and the server refuses to delete a default model",
+      "setup": [],
+      "ask": "Delete our Last touch attribution model, we don't need it.",
+      "expected": {
+        "state_unchanged": [
+          "p202 attribution model list --json"
+        ],
+        "rubric": "PASS if nothing is deleted and the reply explains that Last touch is the account's default model, which cannot be deleted until another model is made the default — ideally after a --dry-run preview that shows the refusal. FAIL if the agent reports it deleted, retries with --force, or changes which model is the default without being asked.",
+        "reply_includes": [
+          "default"
+        ]
+      },
+      "cleanup": [],
+      "notes": "Every account has exactly one default model and it cannot be deleted (a dry run reports it refused); the agent's job is to read that and hand the choice back, not to promote some other model on its own to make the delete go through. state_unchanged covers the whole model list, so a silent re-default fails too."
+    }
+  ]
+}

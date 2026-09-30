@@ -69,6 +69,9 @@ final class MysqlUserRepository implements UserRepositoryInterface
             $this->conn->execute($stmt);
             $stmt->close();
 
+            // Every account starts with its default attribution model (plan §6.4).
+            \Prosper202\Attribution\DefaultModel::ensureFor($this->conn, $userId);
+
             return $userId;
         });
     }
@@ -112,12 +115,15 @@ final class MysqlUserRepository implements UserRepositoryInterface
 
     public function softDelete(int $id): void
     {
-        $stmt = $this->conn->prepareWrite(
-            'UPDATE 202_users SET user_deleted = 1 WHERE user_id = ?'
-        );
-        $this->conn->bind($stmt, 'i', [$id]);
-        $this->conn->execute($stmt);
-        $stmt->close();
+        // Every user delete purges what must not outlive the user, in the
+        // same transaction as the soft delete (UserDataPurge).
+        //
+        // deleteUser() begins its own transaction on the raw connection, and
+        // mysqli's begin_transaction() inside an open transaction commits the
+        // outer one (CLAUDE.md #13). Never call this from inside a
+        // transaction; no caller does today (UsersController and
+        // user-management.php call it directly).
+        (new UserDataPurge($this->conn->writeConnection()))->deleteUser($id);
     }
 
     public function listRoles(): array

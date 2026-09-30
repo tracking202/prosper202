@@ -53,6 +53,22 @@ class ApiClient
         return $this->request('DELETE', $path);
     }
 
+    /**
+     * GET a file endpoint (an attribution export's CSV) and return its bytes.
+     * An error answer is JSON like any other and is thrown the same way.
+     */
+    public function download(string $path): string
+    {
+        [$httpCode, $response] = $this->send('GET', $this->baseUrl . '/' . ltrim($path, '/'), null);
+        if ($httpCode >= 400) {
+            $decoded = json_decode($response, true);
+            $data = is_array($decoded) ? $decoded : [];
+            throw new ApiException((string) ($data['message'] ?? "HTTP $httpCode"), $httpCode, $data);
+        }
+
+        return $response;
+    }
+
     private function request(string $method, string $path, array $params = [], array $body = []): array
     {
         $url = $this->baseUrl . '/' . ltrim($path, '/');
@@ -71,6 +87,28 @@ class ApiClient
             }
         }
 
+        [$httpCode, $response] = $this->send($method, $url, $encodedBody);
+
+        $decoded = null;
+        if ($response !== '') {
+            $decoded = json_decode($response, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                throw new \RuntimeException("Invalid JSON response from server: " . substr($response, 0, 200));
+            }
+        }
+        $data = is_array($decoded) ? $decoded : [];
+
+        if ($httpCode >= 400) {
+            $msg = $data['message'] ?? $data['error'] ?? "HTTP $httpCode";
+            throw new ApiException($msg, $httpCode, $data);
+        }
+
+        return $data;
+    }
+
+    /** @return array{0: int, 1: string} status and body */
+    private function send(string $method, string $url, ?string $encodedBody): array
+    {
         $ch = curl_init();
         curl_setopt_array($ch, [
             CURLOPT_URL => $url,
@@ -101,24 +139,10 @@ class ApiClient
         if ($errno) {
             throw new \RuntimeException("HTTP request failed: $error (errno: $errno)");
         }
-        if ($response === false) {
+        if (!is_string($response)) {
             throw new \RuntimeException('HTTP request failed without cURL error details.');
         }
 
-        $decoded = null;
-        if ($response !== '') {
-            $decoded = json_decode($response, true);
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                throw new \RuntimeException("Invalid JSON response from server: " . substr($response, 0, 200));
-            }
-        }
-        $data = is_array($decoded) ? $decoded : [];
-
-        if ($httpCode >= 400) {
-            $msg = $data['message'] ?? $data['error'] ?? "HTTP $httpCode";
-            throw new ApiException($msg, $httpCode, $data);
-        }
-
-        return $data;
+        return [(int) $httpCode, $response];
     }
 }

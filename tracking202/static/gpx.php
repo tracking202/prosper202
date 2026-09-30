@@ -1,9 +1,6 @@
 <?php
 declare(strict_types=1);
 
-use Prosper202\Attribution\AttributionServiceFactory;
-use Prosper202\Attribution\Repository\Mysql\ConversionJourneyRepository;
-
 //write out a transparent 1x1 gif
 header("content-type: image/gif"); 
 header('Content-Length: 43');
@@ -17,34 +14,28 @@ include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/class-dataengine-slim.php');
 include_once(substr(__DIR__, 0,-19) . '/202-config/static-endpoint-helpers.php');
 
-$settingsService = AttributionServiceFactory::createSettingsService();
-
 //get the aff_camapaign_id
 $mysql['user_id'] = 1;
 $mysql['click_id'] = 0;
 $mysql['cid'] = 0;
 $mysql['use_pixel_payout'] = 0;
-$advertiserId = null;
 
-//grab the cid
-if(array_key_exists('cid',$_GET) && is_numeric($_GET['cid'])) {
-	$mysql['cid']= $db->real_escape_string((string)$_GET['cid']);
+//grab the cid (the campaign whose own cookie names the click)
+$campaignIdFromRequest = p202ParseClickId($_GET['cid'] ?? null) ?? 0;
+$mysql['cid'] = (string) $campaignIdFromRequest;
+
+// The click: the subid parameter, the campaign's cookie, the general cookie
+// (p202ClickIdFromRequest). A value that is present and not an exact click
+// id is refused rather than cast ("123.9" is not click 123) and rather than
+// falling back to the IP lookup below.
+$requestedClick = p202ClickIdFromRequest($_GET, $_COOKIE, $campaignIdFromRequest);
+if ($requestedClick['malformed'] !== null) {
+    error_log('gpx: refusing malformed ' . $requestedClick['malformed'] . ' click id');
+    exit;
 }
-    
-// grab the subid
-if (array_key_exists('subid', $_GET) && is_numeric($_GET['subid'])) {
-    $mysql['click_id'] = $db->real_escape_string((string)$_GET['subid']);
-} elseif (array_key_exists('sid', $_GET) && is_numeric($_GET['sid'])) {
-    $mysql['click_id'] = $db->real_escape_string((string)$_GET['sid']);
-} else { // no subid found get from cookie or fingerprint
-       
-    // see if it has the cookie in the campaign id, then the general match, then do whatever we can to grab SOMETHING to tie this lead to
-    if (isset($_COOKIE['tracking202subid_a_' . $mysql['cid']]) && $_COOKIE['tracking202subid_a_' . $mysql['cid']] && $mysql['cid'] != '0') {
-        $mysql['click_id'] = $db->real_escape_string($_COOKIE['tracking202subid_a_' . $mysql['cid']]);
-    } else
-        if (isset($_COOKIE['tracking202subid']) && $_COOKIE['tracking202subid']) {
-            $mysql['click_id'] = $db->real_escape_string($_COOKIE['tracking202subid']);
-        } else {
+if ($requestedClick['click_id'] !== null) {
+    $mysql['click_id'] = (string) $requestedClick['click_id'];
+} else { // nothing named a click: fall back to this address's last click
             // ok grab the last click from this ip_id
             $mysql['ip_address'] = $db->real_escape_string($_SERVER['REMOTE_ADDR']);
             $daysago = time() - 2592000; // 30 days ago
@@ -65,7 +56,6 @@ if (array_key_exists('subid', $_GET) && is_numeric($_GET['subid'])) {
                 $mysql['click_id'] = $db->real_escape_string($click_row1['click_id']);
                 $mysql['ppc_account_id'] = $db->real_escape_string($click_row1['ppc_account_id'] ?? '');
             }
-        }
 }
 
 if (is_numeric($mysql['click_id'])) {
@@ -86,6 +76,27 @@ if (is_numeric($mysql['click_id'])) {
 		return;
 	}
 
+	// An event (plan §2.2): stored on the click and evaluated by its goals.
+	// The image has already been sent, so a refusal is logged. The event
+	// id dedupes a reload, so the one-conversion-per-click gate below is
+	// for plain conversions only; a campaign without goals takes that path
+	// as it always has, with the event's name kept on the row.
+	$eventName = null;
+	try {
+		$webEvent = p202RecordWebEvent($db, (int) $mysql['click_id'], $_GET, ['browser' => false]);
+	} catch (\Throwable $webEventError) {
+		error_log('gpx: event recording failed for click ' . $mysql['click_id'] . ': ' . $webEventError->getMessage());
+		return;
+	}
+	if ($webEvent !== null && $webEvent['status'] !== 'no_goals') {
+		if ($webEvent['status'] !== 'recorded') {
+			error_log('gpx: event refused for click ' . $mysql['click_id'] . ' (' . $webEvent['status'] . '): '
+				. ($webEvent['message'] ?? $webEvent['reason'] ?? ''));
+		}
+		return;
+	}
+	$eventName = $webEvent['event_name'] ?? null;
+
         // Record when the click has not converted yet, OR when the pixel
         // carries a transaction id: a distinct txid is a repeat purchase from
         // the same click (LTV), while a replayed txid is safely de-duplicated
@@ -95,7 +106,6 @@ if (is_numeric($mysql['click_id'])) {
 
                 $mysql['campaign_id'] = $db->real_escape_string((string) ($cpa_row['aff_campaign_id'] ?? ''));
                 $mysql['click_user_id'] = $db->real_escape_string((string) ($cpa_row['user_id'] ?? ''));
-                $advertiserId = p202ResolveAdvertiserId($db, (int) $mysql['campaign_id']);
                 $mysql['click_time'] = $db->real_escape_string((string) ($cpa_row['click_time'] ?? '0'));
 
 		$conv_time = time();
@@ -136,10 +146,15 @@ if (is_numeric($mysql['click_id'])) {
 				'click_time'      => $click_time_raw,
 				'conv_time'       => $conv_time,
 				'time_difference' => $time_difference,
-				'ip'              => $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '',
+				'ip'              => p202ClientIp($_SERVER),
 				'pixel_type'      => 1,
 				'user_agent'      => $_SERVER['HTTP_USER_AGENT'] ?? '',
 				'click_payout'    => $click_payout_for_log,
+				'event_name'      => $eventName,
+				// The click_lead read above is a fast path; the writer re-checks
+				// it under the click lock so two concurrent id-less pixels
+				// record one conversion, not two.
+				'once_per_click'  => p202ExtractTransactionId($_GET) === '',
 			],
 			(string) ($cpa_row['click_cpa'] ?? ''),
 			$mysql['use_pixel_payout'] == 1,
@@ -152,43 +167,10 @@ if (is_numeric($mysql['click_id'])) {
 			error_log('gpx: conversion recording failed for click ' . $mysql['click_id'] . ': ' . $conversionError->getMessage());
 		}
 		$conversionId = $conversionResult['conv_id'];
-
-                if ($conversionId > 0 && !$conversionResult['duplicate']) {
-                        $scope = [
-                                'user_id' => (int) $mysql['click_user_id'],
-                                'campaign_id' => (int) $mysql['campaign_id'],
-                        ];
-                        if ($advertiserId !== null) {
-                                $scope['advertiser_id'] = $advertiserId;
-                        }
-
-                        if ($settingsService->isMultiTouchEnabled($scope)) {
-                                try {
-                                        $journeyRepository = new ConversionJourneyRepository($db);
-                                        $journeyRepository->persistJourney(
-                                                conversionId: $conversionId,
-                                                userId: (int) $mysql['click_user_id'],
-                                                campaignId: (int) $mysql['campaign_id'],
-                                                conversionTime: (int) $mysql['conv_time'],
-                                                primaryClickId: (int) $mysql['click_id'],
-                                                primaryClickTime: (int) $mysql['click_time']
-                                        );
-                                } catch (Throwable $journeyError) {
-                                        error_log('Failed to persist conversion journey for conv_id ' . $conversionId . ': ' . $journeyError->getMessage());
-                                }
-                        }
-                }
-
-			// Rebuild attribution snapshots so the attribution page reflects changes immediately
-		try {
-			$jobRunner = AttributionServiceFactory::createJobRunner();
-			$userId = (int) $mysql['click_user_id'];
-			$endTime = time();
-			$startTime = $endTime - 86400;
-			$jobRunner->runForUser($userId, $startTime, $endTime);
-		} catch (Throwable $e) {
-			error_log('Attribution rebuild after gpx conversion failed: ' . $e->getMessage());
+		if ($conversionId > 0) {
+			p202LinkConversionIdentity($db, (int) $mysql['click_id'], $_GET);
 		}
+
 	}
 }
 
