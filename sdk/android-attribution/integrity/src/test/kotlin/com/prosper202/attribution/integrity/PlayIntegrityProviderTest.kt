@@ -33,6 +33,8 @@ import java.util.Collections
 import java.util.concurrent.Callable
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import kotlin.test.AfterTest
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -60,6 +62,11 @@ class PlayIntegrityProviderTest {
 
         override fun prepareIntegrityToken(request: PrepareIntegrityTokenRequest): Task<StandardIntegrityTokenProvider> {
             // b() is the cloud project number (the builder's setCloudProjectNumber; the getter is obfuscated).
+            // That name is integrity 1.6.0's, the version integrity/build.gradle.kts pins. Obfuscated
+            // names are not API and may be reassigned in any release: on a version bump this line can
+            // stop compiling (no b(), or one of another type), or — the quiet case — compile against a
+            // b() that returns some other long, which the project-number assertions below then fail on.
+            // Re-read the new PrepareIntegrityTokenRequest (javap) and rename the call.
             prepared.add(request.b())
             val generation = prepared.size
             return Tasks.forResult(
@@ -166,8 +173,14 @@ class PlayIntegrityProviderTest {
     fun playThatNeverAnswersTimesOutAsRetryable() {
         val manager = FakeManager()
         manager.answers.add { TaskCompletionSource<StandardIntegrityToken>().task }
+        val started = System.nanoTime()
         val e = assertFailsWith<IntegrityUnavailableException> { offMain { PlayIntegrityProvider(manager, 1).tokenFor(attempt("{}")) } }
+        val waitedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)
         assertTrue(e.retryable)
+        // Retryable for the reason the test is named after: Tasks.await's
+        // timeout, not some other failure that happens to be retryable.
+        assertIs<TimeoutException>(e.cause, "the cause is the wait running out")
+        assertTrue(waitedMillis >= 1000, "it waited the full 1s timeout, not ${waitedMillis}ms")
     }
 
     /**
@@ -232,7 +245,17 @@ class PlayIntegrityProviderTest {
             override fun showDialog(activity: Activity, requestCode: Int): Task<Int> = Tasks.forException(UnsupportedOperationException())
         }
 
-        /** Play's own exception (its constructor is package-private). */
+        /**
+         * Play's own exception (its constructor is package-private). The
+         * (int errorCode, boolean, Throwable) constructor is integrity
+         * 1.6.0's, the version integrity/build.gradle.kts pins, and not API.
+         * After a version bump that changes it, getDeclaredConstructor throws
+         * NoSuchMethodException and every test that plays a Play error fails
+         * there; if the arguments are reordered instead, the errorCode check
+         * below fails. Either way, read the new class (javap -p) and update
+         * this reflection; the provider's own code uses only the public
+         * getErrorCode().
+         */
         fun playError(code: Int): StandardIntegrityException {
             val c = StandardIntegrityException::class.java.getDeclaredConstructor(Int::class.javaPrimitiveType, Boolean::class.javaPrimitiveType, Throwable::class.java)
             c.isAccessible = true

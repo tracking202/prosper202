@@ -1,6 +1,7 @@
 package com.prosper202.attribution
 
 import android.app.Application
+import com.prosper202.attribution.core.AttributionEngine
 import com.prosper202.attribution.core.AttributionListener
 import com.prosper202.attribution.core.InstallPayload
 import com.prosper202.attribution.core.InstallToken
@@ -52,6 +53,9 @@ class P202AttributionTest {
     private lateinit var ctx: AppContext
     private lateinit var play: FakePlayStore
     private val events = Collections.synchronizedList(ArrayList<String>())
+    private val time = VirtualTime()
+    private val realScheduler = P202Attribution.newScheduler
+    private val realClock = P202Attribution.clock
 
     private val listener = object : AttributionListener {
         override fun onInstallRecorded(match: String, reason: String, duplicate: Boolean) {
@@ -85,6 +89,8 @@ class P202AttributionTest {
     @BeforeTest
     fun setUp() {
         P202Attribution.resetForTests()
+        P202Attribution.newScheduler = time::newScheduler
+        P202Attribution.clock = time.clock
         ctx = AppContext(app, referenceBody["app_key"]!!.stringOrNull!!, referenceBody["app_version"]!!.stringOrNull)
         ShadowBuild.setVersionRelease(referenceBody["os_version"]!!.stringOrNull)
         play = FakePlayStore(app)
@@ -95,6 +101,8 @@ class P202AttributionTest {
     @AfterTest
     fun tearDown() {
         P202Attribution.resetForTests()
+        P202Attribution.newScheduler = realScheduler
+        P202Attribution.clock = realClock
         server.close()
     }
 
@@ -172,7 +180,11 @@ class P202AttributionTest {
         P202Attribution.resetForTests()
         launch()
         assertEquals("attributed", P202Attribution.installMatch)
-        Thread.sleep(500)
+        // Every delayed task either engine holds (the referrer read's
+        // timeout, any retry or wake) is run to completion, however far
+        // off: none of them may send the install again.
+        val fired = time.runEveryDelayedTask()
+        assertTrue(AttributionEngine.REFERRER_TIMEOUT_MILLIS in fired, "the run reached the engine's delayed work: $fired")
         assertNull(server.requests.poll(), "a recorded install is not reported again")
         assertEquals(uuid, state()["install_uuid"])
     }
@@ -225,8 +237,11 @@ class P202AttributionTest {
         server.next() // the install
         pumpUntil("the refusal") { events.isNotEmpty() }
         assertEquals(listOf("refused 400"), events.toList())
-        Thread.sleep(1500)
-        assertNull(server.requests.poll(), "a refused install is not resent")
+        // Not a sleep past a guessed backoff: every delayed task the engine
+        // holds is run, at the time it is due, until none is left.
+        val fired = time.runEveryDelayedTask()
+        assertTrue(AttributionEngine.REFERRER_TIMEOUT_MILLIS in fired, "the run reached the engine's delayed work: $fired")
+        assertNull(server.requests.poll(), "a refused install is not resent, after any delay")
         assertEquals("refused", state()["install_state"])
         assertNotEquals(null, state()["install_body"])
     }

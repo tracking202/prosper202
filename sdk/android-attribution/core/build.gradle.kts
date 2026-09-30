@@ -30,10 +30,21 @@ kotlin {
 animalsniffer {
     // D8 backports these classes' Java 8 static helpers (Long.hashCode(long)
     // and the like, which Kotlin emits for data classes) when it dexes the
-    // app for minSdk < 24; checked by dexing :core with build-tools 34's d8
-    // --min-api 21 and reading the dex, which calls none of them. Animal
-    // Sniffer's ignores are per class, so these three are trusted whole.
+    // app for minSdk < 24. Animal Sniffer's ignores match the owner class
+    // only (animal-sniffer 1.24's SignatureChecker has no member form), so
+    // the three are ignored whole here, and the trust is enforced where the
+    // backport happens: CI's Android job dexes :core with D8 at --min-api 21
+    // and scripts/dex-api-check.py fails on any platform method, field or
+    // class in the dex that is newer than API 21, on these classes or any
+    // other.
     ignore = listOf("java.lang.Boolean", "java.lang.Long", "java.lang.Double")
+}
+
+// The core's runtime dependencies (the Kotlin standard library), for D8's
+// --classpath in that CI step: they are not dexed or checked, only resolved.
+tasks.register<Sync>("dexClasspath") {
+    from(configurations.runtimeClasspath)
+    into(layout.buildDirectory.dir("dex-classpath"))
 }
 
 dependencies {

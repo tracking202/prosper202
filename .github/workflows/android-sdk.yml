@@ -13,9 +13,14 @@ name: Android SDK
 # The second job builds the Android libraries themselves (:android and
 # :integrity) with AGP against the runner image's Android SDK ($ANDROID_HOME),
 # runs Android lint on them (warnings are errors, no baseline), and runs their
-# Robolectric suites: Play's real install-referrer client bound to a played
-# Play Store, P202Attribution.configure() posting to an HTTP server on
-# 127.0.0.1, and PlayIntegrityProvider over a fake StandardIntegrityManager.
+# Robolectric suites, each in both the debug and the release variant: Play's
+# real install-referrer client bound to a played Play Store,
+# P202Attribution.configure() posting to an HTTP server on 127.0.0.1, and
+# PlayIntegrityProvider over a fake StandardIntegrityManager. It also dexes
+# :core with D8 at --min-api 21 and fails on any platform API in the dex
+# newer than API 21 (scripts/dex-api-check.py): Animal Sniffer ignores
+# java.lang.Boolean, Long and Double whole, trusting D8 to backport what
+# Kotlin calls on them, and this is the check of that trust.
 # No emulator: nothing here runs on a device or gets a real Play Integrity
 # token. LiveInstanceTest skips itself as LiveServerTest does.
 
@@ -56,6 +61,10 @@ jobs:
         # check = test + Animal Sniffer (the core against the Android API 21 signature).
         run: gradle -p sdk/android-attribution --no-daemon -Pp202.android=false :core:check
 
+      - name: The suite ran (a floor on the executed test count)
+        # 56 executed locally (57 with LiveServerTest, which skips itself here).
+        run: python3 sdk/android-attribution/scripts/test-floor.py sdk/android-attribution/core/build/test-results/test=56
+
   android:
     name: Android libraries (AGP assemble, lint, Robolectric)
     runs-on: ubuntu-latest
@@ -81,28 +90,39 @@ jobs:
           test -d "$ANDROID_HOME" || { echo "ANDROID_HOME ($ANDROID_HOME) is not a directory" >&2; exit 1; }
           echo "ANDROID_HOME=$ANDROID_HOME"
 
-      - name: Assemble, lint, Robolectric tests
+      - name: Assemble, lint, Robolectric tests (debug and release)
         run: >-
           gradle -p sdk/android-attribution --no-daemon
+          :android:assembleDebug :integrity:assembleDebug
           :android:assembleRelease :integrity:assembleRelease
+          :android:lintDebug :integrity:lintDebug
           :android:lintRelease :integrity:lintRelease
+          :android:testDebugUnitTest :integrity:testDebugUnitTest
           :android:testReleaseUnitTest :integrity:testReleaseUnitTest
 
-      - name: The suites ran (a floor on the executed test count)
+      - name: The suites ran (a floor on the executed test count, per variant)
+        # 11 and 6 executed locally in each variant (LiveInstanceTest skips itself).
+        run: >-
+          python3 sdk/android-attribution/scripts/test-floor.py
+          sdk/android-attribution/android/build/test-results/testDebugUnitTest=11
+          sdk/android-attribution/android/build/test-results/testReleaseUnitTest=11
+          sdk/android-attribution/integrity/build/test-results/testDebugUnitTest=6
+          sdk/android-attribution/integrity/build/test-results/testReleaseUnitTest=6
+
+      - name: The core dexed for API 21 calls nothing newer (D8 backports checked)
         run: |
-          python3 - <<'PY'
-          import glob, re, sys
-          floor = {"android": 11, "integrity": 6}
-          bad = False
-          for mod, want in floor.items():
-              ran = 0
-              for f in glob.glob(f"sdk/android-attribution/{mod}/build/test-results/testReleaseUnitTest/*.xml"):
-                  m = re.search(r'tests="(\d+)" skipped="(\d+)"', open(f).read(2000))
-                  ran += int(m[1]) - int(m[2])
-              print(f"{mod}: {ran} tests executed (floor {want})")
-              bad |= ran < want
-          sys.exit(1 if bad else 0)
-          PY
+          set -euo pipefail
+          gradle -p sdk/android-attribution --no-daemon :core:jar :core:dexClasspath
+          bt=$(printf "%s\n" "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          platform=$(printf "%s\n" "$ANDROID_HOME"/platforms/android-* | sort -V | tail -1)
+          test -x "$bt/d8" || { echo "no d8 in $bt" >&2; exit 1; }
+          test -f "$platform/data/api-versions.xml" || { echo "no api-versions.xml in $platform" >&2; exit 1; }
+          echo "d8: $bt, API table: $platform"
+          out=$(mktemp -d)
+          cp=()
+          for j in sdk/android-attribution/core/build/dex-classpath/*.jar; do cp+=(--classpath "$j"); done
+          "$bt/d8" --min-api 21 --lib "$platform/android.jar" "${cp[@]}" --output "$out" sdk/android-attribution/core/build/libs/core-*.jar
+          python3 sdk/android-attribution/scripts/dex-api-check.py "$platform/data/api-versions.xml" 21 "$out"/classes*.dex
 
       - name: Upload lint and test reports
         if: always()

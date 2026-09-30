@@ -2603,14 +2603,53 @@ The SDK is `sdk/android-attribution/`: `core/` (package
   exception types (every `integrity.json` hash, prepare once per project,
   re-prepare on `INTEGRITY_TOKEN_PROVIDER_INVALID`, the error codes
   sorted, a timeout retryable, and the engine sending the token bound to
-  the reference body's fingerprint). Thirteen planted defects, one per
-  behaviour above, each failed the suite and were restored. The optional
-  `LiveInstanceTest` runs `configure()` against a live instance from
-  `tests/live/android-sdk.sh` ("device R": attributed to its click, with
-  the version facts read from Android; the pass was 58 of 58, and with the
-  referrer lower-cased in `PlayInstallReferrerSource` it failed 4). CI's
-  `android-sdk.yml` job "Android libraries" runs assemble, lint and both
-  Robolectric suites with a floor on the executed test count. Two defects
+  the reference body's fingerprint).
+  **What was planted, locally.** These are a record of runs in the MR 15
+  sandbox, not something CI repeats: CI runs the suites as they stand, and
+  a planted defect is only evidence that a test could fail on the day it
+  was planted. Thirteen defects were planted one at a time, each failed at
+  least one test and each was restored: the referrer's click and
+  install-begin timestamps swapped; the referrer connection never ended;
+  a `RemoteException` read as an empty OK answer; the referrer
+  normalised (trimmed, lower-cased) before it is sent; `os_version` from
+  `SDK_INT` rather than the release string; the state file in `filesDir`
+  (backed up) instead of `noBackupFilesDir`; an unreadable state file
+  overwritten in place; a 5xx not retried; a 429 not retried; the
+  integrity `requestHash` the install id rather than the body hash;
+  `NETWORK_ERROR` classed final; no re-prepare on
+  `INTEGRITY_TOKEN_PROVIDER_INVALID`; a Play timeout classed final. The
+  review round after that planted five more, each failing its test and
+  each restored: a relaunch that re-sends a recorded install after 5 s
+  and a 400 re-sent after 5 s (both passed the earlier sleep-based
+  versions of those tests, which slept 0.5 s and 1.5 s; the tests now run
+  every delayed task the engine holds, in due order on a clock moved
+  forward to each, instead of sleeping); a Play wait that returns at once
+  and a timeout whose cause is not the `TimeoutException` (the timeout
+  test now asserts both); and `FileStore` reporting a corrupt file as
+  moved aside when the rename failed (its failure branch now has a JVM
+  test, driven by an aside name longer than a file name may be, which
+  fails `rename(2)` for root as well). **Not planted:** the organic empty
+  referrer, no Play Store, a Play Store too old, an unbindable service,
+  the install id minted only once, preparing once per Cloud project and
+  afresh for another; those tests pass, and nothing has shown that they
+  would fail. The optional `LiveInstanceTest` runs `configure()` against a
+  live instance from `tests/live/android-sdk.sh` ("device R": attributed
+  to its click, with the version facts read from Android); in the MR 15
+  sandbox that pass was 58 of 58, and with the referrer lower-cased in
+  `PlayInstallReferrerSource` it failed 4. CI does not run it.
+  **What CI runs.** `android-sdk.yml`'s job "Android libraries" assembles,
+  lints and runs both Robolectric suites in the debug and the release
+  variant, with a floor on the executed test count for each (11 in
+  `android`, 6 in `integrity`, per variant); dexes `:core` with D8 at
+  `--min-api 21` and fails on any platform method, field or class left in
+  the dex that is newer than API 21 (`scripts/dex-api-check.py`, against
+  the SDK's `api-versions.xml` — this is what Animal Sniffer's whole-class
+  ignores of `Boolean`, `Long` and `Double` rely on: D8 rewrites the
+  `hashCode` helpers Kotlin calls on them, and dexing at `--min-api 24`
+  instead leaves all three in the dex, which the check reports; a planted
+  `Map.putIfAbsent` fails it too). The JVM job "Core and contract vectors"
+  runs `:core:check` with a floor of 56 executed tests (57 with
+  `LiveServerTest`, which skips itself there). Two defects
   the first AGP build found: the integrity module said `minSdk 21`, but
   integrity 1.6.0's manifest requires 23 (the manifest merger refuses it,
   as it would have refused every app below 23 — now 23; the base SDK stays
@@ -4226,10 +4265,12 @@ Open for the release decision:
    signals live as long as the clicks do. Erasing a customer now reaches
    them; a retention class for them does not exist.
 8. **Surfaces that have never run for real,** from the as-built sections:
-   the Android modules are now assembled with AGP, lint-clean and run under
-   Robolectric in CI (MR 15, §5.12), but have not run on a device or
+   the Android modules are now assembled with AGP (debug and release),
+   lint-clean and run under Robolectric in CI, with a floor on each suite's
+   executed test count (MR 15, §5.12), but have not run on a device or
    emulator, and the integrity provider has never requested a real token
-   (§5.12); the server's Play Integrity client has never made a
+   (§5.12); the planted defects and the live pass's 58 of 58 recorded
+   there are local runs in the MR 15 sandbox, not something CI repeats; the server's Play Integrity client has never made a
    request to Google, only to a self-written fake (§5.11); the iOS
    StoreKit/AdAttributionKit hand-off compiles out on Linux and was not
    built for a device (§5.9); iOS `setCustomerId()` rides no request, so the

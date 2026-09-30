@@ -9,8 +9,14 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.os.Bundle
 import com.google.android.finsky.externalreferrer.IGetInstallReferrerService
+import com.prosper202.attribution.core.Clock
+import com.prosper202.attribution.core.ExecutorScheduler
 import com.prosper202.attribution.core.JsonValue
+import com.prosper202.attribution.core.Scheduler
 import java.util.Collections
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import org.robolectric.Shadows.shadowOf
 
 /*
@@ -87,5 +93,107 @@ internal class FakePlayStore(private val app: Application, versionCode: Int = 80
             putString("install_version", referrer["install_version"]?.stringOrNull)
             putBoolean("google_play_instant", referrer["google_play_instant"] == JsonValue.Bool(true))
         }
+    }
+}
+
+/**
+ * The engines' worker and clock, with every delayed task on record, so a
+ * test can show that nothing more will be sent without sleeping past a
+ * guess at the backoff. [execute] and [schedule] run for real (one worker
+ * thread per engine, real delays), so the retry tests still wait out a
+ * real Retry-After; [runEveryDelayedTask] then fires whatever is still
+ * waiting — a retry, a wake, the referrer timeout — one at a time in due
+ * order, moving [clock] forward to each task's due time first, so the
+ * engine's own "is it time yet" check agrees that it is.
+ */
+internal class VirtualTime {
+    @Volatile
+    private var offset = 0L
+    private val workers = Collections.synchronizedList(ArrayList<Worker>())
+
+    val clock = Clock { System.currentTimeMillis() + offset }
+
+    fun newScheduler(): Scheduler = Worker().also { workers.add(it) }
+
+    private class Delayed(val due: Long, val delay: Long, val task: () -> Unit) {
+        private val claimed = AtomicBoolean(false)
+        fun claim(): Boolean = claimed.compareAndSet(false, true)
+        val pending: Boolean get() = !claimed.get()
+    }
+
+    private inner class Worker : Scheduler {
+        val real = ExecutorScheduler()
+        val delayed: MutableList<Delayed> = Collections.synchronizedList(ArrayList())
+
+        /**
+         * Tasks submitted and not yet finished. Counted up before a task is
+         * queued (or, for a timer, before it claims its entry), and down
+         * after it has run, so a task that queues or schedules another is
+         * never seen as idle in between.
+         */
+        val busy = AtomicInteger()
+
+        override fun execute(task: () -> Unit) {
+            busy.incrementAndGet()
+            real.execute {
+                try {
+                    task()
+                } finally {
+                    busy.decrementAndGet()
+                }
+            }
+        }
+
+        override fun schedule(delayMillis: Long, task: () -> Unit): () -> Unit {
+            val d = Delayed(clock.nowMillis() + delayMillis, delayMillis, task)
+            delayed.add(d)
+            val cancel = real.schedule(delayMillis) {
+                busy.incrementAndGet()
+                try {
+                    if (d.claim()) task()
+                } finally {
+                    busy.decrementAndGet()
+                }
+            }
+            return {
+                d.claim()
+                cancel()
+            }
+        }
+
+        /** Wait until nothing submitted to the worker is queued or running. */
+        fun idle() {
+            val until = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
+            while (busy.get() != 0) {
+                check(System.nanoTime() < until) { "the SDK's worker did not go idle in 20s" }
+                Thread.sleep(2)
+            }
+        }
+    }
+
+    /**
+     * Fire every delayed task the engines still hold, and every one those
+     * schedule in turn, until none is left. Returns the delays that were
+     * fired. Fails if the engines are still scheduling after [limit] tasks.
+     */
+    fun runEveryDelayedTask(limit: Int = 50): List<Long> {
+        val fired = ArrayList<Long>()
+        repeat(limit) {
+            val all = synchronized(workers) { workers.toList() }
+            all.forEach { it.idle() }
+            val (worker, next) = all
+                .flatMap { w -> synchronized(w.delayed) { w.delayed.filter { it.pending } }.map { w to it } }
+                .minByOrNull { it.second.due }
+                // Nothing waiting; done only if nothing started meanwhile
+                // (a timer that claimed its entry after idle() returned).
+                ?: if (all.all { it.busy.get() == 0 }) return fired else return@repeat
+            val ahead = next.due - clock.nowMillis()
+            if (ahead > 0) offset += ahead
+            if (next.claim()) {
+                fired.add(next.delay)
+                worker.execute(next.task)
+            }
+        }
+        throw AssertionError("the engines were still scheduling work after $limit delayed tasks: ${fired.take(10)}")
     }
 }
