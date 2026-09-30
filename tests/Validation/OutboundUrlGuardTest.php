@@ -123,6 +123,9 @@ final class OutboundUrlGuardTest extends TestCase
         $opts = OutboundUrlGuard::curlOptions('https://example.com/hook', ['203.0.113.10']);
 
         self::assertSame(['example.com:443:203.0.113.10'], $opts[CURLOPT_RESOLVE]);
+        // Through a proxy the proxy resolves the host and the pin is ignored.
+        self::assertSame('', $opts[CURLOPT_PROXY]);
+        self::assertSame('*', $opts[CURLOPT_NOPROXY]);
         self::assertFalse($opts[CURLOPT_FOLLOWLOCATION]);
         self::assertSame(0, $opts[CURLOPT_MAXREDIRS]);
         self::assertSame(CURLPROTO_HTTPS, $opts[CURLOPT_PROTOCOLS]);
@@ -133,22 +136,53 @@ final class OutboundUrlGuardTest extends TestCase
         self::assertGreaterThan(0, $opts[CURLOPT_TIMEOUT]);
     }
 
-    public function testEveryDispatcherUsesTheSharedCurlOptions(): void
+    /**
+     * Two implementations pin an outbound webhook: this guard's curlOptions()
+     * (LTV webhooks) and Attribution\WebhookSender (MTA exports, checked by
+     * its own, stricter WebhookGuard). They arrived separately; until they are
+     * one, what keeps them from drifting is this: no third file pins curl
+     * itself, and each of the two names every option in the hardening set.
+     * Presence only -- this guard's values are asserted above, the sender's in
+     * tests/Attribution/WebhookSenderTest. The proxy pair is in the set
+     * because it was the drift: the sender had it and this guard did not, and
+     * without it a proxy in the environment resolves the host and the pin is
+     * ignored.
+     */
+    public function testEveryPinnedDispatcherCarriesTheWholeHardeningSet(): void
     {
-        // The hardening set exists once so no dispatcher can drop an entry. A
-        // new cron that posts to a user-supplied URL must go through it too.
-        foreach (\Tests\Support\SourceScan::phpFiles() as $path => $source) {
-            if (!str_contains($source, 'CURLOPT_RESOLVE') || $path === '202-config/Validation/OutboundUrlGuard.php') {
-                continue;
+        $sanctioned = ['202-config/Validation/OutboundUrlGuard.php', '202-config/Attribution/WebhookSender.php'];
+        $files = \Tests\Support\SourceScan::phpFiles();
+
+        // Matched as a code token, not text: a docblock that names an option
+        // (WebhookTarget's does) sets nothing.
+        $usesInCode = static function (string $source, string $option): bool {
+            foreach (token_get_all($source) as $t) {
+                if (is_array($t) && $t[0] === T_STRING && $t[1] === $option) {
+                    return true;
+                }
             }
-            self::fail("$path sets CURLOPT_RESOLVE itself; use OutboundUrlGuard::curlOptions() so the pin and the rest of the hardening cannot diverge.");
+            return false;
+        };
+
+        foreach ($files as $path => $source) {
+            if (str_contains($source, 'CURLOPT_RESOLVE') && $usesInCode($source, 'CURLOPT_RESOLVE') && !in_array($path, $sanctioned, true)) {
+                self::fail("$path sets CURLOPT_RESOLVE itself; send through OutboundUrlGuard::curlOptions() (or WebhookSender) so the pin and the rest of the hardening cannot diverge.");
+            }
         }
-        foreach (['202-cronjobs/attribution-export.php', '202-cronjobs/ltv_webhooks.php'] as $cron) {
-            self::assertStringContainsString(
-                'OutboundUrlGuard::curlOptions(',
-                \Tests\Support\SourceScan::phpFiles()[$cron],
-                "$cron must apply OutboundUrlGuard::curlOptions()"
-            );
+
+        foreach ($sanctioned as $path) {
+            self::assertArrayHasKey($path, $files, "$path is gone; update this test");
+            foreach (['CURLOPT_RESOLVE', 'CURLOPT_PROXY', 'CURLOPT_NOPROXY', 'CURLOPT_PROTOCOLS', 'CURLOPT_REDIR_PROTOCOLS',
+                'CURLOPT_FOLLOWLOCATION', 'CURLOPT_MAXREDIRS', 'CURLOPT_SSL_VERIFYPEER', 'CURLOPT_SSL_VERIFYHOST',
+                'CURLOPT_CONNECTTIMEOUT', 'CURLOPT_TIMEOUT'] as $option) {
+                self::assertTrue($usesInCode($files[$path], $option), "$path does not set $option");
+            }
         }
+
+        self::assertStringContainsString(
+            'OutboundUrlGuard::curlOptions(',
+            $files['202-cronjobs/ltv_webhooks.php'],
+            '202-cronjobs/ltv_webhooks.php must apply OutboundUrlGuard::curlOptions()'
+        );
     }
 }

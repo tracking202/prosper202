@@ -7,7 +7,7 @@ namespace Api\V3\Support;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ConflictException;
 
-class ServerStateStore
+class ServerStateStore implements QuotaStore
 {
     private const int DEFAULT_RETENTION = 5000;
 
@@ -988,42 +988,327 @@ class ServerStateStore
         return $this->sanitizeSensitive($payload);
     }
 
+    /**
+     * Soft per-source rate limit for unauthenticated endpoints.
+     *
+     * The bucket is keyed on the validated TCP peer address (REMOTE_ADDR),
+     * never on client-supplied headers: X-Forwarded-For is attacker-chosen
+     * on an open endpoint, so keying on it lets a flooder mint a fresh
+     * bucket per request — the limit never fires AND every spoofed value
+     * becomes a state file (the p13n endpoints' "never raw spoofable
+     * headers" rule). Behind a TLS-terminating proxy the peer is the proxy,
+     * so callers size $maxPerWindow as an aggregate ceiling, not a
+     * per-device one.
+     *
+     * Soft means the limiter's own failure never blocks the request:
+     * returns the retry-after seconds when the limit is exceeded, and null
+     * when the request may proceed — including when the limiter itself
+     * errored (logged). Also opportunistically garbage-collects stale
+     * bucket files so the directory stays bounded by recent distinct peers.
+     */
+    public function softIpRateLimit(string $prefix, int $maxPerWindow, int $windowSeconds, ?string $peerIp = null): ?int
+    {
+        try {
+            $ip = $peerIp ?? (string)($_SERVER['REMOTE_ADDR'] ?? '');
+            if (filter_var($ip, FILTER_VALIDATE_IP) === false) {
+                // No validated peer (CLI, misconfigured SAPI): one shared
+                // bucket rather than an attacker-nameable one.
+                $ip = 'unknown';
+            }
+            if (mt_rand(1, 100) === 1) {
+                $this->pruneStaleRateLimits(max(3600, $windowSeconds * 10));
+            }
+            $rate = $this->consumeRateLimit($prefix . ':' . substr($ip, 0, 64), $maxPerWindow, $windowSeconds);
+            if (!$rate['allowed']) {
+                return max(1, (int)$rate['reset_at'] - time());
+            }
+            return null;
+        } catch (\Throwable $e) {
+            error_log('p202: rate limiter unavailable, serving request: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Delete rate-limit bucket files whose window is long over. Buckets are
+     * one small JSON file per distinct source; without collection the
+     * directory grows with every source ever seen.
+     */
+    public function pruneStaleRateLimits(int $maxAgeSeconds): void
+    {
+        $dir = $this->dir('rate_limits');
+        $entries = @scandir($dir);
+        if ($entries === false) {
+            return;
+        }
+        $cutoff = time() - $maxAgeSeconds;
+        foreach ($entries as $entry) {
+            if ($entry === '.' || $entry === '..') {
+                continue;
+            }
+            // Buckets, and the temp files a process killed between write and
+            // rename leaves behind (`<name>.json.tmp-xxxx`) — collecting only
+            // `.json` left those orphans to accumulate forever in the very
+            // directory this pass exists to bound.
+            $isBucket = str_ends_with($entry, '.json');
+            $isLock = str_ends_with($entry, '.json.lock');
+            $isOrphanTemp = str_contains($entry, '.json.tmp-');
+            if (!$isBucket && !$isLock && !$isOrphanTemp) {
+                continue;
+            }
+            $path = $dir . '/' . $entry;
+            $mtime = @filemtime($path);
+            if ($mtime === false || $mtime >= $cutoff) {
+                continue;
+            }
+            if ($isLock) {
+                // Neither of the cheap tests can decide a lock is free. Its
+                // mtime is its CREATION time — taking the lock does not
+                // touch it — and a missing bucket file is also the state of
+                // the request that revives an idle peer, possibly one this
+                // very pass emptied moments earlier. Deleting a held lock
+                // leaves two processes holding LOCK_EX on different inodes,
+                // which is the lost update the lock exists to prevent, so
+                // what protects it is taking it.
+                if (is_file(substr($path, 0, -strlen('.lock')))) {
+                    continue;
+                }
+                $this->unlinkUnheldLock($path);
+                continue;
+            }
+            if ($isBucket) {
+                $this->unlinkIdleBucket($path, $cutoff);
+                continue;
+            }
+            @unlink($path);
+        }
+    }
+
+    /**
+     * Remove a bucket only under its own lock, and only if it is still idle
+     * once the lock is held. The mtime above was read without the lock, so a
+     * request could rewrite the bucket between that read and an unlink —
+     * deleting a live count, and for a quota (reserveQuota()) handing the
+     * rest of the window a fresh budget. Taken non-blocking: a bucket someone
+     * is inside is live by definition, and a collection pass that runs on a
+     * request path must not wait on one. With the lock held, a writer that
+     * comes after reads no file — a fresh window, which is what a bucket idle
+     * past $cutoff (never less than an hour, many windows) already was. The
+     * lock file goes with the bucket, while still held, as unlinkUnheldLock()
+     * removes one; 'c+' because a bucket with no lock file beside it is still
+     * one a writer may be about to lock.
+     */
+    private function unlinkIdleBucket(string $path, int $cutoff): void
+    {
+        $lockPath = $path . '.lock';
+        $fh = @fopen($lockPath, 'c+');
+        if ($fh === false) {
+            return;
+        }
+        try {
+            if (!flock($fh, LOCK_EX | LOCK_NB)) {
+                return;
+            }
+            clearstatcache(true, $path);
+            $mtime = @filemtime($path);
+            if ($mtime !== false && $mtime < $cutoff) {
+                @unlink($path);
+                @unlink($lockPath);
+            }
+            flock($fh, LOCK_UN);
+        } finally {
+            fclose($fh);
+        }
+    }
+
+    /**
+     * Remove a stale lock file only when no one is inside its critical
+     * section: the unlink runs while this pass itself holds LOCK_EX, so a
+     * mutateJsonFile() that already has the lock keeps its file. The
+     * remaining window is the instant between fopen() and flock() there — a
+     * caller that opened this inode microseconds ago still ends up alone on
+     * it — versus the whole critical section before. 'r+' rather than 'c+':
+     * a collection pass must never create the file it came to delete.
+     */
+    private function unlinkUnheldLock(string $path): void
+    {
+        $fh = @fopen($path, 'r+');
+        if ($fh === false) {
+            return;
+        }
+        if (flock($fh, LOCK_EX | LOCK_NB)) {
+            @unlink($path);
+            flock($fh, LOCK_UN);
+        }
+        fclose($fh);
+    }
+
+    /**
+     * Take $cost units of a fixed-window quota, or refuse without taking any.
+     *
+     * The per-registration install cap and the per-install event cap (plan
+     * §7.1): unlike softIpRateLimit(), a refused request consumes nothing —
+     * what is over the cap is neither stored nor counted — and the check
+     * fails CLOSED: a store that cannot be read or written throws, and the
+     * caller answers 503 rather than guessing (the SDK retries 5xx, so an
+     * outage of the limiter delays installs and loses none). The bucket file
+     * is written under the same exclusive lock as the rate limits, so a
+     * burst cannot all read the same count; its name is the rate-limit path
+     * (slug plus a hash of the whole bucket), so the caller's bucket string
+     * must itself be injective (CLAUDE.md #17).
+     *
+     * An admitted cost is spent when it is taken, before the caller does the
+     * work; a caller whose work then fails (or turns out to have been done
+     * already) gives it back with refundQuota(), so the cap counts what was
+     * recorded rather than what was attempted. The window is fixed, not
+     * sliding: a burst straddling a window boundary can take up to twice
+     * the limit in a short span. And the bucket is a file under this store's
+     * directory, so web hosts that do not share it each keep their own count.
+     *
+     * @return int|null seconds until the window resets when refused, null when admitted
+     * @throws \RuntimeException when the quota cannot be read or written
+     */
+    public function reserveQuota(string $bucket, int $limit, int $windowSeconds, int $cost = 1): ?int
+    {
+        return $this->reserveQuotaWindow($bucket, $limit, $windowSeconds, $cost)['retry_after'];
+    }
+
+    /**
+     * reserveQuota(), also naming the window the cost was charged to, which
+     * refundQuota() needs to give it back to that window and no other.
+     *
+     * @return array{retry_after: int|null, window_start: int} retry_after null when admitted
+     * @throws \RuntimeException when the quota cannot be read or written
+     */
+    #[\Override]
+    public function reserveQuotaWindow(string $bucket, int $limit, int $windowSeconds, int $cost = 1): array
+    {
+        if ($limit < 1 || $windowSeconds < 1 || $cost < 1) {
+            throw new \InvalidArgumentException('a quota needs a positive limit, window and cost');
+        }
+        $now = time();
+        $admitted = false;
+        $resetAt = $now + $windowSeconds;
+        $charged = $now;
+        $this->mutateJsonFile(
+            $this->rateLimitPath($bucket),
+            ['window_start' => 0, 'count' => 0],
+            static function (array $state) use ($now, $limit, $windowSeconds, $cost, &$admitted, &$resetAt, &$charged): array {
+                [$windowStart, $count] = self::quotaState($state);
+                if ($windowStart <= 0 || ($now - $windowStart) >= $windowSeconds || $windowStart > $now) {
+                    $windowStart = $now;
+                    $count = 0;
+                }
+                $resetAt = $windowStart + $windowSeconds;
+                $charged = $windowStart;
+                if ($count + $cost <= $limit) {
+                    $count += $cost;
+                    $admitted = true;
+                }
+
+                return ['window_start' => $windowStart, 'count' => $count, 'updated_at' => gmdate('c')];
+            },
+            true
+        );
+
+        return ['retry_after' => $admitted ? null : max(1, $resetAt - $now), 'window_start' => $charged];
+    }
+
+    /**
+     * Give back $cost units that reserveQuotaWindow() charged to the window
+     * starting at $windowStart: a request that was admitted and then did not
+     * do the work it paid for (it failed, or what it carried was already
+     * stored). Under the same exclusive lock and as strict as the charge —
+     * a bucket that cannot be read or written throws, and is never
+     * overwritten as though it held nothing. It never takes a count below
+     * zero, and it refunds nothing once that window has closed: the next
+     * window never held the charge, and crediting it would let a failure
+     * buy the next minute more than the cap.
+     *
+     * @return bool whether the units went back (false: the window had already closed)
+     * @throws \RuntimeException when the quota cannot be read or written
+     */
+    #[\Override]
+    public function refundQuota(string $bucket, int $windowSeconds, int $cost, int $windowStart): bool
+    {
+        if ($windowSeconds < 1 || $cost < 1 || $windowStart < 1) {
+            throw new \InvalidArgumentException('a refund needs a positive window, cost and window start');
+        }
+        $refunded = false;
+        $path = $this->rateLimitPath($bucket);
+        $this->mutateJsonFile(
+            $path,
+            ['window_start' => 0, 'count' => 0],
+            static function (array $state) use ($windowStart, $cost, &$refunded): array {
+                [$current, $count] = self::quotaState($state);
+                if ($current !== $windowStart) {
+                    return $state;
+                }
+                $refunded = true;
+
+                return ['window_start' => $current, 'count' => max(0, $count - $cost), 'updated_at' => gmdate('c')];
+            },
+            true
+        );
+
+        return $refunded;
+    }
+
+    /**
+     * A quota bucket's window start and count, or a throw: a malformed
+     * bucket is never read as "nothing used" (CLAUDE.md #11).
+     *
+     * @param array<string, mixed> $state
+     * @return array{0: int, 1: int}
+     */
+    private static function quotaState(array $state): array
+    {
+        $windowStart = $state['window_start'] ?? 0;
+        $count = $state['count'] ?? 0;
+        if (!is_int($windowStart) || !is_int($count) || $count < 0) {
+            throw new DatabaseException('Quota state is malformed');
+        }
+
+        return [$windowStart, $count];
+    }
+
     /** @return array{allowed: bool, remaining: int, reset_at: int} */
     public function consumeRateLimit(string $bucket, int $maxPerWindow, int $windowSeconds): array
     {
-        $path = $this->dir('rate_limits') . '/' . $this->slug($bucket) . '.json';
+        $path = $this->rateLimitPath($bucket);
+        $now = time();
 
-        // Counting must happen under the state lock: with the bare
-        // read-then-write pattern, concurrent requests read the same count
-        // and the limit is systematically undercounted.
-        $allowed = true;
-        $remaining = 0;
-        $resetAt = 0;
-        $this->mutateJsonFile($path, ['window_start' => 0, 'count' => 0], static function (array $state) use ($maxPerWindow, $windowSeconds, &$allowed, &$remaining, &$resetAt): array {
-            $now = time();
-            $windowStart = (int)($state['window_start'] ?? 0);
-            $count = (int)($state['count'] ?? 0);
-            if ($windowStart <= 0 || ($now - $windowStart) >= $windowSeconds) {
-                $windowStart = $now;
-                $count = 0;
+        // The increment runs under mutateJsonFile's exclusive lock, not as a
+        // bare read-then-write: concurrent callers would otherwise all read
+        // the same count and each write count+1, so a burst of N requests
+        // advanced the window by 1. A limiter that under-counts under
+        // concurrency fails in exactly the situation it exists for, and this
+        // one now fronts two unauthenticated endpoints.
+        $windowStart = 0;
+        $count = 0;
+        $this->mutateJsonFile(
+            $path,
+            ['window_start' => 0, 'count' => 0],
+            static function (array $state) use ($now, $windowSeconds, &$windowStart, &$count): array {
+                $windowStart = (int)($state['window_start'] ?? 0);
+                $count = (int)($state['count'] ?? 0);
+                if ($windowStart <= 0 || ($now - $windowStart) >= $windowSeconds) {
+                    $windowStart = $now;
+                    $count = 0;
+                }
+                $count++;
+                return [
+                    'window_start' => $windowStart,
+                    'count' => $count,
+                    'updated_at' => gmdate('c'),
+                ];
             }
-
-            $count++;
-            $allowed = $count <= $maxPerWindow;
-            $remaining = max(0, $maxPerWindow - $count);
-            $resetAt = $windowStart + $windowSeconds;
-
-            return [
-                'window_start' => $windowStart,
-                'count' => $count,
-                'updated_at' => gmdate('c'),
-            ];
-        });
+        );
 
         return [
-            'allowed' => $allowed,
-            'remaining' => $remaining,
-            'reset_at' => $resetAt,
+            'allowed' => $count <= $maxPerWindow,
+            'remaining' => max(0, $maxPerWindow - $count),
+            'reset_at' => $windowStart + $windowSeconds,
         ];
     }
 
@@ -1151,6 +1436,26 @@ class ServerStateStore
         return $this->dir('traces') . '/spans.json';
     }
 
+    /**
+     * Bucket file for one rate-limit key. slug() is not injective — it
+     * collapses every run of characters outside [a-z0-9._-] to a single '-'
+     * — so `<prefix>:2001:db8::1` and `<prefix>:2001:db8:1::`, both forms
+     * REMOTE_ADDR really produces, named the same file and shared one
+     * ceiling: a flooder's 429 was answered to an unrelated peer. The
+     * readable slug stays for whoever reads the directory; a short digest of
+     * the RAW key is what makes the name unique.
+     */
+    private function rateLimitPath(string $bucket): string
+    {
+        $slug = $this->slug($bucket);
+        if ($slug === '') {
+            // A key with no slug-safe characters at all would otherwise
+            // produce a filename starting with '-'.
+            $slug = 'bucket';
+        }
+        return $this->dir('rate_limits') . '/' . $slug . '-' . substr(hash('sha256', $bucket), 0, 12) . '.json';
+    }
+
     private function dir(string $name): string
     {
         return $this->baseDir . '/' . $name;
@@ -1174,7 +1479,7 @@ class ServerStateStore
      * @param array<string, mixed> $default
      * @param callable(array<string, mixed>): array<string, mixed> $mutator
      */
-    private function mutateJsonFile(string $path, array $default, callable $mutator): void
+    private function mutateJsonFile(string $path, array $default, callable $mutator, bool $strict = false): void
     {
         $this->ensureDir(dirname($path));
         $lockPath = $path . '.lock';
@@ -1188,7 +1493,7 @@ class ServerStateStore
         }
 
         try {
-            $data = $this->readJsonFile($path, $default);
+            $data = $this->readJsonFile($path, $default, $strict);
             $data = $mutator($data);
             $this->writeJsonFileAtomic($path, $data);
         } finally {
@@ -1197,7 +1502,13 @@ class ServerStateStore
         }
     }
 
-    private function readJsonFile(string $path, array $default): array
+    /**
+     * A state file's contents, or $default when there is none. Strict, an
+     * unreadable or undecodable file throws instead of reading as the
+     * default: for a quota the default is "nothing used yet", the most
+     * permissive answer there is (CLAUDE.md #11).
+     */
+    private function readJsonFile(string $path, array $default, bool $strict = false): array
     {
         if (!is_file($path)) {
             return $default;
@@ -1205,11 +1516,17 @@ class ServerStateStore
 
         $raw = file_get_contents($path);
         if ($raw === false || $raw === '') {
+            if ($strict) {
+                throw new DatabaseException('State file ' . basename($path) . ' could not be read');
+            }
             return $default;
         }
 
         $decoded = json_decode($raw, true);
         if (!is_array($decoded)) {
+            if ($strict) {
+                throw new DatabaseException('State file ' . basename($path) . ' is not a JSON object');
+            }
             return $default;
         }
 

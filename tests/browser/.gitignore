@@ -1,0 +1,7 @@
+# Screenshots a run produces, including one per crashed scenario.
+shots/
+
+# A local `npm install playwright-core --prefix tests/browser`, for machines
+# that do not already have it. The runner resolves it from here when present.
+node_modules/
+package-lock.json

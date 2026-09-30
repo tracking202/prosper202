@@ -4,64 +4,16 @@ include_once(str_repeat("../", 1).'202-config/connect.php');
 
 AUTH::require_user();
 
-// Simple markdown to HTML converter
-function markdownToHtml(string $markdown): string {
-    // Convert headers
-    $html = preg_replace('/^### (.+)$/m', '<h3>$1</h3>', $markdown);
-    $html = preg_replace('/^## (.+)$/m', '<h2>$1</h2>', $html);
-    $html = preg_replace('/^# (.+)$/m', '<h1>$1</h1>', $html);
-    
-    // Convert code blocks
-    $html = preg_replace('/```(\w+)?\n(.*?)```/s', '<pre><code class="language-$1">$2</code></pre>', $html);
-    $html = preg_replace('/`([^`]+)`/', '<code>$1</code>', $html);
-    
-    // Convert links
-    $html = preg_replace('/\[([^\]]+)\]\(([^)]+)\)/', '<a href="$2">$1</a>', $html);
-    
-    // Convert bold and italic
-    $html = preg_replace('/\*\*([^*]+)\*\*/', '<strong>$1</strong>', $html);
-    $html = preg_replace('/\*([^*]+)\*/', '<em>$1</em>', $html);
-    
-    // Convert lists
-    $html = preg_replace('/^\- (.+)$/m', '<li>$1</li>', $html);
-    $html = preg_replace('/(<li>.*<\/li>)/s', '<ul>$1</ul>', $html);
-    
-    // Convert line breaks to paragraphs
-    $lines = explode("\n", $html);
-    $paragraphs = [];
-    $current_paragraph = '';
-    
-    foreach ($lines as $line) {
-        $line = trim($line);
-        if (empty($line)) {
-            if (!empty($current_paragraph)) {
-                $paragraphs[] = $current_paragraph;
-                $current_paragraph = '';
-            }
-        } elseif (preg_match('/^<(h[1-6]|pre|ul|li)/', $line)) {
-            if (!empty($current_paragraph)) {
-                $paragraphs[] = '<p>' . $current_paragraph . '</p>';
-                $current_paragraph = '';
-            }
-            $paragraphs[] = $line;
-        } else {
-            $current_paragraph .= ($current_paragraph ? ' ' : '') . $line;
-        }
-    }
-    
-    if (!empty($current_paragraph)) {
-        $paragraphs[] = '<p>' . $current_paragraph . '</p>';
-    }
-    
-    return implode("\n", $paragraphs);
-}
+// The Markdown renderer lives in 202-config/markdown.php so it can be tested.
+require_once __DIR__ . '/../202-config/markdown.php';
 
 // Get the document to display
 $doc = $_GET['doc'] ?? '';
 $allowed_docs = [
     'attribution-engine' => 'documentation/tutorials-and-guides/14-advanced-attribution-engine.md',
     'attribution-troubleshooting' => 'documentation/tutorials-and-guides/15-advanced-attribution-troubleshooting.md',
-    'api-integrations' => 'documentation/api/00-api-integrations.md'
+    'api-integrations' => 'documentation/api/00-api-integrations.md',
+    'ui-standard' => 'documentation/features/ui-standard.md'
 ];
 
 if (!isset($allowed_docs[$doc])) {
@@ -85,103 +37,39 @@ $html_content = markdownToHtml($markdown_content);
 $doc_titles = [
     'attribution-engine' => 'Advanced Attribution Engine',
     'attribution-troubleshooting' => 'Attribution Troubleshooting Guide',
-    'api-integrations' => 'API Integrations'
+    'api-integrations' => 'API Integrations',
+    'ui-standard' => 'The Prosper202 UI Standard'
 ];
+
+// The document's own first heading becomes the page header, so the title is
+// not said twice. It is markup from the same render as the body below: the
+// renderer passes inline HTML through (it does not escape heading text), which
+// is acceptable only because $allowed_docs names files from this repository.
+$doc_heading = htmlspecialchars($doc_titles[$doc], ENT_QUOTES, 'UTF-8');
+if (preg_match('~^\s*<h1>(.*?)</h1>~s', $html_content, $first_heading)) {
+    $doc_heading = $first_heading[1];
+    $html_content = substr($html_content, strlen($first_heading[0]));
+}
 
 template_top($doc_titles[$doc]); ?>
 
-<style>
-.documentation {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    line-height: 1.6;
-    color: #333;
-}
+<div class="p202-page-header">
+    <div class="p202-page-header__icon"><i class="bi bi-book"></i></div>
+    <div class="p202-page-header__text">
+        <h1 class="p202-page-header__title"><?php echo $doc_heading; ?></h1>
+        <p class="p202-page-header__desc">Documentation that ships with this install.</p>
+    </div>
+    <div class="p202-page-header__actions">
+        <a class="btn btn-secondary" href="help.php"><i class="bi bi-arrow-left"></i> Help</a>
+    </div>
+</div>
 
-.documentation h1 {
-    color: #32383f;
-    border-bottom: 2px solid #2f6fdd;
-    padding-bottom: 10px;
-    margin-bottom: 20px;
-}
-
-.documentation h2 {
-    color: #32383f;
-    margin-top: 30px;
-    margin-bottom: 15px;
-    border-left: 4px solid #2f6fdd;
-    padding-left: 10px;
-}
-
-.documentation h3 {
-    color: #32383f;
-    margin-top: 25px;
-    margin-bottom: 10px;
-}
-
-.documentation code {
-    background-color: #fafbfc;
-    padding: 2px 6px;
-    border-radius: 3px;
-    font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
-    font-size: 85%;
-}
-
-.documentation pre {
-    background-color: #fafbfc;
-    border: 1px solid #f0f1f2;
-    border-radius: 5px;
-    padding: 15px;
-    overflow-x: auto;
-    margin: 15px 0;
-}
-
-.documentation pre code {
-    background: none;
-    padding: 0;
-}
-
-.documentation ul {
-    margin: 10px 0 10px 20px;
-}
-
-.documentation li {
-    margin: 5px 0;
-}
-
-.documentation a {
-    color: #2f6fdd;
-    text-decoration: none;
-}
-
-.documentation a:hover {
-    text-decoration: underline;
-}
-
-.back-link {
-    margin-bottom: 20px;
-}
-
-.back-link a {
-    color: #6b7280;
-    text-decoration: none;
-    font-size: 14px;
-}
-
-.back-link a:hover {
-    color: #2f6fdd;
-}
-</style>
-
-<div class="row account">
-    <div class="col-xs-12">
-        <div class="back-link">
-            <a href="help.php">&larr; Back to Help Resources</a>
-        </div>
-        
-        <div class="documentation">
+<article class="p202-panel">
+    <div class="p202-panel__body">
+        <div class="p202-doc">
             <?php echo $html_content; ?>
         </div>
     </div>
-</div>
+</article>
 
 <?php template_bottom(); ?>

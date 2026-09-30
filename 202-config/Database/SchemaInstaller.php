@@ -12,10 +12,15 @@ use Prosper202\Database\Tables\ClickTables;
 use Prosper202\Database\Tables\TrackingTables;
 use Prosper202\Database\Tables\CampaignTables;
 use Prosper202\Database\Tables\AttributionTables;
+use Prosper202\Database\Tables\ConversionTables;
+use Prosper202\Database\Tables\IdentityTables;
 use Prosper202\Database\Tables\LtvTables;
 use Prosper202\Database\Tables\RotatorTables;
 use Prosper202\Database\Tables\AdNetworkTables;
 use Prosper202\Database\Tables\MiscTables;
+use Prosper202\Database\Tables\AppTables;
+use Prosper202\Database\Tables\GoalTables;
+use Prosper202\Database\Tables\SecretTables;
 use Prosper202\Database\Tables\SyncTables;
 use Prosper202\Database\Exceptions\SchemaInstallException;
 
@@ -53,10 +58,15 @@ final class SchemaInstaller
             $this->createClickTables();
             $this->createTrackingTables();
             $this->createCampaignTables();
+            $this->createConversionTables();
+            $this->createIdentityTables();
             $this->createAttributionTables();
             $this->createLtvTables();
             $this->createRotatorTables();
             $this->createAdNetworkTables();
+            $this->createAppTables();
+            $this->createGoalTables();
+            $this->createSecretTables();
             $this->createMiscTables();
             $this->setCollations();
         } catch (SchemaInstallException $e) {
@@ -121,6 +131,22 @@ final class SchemaInstaller
     }
 
     /**
+     * Create the conversion ledger, its MTA outbox and upload batches.
+     */
+    public function createConversionTables(): void
+    {
+        $this->createTablesFromDefinitions(ConversionTables::getDefinitions());
+    }
+
+    /**
+     * Create the identity graph's tables.
+     */
+    public function createIdentityTables(): void
+    {
+        $this->createTablesFromDefinitions(IdentityTables::getDefinitions());
+    }
+
+    /**
      * Create attribution tables.
      */
     public function createAttributionTables(): void
@@ -150,6 +176,32 @@ final class SchemaInstaller
     public function createAdNetworkTables(): void
     {
         $this->createTablesFromDefinitions(AdNetworkTables::getDefinitions());
+    }
+
+    /**
+     * Create the app tables (AppTables): registrations, their SKAN
+     * encodings, and the Apple postbacks.
+     */
+    public function createAppTables(): void
+    {
+        $this->createTablesFromDefinitions(AppTables::getDefinitions());
+    }
+
+    /**
+     * Create the goals engine's tables.
+     */
+    public function createGoalTables(): void
+    {
+        $this->createTablesFromDefinitions(GoalTables::getDefinitions());
+    }
+
+    /**
+     * Create the installation-wide secrets table (the Android install-token
+     * key lives there; INSTALL::install_databases() mints it).
+     */
+    public function createSecretTables(): void
+    {
+        $this->createTablesFromDefinitions(SecretTables::getDefinitions());
     }
 
     /**

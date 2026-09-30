@@ -28,11 +28,13 @@ class Application extends ConsoleApplication
         // --- Clicks ---
         $this->add(new Commands\ClickListCommand());
         $this->add(new Commands\ClickGetCommand());
+        $this->add(new Commands\ClickConversionsCommand());
 
         // --- Conversions ---
         $this->add(new Commands\ConversionListCommand());
         $this->add(new Commands\ConversionGetCommand());
         $this->add(new Commands\ConversionCreateCommand());
+        $this->add(new Commands\EventSendCommand());
         $this->add(new Commands\ConversionDeleteCommand());
 
         // --- Reports ---
@@ -68,9 +70,15 @@ class Application extends ConsoleApplication
         $this->add(new Commands\AttributionModelCreateCommand());
         $this->add(new Commands\AttributionModelUpdateCommand());
         $this->add(new Commands\AttributionModelDeleteCommand());
-        $this->add(new Commands\AttributionSnapshotListCommand());
+        $this->add(new Commands\AttributionBreakdownCommand());
+        $this->add(new Commands\AttributionJourneyCommand());
+        $this->add(new Commands\AttributionQueueCommand());
         $this->add(new Commands\AttributionExportListCommand());
-        $this->add(new Commands\AttributionExportScheduleCommand());
+        $this->add(new Commands\AttributionExportGetCommand());
+        $this->add(new Commands\AttributionExportCreateCommand());
+        $this->add(new Commands\AttributionExportDownloadCommand());
+        $this->add(new Commands\AttributionExportRetryCommand());
+        $this->add(new Commands\AttributionExportDeleteCommand());
 
         // --- Users ---
         $this->add(new Commands\UserListCommand());
@@ -84,8 +92,23 @@ class Application extends ConsoleApplication
         $this->add(new Commands\UserApiKeyListCommand());
         $this->add(new Commands\UserApiKeyCreateCommand());
         $this->add(new Commands\UserApiKeyDeleteCommand());
+        $this->add(new Commands\UserIdentityKeyGetCommand());
+        $this->add(new Commands\UserIdentityKeyRotateCommand());
         $this->add(new Commands\UserPreferencesGetCommand());
         $this->add(new Commands\UserPreferencesUpdateCommand());
+
+        // --- App measurement (Android installs; registrations are managed with the Go CLI's `p202 app`) ---
+        $this->add(new Commands\AppInstallListCommand());
+        $this->add(new Commands\AppInstallGetCommand());
+        $this->add(new Commands\AppInstallTokenCommand());
+        $this->add(new Commands\AppReportCommand());
+        $this->add(new Commands\AppNotificationsCommand());
+        $this->add(new Commands\AppLinkCommand());
+        // Play Integrity: the status, the mode, and the service-account credential.
+        $this->add(new Commands\AppIntegrityStatusCommand());
+        $this->add(new Commands\AppIntegrityModeCommand());
+        $this->add(new Commands\AppIntegrityCredentialSetCommand());
+        $this->add(new Commands\AppIntegrityCredentialClearCommand());
 
         // --- System ---
         $this->add(new Commands\SystemHealthCommand());
@@ -115,6 +138,8 @@ class Application extends ConsoleApplication
                     'aff_network_id' => 'Affiliate network ID',
                     'aff_campaign_cloaking' => 'Enable cloaking (0|1)',
                     'aff_campaign_rotate' => 'Enable URL rotation (0|1)',
+                    'payout_mode' => 'How conversions set a click\'s value (replace|accumulate)',
+                    'identity_signals' => 'Link clicks into multi-touch journeys (1|0)',
                 ],
                 // Must match CampaignsController::fields() required flags, or
                 // client-side validation passes and the server 422s anyway.

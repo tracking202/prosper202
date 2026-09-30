@@ -51,7 +51,8 @@ $tracker_sql .= "202_landing_pages.aff_campaign_id,
 						202_aff_campaigns.aff_campaign_url_5,
 						202_aff_campaigns.aff_campaign_payout,
 						202_aff_campaigns.aff_campaign_cloaking,
-						202_aff_campaigns.aff_campaign_rotate
+						202_aff_campaigns.aff_campaign_rotate,
+						202_aff_campaigns.identity_signals
 				FROM    202_landing_pages, 202_aff_campaigns
 				WHERE   202_landing_pages.landing_page_id_public='" . $mysql['landing_page_id_public'] . "'
 					AND     202_aff_campaigns.aff_campaign_id = 202_landing_pages.aff_campaign_id";
@@ -436,7 +437,20 @@ $mysql['click_redirect_site_url_id'] = (string) $click_redirect_site_url_id;
 
 // Record click via repository (replaces 9 raw INSERT statements with parameterized, transactional writes)
 $clickRecord = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql);
+// Identity signals (plan §6.2): the tracking domain's p202vid cookie, the
+// p202lpid the landing page's script sends, a signed customer id — linked
+// after the click is stored; nothing when consent is withheld or the
+// campaign's identity capture is off.
+$clickIdentity = \Prosper202\Identity\ClickIdentity::fromRequest(
+	$_GET,
+	$_COOKIE,
+	\Prosper202\Identity\RequestSignals::campaignAllows(array_key_exists('identity_signals', $tracker_row) ? $tracker_row['identity_signals'] : null),
+	// Minted only when the landing page is on the tracker's own site; a
+	// cross-site script request links by the page's p202lpid instead.
+	(string) ($_SERVER['HTTP_SEC_FETCH_SITE'] ?? '') !== 'cross-site'
+);
 $clickRecord->clickId = $click_id;
+$clickRecord->identity = $clickIdentity;
 $clickRepo->recordClick($clickRecord);
 
 //update the click summary table if this is a 'real click'
@@ -462,6 +476,7 @@ $mysql['click_time'] = $db->real_escape_string((string) $click_time);
 
 //set the cookie
 setClickIdCookie($mysql['click_id'], $mysql['aff_campaign_id']);
+$clickIdentity->sendCookie($_SERVER);
 //set outbound cookie
 setOutboundCookie($outbound_site_url);
 

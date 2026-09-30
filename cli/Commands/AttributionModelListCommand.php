@@ -18,7 +18,7 @@ class AttributionModelListCommand extends BaseCommand
     {
         parent::configure();
         $this->setDescription('List attribution models')
-            ->addOption('type', 't', InputOption::VALUE_REQUIRED, 'Filter by type: first_touch, last_touch, linear, time_decay, position_based, algorithmic');
+            ->addOption('type', 't', InputOption::VALUE_REQUIRED, 'Filter by type: ' . implode(', ', \Prosper202\Attribution\ModelType::values()));
     }
 
     protected function handle(InputInterface $input, OutputInterface $output): int

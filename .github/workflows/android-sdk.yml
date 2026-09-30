@@ -1,0 +1,135 @@
+name: Android SDK
+
+# The Android SDK's platform-free core (sdk/android-attribution/core: the
+# install token, the install and events bodies and their canonical form,
+# the customer id, the queue and retry rules, the transport) and its tests,
+# including every cross-language vector in tests/fixtures/app-sdk-contract/
+# that the PHP suite also runs. The Android library module is left out
+# (-Pp202.android=false): it needs AGP and an Android SDK, and nothing in it
+# is decided anywhere but the core. The env-gated LiveServerTest skips itself
+# here, as it does on any machine that does not set P202_LIVE_BASE
+# (tests/live/android-sdk.sh sets it).
+#
+# The second job builds the Android libraries themselves (:android and
+# :integrity) with AGP against the runner image's Android SDK ($ANDROID_HOME),
+# runs Android lint on them (warnings are errors, no baseline), and runs their
+# Robolectric suites, each in both the debug and the release variant: Play's
+# real install-referrer client bound to a played Play Store,
+# P202Attribution.configure() posting to an HTTP server on 127.0.0.1, and
+# PlayIntegrityProvider over a fake StandardIntegrityManager. It also dexes
+# :core with D8 at --min-api 21 and fails on any platform API in the dex
+# newer than API 21 (scripts/dex-api-check.py): Animal Sniffer ignores
+# java.lang.Boolean, Long and Double whole, trusting D8 to backport what
+# Kotlin calls on them, and this is the check of that trust.
+# No emulator: nothing here runs on a device or gets a real Play Integrity
+# token. LiveInstanceTest skips itself as LiveServerTest does.
+
+on:
+  push:
+    paths:
+      - 'sdk/android-attribution/**'
+      - 'tests/fixtures/app-sdk-contract/**'
+      - '.github/workflows/android-sdk.yml'
+  pull_request:
+    paths:
+      - 'sdk/android-attribution/**'
+      - 'tests/fixtures/app-sdk-contract/**'
+      - '.github/workflows/android-sdk.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Core and contract vectors (JVM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Java
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
+        with:
+          gradle-version: '8.14.3'   # the version the SDK is developed against
+
+      - name: Test
+        # check = test + Animal Sniffer (the core against the Android API 21 signature).
+        run: gradle -p sdk/android-attribution --no-daemon -Pp202.android=false :core:check
+
+      - name: The suite ran (a floor on the executed test count)
+        # 56 executed locally (57 with LiveServerTest, which skips itself here).
+        run: python3 sdk/android-attribution/scripts/test-floor.py sdk/android-attribution/core/build/test-results/test=56
+
+  android:
+    name: Android libraries (AGP assemble, lint, Robolectric)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Java
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          # Robolectric 4.14's Android 15 (SDK 35) runtime needs Java 21.
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
+        with:
+          gradle-version: '8.14.3'
+
+      - name: Android SDK
+        run: |
+          # settings.gradle.kts includes :android and :integrity only when it
+          # finds an SDK; the task paths below fail loudly if it did not.
+          test -d "$ANDROID_HOME" || { echo "ANDROID_HOME ($ANDROID_HOME) is not a directory" >&2; exit 1; }
+          echo "ANDROID_HOME=$ANDROID_HOME"
+
+      - name: Assemble, lint, Robolectric tests (debug and release)
+        run: >-
+          gradle -p sdk/android-attribution --no-daemon
+          :android:assembleDebug :integrity:assembleDebug
+          :android:assembleRelease :integrity:assembleRelease
+          :android:lintDebug :integrity:lintDebug
+          :android:lintRelease :integrity:lintRelease
+          :android:testDebugUnitTest :integrity:testDebugUnitTest
+          :android:testReleaseUnitTest :integrity:testReleaseUnitTest
+
+      - name: The suites ran (a floor on the executed test count, per variant)
+        # 11 and 6 executed locally in each variant (LiveInstanceTest skips itself).
+        run: >-
+          python3 sdk/android-attribution/scripts/test-floor.py
+          sdk/android-attribution/android/build/test-results/testDebugUnitTest=11
+          sdk/android-attribution/android/build/test-results/testReleaseUnitTest=11
+          sdk/android-attribution/integrity/build/test-results/testDebugUnitTest=6
+          sdk/android-attribution/integrity/build/test-results/testReleaseUnitTest=6
+
+      - name: The core dexed for API 21 calls nothing newer (D8 backports checked)
+        run: |
+          set -euo pipefail
+          gradle -p sdk/android-attribution --no-daemon :core:jar :core:dexClasspath
+          bt=$(printf "%s\n" "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          platform=$(printf "%s\n" "$ANDROID_HOME"/platforms/android-* | sort -V | tail -1)
+          test -x "$bt/d8" || { echo "no d8 in $bt" >&2; exit 1; }
+          test -f "$platform/data/api-versions.xml" || { echo "no api-versions.xml in $platform" >&2; exit 1; }
+          echo "d8: $bt, API table: $platform"
+          out=$(mktemp -d)
+          cp=()
+          for j in sdk/android-attribution/core/build/dex-classpath/*.jar; do cp+=(--classpath "$j"); done
+          "$bt/d8" --min-api 21 --lib "$platform/android.jar" "${cp[@]}" --output "$out" sdk/android-attribution/core/build/libs/core-*.jar
+          python3 sdk/android-attribution/scripts/dex-api-check.py "$platform/data/api-versions.xml" 21 "$out"/classes*.dex
+
+      - name: Upload lint and test reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android-sdk-reports
+          path: |
+            sdk/android-attribution/*/build/reports/
+            sdk/android-attribution/*/build/test-results/
+          if-no-files-found: ignore

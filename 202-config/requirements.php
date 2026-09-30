@@ -58,122 +58,35 @@ if (is_installed() == true) {
 	    $partition_support = 0;
 	}
  
-info_top(); ?>
-	<div class="main col-xs-7 install">
-	<center><img src="<?php echo get_absolute_url();?>202-img/prosper202.png"></center>
-	<h6>Hey There!</h6>
-	<small>Before we get started, let's make sure your server is optimized for the ultimate Prosper202 ClickServer Performance.</small>
-	<br></br>
-	<h6>For Best Performance - Host With The Prosper202 Official Hosting Partners:</h6>
-	<?php 
-		$partners_data = getData('https://my.tracking202.com/api/v2/hostings');
-		$partners = [];
-		
-		if ($partners_data) {
-			$partners = json_decode((string) $partners_data, true);
-		}
-		
-		// Fallback if API is unavailable
-		if (!$partners || !is_array($partners)) {
-			$partners = [
-				[
-					'title' => 'Visit Official Hosting Partners',
-					'description' => 'Get recommended hosting for Prosper202',
-					'url' => 'https://my.tracking202.com/hosting',
-					'thumb' => '202-img/prosper202.png'
-				]
-			];
-		}
+$partners_data = getData('https://my.tracking202.com/api/v2/hostings');
+$partners = $partners_data ? json_decode((string) $partners_data, true) : null;
+$tone = static fn (bool $ok, string $whenNot = 'bad'): string => $ok ? 'good' : $whenNot;
 
-		foreach ($partners as $partner) { ?>
-			<div class="media">
-			  <div class="media-left">
-			    <a href="<?php echo htmlspecialchars((string) $partner['url']);?>">
-			      <img class="media-object" style="width: 64px; height: 64px;" src="<?php echo htmlspecialchars((string) $partner['thumb']);?>">
-			    </a>
-			  </div>
-			  <div class="media-body">
-			    <a href="<?php echo htmlspecialchars((string) $partner['url']);?>" style="color: #337ab7;"><strong><?php echo htmlspecialchars((string) $partner['title']);?></strong></a>
-			    <p class="infotext"><a href="<?php echo htmlspecialchars((string) $partner['url']);?>" style="color: #333;"><?php echo htmlspecialchars((string) $partner['description']);?></a></p>
-			  </div>
-			</div>
-		<?php }
-	?>
-	<h6>System requirements</h6>
-	<table class="table table-bordered">
-	<thead>
-		<tr class="info">
-			<th>Software / Function</th>
-			<th>Status</th>
-		</tr>
-	</thead>
-	<tbody>
-                <tr>
-                        <td>PHP >= <?php echo PROSPER202_MIN_PHP_VERSION; ?></td>
-                        <td><span class="label label-<?php if (isset($version_error['phpversion'])) {echo "important";} else {echo "primary";}?>" style="font-size: 100%;"><?php echo phpversion(); ?></span></td>
-                </tr>
-		<tr>
-			<td><?php echo $dbwording?></td>
-			<td><span class="label label-<?php if (isset($version_error['mysqlversion'])) {echo "important";} else {echo "primary";}?>" style="font-size: 100%;"><?php echo $html['mysqlversion'] ;?></span></td>
-		</tr>
-		<tr>
-			<td>CURL</td>
-			<td><span class="label label-<?php if (isset($version_error['curl'])) {echo "important";} else {echo "primary";}?>" style="font-size: 100%;"><?php if(isset($version_error['curl'])) echo $version_error['curl']; else echo "Installed"; ?></span></td>
-		</tr>
-		<tr>
-			<td>xml_parser_create()</td>
-			<td><span class="label label-<?php if (isset($version_error['xml_parser_create'])) {echo "important";} else {echo "primary";}?>" style="font-size: 100%;"><?php if(isset($version_error['xml_parser_create'])) echo $version_error['xml_parser_create']; else echo "Installed"; ?></span></td>
-		</tr>
-		<tr>
-			<td>MySQL Partitioning <br><small>(Recommended for better performance with large datasets)</small></td>
-			<td><span class="label label-<?php if ($partition_support==0) {echo "info";} else {echo "primary";}?>" style="font-size: 100%;"><?php if($partition_support==0) echo "Disabled"; else echo "Enabled"; ?></span></td>
-		</tr>
-		<tr>
-			<td>PHP Memcache or Memcached (Recommended for BlazerCache&trade;)</td>
-			<td><span class="label label-<?php if (!$memcacheInstalled) {echo "warning";} else {echo "primary";}?>" style="font-size: 100%;"><?php if(!$memcacheInstalled) echo "Missing"; else echo "Installed"; ?></span></td>
-		</tr>
-
-		<tr>
-			<td>PHP ZipArchive <br><small>(Required for 1-Click Upgrade feature)</small></td>
-			<td><span class="label label-<?php if (!class_exists('ZipArchive')) {echo "info";} else {echo "primary";}?>" style="font-size: 100%;"><?php if(!class_exists('ZipArchive')) echo "Not Available"; else echo "Available"; ?></span></td>
-		</tr>
-
-		<tr>
-			<td>PHP OpenSSL <br>(required for Enhanced Account Security and Clickbank Sales Notification Integration)</td>
-			<td><span class="label label-<?php if (!extension_loaded('openssl')) {echo "warning";} else {echo "primary";}?>" style="font-size: 100%;"><?php if(!extension_loaded('openssl')) echo "Missing"; else echo "Installed"; ?></span></td>
-		</tr>
-
-	</tbody>
-	</table>
-	
-	<?php if($version_error) { ?>
-	<h4 style="color:#e74c3c">Your current host does not meet the Prosper202 Server Requirements! <br><br>Please switch to an Official Hosting Partner below to continue without issues:</h4>
-	<br></br>
-	<h6>Prosper202 Official Hosting Partners:</h6>
-
-	<?php 
-		foreach ($partners as $partner) { ?>
-			<div class="media">
-			  <div class="media-left">
-			    <a href="<?php echo htmlspecialchars((string) $partner['url']);?>">
-			      <img class="media-object" style="width: 64px; height: 64px;" src="<?php echo htmlspecialchars((string) $partner['thumb']);?>">
-			    </a>
-			  </div>
-			  <div class="media-body">
-			    <a href="<?php echo htmlspecialchars((string) $partner['url']);?>" style="color: #337ab7;"><strong><?php echo htmlspecialchars((string) $partner['title']);?></strong></a>
-			    <p class="infotext"><a href="<?php echo htmlspecialchars((string) $partner['url']);?>" style="color: #333;"><?php echo htmlspecialchars((string) $partner['description']);?></a></p>
-			  </div>
-			</div>
-		<?php }
-	?>
-	
-	<?php } else { ?>
-	<a href="<?php echo get_absolute_url();?>202-config/get_apikey.php" class="btn btn-lg btn-block btn-p202" target="_blank" id="202_lb_install_btn">Install Prosper202 ClickServer Now <span class="glyphicon glyphicon-chevron-right"></span></a>
-	<?php } ?>	
-
-	</div>
-	<script type="text/javascript">
-<!--
+info_top(['title' => 'Server check - Prosper202 ClickServer', 'wide' => true]);
+if ($version_error) {
+	echo p202_standalone_card('This server does not meet the requirements', 'Prosper202 cannot be installed here until the items marked below are fixed. An Official Hosting Partner runs it without changes.');
+} else {
+	echo p202_standalone_card('Your server is ready', 'Step 1 of 3: Prosper202 checked what it needs from this server. Next, your license key.');
+}
+echo p202_standalone_requirements([
+	['PHP >= ' . PROSPER202_MIN_PHP_VERSION, phpversion(), $tone(!isset($version_error['phpversion']))],
+	[$dbwording, $mysqlversion, $tone(!isset($version_error['mysqlversion']))],
+	['CURL', isset($version_error['curl']) ? $version_error['curl'] : 'Installed', $tone(!isset($version_error['curl']))],
+	['xml_parser_create()', isset($version_error['xml_parser_create']) ? $version_error['xml_parser_create'] : 'Installed', $tone(!isset($version_error['xml_parser_create']))],
+	['MySQL partitioning', $partition_support == 0 ? 'Disabled' : 'Enabled', $tone($partition_support != 0, 'neutral'), 'Recommended for better performance with large datasets'],
+	['PHP Memcache or Memcached', $memcacheInstalled ? 'Installed' : 'Missing', $tone($memcacheInstalled, 'warn'), 'Recommended for BlazerCache'],
+	['PHP ZipArchive', class_exists('ZipArchive') ? 'Available' : 'Not available', $tone(class_exists('ZipArchive'), 'neutral'), 'Required for the 1-Click Upgrade feature'],
+	['PHP OpenSSL', extension_loaded('openssl') ? 'Installed' : 'Missing', $tone(extension_loaded('openssl'), 'warn'), 'Required for Enhanced Account Security and ClickBank sales notifications'],
+]);
+if (!$version_error) { ?>
+	<a href="<?php echo get_absolute_url(); ?>202-config/get_apikey.php" class="btn btn-primary btn-lg w-100 mt-3" target="_blank" id="202_lb_install_btn">Install Prosper202 ClickServer now</a>
+<?php }
+echo p202_standalone_card_end();
+echo p202_standalone_card('For best performance, host with an Official Hosting Partner', 'Hosting that runs every Prosper202 requirement out of the box.');
+echo p202_standalone_partners($partners);
+echo p202_standalone_card_end();
+?>
+	<script>
 var lb_url = "https://202.redirexit.com/tracking202/redirect/dl.php?t202id=72774&t202kw=req-screen-lb";
 function leavebehind202() {
 	this.target="_blank";
@@ -184,6 +97,5 @@ function leavebehind202() {
 var el = document.getElementById("202_lb_install_btn");
 if(el)
     el.addEventListener("click", leavebehind202);
-//-->
 </script>
-<?php info_bottom(); 
+<?php info_bottom();

@@ -116,35 +116,20 @@ final class ConnectionTest extends TestCase
         $this->assertNull($conn->fetchOne($stmt));
     }
 
-    public function testFetchOneReturnsNullWhenThereIsNoResultSetAndNoError(): void
+    public function testFetchOneThrowsWhenGetResultReturnsFalse(): void
     {
-        // get_result() is false and the statement reports no errno: a statement
-        // that simply produced no result set. (A mock cannot expose errno, so
-        // Connection reads it as 0 -- the same as a real INSERT would report.)
+        // false from get_result() is a fetch failure, not an empty result set
+        // (that is a mysqli_result with no rows). This test used to assert
+        // null here, which pinned the defect: a failed lookup read exactly
+        // like "no such row" (CLAUDE.md error pattern #1).
         $stmt = $this->createMock(mysqli_stmt::class);
         $stmt->method('execute')->willReturn(true);
         $stmt->method('get_result')->willReturn(false);
         $stmt->expects($this->once())->method('close');
 
         $conn = new Connection($this->createFakeMysqli());
-        $this->assertNull($conn->fetchOne($stmt));
-    }
-
-    public function testFetchOneThrowsWhenGetResultFailsWithAnError(): void
-    {
-        // The other meaning of a false get_result(): the fetch itself failed
-        // (server gone away mid-query, errno 2013). Reading that as "no rows"
-        // is how a free-id check reports a taken id as free. mysqli_stmt::$errno
-        // cannot be set on a fake, so the reader is the seam.
-        $stmt = $this->createMock(mysqli_stmt::class);
-        $stmt->method('execute')->willReturn(true);
-        $stmt->method('get_result')->willReturn(false);
-        $stmt->expects($this->once())->method('close');
-
-        $conn = $this->connectionReportingStatementErrno(2013, 'Lost connection to server during query');
-
         $this->expectException(QueryException::class);
-        $this->expectExceptionMessage('MySQL get_result failed: Lost connection to server during query [errno 2013]');
+        $this->expectExceptionMessage('get_result failed');
         $conn->fetchOne($stmt);
     }
 
@@ -174,55 +159,18 @@ final class ConnectionTest extends TestCase
         $this->assertSame($rows, $conn->fetchAll($stmt));
     }
 
-    public function testFetchAllReturnsEmptyArrayWhenThereIsNoResultSetAndNoError(): void
+    public function testFetchAllThrowsWhenGetResultReturnsFalse(): void
     {
+        // As for fetchOne: [] is what an empty result set yields; false is an
+        // error and must not be read as "no rows".
         $stmt = $this->createMock(mysqli_stmt::class);
         $stmt->method('execute')->willReturn(true);
         $stmt->method('get_result')->willReturn(false);
         $stmt->expects($this->once())->method('close');
 
         $conn = new Connection($this->createFakeMysqli());
-        $this->assertSame([], $conn->fetchAll($stmt));
-    }
-
-    public function testFetchAllThrowsWhenGetResultFailsWithAnError(): void
-    {
-        // A batch loop reading this as [] exits early and reports success.
-        $stmt = $this->createMock(mysqli_stmt::class);
-        $stmt->method('execute')->willReturn(true);
-        $stmt->method('get_result')->willReturn(false);
-        $stmt->expects($this->once())->method('close');
-
-        $conn = $this->connectionReportingStatementErrno(2006, 'MySQL server has gone away');
-
         $this->expectException(QueryException::class);
-        $this->expectExceptionMessage('[errno 2006]');
         $conn->fetchAll($stmt);
-    }
-
-    /**
-     * A Connection whose statement-error readers report the given values.
-     * Native mysqli_stmt::$errno/$error throw on every constructor-skipping
-     * fake, so this is the only way to exercise the failed-fetch branch.
-     */
-    private function connectionReportingStatementErrno(int $errno, string $error): Connection
-    {
-        return new class($this->createFakeMysqli(), $errno, $error) extends Connection {
-            public function __construct(\mysqli $write, private int $fakeErrno, private string $fakeError)
-            {
-                parent::__construct($write);
-            }
-
-            protected function statementErrno(object $stmt): int
-            {
-                return $this->fakeErrno;
-            }
-
-            protected function statementError(object $stmt): string
-            {
-                return $this->fakeError;
-            }
-        };
     }
 
     // ── ExecuteInsert ────────────────────────────────────────────────

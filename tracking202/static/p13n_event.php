@@ -34,17 +34,19 @@ if ($token === '' || $eventName === '') {
     $emptyResponse();
 }
 
-// Per-IP fixed-window rate limit (fail-open; tokens are unguessable and
+// Per-peer fixed-window rate limit (fail-open; tokens are unguessable and
 // events are low-sensitivity writes).
 try {
     $stateStore = new \Api\V3\Support\ServerStateStore();
-    // Key on the IP connect2.php already validated/normalized (it handles
-    // proxy headers and privacy masking) — never raw spoofable headers.
-    $ip = isset($ip_address) && is_object($ip_address) && isset($ip_address->address) && (string) $ip_address->address !== ''
-        ? (string) $ip_address->address
-        : (string) ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
-    $rate = $stateStore->consumeRateLimit('p13n_event:' . $ip, 120, 60);
-    if (!$rate['allowed']) {
+    // softIpRateLimit() keys on the validated TCP peer (REMOTE_ADDR) and
+    // prunes stale buckets. Not connect2.php's $ip_address: that is the
+    // first of six client-supplied proxy headers with no trusted-proxy
+    // check, so a flooder sending a random CF-Connecting-IP per request
+    // both misses the limit entirely and mints one bucket file per request.
+    $retryAfter = $stateStore->softIpRateLimit('p13n_event', 120, 60);
+    if ($retryAfter !== null) {
+        // Same `{}` as every other outcome: no 429 and no Retry-After, so
+        // the beacon never becomes an oracle.
         $emptyResponse();
     }
 } catch (\Throwable $rateError) {

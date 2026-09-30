@@ -122,6 +122,13 @@ final class OutboundUrlGuard
      *    An IPv4 literal is preferred; an IPv6 one is bracketed, the form curl
      *    documents -- unbracketed, its extra colons make the entry unparseable
      *    and curl silently drops the pin.
+     *  - No proxy, whatever the environment says. libcurl honours
+     *    https_proxy/HTTPS_PROXY, and through a proxy curl sends
+     *    `CONNECT host:443` and the PROXY resolves the name -- the pin is
+     *    silently ignored and the rebinding hole is back (measured: with a
+     *    proxy in the environment the proxy received the CONNECT; with these
+     *    two options it received nothing). Attribution's WebhookSender sets the
+     *    same pair.
      *  - No redirects, and https only, including for any redirect curl might
      *    otherwise follow.
      *  - TLS verification stays on; SNI and certificate checks use the URL's
@@ -136,6 +143,8 @@ final class OutboundUrlGuard
     {
         return [
             CURLOPT_RESOLVE => [self::curlResolveEntry($url, $validatedIps)],
+            CURLOPT_PROXY => '',
+            CURLOPT_NOPROXY => '*',
             CURLOPT_FOLLOWLOCATION => false,
             CURLOPT_MAXREDIRS => 0,
             CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,

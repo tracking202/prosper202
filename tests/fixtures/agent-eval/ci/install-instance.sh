@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 #
 # Stand up a throwaway Prosper202 instance for agent evals: write
-# 202-config.php, serve the repo with PHP's built-in server, and drive the
-# real web installer headlessly (cookie + CSRF token + form POST). Prints
-# exactly one line to stdout on success: the REST API key of the account it
-# created. Everything else goes to stderr.
+# 202-config.php, serve the repo with PHP's built-in server (through
+# router.php, so the dotted SKAN receiver URL resolves on PHP < 8.4), drive
+# the real web installer headlessly (cookie + CSRF token + form POST), and
+# probe the postback receiver URLs. Prints exactly one line to stdout on success:
+# the REST API key of the account it created. Everything else goes to stderr.
 #
 # Requirements: a reachable MySQL, PHP with the app's extensions, curl, and
 # a full `composer install` (the click path needs ua-parser/uap-php's
@@ -59,7 +60,12 @@ else
 fi
 
 log "Serving on $BASE_URL (log: $RUNTIME_DIR/php-server.log)"
-php -S "$HTTP_HOST:$HTTP_PORT" >"$RUNTIME_DIR/php-server.log" 2>&1 &
+# Before PHP 8.4 the built-in server never resolves the directory index of a
+# path containing a "." — /.well-known/skadnetwork/report-attribution/, the
+# SKAN receiver, is a 404 without help. router.php (next to this script)
+# fills that gap and passes every other request through untouched.
+ROUTER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/router.php"
+php -S "$HTTP_HOST:$HTTP_PORT" "$ROUTER" >"$RUNTIME_DIR/php-server.log" 2>&1 &
 echo $! > "$RUNTIME_DIR/php-server.pid"
 
 for i in $(seq 1 30); do
@@ -113,6 +119,19 @@ if [ -z "$REST_KEY" ]; then
     grep -oE '<div class="error">[^<]*' "$RESULT" | head -5 >&2 || head -5 "$RESULT" >&2
     exit 1
 fi
+
+# The postback receivers live at dotted directory URLs; prove the server
+# resolves each (see router.php) here, where the cause is named, rather than
+# letting an eval case fail later with a row count that does not add up.
+for RECEIVER_PATH in /.well-known/skadnetwork/report-attribution/ /.well-known/appattribution/report-attribution/; do
+    RECEIVER_URL="$BASE_URL$RECEIVER_PATH"
+    RECEIVER_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' "$RECEIVER_URL" || true)
+    if [ "$RECEIVER_STATUS" != "200" ]; then
+        log "Receiver probe GET $RECEIVER_URL returned HTTP ${RECEIVER_STATUS:-000} (expected 200); last server log lines:"
+        tail -5 "$RUNTIME_DIR/php-server.log" >&2
+        exit 1
+    fi
+done
 
 log "Install complete; instance at $BASE_URL"
 printf '%s\n' "$REST_KEY"

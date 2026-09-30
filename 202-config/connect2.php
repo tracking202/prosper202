@@ -8,6 +8,7 @@ if (!file_exists(__DIR__ . '/version.php')) {
     die('Critical: Version file missing');
 }
 require_once(__DIR__ . '/version.php');
+require_once(__DIR__ . '/mysql-error-args.php');
 
 $_GET = array_change_key_case($_GET, CASE_LOWER);
 //fix for nginx with no server name set
@@ -188,7 +189,9 @@ $_SERVER['HTTP_X_FORWARDED_FOR'] = match (true) {
     !empty($_SERVER['HTTP_X_SUCURI_CLIENTIP']) => $_SERVER['HTTP_X_SUCURI_CLIENTIP'],
     !empty($_SERVER['HTTP_X_REAL_IP']) => $_SERVER['HTTP_X_REAL_IP'],
     !empty($_SERVER['HTTP_CLIENT_IP']) => $_SERVER['HTTP_CLIENT_IP'],
-    !empty($_SERVER['HTTP_X_FORWARDED_FOR']) && ($_SERVER['SERVER_ADDR'] != $_SERVER['HTTP_X_FORWARDED_FOR']) => $_SERVER['HTTP_X_FORWARDED_FOR'],
+    // SERVER_ADDR is absent under some SAPIs (php -S): an undefined-key
+    // warning on every forwarded request, and no address to compare with.
+    !empty($_SERVER['HTTP_X_FORWARDED_FOR']) && (($_SERVER['SERVER_ADDR'] ?? '') != $_SERVER['HTTP_X_FORWARDED_FOR']) => $_SERVER['HTTP_X_FORWARDED_FOR'],
     default => $_SERVER['REMOTE_ADDR'],
 };
 
@@ -697,6 +700,26 @@ function setClickIdCookie($click_id, $campaign_id = 0)
 
         setcookie('tracking202subid', (string) $click_id,  ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
         setcookie('tracking202subid_a_' . $campaign_id, (string) $click_id,   ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
+
+        // The install-token proof (InstallTokenGrant): set only by the
+        // request that allocated the click, so a later lp.php can sign the
+        // click the visitor really has and no other. httponly, unlike the
+        // click cookies above: no script needs it, and none may set it.
+        // A missing or unreadable key sets nothing; the redirect then
+        // expands the token empty, which credits no one.
+        if (\Prosper202\Click\RecordedClicks::has($click_id)) {
+            try {
+                $installKey = p202InstallTokenKey();
+            } catch (\Throwable) {
+                $installKey = null;
+            }
+            if (is_string($installKey) && strlen($installKey) === 32) {
+                $proof = \Api\V3\Apps\Android\InstallToken::forClick((int) $click_id, $installKey);
+                $proofCookie = \Api\V3\Apps\Android\InstallTokenGrant::PROOF_COOKIE;
+                setcookie($proofCookie, $proof, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => true, 'samesite' => 'None']);
+                setcookie($proofCookie . '_a_' . $campaign_id, $proof, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => true, 'samesite' => 'None']);
+            }
+        }
     }
 }
 
@@ -2189,79 +2212,85 @@ function foreach_memcache_mysql_fetch_assoc($arg1, $arg2 = null, $allowCaching =
     }
 }
 
+/**
+ * The installation's install-token key: 32 bytes, null when none was minted.
+ * Read once per process, and kept only when it was read: a missing or
+ * unreadable key is asked for again next time, never cached as "none".
+ *
+ * @throws \RuntimeException when there is no database or the read fails
+ */
+function p202InstallTokenKey(): ?string
+{
+    static $key = null;
+    if ($key === null) {
+        $db = $GLOBALS['db'] ?? null;
+        if (!($db instanceof mysqli) && class_exists('DB')) {
+            $db = DB::getInstance()->getConnection();
+        }
+        if (!($db instanceof mysqli)) {
+            throw new \RuntimeException('no database connection');
+        }
+        $key = \Api\V3\Apps\Android\InstallTokenKey::load($db);
+    }
+
+    return $key;
+}
+
+/**
+ * `[[p202_install_token]]` for a click (plan §5.1): the click id signed with
+ * the installation's install-token key, `<click_id>.<mac>`, which a Google
+ * Play store link carries in `referrer=p202%3D[[p202_install_token]]` to the
+ * Android intake — but only for a click this request allocated, or one whose
+ * token the visitor already holds in the httponly proof cookie the recording
+ * request set (setClickIdCookie()).
+ *
+ * lp.php, lpc.php, off.php, offrtr.php and the pixel endpoints take their
+ * click id from a cookie or a query parameter the requester chooses, and
+ * click ids are sequential, so signing that value would sign any click an
+ * attacker names — and pay its install to the attacker (CLAUDE.md #16). See
+ * Api\V3\Apps\Android\InstallTokenGrant.
+ *
+ * Expands EMPTY — never to the bare click id — for such a click, when the
+ * click id is not a canonical positive integer (the fallback redirect's
+ * "p202", a cloaked placeholder), or when the key is missing or unreadable:
+ * the install is then recorded unattributed rather than attributable to a
+ * guessable click (CLAUDE.md #11, #16).
+ */
+function p202ProvenInstallToken($clickId): string
+{
+    return \Api\V3\Apps\Android\InstallTokenGrant::forRequest(
+        $clickId,
+        \Prosper202\Click\RecordedClicks::has($clickId),
+        $_COOKIE,
+        'p202InstallTokenKey'
+    );
+}
+
 function replaceTokens($url, $tokens = [], $fillblanks = 0)
 {
-    $tokens = array_map(rawurlencode202(...), $tokens);
-
-    if (isset($tokens['c1']) || $fillblanks)
-        $url = preg_replace('/\[\[c1\]\]/i', (string) $tokens['c1'], (string) $url);
-    if (isset($tokens['c2']) || $fillblanks)
-        $url = preg_replace('/\[\[c2\]\]/i', (string) $tokens['c2'], (string) $url);
-    if (isset($tokens['c3']) || $fillblanks)
-        $url = preg_replace('/\[\[c3\]\]/i', (string) $tokens['c3'], (string) $url);
-    if (isset($tokens['c4']) || $fillblanks)
-        $url = preg_replace('/\[\[c4\]\]/i', (string) $tokens['c4'], (string) $url);
-    if (isset($tokens['t202pubid']) || $fillblanks)
-        $url = preg_replace('/\[\[t202pubid\]\]/i', (string) $tokens['t202pubid'], (string) $url);
-    if (isset($tokens['gclid']) || $fillblanks)
-        $url = preg_replace('/\[\[gclid\]\]/i', (string) $tokens['gclid'], (string) $url);
-    if (isset($tokens['msclkid']) || $fillblanks)
-        $url = preg_replace('/\[\[msclkid\]\]/i', (string) $tokens['msclkid'], (string) $url);
-    if (isset($tokens['fbclid']) || $fillblanks)
-        $url = preg_replace('/\[\[fbclid\]\]/i', (string) $tokens['fbclid'], (string) $url);
-    if (isset($tokens['utm_source']) || $fillblanks)
-        $url = preg_replace('/\[\[utm_source\]\]/i', (string) $tokens['utm_source'], (string) $url);
-    if (isset($tokens['utm_medium']) || $fillblanks)
-        $url = preg_replace('/\[\[utm_medium\]\]/i', (string) $tokens['utm_medium'], (string) $url);
-    if (isset($tokens['utm_campaign']) || $fillblanks)
-        $url = preg_replace('/\[\[utm_campaign\]\]/i', (string) $tokens['utm_campaign'], (string) $url);
-    if (isset($tokens['utm_term']) || $fillblanks)
-        $url = preg_replace('/\[\[utm_term\]\]/i', (string) $tokens['utm_term'], (string) $url);
-    if (isset($tokens['utm_content']) || $fillblanks)
-        $url = preg_replace('/\[\[utm_content\]\]/i', (string) $tokens['utm_content'], (string) $url);
-    if (isset($tokens['subid']) || $fillblanks)
-        $url = preg_replace('/\[\[subid\]\]/i', (string) $tokens['subid'], (string) $url);
-    if (isset($tokens['t202kw']) || $fillblanks)
-        $url = preg_replace('/\[\[t202kw\]\]/i', (string) $tokens['t202kw'], (string) $url);
-    if (isset($tokens['payout']) || $fillblanks)
-        $url = preg_replace('/\[\[payout\]\]/i', (string) $tokens['payout'], (string) $url);
-    if (isset($tokens['random']) || $fillblanks)
-        $url = preg_replace('/\[\[random\]\]/i', (string) $tokens['random'], (string) $url);
-    if (isset($tokens['cpc']) || $fillblanks)
-        $url = preg_replace('/\[\[cpc\]\]/i', (string) $tokens['cpc'], (string) $url);
-    if (isset($tokens['cpc2']) || $fillblanks)
-        $url = preg_replace('/\[\[cpc2\]\]/i', (string) $tokens['cpc2'], (string) $url);
-    if (isset($tokens['cpa']) || $fillblanks)
-        $url = preg_replace('/\[\[cpa\]\]/i', (string) $tokens['cpa'], (string) $url);
-    if (isset($tokens['timestamp']) || $fillblanks)
-        $url = preg_replace('/\[\[timestamp\]\]/i', (string) $tokens['timestamp'], (string) $url);
-    if (isset($tokens['country']) || $fillblanks)
-        $url = preg_replace('/\[\[country\]\]/i', (string) $tokens['country'], (string) $url);
-    if (isset($tokens['country_code']) || $fillblanks)
-        $url = preg_replace('/\[\[country_code\]\]/i', (string) $tokens['country_code'], (string) $url);
-    if (isset($tokens['region']) || $fillblanks)
-        $url = preg_replace('/\[\[region\]\]/i', (string) $tokens['region'], (string) $url);
-    if (isset($tokens['city']) || $fillblanks)
-        $url = preg_replace('/\[\[city\]\]/i', (string) $tokens['city'], (string) $url);
-    if (isset($tokens['referer']) || $fillblanks) {
-        $url = preg_replace('/\[\[referer\]\]/i', (string) $tokens['referer'], (string) $url);
-        $url = preg_replace('/\[\[referrer\]\]/i', (string) $tokens['referer'], (string) $url);
+    // The install token is computed from the RAW click id, through the
+    // proof check (p202ProvenInstallToken), only when the
+    // URL asks for it, and handed to the one implementation as a token of
+    // its own. Its alphabet (digits, ".", base64url) is unchanged by the
+    // encoding there. (PR 5; the replacement itself is TrafficSourcePixels'.)
+    $tokens = is_array($tokens) ? $tokens : [];
+    if (!isset($tokens['p202_install_token']) && stripos((string) $url, '[[p202_install_token]]') !== false) {
+        if (isset($tokens['subid'])) {
+            $tokens['p202_install_token'] = p202ProvenInstallToken($tokens['subid']);
+        } elseif ($fillblanks) {
+            $tokens['p202_install_token'] = '';
+        }
     }
-    if (isset($tokens['sourceid']) || $fillblanks)
-        $url = preg_replace('/\[\[sourceid\]\]/i', (string) $tokens['sourceid'], (string) $url);
-    if (isset($tokens['transactionid']) || $fillblanks)
-        $url = preg_replace('/\[\[(transactionid|t202txid)\]\]/i', (string) $tokens['transactionid'], (string) $url);
-    return $url;
+
+    // One implementation for the tracker's URLs and the traffic-source
+    // pixels alike, so a path that never loads this file (POST /events,
+    // the goal notifier) replaces tokens exactly as the tracker does.
+    return \Prosper202\Conversion\TrafficSourcePixels::replaceTokens($url, $tokens, $fillblanks ? 1 : 0);
 }
 
 function rawurlencode202($token)
 {
-    if (isset($token)) {
-        $token = str_replace('%40', '@', rawurlencode((string)$token));
-        return $token;
-    } else {
-        return NULL;
-    }
+    return \Prosper202\Conversion\TrafficSourcePixels::encode($token);
 }
 
 function getGeoData($ip)
@@ -2404,7 +2433,7 @@ function getIspData($ip)
 
 function systemHash(): string
 {
-    $hash = hash('ripemd160', $_SERVER['HTTP_HOST'] . $_SERVER['SERVER_ADDR']);
+    $hash = hash('ripemd160', ($_SERVER['HTTP_HOST'] ?? '') . ($_SERVER['SERVER_ADDR'] ?? ''));
     return $hash;
 }
 
@@ -2444,7 +2473,21 @@ function setOutboundCookie($outbound_site_url)
     }
 }
 
-function getPrePopVars($vars)
+/**
+ * The query string a redirect passes on to its destination: every incoming
+ * parameter except the tracker's own.
+ *
+ * Identity parameters are the tracker's too, with one distinction. The
+ * landing page's first-party id (p202lpid) never leaves. The customer id (every
+ * alias and its type), the operator's signature of it and the consent flag go
+ * on only to the operator's own landing page ($toOwnLandingPage), whose
+ * landing.php reads them from its URL to personalise the page and to honour
+ * the refusal. An offer is a third party: a customer id is personal data the
+ * operator gave this tracker, and it is not forwarded there.
+ *
+ * @param array<string, mixed> $vars
+ */
+function getPrePopVars($vars, bool $toOwnLandingPage = false)
 {
     $urlvars = '';
     $stoplist = [
@@ -2457,6 +2500,7 @@ function getPrePopVars($vars)
         't202id',
         't202b',
         't202ctx', // Landing Page Optimizer context token: minted fresh per click, never re-passed
+        'p202lpid',
         't202ref',
         't202pubid',
         'acip',
@@ -2473,6 +2517,9 @@ function getPrePopVars($vars)
         'utm_term',
         'utm_content'
     ];
+    if (!$toOwnLandingPage) {
+        array_push($stoplist, 'cust', 'customer_ref', 'cust_type', 'customer_ref_type', 'cust_sig', 'p202_consent');
+    }
 
     foreach ($vars as $key => $value) {
         if (! in_array($key, $stoplist)) {
@@ -2513,11 +2560,10 @@ function record_mysql_error($dbOrSql, $sql = null): never
 {
     global $server_row, $ip_address; // Add global $ip_address
 
-    if ($sql === null) {
-        $sql = (string) $dbOrSql;
+    // ($db), ($sql) and ($db, $sql) are all in use; see p202MysqlErrorArgs().
+    [$db, $sql] = p202MysqlErrorArgs($dbOrSql, $sql);
+    if (!$db instanceof \mysqli) {
         $db = $GLOBALS['db'] ?? null;
-    } else {
-        $db = $dbOrSql;
     }
 
     if (!$db instanceof \mysqli) {
@@ -2588,12 +2634,7 @@ function record_mysql_error($dbOrSql, $sql = null): never
 
     // report error to user and end page    
 ?>
-    <div class="warning" style="margin: 40px auto; width: 450px;">
-        <div>
-            <h3>A database error has occured, the webmaster has been notified</h3>
-            <p>If this error persists, you may email us directly: <?php printf('<a href="mailto:%s">%s</a>', $_SERVER['SERVER_ADMIN'], $_SERVER['SERVER_ADMIN']); ?></p>
-        </div>
-    </div>
+    <div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><strong>A database error has occurred, and it has been recorded.</strong> If it keeps happening, email <?php $p202Admin = htmlspecialchars((string) ($_SERVER['SERVER_ADMIN'] ?? ''), ENT_QUOTES, 'UTF-8'); printf('<a href="mailto:%s">%s</a>', $p202Admin, $p202Admin); ?>.</div></div>
 
 
 <?php
@@ -2791,7 +2832,9 @@ function getTrackingDomain(): string
     $tracking_domain_result = _mysqli_query($db, $tracking_domain_sql); //($user_sql);
     $tracking_domain_row = $tracking_domain_result->fetch_assoc();
     if (isset($tracking_domain_row['user_tracking_domain']) && strlen((string) $tracking_domain_row['user_tracking_domain']) > 0) {
-        $tracking_domain = $tracking_domain_row['user_tracking_domain'];
+        // host[:port] only: a stored full URL doubled the scheme in every
+        // link built from it (see TrackingDomain).
+        $tracking_domain = \Prosper202\Click\TrackingDomain::normalize((string) $tracking_domain_row['user_tracking_domain']) ?: $tracking_domain;
     }
     return $tracking_domain;
 }
@@ -3157,7 +3200,8 @@ function getClickId(): string
 
     //now gather the info for the advance click insert
     $click_id = $db->insert_id;
-    return $db->real_escape_string($click_id);
+    \Prosper202\Click\RecordedClicks::note((int) $click_id);
+    return $db->real_escape_string((string) $click_id);
 }
 
 function getClickIdPublic($click_id)
@@ -3487,6 +3531,10 @@ function processCacheRedirect(): void
             if ($getUrl) {
 
                 $new_url = str_replace("[[subid]]", "p202", $getUrl);
+                // No click is recorded while MySQL is down, so there is no
+                // click to sign: the install token expands empty (plan §5.1),
+                // never to a value an install could be credited through.
+                $new_url = str_ireplace('[[p202_install_token]]', '', $new_url);
 
                 // t202pubid string replace for cached redirect
                 if (isset($_GET['t202pubid']) && $_GET['t202pubid'] != '') {
@@ -3869,7 +3917,8 @@ function getForeignPayout($currency, $payout_currency, $payout)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/get-foreign-payout');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3882,42 +3931,6 @@ function getForeignPayout($currency, $payout_currency, $payout)
 
     $result['exchange_payout'] /= 10000;
     return $result;
-}
-
-function updateForeignPayout(&$mysql)
-{
-    global $db;
-    // update currency value
-    if (isset($_GET['amount']) && is_numeric($_GET['amount'])) {
-        $mysql['fpa']  = $_GET['amount'];
-    } else {
-        $mysql['fpa']  = $_GET['aff_campaign_foreign_payout'];
-    }
-    if (isset($mysql['aff_campaign_currency']) && isset($mysql['user_account_currency']) && isset($mysql['aff_campaign_id']) && ($mysql['aff_campaign_currency'] != $mysql['user_account_currency'])) {
-
-        $exchangePayout = getForeignPayout($mysql['user_account_currency'], $mysql['aff_campaign_currency'], $mysql['fpa']);
-
-        $mysql['aff_campaign_payout'] = $db->real_escape_string($exchangePayout['exchange_payout']);
-
-        //if a payout was set in the postback or pixel then use that but don't update the default campaign info
-        if (isset($_GET['amount']) && is_numeric($_GET['amount'])) {
-
-            $mysql['payout'] = $mysql['click_payout'] * $mysql['aff_campaign_payout'] / $mysql['fpa']; // calculate the value without doing a second api call for exchange rate
-            $mysql['aff_campaign_payout'] = $mysql['payout'];
-        } else { //
-            $mysql['payout'] = $db->real_escape_string($exchangePayout['exchange_payout']);
-
-            $aff_campaign_sql = "UPDATE `202_aff_campaigns` SET";
-            $aff_campaign_sql .= " `aff_campaign_payout`='" . $mysql['aff_campaign_payout'] . "' ";
-            $aff_campaign_sql .= "WHERE `aff_campaign_id`='" . $mysql['aff_campaign_id'] . "'";
-            $db->query($aff_campaign_sql);
-        }
-
-        $click_sql = "UPDATE `202_clicks` SET";
-        $click_sql .= " `click_payout`='" . $mysql['aff_campaign_payout'] . "' ";
-        $click_sql .= "WHERE `click_id`='" . $mysql['click_id'] . "'";
-        $db->query($click_sql);
-    }
 }
 
 function getDynamicEPVPixelId(&$mysql)

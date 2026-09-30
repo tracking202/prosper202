@@ -224,6 +224,40 @@ abstract class Controller
     {
     }
 
+    /**
+     * Message for a duplicate-key (MySQL 1062) failure on this controller's
+     * INSERT/UPDATE, or null (the default) to let the exception propagate.
+     *
+     * Returning a message turns the race loser's raw SQL error into the same
+     * 409 a beforeCreate uniqueness pre-check produces: two concurrent
+     * writes can both pass the pre-check, and only the UNIQUE key decides.
+     * The message should name the colliding thing the way the pre-check
+     * does, so the caller cannot tell which path rejected them.
+     */
+    protected function duplicateKeyConflictMessage(): ?string
+    {
+        return null;
+    }
+
+    /**
+     * @throws ConflictException when the failure is a duplicate key and the
+     *                           controller declares a conflict message
+     */
+    private function rethrowDuplicateKey(\mysqli_sql_exception $e, \mysqli_stmt $stmt): never
+    {
+        // Under mysqli's ERROR|STRICT reporting the throw comes from inside
+        // $stmt->execute(), so execute()'s own close() never ran: this is
+        // the only place that can release the statement before the
+        // exception leaves the request. Without it every 409 from a racing
+        // create leaks a prepared statement against max_prepared_stmt_count.
+        $stmt->close();
+        $message = $this->duplicateKeyConflictMessage();
+        if ($message !== null && (int)$e->getCode() === 1062) {
+            throw new ConflictException($message);
+        }
+        throw $e;
+    }
+
     // ─── CRUD Operations ─────────────────────────────────────────────
 
     public function list(array $params): array
@@ -436,7 +470,11 @@ abstract class Controller
         $stmt = $this->prepare($sql);
         $this->bind($stmt, $types, ...$binds);
 
-        $this->execute($stmt, 'Insert failed');
+        try {
+            $this->execute($stmt, 'Insert failed');
+        } catch (\mysqli_sql_exception $e) {
+            $this->rethrowDuplicateKey($e, $stmt);
+        }
 
         $insertId = $stmt->insert_id;
         $stmt->close();
@@ -511,7 +549,11 @@ abstract class Controller
         $stmt = $this->prepare($sql);
         $this->bind($stmt, $types, ...$binds);
 
-        $this->execute($stmt, 'Update failed');
+        try {
+            $this->execute($stmt, 'Update failed');
+        } catch (\mysqli_sql_exception $e) {
+            $this->rethrowDuplicateKey($e, $stmt);
+        }
         $stmt->close();
 
         // As in create(): the write has landed, so a later failure must not
@@ -526,6 +568,23 @@ abstract class Controller
     }
 
     public function delete(int|string $id): void
+    {
+        $this->recordDeleted($this->deleteRecord($id));
+    }
+
+    /**
+     * The delete itself: beforeDelete() and the row write, without the
+     * change record. Returns the row as it was.
+     *
+     * Split from recordDeleted() so a controller that runs the delete inside
+     * a transaction can record the change after the commit: recordChange()
+     * inside the transaction would have its failure roll the delete back and
+     * still be reported as WriteCommittedException — "the write landed,
+     * never retry" — about a write that did not land (CLAUDE.md #13).
+     *
+     * @return array<string, mixed>
+     */
+    protected function deleteRecord(int|string $id): array
     {
         $existing = $this->get($id);
         $this->beforeDelete($id);
@@ -561,8 +620,20 @@ abstract class Controller
         $this->execute($stmt, 'Delete failed');
         $stmt->close();
 
+        return (array)$existing['data'];
+    }
+
+    /**
+     * Record a delete that has landed. Call it only once the delete is
+     * committed: a failure here is reported as WriteCommittedException, which
+     * tells every retry seam the row is already gone.
+     *
+     * @param array<string, mixed> $deleted The row deleteRecord() returned.
+     */
+    protected function recordDeleted(array $deleted): void
+    {
         try {
-            $this->recordChange('delete', (array)$existing['data']);
+            $this->recordChange('delete', $deleted);
         } catch (\Throwable $e) {
             throw new WriteCommittedException($this->changeEntityName() ?? 'record', $e);
         }

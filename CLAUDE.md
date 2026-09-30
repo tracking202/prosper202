@@ -30,6 +30,16 @@ Never use `json_decode(...) ?? []` or similar fallbacks that silently discard ba
 ### 5. Inconsistent security patterns across similar operations
 If create has secure password input, update must too. If one delete command has confirmation, all must. When implementing a security measure, grep for every analogous code path and apply the same pattern. Spot-checking misses these — review exhaustively.
 
+The pre-login pages are the sharp instance. `install.php` and `202-login.php`
+checked the session token on their POST; `upgrade.php` — the same
+no-login-yet situation, one directory over — did not, and the repair
+RELEASING.md gives for a stranded branch deployment (wind `202_version` back,
+open that page) is exactly when the gap was open.
+`tests/Auth/PreLoginPostRequiresTokenTest` now pins all three, and
+`tests/live/upgrade-csrf.sh` proves it over HTTP. The wider number is the one
+to know: 74 files in the tree read `$_POST` and 27 check a token. That sweep
+is open; anything that adds a POST handler should be held to it.
+
 ### 6. Empty response rendering for void operations
 DELETE/204 responses return empty arrays. Rendering an empty array produces no output. Void operations (delete, remove, revoke) need explicit success messages, not render calls.
 
@@ -158,7 +168,415 @@ the lookup keys on (here the key itself, so the same key still lands in the
 same file) and bound what a shard retains, or the correctness fix ships a
 latency regression.
 
-### 16. A validation in a hydration path fails the batch, not the record
+### 16. On a public endpoint, identity is what the attacker cannot choose
+Every value a security decision keys on must be split into what the peer
+proved and what the request merely *claimed*. Two instances shipped in one
+feature: the receiver's rate limiter keyed buckets on `AUTH::client_ip()`,
+which honors `X-Forwarded-For` — one curl loop with random headers both
+dodges the limit and mints unbounded bucket files (key on `REMOTE_ADDR`;
+the XFF-aware value is for display); and the postback dedupe hash covered
+only fields an attacker can copy out of thin air (network, transaction,
+leg), so a forgery arriving first claimed the UNIQUE slot and the genuine
+signed postback was answered `duplicate: true` and dropped — the dedupe
+must cover the full body, so only a byte-identical retry collapses. The
+same review asks the report question: aggregates over rows anyone can
+insert must default to counting only rows that passed verification, with
+the unverified visible in separate columns — "stored and flagged" is not a
+trust decision, the read path makes one whether it means to or not.
+
+### 17. A key derived from an identity must be injective
+When a value exists to tell two things apart, every transform between the
+thing and the comparison has to preserve the distinction. Two instances
+shipped in one feature, both found only by reading:
+`ServerStateStore::slug()` turns a rate-limit bucket into a filename with
+`preg_replace('/[^a-z0-9._-]+/', '-', ...)`, which collapses every run of
+`:` — so `2001:db8::1` and `2001:db8:1::`, both canonical addresses that
+`REMOTE_ADDR` really produces, shared one bucket and one ceiling, and a
+flood from one peer answered 429 to the other; and the report's identity
+was `CONCAT_WS('|', protocol, ad_network_id, transaction_id, ...)` over
+fields no validator constrains the characters of, so a postback naming
+`acme.skadnetwork|A9F3` / `B7C2` and one naming `acme.skadnetwork` /
+`A9F3|B7C2` counted as one.
+
+The second is the sharper lesson, because the codebase already had the
+answer: `PostbackReceiver::dedupeHash()` length-prefixes every field and
+its comment says why — "with a plain joining character, an ad-network-id
+containing that character could collide with a different (network, id)
+pair". The guard existed, one file away, and the sibling was written with
+a bare delimiter anyway. Ask of any composite key, bucket name, cache key
+or `CONCAT_WS`: can two different inputs produce this same string? If a
+sanitizer, a truncation, a case fold or a delimiter sits between the value
+and the comparison, the answer is usually yes.
+
+The collation is the transform nobody writes down. Every table defaults to
+`utf8mb4_general_ci`, so a UNIQUE key over a value someone else chose folds
+case: `tx:A-1` and `tx:a-1` on one click were one ledger key, and the
+second sale was answered `duplicate` with its money dropped; LTV's
+idempotency key and external subscription/product ids did the same.
+`UniqueKeyCollationTest` now requires every text column in a UNIQUE or
+PRIMARY key to declare `COLLATE utf8mb4_bin` or to be listed with the
+reason folding is right — and a column's collation lives in the upgrade
+too, not only the table definition (the reconciler compares names and
+nullability, not collations).
+
+This differs from #15: there the discriminator was *inside* the lookup
+path, so no lookup could see it change. Here the mapping itself is
+many-to-one, so two things that should differ never get the chance to.
+
+### 18. A guard that runs after the framework already normalized its input
+`assertUsableAppId()` rejected anything that was not a positive App Store
+id, and it never once saw a bad value. It ran from `beforeCreate()`, and
+`Controller::create()` calls `validatePayload()` — which casts every `'i'`
+field — *before* it calls the hook. So `1e20` was stored as
+7766279631452241920, `'99999999999999999999'` as `PHP_INT_MAX`, `1.5` as
+1, each answered 201 with an id the caller never sent, and the global
+UNIQUE key taken by a garbage number. The same shape sat two files away in
+the conversion-values controller, where the mis-scoped rule is then served
+to a device in another app's runtime schema.
+
+This is #12 seen from the inside: the layer that discarded the input was
+not a different service or a CLI, it was the base class on the same
+request path, three stack frames up, doing something entirely reasonable.
+A validation hook cannot see the raw request unless it is given it. When
+you add a check, find where the value it inspects came from — if a
+framework hook hands it to you, assume it has already been normalized, and
+prove otherwise by feeding a malformed value in at the outermost entry
+point (the decoded request body, not the hook's argument) and watching
+where it lands.
+
+### 19. A class name is not a contract, and a container is not a component
+CSS has no undefined-symbol error. `class="p202-flash p202-flash--warn"`
+renders as an ordinary `<div>`: the modifier was never written into any
+stylesheet, so it styles nothing, warns nothing, and looks in the source
+exactly like the modifiers that do exist. Two of these shipped in one
+feature — the second found only by diffing every `p202-*` token in the
+markup against the selectors in `202-css/`. That diff is now
+`ComponentClassIsConsumedTest`, which fails when a class in markup is
+named by no stylesheet rule and no script. A class that only a script
+selects on (`p202-copy-label`) counts as consumed: the test asks whether
+*anything* acts on the class, not whether it is styled.
+
+The half a checker cannot see is the one above it. `.p202-empty` is
+defined, so this passes:
+
+```html
+<div class="p202-empty"><h2>Nothing received yet</h2><p>…</p></div>
+```
+
+and it still renders wrong, because the component's typography lives in
+`.p202-empty__title`, not in the container — the `<h2>` comes out at
+browser-default heading size, louder than every panel title on the page.
+Reaching for a component means reaching for its parts. The rule at the top
+of `p202-components.css` says where they are: `202-account/ui-kit.php`
+renders every component in every state, so read the kit's markup for the
+component you want and copy its shape, rather than putting your own
+elements inside its container and assuming the container carries the
+styling.
+
+One wave later the same reach went the other way. `.p202-help` *reads* like
+a name for muted helper text; it is the help-**icon** component —
+`inline-flex`, `cursor: help`, one `<i>` inside, exactly as the kit shows
+it. Six sentences went into it on the new page, and two more had been
+sitting in the previous wave's page since it shipped. A flex container
+makes every child a flex item and **discards the whitespace between them**,
+so `Choose <em>Custom Date</em> to set these.` rendered as `ChooseCustom
+Dateto set these.` — valid markup, a class that exists, every static test
+green, and a broken sentence. The general shape: *inline content placed in
+a layout container loses the spaces around its tags*, and nothing that
+reads source can see it. `checks.flexContainersKeepTheirSpaces` in
+`tests/browser/lib/checks.js` is that one measured in the browser — a flex
+container with no `gap` whose children mix text and elements. The sibling
+lesson is that a class name is not a synonym: before using one for
+something that is not what the kit shows it doing, read its rule.
+
+### 20. A checker only sees the syntax it follows
+
+The upgrade-ladder guard walked tokens for `T_IF` `(` … `)` `{`, so `elseif`,
+the alternative syntax (`if (…): … endif;`), a braceless body, a ternary, a
+`while`, and `switch`/`case` were all spellings of the forbidden gate that it
+reported as **absent** — six silent passes, each measured by planting it. That
+is #11 in a checker rather than a predicate: a scanner that cannot see a
+construct must not answer "no such construct".
+
+Two ways out, in that order. **Ask the question in a form that has no
+structure to miss**: the invariant here was "`$prosper202_version` is never
+compared equal to the code version", which is a property of the token stream,
+not of any statement — scanning every token for the comparison and never
+looking at statement shape has nothing left to evade it. Where that is
+impossible, **forbid the construct you cannot read and name it**: a `case` arm
+carries no comparison token at all, so the arms are not parsed, the `switch`
+subject is banned outright and the message says to teach both scans before
+writing one. A ban is only a ban if it reads the whole construct, though —
+the first draft of that one checked the single token after `switch (`, which
+`switch ((string) $v)` and `match (($v))` both walk straight past. Search the
+balanced subject, and cover the mirror image (`case $v:`, `$v => …`) where
+the version is the arm and the thing it is compared against is the subject.
+
+Then prove it. Plant the defect in *every* spelling, and run the same plants
+against the version you are replacing — "this closes a hole" is then a
+measurement with a before and an after, not a claim. Note which direction a
+hole falls in: the same `elseif` blindness that let a forbidden gate through
+also made a correctly gated call read as ungated in a sibling test, a false
+*failure*. Only one of those two directions is silent, and it is the one worth
+hunting.
+
+The list of shapes a checker reads has to come from the grammar, not from
+memory. `PreLoginPostRequiresTokenTest`'s use classifier knew assignment,
+compound assignment, `++`, element write, `list()`, `&` and a positional
+argument — the shapes that came to mind — and PHP writes a variable in more
+ways than that: a named argument (`f(name: $x)`, a `:` before the variable
+where the classifier looked for `(` or `,`), a `foreach` target (`as $x`,
+`=> $x`), a `catch` target, keyed destructuring (`['k' => $x] = …`), a
+`global`/`static` declaration, and then the writes that never name the
+variable at all — `$$name`, `${'name'}`, `$GLOBALS['name']` (the pages run
+at file scope, where that is the same variable — the one the first sweep of
+this list still missed), `extract()`, `eval()`, an `include` — which no
+scan for the variable's token can see and which the scanned range now
+refuses outright. Enumerate from the language reference
+before writing the classifier, plant every shape on the list, and refuse by
+name the ones that cannot be read.
+
+Beside the variable is not around the expression. The classifier read the
+token before the variable and the token after it, and `weaken(($error))`
+showed it a `(` on each side, which it called a read — while PHP passes the
+parenthesized variable by reference exactly as it passes the bare one, and
+`[($e)] = …` and `list(($e)) = …` assign it. The same lens found the element
+shapes: `weaken($csrf_ok[0])`, `$csrf_ok[0]++`, `[$csrf_ok[0]] = …`,
+`foreach (… as $csrf_ok[0])` and `$csrf_ok[0][0] = …` each read as a read,
+and each turns a `false` result into a truthy array, so the work runs. What
+is done to a variable is done to the expression it roots, and the tokens to
+read are the ones beside that expression: gather its index chain and the
+redundant parentheses around it first, then classify from the edges. The
+parentheses to cross are the ones nothing owns — after another `(`, a `,`,
+a `[`, a `:` or a `=>` — and never a callee's or a keyword's, because
+crossing `weaken(` puts the callee beside the extent and reads the argument
+as a read, the silent direction. Every spelling was executed before it was
+listed; the ones the grammar refuses (`($x) = …`, `&($x)`, `as ($x)`) are
+parse errors, and the docblock says so rather than guarding against them.
+When a classifier keys on adjacency, ask what the language lets sit
+between the variable and the thing that acts on it.
+
+### 21. Naming a thing is not being guarded by it
+
+`versionsComparedIn()` reported which versions a gate's condition compares
+against, and every check downstream read that as "the block runs only at those
+versions". Those are different questions and `||` is the gap between them:
+`if ($prosper202_version == '1.9.75' || $force)` names 1.9.75 and runs at every
+other version too. Planted as the stronger `|| true` on the real reconcile
+gate, twelve structural checks stayed green — including the one whose entire
+subject is "every reconcile call sits inside a version gate".
+
+The first fix walked the condition's boolean structure and allowed `&&`,
+reasoning that a conjunct can only narrow. True, and beside the point: the
+same reviewer then planted `== '1.9.75' && $enabled` and showed that a gate
+carries **two** obligations — admit the versions it names, and admit no others
+— and that narrowing breaks the first. A false flag keeps 1.9.75 installs out
+of the 1.9.75 rung, so they sit at 1.9.75 forever and nothing ever converges
+them. One direction of the invariant had been checked and called done. No
+token scan can prove a conjunct always true, so the answer was subtraction: a
+gate is a disjunction of version equalities, or it is not a gate.
+
+The same round killed a cast allowance justified in a comment as
+"value-preserving". Executed, `(bool) $prosper202_version == '1.9.75'` is true
+for every non-empty stored version and `(int) … == 1` matches every 1.x —
+"value-preserving" was a claim about seven cast operators, none of which had
+been run.
+
+The shape to carry away: when an invariant reads *only X* **and** *all X*, a
+check enforcing one of those halves looks exactly like a check enforcing both.
+Write both halves down before writing the check, and ask of every relaxation
+which half it relaxes.
+
+The general shape is not confined to conditions: whenever one check extracts a
+value from an expression and another treats that value as a constraint, ask
+what else the expression admits. *Contains x* and *implies x* read the same in
+a grep and are not the same claim.
+
+Two smaller forms of the same error shipped in the fix for this one, both
+found by the same reviewer within the hour:
+
+- **A greedy `.*` turns "is" into "contains".** `/^version_compare\(.*'>'\)$/`
+  was written to say the condition *is* that call, and it accepted
+  `version_compare(…, '<') || version_compare(…, '>')` — a guard that fires
+  for every version but the current one. Anchors do not make a pattern exact
+  when what sits between them can swallow an operator.
+- **Assertions compose only if they name the same thing.** The guard was
+  asserted to contain an `UPDATE` and to contain an `_upgrade_query(` call.
+  Both held while the call received a different variable, so the write never
+  ran. Two true statements about different parts of a block are not one
+  statement about the block; when the claim is "this value reaches that
+  call", follow the value.
+
+The same shape shipped again one PR later, in `PreLoginPostRequiresTokenTest`:
+the token guard was asserted to *precede* the protected work, and the helper
+to *contain* `hash_equals(`. `$error = false;` between the guard and the work
+passed the first; `hash_equals(…); return true;` passed the second — 22 of 24
+planted defects, against a test whose docblock said "guarded". When the claim
+is "this result decides that", execute it where the code is pure enough
+(both helpers were), and otherwise prove the branch the work sits under and
+that nothing between the guard and the branch can change what it tests.
+
+And its form, one round later: the same test asserted that `name="token"`
+appeared somewhere in the file, which said nothing about which form carried
+it — below `</form>`, in a second form, disabled, or inside `<!-- -->`, it
+was on the page and not in the submission, and the live pass scraped the
+first token it found and posted it by hand, so it would have stayed green
+too. The claim was "the form that posts carries the token"; the check has
+to find that form, bound it, and read the input inside it, and the live
+pass has to submit the form's own fields rather than a token it found
+anywhere on the page. And its value, the round after that: "the escaper's
+first argument contains `$_SESSION['token']`" accepted
+`'prefix' . $_SESSION['token']`, which the server's `hash_equals()` refuses
+on every submission — a login page nobody can log in through, green in CI.
+Parse the expression the claim is about and accept the spellings you can
+name; a substring test of an expression is #21 every time.
+
+Two more, one review later, both about what a call *is*. The ladder's walk
+credited `$logger->_upgrade_query($sql)` and `Log\_upgrade_query($sql)` as
+the query that wrote the version, and the page test found its guard by the
+substring `AUTH::check_csrf_token(`, which `MyAUTH::check_csrf_token(`
+contains: a name is not a call site. A callee is the token *and what
+precedes it* — `->`, `?->`, `::`, `new` and `function` each make the same
+final token something else, `Other\name` is another function — and an
+unqualified name is the global one only in a file that declares no
+namespace and imports no function, which both tests now assert (a `use
+function Other\version_compare;` at the top of the ladder rebound the
+downgrade guard's comparison with every check green). And bounding the
+guard call was not reading it: `install_csrf_ok($expected, $submitted)`
+was shown to decide the work and executed on token pairs, and never asked
+what the page hands it — `install_csrf_ok($_POST['token'],
+$_POST['token'])` accepts every non-empty token and left everything green.
+That is #12 seen from the call site: the arguments are now parsed as the
+session token and the posted token, in that order, read where they are or
+through a variable assigned exactly that once, directly in the block,
+untouched to the call and alias-free. One review later the same substring
+found the *work*: `MyUPGRADE::upgrade_databases(` satisfied the marker for
+the protected operation, so a page calling a lookalike class read as
+guarded while the real operation went unwatched — the guard had been fixed
+and the three work sites, found the same way two screens down, had not.
+One helper now reads guard and work alike. When a check says "X is
+called", ask what X is called *with*, and whether the thing named is the
+thing meant; and when one site read by name is fixed, every site read by
+name is the sweep.
+
+### 22. "Somewhere in the block" is not an order
+
+`reconcileSuccessRanges()` found the reconcile assignment anywhere in the
+step and then credited every `if ($ok) {` from the step's start;
+`persistsThatReachAQuery()` built its variable-to-statement map over the
+whole step and then credited every `_upgrade_query($sql)` from it. Both
+answered a question about order — *is the guard below the assignment, is
+the value at the call the one that was assigned* — with a lookup that had
+thrown the order away, so a guard above its assignment, a `$ok = true;`
+between the two, and `$sql = "UPDATE …"; $sql = "SELECT …";
+_upgrade_query($sql);` all read as correct. Planted, fourteen shapes
+passed. When a check's claim is "A guards B" or "A reaches B", it is a
+claim about sequence *and* about nothing changing in between, and a check
+that matches A and B separately and joins them by name proves neither
+half. Walk the range once in source order, carry the value forward, drop it
+at the first appearance you cannot read (the check does not tell a read
+from a write, and says so), and refuse by line anything else — the loud
+direction. Twin of #15: there the discriminator was folded into the key;
+here the order was.
+
+Its sibling, one review later, in the check that replaced the unordered one:
+the seed of the error flag was found *anywhere* after the guard and credited
+though it sat inside a conditional that could skip it, and any whole
+assignment in the failure branch counted as a seed whatever it assigned —
+`$error = [];` there leaves the flag empty and the work reachable. Where a
+value is set and what it is set to are both part of "A guards B". A
+statement the invariant depends on has to be shown to run on every path
+(directly in the block, first in its own statement, not the body of a
+braceless `if`) and to assign what the invariant needs; and the work has to
+sit inside the block whose entry the guard assumes, because outside the
+POST block a GET runs it with no token asked for. And the position that
+matters is the *act's*, not the value's: the ladder check located the
+`UPDATE 202_version` literal and asked whether *it* sat in the success
+branch, so a literal assigned inside the branch and handed to
+`_upgrade_query()` after its closing brace read as guarded, and one assigned
+above the branch and queried inside it read as unguarded. The write is the
+call; anchor on the call. Two more of the same family, one review later: a
+scan for writes that stopped at the branch's `if` keyword left the condition
+unread, and `if (($error = false) === false && !$error)` carries the accepted
+conjunct while resetting the flag inside it — a condition is code, so scan to
+the brace; and a value carried across statements was carried through braces
+as if they were not there, so an assignment inside a nested condition was
+credited at a call after it — a hold lives in the block that set it, and
+leaving the block drops it, because the block may not have run.
+
+The last two rounds of this were the *other half* of "A guards B": not only
+must B never run when A said no, B must run whenever A said yes. A persist
+accepted anywhere inside the success branch — in a nested condition, or
+behind `$enabled && _upgrade_query(…)` — leaves a successful reconcile
+without its version write, and the rung is stuck; and a seed scan that
+returned at the first good write left `$error['user'] = …; $error = [];`
+unread. Both halves need the same treatment: the act must run on every path
+through the branch (directly inside it, in a shape that evaluates it
+unconditionally), and a scan that accepts a write has to read the rest of
+the block for the one that undoes it.
+
+One more, the round after: "runs whenever the block runs" was read as
+*directly inside the braces, first in its statement*, and a statement after
+a closing brace passed — as if the branch that brace closed could not have
+left. `if ($skip) { return false; }` above the guard, or above the persist
+inside it, is a path on which a successful reconcile never records its
+version, and the check called both unconditional. A jump is the third thing
+"runs on every path" has to read, after depth and order; the check cannot
+tell where one lands (a `break` in a nested loop, a `return` in a closure),
+so every return, exit, throw, break, continue and goto above the statement
+is refused by line, and `goto` is refused for the whole file, because PHP
+lets one enter an `if` from anywhere in the same scope and no brace-bounded
+range can see it come in.
+
+And depth is not position: `if ($enabled) $ok = reconcile();` sits at the
+step's brace depth and runs only when `$enabled` is true. The assignment
+check counted braces while the guard check, two screens down in the same
+file, already asked the whole question — first in its statement, at the
+block's depth, nothing above it that leaves — through one helper. When an
+invariant says "runs whenever the block runs", ask it with that helper at
+every site, not with a fresh depth loop that answers a smaller question.
+The very next review found the site that sentence had missed: the walk that
+carries a `$sql = "UPDATE …"` to its call recorded the hold by depth, so
+`if ($enabled) $sql = …; _upgrade_query($sql);` was credited too. "Every
+site" is a list to be enumerated from the code — every place that decides a
+statement ran — not recalled; the sweep after a finding has to grep for the
+mechanism (here, every depth counter) rather than for the symptom.
+
+The range is not the scope. Every scan above vouches for a variable by
+finding its own token between two points in a block, and PHP's scope is the
+function, not the block. Codex planted `$error_alias =& $error;` above the
+guard and `$error_alias = false;` inside the scanned interval: the interval
+never names `$error`, the guard's result was rewritten, and every check
+stayed green. A closure's `use (&$x)`, a `foreach` by reference and a
+`global` declaration paired with a function that declares the same name
+(called in the range as a bare call, which names nothing) do the same, and
+the constructs that name no variable at all — `$$name`, `extract()`,
+`eval()`, an `include` — both write inside the range where they sit and make
+the alias from anywhere in the same function, so refusing them in the range
+was half a refusal. Both tests now refuse each of these where it is made,
+file-wide, for every name a scan vouches for (the ladder's held persist
+variables included), and the unnamed constructs outright; an include outside
+every function body is the ladder's one exception, and one above the range
+is the pages', which load their configuration that way. Every shape was
+executed against a local before it was listed — which is how `$GLOBALS`
+turned out to be the one that does not reach a method's local; it is refused
+anyway, because the scan cannot read for the `global` declaration that would
+make it. When a check vouches that a variable is untouched between two
+points, ask what can touch it *without naming it there*, and look for that
+over the whole scope.
+
+A reference has two ends, and the fix for the paragraph above read one.
+`$alias =& $error;` puts the `&` before the guarded name, which is what the
+check looked for; `$error =& $alias;` binds the same two slots with the
+guarded name on the left and nothing before it but whitespace, and the
+reviewer planted that one within the hour. Executed, every spelling
+tokenizes as `=` then `&`, and the reverse alias flips every page and the
+ladder rung exactly as the forward one did. A construct that binds two
+names has to be read from both of them: when a check looks for a
+variable's part in a relation, ask which other positions the grammar lets
+that variable occupy in the same relation, and plant each.
+
+### 23. A validation in a hydration path fails the batch, not the record
 `ExportWebhook`'s constructor ran the SSRF guard. That constructor is also the
 row-hydration path: the export cron's `findPending()` maps every pending row
 through it, so one stored `http://` webhook — or one transient DNS failure —
@@ -178,6 +596,17 @@ discards it, resolves the host itself, and the DNS-rebinding hole the pin
 exists to close is open again — with the pinning code still sitting there
 looking correct. A guard that can be dropped without an error needs a test that
 asserts the guard's *output*, not just that the call was made.
+
+The same pin was dropped a second way, by the environment rather than the
+code. libcurl honours `https_proxy`/`HTTPS_PROXY`, and through a proxy curl
+sends `CONNECT host:443` and the *proxy* resolves the name, so
+`CURLOPT_RESOLVE` is ignored without a word. Measured: with a proxy in the
+environment the proxy received the CONNECT; with `CURLOPT_PROXY => ''` and
+`CURLOPT_NOPROXY => '*'` it received nothing. The attribution export sender
+set that pair and the LTV webhook guard did not, and nothing compared them.
+When two implementations of one protection exist, a test that pins them to
+the same option set is what stops one from quietly lacking a line the other
+learned; `OutboundUrlGuardTest` does that for the two webhook senders.
 
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
@@ -280,12 +709,34 @@ Check here before burning time on tooling failures.
   installed.json, and the static map takes precedence). The tag ships
   `resources/regexes.php`, so full composer installs (CI) need none of
   this.
+- **`php -S` caches bytecode for 2 seconds, so an edit-then-request probe can
+  test the code you just replaced.** The web SAPI here runs with
+  `opcache.enable=On` and `opcache.revalidate_freq=2`; the CLI does not
+  (`enable_cli=Off`), so `php -l` and PHPUnit always see the new file while the
+  server may not. Forcing a failure into a method and immediately curling the
+  page returned the *old* behaviour and read as "the fix does not work" — the
+  fix was fine. Put a few seconds of real work (or `php -r 'usleep(3500000);'`)
+  between the write and the request, or restart the server. A full live-pass
+  script is slow enough not to hit this; a one-shot probe is not.
 - **A live local instance is achievable end to end**: install
   `mariadb-server` via apt, start `mariadbd --user=mysql` manually, create
   a DB/user, then run `tests/fixtures/agent-eval/ci/install-instance.sh`
   (headless web installer; prints the REST API key) and seed with
   `tests/fixtures/agent-eval/seed.sh`. Reports stay empty until the
   dataengine cron runs — the seeder triggers `202-cronjobs/dej.php` itself.
+- **This sandbox's PHP is 8.4; CI runs 8.3, and `php -S` differs between
+  them.** Before 8.4 the built-in server treats any request path containing
+  a `.` as a static file and never resolves its directory index, so
+  `/.well-known/skadnetwork/report-attribution/` is a 404 (logged
+  `- Success`) on 8.3 and fine on 8.4. `install-instance.sh` therefore serves
+  through `tests/fixtures/agent-eval/ci/router.php` and probes the receiver
+  URL after installing. To run CI's PHP here without touching the system
+  `php`: `apt-get download php8.3-cli php8.3-common php8.3-mysql
+  php8.3-mbstring php8.3-curl php8.3-xml php8.3-gd php8.3-zip` into the
+  scratchpad, `dpkg -x` each, and run `usr/bin/php8.3 -n -d
+  extension_dir=usr/lib/php/20230831 -d extension=mysqlnd -d extension=mysqli
+  ...` (a shim named `php` on PATH makes `install-instance.sh` use it). The
+  static builds on dl.static-php.dev ship without mysqli.
 - **phpstan is now configured and runs in CI** (`phpstan.neon.dist` +
   `phpstan-baseline.neon`, job `phpstan` in `.github/workflows/php-lint.yml`).
   In a sandbox where `composer install` failed there is no `vendor/bin/`, but
@@ -297,6 +748,12 @@ Check here before burning time on tooling failures.
   into `vendor/` by hand is invisible to it even after patching the
   autoloader. Add `scanDirectories: [vendor/<pkg>]` in a scratch config that
   `includes:` the dist file to confirm a clean run; do not commit that.
+- **The PHPUnit 9 phar takes ONE path argument; extra paths are silently
+  ignored.** `php phpunit-9.phar ... tests/A/FooTest.php tests/Schema/` ran
+  only `FooTest` and reported OK, and the schema suite it appeared to include
+  never executed — noticed only because 4 tests ran where 9 were expected.
+  Run one path per invocation, and compare the test count against what the
+  paths should contain before believing an OK line.
 - **`tests/Schema/StaticSqlSchemaTest.php` checks SQL against the schema** by
   preparing every statically-known v3 statement on a real server — MySQL is
   the only thing that knows whether a column exists, so no SQL parser is
@@ -310,6 +767,63 @@ Check here before burning time on tooling failures.
   `.github/workflows/go-cli.yml`; `go-cli/.golangci.yml` scopes the linters to
   dropped errors rather than style. Run `golangci-lint run ./...` from
   `go-cli/` before pushing.
+
+- **`git checkout <file>` restores from the index, not from your working
+  copy.** Proving a new test is not vacuous means planting a defect and
+  reverting it, and that revert silently deleted an afternoon of unstaged work
+  in five files. The only symptom was the "clean" re-run still failing. Copy
+  the file to the scratchpad and copy it back, or stage everything first — and
+  always re-run the suite after the restore, which is what caught it.
+
+- **One page shell, one chrome.** Every page renders on Bootstrap 5.3 with
+  the Prosper202 theme and component layer: `template_top()` for pages behind
+  the login, `info_top()` (`202-config/functions-standalone-ui.php`) for the
+  standalone ones — sign-in, password reset, installer, upgrader, 404,
+  `_die()`. The classic Bootstrap 3 / Flat UI shell is gone (U8), and so is
+  the `'ui'` option that chose it: `template_top()` throws on an option key it
+  does not know, so a leftover `['ui' => 'v2']` fails where it is written. A
+  Bootstrap 3, Flat UI or Font Awesome 4 class renders as nothing, and
+  `NoLegacyBootstrapClassesTest` refuses one anywhere in the served tree. The
+  chrome (`202-config/template.php`, `tracking202/_config/top.php`,
+  `tracking202/_config/sub-menu.php`) is framework-neutral markup styled by
+  `202-css/p202-chrome.css` — keep Bootstrap classes out of it; scope
+  page-family styles with the `p202-section-*` / `p202-sub-*` body classes
+  instead. Every third-party file
+  is an entry in `202-config/assets.php` with its SHA-384, referenced by id
+  from `p202_shell_assets()` or emitted with `p202_asset_tag()`; nothing in the
+  tree loads a script or stylesheet from an external host except Highcharts at
+  a pinned version and two hosted-service loaders listed in
+  `ShellIsolationTest`.
+  Four structural tests guard this (`AssetManifestTest`, `ShellIsolationTest`,
+  `NoLegacyBootstrapClassesTest`, `ComponentClassIsConsumedTest` under
+  `tests/Api/V3/`), and `202-account/ui-kit.php` shows every component —
+  copy a component's markup from the kit, parts included (error pattern #19).
+  What those cannot see — layout, theme, and the JavaScript a request never
+  runs — is covered by the browser passes in `tests/browser/` (local, not CI:
+  `node tests/browser/run.js`, see its README). Reach for one whenever a claim
+  is about a rendered pixel or an event handler: a belief about which flex
+  property made a row wrap survived a review and a push, and one measurement
+  settled it. Its `lib/checks.js` holds the per-page baseline, so adding a
+  page to a family costs a line. Two of those checks exist because a page
+  looked right in the markup and wrong on screen:
+  `flexContainersKeepTheirSpaces` (see error pattern #19) and
+  `currentSubMenuItemIsVisible`, which caught a chrome script that only
+  scrolled the current entry into view below 767px — the Analyze strip
+  overflows a 1280px desktop, so the current page's own entry was clipped.
+  Set `--cdn` (`P202_CDN_MIRROR`) when running it here, or every
+  `tracking202` page throws `Highcharts is not defined` from the blocked
+  vendor CDN and reads as a page defect.
+  The standard's first rule
+  is that the app decides what it can and says so: a form shows the common
+  case, everything else sits under a closed `.p202-disclosure` labelled
+  Advanced, and a value the app can find (platform from a store link, the
+  name from the store, HTTPS from the install URL) is never asked for. See
+  `documentation/features/ui-standard.md`.
+- **`pgrep -f` / `pkill -f` with a pattern that also appears in your own
+  command line matches your own shell and kills it (exit 144).** This happened
+  three times in one session, including once with the `[i]nstall` bracket
+  trick, because the same command later invoked the script by name. Kill by
+  port (`fuser -k 8098/tcp`) or by a pid you looked up in a separate command.
 
 ## Closing the loop on mistakes
 
@@ -327,7 +841,7 @@ bot, or by yourself — ends in one of three artefacts, chosen in this order:
      semantics, `bind_param` arity, forbidden call shapes;
    - a **structural test** under `tests/`, for anything that is really a
      question about the codebase rather than one file: `UncheckedExecuteTest`,
-     `DuplicateGlobalClassTest`, `ScopeCoverageTest`,
+     `DuplicateGlobalClassTest`, `ScopeCoverageTest`, `ComponentClassIsConsumedTest`,
      `ApiKeyAuthPathScopeTest`, `StaticSqlSchemaTest` are all this shape —
      they walk the tree or the schema and assert an invariant holds
      everywhere.
@@ -344,7 +858,10 @@ Two obligations that are easy to skip:
 - **A regression test is not a substitute for either.** It proves this bug is
   gone; it does nothing for the next instance of the same shape elsewhere.
   Grep for every analogous site (error pattern #5) and decide whether a check
-  can cover them all.
+  can cover them all. The `p202-sweep` skill in `.claude/skills/p202-sweep/`
+  is that sweep as a procedure: state the invariant as a predicate over one
+  site, fan it across the tree, settle the uncertain cases by executing rather
+  than reading, and land the result as a rule or structural test.
 - **Meet the bar for a new check before adding it** — clean against the whole
   tree first, then exercised against every shape and call form it claims to
   cover. A rule that fires on correct code gets disabled, and then the pattern
@@ -386,6 +903,29 @@ Three habits, in order of how often they would have helped:
   nothing had been aimed at the wrong directory; a test that passed against a
   "reverted" fix had a revert that silently did not apply.
 
+- **A performance fix must be shown to return the same answer, not just to run
+  faster.** A day-grouped report was made to scan only the newest `limit + 1`
+  days, justified in a code comment, the OpenAPI spec and the guide with three
+  phrasings of "the days it cuts are days the LIMIT would have thrown away".
+  Executed, a tenant with six populated days spread over seven hundred returned
+  six groups before and two after — and low-volume accounts are exactly the ones
+  that hit it. The optimization was defensible; asserting its safety in three
+  places without running the sparse case was not, and prose that denies a
+  behaviour change reads as verified fact to the next reviewer. Before claiming
+  an optimization is invisible, construct the input where the shortcut and the
+  full computation could disagree and run both.
+
+- **Answering a reviewer is reporting.** A P2 was declined here with "the
+  1-click pages only call `upgrade_databases()` once the feed advertises a
+  newer version", cited to a file and line, recalled from a path read earlier
+  and never reopened. That gate is real but lives in a different function
+  (`functions.php`'s `update_needed()`); `202-account/auto-upgrade.php`'s POST
+  handler checks a CSRF token and nothing else, so the reviewer was right and
+  the decline was wrong. The reply then became a code comment and a test's
+  failure message, where it read as established fact to everyone after. Open
+  the file before you answer, and where a claim about reachability decides
+  something, execute the path.
+
 The rest of this section is the same principle applied to checks — the places
 where a check quietly fails to check what it appears to.
 
@@ -408,6 +948,15 @@ where a check quietly fails to check what it appears to.
   more workers never hit the adoption-rename race. Inserting a deliberate
   sleep between the guard and the rename reproduced it on the first try, and
   demonstrated the fix. Scratch-only: never commit the sleep.
+- **"Not succeeded" is not "refused".** The live pass's session-less replay
+  asserted that `Success!` was absent from the body and `202_version`
+  unchanged — both true of a 500 thrown before the guard ran. Planted (a
+  cookie-less POST answering 500 and exiting), the pass stayed 16/16 green
+  with the guard never reached. A negative assertion plus an unchanged side
+  effect is satisfied by every failure there is; a refusal has to be
+  asserted positively — the status the page answers with and the sentence
+  the guard itself writes — and the sibling cases already did, one screen
+  up.
 - **A new lint rule is not done when it fires on the bug you wrote it for.**
   Run it against the whole clean tree first (a rule with false positives is
   worse than no rule — one draft produced 194), then plant a defect in *every*
@@ -422,6 +971,34 @@ where a check quietly fails to check what it appears to.
   partial `vendor/`), measure the exposure rather than waiting to find out —
   e.g. instrument a new rule to report every site it *declines* to analyse; if
   that count is zero, fuller symbol resolution cannot surface new findings.
+- **Local green is not CI green when the runtime version differs.** The
+  eval harness passed here three times on PHP 8.4 and failed in CI on 8.3,
+  because `php -S` changed its path rules between the two; an hour went to
+  the MySQL 8.0 service that the two setups also did not share. Before
+  suspecting the component that differs most visibly, diff the versions of
+  everything on the path (`php -v` against the workflow's `php-version`),
+  and read the server log the job uploads — the 404 was on its first page.
+- **A tier that reports PASS with no output did not run.** Putting the
+  scratchpad's `bin/` on PATH to reach a `phpcs` shim also put a stub `php`
+  there — left over from an old cron-clock experiment, and one that echoes and
+  exits 0. Every PHP tier then "passed": phpstan reported PASS on an empty
+  analysis, and only the unit tier's floor on its test count ("ran only 0
+  tests") said anything was wrong, which is what exposed it. Two habits: give a
+  scratch shim its own directory rather than a shared `bin/`, and give every
+  tier a floor — a PHPStan run with no result line is now a `could not run`,
+  which the stub interpreter itself was used to prove.
+- **A macOS end-to-end pass cannot see a case bug.** Git tracks
+  `tracking202/Redirect/` beside `tracking202/redirect/`; macOS's default
+  filesystem merges them, so a release zip built on a Mac put every click
+  endpoint under `Redirect/`. That zip installed, seeded and tracked clicks
+  perfectly — on the Mac — and would have served `dl.php` as a 404 on every
+  Linux host. It surfaced only when the same build ran in an Ubuntu container
+  and its file list was diffed against the Mac's. `package-release.sh` now
+  refuses a case-insensitive staging directory and `release-tree.php verify`
+  checks every shipped file's exact path, but the general rule stands: when a
+  result will run on Linux, produce it on Linux (a container is enough) before
+  calling it verified, and compare artifacts across platforms rather than
+  trusting that "it built" means "it built the same thing".
 - **Local green is not CI green when the environment carries ambient state.**
   A `--scope` check placed after `api.NewFromConfig()` passed here only
   because this sandbox has a URL configured; CI has none, so the config error
@@ -437,10 +1014,22 @@ where a check quietly fails to check what it appears to.
 - Read the file first, then think about what each line does, especially error paths.
 - After writing code, re-read it as a skeptic looking for the failure mode, not as the author expecting it to work.
 - When fixing a pattern (e.g., unchecked execute), grep the entire codebase for every instance — don't fix one and assume the rest are fine.
+- Deleting CSS is a code change, not housekeeping. Before removing a rule as
+  superseded, grep its selector against the markup: two content rules went out
+  with the old navbar in wave 0 (`.advertise`, the home page's offer iframe,
+  which fell back to a 300px default inside a full-width panel, and the
+  `small` override of Flat UI Pro's 2.067 line-height), and neither element is
+  anywhere near the chrome. Run the whole removed set through a usage sweep,
+  and measure the survivors in a browser rather than reasoning about cascade.
 - Per-file reading cannot catch a defect that lives in the *relationship* between two files: a handler and its dispatcher can each read correctly while the runtime binding between them is wrong. For cross-file mechanisms, execute the path instead of reading it.
 - Never report work as complete or merge-ready on the strength of tests that don't exercise the new path. State what was actually run and what could not be.
 
 ## Before committing
+- Run the verification ladder and report its scope report verbatim:
+  `.claude/skills/p202-verify/scripts/verify.sh --changed`. The skill at
+  `.claude/skills/p202-verify/` explains which tiers your change needs and how
+  to recover a tier on a partial `vendor/`. A tier it reports as `SKIP` did not
+  run; never fold a skip into a claim that tests pass.
 - Always perform a full deploy-quality code review of the staged changes before committing. Treat every commit as if it ships to production.
 - Walk each changed file individually (per the Review discipline above), tracing error paths and the failure modes in the "Error patterns to avoid" list.
 - Confirm the code lints/compiles and that any relevant tests pass. If tests or static analysis can't be run in the environment, say so explicitly rather than implying they passed.

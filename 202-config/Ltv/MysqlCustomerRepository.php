@@ -33,14 +33,16 @@ final class MysqlCustomerRepository
 
     /**
      * Idempotency-key namespaces the system mints internally: soft-delete
-     * voids ('void:'/'void-nc:'), the historical backfill ('backfill:') and
-     * derived subscription-renewal keys ('sub:'). The ledger's uniqueness is
-     * per (user, key) across ALL sources, so an external caller supplying
-     * e.g. 'void:conv:123' would make the later compensating void of
-     * conversion 123 read as a replay and silently skip — leaving deleted
-     * revenue in LTV totals. External surfaces reject these prefixes.
+     * voids ('void:'/'void-nc:'), the re-posting of a revived goal
+     * conversion's voided revenue ('reinstate:'), the historical backfill
+     * ('backfill:') and derived subscription-renewal keys ('sub:'). The
+     * ledger's uniqueness is per (user, key) across ALL sources, so an
+     * external caller supplying e.g. 'void:conv:123' would make the later
+     * compensating void of conversion 123 read as a replay and silently
+     * skip — leaving deleted revenue in LTV totals. External surfaces
+     * reject these prefixes.
      */
-    public const RESERVED_IDEMPOTENCY_PREFIXES = ['void:', 'void-nc:', 'backfill:', 'sub:'];
+    public const RESERVED_IDEMPOTENCY_PREFIXES = ['void:', 'void-nc:', 'reinstate:', 'backfill:', 'sub:'];
 
     public function __construct(private Connection $conn)
     {
@@ -376,7 +378,13 @@ final class MysqlCustomerRepository
              ON DUPLICATE KEY UPDATE customer_id = IF(customer_id IS NULL, VALUES(customer_id), customer_id)'
         );
         $this->conn->bind($stmt, 'ii', [$clickId, $customerId]);
-        $this->conn->executeUpdate($stmt);
+        if ($this->conn->executeUpdate($stmt) === 1) {
+            // 1 is a new row: a click that had no tracking row now has c1–c4
+            // of 0, which the attribution report rollup groups apart from no
+            // row at all. Marked in the caller's transaction (AttributionRollup
+            // rule 2); an update (2) changes only customer_id, which no sum reads.
+            \Prosper202\Report\RollupDirty::clickOfAnyAccount($this->conn, $clickId);
+        }
     }
 
     /**
@@ -495,9 +503,14 @@ final class MysqlCustomerRepository
         );
         $this->conn->bind($stmt, 'i', [$userId]);
         $row = $this->conn->fetchOne($stmt);
-        $currency = strtoupper(trim((string) ($row['user_account_currency'] ?? '')));
 
-        return preg_match('/^[A-Z]{3}$/', $currency) === 1 ? $currency : 'USD';
+        // The rule lives on UsersController, which owns preferences: the
+        // ledger and every page that prints an amount must resolve an
+        // unreadable currency the same way, and this held its own copy of
+        // the regex and the fallback until they were one edit apart.
+        return \Api\V3\Controllers\UsersController::normalizeCurrency(
+            $row['user_account_currency'] ?? null
+        );
     }
 
     /**

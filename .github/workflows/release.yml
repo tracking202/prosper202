@@ -3,9 +3,14 @@ name: Release
 # Build a self-contained release zip and publish it to GitHub Releases.
 #
 # The heavy lifting lives in build/scripts/package-release.sh — this workflow
-# only provisions the toolchain that script preflights for (php, composer, go,
-# git, zip), runs it on a version tag, and attaches the artifact. Release logic
-# is never duplicated in YAML.
+# only checks or provisions the toolchain that script preflights for (php and
+# composer from the runner image, go via setup-go, git, zip), runs it on a
+# version tag, and attaches the artifact. Release logic is never duplicated in
+# YAML.
+#
+# Every action is pinned to a full commit SHA: a tag such as @v2 can be moved
+# to other code, and this job holds contents: write over the zip customers
+# install. Dependabot (.github/dependabot.yml) proposes the updates.
 #
 # Flow: bump 202-config/version.php -> git tag vX.Y.Z -> git push --tags
 
@@ -20,21 +25,43 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    # This job builds the zip customers install and holds contents: write, so
+    # it runs no third-party action for PHP: ubuntu-24.04 ships PHP 8.3 and
+    # Composer. The image is named rather than "latest" so a newer PHP cannot
+    # arrive unannounced, and the check below fails the build if it ever does.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout (full history)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0   # package-release.sh uses `git archive HEAD`
 
-      - name: Set up PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.3'   # matches composer.json "php": ">=8.3"
-          tools: composer
+      - name: Check the runner's PHP and Composer
+        # 8.3 matches composer.json's platform pin. The extensions are the ext-*
+        # requirements in composer.lock's runtime packages, plus tokenizer for
+        # build/scripts/release-tree.php.
+        run: |
+          php -v
+          composer --version
+          php <<'PHP'
+          <?php
+          if (PHP_MAJOR_VERSION !== 8 || PHP_MINOR_VERSION !== 3) {
+              fwrite(STDERR, "::error::expected PHP 8.3, got " . PHP_VERSION . PHP_EOL);
+              exit(1);
+          }
+          $missing = array_filter(
+              ['openssl', 'pcre', 'json', 'curl', 'libxml', 'simplexml', 'iconv', 'tokenizer'],
+              fn ($e) => !extension_loaded($e)
+          );
+          if ($missing) {
+              fwrite(STDERR, '::error::runner PHP lacks: ' . implode(', ', $missing) . PHP_EOL);
+              exit(1);
+          }
+          echo 'PHP ' . PHP_VERSION . ' has every extension the build needs' . PHP_EOL;
+          PHP
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.22'   # matches go-cli/go.mod
 
@@ -85,7 +112,7 @@ jobs:
         # no release tag, so it builds + summarizes the artifact (per
         # RELEASING.md) without invoking action-gh-release, which would fail.
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: dist/prosper202-*.zip
           generate_release_notes: true

@@ -15,9 +15,11 @@ docker-compose.staging.yml
 docker-compose.*.yml
 
 # Dependencies
+# composer.lock is tracked on purpose: the release zip bundles vendor/ for
+# hosts that cannot run Composer, and without a lock every release build
+# resolved "latest" instead of the set CI tested.
 /node_modules/
 /vendor/
-composer.lock
 
 # Build and cache files
 *.cache
@@ -58,8 +60,17 @@ CLAUDE.md
 # Go CLI build artifacts
 go-cli/prosper202-cli
 go-cli/*.exe
+go-cli/p202
+
+# Swift package build artifacts (P202Attribution)
+sdk/ios-attribution/.build/
+sdk/ios-attribution/Package.resolved
 rector.php
 RECTOR_FINDINGS.md
 rector_report.txt
 PHPSTAN_AND_CODE_QUALITY_TOOLS.md
 /mysql_data_test_install
+
+# Attribution export files (Prosper202\Attribution\ExportFiles): account data,
+# written at run time, never part of the tree.
+/202-config/temp/attribution-exports/

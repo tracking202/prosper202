@@ -6,6 +6,12 @@ include_once(substr(__DIR__, 0, -17) . '/202-config/class-dataengine.php');
 
 AUTH::require_user();
 
+require_once(substr(__DIR__, 0, -17) . '/202-config/functions-report-prefs.php');
+
+// Draw the view the page rendered, not whatever the stored filters say by
+// now (ReportView); a request that carries none reads the stored ones.
+$reportView = p202_report_view_begin();
+
 AUTH::set_timezone($_SESSION['user_timezone']);
 
 $time = grab_timeframe();

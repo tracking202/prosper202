@@ -144,6 +144,14 @@ class Slack {
       //MaxMind ISP/Carrier Lookup
       'maxmind_isp_changed' => '#[user] [type] MaxMind ISP/Carrier Lookup',
 
+        //Mobile App Attribution
+        'mobile_app_registered' => 'Mobile App: [app] (id [app_id]) Registered by #[user]',
+
+        //Attribution Model
+        'attribution_model_created' => 'Attribution Model: [model_name] ([model_type]) Created by #[user]',
+        'attribution_model_updated' => 'Attribution Model: [model_name] ([model_type]) Updated by #[user]',
+        'attribution_model_deleted' => 'Attribution Model: [model_name] Deleted by #[user]',
+
       //Failed Login Attempt
       'failed_login' => 'Failed Login Attempt:\n - Username: [username]\n - IP Address: [ip]',
 

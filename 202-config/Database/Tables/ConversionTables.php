@@ -1,0 +1,317 @@
+<?php
+declare(strict_types=1);
+
+namespace Prosper202\Database\Tables;
+
+use Prosper202\Database\Schema\SchemaBuilder;
+use Prosper202\Database\Schema\SchemaDefinition;
+use Prosper202\Database\Schema\TableRegistry;
+
+/**
+ * The conversion ledger and what hangs off it.
+ *
+ * 202_conversion_logs is a core table: every conversion path writes it and
+ * MTA only reads it. It used to be defined among the attribution tables,
+ * which meant a rewrite of MTA's definitions could touch it; it lives here
+ * so it cannot.
+ *
+ * Column order matters to one reader: the upgrade appends the ledger columns
+ * to a table that already exists, so they are declared after customer_id in
+ * the order _upgrade_conversion_ledger() adds them.
+ *
+ * transaction_id and dedupe_key are utf8mb4_bin. They are identities a
+ * network or a source chose, and UNIQUE (click_id, dedupe_key) is what makes
+ * a retry a duplicate: under the table's case-insensitive collation `tx:A-1`
+ * and `tx:a-1` on one click were one key, so a second, different sale was
+ * answered as a replay of the first (CLAUDE.md #17: the key must be
+ * injective), and a reversal naming one transaction id could net the other.
+ * The upgrade converges an existing table to the same collations.
+ *
+ * `reverses_conv_id` is indexed because every conversion's counted amount
+ * (Attribution\CountedAmount — the worker, the journey drill-down, the
+ * recent conversions) looks up the reversals naming it. Without the index
+ * that lookup read the whole table: measured at 1M conversions (plan §8.1),
+ * about 300 ms a conversion, which held the attribution worker to about 330
+ * conversions a minute against its 1,000 target.
+ */
+final class ConversionTables
+{
+    /**
+     * @return array<SchemaDefinition>
+     */
+    public static function getDefinitions(): array
+    {
+        return [
+            self::conversionLogs(),
+            self::attributionPending(),
+            self::attributionBackfill(),
+            self::conversionUploads(),
+            self::notificationPending(),
+            self::notificationCorrectionUrls(),
+            self::attributionRollupDirty(),
+            self::attributionRollupDirtyClicks(),
+        ];
+    }
+
+    public static function conversionLogs(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::CONVERSION_LOGS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::CONVERSION_LOGS . "` (
+                `conv_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+                `click_id` bigint(20) unsigned NOT NULL,
+                `transaction_id` varchar(255) COLLATE utf8mb4_bin DEFAULT NULL,
+                `campaign_id` mediumint(8) unsigned NOT NULL,
+                `click_payout` decimal(11,5) NOT NULL,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `click_time` int(10) NOT NULL,
+                `conv_time` int(10) NOT NULL,
+                `time_difference` text NOT NULL,
+                `ip` varchar(45) NOT NULL DEFAULT '',
+                `pixel_type` int(11) unsigned NOT NULL,
+                `user_agent` text NOT NULL,
+                `deleted` tinyint(4) NOT NULL DEFAULT '0',
+                `customer_id` bigint(20) unsigned DEFAULT NULL,
+                `source` varchar(32) NOT NULL DEFAULT '',
+                `source_ref` varchar(255) DEFAULT NULL,
+                `event_name` varchar(255) DEFAULT NULL,
+                `payable` tinyint(1) NOT NULL DEFAULT '1',
+                `reverses_conv_id` int(11) unsigned DEFAULT NULL,
+                `superseded_by` int(11) unsigned DEFAULT NULL,
+                `superseded_reason` varchar(16) DEFAULT NULL,
+                `dedupe_key` varchar(320) COLLATE utf8mb4_bin NOT NULL,
+                PRIMARY KEY (`conv_id`),
+                UNIQUE KEY `uniq_click_dedupe` (`click_id`,`dedupe_key`),
+                KEY `click_transaction` (`click_id`,`transaction_id`),
+                KEY `user_id` (`user_id`),
+                KEY `campaign_id` (`campaign_id`),
+                KEY `customer_id` (`customer_id`),
+                KEY `reverses_conv_id` (`reverses_conv_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * The MTA outbox. Written in the same transaction as the conversion (and
+     * every later change to what counts), consumed by the attribution worker.
+     * It is conversion schema, not MTA schema: a failure to write it fails the
+     * conversion like any other schema failure, and nothing about the MTA
+     * engine's health can stop it being written.
+     *
+     * enqueue_seq increments on every re-queue of a pending row, so a worker
+     * that processed a row deletes it only if nothing re-queued it meanwhile.
+     *
+     * attempts / last_error / retry_at belong to the worker: a row whose
+     * processing failed is kept with the error and retried after a backoff,
+     * so one malformed conversion delays only itself, never the queue behind
+     * it. A re-queue resets them — the change may be what fixes it.
+     */
+    /**
+     * The upgrade's backfill of pre-upgrade conversions into MTA
+     * (Attribution\ConversionBackfill): one row for the installation, or
+     * none. The upgrade that turns an existing 202_conversion_logs into the
+     * ledger writes it (clicks up to through_click_id are the ones recorded
+     * before the ledger existed); the worker walks next_click_id up to it in
+     * bounded chunks and stamps finished_at. A fresh install has nothing
+     * from before, so it never gets a row. Not per user: the walk is over
+     * the installation's clicks, and each click's row names its own user.
+     */
+    public static function attributionBackfill(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::ATTRIBUTION_BACKFILL,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ATTRIBUTION_BACKFILL . "` (
+                `backfill_id` tinyint(3) unsigned NOT NULL,
+                `next_click_id` bigint(20) unsigned NOT NULL DEFAULT '0',
+                `through_click_id` bigint(20) unsigned NOT NULL,
+                `started_at` int(10) unsigned NOT NULL,
+                `finished_at` int(10) unsigned DEFAULT NULL,
+                `clicks_examined` bigint(20) unsigned NOT NULL DEFAULT '0',
+                `baselines` int(10) unsigned NOT NULL DEFAULT '0',
+                PRIMARY KEY (`backfill_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    public static function attributionPending(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::ATTRIBUTION_PENDING,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ATTRIBUTION_PENDING . "` (
+                `conv_id` int(11) unsigned NOT NULL,
+                `enqueued_at` int(10) unsigned NOT NULL,
+                `reason` varchar(32) NOT NULL,
+                `enqueue_seq` int(10) unsigned NOT NULL DEFAULT '1',
+                `attempts` smallint(5) unsigned NOT NULL DEFAULT '0',
+                `last_error` varchar(255) DEFAULT NULL,
+                `retry_at` int(10) unsigned NOT NULL DEFAULT '0',
+                PRIMARY KEY (`conv_id`),
+                KEY `enqueued_at` (`enqueued_at`),
+                KEY `due` (`retry_at`,`enqueued_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * One row per revenue CSV upload. Each CSV line becomes a ledger row whose
+     * source_ref names its batch, and the newest batch for a click replaces
+     * the earlier ones (ClickValueCalculator, rule 2).
+     */
+    public static function conversionUploads(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::CONVERSION_UPLOADS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::CONVERSION_UPLOADS . "` (
+                `batch_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `file_name` varchar(255) NOT NULL,
+                `line_count` int(10) unsigned NOT NULL DEFAULT '0',
+                `recorded_count` int(10) unsigned NOT NULL DEFAULT '0',
+                `skipped_count` int(10) unsigned NOT NULL DEFAULT '0',
+                `uploaded_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`batch_id`),
+                KEY `user_uploaded` (`user_id`,`uploaded_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * The traffic-source notification outbox (plan §5.2 step 6, §5.5).
+     *
+     * A row is written in the same transaction as the ledger row it
+     * announces, so a process killed between the commit and the send leaves
+     * the row for the worker (202-cronjobs/app-installs.php) instead of
+     * nothing. UNIQUE (conv_id, pixel_id, destination, kind, generation)
+     * makes a retried request unable to queue the same notification twice.
+     *
+     * - destination: the URL's 0-based position in its pixel's code. A
+     *   pixel may hold several space-separated URLs; each is its own row,
+     *   with its own attempts, backoff and status, so a failure at one
+     *   endpoint never resends to another that already accepted it;
+     *
+     * - kind: reached (the first row for an outcome), correction (a
+     *   replacement whose predecessor was already sent, a new row for an
+     *   outcome an earlier row announced, or a revived row whose retraction
+     *   was delivered), retraction (an outcome retired with no replacement
+     *   after its reached was sent);
+     * - generation: 0 for a reached; the count of earlier rows of the same
+     *   kind for the conversion at the destination for a correction or
+     *   retraction, so a row retired, revived and retired again records
+     *   each step (plan §5.7);
+     * - status: pending, sent, failed (attempts exhausted), cancelled (a
+     *   pending reached whose outcome was replaced before it went out, or a
+     *   retraction whose outcome was revived before it went out) and
+     *   suppressed (a correction or retraction no correction URL can carry;
+     *   `last_error` says why);
+     * - url is resolved when the row is queued, with the tokens of the row
+     *   it announces, so what is sent is what was decided in the
+     *   transaction.
+     */
+    public static function notificationPending(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::NOTIFICATION_PENDING,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::NOTIFICATION_PENDING . "` (
+                `notification_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `conv_id` int(11) unsigned NOT NULL,
+                `pixel_id` mediumint(8) unsigned NOT NULL,
+                `destination` smallint(5) unsigned NOT NULL DEFAULT '0',
+                `kind` varchar(16) NOT NULL,
+                `generation` smallint(5) unsigned NOT NULL DEFAULT '0',
+                `status` varchar(16) NOT NULL,
+                `url` text NOT NULL,
+                `attempts` smallint(5) unsigned NOT NULL DEFAULT '0',
+                `next_attempt_at` int(10) unsigned NOT NULL,
+                `last_error` varchar(255) DEFAULT NULL,
+                `created_at` int(10) unsigned NOT NULL,
+                `sent_at` int(10) unsigned DEFAULT NULL,
+                PRIMARY KEY (`notification_id`),
+                UNIQUE KEY `conv_destination_kind` (`conv_id`,`pixel_id`,`destination`,`kind`,`generation`),
+                KEY `status_next` (`status`,`next_attempt_at`),
+                KEY `user_id` (`user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Traffic-source notifications queued with the conversions they announce'"
+        );
+    }
+
+    /**
+     * Where a traffic source takes corrections (plan §5.5, PR 11): one URL
+     * per server-to-server pixel (202_ppc_account_pixels, type 4).
+     *
+     * A postback that went out cannot be recalled, so when an outcome it
+     * announced is replaced or retired the outbox records a `correction` or
+     * `retraction`. With no row here (most networks have no endpoint for
+     * one, so this is off by default) that record stays `suppressed`; with
+     * one, it is queued to this URL like any postback, with
+     * [[p202_goal_value]] (the new value), [[p202_previous_value]],
+     * [[p202_original_conv_id]] and [[p202_notification_kind]] filled.
+     *
+     * Keyed by the pixel rather than a column on it: 202_ppc_account_pixels
+     * is an old table, and its rows are rewritten by the traffic source
+     * form, which knows nothing of corrections.
+     */
+    public static function notificationCorrectionUrls(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::NOTIFICATION_CORRECTION_URLS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::NOTIFICATION_CORRECTION_URLS . "` (
+                `pixel_id` mediumint(8) unsigned NOT NULL,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `correction_url` text NOT NULL,
+                `created_at` int(10) unsigned NOT NULL,
+                `updated_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`pixel_id`),
+                KEY `user_id` (`user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='The correction URL of a traffic source postback pixel'"
+        );
+    }
+
+    // The report rollup's dirty marks. They are the rollup's to read, but the
+    // conversion path, the redirects and the LTV click stamp write them in
+    // the transaction of the change they mark (AttributionRollup rule 2),
+    // so they are recording's schema, as the MTA outbox is: recording never
+    // writes an AttributionTables table (plan §7.4).
+
+    /**
+     * Hours whose sums are stale: a range of hours an account's data
+     * changed in, written in the same transaction as the change (the
+     * worker's credit rewrites, a CPC update, the rollup's own resolution
+     * of a changed click). A report computes a dirty hour exactly; the
+     * rollup re-sums it and deletes the row.
+     */
+    public static function attributionRollupDirty(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::ATTRIBUTION_ROLLUP_DIRTY,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ATTRIBUTION_ROLLUP_DIRTY . "` (
+                `dirty_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `hour_from` int(10) unsigned NOT NULL,
+                `hour_to` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`dirty_id`),
+                KEY `user_hour` (`user_id`,`hour_from`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * Clicks changed after the fact (a rotator re-click rewriting its click,
+     * a CPC set on one click). A click's change reaches the hours of every
+     * conversion whose journey holds it, which the writer does not look up:
+     * the rollup resolves the click into dirty hours, and until it has, the
+     * account's reports are computed exactly.
+     */
+    public static function attributionRollupDirtyClicks(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::ATTRIBUTION_ROLLUP_DIRTY_CLICKS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::ATTRIBUTION_ROLLUP_DIRTY_CLICKS . "` (
+                `dirty_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `click_id` bigint(20) unsigned NOT NULL,
+                PRIMARY KEY (`dirty_id`),
+                KEY `user_id` (`user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+}

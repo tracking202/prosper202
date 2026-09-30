@@ -5,7 +5,7 @@ error_reporting(E_ALL);
 ini_set('display_errors', '1');
 
 try {
-	include_once(str_repeat("../", 1) . '202-config/connect.php');
+	require_once __DIR__ . '/../202-config/connect.php';
 
 	$hash = "SELECT install_hash FROM 202_users WHERE user_id = '1'";
 	$result = $db->query($hash);

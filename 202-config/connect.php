@@ -2,8 +2,35 @@
 
 declare(strict_types=1);
 
+if (!function_exists('p202_cli_fail')) {
+    /**
+     * A command-line run (a cron job, a worker) that cannot go on: say why on
+     * stderr and exit non-zero.
+     *
+     * On the web every early stop below answers with a page or a redirect.
+     * On the command line a redirect is a header nobody reads and die() is
+     * exit status 0, so a cron run against a database that needs an upgrade
+     * printed nothing and reported success — the attribution worker looked
+     * like an idle one with an empty backlog (measurement plan §8.1). Every
+     * stop in this file goes through here first when PHP_SAPI is the CLI;
+     * tests/Cron/CronEntryPointsFailLoudlyTest holds that, and
+     * tests/live/cron-needs-upgrade.sh runs every cron job against a database
+     * wound back a version.
+     */
+    function p202_cli_fail(string $message): void
+    {
+        if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
+            return;
+        }
+        $script = basename((string) ($_SERVER['SCRIPT_FILENAME'] ?? $_SERVER['PHP_SELF'] ?? 'prosper202'));
+        fwrite(STDERR, 'Prosper202 (' . $script . '): ' . $message . PHP_EOL);
+        exit(1);
+    }
+}
+
 // Load centralized version configuration
 if (!file_exists(__DIR__ . '/version.php')) {
+    p202_cli_fail('202-config/version.php is missing; this copy of Prosper202 is incomplete. Deploy the release again.');
     die('Critical: Version file missing');
 }
 require_once(__DIR__ . '/version.php');
@@ -21,14 +48,11 @@ ini_set('session.cookie_lifetime', '0'); // session cookie — expires when brow
 //  - Secure:    only sent over HTTPS. Gated on the request actually being HTTPS so
 //               plain-HTTP installs (local/dev, TLS-terminating proxies that don't
 //               forward the flag) keep working.
-// This mirrors getSecureStatus() (functions-tracking202.php); we can't call that
-// helper here because it isn't loaded until after the session must be started.
-$_request_is_https = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off')
-    || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower((string) $_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https')
-    || (!empty($_SERVER['HTTP_X_FORWARDED_SSL']) && strtolower((string) $_SERVER['HTTP_X_FORWARDED_SSL']) === 'on')
-    || (isset($_SERVER['SERVER_PORT']) && (int) $_SERVER['SERVER_PORT'] === 443)
-    || (isset($_SERVER['HTTP_X_FORWARDED_PORT']) && (int) $_SERVER['HTTP_X_FORWARDED_PORT'] === 443)
-    || (isset($_SERVER['REQUEST_SCHEME']) && strtolower((string) $_SERVER['REQUEST_SCHEME']) === 'https');
+// The answer is p202_request_is_https(), which the setup wizard's session
+// (functions-standalone-ui.php) and getSecureStatus() share, so no page
+// decides the flag differently.
+require_once __DIR__ . '/request-https.php';
+$_request_is_https = p202_request_is_https($_SERVER);
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 ini_set('session.cookie_secure', $_request_is_https ? '1' : '0');
@@ -112,7 +136,9 @@ $p202_display_errors = (PHP_SAPI !== 'cli' && getenv('APP_ENV') === 'production'
 @ini_set('display_errors', $p202_display_errors);
 @ini_set('error_reporting', '6135');
 // @ini_set('safe_mode', 'Off'); // Removed in PHP 5.4
-@ini_set('set_time_limit', '0');
+// (There was an @ini_set('set_time_limit', '0') here. set_time_limit is a
+// function, not an ini key, so it never did anything; the pages that need no
+// time limit — the upgrade paths, the cron — call set_time_limit(0) themselves.)
 
 if (!class_exists('Memcache')) {
     class Memcache
@@ -190,7 +216,7 @@ $_SERVER['HTTP_X_FORWARDED_FOR'] = match (true) {
     !empty($_SERVER['HTTP_X_SUCURI_CLIENTIP']) => $_SERVER['HTTP_X_SUCURI_CLIENTIP'],
     !empty($_SERVER['HTTP_X_REAL_IP']) => $_SERVER['HTTP_X_REAL_IP'],
     !empty($_SERVER['HTTP_CLIENT_IP']) => $_SERVER['HTTP_CLIENT_IP'],
-    !empty($_SERVER['HTTP_X_FORWARDED_FOR']) && ($_SERVER['SERVER_ADDR'] != $_SERVER['HTTP_X_FORWARDED_FOR']) => $_SERVER['HTTP_X_FORWARDED_FOR'],
+    !empty($_SERVER['HTTP_X_FORWARDED_FOR']) && (($_SERVER['SERVER_ADDR'] ?? '') != $_SERVER['HTTP_X_FORWARDED_FOR']) => $_SERVER['HTTP_X_FORWARDED_FOR'],
     // REMOTE_ADDR does not exist under CLI (cron workers)
     default => $_SERVER['REMOTE_ADDR'] ?? '',
 };
@@ -205,6 +231,7 @@ $temp_ip_address = $_SERVER['HTTP_X_FORWARDED_FOR'];
 if (file_exists(ROOT_PATH  . '202-config.php')) {
     include_once(ROOT_PATH  . '202-config.php');
 } else {
+    p202_cli_fail(ROOT_PATH . '202-config.php is missing: Prosper202 is not installed here. Open 202-config/setup-config.php on the site to install it.');
     header('location: setup-config.php');
     die();
 }
@@ -212,14 +239,6 @@ include_once(ROOT_PATH  . '202-config.php');
 
 if (!defined('TRACKING202_JSON_ARCHITECTURE_ENABLED')) {
     define('TRACKING202_JSON_ARCHITECTURE_ENABLED', false);
-}
-
-if (!defined('TRACKING202_STATIC_FILTER_SSR_MAX_OPTIONS')) {
-    define('TRACKING202_STATIC_FILTER_SSR_MAX_OPTIONS', 1500);
-}
-
-if (!defined('TRACKING202_STATIC_FILTER_SSR_MAX_BYTES')) {
-    define('TRACKING202_STATIC_FILTER_SSR_MAX_BYTES', 65536);
 }
 
 if (!function_exists('tracking202NormalizeBooleanFlag')) {
@@ -258,32 +277,6 @@ if (!function_exists('tracking202JsonArchitectureEnabled')) {
     }
 }
 
-if (!function_exists('tracking202StaticFilterSsrEnabled')) {
-    function tracking202StaticFilterSsrEnabled(): bool
-    {
-        // Deliberately ignores the ?tracking_json_mode override. Enabling static-filter
-        // SSR runs six extra GROUP BY queries (country/region/isp/device/browser/platform)
-        // on every display_calendar() page, and 202_locations_region and 202_locations_isp
-        // are large. A query-string parameter any logged-in user can set must not be able
-        // to turn that on, so this reads the deploy-time constant only.
-        return (bool) TRACKING202_JSON_ARCHITECTURE_ENABLED;
-    }
-}
-
-if (!function_exists('tracking202StaticFilterSsrMaxOptions')) {
-    function tracking202StaticFilterSsrMaxOptions(): int
-    {
-        return (int) TRACKING202_STATIC_FILTER_SSR_MAX_OPTIONS;
-    }
-}
-
-if (!function_exists('tracking202StaticFilterSsrMaxBytes')) {
-    function tracking202StaticFilterSsrMaxBytes(): int
-    {
-        return (int) TRACKING202_STATIC_FILTER_SSR_MAX_BYTES;
-    }
-}
-
 // Composer dependencies provide the PSR-4 classes used by tracking, install,
 // and the API. A missing vendor/ almost always means the app was deployed from
 // a raw git clone without running `composer install`. Fail loudly with guidance
@@ -291,6 +284,7 @@ if (!function_exists('tracking202StaticFilterSsrMaxBytes')) {
 // in the request (CLAUDE.md #4: no silent fallbacks).
 $autoloadPath = ROOT_PATH . 'vendor/autoload.php';
 if (!file_exists($autoloadPath)) {
+    p202_cli_fail('vendor/autoload.php is missing: run `composer install --no-dev` in ' . ROOT_PATH . '.');
     http_response_code(500);
     die('<h2>Prosper202: dependencies are missing</h2>'
         . '<p>The <code>vendor/</code> folder was not found, so required libraries '
@@ -307,6 +301,7 @@ include_once(CONFIG_PATH . '/functions-tracking202.php');
 include_once(CONFIG_PATH . '/functions.php');
 // Now that functions.php is included, we can use ipAddress()
 $ip_address = ipAddress($temp_ip_address);
+include_once(CONFIG_PATH . '/functions-ui.php');
 include_once(CONFIG_PATH . '/template.php');
 
 include_once(CONFIG_PATH . '/functions-auth.php');
@@ -406,6 +401,7 @@ try {
 } catch (Exception $e) {
     // Capture the specific exception message
     $db_error_msg = $e->getMessage();
+    p202_cli_fail('cannot connect to the database named in 202-config.php: ' . $db_error_msg);
 
     _die("<h6>Error establishing a database connection</h6>
 			<p><small>This either means that the username and password information in your <code>202-config.php</code> file is incorrect or we can't contact the database server. This could mean your host's database server is down.</small></p>
@@ -482,7 +478,13 @@ if ($skip_upgrade == false) {
     if (is_installed() == true) {
 
         //if we need upgrade, and its not already on the upgrade screen, redirect to the upgrade screen
-        if ((upgrade_needed() == true) and (($navigation[1] != '202-config') and ($navigation[2] != 'upgrade.php'))) {
+        // A command-line run has no request path: its navigation is empty,
+        // and reading a segment it does not have printed a warning ahead of
+        // the reason below.
+        if ((upgrade_needed() == true) and ((($navigation[1] ?? '') != '202-config') and (($navigation[2] ?? '') != 'upgrade.php'))) {
+            p202_cli_fail('the database needs an upgrade: its schema is version ' . PROSPER202::prosper202_version()
+                . ' and this code is version ' . PROSPER202::php_version()
+                . '. Nothing was run. Open 202-config/upgrade.php on the site (signed in) to upgrade it; cron jobs run again once it has.');
             header('location: ' . get_absolute_url() . '202-config/upgrade.php');
             die();
         }
@@ -495,6 +497,7 @@ switch ($navigation[1]) {
     case "alerts202":
     case "stats202":
         if (@ini_get('safe_mode')) {
+            p202_cli_fail('PHP safe_mode is on; turn it off to run this.');
             header('location: ' . get_absolute_url() . '202-account/disable-safe-mode.php');
             die();
         }

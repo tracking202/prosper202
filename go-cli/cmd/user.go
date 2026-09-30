@@ -524,6 +524,61 @@ func extractAPIKey(obj map[string]interface{}) (string, error) {
 	return "", fmt.Errorf("create api-key response did not include api_key")
 }
 
+// --- Identity linking key subcommands ---
+
+var userIdentityKeyCmd = &cobra.Command{
+	Use:   "identity-key",
+	Short: "Show or rotate the key your server signs customer ids with",
+	Long: "The identity linking key is what your own server signs customer ids with, so a\n" +
+		"`cust` on a public pixel or tracking link joins a person's journeys only when it\n" +
+		"carries `cust_sig`:\n\n" +
+		"  cust_sig = hex(HMAC-SHA256(linking_key, \"<cust_type>:<cust>\"))\n\n" +
+		"cust_type defaults to custom; email_md5/email_sha256 digests are signed in lower case.",
+}
+
+var userIdentityKeyGetCmd = &cobra.Command{
+	Use:   "get <user_id>",
+	Short: "Show the identity linking key (minted on first use)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		data, err := c.Get("users/"+args[0]+"/identity-key", nil)
+		if err != nil {
+			return err
+		}
+		render(data)
+		return nil
+	},
+}
+
+var userIdentityKeyRotateCmd = &cobra.Command{
+	Use:   "rotate <user_id>",
+	Short: "Replace the identity linking key; signatures made with the old key stop linking",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		force, _ := cmd.Flags().GetBool("force")
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		// A proposal changes nothing until someone applies it, so only a
+		// direct rotate asks first.
+		if !api.StagedMode() && !force && !confirmPrompt("Rotate the identity linking key for user %s? Every cust_sig signed with the current key stops linking.", args[0]) {
+			fmt.Println("Cancelled.")
+			return nil
+		}
+		data, err := c.Post("users/"+args[0]+"/identity-key/rotate", map[string]interface{}{})
+		if err != nil {
+			return err
+		}
+		render(data)
+		return nil
+	},
+}
+
 // --- Preferences subcommands ---
 
 var userPrefsCmd = &cobra.Command{
@@ -607,6 +662,9 @@ func init() {
 	registerSingleDeleteFlags(userAPIKeyDeleteCmd)
 	userAPIKeyCreateCmd.Flags().String("scope", "", "Scope for the new key: *, read, write, stage, or comma-separated <area>:read/<area>:write/<area>:stage tokens (`read,stage` is the propose-only agent shape; default: full access)")
 	userAPIKeyRotateCmd.Flags().String("scope", "", "Scope for the replacement key (default: the old key's scope, carried over)")
+	emptyHint(userAPIKeyCreateCmd, "scope", "Name the scope (`read`, `write`, `stage`, or `<area>:read`/`<area>:write`/`<area>:stage`, comma-separated), "+
+		"or omit --scope entirely to mint a full-access key on purpose.")
+	emptyHint(userAPIKeyRotateCmd, "scope", "Name the new key's scope, or omit --scope to carry the old key's scope forward.")
 	userAPIKeyRotateCmd.Flags().Bool("keep-old", false, "Do not delete the old API key")
 	userAPIKeyRotateCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt when deleting old key")
 	userAPIKeyRotateCmd.Flags().Bool("update-config", false, "Update local ~/.p202/config.json with the new API key")
@@ -623,8 +681,10 @@ func init() {
 	userRoleCmd.AddCommand(userRoleListCmd, userRoleAssignCmd, userRoleRemoveCmd)
 	userAPIKeyCmd.AddCommand(userAPIKeyListCmd, userAPIKeyCreateCmd, userAPIKeyDeleteCmd, userAPIKeyRotateCmd)
 	userPrefsCmd.AddCommand(userPrefsGetCmd, userPrefsUpdateCmd)
+	userIdentityKeyRotateCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
+	userIdentityKeyCmd.AddCommand(userIdentityKeyGetCmd, userIdentityKeyRotateCmd)
 
 	userCmd.AddCommand(userListCmd, userGetCmd, userCreateCmd, userUpdateCmd, userDeleteCmd)
-	userCmd.AddCommand(userRoleCmd, userAPIKeyCmd, userPrefsCmd)
+	userCmd.AddCommand(userRoleCmd, userAPIKeyCmd, userPrefsCmd, userIdentityKeyCmd)
 	rootCmd.AddCommand(userCmd)
 }
