@@ -22,7 +22,7 @@ jobs:
     name: ShellCheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # install.sh carries 22 pre-existing warnings and is excluded until they
       # are worked through; every other script is held at warning level. Drop
@@ -45,7 +45,7 @@ jobs:
     name: check-code-patterns regression tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # The harness drives the real verify.sh tiers through the repository's
       # own vendor/bin/phpunit, vendor/bin/phpcs and golangci-lint. On a bare
@@ -60,7 +60,7 @@ jobs:
           extensions: mysqli, pdo, pdo_mysql, memcached, :memcache, mbstring, curl, zip, dom, xml, gd, zlib
 
       - name: Cache Composer downloads
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.composer/cache
@@ -83,7 +83,7 @@ jobs:
         run: composer install --prefer-dist --no-interaction --no-progress
 
       - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.22'
           cache-dependency-path: go-cli/go.sum
@@ -124,7 +124,7 @@ jobs:
     name: actionlint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Checks workflow syntax, action versions, context availability, and
       # runs shellcheck over every `run:` block.
