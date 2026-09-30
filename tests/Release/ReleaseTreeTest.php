@@ -219,6 +219,105 @@ final class ReleaseTreeTest extends TestCase
         );
     }
 
+    public function testVerifyReportsAVendorInstalledWithDevDependencies(): void
+    {
+        $classLoader = realpath(self::REPO . '/vendor/composer/ClassLoader.php');
+        if ($classLoader === false) {
+            self::markTestSkipped('vendor/composer/ClassLoader.php is not installed');
+        }
+        // What `composer install` without --no-dev records: the lock and the
+        // tree agree, only the root's dev flag says the zip carries PHPUnit.
+        $installed = "<?php return " . var_export([
+            'root' => ['name' => 'acme/root', 'dev' => true],
+            'versions' => [
+                'acme/root' => ['pretty_version' => 'dev-main', 'install_path' => '/stage'],
+                'acme/lib' => [
+                    'pretty_version' => '2.0.0', 'type' => 'library', 'install_path' => '/stage/vendor/acme/lib',
+                ],
+            ],
+        ], true) . ";\n";
+        $stage = $this->tree([
+            'vendor/autoload.php' => "<?php\nrequire " . var_export($classLoader, true) . ";\n"
+                . "return new \\Composer\\Autoload\\ClassLoader();\n",
+            'vendor/composer/installed.php' => $installed,
+            'vendor/acme/lib/.keep' => '',
+            'composer.lock' => json_encode(['packages' => [['name' => 'acme/lib', 'version' => '2.0.0']]], JSON_THROW_ON_ERROR),
+        ]);
+        $tree = new ReleaseTree($this->manifest(ship: ['vendor', 'composer.lock']));
+
+        $problems = $tree->verify($stage);
+
+        self::assertContains(
+            'vendor/ was installed with dev dependencies; package with composer install --no-dev',
+            $problems,
+            implode("\n", $problems)
+        );
+        self::assertSame([], array_values(preg_grep('/^(locked|vendor\/ has)/', $problems)), implode("\n", $problems));
+    }
+
+    public function testVerifyReportsGoBinariesThatAreMissingEmptyOrNotExecutable(): void
+    {
+        $stage = $this->tree([
+            'go-cli/dist/linux-amd64/p202' => 'ELF',
+            'go-cli/dist/linux-arm64/p202' => '',            // built, but zero bytes
+            'go-cli/dist/darwin-amd64/p202' => 'MACH-O',     // built without +x
+            'go-cli/dist/windows-amd64/p202.exe' => 'MZ',    // Windows has no execute bit
+            // darwin-arm64 was never built
+        ]);
+        self::assertTrue(chmod("{$stage}/go-cli/dist/linux-amd64/p202", 0o755));
+        self::assertTrue(chmod("{$stage}/go-cli/dist/linux-arm64/p202", 0o755));
+        self::assertTrue(chmod("{$stage}/go-cli/dist/darwin-amd64/p202", 0o644));
+        self::assertTrue(chmod("{$stage}/go-cli/dist/windows-amd64/p202.exe", 0o644));
+        $tree = new ReleaseTree($this->manifest(ship: ['go-cli'], goBinaries: [
+            'go-cli/dist/linux-amd64/p202',
+            'go-cli/dist/linux-arm64/p202',
+            'go-cli/dist/darwin-amd64/p202',
+            'go-cli/dist/darwin-arm64/p202',
+            'go-cli/dist/windows-amd64/p202.exe',
+        ]));
+
+        $problems = $tree->verify($stage);
+
+        self::assertSame(
+            [
+                "Go CLI binary 'go-cli/dist/linux-arm64/p202' is missing or empty",
+                "Go CLI binary 'go-cli/dist/darwin-amd64/p202' is not executable",
+                "Go CLI binary 'go-cli/dist/darwin-arm64/p202' is missing or empty",
+            ],
+            array_values(preg_grep('/^Go CLI binary/', $problems)),
+            implode("\n", $problems)
+        );
+    }
+
+    public function testVerifyReportsGroupOrWorldWritableFilesAndDirectories(): void
+    {
+        $stage = $this->tree([
+            'app/index.php' => '<?php',
+            'app/lib/helper.php' => '<?php',
+            'app/upload/.keep' => '',
+        ]);
+        self::assertTrue(chmod("{$stage}/app/index.php", 0o644));
+        self::assertTrue(chmod("{$stage}/app/lib/helper.php", 0o664));   // group-writable file
+        self::assertTrue(chmod("{$stage}/app/upload", 0o777));            // world-writable directory
+        $tree = new ReleaseTree($this->manifest(ship: ['app']));
+
+        $problems = $tree->verify($stage);
+
+        self::assertSame(
+            [
+                "'app/lib/helper.php' is group- or world-writable (664); shared hosts running suPHP answer 500 for it",
+                "'app/upload' is group- or world-writable (777); shared hosts running suPHP answer 500 for it",
+            ],
+            array_values(preg_grep('/writable/', $problems)),
+            implode("\n", $problems)
+        );
+
+        // Fixed, the same tree is clean.
+        self::assertTrue(chmod("{$stage}/app/lib/helper.php", 0o644));
+        self::assertTrue(chmod("{$stage}/app/upload", 0o755));
+        self::assertSame([], array_values(preg_grep('/writable/', $tree->verify($stage))));
+    }
+
     public function testShipsFollowsTheSameRulesAsPrune(): void
     {
         $tree = new ReleaseTree($this->manifest(
@@ -473,13 +572,14 @@ final class ReleaseTreeTest extends TestCase
         array $keepOnly = [],
         array $excludeNested = [],
         array $knownUnresolved = [],
+        array $goBinaries = [],
     ): array {
         return [
             'ship' => $ship,
             'exclude' => $exclude,
             'keep_only' => $keepOnly,
             'exclude_nested' => $excludeNested,
-            'go_binaries' => [],
+            'go_binaries' => $goBinaries,
             'known_unresolved' => $knownUnresolved,
         ];
     }
