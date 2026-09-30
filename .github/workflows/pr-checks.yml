@@ -11,7 +11,7 @@ jobs:
     # different PHP, which is why the image is named, not "latest".
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Runner PHP is 8.3
         run: |
           php -r 'exit(PHP_MAJOR_VERSION === 8 && PHP_MINOR_VERSION === 3 ? 0 : 1);' || { php -v; echo "::error::expected PHP 8.3 on ubuntu-24.04"; exit 1; }
@@ -103,7 +103,7 @@ jobs:
     # Runner-image PHP and Composer, as in php-lint above.
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Runner PHP is 8.3, with Composer
         run: |
           php -r 'exit(PHP_MAJOR_VERSION === 8 && PHP_MINOR_VERSION === 3 ? 0 : 1);' || { php -v; echo "::error::expected PHP 8.3 on ubuntu-24.04"; exit 1; }
