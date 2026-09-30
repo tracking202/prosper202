@@ -557,6 +557,23 @@ abstract class Controller
 
     public function delete(int|string $id): void
     {
+        $this->recordDeleted($this->deleteRecord($id));
+    }
+
+    /**
+     * The delete itself: beforeDelete() and the row write, without the
+     * change record. Returns the row as it was.
+     *
+     * Split from recordDeleted() so a controller that runs the delete inside
+     * a transaction can record the change after the commit: recordChange()
+     * inside the transaction would have its failure roll the delete back and
+     * still be reported as WriteCommittedException — "the write landed,
+     * never retry" — about a write that did not land (CLAUDE.md #13).
+     *
+     * @return array<string, mixed>
+     */
+    protected function deleteRecord(int|string $id): array
+    {
         $existing = $this->get($id);
         $this->beforeDelete($id);
 
@@ -591,8 +608,20 @@ abstract class Controller
         $this->execute($stmt, 'Delete failed');
         $stmt->close();
 
+        return (array)$existing['data'];
+    }
+
+    /**
+     * Record a delete that has landed. Call it only once the delete is
+     * committed: a failure here is reported as WriteCommittedException, which
+     * tells every retry seam the row is already gone.
+     *
+     * @param array<string, mixed> $deleted The row deleteRecord() returned.
+     */
+    protected function recordDeleted(array $deleted): void
+    {
         try {
-            $this->recordChange('delete', (array)$existing['data']);
+            $this->recordChange('delete', $deleted);
         } catch (\Throwable $e) {
             throw new WriteCommittedException($this->changeEntityName() ?? 'record', $e);
         }

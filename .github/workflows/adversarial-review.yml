@@ -28,10 +28,9 @@ on:
       - '202-pass-reset.php'
       - 'api-key-required.php'
       # API-key lifecycle: the appstore page writes clickserver_api_key behind
-      # a CSRF check, and 202-js/account.php (loaded by template.php) generates
-      # and removes REST API keys.
+      # a CSRF check (REST API keys are generated and removed in
+      # 202-account/account.php, covered above).
       - '202-appstore/**'
-      - '202-js/account.php'
       # The cron endpoints authenticate requests against a user's
       # install_hash and release keys or data to external services (dni.php
       # returns the database API key, daily-email.php sends the user's email

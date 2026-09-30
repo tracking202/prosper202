@@ -268,6 +268,7 @@ if ($default == false) {
 		$rule_redirects_sql = "SELECT
 					   2c.click_id, 
 					   2c.user_id,
+					   (SELECT MIN(fc.click_time) FROM 202_clicks AS fc WHERE fc.click_id = 2c.click_id) AS first_click_time,
 					   2c.click_filtered,
 					   2c.landing_page_id,
 					   2cr.click_cloaking,
@@ -316,6 +317,20 @@ if ($default == false) {
 				$mysql['aff_campaign_id'] = $db->real_escape_string((string)$rule_redirect_row['aff_campaign_id']);
 				$mysql['click_payout'] = $db->real_escape_string((string)$rule_redirect_row['aff_campaign_payout']);
 
+				// The click leaves the landing page for this offer: route it to the
+				// offer's campaign and seed its payout with the campaign's. Only a click
+				// that has not converted: a converted click's value belongs to its
+				// conversion ledger (MysqlConversionLedger), and re-seeding it here would
+				// leave the click disagreeing with its rows.
+				// A click leaving its landing page for an offer takes the offer's
+				// campaign. When the click is old enough for the attribution report
+				// rollup to have summed it, the rewrite and its mark are one transaction
+				// (RollupDirty::hotPathRewriteNeedsMark; AttributionRollup rule 2).
+				$rollupMark = \Prosper202\Report\RollupDirty::hotPathRewriteNeedsMark($rule_redirect_row['first_click_time'] ?? null);
+				if ($rollupMark) {
+					$db->begin_transaction() or record_mysql_error($db);
+					\Prosper202\Report\RollupDirty::click(new \Prosper202\Database\Connection($db), (int) ($rule_redirect_row['user_id'] ?? 0), (int) $mysql['click_id']);
+				}
 				$update_sql = "
 					UPDATE
 						202_clicks AS 2c
@@ -327,8 +342,12 @@ if ($default == false) {
 						2cs.click_payout='" . $mysql['click_payout'] . "'
 					WHERE
 						2c.click_id='" . $mysql['click_id'] . "'
+						AND 2c.click_lead = 0
 				";
 				$click_result = $db->query($update_sql) or record_mysql_error($db);
+				if ($rollupMark) {
+					$db->commit() or record_mysql_error($db);
+				}
 
 				if (($rule_redirect_row['click_cloaking'] == 1) or // if tracker has overrided cloaking on
 				(($rule_redirect_row['click_cloaking'] == - 1) and ($rule_redirect_row['aff_campaign_cloaking'] == 1)) or ((! isset($rule_redirect_row['click_cloaking'])) and ($rule_redirect_row['aff_campaign_cloaking'] == 1))) // if no tracker but but by default campaign has cloaking on
@@ -427,6 +446,7 @@ if ($default == false) {
 				$click_sql = "SELECT
 					   2c.click_id, 
 					   2c.user_id,
+					   (SELECT MIN(fc.click_time) FROM 202_clicks AS fc WHERE fc.click_id = 2c.click_id) AS first_click_time,
 					   2c.click_filtered,
 					   2c.landing_page_id,
 					   2cr.click_cloaking,
@@ -441,6 +461,20 @@ if ($default == false) {
 				$mysql['aff_campaign_id'] = $db->real_escape_string((string)$rotator_row['aff_campaign_id']);
 				$mysql['click_payout'] = $db->real_escape_string((string)$rotator_row['aff_campaign_payout']);
 
+				// The click leaves the landing page for this offer: route it to the
+				// offer's campaign and seed its payout with the campaign's. Only a click
+				// that has not converted: a converted click's value belongs to its
+				// conversion ledger (MysqlConversionLedger), and re-seeding it here would
+				// leave the click disagreeing with its rows.
+				// A click leaving its landing page for an offer takes the offer's
+				// campaign. When the click is old enough for the attribution report
+				// rollup to have summed it, the rewrite and its mark are one transaction
+				// (RollupDirty::hotPathRewriteNeedsMark; AttributionRollup rule 2).
+				$rollupMark = \Prosper202\Report\RollupDirty::hotPathRewriteNeedsMark($click_row['first_click_time'] ?? null);
+				if ($rollupMark) {
+					$db->begin_transaction() or record_mysql_error($db);
+					\Prosper202\Report\RollupDirty::click(new \Prosper202\Database\Connection($db), (int) ($click_row['user_id'] ?? 0), (int) $mysql['click_id']);
+				}
 				$update_sql = "
 					UPDATE
 						202_clicks AS 2c
@@ -452,8 +486,12 @@ if ($default == false) {
 						2cs.click_payout='" . $mysql['click_payout'] . "'
 					WHERE
 						2c.click_id='" . $mysql['click_id'] . "'
+						AND 2c.click_lead = 0
 				";
 				$click_result = $db->query($update_sql) or record_mysql_error($db);
+				if ($rollupMark) {
+					$db->commit() or record_mysql_error($db);
+				}
 
 				if (($click_row['click_cloaking'] == 1) or // if tracker has overrided cloaking on
 				(($click_row['click_cloaking'] == - 1) and ($rotator_row['aff_campaign_cloaking'] == 1)) or ((! isset($click_row['click_cloaking'])) and ($rotator_row['aff_campaign_cloaking'] == 1))) // if no tracker but but by default campaign has cloaking on

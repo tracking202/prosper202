@@ -1,17 +1,22 @@
 <?php
 
-use Tracking202\Data\StaticFilterOptionsProvider;
 use UAParser\Parser;
+
+require_once __DIR__ . '/mysql-error-args.php';
 
 // This function will return true, if a user is logged in correctly, and false, if they are not.
 function record_mysql_error($dbOrSql, $sql = null): never
 {
-    if ($sql === null) {
-        $sql = (string) $dbOrSql;
+    // ($db), ($sql) and ($db, $sql) are all in use; see p202MysqlErrorArgs().
+    [$db, $sql] = p202MysqlErrorArgs($dbOrSql, $sql);
+    if (!$db instanceof \mysqli) {
         $database = DB::getInstance();
         $db = $database->getConnection();
-    } else {
-        $db = $dbOrSql;
+    }
+    if (!$db instanceof \mysqli) {
+        error_log('Database connection unavailable - SQL: ' . $sql);
+        echo 'Database error. The webmaster has been notified.';
+        die();
     }
 
     global $server_row;
@@ -50,12 +55,7 @@ function record_mysql_error($dbOrSql, $sql = null): never
 
     // report error to user and end page
 ?>
-    <div class="warning" style="margin: 40px auto; width: 450px;">
-        <div>
-            <h3>A database error has occured, the webmaster has been notified</h3>
-            <p>If this error persists, you may email us directly: <?php printf('<a href="mailto:%s">%s</a>', $_SERVER['SERVER_ADMIN'], $_SERVER['SERVER_ADMIN']); ?></p>
-        </div>
-    </div>
+    <div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><strong>A database error has occurred, and it has been recorded.</strong> If it keeps happening, email <?php $p202Admin = htmlspecialchars((string) ($_SERVER['SERVER_ADMIN'] ?? ''), ENT_QUOTES, 'UTF-8'); printf('<a href="mailto:%s">%s</a>', $p202Admin, $p202Admin); ?>.</div></div>
 
 
 <?php
@@ -113,1040 +113,6 @@ function dollar_format($amount, $currency = null, $cpv = false)
     return $new_amount;
 }
 
-function display_calendar($page, $show_time, $show_adv, $show_bottom, $show_limit, $show_breakdown, $show_type, $show_cpc_or_cpv = true, $show_adv_breakdown = false, array $options = [])
-{
-    global $navigation;
-    $database = DB::getInstance();
-    $db = $database->getConnection();
-    $auth = new AUTH();
-    $auth->set_timezone($_SESSION['user_timezone']);
-
-    $show_filters = $options['show_filters'] ?? false;
-    $show_avg_cpc = $options['show_avg_cpc'] ?? false;
-    $skip_publisher_check = $options['skip_publisher_check'] ?? false;
-    $json_bootstrap_dependent_filters = $options['json_bootstrap_dependent_filters'] ?? false;
-    $hide_publisher_sections = !$skip_publisher_check && !empty($_SESSION['publisher']);
-
-    $userId = (int) ($_SESSION['user_id'] ?? 0);
-    $user_sql = "SELECT * FROM 202_users_pref WHERE user_id=" . $userId;
-    $user_result = _mysqli_query($user_sql);
-    $user_row = ($user_result instanceof mysqli_result) ? ($user_result->fetch_assoc() ?? []) : [];
-
-    $html['user_pref_aff_network_id'] = htmlentities((string) ($user_row['user_pref_aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_aff_campaign_id'] = htmlentities((string) ($user_row['user_pref_aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_text_ad_id'] = htmlentities((string) ($user_row['user_pref_text_ad_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_method_of_promotion'] = htmlentities((string) ($user_row['user_pref_method_of_promotion'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_landing_page_id'] = htmlentities((string) ($user_row['user_pref_landing_page_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_ppc_network_id'] = htmlentities((string) ($user_row['user_pref_ppc_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_ppc_account_id'] = htmlentities((string) ($user_row['user_pref_ppc_account_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_group_1'] = htmlentities((string) ($user_row['user_pref_group_1'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_group_2'] = htmlentities((string) ($user_row['user_pref_group_2'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_group_3'] = htmlentities((string) ($user_row['user_pref_group_3'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_group_4'] = htmlentities((string) ($user_row['user_pref_group_4'] ?? ''), ENT_QUOTES, 'UTF-8');
-
-    $time = grab_timeframe();
-    $html['from'] = date('m/d/Y', $time['from']);
-    $html['to'] = date('m/d/Y', $time['to']);
-    $html['ip'] = htmlentities((string) ($user_row['user_pref_ip'] ?? ''), ENT_QUOTES, 'UTF-8');
-    if (($user_row['user_pref_subid'] ?? '0') != '0' && !empty($user_row['user_pref_subid'] ?? '')) {
-        $html['subid'] = htmlentities((string) $user_row['user_pref_subid'], ENT_QUOTES, 'UTF-8');
-    } else {
-        $html['subid'] = '';
-    }
-
-    $filterEngine = new FilterEngine();
-    if ($show_filters) {
-        $filterEngine = new FilterEngine;
-        $html['filter_name1'] = htmlentities((string) $filterEngine->getFilter('filter_name', 1), ENT_QUOTES, 'UTF-8');
-        $html['filter_name2'] = htmlentities((string) $filterEngine->getFilter('filter_name', 2), ENT_QUOTES, 'UTF-8');
-        $html['filter_name3'] = htmlentities((string) $filterEngine->getFilter('filter_name', 3), ENT_QUOTES, 'UTF-8');
-        $html['filter_condition1'] = htmlentities((string) $filterEngine->getFilter('filter_condition', 1), ENT_QUOTES, 'UTF-8');
-        $html['filter_condition2'] = htmlentities((string) $filterEngine->getFilter('filter_condition', 2), ENT_QUOTES, 'UTF-8');
-        $html['filter_condition3'] = htmlentities((string) $filterEngine->getFilter('filter_condition', 3), ENT_QUOTES, 'UTF-8');
-        $html['filter_value1'] = htmlentities((string) $filterEngine->getFilter('filter_value', 1), ENT_QUOTES, 'UTF-8');
-        $html['filter_value2'] = htmlentities((string) $filterEngine->getFilter('filter_value', 2), ENT_QUOTES, 'UTF-8');
-        $html['filter_value3'] = htmlentities((string) $filterEngine->getFilter('filter_value', 3), ENT_QUOTES, 'UTF-8');
-    }
-
-    $html['user_pref_country_id'] = htmlentities((string) ($user_row['user_pref_country_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_region_id'] = htmlentities((string) ($user_row['user_pref_region_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_isp_id'] = htmlentities((string) ($user_row['user_pref_isp_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['referer'] = htmlentities((string) ($user_row['user_pref_referer'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['keyword'] = htmlentities((string) ($user_row['user_pref_keyword'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['page'] = htmlentities((string) $page, ENT_QUOTES, 'UTF-8');
-    $html['user_pref_device_id'] = htmlentities((string) ($user_row['user_pref_device_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_browser_id'] = htmlentities((string) ($user_row['user_pref_browser_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $html['user_pref_platform_id'] = htmlentities((string) ($user_row['user_pref_platform_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-
-    $ssr_static_filters = [
-        'country' => ['enabled' => false, 'option_count' => 0, 'estimated_bytes' => 0, 'options_html' => ''],
-        'region' => ['enabled' => false, 'option_count' => 0, 'estimated_bytes' => 0, 'options_html' => ''],
-        'isp' => ['enabled' => false, 'option_count' => 0, 'estimated_bytes' => 0, 'options_html' => ''],
-        'device' => ['enabled' => false, 'option_count' => 0, 'estimated_bytes' => 0, 'options_html' => ''],
-        'browser' => ['enabled' => false, 'option_count' => 0, 'estimated_bytes' => 0, 'options_html' => ''],
-        'platform' => ['enabled' => false, 'option_count' => 0, 'estimated_bytes' => 0, 'options_html' => ''],
-    ];
-
-    if ($show_adv && tracking202StaticFilterSsrEnabled()) {
-        $ssr_static_filters = StaticFilterOptionsProvider::build([
-            'country' => $html['user_pref_country_id'],
-            'region' => $html['user_pref_region_id'],
-            'isp' => $html['user_pref_isp_id'],
-            'device' => $html['user_pref_device_id'],
-            'browser' => $html['user_pref_browser_id'],
-            'platform' => $html['user_pref_platform_id'],
-        ]);
-    }
-
-    // --- SSR: Pre-render small/bounded filter dropdowns to eliminate AJAX round-trips ---
-    // PPC Networks (user-scoped, bounded)
-    $ssr_ppc_network_options = '';
-    if (!$hide_publisher_sections) {
-        $ppc_net_sql = "SELECT ppc_network_id, ppc_network_name FROM 202_ppc_networks WHERE user_id=" . $userId . " AND ppc_network_deleted='0' ORDER BY ppc_network_name ASC";
-        $ppc_net_result = $db->query($ppc_net_sql);
-        if ($ppc_net_result) {
-            while ($row = $ppc_net_result->fetch_assoc()) {
-                $val = htmlentities((string) ($row['ppc_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-                $name = htmlentities((string) ($row['ppc_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-                $sel = ($html['user_pref_ppc_network_id'] === $val) ? ' selected' : '';
-                $ssr_ppc_network_options .= sprintf('<option%s value="%s">%s</option>', $sel, $val, $name);
-            }
-        }
-    }
-
-    // Aff Networks (user-scoped, bounded)
-    $ssr_aff_network_options = '';
-    if (!$hide_publisher_sections) {
-        $aff_net_sql = "SELECT aff_network_id, aff_network_name FROM 202_aff_networks WHERE user_id=" . $userId . " AND aff_network_deleted='0' ORDER BY aff_network_name ASC";
-        $aff_net_result = $db->query($aff_net_sql);
-        if ($aff_net_result) {
-            while ($row = $aff_net_result->fetch_assoc()) {
-                $val = htmlentities((string) ($row['aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-                $name = htmlentities((string) ($row['aff_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-                $sel = ($html['user_pref_aff_network_id'] === $val) ? ' selected' : '';
-                $ssr_aff_network_options .= sprintf('<option%s value="%s">%s</option>', $sel, $val, $name);
-            }
-        }
-    }
-
-    // display_calendar() renders the report refine UI, which expects the
-    // plural token so landing_pages.php includes both simple and advanced LPs.
-    $ssr_method_lp_value = 'landingpages';
-?>
-
-    <div class="row" style="margin-bottom: 15px;">
-        <div class="col-xs-12">
-            <div id="preferences-wrapper">
-                <span style="position: absolute; font-size: 12px;"><span
-                        class="fui-search"></span> Refine your search: </span>
-                <form id="user_prefs" onsubmit="return false;"
-                    class="form-inline text-right" role="form">
-                    <div class="row">
-                        <div class="col-xs-12">
-                            <label for="from">Start date: </label>
-                            <div class="form-group datepicker" style="margin-right: 5px;">
-                                <input type="text" class="form-control input-sm" name="from"
-                                    id="from" value="<?php echo $html['from']; ?>">
-                            </div>
-
-                            <label for="to">End date: </label>
-                            <div class="form-group datepicker">
-                                <input type="text" class="form-control input-sm" name="to"
-                                    id="to" value="<?php echo $html['to']; ?>">
-                            </div>
-
-                            <div class="form-group">
-                                <label class="sr-only" for="user_pref_time_predefined">Date</label>
-                                <select class="form-control input-sm"
-                                    name="user_pref_time_predefined" id="user_pref_time_predefined"
-                                    onchange="set_user_pref_time_predefined();">
-                                    <option value="">Custom Date</option>
-                                    <option
-                                        <?php if ($time['user_pref_time_predefined'] == 'today') {
-                                            echo 'selected=""';
-                                        } ?>
-                                        value="today">Today</option>
-                                    <option
-                                        <?php if ($time['user_pref_time_predefined'] == 'yesterday') {
-                                            echo 'selected=""';
-                                        } ?>
-                                        value="yesterday">Yesterday</option>
-                                    <option
-                                        <?php if ($time['user_pref_time_predefined'] == 'last7') {
-                                            echo 'selected=""';
-                                        } ?>
-                                        value="last7">Last 7 Days</option>
-                                    <option
-                                        <?php if ($time['user_pref_time_predefined'] == 'last14') {
-                                            echo 'selected=""';
-                                        } ?>
-                                        value="last14">Last 14 Days</option>
-                                    <option
-                                        <?php if ($time['user_pref_time_predefined'] == 'last30') {
-                                            echo 'selected=""';
-                                        } ?>
-                                        value="last30">Last 30 Days</option>
-                                    <option
-                                        <?php if ($time['user_pref_time_predefined'] == 'thismonth') {
-                                            echo 'selected=""';
-                                        } ?>
-                                        value="thismonth">This Month</option>
-                                    <option
-                                        <?php if ($time['user_pref_time_predefined'] == 'lastmonth') {
-                                            echo 'selected=""';
-                                        } ?>
-                                        value="lastmonth">Last Month</option>
-                                    <option
-                                        <?php if ($time['user_pref_time_predefined'] == 'thisyear') {
-                                            echo 'selected=""';
-                                        } ?>
-                                        value="thisyear">This Year</option>
-                                    <option
-                                        <?php if ($time['user_pref_time_predefined'] == 'lastyear') {
-                                            echo 'selected=""';
-                                        } ?>
-                                        value="lastyear">Last Year</option>
-                                    <option
-                                        <?php if ($time['user_pref_time_predefined'] == 'alltime') {
-                                            echo 'selected=""';
-                                        } ?>
-                                        value="alltime">All Time</option>
-                                </select>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="form_seperator" style="margin: 5px 0px; padding: 1px">
-                        <div class="col-xs-12"></div>
-                    </div>
-
-                    <?php if ($navigation[1] == 'tracking202') { ?>
-                        <div class="row" style="text-align:left; <?php if ($show_adv == false) {
-                                                                        echo 'display:none;';
-                                                                    } ?>">
-                            <div class="col-xs-12" style="margin-top: 5px;">
-                                <div class="row">
-                                    <?php if (!$hide_publisher_sections) { ?>
-                                        <div class="col-xs-6">
-                                            <label>Traffic Source/Account: </label>
-
-                                            <div class="form-group">
-                                                <div style="margin-left: 2px;" id="ppc_network_id_div">
-                                                    <select class="form-control input-sm" name="ppc_network_id" id="ppc_network_id" onchange="load_ppc_account_id(this.value, 0);">
-                                                        <option value=""> -- </option>
-                                                        <option value="16777215" <?php if ($html['user_pref_ppc_network_id'] === '16777215') echo 'selected=""'; ?>>[No PPC Network]</option>
-                                                        <?php echo $ssr_ppc_network_options; ?>
-                                                    </select>
-                                                </div>
-                                            </div>
-
-                                            <div class="form-group">
-                                                <div id="ppc_account_id_div"></div>
-                                            </div>
-                                        </div>
-                                    <?php } //end publisher check
-                                    ?>
-                                    <div class="col-xs-6" style="text-align: right">
-                                        <div class="row">
-                                            <div class="col-xs-6">
-                                                <label>Subid: </label>
-                                                <div class="form-group">
-                                                    <input type="text" class="form-control input-sm" name="subid"
-                                                        id="subid" value="<?php echo $html['subid']; ?>" />
-                                                </div>
-                                            </div>
-                                            <div class="col-xs-6">
-                                                <label>Visitor IP: </label>
-                                                <div class="form-group">
-                                                    <input type="text" class="form-control input-sm" name="ip"
-                                                        id="ip" value="<?php echo $html['ip']; ?>" />
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <?php if (!$hide_publisher_sections) { ?>
-                                        <div class="col-xs-6">
-                                            <label>Category/Campaign: </label>
-                                            <div class="form-group">
-                                                <div id="aff_network_id_div">
-                                                    <select class="form-control input-sm" name="aff_network_id" id="aff_network_id" onchange="load_aff_campaign_id($(this).val(), 0); load_landing_page(this.value); load_text_ad_id(this.value);">
-                                                        <option value="0"> -- </option>
-                                                        <?php echo $ssr_aff_network_options; ?>
-                                                    </select>
-                                                </div>
-                                            </div>
-
-                                            <div class="form-group">
-                                                <div id="aff_campaign_id_div"></div>
-                                            </div>
-                                        </div>
-                                    <?php } //end publisher check
-                                    ?>
-                                    <div class="col-xs-6" style="text-align: right">
-                                        <div class="row">
-                                            <div class="col-xs-6">
-                                                <label>Keyword: </label>
-                                                <div class="form-group">
-                                                    <input name="keyword" id="keyword" type="text"
-                                                        class="form-control input-sm"
-                                                        value="<?php echo $html['keyword']; ?>" />
-                                                </div>
-                                            </div>
-                                            <div class="col-xs-6">
-                                                <label>Referer: </label>
-                                                <div class="form-group">
-                                                    <input name="referer" id="referer" type="text"
-                                                        class="form-control input-sm"
-                                                        value="<?php echo $html['referer']; ?>" />
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="form_seperator" style="margin:5px 0px; padding:1px; <?php if ($show_adv == false) {
-                                                                                            echo 'display:none;';
-                                                                                        } ?>">
-                            <div class="col-xs-12"></div>
-                        </div>
-                        <div id="more-options" style="margin-bottom: 5px; height: 87px; <?php if (($user_row['user_pref_adv'] != '1') or ($show_adv == false)) {
-                                                                                            echo 'display: none;';
-                                                                                        } ?>">
-                            <div class="row" style="text-align: left;">
-                                <div class="col-xs-12" style="margin-top: 5px;">
-                                    <div class="row">
-                                        <?php if (!$hide_publisher_sections) { ?>
-                                            <div class="col-xs-6">
-                                                <label>Text Ad: </label>
-
-                                                <div class="form-group">
-                                                    <img id="text_ad_id_div_loading" class="loading"
-                                                        style="display: none;"
-                                                        src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" />
-                                                    <div id="text_ad_id_div" style="margin-left: 69px;"></div>
-                                                </div>
-
-                                                <div class="form-group">
-                                                    <img id="ad_preview_div_loading" class="loading"
-                                                        style="display: none;"
-                                                        src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" />
-                                                    <div id="ad_preview_div"
-                                                        style="position: absolute; top: -12px; font-size: 10px;"></div>
-                                                </div>
-                                            </div>
-                                        <?php } //end publisher check
-                                        ?>
-                                        <div class="col-xs-6" style="text-align: right">
-                                            <div class="row">
-                                                <div class="col-xs-6">
-                                                    <label>Device type: </label>
-                                                    <div class="form-group">
-                                                        <img id="device_id_div_loading" class="loading"
-                                                            style="<?php if ($ssr_static_filters['device']['enabled']) { echo 'display: none; '; } ?>right: 0px; left: 5px;"
-                                                            src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" />
-                                                        <div id="device_id_div" style="top: -12px; font-size: 10px;">
-                                                            <select class="form-control input-sm" name="device_id"
-                                                                id="device_id">
-                                                                <option value="0" <?php if ($html['user_pref_device_id'] === '' || $html['user_pref_device_id'] === '0') echo 'selected=""'; ?>>--</option>
-                                                                <?php echo $ssr_static_filters['device']['options_html']; ?>
-                                                            </select>
-                                                        </div>
-                                                    </div>
-                                                </div>
-
-                                                <div class="col-xs-6">
-                                                    <label>Country: </label>
-                                                    <div class="form-group">
-                                                        <img id="country_id_div_loading" class="loading"
-                                                            style="<?php if ($ssr_static_filters['country']['enabled']) { echo 'display: none; '; } ?>right: 0px; left: 5px;"
-                                                            src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" />
-                                                        <div id="country_id_div"
-                                                            style="top: -12px; font-size: 10px;">
-                                                            <select class="form-control input-sm" name="country_id"
-                                                                id="country_id">
-                                                                <option value="0" <?php if ($html['user_pref_country_id'] === '' || $html['user_pref_country_id'] === '0') echo 'selected=""'; ?>>--</option>
-                                                                <?php echo $ssr_static_filters['country']['options_html']; ?>
-                                                            </select>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="row">
-                                        <?php if (!$hide_publisher_sections) { ?>
-                                            <div class="col-xs-6">
-                                                <label>Method of Promotion: </label>
-                                                <div class="form-group">
-                                                    <div id="method_of_promotion_div" style="margin-left: 9px;">
-                                                        <select class="form-control input-sm" name="method_of_promotion" id="method_of_promotion" onchange="tempLoadMethodOfPromotion(this);">
-                                                            <option value="0"> -- </option>
-                                                            <option <?php if ($html['user_pref_method_of_promotion'] === 'directlink') echo 'selected=""'; ?> value="directlink">Direct Linking</option>
-                                                            <option <?php if ($html['user_pref_method_of_promotion'] === 'landingpage' || $html['user_pref_method_of_promotion'] === 'landingpages') echo 'selected=""'; ?> value="<?php echo $ssr_method_lp_value; ?>">Landing Page</option>
-                                                        </select>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        <?php } //end publisher check
-                                        ?>
-                                        <div class="col-xs-6" style="text-align: right">
-                                            <div class="row">
-                                                <div class="col-xs-6">
-                                                    <label>Browser: </label>
-                                                    <div class="form-group">
-                                                        <img id="browser_id_div_loading" class="loading"
-                                                            style="<?php if ($ssr_static_filters['browser']['enabled']) { echo 'display: none; '; } ?>right: 0px; left: 5px;"
-                                                            src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" />
-                                                        <div id="browser_id_div"
-                                                            style="top: -12px; font-size: 10px;">
-                                                            <select class="form-control input-sm" name="browser_id"
-                                                                id="browser_id">
-                                                                <option value="0" <?php if ($html['user_pref_browser_id'] === '' || $html['user_pref_browser_id'] === '0') echo 'selected=""'; ?>>--</option>
-                                                                <?php echo $ssr_static_filters['browser']['options_html']; ?>
-                                                            </select>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                <div class="col-xs-6">
-                                                    <label>Region: </label>
-                                                    <div class="form-group">
-                                                        <img id="region_id_div_loading" class="loading"
-                                                            style="<?php if ($ssr_static_filters['region']['enabled']) { echo 'display: none; '; } ?>right: 0px; left: 5px;"
-                                                            src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" />
-                                                        <div id="region_id_div" style="top: -12px; font-size: 10px;">
-                                                            <select class="form-control input-sm" name="region_id"
-                                                                id="region_id">
-                                                                <option value="0" <?php if ($html['user_pref_region_id'] === '' || $html['user_pref_region_id'] === '0') echo 'selected=""'; ?>>--</option>
-                                                                <?php echo $ssr_static_filters['region']['options_html']; ?>
-                                                            </select>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="row">
-                                        <?php if (!$hide_publisher_sections) { ?>
-                                            <div class="col-xs-6">
-                                                <label>Landing Page: </label>
-                                                <div class="form-group">
-                                                    <img id="landing_page_div_loading" class="loading"
-                                                        style="display: none;"
-                                                        src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" />
-                                                    <div id="landing_page_div" style="margin-left: 45px;"></div>
-                                                </div>
-                                            </div>
-                                        <?php } //end publisher check
-                                        ?>
-                                        <div class="col-xs-6" style="text-align: right">
-                                            <div class="row">
-                                                <div class="col-xs-6">
-                                                    <label>Platforms: </label>
-                                                    <div class="form-group">
-                                                        <img id="platform_id_div_loading" class="loading"
-                                                            style="<?php if ($ssr_static_filters['platform']['enabled']) { echo 'display: none; '; } ?>right: 0px; left: 5px;"
-                                                            src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" />
-                                                        <div id="platform_id_div"
-                                                            style="top: -12px; font-size: 10px;">
-                                                            <select class="form-control input-sm" name="platform_id"
-                                                                id="platform_id">
-                                                                <option value="0" <?php if ($html['user_pref_platform_id'] === '' || $html['user_pref_platform_id'] === '0') echo 'selected=""'; ?>>--</option>
-                                                                <?php echo $ssr_static_filters['platform']['options_html']; ?>
-                                                            </select>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                <div class="col-xs-6">
-                                                    <label>ISP/Carrier: </label>
-                                                    <div class="form-group">
-                                                        <img id="isp_id_div_loading" class="loading"
-                                                            style="<?php if ($ssr_static_filters['isp']['enabled']) { echo 'display: none; '; } ?>right: 0px; left: 5px;"
-                                                            src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif" />
-                                                        <div id="isp_id_div" style="top: -12px; font-size: 10px;">
-                                                            <select class="form-control input-sm" name="isp_id"
-                                                                id="isp_id">
-                                                                <option value="0" <?php if ($html['user_pref_isp_id'] === '' || $html['user_pref_isp_id'] === '0') echo 'selected=""'; ?>>--</option>
-                                                                <?php echo $ssr_static_filters['isp']['options_html']; ?>
-                                                            </select>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                </div>
-                            </div>
-
-                            <div class="form_seperator" style="margin: 5px 0px; padding: 1px;">
-                                <div class="col-xs-12"></div>
-                            </div>
-                        </div>
-
-                    <?php } ?>
-                    <?php if ($show_adv_breakdown == true) { ?>
-                        <div class="row">
-                            <div class="col-xs-12" style="margin-top:5px; <?php if ($show_adv != false) {
-                                                                                echo 'text-align:left;';
-                                                                            } ?> <?php if ($show_bottom == false) {
-                                                                                        echo 'display:none;';
-                                                                                    } ?>">
-                                <label>Group By: </label>
-                                <div class="form-group">
-                                    <label class="sr-only" for="user_pref_limit">Date</label> <select
-                                        class="form-control input-sm" name="details[]">
-                                        <?php foreach (ReportSummaryForm::getDetailArray() as $detail_item) { ?>
-                                            <option value="<?php echo $detail_item ?>"
-                                                <?php echo $html['user_pref_group_1'] == $detail_item ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById($detail_item); ?></option>
-                                        <?php } ?>
-                                    </select>
-                                </div>
-
-                                <label>Then Group By: </label>
-                                <div class="form-group">
-                                    <label class="sr-only" for="user_pref_breakdown">Date</label> <select
-                                        class="form-control input-sm" name="details[]">
-                                        <option
-                                            value="<?php echo ReportBasicForm::DETAIL_LEVEL_NONE; ?>"
-                                            <?php echo $html['user_pref_group_1'] == ReportBasicForm::DETAIL_LEVEL_NONE ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById(ReportBasicForm::DETAIL_LEVEL_NONE); ?></option>
-                                        <?php foreach (ReportSummaryForm::getDetailArray() as $detail_item) { ?>
-                                            <option value="<?php echo $detail_item ?>"
-                                                <?php echo $html['user_pref_group_2'] == $detail_item ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById($detail_item); ?></option>
-                                        <?php } ?>
-                                    </select>
-                                </div>
-
-                                <label>Then Group By: </label>
-                                <div class="form-group">
-                                    <label class="sr-only" for="user_pref_chart">Date</label> <select
-                                        class="form-control input-sm" name="details[]">
-                                        <option
-                                            value="<?php echo ReportBasicForm::DETAIL_LEVEL_NONE; ?>"
-                                            <?php echo $html['user_pref_group_1'] == ReportBasicForm::DETAIL_LEVEL_NONE ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById(ReportBasicForm::DETAIL_LEVEL_NONE); ?></option>
-                                        <?php foreach (ReportSummaryForm::getDetailArray() as $detail_item) { ?>
-                                            <option value="<?php echo $detail_item ?>"
-                                                <?php echo $html['user_pref_group_3'] == $detail_item ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById($detail_item); ?></option>
-                                        <?php } ?>
-                                    </select>
-                                </div>
-
-                                <label>Then Group By: </label>
-                                <div class="form-group">
-                                    <label class="sr-only" for="user_pref_show">Date</label> <select
-                                        class="form-control input-sm" name="details[]">
-                                        <option
-                                            value="<?php echo ReportBasicForm::DETAIL_LEVEL_NONE; ?>"
-                                            <?php echo $html['user_pref_group_1'] == ReportBasicForm::DETAIL_LEVEL_NONE ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById(ReportBasicForm::DETAIL_LEVEL_NONE); ?></option>
-                                        <?php foreach (ReportBasicForm::getDetailArray() as $detail_item) { ?>
-                                            <option value="<?php echo $detail_item ?>"
-                                                <?php echo $html['user_pref_group_4'] == $detail_item ? 'selected="selected"' : ''; ?>><?php echo ReportBasicForm::translateDetailLevelById($detail_item); ?></option>
-                                        <?php } ?>
-                                    </select>
-                                </div>
-
-                            </div>
-                        </div>
-
-                        <?php if ($show_filters) { ?>
-                        <div class="row">
-                            <div class="col-xs-12" style="margin-top:5px; <?php if ($show_adv != false) {
-                                                                                echo 'text-align:left;';
-                                                                            } ?> <?php if ($show_bottom == false) {
-                                                                                        echo 'display:none;';
-                                                                                    } ?>">
-                                <label>Filter: </label>
-                                <div class="form-group">
-                                    <label class="sr-only" for="filter_value_1">Filter</label>
-                                    <?php $filterEngine->getFilterNames('filter_name', 1); ?>
-                                    <?php $filterEngine->getFilterNames('filter_condition', 1); ?>
-                                    <input name="filter_value_1" id="filter_value_1" type="text"
-                                        class="form-control input-sm"
-                                        value="<?php echo $html['filter_value1']; ?>" />
-                                </div>
-                            </div>
-                        </div>
-                        <div class="row">
-                            <div class="col-xs-12" style="margin-top:5px; <?php if ($show_adv != false) {
-                                                                                echo 'text-align:left;';
-                                                                            } ?> <?php if ($show_bottom == false) {
-                                                                                        echo 'display:none;';
-                                                                                    } ?>">
-                                <label>Filter: </label>
-                                <div class="form-group">
-                                    <label class="sr-only" for="filter_value_2">Filter</label>
-                                    <?php $filterEngine->getFilterNames('filter_name', 2); ?>
-                                    <?php $filterEngine->getFilterNames('filter_condition', 2); ?>
-                                    <input name="filter_value_2" id="filter_value_2" type="text"
-                                        class="form-control input-sm"
-                                        value="<?php echo $html['filter_value2']; ?>" />
-                                </div>
-                            </div>
-                        </div>
-                        <div class="row">
-                            <div class="col-xs-12" style="margin-top:5px; <?php if ($show_adv != false) {
-                                                                                echo 'text-align:left;';
-                                                                            } ?> <?php if ($show_bottom == false) {
-                                                                                        echo 'display:none;';
-                                                                                    } ?>">
-                                <label>Filter: </label>
-                                <div class="form-group">
-                                    <label class="sr-only" for="filter_value_3">Filter</label>
-                                    <?php $filterEngine->getFilterNames('filter_name', 3); ?>
-                                    <?php $filterEngine->getFilterNames('filter_condition', 3); ?>
-                                    <input name="filter_value_3" id="filter_value_3" type="text"
-                                        class="form-control input-sm"
-                                        value="<?php echo $html['filter_value3']; ?>" />
-                                </div>
-                            </div>
-                        </div>
-                        <?php } ?>
-
-                        <?php if ($show_avg_cpc) { ?>
-                        <div class="row">
-                            <div class="col-xs-12" style="margin-top:5px; <?php if ($show_adv != false) {
-                                                                                echo 'text-align:left;';
-                                                                            } ?> <?php if ($show_bottom == false) {
-                                                                                        echo 'display:none;';
-                                                                                    } ?>">
-                                <label>Avg CPC: </label>
-                                <div class="form-group">
-                                    <label class="sr-only" for="avg_cpc">Avg CPC</label>
-                                    <input name="avg_cpc" id="avg_cpc" type="text"
-                                        class="form-control input-sm"
-                                        value="<?php echo htmlentities((string) ($_SESSION['avg_cpc'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>" />
-                                </div>
-                            </div>
-                        </div>
-                        <?php } ?>
-
-                        <div class="form_seperator" style="margin: 5px 0px; padding: 1px;">
-                            <div class="col-xs-12"></div>
-                        </div>
-
-                    <?php } ?>
-                    <div class="row">
-                        <div class="col-xs-12" style="margin-top:5px; <?php if ($show_adv != false) {
-                                                                            echo 'text-align:left;';
-                                                                        } ?> <?php if ($show_bottom == false) {
-                                                                                    echo 'display:none;';
-                                                                                } ?>">
-                            <label>Display: </label>
-                            <div class="form-group">
-                                <label class="sr-only" for="user_pref_limit">Date</label> <select class="form-control input-sm" name="user_pref_limit" id="user_pref_limit" style="width: auto; <?php if ($show_limit == false) {
-                                                                                                                                                                                                    echo 'display:none;';
-                                                                                                                                                                                                } ?>">
-                                    <option
-                                        <?php if ($user_row['user_pref_limit'] == '10') {
-                                            echo 'SELECTED';
-                                        } ?>
-                                        value="10">10</option>
-                                    <option
-                                        <?php if ($user_row['user_pref_limit'] == '25') {
-                                            echo 'SELECTED';
-                                        } ?>
-                                        value="25">25</option>
-                                    <option
-                                        <?php if ($user_row['user_pref_limit'] == '50') {
-                                            echo 'SELECTED';
-                                        } ?>
-                                        value="50">50</option>
-                                    <option
-                                        <?php if ($user_row['user_pref_limit'] == '75') {
-                                            echo 'SELECTED';
-                                        } ?>
-                                        value="75">75</option>
-                                    <option
-                                        <?php if ($user_row['user_pref_limit'] == '100') {
-                                            echo 'SELECTED';
-                                        } ?>
-                                        value="100">100</option>
-                                    <option
-                                        <?php if ($user_row['user_pref_limit'] == '150') {
-                                            echo 'SELECTED';
-                                        } ?>
-                                        value="150">150</option>
-                                    <option
-                                        <?php if ($user_row['user_pref_limit'] == '200') {
-                                            echo 'SELECTED';
-                                        } ?>
-                                        value="200">200</option>
-                                </select>
-                            </div>
-
-                            <div class="form-group">
-                                <label class="sr-only" for="user_pref_breakdown">Date</label> <select
-                                    class="form-control input-sm" name="user_pref_breakdown"
-                                    id="user_pref_breakdown"
-                                    <?php if ($show_breakdown == false) {
-                                        echo 'style="display:none;"';
-                                    } ?>>
-                                    <option
-                                        <?php if ($user_row['user_pref_breakdown'] == 'hour') {
-                                            echo 'SELECTED';
-                                        } ?>
-                                        value="hour">By Hour</option>
-                                    <option
-                                        <?php if ($user_row['user_pref_breakdown'] == 'day') {
-                                            echo 'SELECTED';
-                                        } ?>
-                                        value="day">By Day</option>
-                                    <option
-                                        <?php if ($user_row['user_pref_breakdown'] == 'month') {
-                                            echo 'SELECTED';
-                                        } ?>
-                                        value="month">By Month</option>
-                                    <option
-                                        <?php if ($user_row['user_pref_breakdown'] == 'year') {
-                                            echo 'SELECTED';
-                                        } ?>
-                                        value="year">By Year</option>
-                                </select>
-                            </div>
-
-                            <div class="form-group">
-                                <label class="sr-only" for="user_pref_show">Date</label> <select
-                                    style="width: 155px;" class="form-control input-sm"
-                                    name="user_pref_show" id="user_pref_show"
-                                    <?php if ($show_type == false) {
-                                        echo 'style="display:none;"';
-                                    } ?>>
-                                    <option
-                                        <?php if ($user_row['user_pref_show'] == 'all') {
-                                            echo 'SELECTED';
-                                        } ?>
-                                        value="all">Show All Clicks</option>
-                                    <option
-                                        <?php if ($user_row['user_pref_show'] == 'real') {
-                                            echo 'SELECTED';
-                                        } ?>
-                                        value="real">Show Real Clicks</option>
-                                    <option
-                                        <?php if ($user_row['user_pref_show'] == 'filtered') {
-                                            echo 'SELECTED';
-                                        } ?>
-                                        value="filtered">Show Filtered Out Clicks</option>
-                                    <option
-                                        <?php if ($user_row['user_pref_show'] == 'filtered_bot') {
-                                            echo 'SELECTED';
-                                        } ?>
-                                        value="filtered_bot">Show Filtered Out Bot Clicks</option>
-                                    <option
-                                        <?php if ($user_row['user_pref_show'] == 'leads') {
-                                            echo 'SELECTED';
-                                        } ?>
-                                        value="leads">Show Converted Clicks</option>
-                                </select>
-                            </div>
-
-                            <div class="form-group">
-                                <label class="sr-only" for="user_cpc_or_cpv">Date</label> <select
-                                    class="form-control input-sm" name="user_cpc_or_cpv"
-                                    id="user_cpc_or_cpv"
-                                    <?php if ($show_cpc_or_cpv == false) {
-                                        echo 'style="display:none;"';
-                                    } ?>>
-                                    <option
-                                        <?php if ($user_row['user_cpc_or_cpv'] == 'cpc') {
-                                            echo 'SELECTED';
-                                        } ?>
-                                        value="cpc">CPC Costs</option>
-                                    <option
-                                        <?php if ($user_row['user_cpc_or_cpv'] == 'cpv') {
-                                            echo 'SELECTED';
-                                        } ?>
-                                        value="cpv">CPV Costs</option>
-                                </select>
-                            </div>
-                            <button id="s-search" style="<?php if ($show_adv != false) {
-                                                                echo 'float:right;';
-                                                            } ?>" type="submit" class="btn btn-xs btn-info" onclick="set_user_prefs('<?php echo $html['page']; ?>');">Set
-                                Preferences</button>
-                            <button id="s-toogleAdv" style="margin-right: 5px; float:right; <?php if ($show_adv == false) {
-                                                                                                echo 'display:none;';
-                                                                                            } ?>" type="submit" class="btn btn-xs btn-default">More
-                                Options</button>
-                        </div>
-                    </div>
-
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <div class="row">
-        <div class="col-xs-12">
-            <div id="m-content">
-                <div class="loading-stats">
-                    <span class="infotext">Loading stats...</span> <img
-                        src="<?php echo get_absolute_url(); ?>202-img/loader-small.gif">
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <script type="text/javascript">
-        /* TIME SETTING FUNCTION */
-        function set_user_pref_time_predefined() {
-
-            var element = $('#user_pref_time_predefined');
-
-            if (element.val() == 'today') {
-                <?php
-
-                $time['from'] = mktime(0, 0, 0, (int) date('m', time()), (int) date('d', time()), (int) date('Y', time()));
-                $time['to'] = mktime(23, 59, 59, (int) date('m', time()), (int) date('d', time()), (int) date('Y', time()));
-                ?>
-
-                $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
-                $('#to').val('<?php echo date('m/d/y', $time['to']); ?>');
-            }
-
-            if (element.val() == 'yesterday') {
-                <?php
-
-                $time['from'] = mktime(0, 0, 0, (int) date('m', time() - 86400), (int) date('d', time() - 86400), (int) date('Y', time() - 86400));
-                $time['to'] = mktime(23, 59, 59, (int) date('m', time() - 86400), (int) date('d', time() - 86400), (int) date('Y', time() - 86400));
-                ?>
-
-                $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
-                $('#to').val('<?php echo date('m/d/y', $time['to']); ?>');
-            }
-
-            if (element.val() == 'last7') {
-                <?php
-
-                $time['from'] = mktime(0, 0, 0, (int) date('m', time() - 86400 * 7), (int) date('d', time() - 86400 * 7), (int) date('Y', time() - 86400 * 7));
-                $time['to'] = mktime(23, 59, 59, (int) date('m', time()), (int) date('d', time()), (int) date('Y', time()));
-                ?>
-
-                $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
-                $('#to').val('<?php echo date('m/d/y', $time['to']); ?>');
-            }
-
-            if (element.val() == 'last14') {
-                <?php
-
-                $time['from'] = mktime(0, 0, 0, (int) date('m', time() - 86400 * 14), (int) date('d', time() - 86400 * 14), (int) date('Y', time() - 86400 * 14));
-                $time['to'] = mktime(23, 59, 59, (int) date('m', time()), (int) date('d', time()), (int) date('Y', time()));
-                ?>
-
-                $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
-                $('#to').val('<?php echo date('m/d/y', $time['to']); ?>');
-            }
-
-            if (element.val() == 'last30') {
-                <?php
-
-                $time['from'] = mktime(0, 0, 0, (int) date('m', time() - 86400 * 30), (int) date('d', time() - 86400 * 30), (int) date('Y', time() - 86400 * 30));
-                $time['to'] = mktime(23, 59, 59, (int) date('m', time()), (int) date('d', time()), (int) date('Y', time()));
-                ?>
-
-                $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
-                $('#to').val('<?php echo date('m/d/y', $time['to']); ?>');
-            }
-
-            if (element.val() == 'thismonth') {
-                <?php
-
-                $time['from'] = mktime(0, 0, 0, (int) date('m', time()), 1, (int) date('Y', time()));
-                $time['to'] = mktime(23, 59, 59, (int) date('m', time()), (int) date('d', time()), (int) date('Y', time()));
-                ?>
-
-                $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
-                $('#to').val('<?php echo date('m/d/y', $time['to']); ?>');
-            }
-
-            if (element.val() == 'lastmonth') {
-                <?php
-                // Anchor to the last day of the previous month (first of this month minus one
-                // day) so the range is correct regardless of month length or today's date.
-                $last_month_day = mktime(0, 0, 0, (int) date('m', time()), 1, (int) date('Y', time())) - 86400;
-                $time['from'] = mktime(0, 0, 0, (int) date('m', $last_month_day), 1, (int) date('Y', $last_month_day));
-                $time['to'] = mktime(23, 59, 59, (int) date('m', $last_month_day), (int) date('d', $last_month_day), (int) date('Y', $last_month_day));
-                ?>
-
-                $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
-                $('#to').val('<?php echo date('m/d/y', $time['to']); ?>');
-            }
-
-            if (element.val() == 'thisyear') {
-                <?php
-
-                $time['from'] = mktime(0, 0, 0, 1, 1, (int) date('Y', time()));
-                $time['to'] = mktime(23, 59, 59, (int) date('m', time()), (int) date('d', time()), (int) date('Y', time()));
-                ?>
-
-                $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
-                $('#to').val('<?php echo date('m/d/y', $time['to']); ?>');
-            }
-
-            if (element.val() == 'lastyear') {
-                <?php
-                $last_year = (int) date('Y', time()) - 1;
-                $time['from'] = mktime(0, 0, 0, 1, 1, $last_year);
-                $time['to'] = mktime(23, 59, 59, 12, 31, $last_year);
-                ?>
-
-                $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
-                $('#to').val('<?php echo date('m/d/y', $time['to']); ?>');
-            }
-
-            if (element.val() == 'alltime') {
-                <?php
-                // for the time from, do something special select the exact date this user was registered and use that :)
-                if (isset($_SESSION['user_id'])) {
-                    $mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
-                    $user_sql = "SELECT user_time_register FROM 202_users WHERE user_id='" . $mysql['user_id'] . "'";
-                    $user_result = $db->query($user_sql) or record_mysql_error($user_sql);
-                    $user_row = $user_result->fetch_assoc();
-                    if ($user_row !== null) {
-                        $time['from'] = $user_row['user_time_register'];
-                    }
-                }
-
-                $time['from'] = mktime(0, 0, 0, (int)date('m', (int)$time['from']), (int)date('d', (int)$time['from']), (int)date('Y', (int)$time['from']));
-                $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-                ?>
-
-                $('#from').val('<?php echo date('m/d/y', $time['from']); ?>');
-                $('#to').val('<?php echo date('m/d/y', $time['to']); ?>');
-            }
-        }
-
-        /* SHOW FIELDS */
-
-        // ppc_network, aff_network, method_of_promotion are now server-rendered.
-        // Initialize select2 on the SSR'd dropdowns.
-        $("#ppc_network_id").select2();
-        $("#aff_network_id").select2();
-        $("#method_of_promotion").select2();
-
-        // Cascading filters: still load via AJAX when user has saved preferences.
-        // PPC account stays on the legacy AJAX path — it is not part of the JSON payload.
-        <?php if ($html['user_pref_ppc_account_id'] != '') { ?>
-            load_ppc_account_id('<?php echo $html['user_pref_ppc_network_id']; ?>', '<?php echo $html['user_pref_ppc_account_id']; ?>');
-        <?php } ?>
-
-        <?php if (!$json_bootstrap_dependent_filters) { ?>
-            <?php if ($html['user_pref_aff_campaign_id'] != '') { ?>
-                load_aff_campaign_id('<?php echo $html['user_pref_aff_network_id']; ?>', '<?php echo $html['user_pref_aff_campaign_id']; ?>');
-            <?php } ?>
-
-            <?php if ($html['user_pref_text_ad_id'] != '') { ?>
-                load_text_ad_id('<?php echo $html['user_pref_aff_campaign_id']; ?>', '<?php echo $html['user_pref_text_ad_id']; ?>');
-                load_ad_preview('<?php echo $html['user_pref_text_ad_id']; ?>');
-            <?php } ?>
-
-            <?php if ($html['user_pref_landing_page_id'] != '') { ?>
-                load_landing_page('<?php echo $html['user_pref_aff_campaign_id']; ?>', '<?php echo $html['user_pref_landing_page_id']; ?>', '<?php echo $html['user_pref_method_of_promotion']; ?>s');
-            <?php } ?>
-        <?php } ?>
-
-        <?php if ($show_adv != false) { ?>
-            <?php foreach (['country', 'region', 'isp', 'device', 'browser', 'platform'] as $ssr_filter_key) { ?>
-                <?php if ($ssr_static_filters[$ssr_filter_key]['enabled']) { ?>
-                    $("#<?php echo $ssr_filter_key; ?>_id").select2();
-                <?php } else { ?>
-                    load_<?php echo $ssr_filter_key; ?>_id('<?php echo $html['user_pref_' . $ssr_filter_key . '_id']; ?>');
-                <?php } ?>
-            <?php } ?>
-        <?php } ?>
-    </script>
-<?php
-
-}
-
-function display_calendar2(...$args) { return display_calendar(...$args); }
-
-/**
- * Build the client-side config for the JSON report transport.
- *
- * $reportType must be one of ReportDispatchRequest::SUPPORTED_REPORT_TYPES. When the
- * JSON architecture flag is off, 'enabled' is false and 202-js/tracking-report.js hands
- * control straight back to the legacy loadContent() path.
- *
- * @return array<string, mixed>
- */
-function tracking202_report_canary_config(string $reportType, string $legacyPageUrl): array
-{
-    $database = DB::getInstance();
-    $db = $database->getConnection();
-
-    $enabled = tracking202JsonArchitectureEnabled();
-
-    $dispatchUrl = get_absolute_url() . 'tracking202/ajax/report_dispatch.php';
-    $override = tracking202NormalizeBooleanFlag($_GET['tracking_json_mode'] ?? null);
-    if ($override !== null) {
-        $dispatchUrl .= '?tracking_json_mode=' . ($override ? '1' : '0');
-    }
-
-    $userId = $db->real_escape_string((string) ($_SESSION['user_id'] ?? 0));
-    $sql = "SELECT
-                user_pref_aff_network_id,
-                user_pref_aff_campaign_id,
-                user_pref_text_ad_id,
-                user_pref_method_of_promotion,
-                user_pref_landing_page_id
-            FROM 202_users_pref
-            WHERE user_id='" . $userId . "'";
-    $result = _mysqli_query($sql);
-    if (!$result instanceof mysqli_result) {
-        // Fail loudly: a swallowed prefs read would hand the client an empty dependent-filter
-        // bootstrap, silently dropping the user's saved campaign/text-ad/landing-page filters.
-        record_mysql_error($sql);
-    }
-    $prefs = $result->fetch_assoc() ?? [];
-
-    return [
-        'enabled' => $enabled,
-        'reportType' => $reportType,
-        'legacyPageUrl' => $legacyPageUrl,
-        'dispatchUrl' => $dispatchUrl,
-        'loaderUrl' => get_absolute_url() . '202-img/loader-small.gif',
-        'excelIconUrl' => get_absolute_url() . '202-img/icons/16x16/page_white_excel.png',
-        'dependentFilters' => [
-            'jsonBootstrap' => $enabled && empty($_SESSION['publisher']),
-            'publisherHidden' => !empty($_SESSION['publisher']),
-            'affNetworkId' => (string) ($prefs['user_pref_aff_network_id'] ?? ''),
-            'affCampaignId' => (string) ($prefs['user_pref_aff_campaign_id'] ?? ''),
-            'textAdId' => (string) ($prefs['user_pref_text_ad_id'] ?? ''),
-            'landingPageId' => (string) ($prefs['user_pref_landing_page_id'] ?? ''),
-            'methodOfPromotion' => (string) ($prefs['user_pref_method_of_promotion'] ?? ''),
-        ],
-    ];
-}
-
-/**
- * Emit the JSON transport bootstrap for a report page.
- *
- * @param array<string, mixed> $config
- */
-function tracking202_render_report_canary(array $config): void
-{
-    // JSON_HEX_* stops a stray "</script>" in any value from escaping the inline script
-    // context. JSON_THROW_ON_ERROR because an unchecked encode failure would emit
-    // "window.… = ;" — a syntax error that would kill the whole inline block.
-    try {
-        $json = json_encode(
-            $config,
-            JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
-                | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
-        );
-    } catch (JsonException $e) {
-        // Emit nothing: the page keeps the legacy transport, which renders the same data.
-        error_log('tracking202 report canary config encoding failed: ' . $e->getMessage());
-        return;
-    }
-    ?>
-    <script type="text/javascript">
-        window.tracking202ReportCanaryConfig = <?php echo $json; ?>;
-    </script>
-    <script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/tracking-report.js"></script>
-    <?php
-}
-
 function grab_timeframe($unused = null): array
 {
     $auth = new AUTH();
@@ -1159,6 +125,7 @@ function grab_timeframe($unused = null): array
     $user_sql = "SELECT user_pref_time_predefined, user_pref_time_from, user_pref_time_to FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
     $user_result = _mysqli_query($user_sql);; // ($user_sql);
     $user_row = ($user_result instanceof mysqli_result) ? ($user_result->fetch_assoc() ?? []) : [];
+    $user_row = \Prosper202\DataEngine\ReportView::apply($user_row, $_SESSION['user_id'] ?? null);
     $pref_time = $user_row['user_pref_time_predefined'] ?? '';
 
     $time = [
@@ -1286,7 +253,9 @@ function getTrackingDomain(): string
         if (isset($tracking_domain_row['user_tracking_domain']) && 
             is_string($tracking_domain_row['user_tracking_domain']) && 
             strlen($tracking_domain_row['user_tracking_domain']) > 0) {
-            $tracking_domain = $tracking_domain_row['user_tracking_domain'];
+            // host[:port] only: a stored full URL doubled the scheme in every
+            // link built from it (see TrackingDomain).
+            $tracking_domain = \Prosper202\Click\TrackingDomain::normalize((string) $tracking_domain_row['user_tracking_domain']) ?: $tracking_domain;
         }
     }
     
@@ -1321,6 +290,7 @@ function query(
     $user_sql = "SELECT * FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
     $user_result = _mysqli_query($user_sql); // ($user_sql);
     $user_row = ($user_result instanceof mysqli_result) ? ($user_result->fetch_assoc() ?? []) : [];
+    $user_row = \Prosper202\DataEngine\ReportView::apply($user_row, $_SESSION['user_id'] ?? null);
 
     // Apply sane defaults when optional arguments are omitted
     if ($db_table === null) {
@@ -2968,7 +1938,8 @@ function clickserver_api_upgrade_url($key)
     // Initiate curl
     $ch = curl_init();
     // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Set the url
@@ -2993,7 +1964,8 @@ function clickserver_api_key_validate($key)
     // Initiate curl
     $ch = curl_init();
     // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Set the url
@@ -3022,7 +1994,8 @@ function api_key_validate($key)
     // Set the url
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/validate-customers-key');
     // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Set to post
@@ -3053,7 +2026,7 @@ function api_key_validate($key)
 
 function systemHash(): string
 {
-    $hash = hash('ripemd160', $_SERVER['HTTP_HOST'] . $_SERVER['SERVER_ADDR']);
+    $hash = hash('ripemd160', ($_SERVER['HTTP_HOST'] ?? '') . ($_SERVER['SERVER_ADDR'] ?? ''));
     return $hash;
 }
 
@@ -3086,7 +2059,8 @@ function getSurveyData($install_hash)
     // Initiate curl
     $ch = curl_init();
     // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Set the url
@@ -3112,7 +2086,8 @@ function updateSurveyData($install_hash, $post)
     // Set the url
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/deep/survey/' . $install_hash);
     // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Set to post
@@ -3138,9 +2113,15 @@ function rotator_data($query, $type)
     // Set the url
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/deep/rotator/' . $type . '/' . $query);
     // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    // Bounded: Setup › Redirector asks this as the user types, and an
+    // upstream that hangs must cost a missing suggestion, not a worker held
+    // for the default connect timeout.
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
     // Execute
     $result = curl_exec($ch);
 
@@ -3208,7 +2189,8 @@ function changelog_remote(): array
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/clickserver/currentversion/paid/changelogs.php');
     // Disable SSL verification (legacy endpoint).
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Bounded timeouts so a slow/offline endpoint can never hang the upgrade screen.
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
@@ -3252,7 +2234,8 @@ function callAutoCron($endpoint)
     // Set the url
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/autocron/' . $endpoint . '/' . $domain);
     // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Bound the wait so a slow/unreachable service can't hang the caller (e.g. install)
@@ -3286,7 +2269,8 @@ function registerDailyEmail($time, $timezone, $hash)
     // Set the url
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/' . $hash . '/' . $domain . '/' . $set_time);
     // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Bound the wait so a slow/unreachable service can't hang the caller (e.g. install)
@@ -3310,7 +2294,8 @@ function tagUserByNetwork($install_hash, $type, $network)
     // Set the url
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/tag/user/' . $install_hash . '/' . $type);
     // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Set to post
@@ -3341,7 +2326,8 @@ function getAllDniNetworks($install_hash)
     // Set the url
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $install_hash . '/networks/all');
     // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Execute
@@ -3363,7 +2349,8 @@ function authDniNetworks($hash, $network, $key, $affId)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/auth/' . $network);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3398,7 +2385,8 @@ function getDniOffers($hash, $network, $key, $affId, $offset, $limit, $sort_by, 
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/all/' . $offset . '/' . $limit);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3418,7 +2406,8 @@ function getDniOfferById($hash, $network, $key, $affId, $id)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/id/' . $id);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3438,7 +2427,8 @@ function requestDniOfferAccess($hash, $network, $key, $affId, $id, $type)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/' . $type . '/' . $id);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3458,7 +2448,8 @@ function submitDniOfferAnswers($hash, $network, $api_key, $affId, $id, $answers)
     $fields = http_build_query($fields);
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/answers/' . $id);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3480,7 +2471,8 @@ function setupDniOffer($hash, $network, $key, $affId, $currency, $id, $ddlci)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/setup/' . $id);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3524,7 +2516,8 @@ function setupDniOfferTrack($hash, $network, $key, $affId, $id, $ddlci = false)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, $url . $id);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3545,7 +2538,8 @@ function getForeignPayout($currency, $payout_currency, $payout)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/get-foreign-payout');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3567,7 +2561,8 @@ function validateCustomersApiKey($key)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/validate-customers-key');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3599,7 +2594,8 @@ function validateRevContentCredentials($id, $secret)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/premium-p202/validate-revcontent-credentials');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3625,7 +2621,8 @@ function pushToRevContent($id, $secret, $boost, $boost_id, array $ads)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/premium-p202/push-revcontent');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3649,7 +2646,8 @@ function pushToFacebook($api_key, $group, $ad_set_id, array $ads)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/premium-p202/facebook-ads/push-facebook/' . $api_key);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3665,7 +2663,8 @@ function getFacebookCampaignsAndAdSets($api_key)
 {
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/premium-p202/facebook-ads/get-ad-sets/' . $api_key);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
     curl_setopt($ch, CURLOPT_TIMEOUT, 60);
@@ -3710,7 +2709,11 @@ function getData($url, int $timeout = 60, int $connectTimeout = 5)
     }
 }
 
-function showHelp($page)
+/**
+ * The help article for a page, or '' when there is none. A page renders its
+ * own link from it.
+ */
+function showHelpUrl(string $page): string
 {
     $url = '';
     switch ($page) {
@@ -3781,9 +2784,7 @@ function showHelp($page)
             break;
     }
 
-    if ($url !== '') {
-        echo '<a href="' . $url . 'helpdocs" class="btn btn-info btn-xs" target="_blank"><span class="glyphicon glyphicon-question-sign" aria-hidden="true" title="Get Help"></span></a>';
-    }
+    return $url === '' ? '' : $url . 'helpdocs';
 }
 
 function createId($length)
@@ -3851,7 +2852,8 @@ function getSetDashEmail($key)
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/get-customers-email');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
@@ -3969,19 +2971,10 @@ function  upgrade_config()
 
 function getSecureStatus(): bool
 {
-    $secure = false;
-    if (
-        (! empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-        || (! empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] == 'https')
-        || (! empty($_SERVER['HTTP_X_FORWARDED_SSL']) && $_SERVER['HTTP_X_FORWARDED_SSL'] == 'on')
-        || (isset($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443)
-        || (isset($_SERVER['HTTP_X_FORWARDED_PORT']) && $_SERVER['HTTP_X_FORWARDED_PORT'] == 443)
-        || (isset($_SERVER['REQUEST_SCHEME']) && $_SERVER['REQUEST_SCHEME'] == 'https')
-    ) {
-        $secure = true;
-    }
-
-    return $secure;
+    // One answer for the whole install, the one the session cookie's Secure
+    // flag is set from (202-config/request-https.php).
+    require_once __DIR__ . '/request-https.php';
+    return p202_request_is_https($_SERVER);
 }
 
 /**
@@ -4056,41 +3049,4 @@ function renderDynamicContentSegmentHelp(): void
 		   <ul style="font-size: 12px;">' . $listItems . '</ul>
 		   So how easy is it to display the visitor\'s country on your landing page? Here\'s the html for it:<br/>
 		   <code>Welcome I see you are reading this from &lt;span name=&quot;t202Country&quot; t202Default=&apos;Your Country&apos;&gt;Your Country&lt;/span&gt;</code></span>');
-}
-
-/**
- * Render a read-only code/URL snippet with a one-click Copy button (the shared
- * .p202-copy component; styled in 202-css/p202-ui.css, wired by the delegated
- * handler in 202-js/custom.php). Replaces the ad-hoc
- * `<textarea class="form-control">...</textarea>` blocks scattered across the
- * setup pages so every snippet gets the same copy affordance.
- *
- * $value is the RAW snippet text — this helper HTML-escapes it, so callers must
- * NOT pre-encode. A single-line value renders as an <input>; multi-line (or an
- * explicit rows >= 2) renders as a <textarea>.
- *
- * @param array{rows?: int, label?: string} $opts
- */
-function p202_copy_snippet(string $value, array $opts = []): string
-{
-    $rows = isset($opts['rows']) ? max(1, (int) $opts['rows']) : 1;
-    $multiline = $rows > 1 || str_contains($value, "\n");
-    $escaped = htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
-    $copyLabel = isset($opts['label']) && $opts['label'] !== ''
-        ? htmlspecialchars((string) $opts['label'], ENT_QUOTES, 'UTF-8')
-        : 'Copy';
-
-    if ($multiline) {
-        $field = '<textarea class="form-control p202-copy-field" rows="' . ($rows > 1 ? $rows : 6)
-            . '" readonly onclick="this.select();">' . $escaped . '</textarea>';
-    } else {
-        $field = '<input type="text" class="form-control p202-copy-field" readonly value="' . $escaped
-            . '" onclick="this.select();">';
-    }
-
-    return '<div class="p202-copy">' . $field
-        . '<button type="button" class="p202-copy-btn" data-copy-label="' . $copyLabel
-        . '" aria-label="Copy to clipboard">'
-        . '<i class="fa fa-clone" aria-hidden="true"></i>'
-        . '<span class="p202-copy-label">' . $copyLabel . '</span></button></div>';
 }

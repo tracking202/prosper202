@@ -121,7 +121,7 @@ final class ApiKeyAuthPathScopeTest extends TestCase
         sort($files);
 
         $this->assertSame(
-            ['api/v1/functions.php', 'api/v2/app.php', 'api/v2/functions.php', 'api/v3/Auth.php'],
+            ['api/v1/functions.php', 'api/v2/functions.php', 'api/v3/Auth.php'],
             $files,
             'The set of API-key authentication paths changed. If a path was added, make sure it '
             . 'handles key scope; if one was removed, update this list.'

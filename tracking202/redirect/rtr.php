@@ -608,12 +608,26 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 
 //now gather the info for the advance click insert
 $click_id = $db->insert_id;
+\Prosper202\Click\RecordedClicks::note((int) $click_id);
 $mysql['click_id'] = $db->real_escape_string((string)$click_id); 
 }
 $mysql['click_alp'] = 0;
 
 $mysql['rotator_id'] = $db->real_escape_string((string)$rotator_id); 
 $mysql['user_id'] = $db->real_escape_string((string)$user_id);
+
+// A rotator re-click (lpr) rewrites the click it found above rather than
+// recording a new one: the REPLACEs below give that click another row, its
+// keyword and its c1-c4. The attribution report rollup has summed that click
+// into its hours and into the hours of any conversion whose journey holds
+// it, so the rewrite and the mark that sends those hours back to exact go in
+// one transaction (AttributionRollup rule 2). A new click needs no mark: its
+// hour is not summed yet.
+$rtrRewritesClick = isset($_GET['lpr']) && $_GET['lpr'] != '';
+if ($rtrRewritesClick) {
+	$db->begin_transaction() or record_mysql_error($db);
+	\Prosper202\Report\RollupDirty::click(new \Prosper202\Database\Connection($db), (int) $mysql['user_id'], (int) $mysql['click_id']);
+}
 
 //ok we have the main data, now insert this row
 $click_sql = "REPLACE INTO   202_clicks
@@ -673,6 +687,10 @@ $click_sql = "
 		c3_id = '".$mysql['c3_id']."',
 		c4_id = '".$mysql['c4_id']."'";
 $click_result = $db->query($click_sql) or record_mysql_error($db);
+
+if ($rtrRewritesClick) {
+	$db->commit() or record_mysql_error($db);
+}
 
 $click_sql = "
 	REPLACE INTO
@@ -736,6 +754,10 @@ if ($cloaking_on == true) {
 // destination comes from the type='lp' branch below (p202-edge-sync §3.3) —
 // never for campaign/url/auto_monetizer targets (offer URLs must not carry it).
 $t202ctx_lp_destination = false;
+// Whether the visitor goes to the operator's own landing page (a rule or the
+// rotator's default pointing at one) rather than an offer: only then do the
+// customer id and the consent flag ride along (see getPrePopVars()).
+$rtrToOwnLandingPage = false;
 if ($rule['aff_campaign_id'] != null) {
 	//rotate the urls
 	$redirect_site_url = rotateTrackerUrl($db, $rule);
@@ -747,12 +769,14 @@ if ($rule['aff_campaign_id'] != null) {
 	} else if ($rule['type'] == 'lp') {
 		$redirect_site_url = $rule['landing_page_url'];
 		$t202ctx_lp_destination = true;
+		$rtrToOwnLandingPage = true;
 	} else if ($rule['type'] == 'auto_monetizer') {
 		$redirect_site_url = "http://prosper202.com";
 	} else if ($rule['default_url'] != null) {
 		$redirect_site_url = $rule['default_url'];
 	} else if ($rule['default_lp'] != null) {
 		$redirect_site_url = $rule['landing_page_url'];
+		$rtrToOwnLandingPage = true;
 	}
 }
 
@@ -774,11 +798,41 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 		setClickIdCookie($mysql['click_id'],$rule['aff_campaign_id']);
 	}
 
+	// Identity signals (plan §6.2): the p202vid cookie, the p202lpid a
+	// landing page sends, a signed customer id. The rotator writes its click
+	// rows inline, so the click is linked here, once they are stored.
+	// A rule that points at a bare URL has no campaign and leaves capture on;
+	// a campaign whose setting cannot be read captures nothing.
+	$rtrCampaignAllows = true;
+	if ((int) $rule['aff_campaign_id'] > 0) {
+		$rtrCampaignRow = memcache_mysql_fetch_assoc(
+			$db,
+			"SELECT identity_signals FROM 202_aff_campaigns WHERE aff_campaign_id='" . $mysql['aff_campaign_id'] . "'"
+		);
+		// `?? '0'` turns a NULL setting into capture off. Today it never sees
+		// one: the column is NOT NULL DEFAULT '1' (CampaignTables). dl.php
+		// passes NULL through to campaignAllows(), which reads it as ON,
+		// because there NULL means "no campaign" (a LEFT JOIN miss). If the
+		// column is ever made nullable, this line and dl.php's must change
+		// together, or a campaign's NULL captures on one redirect path and
+		// not on the other.
+		$rtrCampaignAllows = is_array($rtrCampaignRow)
+			&& \Prosper202\Identity\RequestSignals::campaignAllows($rtrCampaignRow['identity_signals'] ?? '0');
+	}
+	$rtrIdentity = \Prosper202\Identity\ClickIdentity::fromRequest($_GET, $_COOKIE, $rtrCampaignAllows);
+	$rtrIdentity->sendCookie($_SERVER);
+	$rtrIdentity->attach(
+		\Prosper202\Repository\LookupRepositoryFactory::connection($db),
+		(int) $mysql['user_id'],
+		(int) $mysql['click_id'],
+		(int) $mysql['click_time']
+	);
+
 	//set dirty hour
 	$de = new DataEngine();
 	$data = $de->setDirtyHour($mysql['click_id']);
 
-	$urlvars = getPrePopVars($_GET);
+	$urlvars = getPrePopVars($_GET, $rtrToOwnLandingPage);
 
 	// Landing Page Optimizer: on rotator→LP destinations only, append the
 	// signed per-click context token (t202ctx, p202-edge-sync §3.2/§3.3) so

@@ -22,15 +22,15 @@ declare(strict_types=1);
  * per endpoint: the headers, the unconfigured-install 503, the autoloader
  * and the database-free request-shape checks in ../../postback-prelude.php;
  * the probe, rate limit, body read and error envelopes in
- * Api\V3\Attribution\PostbackEndpoint; JWS decoding, validation and
- * signature verification in Api\V3\Attribution\AdAttributionKitProtocol;
- * storage in Api\V3\Attribution\PostbackReceiver. This file only picks the
+ * Api\V3\Apps\Apple\PostbackIntake over Api\V3\Apps\PublicIntake; JWS decoding, validation and
+ * signature verification in Api\V3\Apps\Apple\AdAttributionKitProtocol;
+ * storage in Api\V3\Apps\Apple\PostbackReceiver. This file only picks the
  * protocol.
  */
 
 define('P202_POSTBACK_ENTRY', __FILE__);
 require dirname(__DIR__, 2) . '/postback-prelude.php';
 
-\Api\V3\Attribution\PostbackEndpoint::serve(
-    new \Api\V3\Attribution\AdAttributionKitProtocol(new \Api\V3\Attribution\JwsVerifier())
+\Api\V3\Apps\Apple\PostbackIntake::serve(
+    new \Api\V3\Apps\Apple\AdAttributionKitProtocol(new \Api\V3\Apps\Apple\JwsVerifier())
 );

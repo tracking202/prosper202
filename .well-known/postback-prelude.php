@@ -12,8 +12,8 @@ declare(strict_types=1);
  * reasons: it has to be loadable before the autoloader exists (that is the
  * whole point of the 503 below, the only answer an unconfigured install can
  * give), and it is web-tier glue for this tree, not a class in the
- * Api\V3\Attribution namespace. With it, each entry point is this require
- * plus its PostbackEndpoint::serve() line, so a header added for one
+ * Api\V3\Apps namespace. With it, each entry point is this require
+ * plus its PostbackIntake::serve() line, so a header added for one
  * endpoint is added for all of them and the next protocol's index.php is
  * three lines rather than a third fifty-line copy.
  *
@@ -62,7 +62,10 @@ require_once $p202PostbackRoot . '/vendor/autoload.php';
 // back to the unscoped /tmp/p202-api-v3-state — a different store than the
 // web tier's, so the limit would be counted in buckets nothing else reads.
 // Confirmed by running it both ways, not inferred from the code.
-$p202PostbackMethod = \Api\V3\Attribution\PostbackEndpoint::preflight();
+$p202PostbackMethod = \Api\V3\Apps\PublicIntake::preflight(
+    \Api\V3\Apps\Apple\PostbackReceiver::MAX_BODY_BYTES,
+    \Api\V3\Apps\Apple\PostbackIntake::METHODS
+);
 
 // Configuration is what costs the two connections: 202-config.php builds
 // DB::getInstance() at file scope, whose constructor opens a read-write and

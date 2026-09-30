@@ -83,15 +83,13 @@ final class FlatReportPayloadBuilder
 
     /**
      * @param array<int, array<string, mixed>> $reportData
-     * @param array<string, mixed> $userPreferences
      * @return array<string, mixed>
      */
     public static function build(
         string $reportType,
         array $reportData,
         int $foundRows,
-        ReportDispatchRequest $request,
-        array $userPreferences = []
+        ReportDispatchRequest $request
     ): array {
         $definition = self::REPORTS[$reportType] ?? null;
         if ($definition === null) {
@@ -121,7 +119,6 @@ final class FlatReportPayloadBuilder
                 'publisher' => !empty($_SESSION['publisher']),
                 'campaignDataRestricted' => $campaignDataRestricted,
             ],
-            'dependentFilters' => DependentFilterPayloadBuilder::build($request, $userPreferences),
         ];
     }
 

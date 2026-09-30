@@ -50,7 +50,6 @@ return [
         'cli',
         'favicon.gif',
         'favicon.ico',
-        'font-awesome.min.css',
         'health',
         'index.php',
         'robots.txt',
@@ -63,7 +62,6 @@ return [
         // For the operator. documentation/ is also read at runtime by
         // 202-account/docs.php; docs/ is the API and CLI reference.
         '.claude',              // only the onboarding skill; see 'keep_only'
-        'ATTRIBUTION_SETUP.md',
         'LICENSE',
         'README.md',
         'changelogs.txt',
@@ -82,8 +80,6 @@ return [
         'phpstan.neon.dist',
         'phpunit.ci.xml',
         'phpunit.xml',
-        'playwright.config.js',
-        'package.json',
         'scripts',              // lint and pattern-check scripts
 
         // CI, containers and deployment from source.
@@ -101,7 +97,6 @@ return [
         'AGENTS.md',
         'CLAUDE.md',
         'RELEASING.md',
-        'MOBILE_RESPONSIVE_SUMMARY.md',
         'mysql-modernization-plan.md',
         'mysql-tinybird-evaluation.md',
         'task-plan-*.md',

@@ -1,0 +1,191 @@
+{
+  "description": "Signed customer ids (plan §4.3, §6.2; documentation/features/visitor-identity.md). 'cases' is what CustomerId::canonical() makes of an id and a type name (null: refused); 'signatures' are cust_sig values under 'linking_key' — HMAC-SHA256(key, canonical), hex — computed independently of the PHP code. 'well_formed' is whether the signature has the shape of one (64 hex characters, either case): an SDK checks the shape and refuses what is not well formed; only the server, which holds the key, can check 'valid'.",
+  "format_version": 1,
+  "linking_key": "8d2f6a0c4b1e9f7d3a5c2e8b6f0d4a1c9e7b5d3f1a8c6e4b2d0f9a7c5e3b1d8f",
+  "cases": [
+    {
+      "name": "no type means custom, and the id is trimmed",
+      "id": "  u-829 ",
+      "type": null,
+      "expect": "custom:u-829"
+    },
+    {
+      "name": "the type is a vocabulary word: trimmed and folded",
+      "id": "u-829",
+      "type": " Custom ",
+      "expect": "custom:u-829"
+    },
+    {
+      "name": "an email digest folds to lower case",
+      "id": "B5FC85E55755F9E0D030A10AB4429B6B2944855F9A0D60077FE832BECBC41D72",
+      "type": "email_sha256",
+      "expect": "email_sha256:b5fc85e55755f9e0d030a10ab4429b6b2944855f9a0d60077fe832becbc41d72"
+    },
+    {
+      "name": "an md5 email digest",
+      "id": "3e3417d7ef77d5932a6734b916515ed5",
+      "type": "email_md5",
+      "expect": "email_md5:3e3417d7ef77d5932a6734b916515ed5"
+    },
+    {
+      "name": "an md5 digest named as sha256 is refused",
+      "id": "3e3417d7ef77d5932a6734b916515ed5",
+      "type": "email_sha256",
+      "expect": null
+    },
+    {
+      "name": "a digest that is not hex is refused",
+      "id": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+      "type": "email_sha256",
+      "expect": null
+    },
+    {
+      "name": "an email in the clear is not a digest",
+      "id": "ada@example.com",
+      "type": "email_md5",
+      "expect": null
+    },
+    {
+      "name": "every other type is compared exactly, case included",
+      "id": "AbC-9",
+      "type": "merchant_id",
+      "expect": "merchant_id:AbC-9"
+    },
+    {
+      "name": "an ESP id",
+      "id": "sub_123",
+      "type": "esp_id",
+      "expect": "esp_id:sub_123"
+    },
+    {
+      "name": "a subid",
+      "id": "s1",
+      "type": "subid",
+      "expect": "subid:s1"
+    },
+    {
+      "name": "an unknown type is refused, not treated as custom",
+      "id": "u-829",
+      "type": "phone",
+      "expect": null
+    },
+    {
+      "name": "an empty id is refused",
+      "id": "   ",
+      "type": null,
+      "expect": null
+    },
+    {
+      "name": "a colon inside the id stays inside the id",
+      "id": "a:b",
+      "type": "custom",
+      "expect": "custom:a:b"
+    },
+    {
+      "name": "only ASCII space, tab, newline, return, NUL and vertical tab are trimmed",
+      "id": " u-829",
+      "type": null,
+      "expect": "custom: u-829"
+    }
+  ],
+  "signatures": [
+    {
+      "name": "the signature of custom:u-829",
+      "canonical": "custom:u-829",
+      "signature": "c21cbbf0bddfc93538dd9329f809dbb663e3029dc51fb6c145dc2fbae3e670b4",
+      "valid": true,
+      "well_formed": true
+    },
+    {
+      "name": "the signature of custom:u-829",
+      "canonical": "custom:u-829",
+      "signature": "c21cbbf0bddfc93538dd9329f809dbb663e3029dc51fb6c145dc2fbae3e670b4",
+      "valid": true,
+      "well_formed": true
+    },
+    {
+      "name": "the signature of email_sha256:b5fc85e55755f9e0d030a10ab4429b6b2944855f9a0d60077fe832becbc41d72",
+      "canonical": "email_sha256:b5fc85e55755f9e0d030a10ab4429b6b2944855f9a0d60077fe832becbc41d72",
+      "signature": "ead63e114be2da1bf038936d7089b4c2bdc31be8cb5dacba3725a500c451a29e",
+      "valid": true,
+      "well_formed": true
+    },
+    {
+      "name": "the signature of email_md5:3e3417d7ef77d5932a6734b916515ed5",
+      "canonical": "email_md5:3e3417d7ef77d5932a6734b916515ed5",
+      "signature": "1053c2885bc2eaa13ac242db53c29e0f9481b6c8596f7505e798e7aacd387f5f",
+      "valid": true,
+      "well_formed": true
+    },
+    {
+      "name": "the signature of merchant_id:AbC-9",
+      "canonical": "merchant_id:AbC-9",
+      "signature": "036c36ac34252cb9acd0030dfd9d101e053cbe76c7fc3e114ca716e15772a8b8",
+      "valid": true,
+      "well_formed": true
+    },
+    {
+      "name": "the signature of esp_id:sub_123",
+      "canonical": "esp_id:sub_123",
+      "signature": "b2a3c954b1f334ae7227c1defc9ba26195a4d77e0041b02c7e4232feb72b3d2c",
+      "valid": true,
+      "well_formed": true
+    },
+    {
+      "name": "the signature of subid:s1",
+      "canonical": "subid:s1",
+      "signature": "ac94079bae8e5ee248278b4db82a2acc6a532e7f36664042a6922a8823a7f7a7",
+      "valid": true,
+      "well_formed": true
+    },
+    {
+      "name": "the signature of custom:a:b",
+      "canonical": "custom:a:b",
+      "signature": "9a8246644d7f0d15f506b8f193bc53206e62fca4df15acf474544d38cfdc50b9",
+      "valid": true,
+      "well_formed": true
+    },
+    {
+      "name": "the signature of custom: u-829",
+      "canonical": "custom: u-829",
+      "signature": "e13412266502845b5a0cdd3844f987a61ca1fe62a39efde80d3df245a494d22b",
+      "valid": true,
+      "well_formed": true
+    },
+    {
+      "name": "a signature in upper case is the same signature",
+      "canonical": "custom:u-829",
+      "signature": "C21CBBF0BDDFC93538DD9329F809DBB663E3029DC51FB6C145DC2FBAE3E670B4",
+      "valid": true,
+      "well_formed": true
+    },
+    {
+      "name": "a signature over the id without its type is not the signature",
+      "canonical": "custom:u-829",
+      "signature": "b7e9fbec3b2a24981ef1042b0fb035ba8771738fdce25cb4374c27ebc83771c3",
+      "valid": false,
+      "well_formed": true
+    },
+    {
+      "name": "a signature over another type's id is not the signature",
+      "canonical": "merchant_id:u-829",
+      "signature": "c21cbbf0bddfc93538dd9329f809dbb663e3029dc51fb6c145dc2fbae3e670b4",
+      "valid": false,
+      "well_formed": true
+    },
+    {
+      "name": "a truncated signature is refused",
+      "canonical": "custom:u-829",
+      "signature": "c21cbbf0bddfc93538dd9329f809dbb663e3029dc51fb6c145dc2fbae3e670b",
+      "valid": false,
+      "well_formed": false
+    },
+    {
+      "name": "a signature that is not hex is refused",
+      "canonical": "custom:u-829",
+      "signature": "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+      "valid": false,
+      "well_formed": false
+    }
+  ]
+}

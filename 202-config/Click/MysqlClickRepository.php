@@ -24,11 +24,22 @@ final class MysqlClickRepository implements ClickRepositoryInterface
             'INSERT INTO 202_clicks_counter SET click_id = DEFAULT'
         );
         $clickId = $this->conn->executeInsert($stmt);
+        RecordedClicks::note($clickId);
 
         return $clickId;
     }
 
     public function recordClick(ClickRecord $click): int
+    {
+        $clickId = $this->storeClick($click);
+        // Linking runs in its own transaction once the click is committed: a
+        // failure there is logged by ClickIdentity and never costs the click.
+        $click->identity?->attach($this->conn, $click->userId, $clickId, $click->clickTime);
+
+        return $clickId;
+    }
+
+    private function storeClick(ClickRecord $click): int
     {
         return $this->conn->transaction(function () use ($click): int {
             // 1. Generate or use pre-allocated click_id
@@ -39,6 +50,7 @@ final class MysqlClickRepository implements ClickRepositoryInterface
                     'INSERT INTO 202_clicks_counter SET click_id = DEFAULT'
                 );
                 $clickId = $this->conn->executeInsert($stmt);
+                RecordedClicks::note($clickId);
             }
 
             // 2. 202_clicks — core click data

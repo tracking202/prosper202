@@ -86,6 +86,17 @@ final class ConversionIdempotencyIntegrationTest extends TestCase
         self::$db->query('TRUNCATE TABLE 202_conversion_logs');
         self::$db->query('TRUNCATE TABLE 202_clicks');
         self::$db->query('TRUNCATE TABLE 202_clicks_spy');
+        // Campaign 7, which every click here belongs to, in the mode these
+        // cases are written for: replace, where an id-less conversion is
+        // never deduplicated. Another suite on the same database (the goals
+        // tests make campaign 7 accumulate) must not decide it: in
+        // accumulate mode an id-less payable row is the campaign's one plain
+        // conversion per click, and the repeat case reads as a duplicate.
+        self::$db->query('DELETE FROM 202_aff_campaigns WHERE aff_campaign_id = 7');
+        if (self::$db->query("INSERT INTO 202_aff_campaigns SET aff_campaign_id = 7, user_id = 1, aff_network_id = 1, aff_campaign_name = 'c7',
+                aff_campaign_url = 'http://x', aff_campaign_payout = 10, aff_campaign_time = 1, aff_campaign_foreign_payout = 10, payout_mode = 'replace'") !== true) {
+            self::fail('campaign 7 fixture: ' . self::$db->error);
+        }
     }
 
     private function insertClick(int $clickId, float $payout = 10.0, int $campaignId = 7): void
@@ -108,6 +119,7 @@ final class ConversionIdempotencyIntegrationTest extends TestCase
             'pixel_type'      => 3,
             'user_agent'      => 'IntegrationTest/1.0',
             'click_payout'    => (string) $payout,
+            'once_per_click'  => false,
         ];
     }
 
@@ -160,25 +172,57 @@ final class ConversionIdempotencyIntegrationTest extends TestCase
         self::assertSame(2, (int) $res->fetch_assoc()['c'], 'Empty transaction ids must be stored as NULL');
     }
 
-    public function testUniqueKeyRejectsDuplicateTransactionIdAtDbLevel(): void
+    /**
+     * gpb.php and upx.php used to call the writer without once_per_click, so
+     * a retried id-less postback or a reloaded universal pixel recorded a
+     * second conversion (a NULL transaction id never collides on the UNIQUE
+     * key). With the flag the second hit finds the click already a lead under
+     * its lock and records nothing.
+     */
+    public function testOncePerClickRecordsOneIdlessConversion(): void
+    {
+        $this->insertClick(1005);
+        $log = $this->log(1005);
+        $log['once_per_click'] = true;
+
+        $first = p202RecordConversion(self::$db, $log, '', true, '10.0', '');
+        $retry = p202RecordConversion(self::$db, $log, '', true, '10.0', '');
+
+        self::assertFalse($first['duplicate']);
+        self::assertGreaterThan(0, $first['conv_id']);
+        self::assertTrue($retry['duplicate'], 'the retry is reported as a duplicate');
+        self::assertSame(0, $retry['conv_id']);
+        self::assertSame(1, $this->conversionCount(1005), 'an id-less retry must not record a second conversion');
+    }
+
+    public function testUniqueKeyRejectsADuplicateLedgerKeyAtDbLevel(): void
     {
         $this->insertClick(1002);
         $db = self::$db;
+        $row = "click_id=1002, campaign_id=7, user_id=1, click_time=1, conv_time=1, time_difference='', ip='', pixel_type=1, user_agent='', deleted=0, source='postback'";
 
-        $ok = $db->query("INSERT INTO 202_conversion_logs SET click_id=1002, transaction_id='X1', campaign_id=7, click_payout=1, user_id=1, click_time=1, conv_time=1, time_difference='', ip='', pixel_type=1, user_agent='', deleted=0");
+        $ok = $db->query("INSERT INTO 202_conversion_logs SET $row, click_payout=1, transaction_id='X1', dedupe_key='tx:X1'");
         self::assertTrue($ok);
 
-        // Second insert with the same (click_id, transaction_id) must violate the
-        // UNIQUE backstop even if application-level dedup were bypassed. Depending
-        // on the mysqli_report mode this surfaces either as a false return or a
-        // thrown exception — both must carry ER_DUP_ENTRY (1062).
+        // The backstop is UNIQUE (click_id, dedupe_key) — the key every path
+        // builds through DedupeKey — and it holds even if the application's
+        // own lookup were bypassed. Depending on the mysqli_report mode this
+        // surfaces as a false return or a thrown exception; both carry
+        // ER_DUP_ENTRY (1062) naming the key.
         try {
-            $dup = $db->query("INSERT INTO 202_conversion_logs SET click_id=1002, transaction_id='X1', campaign_id=7, click_payout=1, user_id=1, click_time=1, conv_time=1, time_difference='', ip='', pixel_type=1, user_agent='', deleted=0");
-            self::assertFalse($dup, 'The UNIQUE (click_id, transaction_id) key must reject a duplicate');
+            $dup = $db->query("INSERT INTO 202_conversion_logs SET $row, click_payout=1, transaction_id='X1', dedupe_key='tx:X1'");
+            self::assertFalse($dup, 'The UNIQUE (click_id, dedupe_key) key must reject a duplicate');
             self::assertSame(1062, $db->errno, 'MySQL ER_DUP_ENTRY expected');
+            self::assertStringContainsString('uniq_click_dedupe', $db->error);
         } catch (\mysqli_sql_exception $e) {
             self::assertSame(1062, $e->getCode(), 'MySQL ER_DUP_ENTRY expected');
+            self::assertStringContainsString('uniq_click_dedupe', $e->getMessage());
         }
+
+        // The transaction id itself is no longer unique per click: a reversal
+        // carries the id of the sale it reverses, under its own key.
+        $reversal = $db->query("INSERT INTO 202_conversion_logs SET $row, click_payout=-1, transaction_id='X1', dedupe_key='rev:1:1', reverses_conv_id=1");
+        self::assertTrue($reversal, 'a reversal row shares its sale\'s transaction id');
     }
 
     public function testMissingSourceClickWritesNoOrphanConversion(): void

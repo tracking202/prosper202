@@ -79,8 +79,13 @@ module.exports = {
   // Optional. Only runs when --keep-data is absent, and only writes through
   // the guard in lib/db.js.
   async reset(db) {
-    db.truncate(['202_attribution_postbacks']);
+    db.truncate(['202_app_postbacks']);
   },
+
+  // Optional. Set it when reset() replaces the shared fixture (the
+  // agent-eval seed other specs assert against) with data of its own: the
+  // runner then runs this spec after every spec that does not.
+  replacesFixture: false,
 
   // Optional. Signs in, seeds, whatever the whole spec needs once.
   async setup(ctx) {
