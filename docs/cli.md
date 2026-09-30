@@ -47,6 +47,29 @@ p202 campaign list
 p202 report summary --period today
 ```
 
+## Finding a command
+
+```bash
+p202 search breakdown by browser   # rank commands for a task (offline)
+p202 commands                      # the whole command tree, indented
+p202 commands --json               # every command and flag, with allowed values
+```
+
+`p202 search <words...>` matches your words against every command's name, aliases,
+description, examples, flags and the values its flags accept. Plural forms and common
+synonyms match (referrer/referer, offer/campaign, dead/broken, undo/revert, link/url),
+and "per"/"by" ask for a breakdown. Each result says why it matched and, when a flag
+value matched, prints a command line to try. When nothing matches well it says so and
+shows only the closest three. `--limit N` sets the number of results (default 10).
+
+`p202 commands [command...]` lists the tree, or one subtree (`p202 commands report`).
+With `--json` each command carries its flags' name, shorthand, type, default, usage,
+`required`, and for fixed-set flags `allowed_values` and `value_aliases`. Global flags
+appear once. `--ndjson` prints one command per line and `--quiet` prints paths only.
+
+Every flag that takes a fixed set of values lists the set in `--help`. A value outside
+the set is refused before any request, with every accepted value in the message.
+
 ## Global flags
 
 | Flag       | Description                              |
@@ -789,7 +812,7 @@ p202 report breakdown --breakdown country --sort total_net --sort_dir ASC --limi
 | `-l, --limit`      | 50            | Maximum results            |
 | `-o, --offset`     | 0             | Pagination offset          |
 
-**Breakdown dimensions:** campaign, aff_network, ppc_account, ppc_network, landing_page, keyword, country, city, browser, platform, device, isp, text_ad
+**Breakdown dimensions:** campaign, aff_network, ppc_account, ppc_network, landing_page, keyword, country, city, region, browser, platform, device, isp, text_ad (aliases: lp, source, network, offer, geo). The server advertises its own list as `features.report_breakdowns` in `/capabilities`; a value missing from the CLI's list is sent when the server lists it.
 
 **Sort columns:** total_clicks, total_leads, total_income, total_cost, total_net, roi, epc, conv_rate
 
@@ -801,7 +824,7 @@ p202 analytics --group-by campaign --days 14 --sort roi --limit 10
 ```
 
 `analytics` wraps `report breakdown` with friendly aliases:
-- `--group-by lp` maps to `landing_page`
+- `--group-by` takes the breakdown dimensions above; `lp`, `source`, `network`, `offer` and `geo` map to `landing_page`, `ppc_account`, `aff_network`, `campaign` and `country`
 - `--sort conversions` maps to `total_leads`
 - `--period` takes precedence over `--days`
 

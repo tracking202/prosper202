@@ -52,10 +52,30 @@ the profile default `p202 config set-default output.format <format>`; an agent m
 its pretty-printed form, and `p202 config show` reports the format in use and why. The evidence for
 each marker is in `docs/cli-agent.md`.
 
+## Finding a Command
+
+`p202 search <what you want to do>` ranks commands offline by your words, matched
+against each command's name, aliases, description, examples, flags and the values
+its flags accept (plurals fold; synonyms such as referrer/referer, offer/campaign,
+dead/broken, undo/revert and link/url match; "per"/"by" ask for a breakdown). Each
+result says why it matched and, when a flag value matched, gives a command line to
+try; `--json` returns `{query, terms, good_match, note, results[]}`. When nothing
+matches well, `good_match` is false, the note says so, and only the closest three
+are shown.
+
+`p202 commands [command...]` lists the command tree, or one subtree. `--json`
+returns `{schema, cli_version, global_flags, commands[]}`: per command its path,
+use, aliases, short and long description, examples, whether it runs, and its flags
+(name, shorthand, type, default, usage, `required`, and for fixed-set flags
+`allowed_values`, `value_aliases`, `value_list`). Global flags are listed once and
+hidden flags are left out. `p202 --help` points at both commands.
+
 ## Commands
 
 | Command | Description |
 | ------- | ----------- |
+| `p202 search <words...>` | Find the command for a task (offline; see [Finding a Command](#finding-a-command)) |
+| `p202 commands [command...]` | Every command and flag, with allowed values, in one call (`--json`, `--ndjson`, `--quiet`) |
 | `p202 campaign list` | List campaigns; `--url-contains <text>` returns every campaign with an offer URL (any of the five slots) containing the text; `--with-stats` adds each campaign's `total_clicks`, `total_leads`, `total_income`, `total_cost`, `total_net` for `--period` (default `last30`) or `--days N`, `0` when it had no traffic (needs `reports:read`); `--min-clicks N` keeps campaigns with at least N clicks |
 | `p202 campaign get <id>` | Get a single campaign |
 | `p202 campaign create` | Create a campaign |
@@ -199,7 +219,7 @@ p202 import campaigns /tmp/campaigns.json --skip-errors
 p202 analytics --group-by country --period last30 --sort conversions --limit 10
 ```
 
-Aliases: `--group-by lp` -> `landing_page`, `--sort conversions` -> `total_leads`, `--sort revenue` -> `total_income`.
+`--group-by` takes the report breakdown dimensions: campaign, aff_network, ppc_account, ppc_network, landing_page, keyword, country, city, region, browser, platform, device, isp, text_ad. Aliases: `--group-by lp` -> `landing_page` (also `source`, `network`, `offer`, `geo`), `--sort conversions` -> `total_leads`, `--sort revenue` -> `total_income`. A dimension missing from this list is sent when the server advertises it in `/capabilities` (`features.report_breakdowns`); otherwise it is refused with the list.
 
 `--split-at YYYY-MM-DD|unix` compares the two sides of a date (00:00 UTC) inside the window
 (`--period last7|last30|last90`, `--days N`, `--time_from`/`--time_to`; default `last90`): one row per
@@ -318,7 +338,19 @@ envelope, so an agent reads structured fields instead of parsing prose:
 
 Lists of valid values (supported entities, the metrics a response did
 contain) sit in the message itself, so they are visible even when the hint
-is ignored; the hint carries the next action. Hints come from three sources,
+is ignored; the hint carries the next action. Every flag that takes a fixed
+set of values is declared with that set: its `--help` lists it, a value
+outside it is refused before the command runs (so before any request, and
+with no configuration needed) as `--<flag> must be one of: <values>; got
+"<value>"`, exit 1, and `p202 commands --json` reports it as
+`allowed_values`. Tests walk the command tree to keep every such flag this
+way and to refuse help text that trails off (`etc.`, `...`) instead of
+listing values.
+
+An unknown command or flag exits 1 with a hint naming `<command> --help` and
+`p202 search <what you want to do>`. A mistyped subcommand under a group
+(`p202 campaign lsit`) is refused the same way, with Cobra's suggestion (`did
+you mean list?`), instead of printing the group's help and exiting 0. Hints come from three sources,
 in order of precedence: a hint attached by the command itself (for example,
 which flag to change when the requested metric is missing, or the dependency
 order to sync first when a foreign key cannot be resolved); a generic hint
