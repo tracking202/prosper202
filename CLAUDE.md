@@ -743,14 +743,20 @@ Check here before burning time on tooling failures.
   the file to the scratchpad and copy it back, or stage everything first — and
   always re-run the suite after the restore, which is what caught it.
 
-- **Two page shells, one chrome.** `template_top($title, ['ui' => 'v2'])`
-  renders a page on Bootstrap 5.3 with the Prosper202 theme and component
-  layer; pages that pass nothing get the classic Bootstrap 3 stack unchanged.
-  The two cannot share a page. The chrome (`202-config/template.php`,
-  `tracking202/_config/top.php`, `tracking202/_config/sub-menu.php`) is
-  framework-neutral markup styled by `202-css/p202-chrome.css` — never add a
-  Bootstrap class of either version to it; scope page-family styles with the
-  `p202-section-*` / `p202-sub-*` body classes instead. Every third-party file
+- **One page shell, one chrome.** Every page renders on Bootstrap 5.3 with
+  the Prosper202 theme and component layer: `template_top()` for pages behind
+  the login, `info_top()` (`202-config/functions-standalone-ui.php`) for the
+  standalone ones — sign-in, password reset, installer, upgrader, 404,
+  `_die()`. The classic Bootstrap 3 / Flat UI shell is gone (U8), and so is
+  the `'ui'` option that chose it: `template_top()` throws on an option key it
+  does not know, so a leftover `['ui' => 'v2']` fails where it is written. A
+  Bootstrap 3, Flat UI or Font Awesome 4 class renders as nothing, and
+  `NoLegacyBootstrapClassesTest` refuses one anywhere in the served tree. The
+  chrome (`202-config/template.php`, `tracking202/_config/top.php`,
+  `tracking202/_config/sub-menu.php`) is framework-neutral markup styled by
+  `202-css/p202-chrome.css` — keep Bootstrap classes out of it; scope
+  page-family styles with the `p202-section-*` / `p202-sub-*` body classes
+  instead. Every third-party file
   is an entry in `202-config/assets.php` with its SHA-384, referenced by id
   from `p202_shell_assets()` or emitted with `p202_asset_tag()`; nothing in the
   tree loads a script or stylesheet from an external host except Highcharts at
@@ -765,8 +771,8 @@ Check here before burning time on tooling failures.
   `node tests/browser/run.js`, see its README). Reach for one whenever a claim
   is about a rendered pixel or an event handler: a belief about which flex
   property made a row wrap survived a review and a push, and one measurement
-  settled it. Its `lib/checks.js` holds the per-page baseline, so migrating the
-  next family costs a line each. Two of those checks exist because a page
+  settled it. Its `lib/checks.js` holds the per-page baseline, so adding a
+  page to a family costs a line. Two of those checks exist because a page
   looked right in the markup and wrong on screen:
   `flexContainersKeepTheirSpaces` (see error pattern #19) and
   `currentSubMenuItemIsVisible`, which caught a chrome script that only

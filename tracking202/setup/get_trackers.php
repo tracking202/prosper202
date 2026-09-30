@@ -147,7 +147,7 @@ $trackerLink = static function (array $tracker) use ($base): array {
 
 template_top('Get Trackers'); ?>
 
-<div class="p202-page-header p202-page-header--accent">
+<div class="p202-page-header">
 	<div class="p202-page-header__icon"><i class="bi bi-link-45deg"></i></div>
 	<div class="p202-page-header__text">
 		<h1 class="p202-page-header__title">Get Links</h1>

@@ -4139,9 +4139,10 @@ Open for the release decision:
    per million conversions, during which reports compute in full).
 2. ~~**A cron against a database that needs an upgrade exits 0 silently.**~~
    **Closed by PR 13 (§8.2):** every job exits 1 with the reason.
-3. **`CLAUDE.md`'s "Two page shells" note is stale** since U8 removed the
+3. ~~**`CLAUDE.md`'s "Two page shells" note is stale** since U8 removed the
    classic shell; it still describes `['ui' => 'v2']` and the Bootstrap 3
-   stack.
+   stack.~~ **Closed:** the note now describes the one shell, `info_top()`
+   for standalone pages, and the unknown-option throw.
 4. **The upgrade is one-way** (§7.5a). Its data migration is now measured
    at 1M conversions: 57 s on MariaDB and 91 s on MySQL 8 through
    `upgrade.php`, and it survives a proxy's 504 because it carries on

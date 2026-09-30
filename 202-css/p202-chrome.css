@@ -38,18 +38,18 @@
 }
 
 [data-bs-theme="dark"] {
-    --p202c-bg: #0f1216;
-    --p202c-surface: #171b21;
-    --p202c-surface-2: #1d222a;
-    --p202c-line: #2c323a;
-    --p202c-line-strong: #3d444d;
-    --p202c-ink: #e8eaed;
+    --p202c-bg: #13161b;
+    --p202c-surface: #20252c;
+    --p202c-surface-2: #272d35;
+    --p202c-line: #383f49;
+    --p202c-line-strong: #4a525d;
+    --p202c-ink: #dfe3e8;
     --p202c-ink-2: #c9d1d9;
     --p202c-muted: #9aa3ad;
     --p202c-accent: #6f9ff0;
     --p202c-accent-hover: #8db3f5;
     --p202c-accent-ink: #0f1a2e;
-    --p202c-accent-soft: #1e2a40;
+    --p202c-accent-soft: #26365a;
     --p202c-danger: #f07a70;
     --p202c-danger-ink: #2a0f0d;
     --p202c-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
@@ -108,8 +108,7 @@ body {
    on what a page's body says. */
 .p202c-header,
 .p202c-tabs,
-.p202c-strip,
-.p202c-subnav {
+.p202c-strip {
     font-size: 15px;
     line-height: 1.5;
 }
@@ -421,7 +420,7 @@ body {
     background: transparent;
 }
 
-/* ---------- Sub-menu strip (Overview, Analyze, Update) ---------- */
+/* ---------- Sub-menu strip (Setup, Overview, Analyze, Update) ---------- */
 
 .p202c-strip {
     margin: 0 0 20px;
@@ -475,77 +474,6 @@ body {
     box-shadow: var(--p202c-shadow);
 }
 
-/* ---------- Setup sub-menu (button grid) ---------- */
-
-.p202c-subnav {
-    margin: 0 0 20px;
-    font-family: var(--p202c-font);
-}
-
-.p202c-subnav__list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-}
-
-.p202c-subnav__list > li {
-    margin: 0;
-}
-
-.p202c-subnav__link {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    padding: 10px 14px;
-    background: var(--p202c-surface);
-    border: 1px solid var(--p202c-line);
-    border-radius: 8px;
-    color: var(--p202c-ink-2);
-    font-size: 12px;
-    font-weight: 500;
-    line-height: 1.2;
-    text-align: center;
-    text-decoration: none;
-    white-space: nowrap;
-    transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
-}
-
-.p202c-subnav__link:hover {
-    background: var(--p202c-surface-2);
-    border-color: var(--p202c-line-strong);
-    color: var(--p202c-ink);
-    text-decoration: none;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-}
-
-.p202c-subnav__link:focus-visible {
-    outline: none;
-    border-color: var(--p202c-accent);
-    box-shadow: var(--p202c-focus);
-}
-
-.p202c-subnav__link.is-active,
-.p202c-subnav__link.is-active:hover {
-    background: var(--p202c-accent);
-    border-color: transparent;
-    color: var(--p202c-accent-ink);
-    box-shadow: 0 2px 8px rgba(47, 111, 221, 0.25);
-}
-
-.p202c-subnav__link .p202c-icon {
-    width: 13px;
-    height: 13px;
-    opacity: 0.85;
-}
-
-.p202c-subnav__link.is-active .p202c-icon {
-    opacity: 1;
-}
-
 /* ---------- Footer ---------- */
 
 .p202c-footer {
@@ -575,33 +503,9 @@ body {
 
 /* ---------- Narrow screens ---------- */
 
-@media (max-width: 992px) {
-    .p202c-subnav__link {
-        padding: 8px 10px;
-        font-size: 11px;
-    }
-}
-
 @media (max-width: 767px) {
     .p202c-header__inner {
         padding: 8px 10px;
-    }
-
-    .p202c-subnav__list {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-    }
-
-    .p202c-subnav__link {
-        flex-direction: column;
-        gap: 4px;
-        padding: 10px 8px;
-        font-size: 11px;
-    }
-
-    .p202c-subnav__link .p202c-icon {
-        width: 14px;
-        height: 14px;
     }
 
     .p202c-nav {
@@ -631,29 +535,10 @@ body {
     }
 }
 
-@media (max-width: 480px) {
-    .p202c-subnav__list {
-        grid-template-columns: repeat(2, 1fr);
-        gap: 6px;
-    }
-
-    .p202c-subnav__link {
-        padding: 10px 6px;
-        border-radius: 6px;
-        font-size: 10px;
-    }
-
-    .p202c-subnav__link .p202c-icon {
-        width: 13px;
-        height: 13px;
-    }
-}
-
 @media (prefers-reduced-motion: reduce) {
     .p202c-nav__link,
     .p202c-menu__toggle,
-    .p202c-menu__chevron,
-    .p202c-subnav__link {
+    .p202c-menu__chevron {
         transition: none;
     }
 }

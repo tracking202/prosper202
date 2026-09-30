@@ -56,7 +56,7 @@ function p202_setup_landing_code_page(mysqli $db, string $mode, string $title, s
     template_top($title);
     ?>
 
-    <div class="p202-page-header p202-page-header--accent">
+    <div class="p202-page-header">
         <div class="p202-page-header__icon"><i class="bi bi-terminal"></i></div>
         <div class="p202-page-header__text">
             <h1 class="p202-page-header__title"><?php echo p202_setup_e($heading); ?></h1>

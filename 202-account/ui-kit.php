@@ -487,13 +487,36 @@ $sections = [
 					</ul>
 				</div>
 			</div>
+			<div class="p202-panel mt-4">
+				<div class="p202-panel__head">
+					<h3 class="p202-panel__title">Ads for campaigns</h3>
+					<span class="p202-pill p202-pill--accent">3</span>
+				</div>
+				<div class="p202-panel__body p202-panel__body--scroll">
+					<ul class="p202-list p202-list--grouped">
+						<li class="p202-list__item">
+							<div class="p202-list__group"><span class="p202-list__group-label">EVAL Offer Network › EVAL Campaign A</span><span class="p202-pill">2</span></div>
+							<ul class="p202-list__children">
+								<li class="p202-list__item"><span class="p202-list__name">Spring promo</span><span class="p202-list__actions"><a class="p202-list__action" href="#panel">edit</a><a class="p202-list__action" href="#panel">copy</a><a class="p202-list__action p202-list__action--danger" href="#panel">remove</a></span><span class="p202-list__meta">Big savings on every order this week</span></li>
+								<li class="p202-list__item is-active"><span class="p202-list__name">Free shipping</span><span class="p202-list__actions"><a class="p202-list__action" href="#panel">edit</a><a class="p202-list__action" href="#panel">copy</a><a class="p202-list__action p202-list__action--danger" href="#panel">remove</a></span><span class="p202-list__meta">Free shipping, no minimum</span></li>
+							</ul>
+						</li>
+						<li class="p202-list__item">
+							<div class="p202-list__group"><span class="p202-list__group-label">EVAL Offer Network › EVAL Campaign B</span><span class="p202-pill">1</span></div>
+							<ul class="p202-list__children">
+								<li class="p202-list__item"><span class="p202-list__name">Brand</span><span class="p202-list__actions"><a class="p202-list__action" href="#panel">edit</a><a class="p202-list__action" href="#panel">copy</a><a class="p202-list__action p202-list__action--danger" href="#panel">remove</a></span><span class="p202-list__meta">The original, since 2019</span></li>
+							</ul>
+						</li>
+					</ul>
+				</div>
+			</div>
 		</div>
 		<div class="col-lg-6">
-			<div class="p202-page-header p202-page-header--accent mb-3">
+			<div class="p202-page-header mb-3">
 				<div class="p202-page-header__icon"><i class="bi bi-phone"></i></div>
 				<div class="p202-page-header__text">
 					<h2 class="p202-page-header__title">Mobile App Attribution</h2>
-					<p class="p202-page-header__desc">The accent variant of the page header, for the Setup family.</p>
+					<p class="p202-page-header__desc">The page header, as every page opens: icon, title, one line.</p>
 				</div>
 			</div>
 			<div class="p202-panel">
