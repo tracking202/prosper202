@@ -489,9 +489,9 @@ final class ReleaseTree
         $classResolves = static function (string $name) use ($loader, $declared): bool {
             if (
                 class_exists($name, false) || interface_exists($name, false) || trait_exists($name, false)
-                || enum_exists($name, false) || defined($name)
+                || enum_exists($name, false)
             ) {
-                return true; // built in, or defined by autoload.php itself
+                return true; // built in, or loaded by autoload.php itself
             }
             if (isset($declared[strtolower($name)])) {
                 return true; // class names are case-insensitive in PHP
@@ -543,7 +543,8 @@ final class ReleaseTree
                     'function' => function_exists($name),
                     'const' => defined($name),
                     'import' => $classResolves($name) || $isNamespace($name),
-                    default => $classResolves($name),
+                    'name' => $classResolves($name) || defined($name),
+                    default => $classResolves($name), // 'class': a constant cannot answer
                 };
                 if (!$resolved) {
                     $unresolved[$name] = "{$relative}:{$line}";
@@ -631,8 +632,12 @@ final class ReleaseTree
      * each must be. A qualified name (Commands\Foo, namespace\Foo) is resolved
      * the way PHP resolves it: its first segment through the current
      * namespace's class imports, otherwise under the current namespace.
+     * 'class' is a position only a class can fill (new, instanceof, extends,
+     * implements, an attribute, a trait use, before ::); 'name' is a type, a
+     * catch target or a bare qualified name, which is a class or a namespaced
+     * constant.
      *
-     * @return list<array{0: string, 1: 'class'|'function'|'const'|'import', 2: int}>
+     * @return list<array{0: string, 1: 'class'|'name'|'function'|'const'|'import', 2: int}>
      */
     public static function referencesIn(string $code): array
     {
@@ -657,15 +662,30 @@ final class ReleaseTree
             }
             return null;
         };
-        // A name followed by '(' is a function call, except after `new` or
-        // in an attribute: new \A\B(...) and #[\A\B(...)] are classes.
+        // What a name is depends on where it sits. After `new`, `instanceof`,
+        // `extends`, `implements`, `#[` or a trait `use`, or before `::`, only
+        // a class can stand ('class'). Before '(' it is a function call ('function').
+        // Anywhere else — a type, a catch target, a bare constant — the same
+        // spelling is a class or a namespaced constant ('name'), which the
+        // resolver tries in that order. Only 'name' may be answered by a
+        // constant: a class the tree lost is not made present by a constant
+        // of the same name.
         $kindAt = static function (int $i) use ($tokens, $significant): string {
             $prev = $significant($i - 1, -1);
             $next = $significant($i + 1, 1);
-            $classCall = $prev !== null && is_array($tokens[$prev])
-                && in_array($tokens[$prev][0], [T_NEW, T_ATTRIBUTE], true);
+            $prevId = $prev !== null && is_array($tokens[$prev]) ? $tokens[$prev][0] : null;
+            $nextId = $next !== null && is_array($tokens[$next]) ? $tokens[$next][0] : null;
+            if (
+                in_array($prevId, [T_NEW, T_INSTANCEOF, T_EXTENDS, T_IMPLEMENTS, T_ATTRIBUTE, T_USE], true)
+                || $nextId === T_DOUBLE_COLON
+            ) {
+                return 'class';
+            }
+            if ($next !== null && $tokens[$next] === '(') {
+                return 'function';
+            }
 
-            return ($next !== null && $tokens[$next] === '(' && !$classCall) ? 'function' : 'class';
+            return 'name';
         };
 
         for ($i = 0; $i < $count; $i++) {

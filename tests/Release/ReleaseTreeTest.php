@@ -367,7 +367,19 @@ final class ReleaseTreeTest extends TestCase
                     Local\fn_call();
                     namespace\Rel\Name::q();
                     $cb = function () use ($x) { return $x; };
+                    // Positions only a class can fill, and the ones a
+                    // namespaced constant could: the resolver may answer the
+                    // latter with defined(), never the former.
+                    $ok = $x instanceof \Is\Inst;
+                    try {
+                    } catch (\Err\Kind $e) {
+                    }
+                    echo \Consts\VALUE, Thing\SUB_CONST;
                 }
+            }
+
+            final class D extends \Base\Parents implements \Iface\One, \Iface\Two
+            {
             }
             PHP;
 
@@ -379,12 +391,13 @@ final class ReleaseTreeTest extends TestCase
             'class App\Local\Made',
             'class App\Rel\Name',
             'class Attr\Marker',
+            'class Base\Parents',
             'class Group\Pre\B\Made',
-            'class Hint\Type',
+            'class Iface\One',
+            'class Is\Inst',
             'class Made\Here',
             'class Static\Call',
             'class Vendor\Pkg\Other\Deep',
-            'class Vendor\Pkg\Thing\Sub',
             'const Const\Space\MAX',
             'const Group\Pre\LIMIT',
             'function App\Local\fn_call',
@@ -395,6 +408,12 @@ final class ReleaseTreeTest extends TestCase
             'import Group\Pre\B',
             'import Vendor\Pkg\Other',
             'import Vendor\Pkg\Thing',
+            'name Consts\VALUE',
+            'name Err\Kind',
+            'name Hint\Type',
+            'name Iface\Two',
+            'name Vendor\Pkg\Thing\SUB_CONST',
+            'name Vendor\Pkg\Thing\Sub',
         ], $refs);
     }
 
@@ -488,6 +507,7 @@ final class ReleaseTreeTest extends TestCase
                 . "\$loader->addPsr4('Acme\\\\', __DIR__ . '/acme/src/');\n"
                 . "\$loader->addPsr4('Lib\\\\', __DIR__ . '/lib/src/');\n"
                 . "\$loader->register();\n"
+                . "define('Trap\\\\Thing', 1);\n"   // a namespaced constant, as a package's files autoload might define
                 . "return \$loader;\n",
             'src/Present.php' => "<?php\nnamespace App;\nfinal class Present {}\n",
             'src/Bootstraps.php' => "<?php\nexit(0);\n",
@@ -496,7 +516,9 @@ final class ReleaseTreeTest extends TestCase
                 . "use App\\Bootstraps;\n"
                 . "use App\\Missing;\n"
                 . "use Gone\\Package\\Thing;\n"
-                . "new \\Tolerated\\Legacy();\n",
+                . "new \\Tolerated\\Legacy();\n"
+                . "new \\Trap\\Thing();\n"      // a class; the constant of that name is no answer
+                . "echo \\Trap\\Thing;\n",      // the constant itself, which is defined
             // A namespace import is not a missing class; the class it prefixes
             // is checked where it is written, resolved through the import.
             // (Lib\Sub is a directory under a PSR-4 root that the fixture's
@@ -544,6 +566,7 @@ final class ReleaseTreeTest extends TestCase
             'Cli\Absent' => 'bin/tool:3',
             'Gone\Package\Thing' => 'index.php:5',
             'Site\Local\Nowhere' => 'prefixed.php:7',
+            'Trap\Thing' => 'index.php:7',
         ], $unresolved);
         self::assertNotEmpty(
             preg_grep("/'known_unresolved' lists 'Long\\\\Fixed', which no longer fails to resolve/", $problems),
