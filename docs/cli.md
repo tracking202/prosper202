@@ -260,6 +260,76 @@ p202 campaign clone 42
 p202 campaign clone 42 --name "Q1 Offer (Copy)"
 ```
 
+Find campaigns by offer URL, and rewrite offer URLs in bulk:
+
+```bash
+# Every campaign with a URL (any of the five slots) containing the text; case-insensitive, all pages
+p202 campaign list --url-contains old-network.com
+
+# Preview: which campaign, slot, old URL and new URL. Writes nothing.
+p202 campaign replace-url --match old-network.com --set 'https://example.com/?utm_source={slug}' --dry-run
+
+# Swap just the matched text, e.g. http -> https for one host
+p202 campaign replace-url --match http://promo.example.com --with https://promo.example.com
+
+# Revert that run: the path is printed after "Undo with:" (preview with --dry-run)
+p202 campaign replace-url --undo ~/.p202/undo/replace-url-20260930T101500Z.json
+```
+
+| Flag | Description |
+|------|-------------|
+| `--match <text>` | Required unless `--undo`. Text the URLs to change contain (case-insensitive) |
+| `--with <text>` | Replace the matched text inside the URL |
+| `--set <url>` | Replace the whole URL; `{id}` and `{slug}` (campaign name, lowercased and hyphenated) are filled per campaign. Must be absolute `http(s)://` |
+| `--slot <1-5\|all>` | URL slots to consider, comma-separated (default `all`; 1 is `aff_campaign_url`) |
+| `--ids <list>` | Only these campaign IDs |
+| `--aff-network-id <id>` | Only campaigns in this affiliate network |
+| `--dry-run` | List the changes without writing |
+| `-f, --force` | Skip the confirmation prompt |
+| `--undo <file>` | Revert a run from its undo manifest (see below); not combinable with `--match`, `--with`, `--set`, `--slot`, `--ids`, `--aff-network-id` |
+
+Pass exactly one of `--with` or `--set`. Without `--dry-run` the change list is printed and
+confirmed first; `--staged` records one proposal per campaign instead of writing. Each campaign
+gets a single `PUT /campaigns/{id}` carrying only its changed slots. The output lists every slot
+with `status` `applied`, `staged` (with `change_id`) or `failed`; any failure exits 5 (partial
+failure). Matching runs in the CLI over every page, so it works with any server version.
+
+**Undo.** Every run that applies at least one change saves an undo manifest to
+`~/.p202/undo/replace-url-<UTC time>.json` (directory `0700`, file `0600`) and prints
+`Undo with: p202 campaign replace-url --undo <file> --profile <name>`; under `--json` the path is
+also `meta.undo_manifest`. The manifest holds only the `applied` slots (staged and failed ones
+changed nothing), with the profile and base URL the writes went to and the original flags:
+
+```json
+{
+  "format": "p202.campaign.replace-url.undo",
+  "version": 1,
+  "created_at": "2026-09-30T10:15:00Z",
+  "profile": "default",
+  "base_url": "https://tracker.example.com",
+  "match": "g2afse.com",
+  "set": "https://example.com/?utm_source={slug}",
+  "changes": [
+    {"aff_campaign_id": "279", "aff_campaign_name": "Darkmoon Realm", "field": "aff_campaign_url",
+     "old_url": "https://aanicca.g2afse.com/click?pid=2753", "new_url": "https://example.com/?utm_source=darkmoon-realm"}
+  ]
+}
+```
+
+`--undo <file>` refuses (exit 1, before any request) a manifest written against a different base
+URL than the active profile's; the hint names the `--profile` to use, or how to add one. It re-reads every campaign
+and restores `old_url` only where the slot still holds the manifest's `new_url`. Slots changed
+since, slots already restored, and campaigns deleted since are left alone and listed with
+`status` `skipped` and the reason in `error`; skipped slots alone do not make the run fail.
+Rows show `old_url` as the current value and `new_url` as the restored one, and `--dry-run`, the
+prompt, `--force`, `--staged` and exit 5 on a failed `PUT` work as in a normal run. An undo that
+applies changes saves its own manifest (with `undo_of`), so it can be undone too.
+
+If the manifest cannot be saved after the writes (for example `~/.p202` is not writable), the
+rows are still printed, the manifest is printed on stderr after `Undo manifest` (save it to a
+file to use with `--undo`), and the command exits 5 (`partial_failure`): the writes happened,
+but their undo record did not.
+
 ### Affiliate network (`p202 aff-network`)
 
 | Flag | Required | Description |
@@ -310,6 +380,10 @@ p202 tracker list --all --resolve-names
 - `--resolve-names` adds resolved FK labels (for example `campaign_name`) while preserving original ID fields.
 
 ### Landing page (`p202 landing-page`)
+
+`p202 landing-page list --url-contains <text>` returns every landing page whose
+`landing_page_url` or `leave_behind_page_url` contains the text (case-insensitive, all pages;
+not combinable with `--page`/`--limit`/`--offset`).
 
 | Flag | Required | Description |
 |------|----------|-------------|

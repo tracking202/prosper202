@@ -44,14 +44,16 @@ p202 config show
 
 | Command | Description |
 | ------- | ----------- |
-| `p202 campaign list` | List campaigns |
+| `p202 campaign list` | List campaigns; `--url-contains <text>` returns every campaign with an offer URL (any of the five slots) containing the text |
 | `p202 campaign get <id>` | Get a single campaign |
 | `p202 campaign create` | Create a campaign |
 | `p202 campaign update <id>` | Update a campaign |
 | `p202 campaign delete <id>` | Delete a campaign |
+| `p202 campaign replace-url` | Rewrite offer URLs in bulk: `--match <text>` plus `--with <text>` (replace the matched part) or `--set <url>` (whole URL, `{id}`/`{slug}` filled per campaign); `--slot`, `--ids`, `--aff-network-id` narrow it; `--dry-run` lists campaign, slot, old and new URL and writes nothing; otherwise confirms first (`--force` skips), one `PUT` per campaign, exit 5 on partial failure. Each applying run saves an undo manifest of its applied slots to `~/.p202/undo/` and prints `Undo with: … --undo <file>` (`meta.undo_manifest` under `--json`); `--undo <file>` restores the old URLs only where the slot still holds that run's new URL (others `skipped`), refuses a manifest from another base URL, and exits 5 if a manifest cannot be saved after the writes (it is then printed on stderr) |
 | `p202 aff-network list` | List affiliate networks (alias: `category`) |
 | `p202 ppc-network list` | List PPC/traffic networks (alias: `traffic-network`) |
 | `p202 tracker list` | List trackers |
+| `p202 landing-page list` | List landing pages; `--url-contains <text>` returns every landing page whose `landing_page_url` or `leave_behind_page_url` contains the text |
 | `p202 click list` | List clicks |
 | `p202 click conversions <id>` | Explain a click's value: every conversion on it, whether it counts and why not, what produced it (goal and version, upload, reversal, API key), ending with the click's value; `--json` is `GET /clicks/{id}/conversions` unchanged |
 | `p202 conversion list` | List conversions, with their provenance (`--click_id`, `--source`, `--goal` filter by click, by what produced them and by goal) |
