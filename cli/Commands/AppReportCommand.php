@@ -22,7 +22,7 @@ class AppReportCommand extends BaseCommand
 
     private const SHARED_GROUPINGS = ['day', 'registration', 'platform'];
     private const IOS_GROUPINGS = ['ad-network', 'source', 'country', 'version', 'protocol', 'conversion-type'];
-    private const ANDROID_GROUPINGS = ['campaign', 'match-state', 'integrity-state', 'goal'];
+    private const ANDROID_GROUPINGS = ['campaign', 'match-state', 'integrity-state', 'ctit-flag', 'goal'];
     private const SHARED_FILTERS = ['time_from', 'time_to', 'registration_id', 'registration_ids'];
     private const IOS_FILTERS = ['signature', 'protocol', 'conversion_type', 'ad_network_id', 'country_code', 'source_identifier', 'postback_version', 'did_win'];
 
@@ -32,7 +32,7 @@ class AppReportCommand extends BaseCommand
      * version filter cannot take it.
      */
     private const PARAM_FOR_OPTION = ['postback_version' => 'version'];
-    private const ANDROID_FILTERS = ['match_state', 'integrity_state', 'trusted', 'test', 'aff_campaign_id'];
+    private const ANDROID_FILTERS = ['match_state', 'integrity_state', 'trusted', 'test', 'aff_campaign_id', 'ctit_flag', 'fast_goals'];
 
     #[\Override]
     protected function configure(): void
@@ -58,7 +58,9 @@ class AppReportCommand extends BaseCommand
             ->addOption('integrity_state', null, InputOption::VALUE_REQUIRED, 'Android: this Play Integrity state')
             ->addOption('trusted', null, InputOption::VALUE_REQUIRED, 'Android: trusted, refuted or unvouched (goals are then counted over it)')
             ->addOption('test', null, InputOption::VALUE_REQUIRED, 'Android: 1 test installs only, 0 real ones only')
-            ->addOption('aff_campaign_id', null, InputOption::VALUE_REQUIRED, 'Android: installs on this campaign\'s clicks');
+            ->addOption('aff_campaign_id', null, InputOption::VALUE_REQUIRED, 'Android: installs on this campaign\'s clicks')
+            ->addOption('ctit_flag', null, InputOption::VALUE_REQUIRED, 'Android: click-to-install time short, ok, long or unmeasured')
+            ->addOption('fast_goals', null, InputOption::VALUE_REQUIRED, 'Android: 1 installs with a goal reached implausibly fast, 0 installs without one');
     }
 
     protected function handle(InputInterface $input, OutputInterface $output): int

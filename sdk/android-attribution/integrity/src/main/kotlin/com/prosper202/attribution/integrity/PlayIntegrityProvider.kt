@@ -42,11 +42,15 @@ import java.util.concurrent.TimeoutException
  * an outdated one, a bad project number) are not retryable, and the
  * install goes without a token.
  */
-class PlayIntegrityProvider @JvmOverloads constructor(
-    context: Context,
-    private val timeoutSeconds: Long = 30,
+class PlayIntegrityProvider internal constructor(
+    private val manager: StandardIntegrityManager,
+    private val timeoutSeconds: Long,
 ) : IntegrityProvider {
-    private val manager: StandardIntegrityManager = IntegrityManagerFactory.createStandard(context.applicationContext)
+    /** Play's standard integrity manager for [context]'s application. */
+    @JvmOverloads
+    constructor(context: Context, timeoutSeconds: Long = 30) :
+        this(IntegrityManagerFactory.createStandard(context.applicationContext), timeoutSeconds)
+
     private var prepared: StandardIntegrityTokenProvider? = null
     private var preparedFor: Long = 0
 

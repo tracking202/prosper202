@@ -10,6 +10,7 @@ use Api\V3\Apps\Android\Integrity\UnverifiableInstalls;
 use Api\V3\Apps\Android\InstallIntake;
 use Api\V3\Apps\Android\OrphanedPendingClicks;
 use Api\V3\Apps\AppIdentity;
+use Api\V3\Apps\AppLimits;
 use Api\V3\Apps\AppPolicy;
 use Api\V3\Apps\AppToken;
 use Api\V3\Apps\Apple\SignatureState;
@@ -18,6 +19,7 @@ use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
+use Prosper202\Goals\FastGoalPolicy;
 
 /**
  * The app registry: one registration per app, for both platforms (plan
@@ -85,6 +87,18 @@ class AppRegistrationsController extends Controller
             // document so the build need not hard-code it. Replaced, never
             // cleared (an explicit null is refused).
             'integrity_cloud_project_number' => ['type' => 'i'],
+            // Android, the abuse limits (plan §7.1; AppLimits, FastGoalPolicy):
+            // the click-to-install-time tails an install is flagged for, the
+            // installs the app and the events one install may report a
+            // minute (429 over them), and how soon after its install a goal
+            // is flagged and whether it then pays (count) or not (hold).
+            // Read raw and range-checked in assertAndroidPolicy().
+            'ctit_min_seconds' => ['type' => 'i'],
+            'ctit_max_seconds' => ['type' => 'i'],
+            'install_cap_per_minute' => ['type' => 'i'],
+            'event_cap_per_minute' => ['type' => 'i'],
+            'fast_goal_seconds' => ['type' => 'i'],
+            'fast_goal_policy' => ['type' => 's', 'allowed' => FastGoalPolicy::policies()],
             // What an app build presents in X-P202-App-Token to the pre-auth
             // routes. Served to the owner, never client-writable; rotate with
             // rotateAppToken().
@@ -111,6 +125,7 @@ class AppRegistrationsController extends Controller
         // for the app it names and replaced by that app's platform and key.
         $identity = AppIdentity::fromPayload($payload);
         self::assertAndroidPolicy($payload, $identity->platform);
+        self::assertCtitOrder($payload, null);
         if (isset($payload['integrity_mode']) && $payload['integrity_mode'] !== IntegrityMode::OFF->value) {
             throw new ValidationException('Play Integrity needs a credential first', [
                 'integrity_mode' => 'can only be off when the app is registered: set the service account with '
@@ -179,8 +194,56 @@ class AppRegistrationsController extends Controller
                 $errors[$field] = 'must be a whole number from ' . $min . ' to ' . $max;
             }
         }
+        foreach ([...array_keys(AppLimits::RANGES), 'fast_goal_seconds', 'fast_goal_policy'] as $field) {
+            if (!array_key_exists($field, $payload)) {
+                continue;
+            }
+            $raw = $payload[$field];
+            if ($platform !== AppIdentity::ANDROID) {
+                $errors[$field] = 'applies to Android registrations only';
+            } elseif ($raw === null) {
+                // A NOT NULL setting: an explicit null would be skipped by
+                // the base controller and read as a change (CLAUDE.md #4).
+                $errors[$field] = 'cannot be cleared (null): send a value to replace it';
+            } elseif ($field === 'fast_goal_policy') {
+                if (!in_array($raw, FastGoalPolicy::policies(), true)) {
+                    $errors[$field] = 'must be one of: ' . implode(', ', FastGoalPolicy::policies());
+                }
+            } elseif ($field === 'fast_goal_seconds') {
+                if (FastGoalPolicy::readSeconds($raw) === null) {
+                    $errors[$field] = 'must be a whole number of seconds from 0 to ' . FastGoalPolicy::MAX_SECONDS;
+                }
+            } elseif (AppLimits::read($raw, $field) === null) {
+                [$min, $max] = AppLimits::RANGES[$field];
+                $errors[$field] = 'must be a whole number from ' . $min . ' to ' . $max;
+            }
+        }
         if ($errors !== []) {
             throw new ValidationException('Invalid app policy', $errors);
+        }
+    }
+
+    /**
+     * The short CTIT threshold must sit below the long one, as the write
+     * leaves them: each from the payload when it names it, otherwise the
+     * stored value (or, at create, the default). Called after
+     * assertAndroidPolicy(), so a named value has already been range-checked.
+     *
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed>|null $current the stored registration; null at create
+     */
+    private static function assertCtitOrder(array $payload, ?array $current): void
+    {
+        if (!array_key_exists('ctit_min_seconds', $payload) && !array_key_exists('ctit_max_seconds', $payload)) {
+            return;
+        }
+        $min = AppLimits::read($payload['ctit_min_seconds'] ?? $current['ctit_min_seconds'] ?? AppLimits::DEFAULT_CTIT_MIN_SECONDS, 'ctit_min_seconds');
+        $max = AppLimits::read($payload['ctit_max_seconds'] ?? $current['ctit_max_seconds'] ?? AppLimits::DEFAULT_CTIT_MAX_SECONDS, 'ctit_max_seconds');
+        if ($min === null || $max === null || $min >= $max) {
+            throw new ValidationException('Invalid app policy', [
+                'ctit_min_seconds' => 'must be below ctit_max_seconds (the write would leave them at '
+                    . var_export($min, true) . ' and ' . var_export($max, true) . ')',
+            ]);
         }
     }
 
@@ -279,24 +342,36 @@ class AppRegistrationsController extends Controller
             unset($payload['platform'], $payload['app_key'], $payload['store_link']);
         }
 
-        $policyFields = ['attribution_window_days', 'trust_client_revenue', 'integrity_mode', 'integrity_cloud_project_number'];
+        $policyFields = [
+            'attribution_window_days', 'trust_client_revenue', 'integrity_mode', 'integrity_cloud_project_number',
+            ...array_keys(AppLimits::RANGES), 'fast_goal_seconds', 'fast_goal_policy',
+        ];
         $namesIntegrity = array_key_exists('integrity_mode', $payload) || array_key_exists('integrity_cloud_project_number', $payload);
-        if (array_intersect(array_keys($payload), $policyFields) !== [] && !$namesIntegrity) {
-            self::assertAndroidPolicy($payload, (string)((array)$this->get($id)['data'])['platform']);
-        }
-        if ($namesIntegrity) {
-            // Only a write that names Play Integrity is held to it: an
-            // unrelated field is never refused over the stored setting. The
-            // check and the write commit under the registration's row lock,
-            // which DELETE /apps/{id}/integrity-credential takes for its own
-            // check and delete: checked apart from the write, a credential
-            // cleared in between leaves observe or require committed with
-            // nothing to decode (AppIntegrityController::clearCredential()).
+        $namesPolicy = array_intersect(array_keys($payload), $policyFields) !== [];
+        if ($namesPolicy) {
+            // Every write that names a policy field is checked against the
+            // row it will leave, under the registration's row lock, and
+            // commits under it: the checks that compare the payload with
+            // the stored row (assertCtitOrder(), assertIntegrityUsable())
+            // mean nothing if another write can change that row between the
+            // check and this one. Two updates that each move one CTIT bound
+            // would otherwise both pass against the old other bound and
+            // leave min >= max (which AppLimits::fromRow() then reads as
+            // unreadable). The same lock is the one
+            // DELETE /apps/{id}/integrity-credential takes for its own check
+            // and delete: checked apart from the write, a credential cleared
+            // in between leaves observe or require committed with nothing to
+            // decode (AppIntegrityController::clearCredential()). Only a
+            // write that names Play Integrity is held to it: an unrelated
+            // field is never refused over the stored setting.
             $committed = null;
-            $updated = $this->transaction(function () use ($id, $payload, &$committed): ?array {
+            $updated = $this->transaction(function () use ($id, $payload, $namesIntegrity, &$committed): ?array {
                 $current = AppIntegrityController::lockRegistration($this->db, $this->userId, (int)$id);
                 self::assertAndroidPolicy($payload, (string)$current['platform']);
-                $this->assertIntegrityUsable((int)$id, $payload, $current);
+                self::assertCtitOrder($payload, $current);
+                if ($namesIntegrity) {
+                    $this->assertIntegrityUsable((int)$id, $payload, $current);
+                }
                 try {
                     return parent::update($id, $payload);
                 } catch (WriteCommittedException $e) {

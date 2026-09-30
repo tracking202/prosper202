@@ -48,6 +48,15 @@ use Api\V3\Support\ResponseSanitizer;
  * install's campaign counts in `events` and `goals_reached` with no
  * revenue.
  *
+ * Abuse marks (plan §7.1), beside the figures rather than subtracted from
+ * them: `ctit_measured`, `ctit_short` and `ctit_long` count the installs
+ * whose click-to-install time was measured and fell in either tail
+ * (ClickToInstallTime), grouped by `ctit-flag` and filtered by `ctit_flag`;
+ * `fast_goals` counts the outcomes among `goals_reached` that came
+ * implausibly soon after their install (FastGoalPolicy), and `fast_goals=1`
+ * narrows the report to installs with one. Under a registration's `hold`
+ * policy those outcomes carry no revenue; under `count` they do.
+ *
  * group_by `goal` is the funnel's reading: one row per goal with the
  * installs that reached it (distinct, per trust class), the outcomes and
  * the revenue, plus the goal's name, owner and `after` so a caller can
@@ -69,13 +78,18 @@ final class InstallReport
         'campaign'        => ['expr' => 'c.aff_campaign_id', 'key' => 'aff_campaign_id', 'kind' => 'nullable-int'],
         'match-state'     => ['expr' => 'i.match_state', 'key' => 'match_state', 'kind' => 'string'],
         'integrity-state' => ['expr' => 'i.integrity_state', 'key' => 'integrity_state', 'kind' => 'string'],
+        'ctit-flag'       => ['expr' => "COALESCE(i.ctit_flag, 'unmeasured')", 'key' => 'ctit_flag', 'kind' => 'string'],
     ];
 
     /** Every grouping this report answers, `goal` included. */
-    public const GROUPINGS = ['day', 'registration', 'platform', 'campaign', 'match-state', 'integrity-state', 'goal'];
+    public const GROUPINGS = ['day', 'registration', 'platform', 'campaign', 'match-state', 'integrity-state', 'ctit-flag', 'goal'];
 
     /** The Android-only filters, beside the shared time/registration ones. */
-    public const FILTERS = ['match_state', 'integrity_state', 'trusted', 'test', 'aff_campaign_id'];
+    public const FILTERS = ['match_state', 'integrity_state', 'trusted', 'test', 'aff_campaign_id', 'ctit_flag', 'fast_goals'];
+
+    /** A live outcome of the install reached implausibly fast (FastGoalPolicy): the fast_goals filter's test. */
+    private const FAST_OUTCOME_EXISTS = "EXISTS (SELECT 1 FROM 202_goal_outcomes fo WHERE fo.subject_type = 'install' AND fo.subject_id = i.install_row_id"
+        . ' AND fo.user_id = i.user_id AND fo.superseded_at IS NULL AND fo.too_fast = 1)';
 
     /**
      * The install-level metrics, alias => aggregate. One list, read by the
@@ -93,6 +107,12 @@ final class InstallReport
         'refuted_count' => 'SUM(CASE WHEN i.trusted = 0 THEN 1 ELSE 0 END)',
         'unvouched_count' => 'SUM(CASE WHEN i.trusted IS NULL THEN 1 ELSE 0 END)',
         'test_count' => 'SUM(CASE WHEN i.is_test = 1 THEN 1 ELSE 0 END)',
+        // Click-to-install time (ClickToInstallTime), over every install in
+        // the row whatever its class, like the state breakdowns: a short
+        // tail is click injection's mark, a long one click spamming's.
+        'ctit_measured' => 'SUM(CASE WHEN i.ctit_flag IS NOT NULL THEN 1 ELSE 0 END)',
+        'ctit_short' => "SUM(CASE WHEN i.ctit_flag = 'short' THEN 1 ELSE 0 END)",
+        'ctit_long' => "SUM(CASE WHEN i.ctit_flag = 'long' THEN 1 ELSE 0 END)",
     ];
 
     /** Joined for the campaign dimension and filter: the click's campaign, the owner's own clicks only. */
@@ -177,7 +197,7 @@ final class InstallReport
             $groups[$key] = [$mode['key'] => self::render($mode['kind'], $row['grp'])]
                 + ['platform' => 'android']
                 + self::metricsOf($row)
-                + ['match_states' => [], 'integrity_states' => [], 'goals_reached' => 0, 'revenue' => 0.0, 'events' => []];
+                + ['match_states' => [], 'integrity_states' => [], 'goals_reached' => 0, 'fast_goals' => 0, 'revenue' => 0.0, 'events' => []];
         }
         if ($groups === []) {
             return [[], $truncated];
@@ -204,7 +224,7 @@ final class InstallReport
         }
 
         $names = [];
-        $sql = 'SELECT ' . $expr . ' AS grp, o.goal_id, COUNT(*) AS outcomes,'
+        $sql = 'SELECT ' . $expr . ' AS grp, o.goal_id, COUNT(*) AS outcomes, SUM(o.too_fast) AS fast,'
             . ' COALESCE(SUM(CASE WHEN o.payable = 1 THEN ' . self::revenue() . ' END), 0) AS revenue'
             . ' FROM 202_goal_outcomes o'
             . ' JOIN 202_app_installs i ON i.install_row_id = o.subject_id AND i.user_id = o.user_id '
@@ -219,7 +239,7 @@ final class InstallReport
             if (!isset($groups[$key])) {
                 continue;
             }
-            self::addOutcome($groups[$key], $names[(int)$row['goal_id']]['name'] ?? ('goal ' . (int)$row['goal_id']), (int)$row['outcomes'], (string)$row['revenue']);
+            self::addOutcome($groups[$key], $names[(int)$row['goal_id']]['name'] ?? ('goal ' . (int)$row['goal_id']), (int)$row['outcomes'], (string)$row['revenue'], (int)$row['fast']);
         }
 
         $out = [];
@@ -257,6 +277,7 @@ final class InstallReport
             . ' COUNT(DISTINCT CASE WHEN i.trusted IS NULL THEN o.subject_id END) AS unvouched_count,'
             . ' COUNT(DISTINCT CASE WHEN i.is_test = 1 THEN o.subject_id END) AS test_count,'
             . ' SUM(CASE WHEN ' . $gate . ' THEN 1 ELSE 0 END) AS outcomes,'
+            . ' SUM(CASE WHEN ' . $gate . ' AND o.too_fast = 1 THEN 1 ELSE 0 END) AS fast,'
             . ' COALESCE(SUM(CASE WHEN ' . $gate . ' AND o.payable = 1 THEN ' . self::revenue() . ' END), 0) AS revenue'
             . ' FROM 202_goal_outcomes o'
             . ' JOIN 202_app_installs i ON i.install_row_id = o.subject_id AND i.user_id = o.user_id '
@@ -289,10 +310,11 @@ final class InstallReport
                 'unvouched_count' => (int)$row['unvouched_count'],
                 'test_count' => (int)$row['test_count'],
                 'goals_reached' => 0,
+                'fast_goals' => 0,
                 'revenue' => 0.0,
                 'events' => [],
             ];
-            self::addOutcome($group, $name, (int)$row['outcomes'], (string)$row['revenue']);
+            self::addOutcome($group, $name, (int)$row['outcomes'], (string)$row['revenue'], (int)$row['fast']);
             $out[] = self::finish($group);
         }
 
@@ -316,7 +338,7 @@ final class InstallReport
             $binds
         );
         $totals = ['platform' => 'android'] + self::metricsOf($rows[0] ?? [])
-            + ['match_states' => [], 'integrity_states' => [], 'goals_reached' => 0, 'revenue' => 0.0, 'events' => []];
+            + ['match_states' => [], 'integrity_states' => [], 'goals_reached' => 0, 'fast_goals' => 0, 'revenue' => 0.0, 'events' => []];
 
         foreach (['match_states' => 'i.match_state', 'integrity_states' => 'i.integrity_state'] as $field => $column) {
             $sql = 'SELECT ' . $column . ' AS state, COUNT(*) AS n FROM 202_app_installs i ' . self::CLICK_JOIN
@@ -327,7 +349,7 @@ final class InstallReport
         }
 
         $outcomeRows = $this->fetchAll(
-            'SELECT o.goal_id, COUNT(*) AS outcomes,'
+            'SELECT o.goal_id, COUNT(*) AS outcomes, SUM(o.too_fast) AS fast,'
             . ' COALESCE(SUM(CASE WHEN o.payable = 1 THEN ' . self::revenue() . ' END), 0) AS revenue'
             . ' FROM 202_goal_outcomes o'
             . ' JOIN 202_app_installs i ON i.install_row_id = o.subject_id AND i.user_id = o.user_id '
@@ -339,7 +361,7 @@ final class InstallReport
         );
         $names = $this->goalNames(array_map(static fn (array $r): int => (int)$r['goal_id'], $outcomeRows));
         foreach ($outcomeRows as $row) {
-            self::addOutcome($totals, $names[(int)$row['goal_id']]['name'] ?? ('goal ' . (int)$row['goal_id']), (int)$row['outcomes'], (string)$row['revenue']);
+            self::addOutcome($totals, $names[(int)$row['goal_id']]['name'] ?? ('goal ' . (int)$row['goal_id']), (int)$row['outcomes'], (string)$row['revenue'], (int)$row['fast']);
         }
 
         return self::finish($totals);
@@ -409,6 +431,26 @@ final class InstallReport
                 $binds[] = $value;
                 $types .= 's';
             }
+        }
+        if (isset($params['ctit_flag']) && $params['ctit_flag'] !== '') {
+            $flag = strtolower(trim((string)$params['ctit_flag']));
+            if (!in_array($flag, ClickToInstallTime::filterValues(), true)) {
+                throw new ValidationException('Invalid filter value', ['ctit_flag' => 'Must be one of: ' . implode(', ', ClickToInstallTime::filterValues())]);
+            }
+            if ($flag === ClickToInstallTime::UNMEASURED) {
+                $where[] = 'i.ctit_flag IS NULL';
+            } else {
+                $where[] = 'i.ctit_flag = ?';
+                $binds[] = $flag;
+                $types .= 's';
+            }
+        }
+        if (isset($params['fast_goals']) && $params['fast_goals'] !== '') {
+            $fast = (string)$params['fast_goals'];
+            if ($fast !== '0' && $fast !== '1') {
+                throw new ValidationException('Invalid filter value', ['fast_goals' => 'Must be 1 (installs with a goal reached implausibly fast) or 0 (installs without one)']);
+            }
+            $where[] = ($fast === '1' ? '' : 'NOT ') . self::FAST_OUTCOME_EXISTS;
         }
         if (isset($params['test']) && $params['test'] !== '') {
             $test = (string)$params['test'];
@@ -527,10 +569,11 @@ final class InstallReport
      *
      * @param array<string, mixed> $group
      */
-    private static function addOutcome(array &$group, string $name, int $outcomes, string $revenue): void
+    private static function addOutcome(array &$group, string $name, int $outcomes, string $revenue, int $fast): void
     {
         $units = \Prosper202\Conversion\Ledger\Amount::toUnits($revenue);
         $group['goals_reached'] += $outcomes;
+        $group['fast_goals'] += $fast;
         $group['_revenue_units'] = ($group['_revenue_units'] ?? 0) + $units;
         $group['events'][$name] ??= ['count' => 0, '_units' => 0];
         $group['events'][$name]['count'] += $outcomes;

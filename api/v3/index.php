@@ -72,7 +72,10 @@ RequestContext::setHeaders($headers);
 // their own, bounded one, and through PublicIntake's shared plumbing: the
 // method check and a declared body over the cap refused first, then the
 // soft rate limit keyed on the TCP peer, never on a header the sender
-// chooses (CLAUDE.md #16). GET /apps/installs is the reachability probe.
+// chooses (CLAUDE.md #16). The per-registration install cap and the
+// per-install event cap run inside the intakes, once the token has named
+// the registration (InstallIntake::admit()). GET /apps/installs is the
+// reachability probe.
 if ($path === '/apps/installs' || preg_match('#^/apps/installs/([^/]+)/events$#D', $path, $androidEventsMatch) === 1) {
     $androidEvents = isset($androidEventsMatch[1]);
     $androidCap = $androidEvents ? \Api\V3\Apps\Android\InstallEventsIntake::MAX_BODY_BYTES : \Api\V3\Apps\Android\InstallIntake::MAX_BODY_BYTES;

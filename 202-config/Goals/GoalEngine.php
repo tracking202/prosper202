@@ -179,7 +179,28 @@ final class GoalEngine
             throw new GoalEngineException('Install ' . $installRowId . ' not found', GoalEngineException::NOT_FOUND);
         }
 
-        return self::installSubjectFrom($installRowId, $row);
+        return self::installSubjectFrom($installRowId, $row, $this->fastGoalPolicy($userId, (int) $row['registration_id']));
+    }
+
+    /**
+     * A registration's fast-goal policy (FastGoalPolicy), read plainly — it
+     * is not the install's credit, and no install path locks registrations
+     * before installs. A registration that is gone, or whose columns do not
+     * read, is the trusting-least policy, named in the log.
+     */
+    private function fastGoalPolicy(int $userId, int $registrationId): FastGoalPolicy
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT fast_goal_seconds, fast_goal_policy FROM 202_app_registrations WHERE registration_id = ? AND user_id = ? LIMIT 1'
+        );
+        $this->conn->bind($stmt, 'ii', [$registrationId, $userId]);
+        $policy = FastGoalPolicy::fromRow($this->conn->fetchOne($stmt));
+        if ($policy->unreadable !== []) {
+            error_log('p202 goals: registration ' . $registrationId . '\'s ' . implode(', ', $policy->unreadable)
+                . ' could not be read; outcomes of its installs are flagged under ' . $policy->seconds . ' s and held');
+        }
+
+        return $policy;
     }
 
     /**
@@ -229,11 +250,18 @@ final class GoalEngine
             }
         }
 
-        return self::installSubjectFrom($subject->id, $row);
+        // The registration's fast-goal policy is not credit, so the one the
+        // caller's subject carries stands; a subject built without one reads
+        // it now.
+        return self::installSubjectFrom(
+            $subject->id,
+            $row,
+            $subject->fastGoals ?? $this->fastGoalPolicy($userId, (int) $row['registration_id'])
+        );
     }
 
     /** @param array<string, mixed> $row an install row with its click's click_time and aff_campaign_id (null without one) */
-    private static function installSubjectFrom(int $installRowId, array $row): GoalSubject
+    private static function installSubjectFrom(int $installRowId, array $row, FastGoalPolicy $fastGoals): GoalSubject
     {
         $credited = (string) $row['match_state'] === 'attributed' && $row['trusted'] !== null && (int) $row['trusted'] === 1;
         if ($credited && ($row['click_id'] === null || $row['click_time'] === null)) {
@@ -250,6 +278,7 @@ final class GoalEngine
             $credited ? (int) $row['click_id'] : null,
             $credited ? (int) $row['aff_campaign_id'] : null,
             (int) $row['registration_id'],
+            $fastGoals,
         );
     }
 
@@ -934,9 +963,20 @@ final class GoalEngine
         // source may already have been told about them.
         $replacing = [];
         $retiredEvents = [];
+        // The fast-goal decision (FastGoalPolicy) of each (goal, reaching
+        // event) a retired row carries: an outcome written in its place with
+        // the same event keeps it (valuation()'s $decided), so a
+        // re-evaluation or a replay neither releases a held outcome nor
+        // holds a paid one under a policy changed since. The latest row
+        // decides when there are several.
+        $decidedFor = [];
         foreach ($plan['retire'] as [$stored, $replacementKey]) {
             if ($replacementKey !== null) {
                 $replacing[$replacementKey] = true;
+            }
+            $decidedKey = (int) $stored['goal_id'] . "\0" . (string) $stored['event_id'];
+            if (!isset($decidedFor[$decidedKey]) || (int) $stored['outcome_id'] > (int) $decidedFor[$decidedKey]['outcome_id']) {
+                $decidedFor[$decidedKey] = $stored;
             }
             $retiredEvents[(int) $stored['goal_id'] . "\0" . (string) $stored['event_id']][] = $stored['conversion_id'] !== null ? (int) $stored['conversion_id'] : null;
         }
@@ -949,7 +989,7 @@ final class GoalEngine
             }
             $key = $o->goalId . ':' . $o->version . ':' . $o->n;
             $term = $terms[$o->goalId] ?? null;
-            $written = $this->writeOutcome($userId, $subject, $o, $term, $event, $now, $post);
+            $written = $this->writeOutcome($userId, $subject, $o, $term, $event, $now, $post, $decidedFor[$o->goalId . "\0" . $o->eventId] ?? null);
             $ids[$key] = ['outcome_id' => $written['outcome_id'], 'conversion_id' => $written['conversion_id']];
             $writtenAll[] = [$o, $written, $key];
         }
@@ -1031,22 +1071,23 @@ final class GoalEngine
      * @param array{ledger: list<array<string, mixed>>, clicks: array<int, true>, notices: list<array<string, mixed>>} $post
      * @return array{outcome_id: int, conversion_id: int|null, revived: bool, conversion_new: bool, payable: bool, amount_units: int|null, transaction_id: string|null, dedupe_key: string|null, notify: bool}
      */
-    private function writeOutcome(int $userId, GoalSubject $subject, Outcome $o, ?array $term, ?GoalEvent $event, int $now, array &$post): array
+    private function writeOutcome(int $userId, GoalSubject $subject, Outcome $o, ?array $term, ?GoalEvent $event, int $now, array &$post, ?array $decided = null): array
     {
-        $v = $this->valuation($subject, $o, $term, $event);
-        $payable = $v['payable'];
-        $amountUnits = $v['units'];
-        $notify = $v['notify'];
-
         // A retired row for exactly this outcome is revived rather than
         // duplicated: the UNIQUE key names the event, and a re-evaluation
         // can return to an outcome an earlier one retired.
         $find = $this->conn->prepareWrite(
-            'SELECT outcome_id, conversion_id, superseded_at FROM 202_goal_outcomes
+            'SELECT outcome_id, conversion_id, superseded_at, payable, too_fast, value_note FROM 202_goal_outcomes
              WHERE subject_type = ? AND subject_id = ? AND goal_id = ? AND goal_version = ? AND n = ? AND event_id = ? LIMIT 1 FOR UPDATE'
         );
         $this->conn->bind($find, 'siiiis', [$subject->type, $subject->id, $o->goalId, $o->version, $o->n, $o->eventId]);
         $existing = $this->conn->fetchOne($find);
+        // A revived row keeps its own fast-goal decision; a new row takes
+        // the one of the retired row it replaces, when it has one.
+        $v = $this->valuation($subject, $o, $term, $event, $existing ?? $decided);
+        $payable = $v['payable'];
+        $amountUnits = $v['units'];
+        $notify = $v['notify'];
         if ($existing !== null) {
             if ($existing['superseded_at'] === null) {
                 throw new GoalEngineException(
@@ -1070,6 +1111,13 @@ final class GoalEngine
             $convId = $existing['conversion_id'] !== null ? (int) $existing['conversion_id'] : null;
             $conversionNew = false;
             $dedupeKey = null;
+            // What the row says it is, unless a restatement below rewrites
+            // it: the answer reports the row as stored, never a fresh
+            // valuation the row does not carry. A row stored unpayable
+            // notifies nothing (notice() queues `reached` only for a
+            // payable one, and a revived outcome is never announced again).
+            $payable = (int) $existing['payable'] === 1;
+            $notify = $payable && $v['notify'];
             if ($convId !== null && $subject->clickId !== null) {
                 try {
                     $changed = $this->conversions->reviveGoalRowInTransaction(
@@ -1109,6 +1157,8 @@ final class GoalEngine
                     [$convId, $conversionNew, $dedupeKey] = $this->attachLedgerRow($userId, $subject, $o, $event, $v, $outcomeId, $post);
                 }
                 $this->restate($outcomeId, $subject, $v, $convId);
+                $payable = $v['payable'];
+                $notify = $v['notify'];
             }
 
             return [
@@ -1120,13 +1170,13 @@ final class GoalEngine
         $insert = $this->conn->prepareWrite(
             'INSERT INTO 202_goal_outcomes
                 (user_id, subject_type, subject_id, goal_id, goal_version, n, event_id, reached_at, value, value_source,
-                 value_note, ineligible_reason, payable, campaign_id, app_registration_id, conversion_id, superseded_by, superseded_reason, superseded_at, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?)'
+                 value_note, ineligible_reason, payable, too_fast, campaign_id, app_registration_id, conversion_id, superseded_by, superseded_reason, superseded_at, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?)'
         );
-        $this->conn->bind($insert, 'isiiiisissssiiii', [
+        $this->conn->bind($insert, 'isiiiisissssiiiii', [
             $userId, $subject->type, $subject->id, $o->goalId, $o->version, $o->n, $o->eventId, $o->reachedAt,
             $amountUnits === null ? null : Amount::fromUnits($amountUnits),
-            $v['source'], $v['note'], $o->ineligibleReason, $payable ? 1 : 0, $subject->campaignId, $subject->registrationId, $now,
+            $v['source'], $v['note'], $o->ineligibleReason, $payable ? 1 : 0, $v['too_fast'] ? 1 : 0, $subject->campaignId, $subject->registrationId, $now,
         ]);
         $outcomeId = $this->conn->executeInsert($insert);
         if ($outcomeId <= 0) {
@@ -1151,10 +1201,20 @@ final class GoalEngine
      * notifies: the install goal by its campaign's install terms, any other
      * goal by the campaign's term for it (none without a click).
      *
+     * The fast-goal decision (FastGoalPolicy) is made once, when an outcome
+     * of its (goal, reaching event) is first written. $decided is the stored
+     * outcome row that decision was made on — the row being restated, given
+     * its ledger row or revived, or the retired row a re-evaluation replaces
+     * with the same reaching event — and when it is given, its `too_fast`
+     * and whether it was held (FastGoalPolicy::decidedOn()) stand, whatever the
+     * registration's policy says now: a held outcome stays held, and one
+     * that was paid under `count` is not held by a later switch to `hold`.
+     *
      * @param array<string, mixed>|null $term
-     * @return array{payable: bool, units: int|null, source: string, note: string|null, notify: bool, install: bool, name: string}
+     * @param array<string, mixed>|null $decided the stored outcome row whose fast-goal decision stands
+     * @return array{payable: bool, units: int|null, source: string, note: string|null, notify: bool, install: bool, name: string, too_fast: bool}
      */
-    private function valuation(GoalSubject $subject, Outcome $o, ?array $term, ?GoalEvent $event): array
+    private function valuation(GoalSubject $subject, Outcome $o, ?array $term, ?GoalEvent $event, ?array $decided = null): array
     {
         $meta = $this->goalMeta($o->goalId);
         $isInstallGoal = $meta['builtin'] === MysqlGoalRepository::BUILTIN_INSTALL;
@@ -1172,9 +1232,29 @@ final class GoalEngine
             [$payable, $amountUnits, $source, $note] = self::payability($o, $term, $event);
         }
 
+        // Reached implausibly soon after the install (FastGoalPolicy): always
+        // flagged, and under `hold` neither paid nor sent, and marked held
+        // (value_note) so every later restatement of it knows. An install
+        // subject that carries no policy is judged under the trusting-least
+        // one; an outcome decided before keeps that decision.
+        $tooFast = false;
+        $held = false;
+        if ($decided !== null) {
+            [$tooFast, $held] = FastGoalPolicy::decidedOn($decided);
+        } elseif ($subject->type === GoalSubject::INSTALL && $subject->installAt !== null) {
+            $fast = $subject->fastGoals ?? FastGoalPolicy::unreadable();
+            $tooFast = $fast->tooFast($o, $subject->installAt);
+            $held = $tooFast && $fast->hold;
+        }
+        if ($held) {
+            $payable = false;
+            $notify = false;
+            $note = FastGoalPolicy::HELD_NOTE;
+        }
+
         return [
             'payable' => $payable, 'units' => $amountUnits, 'source' => $source, 'note' => $note,
-            'notify' => $notify, 'install' => $isInstallGoal, 'name' => $meta['name'],
+            'notify' => $notify, 'install' => $isInstallGoal, 'name' => $meta['name'], 'too_fast' => $tooFast,
         ];
     }
 
@@ -1187,7 +1267,7 @@ final class GoalEngine
      * Write an outcome's ledger row on the subject's click, link it, and
      * queue its notification — the first write of the row.
      *
-     * @param array{payable: bool, units: int|null, source: string, note: string|null, notify: bool, install: bool, name: string} $v
+     * @param array{payable: bool, units: int|null, source: string, note: string|null, notify: bool, install: bool, name: string, too_fast: bool} $v
      * @param array{ledger: list<array<string, mixed>>, clicks: array<int, true>, notices: list<array<string, mixed>>} $post
      * @return array{0: int, 1: bool, 2: string|null} the conversion id, whether the row is new, and its dedupe key
      */
@@ -1273,7 +1353,7 @@ final class GoalEngine
      * outbox settles the retraction that retirement queued and never
      * re-announces it), or, when this click never had one, a first write.
      *
-     * @param array{payable: bool, units: int|null, source: string, note: string|null, notify: bool, install: bool, name: string} $v
+     * @param array{payable: bool, units: int|null, source: string, note: string|null, notify: bool, install: bool, name: string, too_fast: bool} $v
      * @param array{ledger: list<array<string, mixed>>, clicks: array<int, true>, notices: list<array<string, mixed>>} $post
      * @return array{0: int, 1: bool, 2: string|null} the conversion id, whether the row is new, and its dedupe key
      */
@@ -1315,19 +1395,20 @@ final class GoalEngine
 
     /**
      * Rewrite what an outcome row says about its credit: its campaign, its
-     * value and payability as valuation() decides them now, and the ledger
-     * row it names.
+     * value and payability as valuation() decides them now — given the row
+     * itself as $decided, so a held outcome stays held (FastGoalPolicy) —
+     * and the ledger row it names.
      *
-     * @param array{payable: bool, units: int|null, source: string, note: string|null, notify: bool, install: bool, name: string} $v
+     * @param array{payable: bool, units: int|null, source: string, note: string|null, notify: bool, install: bool, name: string, too_fast: bool} $v
      */
     private function restate(int $outcomeId, GoalSubject $subject, array $v, ?int $convId): void
     {
         $stmt = $this->conn->prepareWrite(
-            'UPDATE 202_goal_outcomes SET conversion_id = ?, campaign_id = ?, payable = ?, value = ?, value_source = ?, value_note = ?
+            'UPDATE 202_goal_outcomes SET conversion_id = ?, campaign_id = ?, payable = ?, too_fast = ?, value = ?, value_source = ?, value_note = ?
              WHERE outcome_id = ?'
         );
-        $this->conn->bind($stmt, 'iiisssi', [
-            $convId, $subject->campaignId, $v['payable'] ? 1 : 0,
+        $this->conn->bind($stmt, 'iiiisssi', [
+            $convId, $subject->campaignId, $v['payable'] ? 1 : 0, $v['too_fast'] ? 1 : 0,
             $v['units'] === null ? null : Amount::fromUnits($v['units']), $v['source'], $v['note'], $outcomeId,
         ]);
         $this->conn->executeUpdate($stmt);
@@ -1407,13 +1488,13 @@ final class GoalEngine
                 if ($changed !== null) {
                     $post['clicks'][$changed] = true;
                 }
-                $this->restate((int) $stored['outcome_id'], $subject, $this->valuation($subject, $o, null, $event), null);
+                $this->restate((int) $stored['outcome_id'], $subject, $this->valuation($subject, $o, null, $event, $stored), null);
                 continue;
             }
             if ($convId !== null) {
                 continue;
             }
-            $v = $this->valuation($subject, $o, $terms[$o->goalId] ?? null, $event);
+            $v = $this->valuation($subject, $o, $terms[$o->goalId] ?? null, $event, $stored);
             [$convId, $new] = $this->attachLedgerRow($userId, $subject, $o, $event, $v, (int) $stored['outcome_id'], $post);
             $this->restate((int) $stored['outcome_id'], $subject, $v, $convId);
             if ($new) {
@@ -1753,6 +1834,21 @@ final class GoalEngine
         $effective = (int) $row['last_effective_at'];
 
         return new GoalEvent((string) $row['last_event_id'], null, $effective, (int) $row['last_received_at'], [], null, false, null);
+    }
+
+    /**
+     * Which of these event ids the subject already holds — a plain read,
+     * outside any lock. For a caller deciding what a batch will cost before
+     * it is ingested (InstallEventsIntake's event cap): an id read here as
+     * stored stays stored, and one read as new that another request stores
+     * first comes back from ingest() among its duplicates, not accepted.
+     *
+     * @param list<string> $eventIds
+     * @return list<string>
+     */
+    public function storedEventIds(GoalSubject $subject, array $eventIds): array
+    {
+        return array_map('strval', array_keys($this->storedFingerprints($subject, array_values(array_unique($eventIds)))));
     }
 
     /**

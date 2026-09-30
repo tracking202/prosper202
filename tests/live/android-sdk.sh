@@ -201,6 +201,30 @@ say "device C: a forged token"
 eq "$(Q "SELECT CONCAT_WS('/', match_state, trusted) FROM 202_app_installs WHERE install_uuid='$UC'")" "bad_token/0" "refuted"
 eq "$(Q "SELECT COUNT(*) FROM 202_goal_subjects s JOIN 202_app_installs i ON s.subject_type='install' AND s.subject_id=i.install_row_id WHERE i.install_uuid='$UC'")" 0 "and its events reached no goal"
 
+say "device R: the Android library itself — P202Attribution.configure() on Robolectric (LiveInstanceTest)"
+# Needs an Android SDK (ANDROID_HOME / ANDROID_SDK_ROOT): settings.gradle.kts
+# includes :android only when it finds one. Without it this section is
+# reported as skipped, never as passed.
+if [ -n "${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}" ]; then
+    CR=$(click "$TRK" "$OUT/hr")
+    [ -n "$CR" ] && ok "a fourth phone's click ($CR)" || bad "no click recorded"
+    if P202_LIVE_BASE="$BASE" P202_LIVE_APP_TOKEN="$TOKEN" P202_LIVE_APP_KEY=com.p202.sdk.summit P202_LIVE_REFERRER="$(referrer_of "$OUT/hr")" \
+       P202_LIVE_CLICK_TIME="$(Q "SELECT click_time FROM 202_clicks WHERE click_id=$CR")" P202_LIVE_OUT="$OUT/live-android.json" \
+       "$GRADLE" -p "$ROOT/sdk/android-attribution" --no-daemon -q :android:testDebugUnitTest --tests '*LiveInstanceTest*' --rerun > "$OUT/gradle-android.log" 2>&1; then
+        ok "LiveInstanceTest passed: configure() read Play's referrer, posted the install and was answered attributed"
+    else
+        bad "LiveInstanceTest failed (see $OUT/gradle-android.log)"
+        sed -n '1,60p' "$OUT/gradle-android.log" | grep -v JAVA_TOOL_OPTIONS
+    fi
+    UR=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['install_uuid'])" "$OUT/live-android.json" 2>/dev/null)
+    [ -n "$UR" ] && ok "and wrote its install id ($UR)" || bad "LiveInstanceTest wrote no results (skipped?)"
+    eq "$(Q "SELECT CONCAT_WS('/', match_state, trusted, click_id, sdk_version, app_version, os_version, is_test) FROM 202_app_installs WHERE install_uuid='$UR'")" \
+       "attributed/1/$CR/1.0.0/3.2.0/15/0" "attributed to that click, with the facts the library read from Android"
+    eq "$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id=$CR AND dedupe_key='install'")" 1 "the install conversion on the click, once"
+else
+    printf '  \033[33mSKIP\033[0m no Android SDK (ANDROID_HOME): the library pass did not run\n'
+fi
+
 say "the persisted body is the install: replayed, it is a duplicate; changed, a conflict"
 python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['install_body'])" "$STORE_A" > "$OUT/a-body.json" 2>/dev/null
 eq "$(device POST /apps/installs "$TOKEN" "$OUT/a-body.json")" 200 "the SDK's stored body, sent again"

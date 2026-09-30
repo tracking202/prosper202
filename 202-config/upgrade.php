@@ -229,6 +229,19 @@ if (!empty($version_error)) {
                     </fieldset>
                 <?php } ?>
 
+                <?php /* Said before the button, every time: the upgrade cannot be
+                         undone in place (plan §7.5a). Markup from the kit's
+                         warning flash, parts included (CLAUDE.md #19). */ ?>
+                <div class="alert alert-warning p202-flash" role="status" id="upgrade-backup-warning">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <div class="p202-flash__body">
+                        <strong>Back up your database before you press the button.</strong>
+                        This upgrade is one-way: it changes the database in place, and restoring that backup is the only way back.
+                        <?php if (version_compare(PROSPER202::prosper202_version(), '1.9.76', '<')) { ?>
+                            It makes <code>202_conversion_logs.dedupe_key</code> required (NOT NULL), so the Prosper202 you are upgrading from can no longer record conversions against this database, even if you put its files back.
+                        <?php } ?>
+                    </div>
+                </div>
                 <button class="btn btn-primary btn-lg w-100" id="upgrade-submit" type="submit"><?php echo $task_202; ?> Prosper202</button>
             </form>
         <?php echo p202_standalone_card_end(); ?>

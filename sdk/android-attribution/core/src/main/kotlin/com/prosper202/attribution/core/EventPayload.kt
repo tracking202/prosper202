@@ -122,7 +122,9 @@ object EventPayload {
             e[path] = "must be a JSON object"
             return
         }
-        for (k in o.keys) if (k !in ALLOWED) e.putIfAbsent("$path.$k", "is not an event field")
+        // Not Map.putIfAbsent: that is a Java 8 default method, absent before
+        // API 24, and D8 does not backport it — NoSuchMethodError on 21-23.
+        for (k in o.keys) if (k !in ALLOWED && "$path.$k" !in e) e["$path.$k"] = "is not an event field"
         val eventId = o["event_id"]
         if (eventId !is JsonValue.Str || !EVENT_ID.matches(eventId.value)) {
             e["$path.event_id"] = "must be 1-128 printable characters without spaces, not starting with \"@\""

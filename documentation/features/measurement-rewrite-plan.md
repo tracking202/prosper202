@@ -2477,7 +2477,9 @@ The SDK is `sdk/android-attribution/`: `core/` (package
   module is the facade, Play's referrer client, the storage directory and
   device facts. The core's tests run in CI on a JDK
   (`.github/workflows/android-sdk.yml`, `-Pp202.android=false`); the
-  Android module is built only where an Android SDK is found.
+  Android module is built only where an Android SDK is found — in CI, by
+  the same workflow's second job (AGP assemble, lint, Robolectric; see
+  "Built and run without a device" below).
 - **No dependency but the referrer client** (§5.6). So no WorkManager, no
   androidx lifecycle and no JSON library: the core has its own strict JSON
   parser and two writers — the wire's, and the canonical one, which is
@@ -2578,11 +2580,87 @@ The SDK is `sdk/android-attribution/`: `core/` (package
   replayed (duplicate) and changed (409), and Play Integrity under
   `require` against PR 6's fake Google (below). Server side:
   `InstallCustomerLinkIntegrationTest` and the integrity worker's customer
-  test. The Android and integrity modules were type-checked against the
-  `android-34` platform stubs and installreferrer 2.2's, integrity 1.6.0's
-  and play-services-tasks/basement's classes as plain Kotlin (warnings as
-  errors); they were not assembled with AGP (the disk had no room for it),
-  not linted, and not run on a device or emulator.
+  test.
+- **Built and run without a device (MR 15).** The `android` and
+  `integrity` modules are assembled with AGP 8.7.3 (`compileSdk 34`, debug
+  and release, Kotlin warnings as errors) and pass Android lint with
+  warnings as errors and no baseline or disabled checks ("No issues
+  found" for both variants of both). Their Robolectric suites run on
+  Robolectric 4.14.1's Android 15 framework (JDK 21): 11 tests in
+  `android` — Play's real installreferrer 2.2 client bound to a played
+  Play Store service (field-for-field answer, organic empty referrer, no
+  Play Store, a Play Store too old, an unbindable service, a
+  `RemoteException`, the connection unbound after the answer), and
+  `P202Attribution.configure()` posting through the real
+  `HttpURLConnection` to an HTTP server on 127.0.0.1 (the reference
+  install of `install-requests.json` reproduced from the device end —
+  canonical form and fingerprint byte for byte, the referrer's token
+  verifying under `install-token.json`'s key as click 42; the install id
+  minted once into `noBackupFilesDir` and not resent after a relaunch; an
+  unreadable state file moved aside; a 429 and a 503 retried with the same
+  bytes; a 400 terminal) — and 6 in `integrity` — `PlayIntegrityProvider`
+  over a fake `StandardIntegrityManager` with Play's own request, task and
+  exception types (every `integrity.json` hash, prepare once per project,
+  re-prepare on `INTEGRITY_TOKEN_PROVIDER_INVALID`, the error codes
+  sorted, a timeout retryable, and the engine sending the token bound to
+  the reference body's fingerprint).
+  **What was planted, locally.** These are a record of runs in the MR 15
+  sandbox, not something CI repeats: CI runs the suites as they stand, and
+  a planted defect is only evidence that a test could fail on the day it
+  was planted. Thirteen defects were planted one at a time, each failed at
+  least one test and each was restored: the referrer's click and
+  install-begin timestamps swapped; the referrer connection never ended;
+  a `RemoteException` read as an empty OK answer; the referrer
+  normalised (trimmed, lower-cased) before it is sent; `os_version` from
+  `SDK_INT` rather than the release string; the state file in `filesDir`
+  (backed up) instead of `noBackupFilesDir`; an unreadable state file
+  overwritten in place; a 5xx not retried; a 429 not retried; the
+  integrity `requestHash` the install id rather than the body hash;
+  `NETWORK_ERROR` classed final; no re-prepare on
+  `INTEGRITY_TOKEN_PROVIDER_INVALID`; a Play timeout classed final. The
+  review round after that planted five more, each failing its test and
+  each restored: a relaunch that re-sends a recorded install after 5 s
+  and a 400 re-sent after 5 s (both passed the earlier sleep-based
+  versions of those tests, which slept 0.5 s and 1.5 s; the tests now run
+  every delayed task the engine holds, in due order on a clock moved
+  forward to each, instead of sleeping); a Play wait that returns at once
+  and a timeout whose cause is not the `TimeoutException` (the timeout
+  test now asserts both); and `FileStore` reporting a corrupt file as
+  moved aside when the rename failed (its failure branch now has a JVM
+  test, driven by an aside name longer than a file name may be, which
+  fails `rename(2)` for root as well). **Not planted:** the organic empty
+  referrer, no Play Store, a Play Store too old, an unbindable service,
+  the install id minted only once, preparing once per Cloud project and
+  afresh for another; those tests pass, and nothing has shown that they
+  would fail. The optional `LiveInstanceTest` runs `configure()` against a
+  live instance from `tests/live/android-sdk.sh` ("device R": attributed
+  to its click, with the version facts read from Android); in the MR 15
+  sandbox that pass was 58 of 58, and with the referrer lower-cased in
+  `PlayInstallReferrerSource` it failed 4. CI does not run it.
+  **What CI runs.** `android-sdk.yml`'s job "Android libraries" assembles,
+  lints and runs both Robolectric suites in the debug and the release
+  variant, with a floor on the executed test count for each (11 in
+  `android`, 6 in `integrity`, per variant); dexes `:core` with D8 at
+  `--min-api 21` and fails on any platform method, field or class left in
+  the dex that is newer than API 21 (`scripts/dex-api-check.py`, against
+  the SDK's `api-versions.xml` — this is what Animal Sniffer's whole-class
+  ignores of `Boolean`, `Long` and `Double` rely on: D8 rewrites the
+  `hashCode` helpers Kotlin calls on them, and dexing at `--min-api 24`
+  instead leaves all three in the dex, which the check reports; a planted
+  `Map.putIfAbsent` fails it too). The JVM job "Core and contract vectors"
+  runs `:core:check` with a floor of 56 executed tests (57 with
+  `LiveServerTest`, which skips itself there). Two defects
+  the first AGP build found: the integrity module said `minSdk 21`, but
+  integrity 1.6.0's manifest requires 23 (the manifest merger refuses it,
+  as it would have refused every app below 23 — now 23; the base SDK stays
+  21), and the core called `Map.putIfAbsent` (API 24, not backported by
+  D8), found by Animal Sniffer against the API 21 signature, which now runs
+  on `:core` because Android lint does not reach a plain JVM module.
+  **Not verified:** nothing has run on a device or emulator (this sandbox
+  has no `/dev/kvm`), so Robolectric's framework stands in for a real
+  Android's — its binder, its `noBackupFilesDir`, its network stack; Play's
+  referrer service was played, not the Play Store's; and no real Play
+  Integrity token has been requested.
 - **Play Integrity, as PR 6 built the server (§5.11).** When the schema
   document's `integrity` block says `request_token: true` with
   `token_type: standard`, `request_hash:
@@ -2626,9 +2704,9 @@ The SDK is `sdk/android-attribution/`: `core/` (package
   - **Not done:** the provider has not requested a real token — that needs
     a Play-distributed build of an app linked to a Cloud project, a device,
     and Google; the JVM tests hand the engine a provider, and the Android
-    code was only type-checked against the `integrity` 1.6.0 and
-    play-services-tasks classes. Play Integrity's remediation dialogs
-    (`showDialog`) are not offered.
+    provider's Robolectric suite (MR 15, above) drives a fake
+    `StandardIntegrityManager`, not Play. Play Integrity's remediation
+    dialogs (`showDialog`) are not offered.
 
 ### 5.13 As built: decisions (PR 11)
 
@@ -3392,16 +3470,16 @@ rollup of PR 13, §8.2).
 |---|---|
 | Forged Android installs for arbitrary clicks | HMAC install token; `bad_token` counts nowhere |
 | Replayed referrer | `UNIQUE (click_id, dedupe_key)` with the `install` key: one install conversion per click |
-| **Click spamming** (harvest real tokens from cheap clicks) | The inherent residual risk. **Built:** (a) Google's server click time must be within minutes of our `click_time`; (d) Play Integrity; the per-peer rate limit on the intake. **Not built:** (b) a CTIT distribution with its tails flagged, and (c) a per-registration cap — nothing in the tree computes click-to-install time or limits a registration (review of #157, B1). Open for the release decision (§8.1) |
-| Click injection | Server click time after server install-begin → `implausible` |
+| **Click spamming** (harvest real tokens from cheap clicks) | The inherent residual risk. **Built:** (a) Google's server click time must be within minutes of our `click_time`; (d) Play Integrity; the per-peer rate limit on the intake; (b) every install whose token names a click of the owner's records its click-to-install time (`ctit_seconds`: Google's install-begin minus `click_time`) and flags the tails against the registration's `ctit_min_seconds` (default 10) and `ctit_max_seconds` (default one day, a fixed cap: a percentile of the app's own distribution moves with the attack that inflates it) — a mark in the Android report (`ctit_short`, `ctit_long`, `group_by=ctit-flag`, `ctit_flag=`), never a refusal; (c) a per-registration install cap (`install_cap_per_minute`, default 300): 429 with Retry-After, nothing stored or counted, keyed on the registration id the token resolves to (§8.3) |
+| Click injection | Server click time after server install-begin → `implausible`; an install that began within `ctit_min_seconds` of our click is flagged `short` (§8.3) |
 | Row minting on public intakes | Body caps; rate limit on `REMOTE_ADDR` (#16) with injective bucket names (#17); a retention class for every untrusted state. Behind a TLS-terminating proxy the peer is the proxy, so the ceiling is one for the whole server (`PublicIntake`: 120 installs and 600 event requests a minute), and the limiter fails open when its store cannot be read; a deployment behind a proxy (Coolify, a load balancer) should terminate the rate limit at the proxy or accept the shared ceiling |
 | App token lifted into another app | `app_key` mismatch is a visible 422; the token rotates |
 | SSRF through MTA export webhooks | `https` only; private-range refusal of every resolved address; connect pinned to the validated address; no redirects (§6.3) |
 | MTA journey poisoning (a crafted `p202vid`, LP id or `cust` joins someone else's journey) | Browser ids are random 128-bit values, so guessing one is infeasible, and a user can only pollute their own journeys. A customer id links a journey only when it carries a valid `cust_sig` from the operator's server (§6.2); an unsigned `cust` on a public pixel never links. Any signal linking more than the cap is quarantined. Credits are bounded by conversions, which MTA never creates |
-| **Fabricated in-app events** to reach payable goals (the app token is public) | Goals pay only for installs that are `attributed`, and under `require`, only for integrity-valid ones. Values come from the goal or campaign, never from the client unless `trust_client_revenue` is set. `UNIQUE (subject, event_id)` stops replays inflating counts. **Not built:** a per-install event rate cap (the event intake has the per-peer limit only, §5.10) and a report flag for goals reached implausibly fast (review of #157, B1); open for the release decision (§8.1) |
+| **Fabricated in-app events** to reach payable goals (the app token is public) | Goals pay only for installs that are `attributed`, and under `require`, only for integrity-valid ones. Values come from the goal or campaign, never from the client unless `trust_client_revenue` is set. `UNIQUE (subject, event_id)` stops replays inflating counts. **Built** (§8.3): a per-install event cap (`event_cap_per_minute`, default 200 events a minute, never below a full batch; 429, nothing of the batch stored), and a flag on an outcome reached sooner after the install than `fast_goal_seconds` (default 5), counted and filterable in the report (`fast_goals`); a flagged outcome still pays under `fast_goal_policy: count` (the default — the threshold is a heuristic an app's first goal can legitimately meet) and is recorded unpaid and unsent under `hold` |
 | Goal definitions as an attack surface | Data only (JSON schema validated on write and on load), bounded complexity, no expression evaluation. An invalid stored definition disables that goal with its reason and never throws through other goals (#11) |
 | Permission drift between surfaces | One permission check per operation on every surface. `/attribution` asks for `view_attribution_reports` and, to change a model, `manage_attribution_models`; `/apps` asks for `manage_attribution_models` on every write and `view_attribution_reports` on the report and the rows behind it (postbacks, installs, notifications, verify), as the Mobile Apps pages do — it asked for nothing until the review of #157 (B2). `AppsRoutePermissionTest` requires every `/apps` route to carry a decision, the check first in its handler, and `app-core.sh` drives it with role-3 and role-4 keys. `/goals` and `/events` take no role permission, as the campaign pages that edit goals and the conversion API do not. There is no one structural test over every route |
-| Malformed values resolving permissively | Missing HMAC key, unparseable referrer, unreadable policy and invalid model config all resolve to the non-trusting or disabled state (#11) |
+| Malformed values resolving permissively | Missing HMAC key, unparseable referrer, unreadable policy and invalid model config all resolve to the non-trusting or disabled state (#11); an unreadable abuse limit to the one that trusts least, named — the caps answer 503, the CTIT and fast-goal thresholds flag everything, the fast-goal policy holds, and a cap store that cannot answer refuses rather than admits (§8.3) |
 
 ### 7.2 Privacy
 
@@ -3575,8 +3653,10 @@ The upgrade is one-way. The conversion-ledger rung makes `dedupe_key`
 code redeployed on an upgraded database inserts conversions that strict
 mode refuses or that collide on `uniq_click_dedupe`: a code-only rollback
 breaks conversion recording. **Take a database backup before upgrading;
-restoring it is the only way back.** The upgrade page and `RELEASING.md`
-have to say so before release (open, §8.1).
+restoring it is the only way back.** The upgrade page says so above its
+button on every upgrade (`#upgrade-backup-warning`, naming `dedupe_key` when
+the stored version is below 1.9.76), and `RELEASING.md` has a section on it
+(§8.3).
 
 **Measured at 1M conversions.** The database was in the 1.9.55 shape
 (duplicates, case variants, blank and NULL ids; 128 MB buffer pool) and
@@ -4153,13 +4233,12 @@ Open for the release decision:
      Success! means the version reached the code's).
 
    `RELEASING.md` and the upgrade page now tell large installs about the
-   timeout and that a 504 needs nothing redone. **Still open:** the upgrade
-   page and `RELEASING.md` must require a backup and say that restoring it
-   is the only way back.
-5. **Security mitigations the plan listed that were never built** (§7.1): a
-   click-to-install-time distribution with its tails flagged, a
-   per-registration install cap, a per-install event rate cap, and a report
-   flag for goals reached implausibly fast. Build them or accept the risk.
+   timeout and that a 504 needs nothing redone, and both require a backup and
+   say that restoring it is the only way back (§8.3).
+5. ~~**Security mitigations the plan listed that were never built**
+   (§7.1).~~ **Closed by PR 14 (§8.3):** click-to-install time recorded and
+   its tails flagged, a per-registration install cap, a per-install event
+   cap, and a flag on goals reached implausibly fast.
 6. ~~**MTA starts empty at the upgrade.**~~ **Closed** (Codex P1 on PR
    #157): the conversion-ledger step writes a marker,
    `202_attribution_backfill` (the newest click at the upgrade, one indexed
@@ -4187,9 +4266,12 @@ Open for the release decision:
    signals live as long as the clicks do. Erasing a customer now reaches
    them; a retention class for them does not exist.
 8. **Surfaces that have never run for real,** from the as-built sections:
-   the Android module has not been assembled with AGP, linted, or run on a
-   device or emulator, and its integrity provider has never requested a real
-   token (§5.12); the server's Play Integrity client has never made a
+   the Android modules are now assembled with AGP (debug and release),
+   lint-clean and run under Robolectric in CI, with a floor on each suite's
+   executed test count (MR 15, §5.12), but have not run on a device or
+   emulator, and the integrity provider has never requested a real token
+   (§5.12); the planted defects and the live pass's 58 of 58 recorded
+   there are local runs in the MR 15 sandbox, not something CI repeats; the server's Play Integrity client has never made a
    request to Google, only to a self-written fake (§5.11); the iOS
    StoreKit/AdAttributionKit hand-off compiles out on Linux and was not
    built for a device (§5.9); iOS `setCustomerId()` rides no request, so the
@@ -4541,6 +4623,157 @@ rollup. The part adds 24,748 rows to 10.8M; its three build statements take
 52 minutes here against 20 before, with another session's integration
 suites running on the same server throughout, so that time measures the
 sandbox, not the part.
+
+### 8.3 As built: the abuse limits and the backup warning (PR 14)
+
+The four §7.1 mitigations that were open for the release decision (§8.1,
+item 5), and the backup half of item 4. The schema changes are made in place
+(`AppTables`, `GoalTables`; the 1.9.75 rung creates them from those
+definitions): no rung, and the version stays 1.9.76.
+
+**Where the settings live.** Six Android registration columns, read by two
+value objects that follow AppPolicy's rule — strict, and a value no write
+stores is the reading that trusts least, named in the log (#11):
+`Api\V3\Apps\AppLimits` (`ctit_min_seconds`, `ctit_max_seconds`,
+`install_cap_per_minute`, `event_cap_per_minute`) and
+`Prosper202\Goals\FastGoalPolicy` (`fast_goal_seconds`,
+`fast_goal_policy`). Each column is judged alone: an unreadable CTIT
+minimum is its ceiling (3600) and an unreadable maximum its floor (60), so
+every measured install is flagged; an unreadable cap is null, which the
+intakes answer with a 503 naming the column; an unreadable fast-goal
+threshold is its ceiling (3600) and an unreadable policy `hold`. The
+registration API reads each raw before the base controller casts it (#18),
+refuses `null` for these NOT NULL columns by name (#4), holds the CTIT
+minimum below the maximum as the write leaves them, and refuses them on
+iOS. Setup › Mobile Apps shows all six under Advanced; the Go CLI takes them
+on `app create` and `app update`.
+
+**(b) Click-to-install time.** `ClickToInstallTime`: Google's server
+install-begin (the receipt time when Play gave none) minus our `click_time`,
+written to `202_app_installs.ctit_seconds` with `ctit_flag` `short`, `ok` or
+`long`, inside `InstallIntake::classifyWithClick()` — the one step the
+intake, the pending-click settler and the integrity worker all take — for
+any install whose token names a click of the owner's, whatever state
+follows. The registration's thresholds reach the settler and the worker
+through `LockedInstall`, which now reads the limit columns beside the policy
+ones. Defaults: **10 s** short (a person cannot reach the store page and start
+a download faster; the `implausible` rule already refuses an install that
+began before Google's own click) and **86 400 s** long. The long tail is a
+fixed cap rather than the window's 90th percentile: the percentile is learned
+from the distribution click spamming inflates, so it moves with the attack,
+and a small app has too few installs for one to mean anything; a day leaves
+room for installs that wait for Wi-Fi. A flag marks, never refuses, and is
+the thresholds' as they stood when the install was measured. The report
+counts `ctit_measured`, `ctit_short` and `ctit_long` over every install in a
+group (like the state breakdowns, not trust-gated), groups by `ctit-flag`
+and filters by `ctit_flag`; the install list filters by it too; Analyze ›
+Mobile Apps has a Fraud signals panel with the counts and filter links.
+
+**(c) Per-registration install cap** (`install_cap_per_minute`, default
+**300**: well above any launch spike a single app's organic traffic makes, and
+low enough that a scripted flood stays a few hundred rows a minute rather than
+the per-peer ceiling times every proxy it can reach). Checked in
+`InstallIntake::receive()` after every check that can refuse the body and
+after the replay answer, so only a request about to store a new install
+spends it, and over it the answer is 429 with `Retry-After` (and
+`retry_after_seconds`), nothing stored and nothing counted; the SDK retries
+429. The bucket is `app-install-cap:r<registration_id>` — the id the token
+resolved from our table, never anything the body names (#16); the store's
+file name is a slug plus a hash of the whole bucket (#17), and
+`ServerStateStore::reserveQuota()` takes a cost under the file lock and takes
+nothing from a refused request. Unlike the per-peer limiter it fails
+**closed**: a store that cannot be read or written (or a bucket that does not
+decode) throws, and the intake answers 503 with `Retry-After`, so a broken
+state directory delays installs instead of removing the cap. It is per
+server, as the per-peer limit is (N web hosts that do not share the state
+directory enforce up to N× the cap), and the window is fixed, so a burst
+straddling a boundary can reach up to twice the cap. The charge is taken at
+admission and given back (`refundQuota()`, under the same lock, strict, never
+below zero, only to the window it was charged to) when the admitted request
+then records nothing — a 503, an exception, a concurrent duplicate — and a
+refund that fails is logged, never thrown over the original error: the cap
+counts what was recorded, not attempts.
+
+**Per-install event cap** (`event_cap_per_minute`, default **200** events a
+minute, never below one full batch of 100 so a batch always fits): the same
+`admit()`, in `InstallEventsIntake::receive()` once the body has parsed,
+costing the batch's event count, keyed on
+`app-install-event-cap:r<registration>:i<install_row_id>`. A batch that would
+pass it is refused whole with 429 and stored nowhere. It is charged for the
+ids the install does not hold yet (so a replay of a stored batch costs
+nothing and is answered at the cap), and after the engine runs whatever it
+did not accept is refunded — ids a concurrent request stored first, a batch
+it refused, a failure (measured, when the exception does not say whether the
+commit landed). A body carrying only a customer id costs one.
+
+**Goals reached implausibly fast** (`fast_goal_seconds`, default **5**). In
+`GoalEngine::valuation()`, the one place every outcome write decides its
+value: an install subject's outcome whose effective time is less than the
+threshold after the install's time is `too_fast` (a new
+`202_goal_outcomes` column, written on insert and on restate); the install
+itself (`@install`) never is. The policy rides the install subject
+(`GoalSubject::$fastGoals`, read plainly from the registration by
+`installSubject()`; an install subject built without one is judged under the
+unreadable policy). **Decision: a flagged outcome still pays under
+`fast_goal_policy: count`, the default** — the threshold is a heuristic, and
+an app whose first goal is "opened the app" meets it honestly within seconds
+— and is visible in the report (`fast_goals` among `goals_reached`,
+`fast_goals=1` for the installs with one). Under `hold` it is recorded,
+counted in the funnel and flagged, its ledger row written unpayable, and
+nothing is sent to the traffic source, and the outcome's `value_note` is
+`held_too_fast`. There is no release: the decision is the one in force when
+an outcome of that (goal, reaching event) is first written, like every
+snapshot the intake takes, and it stands through a restatement, a credit
+change, a revival and a re-evaluation or replay that replaces the row with
+the same reaching event (`valuation()`'s `$decided`) — so `hold` → `count`
+pays only goals reached afterwards and `count` → `hold` un-pays nothing.
+
+**The backup warning.** `202-config/upgrade.php` says above its button,
+inside the form that posts, as the kit's warning flash, that the upgrade is
+one-way and a backup is required, restoring it the only way back, and —
+from below 1.9.76 — that `202_conversion_logs.dedupe_key` becomes NOT NULL
+so the old code can no longer record conversions. `RELEASING.md` has the
+same as a section. `UpgradeBackupWarningTest` pins both.
+
+**Tests.** Unit: `AppLimitsTest`, `ClickToInstallTimeTest`,
+`FastGoalPolicyTest`, `ServerStateStoreQuotaTest`,
+`UpgradeBackupWarningTest`, the Go CLI's `app_limits_test.go`. Integration:
+`AbuseLimitsIntegrationTest` (10 tests) drives both intakes' `receive()` with
+the real ServerStateStore under a per-test directory (`AndroidDatabase` now
+gives every Android suite one, so no count leaks between tests or runs).
+Live: `tests/live/android-abuse-limits.sh`, 97 checks over HTTP against a
+fresh instance (PHP 8.4 with memcached, MariaDB 10.11): the defaults and nine
+malformed writes refused by name, CTIT `ok`/`short`/`long`/unmeasured through
+real clicks, the report and install-list reads, the cap's 429 with
+`Retry-After` and nothing stored, a replay answered, another app's budget
+apart, an unreadable cap's 503, the event cap refusing a batch whole, count
+and hold, the Setup form and Analyze's Fraud signals panel, and the upgrade
+page's warning (the stored version wound back for one GET). Rerunnable
+inside the same minute: it deletes rather than truncates the app tables, so
+the caps' buckets, keyed on ids, are never a previous run's.
+
+Planted, each restored from a scratch copy and the restore checked by
+SHA-256: 26 defects against the unit and integration tests — CTIT not
+recorded, recorded on the intake's path only, the short tail inclusive, an
+unreadable threshold read as the default, the settler reading default
+thresholds instead of the registration's (missed at first: the settler test
+ran on the defaults; it now raises the minimum first), the install cap
+removed, checked before the replay answer, keyed on the body's install_uuid,
+failing open on an unreadable cap and on a broken store, the quota counting
+refusals and reading a corrupt bucket as empty, the registry not reading the
+cap columns, the event cap removed, costing one per request, keyed per
+registration, `hold` ignored, `too_fast` not written, the install flagged,
+an unreadable policy read as `count`, the report's fast filter counting
+retired outcomes and dropping the count, the API's range and order checks
+removed, and the warning moved below the button or stripped of its body
+part — all 26 caught. Five more through the live pass itself (the install
+cap, the event cap, CTIT, `hold`, the warning hidden), each caught, so every
+guard is reached from the outermost entry (#12, #18).
+
+What did not run: the browser suite (no Playwright or Chromium in this
+sandbox; the Analyze and Setup changes were read over HTTP by the live
+passes, not measured in a browser), `tests/Cli` (Symfony on a partial
+`vendor/`), and GitHub CI.
 
 ## 9. Decisions
 

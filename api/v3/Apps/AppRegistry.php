@@ -20,7 +20,8 @@ final class AppRegistry
 {
     use MysqliStatements;
 
-    private const COLUMNS = 'registration_id, user_id, platform, app_key, accept_test_signals, attribution_window_days, trust_client_revenue, integrity_mode, integrity_cloud_project_number';
+    private const COLUMNS = 'registration_id, user_id, platform, app_key, accept_test_signals, attribution_window_days, trust_client_revenue, integrity_mode, integrity_cloud_project_number, '
+        . 'ctit_min_seconds, ctit_max_seconds, install_cap_per_minute, event_cap_per_minute';
 
     public function __construct(private readonly \mysqli $db)
     {
@@ -70,6 +71,7 @@ final class AppRegistry
             AppIdentity::fromKey((string)$row['platform'], (string)$row['app_key']),
             AppPolicy::fromRow($row),
             ($row['integrity_cloud_project_number'] ?? null) === null ? null : (string)$row['integrity_cloud_project_number'],
+            AppLimits::fromRow($row),
         );
     }
 }

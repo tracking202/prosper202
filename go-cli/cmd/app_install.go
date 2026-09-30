@@ -39,6 +39,7 @@ var appInstallFilterDefs = []struct {
 	{"integrity-state", "integrity_state", "Only this Play Integrity state: not_requested, received, missing, pending, valid, invalid, error, skipped"},
 	{"trusted", "trusted", "Only this trust class: trusted, refuted or unvouched"},
 	{"test", "test", "1 = only test installs, 0 = only real ones"},
+	{"ctit-flag", "ctit_flag", "Only installs whose click-to-install time is short, ok, long or unmeasured"},
 	{"click-id", "click_id", "Only installs attributed or matched to this click"},
 	{"time-from", "time_from", "Received-at range start (unix timestamp)"},
 	{"time-to", "time_to", "Received-at range end (unix timestamp)"},
@@ -88,6 +89,9 @@ func collectInstallFilters(cmd *cobra.Command) (map[string]string, error) {
 	}
 	if v, ok := params["test"]; ok && v != "0" && v != "1" {
 		return nil, validationError("--test must be 0 or 1, got %q", v)
+	}
+	if v, ok := params["ctit_flag"]; ok && v != "short" && v != "ok" && v != "long" && v != "unmeasured" {
+		return nil, validationError("--ctit-flag must be one of: short, ok, long, unmeasured; got %q", v)
 	}
 	if v, ok := params["click_id"]; ok && !positiveID.MatchString(v) {
 		return nil, validationError("--click-id must be a positive whole number, got %q", v).

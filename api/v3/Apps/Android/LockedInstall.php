@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Api\V3\Apps\Android;
 
 use Api\V3\Apps\AppIdentity;
+use Api\V3\Apps\AppLimits;
 use Api\V3\Apps\AppPolicy;
 use Api\V3\Apps\AppRegistration;
 use Prosper202\Database\Connection;
@@ -23,7 +24,7 @@ use Prosper202\Database\Connection;
  */
 final class LockedInstall
 {
-    public const SQL = 'SELECT i.*, r.platform, r.app_key, ' . AppPolicy::REGISTRATION_COLUMNS . '
+    public const SQL = 'SELECT i.*, r.platform, r.app_key, ' . AppPolicy::REGISTRATION_COLUMNS . ', ' . AppLimits::REGISTRATION_COLUMNS . '
          FROM 202_app_installs i JOIN 202_app_registrations r ON r.registration_id = i.registration_id
          WHERE i.install_row_id = ? LIMIT 1 FOR UPDATE';
 
@@ -48,6 +49,8 @@ final class LockedInstall
             (int) $row['user_id'],
             AppIdentity::fromKey((string) $row['platform'], (string) $row['app_key']),
             AppPolicy::fromRow($row, AppPolicy::REGISTRATION_PREFIX),
+            null,
+            AppLimits::fromRow($row, AppPolicy::REGISTRATION_PREFIX),
         );
     }
 }

@@ -56,7 +56,9 @@ final class GoalWritersTest extends TestCase
         // their installs), which liveOutcomes()' paged rows cannot answer;
         // each carries the live filter itself, which
         // testTheReportsOutcomeAggregatesReadLiveRowsOnly() holds it to.
-        'api/v3/Apps/Android/InstallReport.php' => 3,
+        // The fourth is the fast_goals filter's EXISTS (FAST_OUTCOME_EXISTS),
+        // a constant spliced into the WHERE of the others.
+        'api/v3/Apps/Android/InstallReport.php' => 4,
         // Which app a queued postback belongs to: the outcome a conversion
         // is, retired or not — a correction announces a replaced outcome,
         // so the live filter would lose exactly the rows it lists. Nothing

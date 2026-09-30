@@ -20,6 +20,12 @@ use Api\V3\Support\ServerStateStore;
  *    never blocks devices;
  *  - the bounded body read.
  *
+ * The per-peer limit is the only one here because it is the only one that
+ * can run before the request is read: the Android intake's per-registration
+ * install cap and per-install event cap key on the registration the app
+ * token resolves to, so they run inside the intakes once it has
+ * (InstallIntake::admit()), and unlike this limit they fail closed.
+ *
  * Callers: the Apple /.well-known/ postback entry points (through
  * Apple\PostbackIntake), whose URLs Apple dictates, and the pre-auth routes
  * in api/v3/index.php — GET /apps/schema today, POST /apps/installs with the

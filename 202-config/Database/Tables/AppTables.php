@@ -17,7 +17,13 @@ use Prosper202\Database\Schema\TableRegistry;
  * links to a registration by a raw app id. `app_icon` is the store's icon as
  * a data: URI, fetched once at registration (Tracking202\Apps\StoreListing)
  * so a page never makes a viewer's browser call the store; the API does not
- * serve it.
+ * serve it. The abuse limits (plan §7.1, Api\V3\Apps\AppLimits) are
+ * Android policy beside the others: the click-to-install-time tails
+ * (`ctit_min_seconds`, `ctit_max_seconds`), the install cap per registration
+ * and the event cap per install (`install_cap_per_minute`,
+ * `event_cap_per_minute`), and when a goal reached soon after its install is
+ * flagged and whether it still pays (`fast_goal_seconds`,
+ * `fast_goal_policy`, Prosper202\Goals\FastGoalPolicy).
  *
  * 202_app_postbacks is the Apple signal source's store. Devices POST signed
  * SKAdNetwork and AdAttributionKit postbacks to the /.well-known/ endpoints
@@ -78,6 +84,13 @@ use Prosper202\Database\Schema\TableRegistry;
  * so a token already owned by a verified install is refused as a replay
  * without spending quota.
  *
+ * `ctit_seconds` is the install's click-to-install time: Google's server
+ * install-begin time (the receipt time when Play gave none) minus its
+ * click's `click_time`, recorded whenever the install's token names a click
+ * of the registration's owner; `ctit_flag` is `short`, `ok` or `long`
+ * against the registration's thresholds when it was measured (NULL: no
+ * click to measure against). A flag marks; it does not refuse.
+ *
  * 202_app_integrity_credentials holds the operator's Google service
  * account for a registration, AES-256-GCM encrypted under an installation
  * key (202_deployment_secrets) with the registration bound in as associated
@@ -120,6 +133,12 @@ final class AppTables
                 `trust_client_revenue` tinyint(1) unsigned NOT NULL DEFAULT '0',
                 `integrity_mode` varchar(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'off',
                 `integrity_cloud_project_number` bigint(20) unsigned DEFAULT NULL,
+                `ctit_min_seconds` smallint(5) unsigned NOT NULL DEFAULT '10',
+                `ctit_max_seconds` int(10) unsigned NOT NULL DEFAULT '86400',
+                `install_cap_per_minute` smallint(5) unsigned NOT NULL DEFAULT '300',
+                `event_cap_per_minute` smallint(5) unsigned NOT NULL DEFAULT '200',
+                `fast_goal_seconds` smallint(5) unsigned NOT NULL DEFAULT '5',
+                `fast_goal_policy` varchar(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'count',
                 `app_token` varchar(64) NOT NULL,
                 `app_icon` text DEFAULT NULL,
                 `created_at` int(10) unsigned NOT NULL,
@@ -274,6 +293,8 @@ final class AppTables
                 `integrity_checked_at` int(10) unsigned DEFAULT NULL,
                 `integrity_verdict` varchar(1024) DEFAULT NULL,
                 `first_open_at` int(10) unsigned DEFAULT NULL,
+                `ctit_seconds` int(11) DEFAULT NULL,
+                `ctit_flag` varchar(8) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
                 `received_at` int(10) unsigned NOT NULL,
                 `settled_at` int(10) unsigned DEFAULT NULL,
                 `raw_payload` text NOT NULL,

@@ -793,4 +793,42 @@ class AttributionEngineTest {
         assertEquals(1, dir.listFiles()!!.count { it.name.startsWith("p202-attribution.json.corrupt-") }, "moved aside, not deleted")
         dir.deleteRecursively()
     }
+
+    /**
+     * The branch where the corrupt file cannot be moved aside. renameTo is
+     * made to fail by the one thing that fails it for root as well (the
+     * suites run as root in CI containers, and root ignores a read-only
+     * directory): the aside name, the state file's name plus
+     * `.corrupt-<13-digit time>`, is longer than a file name may be (255
+     * bytes on ext4, APFS and every other filesystem a test runs on), so
+     * rename(2) answers ENAMETOOLONG. The state file's own name and its
+     * `.tmp` sibling still fit.
+     */
+    @Test
+    fun aCorruptFileThatCannotBeMovedAsideIsReportedAndReplaced() {
+        val dir = Files.createTempDirectory("p202-store").toFile()
+        val name = "s".repeat(240)
+        val file = File(dir, name)
+        file.writeText("{\"install_uuid\": ")
+        // The mechanism, measured rather than assumed: this rename fails.
+        assertFalse(file.renameTo(File(dir, "$name.corrupt-${System.currentTimeMillis()}")), "a 262-byte name cannot be renamed to")
+        assertTrue(file.exists())
+
+        val notes = ArrayList<String>()
+        val store = FileStore(file) { notes.add(it) }
+        assertNull(store.get(AttributionEngine.K_UUID), "the unreadable file is not read as state")
+        assertEquals(
+            listOf("the SDK state file was not readable and could not be moved aside; starting fresh, and it will be replaced"),
+            notes,
+            "the failure branch reports that nothing was moved, rather than naming a file that was never written",
+        )
+        assertEquals(listOf(name), dir.list()!!.toList(), "nothing was moved aside")
+        assertEquals("{\"install_uuid\": ", file.readText(), "and the corrupt file is untouched until the first write")
+
+        // The first write replaces it, and a new process reads the fresh state.
+        store.edit(mapOf(AttributionEngine.K_UUID to "fresh"))
+        assertEquals(listOf(name), dir.list()!!.toList())
+        assertEquals("fresh", FileStore(file).get(AttributionEngine.K_UUID))
+        dir.deleteRecursively()
+    }
 }

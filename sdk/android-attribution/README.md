@@ -55,9 +55,50 @@ gradle -p sdk/android-attribution -Pp202.android=false :core:test
 - `LiveServerTest` runs the real engine against an instance; it skips
   unless `tests/live/android-sdk.sh` sets `P202_LIVE_BASE`.
 
+With an Android SDK (`ANDROID_HOME`) and JDK 21, the Android libraries
+build, lint and run their Robolectric suites (Robolectric 4.14.1, Android
+15's framework on the JVM; no device or emulator):
+
+```
+gradle -p sdk/android-attribution assembleDebug assembleRelease lint check
+```
+
+(CI names the debug and release tasks of both modules one by one, and
+floors each suite's executed test count with `scripts/test-floor.py`.)
+
+- `PlayInstallReferrerSourceTest`: Play's real installreferrer client bound
+  to a played Play Store service — its answer field for field, an organic
+  install, no or too old a Play Store, an unbindable service, a
+  `RemoteException`, the connection unbound.
+- `P202AttributionTest`: `configure()` posting through the real transport
+  to an HTTP server on 127.0.0.1 — the reference install reproduced byte
+  for byte from the device end, the install id kept in `noBackupFilesDir`
+  across a relaunch, an unreadable state file moved aside, 429/503 retried
+  with the same bytes, a 400 terminal.
+- `PlayIntegrityProviderTest`: the provider over a fake
+  `StandardIntegrityManager` with Play's own types — every `integrity.json`
+  hash, preparing per project, re-preparing once, Play's error codes
+  sorted, a timeout, and the engine sending the token bound to the body.
+- `LiveInstanceTest` runs `configure()` against an instance; it skips
+  unless `tests/live/android-sdk.sh` sets `P202_LIVE_BASE`.
+
+`:core:check` also runs Animal Sniffer against Android API 21's signature:
+Android lint does not look inside the plain JVM core. Animal Sniffer's
+ignores are whole classes, and it ignores `java.lang.Boolean`, `Long` and
+`Double`, whose Java 8 helpers D8 backports; CI checks that trust by dexing
+the core the way an app build does and reading what is left:
+
+```
+gradle -p sdk/android-attribution :core:jar :core:dexClasspath
+$ANDROID_HOME/build-tools/<version>/d8 --min-api 21 --lib $ANDROID_HOME/platforms/android-<n>/android.jar \
+  --classpath sdk/android-attribution/core/build/dex-classpath/<each jar> --output <dir> \
+  sdk/android-attribution/core/build/libs/core-1.0.0.jar
+python3 sdk/android-attribution/scripts/dex-api-check.py $ANDROID_HOME/platforms/android-<n>/data/api-versions.xml 21 <dir>/classes.dex
+```
+
 The goal-evaluator vectors (`goals/`) are not run here: Android goals are
 evaluated on the server (plan §4.3), so the SDK reports every event and
 evaluates none.
 
 Gradle 8.14 and Kotlin 2.0.21; the Android module uses AGP 8.7.3,
-`compileSdk 34`, `minSdk 21`.
+`compileSdk 34`, `minSdk 21` (the integrity module `minSdk 23`, Play Integrity 1.6.0's floor).
