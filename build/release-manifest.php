@@ -70,6 +70,11 @@ return [
         'docs',
         'documentation',
         'install.sh',           // terminal installer for VPS users
+        // The iOS and Android SDK sources (56 tracked files; the build output
+        // beside them is untracked and never exported). README.md calls the
+        // Swift helper bundled and documentation/api/ links both directories,
+        // and the zip promises everything the repository would give.
+        'sdk',
     ],
 
     'exclude' => [
@@ -101,9 +106,6 @@ return [
         'mysql-tinybird-evaluation.md',
         'task-plan-*.md',
 
-        // The iOS helper is consumed with Swift Package Manager from the
-        // repository, never from a server.
-        'sdk',
     ],
 
     // Directories that ship only in part: everything directly under the key
@@ -124,6 +126,7 @@ return [
         '202-config/Messaging/mock-server.php',   // local stand-in for the central messaging API
         '202-config/Messaging/MOCK-SERVER.md',
         '202-config/Messaging/CENTRAL-API.md',    // contract for the central server, not the install
+        'sdk/android-attribution/scripts',        // CI's test-floor and dex API checks (android-sdk.yml)
     ],
 
     // Go CLI binaries the zip promises (README, RELEASING.md, and the
