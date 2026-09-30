@@ -3,7 +3,6 @@ package cmd
 import (
 	"strconv"
 	"strings"
-	"time"
 
 	"p202/internal/api"
 
@@ -72,7 +71,7 @@ func applyReportWindow(params map[string]string, period string, days int, timeFr
 		params["time_to"] = timeTo
 	}
 	if days > 0 && timeFrom == "" && timeTo == "" {
-		now := time.Now().Unix()
+		now := reportNow().Unix()
 		params["time_to"] = strconv.FormatInt(now, 10)
 		params["time_from"] = strconv.FormatInt(now-int64(days*86400), 10)
 	}
@@ -85,6 +84,12 @@ var analyticsCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !envFlagEnabled("CLI_ENABLE_ANALYTICS_SHORTHAND", true) {
 			return validationError("analytics shorthand is disabled").WithHint("Set CLI_ENABLE_ANALYTICS_SHORTHAND=1 in the environment, or use `p202 report breakdown` directly.")
+		}
+
+		// --split-at is validated before the client exists (nil without it).
+		split, err := splitPlanFromFlags(cmd)
+		if err != nil {
+			return err
 		}
 
 		c, err := api.NewFromConfig()
@@ -104,11 +109,15 @@ var analyticsCmd = &cobra.Command{
 			return validationError("unsupported --group-by value %q", groupBy)
 		}
 
+		if split != nil {
+			return runAnalyticsSplit(cmd, c, groupBy, split)
+		}
+
 		params := map[string]string{
 			"breakdown": groupBy,
 		}
 
-		for _, filter := range []string{"aff_campaign_id", "ppc_account_id", "aff_network_id", "ppc_network_id", "landing_page_id", "country_id"} {
+		for _, filter := range analyticsFilterFlags {
 			if v, _ := cmd.Flags().GetString(filter); v != "" {
 				params[filter] = v
 			}

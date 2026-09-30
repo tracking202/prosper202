@@ -679,6 +679,43 @@ p202 analytics --group-by campaign --days 14 --sort roi --limit 10
 - `--sort conversions` maps to `total_leads`
 - `--period` takes precedence over `--days`
 
+#### Before/after a date (`--split-at`)
+
+```bash
+# Which countries moved after 2026-09-04? (default window: last90)
+p202 analytics --group-by country --split-at 2026-09-04
+
+# Rank by the change in clicks per day, since the two sides differ in length
+p202 analytics --group-by campaign --split-at 2026-09-04 --days 120 --sort clicks_per_day --limit 20 --json
+```
+
+`--split-at` takes a date `YYYY-MM-DD` (read as 00:00 UTC) or unix seconds. It splits the window into
+`[start, split)` and `[split, end]`, reads the breakdown for each side (every page, 500 rows a request,
+so the server's row cap drops nothing) and returns one row per value:
+
+| Columns (for `clicks`, `conversions`, `revenue`) | Meaning |
+|------|-------------|
+| `<m>_before`, `<m>_after` | Totals on each side; a value seen on one side only gets `0` on the other |
+| `<m>_change`, `<m>_change_pct` | `after − before`, and that as a percent of `before` (`null` when `before` is 0) |
+| `<m>_per_day_before`, `<m>_per_day_after` | Each total divided by its side's length in days |
+| `<m>_per_day_change`, `<m>_per_day_change_pct` | The same comparison on the per-day rates |
+
+The sides are rarely the same length, so compare the `_per_day` columns: 6,500 clicks over 63.5 days
+against 2,080 over 26.5 days is −68% in total but −23% per day. The table shows the clicks columns and
+the percent changes; `--json` and `--csv` carry every column, and `--fields` picks any of them.
+
+- **Window**: `--period last7|last30|last90`, `--days N`, or `--time_from <unix>` with an optional
+  `--time_to <unix>` (default now); with none of them, `last90`. `today` and `yesterday` are refused
+  (their bounds follow the server's midnight), and so is `--time_to` alone.
+- **Order**: by the absolute change in clicks, largest first. `--sort clicks|conversions|revenue` ranks
+  by another metric's change, `--sort clicks_per_day` (or `conversions_per_day`, `revenue_per_day`) by
+  the change in its per-day rate; `--sort-dir ASC` reverses; `--limit`/`--offset` apply to the ranked rows.
+- **Summary**: both sides' exact bounds, lengths and totals go to stderr, and under `--json` to `meta`
+  (`split_at`, `window.{source,time_from,time_to}`, `before`/`after` with `time_from`, `time_to`,
+  `seconds`, `days`, `rows` and the totals and per-day rates, `sort`, `rows`, `returned`).
+- The split must fall inside the window with both sides non-empty; that, the window and the sort flags
+  are checked before any request.
+
 ### Timeseries
 
 Performance data over time intervals.

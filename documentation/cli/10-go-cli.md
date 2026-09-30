@@ -187,6 +187,17 @@ p202 analytics --group-by country --period last30 --sort conversions --limit 10
 
 Aliases: `--group-by lp` -> `landing_page`, `--sort conversions` -> `total_leads`, `--sort revenue` -> `total_income`.
 
+`--split-at YYYY-MM-DD|unix` compares the two sides of a date (00:00 UTC) inside the window
+(`--period last7|last30|last90`, `--days N`, `--time_from`/`--time_to`; default `last90`): one row per
+value with clicks, conversions and revenue before, after, the change and percent change, and each
+side's per-day rate, since the sides are rarely the same length. Values on one side only get zeros on
+the other; rows rank by the absolute change in clicks (`--sort clicks_per_day` for the per-day rate).
+Both windows' bounds and lengths go to stderr and to `meta` under `--json`.
+
+```bash
+p202 analytics --group-by country --split-at 2026-09-04 --sort clicks_per_day --limit 10
+```
+
 ## Forecasting
 
 Project any tracked metric forward from historical time-series data, with

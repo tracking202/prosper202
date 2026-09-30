@@ -56,6 +56,11 @@ This file captures the API paths and payload/query expectations used by upcoming
   - repeated `POST /api/v3/{entity}` requests
 - `analytics`
   - `GET /api/v3/reports/breakdown` with alias-mapped query params
+- `analytics --split-at <YYYY-MM-DD|unix>`
+  - the window resolved client-side to inclusive unix bounds: `last7|last30|last90` as now minus N days, `--days N`, `--time_from`/`--time_to` (end defaults to now); default `last90`; `today`/`yesterday` refused
+  - two paged `GET /api/v3/reports/breakdown` reads, `time_from=start&time_to=split-1` then `time_from=split&time_to=end` (never `period`, `sort` or the caller's `limit`/`offset`), each with `limit=500` and increasing `offset` until a short page, plus the entity filters
+  - rows merged by breakdown `id`; sort, `--limit` and `--offset` applied client-side to the merged rows
+  - no request when the split, window or sort flags are invalid
 - list `--all`
   - paginated `GET /api/v3/{entity}` loop until exhausted
 - delete `--ids`
