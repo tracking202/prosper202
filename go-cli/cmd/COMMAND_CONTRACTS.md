@@ -44,6 +44,9 @@ This file captures the API paths and payload/query expectations used by upcoming
   - paginated `GET /api/v3/campaigns` (with `filter[aff_network_id]` when `--aff-network-id` is set); no writes
   - no HTTP request to the offer URLs: DNS, TCP connect and TLS handshake once per unique host
   - with `--http` (after confirmation): one `HEAD` per unique offer URL, then a `GET` if the `HEAD` got 405
+- `system health`
+  - for an https base URL, first a DNS lookup, TCP connect and verified TLS handshake to its host (no HTTP bytes), through the same probe as `campaign check-urls`
+  - then `GET /api/v3/system/health` (unauthenticated), attempted whatever the handshake found; the `tls_*` fields are merged into its `data` object
 - `tracker create-with-url`
   - `POST /api/v3/trackers`
   - `GET /api/v3/trackers/{id}/url`

@@ -112,7 +112,7 @@ Without `--json` the same information is two text lines: `Error [category]: mess
 | 2 | auth | Authentication or authorization failure (401/403) | Check the key with `p202 config get` / `p202 config set-key` |
 | 3 | network | Connection timeout, DNS failure, unreachable server | Check the URL; `p202 config test` |
 | 4 | server | API returned a 5xx error | Retry after a wait; `p202 system health` |
-| 5 | partial_failure | Bulk operation completed with some failures | stderr lists the failed items |
+| 5 | partial_failure | Bulk operation completed with some failures, or a check found a problem (`system health`, `rotator check`, `campaign check-urls`) | stderr lists the failed items; a check still prints its rows on stdout |
 
 Decision procedure for an agent:
 
@@ -324,9 +324,25 @@ Use `--all-metrics` when you need clicks, leads, income, cost, and net that agre
 
 ```bash
 p202 system health --json
+p202 system health --cert-warn-days 30 --json
 ```
 
 This endpoint does not require authentication. Use it as a liveness probe.
+
+For an https base URL it first checks the host's TLS certificate, on a connection of its own with no HTTP request, and merges `tls_status`, `tls_detail`, `tls_not_after` (RFC 3339), `tls_days_left` (negative once expired) and `tls_issuer` into `data`. The certificate fields are `null` when no certificate was seen.
+
+| `tls_status` | Meaning | Exit |
+|---|---|---|
+| `ok` | Verified, and expires after `--cert-warn-days` (default 21) | 0 |
+| `not_used` | The base URL is `http://`, so there is no certificate | 0 |
+| `expiring` | Verified, but expires within `--cert-warn-days` (0 turns this off) | 5 |
+| `expired` | Past `tls_not_after`: browsers refuse every https tracking link | 5 |
+| `hostname_mismatch` | The certificate does not cover the host (`tls_detail` lists the names it does cover) | 5 |
+| `unknown_authority` | Not signed by a trusted CA (self-signed, or a missing intermediate) | 5 |
+| `invalid` | Any other certificate or handshake failure, e.g. not yet valid; `tls_detail` says which | 5 |
+| `unreachable` | The check could not connect or finish the handshake, although the API answered | 5 |
+
+Exit 5 (`partial_failure`) works like `p202 rotator check`: the health object is still on stdout, and the envelope's message and hint name the problem and the fix (`sudo certbot renew` for `expired`). A certificate problem outranks the API failure it causes: with an expired certificate the API call fails on it too, so `data` has `status: "unknown"` and `api_error`, and the exit is still 5 with the renewal hint, not 3 with a generic network error. When only the API call fails, the exit code is the API error's (3 network, 4 server).
 
 ## Complete command reference
 
@@ -689,7 +705,7 @@ Notes for agents:
 ### System
 
 ```
-p202 system health     [--json]     # No auth required
+p202 system health     [--cert-warn-days N] [--json]  # No auth required; exits 5 on a TLS certificate problem
 p202 system version    [--json]     # Admin only
 p202 system db-stats   [--json]     # Admin only
 p202 system cron       [--json]     # Admin only

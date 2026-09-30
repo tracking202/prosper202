@@ -1092,7 +1092,8 @@ Use `--concurrency <n>` to limit parallel profile executions (default: `5`, mini
 ## System
 
 ```bash
-p202 system health       # Health check (unauthenticated)
+p202 system health       # Health check (unauthenticated) and TLS certificate check
+p202 system health --cert-warn-days 30
 p202 system version      # Prosper202 + PHP + MySQL versions
 p202 system db-stats     # Database table sizes
 p202 system cron         # Cron job status
@@ -1105,6 +1106,33 @@ p202 system dataengine   # Data engine job status
 |----------------------|---------------|
 | `p202 system health` | No            |
 | All others           | Admin         |
+
+For an https base URL, `system health` checks the host's TLS certificate before it calls the API:
+a verified handshake on its own connection, with no HTTP request. It adds `tls_status`,
+`tls_detail`, `tls_not_after`, `tls_days_left` and `tls_issuer` to the health output.
+`tls_status` is `ok`, `expiring` (expires within `--cert-warn-days`, default 21; 0 turns it off),
+`expired`, `hostname_mismatch`, `unknown_authority`, `invalid` (any other certificate or handshake
+failure) or `unreachable`; an `http://` base URL reports `not_used`.
+
+Like `p202 rotator check`, it exits 5 (`partial_failure`) when `tls_status` is anything but `ok` or
+`not_used`, with the health output still on stdout. An expired certificate is reported as one, with
+the fix, even though the API call behind it then fails on the same certificate:
+
+```
+$ p202 system health
+api_error:      network error (send_request): Get "https://tracker.example.com/api/v3/system/health": tls: failed to verify certificate: x509: certificate has expired or is not yet valid: …
+status:         unknown
+tls_days_left:  -3
+tls_detail:     expired: tls: failed to verify certificate: x509: certificate has expired or is not yet valid: …
+tls_issuer:     CN=R11,O=Let's Encrypt,C=US
+tls_not_after:  2026-09-02T23:59:59Z
+tls_status:     expired
+Error [partial_failure]: the TLS certificate for tracker.example.com:443 expired on 2026-09-02 (3 day(s) ago): browsers refuse every https tracking link on this host
+Hint: Renew the certificate on the server that answers for tracker.example.com (Let's Encrypt: `sudo certbot renew`, then reload nginx or Apache), and find out why auto-renewal stopped with `sudo certbot renew --dry-run`. Re-run `p202 system health` to confirm.
+```
+
+Run it from cron or an uptime monitor to hear about a certificate before it lapses. When only the
+API call fails, the exit code is that error's (3 network, 4 server).
 
 ## Output modes
 
@@ -1149,7 +1177,7 @@ p202 report daypart --period last30 --csv
 | 2    | auth     | Authentication or authorization failure |
 | 3    | network  | Connection timeout, DNS failure, unreachable server |
 | 4    | server   | API returned a 5xx error |
-| 5    | partial_failure | Bulk operation completed with some failures |
+| 5    | partial_failure | Bulk operation completed with some failures, or a check found a problem (its rows stay on stdout) |
 
 Errors go to stderr; stdout stays empty on failure. In human mode:
 

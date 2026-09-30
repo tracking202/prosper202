@@ -13,19 +13,21 @@ var systemCmd = &cobra.Command{
 
 var systemHealthCmd = &cobra.Command{
 	Use:   "health",
-	Short: "Check system health (no auth required)",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewURLOnly()
-		if err != nil {
-			return err
-		}
-		data, err := c.Get("system/health", nil)
-		if err != nil {
-			return err
-		}
-		render(data)
-		return nil
-	},
+	Short: "Check system health and the TLS certificate (no auth required)",
+	Long: "Calls the unauthenticated system/health endpoint and, for an https base URL,\n" +
+		"checks the TLS certificate of its host first: a verified handshake on its own\n" +
+		"connection, with no HTTP request, so an expired certificate is reported as\n" +
+		"one instead of as a network error from the API call.\n\n" +
+		"tls_status: ok, expiring (expires within --cert-warn-days), expired,\n" +
+		"hostname_mismatch, unknown_authority, invalid, unreachable; not_used for an\n" +
+		"http:// URL. tls_not_after, tls_days_left and tls_issuer describe the\n" +
+		"certificate the server sent (null when none arrived); tls_detail says why.\n\n" +
+		"Like `p202 rotator check`, it exits 5 (partial_failure) when tls_status is\n" +
+		"anything but ok or not_used, with the health object still printed on stdout.\n" +
+		"When only the API call fails, it exits as that error does (3 network, 4 server).",
+	Example: "  p202 system health\n" +
+		"  p202 system health --cert-warn-days 30 --json",
+	RunE: runSystemHealth,
 }
 
 var systemVersionCmd = &cobra.Command{
@@ -119,6 +121,7 @@ var systemDataengineCmd = &cobra.Command{
 
 func init() {
 	systemErrorsCmd.Flags().StringP("limit", "l", "", "Max errors to show")
+	systemHealthCmd.Flags().Int("cert-warn-days", 21, "Report the certificate as expiring when it expires within this many days (0 turns the warning off)")
 
 	systemCmd.AddCommand(systemHealthCmd, systemVersionCmd, systemDBStatsCmd,
 		systemCronCmd, systemErrorsCmd, systemDataengineCmd)

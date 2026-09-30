@@ -81,7 +81,7 @@ p202 config show
 | `p202 user list` | List users |
 | `p202 change list` | Review staged writes awaiting approval |
 | `p202 eval run` | Run behavioral evals against an agent driving this instance |
-| `p202 system health` | Health check |
+| `p202 system health` | Health check, plus a TLS certificate check of an https base URL made first, on its own connection (verified handshake, no HTTP request). Adds `tls_status` (`ok`, `expiring` within `--cert-warn-days` (default 21), `expired`, `hostname_mismatch`, `unknown_authority`, `invalid`, `unreachable`; `not_used` for http), `tls_not_after`, `tls_days_left`, `tls_issuer` and `tls_detail`. Exits 5 with the health object on stdout when `tls_status` is not `ok`/`not_used`; an expired certificate is reported as expired with a `certbot renew` hint, not as the network error the API call then hits |
 
 All entities support standard CRUD operations (`list`, `get`, `create`, `update`, `delete`) where applicable. Five behaviors apply across the board on servers that advertise them in `/capabilities`:
 
@@ -348,7 +348,7 @@ wrong state points at `p202 change show`; and only an actual duplicate gets
 | 2 | Authentication/authorization failure |
 | 3 | Network error (connection timeout, DNS failure) |
 | 4 | Server error (5xx response) |
-| 5 | Partial failure (some items in bulk operation failed) |
+| 5 | Partial failure (some items in bulk operation failed, or a check such as `system health` or `rotator check` found a problem; its rows stay on stdout) |
 
 ## Telemetry
 
