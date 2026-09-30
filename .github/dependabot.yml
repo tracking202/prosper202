@@ -5,6 +5,8 @@ updates:
   # trailing comment (a tag like @v2 can be moved to other code). Dependabot
   # rewrites both the SHA and the comment, so pins stay current without going
   # back to mutable tags. Review each bump: the diff is the action's new code.
+  # Dependabot only rewrites pins that exist; a new `@v4` is refused by
+  # scripts/check-action-pins.sh in the actionlint job of scripts-lint.yml.
   - package-ecosystem: github-actions
     directory: /
     schedule:

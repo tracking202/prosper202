@@ -132,3 +132,10 @@ jobs:
         uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
         with:
           fail-on-error: true
+
+      # actionlint accepts `uses: actions/checkout@v4`; this repository does
+      # not (.github/dependabot.yml). Dependabot only rewrites pins that
+      # already exist, and the invariant regressed once in a merge that
+      # brought two new workflows in from master with thirteen floating tags.
+      - name: Every action is pinned to a commit SHA
+        run: scripts/check-action-pins.sh
