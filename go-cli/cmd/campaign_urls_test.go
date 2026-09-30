@@ -329,8 +329,9 @@ func TestReplaceURLIdsAndNetworkNarrowTheScope(t *testing.T) {
 	f := newCampaignFake()
 	setupCampaignFake(t, f)
 
+	// "0281" must still select campaign 281: ids are compared in canonical form.
 	stdout, _, err := executeCommand("campaign", "replace-url", "--match", "g2afse", "--set", "https://new.example/",
-		"--aff-network-id", "32", "--ids", "281", "--dry-run", "--json")
+		"--aff-network-id", "32", "--ids", "0281", "--dry-run", "--json")
 	if err != nil {
 		t.Fatalf("replace-url: %v", err)
 	}

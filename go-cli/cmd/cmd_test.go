@@ -4614,6 +4614,7 @@ func TestParseIDListDeduplication(t *testing.T) {
 		{"abc,def", nil, true},
 		{"1,abc,3", nil, true},
 		{"1.5,2", nil, true},
+		{"007,7,+8", []string{"7", "8"}, false},
 	}
 
 	for _, tt := range tests {
