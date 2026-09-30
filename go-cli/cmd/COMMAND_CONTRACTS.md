@@ -47,6 +47,9 @@ This file captures the API paths and payload/query expectations used by upcoming
 - `system health`
   - for an https base URL, first a DNS lookup, TCP connect and verified TLS handshake to its host (no HTTP bytes), through the same probe as `campaign check-urls`
   - then `GET /api/v3/system/health` (unauthenticated), attempted whatever the handshake found; the `tls_*` fields are merged into its `data` object
+- `system cron`
+  - `GET /api/v3/system/cron`: `data.jobs` (`cronjob_type`, `cronjob_time`, `last_run_human`, every row of `202_cronjobs`) and `data.recent_logs` (`id`, `last_execution_time`, `time_human`, up to 20); times may arrive as numeric strings
+  - summarized client-side; `--raw` keeps the server's arrays
 - `tracker create-with-url`
   - `POST /api/v3/trackers`
   - `GET /api/v3/trackers/{id}/url`

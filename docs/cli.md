@@ -1096,7 +1096,8 @@ p202 system health       # Health check (unauthenticated) and TLS certificate ch
 p202 system health --cert-warn-days 30
 p202 system version      # Prosper202 + PHP + MySQL versions
 p202 system db-stats     # Database table sizes
-p202 system cron         # Cron job status
+p202 system cron         # Is cron ticking? Rows and last run per job type
+p202 system cron --raw   # Every 202_cronjobs row, as the server returns them
 p202 system errors       # Recent system errors
 p202 system errors --limit 5
 p202 system dataengine   # Data engine job status
@@ -1133,6 +1134,29 @@ Hint: Renew the certificate on the server that answers for tracker.example.com (
 
 Run it from cron or an uptime monitor to hear about a certificate before it lapses. When only the
 API call fails, the exit code is that error's (3 network, 4 server).
+
+`system cron` summarizes `202_cronjobs` instead of printing every row (an install can hold
+thousands): per job type, its row count and last run with its age, then the last execution
+recorded in `202_cronjob_logs`. `hourl` and `secon` are `hourly` and `second` cut to the column's
+`char(5)`; when one holds more than 100 rows, a note says why they pile up.
+
+```
+$ p202 system cron
+type                       rows  last_run                 age
+-------------------------  ----  -----------------------  ------
+daily                      1     2026-09-29 12:00:00 UTC  30h08m
+hourl (hourly, truncated)  1281  2026-09-30 18:00:00 UTC  8m44s
+secon (second, truncated)  1281  2026-09-30 18:08:25 UTC  19s
+Last cron execution: 2026-09-30 18:08:04 UTC (40s ago); 2563 row(s) in 202_cronjobs.
+Note: 202_cronjobs holds 1281 hourl and 1281 secon rows: cronjob_type is char(5), so 'hourly' and 'second' are stored truncated, the scheduler's already-ran check never matches them, and it adds a row every minute (a server schema bug, not a stopped cron).
+```
+
+Rows record the slot a job ran for: the daily row is noon of its day, the hourly row the start of
+its hour. When the last execution is older than 5 minutes (cron is not ticking) or none is
+recorded, it exits 5 (`partial_failure`) with the summary still on stdout and a hint to check the
+crontab line for `202-cronjobs/index.php`. `--json` returns the summary as one object (`status`,
+`last_execution`, `types`, `warnings`, `notes`, …); `--raw` prints the server's rows as before, and
+with `--json` adds them to that object as `jobs` and `recent_logs`.
 
 ## Output modes
 

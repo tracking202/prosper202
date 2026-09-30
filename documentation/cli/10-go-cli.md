@@ -82,6 +82,7 @@ p202 config show
 | `p202 change list` | Review staged writes awaiting approval |
 | `p202 eval run` | Run behavioral evals against an agent driving this instance |
 | `p202 system health` | Health check, plus a TLS certificate check of an https base URL made first, on its own connection (verified handshake, no HTTP request). Adds `tls_status` (`ok`, `expiring` within `--cert-warn-days` (default 21), `expired`, `hostname_mismatch`, `unknown_authority`, `invalid`, `unreachable`; `not_used` for http), `tls_not_after`, `tls_days_left`, `tls_issuer` and `tls_detail`. Exits 5 with the health object on stdout when `tls_status` is not `ok`/`not_used`; an expired certificate is reported as expired with a `certbot renew` hint, not as the network error the API call then hits |
+| `p202 system cron` | Whether cron is ticking: per `cronjob_type` its row count and last run with age, and the last execution from `202_cronjob_logs` with its age. `hourl`/`secon` are labelled as `hourly`/`second` truncated by the `char(5)` column, with a note when they pile up. Exits 5 with the summary on stdout when the last execution is older than 5 minutes (`stale`) or missing (`never_ran`). `--raw` prints every row as the server returns it (under `--json`, added to the summary as `jobs`/`recent_logs`) |
 
 All entities support standard CRUD operations (`list`, `get`, `create`, `update`, `delete`) where applicable. Five behaviors apply across the board on servers that advertise them in `/capabilities`:
 

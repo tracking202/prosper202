@@ -112,7 +112,7 @@ Without `--json` the same information is two text lines: `Error [category]: mess
 | 2 | auth | Authentication or authorization failure (401/403) | Check the key with `p202 config get` / `p202 config set-key` |
 | 3 | network | Connection timeout, DNS failure, unreachable server | Check the URL; `p202 config test` |
 | 4 | server | API returned a 5xx error | Retry after a wait; `p202 system health` |
-| 5 | partial_failure | Bulk operation completed with some failures, or a check found a problem (`system health`, `rotator check`, `campaign check-urls`) | stderr lists the failed items; a check still prints its rows on stdout |
+| 5 | partial_failure | Bulk operation completed with some failures, or a check found a problem (`system health`, `system cron`, `rotator check`, `campaign check-urls`) | stderr lists the failed items; a check still prints its rows on stdout |
 
 Decision procedure for an agent:
 
@@ -343,6 +343,14 @@ For an https base URL it first checks the host's TLS certificate, on a connectio
 | `unreachable` | The check could not connect or finish the handshake, although the API answered | 5 |
 
 Exit 5 (`partial_failure`) works like `p202 rotator check`: the health object is still on stdout, and the envelope's message and hint name the problem and the fix (`sudo certbot renew` for `expired`). A certificate problem outranks the API failure it causes: with an expired certificate the API call fails on it too, so `data` has `status: "unknown"` and `api_error`, and the exit is still 5 with the renewal hint, not 3 with a generic network error. When only the API call fails, the exit code is the API error's (3 network, 4 server).
+
+### Check that cron is ticking
+
+```bash
+p202 system cron --json
+```
+
+`data` is a summary, not the rows: `status` (`ok`, `stale` when the last execution is older than `stale_after_seconds` = 300, `never_ran` when none is recorded), `last_execution` (RFC 3339), `last_execution_age_seconds`, `total_rows`, `types` (per `cronjob_type`: `label`, `truncated_from`, `rows`, `last_run`, `last_run_age_seconds`), `warnings` and `notes`. `hourl` and `secon` are `hourly` and `second` cut to the column's char(5) (`truncated_from` says which); a note explains the server bug that piles those rows up. It is not a cron failure. `stale` and `never_ran` exit 5 with the summary still on stdout; the hint is the crontab line to check. `--raw` adds the server's `jobs` and `recent_logs` arrays (every row, often thousands) to the same object.
 
 ## Complete command reference
 
@@ -708,7 +716,7 @@ Notes for agents:
 p202 system health     [--cert-warn-days N] [--json]  # No auth required; exits 5 on a TLS certificate problem
 p202 system version    [--json]     # Admin only
 p202 system db-stats   [--json]     # Admin only
-p202 system cron       [--json]     # Admin only
+p202 system cron       [--raw] [--json]  # Admin only; summary per job type, exits 5 when cron is not ticking
 p202 system errors     [--limit N] [--json]  # Admin only
 p202 system dataengine [--json]     # Admin only
 ```

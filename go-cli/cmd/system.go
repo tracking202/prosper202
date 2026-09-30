@@ -66,19 +66,23 @@ var systemDBStatsCmd = &cobra.Command{
 
 var systemCronCmd = &cobra.Command{
 	Use:   "cron",
-	Short: "Show cron job status",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
-		data, err := c.Get("system/cron", nil)
-		if err != nil {
-			return err
-		}
-		render(data)
-		return nil
-	},
+	Short: "Show whether cron is ticking: rows and last run per job type",
+	Long: "Summarizes 202_cronjobs: per cronjob_type, its row count and last run (time\n" +
+		"and age), then the last execution recorded in 202_cronjob_logs with its age.\n" +
+		"Rows record the slot a job ran for: the daily row is noon of its day (so\n" +
+		"before noon it reads as later today), the hourly row the start of its hour.\n\n" +
+		"hourl and secon are 'hourly' and 'second' cut to the column's char(5) and are\n" +
+		"labelled so; when one holds more than 100 rows, a note explains the server bug\n" +
+		"that adds a row every minute.\n\n" +
+		"Like `p202 rotator check`, it exits 5 (partial_failure) when the last\n" +
+		"execution is older than 5 minutes (stale) or none is recorded (never_ran),\n" +
+		"with the summary still printed on stdout.\n\n" +
+		"--raw prints every row as the server returns it; under --json it adds the\n" +
+		"server's jobs and recent_logs arrays to the summary object.",
+	Example: "  p202 system cron\n" +
+		"  p202 system cron --json\n" +
+		"  p202 system cron --raw --json",
+	RunE: runSystemCron,
 }
 
 var systemErrorsCmd = &cobra.Command{
@@ -122,6 +126,7 @@ var systemDataengineCmd = &cobra.Command{
 func init() {
 	systemErrorsCmd.Flags().StringP("limit", "l", "", "Max errors to show")
 	systemHealthCmd.Flags().Int("cert-warn-days", 21, "Report the certificate as expiring when it expires within this many days (0 turns the warning off)")
+	systemCronCmd.Flags().Bool("raw", false, "Print every 202_cronjobs row as the server returns it (with --json: add jobs and recent_logs to the summary)")
 
 	systemCmd.AddCommand(systemHealthCmd, systemVersionCmd, systemDBStatsCmd,
 		systemCronCmd, systemErrorsCmd, systemDataengineCmd)
