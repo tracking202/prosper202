@@ -168,7 +168,8 @@ func init() {
 	evalRunCmd.Flags().Int("timeout", 300, "Per-command timeout in seconds (agent, setup, checks)")
 	evalRunCmd.Flags().String("p202-bin", "", "Real p202 binary the capture shim execs (default: this binary)")
 	evalRunCmd.Flags().String("only", "", "Comma-separated case ids to run")
-	evalRunCmd.Flags().String("priority", "", "Comma-separated priorities to run (critical,high,medium,low)")
+	evalRunCmd.Flags().String("priority", "", "Priorities to run")
+	enumFlag(evalRunCmd, "priority", newEnum(eval.Priorities, enumList(), enumFoldCase()))
 
 	evalCmd.AddCommand(evalRunCmd)
 	rootCmd.AddCommand(evalCmd)

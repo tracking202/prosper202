@@ -26,14 +26,15 @@ var appReportAndroidFlagDefs = []struct {
 	flag  string
 	param string
 	help  string
+	enum  *enumSpec
 }{
-	{"match-state", "match_state", "Android: only installs in this match state (attributed, organic, bad_token, …)"},
-	{"integrity-state", "integrity_state", "Android: only installs whose Play Integrity verdict is in this state"},
-	{"trusted", "trusted", "Android: only this trust class (trusted, refuted, unvouched); goals are then counted over it"},
-	{"test", "test", "Android: 1 = only test installs, 0 = only real ones"},
-	{"aff-campaign-id", "aff_campaign_id", "Android: only installs on this campaign's clicks (`p202 campaign list`)"},
-	{"ctit-flag", "ctit_flag", "Android: only installs whose click-to-install time is short, ok, long or unmeasured"},
-	{"fast-goals", "fast_goals", "Android: 1 = only installs with a goal reached implausibly fast, 0 = only installs without one"},
+	{"match-state", "match_state", "Android: only installs in this match state", appMatchStateEnum},
+	{"integrity-state", "integrity_state", "Android: only installs whose Play Integrity verdict is in this state", appIntegrityStateEnum},
+	{"trusted", "trusted", "Android: only this trust class ({values}); goals are then counted over it", appTrustEnum},
+	{"test", "test", "Android: only test installs (1) or only real ones (0)", newEnum(binaryValues)},
+	{"aff-campaign-id", "aff_campaign_id", "Android: only installs on this campaign's clicks (`p202 campaign list`)", nil},
+	{"ctit-flag", "ctit_flag", "Android: only installs whose click-to-install time is", appCtitFlagEnum},
+	{"fast-goals", "fast_goals", "Android: only installs with a goal reached implausibly fast (1), or only those without one (0)", newEnum(binaryValues)},
 }
 
 // appReportSharedFilters are postback filter flags that both platforms read.
@@ -75,13 +76,25 @@ var appReportCmd = &cobra.Command{
 }
 
 func registerAppReportFlags(cmd *cobra.Command) {
-	cmd.Flags().String("platform", "", "ios (the default), android, or all for both")
-	cmd.Flags().String("group-by", "day", "Group by: day, registration, platform; with --platform ios also ad-network, source, country, version, protocol, conversion-type; with --platform android also campaign, match-state, integrity-state, ctit-flag, goal")
+	cmd.Flags().String("platform", "", "Platform (default ios; all reports both)")
+	enumFlag(cmd, "platform", newEnum([]string{"ios", "android", "all"}, enumFoldCase(),
+		enumHint("Use --platform all to report both platforms; leave it out for iOS.")))
+	cmd.Flags().String("group-by", "day", "Group by ("+strings.Join(appReportIOSGroupings, ", ")+" need --platform ios; "+
+		strings.Join(appReportAndroidGroupings, ", ")+" need --platform android)")
+	enumFlag(cmd, "group-by", newEnum(appReportGroupings()))
 	cmd.Flags().StringP("limit", "l", "", "Max groups per platform (default 100)")
 	registerAppFilterFlags(cmd)
 	for _, def := range appReportAndroidFlagDefs {
 		cmd.Flags().String(def.flag, "", def.help)
+		if def.enum != nil {
+			enumFlag(cmd, def.flag, def.enum)
+		}
 	}
+}
+
+// appReportGroupings is every --group-by value, both platforms'.
+func appReportGroupings() []string {
+	return append(append(append([]string{}, appReportSharedGroupings...), appReportIOSGroupings...), appReportAndroidGroupings...)
 }
 
 // collectAppReportParams validates the report's flags against the platform
@@ -95,15 +108,9 @@ func collectAppReportParams(cmd *cobra.Command) (map[string]string, error) {
 		// installs existed; the answer names its platform either way.
 		platform = "ios"
 	}
-	if platform != "ios" && platform != "android" && platform != "all" {
-		return nil, validationError("--platform must be one of: ios, android, all, got %q", platform).
-			WithHint("Use --platform all to report both platforms; leave it out for iOS.")
-	}
+	// --platform, --group-by and the fixed-set filters were checked against
+	// their lists in PersistentPreRunE (enum_flags.go).
 	groupBy, _ := cmd.Flags().GetString("group-by")
-	all := append(append(append([]string{}, appReportSharedGroupings...), appReportIOSGroupings...), appReportAndroidGroupings...)
-	if groupBy != "" && !containsString(all, groupBy) {
-		return nil, validationError("--group-by must be one of: %s, got %q", strings.Join(all, ", "), groupBy)
-	}
 	if containsString(appReportIOSGroupings, groupBy) && platform != "ios" {
 		return nil, validationError("--group-by %s is a dimension of Apple's postbacks only", groupBy).
 			WithHint("Use --platform ios (or leave --platform out), or group by %s to see both platforms.", strings.Join(appReportSharedGroupings, ", "))
@@ -135,25 +142,6 @@ func collectAppReportParams(cmd *cobra.Command) (map[string]string, error) {
 				WithHint("Use --platform android to report Android alone.")
 		}
 		params[def.param] = v
-	}
-	if v, ok := params["match_state"]; ok && !matchStates[v] {
-		return nil, validationError("--match-state must be one of: attributed, organic, third_party, unavailable, pending_click, bad_token, foreign_click, implausible, outside_window, duplicate_click, pending_integrity, integrity_failed, integrity_unverified; got %q", v)
-	}
-	if v, ok := params["integrity_state"]; ok && !integrityStates[v] {
-		return nil, validationError("--integrity-state must be one of: not_requested, received, missing, pending, valid, invalid, error, skipped; got %q", v)
-	}
-	if v, ok := params["trusted"]; ok && v != "trusted" && v != "refuted" && v != "unvouched" {
-		return nil, validationError("--trusted must be one of: trusted, refuted, unvouched; got %q", v)
-	}
-	if v, ok := params["test"]; ok && v != "0" && v != "1" {
-		return nil, validationError("--test must be 0 or 1, got %q", v)
-	}
-	if v, ok := params["ctit_flag"]; ok && v != "short" && v != "ok" && v != "long" && v != "unmeasured" {
-		return nil, validationError("--ctit-flag must be one of: short, ok, long, unmeasured; got %q", v).
-			WithHint("short and long are below the app's --ctit-min-seconds and above its --ctit-max-seconds (`p202 app get <id>`); unmeasured installs had no click of yours to measure from.")
-	}
-	if v, ok := params["fast_goals"]; ok && v != "0" && v != "1" {
-		return nil, validationError("--fast-goals must be 0 or 1, got %q", v)
 	}
 	if v, ok := params["aff_campaign_id"]; ok && !positiveID.MatchString(v) {
 		return nil, validationError("--aff-campaign-id must be a positive whole number, got %q", v).

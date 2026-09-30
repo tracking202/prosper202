@@ -47,16 +47,60 @@ p202 campaign list
 p202 report summary --period today
 ```
 
+## Finding a command
+
+```bash
+p202 search breakdown by browser   # rank commands for a task (offline)
+p202 commands                      # the whole command tree, indented
+p202 commands --json               # every command and flag, with allowed values
+```
+
+`p202 search <words...>` matches your words against every command's name, aliases,
+description, examples, flags and the values its flags accept. Plural forms and common
+synonyms match (referrer/referer, offer/campaign, dead/broken, undo/revert, link/url),
+and "per"/"by" ask for a breakdown. Each result says why it matched and, when a flag
+value matched, prints a command line to try. When nothing matches well it says so and
+shows only the closest three. `--limit N` sets the number of results (default 10).
+
+`p202 commands [command...]` lists the tree, or one subtree (`p202 commands report`).
+With `--json` each command carries its flags' name, shorthand, type, default, usage,
+`required`, and for fixed-set flags `allowed_values` and `value_aliases`. Global flags
+appear once. `--ndjson` prints one command per line and `--quiet` prints paths only.
+
+Every flag that takes a fixed set of values lists the set in `--help`. A value outside
+the set is refused before any request, with every accepted value in the message.
+
 ## Global flags
 
 | Flag       | Description                              |
 |------------|------------------------------------------|
-| `--json`   | Output raw JSON instead of formatted tables |
+| `--json`   | Output pretty-printed JSON instead of formatted tables |
+| `--ndjson` | Output one compact JSON object per row   |
 | `--csv`    | Output CSV instead of formatted tables   |
+| `-q`, `--quiet` | Print only ids, one per line        |
+| `--table`  | Output tables even when an AI agent would get JSON |
 | `--profile` | Override active profile for this command |
 | `--group`  | Select a profile tag group for multi-profile commands (`report summary`, `dashboard`, `exec`) |
 
-`--json` and `--csv` are mutually exclusive.
+`--json` and `--csv` are mutually exclusive, and so is `--table` with any other format flag.
+
+### Output format when no flag is given
+
+People get tables. When an AI agent runs `p202` (one of `AI_AGENT`, `CLAUDECODE`, `GEMINI_CLI`,
+`CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED`, `CODEX_THREAD_ID` or `CURSOR_AGENT` is set to a
+value other than empty, `0`, `false`, `no` or `off`), every command prints compact single-line JSON
+and errors print as the JSON envelope on stderr. The first of these that applies decides:
+
+1. A format flag (`--json`, `--ndjson`, `--csv`, `-q`, `--table`).
+2. `P202_OUTPUT=json|table|ndjson|csv` in the environment (JSON from here is pretty-printed).
+3. The profile default: `p202 config set-default output.format table`.
+4. An agent marker: compact JSON, unless `--wide`, `--raw-headers` or `--fields` asks for a table shape.
+5. A table.
+
+`p202 config show` prints the format in use and the reason (`Output: table (default)`,
+`output_source: agent:CLAUDECODE`). `--json` output is unchanged by any of this.
+[docs/cli-agent.md](cli-agent.md#output-agents-get-json-without-asking) has the evidence behind
+each marker and the ones deliberately left out.
 
 ## Configuration
 
@@ -96,10 +140,17 @@ Display the current configuration. The API key is masked in output (first 4 + la
 
 ```
 $ p202 config show
-Config file  ~/.p202/config.json
-URL          https://prosper.example.com
-API Key      abc1...xyz9
+Config file: ~/.p202/config.json
+Active:      default
+Profile:     default
+URL:         https://prosper.example.com
+API key:     abc1...xyz9
+Profiles:    default
+Output:      table (default)
 ```
+
+The last line (`output_format` and `output_source` under JSON) says which output format commands
+use and why: `flag`, `P202_OUTPUT`, `config`, `agent:<VARIABLE>` or `default`.
 
 ### `p202 config test`
 
@@ -145,6 +196,7 @@ Supported default keys include:
 - `report.aff_campaign_id`, `report.ppc_account_id`, `report.aff_network_id`, `report.ppc_network_id`, `report.landing_page_id`, `report.country_id`
 - `report.breakdown`, `report.sort`, `report.sort_dir`, `report.limit`, `report.offset`, `report.interval`
 - `crud.aff_campaign_id`, `crud.ppc_account_id`, `crud.aff_network_id`, `crud.ppc_network_id`, `crud.landing_page_id`, `crud.text_ad_id`, `crud.rotator_id`, `crud.country_id`
+- `output.format`: `json`, `table`, `ndjson` or `csv`; the output format when no format flag or `P202_OUTPUT` is given (see [Global flags](#output-format-when-no-flag-is-given))
 
 ### Feature flags
 
@@ -260,6 +312,146 @@ p202 campaign clone 42
 p202 campaign clone 42 --name "Q1 Offer (Copy)"
 ```
 
+Find campaigns by offer URL, and rewrite offer URLs in bulk:
+
+```bash
+# Every campaign with a URL (any of the five slots) containing the text; case-insensitive, all pages
+p202 campaign list --url-contains old-network.com
+
+# Preview: which campaign, slot, old URL and new URL. Writes nothing.
+p202 campaign replace-url --match old-network.com --set 'https://example.com/?utm_source={slug}' --dry-run
+
+# Swap just the matched text, e.g. http -> https for one host
+p202 campaign replace-url --match http://promo.example.com --with https://promo.example.com
+
+# Revert that run: the path is printed after "Undo with:" (preview with --dry-run)
+p202 campaign replace-url --undo ~/.p202/undo/replace-url-20260930T101500Z.json
+```
+
+| Flag | Description |
+|------|-------------|
+| `--match <text>` | Required unless `--undo`. Text the URLs to change contain (case-insensitive) |
+| `--with <text>` | Replace the matched text inside the URL |
+| `--set <url>` | Replace the whole URL; `{id}` and `{slug}` (campaign name, lowercased and hyphenated) are filled per campaign. Must be absolute `http(s)://` |
+| `--slot <1-5\|all>` | URL slots to consider, comma-separated (default `all`; 1 is `aff_campaign_url`) |
+| `--ids <list>` | Only these campaign IDs |
+| `--aff-network-id <id>` | Only campaigns in this affiliate network |
+| `--dry-run` | List the changes without writing |
+| `-f, --force` | Skip the confirmation prompt |
+| `--undo <file>` | Revert a run from its undo manifest (see below); not combinable with `--match`, `--with`, `--set`, `--slot`, `--ids`, `--aff-network-id` |
+
+Pass exactly one of `--with` or `--set`. Without `--dry-run` the change list is printed and
+confirmed first; `--staged` records one proposal per campaign instead of writing. Each campaign
+gets a single `PUT /campaigns/{id}` carrying only its changed slots. The output lists every slot
+with `status` `applied`, `staged` (with `change_id`) or `failed`; any failure exits 5 (partial
+failure). Matching runs in the CLI over every page, so it works with any server version.
+
+**Undo.** Every run that applies at least one change saves an undo manifest to
+`~/.p202/undo/replace-url-<UTC time>.json` (directory `0700`, file `0600`) and prints
+`Undo with: p202 campaign replace-url --undo <file> --profile <name>`; under `--json` the path is
+also `meta.undo_manifest`. The manifest holds only the `applied` slots (staged and failed ones
+changed nothing), with the profile and base URL the writes went to and the original flags:
+
+```json
+{
+  "format": "p202.campaign.replace-url.undo",
+  "version": 1,
+  "created_at": "2026-09-30T10:15:00Z",
+  "profile": "default",
+  "base_url": "https://tracker.example.com",
+  "match": "g2afse.com",
+  "set": "https://example.com/?utm_source={slug}",
+  "changes": [
+    {"aff_campaign_id": "279", "aff_campaign_name": "Darkmoon Realm", "field": "aff_campaign_url",
+     "old_url": "https://aanicca.g2afse.com/click?pid=2753", "new_url": "https://example.com/?utm_source=darkmoon-realm"}
+  ]
+}
+```
+
+`--undo <file>` refuses (exit 1, before any request) a manifest written against a different base
+URL than the active profile's; the hint names the `--profile` to use, or how to add one. It re-reads every campaign
+and restores `old_url` only where the slot still holds the manifest's `new_url`. Slots changed
+since, slots already restored, and campaigns deleted since are left alone and listed with
+`status` `skipped` and the reason in `error`; skipped slots alone do not make the run fail.
+Rows show `old_url` as the current value and `new_url` as the restored one, and `--dry-run`, the
+prompt, `--force`, `--staged` and exit 5 on a failed `PUT` work as in a normal run. An undo that
+applies changes saves its own manifest (with `undo_of`), so it can be undone too.
+
+If the manifest cannot be saved after the writes (for example `~/.p202` is not writable), the
+rows are still printed, the manifest is printed on stderr after `Undo manifest` (save it to a
+file to use with `--undo`), and the command exits 5 (`partial_failure`): the writes happened,
+but their undo record did not.
+
+Find dead offer URLs **without sending a click**. Opening an affiliate link registers one, so by
+default no HTTP request is made:
+
+```bash
+# Every offer URL slot of every campaign
+p202 campaign check-urls
+
+# One network's primary URLs, with more time per host
+p202 campaign check-urls --aff-network-id 32 --slot 1 --timeout 10s --json
+```
+
+| Flag | Description |
+|------|-------------|
+| `--url-contains <text>` | Only URLs containing the text (case-insensitive, per slot) |
+| `--slot <1-5\|all>` | URL slots to check, comma-separated (default `all`) |
+| `--ids <list>` | Only these campaign IDs |
+| `--aff-network-id <id>` | Only campaigns in this affiliate network |
+| `--timeout <duration>` | Time per host for DNS, connect and TLS together, and per `--http` request (default `5s`) |
+| `--http` | Also send one request per URL (see below); asks first |
+| `-f, --force` | Skip the `--http` confirmation |
+
+Each unique host (scheme, host and port) is checked once: a DNS lookup, a TCP connect and, for
+`https`, a TLS handshake with normal certificate verification, after which the connection is
+closed. There is one row per campaign URL slot: `aff_campaign_id`, `aff_campaign_name`, `field`,
+`url`, `host` (`host:port`), `status` and `detail`. `status` is one of:
+
+- `ok`: the detail gives the address reached and, for https, the certificate's expiry date
+- `invalid_url`: does not parse, has no host, is not http/https, or has a click token in the host
+- `dns_failed`: the detail says `no such host` when the domain does not resolve
+- `connect_failed`: e.g. connection refused
+- `timeout`: no answer to the connect or TLS handshake within `--timeout`
+- `tls_failed`: the detail starts with `expired`, `hostname mismatch`, `unknown authority` or
+  `invalid certificate`
+
+Tokens such as `[[subid]]` are fine anywhere except the host. A summary with the count per status
+goes to stderr.
+
+`--http` also sends one `HEAD` per unique URL on a host that passed (a `GET` only if `HEAD` gets
+405), follows no redirects, and adds `http_status` and `location`. A request that fails is
+reported as `http_failed`. Affiliate networks may record each request as a click, so the command
+warns and asks first (`--force` skips the question). Tokens are sent as `p202check`.
+`http_status` is reported but not judged: a 4xx leaves `status` as `ok`.
+
+Like `p202 rotator check`, it exits 5 (`partial_failure`) when any row's `status` is not `ok`, with
+every row still on stdout. Exit 0 means every URL in scope passed.
+
+Put each campaign's recent traffic next to its URLs:
+
+```bash
+# Every campaign on an old network's links, with its last-30-day clicks, conversions and revenue
+p202 campaign list --url-contains old-network.com --with-stats
+
+# Only campaigns that still get traffic in the last 90 days
+p202 campaign list --with-stats --period last90 --min-clicks 1
+```
+
+| Flag | Description |
+|------|-------------|
+| `--with-stats` | Add `total_clicks`, `total_leads`, `total_income`, `total_cost` and `total_net` (Clicks, Conversions, Revenue, Cost, Profit in tables) to every row; a campaign with no traffic in the window gets `0`s |
+| `--period <p>` | Window: `today`, `yesterday`, `last7`, `last30`, `last90` (default `last30`) |
+| `--days <n>` | Window of the last N days instead; `--period` wins when both are given (as in `analytics`) |
+| `--min-clicks <n>` | Only campaigns with at least N clicks in the window; searches every page, so no `--page/--limit/--offset` |
+
+`--with-stats` works with `--url-contains`, `--all`, `--aff_network_id` and plain paging. It reads the
+campaign breakdown once (`GET /reports/breakdown?breakdown=campaign`, paged 500 rows at a time),
+so the API key needs `reports:read` (or `read`) as well as `campaigns:read`; a 403 there says so. The
+stats are not narrowed by `--aff_network_id`: a campaign's clicks count wherever they were recorded.
+The window flags are refused without `--with-stats`. There is no last-click date: no API endpoint
+returns one per campaign without a request per campaign.
+
 ### Affiliate network (`p202 aff-network`)
 
 | Flag | Required | Description |
@@ -310,6 +502,10 @@ p202 tracker list --all --resolve-names
 - `--resolve-names` adds resolved FK labels (for example `campaign_name`) while preserving original ID fields.
 
 ### Landing page (`p202 landing-page`)
+
+`p202 landing-page list --url-contains <text>` returns every landing page whose
+`landing_page_url` or `leave_behind_page_url` contains the text (case-insensitive, all pages;
+not combinable with `--page`/`--limit`/`--offset`).
 
 | Flag | Required | Description |
 |------|----------|-------------|
@@ -429,6 +625,103 @@ p202 conversion create --click_id 12345 --payout 4.50 --transaction_id "TXN-001"
 | `--payout`         | No       | Payout amount            |
 | `--transaction_id` | No       | Transaction ID (dedup)   |
 
+### Import a network's conversions
+
+When a network's postback was never wired up, its conversion report still
+carries the subid your offer URL sent it (`...&subid=[[subid]]`). Export that
+report and import it:
+
+```bash
+p202 conversion import network-feb.csv --dry-run                  # the plan; no request at all
+p202 conversion import network-feb.csv --dry-run --check-clicks   # + which clicks exist / already have it
+p202 conversion import network-feb.csv                            # asks before writing
+p202 conversion import network-feb.csv --force --json             # agents
+p202 conversion import export.csv --subid-column 'Sub ID 2' --time-column 'Sale Date' --timezone America/New_York
+```
+
+The file is a CSV with a header row (comma, semicolon or tab, detected from
+the header line) or a JSON array of objects. The columns are found by their
+header; case, spaces and punctuation are ignored, so `Sub ID` is `sub_id`:
+
+| Column | Headers recognised | Override | If absent |
+|--------|--------------------|----------|-----------|
+| subid (required) | `subid`, `sub_id`, `aff_sub`, `sub1`, `click_id`, `clickid`, `s2` | `--subid-column` | refused |
+| payout | `payout`, `commission`, `amount`, `revenue` | `--payout-column` | the campaign's default payout |
+| transaction id | `transaction_id`, `order_id`, `txid` | `--txid-column` | none |
+| time | `date`, `time`, `conversion_date`, `created_at` | `--time-column` | the server's now |
+
+The chosen columns are printed on stderr (`Columns: subid="Sub ID" (auto), ...`)
+and returned in `meta.columns`. If two headers could be the same column (a
+network's own `click_id` beside `aff_sub`), the command refuses and asks for
+the flag rather than guessing.
+
+How each cell is read:
+
+- **subid**: exactly as the postback (`tracking202/static/gpb.php`) and the
+  subid uploads read it: the click id, digits only, no sign, no leading zero,
+  within bigint (`Prosper202\Click\ClickId::parse`). Surrounding spaces are
+  trimmed, as the uploads do.
+- **payout**: `$`, thousands separators and spaces are dropped, as the revenue
+  upload does; more than five decimals are rounded the way the ledger stores
+  them. A negative payout needs a transaction id: it reverses the sale with that
+  id, as a postback would.
+- **transaction id**: up to 255 bytes.
+- **time**: unix seconds (10 digits) or milliseconds (13), `YYYYMMDD`,
+  `2026-02-03`, `2026-02-03 14:05[:00]` (with or without `T`), or RFC 3339.
+  Times without a zone are read in `--timezone` (default `UTC`; an IANA name
+  or an offset such as `-05:00`). `--time-format` takes any Go layout, e.g.
+  `'01/02/2006 3:04 PM'`. Slash dates are refused without it, because
+  `02/03/2026` could be either month first or day first.
+
+Each row gets a status and, where it is not imported, a `reason`:
+
+| Status | Meaning |
+|--------|---------|
+| `ready` | (dry run) would be sent |
+| `invalid` | a cell could not be read; `reason` names each one |
+| `duplicate_in_file` | an earlier row has the same click and transaction id, or, without a transaction id, the same click. Like the postback, an id-less conversion converts its click once. |
+| `created` | recorded; `conv_id` and `recorded_payout` are the server's |
+| `duplicate` | already on the click (same transaction id, or an id-less row on a click that already converted), or the server matched or replayed an earlier one. Nothing new was recorded. |
+| `click_not_found` | no click with that id in this account |
+| `failed` | `reason` is the server's error, or `not sent: ...` after a lost connection |
+| `staged` | under `--staged`: a proposal; `change_id` is what `p202 change apply` takes |
+
+```text
+$ p202 conversion import network-feb.csv --dry-run
+Columns: subid="Sub ID" (auto), payout="Commission" (auto), transaction id="Order ID" (auto), conversion time="Date" (auto).
+row  subid  click_id  transaction_id  payout   conv_time   status             reason
+---  -----  --------  --------------  -------  ----------  -----------------  ------------------------------------------
+2    12345  12345     A-1001          45.00    1770127500  ready
+3    12346  12346     A-1002          1200.50  1770196350  ready
+4    abc              A-1003          10.00    1770199200  invalid            subid "abc" is not a Prosper202 click id …
+5    12345  12345     A-1001          45.00    1770285600  duplicate_in_file  same subid and transaction id as row 2
+6    12347  12347                              1770375600  ready
+Dry run: 5 row(s): 3 ready, 1 duplicate_in_file, 1 invalid; the ready rows carry 1245.50 in payouts (1 at the campaign's default payout). Clicks were not checked (add --check-clicks) and nothing was written; drop --dry-run to import.
+```
+
+Under `--json` the rows also carry `idempotency_key`, and `meta.summary`
+counts every status and totals `payout_imported` (`ready_payout` in a dry run).
+
+**Re-running is safe.** Without `--dry-run` the command first reads each
+click's conversions (`GET /clicks/{id}/conversions`, once per click). Rows the
+click already has are `duplicate` and are not sent. Every other row is sent as
+`POST /conversions` with an `Idempotency-Key` computed from its click,
+transaction id, payout and time, so the same row always has the same key and
+a retry replays instead of recording again. Rows with a negative payout go
+after the sales, so a newest-first report reverses the right sale. After a
+partial failure (exit 5), fix the cause and run the same command again: only
+the rows not yet recorded are sent. The read needs a server with that endpoint
+(1.9.76 or later); against an older one the command refuses before writing.
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Show the plan; no request unless `--check-clicks` |
+| `--check-clicks` | With `--dry-run`: also read each click's conversions |
+| `--force`, `-f` | Skip the confirmation prompt |
+| `--subid-column`, `--payout-column`, `--txid-column`, `--time-column` | Choose a column by its header |
+| `--time-format` | Go layout of the time column |
+| `--timezone` | Zone of times written without one (default `UTC`) |
+
 ### Compatibility aliases
 
 The CLI accepts the following legacy flags for backward compatibility:
@@ -519,7 +812,7 @@ p202 report breakdown --breakdown country --sort total_net --sort_dir ASC --limi
 | `-l, --limit`      | 50            | Maximum results            |
 | `-o, --offset`     | 0             | Pagination offset          |
 
-**Breakdown dimensions:** campaign, aff_network, ppc_account, ppc_network, landing_page, keyword, country, city, browser, platform, device, isp, text_ad
+**Breakdown dimensions:** campaign, aff_network, ppc_account, ppc_network, landing_page, keyword, country, city, region, browser, platform, device, isp, text_ad (aliases: lp, source, network, offer, geo). The server advertises its own list as `features.report_breakdowns` in `/capabilities`; a value missing from the CLI's list is sent when the server lists it.
 
 **Sort columns:** total_clicks, total_leads, total_income, total_cost, total_net, roi, epc, conv_rate
 
@@ -531,9 +824,46 @@ p202 analytics --group-by campaign --days 14 --sort roi --limit 10
 ```
 
 `analytics` wraps `report breakdown` with friendly aliases:
-- `--group-by lp` maps to `landing_page`
+- `--group-by` takes the breakdown dimensions above; `lp`, `source`, `network`, `offer` and `geo` map to `landing_page`, `ppc_account`, `aff_network`, `campaign` and `country`
 - `--sort conversions` maps to `total_leads`
 - `--period` takes precedence over `--days`
+
+#### Before/after a date (`--split-at`)
+
+```bash
+# Which countries moved after 2026-09-04? (default window: last90)
+p202 analytics --group-by country --split-at 2026-09-04
+
+# Rank by the change in clicks per day, since the two sides differ in length
+p202 analytics --group-by campaign --split-at 2026-09-04 --days 120 --sort clicks_per_day --limit 20 --json
+```
+
+`--split-at` takes a date `YYYY-MM-DD` (read as 00:00 UTC) or unix seconds. It splits the window into
+`[start, split)` and `[split, end]`, reads the breakdown for each side (every page, 500 rows a request,
+so the server's row cap drops nothing) and returns one row per value:
+
+| Columns (for `clicks`, `conversions`, `revenue`) | Meaning |
+|------|-------------|
+| `<m>_before`, `<m>_after` | Totals on each side; a value seen on one side only gets `0` on the other |
+| `<m>_change`, `<m>_change_pct` | `after − before`, and that as a percent of `before` (`null` when `before` is 0) |
+| `<m>_per_day_before`, `<m>_per_day_after` | Each total divided by its side's length in days |
+| `<m>_per_day_change`, `<m>_per_day_change_pct` | The same comparison on the per-day rates |
+
+The sides are rarely the same length, so compare the `_per_day` columns: 6,500 clicks over 63.5 days
+against 2,080 over 26.5 days is −68% in total but −23% per day. The table shows the clicks columns and
+the percent changes; `--json` and `--csv` carry every column, and `--fields` picks any of them.
+
+- **Window**: `--period last7|last30|last90`, `--days N`, or `--time_from <unix>` with an optional
+  `--time_to <unix>` (default now); with none of them, `last90`. `today` and `yesterday` are refused
+  (their bounds follow the server's midnight), and so is `--time_to` alone.
+- **Order**: by the absolute change in clicks, largest first. `--sort clicks|conversions|revenue` ranks
+  by another metric's change, `--sort clicks_per_day` (or `conversions_per_day`, `revenue_per_day`) by
+  the change in its per-day rate; `--sort-dir ASC` reverses; `--limit`/`--offset` apply to the ranked rows.
+- **Summary**: both sides' exact bounds, lengths and totals go to stderr, and under `--json` to `meta`
+  (`split_at`, `window.{source,time_from,time_to}`, `before`/`after` with `time_from`, `time_to`,
+  `seconds`, `days`, `rows` and the totals and per-day rates, `sort`, `rows`, `returned`).
+- The split must fall inside the window with both sides non-empty; that, the window and the sort flags
+  are checked before any request.
 
 ### Timeseries
 
@@ -911,10 +1241,12 @@ Use `--concurrency <n>` to limit parallel profile executions (default: `5`, mini
 ## System
 
 ```bash
-p202 system health       # Health check (unauthenticated)
+p202 system health       # Health check (unauthenticated) and TLS certificate check
+p202 system health --cert-warn-days 30
 p202 system version      # Prosper202 + PHP + MySQL versions
 p202 system db-stats     # Database table sizes
-p202 system cron         # Cron job status
+p202 system cron         # Is cron ticking? Rows and last run per job type
+p202 system cron --raw   # Every 202_cronjobs row, as the server returns them
 p202 system errors       # Recent system errors
 p202 system errors --limit 5
 p202 system dataengine   # Data engine job status
@@ -924,6 +1256,56 @@ p202 system dataengine   # Data engine job status
 |----------------------|---------------|
 | `p202 system health` | No            |
 | All others           | Admin         |
+
+For an https base URL, `system health` checks the host's TLS certificate before it calls the API:
+a verified handshake on its own connection, with no HTTP request. It adds `tls_status`,
+`tls_detail`, `tls_not_after`, `tls_days_left` and `tls_issuer` to the health output.
+`tls_status` is `ok`, `expiring` (expires within `--cert-warn-days`, default 21; 0 turns it off),
+`expired`, `hostname_mismatch`, `unknown_authority`, `invalid` (any other certificate or handshake
+failure) or `unreachable`; an `http://` base URL reports `not_used`.
+
+Like `p202 rotator check`, it exits 5 (`partial_failure`) when `tls_status` is anything but `ok` or
+`not_used`, with the health output still on stdout. An expired certificate is reported as one, with
+the fix, even though the API call behind it then fails on the same certificate:
+
+```
+$ p202 system health
+api_error:      network error (send_request): Get "https://tracker.example.com/api/v3/system/health": tls: failed to verify certificate: x509: certificate has expired or is not yet valid: …
+status:         unknown
+tls_days_left:  -3
+tls_detail:     expired: tls: failed to verify certificate: x509: certificate has expired or is not yet valid: …
+tls_issuer:     CN=R11,O=Let's Encrypt,C=US
+tls_not_after:  2026-09-02T23:59:59Z
+tls_status:     expired
+Error [partial_failure]: the TLS certificate for tracker.example.com:443 expired on 2026-09-02 (3 day(s) ago): browsers refuse every https tracking link on this host
+Hint: Renew the certificate on the server that answers for tracker.example.com (Let's Encrypt: `sudo certbot renew`, then reload nginx or Apache), and find out why auto-renewal stopped with `sudo certbot renew --dry-run`. Re-run `p202 system health` to confirm.
+```
+
+Run it from cron or an uptime monitor to hear about a certificate before it lapses. When only the
+API call fails, the exit code is that error's (3 network, 4 server).
+
+`system cron` summarizes `202_cronjobs` instead of printing every row (an install can hold
+thousands): per job type, its row count and last run with its age, then the last execution
+recorded in `202_cronjob_logs`. `hourl` and `secon` are `hourly` and `second` cut to the column's
+`char(5)`; when one holds more than 100 rows, a note says why they pile up.
+
+```
+$ p202 system cron
+type                       rows  last_run                 age
+-------------------------  ----  -----------------------  ------
+daily                      1     2026-09-29 12:00:00 UTC  30h08m
+hourl (hourly, truncated)  1281  2026-09-30 18:00:00 UTC  8m44s
+secon (second, truncated)  1281  2026-09-30 18:08:25 UTC  19s
+Last cron execution: 2026-09-30 18:08:04 UTC (40s ago); 2563 row(s) in 202_cronjobs.
+Note: 202_cronjobs holds 1281 hourl and 1281 secon rows: cronjob_type is char(5), so 'hourly' and 'second' are stored truncated, the scheduler's already-ran check never matches them, and it adds a row every minute (a server schema bug, not a stopped cron).
+```
+
+Rows record the slot a job ran for: the daily row is noon of its day, the hourly row the start of
+its hour. When the last execution is older than 5 minutes (cron is not ticking) or none is
+recorded, it exits 5 (`partial_failure`) with the summary still on stdout and a hint to check the
+crontab line for `202-cronjobs/index.php`. `--json` returns the summary as one object (`status`,
+`last_execution`, `types`, `warnings`, `notes`, …); `--raw` prints the server's rows as before, and
+with `--json` adds them to that object as `jobs` and `recent_logs`.
 
 ## Output modes
 
@@ -968,7 +1350,7 @@ p202 report daypart --period last30 --csv
 | 2    | auth     | Authentication or authorization failure |
 | 3    | network  | Connection timeout, DNS failure, unreachable server |
 | 4    | server   | API returned a 5xx error |
-| 5    | partial_failure | Bulk operation completed with some failures |
+| 5    | partial_failure | Bulk operation completed with some failures, or a check found a problem (its rows stay on stdout) |
 
 Errors go to stderr; stdout stays empty on failure. In human mode:
 

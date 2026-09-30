@@ -44,32 +44,43 @@ var appFilterFlagDefs = []struct {
 	flag  string
 	param string
 	help  string
+	enum  *enumSpec // the values the flag takes (AppPostbacksController::buildFilters); nil: not a fixed set
 }{
-	{"time-from", "time_from", "Received-at range start (unix timestamp)"},
-	{"time-to", "time_to", "Received-at range end (unix timestamp)"},
-	{"registration-id", "registration_id", "Filter by registration (from `p202 app list`)"},
-	{"registration-ids", "registration_ids", "Filter by several registrations, comma-separated"},
-	{"protocol", "protocol", "Filter by protocol: skadnetwork (skan) or adattributionkit (aak)"},
-	{"conversion-type", "conversion_type", "Filter: download, redownload, re-engagement"},
-	{"ad-interaction-type", "ad_interaction_type", "Filter: view (view-through) or click"},
-	{"app-id", "app_id", "Filter by the App Store id the postback itself named (forensic; prefer --registration-id)"},
-	{"ad-network-id", "ad_network_id", "Filter by ad network id"},
-	{"version", "version", "Filter by SKAN postback version (e.g. 4.0)"},
-	{"transaction-id", "transaction_id", "Filter by Apple transaction id"},
-	{"country-code", "country_code", "Filter by install country code"},
-	{"source-identifier", "source_identifier", "Filter by SKAN 4 source identifier"},
-	{"campaign-id", "campaign_id", "Filter by SKAN 2/3 campaign id"},
-	{"fidelity-type", "fidelity_type", "Filter: 1=click-through, 0=view-through (both protocols; prefer --ad-interaction-type)"},
-	{"postback-sequence-index", "postback_sequence_index", "Filter by conversion window (0, 1, or 2)"},
-	{"did-win", "did_win", "Filter: 1=winning postbacks, 0=losing"},
-	{"redownload", "redownload", "Filter: 1=redownloads, 0=first installs (both protocols; prefer --conversion-type)"},
-	{"coarse-conversion-value", "coarse_conversion_value", "Filter by coarse value (low, medium, high)"},
-	{"signature", "signature", "Filter by verification state: valid, invalid, unverifiable, development"},
+	{"time-from", "time_from", "Received-at range start (unix timestamp)", nil},
+	{"time-to", "time_to", "Received-at range end (unix timestamp)", nil},
+	{"registration-id", "registration_id", "Filter by registration (from `p202 app list`)", nil},
+	{"registration-ids", "registration_ids", "Filter by several registrations, comma-separated", nil},
+	{"protocol", "protocol", "Filter by protocol", newEnum([]string{"skadnetwork", "adattributionkit"}, enumAliases(map[string]string{"skan": "skadnetwork", "aak": "adattributionkit"}), enumFoldCase())},
+	{"conversion-type", "conversion_type", "Filter by conversion type", newEnum([]string{"download", "redownload", "re-engagement"}, enumFoldCase())},
+	{"ad-interaction-type", "ad_interaction_type", "Filter: view (view-through) or click", newEnum([]string{"view", "click"}, enumFoldCase())},
+	{"app-id", "app_id", "Filter by the App Store id the postback itself named (forensic; prefer --registration-id)", nil},
+	{"ad-network-id", "ad_network_id", "Filter by ad network id", nil},
+	{"version", "version", "Filter by SKAN postback version (e.g. 4.0)", nil},
+	{"transaction-id", "transaction_id", "Filter by Apple transaction id", nil},
+	{"country-code", "country_code", "Filter by install country code", nil},
+	{"source-identifier", "source_identifier", "Filter by SKAN 4 source identifier", nil},
+	{"campaign-id", "campaign_id", "Filter by SKAN 2/3 campaign id", nil},
+	{"fidelity-type", "fidelity_type", "Filter: 1=click-through, 0=view-through (both protocols; prefer --ad-interaction-type)", newEnum(binaryValues)},
+	{"postback-sequence-index", "postback_sequence_index", "Filter by conversion window", newEnum([]string{"0", "1", "2"})},
+	{"did-win", "did_win", "Filter: 1=winning postbacks, 0=losing", newEnum(binaryValues, appBooleanAliases, enumFoldCase())},
+	{"redownload", "redownload", "Filter: 1=redownloads, 0=first installs (both protocols; prefer --conversion-type)", newEnum(binaryValues, appBooleanAliases, enumFoldCase())},
+	{"coarse-conversion-value", "coarse_conversion_value", "Filter by coarse value", newEnum(skanCoarseValues)},
+	{"signature", "signature", "Filter by verification state", newEnum([]string{"valid", "invalid", "unverifiable", "development"}, enumFoldCase())},
 }
+
+// appBooleanAliases are the spellings besides 1/0 a boolean postback filter
+// takes (the server reads it with FILTER_VALIDATE_BOOLEAN).
+var appBooleanAliases = enumAliases(map[string]string{"true": "1", "false": "0"})
+
+// skanCoarseValues are SKAdNetwork's coarse conversion values.
+var skanCoarseValues = []string{"low", "medium", "high"}
 
 func registerAppFilterFlags(cmd *cobra.Command) {
 	for _, def := range appFilterFlagDefs {
 		cmd.Flags().String(def.flag, "", def.help)
+		if def.enum != nil {
+			enumFlag(cmd, def.flag, def.enum)
+		}
 	}
 }
 
@@ -122,29 +133,23 @@ var appLimitRanges = []struct {
 	{"fast_goal_seconds", "fast-goal-seconds", 0, 3600, "A goal reached sooner than this after its install is flagged; 0 flags none. The default is 5."},
 }
 
-// integrityModes are the Play Integrity modes a registration takes.
-var integrityModes = map[string]bool{"off": true, "observe": true, "require": true}
+// The fixed-set registration flags, with the recovery step for each.
+var (
+	appAcceptTestSignalsEnum  = newEnum(binaryValues, enumHint("1 trusts test signals for this app (AdAttributionKit development-signed postbacks; Android test installs) — integration testing only; 0 stores them flagged and uncounted."))
+	appTrustClientRevenueEnum = newEnum(binaryValues, enumHint("1 lets a revenue value the app reports be paid by a goal valued from the event's revenue; the app token is public, so 0 (store and report it, never credit it) is the default."))
+	appIntegrityModeEnum      = newEnum([]string{"off", "observe", "require"}, enumHint("observe records each install's Play Integrity verdict; require attributes and pays only installs whose verdict passes. Both need `p202 app integrity credential set <id> --file key.json` first, and --integrity-cloud-project-number (in the same command, or already set)."))
+	appFastGoalPolicyEnum     = newEnum([]string{"count", "hold"}, enumHint("count pays a goal reached too fast and flags it in the report (the default); hold records and flags it and never pays or notifies it."))
+	appPlatforms              = []string{"ios", "android"}
+)
 
 // validateAppRegistrationBody refuses the flag values the server would
 // reject, so the error names the flag rather than a JSON field.
 func validateAppRegistrationBody(body map[string]string) error {
-	if v, ok := body["accept_test_signals"]; ok && v != "0" && v != "1" {
-		return validationError("--accept-test-signals must be 0 or 1, got %q", v).
-			WithHint("1 trusts test signals for this app (AdAttributionKit development-signed postbacks; Android test installs) — integration testing only; 0 stores them flagged and uncounted.")
-	}
 	if v, ok := body["attribution_window_days"]; ok {
 		if n, err := strconv.Atoi(v); err != nil || n < 1 || n > 365 || strconv.Itoa(n) != v {
 			return validationError("--attribution-window-days must be a whole number of days from 1 to 365, got %q", v).
 				WithHint("It is how long after its click an Android install may begin and still be attributed; the default is 7.")
 		}
-	}
-	if v, ok := body["trust_client_revenue"]; ok && v != "0" && v != "1" {
-		return validationError("--trust-client-revenue must be 0 or 1, got %q", v).
-			WithHint("1 lets a revenue value the app reports be paid by a goal valued from the event's revenue; the app token is public, so 0 (store and report it, never credit it) is the default.")
-	}
-	if v, ok := body["integrity_mode"]; ok && !integrityModes[v] {
-		return validationError("--integrity-mode must be one of: off, observe, require, got %q", v).
-			WithHint("observe records each install's Play Integrity verdict; require attributes and pays only installs whose verdict passes. Both need `p202 app integrity credential set <id> --file key.json` first, and --integrity-cloud-project-number (in the same command, or already set).")
 	}
 	if v, ok := body["integrity_cloud_project_number"]; ok && !positiveID.MatchString(v) {
 		return validationError("--integrity-cloud-project-number must be the Google Cloud project NUMBER (digits), got %q", v).
@@ -159,14 +164,9 @@ func validateAppRegistrationBody(body map[string]string) error {
 			return validationError("--%s must be a whole number from %d to %d, got %q", r.flag, r.min, r.max, v).WithHint(r.hint)
 		}
 	}
-	if v, ok := body["fast_goal_policy"]; ok && v != "count" && v != "hold" {
-		return validationError("--fast-goal-policy must be one of: count, hold, got %q", v).
-			WithHint("count pays a goal reached too fast and flags it in the report (the default); hold records and flags it and never pays or notifies it.")
-	}
-	if v, ok := body["platform"]; ok && v != "ios" && v != "android" {
-		return validationError("--platform must be one of: ios, android, got %q", v).
-			WithHint("Leave --platform out to let the server read it from --app-key or --store-link.")
-	}
+	// accept-test-signals, trust-client-revenue, integrity-mode,
+	// fast-goal-policy and platform were checked against their lists in
+	// PersistentPreRunE (enum_flags.go).
 	return nil
 }
 
@@ -328,9 +328,6 @@ var appListCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		params := map[string]string{}
 		if platform, _ := cmd.Flags().GetString("platform"); platform != "" {
-			if platform != "ios" && platform != "android" {
-				return validationError("--platform must be one of: ios, android, got %q", platform)
-			}
 			params["filter[platform]"] = platform
 		}
 		return runPagedList(cmd, "apps", params)
@@ -714,26 +711,32 @@ var appEncodingDeleteCmd = &cobra.Command{
 
 func init() {
 	registerPagedListFlags(appListCmd)
-	appListCmd.Flags().String("platform", "", "Only this platform: ios or android")
+	appListCmd.Flags().String("platform", "", "Only this platform")
+	enumFlag(appListCmd, "platform", newEnum(appPlatforms))
 	// Which app a registration is can only be said at create: the server
 	// refuses a different app on update, so update does not offer the flags.
 	appCreateCmd.Flags().String("store-link", "", "App Store or Google Play link, market:// link, App Store id or package name")
-	appCreateCmd.Flags().String("platform", "", "ios or android (default: read from --app-key or --store-link)")
+	appCreateCmd.Flags().String("platform", "", "Platform (default: read from --app-key or --store-link)")
+	enumFlag(appCreateCmd, "platform", newEnum(appPlatforms, enumHint("Leave --platform out to let the server read it from --app-key or --store-link.")))
 	appCreateCmd.Flags().String("app-key", "", "The App Store id (iOS) or the package name (Android)")
 	for _, cmd := range []*cobra.Command{appCreateCmd, appUpdateCmd} {
 		cmd.Flags().String("app-name", "", "Display name for reports")
 		cmd.Flags().String("notes", "", "Free-form notes")
 		cmd.Flags().String("accept-test-signals", "", "1 = trust test signals for this app (AdAttributionKit development-signed postbacks, Android test installs; integration testing), 0 = store them flagged (default)")
+		enumFlag(cmd, "accept-test-signals", appAcceptTestSignalsEnum)
 		cmd.Flags().String("attribution-window-days", "", "Android: days after its click an install may begin and still be attributed (1-365, default 7)")
 		cmd.Flags().String("trust-client-revenue", "", "Android: 1 = revenue the app reports may be paid by a goal valued from it; 0 = stored, never credited (default)")
-		cmd.Flags().String("integrity-mode", "", "Android: Play Integrity off (default), observe (record verdicts) or require (attribute only a passing verdict); needs `app integrity credential set` first and --integrity-cloud-project-number")
+		enumFlag(cmd, "trust-client-revenue", appTrustClientRevenueEnum)
+		cmd.Flags().String("integrity-mode", "", "Android: Play Integrity mode, one of {values}: off (default), observe (record verdicts) or require (attribute only a passing verdict); needs `app integrity credential set` first and --integrity-cloud-project-number")
+		enumFlag(cmd, "integrity-mode", appIntegrityModeEnum)
 		cmd.Flags().String("integrity-cloud-project-number", "", "Android: the Google Cloud project NUMBER the SDK requests integrity tokens for (required for observe/require; can be replaced, not cleared)")
 		cmd.Flags().String("ctit-min-seconds", "", "Android: flag an install that began sooner than this after its click (0-3600, default 10)")
 		cmd.Flags().String("ctit-max-seconds", "", "Android: flag an install that began later than this after its click (60-31536000, default 86400)")
 		cmd.Flags().String("install-cap-per-minute", "", "Android: installs the app may report a minute; past it 429 (1-60000, default 300)")
 		cmd.Flags().String("event-cap-per-minute", "", "Android: events one install may post a minute; past it 429 (100-60000, default 200)")
 		cmd.Flags().String("fast-goal-seconds", "", "Android: flag a goal reached sooner than this after its install (0-3600, default 5; 0 flags none)")
-		cmd.Flags().String("fast-goal-policy", "", "Android: count (pay a fast goal and flag it, default) or hold (flag it, never pay)")
+		cmd.Flags().String("fast-goal-policy", "", "Android: what a fast goal does, one of {values}: count (pay it and flag it, default) or hold (flag it, never pay)")
+		enumFlag(cmd, "fast-goal-policy", appFastGoalPolicyEnum)
 	}
 	// Update sends exactly the flags given, an empty one included (clearing
 	// the notes): a deliberate write, not a missing value (collectAppBody).
@@ -753,7 +756,8 @@ func init() {
 	for _, cmd := range []*cobra.Command{appEncodingCreateCmd, appEncodingUpdateCmd} {
 		cmd.Flags().String("registration-id", "", "iOS registration the encoding applies to (from `p202 app list`; 0 = account-wide)")
 		cmd.Flags().String("fine-value", "", "Fine conversion value 0-63")
-		cmd.Flags().String("coarse-value", "", "Coarse conversion value: low, medium, high")
+		cmd.Flags().String("coarse-value", "", "Coarse conversion value")
+		enumFlag(cmd, "coarse-value", newEnum(skanCoarseValues))
 		cmd.Flags().String("goal-id", "", "The goal the value means (`p202 goal list --registration-id <id>`; evaluated on the device, so no click window)")
 		cmd.Flags().String("revenue-override", "", "Revenue per decoded postback, instead of the goal's own value (tiered decoding)")
 	}

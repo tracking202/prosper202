@@ -443,6 +443,8 @@ func executeShellCommand(line string) ([]byte, error) {
 	// whole tree to defaults, then re-apply the session's persistent flags.
 	savedJSON := jsonOutput
 	savedCSV := csvOutput
+	savedTable := tableOutput
+	savedCompact, savedSource, savedImplicit := compactJSON, outputSource, outputImplicit
 	savedProfile := profileName
 	savedGroup := groupName
 	// --staged is a safety promise, not a display preference: losing it in
@@ -453,8 +455,13 @@ func executeShellCommand(line string) ([]byte, error) {
 	sessionOverride := configpkg.GetActiveOverride()
 
 	resetAllFlags(rootCmd)
-	jsonOutput = savedJSON
-	csvOutput = savedCSV
+	// A format the session did not ask for by flag (agent, P202_OUTPUT,
+	// config) is derived again per command, so that command's --table wins.
+	if !savedImplicit {
+		jsonOutput = savedJSON
+		csvOutput = savedCSV
+		tableOutput = savedTable
+	}
 	profileName = savedProfile
 	groupName = savedGroup
 	stagedWrites = savedStaged
@@ -475,6 +482,8 @@ func executeShellCommand(line string) ([]byte, error) {
 	// Restore session-level state the command's own flags may have modified.
 	jsonOutput = savedJSON
 	csvOutput = savedCSV
+	tableOutput = savedTable
+	compactJSON, outputSource, outputImplicit = savedCompact, savedSource, savedImplicit
 	profileName = savedProfile
 	groupName = savedGroup
 	stagedWrites = savedStaged

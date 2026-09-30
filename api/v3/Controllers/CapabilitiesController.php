@@ -130,6 +130,9 @@ class CapabilitiesController
                     // and goal and returns every row's provenance. `sources`
                     // is what the source filter accepts; `not_counted` the
                     // reasons a row can be left out of its click's value.
+                    // The dimensions GET /reports/breakdown takes as
+                    // `breakdown`, read from ReportsController itself.
+                    'report_breakdowns' => ReportsController::breakdownDimensions(),
                     'conversion_ledger' => [
                         'sources' => array_map(static fn (\Prosper202\Conversion\Ledger\ConversionSource $s): string => $s->value, \Prosper202\Conversion\Ledger\ConversionSource::cases()),
                         'not_counted' => array_map(static fn (\Prosper202\Conversion\Ledger\NotCountedReason $r): string => $r->value, \Prosper202\Conversion\Ledger\NotCountedReason::cases()),

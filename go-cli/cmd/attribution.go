@@ -28,6 +28,9 @@ var attributionDimensions = []string{"campaign", "traffic_source", "landing_page
 
 var attributionPeriods = []string{"today", "yesterday", "last7", "last30", "last90"}
 
+// attributionModelStatuses are Prosper202\Attribution\Model's statuses.
+var attributionModelStatuses = []string{"active", "inactive"}
+
 var positiveIntPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
 var unixTimePattern = regexp.MustCompile(`^[0-9]{1,10}$`)
 
@@ -53,9 +56,6 @@ var attrModelListCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		params := map[string]string{}
 		if v, _ := cmd.Flags().GetString("type"); v != "" {
-			if !containsString(attributionModelTypes, v) {
-				return validationError("invalid --type %q; valid: %s", v, strings.Join(attributionModelTypes, ", "))
-			}
 			params["type"] = v
 		}
 		c, err := api.NewFromConfig()
@@ -103,9 +103,6 @@ func attributionModelBody(cmd *cobra.Command) (map[string]interface{}, error) {
 		body["model_name"] = v
 	}
 	if v, _ := cmd.Flags().GetString("model-type"); v != "" {
-		if !containsString(attributionModelTypes, v) {
-			return nil, validationError("invalid --model-type %q; valid: %s", v, strings.Join(attributionModelTypes, ", "))
-		}
 		body["model_type"] = v
 	}
 	if v, _ := cmd.Flags().GetString("weighting-config"); v != "" {
@@ -124,9 +121,6 @@ func attributionModelBody(cmd *cobra.Command) (map[string]interface{}, error) {
 		body["lookback_days"] = n
 	}
 	if v, _ := cmd.Flags().GetString("status"); v != "" {
-		if v != "active" && v != "inactive" {
-			return nil, validationError("invalid --status %q; valid: active, inactive", v)
-		}
 		body["status"] = v
 	}
 	if on, _ := cmd.Flags().GetBool("default"); on {
@@ -218,9 +212,6 @@ func attributionRangeParams(cmd *cobra.Command, params map[string]string) error 
 			WithHint("Use --period last30, or an explicit --time-from/--time-to range in unix seconds.")
 	}
 	if period != "" {
-		if !containsString(attributionPeriods, period) {
-			return validationError("invalid --period %q; valid: %s", period, strings.Join(attributionPeriods, ", "))
-		}
 		params["period"] = period
 	}
 	for name, v := range map[string]string{"time-from": from, "time-to": to} {
@@ -236,7 +227,8 @@ func attributionRangeParams(cmd *cobra.Command, params map[string]string) error 
 }
 
 func registerAttributionRangeFlags(cmd *cobra.Command) {
-	cmd.Flags().String("period", "", "Range: "+strings.Join(attributionPeriods, ", ")+" (default: the last 30 days)")
+	cmd.Flags().String("period", "", "Range (default: the last 30 days): {values}")
+	enumFlag(cmd, "period", newEnum(attributionPeriods))
 	cmd.Flags().String("time-from", "", "Range start, unix seconds")
 	cmd.Flags().String("time-to", "", "Range end, unix seconds")
 }
@@ -253,9 +245,6 @@ when that model is active, otherwise the account default.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		params := map[string]string{}
 		groupBy, _ := cmd.Flags().GetString("group-by")
-		if !containsString(attributionDimensions, groupBy) {
-			return validationError("invalid --group-by %q; valid: %s", groupBy, strings.Join(attributionDimensions, ", "))
-		}
 		params["group_by"] = groupBy
 		for flag, param := range map[string]string{"model": "model_id", "compare-model": "compare_model_id", "limit": "limit"} {
 			v, _ := cmd.Flags().GetString(flag)
@@ -376,27 +365,32 @@ func asAPIError(err error, target **api.APIError) bool {
 }
 
 func init() {
-	modelTypes := strings.Join(attributionModelTypes, ", ")
 
-	attrModelListCmd.Flags().StringP("type", "t", "", "Filter by type: "+modelTypes)
+	attrModelListCmd.Flags().StringP("type", "t", "", "Filter by type")
+	enumFlag(attrModelListCmd, "type", newEnum(attributionModelTypes))
 
 	for _, c := range []*cobra.Command{attrModelCreateCmd, attrModelUpdateCmd} {
 		c.Flags().String("model-name", "", "Model name")
-		c.Flags().String("model-type", "", "Type: "+modelTypes)
+		c.Flags().String("model-type", "", "Type")
 		c.Flags().String("weighting-config", "", `Weighting config JSON object: time_decay {"half_life_hours":48}, position_based {"first_weight":0.4,"last_weight":0.4}`)
 		c.Flags().Int("lookback-days", 30, "Days before a conversion whose clicks can earn credit, 1-365")
-		c.Flags().String("status", "", "active or inactive")
+		c.Flags().String("status", "", "Status")
 		c.Flags().Bool("default", false, "Make this the account default model")
 	}
 	attrModelCreateCmd.Flags().Lookup("model-name").Usage = "Model name (required)"
-	attrModelCreateCmd.Flags().Lookup("model-type").Usage = "Type (required): " + modelTypes
+	attrModelCreateCmd.Flags().Lookup("model-type").Usage = "Type (required)"
+	for _, c := range []*cobra.Command{attrModelCreateCmd, attrModelUpdateCmd} {
+		enumFlag(c, "model-type", newEnum(attributionModelTypes))
+		enumFlag(c, "status", newEnum(attributionModelStatuses))
+	}
 
 	registerDeleteFlags(attrModelDeleteCmd, "model")
 	registerIdempotencyKeyFlag(attrModelCreateCmd)
 
 	attrModelCmd.AddCommand(attrModelListCmd, attrModelGetCmd, attrModelCreateCmd, attrModelUpdateCmd, attrModelDeleteCmd)
 
-	attrBreakdownCmd.Flags().String("group-by", "campaign", "Dimension: "+strings.Join(attributionDimensions, ", "))
+	attrBreakdownCmd.Flags().String("group-by", "campaign", "Dimension")
+	enumFlag(attrBreakdownCmd, "group-by", newEnum(attributionDimensions))
 	attrBreakdownCmd.Flags().String("model", "", "Model id (default: each campaign's override, else the account default)")
 	attrBreakdownCmd.Flags().String("compare-model", "", "A second model id, side by side")
 	attrBreakdownCmd.Flags().String("limit", "", "Rows, 1-1000 (default 100)")

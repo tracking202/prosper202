@@ -11,6 +11,9 @@
 // wires in.
 package eval
 
+// Priorities are the values a case's priority takes, most urgent first.
+var Priorities = []string{"critical", "high", "medium", "low"}
+
 // Case is one behavioral snapshot eval, matching the shape documented in
 // .claude/skills/p202-agent-evals/SKILL.md.
 type Case struct {
