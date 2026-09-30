@@ -773,7 +773,11 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 		},
 	}
 	for _, f := range entity.Fields {
-		createCmd.Flags().String(f.Name, "", f.Desc)
+		desc := f.Desc
+		if f.Required {
+			desc += " (required)"
+		}
+		createCmd.Flags().String(f.Name, "", desc)
 		if f.Enum != nil {
 			enumFlag(createCmd, f.Name, newEnum(f.Enum))
 		}
