@@ -244,6 +244,41 @@ body) instead of creating a duplicate. Requires
 ignore the header and create normally, so retries there can still
 duplicate.
 
+### Import conversions a network reported but never posted back
+
+```bash
+# 1. The plan, offline: which column is which, and every row's status.
+p202 conversion import network-feb.csv --dry-run --json
+# => {"data":[{"row":2,"subid":"12345","click_id":12345,"transaction_id":"A-1001",
+#              "payout":"45.00","conv_time":1770127500,"status":"ready",
+#              "idempotency_key":"conv-import-v1-..."}, ...],
+#     "meta":{"format":"csv","columns":{"subid":"Sub ID","payout":"Commission",
+#             "transaction_id":"Order ID","conv_time":"Date"},"dry_run":true,
+#             "summary":{"rows":5,"ready":3,"invalid":1,"duplicate_in_file":1,...}}}
+
+# 2. The same, checked against the server (read-only): click_not_found and duplicate rows.
+p202 conversion import network-feb.csv --dry-run --check-clicks --json
+
+# 3. Record them. Re-running this exact command is the retry.
+p202 conversion import network-feb.csv --force --json
+```
+
+Read `meta.columns` before step 3. The subid column must hold the Prosper202
+click id (what the offer URL sent as `[[subid]]`), not the network's own click
+id. When both look plausible the command refuses with exit 1 and a hint naming
+`--subid-column`. Every `invalid` row names its reason. A payout column that
+is absent means the campaign's default payout, and an absent time column means
+the server's now. Pass `--timezone` when the network writes local times.
+
+Statuses after step 3: `created`, `duplicate` (already on the click; not sent
+or not re-recorded), `click_not_found`, `failed` (with the server's message),
+`staged` (under `--staged`), plus `invalid` and `duplicate_in_file` from the
+plan. Any `failed` row means exit 5 with every row still in `data`. Fix the
+cause and run the same command again: rows already recorded come back
+`duplicate`, so only the failures are sent. Exit 2/3 during the read means
+nothing was written. A server without `GET /clicks/{id}/conversions` (older
+than 1.9.76) is refused before any write.
+
 ### Mint a least-privilege API key for an agent
 
 ```bash
@@ -516,6 +551,9 @@ p202 conversion list   [--limit 50] [--offset 0] [--campaign_id N] [--all]
                        [--goal N] [--json]
 p202 conversion get    <id> [--json]
 p202 conversion create --click_id N [--payout F] [--transaction_id S] [--idempotency-key S] [--json]
+p202 conversion import <file.csv|file.json> [--dry-run [--check-clicks]] [--force]
+                       [--subid-column H] [--payout-column H] [--txid-column H] [--time-column H]
+                       [--time-format LAYOUT] [--timezone TZ] [--json]
 p202 conversion delete <id> [--force] [--dry-run] [--json]
 p202 conversion delete --ids N1,N2,... [--force] [--dry-run] [--json]
 ```
@@ -789,6 +827,7 @@ Rules:
 | list / get | Yes | None (read-only) |
 | create | With `--idempotency-key` | Without a key, creates a new resource each call |
 | delete --dry-run | Yes | None (read-only preview) |
+| conversion import | Yes (same file) | Records each row not already on its click; rows already recorded come back `duplicate` (each row has a fixed `Idempotency-Key` and the clicks are read first) |
 | any write --staged | No (each staging records a new proposal) | Records a staged change; nothing changes until `change apply` |
 | change apply | No | First call performs the write; a second gets 409 |
 | update | Yes | Same input produces same state |

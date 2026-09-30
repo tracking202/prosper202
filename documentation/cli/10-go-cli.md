@@ -58,6 +58,7 @@ p202 config show
 | `p202 click list` | List clicks |
 | `p202 click conversions <id>` | Explain a click's value: every conversion on it, whether it counts and why not, what produced it (goal and version, upload, reversal, API key), ending with the click's value; `--json` is `GET /clicks/{id}/conversions` unchanged |
 | `p202 conversion list` | List conversions, with their provenance (`--click_id`, `--source`, `--goal` filter by click, by what produced them and by goal) |
+| `p202 conversion import <file>` | Record a network's conversion export (CSV with a header row, or a JSON array of objects) against the clicks its subids name, for installs whose postbacks were never wired. Columns are auto-detected from common headers (subid: `subid`, `sub_id`, `aff_sub`, `sub1`, `click_id`, `clickid`, `s2`; payout: `payout`, `commission`, `amount`, `revenue`; transaction id: `transaction_id`, `order_id`, `txid`; time: `date`, `time`, `conversion_date`, `created_at`) and reported on stderr and in `meta.columns`; two candidate headers for one column are refused, and `--subid-column`/`--payout-column`/`--txid-column`/`--time-column` choose. The subid is read as the postback reads it (the click id: digits, no leading zero); rows are `invalid` (with the reason), `duplicate_in_file`, or ready. `--dry-run` sends nothing (`--check-clicks` adds one read-only `GET /clicks/{id}/conversions` per click). Otherwise the clicks are read first, you confirm (`--force` skips; `--staged` records proposals), and each ready row is `POST /conversions` with an `Idempotency-Key` derived from its click, transaction id, payout and time. Rows end `created`, `duplicate` (already on the click), `click_not_found`, `failed` or `staged`; re-running the same file sends only what is not recorded yet; exit 5 if any row failed |
 | `p202 rotator list` | List rotators |
 | `p202 report summary` | Performance summary |
 | `p202 report breakdown` | Performance by dimension |
@@ -241,7 +242,20 @@ Key behaviors, each detailed in the guide:
 ```bash
 p202 campaign delete --ids 1,2,3 --force
 p202 conversion delete --ids 789,790,791 --force
+p202 conversion import network-feb.csv --dry-run --check-clicks
+p202 conversion import network-feb.csv --force
 ```
+
+`conversion import` is safe to re-run. Before writing, it reads each click's
+conversions: a row whose transaction id is already on the click, or an
+id-less row whose click already converted (the postback converts a click once
+without an id), is `duplicate` and is not sent. The rest carry a fixed
+`Idempotency-Key` each, so a retry within the server's 24-hour idempotency
+window replays instead of recording again. Negative rows (reversals) are sent
+after the sales, so a newest-first report still reverses the right sale. A
+refused key or a lost connection while reading stops the command with its own
+exit code (2 or 3) before anything is written; during the writes it stops
+sending, marks the unsent rows `failed`, and exits 5 with a hint to re-run.
 
 ## Config Defaults
 

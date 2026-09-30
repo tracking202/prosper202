@@ -573,6 +573,103 @@ p202 conversion create --click_id 12345 --payout 4.50 --transaction_id "TXN-001"
 | `--payout`         | No       | Payout amount            |
 | `--transaction_id` | No       | Transaction ID (dedup)   |
 
+### Import a network's conversions
+
+When a network's postback was never wired up, its conversion report still
+carries the subid your offer URL sent it (`...&subid=[[subid]]`). Export that
+report and import it:
+
+```bash
+p202 conversion import network-feb.csv --dry-run                  # the plan; no request at all
+p202 conversion import network-feb.csv --dry-run --check-clicks   # + which clicks exist / already have it
+p202 conversion import network-feb.csv                            # asks before writing
+p202 conversion import network-feb.csv --force --json             # agents
+p202 conversion import export.csv --subid-column 'Sub ID 2' --time-column 'Sale Date' --timezone America/New_York
+```
+
+The file is a CSV with a header row (comma, semicolon or tab, detected from
+the header line) or a JSON array of objects. The columns are found by their
+header; case, spaces and punctuation are ignored, so `Sub ID` is `sub_id`:
+
+| Column | Headers recognised | Override | If absent |
+|--------|--------------------|----------|-----------|
+| subid (required) | `subid`, `sub_id`, `aff_sub`, `sub1`, `click_id`, `clickid`, `s2` | `--subid-column` | refused |
+| payout | `payout`, `commission`, `amount`, `revenue` | `--payout-column` | the campaign's default payout |
+| transaction id | `transaction_id`, `order_id`, `txid` | `--txid-column` | none |
+| time | `date`, `time`, `conversion_date`, `created_at` | `--time-column` | the server's now |
+
+The chosen columns are printed on stderr (`Columns: subid="Sub ID" (auto), ...`)
+and returned in `meta.columns`. If two headers could be the same column (a
+network's own `click_id` beside `aff_sub`), the command refuses and asks for
+the flag rather than guessing.
+
+How each cell is read:
+
+- **subid**: exactly as the postback (`tracking202/static/gpb.php`) and the
+  subid uploads read it: the click id, digits only, no sign, no leading zero,
+  within bigint (`Prosper202\Click\ClickId::parse`). Surrounding spaces are
+  trimmed, as the uploads do.
+- **payout**: `$`, thousands separators and spaces are dropped, as the revenue
+  upload does; more than five decimals are rounded the way the ledger stores
+  them. A negative payout needs a transaction id: it reverses the sale with that
+  id, as a postback would.
+- **transaction id**: up to 255 bytes.
+- **time**: unix seconds (10 digits) or milliseconds (13), `YYYYMMDD`,
+  `2026-02-03`, `2026-02-03 14:05[:00]` (with or without `T`), or RFC 3339.
+  Times without a zone are read in `--timezone` (default `UTC`; an IANA name
+  or an offset such as `-05:00`). `--time-format` takes any Go layout, e.g.
+  `'01/02/2006 3:04 PM'`. Slash dates are refused without it, because
+  `02/03/2026` could be either month first or day first.
+
+Each row gets a status and, where it is not imported, a `reason`:
+
+| Status | Meaning |
+|--------|---------|
+| `ready` | (dry run) would be sent |
+| `invalid` | a cell could not be read; `reason` names each one |
+| `duplicate_in_file` | an earlier row has the same click and transaction id, or, without a transaction id, the same click. Like the postback, an id-less conversion converts its click once. |
+| `created` | recorded; `conv_id` and `recorded_payout` are the server's |
+| `duplicate` | already on the click (same transaction id, or an id-less row on a click that already converted), or the server matched or replayed an earlier one. Nothing new was recorded. |
+| `click_not_found` | no click with that id in this account |
+| `failed` | `reason` is the server's error, or `not sent: ...` after a lost connection |
+| `staged` | under `--staged`: a proposal; `change_id` is what `p202 change apply` takes |
+
+```text
+$ p202 conversion import network-feb.csv --dry-run
+Columns: subid="Sub ID" (auto), payout="Commission" (auto), transaction id="Order ID" (auto), conversion time="Date" (auto).
+row  subid  click_id  transaction_id  payout   conv_time   status             reason
+---  -----  --------  --------------  -------  ----------  -----------------  ------------------------------------------
+2    12345  12345     A-1001          45.00    1770127500  ready
+3    12346  12346     A-1002          1200.50  1770196350  ready
+4    abc              A-1003          10.00    1770199200  invalid            subid "abc" is not a Prosper202 click id …
+5    12345  12345     A-1001          45.00    1770285600  duplicate_in_file  same subid and transaction id as row 2
+6    12347  12347                              1770375600  ready
+Dry run: 5 row(s): 3 ready, 1 duplicate_in_file, 1 invalid; the ready rows carry 1245.50 in payouts (1 at the campaign's default payout). Clicks were not checked (add --check-clicks) and nothing was written; drop --dry-run to import.
+```
+
+Under `--json` the rows also carry `idempotency_key`, and `meta.summary`
+counts every status and totals `payout_imported` (`ready_payout` in a dry run).
+
+**Re-running is safe.** Without `--dry-run` the command first reads each
+click's conversions (`GET /clicks/{id}/conversions`, once per click). Rows the
+click already has are `duplicate` and are not sent. Every other row is sent as
+`POST /conversions` with an `Idempotency-Key` computed from its click,
+transaction id, payout and time, so the same row always has the same key and
+a retry replays instead of recording again. Rows with a negative payout go
+after the sales, so a newest-first report reverses the right sale. After a
+partial failure (exit 5), fix the cause and run the same command again: only
+the rows not yet recorded are sent. The read needs a server with that endpoint
+(1.9.76 or later); against an older one the command refuses before writing.
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Show the plan; no request unless `--check-clicks` |
+| `--check-clicks` | With `--dry-run`: also read each click's conversions |
+| `--force`, `-f` | Skip the confirmation prompt |
+| `--subid-column`, `--payout-column`, `--txid-column`, `--time-column` | Choose a column by its header |
+| `--time-format` | Go layout of the time column |
+| `--timezone` | Zone of times written without one (default `UTC`) |
+
 ### Compatibility aliases
 
 The CLI accepts the following legacy flags for backward compatibility:
