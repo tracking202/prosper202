@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -26,11 +27,18 @@ var profileName string
 var groupName string
 var stagedWrites bool
 
+// rootLong is the root help text; Execute appends the alias list. The
+// last lines tell an agent how to find a command without walking --help.
+const rootLong = "p202 is a command-line tool for managing a Prosper202 tracking instance.\n" +
+	"Designed for both human operators and AI agents.\n\n" +
+	"Finding a command: `p202 search <what you want to do>` ranks commands, flags and\n" +
+	"flag values by your words; `p202 commands --json` lists every command and flag\n" +
+	"(with allowed values) in one call."
+
 var rootCmd = &cobra.Command{
-	Use:   "p202",
-	Short: "Prosper202 CLI",
-	Long: "p202 is a command-line tool for managing a Prosper202 tracking instance.\n" +
-		"Designed for both human operators and AI agents.", // alias list appended dynamically in Execute()
+	Use:           "p202",
+	Short:         "Prosper202 CLI",
+	Long:          rootLong, // alias list appended dynamically in Execute()
 	SilenceErrors: true,
 	SilenceUsage:  true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -72,13 +80,54 @@ const outputHelp = "\n\nOutput: tables for people. When an AI agent runs p202 (a
 	"<format>`, decide. `p202 config show` says which format is in use and why."
 
 func Execute() {
-	rootCmd.Long = "p202 is a command-line tool for managing a Prosper202 tracking instance.\n" +
-		"Designed for both human operators and AI agents." + outputHelp + buildAliasHelp()
-	if err := rootCmd.Execute(); err != nil {
+	rootCmd.Long = rootLong + outputHelp + buildAliasHelp()
+	err := unknownSubcommandError(rootCmd, os.Args[1:])
+	if err == nil {
+		err = rootCmd.Execute()
+	}
+	if err != nil {
 		recoverCommandContext(os.Args[1:])
 		printError(os.Stderr, err)
 		os.Exit(exitCodeForError(err))
 	}
+}
+
+// unknownSubcommandError refuses a word after a command group that names
+// none of its subcommands (`p202 campaign lsit`). Cobra checks this only at
+// the root; below it, it prints the group's help and exits 0, which reads as
+// success. Returns nil when args resolve to a command, or to a group with no
+// further words.
+func unknownSubcommandError(root *cobra.Command, args []string) error {
+	// Find's own error is for an unknown word at the root, which Cobra
+	// reports itself when the command runs.
+	cmd, rest, _ := root.Find(args)
+	if cmd == nil || cmd == root || cmd.Runnable() || !cmd.HasSubCommands() {
+		return nil
+	}
+	for i := 0; i < len(rest); i++ {
+		a := rest[i]
+		if a == "--" {
+			return nil
+		}
+		if strings.HasPrefix(a, "-") {
+			// A flag given as "--name value" takes the next word with it.
+			if !strings.Contains(a, "=") {
+				if f := cmd.Flag(strings.TrimLeft(a, "-")); f != nil && f.NoOptDefVal == "" {
+					i++
+				}
+			}
+			continue
+		}
+		msg := fmt.Sprintf("unknown command %q for %q", a, cmd.CommandPath())
+		if cmd.SuggestionsMinimumDistance <= 0 {
+			cmd.SuggestionsMinimumDistance = 2 // Cobra's own default, applied only at the root
+		}
+		if suggestions := cmd.SuggestionsFor(a); len(suggestions) > 0 {
+			msg += "; did you mean " + strings.Join(suggestions, ", ") + "?"
+		}
+		return errors.New(msg)
+	}
+	return nil
 }
 
 // recoverCommandContext fills in what Cobra never got to set when it
