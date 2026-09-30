@@ -440,8 +440,9 @@ cd go-cli && make test
 Produce the self-contained zip used by the [Download & Upload](#download--upload-no-terminal)
 track. It bundles `vendor/` (Composer `--no-dev`, installed from the committed
 `composer.lock`) and cross-built Go CLI binaries so end users need no Composer or Go
-toolchain, and it leaves out tests and developer tooling as listed in
-[`build/release-manifest.php`](build/release-manifest.php):
+toolchain, and it leaves out the test suites and developer tooling as listed in
+[`build/release-manifest.php`](build/release-manifest.php) (two fixtures the
+bundled CLI and SDKs point at ship with them):
 
 ```bash
 build/scripts/package-release.sh

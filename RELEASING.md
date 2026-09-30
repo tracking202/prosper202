@@ -132,8 +132,10 @@ This is the normal path. CI builds and publishes; you only tag.
    attached and the version in the filename matches the tag. The build has
    already run `release-tree.php verify` on its contents; a spot check that
    `vendor/autoload.php` and `go-cli/dist/linux-amd64/p202` exist, and that
-   `tests/` does not, confirms you downloaded the release asset rather than
-   GitHub's auto-generated "Source code" archive (which has no `vendor/`).
+   `tests/` holds only `fixtures/agent-eval` and `fixtures/app-sdk-contract`
+   (the two the bundled CLI and SDKs point at), confirms you downloaded the
+   release asset rather than GitHub's auto-generated "Source code" archive,
+   which has no `vendor/` and the whole test suite.
 
 > No GitHub secrets are required — the workflow uses the auto-provided
 > `GITHUB_TOKEN` (with `contents: write`) to create the release and upload the
