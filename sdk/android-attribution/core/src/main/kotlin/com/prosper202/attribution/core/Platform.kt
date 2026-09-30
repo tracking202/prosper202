@@ -85,8 +85,13 @@ class FileStore(private val file: File, private val onCorrupt: (String) -> Unit 
             }
             if (parsed == null || parsed.fields.values.any { it !is JsonValue.Str }) {
                 val aside = File(file.path + ".corrupt-" + System.currentTimeMillis())
-                file.renameTo(aside)
-                onCorrupt("the SDK state file was not readable and was moved to ${aside.name}; starting fresh")
+                // renameTo reports failure by its return value only (CLAUDE.md #1):
+                // say so, rather than naming a file that was never written.
+                if (file.renameTo(aside)) {
+                    onCorrupt("the SDK state file was not readable and was moved to ${aside.name}; starting fresh")
+                } else {
+                    onCorrupt("the SDK state file was not readable and could not be moved aside; starting fresh, and it will be replaced")
+                }
             } else {
                 for ((k, v) in parsed.fields) loaded[k] = (v as JsonValue.Str).value
             }

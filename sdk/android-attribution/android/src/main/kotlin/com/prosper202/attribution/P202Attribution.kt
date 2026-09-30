@@ -19,6 +19,7 @@ import com.prosper202.attribution.core.IntegrityProvider
 import com.prosper202.attribution.core.InvalidCustomerIdException
 import com.prosper202.attribution.core.InvalidEventException
 import com.prosper202.attribution.core.Logger
+import com.prosper202.attribution.core.Scheduler
 import com.prosper202.attribution.core.SilentLogger
 import com.prosper202.attribution.core.UrlConnectionTransport
 import java.io.File
@@ -84,8 +85,8 @@ object P202Attribution {
             engine ?: AttributionEngine(
                 store = FileStore(File(app.noBackupFilesDir, STATE_FILE)) { Log.w(TAG, it) },
                 transport = UrlConnectionTransport(),
-                scheduler = ExecutorScheduler(),
-                clock = Clock { System.currentTimeMillis() },
+                scheduler = newScheduler(),
+                clock = clock,
                 referrerSource = PlayInstallReferrerSource(app),
                 integrity = options.integrity,
                 listener = options.listener ?: object : AttributionListener {},
@@ -143,6 +144,24 @@ object P202Attribution {
     /** What the server classified the install as (`attributed`, `organic`, …); null until it answered. */
     @JvmStatic
     val installMatch: String? get() = engine?.installMatch
+
+    /**
+     * Forget the engine, as a new process would (the Robolectric tests'
+     * relaunch). The old engine's worker keeps running until it is idle; its
+     * state is on disk, which is what a relaunch reads.
+     */
+    internal fun resetForTests() {
+        synchronized(this) { engine = null }
+    }
+
+    /**
+     * The worker and the clock a new engine gets. The Robolectric suite
+     * swaps them for ones it can fast-forward, so that "nothing is sent
+     * again" is shown by running every delayed task the engine holds rather
+     * than by sleeping past some of them. Not API: internal to the module.
+     */
+    internal var newScheduler: () -> Scheduler = { ExecutorScheduler() }
+    internal var clock: Clock = Clock { System.currentTimeMillis() }
 
     private fun requireEngine(): AttributionEngine =
         engine ?: throw IllegalStateException("P202Attribution.configure() must be called first (in Application.onCreate)")

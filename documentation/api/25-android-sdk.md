@@ -232,9 +232,11 @@ P202Attribution.configure(this, "https://track.example.com", "<app token>",
   its events are dropped.
 - A registration that asks for tokens from a build without the provider
   gets installs without one, and a Logcat warning.
-- The module depends on `com.google.android.play:integrity:1.6.0`; apps
-  that do not use Play Integrity leave it out and keep the base SDK's
-  single dependency. For a custom source of tokens, implement
+- The module depends on `com.google.android.play:integrity:1.6.0`, whose
+  manifest requires **`minSdk 23`**: the integrity module is `minSdk 23`
+  (the base SDK stays 21), so an app below 23 cannot add it — Android's
+  manifest merger refuses the build. Apps that do not use Play Integrity
+  leave it out and keep the base SDK's single dependency. For a custom source of tokens, implement
   `IntegrityProvider` yourself: `tokenFor(install)` receives the install's
   `requestHash` and `cloudProjectNumber`.
 

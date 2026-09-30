@@ -1,6 +1,6 @@
 plugins {
-    id("com.android.library") version "8.7.3"
-    kotlin("android") version "2.0.21"
+    id("com.android.library")
+    kotlin("android")
 }
 
 // An app includes this build (includeBuild) and depends on com.prosper202:android.
@@ -23,6 +23,17 @@ android {
 
     kotlinOptions {
         jvmTarget = "1.8"
+        allWarningsAsErrors = true
+    }
+
+    lint {
+        abortOnError = true
+        warningsAsErrors = true
+    }
+
+    testOptions {
+        // Robolectric: the real Android framework classes on the JVM.
+        unitTests.isIncludeAndroidResources = true
     }
 }
 
@@ -31,4 +42,10 @@ dependencies {
     // The only third-party dependency (plan §5.6): Play's install-referrer
     // client, 2.2 (January 2021), the latest release.
     implementation("com.android.installreferrer:installreferrer:2.2")
+
+    testImplementation(kotlin("test"))
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.14.1")
 }
+
+apply(from = rootProject.file("robolectric.gradle"))
