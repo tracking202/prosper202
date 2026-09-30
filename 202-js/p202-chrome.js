@@ -195,8 +195,7 @@
         }
     }
 
-    /* The header logo is a cross-origin iframe, so it is told the theme on
-       load and on every change (ads.tracking202.com/prosper202-cs-topleft). */
+    /* The header logo */
     var brandFrame = document.querySelector('iframe.advertise-top-left');
     if (brandFrame && window.MutationObserver) {
         var postTheme = function () {
@@ -207,6 +206,7 @@
         };
         brandFrame.addEventListener('load', postTheme);
         new MutationObserver(postTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-bs-theme'] });
+        postTheme();
     }
 
     }
