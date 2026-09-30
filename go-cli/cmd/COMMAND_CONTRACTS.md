@@ -28,6 +28,11 @@ This file captures the API paths and payload/query expectations used by upcoming
   - `POST /api/v3/campaigns` with cloned mutable fields
 - `campaign list --url-contains <text>`
   - paginated `GET /api/v3/campaigns`, filtered client-side on the five offer URL fields
+- `campaign list --with-stats [--period p | --days n] [--min-clicks n]`
+  - the usual `GET /api/v3/campaigns` (one page, or every page with `--all`/`--url-contains`/`--min-clicks`)
+  - then `GET /api/v3/reports/breakdown?breakdown=campaign` with `period` (default `last30`) or `time_from`/`time_to`, as `analytics` sends them; `limit=500` and increasing `offset` until a short page (the server caps at 500 and returns no pagination block); never filtered by network
+  - rows merged by `aff_campaign_id` = breakdown `id`: `total_clicks`, `total_leads`, `total_income`, `total_cost`, `total_net`, `0` when absent
+  - a 403 on the breakdown is hinted with the `reports:read` scope
 - `campaign replace-url`
   - paginated `GET /api/v3/campaigns` (with `filter[aff_network_id]` when `--aff-network-id` is set)
   - one `PUT /api/v3/campaigns/{id}` per matched campaign, carrying only the changed URL fields

@@ -376,6 +376,30 @@ warns and asks first (`--force` skips the question). Tokens are sent as `p202che
 Like `p202 rotator check`, it exits 5 (`partial_failure`) when any row's `status` is not `ok`, with
 every row still on stdout. Exit 0 means every URL in scope passed.
 
+Put each campaign's recent traffic next to its URLs:
+
+```bash
+# Every campaign on an old network's links, with its last-30-day clicks, conversions and revenue
+p202 campaign list --url-contains old-network.com --with-stats
+
+# Only campaigns that still get traffic in the last 90 days
+p202 campaign list --with-stats --period last90 --min-clicks 1
+```
+
+| Flag | Description |
+|------|-------------|
+| `--with-stats` | Add `total_clicks`, `total_leads`, `total_income`, `total_cost` and `total_net` (Clicks, Conversions, Revenue, Cost, Profit in tables) to every row; a campaign with no traffic in the window gets `0`s |
+| `--period <p>` | Window: `today`, `yesterday`, `last7`, `last30`, `last90` (default `last30`) |
+| `--days <n>` | Window of the last N days instead; `--period` wins when both are given (as in `analytics`) |
+| `--min-clicks <n>` | Only campaigns with at least N clicks in the window; searches every page, so no `--page/--limit/--offset` |
+
+`--with-stats` works with `--url-contains`, `--all`, `--aff_network_id` and plain paging. It reads the
+campaign breakdown once (`GET /reports/breakdown?breakdown=campaign`, paged 500 rows at a time),
+so the API key needs `reports:read` (or `read`) as well as `campaigns:read`; a 403 there says so. The
+stats are not narrowed by `--aff_network_id`: a campaign's clicks count wherever they were recorded.
+The window flags are refused without `--with-stats`. There is no last-click date: no API endpoint
+returns one per campaign without a request per campaign.
+
 ### Affiliate network (`p202 aff-network`)
 
 | Flag | Required | Description |

@@ -44,7 +44,7 @@ p202 config show
 
 | Command | Description |
 | ------- | ----------- |
-| `p202 campaign list` | List campaigns; `--url-contains <text>` returns every campaign with an offer URL (any of the five slots) containing the text |
+| `p202 campaign list` | List campaigns; `--url-contains <text>` returns every campaign with an offer URL (any of the five slots) containing the text; `--with-stats` adds each campaign's `total_clicks`, `total_leads`, `total_income`, `total_cost`, `total_net` for `--period` (default `last30`) or `--days N`, `0` when it had no traffic (needs `reports:read`); `--min-clicks N` keeps campaigns with at least N clicks |
 | `p202 campaign get <id>` | Get a single campaign |
 | `p202 campaign create` | Create a campaign |
 | `p202 campaign update <id>` | Update a campaign |
