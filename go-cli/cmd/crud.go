@@ -453,11 +453,17 @@ func parseIDList(raw string) ([]string, error) {
 	seen := map[string]bool{}
 	for _, part := range parts {
 		id := strings.TrimSpace(part)
-		if id == "" || seen[id] {
+		if id == "" {
 			continue
 		}
-		if _, err := strconv.Atoi(id); err != nil {
+		n, err := strconv.Atoi(id)
+		if err != nil {
 			return nil, validationError("invalid ID %q: must be a numeric value", id).WithHint("Use the internal numeric id from the matching `... list`; public ids from tracking links need --public where supported.")
+		}
+		// Canonical form, so "007" matches the API's 7 in callers that compare ids.
+		id = strconv.Itoa(n)
+		if seen[id] {
+			continue
 		}
 		seen[id] = true
 		out = append(out, id)
