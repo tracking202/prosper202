@@ -38,7 +38,6 @@ final class ReportDispatchRequestTest extends TestCase
         self::assertSame('keyword', $request->reportType);
         self::assertSame(0, $request->offset);
         self::assertSame('', $request->order);
-        self::assertTrue($request->includeDependentFilters, 'dependent filters are bootstrapped by default');
     }
 
     public function testParsesAFullyPopulatedPayload(): void
@@ -47,13 +46,11 @@ final class ReportDispatchRequestTest extends TestCase
             'reportType' => 'country',
             'offset' => 40,
             'order' => 'sort_breakdown_clicks desc',
-            'includeDependentFilters' => false,
         ]);
 
         self::assertSame('country', $request->reportType);
         self::assertSame(40, $request->offset);
         self::assertSame('sort_breakdown_clicks desc', $request->order);
-        self::assertFalse($request->includeDependentFilters);
     }
 
     /**
@@ -165,17 +162,24 @@ final class ReportDispatchRequestTest extends TestCase
     }
 
     /**
-     * Booleans are not coerced: "false" (a truthy string) must not silently become true.
+     * The dependent filter dropdowns were Bootstrap 3 markup for the classic
+     * report calendar, and went with it (U8). A client that still asks for
+     * them is told so by name rather than answered without them.
      */
-    public function testRejectsNonBooleanIncludeDependentFilters(): void
+    public function testTheRetiredDependentFiltersFieldIsRefusedByName(): void
     {
-        $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionCode(422);
-
-        ReportDispatchRequest::fromArray([
-            'reportType' => 'keyword',
-            'includeDependentFilters' => 'false',
-        ]);
+        foreach ([true, false] as $value) {
+            try {
+                ReportDispatchRequest::fromArray([
+                    'reportType' => 'keyword',
+                    'includeDependentFilters' => $value,
+                ]);
+                self::fail('includeDependentFilters was accepted');
+            } catch (InvalidArgumentException $e) {
+                self::assertSame(422, $e->getCode());
+                self::assertStringContainsString('includeDependentFilters', $e->getMessage());
+            }
+        }
     }
 
     /**
@@ -190,7 +194,6 @@ final class ReportDispatchRequestTest extends TestCase
         return [
             'offset' => ['offset'],
             'order' => ['order'],
-            'includeDependentFilters' => ['includeDependentFilters'],
         ];
     }
 
@@ -211,7 +214,6 @@ final class ReportDispatchRequestTest extends TestCase
 
         self::assertSame(0, $request->offset);
         self::assertSame('', $request->order);
-        self::assertTrue($request->includeDependentFilters);
     }
 
     public function testApplyLegacyGlobalsPublishesOffsetAndOrder(): void

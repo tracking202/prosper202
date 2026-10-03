@@ -28,10 +28,9 @@ on:
       - '202-pass-reset.php'
       - 'api-key-required.php'
       # API-key lifecycle: the appstore page writes clickserver_api_key behind
-      # a CSRF check, and 202-js/account.php (loaded by template.php) generates
-      # and removes REST API keys.
+      # a CSRF check (REST API keys are generated and removed in
+      # 202-account/account.php, covered above).
       - '202-appstore/**'
-      - '202-js/account.php'
       # The cron endpoints authenticate requests against a user's
       # install_hash and release keys or data to external services (dni.php
       # returns the database API key, daily-email.php sends the user's email
@@ -62,12 +61,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
 
       - name: Adversarial review
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@756cc22e19660d20e8cc9496b4f242475a7f7790 # v1.0.235
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           allowed_bots: 'claude'

@@ -432,6 +432,8 @@ func executeCommand(args ...string) (string, string, error) {
 	configpkg.ResetActiveOverride()
 	jsonOutput = false
 	csvOutput = false
+	tableOutput = false
+	compactJSON, outputImplicit, outputSource = false, false, sourceDefault
 	profileName = ""
 	groupName = ""
 	_ = rootCmd.PersistentFlags().Set("json", "false")
@@ -2131,6 +2133,8 @@ func TestCampaignCreatePassesExtendedFields(t *testing.T) {
 		"--aff_campaign_foreign_payout=12.34",
 		"--aff_campaign_cloaking=1",
 		"--aff_campaign_rotate=1",
+		"--payout_mode=accumulate",
+		"--identity_signals=0",
 	)
 	if err != nil {
 		t.Fatalf("campaign create error: %v", err)
@@ -2148,6 +2152,8 @@ func TestCampaignCreatePassesExtendedFields(t *testing.T) {
 		"aff_campaign_foreign_payout",
 		"aff_campaign_cloaking",
 		"aff_campaign_rotate",
+		"payout_mode",
+		"identity_signals",
 	} {
 		if _, ok := gotBody[key]; !ok {
 			t.Errorf("request body missing %q", key)
@@ -2569,21 +2575,32 @@ func TestTrackerCreateWithURL(t *testing.T) {
 }
 
 func TestTrackerBulkURLs(t *testing.T) {
+	// bulk-urls fans the per-tracker fetches over a worker pool, so this
+	// handler runs on several goroutines at once and its bookkeeping needs a
+	// lock. Without it `go test -race` fails here by scheduling luck rather
+	// than by anything the CLI did.
+	var mu sync.Mutex
 	var listQuery url.Values
 	urlCalls := 0
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "GET" && r.URL.Path == "/api/v3/trackers":
+			mu.Lock()
 			listQuery = r.URL.Query()
+			mu.Unlock()
 			w.WriteHeader(200)
 			w.Write([]byte(`{"data":[{"tracker_id":1,"aff_campaign_id":10},{"tracker_id":2,"aff_campaign_id":10}]}`))
 		case r.Method == "GET" && r.URL.Path == "/api/v3/trackers/1/url":
+			mu.Lock()
 			urlCalls++
+			mu.Unlock()
 			w.WriteHeader(200)
 			w.Write([]byte(`{"data":{"tracker_id":1,"direct_url":"https://trk.example/1"}}`))
 		case r.Method == "GET" && r.URL.Path == "/api/v3/trackers/2/url":
+			mu.Lock()
 			urlCalls++
+			mu.Unlock()
 			w.WriteHeader(200)
 			w.Write([]byte(`{"data":{"tracker_id":2,"direct_url":"https://trk.example/2"}}`))
 		default:
@@ -2602,11 +2619,15 @@ func TestTrackerBulkURLs(t *testing.T) {
 		t.Fatalf("tracker bulk-urls error: %v", err)
 	}
 
-	if got := listQuery.Get("filter[aff_campaign_id]"); got != "10" {
-		t.Errorf("filter[aff_campaign_id] = %q, want %q", got, "10")
+	mu.Lock()
+	gotFilter := listQuery.Get("filter[aff_campaign_id]")
+	gotCalls := urlCalls
+	mu.Unlock()
+	if gotFilter != "10" {
+		t.Errorf("filter[aff_campaign_id] = %q, want %q", gotFilter, "10")
 	}
-	if urlCalls != 2 {
-		t.Errorf("urlCalls = %d, want 2", urlCalls)
+	if gotCalls != 2 {
+		t.Errorf("urlCalls = %d, want 2", gotCalls)
 	}
 	if !strings.Contains(stdout, "https://trk.example/1") || !strings.Contains(stdout, "https://trk.example/2") {
 		t.Errorf("output should contain both tracker URLs, got:\n%s", stdout)
@@ -4443,7 +4464,7 @@ func TestAnalyticsInvalidGroupByRejects(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid group-by")
 	}
-	if !strings.Contains(err.Error(), "unsupported --group-by") {
+	if !strings.Contains(err.Error(), "--group-by must be one of: campaign, aff_network") {
 		t.Errorf("unexpected error: %q", err.Error())
 	}
 }
@@ -4463,7 +4484,7 @@ func TestAnalyticsInvalidSortRejects(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid sort")
 	}
-	if !strings.Contains(err.Error(), "unsupported --sort") {
+	if !strings.Contains(err.Error(), "--sort must be one of: total_clicks") {
 		t.Errorf("unexpected error: %q", err.Error())
 	}
 }
@@ -4610,6 +4631,7 @@ func TestParseIDListDeduplication(t *testing.T) {
 		{"abc,def", nil, true},
 		{"1,abc,3", nil, true},
 		{"1.5,2", nil, true},
+		{"007,7,+8", []string{"7", "8"}, false},
 	}
 
 	for _, tt := range tests {
@@ -4773,5 +4795,86 @@ func TestUIFriendlyAliasesHitSameEndpoints(t *testing.T) {
 				t.Errorf("alias %q hit %q, want %q", tt.alias, gotPath, tt.wantEndpoint)
 			}
 		})
+	}
+}
+
+func TestUserIdentityKeyGetAndRotate(t *testing.T) {
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path+"?"+r.URL.RawQuery)
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":{"linking_key":"ab12","algorithm":"HMAC-SHA256"}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("user", "identity-key", "get", "7")
+	if err != nil {
+		t.Fatalf("identity-key get error: %v", err)
+	}
+	if !strings.Contains(stdout, "ab12") {
+		t.Errorf("output should show the key, got:\n%s", stdout)
+	}
+	if _, _, err := executeCommand("user", "identity-key", "rotate", "7", "--force"); err != nil {
+		t.Fatalf("identity-key rotate error: %v", err)
+	}
+	want := []string{"GET /api/v3/users/7/identity-key?", "POST /api/v3/users/7/identity-key/rotate?"}
+	if len(calls) != len(want) {
+		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+	for i := range want {
+		if calls[i] != want[i] {
+			t.Errorf("call %d = %q, want %q", i, calls[i], want[i])
+		}
+	}
+}
+
+func TestUserIdentityKeyRotateWithoutForceAsksAndCancels(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(200)
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	// No answer on stdin reads as "no".
+	stdout, _, err := executeCommand("user", "identity-key", "rotate", "7")
+	if err != nil {
+		t.Fatalf("identity-key rotate error: %v", err)
+	}
+	if called {
+		t.Error("rotate reached the server without confirmation")
+	}
+	if !strings.Contains(stdout, "Cancelled.") {
+		t.Errorf("expected a cancellation, got:\n%s", stdout)
+	}
+}
+
+func TestUserIdentityKeyRotateStagedProposesWithoutAsking(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Method + " " + r.URL.Path + "?" + r.URL.RawQuery
+		w.WriteHeader(202)
+		w.Write([]byte(`{"data":{"change_id":"chg_1","status":"staged"}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	if _, _, err := executeCommand("user", "identity-key", "rotate", "7", "--staged"); err != nil {
+		t.Fatalf("staged rotate error: %v", err)
+	}
+	if got != "POST /api/v3/users/7/identity-key/rotate?staged=1" {
+		t.Errorf("request = %q, want a staged POST", got)
 	}
 }

@@ -46,7 +46,17 @@ use RuntimeException;
  * is left as it is, even if its columns differ. Two further differences are
  * metadata only and are also left alone: the order indexes appear in (there
  * is no ADD KEY ... AFTER, and index order has no effect) and the table
- * COMMENT.
+ * COMMENT. Partitions are never touched: 202_clicks and 202_dataengine are
+ * cut into weekly RANGE partitions from the moment an installer ran, so the
+ * boundaries (and how many weeks ahead they reach) are that install's clock,
+ * not its schema.
+ *
+ * Those three, and the AUTO_INCREMENT counter, are the only differences
+ * tests/live/upgrade-equals-install.sh allows between a 1.9.55 database
+ * upgraded by the ladder and a fresh install (Tests\Upgrade\SchemaDiff
+ * normalises exactly these); anything else it finds — a column type, a
+ * position, a missing table, an extra index — this class would not repair,
+ * so the ladder has to.
  *
  * The nullability relaxation is not decoration. The 1.9.76 attribution
  * postback table was reshaped before release and `version` went from

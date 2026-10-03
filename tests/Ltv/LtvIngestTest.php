@@ -9,6 +9,7 @@ use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
 use Prosper202\Ltv\MysqlCustomerRepository;
 use Tests\Support\FakeMysqliConnection;
+use Tests\Support\InsertReportingFakeMysqliConnection;
 
 /**
  * LTV ingest behavior through the canonical conversion writer: customer
@@ -31,12 +32,15 @@ final class LtvIngestTest extends TestCase
             'aff_campaign_id' => 44,
             'click_payout' => 2.75,
             'click_time' => 1700000000,
+            'click_lead' => 0,
         ];
     }
 
-    private function fakeWithClick(): FakeMysqliConnection
+    private function fakeWithClick(): InsertReportingFakeMysqliConnection
     {
-        $write = new FakeMysqliConnection();
+        // The conversion writer refuses an insert that reports no id, and
+        // only the insert-reporting double can report one on PHP 8.4.
+        $write = new InsertReportingFakeMysqliConnection(900);
         $write->whenQueryContainsReturnRows(
             'FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE',
             [$this->clickRow()]
@@ -141,7 +145,8 @@ final class LtvIngestTest extends TestCase
     {
         $write = $this->fakeWithClick();
         $write->whenQueryContainsReturnRows(
-            'SELECT conv_id, customer_id FROM 202_conversion_logs WHERE click_id = ? AND transaction_id = ?',
+            // The replay is found by its ledger key (tx:<transaction id>).
+            'SELECT conv_id, customer_id FROM 202_conversion_logs WHERE click_id = ? AND dedupe_key = ?',
             [['conv_id' => 9001, 'customer_id' => 501]]
         );
 
@@ -219,13 +224,23 @@ final class LtvIngestTest extends TestCase
     public function testSoftDeleteVoidsLedgerAndReversesRollups(): void
     {
         $write = new FakeMysqliConnection();
+        // softDelete finds the conversion's click, locks it, then the row.
         $write->whenQueryContainsReturnRows(
-            'SELECT conv_id, customer_id, deleted FROM 202_conversion_logs',
-            [['conv_id' => 9001, 'customer_id' => 501, 'deleted' => 0]]
+            'SELECT click_id FROM 202_conversion_logs WHERE conv_id = ?',
+            [['click_id' => 10]]
+        );
+        $write->whenQueryContainsReturnRows(
+            'SELECT conv_id, customer_id, deleted, reverses_conv_id FROM 202_conversion_logs',
+            [['conv_id' => 9001, 'customer_id' => 501, 'deleted' => 0, 'reverses_conv_id' => null]]
         );
         $write->whenQueryContainsReturnRows(
             'FROM 202_revenue_events WHERE conv_id = ?',
             [['event_id' => 7001, 'amount' => 2.75, 'currency' => 'USD', 'event_type' => 'purchase', 'occurred_at' => 1700000050]]
+        );
+        // Never reinstated (a revived goal row would be), so the first void key.
+        $write->whenQueryContainsReturnRows(
+            'SELECT COUNT(*) AS n FROM 202_revenue_events',
+            [['n' => 0]]
         );
 
         $conn = new Connection($write, new FakeMysqliConnection());

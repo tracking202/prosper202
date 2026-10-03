@@ -19,18 +19,81 @@ declare(strict_types=1);
 class MessagingClient
 {
     private readonly string $baseUrl;
+    private readonly int $curlProtocols;
     private readonly int $timeout;
     private readonly int $maxRetries;
 
     public function __construct()
     {
         // MESSAGING_API_URL is defined in 202-config/connect.php.
-        $this->baseUrl    = defined('MESSAGING_API_URL') ? MESSAGING_API_URL : 'https://my.tracking202.com/api/v3/messaging';
-        $this->timeout    = 10;
+        // Every request body below carries the install's customer API key and the
+        // user's email, so refuse to speak cleartext even if MESSAGING_API_URL is
+        // misconfigured (mirrors Lpo\PairingClient's guard).
+        //
+        // Trimmed once, here. The transport decision below normalises its input,
+        // and storing the raw value let a whitespace-padded URL pass the check
+        // and then fail every request at curl with "Malformed input to a URL".
+        $configuredUrl = trim((string) (defined('MESSAGING_API_URL') ? MESSAGING_API_URL : 'https://my.tracking202.com/api/v3/messaging'));
+        $protocols = self::transportProtocols($configuredUrl);
+        if ($protocols === null) {
+            throw new \RuntimeException('MESSAGING_API_URL must be an https:// URL (http:// is allowed only for loopback); refusing to send credentials in cleartext.');
+        }
+        $this->baseUrl       = $configuredUrl;
+        // Decided once with the URL and reused by every request: the curl
+        // allowlist and the acceptance rule are the same decision, so they
+        // cannot disagree (they did -- see transportProtocols()).
+        $this->curlProtocols = $protocols;
+        $this->timeout       = 10;
         // Kept low so the synchronous widget-poll path stays responsive when the
         // central server is slow/unreachable; a healthy server answers on the first
         // try. The cron path tolerates the occasional miss and catches up next run.
-        $this->maxRetries = 2;
+        $this->maxRetries    = 2;
+    }
+
+    /**
+     * The one transport decision: which curl protocols may carry requests to
+     * $url, or null when the URL must be refused outright.
+     *
+     * Credentials must not cross a network in cleartext, so https is required --
+     * except against loopback, which never leaves the host. That carve-out
+     * exists because 202-config/Messaging/mock-server.php and the comment at
+     * connect.php:86 both document MESSAGING_API_URL=http://127.0.0.1:8787/messaging
+     * for local development; refusing it made the repo's own documented setup
+     * throw out of the constructor, which the messaging AJAX endpoints surface
+     * as a bare 500 instead of degrading gracefully.
+     *
+     * Acceptance and the curl allowlist used to be two functions that had to
+     * agree. They did not: the allowlist was pinned to CURLPROTO_HTTPS, so the
+     * constructor accepted the documented loopback URL and every request then
+     * failed with CURLE_UNSUPPORTED_PROTOCOL. One function returning both
+     * answers cannot drift.
+     *
+     *   https://...              -> CURLPROTO_HTTPS
+     *   http://<loopback>...     -> CURLPROTO_HTTPS | CURLPROTO_HTTP
+     *   anything else            -> null (refused)
+     */
+    private static function transportProtocols(string $url): ?int
+    {
+        $url = strtolower(trim($url));
+        if (str_starts_with($url, 'https://')) {
+            return CURLPROTO_HTTPS;
+        }
+        if (!str_starts_with($url, 'http://')) {
+            return null;
+        }
+
+        $host = (string) parse_url($url, PHP_URL_HOST);
+        if ($host === '') {
+            return null;
+        }
+        // localhost, ::1, and 127.0.0.0/8 only -- not every RFC1918 address,
+        // which does traverse a network.
+        $loopback = $host === 'localhost'
+            || $host === '::1'
+            || $host === '[::1]'
+            || (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false && str_starts_with($host, '127.'));
+
+        return $loopback ? CURLPROTO_HTTPS | CURLPROTO_HTTP : null;
     }
 
     /**
@@ -151,6 +214,8 @@ class MessagingClient
             CURLOPT_CONNECTTIMEOUT => 5,
             CURLOPT_USERAGENT      => 'Prosper202-Messaging/1.0',
             CURLOPT_FOLLOWLOCATION => false,
+            // Decided once in the constructor, alongside accepting the URL.
+            CURLOPT_PROTOCOLS      => $this->curlProtocols,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_HTTPHEADER     => [

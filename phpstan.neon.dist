@@ -69,6 +69,7 @@ parameters:
 rules:
     # CLAUDE.md #1 — unchecked return values after fallible calls.
     - Prosper202\PHPStan\Rules\ForbidDirectMysqliStmtCallRule
+    - Prosper202\PHPStan\Rules\UncheckedTransactionBoundaryRule
     # CLAUDE.md #4 — silent data loss on malformed input.
     - Prosper202\PHPStan\Rules\ForbidSilentJsonDecodeRule
     # CLAUDE.md #5 — inconsistent security patterns across similar operations.
@@ -92,3 +93,6 @@ rules:
     # and fails on this identifier alone; that test is what gives the rule its
     # reach, and registering it here is what makes the test's run real.
     - Prosper202\PHPStan\Rules\VacuousAssertionRule
+    # CLAUDE.md #23 — versions compared as text. `$logs['version'] >= $version`
+    # listed 1.9.8's release notes as new on the 1-click upgrade page.
+    - Prosper202\PHPStan\Rules\ForbidVersionRelationalCompareRule

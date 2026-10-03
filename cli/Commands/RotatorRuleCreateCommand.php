@@ -39,19 +39,16 @@ class RotatorRuleCreateCommand extends BaseCommand
             'splittest' => (int)$input->getOption('splittest'),
         ];
 
-        if ($input->getOption('criteria_json')) {
-            $body['criteria'] = json_decode((string) $input->getOption('criteria_json'), true);
-            if ($body['criteria'] === null) {
-                $output->writeln('<error>Invalid JSON in --criteria_json</error>');
-                return Command::FAILURE;
-            }
+        // decodeJsonOption rejects malformed JSON AND scalar values — a scalar
+        // like --criteria_json='"country is US"' would previously be sent to
+        // the server, silently dropped, and the rule created with no criteria.
+        $criteria = $this->decodeJsonOption($input, 'criteria_json');
+        if ($criteria !== null) {
+            $body['criteria'] = $criteria;
         }
-        if ($input->getOption('redirects_json')) {
-            $body['redirects'] = json_decode((string) $input->getOption('redirects_json'), true);
-            if ($body['redirects'] === null) {
-                $output->writeln('<error>Invalid JSON in --redirects_json</error>');
-                return Command::FAILURE;
-            }
+        $redirects = $this->decodeJsonOption($input, 'redirects_json');
+        if ($redirects !== null) {
+            $body['redirects'] = $redirects;
         }
 
         $result = $this->client()->post('rotators/' . $input->getArgument('rotator_id') . '/rules', $body);

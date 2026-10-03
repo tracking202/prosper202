@@ -4,6 +4,7 @@
 # snapshot evals. See README.md in this directory for the eval methodology.
 #
 # Usage:
+#   tests/fixtures/agent-eval/seed.sh                 # finds the p202 binary
 #   P202_BIN=go-cli/p202 tests/fixtures/agent-eval/seed.sh
 #
 # Requirements:
@@ -19,7 +20,16 @@
 
 set -euo pipefail
 
-P202_BIN="${P202_BIN:-go-cli/p202}"
+# go-cli/p202 is what `make -C go-cli build` leaves in a checkout; a release
+# zip ships go-cli/dist/<os>-<arch>/p202 instead. The onboarding skill's
+# find-cli.sh knows both, and builds from source when neither is there.
+if [ -z "${P202_BIN:-}" ]; then
+    if [ -x go-cli/p202 ]; then
+        P202_BIN=go-cli/p202
+    else
+        P202_BIN="$(.claude/skills/onboard-prosper202/scripts/find-cli.sh)"
+    fi
+fi
 CLICK_UA="${CLICK_UA:-Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36}"
 
 if ! command -v jq >/dev/null 2>&1; then

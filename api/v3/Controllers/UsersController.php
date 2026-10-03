@@ -9,9 +9,12 @@ use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\StatementHelpers;
 
 class UsersController
 {
+    use StatementHelpers;
+
     /**
      * The currency column's own default, and the fallback for anything
      * unusable. See normalizeCurrency() below.
@@ -175,8 +178,7 @@ class UsersController
             $installHash = (string) $hashRow['install_hash'];
         }
 
-        $this->db->begin_transaction();
-        try {
+        $newId = $this->transaction(function () use ($fname, $lname, $username, $hashedPass, $email, $tz, $now, $active, $installHash): int {
             $stmt = $this->prepare(
                 'INSERT INTO 202_users (user_fname, user_lname, user_name, user_pass, user_email, user_dash_email, user_timezone, user_time_register, user_active, install_hash, user_hash, user_deleted)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)'
@@ -191,11 +193,12 @@ class UsersController
             $this->execute($stmt, 'Failed to create user preferences');
             $stmt->close();
 
-            $this->db->commit();
-        } catch (\Throwable $e) {
-            $this->db->rollback();
-            throw $e;
-        }
+            // Every account starts with its default attribution model, in the
+            // same transaction as the account (plan §6.4).
+            \Prosper202\Attribution\DefaultModel::ensureFor(new \Prosper202\Database\Connection($this->db), (int) $newId);
+
+            return $newId;
+        });
 
         // Committed: both the user row and its preferences row exist. Only
         // the read-back remains, and its failure is not a failed create.
@@ -262,17 +265,24 @@ class UsersController
             'resource' => 'users',
             'mode' => 'soft',
             'record' => $existing['data'],
-            'cascade' => [],
+            'cascade' => \Prosper202\User\UserDataPurge::cascade($id),
         ]];
     }
 
     public function delete(int $id): void
     {
         $this->get($id);
-        $stmt = $this->prepare('UPDATE 202_users SET user_deleted = 1 WHERE user_id = ?');
-        $this->bind($stmt, 'i', $id);
-        $this->execute($stmt, 'Delete failed');
-        $stmt->close();
+        // The soft delete and the purge of what must not outlive the user
+        // (API keys, app registrations, the identity graph, MTA state) commit
+        // together; the account page deletes through the same class.
+        try {
+            (new \Prosper202\User\UserDataPurge($this->db))->deleteUser($id);
+        } catch (\RuntimeException | \InvalidArgumentException $e) {
+            // InvalidArgumentException: deleteUser()'s own check of the id,
+            // which changes nothing either.
+            error_log('p202 users: ' . $e->getMessage());
+            throw new DatabaseException('Delete failed; the user and their data are unchanged');
+        }
     }
 
     // --- Roles ---
@@ -297,6 +307,19 @@ class UsersController
             throw new ValidationException('role_id is required', ['role_id' => 'Must be a positive integer']);
         }
 
+        // Validate BEFORE mutating: 202_user_role has no foreign keys, so an
+        // insert for a nonexistent user/role would persist an orphan grant
+        // that silently becomes live if that user ID is ever created.
+        $this->get($userId);
+        $stmt = $this->prepare('SELECT role_id FROM 202_roles WHERE role_id = ? LIMIT 1');
+        $this->bind($stmt, 'i', $roleId);
+        $this->execute($stmt, 'Role lookup failed');
+        $role = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if (!$role) {
+            throw new ValidationException('Unknown role_id', ['role_id' => 'Role does not exist']);
+        }
+
         $stmt = $this->prepare('INSERT IGNORE INTO 202_user_role (user_id, role_id) VALUES (?, ?)');
         $this->bind($stmt, 'ii', $userId, $roleId);
         $this->execute($stmt, 'Failed to assign role');
@@ -310,7 +333,12 @@ class UsersController
         $stmt = $this->prepare('DELETE FROM 202_user_role WHERE user_id = ? AND role_id = ?');
         $this->bind($stmt, 'ii', $userId, $roleId);
         $this->execute($stmt, 'Failed to remove role');
+        $affected = $stmt->affected_rows;
         $stmt->close();
+        if ($affected === 0) {
+            // A revocation that matched nothing must not report success.
+            throw new NotFoundException('Role assignment not found');
+        }
     }
 
     // --- API Keys ---
@@ -337,6 +365,60 @@ class UsersController
         }
         $stmt->close();
         return ['data' => $rows];
+    }
+
+    /**
+     * The account's customer-id linking key (plan §6.2): what the operator's
+     * own server signs customer ids with, so a `cust` on a public pixel links
+     * journeys only when it carries `cust_sig`. Minted on first read. It is a
+     * signing secret, so it is shown in full only here, to the account itself
+     * or an admin, and never in a list.
+     */
+    public function identityKey(int $userId): array
+    {
+        $this->requireUser($userId);
+        $keys = new \Prosper202\Identity\IdentityKeys(new \Prosper202\Database\Connection($this->db));
+
+        return ['data' => self::identityKeyView($keys->forUser($userId)['link'])];
+    }
+
+    /**
+     * Replace the linking key. Every signature computed with the old key
+     * stops linking at once; ids already linked stay linked.
+     */
+    public function rotateIdentityKey(int $userId): array
+    {
+        $this->requireUser($userId);
+        $keys = new \Prosper202\Identity\IdentityKeys(new \Prosper202\Database\Connection($this->db));
+
+        return ['data' => self::identityKeyView($keys->rotateLinkKey($userId))];
+    }
+
+    /** @return array<string, string> */
+    private static function identityKeyView(string $linkKey): array
+    {
+        return [
+            'linking_key' => $linkKey,
+            'algorithm' => 'HMAC-SHA256',
+            'signs' => '<cust_type>:<cust>, e.g. custom:12345 or email_sha256:<lower-case hex digest>; cust_type defaults to custom',
+            'parameter' => 'cust_sig (lower-case hex)',
+        ];
+    }
+
+    private function requireUser(int $userId): void
+    {
+        $stmt = $this->prepare('SELECT user_id FROM 202_users WHERE user_id = ? AND user_deleted = 0 LIMIT 1');
+        $this->bind($stmt, 'i', $userId);
+        $this->execute($stmt, 'Query failed');
+        if (!$stmt->store_result()) {
+            $stmt->close();
+            throw new DatabaseException('Failed to read user ' . $userId);
+        }
+        $found = $stmt->num_rows > 0;
+        $stmt->close();
+        if (!$found) {
+            throw new NotFoundException('User not found');
+        }
     }
 
     public function createApiKey(int $userId, array $payload = [], ?\Api\V3\Auth $auth = null): array
@@ -462,7 +544,14 @@ class UsersController
         $stmt = $this->prepare('DELETE FROM 202_api_keys WHERE user_id = ? AND api_key = ?');
         $this->bind($stmt, 'is', $userId, $apiKey);
         $this->execute($stmt, 'Failed to delete API key');
+        $affected = $stmt->affected_rows;
         $stmt->close();
+        if ($affected === 0) {
+            // Callers only ever see masked keys after creation; a mismatched
+            // value deleting zero rows must surface as an error — reporting
+            // 204 here would tell the caller a live credential was revoked.
+            throw new NotFoundException('API key not found');
+        }
     }
 
     /**
@@ -649,32 +738,5 @@ class UsersController
         $stmt->close();
 
         return $this->getPreferences($userId);
-    }
-
-    private function prepare(string $sql): \mysqli_stmt
-    {
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            throw new DatabaseException('Prepare failed');
-        }
-        return $stmt;
-    }
-
-    private function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
-    {
-        // @phpstan-ignore-next-line prosper202.directStmtCall -- local checked bind wrapper
-        if (!$stmt->bind_param($types, ...$values)) {
-            $stmt->close();
-            throw new DatabaseException('Bind failed');
-        }
-    }
-
-    private function execute(\mysqli_stmt $stmt, string $message): void
-    {
-        // @phpstan-ignore-next-line prosper202.directStmtCall -- local checked execute wrapper
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException($message);
-        }
     }
 }

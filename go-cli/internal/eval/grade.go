@@ -99,7 +99,7 @@ const excerptMax = 200
 // though today's cases pipe their output through jq. The hazard is the next
 // case that dumps a raw envelope, and it must not depend on remembering
 // this file.
-var secretFields = []string{"schema_token", "api_key", "token", "secret", "password", "authorization"}
+var secretFields = []string{"app_token", "api_key", "token", "secret", "password", "authorization"}
 
 var secretValuePattern = regexp.MustCompile(
 	`(?i)"(` + strings.Join(secretFields, "|") + `)"\s*:\s*"[^"]*"`)

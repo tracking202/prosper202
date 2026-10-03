@@ -1,9 +1,13 @@
 package cmd
 
 import (
+	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/url"
+	"os"
 	"strings"
 
 	"p202/internal/api"
@@ -11,6 +15,7 @@ import (
 	"p202/internal/output"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var configCmd = &cobra.Command{
@@ -45,15 +50,41 @@ var configSetURLCmd = &cobra.Command{
 }
 
 var configSetKeyCmd = &cobra.Command{
-	Use:   "set-key <api-key>",
-	Short: "Set the API key",
-	Args:  cobra.ExactArgs(1),
+	Use:   "set-key [api-key]",
+	Short: "Set the API key (omit the argument to be prompted without echoing)",
+	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load()
 		if err != nil {
 			return err
 		}
-		apiKey := strings.TrimSpace(args[0])
+		var apiKey string
+		if len(args) == 1 {
+			apiKey = strings.TrimSpace(args[0])
+		} else {
+			// An API key is a bearer credential — at least as sensitive as the
+			// password that `user create` already reads with term.ReadPassword.
+			// Prompting keeps it out of shell history and ps output.
+			//
+			// term.ReadPassword needs a real terminal, so when stdin is piped
+			// (echo "$KEY" | p202 config set-key, or CI) fall back to a plain
+			// read instead of failing with "inappropriate ioctl for device".
+			if term.IsTerminal(int(os.Stdin.Fd())) {
+				fmt.Fprint(os.Stderr, "API key (hidden): ")
+				keyBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
+				fmt.Fprintln(os.Stderr)
+				if err != nil {
+					return fmt.Errorf("reading API key: %w", err)
+				}
+				apiKey = strings.TrimSpace(string(keyBytes))
+			} else {
+				line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+				if err != nil && !errors.Is(err, io.EOF) {
+					return fmt.Errorf("reading API key: %w", err)
+				}
+				apiKey = strings.TrimSpace(line)
+			}
+		}
 		if err := validateAPIKey(apiKey); err != nil {
 			return err
 		}
@@ -97,9 +128,11 @@ var configShowCmd = &cobra.Command{
 				"api_key":         p.MaskedKey(),
 				"config_path":     config.Path(),
 				"available_names": profiles,
+				"output_format":   outputFormatName(),
+				"output_source":   outputSource,
 			}
 			data, _ := json.Marshal(obj)
-			output.Render(data, true)
+			output.RenderWith(data, output.Opts{JSON: true, Compact: compactJSON})
 		} else {
 			fmt.Printf("Config file: %s\n", config.Path())
 			fmt.Printf("Active:      %s\n", cfg.ActiveProfile)
@@ -107,6 +140,7 @@ var configShowCmd = &cobra.Command{
 			fmt.Printf("URL:         %s\n", p.URL)
 			fmt.Printf("API key:     %s\n", p.MaskedKey())
 			fmt.Printf("Profiles:    %s\n", profilesStr)
+			fmt.Printf("Output:      %s (%s)\n", outputFormatName(), outputSource)
 		}
 		return nil
 	},
@@ -122,7 +156,7 @@ var configTestCmd = &cobra.Command{
 		}
 		data, err := c.Get("system/health", nil)
 		if err != nil {
-			return withHint(fmt.Errorf("connection failed: %w", err), "Check `p202 config get` (URL and key), that the instance is reachable, and that the key is valid in the Prosper202 UI under API keys.")
+			return withHint(fmt.Errorf("connection failed: %w", err), "Check `p202 config show` (URL and key), that the instance is reachable, and that the key is valid in the Prosper202 UI under API keys.")
 		}
 		if !jsonOutput {
 			fmt.Println("Connection successful!")
@@ -144,6 +178,13 @@ var configSetDefaultCmd = &cobra.Command{
 		}
 		if !isSupportedDefaultKey(key) {
 			return validationError("unsupported default key %q. Supported keys: %s", key, strings.Join(supportedDefaultKeys(), ", "))
+		}
+		if key == outputDefaultKey {
+			format, ok := parseOutputFormat(value)
+			if !ok {
+				return validationError("%s must be one of: %s (got %q)", outputDefaultKey, strings.Join(outputFormats, ", "), value)
+			}
+			value = format
 		}
 
 		cfg, err := config.Load()

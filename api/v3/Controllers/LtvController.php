@@ -845,7 +845,11 @@ class LtvController
                 'last7'     => [$now - (7 * 86400), $now],
                 'last30'    => [$now - (30 * 86400), $now],
                 'last90'    => [$now - (90 * 86400), $now],
-                default     => [null, $now],
+                // A typo like period=last7d must not silently mean "all time".
+                default     => throw new ValidationException(
+                    'Invalid period',
+                    ['period' => 'Valid: today, yesterday, last7, last30, last90']
+                ),
             };
         }
 

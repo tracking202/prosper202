@@ -1,6 +1,7 @@
 package output
 
 import (
+	"bytes"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -21,6 +22,7 @@ type Opts struct {
 	Wide       bool     // show all columns (no width cap)
 	RawHeaders bool     // keep raw API keys as headers instead of friendly names
 	Fields     []string // explicit column selection (in order)
+	Compact    bool     // JSON on one line, HTML characters unescaped (for agents)
 }
 
 // friendlyHeaders maps raw API field names to human-readable column headers.
@@ -74,7 +76,7 @@ func RenderWith(data []byte, opts Opts) {
 		return
 	}
 	if opts.JSON {
-		renderJSON(data)
+		renderJSON(data, opts.Compact)
 		return
 	}
 	if opts.CSV {
@@ -108,9 +110,13 @@ func RenderWith(data []byte, opts Opts) {
 	}
 }
 
-func renderJSON(data []byte) {
+func renderJSON(data []byte, compact bool) {
 	var parsed interface{}
 	if json.Unmarshal(data, &parsed) == nil {
+		if compact {
+			renderCompactJSON(data, parsed)
+			return
+		}
 		pretty, err := json.MarshalIndent(parsed, "", "  ")
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error formatting JSON:", err)
@@ -123,6 +129,22 @@ func renderJSON(data []byte) {
 	}
 	_, _ = os.Stdout.Write(data)
 	fmt.Println()
+}
+
+// renderCompactJSON prints parsed as one line. It decodes and sorts exactly
+// as the pretty form does; only whitespace and HTML escaping differ, since an
+// agent reads the bytes and \u0026 in every URL costs tokens.
+func renderCompactJSON(data []byte, parsed interface{}) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(parsed); err != nil {
+		fmt.Fprintln(os.Stderr, "Error formatting JSON:", err)
+		_, _ = os.Stdout.Write(data)
+		return
+	}
+	// A closed stdout (piping to `head`) is not actionable here.
+	_, _ = os.Stdout.Write(buf.Bytes())
 }
 
 // renderQuiet prints one id per row (no header) for scripting pipelines.
@@ -189,8 +211,8 @@ func idOf(obj map[string]interface{}) string {
 	// shape, including the nullable-foreign-key case.
 	for _, k := range []string{"id", "conv_id", "click_id", "tracker_id", "text_ad_id",
 		"landing_page_id", "aff_campaign_id", "ppc_account_id", "aff_network_id",
-		"ppc_network_id", "rule_id", "rotator_id", "event_id", "attribution_app_id",
-		"postback_id", "snapshot_id", "export_id", "model_id", "delivery_id",
+		"ppc_network_id", "rule_id", "rotator_id", "event_id", "encoding_id",
+		"postback_id", "registration_id", "snapshot_id", "export_id", "model_id", "delivery_id",
 		"webhook_id", "integration_id", "field_id", "alias_id", "subscription_id",
 		"customer_id", "company_id", "product_id", "user_id"} {
 		// Presence is not enough: a nullable foreign key (a customer with no
@@ -566,7 +588,7 @@ func renderTableCSV(items []interface{}, opts Opts) {
 		}
 		record := make([]string, len(keys))
 		for i, k := range keys {
-			record[i] = formatValue(obj[k])
+			record[i] = formatValueExact(obj[k])
 		}
 		if err := writer.Write(record); err != nil {
 			fmt.Fprintln(os.Stderr, "Error writing CSV row:", err)
@@ -592,7 +614,7 @@ func renderObjectCSV(obj map[string]interface{}) {
 		return
 	}
 	for _, k := range keys {
-		if err := writer.Write([]string{k, formatValue(obj[k])}); err != nil {
+		if err := writer.Write([]string{k, formatValueExact(obj[k])}); err != nil {
 			fmt.Fprintln(os.Stderr, "Error writing CSV row:", err)
 			return
 		}
@@ -603,7 +625,21 @@ func renderObjectCSV(obj map[string]interface{}) {
 	}
 }
 
+// formatValue renders a value for human display, rounding floats to 2 decimals.
 func formatValue(v interface{}) string {
+	return formatScalar(v, false)
+}
+
+// formatValueExact renders a value without lossy rounding, for machine-facing
+// output. The API sends computed metrics (roi, epc, margin) as JSON numbers
+// rather than strings, so rounding them here truncated exported data: a --csv
+// export of 0.288613861 came out as 0.29, and the caller had no way to tell it
+// had lost precision.
+func formatValueExact(v interface{}) string {
+	return formatScalar(v, true)
+}
+
+func formatScalar(v interface{}, exact bool) string {
 	if v == nil {
 		return ""
 	}
@@ -612,7 +648,10 @@ func formatValue(v interface{}) string {
 		return val
 	case float64:
 		if val == float64(int64(val)) {
-			return fmt.Sprintf("%d", int64(val))
+			return strconv.FormatInt(int64(val), 10)
+		}
+		if exact {
+			return strconv.FormatFloat(val, 'f', -1, 64)
 		}
 		return fmt.Sprintf("%.2f", val)
 	case bool:

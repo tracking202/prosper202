@@ -22,7 +22,11 @@ type crudField struct {
 	Required bool
 	QueryKey string
 	Aliases  []string
+	Enum     []string // the values the field takes (the controller's 'allowed'); nil: not a fixed set
 }
+
+// forecastEventRecurrences are ForecastEventsController's recurrence values.
+var forecastEventRecurrences = []string{"none", "monthly", "yearly", "custom"}
 
 type crudEntity struct {
 	Name          string
@@ -31,8 +35,10 @@ type crudEntity struct {
 	Endpoint      string
 	Fields        []crudField
 	ListParams    []crudField
-	IDField       string // internal primary-key field (e.g. aff_campaign_id)
-	PublicIDField string // public-facing id field (e.g. aff_campaign_id_public)
+	IDField       string   // internal primary-key field (e.g. aff_campaign_id)
+	PublicIDField string   // public-facing id field (e.g. aff_campaign_id_public)
+	URLFields     []string // URL fields `list --url-contains` searches; none means no such flag
+	StatsGroupBy  string   // reports/breakdown dimension `list --with-stats` merges by IDField; "" means no such flag
 }
 
 // resolvePublicID treats id as a public id and returns the matching internal id
@@ -95,12 +101,18 @@ func isNotFoundErr(err error) bool {
 	return false
 }
 
-// deleteArgsValidator allows zero positional args when --ids is set, else one.
-func deleteArgsValidator(cmd *cobra.Command, args []string) error {
-	if ids, _ := cmd.Flags().GetString("ids"); strings.TrimSpace(ids) != "" {
-		return cobra.MaximumNArgs(0)(cmd, args)
+// deleteArgsValidatorN returns a cobra Args validator for delete commands whose
+// deletable id is preceded by `base` fixed positional args (0 for flat
+// resources, 1 for nested ones like rotator rules): with --ids set the id list
+// replaces the positional id, so exactly `base` args are allowed; otherwise
+// base+1.
+func deleteArgsValidatorN(base int) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if ids, _ := cmd.Flags().GetString("ids"); strings.TrimSpace(ids) != "" {
+			return cobra.ExactArgs(base)(cmd, args)
+		}
+		return cobra.ExactArgs(base+1)(cmd, args)
 	}
-	return cobra.ExactArgs(1)(cmd, args)
 }
 
 // deleteDryRunFlagDesc is the shared help text for --dry-run on every delete
@@ -232,7 +244,50 @@ func withDryRunHint(err error) error {
 // bulkOrSingleDelete deletes one id (positional) or many (--ids), honoring
 // --force, against endpoint/<id>. Shared so every delete has the same bulk
 // semantics. noun is used in confirmation and summary messages.
+
+// deleteArgsValidator allows zero positional args when --ids is set, else one.
+var deleteArgsValidator = deleteArgsValidatorN(0)
+
+// deleteSpec describes what varies between the CLI's delete commands: the URL
+// for one id, and the wording. Everything else — id validation, the --ids bulk
+// path, confirmation, partial-failure accounting, which stream each message
+// goes to — is shared in runBulkOrSingleDelete. These used to be five
+// hand-rolled copies, and the copies are exactly where the mechanics drifted
+// (prompts on stdout, unvalidated ids); the wording is the only part that was
+// ever meant to differ.
+type deleteSpec struct {
+	endpoint    string // collection path; one record is endpoint + "/" + id
+	noun        string // singular, e.g. "rotator"
+	plural      string // bulk prompts and summaries, e.g. "rotators"
+	cascadeOne  string // single-confirm suffix, e.g. " and all its rules"
+	cascadeMany string // bulk-confirm suffix, e.g. " and all their rules"
+	context     string // parent-resource suffix, e.g. " from rotator 7"
+	// idsHintText overrides the --ids recovery hint for commands whose ids are
+	// not discoverable via a plain `<entity> list` (rotator rules, for example).
+	idsHintText string
+}
+
+// idsHint returns the recovery hint shown when --ids resolves to nothing.
+func (s deleteSpec) idsHint() string {
+	if s.idsHintText != "" {
+		return s.idsHintText
+	}
+	return "Comma-separate internal ids, e.g. --ids 12,13,14 (find them with the matching `... list`)."
+}
+
+// bulkOrSingleDelete is the flat-resource convenience wrapper around
+// runBulkOrSingleDelete for callers with no special wording.
 func bulkOrSingleDelete(cmd *cobra.Command, endpoint, noun string) error {
+	return runBulkOrSingleDelete(cmd, cmd.Flags().Args(), deleteSpec{
+		endpoint: endpoint,
+		noun:     noun,
+		plural:   noun + "s",
+	})
+}
+
+// runBulkOrSingleDelete deletes one id (from args) or many (--ids), honoring
+// --force. Prompts and cancellations go to stderr so piped stdout stays data.
+func runBulkOrSingleDelete(cmd *cobra.Command, args []string, spec deleteSpec) error {
 	c, err := api.NewFromConfig()
 	if err != nil {
 		return err
@@ -240,7 +295,6 @@ func bulkOrSingleDelete(cmd *cobra.Command, endpoint, noun string) error {
 	force, _ := cmd.Flags().GetBool("force")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	idsFlag, _ := cmd.Flags().GetString("ids")
-	args := cmd.Flags().Args()
 
 	if strings.TrimSpace(idsFlag) != "" {
 		ids, perr := parseIDList(idsFlag)
@@ -248,30 +302,30 @@ func bulkOrSingleDelete(cmd *cobra.Command, endpoint, noun string) error {
 			return perr
 		}
 		if len(ids) == 0 {
-			return validationError("--ids requires at least one ID").WithHint("Comma-separate internal ids, e.g. --ids 12,13,14 (find them with the matching `... list`).")
+			return validationError("--ids requires at least one ID").WithHint(spec.idsHint())
 		}
 		if dryRun {
-			return renderDeletePreviews(c, endpoint, ids)
+			return renderDeletePreviews(c, spec.endpoint, ids)
 		}
 		if api.StagedMode() {
-			return stageDeletes(c, endpoint, ids)
+			return stageDeletes(c, spec.endpoint, ids)
 		}
-		if !force && !confirmPrompt("Delete %d %ss?", len(ids), noun) {
+		if !force && !confirmPrompt("Delete %d %s%s%s?", len(ids), spec.plural, spec.cascadeMany, spec.context) {
 			fmt.Fprintln(os.Stderr, "Cancelled.")
 			return nil
 		}
 		deleted, failed := 0, 0
 		for _, id := range ids {
-			if err := c.Delete(endpoint + "/" + id); err != nil {
+			if err := c.Delete(spec.endpoint + "/" + id); err != nil {
 				failed++
-				fmt.Fprintf(os.Stderr, "Failed to delete %s %s: %v\n", noun, id, err)
+				fmt.Fprintf(os.Stderr, "Failed to delete %s %s%s: %v\n", spec.noun, id, spec.context, err)
 				continue
 			}
 			deleted++
 		}
-		output.Success("Deleted %d of %d %ss.", deleted, len(ids), noun)
+		output.Success("Deleted %d of %d %s%s.", deleted, len(ids), spec.plural, spec.context)
 		if failed > 0 {
-			return partialFailureError("failed to delete %d %ss", failed, noun)
+			return partialFailureError("failed to delete %d %s", failed, spec.plural)
 		}
 		return nil
 	}
@@ -279,20 +333,27 @@ func bulkOrSingleDelete(cmd *cobra.Command, endpoint, noun string) error {
 	if len(args) != 1 {
 		return validationError("provide a single id or use --ids").WithHint("Pass one id as the argument, or several with --ids 12,13,14.")
 	}
+	// Validate before previewing or staging: a preview is still a DELETE
+	// request, so a blank or non-numeric id must not reach the server on any
+	// of these paths.
+	id, err := validateID(args[0])
+	if err != nil {
+		return err
+	}
 	if dryRun {
-		return renderDeletePreviews(c, endpoint, []string{args[0]})
+		return renderDeletePreviews(c, spec.endpoint, []string{id})
 	}
 	if api.StagedMode() {
-		return stageDeletes(c, endpoint, []string{args[0]})
+		return stageDeletes(c, spec.endpoint, []string{id})
 	}
-	if !force && !confirmPrompt("Delete %s %s?", noun, args[0]) {
+	if !force && !confirmPrompt("Delete %s %s%s%s?", spec.noun, id, spec.cascadeOne, spec.context) {
 		fmt.Fprintln(os.Stderr, "Cancelled.")
 		return nil
 	}
-	if err := c.Delete(endpoint + "/" + args[0]); err != nil {
+	if err := c.Delete(spec.endpoint + "/" + id); err != nil {
 		return err
 	}
-	output.Success("%s %s deleted.", capitalize(noun), args[0])
+	output.Success("%s %s deleted%s.", capitalize(spec.noun), id, spec.context)
 	return nil
 }
 
@@ -446,17 +507,48 @@ func cloneMutableFields(source map[string]interface{}, fields []crudField) map[s
 	return out
 }
 
+// requireID rejects a blank positional id. Interpolating one produced a request
+// against the collection endpoint itself (DELETE users/) rather than against a
+// record — a very different operation from the one the user asked for.
+func requireID(raw string) (string, error) {
+	id := strings.TrimSpace(raw)
+	if id == "" {
+		return "", validationError("an ID is required")
+	}
+	return id, nil
+}
+
+// validateID additionally enforces, for a single positional id, the same numeric
+// rule parseIDList applies to every id in --ids. Used by the mutating commands;
+// `get` uses requireID instead because it also accepts public ids.
+func validateID(raw string) (string, error) {
+	id, err := requireID(raw)
+	if err != nil {
+		return "", err
+	}
+	if _, err := strconv.Atoi(id); err != nil {
+		return "", validationError("invalid ID %q: must be a numeric value", id)
+	}
+	return id, nil
+}
+
 func parseIDList(raw string) ([]string, error) {
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))
 	seen := map[string]bool{}
 	for _, part := range parts {
 		id := strings.TrimSpace(part)
-		if id == "" || seen[id] {
+		if id == "" {
 			continue
 		}
-		if _, err := strconv.Atoi(id); err != nil {
+		n, err := strconv.Atoi(id)
+		if err != nil {
 			return nil, validationError("invalid ID %q: must be a numeric value", id).WithHint("Use the internal numeric id from the matching `... list`; public ids from tracking links need --public where supported.")
+		}
+		// Canonical form, so "007" matches the API's 7 in callers that compare ids.
+		id = strconv.Itoa(n)
+		if seen[id] {
+			continue
 		}
 		seen[id] = true
 		out = append(out, id)
@@ -543,6 +635,33 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("list", entity.Endpoint)
 			defer func() { done(retErr == nil, errString(retErr)) }()
+			urlContains := ""
+			if len(entity.URLFields) > 0 {
+				urlContains, _ = cmd.Flags().GetString("url-contains")
+			}
+			var statsParams map[string]string
+			minClicks := 0
+			if entity.StatsGroupBy != "" {
+				var err error
+				if statsParams, minClicks, err = listStatsParams(cmd, entity); err != nil {
+					return err
+				}
+			}
+			// Client-side filters read every page, so paging flags make no sense with them.
+			clientFilter := ""
+			if urlContains != "" {
+				clientFilter = "--url-contains"
+			} else if minClicks > 0 {
+				clientFilter = "--min-clicks"
+			}
+			if clientFilter != "" {
+				for _, paging := range []string{"page", "limit", "offset"} {
+					if cmd.Flags().Changed(paging) {
+						return validationError("%s searches every page, so it cannot be combined with --%s", clientFilter, paging).
+							WithHint("Drop --page/--limit/--offset; every match is returned.")
+					}
+				}
+			}
 			c, err := api.NewFromConfig()
 			if err != nil {
 				return err
@@ -569,6 +688,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 				}
 			}
 			allRows, _ := cmd.Flags().GetBool("all")
+			if clientFilter != "" {
+				allRows = true
+			}
 			resolveNames, _ := cmd.Flags().GetBool("resolve-names")
 			if resolveNames && !envFlagEnabled("CLI_ENABLE_RESOLVE_NAMES", true) {
 				return validationError("--resolve-names is disabled").WithHint("Set CLI_ENABLE_RESOLVE_NAMES=1 in the environment to enable it, or drop the flag.")
@@ -578,6 +700,20 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 				rows, err := fetchAllRowsWithParams(c, entity.Endpoint, params)
 				if err != nil {
 					return err
+				}
+				if urlContains != "" {
+					matched := make([]map[string]interface{}, 0, len(rows))
+					for _, row := range rows {
+						if rowMatchesURL(row, entity.URLFields, urlContains) {
+							matched = append(matched, row)
+						}
+					}
+					rows = matched
+				}
+				if statsParams != nil {
+					if rows, err = addListStats(c, entity, rows, statsParams, minClicks); err != nil {
+						return err
+					}
 				}
 				if resolveNames {
 					if err := resolveForeignKeyNames(c, rows); err != nil {
@@ -609,13 +745,20 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if resolveNames {
+			if resolveNames || statsParams != nil {
 				rows, err := parseDataArray(data)
 				if err != nil {
 					return err
 				}
-				if err := resolveForeignKeyNames(c, rows); err != nil {
-					return err
+				if statsParams != nil {
+					if rows, err = addListStats(c, entity, rows, statsParams, 0); err != nil {
+						return err
+					}
+				}
+				if resolveNames {
+					if err := resolveForeignKeyNames(c, rows); err != nil {
+						return err
+					}
 				}
 				var parsed map[string]interface{}
 				resp := map[string]interface{}{"data": rows}
@@ -635,8 +778,17 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	listCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 	listCmd.Flags().Bool("all", false, "Fetch all rows across pages")
 	listCmd.Flags().Bool("resolve-names", false, "Resolve foreign key IDs to names")
+	if len(entity.URLFields) > 0 {
+		listCmd.Flags().String("url-contains", "", fmt.Sprintf("Only %s with a URL containing this text (case-insensitive; searches every page; fields: %s)", entity.Name+"s", strings.Join(entity.URLFields, ", ")))
+	}
+	if entity.StatsGroupBy != "" {
+		registerListStatsFlags(listCmd, entity)
+	}
 	for _, p := range entity.ListParams {
 		listCmd.Flags().String(p.Name, "", p.Desc)
+		if p.Enum != nil {
+			enumFlag(listCmd, p.Name, newEnum(p.Enum))
+		}
 		for _, alias := range p.Aliases {
 			listCmd.Flags().String(alias, "", p.Desc+" (legacy alias)")
 			_ = listCmd.Flags().MarkHidden(alias)
@@ -656,8 +808,12 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			id, err := requireID(args[0])
+			if err != nil {
+				return err
+			}
 			forcePublic, _ := cmd.Flags().GetBool("public")
-			data, err := getWithPublicFallback(c, entity, args[0], forcePublic)
+			data, err := getWithPublicFallback(c, entity, id, forcePublic)
 			if err != nil {
 				return err
 			}
@@ -701,7 +857,14 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 		},
 	}
 	for _, f := range entity.Fields {
-		createCmd.Flags().String(f.Name, "", f.Desc)
+		desc := f.Desc
+		if f.Required {
+			desc += " (required)"
+		}
+		createCmd.Flags().String(f.Name, "", desc)
+		if f.Enum != nil {
+			enumFlag(createCmd, f.Name, newEnum(f.Enum))
+		}
 	}
 	registerIdempotencyKeyFlag(createCmd)
 
@@ -726,7 +889,11 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if len(body) == 0 {
 				return validationError("no fields specified; pass at least one flag to update")
 			}
-			data, err := c.Put(entity.Endpoint+"/"+args[0], body)
+			id, err := validateID(args[0])
+			if err != nil {
+				return err
+			}
+			data, err := c.Put(entity.Endpoint+"/"+id, body)
 			if err != nil {
 				return err
 			}
@@ -736,84 +903,24 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	}
 	for _, f := range entity.Fields {
 		updateCmd.Flags().String(f.Name, "", f.Desc)
+		if f.Enum != nil {
+			enumFlag(updateCmd, f.Name, newEnum(f.Enum))
+		}
 	}
 
 	// delete
 	deleteCmd := &cobra.Command{
 		Use:   "delete <id>",
 		Short: fmt.Sprintf("Delete a %s", entity.Name),
-		Args: func(cmd *cobra.Command, args []string) error {
-			idsFlag, _ := cmd.Flags().GetString("ids")
-			if strings.TrimSpace(idsFlag) != "" {
-				return cobra.MaximumNArgs(0)(cmd, args)
-			}
-			return cobra.ExactArgs(1)(cmd, args)
-		},
+		Args:  deleteArgsValidator,
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("delete", entity.Endpoint)
 			defer func() { done(retErr == nil, errString(retErr)) }()
-			c, err := api.NewFromConfig()
-			if err != nil {
-				return err
-			}
-			dryRun, _ := cmd.Flags().GetBool("dry-run")
-			idsFlag, _ := cmd.Flags().GetString("ids")
-			if strings.TrimSpace(idsFlag) != "" {
-				idList, parseErr := parseIDList(idsFlag)
-				if parseErr != nil {
-					return parseErr
-				}
-				if len(idList) == 0 {
-					return validationError("--ids requires at least one ID").WithHint("Comma-separate internal ids, e.g. --ids 12,13,14 (find them with the matching `... list`).")
-				}
-
-				if dryRun {
-					return renderDeletePreviews(c, entity.Endpoint, idList)
-				}
-				if api.StagedMode() {
-					return stageDeletes(c, entity.Endpoint, idList)
-				}
-
-				force, _ := cmd.Flags().GetBool("force")
-				if !force && !confirmPrompt("Delete %d %s?", len(idList), entity.Plural) {
-					fmt.Println("Cancelled.")
-					return nil
-				}
-
-				deleted := 0
-				failed := 0
-				for _, id := range idList {
-					if err := c.Delete(entity.Endpoint + "/" + id); err != nil {
-						failed++
-						fmt.Fprintf(os.Stderr, "Failed to delete %s %s: %v\n", entity.Name, id, err)
-						continue
-					}
-					deleted++
-				}
-				output.Success("Deleted %d of %d %s.", deleted, len(idList), entity.Plural)
-				if failed > 0 {
-					return partialFailureError("failed to delete %d %s", failed, entity.Plural)
-				}
-				return nil
-			}
-
-			if dryRun {
-				return renderDeletePreviews(c, entity.Endpoint, []string{args[0]})
-			}
-			if api.StagedMode() {
-				return stageDeletes(c, entity.Endpoint, []string{args[0]})
-			}
-
-			force, _ := cmd.Flags().GetBool("force")
-			if !force && !confirmPrompt("Delete %s %s?", entity.Name, args[0]) {
-				fmt.Println("Cancelled.")
-				return nil
-			}
-			if err := c.Delete(entity.Endpoint + "/" + args[0]); err != nil {
-				return err
-			}
-			output.Success("%s %s deleted.", capitalize(entity.Name), args[0])
-			return nil
+			return runBulkOrSingleDelete(cmd, args, deleteSpec{
+				endpoint: entity.Endpoint,
+				noun:     entity.Name,
+				plural:   entity.Plural,
+			})
 		},
 	}
 	registerDeleteFlags(deleteCmd, entity.Name)
@@ -826,9 +933,12 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 func init() {
 	entities := []crudEntity{
 		{
-			Name:     "campaign",
-			Plural:   "campaigns (affiliate offers with URLs, payouts, and postback settings)",
-			Endpoint: "campaigns",
+			Name:         "campaign",
+			Plural:       "campaigns (affiliate offers with URLs, payouts, and postback settings)",
+			Endpoint:     "campaigns",
+			IDField:      "aff_campaign_id",
+			URLFields:    campaignURLFields,
+			StatsGroupBy: "campaign",
 			Fields: []crudField{
 				{Name: "aff_campaign_name", Desc: "Campaign name", Required: true},
 				{Name: "aff_campaign_url", Desc: "Primary offer URL", Required: true},
@@ -841,8 +951,11 @@ func init() {
 				{Name: "aff_campaign_currency", Desc: "Currency code (e.g. USD)"},
 				{Name: "aff_campaign_foreign_payout", Desc: "Foreign currency payout"},
 				{Name: "aff_network_id", Desc: "Affiliate network ID"},
-				{Name: "aff_campaign_cloaking", Desc: "Enable cloaking (0 or 1)"},
-				{Name: "aff_campaign_rotate", Desc: "Enable rotation (0 or 1)"},
+				{Name: "aff_campaign_cloaking", Desc: "Enable cloaking (1) or not (0)", Enum: binaryValues},
+				{Name: "aff_campaign_rotate", Desc: "Enable rotation (1) or not (0)", Enum: binaryValues},
+				{Name: "payout_mode", Desc: "How conversions set a click's value, replace (latest payout, default) or accumulate (sum)", Enum: []string{"replace", "accumulate"}},
+				{Name: "identity_signals", Desc: "Link this campaign's clicks into multi-touch journeys (1, default) or not (0)", Enum: binaryValues},
+				{Name: "app_registration_id", Desc: "The Android app registration this campaign's store links install (`p202 app list --platform android`; 0 unlinks). An install of another app on its click is foreign_click"},
 				{Name: "aff_campaign_postback_url", Desc: "Postback URL"},
 				{Name: "aff_campaign_postback_append", Desc: "Postback append string"},
 			},
@@ -884,7 +997,7 @@ func init() {
 			Fields: []crudField{
 				{Name: "ppc_account_name", Desc: "Account name", Required: true},
 				{Name: "ppc_network_id", Desc: "PPC network ID", Required: true},
-				{Name: "ppc_account_default", Desc: "Set as default account (0 or 1)"},
+				{Name: "ppc_account_default", Desc: "Set as default account (1) or not (0)", Enum: binaryValues},
 			},
 			ListParams: []crudField{
 				{Name: "ppc_network_id", QueryKey: "filter[ppc_network_id]", Desc: "Filter by PPC network ID"},
@@ -904,7 +1017,7 @@ func init() {
 				{Name: "rotator_id", Desc: "Rotator ID"},
 				{Name: "click_cpc", Desc: "Cost per click"},
 				{Name: "click_cpa", Desc: "Cost per action"},
-				{Name: "click_cloaking", Desc: "Enable cloaking (0 or 1)"},
+				{Name: "click_cloaking", Desc: "Cloaking: 1 on, 0 off, -1 use the campaign's setting", Enum: []string{"-1", "0", "1"}},
 				{Name: "tracker_id_public", Desc: "Public tracker ID"},
 			},
 			ListParams: []crudField{
@@ -915,9 +1028,10 @@ func init() {
 			},
 		},
 		{
-			Name:     "landing-page",
-			Plural:   "landing pages (pre-sell pages visitors see before the offer)",
-			Endpoint: "landing-pages",
+			Name:      "landing-page",
+			Plural:    "landing pages (pre-sell pages visitors see before the offer)",
+			Endpoint:  "landing-pages",
+			URLFields: []string{"landing_page_url", "leave_behind_page_url"},
 			Fields: []crudField{
 				{Name: "landing_page_url", Desc: "Landing page URL", Required: true},
 				{Name: "aff_campaign_id", Desc: "Campaign ID", Required: true},
@@ -947,16 +1061,18 @@ func init() {
 			},
 		},
 		{
-			Name:     "forecast-event",
-			Aliases:  []string{"event"},
+			Name: "forecast-event",
+			// No "event" alias: `p202 event` is the web-events command, which
+			// shadowed it, so the alias the help advertised never resolved
+			// here (TestEveryAliasResolvesToItsOwnCommand).
 			Plural:   "forecast events (holidays, promotions, anomalies that affect forecasting)",
 			Endpoint: "forecast-events",
 			Fields: []crudField{
 				{Name: "event_name", Desc: "Event name (e.g. 'Black Friday', 'Server Outage')", Required: true},
 				{Name: "event_date", Desc: "Event date (YYYY-MM-DD)", Required: true},
 				{Name: "end_date", Desc: "End date for multi-day events (YYYY-MM-DD)"},
-				{Name: "recurrence", Desc: "Recurrence: none, monthly, yearly, custom"},
-				{Name: "impact_type", Desc: "Impact type: boost, suppress, neutral"},
+				{Name: "recurrence", Desc: "Recurrence", Enum: forecastEventRecurrences},
+				{Name: "impact_type", Desc: "Impact type", Enum: []string{"boost", "suppress", "neutral"}},
 				{Name: "expected_impact_pct", Desc: "Expected impact percentage (e.g. +200 for 3x boost, -50 for half)"},
 				{Name: "lead_days", Desc: "Days before event that impact ramps up"},
 				{Name: "lag_days", Desc: "Days after event that impact decays"},
@@ -965,7 +1081,7 @@ func init() {
 			},
 			ListParams: []crudField{
 				{Name: "event_name", QueryKey: "filter[event_name]", Desc: "Filter by event name"},
-				{Name: "recurrence", QueryKey: "filter[recurrence]", Desc: "Filter by recurrence type"},
+				{Name: "recurrence", QueryKey: "filter[recurrence]", Desc: "Filter by recurrence type", Enum: forecastEventRecurrences},
 				{Name: "tags", QueryKey: "filter[tags]", Desc: "Filter by tag"},
 			},
 		},
@@ -1026,7 +1142,8 @@ func init() {
 		}
 		cloneCmd.Flags().String("name", "", "Optional name override for the cloned campaign")
 		registerIdempotencyKeyFlag(cloneCmd)
-		campaignCmd.AddCommand(cloneCmd)
+		campaignCmd.AddCommand(cloneCmd, newCampaignReplaceURLCmd())
+		campaignCmd.AddCommand(newCampaignCheckURLsCmd())
 	}
 
 	if trackerCmd != nil {
@@ -1228,16 +1345,37 @@ func init() {
 					close(results)
 				}()
 
-				ordered := make([]map[string]interface{}, len(trackers))
+				// Report per-tracker failures and keep the rows that succeeded,
+				// matching how the bulk deletes account for partial failure.
+				// Returning on the first error discarded every row already
+				// fetched, so one transient 500 threw away the whole listing.
+				indexed := make([]map[string]interface{}, len(trackers))
+				failed := 0
 				for result := range results {
 					if result.err != nil {
-						return result.err
+						failed++
+						fmt.Fprintf(os.Stderr, "Failed to fetch URL for tracker at row %d: %v\n", result.index+1, result.err)
+						continue
 					}
-					ordered[result.index] = result.row
+					indexed[result.index] = result.row
 				}
 
-				encoded, _ := json.Marshal(map[string]interface{}{"data": ordered})
+				// Drop the gaps left by failed rows rather than emitting nulls.
+				ordered := make([]map[string]interface{}, 0, len(trackers)-failed)
+				for _, row := range indexed {
+					if row != nil {
+						ordered = append(ordered, row)
+					}
+				}
+
+				encoded, err := json.Marshal(map[string]interface{}{"data": ordered})
+				if err != nil {
+					return fmt.Errorf("encoding tracker URLs: %w", err)
+				}
 				render(encoded)
+				if failed > 0 {
+					return partialFailureError("failed to fetch %d of %d tracker URLs", failed, len(trackers))
+				}
 				return nil
 			},
 		}

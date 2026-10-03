@@ -26,7 +26,8 @@ func collectReportParams(cmd *cobra.Command) map[string]string {
 }
 
 func addReportFilters(cmd *cobra.Command) {
-	cmd.Flags().StringP("period", "p", "", "Period: today, yesterday, last7, last30, last90")
+	cmd.Flags().StringP("period", "p", "", "Period")
+	enumFlag(cmd, "period", newEnum(reportPeriods))
 	cmd.Flags().String("time_from", "", "Start timestamp (unix)")
 	cmd.Flags().String("time_to", "", "End timestamp (unix)")
 	cmd.Flags().String("aff_campaign_id", "", "Filter by INTERNAL campaign id (from `campaign list`), not the public id in tracking URLs")
@@ -198,10 +199,14 @@ func init() {
 	addMultiProfileFlags(reportSummaryCmd)
 
 	addReportFilters(reportBreakdownCmd)
-	reportBreakdownCmd.Flags().StringP("breakdown", "b", "", "Dimension: campaign, aff_network, ppc_account, ppc_network, landing_page (alias: lp), keyword, country, city, browser, platform, device, isp, text_ad")
+	reportBreakdownCmd.Flags().StringP("breakdown", "b", "", "Dimension")
+	enumFlag(reportBreakdownCmd, "breakdown", dimensionEnum(breakdownDimensions))
 	reportBreakdownCmd.Flags().String("group-by", "", "Alias for --breakdown (matches `analytics --group-by`)")
-	reportBreakdownCmd.Flags().StringP("sort", "s", "", "Sort by: total_clicks, total_leads, total_income, total_cost, total_net, roi, epc, conv_rate")
-	reportBreakdownCmd.Flags().String("sort_dir", "", "Sort direction: ASC or DESC")
+	enumFlag(reportBreakdownCmd, "group-by", dimensionEnum(breakdownDimensions))
+	reportBreakdownCmd.Flags().StringP("sort", "s", "", "Sort by")
+	enumFlag(reportBreakdownCmd, "sort", metricEnum(breakdownSorts))
+	reportBreakdownCmd.Flags().String("sort_dir", "", "Sort direction")
+	enumFlag(reportBreakdownCmd, "sort_dir", sortDirEnum())
 	reportBreakdownCmd.Flags().StringP("limit", "l", "", "Max results")
 	reportBreakdownCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 	reportBreakdownCmd.Flags().Float64("min-clicks", 0, "Only rows with at least N clicks")
@@ -213,10 +218,10 @@ func init() {
 	reportTimeseriesCmd.Flags().StringP("interval", "i", "", "Interval: hour, day, week, month")
 
 	addReportFilters(reportDaypartCmd)
-	addSortFlags(reportDaypartCmd, "Sort by: hour_of_day, clicks, conversions, revenue, cost, profit, roi, epc, conv_rate, cpa, avg_cpc (friendly aliases ok)")
+	addSortFlags(reportDaypartCmd, daypartSorts)
 
 	addReportFilters(reportWeekpartCmd)
-	addSortFlags(reportWeekpartCmd, "Sort by: day_of_week, clicks, conversions, revenue, cost, profit, roi, epc, conv_rate (friendly aliases ok)")
+	addSortFlags(reportWeekpartCmd, weekpartSorts)
 
 	reportCmd.AddCommand(reportSummaryCmd, reportBreakdownCmd, reportTimeseriesCmd, reportDaypartCmd, reportWeekpartCmd)
 	rootCmd.AddCommand(reportCmd)

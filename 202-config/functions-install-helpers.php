@@ -149,7 +149,7 @@ if (!function_exists('install_request_base_url')) {
 
 if (!function_exists('render_install_success')) {
     /**
-     * Render the post-install success panel (the .main block) so it can be swapped
+     * Render the post-install success panel (#install-panel) so it can be swapped
      * into the page over AJAX or printed directly on the no-JS path. The base URL
      * and server name are injected (no globals) so the markup can be unit-tested.
      *
@@ -166,49 +166,50 @@ if (!function_exists('render_install_success')) {
         $safeServerName = htmlentities($serverName, ENT_QUOTES, 'UTF-8');
         $cron_line = '* * * * * curl -s "' . $baseUrl . '202-cronjobs/index.php" >/dev/null 2>&1';
         ?>
-        <div class="main col-xs-7 install">
-            <center><img src="<?php echo $base; ?>202-img/prosper202.png"></center>
-            <h6>Success!</h6>
-            <small>Prosper202 has been installed. Now you can <a href="<?php echo $base; ?>202-login.php">log in</a>.</small><br></br>
-            <div class="row" style="margin-bottom: 10px;">
-                <div class="col-xs-3"><span class="label label-default">Username:</span></div>
-                <div class="col-xs-9"><span class="label label-primary"><?php echo $html['user_name']; ?></span></div>
+        <div id="install-panel">
+            <section class="card p202-standalone__card"><div class="card-body">
+            <h1 class="p202-standalone__title">Success! Prosper202 is installed</h1>
+            <p class="p202-standalone__desc">Your account is ready. <a href="<?php echo $base; ?>202-login.php">Sign in</a> to set up your first campaign.</p>
+            <div class="p202-strip mb-4">
+                <div class="p202-strip__row"><span class="p202-pill p202-pill--good">Ready</span><span class="p202-strip__label">Username</span><span class="p202-strip__value"><?php echo $html['user_name']; ?></span></div>
+                <div class="p202-strip__row"><span class="p202-pill">Sign in</span><span class="p202-strip__label">Login address</span><span class="p202-strip__value"><?php printf('<a href="%s202-login.php">%s202-login.php</a>', $base, $safeServerName . $base); ?></span></div>
             </div>
-            <div class="row" style="margin-bottom: 10px;">
-                <div class="col-xs-3"><span class="label label-default">Login address:</span></div>
-                <div class="col-xs-9"><small><?php printf('<a href="%s202-login.php">%s202-login.php</a>', $base, $safeServerName . $base); ?></small></div>
-            </div>
-
-            <h6 style="margin-top: 20px;">Keep background jobs running (cron)</h6>
-            <small>Reports, attribution and emails run on a schedule. If you used Docker this is already handled by the <code>cron</code> service. Otherwise, add this one line to your crontab (<code>crontab -e</code>):</small>
-            <pre style="white-space: pre-wrap; word-break: break-all; font-size: 11px;"><?php echo htmlspecialchars($cron_line, ENT_QUOTES, 'UTF-8'); ?></pre>
-
-            <?php if (($html['rest_api_key'] ?? '') !== '') { ?>
-            <h6 style="margin-top: 20px;">Connect the CLI / Claude onboarding (optional)</h6>
-            <small>Use this REST API key with the <code>p202</code> CLI or the Claude <code>/onboard-prosper202</code> skill to finish setup hands-free. <strong>Copy it now</strong> — for security it isn't shown again (you can always generate a new one under Account &rarr; REST API Keys).</small>
-            <div class="row" style="margin-top: 8px; margin-bottom: 6px;">
-                <div class="col-xs-3"><span class="label label-default">Instance URL:</span></div>
-                <div class="col-xs-9"><small><code><?php echo htmlspecialchars(rtrim($baseUrl, '/'), ENT_QUOTES, 'UTF-8'); ?></code></small> &mdash; use with <code>p202 config set-url</code> (the CLI appends <code>/api/v3</code> itself)</div>
-            </div>
-            <div class="row" style="margin-bottom: 6px;">
-                <div class="col-xs-3"><span class="label label-default">User ID:</span></div>
-                <div class="col-xs-9"><small><code><?php echo (int) ($html['user_id'] ?? 0); ?></code></small></div>
-            </div>
-            <div class="row" style="margin-bottom: 6px;">
-                <div class="col-xs-3"><span class="label label-default">API key:</span></div>
-                <div class="col-xs-9"><small><code style="word-break: break-all;"><?php echo $html['rest_api_key']; ?></code></small></div>
-            </div>
-            <?php } ?>
 
             <?php if ($warnings) { ?>
-                <div style="margin: 12px 0; padding: 8px 12px; border: 1px solid #faebcc; background: #fcf8e3; color: #8a6d3b; border-radius: 4px; font-size: 12px;">
+                <div class="alert alert-warning p202-flash" role="status"><i class="bi bi-exclamation-triangle"></i><div class="p202-flash__body">
                     <strong>You're all set — a couple of optional steps need a quick follow-up:</strong>
-                    <ul style="margin: 6px 0 0 18px;">
+                    <ul class="mb-0 mt-1">
                         <?php foreach ($warnings as $w) { echo '<li>' . $w . '</li>'; } ?>
                     </ul>
-                </div>
+                </div></div>
             <?php } ?>
-            <p><small>Were you expecting more steps? Sorry, that's it!</small></p>
+
+            <h2 class="h6 mt-4">Keep background jobs running (cron)</h2>
+            <p class="small">Reports, attribution and emails run on a schedule. If you used Docker this is already handled by the <code>cron</code> service. Otherwise, add this one line to your crontab (<code>crontab -e</code>):</p>
+            <div class="p202-code mb-3">
+                <pre class="p202-code__value"><?php echo htmlspecialchars($cron_line, ENT_QUOTES, 'UTF-8'); ?></pre>
+                <button type="button" class="btn btn-secondary btn-sm p202-copy" data-p202-copy="<?php echo htmlspecialchars($cron_line, ENT_QUOTES, 'UTF-8'); ?>"><i class="bi bi-clipboard"></i> Copy</button>
+            </div>
+
+            <?php if (($html['rest_api_key'] ?? '') !== '') { ?>
+            <h2 class="h6 mt-4">Connect the CLI / Claude onboarding (optional)</h2>
+            <p class="small">Use this REST API key with the <code>p202</code> CLI or the Claude <code>/onboard-prosper202</code> skill to finish setup hands-free. <strong>Copy it now</strong> — for security it isn't shown again (you can always generate a new one under Account &rarr; REST API Keys).</p>
+            <dl class="row small mb-2">
+                <dt class="col-sm-3">Instance URL</dt>
+                <dd class="col-sm-9"><code><?php echo htmlspecialchars(rtrim($baseUrl, '/'), ENT_QUOTES, 'UTF-8'); ?></code> &mdash; use with <code>p202 config set-url</code> (the CLI appends <code>/api/v3</code> itself)</dd>
+                <dt class="col-sm-3">User ID</dt>
+                <dd class="col-sm-9"><code><?php echo (int) ($html['user_id'] ?? 0); ?></code></dd>
+            </dl>
+            <div class="form-label">API key</div>
+            <div class="p202-code mb-3">
+                <pre class="p202-code__value" id="install-api-key"><?php echo $html['rest_api_key']; ?></pre>
+                <button type="button" class="btn btn-secondary btn-sm p202-copy" data-p202-copy="<?php echo $html['rest_api_key']; ?>"><i class="bi bi-clipboard"></i> Copy</button>
+            </div>
+            <?php } ?>
+
+            <a class="btn btn-primary w-100 mt-2" href="<?php echo $base; ?>202-login.php">Sign in</a>
+            <p class="small text-secondary mt-3 mb-0">Were you expecting more steps? Sorry, that's it!</p>
+            </div></section>
         </div>
         <?php
     }

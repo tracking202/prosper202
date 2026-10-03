@@ -7,6 +7,11 @@ include_once $rootPath . '/202-config/connect.php';
 AUTH::require_user();
 AUTH::set_timezone($_SESSION['user_timezone']);
 
+// Export the window the page drew (the link carries its view), not
+// whatever the stored one says by now (ReportView).
+require_once $rootPath . '/202-config/functions-report-prefs.php';
+p202_report_view_begin();
+
 //grab user time range preference
 $time = grab_timeframe();
 $userId = (int) $_SESSION['user_id'];

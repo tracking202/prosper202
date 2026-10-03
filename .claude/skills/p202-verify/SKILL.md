@@ -55,6 +55,7 @@ subset, because the tier that matters is the one that touches your path.
 | `202-config/PHPStan/Rules/**` | + rule registered in `phpstan.neon.dist`, + clean against the whole tree, + a planted defect in every call shape it claims to cover |
 | `202-config/Database/**`, `202-config/migrations/**`, `tests/Schema/**`, `api/v3/**`, any `*.sql` | + `--group integration tests/Schema/` against a scratch database. The table definitions live in `202-config/Database/Tables/*.php` and have no "schema" in their path; the first version of the selector missed them. |
 | `sdk/ios-attribution/**` | swift (`swift build && swift test`, mirroring the Swift SDK job); SKIP with the toolchain hint when `swift` is absent |
+| `sdk/android-attribution/**`, `tests/fixtures/app-sdk-contract/**` | kotlin (`gradle -p sdk/android-attribution -Pp202.android=false :core:test`, mirroring the Android SDK job); SKIP when `java` or `gradle` is absent |
 | `.github/workflows/**` | actionlint, which is CI's workflow gate; a workflow-only change previously selected nothing that could see an invalid action input |
 | anything auth, scope, idempotency, or staged-write shaped | all of the above, plus a live end-to-end pass |
 
@@ -117,6 +118,7 @@ Tiers, in order, with the command each wraps:
 8. `patterns` — `scripts/check-code-patterns.sh`, the existing Stop hook
 9. `actionlint` — `actionlint` over `.github/workflows/`, selected when a workflow changes
 10. `swift` — `cd sdk/ios-attribution && swift build && swift test`, selected when that directory changes
+11. `kotlin` — `gradle -p sdk/android-attribution -Pp202.android=false :core:test` (`P202_GRADLE` names another Gradle), selected when the SDK or the shared vectors change. Gradle exits 0 when no test ran, so fewer than 30 executed tests is FAIL.
 
 The `--memory-limit` on tier 2 is not decoration. CI installs PHP through
 `setup-php`, which leaves `memory_limit` uncapped; a stock local `php.ini`
@@ -186,6 +188,19 @@ this order:
 A regression test is not a substitute for either. It proves this instance is
 gone and does nothing for the next one elsewhere. Grep for every analogous
 site before deciding a check can cover them all.
+
+## Changing the ladder itself
+
+`verify.sh`, and every script a tier calls (`scripts/check-code-patterns.sh`,
+`scripts/check-action-pins.sh`), have their own regression harness:
+`scripts/tests/verify-ladder.test.sh` and
+`scripts/tests/check-code-patterns.test.sh`. Run both after any such change.
+They copy the ladder into throwaway repositories and assert each tier's
+verdict on planted trees, so a tier that passes on the real tree can still
+fail them — an actionlint tier that started calling the pin check passed
+here and failed CI, because the harness's "valid workflow" uses no action
+and its throwaway had no copy of the script. CI runs both in the hook-tests
+job of `scripts-lint.yml`.
 
 ## Reference
 

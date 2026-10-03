@@ -6,9 +6,12 @@ namespace Api\V3\Controllers;
 
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Support\ServerStateStore;
+use Api\V3\Support\StatementHelpers;
 
 class SystemController
 {
+    use StatementHelpers;
+
     public function __construct(private readonly \mysqli $db)
     {
     }
@@ -70,10 +73,13 @@ class SystemController
         }
         $dbName = (string)$dbRow['db'];
 
+        // One prepared statement re-bound per table, instead of re-preparing
+        // the identical query on every iteration. (bind/execute close the
+        // statement themselves before throwing, so no finally-close here.)
+        $stmt = $this->prepare(
+            "SELECT TABLE_ROWS as cnt FROM information_schema.TABLES WHERE table_schema = ? AND table_name = ?"
+        );
         foreach ($tables as $table => $label) {
-            $stmt = $this->prepare(
-                "SELECT TABLE_ROWS as cnt FROM information_schema.TABLES WHERE table_schema = ? AND table_name = ?"
-            );
             $this->bind($stmt, 'ss', $dbName, $table);
             $this->execute($stmt, 'Stats query failed');
             $result = $stmt->get_result();
@@ -82,9 +88,9 @@ class SystemController
                 throw new DatabaseException('Stats query failed');
             }
             $row = $result->fetch_assoc();
-            $stmt->close();
             $stats[] = ['table' => $table, 'label' => $label, 'rows_estimate' => (int)($row['cnt'] ?? 0)];
         }
+        $stmt->close();
 
         $result = $this->db->query(
             "SELECT SUM(data_length + index_length) as size
@@ -244,33 +250,6 @@ class SystemController
                 ],
             ],
         ];
-    }
-
-    private function prepare(string $sql): \mysqli_stmt
-    {
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            throw new DatabaseException('Prepare failed');
-        }
-        return $stmt;
-    }
-
-    private function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
-    {
-        // @phpstan-ignore-next-line -- local ref-safe wrapper
-        if (!$stmt->bind_param($types, ...$values)) {
-            $stmt->close();
-            throw new DatabaseException('Bind failed');
-        }
-    }
-
-    private function execute(\mysqli_stmt $stmt, string $message): void
-    {
-        // @phpstan-ignore-next-line -- local checked-execution wrapper
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException($message);
-        }
     }
 
     private function intEnv(string $name, int $default): int

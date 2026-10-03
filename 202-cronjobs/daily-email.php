@@ -5,7 +5,7 @@ error_reporting(E_ALL);
 ini_set('display_errors', '1');
 
 try {
-	include_once(str_repeat("../", 1) . '202-config/connect.php');
+	require_once __DIR__ . '/../202-config/connect.php';
 
 	$hash = "SELECT install_hash FROM 202_users WHERE user_id = '1'";
 	$result = $db->query($hash);
@@ -72,8 +72,13 @@ try {
 		}
 	}
 
+	// Only run the comparison query when today produced campaigns. With an empty
+	// $ids the IN () below is a MySQL syntax error, which the outer catch
+	// swallows to error_log — silently skipping the whole daily email on any
+	// day that starts with no data.
+	if ($ids !== []) {
 	$sql_yesterday = "SELECT
-		2c.aff_campaign_id, 
+		2c.aff_campaign_id,
 		2ca.aff_campaign_name,
 		COUNT(*) AS clicks,
 		SUM(2cr.click_out) AS click_throughs,
@@ -118,6 +123,7 @@ try {
 			$data['campaigns'][$row_yesterday['aff_campaign_id']]['difference'] = $difference;
 		}
 	}
+	} // end if ($ids !== [])
 
 	if (count($data['campaigns']) > 0) {
 		$curl = curl_init('https://my.tracking202.com/api/v2/send-daily-email');

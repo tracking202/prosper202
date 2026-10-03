@@ -5,7 +5,7 @@
  *
  * tests/live/analyze-mobile-apps.sh checks what this page answers over HTTP —
  * the numbers against the database, every grouping, the filters, the CSV, the
- * three views. None of that is repeated here. What is here is what only a
+ * views. None of that is repeated here. What is here is what only a
  * rendering engine can answer:
  *
  *  - the range picker, whose whole behaviour is a change handler. The date
@@ -31,6 +31,9 @@ const PAGE = '/tracking202/analyze/mobile_apps.php';
 const APP_ID = 990077001;
 const OTHER_APP_ID = 990077002;
 const DAY = 86400;
+const ANDROID_REG = 99001;
+const INSTALL_GOAL = 990001;
+const TUTORIAL_GOAL = 990002;
 
 /** Midnight UTC today, the anchor every preset is measured from. */
 function todayUtc() {
@@ -56,7 +59,7 @@ function postbackSql(n, daysBack, overrides) {
     conversion_type: 'download',
     did_win: 1,
     signature_state: 'valid',
-    signature_valid: 1,
+    trusted: 1,
     country_code: 'US',
     source_identifier: '12',
     conversion_value: 3,
@@ -65,17 +68,22 @@ function postbackSql(n, daysBack, overrides) {
   const at = todayUtc() - daysBack * DAY + 3600 + n * 61;
   const quoted = (v) => (v === null ? 'NULL' : "'" + String(v).replace(/'/g, "''") + "'");
 
-  return "INSERT INTO 202_attribution_postbacks "
-    + '(user_id, received_at, protocol, version, ad_network_id, transaction_id, app_id, '
+  // The registration the app id names, looked up rather than assumed: a
+  // TRUNCATE resets the counter, but nothing here should depend on that.
+  const registration = "(SELECT registration_id FROM 202_app_registrations WHERE platform = 'ios' AND app_key = '"
+    + row.app_id + "')";
+
+  return "INSERT INTO 202_app_postbacks "
+    + '(user_id, registration_id, received_at, protocol, version, ad_network_id, transaction_id, app_id, '
     + 'source_identifier, conversion_value, postback_sequence_index, conversion_type, '
     + 'redownload, did_win, country_code, attribution_signature, signature_state, '
-    + 'signature_valid, dedupe_hash, raw_payload, remote_ip, created_at) VALUES ('
-    + ['1', at, quoted(row.protocol), quoted(row.version), quoted(row.ad_network_id),
+    + 'trusted, dedupe_hash, raw_payload, remote_ip, created_at) VALUES ('
+    + ['1', registration, at, quoted(row.protocol), quoted(row.version), quoted(row.ad_network_id),
       quoted('browser-' + n), row.app_id, quoted(row.source_identifier),
       row.conversion_value === null ? 'NULL' : row.conversion_value, '0',
       quoted(row.conversion_type), '0', row.did_win, quoted(row.country_code),
       quoted('sig'), quoted(row.signature_state),
-      row.signature_valid === null ? 'NULL' : row.signature_valid,
+      row.trusted === null ? 'NULL' : row.trusted,
       "SHA1('browser-" + n + "')", quoted('{}'), quoted('198.51.100.7'), at].join(', ')
     + ')';
 }
@@ -111,20 +119,38 @@ module.exports = {
 
   async reset(db) {
     db.truncate([
-      '202_attribution_apps',
-      '202_attribution_conversion_values',
-      '202_attribution_postbacks',
+      '202_app_registrations',
+      '202_app_skan_encodings',
+      '202_app_skan_encoding_history',
+      '202_app_postbacks',
+      '202_goals',
+      '202_goal_versions',
+      // Installs and their outcomes too: the registration ids restart with
+      // the truncate, so an install another suite left (the agent-eval
+      // Android cases) can name the id the Android scenario gives its app
+      // and be counted as one of its installs.
+      '202_app_installs',
+      '202_goal_outcomes',
     ]);
     db.write("UPDATE 202_users_pref SET user_account_currency='USD' WHERE user_id=1");
 
     const now = Math.floor(Date.now() / 1000);
-    db.write("INSERT INTO 202_attribution_apps "
-      + '(user_id, app_id, app_name, platform, accept_development_postbacks, schema_token, created_at, updated_at) VALUES '
-      + "(1, " + APP_ID + ", 'Summit Run', 'ios', 0, 'browser-token-aaaaaaaaaaaaaaaaaaaaaaaa', " + now + ', ' + now + '), '
-      + "(1, " + OTHER_APP_ID + ", 'Summit Racer', 'ios', 0, 'browser-token-bbbbbbbbbbbbbbbbbbbbbbbb', " + now + ', ' + now + ')');
-    db.write('INSERT INTO 202_attribution_conversion_values '
-      + '(user_id, app_id, fine_value, coarse_value, event_name, revenue, created_at, updated_at) VALUES '
-      + "(1, " + APP_ID + ", 3, NULL, 'purchase', 4.99000, " + now + ', ' + now + ')');
+    db.write("INSERT INTO 202_app_registrations "
+      + '(user_id, platform, app_key, app_name, accept_test_signals, app_token, created_at, updated_at) VALUES '
+      + "(1, 'ios', '" + APP_ID + "', 'Summit Run', 0, REPEAT('ab', 32), " + now + ', ' + now + '), '
+      + "(1, 'ios', '" + OTHER_APP_ID + "', 'Summit Racer', 0, REPEAT('cd', 32), " + now + ', ' + now + ')');
+    // An encoding names a goal (plan §4.5): the app's plain "purchase" goal,
+    // worth the encoding's revenue_override.
+    db.write('INSERT INTO 202_goals (user_id, scope, scope_id, name, current_version, created_at, updated_at) '
+      + "SELECT 1, 'registration', registration_id, 'purchase', 1, " + now + ', ' + now
+      + " FROM 202_app_registrations WHERE platform = 'ios' AND app_key = '" + APP_ID + "'");
+    db.write('INSERT INTO 202_goal_versions (goal_id, version, definition, effective_at, created_at) '
+      + 'SELECT goal_id, 1, \'{"name":"purchase","trigger":{"event":"purchase","where":[]},"threshold":{"count":1},'
+      + '"after":[],"within":null,"repeat":{"mode":"once"},"value":{"type":"none"}}\', ' + now + ', ' + now + ' FROM 202_goals');
+    db.write('INSERT INTO 202_app_skan_encodings '
+      + '(user_id, registration_id, fine_value, coarse_value, goal_id, revenue_override, effective_at, created_at, updated_at) '
+      + 'SELECT 1, g.scope_id, 3, NULL, g.goal_id, 4.99000, ' + now + ', ' + now + ', ' + now
+      + " FROM 202_goals g WHERE g.name = 'purchase'");
 
     // Today, so every preset from Today upwards has something; and eight days
     // back, which only the longer presets and a custom window reach.
@@ -132,7 +158,7 @@ module.exports = {
     db.write(postbackSql(2, 0, { conversion_type: 're-engagement', country_code: 'GB' }));
     db.write(postbackSql(3, 0, { app_id: OTHER_APP_ID, ad_network_id: 'beta.skadnetwork', did_win: 0 }));
     db.write(postbackSql(4, 1, { protocol: 'adattributionkit', version: '1.0', country_code: null }));
-    db.write(postbackSql(5, 8, { signature_state: 'invalid', signature_valid: 0 }));
+    db.write(postbackSql(5, 8, { signature_state: 'invalid', trusted: 0 }));
   },
 
   async setup(ctx) {
@@ -158,19 +184,19 @@ module.exports = {
     },
 
     {
-      name: 'The three views are three tabs',
+      name: 'The views are tabs',
       async run(ctx) {
         const { app, ui, expect } = ctx;
         await app.goto(PAGE);
 
-        expect.eq(await ui.texts('.p202-tabs .nav-link'), ['Report', 'Postbacks', 'Verify'],
-          'the tabs are Report, Postbacks and Verify');
+        expect.eq(await ui.texts('.p202-tabs .nav-link'), ['Report', 'iOS postbacks', 'Verify'],
+          'an account with only iOS apps has Report, iOS postbacks and Verify: the funnel and the outbox are an Android install\'s');
         expect.eq(await ui.attr('.p202-tabs .nav-link.active', 'aria-current'), 'page',
           'the current tab says so to a screen reader');
 
-        await ui.clickThrough('.p202-tabs .nav-link:has-text("Postbacks")');
-        expect.eq(new URL(ui.page.url()).searchParams.get('view'), 'postbacks', 'Postbacks opens its view');
-        expect.eq(await ui.text('.p202-tabs .nav-link.active'), 'Postbacks', 'and becomes the current tab');
+        await ui.clickThrough('.p202-tabs .nav-link:has-text("iOS postbacks")');
+        expect.eq(new URL(ui.page.url()).searchParams.get('view'), 'postbacks', 'iOS postbacks opens its view');
+        expect.eq(await ui.text('.p202-tabs .nav-link.active'), 'iOS postbacks', 'and becomes the current tab');
 
         await ui.clickThrough('.p202-tabs .nav-link:has-text("Verify")');
         expect.ok(await ui.exists('textarea[name="payload"]'), 'Verify opens a place to paste a postback');
@@ -253,10 +279,12 @@ module.exports = {
     {
       name: 'Grouping and filters survive each other',
       async run(ctx) {
-        const { app, ui, expect } = ctx;
+        const { app, db, ui, expect } = ctx;
         await app.goto(PAGE + '?range=last30');
+        const other = String(db.value("SELECT registration_id FROM 202_app_registrations WHERE platform = 'ios' AND app_key = '"
+          + OTHER_APP_ID + "'"));
 
-        await ui.select('#app_id', String(OTHER_APP_ID));
+        await ui.select('#registration_id', other);
         await ui.clickThrough('.p202-table-toolbar button:has-text("Apply")');
         expect.eq(await ui.text('.p202-tile:has-text("Postbacks") .p202-tile__value'), '1',
           'the app filter narrows the report');
@@ -264,8 +292,8 @@ module.exports = {
         await ui.clickThrough('.p202-pill:has-text("Country")');
         const url = new URL(ui.page.url());
         expect.eq(url.searchParams.get('group_by'), 'country', 'a grouping pill regroups');
-        expect.eq(url.searchParams.get('app_id'), String(OTHER_APP_ID), 'and keeps the app filter');
-        expect.eq(await ui.value('#app_id'), String(OTHER_APP_ID), 'which the toolbar still shows');
+        expect.eq(url.searchParams.get('registration_id'), other, 'and keeps the app filter');
+        expect.eq(await ui.value('#registration_id'), other, 'which the toolbar still shows');
         expect.ok(await ui.exists('.p202-pill--accent:has-text("Country")'),
           'and the pill for the current grouping is the accented one');
 
@@ -352,6 +380,96 @@ module.exports = {
         await shot('report');
         await app.goto(PAGE + '?view=postbacks&range=last30');
         await shot('postbacks');
+      },
+    },
+
+    {
+      name: 'An account with an Android app: its tabs, its report, its funnel',
+      async run(ctx) {
+        const { app, db, ui, expect, shot, withSession } = ctx;
+        const now = Math.floor(Date.now() / 1000);
+        const at = now - 3600;
+        // One Android app with two goals (the install, then a tutorial after
+        // it), four installs of every trust class, and what they reached.
+        // Written as rows, as the postbacks above are: the intake is
+        // tests/live/mobile-apps-ui.sh's to drive; this is about what the
+        // page draws. Every row goes again when the scenario ends.
+        db.temporarily(
+          'INSERT INTO 202_app_registrations (registration_id, user_id, platform, app_key, app_name, accept_test_signals, app_token, created_at, updated_at) VALUES '
+          + "(" + ANDROID_REG + ", 1, 'android', 'com.p202.browser.summit', 'Summit Quest', 0, REPEAT('ef', 32), " + now + ', ' + now + ')',
+          'DELETE FROM 202_app_registrations WHERE registration_id = ' + ANDROID_REG
+        );
+        db.temporarily(
+          'INSERT INTO 202_goals (goal_id, user_id, scope, scope_id, name, builtin, current_version, created_at, updated_at) VALUES '
+          + "(" + INSTALL_GOAL + ", 1, 'registration', " + ANDROID_REG + ", 'install', 'install', 1, " + now + ', ' + now + '), '
+          + "(" + TUTORIAL_GOAL + ", 1, 'registration', " + ANDROID_REG + ", 'Tutorial', NULL, 1, " + now + ', ' + now + ')',
+          'DELETE FROM 202_goals WHERE goal_id IN (' + INSTALL_GOAL + ', ' + TUTORIAL_GOAL + ')'
+        );
+        const def = (name, event, after) => JSON.stringify({ name, trigger: { event, where: [] }, threshold: { count: 1 }, after,
+          within: null, repeat: { mode: 'once' }, value: { type: 'none' } });
+        db.temporarily(
+          'INSERT INTO 202_goal_versions (goal_id, version, definition, effective_at, created_at) VALUES '
+          + '(' + INSTALL_GOAL + ", 1, '" + def('install', 'install', []) + "', " + now + ', ' + now + '), '
+          + '(' + TUTORIAL_GOAL + ", 1, '" + def('Tutorial', 'tutorial_done', [INSTALL_GOAL]) + "', " + now + ', ' + now + ')',
+          'DELETE FROM 202_goal_versions WHERE goal_id IN (' + INSTALL_GOAL + ', ' + TUTORIAL_GOAL + ')'
+        );
+        const install = (n, state, trusted) => '(' + (ANDROID_REG * 10 + n) + ', 1, ' + ANDROID_REG + ", '00000000-0000-4000-8000-00000000000" + n + "', REPEAT('a', 64), 'google_play', "
+          + "'" + state + "', 'seeded', " + (trusted === null ? 'NULL' : trusted) + ", 'ok', " + at + ", '{}')";
+        db.temporarily(
+          'INSERT INTO 202_app_installs (install_row_id, user_id, registration_id, install_uuid, body_hash, store, match_state, match_reason, trusted, referrer_status, received_at, raw_payload) VALUES '
+          + [install(1, 'attributed', 1), install(2, 'attributed', 1), install(3, 'organic', null), install(4, 'bad_token', 0)].join(', '),
+          'DELETE FROM 202_app_installs WHERE registration_id = ' + ANDROID_REG
+        );
+        const outcome = (n, goal, value, payable) => "(1, 'install', " + (ANDROID_REG * 10 + n) + ', ' + goal + ", 1, 1, 'e" + n + '-' + goal + "', " + at
+          + ', ' + value + ", 'goal', " + payable + ', ' + ANDROID_REG + ', ' + at + ')';
+        db.temporarily(
+          'INSERT INTO 202_goal_outcomes (user_id, subject_type, subject_id, goal_id, goal_version, n, event_id, reached_at, value, value_source, payable, app_registration_id, created_at) VALUES '
+          + [outcome(1, INSTALL_GOAL, 'NULL', 0), outcome(2, INSTALL_GOAL, 'NULL', 0), outcome(3, INSTALL_GOAL, 'NULL', 0),
+            outcome(1, TUTORIAL_GOAL, '2.50000', 1)].join(', '),
+          'DELETE FROM 202_goal_outcomes WHERE app_registration_id = ' + ANDROID_REG
+        );
+
+        await app.goto(PAGE);
+        expect.eq(await ui.texts('.p202-tabs .nav-link'), ['Report', 'Funnel', 'iOS postbacks', 'Postbacks sent', 'Verify'],
+          'an Android app brings the funnel and the outbox into the tabs');
+
+        await app.goto(PAGE + '?platform=android&group_by=registration&range=last7');
+        await checks.v2PageBaseline(ctx);
+        expect.eq(await ui.text('.p202-tile:has-text("Installs") .p202-tile__value'), '2', 'the attributed installs, trusted only');
+        expect.eq(await ui.text('.p202-tile:has-text("Refuted") .p202-tile__value'), '1', 'the forged one beside them');
+        expect.ok(await ui.visible('text=How installs were matched'), 'with the match-state breakdown');
+        await shot('android-report');
+
+        await ui.clickThrough('.p202-tabs .nav-link:has-text("Funnel")');
+        const bars = await ui.page.$$eval('tr[data-funnel-goal] .progress', (els) => els.map((el) => {
+          const bar = el.querySelector('.progress-bar');
+          return { track: el.getBoundingClientRect().width, bar: bar.getBoundingClientRect().width };
+        }));
+        expect.eq(bars.length, 2, 'the funnel has its two steps');
+        if (bars.length === 2) {
+          expect.ok(Math.abs(bars[0].bar - bars[0].track) < 2, 'the install step fills its track', JSON.stringify(bars[0]));
+          expect.ok(Math.abs(bars[1].bar / bars[1].track - 0.5) < 0.05, 'and the tutorial, reached by one of two, fills half of it', JSON.stringify(bars[1]));
+        }
+
+        await checks.atWidths(ctx, [1280, 390], async () => {
+          await checks.tablesScrollThemselves(ctx);
+        });
+        await shot('android-funnel');
+
+        await ui.clickThrough('.p202-tabs .nav-link:has-text("Postbacks sent")');
+        expect.eq(await ui.count('[data-outbox-status]'), 5, 'the outbox tab counts its five states');
+        await checks.atWidths(ctx, [390], async () => {
+          expect.ok(true, 'the outbox tiles fit a phone');
+        });
+
+        await withSession({ colorScheme: 'dark' }, async (dark) => {
+          await dark.app.goto(PAGE + '?view=funnel&registration_id=' + ANDROID_REG);
+          await checks.darkThemeApplies({ ...ctx, ui: dark.ui, page: dark.page });
+          await dark.page.screenshot({
+            path: path.join(ctx.config.shots, 'analyze-mobile-apps-funnel-dark.png'),
+            fullPage: true,
+          });
+        });
       },
     },
 

@@ -17,7 +17,9 @@ final readonly class Auth
         /** @var string[] lower-cased role names */
         private array $roles,
         /** @var string[] lower-cased api key scopes */
-        private array $scopes = ['*']
+        private array $scopes = ['*'],
+        /** The key's ledger reference (SourceRef::apiKey()): a digest, never the key. */
+        private string $apiKeyRef = ''
     )
     {
     }
@@ -28,7 +30,10 @@ final readonly class Auth
      */
     public static function fromRequest(array $headers, \mysqli $db): self
     {
-        $authHeader = $headers['Authorization'] ?? $headers['authorization'] ?? '';
+        // Header names are case-insensitive per RFC 9110; normalize instead of
+        // probing a couple of hardcoded casings.
+        $headers = array_change_key_case($headers, CASE_LOWER);
+        $authHeader = $headers['authorization'] ?? '';
         if (is_array($authHeader)) {
             $authHeader = $authHeader[0] ?? '';
         }
@@ -42,10 +47,12 @@ final readonly class Auth
             throw new AuthException('API key required. Pass via Authorization: Bearer <key> header.', 401);
         }
 
+        // Join 202_users so keys belonging to soft-deleted users stop
+        // authenticating — "deleting" a user must actually revoke access.
         $scopeColumnExists = self::apiKeyScopeColumnExists($db);
         $sql = $scopeColumnExists
-            ? 'SELECT user_id, scope FROM 202_api_keys WHERE api_key = ? LIMIT 1'
-            : 'SELECT user_id FROM 202_api_keys WHERE api_key = ? LIMIT 1';
+            ? 'SELECT k.user_id, k.scope FROM 202_api_keys k INNER JOIN 202_users u ON u.user_id = k.user_id WHERE k.api_key = ? AND u.user_deleted = 0 LIMIT 1'
+            : 'SELECT k.user_id FROM 202_api_keys k INNER JOIN 202_users u ON u.user_id = k.user_id WHERE k.api_key = ? AND u.user_deleted = 0 LIMIT 1';
         $stmt = $db->prepare($sql);
         if (!$stmt) {
             throw new AuthException('Authentication unavailable', 500);
@@ -69,10 +76,10 @@ final readonly class Auth
 
         $scopes = self::parseScopes((string)($row['scope'] ?? ''));
 
-        return self::loadRoles((int)$row['user_id'], $db, $scopes);
+        return self::loadRoles((int)$row['user_id'], $db, $scopes, \Prosper202\Conversion\Ledger\SourceRef::apiKey($apiKey));
     }
 
-    private static function loadRoles(int $userId, \mysqli $db, array $scopes = ['*']): self
+    private static function loadRoles(int $userId, \mysqli $db, array $scopes = ['*'], string $apiKeyRef = ''): self
     {
         $roles = [];
         $stmt = $db->prepare(
@@ -101,12 +108,22 @@ final readonly class Auth
         }
         $stmt->close();
 
-        return new self($userId, $roles, $scopes);
+        return new self($userId, $roles, $scopes, $apiKeyRef);
     }
 
     public function userId(): int
     {
         return $this->userId;
+    }
+
+    /**
+     * What a conversion written with this key records as its source_ref
+     * (SourceRef::apiKey()): a truncated digest of the key, so the
+     * breakdown can name the key without anyone reading it back.
+     */
+    public function apiKeyRef(): string
+    {
+        return $this->apiKeyRef;
     }
 
     /** @return string[] */
@@ -140,6 +157,9 @@ final readonly class Auth
         'ltv',
         'rotators',
         'attribution',
+        'apps',
+        'goals',
+        'events',
         'users',
         'system',
         'sync',
@@ -312,6 +332,48 @@ final readonly class Auth
         }
     }
 
+    /**
+     * Require one of the legacy role permissions (202_permissions) — the
+     * same check the session pages make through User::hasPermission, so an
+     * operation is gated identically on every surface (error pattern #5).
+     * The attribution routes use view_attribution_reports for reads and
+     * manage_attribution_models for writes.
+     *
+     * A failed lookup is not "no permission" (error pattern #11): it is a
+     * 500, never a 403 that reads as the user's fault, and never a pass.
+     */
+    public function requirePermission(\mysqli $db, string $permission): void
+    {
+        $stmt = $db->prepare(
+            'SELECT 1 FROM 202_user_role ur
+             JOIN 202_role_permission rp ON rp.role_id = ur.role_id
+             JOIN 202_permissions p ON p.permission_id = rp.permission_id
+             WHERE ur.user_id = ? AND p.permission_description = ? LIMIT 1'
+        );
+        if (!$stmt) {
+            throw new AuthException('Authorization unavailable', 500);
+        }
+        self::bind($stmt, 'is', $this->userId, $permission);
+        if (!self::execute($stmt)) {
+            $stmt->close();
+            throw new AuthException('Authorization unavailable', 500);
+        }
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            throw new AuthException('Authorization unavailable', 500);
+        }
+        $granted = $result->fetch_row() !== null;
+        $stmt->close();
+
+        if (!$granted) {
+            throw new AuthException(
+                "This account's role does not have the '" . $permission . "' permission.",
+                403
+            );
+        }
+    }
+
     public function requireSelfOrAdmin(int $targetUserId): void
     {
         if ($this->userId !== $targetUserId && !$this->isAdmin()) {
@@ -356,6 +418,10 @@ final readonly class Auth
      */
     private static function probeApiKeyScopeColumn(\mysqli $db): bool
     {
+        // Fail closed: a DB error here must not silently drop the scope column
+        // from the auth query (which would grant the key the full '*' scope).
+        // Only a successful probe that finds no column may report false —
+        // that is the legitimate pre-upgrade schema case.
         $stmt = $db->prepare("SHOW COLUMNS FROM 202_api_keys LIKE 'scope'");
         if (!$stmt) {
             throw new AuthException('Authentication unavailable', 500);
@@ -393,8 +459,21 @@ final readonly class Auth
         $scopes = [];
         if (str_starts_with($raw, '[')) {
             $decoded = json_decode($raw, true);
+            // Unreadable JSON leaves $scopes empty and falls through to the
+            // MALFORMED_SCOPE branch below. That is deliberately not a throw:
+            // a corrupt scope value is a property of one key, so denying that
+            // key with a scope nobody matches is both fail-closed and
+            // diagnosable, whereas a 500 reports a server fault and names no
+            // row.
             if (is_array($decoded)) {
                 foreach ($decoded as $scope) {
+                    // Skip non-scalars rather than casting: (string) on an array
+                    // warns and yields "Array", inventing a scope name that is
+                    // not in the column. Contributing nothing lands a list of
+                    // them in MALFORMED_SCOPE like any other unreadable value.
+                    if (!is_scalar($scope)) {
+                        continue;
+                    }
                     $value = strtolower(trim((string)$scope));
                     if ($value !== '') {
                         $scopes[] = $value;

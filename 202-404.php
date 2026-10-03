@@ -3,18 +3,13 @@ declare(strict_types=1);
 include_once(__DIR__ . '/202-config/connect.php');
 
 http_response_code(404);
-info_top();
+info_top(['title' => 'Page not found - Prosper202 ClickServer']);
+echo p202_standalone_card('Page not found', 'The link may have expired, or the address may be mistyped.');
 ?>
-<div class="row">
-<div class="main col-xs-6">
-	<center><img src="202-img/prosper202.png"></center>
-	<h6 style="text-align: center;">The page you requested was not found.</h6>
-	<center><span class="infotext">You may have clicked an expired link or mistyped the web address you were looking for.</span></center>
-	
-		<ul>
-		  <li><a href="<?php echo get_absolute_url();?>">Return home</a></li>
-		  <li><a href="javascript:history.back();">Go back to the previous page</a></li>
-		</ul>
-</div>
-</div>
-<?php info_bottom(); ?>
+	<div class="d-grid gap-2">
+		<a class="btn btn-primary" href="<?php echo htmlspecialchars(get_absolute_url(), ENT_QUOTES, 'UTF-8'); ?>">Go to Prosper202</a>
+		<a class="btn btn-secondary" href="javascript:history.back();">Back to the previous page</a>
+	</div>
+<?php
+echo p202_standalone_card_end();
+info_bottom();

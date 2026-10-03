@@ -101,7 +101,11 @@ final readonly class PartitionInstaller
      */
     private function disableStrictMode(): void
     {
+        // sql_mode is a SESSION variable, so it must be set on THIS connection —
+        // the one-arg form resolves `global $db` and silently configured a
+        // different session (and fatals from CLI/test contexts with no global
+        // $db). Matches SchemaInstaller::disableStrictMode().
         $sql = "SET session sql_mode= ''";
-        _mysqli_query($sql);
+        _mysqli_query($this->connection, $sql);
     }
 }

@@ -168,6 +168,9 @@ if [ -f "$VERIFY" ]; then
     chmod +x scripts/check-code-patterns.sh
     cp "$VERIFY" ./verify.sh
     chmod +x ./verify.sh
+    # The actionlint tier runs CI's pin check from the tree it verifies.
+    cp "$HERE/../check-action-pins.sh" scripts/check-action-pins.sh
+    chmod +x scripts/check-action-pins.sh
 
     expect_tier() { # name want_verdict
         local name="$1" want="$2" got
@@ -206,6 +209,17 @@ if [ -f "$VERIFY" ]; then
         mkdir -p .github/workflows
         printf 'on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n' > .github/workflows/ok.yml
         expect_actionlint "actionlint: a valid workflow PASSES" PASS
+        # The tier is also CI's pin gate (scripts/check-action-pins.sh):
+        # actionlint accepts @v4, the repository does not.
+        printf 'on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0\n' > .github/workflows/pinned.yml
+        expect_actionlint "actionlint: an action pinned to a SHA with its version PASSES" PASS
+        printf 'on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n' > .github/workflows/floating.yml
+        expect_actionlint "actionlint: an action on a floating tag FAILS" FAIL
+        rm .github/workflows/floating.yml
+        # Without the pin check the tier must say so, not pass on actionlint alone.
+        mv scripts/check-action-pins.sh scripts/check-action-pins.sh.away
+        expect_actionlint "actionlint: a tree without the pin check FAILS" FAIL
+        mv scripts/check-action-pins.sh.away scripts/check-action-pins.sh
         # An input the action does not define: the exact mistake CI rejected
         # on this branch.
         printf 'on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          no-such-input: yes\n' > .github/workflows/bad.yml

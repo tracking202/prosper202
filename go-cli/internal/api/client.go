@@ -8,13 +8,23 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"p202/internal/config"
 )
 
 const maxResponseSize = 10 << 20 // 10 MB
+
+// maxDownloadSize bounds a file download (an attribution export's CSV).
+// Download refuses a larger body rather than returning a short file.
+const maxDownloadSize = 64 << 20 // 64 MB
+
+// OpDownloadTooLarge marks a download refused because the body exceeded
+// maxDownloadSize.
+const OpDownloadTooLarge = "download_too_large"
 
 // stagedMode, when set (the root --staged flag), stamps staged=1 onto every
 // mutating request so the server records the write as a proposal (a staged
@@ -37,13 +47,26 @@ func StagedMode() bool {
 
 type Client struct {
 	rootURL string
-	baseURL string
 	apiKey  string
 	http    *http.Client
 
+	// mu guards every field below it. A Client is shared across goroutines
+	// (cmd/crud.go fans bulk tracker-URL fetches over a worker pool with one
+	// client; cmd/shell.go keeps a long-lived one), and ensureCapabilities()
+	// lazily rewrites baseURL after version negotiation while in-flight
+	// requests are reading it — an unsynchronized read/write pair.
+	mu                 sync.Mutex
+	baseURL            string
 	capabilities       map[string]interface{}
 	capabilitiesLoaded bool
 	capabilitiesErr    error
+}
+
+// currentBaseURL returns the negotiated base URL under the lock.
+func (c *Client) currentBaseURL() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.baseURL
 }
 
 type APIError struct {
@@ -132,7 +155,7 @@ func HintFor(err error) string {
 		case apiErr.Status == 403 && strings.Contains(strings.ToLower(apiErr.Message), "scope"):
 			return "This key's scope does not cover the operation. Use a key with the needed scope, or mint one: `p202 user apikey create <user_id> --scope write` (scopes: *, read, write, <area>:read, <area>:write)."
 		case apiErr.Status == 401 || apiErr.Status == 403:
-			return "Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong."
+			return "Verify your API key: run `p202 config show`, then `p202 config set-key <key>` if it's wrong."
 		case apiErr.Status == 404:
 			return "Not found. Run the matching `... list` to find valid ids (ids are internal — not the public ones in tracking links; some commands accept --public)."
 		// A 409 has several unrelated causes -- a still-running idempotent
@@ -165,9 +188,12 @@ func HintFor(err error) string {
 	}
 	var reqErr *RequestError
 	if errors.As(err, &reqErr) {
+		if reqErr.Op == OpDownloadTooLarge {
+			return "Nothing was written. Create a smaller export (a shorter --time-from/--time-to range, or a coarser --group-by such as campaign) and download that one."
+		}
 		switch reqErr.Kind {
 		case "network":
-			return "Check the server URL (`p202 config get`) and that the instance is reachable; run `p202 config test` to verify the connection."
+			return "Check the server URL (`p202 config show`) and that the instance is reachable; run `p202 config test` to verify the connection."
 		case "validation":
 			return "The request could not be built from the given values; check them and retry."
 		}
@@ -237,10 +263,13 @@ func (c *Client) SupportsCapability(path ...string) bool {
 
 func (c *Client) Capability(path ...string) (interface{}, bool) {
 	c.ensureCapabilities()
+	c.mu.Lock()
+	caps := c.capabilities
+	c.mu.Unlock()
 	if len(path) == 0 {
-		return c.capabilities, len(c.capabilities) > 0
+		return caps, len(caps) > 0
 	}
-	var current interface{} = c.capabilities
+	var current interface{} = caps
 	for _, key := range path {
 		obj, ok := current.(map[string]interface{})
 		if !ok {
@@ -260,16 +289,25 @@ func (c *Client) Capability(path ...string) (interface{}, bool) {
 // does not grant this capability" from "the capabilities could not be fetched".
 func (c *Client) CapabilitiesError() error {
 	c.ensureCapabilities()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.capabilitiesErr
 }
 
+// ensureCapabilities loads capabilities at most once. It holds mu for the whole
+// negotiate-and-load sequence so concurrent callers see either the pre- or the
+// post-negotiation baseURL, never a torn read, and only one of them performs
+// the network round-trips.
 func (c *Client) ensureCapabilities() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if c.capabilitiesLoaded {
 		return
 	}
 	c.capabilitiesLoaded = true
 
-	c.negotiateVersion()
+	c.negotiateVersionLocked()
 
 	req, err := http.NewRequest("GET", c.baseURL+"/capabilities", nil)
 	if err != nil {
@@ -310,7 +348,14 @@ func (c *Client) ensureCapabilities() {
 	c.capabilities = decoded
 }
 
-func (c *Client) negotiateVersion() {
+// apiVersionPattern constrains the version segment the SERVER hands back. It is
+// interpolated straight into every subsequent request path, so anything other
+// than digits (a traversal like "3/../../admin", a query string, a stray space)
+// must not be accepted from a remote response.
+var apiVersionPattern = regexp.MustCompile(`^[0-9]{1,4}$`)
+
+// negotiateVersionLocked must be called with c.mu held.
+func (c *Client) negotiateVersionLocked() {
 	req, err := http.NewRequest("GET", c.rootURL+"/api/versions", nil)
 	if err != nil {
 		return
@@ -348,7 +393,9 @@ func (c *Client) negotiateVersion() {
 	}
 
 	preferred = strings.TrimPrefix(strings.ToLower(preferred), "v")
-	if preferred == "" {
+	if !apiVersionPattern.MatchString(preferred) {
+		// Keep the compiled-in default rather than trusting a malformed or
+		// hostile version string from the server.
 		return
 	}
 	c.baseURL = c.rootURL + "/api/v" + preferred
@@ -360,7 +407,7 @@ func (c *Client) Get(path string, params map[string]string) ([]byte, error) {
 
 // GetWithHeaders is Get with extra request headers — for endpoints whose
 // credential travels as a header rather than as the API key or a query
-// parameter (the public SKAN schema endpoint's X-P202-Schema-Token; query
+// parameter (the public app schema endpoint's X-P202-App-Token; query
 // strings land in access logs, headers do not).
 func (c *Client) GetWithHeaders(path string, params map[string]string, headers map[string]string) ([]byte, error) {
 	return c.doWithHeaders("GET", path, params, nil, headers)
@@ -368,6 +415,16 @@ func (c *Client) GetWithHeaders(path string, params map[string]string, headers m
 
 func (c *Client) Post(path string, body interface{}) ([]byte, error) {
 	return c.do("POST", path, nil, body)
+}
+
+// AppTokenHeader carries an app registration's token to the public app
+// routes; a request that sends it sends no API key.
+const AppTokenHeader = "X-P202-App-Token"
+
+// PostWithHeaders is Post with extra request headers — for the public app
+// intake, which is selected by X-P202-App-Token rather than the API key.
+func (c *Client) PostWithHeaders(path string, body interface{}, headers map[string]string) ([]byte, error) {
+	return c.doWithHeaders("POST", path, nil, body, headers)
 }
 
 // PostIdempotent sends a create with an Idempotency-Key header. Retrying the
@@ -439,21 +496,44 @@ func (c *Client) requireFeature(flag, flagName, remedy string) error {
 	}
 }
 
+// readOnlyPost lists the POST endpoints that compute over their body and
+// store nothing — reads that arrive as POST because the payload is their
+// input. There is no proposal to record for them, so --staged never stamps
+// them (the server would answer "staged is not supported").
+var readOnlyPost = map[string]bool{
+	"apps/verify":    true, // a postback's signature
+	"goals/validate": true, // a goal definition
+	"goals/evaluate": true, // definitions against events
+}
+
 func (c *Client) do(method, path string, params map[string]string, body interface{}) ([]byte, error) {
 	return c.doWithHeaders(method, path, params, body, nil)
 }
 
+// Download GETs a file endpoint and returns its bytes. A JSON read above
+// is capped by truncation; a file cannot be, because a short CSV reads as a
+// complete one — so a body over maxDownloadSize is an error here.
+func (c *Client) Download(path string) ([]byte, error) {
+	return c.doLimited("GET", path, nil, nil, nil, maxDownloadSize, true)
+}
+
 func (c *Client) doWithHeaders(method, path string, params map[string]string, body interface{}, headers map[string]string) ([]byte, error) {
-	u := c.baseURL + "/" + strings.TrimLeft(path, "/")
+	return c.doLimited(method, path, params, body, headers, maxResponseSize, false)
+}
+
+func (c *Client) doLimited(method, path string, params map[string]string, body interface{}, headers map[string]string, limit int64, strict bool) ([]byte, error) {
+	// Read once under the lock: version negotiation can rewrite baseURL from
+	// another goroutine, and the URL and the version header below must agree.
+	baseURL := c.currentBaseURL()
+	u := baseURL + "/" + strings.TrimLeft(path, "/")
 
 	if stagedMode &&
 		(method == "POST" || method == "PUT" || method == "PATCH" || method == "DELETE") &&
 		!strings.HasPrefix(strings.TrimLeft(path, "/"), "staged-changes") &&
-		// attribution/verify computes over the submitted payload and stores
-		// nothing — a read that arrives as POST because the postback JSON
-		// is its input. There is no proposal to record; stamping staged=1
-		// would only earn the server's "staged is not supported" rejection.
-		strings.TrimLeft(path, "/") != "attribution/verify" &&
+		// Reads that arrive as POST (readOnlyPost) record no proposal;
+		// stamping staged=1 would only earn the server's "staged is not
+		// supported" rejection.
+		!readOnlyPost[strings.TrimLeft(path, "/")] &&
 		params["dry_run"] == "" {
 		// A dry-run preview is a read; staging it would be rejected by the
 		// server's mutual-exclusion check, so an explicit --dry-run wins
@@ -490,12 +570,23 @@ func (c *Client) doWithHeaders(method, path string, params map[string]string, bo
 		return nil, &RequestError{Kind: "validation", Op: "create_request", Err: err}
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	// The public app routes (the install intake, the schema) are selected
+	// by the app's own token and never read the API key: sending it there
+	// hands the account's credential to a route that does not need it.
+	appRoute := false
+	for name := range headers {
+		if http.CanonicalHeaderKey(name) == http.CanonicalHeaderKey(AppTokenHeader) {
+			appRoute = true
+		}
+	}
+	if !appRoute {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "p202-cli/2.0 (Go)")
-	if idx := strings.LastIndex(c.baseURL, "/api/v"); idx != -1 {
-		req.Header.Set("X-P202-API-Version", c.baseURL[idx+5:])
+	if idx := strings.LastIndex(baseURL, "/api/v"); idx != -1 {
+		req.Header.Set("X-P202-API-Version", baseURL[idx+5:])
 	}
 	for name, value := range headers {
 		req.Header.Set(name, value)
@@ -507,13 +598,23 @@ func (c *Client) doWithHeaders(method, path string, params map[string]string, bo
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	readLimit := limit
+	if strict {
+		readLimit = limit + 1
+	}
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, readLimit))
 	if err != nil {
 		return nil, &RequestError{Kind: "network", Op: "read_response", Err: err}
 	}
 
 	if resp.StatusCode >= 400 {
 		return nil, parseAPIError(resp.StatusCode, respBody)
+	}
+	if strict && int64(len(respBody)) > limit {
+		// Not a network failure: the server answered in full and the file
+		// is simply bigger than this client takes. The fix is a smaller
+		// file, which HintFor names.
+		return nil, &RequestError{Kind: "validation", Op: OpDownloadTooLarge, Err: fmt.Errorf("the file is larger than %d MB, the most this client downloads", limit>>20)}
 	}
 
 	return respBody, nil

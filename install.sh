@@ -1334,6 +1334,15 @@ main() {
     # Check if Docker install is preferred (interactive mode only)
     local use_docker=false
     if [ "$DOCKER_MODE" = true ]; then
+        # The release zip is packaged for hosts without Docker and carries no
+        # compose file or Dockerfile (build/release-manifest.php). Say so here
+        # rather than letting `docker compose up` fail on a missing file.
+        if [ ! -f "$SCRIPT_DIR/docker-compose.yaml" ]; then
+            print_error "--docker needs the Docker stack (docker-compose.yaml, Dockerfile), which this copy does not include."
+            print_info "The release zip is for hosts without Docker. For Docker, clone the repository and run the installer there:"
+            print_info "  git clone https://github.com/tracking202/prosper202 && cd prosper202 && ./install.sh --docker"
+            exit 1
+        fi
         use_docker=true
     elif [ "$INTERACTIVE" = true ] && [ "$IN_DOCKER" != true ]; then
         if offer_docker_install; then

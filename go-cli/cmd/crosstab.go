@@ -22,6 +22,18 @@ var dimensionFilterParam = map[string]string{
 	"country":      "country_id",
 }
 
+// crosstabRowDimensions are the dimensions with an entity filter, the only
+// ones a crosstab can fan out over, in breakdownDimensions order.
+func crosstabRowDimensions() []string {
+	var rows []string
+	for _, d := range breakdownDimensions {
+		if dimensionFilterParam[d] != "" {
+			rows = append(rows, d)
+		}
+	}
+	return rows
+}
+
 var reportCrosstabCmd = &cobra.Command{
 	Use:   "crosstab",
 	Short: "Two-dimension breakdown (e.g. traffic source × country) for one metric",
@@ -89,7 +101,10 @@ var reportCrosstabCmd = &cobra.Command{
 		if len(opts.Fields) == 0 {
 			opts.Fields = append([]string{rowDim}, cols...)
 		}
-		out, _ := json.Marshal(map[string]interface{}{"data": matrix})
+		out, err := json.Marshal(map[string]interface{}{"data": matrix})
+		if err != nil {
+			return fmt.Errorf("encoding crosstab matrix: %w", err)
+		}
 		output.RenderWith(out, opts)
 		return nil
 	},
@@ -97,9 +112,12 @@ var reportCrosstabCmd = &cobra.Command{
 
 func init() {
 	addReportFilters(reportCrosstabCmd)
-	reportCrosstabCmd.Flags().String("rows", "", "Row dimension (ppc_account, country, campaign, ...)")
-	reportCrosstabCmd.Flags().String("cols", "", "Column dimension (country, device, ...)")
-	reportCrosstabCmd.Flags().String("metric", "total_net", "Metric to pivot (profit, roi, revenue, cost, clicks, conversions)")
+	reportCrosstabCmd.Flags().String("rows", "", "Row dimension (one with an entity filter)")
+	enumFlag(reportCrosstabCmd, "rows", newEnum(crosstabRowDimensions(), enumAliases(dimensionAliases), enumFoldCase()))
+	reportCrosstabCmd.Flags().String("cols", "", "Column dimension")
+	enumFlag(reportCrosstabCmd, "cols", dimensionEnum(breakdownDimensions))
+	reportCrosstabCmd.Flags().String("metric", "total_net", "Metric to pivot")
+	enumFlag(reportCrosstabCmd, "metric", metricEnum(metricColumns))
 	reportCrosstabCmd.Flags().Int("limit-rows", 20, "Cap the number of rows fanned out")
 	reportCmd.AddCommand(reportCrosstabCmd)
 }

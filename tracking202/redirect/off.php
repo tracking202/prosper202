@@ -80,6 +80,8 @@ if ($usedCachedRedirect == true) {
         if ($getUrl) {
             
             $new_url = str_replace("[[subid]]", "p202", $getUrl);
+            // No click is recorded: the install token expands empty (plan §5.1).
+            $new_url = str_ireplace('[[p202_install_token]]', '', $new_url);
             
             // c1 sring replace for cached redirect
             if (isset($_GET['c1']) && $_GET['c1'] != '') {
@@ -159,7 +161,7 @@ if ($pci == '') {
     } else {
         
         // cloaking ON, so do a meta REFRESH
-        $html['aff_campaign_name'] = $aff_campaign_row['aff_campaign_name'];
+        $html['aff_campaign_name'] = htmlspecialchars((string) $aff_campaign_row['aff_campaign_name'], ENT_QUOTES, 'UTF-8');
         ?>
 
 <html>
@@ -216,6 +218,7 @@ $info_sql = "
 	SELECT
 		2c.click_id,
 		2c.user_id,
+		(SELECT MIN(fc.click_time) FROM 202_clicks AS fc WHERE fc.click_id = 2cr.click_id) AS first_click_time,
 		click_filtered,
 		landing_page_id,
 		click_cloaking,
@@ -251,7 +254,8 @@ if (!$info_row || !isset($info_row['click_id'])) {
         $getUrl = $memcache->get(md5('ac_' . $acip . systemHash()));
         if ($getUrl) {
             $urlvars = getPrePopVars($urlvarslist);
-            $new_url = setPrePopVars($urlvars, str_replace('[[subid]]', 'p202', $getUrl), false);
+            // No click is recorded: the install token expands empty (plan §5.1).
+            $new_url = setPrePopVars($urlvars, str_ireplace('[[p202_install_token]]', '', str_replace('[[subid]]', 'p202', $getUrl)), false);
             p202NoStore();
             header('location: ' . $new_url);
             die();
@@ -279,6 +283,11 @@ $mysql['click_id'] = $db->real_escape_string((string)$click_id);
 $mysql['aff_campaign_id'] = $db->real_escape_string((string)$info_row['aff_campaign_id']);
 $mysql['click_payout'] = $db->real_escape_string((string)$info_row['aff_campaign_payout']);
 
+// The click leaves the landing page for this offer: route it to the
+// offer's campaign and seed its payout with the campaign's. Only a click
+// that has not converted: a converted click's value belongs to its
+// conversion ledger (MysqlConversionLedger), and re-seeding it here would
+// leave the click disagreeing with its rows.
 $update_sql = "
 	UPDATE
 		202_clicks AS 2c
@@ -290,10 +299,23 @@ $update_sql = "
 		2cs.click_payout='" . $mysql['click_payout'] . "'
 	WHERE
 		2c.click_id='" . $mysql['click_id'] . "'
+		AND 2c.click_lead = 0
 ";
+// A click leaving its landing page for an offer takes the offer's
+// campaign. When the click is old enough for the attribution report
+// rollup to have summed it, the rewrite and its mark are one transaction
+// (RollupDirty::hotPathRewriteNeedsMark; AttributionRollup rule 2).
+$rollupMark = \Prosper202\Report\RollupDirty::hotPathRewriteNeedsMark($info_row['first_click_time'] ?? null);
+if ($rollupMark) {
+	$db->begin_transaction() or record_mysql_error($db);
+	\Prosper202\Report\RollupDirty::click(new \Prosper202\Database\Connection($db), (int) ($info_row['user_id'] ?? 0), (int) $mysql['click_id']);
+}
 // this function delays the sql, because UPDATING is very very slow
 //delay_sql($db, $update_sql);
 $click_result = $db->query($update_sql) or record_mysql_error($db);
+if ($rollupMark) {
+	$db->commit() or record_mysql_error($db);
+}
 
 $mysql['click_out'] = 1;
 
@@ -394,10 +416,14 @@ $redirect_site_url = setPrePopVars($urlvars, $redirect_site_url, false);
 $de = new DataEngine();
 $data=($de->setDirtyHour($mysql['click_id']));
 
+// Assign before the output below: the earlier assignment lives in the other
+// branch, so this path was echoing an undefined key. Escaped like the URL.
+$html['aff_campaign_name'] = htmlspecialchars((string) ($info_row['aff_campaign_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+
 if ($cloaking_on == true) {
-    
+
     // if cloaking is turned on, meta refresh out
-    
+
     ?>
 <html>
 <head>

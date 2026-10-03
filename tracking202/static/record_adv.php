@@ -75,6 +75,7 @@ if ($_GET['t202id']) {
 			tr.click_cloaking,
 			tr.aff_campaign_id,
 			ac.aff_campaign_payout,
+			ac.identity_signals,
 			2cv.ppc_variable_ids,
 			2cv.parameters
 		FROM
@@ -126,51 +127,51 @@ switch ($user_row['user_keyword_searched_or_bidded'] ?? '') {
 	case "bidded":
 		#try to get the bidded keyword first
 		if ($_GET['OVKEY']) { //if this is a Y! keyword
-			$keyword = $db->real_escape_string((string)$_GET['OVKEY']);
+			$keyword = (string)$_GET['OVKEY'];
 		} elseif ($_GET['t202kw']) {
-			$keyword = $db->real_escape_string((string)$_GET['t202kw']);
+			$keyword = (string)$_GET['t202kw'];
 		} elseif ($_GET['target_passthrough']) { //if this is a mediatraffic! keyword
-			$keyword = $db->real_escape_string((string)$_GET['target_passthrough']);
+			$keyword = (string)$_GET['target_passthrough'];
 		} else { //if this is a zango, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['keyword']);
+			$keyword = (string)$_GET['keyword'];
 		}
 		break;
 	case "searched":
 		#try to get the searched keyword
 		if (!empty($referer_query['q'])) {
-			$keyword = $db->real_escape_string($referer_query['q']);
+			$keyword = $referer_query['q'];
 		} elseif ($_GET['OVRAW']) { //if this is a Y! keyword
-			$keyword = $db->real_escape_string((string)$_GET['OVRAW']);
+			$keyword = (string)$_GET['OVRAW'];
 		} elseif ($_GET['target_passthrough']) { //if this is a mediatraffic! keyword
-			$keyword = $db->real_escape_string((string)$_GET['target_passthrough']);
+			$keyword = (string)$_GET['target_passthrough'];
 		} elseif ($_GET['keyword']) { //if this is a zango, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['keyword']);
+			$keyword = (string)$_GET['keyword'];
 		} elseif ($_GET['search_word']) { //if this is a eniro, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['search_word']);
+			$keyword = (string)$_GET['search_word'];
 		} elseif ($_GET['query']) { //if this is a naver, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['query']);
+			$keyword = (string)$_GET['query'];
 		} elseif ($_GET['encquery']) { //if this is a aol, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['encquery']);
+			$keyword = (string)$_GET['encquery'];
 		} elseif ($_GET['terms']) { //if this is a about.com, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['terms']);
+			$keyword = (string)$_GET['terms'];
 		} elseif ($_GET['rdata']) { //if this is a viola, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['rdata']);
+			$keyword = (string)$_GET['rdata'];
 		} elseif ($_GET['qs']) { //if this is a virgilio, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['qs']);
+			$keyword = (string)$_GET['qs'];
 		} elseif ($_GET['wd']) { //if this is a baidu, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['wd']);
+			$keyword = (string)$_GET['wd'];
 		} elseif ($_GET['text']) { //if this is a yandex, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['text']);
+			$keyword = (string)$_GET['text'];
 		} elseif ($_GET['szukaj']) { //if this is a wp.pl, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['szukaj']);
+			$keyword = (string)$_GET['szukaj'];
 		} elseif ($_GET['qt']) { //if this is a O*net, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['qt']);
+			$keyword = (string)$_GET['qt'];
 		} elseif ($_GET['k']) { //if this is a yam, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['k']);
+			$keyword = (string)$_GET['k'];
 		} elseif ($_GET['words']) { //if this is a Rambler, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['words']);
+			$keyword = (string)$_GET['words'];
 		} else {
-			$keyword = $db->real_escape_string((string)$_GET['t202kw']);
+			$keyword = (string)$_GET['t202kw'];
 		}
 		break;
 }
@@ -179,7 +180,7 @@ if (str_starts_with((string) $keyword, 't202var_')) {
 	$t202var = substr((string) $keyword, strpos((string) $keyword, "_") + 1);
 
 	if (isset($_GET[$t202var])) {
-		$keyword = $db->real_escape_string((string) $_GET[$t202var]);
+		$keyword = (string) $_GET[$t202var];
 	}
 }
 
@@ -187,22 +188,22 @@ $keyword = str_replace('%20', ' ', $keyword);
 $keyword_id = $trackingRepo->findOrCreateKeyword($keyword);
 $mysql['keyword_id'] = $db->real_escape_string((string) $keyword_id);
 
-$c1 = $db->real_escape_string((string)$_GET['c1']);
+$c1 = (string)$_GET['c1'];
 $c1 = str_replace('%20', ' ', $c1);
 $c1_id = $trackingRepo->findOrCreateC1($c1);
 $mysql['c1_id'] = $db->real_escape_string((string) $c1_id);
 
-$c2 = $db->real_escape_string((string)$_GET['c2']);
+$c2 = (string)$_GET['c2'];
 $c2 = str_replace('%20', ' ', $c2);
 $c2_id = $trackingRepo->findOrCreateC2($c2);
 $mysql['c2_id'] = $db->real_escape_string((string) $c2_id);
 
-$c3 = $db->real_escape_string((string)$_GET['c3']);
+$c3 = (string)$_GET['c3'];
 $c3 = str_replace('%20', ' ', $c3);
 $c3_id = $trackingRepo->findOrCreateC3($c3);
 $mysql['c3_id'] = $db->real_escape_string((string) $c3_id);
 
-$c4 = $db->real_escape_string((string)$_GET['c4']);
+$c4 = (string)$_GET['c4'];
 $c4 = str_replace('%20', ' ', $c4);
 $c4_id = $trackingRepo->findOrCreateC4($c4);
 $mysql['c4_id'] = $db->real_escape_string((string) $c4_id);
@@ -220,7 +221,7 @@ foreach ($parameters as $key => $value) {
 		continue;
 	}
 
-	$variable = $db->real_escape_string((string)$_GET[$value]);
+	$variable = (string)$_GET[$value];
 
 	if (isset($variable) && $variable != '') {
 		$variable = str_replace('%20', ' ', $variable);
@@ -230,7 +231,7 @@ foreach ($parameters as $key => $value) {
 }
 
 //utm_source
-$utm_source = $db->real_escape_string((string)$_GET['utm_source']);
+$utm_source = (string)$_GET['utm_source'];
 if (isset($utm_source) && $utm_source != '') {
 	$utm_source = str_replace('%20', ' ', $utm_source);
 	$utm_source_id = $trackingRepo->findOrCreateUtm($utm_source, 'utm_source');
@@ -240,7 +241,7 @@ if (isset($utm_source) && $utm_source != '') {
 $mysql['utm_source_id'] = $db->real_escape_string((string) $utm_source_id);
 
 //utm_medium
-$utm_medium = $db->real_escape_string((string)$_GET['utm_medium']);
+$utm_medium = (string)$_GET['utm_medium'];
 if (isset($utm_medium) && $utm_medium != '') {
 	$utm_medium = str_replace('%20', ' ', $utm_medium);
 	$utm_medium_id = $trackingRepo->findOrCreateUtm($utm_medium, 'utm_medium');
@@ -250,7 +251,7 @@ if (isset($utm_medium) && $utm_medium != '') {
 $mysql['utm_medium_id'] = $db->real_escape_string((string) $utm_medium_id);
 
 //utm_campaign
-$utm_campaign = $db->real_escape_string((string)$_GET['utm_campaign']);
+$utm_campaign = (string)$_GET['utm_campaign'];
 if (isset($utm_campaign) && $utm_campaign != '') {
 	$utm_campaign = str_replace('%20', ' ', $utm_campaign);
 	$utm_campaign_id = $trackingRepo->findOrCreateUtm($utm_campaign, 'utm_campaign');
@@ -260,7 +261,7 @@ if (isset($utm_campaign) && $utm_campaign != '') {
 $mysql['utm_campaign_id'] = $db->real_escape_string((string) $utm_campaign_id);
 
 //utm_term
-$utm_term = $db->real_escape_string((string)$_GET['utm_term']);
+$utm_term = (string)$_GET['utm_term'];
 if (isset($utm_term) && $utm_term != '') {
 	$utm_term = str_replace('%20', ' ', $utm_term);
 	$utm_term_id = $trackingRepo->findOrCreateUtm($utm_term, 'utm_term');
@@ -270,7 +271,7 @@ if (isset($utm_term) && $utm_term != '') {
 $mysql['utm_term_id'] = $db->real_escape_string((string) $utm_term_id);
 
 //utm_content
-$utm_content = $db->real_escape_string((string)$_GET['utm_content']);
+$utm_content = (string)$_GET['utm_content'];
 if (isset($utm_content) && $utm_content != '') {
 	$utm_content = str_replace('%20', ' ', $utm_content);
 	$utm_content_id = $trackingRepo->findOrCreateUtm($utm_content, 'utm_content');
@@ -406,12 +407,26 @@ $mysql['click_redirect_site_url_id'] = '0';
 
 // Record click via repository (replaces 9 raw INSERT statements with parameterized, transactional writes)
 $clickRecord = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql);
+// Identity signals (plan §6.2): the tracking domain's p202vid cookie, the
+// p202lpid the landing page's script sends, a signed customer id — linked
+// after the click is stored; nothing when consent is withheld or the
+// campaign's identity capture is off.
+$clickIdentity = \Prosper202\Identity\ClickIdentity::fromRequest(
+	$_GET,
+	$_COOKIE,
+	\Prosper202\Identity\RequestSignals::campaignAllows(array_key_exists('identity_signals', $tracker_row) ? $tracker_row['identity_signals'] : null),
+	// Minted only when the landing page is on the tracker's own site; a
+	// cross-site script request links by the page's p202lpid instead.
+	(string) ($_SERVER['HTTP_SEC_FETCH_SITE'] ?? '') !== 'cross-site'
+);
 $clickRecord->clickId = $click_id;
+$clickRecord->identity = $clickIdentity;
 $clickRepo->recordClick($clickRecord);
 
 
 //set the cookie
 setClickIdCookie($mysql['click_id'], $mysql['aff_campaign_id']);
+$clickIdentity->sendCookie($_SERVER);
 //set the PCI Cookie
 setPCIdCookie($mysql['click_id_public']);
 

@@ -65,7 +65,7 @@ jobs:
           --health-retries=10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # The `runner` context is not available in a job-level env block (it
       # expands to empty there), so publish the path from a step instead.
@@ -73,20 +73,20 @@ jobs:
         run: echo "P202_SERVER_STATE_DIR=${{ runner.temp }}/p202-state" >> "$GITHUB_ENV"
 
       - name: Set up PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
           php-version: '8.3'
           # See php-unit.yml for why the procedural `memcache` extension is disabled.
           extensions: mysqli, pdo, pdo_mysql, memcached, :memcache, mbstring, curl, zip, dom, xml, gd, zlib
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.22'   # matches go-cli/go.mod
           cache-dependency-path: go-cli/go.sum
 
       - name: Cache Composer downloads
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.composer/cache
@@ -133,6 +133,9 @@ jobs:
           P202_DB_PASS: root
           P202_HTTP_PORT: '8000'
           P202_EVAL_RUNTIME_DIR: ${{ runner.temp }}/p202-eval
+          # Known to the pre-login pass below, which signs in with it; a
+          # throwaway instance on a disposable service container.
+          P202_ADMIN_PASS: eval-ci-${{ github.run_id }}
         run: |
           mkdir -p "$P202_EVAL_RUNTIME_DIR"
           KEY=$(tests/fixtures/agent-eval/ci/install-instance.sh)
@@ -155,6 +158,26 @@ jobs:
           P202_DB_PASS: root
           P202_DB_ALLOW_DESTRUCTIVE: yes-i-mean-it
         run: bash tests/live/upgrade-csrf.sh
+
+      - name: Prove the pre-login pages refuse what they must (setup wizard lock included)
+        # tests/live/prelogin-pages.sh drives sign-in, the password reset
+        # pair, the license-key page, the setup wizard on this installed
+        # instance (its lock, and the legacy-format update, which swaps in a
+        # legacy 202-config.php and puts the original bytes back on exit),
+        # the 404, the retired 202-Mobile addresses and the feed pages. It
+        # changes the admin's password and ClickServer key and restores both.
+        env:
+          P202_BASE: http://127.0.0.1:8000
+          P202_DB: prosper202
+          P202_DB_HOST: 127.0.0.1
+          P202_DB_PORT: '3306'
+          P202_DB_USER: root
+          P202_DB_PASS: root
+          P202_DB_ALLOW_DESTRUCTIVE: yes-i-mean-it
+          P202_USER: evalci
+          P202_PASS: eval-ci-${{ github.run_id }}
+          P202_SERVER_LOG: ${{ runner.temp }}/p202-eval/php-server.log
+        run: bash tests/live/prelogin-pages.sh
 
       - name: Configure the CLI
         run: |
@@ -184,9 +207,33 @@ jobs:
             "${JUDGE_ARGS[@]}" \
             --json | tee eval-results.json
 
+      - name: Run the integration suites that need a running instance
+        # `@group instance` suites (tests/integration-suites.php --instance)
+        # speak HTTP to an instance, so they run here rather than in the
+        # database-only integration job — after the eval suite, because they
+        # create the entities they click and a case must read the fixture
+        # alone. Each must report OK with at least one test: a suite that
+        # skipped did not run.
+        env:
+          P202_BASE: http://127.0.0.1:8000
+          P202_API_KEY: ${{ env.P202_EVAL_API_KEY }}
+        run: |
+          mapfile -t SUITES < <(php tests/integration-suites.php --instance)
+          if [ "${#SUITES[@]}" -lt 1 ]; then
+            echo "tests/integration-suites.php --instance selected nothing" >&2
+            exit 1
+          fi
+          # This job installs with --no-dev, so PHPUnit comes as the phar
+          # (PHPUnit 9, as composer.json pins); the suites load by path.
+          curl -sSfL https://phar.phpunit.de/phpunit-9.phar -o "$RUNNER_TEMP/phpunit-9.phar"
+          for suite in "${SUITES[@]}"; do
+            php "$RUNNER_TEMP/phpunit-9.phar" --configuration phpunit.ci.xml --group integration --no-coverage "$suite" | tee phpunit-instance.out
+            grep -qE '^OK \([1-9][0-9]* tests?' phpunit-instance.out
+          done
+
       - name: Upload results and server log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: agent-eval-results
           path: |

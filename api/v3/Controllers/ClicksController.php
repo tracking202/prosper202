@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
-use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
+use Api\V3\Support\StatementHelpers;
 
 class ClicksController
 {
+    use StatementHelpers;
+
     public function __construct(private readonly \mysqli $db, private readonly int $userId)
     {
     }
@@ -76,7 +78,7 @@ class ClicksController
             LEFT JOIN 202_platforms p ON ca.platform_id = p.platform_id
             LEFT JOIN 202_browsers b ON ca.browser_id = b.browser_id
             $whereClause
-            ORDER BY c.click_time DESC
+            ORDER BY c.click_time DESC, c.click_id DESC
             LIMIT ? OFFSET ?";
 
         $binds[] = $limit;
@@ -152,30 +154,30 @@ class ClicksController
         return ['data' => $row];
     }
 
-    private function prepare(string $sql): \mysqli_stmt
+    /**
+     * GET /clicks/{id}/conversions: every conversion row of the click, with
+     * whether it counts toward the click's value and why not when it does
+     * not, and the click's value from its rows beside the figure the
+     * reports show (ClickBreakdown). All rows, deleted and superseded ones
+     * included, oldest first; a click's rows are few, so it is not paged.
+     */
+    public function conversions(int $id): array
     {
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            throw new DatabaseException('Prepare failed');
+        $conn = new \Prosper202\Database\Connection($this->db);
+        try {
+            $breakdown = (new \Prosper202\Conversion\Ledger\ClickBreakdown($conn))->forClick($id, $this->userId);
+        } catch (\Prosper202\Conversion\Ledger\LedgerIntegrityException $e) {
+            // A row the ledger cannot read (an unknown source, a corrupt
+            // amount) makes the click's value unexplainable: say which row,
+            // never serve a breakdown that silently leaves it out.
+            throw new \Api\V3\HttpException('The click\'s conversions cannot be explained: ' . $e->getMessage(), 500, $e);
+        } catch (\Prosper202\Database\Exceptions\QueryException $e) {
+            throw new DatabaseException('Reading the click\'s conversions failed', $e);
         }
-        return $stmt;
-    }
+        if ($breakdown === null) {
+            throw new NotFoundException('Click not found');
+        }
 
-    private function bind(\mysqli_stmt $stmt, string $types, mixed ...$values): void
-    {
-        // @phpstan-ignore-next-line prosper202.directStmtCall — this IS the centralized ref-safe bind wrapper (no Connection instance in scope; routing through $this->conn would self-recurse)
-        if (!$stmt->bind_param($types, ...$values)) {
-            $stmt->close();
-            throw new DatabaseException('Bind failed');
-        }
-    }
-
-    private function execute(\mysqli_stmt $stmt, string $message): void
-    {
-        // @phpstan-ignore-next-line prosper202.directStmtCall — this IS the centralized checked-execute wrapper (no Connection instance; routing through $this->conn would self-recurse)
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new DatabaseException($message);
-        }
+        return ['data' => $breakdown['rows'], 'click' => $breakdown['click']];
     }
 }

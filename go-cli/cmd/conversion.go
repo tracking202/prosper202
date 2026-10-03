@@ -3,12 +3,10 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 
 	"p202/internal/api"
-	"p202/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -22,11 +20,31 @@ var conversionListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List conversions",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		params := map[string]string{}
+		// The ledger filters, checked before the client is built: a value the
+		// server would refuse is refused with the command that finds a
+		// right one.
+		if v, _ := cmd.Flags().GetString("click_id"); v != "" {
+			if !positiveIDPattern.MatchString(v) {
+				return validationError("--click_id must be a positive integer, got %q", v).
+					WithHint("Use the internal click id from `p202 click list`; `p202 click conversions <id>` explains that click's value.")
+			}
+			params["click_id"] = v
+		}
+		if v, _ := cmd.Flags().GetString("source"); v != "" {
+			params["source"] = v
+		}
+		if v, _ := cmd.Flags().GetString("goal"); v != "" {
+			if !positiveIDPattern.MatchString(v) {
+				return validationError("--goal must be a positive integer goal id, got %q", v).
+					WithHint("Find the goal's id with `p202 goal list`.")
+			}
+			params["goal"] = v
+		}
 		c, err := api.NewFromConfig()
 		if err != nil {
 			return err
 		}
-		params := map[string]string{}
 		// Accept --aff_campaign_id (the name every other command uses); fall back
 		// to the legacy --campaign_id spelling.
 		if v, _ := cmd.Flags().GetString("aff_campaign_id"); v != "" {
@@ -45,7 +63,7 @@ var conversionListCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			encoded, _ := json.Marshal(map[string]interface{}{
+			encoded, err := json.Marshal(map[string]interface{}{
 				"data": rows,
 				"pagination": map[string]interface{}{
 					"total":  len(rows),
@@ -53,6 +71,9 @@ var conversionListCmd = &cobra.Command{
 					"offset": 0,
 				},
 			})
+			if err != nil {
+				return fmt.Errorf("encoding %d conversions: %w", len(rows), err)
+			}
 			render(encoded)
 			return nil
 		}
@@ -70,6 +91,11 @@ var conversionListCmd = &cobra.Command{
 		return nil
 	},
 }
+
+// conversionSources is what a ledger row's source can be
+// (ConversionSource in 202-config/Conversion/Ledger), in the server's order.
+var conversionSources = []string{"pixel", "postback", "universal_pixel", "api", "subid_upload", "revenue_upload",
+	"legacy_pixel", "clickbank", "app_install", "goal", "legacy_baseline"}
 
 var conversionGetCmd = &cobra.Command{
 	Use:   "get <id>",
@@ -102,11 +128,11 @@ var conversionCreateCmd = &cobra.Command{
 			clickIDStr, _ = cmd.Flags().GetString("click_id_public")
 		}
 		if clickIDStr == "" {
-			return validationError("required flag --click_id (or --click_id_public) is missing")
+			return fmt.Errorf("required flag --click_id (or --click_id_public) is missing")
 		}
 		clickID, err := strconv.Atoi(clickIDStr)
 		if err != nil {
-			return validationError("--click_id must be an integer: %s", clickIDStr).WithHint("Use the internal click id from `p202 click list`, or pass the public id via --click_id_public.")
+			return fmt.Errorf("--click_id must be an integer: %s", clickIDStr)
 		}
 		body := map[string]interface{}{
 			"click_id": clickID,
@@ -132,76 +158,13 @@ var conversionCreateCmd = &cobra.Command{
 var conversionDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete a conversion",
-	Args: func(cmd *cobra.Command, args []string) error {
-		idsFlag, _ := cmd.Flags().GetString("ids")
-		if strings.TrimSpace(idsFlag) != "" {
-			return cobra.MaximumNArgs(0)(cmd, args)
-		}
-		return cobra.ExactArgs(1)(cmd, args)
-	},
+	Args:  deleteArgsValidator,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
-		dryRun, _ := cmd.Flags().GetBool("dry-run")
-		idsFlag, _ := cmd.Flags().GetString("ids")
-		if strings.TrimSpace(idsFlag) != "" {
-			idList, parseErr := parseIDList(idsFlag)
-			if parseErr != nil {
-				return parseErr
-			}
-			if len(idList) == 0 {
-				return validationError("--ids requires at least one ID").WithHint("Comma-separate internal ids, e.g. --ids 12,13,14 (find them with the matching `... list`).")
-			}
-
-			if dryRun {
-				return renderDeletePreviews(c, "conversions", idList)
-			}
-			if api.StagedMode() {
-				return stageDeletes(c, "conversions", idList)
-			}
-
-			force, _ := cmd.Flags().GetBool("force")
-			if !force && !confirmPrompt("Delete %d conversions?", len(idList)) {
-				fmt.Println("Cancelled.")
-				return nil
-			}
-
-			deleted := 0
-			failed := 0
-			for _, id := range idList {
-				if err := c.Delete("conversions/" + id); err != nil {
-					failed++
-					fmt.Fprintf(os.Stderr, "Failed to delete conversion %s: %v\n", id, err)
-					continue
-				}
-				deleted++
-			}
-			output.Success("Deleted %d of %d conversions.", deleted, len(idList))
-			if failed > 0 {
-				return partialFailureError("failed to delete %d conversions", failed)
-			}
-			return nil
-		}
-
-		if dryRun {
-			return renderDeletePreviews(c, "conversions", []string{args[0]})
-		}
-		if api.StagedMode() {
-			return stageDeletes(c, "conversions", []string{args[0]})
-		}
-
-		force, _ := cmd.Flags().GetBool("force")
-		if !force && !confirmPrompt("Delete conversion %s?", args[0]) {
-			fmt.Println("Cancelled.")
-			return nil
-		}
-		if err := c.Delete("conversions/" + args[0]); err != nil {
-			return err
-		}
-		output.Success("Conversion %s deleted.", args[0])
-		return nil
+		return runBulkOrSingleDelete(cmd, args, deleteSpec{
+			endpoint: "conversions",
+			noun:     "conversion",
+			plural:   "conversions",
+		})
 	},
 }
 
@@ -214,6 +177,16 @@ func init() {
 	_ = conversionListCmd.Flags().MarkHidden("campaign_id")
 	conversionListCmd.Flags().String("time_from", "", "Start timestamp (unix)")
 	conversionListCmd.Flags().String("time_to", "", "End timestamp (unix)")
+	conversionListCmd.Flags().String("click_id", "", "Only this click's conversions (see also `p202 click conversions <id>`)")
+	conversionListCmd.Flags().String("source", "", "Only conversions from this source")
+	enumFlag(conversionListCmd, "source", newEnum(conversionSources))
+	conversionListCmd.Flags().String("goal", "", "Only this goal's outcomes, every version (goal id from `p202 goal list`)")
+	// An empty filter is refused by name (empty_flags.go): read as "not
+	// given" it would list every conversion as though filtered.
+	emptyHint(conversionListCmd, "click_id", "Omit --click_id to list every click's conversions, or pass an internal click id from `p202 click list`.")
+	emptyHint(conversionListCmd, "source", "Omit --source to list every source, or pass one of: "+strings.Join(conversionSources, ", ")+".")
+	emptyHint(conversionListCmd, "goal", "Omit --goal to list every goal's conversions, or pass a goal id from `p202 goal list`.")
+	emptyHint(conversionListCmd, "aff_campaign_id", "Omit --aff_campaign_id to list every campaign's conversions, or pass a campaign id from `p202 campaign list`.")
 
 	conversionCreateCmd.Flags().String("click_id", "", "Click ID (required)")
 	conversionCreateCmd.Flags().String("click_id_public", "", "Legacy alias for --click_id")

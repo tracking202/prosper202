@@ -7,10 +7,12 @@ Since 2007, Prosper202 has helped marketers take control of their tracking with 
 ## Key Features
 
 - **Self-Hosted & Full Source Code** — Run Prosper202 100% on your own servers for ultimate control of your proprietary data and marketing methods. Customize the full source code to meet your needs.
-- **Click & Conversion Tracking** — Real-time click capture with sub-ID parameters, referrer tracking, and automatic IP/UA logging. Server-to-server postback and pixel tracking with revenue, payout, and status fields.
+- **Click & Conversion Tracking** — Real-time click capture with sub-ID parameters, referrer tracking, and automatic IP/UA logging. Server-to-server postback and pixel tracking with revenue, payout, and status fields. Every conversion is a ledger row that records what produced it, so any click's value can be explained row by row, and a campaign chooses whether repeat conversions keep the latest payout or add up.
+- **Goals & Web Events** — Define what counts as a conversion — an event with conditions, the Nth purchase, a running total, a step after another goal, within a time window — and what each is worth. Goals are versioned, shared by web campaigns and apps, and paid per campaign; events arrive as `event=` on your postbacks and pixels, through `POST /api/v3/events`, or from `p202.track()` on a landing page ([goals](documentation/api/22-goals.md), [events](documentation/api/23-events.md)).
 - **12+ Report Types** — Keywords, geo, device, browser, OS, referrer, ISP, landing page, and custom dimension reports. Track profit and loss, conversion metrics, EPC per keyword, per text ad, per referrer, and more.
-- **Multi-Touch Attribution** — Six attribution models: first-touch, last-touch, linear, time-decay, position-based, and algorithmic.
-- **iOS SKAdNetwork (SKAN) Measurement** — Act as your iOS app's SKAN attribution endpoint: receive Apple's signed install postbacks, verify their signatures, decode conversion values into events and revenue, and report installs by ad network, campaign, and country. The bundled P202Attribution Swift helper fetches the conversion-value mapping from your server at runtime, so changing it never requires an App Store resubmission ([guide](documentation/api/19-attribution-postbacks.md)).
+- **Multi-Touch Attribution** — Each conversion's value spread over the visitor's own clicks across campaigns (joined by first-party identity signals, never IP), under last-touch, first-touch, linear, time-decay and position-based models, with reports by campaign, source, keyword, landing page, country, device or day ([guide](documentation/tutorials-and-guides/14-advanced-attribution-engine.md)).
+- **Mobile App Measurement (iOS and Android)** — On iOS, act as your app's SKAdNetwork and AdAttributionKit endpoint: receive Apple's signed install postbacks, verify their signatures, decode conversion values into goals and revenue, and report installs by ad network, source identifier, and country. The bundled P202Attribution Swift SDK evaluates your goals on the device against a mapping it fetches from your server at runtime, so changing it never requires an App Store resubmission ([guide](documentation/api/19-app-measurement.md)). On Android, the Prosper202 Android SDK reads the Google Play install referrer and turns each install, and the events after it, into a conversion on the click that sent the user to the store, reported by campaign and goal, with optional Play Integrity checks and click-injection and click-spamming signals ([installs](documentation/api/24-android-installs.md), [SDK](documentation/api/25-android-sdk.md)).
+- **Customer LTV** — Customer records with identity resolution, a unified revenue ledger, products, subscriptions and companies; realized and predictive lifetime value, MRR and churn; next-offer recommendations; and LTV fields as dynamic tokens on your landing pages.
 - **Split Testing** — Run unlimited weighted split tests to discover your best marketing message and offer. Pause non-converting tests and automatically send all traffic to the winner.
 - **Smart Redirector & Traffic Rules** — Rule-based traffic distribution with weighted rotation, geo-targeting, and device filtering.
 - **BlazerCache Technology** — Fast redirects that continue working even if the database goes down, preventing lost revenue.
@@ -22,16 +24,16 @@ Since 2007, Prosper202 has helped marketers take control of their tracking with 
 - **WordPress Integration** — Two-way communication between WordPress and Prosper202, instantly setting up posts and pages as landing pages.
 - **Deep Linking** — Boost conversion rates by deep linking directly into apps, reducing friction for users.
 - **Team Access** — Full role-based authentication with no limit on users and no per-seat costs.
-- **API & CLI Tools** — Full REST API and CLI tools designed for both human developers and AI agents. Automate campaign management, pull reports, and integrate with your existing tools. CLI-first design works seamlessly with AI coding agents like Claude Code, Codex, and OpenClaw.
+- **API & CLI Tools** — Full REST API and CLI tools designed for both human developers and AI agents. Automate campaign management, pull reports, and integrate with your existing tools. CLI-first design works seamlessly with AI coding agents like Claude Code, Codex, and OpenClaw, and agents can be given least-privilege API keys and made to propose writes for a person to approve instead of performing them ([building agents](documentation/tutorials-and-guides/17-building-agents-on-prosper202.md)).
 - **Forecasting** — `p202 forecast` projects any metric forward with calibrated bands, coherent multi-metric output, seasonality, and anomaly handling ([guide](documentation/cli/11-forecasting.md))
 
 ## Requirements
 
 - PHP 8.3+
-- MySQL 8.0+
+- MySQL 8.0+ or MariaDB 10.6+ (the installer and the upgrade page refuse older versions)
 - Web server: **Nginx with PHP-FPM (recommended for manual installs)** or **Apache** (as used in the official Docker image)
-- Composer
-- Go 1.22+ (optional, for the Go CLI)
+- Composer (installs from source only; the release zip bundles `vendor/`)
+- Go 1.22+ (optional, to build the Go CLI from source; the release zip bundles its binaries)
 
 ## Installation
 
@@ -166,10 +168,6 @@ This stack is a development configuration (PHP `display_errors` is on). For prod
            try_files $uri $uri/ /api/v3/index.php?$query_string;
        }
 
-       location /api/v2/ {
-           try_files $uri $uri/ /api/v2/index.php?$query_string;
-       }
-
        location ~ \.php$ {
            fastcgi_pass php_fpm;
            fastcgi_keep_conn on;
@@ -180,6 +178,12 @@ This stack is a development configuration (PHP `display_errors` is on). For prod
        # Deny dotfiles (.git, .env, ...) but keep /.well-known/ reachable
        # for ACME (Let's Encrypt) HTTP-01 validation
        location ~ /\.(?!well-known/) {
+           deny all;
+       }
+
+       # Attribution export CSVs and upgrade zips; served only through the
+       # authenticated download endpoints (^~ wins over the .php regex)
+       location ^~ /202-config/temp/ {
            deny all;
        }
    }
@@ -196,7 +200,7 @@ This stack is a development configuration (PHP `display_errors` is on). For prod
 
 #### Apache Alternative
 
-If you prefer Apache over Nginx, point your document root at the project directory and ensure `mod_rewrite` is enabled so the `.htaccess` files shipped in `api/v2/`, `api/v3/`, and `tracking202/update/reports/` can handle routing. Those files only need `AllowOverride FileInfo Options=FollowSymLinks` (`FileInfo` for the rewrite rules, `Options=FollowSymLinks` for the `Options +FollowSymLinks` line in the reports rules) — avoid `AllowOverride All`, which is broader than required. Example virtual host:
+If you prefer Apache over Nginx, point your document root at the project directory and ensure `mod_rewrite` is enabled so the `.htaccess` files shipped in `api/v3/` and `tracking202/update/reports/` can handle routing. Those files only need `AllowOverride FileInfo Options=FollowSymLinks` (`FileInfo` for the rewrite rules, `Options=FollowSymLinks` for the `Options +FollowSymLinks` line in the reports rules) — avoid `AllowOverride All`, which is broader than required. Example virtual host:
 
 ```apache
 <VirtualHost *:80>
@@ -207,6 +211,14 @@ If you prefer Apache over Nginx, point your document root at the project directo
         Options -Indexes +FollowSymLinks
         AllowOverride FileInfo Options=FollowSymLinks
         Require all granted
+    </Directory>
+
+    # Attribution export CSVs and upgrade zips, served only through the
+    # authenticated download endpoints. The directory's own .htaccess needs
+    # AllowOverride AuthConfig, so the deny lives here instead.
+    <Directory /path/to/prosper202/202-config/temp>
+        AllowOverride None
+        Require all denied
     </Directory>
 
     # Deny dotfiles (.git, .env, ...) but keep /.well-known/ reachable for
@@ -244,13 +256,6 @@ This variant sets `AllowOverride None` and inlines the shipped `.htaccess` rules
         Require all granted
     </Directory>
 
-    # Inlined from api/v2/.htaccess
-    <Directory /path/to/prosper202/api/v2>
-        RewriteEngine On
-        RewriteCond %{REQUEST_FILENAME} !-f
-        RewriteRule ^ index.php [QSA,L]
-    </Directory>
-
     # Inlined from api/v3/.htaccess
     <Directory /path/to/prosper202/api/v3>
         RewriteEngine On
@@ -269,6 +274,12 @@ This variant sets `AllowOverride None` and inlines the shipped `.htaccess` rules
     <FilesMatch "\.php$">
         SetHandler "proxy:unix:/run/php/php8.3-fpm.sock|fcgi://localhost"
     </FilesMatch>
+
+    # Attribution export CSVs and upgrade zips: with AllowOverride None the
+    # directory's .htaccess is never read, so this is the only deny
+    <Directory /path/to/prosper202/202-config/temp>
+        Require all denied
+    </Directory>
 
     # Deny dotfiles (.git, .env, ...) but keep /.well-known/ for ACME
     <LocationMatch "/\.(?!well-known/)">
@@ -294,9 +305,31 @@ sudo systemctl restart apache2
 
 As with Nginx, throughput is ultimately capped by PHP-FPM, so size `pm.max_children` in your FPM pool to your traffic; raise `MaxRequestWorkers` in `mpm_event.conf` alongside it.
 
+### Upgrading
+
+**Back up the database before you upgrade.** An upgrade changes the database in
+place and there is no downgrade: restoring a backup taken before the upgrade is
+the only way back. From 1.9.76, putting the old files back on an upgraded
+database leaves an install that can no longer record conversions. Take a full
+`mysqldump` (or your host's snapshot) of the Prosper202 database after the site
+stops taking traffic, then upgrade — through `202-config/upgrade.php`, or the
+**1-Click Upgrade** button in the new-version notice under the header. Both
+pages say the same above their button. From 1.9.55, the 1-click page replaces
+the files and then sends you to the upgrade page for the database step, which
+checks the database server's version before it changes anything.
+
+On a large install the upgrade page can outlast a proxy's time limit (a million
+conversions takes one to two minutes). The upgrade keeps running on the server:
+wait a few minutes and reload the page, which sends you to sign in once it has
+finished. What changed in each release is in [`changelogs.txt`](changelogs.txt);
+the step-by-step guide is
+[Upgrading Prosper202](documentation/tutorials-and-guides/05-upgrading-prosper202.md).
+
 ## API v3
 
-REST API under `/api/v3/` with bearer token authentication. Covers campaigns, affiliate and PPC networks, PPC accounts, trackers, landing pages, text ads, clicks, conversions, rotators, attribution models, SKAdNetwork postbacks and conversion-value rules, forecast events, and users, plus server-side sync, capability discovery, and system operations.
+REST API under `/api/v3/` with bearer token authentication. Covers campaigns, affiliate and PPC networks, PPC accounts, trackers, landing pages, text ads, clicks, conversions (with each click's conversions explained row by row), reports, rotators, goals, web events, multi-touch attribution (models, reports, journeys and exports), app measurement (the iOS and Android app registry, SKAdNetwork and AdAttributionKit postbacks, SKAN encodings, Android installs and Play Integrity), customer LTV, forecast events, and users, plus server-side sync, capability discovery, and system operations.
+
+Writes are built to be safe to automate: API keys can be scoped to read-only, one area, or propose-only; any write can be staged with `?staged=1` as a proposal someone approves later (`/api/v3/staged-changes`, or `p202 change`); deletes preview their cascade with `?dry_run=1`; and most creates honor an `Idempotency-Key`, so a retry does not make a duplicate. The full surface is described in [`docs/openapi.yaml`](docs/openapi.yaml) and the [API guides](documentation/api/).
 
 ```bash
 curl -H "Authorization: Bearer <api-key>" https://your-server/api/v3/campaigns
@@ -339,14 +372,51 @@ cd go-cli && make build
 ```bash
 ./p202 campaign list --json                 # any entity: list / get / create / update / delete
 ./p202 report summary --period last7
-./p202 attribution report --group-by ad-network    # iOS SKAdNetwork / AdAttributionKit installs with decoded revenue
+./p202 app report --group-by ad-network            # iOS SKAdNetwork / AdAttributionKit installs with decoded revenue
 ./p202 forecast --metric revenue --horizon 7
 ./p202 sync all --from prod --to staging    # replicate between instances
 ```
 
+Housekeeping that used to take a script:
+
+```bash
+./p202 campaign list --with-stats --period last30   # every campaign with its clicks, leads, income, cost and net
+./p202 campaign check-urls                          # offer URLs whose host is dead, found without sending a click
+./p202 campaign replace-url --match old-network.example --with new-network.example --dry-run
+                                                    # bulk-rewrite offer URLs; a real run saves an undo manifest
+./p202 conversion import network-export.csv --dry-run
+                                                    # record a network's conversion export against its clicks, re-runnable
+./p202 analytics --group-by country --split-at 2026-09-04
+                                                    # what changed before vs. after a date, per country
+./p202 system health                                # API reachability and the TLS certificate's expiry
+```
+
 **3. Built for agents**
 
-Agents need to know, from a failure alone, what to do next. So:
+An agent should be able to find the right command, read its output, and
+recover from a failure without a person in the loop. So:
+
+- **JSON without asking.** When an AI agent runs p202 — Claude Code, Codex,
+  Gemini CLI and Cursor's CLI agent set a marker such as `AI_AGENT` or
+  `CLAUDECODE` in the environment — output is compact JSON with no `--json`
+  needed. People at a terminal and existing scripts keep tables; `--table`,
+  `P202_OUTPUT` or `p202 config set-default output.format` override it, and
+  `p202 config show` says which format is in use and why.
+- **Find a command by describing the task.** `p202 search find dead offer
+  links` ranks commands, flags and flag values by your words, offline, and
+  says when nothing matches well; `p202 commands --json` lists every command
+  and flag, with its allowed values, in one call.
+- **Valid values are always spelled out.** Every flag that takes a fixed set
+  lists it in its help, and a wrong value is refused before any request with
+  the full list: `--period must be one of: today, yesterday, last7, last30,
+  last90; got "last31"`.
+- **Writes can wait for a person.** `--staged` records any write as a
+  proposal that someone reviews and runs with `p202 change apply`, `--dry-run`
+  previews deletes and bulk edits, and API keys can be scoped down to
+  read-only or propose-only. The agent reference is
+  [`docs/cli-agent.md`](docs/cli-agent.md).
+
+Errors are written for an agent to act on:
 
 - **Exit codes mean something:** `1` bad input, `2` auth, `3` network,
   `4` server error, `5` partial failure, and they hold through error
@@ -429,8 +499,11 @@ cd go-cli && make test
 ### Building a release
 
 Produce the self-contained zip used by the [Download & Upload](#download--upload-no-terminal)
-track. It bundles `vendor/` (Composer `--no-dev`) and cross-built Go CLI binaries so
-end users need no Composer or Go toolchain:
+track. It bundles `vendor/` (Composer `--no-dev`, installed from the committed
+`composer.lock`) and cross-built Go CLI binaries so end users need no Composer or Go
+toolchain, and it leaves out the test suites and developer tooling as listed in
+[`build/release-manifest.php`](build/release-manifest.php) (two fixtures the
+bundled CLI and SDKs point at ship with them):
 
 ```bash
 build/scripts/package-release.sh
@@ -461,8 +534,11 @@ process — versioning, tagging, CI, local builds, and troubleshooting — see
 - `bin/` - Entry scripts (`p202`)
 - `tracking202/` - Main tracking application (redirects, setup, reporting)
 - `202-cronjobs/` - Background job processing
+- `sdk/` - Mobile app SDKs: `ios-attribution/` (Swift) and `android-attribution/` (Kotlin)
+- `documentation/` - User, API, and CLI guides
+- `docs/` - OpenAPI spec (`openapi.yaml`) and CLI references (`cli.md`, `cli-agent.md`)
 - `build/` - Docker, CI, and release tooling (see [`build/README.md`](build/README.md) for the contributor reference)
-- `tests/` - PHPUnit test suite
+- `tests/` - PHPUnit test suite, plus live, browser, and agent-eval passes
 
 ## License
 

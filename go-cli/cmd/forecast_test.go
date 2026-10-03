@@ -75,7 +75,7 @@ func TestForecastRejectsInvalidMetric(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid metric")
 	}
-	if !strings.Contains(err.Error(), "unsupported metric") {
+	if !strings.Contains(err.Error(), "--metric must be one of: total_clicks") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -95,7 +95,7 @@ func TestForecastRejectsInvalidMethod(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid method")
 	}
-	if !strings.Contains(err.Error(), "unsupported method") {
+	if !strings.Contains(err.Error(), "--method must be one of: linear, sma, wma, holtwinters, ensemble, auto") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -453,7 +453,7 @@ func TestForecastRejectsInvalidInterval(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid interval")
 	}
-	if !strings.Contains(err.Error(), "unsupported interval") {
+	if !strings.Contains(err.Error(), "--interval must be one of: hour, day, week, month") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }

@@ -208,6 +208,17 @@ or `CONCAT_WS`: can two different inputs produce this same string? If a
 sanitizer, a truncation, a case fold or a delimiter sits between the value
 and the comparison, the answer is usually yes.
 
+The collation is the transform nobody writes down. Every table defaults to
+`utf8mb4_general_ci`, so a UNIQUE key over a value someone else chose folds
+case: `tx:A-1` and `tx:a-1` on one click were one ledger key, and the
+second sale was answered `duplicate` with its money dropped; LTV's
+idempotency key and external subscription/product ids did the same.
+`UniqueKeyCollationTest` now requires every text column in a UNIQUE or
+PRIMARY key to declare `COLLATE utf8mb4_bin` or to be listed with the
+reason folding is right — and a column's collation lives in the upgrade
+too, not only the table definition (the reconciler compares names and
+nullability, not collations).
+
 This differs from #15: there the discriminator was *inside* the lookup
 path, so no lookup could see it change. Here the mapping itself is
 many-to-one, so two things that should differ never get the chance to.
@@ -565,6 +576,56 @@ names has to be read from both of them: when a check looks for a
 variable's part in a relation, ask which other positions the grammar lets
 that variable occupy in the same relation, and plant each.
 
+### 23. Versions compared as text
+
+`$logs['version'] >= $version` on the 1-click upgrade page compared two
+version strings with a relational operator, and PHP compares those as text,
+character by character: `"1.9.8" >= "1.9.76"` is true, so every install was
+shown the 1.9.8 and 1.9.9 release notes as "what changed". It read correctly
+and rendered plausibly — a list of notes — which is why it survived the move
+to the new shell. `version_compare()` is the comparison; a version that really
+is a counter (a goal's version number) is cast to `int`, which also tells the
+reader it is one. `ForbidVersionRelationalCompareRule` reports `<`, `>`, `<=`,
+`>=` and `<=>` on any operand *named* as a version — variable, property, array
+key, constant, function or method — that PHPStan cannot prove is a number.
+The name is the whole heuristic: a version held in `$v` or `$latest` is not
+seen, so a comparison of values that came out of `202_version`, a feed or a
+`changelog()` entry needs `version_compare()` whatever it is called. Equality
+is not covered either, and is not safe in general: `"1.9" == "1.90"` is true,
+because both are numeric strings.
+
+### 24. A validation in a hydration path fails the batch, not the record
+`ExportWebhook`'s constructor ran the SSRF guard. That constructor is also the
+row-hydration path: the export cron's `findPending()` maps every pending row
+through it, so one stored `http://` webhook — or one transient DNS failure —
+threw out of the first call and stranded *every* pending export on every tick,
+including jobs with no webhook at all. The guard was right; its placement
+converted a single bad record into a total outage of the queue. Rejecting bad
+input belongs at the write boundary, where a caller is present to be told, and
+again at the point of use, where it can fail one item. A constructor that
+doubles as `fromDatabaseRow()` is neither: it runs over data that is already
+stored, in a loop, with nobody to answer. Before adding a check, ask who is on
+the other end of the throw and how many unrelated records share the call.
+
+The same question applies to any guard whose failure mode is silence. The
+webhook crons pin curl to an address `OutboundUrlGuard` approved, but an
+unbracketed IPv6 literal makes the `CURLOPT_RESOLVE` entry unparseable; curl
+discards it, resolves the host itself, and the DNS-rebinding hole the pin
+exists to close is open again — with the pinning code still sitting there
+looking correct. A guard that can be dropped without an error needs a test that
+asserts the guard's *output*, not just that the call was made.
+
+The same pin was dropped a second way, by the environment rather than the
+code. libcurl honours `https_proxy`/`HTTPS_PROXY`, and through a proxy curl
+sends `CONNECT host:443` and the *proxy* resolves the name, so
+`CURLOPT_RESOLVE` is ignored without a word. Measured: with a proxy in the
+environment the proxy received the CONNECT; with `CURLOPT_PROXY => ''` and
+`CURLOPT_NOPROXY => '*'` it received nothing. The attribution export sender
+set that pair and the LTV webhook guard did not, and nothing compared them.
+When two implementations of one protection exist, a test that pins them to
+the same option set is what stops one from quietly lacking a line the other
+learned; `OutboundUrlGuardTest` does that for the two webhook senders.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure
@@ -732,14 +793,20 @@ Check here before burning time on tooling failures.
   the file to the scratchpad and copy it back, or stage everything first — and
   always re-run the suite after the restore, which is what caught it.
 
-- **Two page shells, one chrome.** `template_top($title, ['ui' => 'v2'])`
-  renders a page on Bootstrap 5.3 with the Prosper202 theme and component
-  layer; pages that pass nothing get the classic Bootstrap 3 stack unchanged.
-  The two cannot share a page. The chrome (`202-config/template.php`,
-  `tracking202/_config/top.php`, `tracking202/_config/sub-menu.php`) is
-  framework-neutral markup styled by `202-css/p202-chrome.css` — never add a
-  Bootstrap class of either version to it; scope page-family styles with the
-  `p202-section-*` / `p202-sub-*` body classes instead. Every third-party file
+- **One page shell, one chrome.** Every page renders on Bootstrap 5.3 with
+  the Prosper202 theme and component layer: `template_top()` for pages behind
+  the login, `info_top()` (`202-config/functions-standalone-ui.php`) for the
+  standalone ones — sign-in, password reset, installer, upgrader, 404,
+  `_die()`. The classic Bootstrap 3 / Flat UI shell is gone (U8), and so is
+  the `'ui'` option that chose it: `template_top()` throws on an option key it
+  does not know, so a leftover `['ui' => 'v2']` fails where it is written. A
+  Bootstrap 3, Flat UI or Font Awesome 4 class renders as nothing, and
+  `NoLegacyBootstrapClassesTest` refuses one anywhere in the served tree. The
+  chrome (`202-config/template.php`, `tracking202/_config/top.php`,
+  `tracking202/_config/sub-menu.php`) is framework-neutral markup styled by
+  `202-css/p202-chrome.css` — keep Bootstrap classes out of it; scope
+  page-family styles with the `p202-section-*` / `p202-sub-*` body classes
+  instead. Every third-party file
   is an entry in `202-config/assets.php` with its SHA-384, referenced by id
   from `p202_shell_assets()` or emitted with `p202_asset_tag()`; nothing in the
   tree loads a script or stylesheet from an external host except Highcharts at
@@ -754,8 +821,8 @@ Check here before burning time on tooling failures.
   `node tests/browser/run.js`, see its README). Reach for one whenever a claim
   is about a rendered pixel or an event handler: a belief about which flex
   property made a row wrap survived a review and a push, and one measurement
-  settled it. Its `lib/checks.js` holds the per-page baseline, so migrating the
-  next family costs a line each. Two of those checks exist because a page
+  settled it. Its `lib/checks.js` holds the per-page baseline, so adding a
+  page to a family costs a line. Two of those checks exist because a page
   looked right in the markup and wrong on screen:
   `flexContainersKeepTheirSpaces` (see error pattern #19) and
   `currentSubMenuItemIsVisible`, which caught a chrome script that only
@@ -938,6 +1005,18 @@ where a check quietly fails to check what it appears to.
   scratch shim its own directory rather than a shared `bin/`, and give every
   tier a floor — a PHPStan run with no result line is now a `could not run`,
   which the stub interpreter itself was used to prove.
+- **A macOS end-to-end pass cannot see a case bug.** Git tracks
+  `tracking202/Redirect/` beside `tracking202/redirect/`; macOS's default
+  filesystem merges them, so a release zip built on a Mac put every click
+  endpoint under `Redirect/`. That zip installed, seeded and tracked clicks
+  perfectly — on the Mac — and would have served `dl.php` as a 404 on every
+  Linux host. It surfaced only when the same build ran in an Ubuntu container
+  and its file list was diffed against the Mac's. `package-release.sh` now
+  refuses a case-insensitive staging directory and `release-tree.php verify`
+  checks every shipped file's exact path, but the general rule stands: when a
+  result will run on Linux, produce it on Linux (a container is enough) before
+  calling it verified, and compare artifacts across platforms rather than
+  trusting that "it built" means "it built the same thing".
 - **Local green is not CI green when the environment carries ambient state.**
   A `--scope` check placed after `api.NewFromConfig()` passed here only
   because this sandbox has a URL configured; CI has none, so the config error

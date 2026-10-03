@@ -86,6 +86,42 @@ func TestRenderJSONModePrettyPrints(t *testing.T) {
 	}
 }
 
+// Compact is the agent form: the same document as --json on one line, with
+// & < > left as they are. Pretty (--json) keeps its indentation and escaping.
+func TestRenderJSONCompactVersusPretty(t *testing.T) {
+	input := `{"data":[{"id":2,"url":"https://x.example/?a=1&b=<2>"},{"id":1,"name":"n"}],"pagination":{"total":2}}`
+
+	compact := captureStdout(t, func() {
+		RenderWith([]byte(input), Opts{JSON: true, Compact: true})
+	})
+	if strings.Count(compact, "\n") != 1 || !strings.HasSuffix(compact, "}\n") {
+		t.Fatalf("compact JSON should be exactly one line, got %q", compact)
+	}
+	if !strings.Contains(compact, `"url":"https://x.example/?a=1&b=<2>"`) {
+		t.Errorf("compact JSON should keep & < > unescaped and have no spaces, got %s", compact)
+	}
+
+	pretty := captureStdout(t, func() {
+		RenderWith([]byte(input), Opts{JSON: true})
+	})
+	if !strings.Contains(pretty, "\n  \"data\": [") || !strings.Contains(pretty, `\u0026`) {
+		t.Errorf("--json output should stay indented and HTML-escaped as before, got:\n%s", pretty)
+	}
+
+	var a, b interface{}
+	if err := json.Unmarshal([]byte(compact), &a); err != nil {
+		t.Fatalf("compact output is not JSON: %v", err)
+	}
+	if err := json.Unmarshal([]byte(pretty), &b); err != nil {
+		t.Fatalf("pretty output is not JSON: %v", err)
+	}
+	ca, _ := json.Marshal(a)
+	cb, _ := json.Marshal(b)
+	if string(ca) != string(cb) {
+		t.Errorf("compact and pretty must carry the same document:\n%s\n%s", ca, cb)
+	}
+}
+
 func TestRenderJSONModeWithArray(t *testing.T) {
 	input := `[{"id":1},{"id":2}]`
 	out := captureStdout(t, func() {
@@ -467,22 +503,22 @@ func TestRenderQuietPrefersTheRowsOwnPrimaryKeyOverUserId(t *testing.T) {
 	// for each list endpoint, including the foreign keys that ride along; the
 	// ids are chosen so a wrong pick is visible.
 	cases := map[string]string{
-		`{"data":[{"attribution_app_id":2,"app_id":525463029,"user_id":1}]}`: "2",
-		`{"data":[{"rule_id":7,"app_id":525463029,"user_id":1}]}`:            "7",
-		`{"data":[{"postback_id":31,"user_id":1,"campaign_id":9}]}`:          "31",
-		`{"data":[{"event_id":12,"user_id":1,"event_name":"Black Friday"}]}`: "12",
-		`{"data":[{"model_id":3,"user_id":1,"model_name":"U-shaped"}]}`:      "3",
-		`{"data":[{"snapshot_id":44,"model_id":3,"user_id":1}]}`:             "44",
-		`{"data":[{"export_id":5,"user_id":1,"model_id":3}]}`:                "5",
-		`{"data":[{"subscription_id":8,"customer_id":21,"user_id":1}]}`:      "8",
-		`{"data":[{"customer_id":21,"user_id":1,"company":"Acme"}]}`:         "21",
-		`{"data":[{"company_id":6,"name":"Acme","domain":"acme.io"}]}`:       "6",
-		`{"data":[{"product_id":9,"sku":"pro-annual"}]}`:                     "9",
-		`{"data":[{"field_id":2,"field_key":"plan","user_id":1}]}`:           "2",
-		`{"data":[{"webhook_id":4,"webhook_url":"https://x","user_id":1}]}`:  "4",
-		`{"data":[{"delivery_id":15,"webhook_id":4,"user_id":1}]}`:           "15",
-		`{"data":[{"integration_id":3,"provider":"stripe","user_id":1}]}`:    "3",
-		`{"data":[{"alias_id":11,"alias_type":"email"}]}`:                    "11",
+		`{"data":[{"registration_id":2,"app_key":"525463029","user_id":1}]}`:            "2",
+		`{"data":[{"encoding_id":7,"registration_id":2,"user_id":1}]}`:                  "7",
+		`{"data":[{"postback_id":31,"user_id":1,"registration_id":2,"campaign_id":9}]}`: "31",
+		`{"data":[{"event_id":12,"user_id":1,"event_name":"Black Friday"}]}`:            "12",
+		`{"data":[{"model_id":3,"user_id":1,"model_name":"U-shaped"}]}`:                 "3",
+		`{"data":[{"snapshot_id":44,"model_id":3,"user_id":1}]}`:                        "44",
+		`{"data":[{"export_id":5,"user_id":1,"model_id":3}]}`:                           "5",
+		`{"data":[{"subscription_id":8,"customer_id":21,"user_id":1}]}`:                 "8",
+		`{"data":[{"customer_id":21,"user_id":1,"company":"Acme"}]}`:                    "21",
+		`{"data":[{"company_id":6,"name":"Acme","domain":"acme.io"}]}`:                  "6",
+		`{"data":[{"product_id":9,"sku":"pro-annual"}]}`:                                "9",
+		`{"data":[{"field_id":2,"field_key":"plan","user_id":1}]}`:                      "2",
+		`{"data":[{"webhook_id":4,"webhook_url":"https://x","user_id":1}]}`:             "4",
+		`{"data":[{"delivery_id":15,"webhook_id":4,"user_id":1}]}`:                      "15",
+		`{"data":[{"integration_id":3,"provider":"stripe","user_id":1}]}`:               "3",
+		`{"data":[{"alias_id":11,"alias_type":"email"}]}`:                               "11",
 		// Core entities, whose rows carry other entities' keys as references.
 		`{"data":[{"click_id":6,"aff_campaign_id":2,"ppc_account_id":1,"landing_page_id":4,"rotator_id":null,"rule_id":null,"user_id":1}]}`: "6",
 		`{"data":[{"conv_id":3,"click_id":6,"campaign_id":2,"user_id":1}]}`:                                                                 "3",

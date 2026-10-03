@@ -1,0 +1,104 @@
+# Prosper202 Android SDK
+
+Install attribution for Android apps: reads Google Play's install referrer
+on the first launch, reports the install to your Prosper202 server once,
+then the app's events and the signed customer id. The integration guide is
+[documentation/api/25-android-sdk.md](../../documentation/api/25-android-sdk.md);
+the wire contract is
+[documentation/api/21-app-sdk-contract.md](../../documentation/api/21-app-sdk-contract.md).
+
+```kotlin
+// Application.onCreate()
+P202Attribution.configure(this, "https://track.example.com", "<app token>")
+
+P202Attribution.logEvent("level_reached", mapOf("level" to 3))
+P202Attribution.logEvent("purchase", revenue = 4.99, transactionId = order.id)
+P202Attribution.setCustomerId(user.id, signatureFromYourServer)
+```
+
+## Layout
+
+| Module | What | Needs |
+|---|---|---|
+| `core/` | Everything that decides anything: the install token, the install and events bodies and the canonical form the server fingerprints, the customer id, the durable queue, the retry rules, the `HttpURLConnection` transport, the file store | a JDK |
+| `android/` | `P202Attribution` (the facade), Play's `InstallReferrerClient`, the store in `noBackupFilesDir`, device facts, flushing when the app goes to the background | an Android SDK and AGP |
+| `integrity/` (optional) | `PlayIntegrityProvider`: Play Integrity's standard request, bound to the install body's fingerprint | an Android SDK and AGP; `com.google.android.play:integrity` |
+
+The core is plain Kotlin that runs on Android from API 21 (no `java.nio.file`,
+`java.util.Base64` or `java.time`) and on the JVM, which is where its tests
+run. `settings.gradle.kts` includes `android/` and `integrity/` only when an Android SDK is
+found and `-Pp202.android=false` is not given.
+
+## Tests
+
+```sh
+gradle -p sdk/android-attribution -Pp202.android=false :core:test
+```
+
+- `ContractVectorsTest` runs every vector in `tests/fixtures/app-sdk-contract/`
+  that concerns this SDK — `android/` (the token, the Play Integrity
+  request hash of every `integrity.json` body, every install body's
+  field errors, canonical form and fingerprint, every events body, the
+  answers and which are retried), `customer-id.json` and the Android keys
+  of `app-identity.json` — the same files the PHP suite runs.
+- `AttributionEngineTest` drives the engine on virtual time against a
+  scripted server: one install, the same bytes on every retry, backoff and
+  `Retry-After` across a relaunch, refusals re-armed only by a new token,
+  batching under the caps, the queue bound, refuted installs, the customer
+  on either route, a token requested only when the schema asks and bound to
+  the body, holding back for Play, a waiting install's events, the file
+  store.
+- `UnicodeInputTest`: every string the app passes (the customer id, event
+  property values and transaction ids, the configured endpoint and
+  versions) is refused by name when it holds an unpaired UTF-16 surrogate,
+  which the canonical form cannot encode and no server can store.
+- `LiveServerTest` runs the real engine against an instance; it skips
+  unless `tests/live/android-sdk.sh` sets `P202_LIVE_BASE`.
+
+With an Android SDK (`ANDROID_HOME`) and JDK 21, the Android libraries
+build, lint and run their Robolectric suites (Robolectric 4.14.1, Android
+15's framework on the JVM; no device or emulator):
+
+```
+gradle -p sdk/android-attribution assembleDebug assembleRelease lint check
+```
+
+(CI names the debug and release tasks of both modules one by one, and
+floors each suite's executed test count with `scripts/test-floor.py`.)
+
+- `PlayInstallReferrerSourceTest`: Play's real installreferrer client bound
+  to a played Play Store service — its answer field for field, an organic
+  install, no or too old a Play Store, an unbindable service, a
+  `RemoteException`, the connection unbound.
+- `P202AttributionTest`: `configure()` posting through the real transport
+  to an HTTP server on 127.0.0.1 — the reference install reproduced byte
+  for byte from the device end, the install id kept in `noBackupFilesDir`
+  across a relaunch, an unreadable state file moved aside, 429/503 retried
+  with the same bytes, a 400 terminal.
+- `PlayIntegrityProviderTest`: the provider over a fake
+  `StandardIntegrityManager` with Play's own types — every `integrity.json`
+  hash, preparing per project, re-preparing once, Play's error codes
+  sorted, a timeout, and the engine sending the token bound to the body.
+- `LiveInstanceTest` runs `configure()` against an instance; it skips
+  unless `tests/live/android-sdk.sh` sets `P202_LIVE_BASE`.
+
+`:core:check` also runs Animal Sniffer against Android API 21's signature:
+Android lint does not look inside the plain JVM core. Animal Sniffer's
+ignores are whole classes, and it ignores `java.lang.Boolean`, `Long` and
+`Double`, whose Java 8 helpers D8 backports; CI checks that trust by dexing
+the core the way an app build does and reading what is left:
+
+```
+gradle -p sdk/android-attribution :core:jar :core:dexClasspath
+$ANDROID_HOME/build-tools/<version>/d8 --min-api 21 --lib $ANDROID_HOME/platforms/android-<n>/android.jar \
+  --classpath sdk/android-attribution/core/build/dex-classpath/<each jar> --output <dir> \
+  sdk/android-attribution/core/build/libs/core-1.0.0.jar
+python3 sdk/android-attribution/scripts/dex-api-check.py $ANDROID_HOME/platforms/android-<n>/data/api-versions.xml 21 <dir>/classes.dex
+```
+
+The goal-evaluator vectors (`goals/`) are not run here: Android goals are
+evaluated on the server (plan §4.3), so the SDK reports every event and
+evaluates none.
+
+Gradle 8.14 and Kotlin 2.0.21; the Android module uses AGP 8.7.3,
+`compileSdk 34`, `minSdk 21` (the integrity module `minSdk 23`, Play Integrity 1.6.0's floor).

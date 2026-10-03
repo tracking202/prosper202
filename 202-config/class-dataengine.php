@@ -6,6 +6,7 @@ use Prosper202\DataEngine\ClickRollupSql;
 use Prosper202\DataEngine\GroupedReportDefinition;
 use Prosper202\DataEngine\GroupedReportRegistry;
 use Prosper202\DataEngine\HtmlReportFormatter;
+use Prosper202\DataEngine\ReportView;
 use Prosper202\DataEngine\MetricsSql;
 use Prosper202\DataEngine\ReportTotals;
 use Prosper202\DataEngine\SortOrder;
@@ -228,7 +229,7 @@ class DataEngine
         }
         // Fix #2: a missing pref row (brand-new account) should degrade
         // gracefully, not 500.  Build filters from an empty row → all defaults.
-        $user_row = $user_result->fetch_assoc() ?: [];
+        $user_row = ReportView::apply($user_result->fetch_assoc() ?: [], $_SESSION['user_id']);
 
         // Stored prefs are still attacker-influenced input: escape the free
         // text value before it is interpolated into a LIKE clause.
@@ -262,7 +263,7 @@ class DataEngine
             throw new Exception('Unable to load user report preferences');
         }
         // Fix #2: no pref row (brand-new account) → degrade to default ('all').
-        $user_row = $user_result->fetch_assoc() ?: [];
+        $user_row = ReportView::apply($user_result->fetch_assoc() ?: [], $_SESSION['user_id']);
 
         return UserPrefFilters::showFilter((string) ($user_row['user_pref_show'] ?? 'all'));
     }
@@ -426,10 +427,17 @@ class DataEngine
     {
         $filters = $this->getFilters();
 
+        // The group itself breaks ties in the sort. Every sort key is a
+        // metric, and metrics tie all the time (every keyword with no leads
+        // ties on the default sort), so without it MySQL returns tied rows
+        // in whatever order the plan produces — a different order on two
+        // runs of the same query, which moved rows between pages of a
+        // paginated report (one row on two pages, another on none) and made
+        // two downloads of the same report disagree.
         $sql = 'SELECT ' . $definition->labelSelect . ',' . MetricsSql::GROUPED_SELECT
             . $this->groupedReportFrom($definition, (string) $clickFrom, (string) $clickTo, $filters)
             . ' group by ' . $definition->groupBy
-            . $this->sortOrder()
+            . $this->sortOrder() . ', ' . $definition->groupBy
             . $filters['limit'];
 
         $data = $this->collectRows($sql, $cpv);
@@ -1194,8 +1202,9 @@ ORDER BY ppc_network_id , name , variable";
 }
 
 /**
- * Renders report data (as produced by DataEngine) as HTML tables, Excel
- * downloads and pagination controls.
+ * Renders report data (as produced by DataEngine) as Excel downloads. The
+ * HTML tables and pagination it also rendered belonged to the classic report
+ * pages and went with them (U8); the pages render their own.
  */
 class DisplayData
 {
@@ -1220,451 +1229,33 @@ class DisplayData
         'platform' => 'Platform',
     ];
 
-    /** Report type => excel download endpoint (under tracking202/analyze/). */
-    private const DOWNLOAD_URLS = [
-        'keyword' => 'keywords_download.php',
-        'textad' => 'text_ads_download.php',
-        'referer' => 'referers_download.php',
-        'ip' => 'ips_download.php',
-        'country' => 'countries_download.php',
-        'region' => 'regions_download.php',
-        'city' => 'cities_download.php',
-        'isp' => 'isps_download.php',
-        'landingpage' => 'landing_pages_download.php',
-        'device' => 'device_download.php',
-        'browser' => 'browser_download.php',
-        'platform' => 'platform_download.php',
-    ];
-
-    /** Report types whose table is not paginated. */
-    private const UNPAGINATED = ['breakdown', 'hourly', 'weekly'];
-
     /**
-     * Bootstrap label style (primary/important/default) for a net or ROI value.
+     * Masks the variables excel download for a viewer without
+     * access_to_campaign_data. The 1.9.76 rewrite removed the HTML renderers
+     * this used to sit among and took it with them, which left
+     * downloadVariables() printing real clicks, leads, income, cost and net to
+     * exactly the users the permission withholds them from.
+     *
+     * The variable report nests its rows (network -> variable -> value) and
+     * carries totals under total_* keys, so the mask walks the whole structure
+     * for both prefixes.
      */
-    private static function labelStyle($value): string
+    private function maskVariableData($theData)
     {
-        $number = self::convertToNumber($value);
-        if ($number > 0) {
-            return 'primary';
-        }
-        if ($number < 0) {
-            return 'important';
+        if (!\Prosper202\Report\CampaignDataMask::hidden()) {
+            return $theData;
         }
 
-        return 'default';
-    }
-
-    private static function featureKey(string $reportType, array $html): string
-    {
-        switch ($reportType) {
-            case 'LpOverview':
-                return $html['landing_page_nickname'] ?? '';
-            case 'campaignOverview':
-                return ($html['aff_network_name'] ?? '') . ' - ' . ($html['aff_campaign_name'] ?? '');
-            case 'breakdown':
-            case 'hourly':
-            case 'weekly':
-                return $html['click_time_from_disp'] ?? '';
-            case 'keyword':
-                $keyword = $html['keyword'] ?? 'Unknown';
-                return '<div style="text-overflow: ellipsis; overflow : hidden; white-space: nowrap;
- width: 250px;" title="' . $keyword . '">' . $keyword . '</div>';
-            case 'textad':
-                return $html['text_ad_name'] ?? 'Unknown';
-            case 'referer':
-                $referer_name = $html['referer_name'] ?? 'Unknown';
-                return '<div style="text-overflow: ellipsis; overflow : hidden; white-space: nowrap;
- width: 250px;" title="' . $referer_name . '">' . $referer_name . '</div>';
-            case 'ip':
-                $ip_address = $html['ip_address'] ?? 'Unknown';
-                return '<div style="text-overflow: ellipsis; overflow : hidden; white-space: nowrap;
- width: 100%;" title="' . $ip_address . '">' . $ip_address . '</div>';
-            case 'country':
-            case 'region':
-            case 'city':
-                $nameKey = ['country' => 'country_name', 'region' => 'region_name', 'city' => 'city_name'][$reportType];
-                $country_code = !empty($html['country_code']) ? $html['country_code'] : 'unknown';
-                $name = $html[$nameKey] ?? 'Unknown';
-                return '<img src="' . get_absolute_url() . '202-img/flags/' . strtolower((string) $country_code) . '.png"> ' . $name . ' (' . $country_code . ')';
-            case 'isp':
-                return $html['isp_name'] ?? 'Unknown';
-            case 'landingpage':
-                $landing_page_nickname = $html['landing_page_nickname'] ?? 'Unknown';
-                return '<div style="text-overflow: ellipsis; overflow : hidden; white-space: nowrap;
- width: 240px;" title="' . $landing_page_nickname . '">' . $landing_page_nickname . '</div>';
-            case 'device':
-                return $html['device_name'] ?? 'Unknown';
-            case 'browser':
-                return $html['browser_name'] ?? 'Unknown';
-            case 'platform':
-                return $html['platform_name'] ?? 'Unknown';
-        }
-
-        return '';
-    }
-
-    public function displayReport($reportType, $theData, $foundRows = '')
-    {
-        global $userObj;
-
-        $paginateReport = !in_array($reportType, self::UNPAGINATED, true);
-        $downloadUrl = self::DOWNLOAD_URLS[$reportType] ?? '';
-        $featureLabel = self::FEATURE_LABELS[$reportType] ?? 'Item';
-
-        if ($downloadUrl != '') {
-            echo '<div class="row">
-                    <div class="col-xs-12 text-right" style="padding-bottom: 10px;">
-                        <img style="margin-bottom:2px;" src="' . get_absolute_url() . '202-img/icons/16x16/page_white_excel.png"/>
-                        <a style="font-size:12px;" target="_new" href="' . get_absolute_url() . 'tracking202/analyze/' . $downloadUrl . '">
-                            <strong>Download to excel</strong>
-                        </a>
-                    </div>
-                </div>';
-        }
-
-        echo '<table class="table table-bordered table-hover" id="stats-table">
-        <thead>
-        <tr style="background-color: #f2fbfa;">
-        <th colspan="4" style="text-align:left">' . $featureLabel . '</th>
-        <th>Clicks</th>
-        <th>Click Throughs</th>
-        <th>CTR</th>
-        <th>Leads</th>
-        <th>Avg S/U</th>
-        <th>Avg Payout</th>
-        <th>Avg EPC</th>
-        <th>Avg CPC</th>
-        <th>Income</th>
-        <th>Cost</th>
-        <th>Net</th>
-        <th>ROI</th>
-        </tr>
-        </thead>
-        <tbody>';
-
-        $rows = array_values((array) $theData);
-        $rowCount = count($rows);
-
-        if ($rowCount === 0) {
-            // No rows at all: close the table cleanly (the totals row that
-            // normally emits </tbody></table> never runs here) and show a
-            // friendly empty state instead of a bare headers-only grid.
-            echo '</tbody></table>
-                <div class="empty-state"><i class="fa fa-inbox" style="font-size:40px; display:block; margin-bottom:12px; color:#c4c9cf;"></i>
-                <strong>No data for this date range</strong>
-                Try widening the date range above, or clearing your search filters.</div>';
-            if ($paginateReport) {
-                echo $this->paginate($reportType, $foundRows);
-            }
-            return;
-        }
-
-        for ($i = 0; $i < $rowCount; $i++) {
-            $html = $rows[$i];
-            $featureKey = self::featureKey((string) $reportType, $html);
-
-            $netStyle = self::labelStyle($html['net'] ?? 0);
-            $roiStyle = self::labelStyle($html['roi'] ?? 0);
-            $totalNetStyle = self::labelStyle($html['total_net'] ?? 0);
-            $totalRoiStyle = self::labelStyle($html['total_roi'] ?? 0);
-
-            $masked = $userObj && !$userObj->hasPermission("access_to_campaign_data") && empty($_SESSION['publisher']);
-
-            if ($i != $rowCount - 1) {
-                if ($masked) {
-                    $html['clicks'] = '?';
-                    $html['click_out'] = '?';
-                    $html['leads'] = '?';
-                    $html['income'] = '?';
-                    $html['cost_wrapper'] = '?';
-                    $html['net'] = '?';
-                } else {
-                    $html['cost_wrapper'] = '(' . $html['cost'] . ')';
-                }
-
-                echo ' <tr>
-               <td colspan="4" style="text-align:left; padding-left:10px">' . $featureKey . '</td>
-                   <td>' . $html['clicks'] . '</td>
-
-                        <td>' . $html['click_out'] . '</td>
-            			<td>' . $html['ctr'] . '</td>
-            			<td>' . $html['leads'] . '</td>
-            			<td>' . $html['su_ratio'] . '</td>
-            			<td>' . $html['payout'] . '</td>
-            			<td>' . $html['epc'] . '</td>
-            			<td>' . $html['cpc'] . '</td>
-            			<td><span class="label label-info">' . $html['income'] . '</span></td>
-            			<td><span class="label label-info">' . $html['cost_wrapper'] . '</span></td>
-            			<td> <span class="label label-' . $netStyle . '">' . $html['net'] . '</span></td>
-            			<td> <span class="label label-' . $roiStyle . '">' . $html['roi'] . '</span></td>
-
-            		</tr> ';
-            } else {
-                if ($masked) {
-                    $html['total_clicks'] = '?';
-                    $html['total_click_out'] = '?';
-                    $html['total_leads'] = '?';
-                    $html['total_income'] = '?';
-                    $html['total_cost_wrapper'] = '?';
-                    $html['total_net'] = '?';
-                } else {
-                    $html['total_cost_wrapper'] = '(' . $html['total_cost'] . ')';
-                }
-
-                echo '<tr style="background-color: #F8F8F8;" id="totals" class="no-sort">
-        <td colspan="4" style="text-align:left; padding-left:10px;"><strong>Totals for report</strong></td>
-        <td><strong>' . $html['total_clicks'] . '</strong></td>
-            <td><strong>' . $html['total_click_out'] . '</strong></td>
-                <td><strong>' . $html['total_ctr'] . '</strong></td>
-        			<td><strong>' . $html['total_leads'] . '</strong></td>
-        			<td><strong>' . $html['total_su_ratio'] . '</strong></td>
-        			<td><strong>' . $html['total_payout'] . '</strong></td>
-        			<td><strong>' . $html['total_epc'] . '</strong></td>
-        			<td><strong>' . $html['total_cpc'] . '</strong></td>
-        			<td><strong>' . $html['total_income'] . '</strong></td>
-        			<td><strong>' . $html['total_cost_wrapper'] . '</strong></td>
-        			<td><strong><span class="label label-' . $totalNetStyle . '">' . $html['total_net'] . '</span></strong></td>
-        			<td><strong><span class="label label-' . $totalRoiStyle . '">' . $html['total_roi'] . '</span></strong></td>
-        		</tr>
-        		</tbody>
-        	</table> ';
-            }
-        }
-
-        if ($paginateReport) {
-            echo $this->paginate($reportType, $foundRows);
-        }
-    }
-
-    public function displayPerPPCReport($type, $theData)
-    {
-        global $userObj;
-
-        $featureLabel = match ($type) {
-            'slp_direct_link' => '[direct link & simple lp]',
-            'alp' => '[adv lp]',
-            default => '',
-        };
-
-        if (empty($theData)) {
-            return;
-        }
-
-        foreach ($theData as $campaign) {
-            $name = match ($type) {
-                'slp_direct_link' => $campaign['total_aff_network_name'] . ' - ' . $campaign['total_aff_campaign_name'],
-                'alp' => $campaign['total_landing_page_nickname'],
-                default => '',
-            };
-
-            $totalNetStyle = self::labelStyle($campaign['total_net']);
-            $totalRoiStyle = self::labelStyle($campaign['total_roi']);
-
-            echo '
-            <strong><small>' . $name . ' <span style="font-size: 65%; color: grey; font-weight: normal;">' . $featureLabel . '</span></small></strong>
-            <table class="table table-bordered table-hover" id="stats-table">
-            <thead>
-            <tr style="background-color: #f2fbfa;">
-            <th colspan="4" class="no-sort" style="text-align:left">Traffic Source - Traffic Source Account</th>
-            <th>Clicks</th>
-            <th>Click Throughs</th>
-            <th>CTR</th>
-            <th>Leads</th>
-            <th>Avg S/U</th>
-            <th>Avg Payout</th>
-            <th>Avg EPC</th>
-            <th>Avg CPC</th>
-            <th>Income</th>
-            <th>Cost</th>
-            <th>Net</th>
-            <th>ROI</th>
-            </tr>
-            </thead>
-            <tbody>';
-
-            foreach ($campaign['ppc_accounts'] as $ppc_account) {
-                $netStyle = self::labelStyle($ppc_account['net']);
-                $roiStyle = self::labelStyle($ppc_account['roi']);
-
-                if ($userObj && !$userObj->hasPermission("access_to_campaign_data") && empty($_SESSION['publisher'])) {
-                    $ppc_account['clicks'] = '?';
-                    $ppc_account['click_out'] = '?';
-                    $ppc_account['leads'] = '?';
-                    $ppc_account['income'] = '?';
-                    $ppc_account['cost_wrapper'] = '?';
-                    $ppc_account['net'] = '?';
-                } else {
-                    $ppc_account['cost_wrapper'] = '(' . $ppc_account['cost'] . ')';
-                }
-
-                if (($ppc_account['ppc_network_name'] != '') && ($ppc_account['ppc_account_name'] != '')) {
-                    $source_name = $ppc_account['ppc_network_name'] . ' - ' . $ppc_account['ppc_account_name'];
-                } else {
-                    $source_name = '[No Traffic Source Account]';
-                }
-
-                echo ' <tr>
-                   <td colspan="4" style="text-align:left; padding-left:10px">' . $source_name . '</td>
-                   <td>' . $ppc_account['clicks'] . '</td>
-
-                        <td>' . $ppc_account['click_out'] . '</td>
-                        <td>' . $ppc_account['ctr'] . '</td>
-                        <td>' . $ppc_account['leads'] . '</td>
-                        <td>' . $ppc_account['su_ratio'] . '</td>
-                        <td>' . $ppc_account['payout'] . '</td>
-                        <td>' . $ppc_account['epc'] . '</td>
-                        <td>' . $ppc_account['cpc'] . '</td>
-                        <td><span class="label label-info">' . $ppc_account['income'] . '</span></td>
-                        <td><span class="label label-info">' . $ppc_account['cost_wrapper'] . '</span></td>
-                        <td> <span class="label label-' . $netStyle . '">' . $ppc_account['net'] . '</span></td>
-                        <td> <span class="label label-' . $roiStyle . '">' . $ppc_account['roi'] . '</span></td>
-
-                </tr> ';
-            }
-
-            if ($userObj && !$userObj->hasPermission("access_to_campaign_data") && empty($_SESSION['publisher'])) {
-                $campaign['total_clicks'] = '?';
-                $campaign['total_click_out'] = '?';
-                $campaign['total_leads'] = '?';
-                $campaign['total_income'] = '?';
-                $campaign['cost_wrapper'] = '?';
-                $campaign['net'] = '?';
-            } else {
-                $campaign['cost_wrapper'] = '(' . $campaign['total_cost'] . ')';
-            }
-
-            echo '<tr style="background-color: #F8F8F8;" id="totals" class="no-sort">
-                    <td colspan="4" style="text-align:left; padding-left:10px;"><strong>Totals for report</strong></td>
-                    <td><strong>' . $campaign['total_clicks'] . '</strong></td>
-                    <td><strong>' . $campaign['total_click_out'] . '</strong></td>
-                    <td><strong>' . $campaign['total_ctr'] . '</strong></td>
-                    <td><strong>' . $campaign['total_leads'] . '</strong></td>
-                    <td><strong>' . $campaign['total_su_ratio'] . '</strong></td>
-                    <td><strong>' . $campaign['total_payout'] . '</strong></td>
-                    <td><strong>' . $campaign['total_epc'] . '</strong></td>
-                    <td><strong>' . $campaign['total_cpc'] . '</strong></td>
-                    <td><strong>' . $campaign['total_income'] . '</strong></td>
-                    <td><strong>' . $campaign['cost_wrapper'] . '</strong></td>
-                    <td><strong><span class="label label-' . $totalNetStyle . '">' . $campaign['total_net'] . '</span></strong></td>
-                    <td><strong><span class="label label-' . $totalRoiStyle . '">' . $campaign['total_roi'] . '</span></strong></td>
-                </tr>
-                </tbody>
-            </table> ';
-        }
-    }
-
-    public function displayVariableReport($theData)
-    {
-        echo '<div class="row">
-                    <div class="col-xs-12 text-right" style="padding-bottom: 10px;">
-                        <img style="margin-bottom:2px;" src="' . get_absolute_url() . '202-img/icons/16x16/page_white_excel.png"/>
-                        <a style="font-size:12px;" target="_new" href="' . get_absolute_url() . 'tracking202/analyze/variables_download.php">
-                            <strong>Download to excel</strong>
-                        </a>
-                    </div>
-                </div>';
-
-        echo '<table class="table table-bordered" id="stats-table">
-            <thead>
-            <tr style="background-color: #f2fbfa;">
-            <th style="text-align:left">Variables</th>
-            <th>Clicks</th>
-            <th>Click Throughs</th>
-             <th>CTR</th>
-            <th>Leads</th>
-            <th>Avg S/U</th>
-            <th>Avg Payout</th>
-            <th>Avg EPC</th>
-            <th>Avg CPC</th>
-            <th>Income</th>
-            <th>Cost</th>
-            <th>Net</th>
-            <th>ROI</th>
-            </tr>
-            </thead>
-            <tbody>';
-
-        $rows = array_values((array) $theData);
-        $rowCount = count($rows);
-
-        if ($rowCount === 0) {
-            // No rows: close the table cleanly and show a friendly empty state
-            // instead of a bare headers-only grid with an unclosed <tbody>.
-            echo '</tbody></table>
-                <div class="empty-state"><i class="fa fa-inbox" style="font-size:40px; display:block; margin-bottom:12px; color:#c4c9cf;"></i>
-                <strong>No data for this date range</strong>
-                Try widening the date range above, or clearing your search filters.</div>';
-            return;
-        }
-
-        for ($i = 0; $i < $rowCount; $i++) {
-            $html = $rows[$i];
-
-            if ($i != $rowCount - 1) {
-                if (isset($html['variables']) && $html['variables']) {
-                    foreach ($html['variables'] as $variables) {
-                        echo '
-                    <tr class="sub">
-                       <td class="result_main_column_level_1" colspan="13"><strong>' . ($html[0]['ppc_network_name'] ?? '') . ' - ' . ($variables[0]['variable_name'] ?? '') . '</strong></td>
-                    </tr> ';
-
-                        foreach ($variables['values'] ?? [] as $value) {
-                            $value_netStyle = self::labelStyle($value['net']);
-                            $value_roiStyle = self::labelStyle($value['roi']);
-
-                            echo '
-                        <tr class="lite">
-                           <td class="result_main_column_level_3">' . $value['variable_value'] . '</td>
-                           <td>' . $value['clicks'] . '</td>
-                           <td>' . $value['click_out'] . '</td>
-                           <td>' . $value['ctr'] . '</td>
-                           <td>' . $value['leads'] . '</td>
-                           <td>' . $value['su_ratio'] . '</td>
-                           <td>' . $value['payout'] . '</td>
-                           <td>' . $value['epc'] . '</td>
-                           <td>' . $value['cpc'] . '</td>
-                           <td><span class="label label-info">' . $value['income'] . '</span></td>
-                           <td><span class="label label-info">' . $value['cost'] . '</span></td>
-                           <td> <span class="label label-' . $value_netStyle . '">' . $value['net'] . '</span></td>
-                           <td> <span class="label label-' . $value_roiStyle . '">' . $value['roi'] . '</span></td>
-                        </tr> ';
-                        }
-                    }
-                }
-            } else {
-                $totalNetStyle = self::labelStyle($html['total_net'] ?? 0);
-                $totalRoiStyle = self::labelStyle($html['total_roi'] ?? 0);
-
-                echo '
-                <tr style="background-color: #F8F8F8;" id="totals" class="no-sort">
-                    <td class="result_main_column_level_1"><strong>Totals for report</strong></td>
-                    <td><strong>' . $html['total_clicks'] . '</strong></td>
-                    <td><strong>' . $html['total_click_out'] . '</strong></td>
-                    <td><strong>' . $html['total_ctr'] . '</strong></td>
-                    <td><strong>' . $html['total_leads'] . '</strong></td>
-                    <td><strong>' . $html['total_su_ratio'] . '</strong></td>
-                    <td><strong>' . $html['total_payout'] . '</strong></td>
-                    <td><strong>' . $html['total_epc'] . '</strong></td>
-                    <td><strong>' . $html['total_cpc'] . '</strong></td>
-                    <td><strong>' . $html['total_income'] . '</strong></td>
-                    <td><strong>' . $html['total_cost'] . '</strong></td>
-                    <td><strong><span class="label label-' . $totalNetStyle . '">' . $html['total_net'] . '</span></strong></td>
-                    <td><strong><span class="label label-' . $totalRoiStyle . '">' . $html['total_roi'] . '</span></strong></td>
-                </tr>
-            </tbody>
-            </table>';
-            }
-        }
+        return \Prosper202\Report\CampaignDataMask::applyDeep((array) $theData);
     }
 
     public function downloadReport($reportType, $theData, $foundRows = '')
     {
-        global $userObj;
-
         $featureLabel = self::FEATURE_LABELS[$reportType] ?? 'Item';
 
         echo $featureLabel . "\t" . "Clicks" . "\t" . "Click Throughs" . "\t" . "LP CTR" . "\t" . "Leads" . "\t" . "S/U" . "\t" . "Payout" . "\t" . "EPC" . "\t" . "Avg CPC" . "\t" . "Income" . "\t" . "Cost" . "\t" . "Net" . "\t" . "ROI" . "\n";
+
+        $masked = \Prosper202\Report\CampaignDataMask::hidden();
 
         foreach (array_values((array) $theData) as $html) {
             // The trailing totals row carries only total_* keys; letting it
@@ -1700,13 +1291,8 @@ class DisplayData
                 continue;
             }
 
-            if ($userObj && !$userObj->hasPermission("access_to_campaign_data") && empty($_SESSION['publisher'])) {
-                $html['clicks'] = '?';
-                $html['click_out'] = '?';
-                $html['leads'] = '?';
-                $html['income'] = '?';
-                $html['cost'] = '?';
-                $html['net'] = '?';
+            if ($masked) {
+                $html = \Prosper202\Report\CampaignDataMask::apply($html);
             }
 
             echo $featureKey . "\t" . $html['clicks'] . "\t" . $html['click_out'] . "\t" . $html['ctr'] . "\t" . $html['leads'] . "\t" . $html['su_ratio'] . "\t" . $html['payout'] . "\t" . $html['epc'] . "\t" . $html['cpc'] . "\t" . $html['income'] . "\t" . $html['cost'] . "\t" . $html['net'] . "\t" . $html['roi'] . "\n";
@@ -1715,6 +1301,8 @@ class DisplayData
 
     public function downloadVariables($theData)
     {
+        $theData = $this->maskVariableData($theData);
+
         echo "Custom Variables" . "\t" . "Clicks" . "\t" . "Click Throughs" . "\t" . "LP CTR" . "\t" . "Leads" . "\t" . "S/U" . "\t" . "Payout" . "\t" . "EPC" . "\t" . "Avg CPC" . "\t" . "Income" . "\t" . "Cost" . "\t" . "Net" . "\t" . "ROI" . "\n";
 
         $rows = array_values((array) $theData);
@@ -1752,62 +1340,6 @@ class DisplayData
         return str_replace(['$', ','], '', $val);
     }
 
-    public function paginate($reportType, $foundRows)
-    {
-        // Whitelisted, not escaped: this value lands inside an onclick
-        // handler, where HTML entities are decoded before the JS executes,
-        // so only known sort keys may be reflected at all.
-        $order = SortOrder::canonicalKey((string) ($_POST['order'] ?? ''));
-
-        $fileSlug = match ($reportType) {
-            'textad' => 'text_ads',
-            'landingpage' => 'landing_pages',
-            'keyword', 'referer', 'ip', 'region', 'isp', 'device', 'browser', 'platform' => $reportType . 's',
-            'country', 'city' => substr((string) $reportType, 0, -1) . 'ies',
-            default => $reportType,
-        };
-        $fileName = "sort_" . $fileSlug . ".php";
-
-        new UserPrefs();
-        $userPrefLimit = (int) UserPrefs::getPref('user_pref_limit');
-        if ($userPrefLimit < 1) {
-            $userPrefLimit = 50; // matches the schema default; guards against division by zero
-        }
-        $pages = (int) ceil((int) $foundRows / $userPrefLimit);
-
-        if (isset($_POST['offset']) && $_POST['offset'] != '') {
-            $offset = (int) $_POST['offset'];
-        } else {
-            $offset = 0;
-        }
-
-        if ($pages > 1) {
-?>
-            <div class="row">
-                <div class="col-xs-12 text-center">
-                    <div class="pagination" id="table-pages">
-                        <ul>
-                            <?php
-                            $page = ($offset == 0) ? 0 : $offset - 1;
-                            printf(' <li class="previous"><a class="fui-arrow-left" onclick="loadContent(\'%stracking202/ajax/%s\',\'%s\',\'%s\');"></a></li>', get_absolute_url(), $fileName, $page, $order);
-
-                            for ($i = 0; $i < $pages; $i++) {
-                                if (($i >= $offset - 10) and ($i < $offset + 11)) {
-                                    $class = ($offset == $i) ? 'class="active"' : '';
-                                    printf(' <li %s><a onclick="loadContent(\'%stracking202/ajax/%s\',\'%s\',\'%s\');">%s</a></li>', $class, get_absolute_url(), $fileName, $i, $order, $i + 1);
-                                }
-                            }
-
-                            $page = ($offset + 1 == $pages) ? $offset : $offset + 1;
-                            printf(' <li class="next"><a class="fui-arrow-right" onclick="loadContent(\'%stracking202/ajax/%s\',\'%s\',\'%s\');"></a></li>', get_absolute_url(), $fileName, $page, $order);
-                            ?>
-                        </ul>
-                    </div>
-                </div>
-            </div>
-<?php
-        }
-    }
 }
 
 /**
@@ -1844,7 +1376,7 @@ class UserPrefs
 
         $user_row = $user_result->fetch_assoc();
         if ($user_row) {
-            self::$userPref = $user_row;
+            self::$userPref = ReportView::apply($user_row, $_SESSION['user_id']);
         }
     }
 

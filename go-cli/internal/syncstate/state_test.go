@@ -2,6 +2,8 @@ package syncstate
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -319,9 +321,75 @@ func TestAcquireLockSucceedsFirst(t *testing.T) {
 
 	release()
 
-	// Lock file should be removed after release.
-	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
-		t.Fatalf("lock file should be removed after release, stat err = %v", err)
+	// The lock file is intentionally left on disk: ownership is the kernel lock,
+	// not the file's existence, and unlinking a flock'd path lets two processes
+	// believe they hold it. What must hold after release is that the lock can be
+	// taken again.
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("lock file should persist after release: %v", err)
+	}
+	again, err := AcquireLock("src", "dst")
+	if err != nil {
+		t.Fatalf("lock should be re-acquirable after release: %v", err)
+	}
+	again()
+}
+
+// A lock file left behind by a process that died mid-sync used to block every
+// later sync for that pair forever. The kernel drops the lock when the holder
+// dies, so a leftover file must not block anything.
+func TestAcquireLockIgnoresLeftoverFileFromDeadProcess(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+
+	if err := os.MkdirAll(Dir(), 0700); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := LockPath("src", "dst")
+	// pid 0x7FFFFFFF is not a live process; the content is informational only.
+	if err := os.WriteFile(lockPath, []byte("pid=2147483647 time=2020-01-01T00:00:00Z\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	release, err := AcquireLock("src", "dst")
+	if err != nil {
+		t.Fatalf("stale lock file should not block acquisition: %v", err)
+	}
+	defer release()
+
+	// The stale holder metadata must be replaced, not appended to.
+	data, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "2147483647") {
+		t.Fatalf("stale holder metadata survived acquisition: %q", data)
+	}
+	if !strings.Contains(string(data), fmt.Sprintf("pid=%d", os.Getpid())) {
+		t.Fatalf("lock file should record the current pid, got %q", data)
+	}
+}
+
+// The contention error must name the holder so a user can act on it.
+func TestAcquireLockContentionReportsHolder(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+
+	release, err := AcquireLock("src", "dst")
+	if err != nil {
+		t.Fatalf("first AcquireLock() error: %v", err)
+	}
+	defer release()
+
+	_, err = AcquireLock("src", "dst")
+	if err == nil {
+		t.Fatal("second AcquireLock() should fail")
+	}
+	if !errors.Is(err, ErrLockHeld) {
+		t.Fatalf("error should wrap ErrLockHeld, got %v", err)
+	}
+	if !strings.Contains(err.Error(), fmt.Sprintf("pid %d", os.Getpid())) {
+		t.Fatalf("contention error should name the holding pid, got %v", err)
 	}
 }
 

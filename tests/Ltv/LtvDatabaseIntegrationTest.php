@@ -7,6 +7,10 @@ namespace Tests\Ltv;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\Connection;
 use Prosper202\Database\SchemaInstaller;
+use Prosper202\Identity\IdentityGraph;
+use Prosper202\Identity\IdentityKeys;
+use Prosper202\Identity\IdentitySignal;
+use Prosper202\Identity\SignalType;
 use Prosper202\Ltv\CompanyConflictException;
 use Prosper202\Ltv\MysqlCompanyRepository;
 use Prosper202\Ltv\MysqlCustomerCrmRepository;
@@ -111,6 +115,7 @@ final class LtvDatabaseIntegrationTest extends TestCase
             'time_difference' => '0 days, 0 hours, 1 min and 40 sec',
             'ip' => '203.0.113.9', 'pixel_type' => 3,
             'user_agent' => 'LtvIntegrationTest/1.0', 'click_payout' => '10.0',
+            'once_per_click' => false,
         ];
     }
 
@@ -473,6 +478,54 @@ final class LtvDatabaseIntegrationTest extends TestCase
         self::assertSame(2, (int) $this->scalar('SELECT COUNT(*) FROM 202_revenue_line_items'));
     }
 
+    /**
+     * A caller's idempotency key is compared exactly: `Order-A` and
+     * `order-a` are two requests. Under the table's case-insensitive
+     * collation the second was a replay of the first and its revenue was
+     * dropped (CLAUDE.md #17).
+     */
+    public function testIdempotencyKeysThatDifferOnlyInCaseAreTwoEvents(): void
+    {
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $customerId = $customers->resolveOrCreateByAlias(1, 'custom', 'case-keys', [], null, 1700000000);
+        $event = static fn (string $key, float $amount): array => [
+            'event_type' => 'purchase', 'amount' => $amount, 'currency' => 'USD',
+            'occurred_at' => 1700000000, 'source' => 'api', 'idempotency_key' => $key,
+        ];
+
+        $upper = $customers->insertRevenueEvent(1, $customerId, $event('Order-A', 10.0), 1700000000);
+        $lower = $customers->insertRevenueEvent(1, $customerId, $event('order-a', 7.0), 1700000000);
+
+        self::assertTrue($upper['inserted']);
+        self::assertTrue($lower['inserted'], 'order-a is not a replay of Order-A');
+        self::assertNotSame($upper['eventId'], $lower['eventId']);
+        self::assertSame(['event_id' => $lower['eventId'], 'customer_id' => $customerId], $customers->findEventByIdempotencyKey(1, 'order-a'));
+        self::assertSame(17.0, (float) $this->scalar("SELECT SUM(amount) FROM 202_revenue_events WHERE user_id=1 AND idempotency_key IN ('Order-A', 'order-a')"));
+
+        $replay = $customers->insertRevenueEvent(1, $customerId, $event('order-a', 7.0), 1700000000);
+        self::assertFalse($replay['inserted'], 'each still deduplicates against itself');
+        self::assertSame($lower['eventId'], $replay['eventId']);
+    }
+
+    /** External ids the merchant or billing system chose are compared exactly, like idempotency keys. */
+    public function testExternalIdsThatDifferOnlyInCaseAreTwoRecords(): void
+    {
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $customerId = $customers->resolveOrCreateByAlias(1, 'custom', 'case-ext', [], null, 1700000000);
+        $subs = new \Prosper202\Ltv\MysqlSubscriptionRepository(self::$conn, $customers);
+
+        $upper = $subs->upsert(1, ['external_sub_id' => 'sub_Ab1', 'amount' => 30.0, 'customer_id' => $customerId]);
+        $lower = $subs->upsert(1, ['external_sub_id' => 'sub_ab1', 'amount' => 10.0, 'customer_id' => $customerId]);
+        self::assertNotSame($upper['subscriptionId'], $lower['subscriptionId'], 'sub_ab1 is not an update of sub_Ab1');
+        self::assertSame(2, (int) $this->scalar("SELECT COUNT(*) FROM 202_subscriptions WHERE user_id=1 AND external_sub_id IN ('sub_Ab1', 'sub_ab1')"));
+        self::assertSame($lower['subscriptionId'], $subs->upsert(1, ['external_sub_id' => 'sub_ab1', 'amount' => 12.0, 'customer_id' => $customerId])['subscriptionId'], 'and each still upserts itself');
+
+        $a = $customers->upsertProduct(1, ['external_product_id' => 'Var-9'], 'USD', 1700000000);
+        $b = $customers->upsertProduct(1, ['external_product_id' => 'var-9'], 'USD', 1700000000);
+        self::assertNotSame($a, $b, 'var-9 is not Var-9');
+        self::assertSame($b, $customers->upsertProduct(1, ['external_product_id' => 'var-9'], 'USD', 1700000000));
+    }
+
     public function testRefundLineItemsStoreNegativeAmounts(): void
     {
         $customers = new MysqlCustomerRepository(self::$conn);
@@ -652,6 +705,84 @@ final class LtvDatabaseIntegrationTest extends TestCase
         self::assertSame($merchant, $p13n->resolveVisitorCustomer(1, ['cust' => '123', 'cust_type' => 'merchant_id'], 0, true));
         self::assertSame($custom, $p13n->resolveVisitorCustomer(1, ['cust' => '123'], 0, true), 'untyped refs default to custom, like ingest');
         self::assertNull($p13n->resolveVisitorCustomer(1, ['cust' => '123', 'cust_type' => 'bogus'], 0, true), 'unknown types resolve nobody');
+    }
+
+    /**
+     * Erasing a customer reaches the identity graph (plan §7.2): the signal
+     * the customer's id became, and every observation of it, are gone, so the
+     * id no longer maps to a visitor key; the merge it caused keeps its row
+     * (the worker's re-queue) but loses the hash. Another customer's signal,
+     * and a signal of another kind, are untouched.
+     */
+    public function testEraseRemovesTheCustomersIdentitySignals(): void
+    {
+        foreach (['signals', 'observations', 'merges', 'keys'] as $table) {
+            self::$db->query('TRUNCATE TABLE 202_identity_' . $table);
+        }
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $erased = $customers->resolveOrCreateByAlias(1, 'merchant_id', 'm-100', [], null, 1700000000);
+        $customers->addAlias(1, $erased, 'email_md5', str_repeat('ab', 16), 1700000000);
+        $kept = $customers->resolveOrCreateByAlias(1, 'merchant_id', 'm-200', [], null, 1700000000);
+
+        $hashKey = (new IdentityKeys(self::$conn))->forUser(1)['hash'];
+        $hash = static fn (string $canonical, SignalType $type = SignalType::CUSTOMER): string
+            => IdentityGraph::hash($hashKey, new IdentitySignal($type, $canonical));
+        $signals = [
+            'erased-merchant' => $hash('merchant_id:m-100'),
+            'erased-email' => $hash('email_md5:' . str_repeat('ab', 16)),
+            'kept' => $hash('merchant_id:m-200'),
+        ];
+        $cookie = $hash('merchant_id:m-100', SignalType::VISITOR_COOKIE);
+        $clickId = 9100;
+        foreach ($signals + ['cookie' => $cookie] as $name => $h) {
+            $type = $name === 'cookie' ? 'vid' : 'cust';
+            self::$db->query(
+                'INSERT INTO 202_identity_signals (user_id, signal_type, signal_hash, visitor_key, merges, created_at)'
+                . " VALUES (1, '$type', '$h', 5, 0, 1700000000)"
+            );
+            self::$db->query(
+                'INSERT INTO 202_identity_observations (click_id, signal_type, signal_hash, observed_at)'
+                . ' VALUES (' . ($clickId++) . ", '$type', '$h', 1700000000)"
+            );
+        }
+        self::$db->query(
+            'INSERT INTO 202_identity_merges'
+            . ' (user_id, from_key, into_key, click_id, signal_type, signal_hash, merged_at)'
+            . " VALUES (1, 6, 5, 9100, 'cust', '{$signals['erased-merchant']}', 1700000000)"
+        );
+
+        $crm = new MysqlCustomerCrmRepository($conn = self::$conn, $customers, new MysqlCustomerFieldRepository($conn));
+        $crm->erase(1, $erased);
+
+        $count = fn (string $table, string $where): string
+            => (string) $this->scalar("SELECT COUNT(*) FROM $table WHERE $where");
+        foreach (['erased-merchant', 'erased-email'] as $name) {
+            $h = $signals[$name];
+            self::assertSame('0', $count('202_identity_signals', "signal_hash = '$h'"), "the $name signal is gone");
+            self::assertSame('0', $count('202_identity_observations', "signal_hash = '$h'"), "its observations too");
+        }
+        $merge = $this->row('SELECT signal_hash, requeued_at FROM 202_identity_merges WHERE click_id = 9100');
+        self::assertSame('erased', $merge['signal_hash'] ?? null, 'the merge row stays, without the hash');
+        self::assertIsArray($merge, 'the merge row is still there');
+        self::assertArrayHasKey('requeued_at', $merge);
+        self::assertNull($merge['requeued_at'], 'and its re-queue is still pending');
+        $signal = static fn (string $h): string => "signal_hash = '$h'";
+        self::assertSame('1', $count('202_identity_signals', $signal($signals['kept'])), 'the other customer stays');
+        self::assertSame('1', $count('202_identity_signals', $signal($cookie)), 'another kind of signal stays');
+        self::assertSame('2', $count('202_identity_observations', '1'), 'only the erased observations went');
+        self::assertSame('0', $count('202_customer_aliases', "customer_id = $erased"), 'the aliases are gone too');
+        self::assertSame('1', $count('202_customer_aliases', "customer_id = $kept"));
+    }
+
+    /** An account whose identity keys were never minted erases without minting them. */
+    public function testEraseMintsNoIdentityKeys(): void
+    {
+        self::$db->query('TRUNCATE TABLE 202_identity_keys');
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $id = $customers->resolveOrCreateByAlias(1, 'custom', 'nobody', [], null, 1700000000);
+        $fields = new MysqlCustomerFieldRepository(self::$conn);
+        (new MysqlCustomerCrmRepository(self::$conn, $customers, $fields))->erase(1, $id);
+        self::assertSame('0', (string) $this->scalar('SELECT COUNT(*) FROM 202_identity_keys'));
     }
 
     public function testCompanyDomainIsUniquePerAccountAndMergeInheritsSafely(): void

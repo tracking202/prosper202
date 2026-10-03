@@ -107,8 +107,8 @@ if (!function_exists('get_platform_id')) {
 }
 
 if (!function_exists('get_device_id')) {
-    function get_device_id($device_name)
+    function get_device_id($device_name, $device_type = null)
     {
-        return INDEXES::get_device_id($device_name);
+        return INDEXES::get_device_id($device_name, $device_type);
     }
 }

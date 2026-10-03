@@ -17,7 +17,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$error) {
 	$mysql['user_email'] = $db->real_escape_string((string)$_POST['user_email']);
 
 	$user_sql = "SELECT user_id FROM 202_users WHERE user_name='" . $mysql['user_name'] . "' AND user_email='" . $mysql['user_email'] . "'";
-	$user_result = _mysqli_query($user_sql, $db);
+	$user_result = _mysqli_query($db, $user_sql);
 	$user_row = ($user_result instanceof mysqli_result) ? $user_result->fetch_assoc() : null;
 
 	// Always report success regardless of whether the account exists. Revealing
@@ -42,7 +42,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$error) {
 							SET 		user_pass_key='" . $mysql['user_pass_key'] . "',
 										user_pass_time='" . $mysql['user_pass_time'] . "'
 							WHERE		user_id='" . $mysql['user_id'] . "'";
-		$update_result = _mysqli_query($update_sql, $db);
+		$update_result = _mysqli_query($db, $update_sql);
 
 		// If the key never persisted, do not mail a dead reset link. Log it
 		// server-side but keep the generic success message (below) so the
@@ -103,33 +103,30 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$error) {
 
 
 
-<?php info_top(); ?>
+<?php info_top(['title' => 'Reset your password - Prosper202 ClickServer']);
 
-<?php if ($success == true) { ?>
-
-	<center><small>An email has been sent with a link where you can change your password.</small></center>
-
-<?php } else { ?>
-	<div class="row">
-		<div class="main col-xs-4">
-			<center><img src="202-img/prosper202.png"></center>
-			<center><span class="infotext">Please enter your username and e-mail address.<br />You will receive a new password via e-mail to <a href="<?php echo get_absolute_url(); ?>202-login.php">login</a> with.</span></center>
-			<form class="form-signin form-horizontal" role="form" method="post" action="">
-				<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
-				<div class="form-group <?php if (isset($error['user'])) echo "has-error"; ?>">
-					<?php if (isset($error['user'])) { ?>
-						<div class="tooltip right in login_tooltip">
-							<div class="tooltip-arrow"></div>
-							<div class="tooltip-inner"><?php echo $error['user']; ?></div>
-						</div>
-					<?php } ?>
-					<input type="text" class="form-control first" name="user_name" placeholder="Username">
-					<input type="text" class="form-control last" name="user_email" placeholder="Email">
-					<p></p>
-					<button class="btn btn-lg btn-p202 btn-block" type="submit">Get New Password <span class="fui-arrow-right pull-right"></span></button>
-				</div>
-			</form>
+if ($success == true) {
+	echo p202_standalone_card('Check your email', 'If that username and email match an account, a link to choose a new password is on its way. It works for three days.'); ?>
+	<p class="mb-0"><a class="btn btn-secondary w-100" href="<?php echo htmlspecialchars(get_absolute_url(), ENT_QUOTES, 'UTF-8'); ?>202-login.php">Back to sign in</a></p>
+<?php echo p202_standalone_card_end();
+} else {
+	echo p202_standalone_card('Reset your password', 'Enter your username and the email address on your account. We will email you a link to choose a new password.'); ?>
+	<?php if (isset($error['user'])) { ?>
+		<div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><?php echo htmlspecialchars(trim((string) $error['user']), ENT_QUOTES, 'UTF-8'); ?></div></div>
+	<?php } ?>
+	<form method="post" action="" id="lost-pass-form">
+		<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
+		<div class="mb-3">
+			<label class="form-label" for="user_name">Username</label>
+			<input type="text" class="form-control" id="user_name" name="user_name" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
 		</div>
-	</div>
-<?php } ?>
-<?php info_bottom(); ?>
+		<div class="mb-3">
+			<label class="form-label" for="user_email">Email</label>
+			<input type="email" class="form-control" id="user_email" name="user_email" autocomplete="email" required>
+		</div>
+		<button class="btn btn-primary w-100" type="submit">Email me a reset link</button>
+	</form>
+	<p class="mt-3 mb-0 text-center small"><a href="<?php echo htmlspecialchars(get_absolute_url(), ENT_QUOTES, 'UTF-8'); ?>202-login.php">Back to sign in</a></p>
+<?php echo p202_standalone_card_end();
+}
+info_bottom();

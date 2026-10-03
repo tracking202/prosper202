@@ -17,7 +17,7 @@ if ($submitted_key === '') {
 	$user_row = null;
 } else {
 	$user_sql = "SELECT * FROM 202_users WHERE user_pass_key='" . $mysql['user_pass_key'] . "'";
-	$user_result = _mysqli_query($user_sql, $db);
+	$user_result = _mysqli_query($db, $user_sql);
 	$user_row = ($user_result instanceof mysqli_result) ? $user_result->fetch_assoc() : null;
 }
 
@@ -74,7 +74,7 @@ if (!$error and ($_SERVER['REQUEST_METHOD'] == "POST")) {
 									user_pass_key=NULL,
 									user_pass_time='0'
 						  WHERE	user_id='" . $mysql['user_id'] . "'";
-		$user_result = _mysqli_query($user_sql, $db);
+		$user_result = _mysqli_query($db, $user_sql);
 
 		if ($user_result === false) {
 			$error['user_pass'] = '<div class="error">Could not save your new password, please try again.</div>';
@@ -91,40 +91,37 @@ $html['user_name'] = htmlentities((string)($user_row['user_name'] ?? ''), ENT_QU
 //if password was changed successfully
 if ($success == true) {
 
-	_die("<center><small>Congratulations, your password has been reset.<br/>You can now <a href=\"" . get_absolute_url() . "202-login.php\">login</a> with your new password.</small></center>");
+	_die("<h6>Password changed</h6><small>Your password has been reset. You can now <a href=\"" . get_absolute_url() . "202-login.php\">sign in</a> with your new password.</small>");
 }
 
 if (!empty($error['user_pass_key'])) {
 
-	_die("<center><small>" . $error['user_pass_key'] . "<br/>Please use the <a href=\"" . get_absolute_url() . "202-lost-pass.php\">password retrieval tool</a> to get a new password reset key.</small></center>");
+	_die("<h6>This reset link does not work</h6><small>" . htmlspecialchars(p202_standalone_error_text($error['user_pass_key']), ENT_QUOTES, 'UTF-8') . " Please use the <a href=\"" . get_absolute_url() . "202-lost-pass.php\">password retrieval tool</a> to get a new password reset link.</small>");
 }
 
 //else if none of the above, show the code to reset! 
 ?>
 
-<?php info_top(); ?>
-<div class="row">
-	<div class="main col-xs-4">
-		<center><img src="202-img/prosper202.png"></center>
-		<center><span class="infotext">Please create a new password and verify it to proceed.</span></center>
-		<form class="form-signin form-horizontal" role="form" method="post" action="">
-			<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
-			<div class="form-group">
-				<input type="text" class="form-control first" id="user_name" name="user_name" value="<?php echo $html['user_name']; ?>" disabled="disabled">
-			</div>
-			<div class="form-group <?php if (!empty($error['user_pass'])) echo "has-error"; ?>">
-				<?php if (!empty($error['user_pass'])) { ?>
-					<div class="tooltip right in login_tooltip">
-						<div class="tooltip-arrow"></div>
-						<div class="tooltip-inner"><?php echo $error['user_pass']; ?></div>
-					</div>
-				<?php } ?>
-				<input type="password" class="form-control middle" name="user_pass" placeholder="New Password">
-				<input type="password" class="form-control last" name="verify_user_pass" placeholder="Verify Password">
-				<p></p>
-				<button class="btn btn-lg btn-p202 btn-block" type="submit">Reset Password <span class="fui-arrow-right pull-right"></span></button>
-			</div>
-		</form>
-	</div>
-</div>
-<?php info_bottom(); ?>
+<?php info_top(['title' => 'Choose a new password - Prosper202 ClickServer']);
+echo p202_standalone_card('Choose a new password', 'Type it twice. It must be 8 to 72 characters.'); ?>
+	<?php if (!empty($error['user_pass'])) { ?>
+		<div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><?php echo htmlspecialchars(p202_standalone_error_text($error['user_pass']), ENT_QUOTES, 'UTF-8'); ?></div></div>
+	<?php } ?>
+	<form method="post" action="" id="pass-reset-form">
+		<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
+		<div class="mb-3">
+			<label class="form-label" for="user_name">Username</label>
+			<input type="text" class="form-control" id="user_name" value="<?php echo $html['user_name']; ?>" autocomplete="username" readonly>
+		</div>
+		<div class="mb-3">
+			<label class="form-label" for="user_pass">New password</label>
+			<input type="password" class="form-control<?php echo !empty($error['user_pass']) ? ' is-invalid' : ''; ?>" id="user_pass" name="user_pass" autocomplete="new-password" minlength="8" maxlength="72" required autofocus>
+		</div>
+		<div class="mb-3">
+			<label class="form-label" for="verify_user_pass">Type it again</label>
+			<input type="password" class="form-control" id="verify_user_pass" name="verify_user_pass" autocomplete="new-password" minlength="8" maxlength="72" required>
+		</div>
+		<button class="btn btn-primary w-100" type="submit">Reset password</button>
+	</form>
+<?php echo p202_standalone_card_end();
+info_bottom();
