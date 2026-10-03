@@ -17,7 +17,7 @@ use Tests\TestCase;
  * and so is executed here rather than read. The 1-click pages used to carry
  * their own sentence ("back up your database before upgrading"), which read
  * as a precaution; a page that starts an upgrade and is not in PAGES fails
- * testEveryCallerOfTheLadderIsAPageHereOrTheSilentUpdater, so a fourth one
+ * testEveryCallerOfTheLadderIsAPageHereOrListedWithItsReason, so a fourth one
  * cannot ship its own wording either.
  * tests/live/android-abuse-limits.sh reads the rendered upgrade page.
  */
@@ -32,9 +32,17 @@ final class UpgradeBackupWarningTest extends TestCase
 
     /**
      * Calls of the ladder that are not a page with a button, and why.
-     * functions.php's update_needed() upgrades without anyone pressing
-     * anything, and only when the release feed marks a release autoupgrade —
-     * a decision made on the feed, so there is no form here to warn in.
+     *
+     * functions.php: update_needed() would replace the files and run the
+     * ladder with no form to warn in, when the version feed advertises the
+     * release one patch above the running one and marks it autoupgrade. It
+     * cannot today, because nothing calls it:
+     * 202-account/ajax/check-for-update.php did up to 1.9.28 and has called
+     * check_premium_update() since 1.9.55. Called, it would still find no
+     * release: it reads items[0] from premium-p202/version, which serves a
+     * flat {"version": ...} object (fetched 2026-10-03). The call site is
+     * still there, so the file is listed, and testNothingCallsUpdateNeeded
+     * holds this reason to the tree.
      */
     private const NO_FORM = [
         '202-config/functions.php',
@@ -114,9 +122,13 @@ final class UpgradeBackupWarningTest extends TestCase
         }
     }
 
-    public function testEveryCallerOfTheLadderIsAPageHereOrTheSilentUpdater(): void
+    /**
+     * The tokens of every PHP file the app serves or runs, by path.
+     *
+     * @return iterable<string, list<array{int, string, int}|string>>
+     */
+    private static function appSources(): iterable
     {
-        $callers = [];
         $files = new \RecursiveIteratorIterator(
             new \RecursiveDirectoryIterator(self::root(), \FilesystemIterator::SKIP_DOTS)
         );
@@ -126,7 +138,82 @@ final class UpgradeBackupWarningTest extends TestCase
             if ($file->getExtension() !== 'php' || preg_match('#^(vendor|tests|node_modules|\.git)/#', $path) === 1) {
                 continue;
             }
-            $tokens = token_get_all((string) file_get_contents($file->getPathname()));
+            yield $path => token_get_all((string) file_get_contents($file->getPathname()));
+        }
+    }
+
+    /**
+     * The nearest token from $i in $step's direction that is not whitespace or
+     * a comment, as lower-case text ('' at either end of the file).
+     *
+     * @param list<array{int, string, int}|string> $tokens
+     */
+    private static function neighbour(array $tokens, int $i, int $step): string
+    {
+        for ($j = $i + $step; isset($tokens[$j]); $j += $step) {
+            $token = $tokens[$j];
+            if (is_array($token) && in_array($token[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+                continue;
+            }
+
+            return strtolower(is_array($token) ? $token[1] : $token);
+        }
+
+        return '';
+    }
+
+    /**
+     * The value of a T_CONSTANT_ENCAPSED_STRING, escapes decoded as PHP does:
+     * '\update_needed', '\\update_needed' and "\x75pdate_needed" are each a
+     * name call_user_func() resolves. Such a token carries no interpolation,
+     * so every escape is one of these; any other backslash is kept.
+     */
+    private static function literalValue(string $literal): string
+    {
+        $literal = ltrim($literal, 'bB');
+        $body = substr($literal, 1, -1);
+        if ($literal[0] === "'") {
+            return (string) preg_replace('/\\\\([\\\\\'])/', '$1', $body);
+        }
+        $simple = ['n' => "\n", 'r' => "\r", 't' => "\t", 'v' => "\v", 'e' => "\e", 'f' => "\f",
+            '\\' => '\\', '$' => '$', '"' => '"'];
+
+        return (string) preg_replace_callback(
+            '/\\\\(?:([nrtvef\\\\$"])|([0-7]{1,3})|x([0-9A-Fa-f]{1,2})|u\{([0-9A-Fa-f]+)\})/',
+            static function (array $m) use ($simple): string {
+                if (($m[1] ?? '') !== '') {
+                    return $simple[$m[1]];
+                }
+                if (($m[2] ?? '') !== '') {
+                    return chr(octdec($m[2]) & 0xFF);
+                }
+                if (($m[3] ?? '') !== '') {
+                    return chr(hexdec($m[3]));
+                }
+                // UTF-8 by hand: PHP encodes a surrogate too, where mb_chr()
+                // returns false.
+                $cp = (int) hexdec($m[4]);
+                if ($cp < 0x80) {
+                    return chr($cp);
+                }
+                if ($cp < 0x800) {
+                    return chr(0xC0 | $cp >> 6) . chr(0x80 | $cp & 0x3F);
+                }
+                if ($cp < 0x10000) {
+                    return chr(0xE0 | $cp >> 12) . chr(0x80 | $cp >> 6 & 0x3F) . chr(0x80 | $cp & 0x3F);
+                }
+
+                return chr(0xF0 | $cp >> 18) . chr(0x80 | $cp >> 12 & 0x3F)
+                    . chr(0x80 | $cp >> 6 & 0x3F) . chr(0x80 | $cp & 0x3F);
+            },
+            $body
+        );
+    }
+
+    public function testEveryCallerOfTheLadderIsAPageHereOrListedWithItsReason(): void
+    {
+        $callers = [];
+        foreach (self::appSources() as $path => $tokens) {
             foreach ($tokens as $i => $token) {
                 // Any class's upgrade_databases, called statically: a wider net
                 // than UPGRADE:: alone, so a lookalike shows up here instead
@@ -151,6 +238,55 @@ final class UpgradeBackupWarningTest extends TestCase
             $expected,
             $callers,
             'a page that starts an upgrade shows the warning (add it to PAGES), or is listed with its reason'
+        );
+    }
+
+    /**
+     * NO_FORM's reason for functions.php, held to the tree. A call by name
+     * (bare, \-qualified, namespace\-relative or imported with use function)
+     * or a quoted string whose value names it, with or without the leading
+     * backslash and however its escapes spell it (a callable for
+     * call_user_func(), array_map(), ...), is a use; a quoted string that is
+     * an array key or a subscript is the session flag of the same name. A
+     * name assembled at runtime, or written inside a heredoc or an
+     * interpolated string, is not seen.
+     */
+    public function testNothingCallsUpdateNeeded(): void
+    {
+        $names = ['update_needed', '\\update_needed', 'namespace\\update_needed'];
+        $uses = [];
+        foreach (self::appSources() as $path => $tokens) {
+            foreach ($tokens as $i => $token) {
+                if (!is_array($token)) {
+                    continue;
+                }
+                $named = in_array($token[0], [T_STRING, T_NAME_FULLY_QUALIFIED, T_NAME_RELATIVE], true)
+                    && in_array(strtolower($token[1]), $names, true);
+                $quoted = $token[0] === T_CONSTANT_ENCAPSED_STRING
+                    && in_array(strtolower(self::literalValue($token[1])), ['update_needed', '\\update_needed'], true);
+                if (!$named && !$quoted) {
+                    continue;
+                }
+                $prev = self::neighbour($tokens, $i, -1);
+                $next = self::neighbour($tokens, $i, 1);
+                if ($named && in_array($prev, ['->', '?->', '::'], true)) {
+                    continue; // a method or class constant: another symbol
+                }
+                if ($named && $path === '202-config/functions.php' && $prev === 'function' && $next === '(') {
+                    continue; // the declaration
+                }
+                if ($quoted && ($next === '=>' || ($prev === '[' && $next === ']'))) {
+                    continue; // $_SESSION['update_needed'] and the banner's key
+                }
+                $uses[] = "$path:{$token[2]}";
+            }
+        }
+
+        self::assertSame(
+            [],
+            $uses,
+            'update_needed() is used again: it replaces the files and runs the ladder with no form to warn in. '
+            . 'Give that path the backup warning, then correct NO_FORM\'s reason'
         );
     }
 
